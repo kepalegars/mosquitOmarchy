@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# omarchy-vm-focus — toggle where the SUPER+… shortcuts go (host ↔ in-VM
+# Omarchy) and say so in a compositor notification (hyprctl notify draws on
+# top of the VM window even when it is fullscreen).
+#
+# Bound to SUPER + ALT + V both in the normal submap and inside the
+# "omarchy-vm" submap (the script self-detects the current one), so pressing
+# it always toggles and reports the new focus.
+set -u
+
+# Crash reporting (mosquitOmarchy): a failure stores a dated log and offers a
+# clickable AI diagnosis. Install scripts are deliberately exempt.
+_mq_crash_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/crash.bash"
+[[ -f $_mq_crash_lib ]] && { source "$_mq_crash_lib"; mq_crash_guard "omarchy-vm-focus"; }
+
+notify(){ hyprctl notify -1 2500 "rgb(33ccff)" "$1" >/dev/null 2>&1 || true; }
+
+cur="$(hyprctl submap 2>/dev/null || echo default)"
+if [[ $cur == "omarchy-vm" ]]; then
+  hyprctl eval 'hl.dispatch(hl.dsp.submap("reset"))' >/dev/null 2>&1 || true
+  notify "Focus: HOST — native Omarchy shortcuts"
+else
+  hyprctl eval 'hl.dispatch(hl.dsp.submap("omarchy-vm"))' >/dev/null 2>&1 || true
+  notify "Focus: VM — the guest Omarchy gets SUPER+…"
+fi

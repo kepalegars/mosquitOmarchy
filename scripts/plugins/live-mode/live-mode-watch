@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# live-mode-watch — thermal watchdog + state reassertion for live mode.
+# Runs in the background while live mode is active.
+# Managed by scripts/plugins/live-mode/setup-live-mode.sh
+#
+# Reasserts the live session's own state only: performance profile,
+# sleep management (lid block + stay-awake), gaps, and the Live theme.
+# It never starts mega-caffeine and never applies a screen tint — live
+# mode is explicitly tint-free.
+
+set -euo pipefail
+
+# Crash reporting (mosquitOmarchy): a failure stores a dated log and offers a
+# clickable AI diagnosis. Install scripts are deliberately exempt.
+_mq_crash_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/lib/crash.bash"
+[[ -f $_mq_crash_lib ]] && { source "$_mq_crash_lib"; mq_crash_guard "live-mode-watch"; }
+
+REAL_USER="${SUDO_USER:-${LOGNAME:-$USER}}"
+REAL_HOME=$(eval echo "~$REAL_USER" 2>/dev/null || echo "$HOME")
+STATE_DIR="$REAL_HOME/.local/state/live-mode"
+CONFIG_FILE="$REAL_HOME/.config/live-mode/settings"
+ACTIVE_FLAG="$STATE_DIR/active"
+ROOT_HELPER="$HOME/.local/bin/live-mode-root"
+
+# Thermal tuning: the limit is configured in the Live Manager (settings),
+# default 85 °C. Recovery rides 7 °C below the limit.
+THERMAL_LIMIT_C=85
+[[ -f $CONFIG_FILE ]] && source "$CONFIG_FILE" || true
+case $THERMAL_LIMIT_C in 95|90|85|80|75) ;; *) THERMAL_LIMIT_C=85 ;; esac
+THRESHOLD_HIGH=$(( THERMAL_LIMIT_C * 1000 ))        # start throttling (m°C)
+THRESHOLD_RECOVER=$(( THERMAL_LIMIT_C * 1000 - 7000 ))
+THRESHOLD_STEP=200000   # kHz stepped per interval
+INTERVAL=5
+
+is_active() { [[ -f "$ACTIVE_FLAG" ]]; }
+
+ok()   { printf '\033[32m●\033[0m %s\n' "$*"; }
+warn() { printf '\033[33m●\033[0m %s\n' "$*" >&2; }
+
+get_temp() {
+  cat /sys/class/hwmon/hwmon7/temp1_input 2>/dev/null || echo 0
+}
+
+get_hw_max() {
+  cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo 5134889
+}
+
+get_current_max() {
+  cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null || echo 0
+}
+
+thermal_control() {
+  local temp hw_max current_cap new_cap
+  temp=$(get_temp)
+  hw_max=$(get_hw_max)
+  current_cap=$(get_current_max)
+
+  if (( temp >= THRESHOLD_HIGH )); then
+    new_cap=$(( current_cap - THRESHOLD_STEP ))
+    (( new_cap < 2000000 )) && new_cap=2000000  # don't go below 2GHz
+    sudo -n "$ROOT_HELPER" thermal-cap "$new_cap" >/dev/null 2>&1 || true
+  elif (( temp <= THRESHOLD_RECOVER )); then
+    new_cap=$(( current_cap + THRESHOLD_STEP ))
+    (( new_cap > hw_max )) && new_cap="$hw_max"
+    sudo -n "$ROOT_HELPER" thermal-cap "$new_cap" >/dev/null 2>&1 || true
+  fi
+}
+
+reassert_state() {
+  # Profile → performance
+  local cur
+  cur=$(powerprofilesctl get 2>/dev/null || echo "")
+  [[ "$cur" != "performance" ]] && powerprofilesctl set performance 2>/dev/null || true
+
+  # Ultra-save off
+  if [[ -f "$REAL_HOME/.local/state/ultra-save/state" ]] && grep -q "^on$" "$REAL_HOME/.local/state/ultra-save/state" 2>/dev/null; then
+    sudo -n "$HOME/.local/bin/ultra-save" off >/dev/null 2>&1 || true
+  fi
+
+  # Stay-awake forced on (the lid inhibitor may be killed by external
+  # cleanup; relaunch it if it died).
+  if ! pgrep -f "[s]ystemd-inhibit --what=handle-lid-switch:sleep" >/dev/null 2>&1; then
+    setsid --fork systemd-inhibit --what=handle-lid-switch:sleep \
+      --who="Live mode" \
+      --why="Live mode: lid closed without sleeping" \
+      sleep infinity >/dev/null 2>&1 &
+  fi
+  [[ -f "$REAL_HOME/.local/state/omarchy/indicators/stay-awake" ]] || \
+    { mkdir -p "$(dirname "$REAL_HOME/.local/state/omarchy/indicators/stay-awake")"; touch "$REAL_HOME/.local/state/omarchy/indicators/stay-awake"; }
+
+  # Gaps off
+  if [[ ! -f "$REAL_HOME/.local/state/omarchy/toggles/hypr/window-no-gaps.lua" ]]; then
+    omarchy-hyprland-window-gaps-toggle >/dev/null 2>&1 || true
+  fi
+
+  # Live theme (re-assert if user switched away)
+  local theme
+  theme=$(cat "$REAL_HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || true)
+  if [[ "$theme" != "Live" && -L "$REAL_HOME/.config/omarchy/themes/live" ]]; then
+    omarchy theme set Live >/dev/null 2>&1 || true
+  fi
+}
+
+# patchbay_watch: while live mode is on, closing the mosquito routing tool
+# prompts a confirmation — "yes" parks it for the rest of the session,
+patchbay_watch() {
+  [[ -f "$REAL_HOME/.config/live-mode/settings" ]] && source "$REAL_HOME/.config/live-mode/settings" || true
+  [[ $ROUTING_TOOL == no ]] && return 0
+  [[ -f "$STATE_DIR/patchbay_closed_this_session" ]] && return 0
+
+  local addr ours
+  ours=$(cat "$STATE_DIR/patchbay_addr" 2>/dev/null || true)
+  addr=$(hyprctl -j clients 2>/dev/null | jq -r '
+    .[] | select((.class // "") == "qpwgraph" or (.class // "") == "org.rncbc.qpwgraph" or (.class // "") == "org.pq_graph.Qpwgraph") | .address' 2>/dev/null | head -n1)
+
+  # Still (or again) running — nothing to do.
+  [[ -n "$addr" ]] && { [[ "$addr" != "$ours" ]] && echo "$addr" > "$STATE_DIR/patchbay_addr"; return 0; }
+
+  # It vanished: ask ONCE via the confirm overlay.
+  local payload sel="$STATE_DIR/confirm_sel" donef="$STATE_DIR/confirm_done" ans
+  rm -f "$sel" "$donef"
+  payload=$(jq -cn --arg message "Close the mosquito routing tool for this Live session?" \
+    --arg selectionFile "$sel" --arg doneFile "$donef" \
+    '{message:$message, selectionFile:$selectionFile, doneFile:$doneFile}')
+  omarchy-shell shell summon mosquito.confirm "$payload" >/dev/null 2>&1 || true
+  ans=""
+  for i in $(seq 1 60); do
+    [[ -f "$donef" ]] && break
+    sleep 0.5
+  done
+  ans=$(cat "$sel" 2>/dev/null || echo "")
+  rm -f "$sel" "$donef"
+
+  if [[ "$ans" == "yes" ]]; then
+    touch "$STATE_DIR/patchbay_closed_this_session"
+    printf '' > "$STATE_DIR/patchbay_addr"
+    ok "mosquito routing tool closed for this session by the user."
+  else
+    # Keep it running: relaunch + park (same path as activation).
+    command -v qpwgraph >/dev/null 2>&1 && {
+      setsid --fork uwsm-app -- qpwgraph >/dev/null 2>&1 || \
+      setsid --fork qpwgraph >/dev/null 2>&1 || true
+      local i new
+      for i in $(seq 1 20); do
+        sleep 0.3
+        new=$(hyprctl -j clients 2>/dev/null | jq -r '
+          .[] | select((.class // "") == "qpwgraph" or (.class // "") == "org.rncbc.qpwgraph" or (.class // "") == "org.pq_graph.Qpwgraph") | .address' 2>/dev/null | head -n1)
+        [[ -n "$new" ]] && break
+      done
+      [[ -n "$new" ]] && {
+        echo "$new" > "$STATE_DIR/patchbay_addr"
+        hyprctl dispatch movetoworkspacesilent "special:scratchpad,address:$new" >/dev/null 2>&1 || true
+      }
+    }
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
+
+while is_active; do
+  thermal_control
+  reassert_state
+  patchbay_watch
+  sleep "$INTERVAL"
+done

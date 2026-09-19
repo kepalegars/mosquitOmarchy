@@ -1,0 +1,302 @@
+#!/usr/bin/env bash
+# mosquito-move-manager — the single, stable entry point.
+#
+# The TUI (mosquito-move-manager-tui, a real Bubble Tea program — Go,
+# tui-go/) is the ONLY interface. The old bash/gum "native" overlay
+# interface and the interface mode file (~/.config/move-session/interface)
+# were removed: there is no interface switching anywhere anymore. This is
+# the ONLY file the Omarchy menu entry's Exec= line (or any other launcher:
+# a keybinding, a shell alias, running `mosquito-move-manager` by hand)
+# ever needs to point at.
+#
+# - No arguments → the interactive menu, i.e. the TUI. TUI mode needs an
+#   actual terminal to render into: if this dispatcher is already running
+#   inside one (stdin+stdout both a tty — typed by hand, or inherited from
+#   a detached relaunch that happened to keep one), it execs the TUI binary
+#   directly; otherwise (the Omarchy Trigger menu, a fully detached launch
+#   with no tty at all) it opens a terminal itself, directly (foot, falling
+#   back to xterm — the same pair `gui-run.bash` already relies on
+#   elsewhere in this repo), `exec`ing straight into that terminal with no
+#   extra process hop in between.
+#
+#   This is deliberately NOT routed through Omarchy's own
+#   `omarchy-launch-or-focus-tui` (which resolves the terminal via
+#   `xdg-terminal-exec` and would also focus an already-open TUI window
+#   instead of opening a duplicate). The extra process hop that path adds
+#   was found, via live testing on the real desktop, to reliably corrupt
+#   interactive/alt-screen rendering (screenshots of the actual rendered
+#   window, not just exit codes: partial frames, then blank) — reproduced
+#   consistently through `xdg-terminal-exec` and never through a plain,
+#   direct, single-hop `foot -e …` (confirmed both in isolation and as the
+#   exact invocation shipped below).
+#
+# - With arguments → a one-shot flag action (status, --midi, --pick-file,
+#   --version, --address, …), NOT the interface. These run through the
+#   shared core (lib-move-manager-core.sh) exactly as before, with the
+#   core's own real prompt primitives enabled (the Omarchy overlay /
+#   zenity / plain-tty chain — see that file's "UI PRIMITIVE CONTRACT" for
+#   why they now live there behind a guard instead of in a dedicated
+#   native entry-point script). `main "$@"` auto-runs at the bottom of the
+#   core once sourced.
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── Single-instance handling (interactive launches only) ────────────────────
+# One TUI per manager: a normal launch that finds another copy already
+# running asks whether to close it first; --replace closes it without asking;
+# answering no abandons the new instance. A conflict is ONLY a process whose
+# own executable (argv[0] / the /proc/<pid>/exe target — never a later
+# command-line argument) is the TUI binary. `foot … -e …/…-tui` (argv[0] is
+# `foot`) and the bash dispatcher (`…/mosquito-move-manager`) are therefore
+# never candidates, and no pgrep -f substring hit can match a wrapper that
+# merely mentions the path. Each real TUI's per-PID state marker then decides:
+# mode=busy (mid-operation) or mode=discretion (hidden Bitwig watchdog) means
+# the instance is IGNORED with no prompt and no kill; a missing marker or any
+# other mode is a genuine conflict. Stale markers (dead/non-TUI PIDs) are
+# pruned rather than trusted, so a crashed instance never blocks a new launch.
+# The manager.pid file still records the dispatcher shell but is deliberately
+# NOT a conflict source — only a TUI marker counts. Flag actions never reach
+# this code.
+MGR_TUI_BIN="$DIR/mosquito-move-manager-tui"
+MGR_SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+# Canonical, env-independent instance root — computed EXACTLY the same way in
+# tui-go/discretion.go (managerInstanceBase/managerStateDir). It is derived
+# from $HOME only, never from an override env var: a differing
+# MOSQUITO_MOVE_MANAGER_STATE_DIR (or TMPDIR) between the launching shell and
+# the running TUI once made the detector read a different directory than the
+# TUI wrote its marker to, so a genuinely busy instance looked idle and the
+# "replace it?" prompt appeared over a conversion already in progress.
+MGR_INSTANCE_BASE="${HOME:-/tmp}"
+MGR_INSTANCE_ROOT="$MGR_INSTANCE_BASE/.local/state/mosquito-move-manager"
+MGR_STATE_DIR="$MGR_INSTANCE_ROOT/instances"
+MGR_PIDFILE="$MGR_INSTANCE_ROOT/manager.pid"
+MGR_DETECT_LOG="$MGR_INSTANCE_ROOT/detector.log"
+
+# _mgr_pidfile_cleanup removes the PID file ONLY while it still records this
+# shell. A hidden "discretion" instance can now outlive a newer, visible one:
+# without the ownership check, the older shell's EXIT trap would delete the
+# newer instance's PID file.
+_mgr_pidfile_cleanup() {
+  local cur
+  cur="$(cat "$MGR_PIDFILE" 2>/dev/null || true)"
+  [[ $cur == "$$" ]] && rm -f "$MGR_PIDFILE"
+  return 0
+}
+
+_mgr_is_tui_pid() {
+  # True ONLY when PID's own executable — the /proc/<pid>/exe target, or as a
+  # fallback argv[0] when that link is gone — is the TUI binary (matched by
+  # basename so any launch path works). Arguments are NEVER inspected: this is
+  # what makes `foot -e …/mosquito-move-manager-tui` (exe is `foot`) and the
+  # bash dispatcher (exe is `bash`) non-matches, unlike a pgrep -f that hits
+  # the TUI path as a mere argument.
+  local p="$1" exe base arg0
+  [[ $p =~ ^[0-9]+$ ]] || return 1
+  if exe="$(readlink "/proc/$p/exe" 2>/dev/null)"; then
+    base="${exe##*/}"
+    [[ $base == "${MGR_TUI_BIN##*/}" ]] && return 0
+    # A live exe link that is not the TUI settles it; argv[0] is freely
+    # settable, so only fall back to it when the link is gone (replaced or
+    # deleted binary, shown with a " (deleted)" suffix).
+    [[ $exe == *" (deleted)" ]] || return 1
+  fi
+  [[ -r /proc/$p/cmdline ]] || return 1
+  arg0="$(tr '\0' '\n' < "/proc/$p/cmdline" 2>/dev/null | head -n 1)"
+  base="${arg0##*/}"
+  [[ $base == "${MGR_TUI_BIN##*/}" ]]
+}
+
+_mgr_is_discretion_pid() {
+  # True only for a real TUI PID whose own marker says it must NOT count as
+  # "another instance is already open": a "busy" manager (any conversion /
+  # Bitwig handoff / install / poll step in flight) or a hidden "discretion"
+  # one (a Bitwig-close watchdog that shows no window). The gate ignores both
+  # and starts normally, with no prompt. No marker, any other mode, or a PID
+  # that is not the TUI binary is never "ignored".
+  local p="$1" f="$MGR_STATE_DIR/mosquito-move-manager-$p.state"
+  _mgr_is_tui_pid "$p" || return 1
+  [[ -f $f ]] || return 1
+  grep -qE '^mode=(discretion|busy)$' "$f" 2>/dev/null
+}
+
+_mgr_prune_markers() {
+  # Read every marker in the canonical dir and drop the stale ones (dead PID /
+  # not our TUI / unknown mode) so they can never hide a real instance
+  # forever. Atomic marker writes mean a live marker is always complete.
+  [[ -d $MGR_STATE_DIR ]] || return 0
+  local f p
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    p="${f##*/mosquito-move-manager-}"
+    p="${p%.state}"
+    [[ $p =~ ^[0-9]+$ ]] || { rm -f "$f" 2>/dev/null || true; continue; }
+    _mgr_is_discretion_pid "$p" || rm -f "$f" 2>/dev/null || true
+  done < <(find "$MGR_STATE_DIR" -maxdepth 1 -type f -name 'mosquito-move-manager-*.state' 2>/dev/null)
+}
+
+_mgr_debug_conflict() {
+  # Best-effort diagnostic: dump exactly what the detector saw, so a user who
+  # reports a spurious "replace it?" prompt can show why it matched. Goes to
+  # stderr (visible from a shell) and to the canonical detector.log.
+  local pids="$1" p f out
+  mkdir -p "$MGR_INSTANCE_ROOT" 2>/dev/null || true
+  out="$(
+    printf 'mosquito-move-manager: conflicting instance(s) at %s\n' "$(date -Is 2>/dev/null || date)"
+    printf '  state_dir=%s\n  pidfile=%s\n  this_pid=%s\n' "$MGR_STATE_DIR" "$MGR_PIDFILE" "$$"
+    while IFS= read -r p; do
+      [[ -n $p ]] || continue
+      f="$MGR_STATE_DIR/mosquito-move-manager-$p.state"
+      printf '  pid=%s cmdline=' "$p"
+      tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null || printf '<unreadable>'
+      printf '\n'
+      if [[ -f $f ]]; then
+        printf '    marker %s:\n' "$f"
+        sed 's/^/      /' "$f" 2>/dev/null || true
+      else
+        printf '    marker %s: <missing>\n' "$f"
+      fi
+    done <<< "$pids"
+    printf '  all state files:\n'
+    find "$MGR_STATE_DIR" -maxdepth 1 -type f -name 'mosquito-move-manager-*.state' 2>/dev/null | sed 's/^/    /' || true
+  )" 2>/dev/null || true
+  [[ -n $out ]] || return 0
+  printf '%s\n' "$out" >&2
+  printf '%s\n' "$out" >> "$MGR_DETECT_LOG" 2>/dev/null || true
+}
+
+_mgr_running_tui_pids() {
+  local p rec f
+  local -a pids=()
+  _mgr_prune_markers
+  # Candidates: every TUI-named process, every live marker file (so a marked
+  # instance is honoured even if pgrep misses it), and the recorded PID.
+  while IFS= read -r p; do
+    [[ -n $p && $p != "$$" ]] || continue
+    if _mgr_is_tui_pid "$p"; then pids+=("$p"); fi
+  done < <(pgrep -f -- "${MGR_TUI_BIN##*/}" 2>/dev/null || true)
+  if [[ -d $MGR_STATE_DIR ]]; then
+    for f in "$MGR_STATE_DIR"/mosquito-move-manager-*.state; do
+      [[ -f $f ]] || continue
+      p="${f##*/mosquito-move-manager-}"
+      p="${p%.state}"
+      [[ $p =~ ^[0-9]+$ && $p != "$$" ]] || continue
+      if _mgr_is_tui_pid "$p"; then pids+=("$p"); fi
+    done
+  fi
+  if [[ -f $MGR_PIDFILE ]]; then
+    rec=$(cat "$MGR_PIDFILE" 2>/dev/null || true)
+    if [[ $rec =~ ^[0-9]+$ ]] && [[ $rec != "$$" ]] && _mgr_is_tui_pid "$rec"; then
+      pids+=("$rec")
+    else
+      rm -f "$MGR_PIDFILE"
+    fi
+  fi
+  if ((${#pids[@]})); then
+    printf '%s\n' "${pids[@]}" | sort -u | while IFS= read -r p; do
+      [[ -n $p ]] || continue
+      _mgr_is_discretion_pid "$p" && continue
+      printf '%s\n' "$p"
+    done
+  fi
+  return 0
+}
+
+_mgr_single_instance_gate() {
+  local replace="$1" pids p
+  trap _mgr_pidfile_cleanup EXIT
+  pids=$(_mgr_running_tui_pids)
+  if [[ -n $pids ]]; then
+    _mgr_debug_conflict "$pids"
+    if [[ $replace != true ]]; then
+      # Short button labels so the shared mosquito.confirm overlay never
+      # clips them; the message carries the full intent. "Replace" is short
+      # enough to fit even the overlay's minimum button width.
+      if ! ui_confirm "Another mosquito Move Manager instance is already open. Close it and continue?" "Keep" "Replace"; then
+        echo "mosquito-move-manager: another instance is already open — leaving it alone." >&2
+        exit 0
+      fi
+    fi
+    while IFS= read -r p; do
+      [[ -n $p ]] || continue
+      kill "$p" 2>/dev/null || true
+    done <<< "$pids"
+    for _ in $(seq 1 20); do
+      if [[ -z $(_mgr_running_tui_pids) ]]; then break; fi
+      sleep 0.1
+    done
+    for p in $(_mgr_running_tui_pids); do kill -9 "$p" 2>/dev/null || true; done
+  fi
+  mkdir -p "$MGR_INSTANCE_ROOT" 2>/dev/null || true
+  printf '%s\n' "$$" > "$MGR_PIDFILE"
+}
+
+# --replace: interactive launch that closes any other instance without asking.
+REPLACE=false
+if [[ ${1:-} == --replace ]]; then
+  REPLACE=true
+  shift
+fi
+
+if [[ $# -eq 0 ]]; then
+  # Interactive path: the TUI is the only interface. Load the core's native
+  # prompt primitives once, lib-only so its `main` stays out of the way —
+  # both the Hyprland gate and the single-instance confirm below need
+  # ui_confirm, which only exists when the native-UI flag is set at source
+  # time. The two gate vars are shell-local (never exported) so the TUI —
+  # and the actions backend it spawns — don't inherit the native-UI flag and
+  # keep their stubbed prompts.
+  MOSQUITO_MOVE_MANAGER_LIB_ONLY=1
+  MOSQUITO_MOVE_MANAGER_NATIVE_UI=1
+  source "$DIR/lib-move-manager-core.sh"
+  unset MOSQUITO_MOVE_MANAGER_LIB_ONLY MOSQUITO_MOVE_MANAGER_NATIVE_UI
+
+  # Hyprland guard: Omarchy — and every window-management step this module
+  # relies on — targets Hyprland, and nothing has been tested elsewhere.
+  # Warn and ask once, up front, on the interactive launcher path ONLY:
+  # flag actions (status, --midi, …) and the actions backend must never
+  # block on a prompt.
+  if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] \
+     && ! { command -v hyprctl >/dev/null 2>&1 && pgrep -x Hyprland >/dev/null 2>&1; }; then
+    if ! ui_confirm "mosquito Move Manager is built for Omarchy/Hyprland and has not been tested on any other desktop. Start it anyway?" "Quit" "Continue"; then
+      echo "mosquito-move-manager: no Hyprland session — exiting." >&2
+      exit 0
+    fi
+  fi
+
+  # One TUI per manager: --replace closes any other copy silently, otherwise
+  # ask before taking over.
+  _mgr_single_instance_gate "$REPLACE"
+
+  # The TUI resolves the SAME canonical marker/PID directory on its own (see
+  # tui-go/discretion.go) — no path is exported, so no launcher/env difference
+  # can desync the two sides. Create it up front so the detector's prune always
+  # has a directory to read.
+  mkdir -p "$MGR_STATE_DIR" 2>/dev/null || true
+
+  # Interactive launch → the TUI, the only interface. The TUI runs as a
+  # child (not exec) so the EXIT trap can drop the PID file when it ends.
+  if [[ -t 0 && -t 1 ]]; then
+    "$MGR_TUI_BIN"
+    exit $?
+  elif command -v foot >/dev/null 2>&1; then
+    # Open the terminal as a perfect square (92x92 chars) — small but wide
+    # enough to show the whole ASCII title + every option of the first menu.
+    foot -W 100x30 --app-id=org.omarchy.mosquito-move-manager-tui -e "$MGR_TUI_BIN"
+    exit $?
+  elif command -v xterm >/dev/null 2>&1; then
+    xterm -e "$MGR_TUI_BIN"
+    exit $?
+  else
+    echo "mosquito-move-manager: no terminal emulator found (foot/xterm) to open the TUI in." >&2
+    exit 1
+  fi
+fi
+
+# Flag-driven one-shot action: run through the shared core with its real
+# prompt primitives enabled. $SELF is the dispatcher — the notification
+# "click to pick a file" relaunch (--exec $SELF --pick-file) must come back
+# here, not to any per-interface script.
+SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+export MOSQUITO_MOVE_MANAGER_NATIVE_UI=1
+source "$DIR/lib-move-manager-core.sh"

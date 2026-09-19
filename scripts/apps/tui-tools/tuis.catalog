@@ -1,0 +1,26 @@
+# tuis.catalog — Terminal tools of the "apps" module (type TUI).
+#
+# One catalog per type (gui / tui / webapps), read by the "apps" module
+# (setup-apps.sh dispatcher + tui/setup-tuis.sh). Each line keeps the
+# type prefix so the backup selection format (apps.selected: "APP <pkg>",
+# "TUI <pkg>", "WEB <name>") stays identical whatever the catalog:
+#
+#   TUI <pkg> | <label>            → terminal tool (AUR or official package, via yay)
+#   PLUG <id> | <git-url> | <label> → Omarchy shell plugin (via `omarchy plugin add`)
+#
+# Blank lines and lines starting with "#" are ignored.
+# The actual selection is saved by the backup (setup-customarchy.sh --backup) in apps.selected.
+#
+# NOTE: TUIs that the Omarchy ISO already installs by default (bat, btop,
+# dua-cli, eza, fd, fzf, lazygit, lazydocker, tldr, tmux, starship, zoxide,
+# yt-dlp — see omarchy's install/omarchy-base.packages) are deliberately NOT
+# listed here: they are already present, so offering/backing them up is noise.
+
+PLUG nosignal.monitor-settings|https://github.com/28allday/Monitor-TUI-Omarchy.git|Monitor Settings — Hyprland display/monitor panel (28allday)
+
+TUI calcure|calcure — terminal calendar/planner
+TUI smassh|smassh — typing trainer
+TUI croc|croc — secure file transfer
+TUI crunchycleaner-bin|crunchycleaner — lightweight software cache & junk cleaner
+TUI septabee|SEPTABEE — retro studio DAW & music app (terminal, JIT audio)
+TUI caligula-git|caligula — flash ISOs & USB drives (interactive disk imaging, terminal)

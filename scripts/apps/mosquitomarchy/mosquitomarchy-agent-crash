@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# mosquitomarchy-agent-crash — open the default coding agent on ONE crash log.
+#
+# Clicked from a "mosquitOmarchy: <tool> failed" notification, or run by hand:
+#   mosquitomarchy-agent-crash <logfile> [tool]
+#
+# The method lives in the mosquitomarchy-crash skill so it is edited in one
+# place and works with whichever agent is default (Omarchy's own convention).
+# The agent diagnoses and PROPOSES fixes; it applies nothing without the user's
+# confirmation. If no agent harness is present, the prompt is printed instead.
+set -euo pipefail
+
+log=${1:?usage: mosquitomarchy-agent-crash <logfile> [tool]}
+tool=${2:-mosquitOmarchy}
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "$here/../../.." && pwd)"
+skill="$repo/scripts/apps/mosquitomarchy/skills/mosquitomarchy-crash/SKILL.md"
+
+prompt=$(
+  cat <<PROMPT
+A mosquitOmarchy script failed on this Omarchy machine and I want to know why.
+
+What the crash report recorded:
+  tool: $tool
+  log:  $log
+
+Use the mosquitomarchy-crash skill — it covers how to read the log, where the
+failing script lives, and what to report. If your harness has no skill
+mechanism, read the skill file directly and follow it instead:
+
+  $skill
+
+Then: read the log above, diagnose the most likely cause, and PROPOSE fixes as a
+concrete diff or exact commands. Do NOT apply anything — wait for my
+confirmation before changing any file.
+PROMPT
+)
+
+if command -v omarchy-agent >/dev/null 2>&1; then
+  exec omarchy-agent --prompt "$prompt"
+fi
+
+printf '%s\n' "$prompt"

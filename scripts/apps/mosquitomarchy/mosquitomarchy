@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# mosquitomarchy — the single, stable entry point for the mosquitOmarchy
+# setup launcher.
+#
+# The Go/Bubble Tea TUI (mosquitomarchy-tui, see tui-go/) is the ONLY
+# interface: it replaced the old gum-based `launcher_menu` in
+# setup-customarchy.sh. Every launch goes through this dispatcher — the
+# Omarchy Install menu entry's action, a keybinding, or running
+# `mosquitomarchy` by hand all point here.
+#
+# The TUI needs a real terminal to render into: if this dispatcher is
+# already inside one (stdin+stdout both a tty), it execs the TUI binary
+# directly; otherwise (the Omarchy menu, a fully detached launch) it opens a
+# terminal itself, directly with foot (falling back to xterm).
+#
+# This is deliberately NOT routed through `xdg-terminal-exec`: on the real
+# desktop that extra process hop reliably corrupted interactive/alt-screen
+# rendering (partial frames, then blank) — the same finding that made
+# mosquito-move-manager use a plain, direct, single-hop `foot -e …`.
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUI="$DIR/mosquitomarchy-tui"
+
+# Resolve the checkout WITHOUT assuming where this dispatcher runs from: the
+# repo copy lives in <repo>/scripts/apps/mosquitomarchy (../../.. = repo), but the
+# deployed copy lives in ~/.local/bin (../../.. = /home). Prefer the repo layout,
+# else follow the mosquitomarchy-actions symlink into the repo. Never abort when
+# neither matches: under `set -e` a failing `cd` in a command substitution would
+# kill the whole launch.
+_REPO=""
+if [[ -f "$DIR/../../../setup-customarchy.sh" ]]; then
+  _REPO="$(cd "$DIR/../../.." && pwd)"
+elif [[ -L "$DIR/mosquitomarchy-actions" ]]; then
+  _cand="$(cd "$(dirname "$(readlink -f "$DIR/mosquitomarchy-actions")")/../../.." 2>/dev/null && pwd || true)"
+  [[ -n $_cand && -f "$_cand/setup-customarchy.sh" ]] && _REPO="$_cand"
+fi
+[[ -n $_REPO ]] && export MOSQUITOMARCHY_REPO="$_REPO"
+
+# Crash reporting: a failed launch stores a dated log and offers the clickable
+# AI diagnosis (see scripts/lib/crash.bash). Only when the checkout is known.
+if [[ -n $_REPO && -f "$_REPO/scripts/lib/crash.bash" ]]; then
+  source "$_REPO/scripts/lib/crash.bash"
+  mq_crash_guard "mosquitomarchy"
+fi
+
+if [[ ! -x $TUI ]]; then
+  echo "mosquitomarchy: $TUI not found — re-run the mosquitOmarchy installer to build it." >&2
+  exit 1
+fi
+
+if [[ -t 0 && -t 1 ]]; then
+  exec "$TUI"
+fi
+
+if command -v foot >/dev/null 2>&1; then
+  # Wide enough for the full boxed "mosquitomarchy" wordmark (~121 cols).
+  exec foot -W 132x36 --app-id=org.omarchy.mosquitomarchy-tui -e "$TUI"
+fi
+if command -v xterm >/dev/null 2>&1; then
+  exec xterm -e "$TUI"
+fi
+
+echo "mosquitomarchy: no terminal emulator found (foot/xterm) to open the TUI in." >&2
+exit 1

@@ -1,0 +1,980 @@
+import QtQuick
+import Quickshell
+import Quickshell.Wayland
+import qs.Commons
+import qs.Ui
+
+Panel {
+  id: root
+  moduleName: "jamjamjam-plugin"
+  manageIpc: false
+
+  property var anchorItem: null
+  property var hostWidget: null
+  property var service: null
+
+  // Clicking the red ♪ pins the panel: it stays open and only its card keeps
+  // receiving pointer input, so clicks fall through and other apps stay usable.
+  property bool pinned: false
+
+  readonly property var snapshot: service ? service.snapshot : ({})
+  readonly property var analyzer: snapshot.analyzer || ({ key: "", keyConfidence: 0, bpm: 0, currentChord: "", progression: [] })
+  readonly property bool keyStable: analyzer.keyStable === true
+  readonly property bool songChanged: analyzer.songChanged === true
+  readonly property bool analysisLocked: snapshot.locked === true
+  readonly property int beatsPerBar: Number(analyzer.beatsPerBar || 4)
+  readonly property var midi: snapshot.midi || ({ mode: false, state: "off", message: "", ports: [], currentChord: "", connected: false })
+  readonly property var synth: snapshot.synth || ({ enabled: true, waveform: "sine", volume: 0.4, running: false, error: "" })
+  readonly property var guitar: snapshot.guitar || ({ strings: [], dots: [], label: "" })
+  readonly property string keyName: String(analyzer.key || "")
+  readonly property real bpm: Number(analyzer.bpm || 0)
+  readonly property string currentAudioChord: String(analyzer.currentChord || "")
+  readonly property bool noChordSignal: analyzer.noSignal === true
+  readonly property var chordNotes: analyzer.chordNotes || []
+  readonly property var mic: snapshot.mic || ({ available: true, muted: false })
+  readonly property bool micCut: mic.available === false || mic.muted === true
+  readonly property bool paused: snapshot.paused === true
+  readonly property bool tuiActive: snapshot.tuiActive === true
+  readonly property bool needsReset: snapshot.needsReset === true
+  readonly property var configState: snapshot.config || ({ noteNaming: "flats" })
+  readonly property var metronome: snapshot.metronome || ({ enabled: false, bpm: 120, beats: 4 })
+  readonly property bool metronomeEnabled: metronome.enabled === true
+  readonly property real metronomeBpm: root.bpm > 0 ? root.bpm : Number(metronome.bpm || 120)
+  property bool beatPulse: false
+  property bool settingsVisible: false
+
+  // One white flash per beat while the metronome runs, at the analysed BPM.
+  Timer {
+    running: root.metronomeEnabled
+    interval: Math.max(80, 60000 / Math.max(40, root.metronomeBpm))
+    repeat: true
+    onTriggered: {
+      root.beatPulse = true
+      beatOff.restart()
+    }
+  }
+  Timer {
+    id: beatOff
+    interval: 90
+    repeat: false
+    onTriggered: root.beatPulse = false
+  }
+  readonly property var progression: analyzer.progression || []
+  readonly property var loop: snapshot.loop || ({ active: false, chords: [], pos: 0 })
+  readonly property var tuner: snapshot.tuner || ({ active: false, freq: 0, note: "", octave: 0, cents: 0 })
+  readonly property var song: snapshot.song || ({ available: false, match: null, error: "" })
+  readonly property bool recording: snapshot.recording === true
+  readonly property string inputSource: String(snapshot.inputSource || "pc")
+  readonly property bool inputIsMic: inputSource === "mic"
+  readonly property bool tunerActive: tuner.active === true
+  readonly property string tunerNote: String(tuner.note || "")
+  readonly property int tunerOctave: Number(tuner.octave || 0)
+  readonly property real tunerFreq: Number(tuner.freq || 0)
+  readonly property real cents: tunerActive ? Number(tuner.cents || 0) : 0
+  readonly property bool inTune: tunerActive && Math.abs(cents) <= 4
+  readonly property bool midiMode: midi.mode === true
+  readonly property string midiChord: String(midi.currentChord || "")
+  readonly property color foreground: Color.popups.text
+  readonly property color accent: Color.accent
+  readonly property color muted: Color.muted
+  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+
+  property bool midiSectionVisible: false
+  // The fretboard is only drawn once a key is confidently established, and it
+  // follows the analysis INPUT (PC audio or microphone) automatically.
+  readonly property bool showFretboard: root.keyStable && root.keyName !== ""
+    && !root.noChordSignal && (guitar && guitar.dots && guitar.dots.length > 0)
+
+  // Input regions for the popup surface. Unpinned = the whole screen (so an
+  // outside click dismisses). Pinned = only the card rect, so the compositor
+  // routes clicks elsewhere to the apps below while the panel stays visible.
+  property Region fullInputRegion: Region {
+    width: popup.screenW
+    height: popup.screenH
+  }
+  property Region pinnedInputRegion: Region {
+    x: Math.round(popup.cardOrigin.x - popup.padding)
+    y: Math.round(popup.cardOrigin.y - popup.padding)
+    width: Math.round(popup.contentWidth + popup.padding * 2)
+    height: Math.round(popup.contentHeight + popup.padding * 2)
+  }
+
+  readonly property int headerHeight: Style.space(44)
+  readonly property int fretboardHeight: showFretboard ? Style.space(180) : 0
+  readonly property int tunerHeight: Style.space(190)
+
+  function open() { controller.show() }
+  function close() { controller.hide() }
+  function toggle() { opened ? close() : open() }
+
+  // Black or white, whichever reads best on the given fill (BT.601 luminance).
+  function contrastText(fill) {
+    return (0.299 * fill.r + 0.587 * fill.g + 0.114 * fill.b) < 0.5 ? "#ffffff" : "#000000"
+  }
+
+  readonly property real gridRowHeight: Style.space(30)
+
+  onOpenedChanged: {
+    // Analysis follows the panel lifecycle: reset + start on open,
+    // stop as soon as the panel is not visible.
+    if (!opened) root.pinned = false
+    if (root.service) root.service.setVisible(opened)
+  }
+
+  KeyboardPanel {
+    id: popup
+    anchorItem: root.anchorItem
+    owner: root
+    bar: root.bar
+    open: root.opened
+    focusTarget: keyCatcher
+    // Pinned: shrink the input region to the card so the rest of the screen
+    // stays clickable (other apps usable) while the panel remains open.
+    mask: root.pinned ? root.pinnedInputRegion : root.fullInputRegion
+    contentWidth: popup.fittedContentWidth(Style.space(440), Style.space(560))
+    contentHeight: popup.fittedContentHeight(column.implicitHeight, Style.space(760))
+
+    PanelKeyCatcher {
+      id: keyCatcher
+      anchors.fill: parent
+      onCloseRequested: root.close()
+      onTextKey: function(text) {
+        var key = String(text || "").toLowerCase()
+        if (key === " " || key === "space") {
+          if (root.service) root.service.resumeAnalysis()
+          return
+        }
+        if (root.settingsVisible && key === "n") {
+          if (root.service) root.service.setConfig(String(root.configState.noteNaming || "flats") === "flats" ? "sharps" : "flats")
+          return
+        }
+        if (key === "r" && root.service) root.service.resetAnalysis()
+        else if (key === "g" && root.service) root.service.openTui()
+        else if (key === "p" && root.service) root.service.togglePaused()
+        else if (key === "s") root.settingsVisible = !root.settingsVisible
+        else if (key === "m") { root.midiSectionVisible = !root.midiSectionVisible; if (root.service) root.service.toggleMidi() }
+      }
+
+      Column {
+        id: column
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        spacing: Style.spacing.md
+
+        // ─── Header: title + reset icon ───────────────────────────
+        Item {
+          width: parent.width
+          height: root.headerHeight
+          implicitHeight: root.headerHeight
+
+          Row {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.spacing.sm
+
+            // Red music-note icon: click to pin the panel. Hovering shows the
+            // hint. Pinned, the panel stays open and other apps stay usable.
+            Button {
+              id: pinButton
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "♪"
+              iconSize: Style.space(24)
+              text: ""
+              bordered: false
+              selected: root.pinned
+              foreground: root.pinned ? root.accent : Color.urgent
+              accent: root.accent
+              horizontalPadding: Style.spacing.xs
+              verticalPadding: 0
+              tooltipText: root.pinned
+                ? "Pinned — the panel stays open; click to unpin and let it close normally"
+                : "Pin the panel — keep it open while you use other apps"
+              onClicked: root.pinned = !root.pinned
+            }
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: "jamjamjam"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.subtitle
+              font.bold: true
+              font.letterSpacing: Style.space(1)
+            }
+          }
+
+          // Header controls: reset · pause · input · settings (gear).
+          Row {
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.spacing.xs
+
+            Button {
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "󰑓"
+              iconSize: Style.space(16)
+              text: ""
+              bordered: false
+              foreground: root.muted
+              accent: root.accent
+              tooltipText: "Clear the detected key, BPM and chord history (r)"
+              onClicked: if (root.service) root.service.resetAnalysis()
+            }
+
+            Button {
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: root.paused ? "󰐊" : "󰏤"
+              iconSize: Style.space(16)
+              text: ""
+              bordered: false
+              foreground: root.paused ? root.accent : root.muted
+              accent: root.accent
+              tooltipText: root.paused ? "Resume the analysis" : "Pause the analysis"
+              onClicked: if (root.service) root.service.togglePaused()
+            }
+
+            Button {
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(26)
+              height: Style.space(26)
+              iconText: root.inputIsMic ? "󰍬" : "󰍹"
+              iconSize: Style.space(15)
+              text: ""
+              selected: root.inputIsMic
+              bordered: true
+              foreground: root.inputIsMic ? root.accent : root.foreground
+              accent: root.accent
+              horizontalPadding: 0
+              verticalPadding: 0
+              tooltipText: root.inputIsMic
+                ? "Analyze the default microphone"
+                : "Analyze PC audio (speaker monitor)"
+              onClicked: if (root.service) root.service.setSource(root.inputIsMic ? "pc" : "mic")
+            }
+
+            Button {
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "󰒓"
+              iconSize: Style.space(16)
+              text: ""
+              selected: root.settingsVisible
+              bordered: false
+              foreground: root.settingsVisible ? root.accent : root.muted
+              accent: root.accent
+              tooltipText: "Plugin settings"
+              onClicked: root.settingsVisible = !root.settingsVisible
+            }
+          }
+        }
+
+        // ─── Key / BPM cards ──────────────────────────────────────
+        Item {
+          width: parent.width
+          height: Style.space(110)
+          implicitHeight: Style.space(110)
+
+          Row {
+            anchors.fill: parent
+            spacing: Style.spacing.sm
+
+            // Key card
+            Rectangle {
+              width: (parent.width - parent.spacing * 2) * 0.42
+              height: parent.height
+              radius: Style.cornerRadius
+              color: Style.selectedFillFor(root.foreground, root.keyName !== "" ? root.accent : root.muted)
+
+              Column {
+                anchors.centerIn: parent
+                spacing: Style.spacing.xs
+
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  text: "KEY"
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  text: root.keyName !== "" ? root.keyName : "—"
+                  color: root.keyName !== "" ? root.accent : root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.space(32)
+                  font.bold: true
+                }
+                Item {
+                  width: parent.width
+                  height: Style.space(4)
+                  visible: root.keyName !== ""
+                }
+                Text {
+                  visible: root.keyName !== ""
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  text: "conf " + Math.round(root.analyzer.keyConfidence * 100) + "%"
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+            }
+
+            // BPM card — click toggles the metronome; while enabled the card
+            // flashes white once per beat at the analysed BPM.
+            Rectangle {
+              id: bpmCard
+              width: (parent.width - parent.spacing * 2) * 0.18
+              height: parent.height
+              radius: Style.cornerRadius
+              color: Style.selectedFillFor(root.foreground, root.bpm > 0 ? root.accent : root.muted)
+              border.color: root.metronomeEnabled ? Util.alpha(Color.foreground, 0.35 + root.beatPulse * 0.65) : "transparent"
+              border.width: root.metronomeEnabled ? 1 : 0
+
+              Rectangle {
+                anchors.fill: parent
+                radius: parent.radius
+                color: Color.foreground
+                opacity: root.metronomeEnabled ? root.beatPulse * 0.30 : 0
+                Behavior on opacity { NumberAnimation { duration: 60 } }
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: if (root.service) root.service.setMetronome(!root.metronomeEnabled)
+              }
+
+              Column {
+                anchors.centerIn: parent
+                spacing: Style.spacing.xs
+
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  text: (root.metronomeEnabled ? "BPM ♪ " : "BPM ") + root.beatsPerBar + "/4"
+                  color: root.metronomeEnabled ? root.accent : root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  text: root.bpm > 0 ? Math.round(root.bpm) : "—"
+                  color: root.bpm > 0 ? root.accent : root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.space(32)
+                  font.bold: true
+                }
+              }
+            }
+
+            // Chord card: the detected chord name only (the notes have their
+            // own line below).
+            Rectangle {
+              width: (parent.width - parent.spacing * 2) * 0.40
+              height: parent.height
+              radius: Style.cornerRadius
+              color: Style.selectedFillFor(root.foreground, root.currentAudioChord !== "" ? Color.urgent : root.muted)
+
+              Column {
+                anchors.centerIn: parent
+                spacing: Style.spacing.xs
+
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  text: "CHORD"
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  width: parent.width
+                  horizontalAlignment: Text.AlignHCenter
+                  elide: Text.ElideRight
+                  text: root.currentAudioChord !== "" ? root.currentAudioChord : "· · ·"
+                  color: root.currentAudioChord !== "" ? Color.urgent : root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: root.currentAudioChord !== "" ? Style.space(26) : Style.space(14)
+                  font.bold: true
+                }
+              }
+            }
+          }
+        }
+
+        // ─── Tuner (input pitch detection) ────────────────────────
+        Item {
+          width: parent.width
+          height: root.tunerHeight
+          implicitHeight: root.tunerHeight
+
+          Rectangle {
+            anchors.fill: parent
+            radius: Style.cornerRadius
+            color: root.tunerActive ? Util.alpha(root.accent, 0.14)
+              : Style.selectedFillFor(root.foreground, root.muted)
+            border.color: root.inTune ? Util.alpha(root.accent, 0.85)
+              : (root.tunerActive ? root.accent : "transparent")
+            border.width: 1
+
+            Column {
+              anchors.centerIn: parent
+              spacing: Style.spacing.sm
+
+              Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: Style.spacing.sm
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "TUNER"
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  font.letterSpacing: Style.space(1)
+                }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.micCut ? "✕ mic muted" : "● default mic"
+                  color: root.micCut ? Color.urgent : root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: root.micCut
+                  ? "mic muted"
+                  : (root.tunerActive
+                    ? (root.tunerNote + (root.tunerOctave > 0 ? String(root.tunerOctave) : ""))
+                    : "—")
+                color: root.micCut ? Color.urgent : (root.tunerActive ? Color.urgent : root.muted)
+                font.family: root.fontFamily
+                font.pixelSize: root.micCut ? Style.space(20) : Style.space(40)
+                font.bold: true
+              }
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: root.micCut
+                  ? "unmute the default mic"
+                  : (root.tunerActive
+                    ? (root.tunerFreq > 0 ? "≈ " + root.tunerFreq.toFixed(1) + " Hz"
+                      : (root.inTune ? "in tune" : "·"))
+                    : "Sing or play a note…")
+                color: root.muted
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              // Cents deviation meter (needle over a ±50¢ track)
+              Item {
+                width: parent.width * 0.82
+                height: Style.space(30)
+                anchors.horizontalCenter: parent.horizontalCenter
+
+                Rectangle {
+                  anchors.centerIn: parent
+                  width: parent.width
+                  height: 4
+                  radius: 2
+                  color: Util.alpha(Color.foreground, 0.12)
+                }
+
+                Repeater {
+                  model: [-50, -25, 0, 25, 50]
+
+                  Rectangle {
+                    required property int modelData
+                    width: 2
+                    height: modelData === 0 ? 14 : 8
+                    radius: 1
+                    color: modelData === 0 ? Util.alpha(Color.foreground, 0.55) : Util.alpha(Color.foreground, 0.28)
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 2
+                    x: (modelData + 50) / 100 * (parent.width - 2)
+                  }
+                }
+
+                Column {
+                  anchors.top: parent.top
+                  anchors.left: parent.left
+                  Text {
+                    text: "♭"
+                    color: root.muted
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+                Column {
+                  anchors.top: parent.top
+                  anchors.right: parent.right
+                  Text {
+                    text: "♯"
+                    color: root.muted
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+
+                Rectangle {
+                  id: tunerNeedle
+                  visible: root.tunerActive
+                  width: 3
+                  height: parent.height
+                  radius: 1.5
+                  color: root.inTune ? root.accent : Color.urgent
+                  x: {
+                    var t = Math.max(-1, Math.min(1, root.cents / 50))
+                    return (parent.width - width) / 2 + (parent.width - width) / 2 * t
+                  }
+                }
+              }
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: root.micCut
+                  ? "mic muted — unmute it to tune"
+                  : (root.tunerActive
+                    ? (root.inTune
+                      ? "IN TUNE"
+                      : ((root.cents < 0 ? "♭" : "♯") + " " + Math.round(Math.abs(root.cents)) + "¢"))
+                    : "Sing or play into the mic")
+                color: root.inTune ? root.accent : root.muted
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: root.inTune
+              }
+            }
+          }
+        }
+
+        // ─── Chord notes heard right now (single line) ────────────
+        Column {
+          width: parent.width
+          spacing: 2
+
+          Text {
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: root.currentAudioChord !== ""
+              ? (root.chordNotes.length > 0 ? root.chordNotes.join(" ") : root.currentAudioChord)
+              : (root.noChordSignal ? "could not find the chord" : "· · ·")
+            color: root.currentAudioChord !== "" ? Color.urgent : root.muted
+            font.family: root.fontFamily
+            font.pixelSize: root.currentAudioChord !== "" ? Style.space(20) : Style.space(12)
+            font.bold: true
+          }
+
+          Text {
+            visible: root.analysisLocked
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: "⏸ key found — analysis stopped · press space to restart"
+            color: root.accent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+
+          Text {
+            visible: root.songChanged
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: "⟳ new song detected — press r to reset the analysis"
+            color: Color.urgent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+
+          Text {
+            visible: root.song && root.song.match !== null && root.song.match.title !== undefined
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: "♪ " + (root.song.match ? String(root.song.match.title || "") : "") + " — " + (root.song.match ? String(root.song.match.artist || "") : "")
+            color: root.accent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+          }
+        }
+
+        // ─── Guitar fretboard ─────────────────────────────────────
+        Item {
+          width: parent.width
+          height: root.fretboardHeight
+          implicitHeight: root.fretboardHeight
+          clip: true
+
+          Rectangle {
+            anchors.fill: parent
+            radius: Style.cornerRadius
+            color: Util.alpha(Color.background, 0.35)
+
+            Column {
+              anchors.fill: parent
+              anchors.margins: Style.spacing.sm
+              spacing: Style.spacing.xs
+
+              Row {
+                id: fretLegend
+                width: parent.width
+                spacing: Style.spacing.sm
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "SCALE: " + String(guitar.label || "—")
+                  color: root.accent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "root"
+                  color: Color.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+                Rectangle {
+                  width: Style.space(8)
+                  height: Style.space(8)
+                  radius: width / 2
+                  color: Color.urgent
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "3rd/6th"
+                  color: root.accent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+                Rectangle {
+                  width: Style.space(8)
+                  height: Style.space(8)
+                  radius: width / 2
+                  color: root.accent
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "5th"
+                  color: Util.alpha(Color.foreground, 0.9)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
+              GuitarFretboard {
+                width: parent.width
+                height: Math.max(Style.space(90), parent.height - fretLegend.height - Style.spacing.xs)
+                dots: guitar.dots || []
+                stringsData: guitar.strings || []
+                keyLabel: String(guitar.label || "")
+                accentColor: root.accent
+                rootColor: Color.urgent
+              }
+            }
+          }
+        }
+
+        // ─── MIDI section (compact, no wrapper box) ───────────────
+        Column {
+          id: midiContent
+          visible: root.midiSectionVisible
+          width: parent.width
+          spacing: Style.spacing.sm
+
+          Item {
+            width: parent.width
+            height: Math.max(Style.space(30), midiToggle.implicitHeight)
+            implicitHeight: height
+
+            Text {
+              id: midiTitle
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: "MIDI MODE"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: Style.space(1)
+            }
+
+            ToggleSwitch {
+              id: midiToggle
+              anchors.left: midiTitle.right
+              anchors.leftMargin: Style.spacing.sm
+              anchors.verticalCenter: parent.verticalCenter
+              checked: root.midiMode
+              foreground: root.foreground
+              accent: root.accent
+              onToggled: if (root.service) root.service.toggleMidi()
+            }
+
+            Text {
+              anchors.left: midiToggle.right
+              anchors.leftMargin: Style.spacing.sm
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              elide: Text.ElideRight
+              text: root.midi.state === "connected"
+                ? "● " + String(midi.message || "MIDI connected")
+                : (root.midiMode
+                  ? (root.midi.state === "waiting" ? "○ " + String(midi.message || "No MIDI device found") : String(midi.message || ""))
+                  : "off")
+              color: root.midi.state === "connected" ? root.accent : root.muted
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          // Device controls on their own row so the mute button never
+          // overlaps the enable toggle.
+          Item {
+            width: parent.width
+            height: Style.space(30)
+            implicitHeight: Style.space(30)
+
+            Button {
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.synth.enabled ? "SOUND" : "MUTED"
+              selected: root.synth.enabled === true
+              bordered: true
+              foreground: root.synth.enabled ? root.accent : root.muted
+              accent: root.accent
+              fontSize: Style.font.caption
+              horizontalPadding: Style.spacing.xs
+              verticalPadding: Style.spacing.xs
+              tooltipText: root.synth.enabled ? "Mute the synthesizer" : "Unmute the synthesizer"
+              onClicked: if (root.service) root.service.toggleSynth()
+            }
+
+            Button {
+              id: midiRescan
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              text: " RESCAN "
+              bordered: true
+              foreground: root.foreground
+              accent: root.accent
+              fontSize: Style.font.caption
+              horizontalPadding: Style.spacing.xs
+              verticalPadding: Style.spacing.xs
+              tooltipText: "Rescan MIDI devices"
+              onClicked: if (root.service) root.service.refreshPorts()
+            }
+          }
+
+          // MIDI chord (single compact line, no box)
+          Text {
+            visible: root.midiMode
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
+            text: root.midiChord !== "" ? "MIDI CHORD   " + root.midiChord
+              : (root.midi.state === "connected" ? "Play a chord…" : "Connect a MIDI device")
+            color: root.midiChord !== "" ? Color.urgent : (root.midi.state === "connected" ? root.accent : root.muted)
+            font.family: root.fontFamily
+            font.pixelSize: root.midiChord !== "" ? Style.space(18) : Style.font.caption
+            font.bold: true
+          }
+
+          // Synth controls (waveform)
+          Row {
+            visible: root.midiMode
+            width: parent.width
+            spacing: Style.spacing.sm
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: "WAVEFORM"
+              color: root.muted
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            Repeater {
+              model: ["sine", "triangle", "sawtooth", "square", "organ"]
+
+              Button {
+                required property string modelData
+                anchors.verticalCenter: parent.verticalCenter
+                text: " " + modelData.toUpperCase() + " "
+                selected: String(synth.waveform || "sine") === modelData
+                bordered: true
+                foreground: String(synth.waveform || "sine") === modelData ? root.accent : root.foreground
+                accent: root.accent
+                fontSize: Style.font.caption
+                horizontalPadding: Style.spacing.xs
+                verticalPadding: Style.spacing.xs
+                onClicked: if (root.service) root.service.setWaveform(modelData)
+              }
+            }
+          }
+
+          // Synth controls (volume + panic)
+          Row {
+            visible: root.midiMode
+            width: parent.width
+            spacing: Style.spacing.sm
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: "VOL"
+              color: root.muted
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            PanelSlider {
+              anchors.verticalCenter: parent.verticalCenter
+              width: parent.width - Style.space(100)
+              minimum: 0
+              maximum: 1
+              value: root.service ? root.service.synthVolume : 0.4
+              onMoved: if (root.service) root.service.setVolume(value)
+            }
+
+            Button {
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "󰂎"
+              iconSize: Style.space(14)
+              text: ""
+              bordered: true
+              foreground: Color.urgent
+              accent: Color.urgent
+              fontSize: Style.font.caption
+              horizontalPadding: Style.spacing.xs
+              verticalPadding: Style.spacing.xs
+              tooltipText: "Cut all held synths notes"
+              onClicked: if (root.service) root.service.panicMidi()
+            }
+          }
+        }
+
+        // ─── Plugin settings (gear) ───────────────────────────────
+        Column {
+          id: settingsContent
+          visible: root.settingsVisible
+          width: parent.width
+          spacing: Style.spacing.sm
+
+          Item {
+            width: parent.width
+            height: Style.space(30)
+            implicitHeight: Style.space(30)
+
+            Text {
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: "SETTINGS"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: Style.space(1)
+            }
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.spacing.sm
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: "NOTE NAMING"
+              color: root.muted
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+            Button {
+              anchors.verticalCenter: parent.verticalCenter
+              text: " FLATS "
+              selected: String(root.configState.noteNaming || "flats") === "flats"
+              bordered: true
+              foreground: String(root.configState.noteNaming || "flats") === "flats" ? root.accent : root.foreground
+              accent: root.accent
+              fontSize: Style.font.caption
+              horizontalPadding: Style.spacing.xs
+              verticalPadding: Style.spacing.xs
+              onClicked: if (root.service) root.service.setConfig("flats")
+            }
+            Button {
+              anchors.verticalCenter: parent.verticalCenter
+              text: " SHARPS "
+              selected: String(root.configState.noteNaming || "flats") === "sharps"
+              bordered: true
+              foreground: String(root.configState.noteNaming || "flats") === "sharps" ? root.accent : root.foreground
+              accent: root.accent
+              fontSize: Style.font.caption
+              horizontalPadding: Style.spacing.xs
+              verticalPadding: Style.spacing.xs
+              onClicked: if (root.service) root.service.setConfig("sharps")
+            }
+          }
+        }
+
+        // ─── Toolbar (pinned to the bottom) ───────────────────────
+        // MIDI hugs the left edge, "Open TUI" is flush with the right edge so
+        // it lines up with the card row above it.
+        Item {
+          width: parent.width
+          height: Math.max(midiToolbarButton.implicitHeight, openTuiButton.implicitHeight)
+          implicitHeight: height
+
+          Button {
+            id: midiToolbarButton
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: "MIDI"
+            selected: root.midiSectionVisible
+            bordered: true
+            foreground: root.midiSectionVisible ? root.accent : root.foreground
+            accent: root.accent
+            fontSize: Style.font.caption
+            horizontalPadding: Style.spacing.sm
+            verticalPadding: Style.spacing.xs
+            tooltipText: "MIDI device detection and synthesizer (m)"
+            onClicked: root.midiSectionVisible = !root.midiSectionVisible
+          }
+
+          Button {
+            id: openTuiButton
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Open TUI"
+            bordered: false
+            // Filled with the theme accent; the label picks the contrasting
+            // black/white for that fill (hover just brightens it).
+            color: openTuiHover.hovered ? Qt.lighter(root.accent, 1.15) : root.accent
+            foreground: root.contrastText(openTuiHover.hovered ? Qt.lighter(root.accent, 1.15) : root.accent)
+            accent: root.accent
+            fontSize: Style.font.caption
+            horizontalPadding: Style.spacing.sm
+            verticalPadding: Style.spacing.xs
+            tooltipText: "Open the guitar-neck TUI: scale, live chord, tuner (g)"
+            onClicked: if (root.service) root.service.openTui()
+
+            HoverHandler { id: openTuiHover }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,55 @@
+# ── Large binaries / installation archives (provided separately, never on GitHub) ──
+# These files are downloaded on demand via apps/download-assets.sh
+# (assets.links catalog). Do NOT commit them: they far exceed the
+# GitHub repository limit (100 MB per file) and bloat the clone.
+scripts/apps/ableton/*.zip
+scripts/apps/davinci/*.zip
+scripts/apps/guitarpro/*.exe
+scripts/apps/**/*.run
+scripts/apps/bitwig/*.deb
+
+# ── Logs & transient install files ──
+*.log
+*.part
+
+# ── Crash logs: local-only, one dated log per failed mosquitOmarchy run ──
+# Written by scripts/lib/crash.bash into .local/crash-logs/. NEVER pushed and
+# NEVER archived (archive-customarchy.sh excludes .local/ too).
+.local/
+
+# ── Machine-scoped state (mosquito Audio Plugin Manager): per-machine, never committed ──
+scripts/apps/audio-plugin-manager/audio-plugin-manager-state.json
+
+# ── Patches (whole folders): provided separately, never on GitHub ──
+# All the files (including each app's patches) are recovered via the
+# LATEST RELEASE of the repository (archive from archive-customarchy.sh) —
+# not on the repo.
+scripts/apps/ableton/PATCH/
+scripts/apps/guitarpro/PATCH/
+scripts/apps/davinci/PATCH/
+scripts/apps/bitwig/PATCH/
+
+# ── Python environments / caches for the patches ──
+__pycache__/
+*.pyc
+
+# ── Sensitive / never on a repository (even private) ──
+# Authorization files (Ableton license), license-workaround tools
+# (DaVinci patch-resolve.sh). Everything touching the patch stays local
+# (and/or in the release archive).
+scripts/apps/guitarpro/guitar-pro-8-licence.md
+
+# ── Password files / archives: ultra-safety, NEVER in a repository ──
+# KeePassXC databases and backup archives (the backups normally live in
+# $HOME/omarchy-backups, outside the repo — this is a last-resort guard if
+# one is ever copied here by mistake).
+*.kdbx
+*.kdbx.*
+omarchy-backup-*.tar.gz
+omarchy-backup-*.tar.gz.gpg
+
+# ── User-only notes (see archive-customarchy.sh release) ──
+SECRET-README.md
+# Extracted DaVinci OFX plugin bundle (downloaded/manual)
+scripts/apps/davinci/*.bundle/
+scripts/apps/davinci/*.bundle

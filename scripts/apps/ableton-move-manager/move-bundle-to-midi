@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""move-bundle-to-midi — export an Ableton Move set as a Standard MIDI File.
+
+Accepts a downloaded `.abletonbundle` / `.ablbundle` (a zip containing
+`Song.abl` + `Samples/`), a bare `Song.abl`/`.abl`, or an already-prepared
+`<name>.als` used internally by ableton-move-converter. Native Live `.als` files are
+rejected on purpose (forced through Ableton first).
+
+The Move set format is the Ableton song JSON schema (`song.json`). Notes are
+stored with an absolute MIDI note number, so no scale/root-note math is needed.
+One MIDI track is produced per song track (clips are concatenated in slot
+order); the tempo and time-signature metas come from the set header.
+
+Standard library only — no mido/pretty_midi required.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import sys
+import zipfile
+
+PPQ = 480  # ticks per quarter note
+
+
+def varint(n: int) -> bytes:
+    """MIDI variable-length quantity."""
+    out = bytearray([n & 0x7F])
+    n >>= 7
+    while n:
+        out.insert(0, 0x80 | (n & 0x7F))
+        n >>= 7
+    return bytes(out)
+
+
+def meta(tag: int, data: bytes) -> bytes:
+    return b"\xFF" + bytes([tag]) + varint(len(data)) + data
+
+
+def end_of_track() -> bytes:
+    return meta(0x2F, b"")
+
+
+def load_song(path: str) -> tuple[str, dict]:
+    """Return (set_name, song dict) from a bundle, .abl or prepared .als."""
+    base = os.path.basename(path)
+    if zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path) as zf:
+            candidates = [n for n in zf.namelist() if n.lower().endswith((".abl", ".als"))]
+            candidates.sort(key=lambda n: (n.lower() != "song.abl", len(n)))
+            if not candidates:
+                raise ValueError("no Song.abl/.abl/.als entry in the bundle")
+            doc = candidates[0]
+            return os.path.splitext(base)[0], json.loads(zf.read(doc).decode("utf-8", "replace"))
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        return os.path.splitext(base)[0], json.load(fh)
+
+
+def note_events(track: dict) -> list[tuple[int, int, int, int]]:
+    """Return (tick, on, note, velocity) events for one song track.
+
+    Concatenates every clip in slot order; note times are already absolute
+    within the set. Each tuple gets a relative delta computed by the caller.
+    """
+    events: list[tuple[int, bool, int, int]] = []
+    for slot in track.get("clipSlots", []):
+        clip = slot.get("clip")
+        if not clip:
+            continue
+        for n in clip.get("notes", []):
+            tick_on = int(round(n.get("startTime", 0.0) * PPQ))
+            tick_off = int(round((n.get("startTime", 0.0) + n.get("duration", 0.1)) * PPQ))
+            note = max(0, min(127, int(n.get("noteNumber", 0))))
+            vel = max(1, min(127, int(round(n.get("velocity", 100.0)))))
+            events.append((tick_off, False, note, vel))
+            events.append((tick_on, True, note, vel))
+    events.sort(key=lambda e: (e[0], 0 if not e[1] else 1))
+    return events
+
+
+def track_chunk(events: list[tuple[int, bool, int, int]], name: str) -> bytes:
+    if not events:
+        run = meta(0x03, name.encode()) + end_of_track()
+        return b"MTrk" + len(run).to_bytes(4, "big") + run
+
+    data = bytearray(meta(0x03, name.encode()))
+    prev = 0
+    for tick, on, note, vel in events:
+        delta = tick - prev
+        prev = tick
+        data += varint(delta)
+        if on:
+            data += bytes([0x90, note, vel])
+        else:
+            data += bytes([0x80, note, vel])
+    data += end_of_track()
+    return b"MTrk" + len(data).to_bytes(4, "big") + data
+
+
+def tempo_chunk(bpm: float, numerator: int, denominator: int) -> bytes:
+    us_per_q = int(round(60_000_000.0 / max(1.0, float(bpm))))
+    denom_log2 = max(0, int(round(math.log2(max(1, denominator)))))
+    data = bytearray()
+    data += meta(0x51, us_per_q.to_bytes(3, "big"))          # set tempo
+    data += meta(0x58, bytes([numerator & 0xFF, denom_log2, 24, 8]))  # time sig
+    data += meta(0x03, b"Move Set")
+    data += end_of_track()
+    return b"MTrk" + len(data).to_bytes(4, "big") + data
+
+
+def convert(path: str, outdir: str) -> str:
+    name, song = load_song(path)
+    if name.lower().endswith(".als") and not zipfile.is_zipfile(path):
+        raise ValueError("native Live .als files are not converted to MIDI — open them in Ableton first")
+
+    bpm = float(song.get("tempo", 120.0))
+    ts = song.get("timeSignature", {}) or {}
+    num = int(ts.get("upper", 4))
+    den = int(ts.get("lower", 4) or 4)
+
+    header = b"MThd" + (6).to_bytes(4, "big") + (1).to_bytes(2, "big")
+    tracks = [t for t in song.get("tracks", []) if t.get("kind") == "midi"]
+    ntrks = 1 + len(tracks)
+    header += ntrks.to_bytes(2, "big") + PPQ.to_bytes(2, "big")
+
+    chunks = [tempo_chunk(bpm, num, den)]
+    for i, tr in enumerate(tracks):
+        label = tr.get("name") or f"Track {i + 1}"
+        chunks.append(track_chunk(note_events(tr), label))
+
+    os.makedirs(outdir, exist_ok=True)
+    out = os.path.join(outdir, f"{os.path.splitext(name)[0]}.mid")
+    with open(out, "wb") as fh:
+        fh.write(header)
+        fh.writelines(chunks)
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("set", help=".abletonbundle/.ablbundle (zip) or .abl/Song.abl file")
+    ap.add_argument("-o", "--output", default=".", help="output directory (default: current)")
+    args = ap.parse_args()
+
+    try:
+        out = convert(args.set, args.output)
+    except (OSError, ValueError, json.JSONDecodeError, KeyError) as e:
+        print(f"move-bundle-to-midi: error: {e}", file=sys.stderr)
+        return 1
+    print(out)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

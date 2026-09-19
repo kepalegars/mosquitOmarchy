@@ -1,0 +1,25 @@
+# guis.catalog — GUI apps of the "apps" module (type APP).
+#
+# One catalog per type (gui / tui / webapps), read by the "apps" module
+# (setup-apps.sh dispatcher + gui/setup-guis.sh). Each line keeps the
+# type prefix so the backup selection format (apps.selected: "APP <pkg>",
+# "TUI <pkg>", "WEB <name>") stays identical whatever the catalog:
+#
+#   APP <pkg> | <label>   → GUI app (AUR or official package, via yay)
+#
+# Blank lines and lines starting with "#" are ignored.
+# The actual selection is saved by the backup (setup-customarchy.sh --backup) in apps.selected.
+
+APP betterbird-fr-bin|Betterbird — e-mail (Thunderbird fork)
+APP bottles|Bottles — Windows games & apps (Wine)
+APP keepassxc|KeePassXC — password manager
+APP libreoffice-fresh|LibreOffice — office suite
+APP zen-browser-bin|Zen Browser — web browser
+APP signal-desktop|Signal — encrypted messaging
+APP vlc|VLC — media player
+APP stremio|Stremio — streaming hub
+APP qbittorrent|qBittorrent — torrent client
+APP pinta|Pinta — simple image editor
+APP obsidian|Obsidian — markdown notes
+APP kdrive-bin|KDrive — Infomaniak sync client
+APP sone-bin|sone — native Tidal client (lossless hi-res)

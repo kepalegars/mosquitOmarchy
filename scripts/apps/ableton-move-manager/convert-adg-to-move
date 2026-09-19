@@ -1,0 +1,563 @@
+#!/usr/bin/env python3
+"""convert-adg-to-move — convert Ableton Live .adg drum racks into Move-compatible
+presets (".adg" drum rack + ".ablpresetbundle"), replicating the L2Move tool
+(https://github.com/manuz888/L2Move, MIT) as a local, dependency-free script so
+the mosquito Move Manager no longer depends on third-party binaries.
+
+Format notes (matching L2Move's own pipeline):
+  * An .adg is either a gzip-compressed XML document or plain XML. Each
+    DrumBranchPreset holds one pad: its ZoneSettings/ReceivingNote is the pad
+    note and a SampleRef (FileRef/Path, or the hex FileRef/Data blob) points at
+    the sample file.
+  * Each distinct set of receiving notes becomes one kit. A kit of >= 4 pads is
+    written as a full .adg built on the Move Drum Rack template shipped next to
+    this script (converter/template/move-drum-rack-template.adg), with the
+    source's SampleRef injected into the matching pad's DrumSampler UserSample.
+  * The .ablpresetbundle is the format Move itself installs as a "User preset":
+    a zip of Preset.ablpreset (devicePreset JSON) + Samples/ (audio files),
+    pads on receiving notes 36..36+n, sending note 60.
+
+Outputs land under <outdir>/<preset>.adg and <outdir>/<preset>.ablpresetbundle
+(next to the source file when --output is the source's directory). Nothing is
+overwritten: on collision a -<timestamp> suffix keeps both files.
+
+Standard library only. Usage:
+  convert-adg-to-move [-o OUTDIR] file.adg [more.adg ...]
+"""
+
+from __future__ import annotations
+
+import argparse
+import gzip
+import io
+import json
+import os
+import re
+import sys
+import zipfile
+import xml.etree.ElementTree as ET
+
+TEMPLATE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "converter",
+    "template",
+    "move-drum-rack-template.adg",
+)
+
+BUNDLE_EXT = ".ablpresetbundle"
+PRESET_JSON = "Preset.ablpreset"
+SAMPLES_DIR = "Samples"
+MIN_KIT_SIZE = 4  # L2Move: a kit needs at LEAST four pads to be worth exporting
+
+
+class HttpError(Exception):
+    pass
+
+
+class ConvertError(Exception):
+    pass
+
+
+# ───────────────────────────────────────────────────────────── helpers ──────
+
+
+def is_gzip(path):
+    with open(path, "rb") as f:
+        return f.read(2) == b"\x1f\x8b"
+
+
+def load_adg_xml(path):
+    raw = open(path, "rb").read()
+    if is_gzip(path):
+        raw = gzip.decompress(raw)
+    xml = raw.decode("utf-8", errors="replace")
+    # Strict parser: a malformed rack is a failed conversion, not a silent
+    # partial dump. (L2Move swallows parse errors and reports "no samples".)
+    return ET.fromstring(xml)
+
+
+def hex_to_path(hex_blob):
+    """Mirror of L2Move's FileHelper.HexToPath: strip whitespace, decode hex,
+    keep printable ASCII, then grab the first lookalike absolute path."""
+    try:
+        cleaned = re.sub(r"\s+", "", hex_blob)
+        decoded = "".join(chr(int(cleaned[i:i + 2], 16)) for i in range(0, len(cleaned) - 1, 2))
+    except ValueError:
+        return ""
+    m = re.search(r"(/[\w/\-\. ]+\.\w{3,4})", decoded)
+    return m.group(1) if m else ""
+
+
+def resolve_sample_path(raw_path, source_file, search_root=""):
+    """Resolve a sample reference to an existing file. Tries: the path as-is;
+    a raw value from a Windows Wine prefix ('C:/…' remapped onto search_root,
+    typically the prefix's drive_c); relative to the source file's directory;
+    the 'first common folder' combination L2Move's CombineFromCommonPath does;
+    finally a basename search near the source file (Wine .adg files routinely
+    embed 'C:/Users/…' paths that only exist inside the prefix)."""
+    if not raw_path:
+        return ""
+    if os.path.isfile(raw_path):
+        return raw_path
+    candidates = []
+    trimmed = raw_path.replace("\\", "/")
+    if re.match(r"^[a-zA-Z]:", trimmed) and search_root:
+        rel = re.sub(r"^[a-zA-Z]:[/]+", "", trimmed)
+        if rel:
+            candidates.append(os.path.join(search_root, rel))
+    if not os.path.isabs(trimmed):
+        candidates.append(os.path.join(os.path.dirname(source_file), trimmed))
+    src_parts = [p for p in os.path.abspath(source_file).split(os.sep) if p]
+    rel_parts = [p for p in trimmed.split("/") if p]
+    common = -1
+    start = -1
+    for i, a in enumerate(src_parts):
+        for j, b in enumerate(rel_parts):
+            if a.lower() == b.lower():
+                common, start = i, j
+                break
+        if common != -1:
+            break
+    if common != -1:
+        joined = os.path.join(
+            *src_parts[: common + 1], *rel_parts[start + 1 :]
+        )
+        if joined.startswith("/"):
+            joined = joined[1:]
+        candidates.append(joined)
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    if search_root:
+        base = os.path.basename(trimmed)
+        if base:
+            close = os.path.join(os.path.dirname(os.path.abspath(source_file)), base)
+            if os.path.isfile(close):
+                return close
+            found = find_by_name(search_root, base)
+            if found:
+                return found
+    return ""
+
+
+def find_by_name(root, name, max_depth=12):
+    """Cheap depth-limited basename search used as the last resort for
+    surrounding-sample folders."""
+    if not os.path.isdir(root):
+        return ""
+    root = os.path.abspath(root)
+    if os.path.isfile(os.path.join(root, name)):
+        return os.path.join(root, name)
+    for dirpath, dirs, _files in os.walk(root):
+        depth = dirpath[len(root):].count(os.sep)
+        if depth >= max_depth:
+            dirs[:] = []
+        if name in _files:
+            return os.path.join(dirpath, name)
+        if depth >= max_depth:
+            dirs[:] = []
+    return ""
+
+
+def strip_tag(el, target):
+    """Remove every descendant named `target` (any depth), post-order, so each
+    removal happens at the element's direct parent — Element.remove() only
+    accepts direct children."""
+    for child in list(el):
+        if child.tag == target:
+            el.remove(child)
+        else:
+            strip_tag(child, target)
+
+
+def extract_samples(source_file, search_root=""):
+    """Extract (branchId, sampleRef, receivingNote, samplePath) from an .adg,
+    replicating L2Move's DrumRackAdgProcessor.ExtractDrumSamplesFromFile."""
+    root = load_adg_xml(source_file)
+    samples = []
+    for branch in root.iter("DrumBranchPreset"):
+        branch_id = branch.get("Id") or ""
+        zone = branch.find("ZoneSettings")
+        note_el = zone.find("ReceivingNote") if zone is not None else None
+        receiving_note = note_el.get("Value") if note_el is not None else None
+        if not receiving_note:
+            continue
+        for ref in branch.iter("SampleRef"):
+            fr = ref.find("FileRef")
+            if fr is None:
+                continue
+            path_el = fr.find("Path")
+            path = path_el.get("Value") if path_el is not None else ""
+            if not path:
+                data_el = fr.find("Data")
+                if data_el is None:
+                    continue
+                path = hex_to_path(data_el.text or "")
+                resolved = resolve_sample_path(path, source_file, search_root)
+                # L2Move skips hex-derived paths that don't exist on disk.
+                if not resolved:
+                    continue
+                path = resolved
+            ref.set("Id", "0")
+            # Strip every SourceContext descendant (L2Move: .Remove()), then
+            # add one empty fresh SourceContext.
+            strip_tag(ref, "SourceContext")
+            ref.append(ET.SubElement(ref, "SourceContext"))
+            samples.append(
+                {
+                    "id": branch_id,
+                    "ref": ref,
+                    "note": receiving_note,
+                    "path": path,
+                }
+            )
+    return samples
+
+
+def group_kits(samples):
+    """One kit per distinct receiving-note set, exactly like L2Move: repeatedly
+    take the distinct-by-note subset, then remove those samples from the pool."""
+    pool = list(samples)
+    kits = []
+    while pool:
+        kit = []
+        used_notes = set()
+        for s in pool:
+            if s["note"] not in used_notes:
+                kit.append(s)
+                used_notes.add(s["note"])
+        kits.append(kit)
+        pool = [s for s in pool if s not in kit]
+    return kits
+
+
+def unique_target(path):
+    if not os.path.exists(path):
+        return path
+    base, ext = os.path.splitext(path)
+    return f"{base}_{time_stamp()}{ext}"
+
+
+def time_stamp():
+    import time
+
+    return time.strftime("%Y%m%d%H%M%S")
+
+
+# ──────────────────────────────────────────────────── Move-compatible .adg ────
+
+
+def write_adg(template_file, kit, out_path):
+    """Inject each kit sample into the matching template pad (by branch Id) and
+    write the result gzip-compressed, UTF-8 (no BOM), tab-indented — matching
+    L2Move's WriteAdg."""
+    tree = ET.parse(template_file)
+    root = tree.getroot()
+    by_id = {s["id"]: s for s in kit}
+    for branch in root.iter("DrumBranchPreset"):
+        preset_id = branch.get("Id")
+        if preset_id is None:
+            raise ConvertError("template DrumBranchPreset without Id")
+        sample = by_id.get(preset_id)
+        if sample is None:
+            continue
+        zone = branch.find("ZoneSettings")
+        note_el = zone.find("ReceivingNote") if zone is not None else None
+        if note_el is None:
+            continue
+        user_sample = branch.find(".//UserSample")
+        if user_sample is None:
+            continue
+        value = user_sample.find("Value")
+        if value is None:
+            value = ET.SubElement(user_sample, "Value")
+        value.append(sample["ref"])
+        note_el.set("Value", sample["note"])
+    _indent(root)
+    xml_str = ET.tostring(root, encoding="unicode")
+    xml_str = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str + "\n"
+    if not os.path.isdir(os.path.dirname(out_path)):
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "wb") as f:
+        f.write(gzip.compress(xml_str.encode("utf-8"), mtime=0))
+    return out_path
+
+
+def _indent(elem, level=0):
+    """ET writes everything on one line; re-indent so the result is readable
+    and structurally close to what Live itself writes (tabs, like L2Move)."""
+    i = "\t" * level
+    children = list(elem)
+    if not children:
+        return
+    if not (elem.text or "").strip():
+        elem.text = "\n" + i
+    for child in children:
+        _indent(child, level + 1)
+    if not (elem.tail or "").strip():
+        elem.tail = "\n" + i
+
+
+# ─────────────────────────────────────────────────── Move preset bundle ──────
+
+
+def scheme():
+    return "http://tech.ableton.com/schema/song/1.4.4/devicePreset.json"
+
+
+def params_default():
+    # CamelCased by L2Move's CustomContractResolver (macros are params of the
+    # rack, not standalone JsonProperty names). "voice_Envelope_Hold" keeps its
+    # explicit JsonProperty spelling everywhere it is used.
+    return {
+        "enabled": True,
+        "macro0": 0.0,
+        "macro1": 0.0,
+        "macro2": 0.0,
+        "macro3": 0.0,
+        "macro4": 0.0,
+        "macro5": 0.0,
+        "macro6": 0.0,
+        "macro7": 0.0,
+    }
+
+
+# L2Move's Device type carries "[AlwaysInclude] PresetUri" — serialized as
+# "presetUri": null on every device, so emit it for drop-in parity.
+def device_base(kind, name):
+    d = {"presetUri": None, "kind": kind}
+    if name:
+        d["name"] = name
+    return d
+
+
+def chain_base():
+    return {"name": "", "color": 0}
+
+
+def mixer_json(sends):
+    return {
+        "pan": 0.0,
+        "solo-cue": False,
+        "speakerOn": True,
+        "volume": 0.0,
+        "sends": sends,
+    }
+
+
+def reverb_return_chain():
+    return {
+        **chain_base(),
+        "devices": [
+            {
+                "presetUri": None,
+                "kind": "reverb",
+                "name": "Reverb",
+                "parameters": {},
+                "deviceData": {},
+            }
+        ],
+        "mixer": mixer_json([{"isEnabled": False, "amount": -70.0}]),
+    }
+
+
+def drum_cell(sample_uri, display_name):
+    return {
+        **chain_base(),
+        "devices": [
+            {
+                **device_base("drumCell", ""),
+                "deviceData": {"sampleUri": sample_uri},
+                "parameters": {"voice_Envelope_Hold": 60.0},
+            }
+        ],
+        "mixer": mixer_json([{"isEnabled": True, "amount": -70.0}]),
+        "drumZoneSettings": None,
+        "chains": [],
+        "returnChains": [],
+        "name": display_name,
+    }
+
+
+def new_drum_rack_preset(name, samples):
+    cells = []
+    for i, s in enumerate(samples):
+        uri_name = __import__("urllib.parse", fromlist=["quote"]).quote(
+            os.path.basename(s["path"])
+        )
+        display = os.path.splitext(os.path.basename(s["path"]))[0]
+        cell = drum_cell(os.path.join(SAMPLES_DIR, uri_name), display)
+        # Move pads start at MIDI note 36; each next sample sits on the next
+        # pad (samples are pre-sorted note-descending, exactly like L2Move's
+        # CreatePresetAsync → GenerateDrumKit: highest note first).
+        cell["drumZoneSettings"] = {
+            "receivingNote": 36 + i,
+            "sendingNote": 60,
+            "chokeGroup": None,  # AlwaysInclude — L2Move serializes null
+        }
+        cells.append(cell)
+    return {
+        "$schema": scheme(),
+        "kind": "instrumentRack",
+        "name": name,
+        "parameters": params_default(),
+        "chains": [
+            {
+                **chain_base(),
+                "devices": [
+                    {
+                        **device_base("drumRack", ""),
+                        "parameters": params_default(),
+                        "chains": cells,
+                        "returnChains": [reverb_return_chain()],
+                    },
+                    {**device_base("saturator", "Saturator"),
+                     "parameters": params_default(), "deviceData": {}},
+                ],
+                "mixer": mixer_json([]),
+                "drumZoneSettings": None,
+                "chains": [],
+                "returnChains": [],
+            }
+        ],
+    }
+
+
+def write_bundle(name, samples, out_dir, search_root=""):
+    """Replicate MovePresetManager.GenerateDrumKit: build the folder layout,
+    json + samples, zip it, remove the temp folder."""
+    # Pad order comes from the note order — L2Move sorts note-descending so the
+    # highest note lands on pad 0 (note 36).
+    ordered = sorted(samples, key=lambda s: int(s["note"]), reverse=True)
+    base = unique_target(os.path.join(out_dir, name + BUNDLE_EXT))
+    if base.endswith(BUNDLE_EXT):
+        base = base[: -len(BUNDLE_EXT)]
+    bundle_path = base + BUNDLE_EXT
+    work = os.path.join(out_dir, "." + name + ".tmp")
+    try:
+        os.makedirs(os.path.join(work, SAMPLES_DIR), exist_ok=True)
+        ordered_out = []
+        for i, s in enumerate(ordered):
+            resolved = resolve_sample_path(s["path"], s.get("_src", ""), search_root)
+            if not os.path.isfile(resolved):
+                raise ConvertError(f"sample not found for pad {i + 1}: {s['path']}")
+            dst = os.path.join(work, SAMPLES_DIR, os.path.basename(resolved))
+            # A duplicate filename would silently collide in the bundle — keep both.
+            if os.path.exists(dst):
+                dst = unique_target(dst)
+            import shutil
+
+            shutil.copy2(resolved, dst)
+            ordered_out.append({**s, "path": resolved})
+        preset = new_drum_rack_preset(name, ordered_out)
+        with open(os.path.join(work, PRESET_JSON), "w", encoding="utf-8") as f:
+            json.dump(preset, f, indent=4)
+        with zipfile.ZipFile(bundle_path + ".part", "w", zipfile.ZIP_DEFLATED) as z:
+            for dirpath, _, files in os.walk(work):
+                for fn in files:
+                    full = os.path.join(dirpath, fn)
+                    z.write(full, os.path.relpath(full, work))
+        os.replace(bundle_path + ".part", bundle_path)
+    finally:
+        import shutil
+
+        shutil.rmtree(work, ignore_errors=True)
+    return bundle_path
+
+
+# ───────────────────────────────────────────────────────────────── main ─────
+
+
+def convert_one(source_file, out_dir, produce_bundle=True, search_root=""):
+    samples = extract_samples(source_file, search_root)
+    if not samples:
+        raise ConvertError("no drum samples found")
+    for s in samples:
+        s["_src"] = source_file
+
+    kits = [k for k in group_kits(samples)]
+    single = len(kits) <= 1
+
+    results = []
+    for kit in kits:
+        if len(kit) < MIN_KIT_SIZE:
+            continue
+        base = os.path.basename(source_file)
+        if single:
+            name = os.path.splitext(base)[0]
+        else:
+            idx = kits.index(kit) + 1
+            name = f"{os.path.splitext(base)[0]} - Kit {idx}"
+        adg_out = unique_target(os.path.join(out_dir, name + ".adg"))
+        adg_out = write_adg(TEMPLATE, kit, adg_out)
+        bundle_out = ""
+        bundle_error = ""
+        if produce_bundle and not os.path.isdir(adg_out):
+            try:
+                bundle_out = write_bundle(name, kit, out_dir, search_root)
+            except ConvertError as e:
+                # The editable .adg is still valid — the bundle (which embeds
+                # the actual audio) just couldn't be assembled (e.g. its
+                # samples aren't on disk). Keep the .adg, report the gap.
+                bundle_error = str(e)
+        results.append(
+            {
+                "preset": name,
+                "pads": len(kit),
+                "adg": adg_out,
+                "bundle": bundle_out,
+                "bundle_error": bundle_error,
+            }
+        )
+    if not results:
+        raise ConvertError("no kit with at least 4 pads found")
+    return results
+
+
+def main(argv):
+    p = argparse.ArgumentParser(description="Convert Ableton .adg drum racks to Move presets")
+    p.add_argument("files", nargs="+", help=".adg drum rack source file(s)")
+    p.add_argument("-o", "--output", default="", help="output directory (default: each source's own directory)")
+    p.add_argument("--search-root", default="", help="root to resolve Windows/Wine 'C:/…' sample paths against (the prefix's drive_c)")
+    p.add_argument("--no-bundle", action="store_true", help="skip the .ablpresetbundle export")
+    p.add_argument("--catalog", action="store_true", help="print a JSON summary instead of prose")
+    args = p.parse_args(argv)
+
+    all_results = []
+    errors = 0
+    for src in args.files:
+        if not os.path.isfile(src):
+            print(f"skip: {src}: not a file", file=sys.stderr)
+            errors += 1
+            continue
+        out_dir = args.output or os.path.dirname(os.path.abspath(src))
+        try:
+            results = convert_one(src, out_dir, produce_bundle=not args.no_bundle,
+                                  search_root=args.search_root)
+            for r in results:
+                if args.catalog:
+                    all_results.append(r)
+                else:
+                    print(f"OK {r['preset']} — {r['pads']} pads")
+                    if r["adg"]:
+                        print(f"   .adg   -> {r['adg']}")
+                    if r["bundle"]:
+                        print(f"   preset -> {r['bundle']}")
+                    if r["bundle_error"]:
+                        print(f"   note: preset bundle skipped — {r['bundle_error']}", file=sys.stderr)
+        except ConvertError as e:
+            print(f"ERR {os.path.basename(src)} — {e}", file=sys.stderr)
+            errors += 1
+        except Exception as e:  # noqa: BLE001 — report and continue the batch
+            print(f"ERR {os.path.basename(src)} — unexpected: {e}", file=sys.stderr)
+            errors += 1
+
+    if args.catalog:
+        print(json.dumps(all_results, indent=2))
+    if errors:
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,17 @@
+{
+  "ExemptDomainFileTypePairsFromFileTypeDownloadWarnings": [
+    {
+      "domains": ["move.local"],
+      "file_extension": [
+        "*",
+        "{abl}",
+        "{als}",
+        "{zip}",
+        "{abeltonbundle}",
+        "{ablbundle}",
+        "{mid}"
+      ]
+    }
+  ],
+  "CommandLineFlagSecurityWarningsEnabled": false
+}

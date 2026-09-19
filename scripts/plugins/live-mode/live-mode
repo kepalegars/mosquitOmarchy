@@ -1,0 +1,872 @@
+#!/usr/bin/env bash
+# live-mode — Omarchy live mode orchestrator (performance-audio session).
+# Invoked by user: live-mode on|off|status|toggle|manage
+# sudoers NOPASSWD entry for live-mode-root handles privileged ops.
+# Managed by scripts/plugins/live-mode/setup-live-mode.sh
+#
+# Live mode deliberately does NOT run mega-caffeine. It replicates only
+# mega-caffeine's sleep management (lid-close inhibition + stay-awake
+# indicator) under its own name, never applies a screen tint, and turns any
+# running mega-caffeine session off when it ends. The manage TUI configures
+# the NEXT session and is meant to be used while live mode is off.
+
+set -euo pipefail
+
+REAL_USER="${SUDO_USER:-${LOGNAME:-$USER}}"
+REAL_HOME=$(eval echo "~$REAL_USER" 2>/dev/null || echo "$HOME")
+STATE_DIR="$REAL_HOME/.local/state/live-mode"
+CONFIG_DIR="$REAL_HOME/.config/live-mode"
+CONFIG_FILE="$CONFIG_DIR/settings"
+ACTIVE_FLAG="$STATE_DIR/active"
+ROOT_HELPER="$HOME/.local/bin/live-mode-root"
+WATCHER="$HOME/.local/bin/live-mode-watch"
+TUI_BIN="$HOME/.local/bin/mosquito-live-mode-tui"
+FRAME_OVERLAY_ID="mosquito.livemode"
+MEGA_CAFFEINE="$HOME/.local/bin/mega-caffeine"
+CAFFEINE_STATE_DIR="$REAL_HOME/.local/state/caffeine"
+
+# Single-instance PID file for the Live Manager TUI (see the gate below).
+MANAGER_PIDFILE="${XDG_RUNTIME_DIR:-/tmp}/mosquito-live-mode.pid"
+MANAGER_SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+
+mkdir -p "$STATE_DIR"
+
+usage() {
+  cat >&2 <<EOF
+Usage: live-mode <command>
+
+Commands:
+  on [yes]      Activate live mode (confirmation unless 'yes' given)
+  off [yes]     Deactivate live mode (confirmation unless 'yes' given)
+  status        Show current live mode state
+  toggle        Toggle live mode on/off
+  manage [--replace]  Open the Live Manager (configures the next session; live mode must be off)
+                      --replace closes any other open Live Manager first
+EOF
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+# Settings (written by the Live Manager TUI, read here and by the watchdog)
+# ---------------------------------------------------------------------------
+
+THERMAL_LIMIT_C=85
+CLOSE_APPS=yes
+CLOSE_APPS_LIST="kDrive qBittorrent Steam Discord Slack Spotify"
+ROUTING_TOOL=yes
+NO_GAPS=yes
+SILENCE_NOTIFICATIONS=yes
+
+load_settings() {
+  [[ -f $CONFIG_FILE ]] && source "$CONFIG_FILE" || true
+  case $THERMAL_LIMIT_C in 95|90|85|80|75) ;; *) THERMAL_LIMIT_C=85 ;; esac
+  [[ $CLOSE_APPS == no ]] || CLOSE_APPS=yes
+  # Normalize the configured app list: keep only known app names, in fixed
+  # order, as a space-separated string.
+  local known name
+  local filtered=""
+  for known in kDrive qBittorrent Steam Discord Slack Spotify; do
+    case " $CLOSE_APPS_LIST " in
+      *" $known "*) filtered+="$known " ;;
+    esac
+  done
+  CLOSE_APPS_LIST="${filtered% }"
+  [[ $ROUTING_TOOL == no ]] || ROUTING_TOOL=yes
+  [[ $NO_GAPS == no ]] || NO_GAPS=yes
+  [[ $SILENCE_NOTIFICATIONS == no ]] || SILENCE_NOTIFICATIONS=yes
+}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+is_active() { [[ -f "$ACTIVE_FLAG" ]]; }
+
+ok()   { printf '\033[32m●\033[0m %s\n' "$*"; }
+warn() { printf '\033[33m●\033[0m %s\n' "$*" >&2; }
+err()  { printf '\033[31m●\033[0m %s\n' "$*" >&2; }
+
+confirm() {
+  local message="$1" payload sel="$STATE_DIR/confirm_sel" donef="$STATE_DIR/confirm_done"
+  rm -f "$sel" "$donef"
+  payload=$(jq -cn --arg message "$message" --arg selectionFile "$sel" --arg doneFile "$donef" \
+    '{message:$message, selectionFile:$selectionFile, doneFile:$doneFile}')
+  omarchy-shell shell summon mosquito.confirm "$payload" >/dev/null 2>&1 || true
+  for i in $(seq 1 60); do
+    [[ -f "$donef" ]] && break
+    sleep 0.5
+  done
+  [[ -f "$donef" ]] || return 1
+  local ans
+  ans=$(cat "$sel" 2>/dev/null || echo "")
+  rm -f "$sel" "$donef"
+  [[ "$ans" == "yes" ]]
+}
+
+# Single-button notice via the same confirm overlay (okOnly): shows an OK-only
+# card, waits for the user to acknowledge. Used for "can't do this" notices.
+confirm_ok() {
+  local message="$1" payload sel="$STATE_DIR/confirm_sel" donef="$STATE_DIR/confirm_done"
+  rm -f "$sel" "$donef"
+  payload=$(jq -cn --arg message "$message" --arg selectionFile "$sel" --arg doneFile "$donef" \
+    '{message:$message, selectionFile:$selectionFile, doneFile:$doneFile, okOnly:true}')
+  omarchy-shell shell summon mosquito.confirm "$payload" >/dev/null 2>&1 || true
+  for i in $(seq 1 60); do
+    [[ -f "$donef" ]] && break
+    sleep 0.5
+  done
+  rm -f "$sel" "$donef"
+}
+
+# ── Single-instance handling for the Live Manager TUI (manage only) ─────────
+# One TUI per manager: a normal `manage` that finds another copy already
+# running asks whether to close it first; `manage --replace` closes it
+# without asking; answering no abandons the new instance. Detection is an
+# exact /proc/<pid>/cmdline argv-field match on the TUI binary (absolute path
+# or bare basename), so a plain pgrep substring hit can never match an
+# unrelated wrapper that merely mentions the path. A PID file records the
+# live instance; a stale record is dropped rather than trusted, so a crashed
+# instance never blocks a new launch. The on/off/status paths never reach this.
+manager_is_our_pid() {
+  # True when PID carries the manager TUI binary or this dispatcher as a
+  # whole, exact argv field — never on a mere substring.
+  local p="$1" field
+  [[ -r /proc/$p/cmdline ]] || return 1
+  while IFS= read -r -d '' field; do
+    case $field in
+      "$TUI_BIN"|"${TUI_BIN##*/}") return 0 ;;
+    esac
+    if [[ $MANAGER_SELF == /* && $field == "$MANAGER_SELF" ]]; then return 0; fi
+  done < "/proc/$p/cmdline"
+  return 1
+}
+
+manager_tui_pids() {
+  local p rec
+  local -a pids=()
+  while IFS= read -r p; do
+    [[ -n $p && $p != "$$" ]] || continue
+    if manager_is_our_pid "$p"; then pids+=("$p"); fi
+  done < <(pgrep -f -- "${TUI_BIN##*/}" 2>/dev/null || true)
+  if [[ -f $MANAGER_PIDFILE ]]; then
+    rec=$(cat "$MANAGER_PIDFILE" 2>/dev/null || true)
+    if [[ $rec =~ ^[0-9]+$ ]] && [[ $rec != "$$" ]] && manager_is_our_pid "$rec"; then
+      pids+=("$rec")
+    else
+      rm -f "$MANAGER_PIDFILE"
+    fi
+  fi
+  if ((${#pids[@]})); then
+    printf '%s\n' "${pids[@]}" | sort -u
+  fi
+  return 0
+}
+
+manager_pidfile_cleanup() { rm -f "$MANAGER_PIDFILE"; }
+
+manager_single_instance_gate() {
+  local replace="$1" pids p
+  trap manager_pidfile_cleanup EXIT
+  pids=$(manager_tui_pids)
+  if [[ -n $pids ]]; then
+    if [[ $replace != --replace ]]; then
+      if ! confirm "Another Live Mode Manager instance is already open. Close it and continue?"; then
+        warn "Another Live Manager is already open — leaving it alone."
+        exit 0
+      fi
+    fi
+    while IFS= read -r p; do
+      [[ -n $p ]] || continue
+      kill "$p" 2>/dev/null || true
+    done <<< "$pids"
+    for _ in $(seq 1 20); do
+      if [[ -z $(manager_tui_pids) ]]; then break; fi
+      sleep 0.1
+    done
+    for p in $(manager_tui_pids); do kill -9 "$p" 2>/dev/null || true; done
+  fi
+  printf '%s\n' "$$" > "$MANAGER_PIDFILE"
+}
+
+detect_background_apps() {
+  # Intersects the running apps with the configured close-at-start list
+  # (Live Manager). Names only (no pid), so the kill prompt reads cleanly.
+  local entries=() pid cmd name
+  while read -r pid cmd rest; do
+    [[ -n "$pid" && -n "$cmd" ]] || continue
+    name=$(basename "$cmd")
+    case " $CLOSE_APPS_LIST " in
+      *" kDrive "*) [[ "$name" == kDrive || "$name" == kDrive ]] && entries+=("kDrive") ;;
+    esac
+    case "$name" in
+      qbittorrent) [[ " $CLOSE_APPS_LIST " == *" qBittorrent "* ]] && entries+=("qBittorrent") ;;
+      steam)       [[ " $CLOSE_APPS_LIST " == *" Steam "* ]] && entries+=("Steam") ;;
+      discord)     [[ " $CLOSE_APPS_LIST " == *" Discord "* ]] && entries+=("Discord") ;;
+      slack)       [[ " $CLOSE_APPS_LIST " == *" Slack "* ]] && entries+=("Slack") ;;
+      spotify)     [[ " $CLOSE_APPS_LIST " == *" Spotify "* ]] && entries+=("Spotify") ;;
+    esac
+  done < <(pgrep -a -u "$REAL_USER" 2>/dev/null || true)
+  printf '%s\n' "${entries[@]}" | sort -u
+}
+
+close_background_apps() {
+  [[ $CLOSE_APPS == no ]] && return 0
+  local list
+  list=$(detect_background_apps)
+  [[ -z "$list" ]] && return 0
+  local apps_text
+  apps_text=$(echo "$list" | sed 's/^/  • /')
+  if confirm $'Close these background apps?\n'"$apps_text"; then
+    local pid cmd name
+    while read -r pid cmd rest; do
+      [[ -n "$pid" && -n "$cmd" ]] || continue
+      name=$(basename "$cmd")
+      case "$name" in
+        kDrive|kDrive)
+          [[ " $CLOSE_APPS_LIST " == *" kDrive "* ]] && { kill "$pid" 2>/dev/null && ok "Closed kDrive" || warn "Could not close kDrive"; } ;;
+        qbittorrent)
+          [[ " $CLOSE_APPS_LIST " == *" qBittorrent "* ]] && { kill "$pid" 2>/dev/null && ok "Closed qBittorrent" || warn "Could not close qBittorrent"; } ;;
+        steam)
+          [[ " $CLOSE_APPS_LIST " == *" Steam "* ]] && { kill "$pid" 2>/dev/null && ok "Closed Steam" || warn "Could not close Steam"; } ;;
+        discord)
+          [[ " $CLOSE_APPS_LIST " == *" Discord "* ]] && { kill "$pid" 2>/dev/null && ok "Closed Discord" || warn "Could not close Discord"; } ;;
+        slack)
+          [[ " $CLOSE_APPS_LIST " == *" Slack "* ]] && { kill "$pid" 2>/dev/null && ok "Closed Slack" || warn "Could not close Slack"; } ;;
+        spotify)
+          [[ " $CLOSE_APPS_LIST " == *" Spotify "* ]] && { kill "$pid" 2>/dev/null && ok "Closed Spotify" || warn "Could not close Spotify"; } ;;
+      esac
+    done < <(pgrep -a -u "$REAL_USER" 2>/dev/null || true)
+    sleep 1
+  else
+    ok "Background apps kept running."
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Screen tint — live mode must NEVER show the warm/red caffeine tint
+# ---------------------------------------------------------------------------
+
+current_tint() {
+  hyprctl hyprsunset temperature 2>/dev/null | grep -oE '[0-9]+' | head -n1 || true
+}
+
+neutralize_tint() {
+  local cur
+  cur=$(current_tint)
+  # Only neutralize when a warm tint is actually applied (≠ 6500K identity).
+  if [[ -n $cur && $cur != 6500 ]]; then
+    echo "$cur" > "$STATE_DIR/tint_before"
+    hyprctl hyprsunset temperature 6500 >/dev/null 2>&1 || true
+    ok "Screen tint neutralized for the session."
+  fi
+}
+
+restore_tint() {
+  local saved
+  saved=$(cat "$STATE_DIR/tint_before" 2>/dev/null || true)
+  rm -f "$STATE_DIR/tint_before"
+  if [[ -n $saved ]]; then
+    hyprctl hyprsunset temperature "$saved" >/dev/null 2>&1 || true
+    ok "Screen tint restored."
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Gaps
+# ---------------------------------------------------------------------------
+
+gaps_are_off() {
+  [[ -f "$REAL_HOME/.local/state/omarchy/toggles/hypr/window-no-gaps.lua" ]]
+}
+
+toggle_gaps_off() {
+  if ! gaps_are_off; then
+    omarchy-hyprland-window-gaps-toggle >/dev/null 2>&1 || true
+    ok "Window gaps disabled."
+  else
+    ok "Gaps already disabled."
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Scratchpad helpers
+# ---------------------------------------------------------------------------
+
+# move_scratchpad_windows: the pre-live convention pushes windows whose title
+# starts with "-scratch" onto the last empty workspace so they stop stealing
+# focus during the session.
+move_scratchpad_windows() {
+  local clients workspaces last_empty scratchpad_ids
+  clients=$(hyprctl -j clients 2>/dev/null) || return 0
+  workspaces=$(hyprctl -j workspaces 2>/dev/null) || return 0
+
+  scratchpad_ids=$(echo "$clients" | jq -r '.[] | select(.title | startswith("-scratch")) | .address' 2>/dev/null) || return 0
+  [[ -z "$scratchpad_ids" ]] && return 0
+
+  last_empty=$(echo "$workspaces" | jq -r '.[].id' | sort -n | while read wid; do
+    local count
+    count=$(echo "$clients" | jq -r --argjson wid "$wid" '[.[] | select(.workspace.id == $wid)] | length' 2>/dev/null || echo "1")
+    [[ "$count" == "0" ]] && { echo "$wid"; break; }
+  done) || true
+
+  [[ -z "$last_empty" ]] && { warn "No empty workspace for scratchpad windows."; return 0; }
+
+  while IFS= read -r addr; do
+    [[ -n "$addr" ]] && hyprctl dispatch movetoworkspace "$last_empty" "address:$addr" >/dev/null 2>&1 || true
+  done <<< "$scratchpad_ids"
+  ok "Scratchpad windows moved to workspace $last_empty."
+}
+
+# ---------------------------------------------------------------------------
+# mosquito routing tool + scratchpad lifecycle
+#
+# The routing tool (qpwgraph) is the manager of the PipeWire routing, started
+# by live mode and parked in Omarchy's scratchpad (SUPER + S to toggle).
+# The scratchpad's pre-session contents are snapshotted so deactivation
+# returns the workspace to exactly what it was before (a tool that was
+# running before keeps running; nothing is left behind if the scratchpad
+# was empty).
+# ---------------------------------------------------------------------------
+
+SCRATCHPAD_SNAPSHOT="$STATE_DIR/scratchpad_before.json"
+PATCHBAY_ADDR_FILE="$STATE_DIR/patchbay_addr"
+PATCHBAY_PREEXISTED="$STATE_DIR/patchbay_preexisting"
+PATCHBAY_CLOSED_FLAG="$STATE_DIR/patchbay_closed_this_session"
+
+special_clients() {
+  # Lists scratchpad clients as "address|class|initial_title|pid".
+  hyprctl -j clients 2>/dev/null | jq -r '
+    .[] | select(.workspace.name == "scratchpad")
+    | "\(.address)|\(.class)|\(.initialTitle // .title)|\(.pid)"' 2>/dev/null
+}
+
+qpwgraph_addr() {
+  # Address of a running qpwgraph window (any workspace), empty if none.
+  # Match both the bare "qpwgraph" class and Qpwgraph's Wayland app-id
+  # class, which is what Hyprland reports for the launched window.
+  hyprctl -j clients 2>/dev/null | jq -r '
+    .[] | select((.class // "") == "qpwgraph" or (.class // "") == "org.rncbc.qpwgraph" or (.class // "") == "org.pq_graph.Qpwgraph") | .address' 2>/dev/null | head -n1
+}
+
+snapshot_scratchpad() {
+  : > "$PATCHBAY_ADDR_FILE"; : > "$PATCHBAY_CLOSED_FLAG"
+  rm -f "$PATCHBAY_PREEXISTED"
+  special_clients > "$SCRATCHPAD_SNAPSHOT"
+}
+
+open_routing_tool() {
+  [[ $ROUTING_TOOL == no ]] && return 0
+
+  # Already parked in the scratchpad under this session → nothing to do.
+  local existing
+  existing=$(qpwgraph_addr)
+  if [[ -n "$existing" ]]; then
+    if grep -qF "$existing" "$SCRATCHPAD_SNAPSHOT" 2>/dev/null; then
+      # It was running before live mode started: leave it exactly as-is.
+      echo "$existing" > "$PATCHBAY_ADDR_FILE"
+      touch "$PATCHBAY_PREEXISTED"
+      ok "mosquito routing tool already parked in the scratchpad."
+      return 0
+    fi
+    # Spawned by an earlier activation in the same session — re-park it.
+    hyprctl dispatch movetoworkspacesilent "special:scratchpad,address:$existing" >/dev/null 2>&1 || true
+    echo "$existing" > "$PATCHBAY_ADDR_FILE"
+    ok "mosquito routing tool parked in the scratchpad (SUPER + S)."
+    return 0
+  fi
+
+  if [[ -f "$PATCHBAY_CLOSED_FLAG" ]]; then
+    return 0
+  fi
+  if ! command -v qpwgraph >/dev/null 2>&1; then
+    warn "qpwgraph is not installed — the mosquito routing tool is skipped."
+    return 0
+  fi
+
+  setsid --fork uwsm-app -- qpwgraph >/dev/null 2>&1 || \
+    setsid --fork qpwgraph >/dev/null 2>&1 || true
+
+  local addr i clients
+  for i in $(seq 1 20); do
+    sleep 0.3
+    existing=$(qpwgraph_addr)
+    [[ -n "$existing" ]] && break
+  done
+
+  if [[ -n "$existing" ]]; then
+    echo "$existing" > "$PATCHBAY_ADDR_FILE"
+    hyprctl dispatch movetoworkspacesilent "special:scratchpad,address:$existing" >/dev/null 2>&1 || true
+    ok "mosquito routing tool parked in the scratchpad (SUPER + S)."
+  else
+    warn "qpwgraph launched, but its window could not be parked in the scratchpad."
+  fi
+}
+
+# restore_scratchpad: at deactivation, remove what live mode added and put
+# back what was there before. A pre-existing routing tool is left alone; one
+# the session spawned is closed so an empty scratchpad returns empty.
+restore_scratchpad() {
+  local ours
+  ours=$(cat "$PATCHBAY_ADDR_FILE" 2>/dev/null || true)
+  if [[ -n "$ours" ]] && ! grep -qF "$ours" "$SCRATCHPAD_SNAPSHOT" 2>/dev/null; then
+    hyprctl -j clients 2>/dev/null | jq -e --arg a "$ours" \
+      'map(select(.address == $a)) | length > 0' >/dev/null 2>&1 && {
+      hyprctl dispatch closewindow "address:$ours" >/dev/null 2>&1 || true
+      ok "Session's mosquito routing tool closed (scratchpad back to its pre-live state)."
+    }
+  fi
+  : > "$PATCHBAY_ADDR_FILE"; : > "$SCRATCHPAD_SNAPSHOT"; rm -f "$PATCHBAY_CLOSED_FLAG"
+}
+
+
+# ---------------------------------------------------------------------------
+# Notifications DND
+# ---------------------------------------------------------------------------
+
+silence_is_on() {
+  grep -q '"dnd": true' "$REAL_HOME/.local/state/omarchy/notifications.json" 2>/dev/null
+}
+
+silence_notifications_on() {
+  [[ $SILENCE_NOTIFICATIONS == no ]] && return 0
+  silence_is_on || omarchy-toggle-notification-silencing >/dev/null 2>&1 || true
+  ok "Notifications silenced."
+}
+
+silence_notifications_restore() {
+  silence_is_on && omarchy-toggle-notification-silencing >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------------------
+# Sleep management — replicated from mega-caffeine, under live mode's name
+#
+# • systemd-inhibit blocks the lid from suspending (computer stays on with
+#   the lid closed).
+# • The stay-awake indicator file is forced on and restored afterwards, so
+#   the bar shows the red coffee icon with the "Live Mode ON" tooltip.
+# • No tint, no toast, no duration prompt — that is regular mega-caffeine
+#   behaviour, which live mode must not trigger.
+# ---------------------------------------------------------------------------
+
+STAYAWAKE_FILE="$REAL_HOME/.local/state/omarchy/indicators/stay-awake"
+STAYAWAKE_PREV_FILE="$CAFFEINE_STATE_DIR/stayawake_prev"
+INHIBIT_PID_FILE="$CAFFEINE_STATE_DIR/inhibit.pid"
+
+stayawake_state() { [[ -f "$STAYAWAKE_FILE" ]] && echo on || echo off; }
+
+apply_stayawake() {
+  local cur
+  cur=$(stayawake_state)
+  [[ $cur == "$1" ]] && return 0
+  if [[ $1 == on ]]; then
+    mkdir -p "$(dirname "$STAYAWAKE_FILE")"
+    touch "$STAYAWAKE_FILE"
+  else
+    rm -f "$STAYAWAKE_FILE"
+  fi
+}
+
+start_sleep_management() {
+  # If a regular mega-caffeine session is running, end it first — its tint
+  # and its own stay-awake bookkeeping would fight this session.
+  if "$MEGA_CAFFEINE" --status 2>/dev/null | grep -q '"enabled":true'; then
+    CAFFEINE_LIVE_FORCE_OFF=1 "$MEGA_CAFFEINE" off >/dev/null 2>&1 || true
+    ok "Running mega-caffeine session ended (live mode manages sleep itself)."
+  fi
+
+  setsid --fork systemd-inhibit --what=handle-lid-switch:sleep \
+    --who="Live mode" \
+    --why="Live mode: lid closed without sleeping" \
+    sleep infinity >/dev/null 2>&1 &
+  echo $! > "$INHIBIT_PID_FILE"
+
+  if [[ ! -f "$STAYAWAKE_PREV_FILE" ]]; then
+    mkdir -p "$CAFFEINE_STATE_DIR"
+    stayawake_state > "$STAYAWAKE_PREV_FILE"
+  fi
+  apply_stayawake on
+  ok "Stays awake — closing the lid no longer suspends."
+}
+
+stop_sleep_management() {
+  pkill -f "[s]ystemd-inhibit --what=handle-lid-switch:sleep" >/dev/null 2>&1 || true
+  local pid
+  pid=$(cat "$INHIBIT_PID_FILE" 2>/dev/null || true)
+  [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+  rm -f "$INHIBIT_PID_FILE"
+  local prev
+  prev=$(cat "$STAYAWAKE_PREV_FILE" 2>/dev/null || echo off)
+  rm -f "$STAYAWAKE_PREV_FILE"
+  apply_stayawake "$prev"
+
+  # Mega caffeine must not survive the live session either.
+  if "$MEGA_CAFFEINE" --status 2>/dev/null | grep -q '"enabled":true'; then
+    CAFFEINE_LIVE_FORCE_OFF=1 "$MEGA_CAFFEINE" off >/dev/null 2>&1 || true
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Frame overlay
+# ---------------------------------------------------------------------------
+
+frame_show() {
+  omarchy-shell shell summon "$FRAME_OVERLAY_ID" '{"visible":true}' >/dev/null 2>&1 || true
+}
+
+frame_hide() {
+  omarchy-shell shell summon "$FRAME_OVERLAY_ID" '{"visible":false}' >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------------------
+# Theme (live mode: solid black wallpaper + all accents red)
+#
+# The Live theme is stored OUTSIDE ~/.config/omarchy/themes/ (at
+# $STATE_DIR/theme), so it never shows up in `omarchy theme list` / the theme
+# switcher, which scan that directory. During live mode a symlink
+# ~/.config/omarchy/themes/live -> $STATE_DIR/theme is created so
+# `omarchy theme set Live` can resolve it; it's removed again on deactivation,
+# hiding the entry from the theme picker whenever live mode is off. The theme
+# in use before activation is memorized and reapplied when the session ends.
+# ---------------------------------------------------------------------------
+
+# omarchy theme set lowercases its argument and writes the lowercase name
+# into theme.name (e.g. "live"), so every comparison below — including the
+# self-heal confirm and the restore gate — must use the same exact case.
+LIVE_THEME_NAME="live"
+LIVE_THEME_DIR="$STATE_DIR/theme"
+LIVE_THEME_LINK="$REAL_HOME/.config/omarchy/themes/live"
+LIVE_THEME_BG="$LIVE_THEME_DIR/backgrounds/black.png"
+PRE_THEME_FILE="$STATE_DIR/pre_theme_name"
+
+theme_current() {
+  cat "$REAL_HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || true
+}
+
+save_current_theme() {
+  local name
+  name=$(theme_current)
+  [[ -n "$name" ]] && echo "$name" > "$PRE_THEME_FILE"
+}
+
+ensure_live_theme() {
+  # Create the Live theme on demand if it isn't installed yet.
+  if [[ ! -f "$LIVE_THEME_DIR/colors.toml" ]]; then
+    mkdir -p "$LIVE_THEME_DIR" "$LIVE_THEME_DIR/backgrounds"
+    cat > "$LIVE_THEME_DIR/colors.toml" <<LIVETHEME
+mode = "dark"
+
+accent = "#ff1a1a"
+selection = "#3a0000"
+muted = "#660000"
+
+background = "#000000"
+dark_background = "#000000"
+darker_background = "#000000"
+lighter_background = "#1a0000"
+
+foreground = "#e0e0e0"
+dark_foreground = "#808080"
+light_foreground = "#f0f0f0"
+bright_foreground = "#ffffff"
+
+red = "#ff1a1a"
+yellow = "#ff4444"
+orange = "#ff3333"
+green = "#cc0000"
+cyan = "#ff2222"
+blue = "#ff1a1a"
+magenta = "#ff1a1a"
+brown = "#990000"
+
+bright_red = "#ff4444"
+bright_yellow = "#ff6666"
+bright_green = "#ff3333"
+bright_cyan = "#ff3333"
+bright_blue = "#ff4444"
+bright_magenta = "#ff4444"
+LIVETHEME
+  fi
+  if [[ ! -f "$LIVE_THEME_BG" ]]; then
+    mkdir -p "$(dirname "$LIVE_THEME_BG")"
+    magick -size 1920x1080 xc:"#000000" "$LIVE_THEME_BG" 2>/dev/null || \
+    convert -size 1920x1080 xc:"#000000" "$LIVE_THEME_BG" 2>/dev/null || true
+  fi
+}
+
+switch_to_live_theme() {
+  ensure_live_theme
+  local current
+  current=$(theme_current)
+  if [[ "$current" != "$LIVE_THEME_NAME" ]]; then
+    save_current_theme
+    # Link the theme into the scanned dir only while live mode is active.
+    mkdir -p "$(dirname "$LIVE_THEME_LINK")"
+    ln -sfn "$LIVE_THEME_DIR" "$LIVE_THEME_LINK"
+    # Detached + self-healing (same rationale as restore_previous_theme:
+    # theme-set post-hooks restart terminals and can race the write).
+    setsid --fork bash -lc '
+      local_expected="'"$LIVE_THEME_NAME"'"
+      for i in $(seq 1 30); do
+        omarchy theme set Live >/dev/null 2>&1 || true
+        sleep 0.4
+        cur=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null)
+        [[ "$cur" == "$local_expected" ]] && exit 0
+      done
+    ' >/dev/null 2>&1 &
+  fi
+}
+
+restore_previous_theme() {
+  local prev
+  prev=$(cat "$PRE_THEME_FILE" 2>/dev/null || true)
+  [[ -z "$prev" || "$prev" == "$LIVE_THEME_NAME" ]] && prev="achraff-67"
+
+  local current
+  current=$(theme_current)
+  if [[ "$current" == "$LIVE_THEME_NAME" ]]; then
+    # Detached + self-healing: omarchy-theme-set's post-hooks restart
+    # terminals (killing this script's terminal mid-OFF if run inline), and
+    # the first write can be raced by other hooks — the background job
+    # keeps setting until the theme.name lands on the pre-live value.
+    setsid --fork bash -lc '
+      local_restored="'"$prev"'"
+      for i in $(seq 1 30); do
+        omarchy theme set "$local_restored" >/dev/null 2>&1 || true
+        sleep 0.4
+        cur=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null)
+        [[ "$cur" == "$local_restored" ]] && exit 0
+      done
+    ' >/dev/null 2>&1 &
+    ok "Restoring theme: $prev."
+  fi
+  rm -f "$PRE_THEME_FILE"
+  # Drop the symlink so the Live theme entry disappears from the theme picker.
+  rm -f "$LIVE_THEME_LINK"
+}
+
+# ---------------------------------------------------------------------------
+# Watchdog
+# ---------------------------------------------------------------------------
+
+start_watchdog() {
+  if [[ -x "$WATCHER" ]]; then
+    nohup "$WATCHER" >/dev/null 2>&1 &
+    ok "Thermal guard started (pid $!)."
+  else
+    warn "live-mode-watch not found; thermal guard disabled."
+  fi
+}
+
+stop_watchdog() {
+  # The watchdog re-creates the stay-awake indicator file on every tick
+  # (reassert_state), so if cmd_off doesn't wait for it to actually exit
+  # before removing that file, the watchdog's next tick re-creates it and
+  # the red coffee icon stays on long after deactivation. We both (a) wait
+  # for the watchdog process to fully exit and (b) drop the active flag
+  # while we wait — the flag is the watchdog's loop condition, so as soon
+  # as it's gone the watchdog's next is_active check fails and reassert_state
+  # never runs again. Result: the red coffee icon disappears immediately,
+  # not after the next watchdog tick.
+  pkill -f "live-mode-watch" 2>/dev/null || true
+  rm -f "$ACTIVE_FLAG"
+  local i
+  for i in $(seq 1 30); do
+    pgrep -f "live-mode-watch" >/dev/null 2>&1 || return 0
+    sleep 0.1
+  done
+}
+
+# ---------------------------------------------------------------------------
+# ON
+# ---------------------------------------------------------------------------
+
+cmd_on() {
+  local force="${1:-}"
+
+  if is_active; then
+    ok "Live Mode is already active."
+    return 0
+  fi
+
+  load_settings
+
+  # Step 1 — confirm activation (unless forced). Each line is kept short
+  # enough to fit the confirm dialog's card width on a single line
+  # (the screen is narrow — a wrapped bullet breaks the prompt).
+  if [[ "$force" != "yes" ]]; then
+    if ! confirm $'Activate Live Mode?\n• Max performance (audio optimized)\n• Thermal guard\n• Always awake (lid closed without sleeping)\n• mosquito routing tool in scratchpad (SUPER + S)\n• Notifications silenced\n• Gaps disabled'; then
+      ok "Aborted."
+      return 0
+    fi
+  fi
+
+  # on_failure() removes the session flag so a failed/crashed activation can
+  # never strand the "manage only while off" gate or the toggle logic.
+  on_fail() { rm -f "$ACTIVE_FLAG"; }
+  trap on_fail EXIT
+
+  # Mark active first: every helper below (sleep management, watchdog,
+  # theme) treats the flag as the source of truth for the session.
+  echo on > "$ACTIVE_FLAG"
+
+  ok "Activating Live Mode..."
+
+  # Snapshot what is ALREADY in the scratchpad so deactivation can put it
+  # back exactly (see restore_scratchpad).
+  snapshot_scratchpad
+
+  # 1. Ask whether to close the background apps (names only, per settings).
+  close_background_apps
+
+  # 2. Privileged setup (profile/audio/usb/battery/fence) runs while the
+  #    rest of the activation proceeds — serialized steps made startup feel
+  #    slow.
+  sudo -n "$ROOT_HELPER" apply >/dev/null 2>&1 &
+  root_job=$!
+
+  # 3. Neutralize any warm screen tint for the session (restored afterwards).
+  neutralize_tint
+
+  # 4. Sleep management replicated from mega-caffeine (no tint, no toast).
+  start_sleep_management
+
+  # 5. Independent cosmetic/setup steps concurrently.
+  [[ $NO_GAPS == yes ]] && { toggle_gaps_off & }
+  { [[ $SILENCE_NOTIFICATIONS == yes ]] && silence_notifications_on & } >/dev/null 2>&1
+  frame_show &
+
+  # 6. Scratchpad windows out of the way.
+  move_scratchpad_windows
+
+  # 7. Audio routing tool into the scratchpad (idempotent).
+  open_routing_tool
+
+  # 8. Live theme switched from a DETACHED process: omarchy-theme-set's
+  #    post-hooks restart terminals, and if this script runs inside one the
+  #    restart would kill the orchestrator mid-flight.
+  switch_to_live_theme
+
+  # 9. Thermal watchdog (last: it reasserts everything above).
+  start_watchdog
+
+  wait "$root_job" 2>/dev/null || true
+  if ! sudo -n "$ROOT_HELPER" status >/dev/null 2>&1; then
+    warn "System state could not be applied (sudo denied) — performance steps inactive."
+  fi
+
+  trap - EXIT
+  ok "Live Mode is ON."
+}
+
+# ---------------------------------------------------------------------------
+# OFF
+# ---------------------------------------------------------------------------
+
+cmd_off() {
+  local force="${1:-}"
+  if ! is_active; then
+    ok "Live Mode is already off."
+    return 0
+  fi
+
+  # Simple confirmation only.
+  if [[ "$force" != "yes" ]]; then
+    if ! confirm "Deactivate Live Mode?"; then
+      ok "Aborted."
+      return 0
+    fi
+  fi
+
+  ok "Deactivating Live Mode..."
+
+  # 1. Stop watchdog
+  stop_watchdog
+
+  # 2. Frame hide
+  frame_hide
+
+  # 3. Restore the theme that was in use before activation
+  restore_previous_theme
+
+  # 4. Restore notifications
+  silence_notifications_restore
+
+  # 5. Sleep management off (also ends any mega-caffeine session)
+  stop_sleep_management
+
+  # 6. Restore the screen tint that was neutralized
+  restore_tint
+
+  # 7. Privileged: restore profile, audio, usb, battery, thermal, fence
+  sudo -n "$ROOT_HELPER" restore >/dev/null 2>&1 || warn "Partial restore (sudo denied for some ops)."
+
+  # 8. Remove active flag
+  rm -f "$ACTIVE_FLAG"
+
+  ok "Live Mode is OFF."
+}
+
+# ---------------------------------------------------------------------------
+# STATUS
+# ---------------------------------------------------------------------------
+
+cmd_status() {
+  if is_active; then
+    echo "Live Mode: ON"
+    sudo -n "$ROOT_HELPER" status 2>/dev/null || echo "{}"
+  else
+    echo "Live Mode: OFF"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# MANAGE
+# ---------------------------------------------------------------------------
+# The Live Manager TUI configures the NEXT session and is meant to be used
+# while live mode is OFF. While a session is active, opening it would fight
+# the running watchdog, so an OK notice explains that instead.
+
+cmd_manage() {
+  local replace="${1:-}"
+  if is_active; then
+    confirm_ok $'Live Mode Manager can\'t be opened while Live Mode is active.\nIt configures the next session — stop Live Mode first.'
+    return 0
+  fi
+  if [[ ! -x "$TUI_BIN" ]]; then
+    err "Manage TUI not found: $TUI_BIN"
+    return 1
+  fi
+  # One TUI per manager: --replace closes any other copy silently, otherwise
+  # ask before taking over.
+  manager_single_instance_gate "$replace"
+  # Launch the manager in a terminal (foot, falling back to xterm) when this
+  # call is detached — e.g. from the Omarchy menu. Square window, same as the
+  # other mosquito managers. The TUI runs as a child (not exec) so the EXIT
+  # trap can drop the PID file when it ends.
+  if [[ -t 0 && -t 1 ]]; then
+    "$TUI_BIN"
+    exit $?
+  elif command -v foot >/dev/null 2>&1; then
+    foot -W 100x30 --app-id=org.omarchy.mosquito-live-mode-tui -e "$TUI_BIN"
+    exit $?
+  elif command -v xterm >/dev/null 2>&1; then
+    xterm -e "$TUI_BIN"
+    exit $?
+  else
+    err "No terminal emulator (foot/xterm) available to open the manager."
+    return 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+case "${1:-}" in
+  on)      cmd_on "${2:-}" ;;
+  off)     cmd_off "${2:-}" ;;
+  status)  cmd_status ;;
+  toggle)  is_active && cmd_off || cmd_on ;;
+  manage)  cmd_manage "${2:-}" ;;
+  *)       usage ;;
+esac
