@@ -1,0 +1,526 @@
+#!/usr/bin/env bash
+# mosquito-audio-plugin-manager-actions — non-interactive backend for the Go TUI
+# (mosquito-audio-plugin-manager-tui, tui-go/). Same role and same stub-primitive
+# design as the sibling mosquito-move-manager-actions — see that file's own
+# header for the full rationale. In short: Go makes every decision (which
+# plugin, which prefix, confirm/cancel); this script performs the
+# mechanical action once a decision is made, by sourcing the exact same
+# lib-audio-plugin-manager-core.sh the TUI's dispatcher uses and calling its
+# functions directly — no business logic duplicated here. (These stubs also
+# win over the core's own guarded ui_* primitives: the core only defines
+# them when ${MOSQUITO_AUDIO_PLUGIN_MANAGER_NATIVE_UI} is set, which the
+# dispatcher — never this file — sets.)
+set -euo pipefail
+
+ui_confirm() { return 1; }
+ui_info() { :; }
+ui_select() { echo "BUG: ui_select reached in actions mode ($*)" >&2; return 2; }
+ui_input() { echo "BUG: ui_input reached in actions mode ($*)" >&2; return 2; }
+ui_ready_or_die() { :; }
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-audio-plugin-manager-core.sh"
+
+state_init
+# A prefs file existing BEFORE load_prefs ran means this machine was already
+# set up under this manager (or an earlier version): the first-launch wizard
+# must NOT re-offer itself on every upgrade. On a genuinely fresh machine the
+# file only appears because load_prefs() itself initializes it, which is
+# exactly the "wizard wanted" case.
+prefs_existed=false
+[[ -f $PREFS_FILE ]] && prefs_existed=true
+load_prefs
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  status-json)
+    spf_installed=false
+    command -v spf >/dev/null 2>&1 && spf_installed=true
+    jq -nc --arg file_picker "$(current_file_picker)" \
+      --argjson superfile_installed "$spf_installed" \
+      --argjson hide_vst2 "$HIDE_VST2" --argjson hide_32bit "$HIDE_32BIT" \
+      --arg sort_mode "$PLUGIN_SORT_MODE" \
+      --arg plugins_root "$PLUGINS_ROOT" --arg downloads_dir "$DOWNLOADS_DIR" \
+      --arg plugin_win_handler "${PLUGIN_WIN_HANDLER:-hyprland}" \
+      --argjson wizard_done "$([[ ${WIZARD_DONE:-0} == 1 ]] || $prefs_existed && echo true || echo false)" \
+      '{file_picker:$file_picker,superfile_installed:$superfile_installed,hide_vst2:$hide_vst2,hide_32bit:$hide_32bit,sort_mode:$sort_mode,plugins_root:$plugins_root,downloads_dir:$downloads_dir,plugin_win_handler:$plugin_win_handler,wizard_done:$wizard_done}'
+    ;;
+
+  set-plugins-root)
+    migrate_plugins_root "${1:?new plugins folder required}"
+    ;;
+
+  wizard-finish)
+    # First-launch wizard's single step, called by the Go TUI's runner once
+    # the user confirms the plugins folder (default or chosen): point the
+    # manager at it WITHOUT the migration path of set-plugins-root (a fresh
+    # setup has no plugin files to move), flag the wizard as done so
+    # status-json stops offering it, then point every ALREADY-INSTALLED DAW
+    # at the shared root by every external, non-destructive means available
+    # — streaming one plain-text line per program (the runner displays them
+    # as-is). Programs whose plugin folders can't be automated (Bitwig) are
+    # named so the user can finish them by hand. Never touches an Ableton
+    # .run file.
+    root="${1:-$PLUGINS_ROOT}"
+    root="${root%/}"
+    [[ -n $root ]] || { echo "wizard-finish: plugins folder required" >&2; exit 2; }
+    mkdir -p "$root"
+    PLUGINS_ROOT="$root"
+    WIZARD_DONE=1
+    save_prefs
+    init_plugins_root
+    apply_plugins_root
+    found=0
+    # ── REAPER ────────────────────────────────────────────────────────────
+    reaper_ini="$HOME/.config/REAPER/reaper.ini"
+    if command -v reaper >/dev/null 2>&1 || [[ -f $reaper_ini ]]; then
+      found=1
+      mkdir -p "$(dirname "$reaper_ini")" "$HOME/.vst" "$HOME/.vst3" "$HOME/.clap"
+      [[ -f $reaper_ini ]] || : > "$reaper_ini"
+      python3 - "$reaper_ini" "$HOME" <<'PYWIZARD'
+import os
+import sys
+import shutil
+
+path, home = sys.argv[1], sys.argv[2]
+keys = {"vstpath": ".vst", "vst3path": ".vst3", "clappath": ".clap"}
+src = path + ".mosquito.bak"
+if not os.path.exists(src):
+    shutil.copy2(path, src)
+with open(path, encoding="utf-8") as f:
+    lines = f.read().splitlines()
+out = []
+changed = False
+pending = dict(keys)
+for ln in lines:
+    for k, sub in list(pending.items()):
+        if ln.startswith(k + "="):
+            raw = ln[len(k) + 1:]
+            parts = raw.split(",") if "," in raw else raw.split("|")
+            seen, cur = set(), []
+            for d in parts:
+                d = d.strip().strip('"').rstrip("\\")
+                if d and d not in seen:
+                    seen.add(d)
+                    cur.append(d)
+            add = os.path.join(home, sub)
+            if add not in seen:
+                cur.append(add)
+                changed = True
+            ln = k + "=" + ",".join(cur)
+            del pending[k]
+            break
+    out.append(ln)
+for k, sub in pending.items():
+    out.append(k + "=" + os.path.join(home, sub))
+    changed = True
+if changed:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out) + "\n")
+PYWIZARD
+      printf '✓  REAPER — reaper.ini now scans the yabridge chainloaders (%s, %s, %s)\n' "$HOME/.vst" "$HOME/.vst3" "$HOME/.clap"
+    else
+      printf '·  REAPER — not installed, nothing to point at the plugins folder\n'
+    fi
+    # ── Ableton Live (Windows build on wine prefix ~/.wine-ableton) ──────
+    if [[ -d "$HOME/.wine-ableton/drive_c" ]]; then
+      found=1
+      linker="$SCRIPT_DIR/link-vst-shared.sh"
+      if [[ ! -x $linker ]]; then
+        linker="$HOME/mosquitOmarchy/scripts/apps/audio-plugin-manager/link-vst-shared.sh"
+      fi
+      if [[ -x $linker ]] && AUDIOSTACK_VST_ROOT="$root" bash "$linker" >/dev/null 2>&1; then
+        printf '✓  Ableton Live — its shared VST folders (Common Files) now symlink into %s\n' "$root"
+      else
+        printf '·  Ableton Live — prefix found, but the shared-VST linker is unavailable\n'
+      fi
+    else
+      printf '·  Ableton Live — not installed, nothing to point at the plugins folder\n'
+    fi
+    # ── Bitwig Studio ─────────────────────────────────────────────────────
+    if command -v bitwig-studio >/dev/null 2>&1 || [[ -d "$HOME/.config/Bitwig" ]]; then
+      found=1
+      printf '→  Bitwig Studio — set its plugin folders in Preferences → Plug-ins: %s (and its vst / vst3 / clap subfolders)\n' "$root"
+    else
+      printf '·  Bitwig Studio — not installed, nothing to point at the plugins folder\n'
+    fi
+    if (( ! found )); then
+      printf 'Finished — with your DAWs installed, they would have been pointed at %s automatically.\n' "$root"
+    fi
+    printf 'Finished — the plugins folder is %s.\n' "$root"
+    ;;
+
+  set-downloads-dir)
+    DOWNLOADS_DIR="${1:?folder required}"
+    save_prefs
+    ;;
+
+  pick-folder)
+    # Generic folder picker for the two Settings entries above (plugins
+    # root / downloads dir) -- same dialog chain as pick-any-plugin-file,
+    # directory mode instead of file mode.
+    dir=""
+    title="${1:-Pick a folder}"
+    start="${2:-$HOME}"
+    if command -v omarchy-file-select >/dev/null 2>&1 && { [[ -n ${DISPLAY:-} || -n ${WAYLAND_DISPLAY:-} || -n ${OMARCHY_WL:-} ]]; }; then
+      dir=$(omarchy-file-select --title "$title" --directory 2>/dev/null | head -1)
+    elif command -v zenity >/dev/null 2>&1; then
+      dir=$(zenity --file-selection --directory --title="$title" --filename="$start/" 2>/dev/null) || true
+    fi
+    jq -nc --arg path "${dir:-}" '{path:$path}'
+    ;;
+
+  toggle-hide-vst2)
+    [[ $HIDE_VST2 == true ]] && HIDE_VST2=false || HIDE_VST2=true
+    save_prefs
+    ;;
+
+  toggle-hide-32bit)
+    [[ $HIDE_32BIT == true ]] && HIDE_32BIT=false || HIDE_32BIT=true
+    save_prefs
+    ;;
+
+  set-sort-and-list)
+    # Sets PLUGIN_SORT_MODE then immediately re-lists -- one round trip for
+    # the btop-style "arrow key cycles sort live" interaction, instead of a
+    # separate set + separate re-fetch.
+    PLUGIN_SORT_MODE="${1:?vendor, name, format or date required}"
+    save_prefs
+    while IFS=$'\t' read -r sortkey label origin fmt enabled value; do
+      [[ -n $value ]] || continue
+      parent="$(wine_program_parent_of "$value")"
+      jq -nc --arg display "[$origin/$fmt]  $label" --arg value "$value" \
+        --arg origin "$origin" --arg format "$fmt" --argjson enabled "$enabled" \
+        --arg kind "plugin" --arg parent "$parent" \
+        '{display: ($display + (if $enabled then "" else "  (hidden)" end)), value:$value, origin:$origin, format:$format, enabled:$enabled, kind:$kind, parent:$parent}'
+    done <<< "$(all_plugin_list_rows_sorted)"
+    wine_program_rows_json
+    ;;
+
+  set-file-picker)
+    mode="${1:?default or superfile required}"
+    mkdir -p "$(dirname "$FILE_PICKER_MODE_FILE")"
+    printf '%s\n' "$mode" > "$FILE_PICKER_MODE_FILE"
+    ;;
+
+  ensure-superfile)
+    ensure_superfile_installed
+    ;;
+
+  list-all-plugins)
+    # The unified Plugin list -- VST + native together, one row shape, per
+    # explicit request ("la plugin list est donc commune"). value is
+    # self-describing ("vst:<type>:<path>" or "native:<path>") so
+    # uninstall-batch/toggle-hidden never have to guess the origin back out
+    # of a bare path.
+    while IFS=$'\t' read -r sortkey label origin fmt enabled value; do
+      [[ -n $value ]] || continue
+      parent="$(wine_program_parent_of "$value")"
+      jq -nc --arg display "[$origin/$fmt]  $label" --arg value "$value" \
+        --arg origin "$origin" --arg format "$fmt" --argjson enabled "$enabled" \
+        --arg kind "plugin" --arg parent "$parent" \
+        '{display: ($display + (if $enabled then "" else "  (hidden)" end)), value:$value, origin:$origin, format:$format, enabled:$enabled, kind:$kind, parent:$parent}'
+    done <<< "$(all_plugin_list_rows_sorted)"
+    wine_program_rows_json
+    ;;
+
+  plugin-detail)
+    target="${1:?}"
+    jq -nc --arg text "$(basename "$target")"$'\n\n'"$target" '{text:$text}'
+    ;;
+
+  readme-text)
+    jq -nc --arg vst2 "$VST_VST2" --arg vst3 "$VST_VST3" --arg clap "$VST_CLAP" \
+      '{text: ("Where to point your DAW plugin folders:\n\n  vst\t→ " + $vst2 + "\n  vst3\t→ " + $vst3 + "\n  clap\t→ " + $clap)}'
+    ;;
+
+    # Windows-program-folder entries (a whole wine install, not just one
+    # plugin file). Parent assignment is the shared wine_program_parent_of
+    # heuristic (see lib-audio-plugin-manager-core.sh) — the exact same
+    # helper list-all-plugins uses for the "Installed plugins" setup list,
+    # so the uninstall tree and the setup list can never drift apart:
+    #   1. a plugin file whose install path IS under a scan_wine_programs
+    #      folder belongs to that folder (direct ancestry);
+    #   2. OR when its DAT mentions the product stem (case-insensitive);
+    #   3. OR the classic "installed-with" cluster: the folder's
+    #      unins000.exe mtime within ±1 hour of the plugin file's mtime;
+    #   4. OR the plugin's vendor folder name matches the installer folder.
+  list-uninstallable)
+    while IFS=$'\t' read -r sortkey label origin fmt enabled value; do
+      [[ -n $value ]] || continue
+      parent="$(wine_program_parent_of "$value")"
+      jq -nc --arg display "[$origin/$fmt]  $label" --arg value "$value" \
+              --arg kind "plugin" --arg parent "$parent" \
+        '{display:$display,value:$value,kind:$kind,parent:$parent}'
+    done <<< "$(all_plugin_list_rows_sorted)"
+    wine_program_rows_json
+    ;;
+
+  uninstall-batch)
+    # One or more "vst:<type>:<path>", "native:<path>" or "win:<path>"
+    # tokens (list-all-plugins/list-uninstallable's own value shape) --
+    # routes each to the right uninstall function, so a batch pick (Tab in
+    # the Go TUI) can remove several plugins of mixed origin in one go.
+    (($#)) || { echo "at least one plugin required" >&2; exit 2; }
+    rc=0
+    for tgt in "$@"; do
+      case "$tgt" in
+        vst:*)    uninstall_target "${tgt#vst:}" || rc=1 ;;
+        win:*)    uninstall_target "win:${tgt#win:}" || rc=1 ;;
+        native:*) uninstall_native_plugin "${tgt#native:}" || rc=1 ;;
+        *)        echo "unrecognized target: $tgt" >&2; rc=1 ;;
+      esac
+    done
+    exit $rc
+    ;;
+
+  open-folder)
+    # $1 = a list value ("win:<dir>", "vst:<type>:<path>", "native:<path>")
+    # or a bare path: opens the plugin's containing folder in the system
+    # file manager. The Go TUI's uninstall screen invokes this with "x" on
+    # the highlighted row.
+    target="${1:?path required}"
+    case "$target" in
+      win:*)    dir="${target#win:}" ;;
+      vst:*)    f="${target#vst:}"; f="${f#*:}"; dir="$(dirname "$f")" ;;
+      native:*) dir="$(dirname "${target#native:}")" ;;
+      *)        dir="$target" ;;
+    esac
+    if open_folder_path "$dir"; then
+      echo "opened: $dir"
+    else
+      echo "no file manager found — folder: $dir"
+    fi
+    ;;
+
+  list-prefixed-plugins)
+    while IFS= read -r k; do
+      [[ -n $k ]] || continue
+      prefix="$(state_plugin_prefix "$k")"
+      [[ -n $prefix ]] || continue
+      jq -nc --arg display "$(plugin_prefix_label "$k")   ->  $(basename "$prefix")" --arg key "$k" --arg prefix "$prefix" \
+        '{display:$display,key:$key,prefix:$prefix}'
+    done <<< "$(state_list_keys)"
+    ;;
+
+  list-prefixes)
+    for p in "${WINE_PREFIXES[@]}"; do
+      jq -nc --arg path "$p" --arg label "$(basename "$p")" '{path:$path,label:$label}'
+    done
+    ;;
+
+  default-prefix)
+    jq -nc --arg path "$(default_prefix)" '{path:$path}'
+    ;;
+
+  create-prefix)
+    name="${1:?name required}"
+    slug="$(printf '%s' "$name" | tr ' ' '-' | tr -cd '[:alnum:]-' | tr '[:upper:]' '[:lower:]')"
+    [[ -n $slug ]] || { echo "empty prefix name" >&2; exit 2; }
+    newp="$HOME/.wine-$slug"
+    if [[ ! -d "$newp/drive_c" ]]; then
+      echo "Creating wine prefix: $newp"
+      WINEPREFIX="$newp" wineboot -u >/dev/null 2>&1 || echo "(wineboot returned a non-zero code — continuing)"
+    fi
+    jq -nc --arg path "$newp" '{path:$path}'
+    ;;
+
+  install)
+    file="${1:?installer path required}"
+    prefix="${2:?prefix required}"
+    tag="${3:-}"
+    if [[ ! -d "$prefix/drive_c" ]]; then
+      echo "Creating wine prefix: $prefix"
+      WINEPREFIX="$prefix" wineboot -u >/dev/null 2>&1 || echo "(wineboot returned a non-zero code — continuing)"
+    fi
+    install_plugin "$file" "$prefix" "$tag"
+    ;;
+
+  set-plugin-handler)
+    # $1 = classic|hyprland (persisted through prefs, applied to future
+    # installs AND re-applied to the shared yabridge.toml write)
+    set_plugin_handler "${1:?handler mode required}"
+    ;;
+
+  list-fixes)
+    # The general fix catalog shown by the "Apply fixes for Wine VSTs" screen.
+    fixes_list_json
+    ;;
+
+  list-plugin-fixes)
+    # $1 = plugin label; every fix with an "applied" flag for that plugin.
+    fixes_for_plugin_json "${1:?plugin required}"
+    ;;
+
+  list-applied-fix-plugins)
+    # One JSON line {"plugin": <stem>} per plugin that has at least one fix
+    # recorded as applied. The fixes plugin chooser badges those rows in the
+    # theme accent; a single cheap call avoids N list-plugin-fixes round trips.
+    while IFS= read -r stem; do
+      [[ -n $stem ]] || continue
+      jq -nc --arg plugin "$stem" '{plugin:$plugin}'
+    done < <(fixes_applied_plugins)
+    ;;
+
+  apply-fixes)
+    # $1 = plugin label, then one or more fix ids (idempotent).
+    plugin="${1:?plugin required}"; shift
+    fix_apply "$plugin" "$@"
+    ;;
+
+  remove-fixes)
+    # $1 = plugin label, then one or more fix ids (idempotent).
+    plugin="${1:?plugin required}"; shift
+    fix_remove "$plugin" "$@"
+    ;;
+
+  pick-any-plugin-file)
+    # One unified picker for BOTH plugin universes -- the Go TUI decides
+    # what to do with the result by extension (exe/msi -> wine install;
+    # lv2/clap/vst3/zip/tar/tar.gz/tgz -> native install), the user never
+    # has to say which kind it is up front. Only reached when the picker
+    # preference is "default" — the Go TUI handles "superfile" itself
+    # (pickFileViaSuperfileEmbedded(), tea.ExecProcess, its own terminal),
+    # so it never spawns a separate window.
+    file=""
+    title="Install a plugin — pick a Windows installer (exe/msi) or a native plugin (lv2/clap/vst3/archive)"
+    if command -v omarchy-file-select >/dev/null 2>&1 && { [[ -n ${DISPLAY:-} || -n ${WAYLAND_DISPLAY:-} || -n ${OMARCHY_WL:-} ]]; }; then
+      # The portal chooser has no "starting folder" option to pass --
+      # DOWNLOADS_DIR only shapes the fallback pickers below.
+      file=$(omarchy-file-select --title "$title" --extensions "exe msi lv2 clap vst3 zip tar.gz tgz" 2>/dev/null | head -1)
+    elif command -v omarchy-menu-file >/dev/null 2>&1; then
+      file=$(omarchy-menu-file "$title" "$DOWNLOADS_DIR:$HOME/" "exe msi lv2 clap vst3 zip tar.gz tgz" 2>/dev/null | head -1)
+    elif command -v zenity >/dev/null 2>&1; then
+      file=$(zenity --file-selection --title="$title" --filename="$DOWNLOADS_DIR/" 2>/dev/null) || true
+    fi
+    jq -nc --arg path "${file:-}" '{path:$path}'
+    ;;
+
+  list-standalones)
+    while IFS=$'\t' read -r base f; do
+      [[ -n $f ]] || continue
+      jq -nc --arg display "$base" --arg value "$f" '{display:$display,value:$value}'
+    done <<< "$(executable_list)"
+    ;;
+
+  launch-standalone)
+    exe="${1:?exe path required}"
+    setsid wine start /unix "$exe" >/dev/null 2>&1 &
+    disown
+    echo "launched (standalone window may open)"
+    ;;
+
+  list-executables-toggle)
+    while IFS=$'\t' read -r base f; do
+      [[ -n $f ]] || continue
+      slug="$APPS_DIR/$DESKTOP_SLUG-$(basename "${base%.exe}" | tr ' ' '-' | tr -cd '[:alnum:]-').desktop"
+      shown=false
+      [[ -f $slug ]] && shown=true
+      jq -nc --arg display "$base" --arg value "$f" --argjson shown "$shown" '{display:$display,value:$value,shown:$shown}'
+    done <<< "$(executable_list)"
+    ;;
+
+  toggle-executable)
+    exe="${1:?exe path required}"
+    base="$(basename "$exe")"
+    mkdir -p "$APPS_DIR"
+    slug="$APPS_DIR/$DESKTOP_SLUG-$(basename "${base%.exe}" | tr ' ' '-' | tr -cd '[:alnum:]-').desktop"
+    if [[ -f $slug ]]; then
+      rm -f "$slug"
+      echo "hidden: $base"
+    else
+      cat > "$slug" <<EOF
+[Desktop Entry]
+Name=$base
+Comment=VST standalone (managed by mosquito Audio Plugin Manager)
+Exec=uwsm app -- mosquito-audio-plugin-manager launch "$exe"
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;
+StartupNotify=false
+EOF
+      echo "shown in menu: $base"
+    fi
+    ;;
+
+  move-plugin)
+    move_plugin "${1:?key required}" "${2:?from prefix required}" "${3:?to prefix required}"
+    ;;
+
+  reconcile-missing)
+    while IFS= read -r k; do
+      [[ -n $k ]] || continue
+      files=()
+      while IFS= read -r f; do [[ -n $f ]] && files+=("$f"); done <<< "$(state_plugin_files "$k")"
+      ((${#files[@]})) || continue
+      there=0
+      for f in "${files[@]}"; do [[ -e $f ]] && there=1 && break; done
+      ((there)) || jq -nc --arg key "$k" --arg label "$(plugin_prefix_label "$k")" '{key:$key,label:$label}'
+    done <<< "$(state_list_keys)"
+    ;;
+
+  add-missing)
+    # Keep a missing plugin in the shared log (it belongs to another machine
+    # or will be synced/mounted back later), but stop flagging it on this one:
+    # its tracked files are emptied, mirroring how a fresh registration looks
+    # before any file is picked. The key + prefix remain listed as installed.
+    keep_missing_keys "$@"
+    jq -nc --argjson n "$#" '{kept:$n}'
+    ;;
+
+  remove-missing)
+    # Remove a missing plugin everywhere (this computer + the shared log) and
+    # clean up any standalone .desktop menu entry it generated.
+    purge_missing_keys "$@"
+    jq -nc --argjson n "$#" '{removed:$n}'
+    ;;
+
+  reconcile-orphans)
+    while IFS=$'\t' read -r f t; do
+      [[ -n $f ]] || continue
+      state_has "$(plugin_key "$f")" && continue
+      jq -nc --arg display "$(basename "$f")  ($(plugin_group_label "$f"))" --arg value "$f" '{display:$display,value:$value}'
+    done <<< "$(scan_plugins)"
+    ;;
+
+  add-orphan)
+    f="${1:?file required}"
+    prefix="$(default_prefix)"
+    src="$(wine_source_of "$f" 2>/dev/null)" || src=""
+    [[ -n $src ]] && prefix="${src%%/drive_c/*}"
+    state_register_install "$(plugin_key "$f")" "$prefix" "$f"
+    echo "added to the manager: $(basename "$f")"
+    ;;
+
+  cleanup)
+    # "cleanup!" -- fix every plugin/log inconsistency, non-destructively
+    # (missing stay in the log, untracked files get registered, dangling
+    # launchers removed). Only the final JSON report line is echoed.
+    cleanup | tail -1
+    ;;
+
+  install-native-plugin)
+    # These core functions print their own ok()/status lines to stdout
+    # before a final bare path -- only that last line is the real return
+    # value (see e.g. install_native_plugin_from_file, toggle_native_plugin_enabled,
+    # toggle_vst_plugin_hidden in lib-audio-plugin-manager-core.sh).
+    dest="$(install_native_plugin_from_file "${1:?file required}" | tail -1)"
+    jq -nc --arg path "$dest" '{path:$path}'
+    ;;
+
+  toggle-native-plugin)
+    new="$(toggle_native_plugin_enabled "${1:?plugin path required}" | tail -1)"
+    jq -nc --arg path "$new" '{path:$path}'
+    ;;
+
+  toggle-vst-hidden)
+    new="$(toggle_vst_plugin_hidden "${1:?plugin path required}" | tail -1)"
+    jq -nc --arg path "$new" '{path:$path}'
+    ;;
+
+  *)
+    echo "mosquito-audio-plugin-manager-actions: unknown action '$cmd'" >&2
+    exit 2
+    ;;
+esac

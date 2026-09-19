@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# live-mode-root — privileged helper for Omarchy live mode.
+# Invoked via: sudo -n ~/.local/bin/live-mode-root <command> [args...]
+# Managed by scripts/plugins/live-mode/setup-live-mode.sh
+
+set -euo pipefail
+
+REAL_USER="${SUDO_USER:-${LOGNAME:-$USER}}"
+REAL_HOME=$(eval echo "~$REAL_USER" 2>/dev/null || echo "$HOME")
+STATE_DIR="$REAL_HOME/.local/state/live-mode"
+PRE_STATE="$STATE_DIR/pre_state.json"
+
+BIN_DIR="$HOME/.local/bin"
+POWER_HELPER="/usr/local/bin/power-helper"
+
+mkdir -p "$STATE_DIR"
+
+usage() {
+  cat >&2 <<EOF
+Usage: live-mode-root <command> [args...]
+
+Commands:
+  status                                Print current root-level state (JSON)
+  apply                                 Apply live mode (save state, set profile,
+                                        audio, usb, battery, fence)
+  restore                               Restore pre-live state
+  thermal-cap <kHz>                     Set scaling_max_freq on all policies
+  thermal-restore                       Restore scaling_max_freq to hardware max
+EOF
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+json_quote() {
+  local v="$1" esc
+  esc="${v//\\/\\\\}"
+  esc="${esc//\"/\\\"}"
+  printf '%s' "$esc"
+}
+
+w() {
+  [[ -f "$1" ]] && echo "$2" > "$1" 2>/dev/null || true
+}
+
+read_temp_k() {
+  cat /sys/class/hwmon/hwmon7/temp1_input 2>/dev/null || echo 0
+}
+
+# ---------------------------------------------------------------------------
+# apply — save pre-state, then enable everything
+# ---------------------------------------------------------------------------
+
+cmd_apply() {
+  local cpu_max usb_autosuspend snd_save threshold_start threshold_end profile
+
+  # Read current values
+  profile=$(powerprofilesctl get 2>/dev/null || echo "balanced")
+  cpu_max=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null || echo 0)
+  snd_save=$(cat /sys/module/snd_hda_intel/parameters/power_save 2>/dev/null || echo 0)
+
+  # Battery
+  threshold_end=$(cat /sys/class/power_supply/BAT0/charge_control_end_threshold 2>/dev/null || echo 100)
+  threshold_start=$(cat /sys/class/power_supply/BAT0/charge_control_start_threshold 2>/dev/null || echo 0)
+
+  # Write pre-state
+  cat > "$PRE_STATE" <<EOF
+{
+  "timestamp": $(date +%s),
+  "profile": "$profile",
+  "scaling_max_freq": $cpu_max,
+  "snd_hda_power_save": $snd_save,
+  "battery_start": $threshold_start,
+  "battery_end": $threshold_end,
+  "usb_autosuspend_disabled": false,
+  "thermal_max_freq": $cpu_max
+}
+EOF
+  chmod 600 "$PRE_STATE"
+
+  # 1. Power profile: performance
+  powerprofilesctl set performance 2>/dev/null || true
+
+  # 2. Disable battery conservation / restore to 0 100
+  "$POWER_HELPER" charging preset off >/dev/null 2>&1 || true
+
+  # 3. Audio: disable HDA power-save
+  w /sys/module/snd_hda_intel/parameters/power_save "0"
+
+  # 4. USB autosuspend: disable globally
+  for ctrl in /sys/bus/usb/devices/*/power/control; do
+    [[ -f "$ctrl" ]] && echo "on" > "$ctrl" 2>/dev/null || true
+  done
+
+  # 5. Thermal: leave scaling_max_freq at current (max) — watchdog will cap
+
+  # 6. Fence pacman by creating /var/lib/pacman/db.lck
+  [ -f /var/lib/pacman/db.lck ] || touch /var/lib/pacman/db.lck 2>/dev/null || true
+
+  echo '{"status":"ok","applied":true}'
+}
+
+# ---------------------------------------------------------------------------
+# restore
+# ---------------------------------------------------------------------------
+
+cmd_restore() {
+  if [[ ! -f "$PRE_STATE" ]]; then
+    echo '{"error":"no pre-state found"}' >&2
+    exit 1
+  fi
+
+  local profile cpu_max snd_save start end
+  profile=$(jq -r '.profile // "balanced"' "$PRE_STATE")
+  cpu_max=$(jq -r '.scaling_max_freq // 0' "$PRE_STATE")
+  snd_save=$(jq -r '.snd_hda_power_save // 0' "$PRE_STATE")
+  start=$(jq -r '.battery_start // 0' "$PRE_STATE")
+  end=$(jq -r '.battery_end // 100' "$PRE_STATE")
+
+  # Restore power profile
+  powerprofilesctl set "$profile" 2>/dev/null || powerprofilesctl set balanced 2>/dev/null || true
+
+  # Restore battery thresholds
+  echo "$start" > /sys/class/power_supply/BAT0/charge_control_start_threshold 2>/dev/null || true
+  echo "$end" > /sys/class/power_supply/BAT0/charge_control_end_threshold 2>/dev/null || true
+
+  # Restore HDA power-save
+  w /sys/module/snd_hda_intel/parameters/power_save "$snd_save"
+
+  # Restore USB autosuspend
+  for ctrl in /sys/bus/usb/devices/*/power/control; do
+    [[ -f "$ctrl" ]] && echo "auto" > "$ctrl" 2>/dev/null || true
+  done
+
+  # Restore scaling_max_freq to hardware max
+  local hw_max
+  hw_max=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo 0)
+  for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
+    [[ -f "$f" ]] && echo "$hw_max" > "$f" 2>/dev/null || true
+  done
+
+  # Remove pacman fence
+  rm -f /var/lib/pacman/db.lck 2>/dev/null || true
+
+  rm -f "$PRE_STATE"
+
+  echo '{"status":"ok","restored":true}'
+}
+
+# ---------------------------------------------------------------------------
+# thermal-cap
+# ---------------------------------------------------------------------------
+
+cmd_thermal_cap() {
+  local cap="${1:?usage: live-mode-root thermal-cap <kHz>}"
+  for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
+    [[ -f "$f" ]] && echo "$cap" > "$f" 2>/dev/null || true
+  done
+  # Track current cap in pre-state if exists
+  if [[ -f "$PRE_STATE" ]]; then
+    jq --argjson c "$cap" '.thermal_max_freq = $c' "$PRE_STATE" > "$PRE_STATE.tmp" && mv "$PRE_STATE.tmp" "$PRE_STATE"
+  fi
+  echo "{\"status\":\"ok\",\"thermal_max_freq\":$cap}"
+}
+
+cmd_thermal_restore() {
+  local hw_max
+  hw_max=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo 0)
+  for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
+    [[ -f "$f" ]] && echo "$hw_max" > "$f" 2>/dev/null || true
+  done
+  if [[ -f "$PRE_STATE" ]]; then
+    jq --argjson c "$hw_max" '.thermal_max_freq = $c' "$PRE_STATE" > "$PRE_STATE.tmp" && mv "$PRE_STATE.tmp" "$PRE_STATE"
+  fi
+  echo "{\"status\":\"ok\",\"thermal_max_freq\":$hw_max}"
+}
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+
+cmd_status() {
+  local profile cpu_max snd_save live_active
+  profile=$(powerprofilesctl get 2>/dev/null || echo "unknown")
+  cpu_max=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null || echo 0)
+  snd_save=$(cat /sys/module/snd_hda_intel/parameters/power_save 2>/dev/null || echo 0)
+  live_active="false"
+  [[ -f "$STATE_DIR/active" ]] && live_active="true"
+
+  jq -n \
+    --arg profile "$profile" \
+    --argjson cpu_max "$cpu_max" \
+    --argjson snd_save "$snd_save" \
+    --argjson live_active "$live_active" \
+    '{profile:$profile, scaling_max_freq:$cpu_max, snd_hda_power_save:$snd_save, live_mode:$live_active}'
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  status)           cmd_status ;;
+  apply)            cmd_apply ;;
+  restore)          cmd_restore ;;
+  thermal-cap)      cmd_thermal_cap "$@" ;;
+  thermal-restore)  cmd_thermal_restore ;;
+  *)                usage ;;
+esac

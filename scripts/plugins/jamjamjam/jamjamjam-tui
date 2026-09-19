@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# jamjamjam-tui — opens the jamjamjam guitar-neck TUI (floating, centered
+# omarchy-style prompt window) in a foot terminal.
+# Invoked by:
+#   * the jamjamjam panel (GUITAR button) ->  jamjamjam-tui open
+#   * a terminal, manually              ->  jamjamjam-tui
+#
+# Only one instance runs: a second spawn refocuses the existing window.
+# The TUI is a pure viewer of ~/.local/state/jamjamjam/state.json, which the
+# panel backend writes whenever it runs. When the state file is stale, the
+# dispatcher starts the backend standalone in the background (system-audio
+# capture only, no IPC writer) so the neck still shows live analysis without
+# the panel. Managed by scripts/plugins/jamjamjam/setup-jamjamjam-plugin.sh
+
+set -euo pipefail
+
+REAL_HOME=$(eval echo "~${LOGNAME:-$USER}" 2>/dev/null || echo "$HOME")
+STATE_DIR="$REAL_HOME/.local/state/jamjamjam"
+PLUGIN_BACKEND="$REAL_HOME/.config/omarchy/plugins/jamjamjam-plugin/backend/jamjamjam_backend.py"
+NECK_BIN="$REAL_HOME/.local/bin/jamjamjam-neck"
+STANDALONE_PID="$STATE_DIR/standalone-backend.pid"
+
+# Foot window app-id/class the panel and this dispatcher rely on (Hyprland
+# rule: floating, centered — see setup-jamjamjam-plugin.sh).
+TUI_WINDOW_CLASS="org.omarchy.jamjamjam-tui"
+
+mkdir -p "$STATE_DIR"
+
+state_age() {
+  local f="$STATE_DIR/state.json"
+  [[ -f $f ]] || { echo 9999; return 0; }
+  local now age
+  now=$(date +%s)
+  age=$(stat -c %Y "$f" 2>/dev/null || echo 0)
+  echo $(( now - age ))
+}
+
+start_standalone_backend() {
+  [[ -f $PLUGIN_BACKEND ]] || return 0
+  # Keep only one standalone recorder running.
+  if [[ -f $STANDALONE_PID ]]; then
+    local pid
+    pid=$(cat "$STANDALONE_PID" 2>/dev/null || true)
+    if [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    rm -f "$STANDALONE_PID"
+  fi
+  nohup python3 "$PLUGIN_BACKEND" --standalone \
+    >>"$STATE_DIR/standalone.log" 2>&1 &
+  echo $! > "$STANDALONE_PID"
+}
+
+single_instance_gate() {
+  # One instance only: pgrep on the neck binary also matches the foot
+  # window that wraps it, so a running window blocks a second spawn.
+  if pgrep -f -- "$NECK_BIN" >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
+}
+
+focus_existing() {
+  # No second instance: bring the running window to front.
+  if command -v hyprctl >/dev/null 2>&1; then
+    hyprctl dispatch focuswindow class:$TUI_WINDOW_CLASS >/dev/null 2>&1 || true
+  fi
+}
+
+cmd_launch() {
+  if [[ ! -x $NECK_BIN ]]; then
+    echo "jamjamjam-tui: neck binary not found ($NECK_BIN) — run setup-jamjamjam-plugin.sh" >&2
+    return 1
+  fi
+  # Freshen the snapshot while foot boots (non-blocking): the TUI shows its
+  # splash, then "waiting for backend" until the standalone snapshot lands.
+  local age
+  age=$(state_age)
+  if [[ $age -gt 2 ]]; then
+    start_standalone_backend
+  fi
+  if command -v foot >/dev/null 2>&1; then
+    foot -W 120x34 --app-id=$TUI_WINDOW_CLASS -e "$NECK_BIN" &
+    return 0
+  elif command -v xterm >/dev/null 2>&1; then
+    xterm -e "$NECK_BIN" &
+    return 0
+  else
+    echo "jamjamjam-tui: no terminal emulator (foot/xterm) available" >&2
+    return 1
+  fi
+}
+
+case "${1:-}" in
+  open|"")
+    if single_instance_gate; then
+      cmd_launch
+    else
+      focus_existing
+    fi
+    ;;
+  *)
+    echo "Usage: jamjamjam-tui [open]" >&2
+    exit 1
+    ;;
+esac

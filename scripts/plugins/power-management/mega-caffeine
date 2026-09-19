@@ -1,0 +1,696 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Mega caffeine — close the laptop, let processes keep running.
+#
+# Activates a "coffee mode": tints the screen red (hyprsunset), prevents
+# sleep when the lid is closed (systemd-inhibit handle-lid-switch+sleep)
+# and watches the automatic shutdown conditions:
+#   - CPU temperature above the limit (default 85 °C)
+#   - battery below the limit (default 10 %) — unless override accepted at < 30 %
+#
+# While active it also forces the Omarchy "caffeine" stay-awake indicator ON
+# (Allow Idle Lock & Screensaver) so the screensaver / screen lock won't
+# interrupt the running job; the indicator icon turns red in the bar. The
+# previous state is restored when the mode stops.
+#
+# On launch it asks:
+#   - the usage duration of the mode (natural-language text field, empty input
+#     or "skip"/"unlimited" = unlimited, bounded by battery and CPU)
+#   - whether to force the battery limit when starting below 30 % (run to the end)
+#   - whether to enable the ultra power save mode (ultra-save) during the session
+#
+# Usage:
+#   mega-caffeine on                    # activate (with prompts)
+#   mega-caffeine on --no-ultrasave     # without the ultra-save question
+#   mega-caffeine on --override-battery # force the battery limit without asking
+#   mega-caffeine off                   # deactivate
+#   mega-caffeine toggle                # invert
+#   mega-caffeine status                # text
+#   mega-caffeine --status              # JSON (for widgets/indicators)
+#   mega-caffeine probe                 # diagnostic (temp, battery, tint)
+#
+# Options of `on`/`toggle`:
+#   --ultrasave | --no-ultrasave    force/skip the ultra power save mode
+#   --override-battery | --no-override-battery
+#   --temp-limit <°C>               CPU threshold (default 85)
+#   --tint <K>                      screen temperature (default 1500 = red)
+#   --max-minutes <M>               auto-deactivate after M minutes (0 = unlimited)
+#   --duration <duration>           natural durations: 90m, 2h30, "one hour"...
+#                                   skips the prompt (max = unlimited)
+#
+# Environment variables: CAFFEINE_STATE_DIR, CAFFEINE_TINT,
+#   CAFFEINE_TEMP_LIMIT, CAFFEINE_BATTERY_LIMIT, CAFFEINE_POLL_SECONDS, CAFFEINE_MAX_MINUTES
+#
+# Omarchy integration (already in place in power-management/):
+#   1. deployed to ~/.local/bin (mega-caffeine) by power-management/setup-battery-management.sh
+#   2. omarchy-menu.jsonc menu: Trigger > Toggle > Mega caffeine (managed by setup-battery-management.sh)
+# =============================================================================
+set -euo pipefail
+
+# Absolute path of this script, robust to invocation by relative name/PATH
+# (used to relaunch ourselves in the background for --monitor).
+SELF="${BASH_SOURCE[0]}"
+if [[ $SELF != /* ]]; then
+  SELF="$(command -v "${SELF##*/}" 2>/dev/null || echo "$PWD/$SELF")"
+fi
+SELF="$(readlink -f "$SELF" 2>/dev/null || echo "$SELF")"
+
+STATE_DIR="${CAFFEINE_STATE_DIR:-$HOME/.local/state/caffeine}"
+STATE_FILE="$STATE_DIR/state"             # on|off
+INHIBIT_PID_FILE="$STATE_DIR/inhibit.pid"
+TINT_PREV_FILE="$STATE_DIR/tint_prev"
+TINT_HYPRSUNSET_FILE="$STATE_DIR/hyprsunset_was_running"
+ULTRASAVE_WAS_FILE="$STATE_DIR/ultrasave_was"
+BATTERY_OVERRIDE_FILE="$STATE_DIR/battery_override"
+MAX_END_FILE="$STATE_DIR/max_end"
+STAYAWAKE_FILE="${CAFFEINE_STAYAWAKE_FILE:-$HOME/.local/state/omarchy/indicators/stay-awake}"
+STAYAWAKE_PREV_FILE="$STATE_DIR/stayawake_prev"
+
+RED_TEMP="${CAFFEINE_TINT:-1500}"
+TINT_GIVEN=0
+TEMP_LIMIT="${CAFFEINE_TEMP_LIMIT:-85}"
+BATTERY_LIMIT="${CAFFEINE_BATTERY_LIMIT:-10}"
+POLL_SECONDS="${CAFFEINE_POLL_SECONDS:-5}"
+MAX_MINUTES="${CAFFEINE_MAX_MINUTES:-0}"
+LOW_BATTERY_PROMPT_AT=30            # on demande l'override en dessous de ce seuil
+IDENTITY_TEMP=6000
+
+ULTRASAVE_CMD="$HOME/.local/bin/ultra-save"
+ULTRASAVE_ASK="ask"
+OVERRIDE_ASK="ask"
+DURATION_RESOLVED=""
+[[ -n ${CAFFEINE_MAX_MINUTES:-} ]] && DURATION_RESOLVED=yes
+
+msg()  { echo "==> $*"; }
+ok()   { echo "  ok $*"; }
+warn() { echo "  !  $*"; }
+err()  { echo "  xx $*" >&2; }
+
+fmt_duration() {
+  # $1 = minutes. Renders a compact human duration: "4 min", "2 h 30",
+  # "1 j 3 h". Plain minutes under an hour (like the input field).
+  local m=${1:-0} d h
+  [[ $m -le 0 ]] && { echo "unlimited"; return 0; }
+  d=$(( m / 1440 ))
+  h=$(( (m % 1440) / 60 ))
+  m=$(( m % 60 ))
+  if   (( d > 0 && h > 0 ));  then echo "${d} j ${h} h"
+  elif (( d > 0 ));           then echo "${d} j"
+  elif (( h > 0 && m > 0 ));  then echo "${h} h ${m}"
+  elif (( h > 0 ));           then echo "${h} h"
+  else echo "${m} min"
+  fi
+}
+
+notify() {
+  # Live mode already silences notifications (DND) and swaps to the red live
+  # theme; a caffeine toast (especially the "Always awake" one fired at
+  # activation) would be noise. Suppress every caffeine notification while
+  # live mode is active.
+  if is_live_mode; then
+    return 0
+  fi
+  # $1 = headline, $2 = description, $3 = urgency (low|normal|critical),
+  # $4 = persist marker ("persist" = stay up until dismissed, like the
+  #   move-manager --persist: coffee mode is an active state the user should
+  #   be able to see/act on rather than a one-shot confirmation)
+  local persist=0
+  [[ ${4-} == persist ]] && persist=1
+  if (( persist == 1 )); then
+    command -v omarchy-notification-send >/dev/null 2>&1 \
+      && omarchy-notification-send "$1" "$2" -g "☕" -u "${3:-low}" -i "coffee" -t -1 >/dev/null 2>&1 || true
+  else
+    command -v omarchy-notification-send >/dev/null 2>&1 \
+      && omarchy-notification-send "$1" "$2" -g "☕" -u "${3:-low}" -i "coffee" -t 6000 >/dev/null 2>&1 || true
+  fi
+}
+
+is_running() { [[ -f "$STATE_FILE" ]] && [[ $(cat "$STATE_FILE") == "on" ]]; }
+
+# Live mode (scripts/plugins/live-mode): mega caffeine is locked on for the session.
+LIVE_FLAG="${CAFFEINE_LIVE_FLAG:-$HOME/.local/state/live-mode/active}"
+is_live_mode() { [[ -f "$LIVE_FLAG" ]]; }
+
+ask_yes() {
+  # $1 = question. Returns 0 for yes.
+  # Native Omarchy confirm overlay (square card with the message and Yes/No —
+  # no auto "…" appended, unlike the dmenu input/select header), zenity as a
+  # fallback, plain read on a tty.
+  if [[ -t 0 ]] && [[ -n ${TERM:-} ]]; then
+    local ans
+    read -r -p "$1 [y/N] " ans || return 1
+    [[ $ans =~ ^[yYoO]$ ]]
+    return
+  fi
+  if command -v omarchy-shell >/dev/null 2>&1; then
+    local sel done payload
+    sel=$(mktemp)
+    done=$(mktemp)
+    rm -f "$done"
+    payload=$(jq -cn --arg message "$1" --arg selectionFile "$sel" --arg doneFile "$done" \
+      '{message:$message, selectionFile:$selectionFile, doneFile:$doneFile}')
+    omarchy-shell shell summon mosquito.confirm "$payload" >/dev/null 2>&1 || true
+    while [[ ! -e $done ]]; do sleep 0.05; done
+    local ret=1
+    [[ $(cat "$sel" 2>/dev/null) == yes ]] && ret=0
+    rm -f "$sel" "$done"
+    return $ret
+  fi
+  if command -v zenity >/dev/null 2>&1; then
+    zenity --question --title="Mega caffeine" --text="$1" --ellipsize 2>/dev/null || return 1
+    return 0
+  fi
+  warn "No GUI to ask — continuing as 'no'."
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Natural-language duration → minutes ("max" for unlimited, "" if invalid).
+# Examples: 90 | 90m | 1h30 | 2 h | one hour | two and a half hours | day
+#            skip/default/unlimited/run to the end → max (battery + CPU only)
+# ---------------------------------------------------------------------------
+parse_duration() {
+  local in="$1" total half=0 w d
+  in=$(printf '%s' "$in" | tr '[:upper:]' '[:lower:]')
+  in=$(printf '%s' "$in" | sed -E 's/[[:space:]]+/ /g; s/^ +//; s/ +$//')
+
+  [[ -z $in ]] && { echo max; return 0; }
+
+  # Words "unlimited" → max (bounded by battery + CPU).
+  case " $in " in
+    *" skip "*|*" default "*|*" defaut "*|*" max "*|*" illimite "*|*" illimité "*|*" unlimited "*|*" infini "*|*" forever "*|*" bout "*)
+      echo max; return 0 ;;
+  esac
+
+  # "half" → +30 min before consolidation ("one and a half hours" = 90).
+  printf '%s' "$in" | grep -q 'demi' && half=30
+
+  # number-words 1..10 → digits
+  in=" $in "
+  while read -r w d; do
+    in=$(printf '%s' "$in" | sed -E "s/([^0-9])$w([^0-9])/\1$d\2/g")
+  done <<'EOF'
+un 1
+une 1
+deux 2
+trois 3
+quatre 4
+cinq 5
+six 6
+sept 7
+huit 8
+neuf 9
+dix 10
+EOF
+  in=$(printf '%s' "$in" | tr -s ' ' | sed -E 's/^ +//; s/ +$//')
+
+  # Normalize units and compact: "1 heure 30 min" → "1h30"
+  in=$(printf '%s' "$in" | sed -E \
+      -e 's/(jours|jour|days|day)/j/g' \
+      -e 's/(heures|heure|hours|hour)/h/g' \
+      -e 's/(minutes|minute|mins|min)/m/g' \
+      -e 's/et +//g' \
+      -e 's/[.,]([0-9.]+)/.\1/g' \
+      -e 's/[^0-9.dhjm]//g' )
+
+  # Nothing numeric → invalid (the caller falls back to max).
+  [[ $in != *[0-9]* ]] && { echo ""; return 0; }
+
+  # Sum of the value+unit pairs; bare number = minutes (like the reminder).
+  total=$(printf '%s' "$in" | grep -oE '[0-9.]+[dhjm]?|[0-9.]+' | awk '{
+      v = $0 + 0
+      u = substr($0, length($0), 1)
+      s += (u == "h") ? v * 60 : (u == "d" || u == "j") ? v * 1440 : v
+    } END { printf "%d", s + 0.5 }')
+  total=$(( total + half ))
+
+  if (( total > 0 )); then echo "$total"; return 0; fi
+  echo ""
+}
+
+ask_duration() {
+  # Text field at launch: usage duration in natural language, in the style of
+  # the Omarchy menu (input mode: square box with the short prompt inside),
+  # zenity as a fallback, plain read on a tty.
+  # NOTE: the Omarchy menu appends its own "…" to the prompt, so we pass it
+  # WITHOUT trailing dots (e.g. "Stop mega caffeine in" → shown as "... in…").
+  # Empty input (= skip) → 0 = unlimited (bounded battery/CPU).
+  local ans norm
+  if [[ -t 0 ]] && [[ -n ${TERM:-} ]]; then
+    printf "Duration of the mode? formats: 90m, 2h30, 1 hour, 2 days\n> (Empty input = unlimited, bounded by battery + CPU)\n> "
+    read -r ans || ans=""
+  else
+    ans=""
+    if command -v omarchy-menu-input >/dev/null 2>&1; then
+      ans=$(omarchy-menu-input "Stop mega caffeine in" --width 520 2>/dev/null || true)
+    elif command -v zenity >/dev/null 2>&1; then
+      ans=$(zenity --entry --title="Mega caffeine" \
+          --text="Duration of the mode?\n\nFormats: 90m, 2h30, 1 hour, 2 days\nEmpty input = unlimited (bounded by battery and CPU)" \
+          2>/dev/null || true)
+    fi
+  fi
+  norm=$(parse_duration "$ans" || true)
+  [[ -z $norm ]] && norm=max
+  if [[ $norm == "max" ]]; then
+    [[ -z ${CAFFEINE_QUIET:-} ]] && ok "duration: unlimited (battery + CPU)" >&2
+    echo 0
+  else
+    [[ -z ${CAFFEINE_QUIET:-} ]] && ok "duration: $norm min" >&2
+    echo "$norm"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Sensors
+# ---------------------------------------------------------------------------
+
+battery_pct() {
+  # Returns the % of the first BAT* battery, or -1 if none.
+  local c
+  c=$(cat /sys/class/power_supply/BAT*/capacity 2>/dev/null | head -1)
+  [[ -n $c ]] && echo "$c" || echo -1
+}
+
+cpu_temp() {
+  # CPU temperature (°C): k10temp first, otherwise thermal_zone.
+  local d temp
+  for d in /sys/class/hwmon/hwmon*; do
+    [[ $(cat "$d/name" 2>/dev/null) == "k10temp" ]] && temp=$(cat "$d/temp1_input" 2>/dev/null) && break
+  done
+  if [[ -z $temp ]]; then
+    for d in /sys/class/thermal/thermal_zone*; do
+      temp=$(cat "$d/temp" 2>/dev/null) && break
+    done
+  fi
+  [[ -n $temp ]] && echo $((temp / 1000)) || echo 0
+}
+
+current_tint() { hyprctl hyprsunset temperature 2>/dev/null | grep -oE '[0-9]+' | head -1; }
+
+hyprsunset_running() { pgrep -x hyprsunset >/dev/null; }
+
+# ---------------------------------------------------------------------------
+# Tint + ultra-save + sleep locking
+# ---------------------------------------------------------------------------
+
+apply_tint() {
+  mkdir -p "$STATE_DIR"
+  local prev hvrs
+  if hyprsunset_running; then
+    hvrs=yes
+    prev=$(current_tint || true)
+  else
+    hvrs=no
+    prev=""
+    setsid uwsm-app -- hyprsunset >/dev/null 2>&1 &
+    sleep 1
+  fi
+  echo "$prev" > "$TINT_PREV_FILE"
+  echo "$hvrs" > "$TINT_HYPRSUNSET_FILE"
+  # hyprsunset re-applies its temperature at boot: resend until it takes effect.
+  for _ in {1..10}; do
+    hyprctl hyprsunset temperature "$RED_TEMP" >/dev/null 2>&1 || true
+    sleep 0.2
+    [[ $(current_tint || true) == "$RED_TEMP" ]] && break
+  done
+}
+
+restore_tint() {
+  local prev hvrs
+  prev=$(cat "$TINT_PREV_FILE" 2>/dev/null || true)
+  hvrs=$(cat "$TINT_HYPRSUNSET_FILE" 2>/dev/null || true)
+  if [[ -n $prev && $prev != "$RED_TEMP" ]]; then
+    hyprctl hyprsunset temperature "$prev" >/dev/null 2>&1
+  else
+    hyprctl hyprsunset temperature "$IDENTITY_TEMP" >/dev/null 2>&1
+  fi
+  if [[ $hvrs != "yes" ]]; then
+    sleep 0.3
+    pkill -x hyprsunset >/dev/null 2>&1 || true
+  fi
+  rm -f "$TINT_PREV_FILE" "$TINT_HYPRSUNSET_FILE"
+}
+
+apply_ultrasave() {
+  # Already on (enabled outside this session, or by a previous run) —
+  # nothing to ask and nothing to change: asking "enable it?" when it's
+  # already enabled is a moot question, and answering "no" used to force it
+  # off at session end even though nobody asked mega-caffeine to touch a
+  # pre-existing setting. Leave it alone; restore_ultrasave() correctly
+  # keeps it on afterward too (was=on).
+  local was=off
+  # Source of truth is ultra-save's own state file; `ultra-save status` is a
+  # human box ("Mode: on"), so the old `grep -q '^on$'` never matched and the
+  # already-on question was asked every time. Fall back to parsing the box.
+  if [[ -f "$HOME/.local/state/ultra-save/state" ]] \
+     && grep -q '^on$' "$HOME/.local/state/ultra-save/state" 2>/dev/null; then
+    was=on
+  elif [[ -x $ULTRASAVE_CMD ]] && "$ULTRASAVE_CMD" status 2>/dev/null | grep -qiE 'Mode:[[:space:]]*on'; then
+    was=on
+  fi
+  if [[ $was == "on" ]]; then
+    echo "on" > "$ULTRASAVE_WAS_FILE"
+    return 0
+  fi
+  if [[ $ULTRASAVE_ASK == "ask" ]]; then
+    if ! ask_yes "Enable ultra power save mode during this session?"; then
+      echo "off" > "$ULTRASAVE_WAS_FILE"
+      return 0
+    fi
+  elif [[ $ULTRASAVE_ASK == "no" ]]; then
+    echo "off" > "$ULTRASAVE_WAS_FILE"
+    return 0
+  fi
+  echo "off" > "$ULTRASAVE_WAS_FILE"
+  sudo -n "$ULTRASAVE_CMD" on >/dev/null 2>&1 || warn "ultra-save on failed (sudoers?)"
+}
+
+restore_ultrasave() {
+  local was
+  was=$(cat "$ULTRASAVE_WAS_FILE" 2>/dev/null || echo on)
+  if [[ $was != "on" ]]; then
+    sudo -n "$ULTRASAVE_CMD" off >/dev/null 2>&1 || true
+  fi
+  rm -f "$ULTRASAVE_WAS_FILE"
+}
+
+# ---------------------------------------------------------------------------
+# Stay awake (Omarchy "caffeine" indicator: Allow Idle Lock & Screensaver).
+# While the mode is active we force the "allow idle lock & screensaver" state
+# ON so the screensaver / screen lock do not interrupt the running job; the
+# indicator icon turns red (and revealed/active) in the bar. On stop we
+# restore whatever state the user had before starting the mode.
+# ---------------------------------------------------------------------------
+stayawake_state() { [[ -f "$STAYAWAKE_FILE" ]] && echo on || echo off; }
+
+apply_stayawake() {
+  # $1 = on|off (only acts if the state actually changes, so we don't clobber
+  # a value that another tool/user set in the meantime).
+  local cur
+  cur=$(stayawake_state)
+  [[ $cur == "$1" ]] && return 0
+  mkdir -p "$STATE_DIR"
+  if [[ $1 == on ]]; then
+    mkdir -p "$(dirname "$STAYAWAKE_FILE")"
+    touch "$STAYAWAKE_FILE"
+  else
+    rm -f "$STAYAWAKE_FILE"
+  fi
+  [[ -z ${CAFFEINE_QUIET:-} ]] && ok "stay-awake $1 (allow idle lock & screensaver)"
+}
+
+start_stayawake() {
+  # Remember the previous user state (once), then force ON.
+  if [[ ! -f "$STAYAWAKE_PREV_FILE" ]]; then
+    mkdir -p "$STATE_DIR"
+    stayawake_state > "$STAYAWAKE_PREV_FILE"
+  fi
+  apply_stayawake on
+}
+
+stop_stayawake() {
+  # Restore the state that was active before this session.
+  local prev
+  prev=$(cat "$STAYAWAKE_PREV_FILE" 2>/dev/null || echo off)
+  rm -f "$STAYAWAKE_PREV_FILE"
+  apply_stayawake "$prev"
+}
+
+start_lid_block() {
+  setsid --fork systemd-inhibit --what=handle-lid-switch:sleep \
+    --who="Mega caffeine" \
+    --why="Coffee mode active: lid closed without sleeping" \
+    sleep infinity >/dev/null 2>&1 &
+  echo $! > "$INHIBIT_PID_FILE"
+}
+
+stop_lid_block() {
+  # Kill by pattern (robust: setsid --fork can shift the captured pid), then
+  # by stored pid for safety. The [..] prevent pkill -f from matching itself
+  # when the string appears in the caller's command line.
+  pkill -f "[s]ystemd-inhibit --what=handle-lid-switch:sleep" >/dev/null 2>&1 || true
+  local pid
+  pid=$(cat "$INHIBIT_PID_FILE" 2>/dev/null || true)
+  [[ -n $pid ]] && kill "$pid" >/dev/null 2>&1 || true
+  rm -f "$INHIBIT_PID_FILE"
+}
+
+# ---------------------------------------------------------------------------
+# Start / stop
+# ---------------------------------------------------------------------------
+
+start_caffeine() {
+  if is_running; then
+    notify "Mega caffeine" "Already active." normal
+    return 0
+  fi
+
+  mkdir -p "$STATE_DIR"
+
+  # Live mode: force unlimited no-prompt activation, never ask about
+  # ultra-save or the battery override. The red tint is applied as normal
+  # (RED_TEMP stays at its default/CAFFEINE_TINT value) so the live-mode
+  # activation gets the same warm screen as a regular caffeine session.
+  if is_live_mode; then
+    DURATION_RESOLVED=yes
+    MAX_MINUTES=0
+    ULTRASAVE_ASK=no
+    OVERRIDE_ASK=no
+  fi
+
+  # 1) Usage duration: text field at launch (unless provided as an option).
+  if [[ ${DURATION_RESOLVED:-} != yes ]]; then
+    local m
+    m=$(ask_duration)
+    if [[ $m =~ ^[0-9]+$ ]] && (( m > 0 )); then
+      MAX_MINUTES=$m
+    else
+      MAX_MINUTES=0
+    fi
+  fi
+
+  # 2) Battery limit: below 30 %, asks for the override (run to the end).
+  local b override=0
+  b=$(battery_pct)
+  if [[ $b -ne -1 ]] && (( b < LOW_BATTERY_PROMPT_AT )); then
+    if [[ $OVERRIDE_ASK == "ask" ]]; then
+      if ask_yes "Battery at $b% — force the battery limit and run to the end?"; then
+        override=1
+      else
+        notify "Mega caffeine" "Battery too low ($b%). Aborting." normal persist
+        return 1
+      fi
+    elif [[ $OVERRIDE_ASK == "yes" ]]; then
+      override=1
+    fi
+  fi
+  echo "$override" > "$BATTERY_OVERRIDE_FILE"
+
+  # Max timer: auto-deactivate after MAX_MINUTES (0 = unlimited).
+  if (( MAX_MINUTES > 0 )); then
+    echo $(( $(date +%s) + MAX_MINUTES * 60 )) > "$MAX_END_FILE"
+  else
+    rm -f "$MAX_END_FILE"
+  fi
+
+  apply_tint || { err "Could not apply the tint."; return 1; }
+  apply_ultrasave
+  start_lid_block || { err "systemd-inhibit unavailable."; restore_tint; return 1; }
+  start_stayawake
+
+  echo on > "$STATE_FILE"
+
+  setsid --fork bash "$SELF" --monitor </dev/null >/dev/null 2>&1 &
+
+  notify "Mega caffeine" "Always awake <b>no matter what</b> for $(fmt_duration "$MAX_MINUTES")" normal persist
+  ok "Mega caffeine activated."
+}
+
+stop_caffeine() {
+  # $1 = reason, $2 = "true" when invoked from the monitor itself.
+  # With self=true we skip the pkill of --monitor: that pattern would match
+  # THIS very process (bash ... mega-caffeine --monitor) and SIGTERM us in the
+  # middle of the cleanup, leaving the lid-block, tint and stay-awake stuck.
+  local reason="${1:-}" self="${2:-}"
+
+  # While live mode is active, mega caffeine is locked on: refuse to disable
+  # (except when the live-mode script itself ends the session, signalled via
+  # CAFFEINE_LIVE_FORCE_OFF=1, in which case we skip restore_ultrasave so it
+  # doesn't fight the live-mode shutdown).
+  if is_live_mode && [[ ${CAFFEINE_LIVE_FORCE_OFF:-0} != 1 ]]; then
+    notify "Mega caffeine" "Live mode active — it can't be disabled." normal
+    return 1
+  fi
+
+  # Always clean up the leftovers (inhibitor, monitor, tint, ultra-save),
+  # even if the state is already "off" (e.g. off interrupted by a kill).
+  local was_running=false
+  is_running && was_running=true
+
+  echo off > "$STATE_FILE"
+  if [[ $self != true ]]; then
+    pkill -f "[m]ega-caffeine --monitor" >/dev/null 2>&1 || true
+  fi
+  stop_lid_block
+  restore_tint
+  if [[ ${CAFFEINE_LIVE_FORCE_OFF:-0} != 1 ]]; then
+    restore_ultrasave
+  else
+    rm -f "$ULTRASAVE_WAS_FILE"
+  fi
+  stop_stayawake
+  rm -f "$BATTERY_OVERRIDE_FILE" "$MAX_END_FILE"
+
+  # Clear the persistent "Always awake" toast (notify with persist above) so
+  # it doesn't linger as stale after the mode is actually off.
+  command -v omarchy-notification-dismiss >/dev/null 2>&1 \
+    && omarchy-notification-dismiss "Mega caffeine" >/dev/null 2>&1 || true
+
+  if [[ $was_running != true ]] && [[ -z ${CAFFEINE_QUIET:-} ]]; then
+    notify "Mega caffeine" "Already off." normal
+  elif [[ -n $reason ]]; then
+    notify "Mega caffeine" "Deactivated: $reason." normal
+  else
+    notify "Mega caffeine" "Deactivated." normal
+  fi
+  [[ $was_running == true ]] && ok "Mega caffeine stopped${reason:+ ($reason)}."
+}
+
+# Monitoring loop (launched in the background by start_caffeine).
+monitor() {
+  while is_running; do
+    local t b override now end
+    # During live mode the thermal guard is live-mode-watch (which caps CPU
+    # frequency instead of killing the coffee mode), so skip temp/battery
+    # auto-stops here.
+    if is_live_mode; then
+      sleep "$POLL_SECONDS"
+      continue
+    fi
+    t=$(cpu_temp)
+    if (( t > TEMP_LIMIT )); then
+      stop_caffeine "CPU temperature ${t}°C" true
+      exit 0
+    fi
+    override=$(cat "$BATTERY_OVERRIDE_FILE" 2>/dev/null || echo 0)
+    if [[ $override != 1 ]]; then
+      b=$(battery_pct)
+      if [[ $b -ne -1 ]] && (( b < BATTERY_LIMIT )); then
+        stop_caffeine "battery ${b}%" true
+        exit 0
+      fi
+    fi
+    end=$(cat "$MAX_END_FILE" 2>/dev/null || echo 0)
+    if (( end > 0 )); then
+      now=$(date +%s)
+      if (( now >= end )); then
+        stop_caffeine "max duration reached (${MAX_MINUTES} min)" true
+        exit 0
+      fi
+    fi
+    sleep "$POLL_SECONDS"
+  done
+}
+
+# ---------------------------------------------------------------------------
+# Status
+# ---------------------------------------------------------------------------
+
+print_status() {
+  if is_running; then
+    local t b end now remain
+    t=$(cpu_temp)
+    b=$(battery_pct)
+    msg "Mega caffeine: ACTIVE"
+    msg "  screen tint: ${RED_TEMP}K (red)"
+    msg "  CPU temperature: ${t}°C (limit ${TEMP_LIMIT}°C)"
+    msg "  battery: ${b}% (limit ${BATTERY_LIMIT}%${OVERRIDE:-})"
+    end=$(cat "$MAX_END_FILE" 2>/dev/null || echo 0)
+    if (( end > 0 )); then
+      now=$(date +%s)
+      remain=$(((end - now + 59) / 60))
+      (( remain < 0 )) && remain=0
+      msg "  auto-stop in: ${remain} min max"
+    fi
+  else
+    msg "Mega caffeine: inactive"
+  fi
+}
+
+status_json() {
+  local enabled=false
+  is_running && enabled=true
+  local end=0 now=0 remainingMinutes=0 unlimited=false stayawake
+  end=$(cat "$MAX_END_FILE" 2>/dev/null || echo 0)
+  if (( end > 0 )); then
+    now=$(date +%s)
+    remainingMinutes=$(( (end - now + 59) / 60 ))
+    (( remainingMinutes < 0 )) && remainingMinutes=0
+  else
+    unlimited=true
+  fi
+  [[ -f "$STAYAWAKE_FILE" ]] && stayawake=true || stayawake=false
+  local liveMode=false
+  is_live_mode && liveMode=true
+  jq -cn --argjson enabled "$enabled" --argjson remainingMinutes "$remainingMinutes" \
+    --argjson unlimited "$unlimited" --argjson stayAwake "$stayawake" \
+    --argjson liveMode "$liveMode" \
+    '{enabled:$enabled, remainingMinutes:$remainingMinutes, unlimited:$unlimited, stayAwake:$stayAwake, liveMode:$liveMode, temperature:'"${RED_TEMP}"', tempLimit:'"${TEMP_LIMIT}"', batteryLimit:'"${BATTERY_LIMIT}"'}'
+}
+
+# ---------------------------------------------------------------------------
+# Command-line arguments
+# ---------------------------------------------------------------------------
+
+parse_on_options() {
+  while (($#)); do
+    case "$1" in
+      --ultrasave) ULTRASAVE_ASK=yes ;;
+      --no-ultrasave) ULTRASAVE_ASK=no ;;
+      --override-battery) OVERRIDE_ASK=yes ;;
+      --no-override-battery) OVERRIDE_ASK=no ;;
+      --temp-limit) TEMP_LIMIT="${2?--temp-limit <°C>}"; shift ;;
+      --tint) RED_TEMP="${2?--tint <K>}"; TINT_GIVEN=1; shift ;;
+      --max-minutes) MAX_MINUTES="${2?--max-minutes <M>}"; MAX_MINUTES=${MAX_MINUTES:-0}; DURATION_RESOLVED=yes; shift ;;
+      --duration) : "${2?--duration <duration>}"; MAX_MINUTES=$(parse_duration "$2" || true); [[ $MAX_MINUTES == "max" || -z $MAX_MINUTES ]] && MAX_MINUTES=0; DURATION_RESOLVED=yes; shift ;;
+      *) err "Unknown option: $1" >&2; return 1 ;;
+    esac
+    shift
+  done
+}
+
+case "${1:-toggle}" in
+  on|start|enable)
+    shift
+    parse_on_options "$@" || exit 1
+    start_caffeine
+    ;;
+  off|stop|disable)
+    stop_caffeine
+    ;;
+  toggle)
+    shift
+    if is_running; then
+      stop_caffeine
+    else
+      parse_on_options "$@" || exit 1
+      start_caffeine
+    fi
+    ;;
+  status)
+    print_status
+    ;;
+  --status)
+    status_json
+    ;;
+  probe|--probe)
+    msg "probe: cpu=$(cpu_temp)°C battery=$(battery_pct)% tint=$(current_tint || echo -)K hyprsunset=$(hyprsunset_running && echo running || echo stopped)"
+    ;;
+  --monitor)
+    monitor
+    ;;
+  *)
+    err "Usage: $0 {on|off|toggle|status|--status|probe} [options]" >&2
+    exit 1
+    ;;
+esac

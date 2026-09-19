@@ -1,0 +1,15 @@
+# webapps.catalog — Omarchy webapps of the "apps" module (type WEB).
+#
+# One catalog per type (gui / tui / webapps), read by the "apps" module
+# (setup-apps.sh dispatcher + webapps/setup-webapps.sh). Each line keeps
+# the type prefix so the backup selection format (apps.selected) stays
+# identical whatever the catalog:
+#
+#   WEB <name> | <url> | <icon>  → Omarchy webapp (omarchy webapp install)
+#
+# Blank lines and lines starting with "#" are ignored.
+# The actual selection is saved by the backup (setup-customarchy.sh --backup) in apps.selected.
+
+WEB WhatsApp|https://web.whatsapp.com/|whatsapp
+WEB kSuite|https://ksuite.infomaniak.com/all/kdrive/app/drive/1099475/files/5|ksuite
+WEB Schwung Manager|http://move.local:7700|schwung-manager

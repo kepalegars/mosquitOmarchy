@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "mosquito.confirm",
+  "name": "Confirm (Mega Caffeine)",
+  "version": "1.0.0",
+  "author": "Mosquito",
+  "description": "Native square confirmation dialog (message + Yes/No) for Mega caffeine prompts",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Confirm.qml"
+  }
+}

@@ -1,0 +1,248 @@
+#!/usr/bin/env bash
+# power-helper — Backend helper for the custom.power Omarchy plugin.
+#
+# Convenience wrapper that composes two concerns in one panel:
+#   1. Lenovo charge-preservation (charge_control_*_threshold via sysfs)
+#   2. Ultra-save low-power mode (delegates to ~/.local/bin/ultra-save)
+#
+# Usage:
+#   power-helper charging probe
+#   power-helper charging list [--active-state]
+#   power-helper charging set <start> <end>       # custom threshold, e.g. 50 80
+#   power-helper charging preset <name>           # off/1d/1w...
+#   power-helper ultrasave status
+#   power-helper ultrasave on|off|toggle
+#
+# All output is plain key\tvalue per line (like omarchy-battery-status --shell)
+# so the QML process can parse it with Model.parseKeyValue.
+
+set -euo pipefail
+
+BAT_DIR="/sys/class/power_supply/BAT0"
+ULTRASAVE="$HOME/.local/bin/ultra-save"
+ULTRASAVE_STATE="$HOME/.local/state/ultra-save/state"
+
+# ---------------------------------------------------------------------------
+# Model detection — confirm we're on a Lenovo with charge-control support
+# ---------------------------------------------------------------------------
+has_charge_control() {
+  [[ -w "$BAT_DIR/charge_control_end_threshold" ]] && [[ -w "$BAT_DIR/charge_control_start_threshold" ]]
+}
+
+# ---------------------------------------------------------------------------
+# Charging profiles (presets matching the common ThinkPad convention).
+# Each row: name<TAB>start<TAB>end
+# ---------------------------------------------------------------------------
+profiles_presets() {
+  cat <<'EOF'
+full	0	100
+optimized	75	80
+mostly	50	60
+half	40	50
+low	30	40
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# charging probe — print hardware support flags
+# ---------------------------------------------------------------------------
+charging_probe() {
+  local w=0 model="unknown" vendor=""
+  has_charge_control && w=1
+  if [[ -r /sys/class/dmi/id/product_name ]]; then
+    model=$(cat /sys/class/dmi/id/product_name)
+  fi
+  if [[ -r /sys/class/dmi/id/sys_vendor ]]; then
+    vendor=$(cat /sys/class/dmi/id/sys_vendor)
+  fi
+  printf 'supported\t%s\n' "$w"
+  printf 'writable\t%s\n' "$w"
+  printf 'model\t%s\n' "$model"
+  printf 'vendor\t%s\n' "$vendor"
+}
+
+# ---------------------------------------------------------------------------
+# charging list — active value and preset list
+# ---------------------------------------------------------------------------
+charging_list() {
+  local start end
+  start=$(cat "$BAT_DIR/charge_control_start_threshold" 2>/dev/null || echo 0)
+  end=$(cat "$BAT_DIR/charge_control_end_threshold" 2>/dev/null || echo 100)
+
+  local active="custom"
+  # Reconstruct the active preset name by matching current threshold.
+  while IFS=$'\t' read -r pname ps pe; do
+    [[ -z "$pname" ]] && continue
+    if [[ "$ps" == "$start" && "$pe" == "$end" ]]; then
+      active="$pname"
+      break
+    fi
+  done < <(profiles_presets 2>/dev/null || true)
+
+  case "${1:-}" in
+    --active-state)
+      printf 'active\t%s\n' "$active"
+      printf 'start\t%s\n' "$start"
+      printf 'end\t%s\n' "$end"
+      ;;
+    *)
+      echo -e "name\tstart\tend\tactive"
+      while IFS=$'\t' read -r pname ps pe; do
+        [[ -z "$pname" ]] && continue
+        printf '%s\t%s\t%s\t%s\n' "$pname" "$ps" "$pe" \
+          "$([[ "$ps" == "$start" && "$pe" == "$end" ]] && echo 1 || echo 0)"
+      done < <(profiles_presets 2>/dev/null || true)
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# charging set — write custom thresholds
+# ---------------------------------------------------------------------------
+charging_set() {
+  local start="${1:?start threshold required}"
+  local end="${2:?end threshold required}"
+
+  # Validate: integers 0-100, end >= start + 5
+  if ! [[ "$start" =~ ^[0-9]+$ && "$end" =~ ^[0-9]+$ ]]; then
+    echo "error	Invalid threshold values: start=$start end=$end" >&2
+    exit 1
+  fi
+  if (( start < 0 || start > 100 || end < 0 || end > 100 || end <= start )); then
+    echo "error	Valid range: 0<=start<end<=100 (end must be > start)" >&2
+    exit 1
+  fi
+
+  if ! has_charge_control; then
+    echo "error	Charge control not writable (is the udev rule installed?)" >&2
+    exit 1
+  fi
+
+  echo "$start" > "$BAT_DIR/charge_control_start_threshold" 2>/dev/null || {
+    echo "error	Failed to write start threshold" >&2
+    exit 1
+  }
+  echo "$end" > "$BAT_DIR/charge_control_end_threshold" 2>/dev/null || {
+    echo "error	Failed to write end threshold" >&2
+    exit 1
+  }
+
+  printf 'start\t%s\nend\t%s\nstatus\tok\n' "$start" "$end"
+}
+
+# ---------------------------------------------------------------------------
+# charging preset — apply a named preset
+# ---------------------------------------------------------------------------
+charging_preset() {
+  local name="${1:?preset name required}"
+  local ps pe found=0
+  while IFS=$'\t' read -r pname pstart pend; do
+    [[ "$pname" == "$name" ]] || continue
+    ps="$pstart"; pe="$pend"; found=1
+    break
+  done < <(profiles_presets)
+  if (( found == 0 )); then
+    echo "error	Unknown preset: $name" >&2
+    exit 1
+  fi
+  charging_set "$ps" "$pe"
+  echo "preset	$name"
+}
+
+# ---------------------------------------------------------------------------
+# conservation — Lenovo battery conservation mode (single toggle).
+#
+# ON  = limit charging to ~80% (start 75, stop 80) to prolong battery life
+#       when the machine stays plugged into AC, mirroring Lenovo Vantage's
+#       "Battery Conservation Mode".
+# OFF = full charge range (0-100%).
+# ---------------------------------------------------------------------------
+CONS_START=75
+CONS_END=80
+
+conservation_status() {
+  local end
+  end=$(cat "$BAT_DIR/charge_control_end_threshold" 2>/dev/null || echo 100)
+  local state="off"
+  (( end < 100 )) && state="on"
+  printf 'state\t%s\n' "$state"
+  printf 'start\t%s\n' "$(cat "$BAT_DIR/charge_control_start_threshold" 2>/dev/null || echo 0)"
+  printf 'end\t%s\n' "$end"
+}
+
+conservation_set() {
+  local want="$1"
+  if ! has_charge_control; then
+    echo "error	Charge control not writable (is the udev rule installed?)" >&2
+    exit 1
+  fi
+  if [[ "$want" == "on" ]]; then
+    charging_set "$CONS_START" "$CONS_END" >/dev/null || exit 1
+  else
+    charging_set 0 100 >/dev/null || exit 1
+  fi
+  conservation_status
+}
+
+# ---------------------------------------------------------------------------
+# ultrasave — machine-readable status + delegate toggle
+# ---------------------------------------------------------------------------
+ultrasave_status() {
+  local state="off"
+  [[ -f "$ULTRASAVE_STATE" ]] && grep -q '^on$' "$ULTRASAVE_STATE" && state="on"
+
+  local bat_pct="" power_w="" profile="" 
+  bat_pct=$(cat /sys/class/power_supply/BAT*/capacity 2>/dev/null | head -1 || true)
+  profile=$(powerprofilesctl get 2>/dev/null || true)
+
+  local pn
+  pn=$(cat /sys/class/power_supply/BAT*/power_now 2>/dev/null | head -1 || echo 0)
+  [[ "$pn" != "0" && -n "$pn" ]] && power_w=$(awk "BEGIN {printf \"%.1f\", $pn / 1000000}")
+
+  printf 'state\t%s\n' "$state"
+  printf 'power\t%s\n' "${power_w:-}W"
+  printf 'battery\t%s\n' "${bat_pct:-?}%"
+  printf 'profile\t%s\n' "$profile"
+}
+
+ultrasave_set() {
+  local act="$1"
+  if ! [[ -x "$ULTRASAVE" ]]; then
+    echo "error	ultra-save helper not found at $ULTRASAVE" >&2
+    exit 1
+  fi
+  sudo -n "$ULTRASAVE" "$act" >/dev/null 2>&1 || {
+    echo "error	could not run ultra-save $act (NOPASSWD sudo needed)" >&2
+    exit 1
+  }
+  sleep 0.2
+  ultrasave_status
+}
+
+# ---------------------------------------------------------------------------
+# Main dispatch
+# ---------------------------------------------------------------------------
+case "${1:-}" in
+  charging)
+    case "${2:-}" in
+      probe)          charging_probe ;;
+      list)           charging_list "${3:-}" ;;
+      set)            charging_set "${3:-}" "${4:-}" ;;
+      preset)         charging_preset "${3:-}" ;;
+      conservation)   conservation_set "${3:-}" ;;
+      status)         conservation_status ;;
+      *)              echo "Usage: power-helper charging {probe|list|set|preset|conservation|status}" >&2; exit 1 ;;
+    esac
+    ;;
+  ultrasave)
+    case "${2:-}" in
+      status)          ultrasave_status ;;
+      on|off|toggle)   ultrasave_set "$2" ;;
+      *)               echo "Usage: power-helper ultrasave {status|on|off|toggle}" >&2; exit 1 ;;
+    esac
+    ;;
+  *)
+    echo "Usage: power-helper {charging|ultrasave}" >&2
+    exit 1
+    ;;
+esac

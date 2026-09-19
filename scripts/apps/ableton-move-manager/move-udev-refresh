@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# =============================================================================
+# move-udev-refresh — the only remaining USB-triggered behavior: warns when
+# the Move disconnects *while the Move Manager webapp is actively in use*
+# (its own dedicated Chromium profile is running — whether launched
+# standalone or through mosquito-move-manager, either way). Does nothing on
+# connect, and does nothing at all if the Manager isn't open. An earlier
+# version of this script also force-redrew mosquito-move-manager's main menu
+# live via the shell's IPC — dropped by user request; connection status is
+# checked once, right before that menu is (re)shown, never pushed live while
+# it sits open.
+#
+# Called by udev rule 99-ableton-move.rules (RUN+=) on both add and remove.
+# Runs as root: resolves the real desktop user and session
+# (XDG_RUNTIME_DIR/WAYLAND_DISPLAY) before touching anything, so it reaches
+# the user's own Wayland session.
+# =============================================================================
+set -euo pipefail
+
+[[ ${ACTION:-} == remove ]] || exit 0
+
+# Resolve the real desktop user (defined by setup-ableton-move-manager.sh; fallback).
+if [[ $EUID -eq 0 && -n ${SUDO_USER:-} ]]; then
+  SESS_USER="$SUDO_USER"
+else
+  SESS_USER="${USER:-$(id -un)}"
+fi
+
+UID_SESS="$(id -u "$SESS_USER" 2>/dev/null || echo "$EUID")"
+RUNTIME="/run/user/$UID_SESS"
+[[ -d $RUNTIME ]] || exit 0
+
+SESS_HOME="$(getent passwd "$SESS_USER" 2>/dev/null | cut -d: -f6)"
+SESS_HOME="${SESS_HOME:-/home/$SESS_USER}"
+
+# Same profile-path identifier mosquito-move-manager's own manager_running()
+# and move-manager-webapp's close_existing_instance() use — matches whether
+# the Manager was opened standalone or through the script.
+PROFILE="$SESS_HOME/.cache/move-manager"
+pgrep -f -- "--user-data-dir=$PROFILE" >/dev/null 2>&1 || exit 0
+
+WAY=""
+for w in "$RUNTIME"/wayland-*; do
+  [[ -S $w ]] && { WAY=$(basename "$w"); break; }
+done
+[[ -n $WAY ]] || WAY="wayland-0"
+
+run_as_user() {
+  if [[ $EUID -eq 0 && $SESS_USER != root ]]; then
+    sudo -u "$SESS_USER" XDG_RUNTIME_DIR="$RUNTIME" WAYLAND_DISPLAY="$WAY" "$@"
+  else
+    XDG_RUNTIME_DIR="$RUNTIME" WAYLAND_DISPLAY="$WAY" "$@"
+  fi
+}
+
+if run_as_user command -v omarchy-notification-send >/dev/null 2>&1; then
+  run_as_user omarchy-notification-send "Move Manager" \
+    "Ableton Move disconnected via USB — the Manager may not work until it reconnects" \
+    -g "🔴" -u normal -t -1 2>/dev/null || true
+else
+  run_as_user notify-send -i audio-x-generic "Move Manager" \
+    "Ableton Move disconnected via USB — the Manager may not work until it reconnects" 2>/dev/null || true
+fi
+exit 0
