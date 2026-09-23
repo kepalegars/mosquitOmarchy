@@ -139,7 +139,13 @@ Panel {
       anchors.fill: parent
       onCloseRequested: root.close()
       onTextKey: function(text) {
+        // When the panel is PINNED, only capture keys if this Panel has the
+        // active focus — otherwise let the key fall through to the app under
+        // the (semi-transparent) panel. Unpinned panels behave as before.
         var key = String(text || "").toLowerCase()
+        if (root.pinned && root.Window.activeFocusItem !== root.contentItem) {
+          return
+        }
         if (key === " " || key === "space") {
           if (root.service) root.service.resumeAnalysis()
           return
@@ -150,6 +156,7 @@ Panel {
         }
         if (key === "r" && root.service) root.service.resetAnalysis()
         else if (key === "g" && root.service) root.service.openTui()
+        else if (key === "h") root.pinned = !root.pinned
         else if (key === "p" && root.service) root.service.togglePaused()
         else if (key === "s") root.settingsVisible = !root.settingsVisible
         else if (key === "m") { root.midiSectionVisible = !root.midiSectionVisible; if (root.service) root.service.toggleMidi() }
@@ -193,14 +200,28 @@ Panel {
               onClicked: root.pinned = !root.pinned
             }
 
-            Text {
+            Column {
               anchors.verticalCenter: parent.verticalCenter
-              text: "jamjamjam"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.subtitle
-              font.bold: true
-              font.letterSpacing: Style.space(1)
+              spacing: 0
+              // Tiny version caption above the title (manifest version, e.g.
+              // "v1.0.0"). Kept small/grey so it never competes with the
+              // bold subtitle.
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "v" + (root.manifest && root.manifest.version !== undefined ? String(root.manifest.version) : "1.0.0")
+                color: Util.alpha(root.foreground, 0.55)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.micro
+              }
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "jamjamjam"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.subtitle
+                font.bold: true
+                font.letterSpacing: Style.space(1)
+              }
             }
           }
 
@@ -614,15 +635,11 @@ Panel {
           implicitHeight: root.fretboardHeight
           clip: true
 
-          Rectangle {
+          // (grey wrapper removed — show the content directly, layout is good as-is)
+          Column {
             anchors.fill: parent
-            radius: Style.cornerRadius
-            color: Util.alpha(Color.background, 0.35)
-
-            Column {
-              anchors.fill: parent
-              anchors.margins: Style.spacing.sm
-              spacing: Style.spacing.xs
+            anchors.margins: Style.spacing.sm
+            spacing: Style.spacing.xs
 
               Row {
                 id: fretLegend
@@ -675,14 +692,57 @@ Panel {
                 }
               }
 
-              GuitarFretboard {
+              Item {
                 width: parent.width
                 height: Math.max(Style.space(90), parent.height - fretLegend.height - Style.spacing.xs)
-                dots: guitar.dots || []
-                stringsData: guitar.strings || []
-                keyLabel: String(guitar.label || "")
-                accentColor: root.accent
-                rootColor: Color.urgent
+
+                // String-note column to the LEFT of the fretboard (high E at
+                // the top, low E at the bottom — standard guitar orientation).
+                Column {
+                  id: stringNoteColumn
+                  width: Style.space(14)
+                  anchors.left: parent.left
+                  anchors.top: parent.top
+                  anchors.bottom: parent.bottom
+                  spacing: 0
+                  Repeater {
+                    model: 6
+                    delegate: Item {
+                      width: parent.width
+                      height: parent.height / 6
+                      // High E (string index 5) at the top, low E at the bottom.
+                      property string note: {
+                        var arr = root.guitar.strings || []
+                        var i = 5 - index
+                        return (arr[i] && arr[i].name !== undefined) ? arr[i].name : ""
+                      }
+                      Text {
+                        anchors.centerIn: parent
+                        text: parent.note
+                        color: Util.alpha(Color.foreground, 0.65)
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                        font.bold: true
+                      }
+                    }
+                  }
+                }
+
+                GuitarFretboard {
+                  // The 12th-fret case (double-dot octave marker) is hidden
+                  // (12-fret boards stop before the standard 12/14 double dot,
+                  // so a marker there reads as "12" written on the neck).
+                  anchors.left: stringNoteColumn.right
+                  anchors.leftMargin: Style.spacing.xs
+                  anchors.right: parent.right
+                  anchors.top: parent.top
+                  anchors.bottom: parent.bottom
+                  dots: (guitar.dots || []).filter(function(d) { return d.fret < 12 })
+                  stringsData: guitar.strings || []
+                  keyLabel: String(guitar.label || "")
+                  accentColor: root.accent
+                  rootColor: Color.urgent
+                }
               }
             }
           }

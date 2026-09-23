@@ -50,6 +50,18 @@ type Confirm struct {
 	focus int
 }
 
+// SetFocus focuses one of the dialog's buttons by index (0 = first, last = Yes).
+func (c Confirm) SetFocus(idx int) Confirm {
+	if idx < 0 {
+		idx = 0
+	}
+	if idx > c.buttonCount()-1 {
+		idx = c.buttonCount() - 1
+	}
+	c.focus = idx
+	return c
+}
+
 func NewConfirm(message, noLabel, yesLabel string) Confirm {
 	if noLabel == "" {
 		noLabel = "No"

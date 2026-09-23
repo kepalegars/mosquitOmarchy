@@ -3223,8 +3223,17 @@ main(){
   # as "do everything with defaults", a MODE/--status/--uninstall has its own
   # path). The step-by-step wizard remains reachable from the menu's setup /
   # update entries (and via the -y / --update flags).
+  # Interactive run with no flags → hand over to the NEW Go/Bubble Tea TUI
+  # (it replaced the old in-script gum launcher_picker; this script remains
+  # the engine behind the TUI's Setup/Uninstall/Backup flows and the flag
+  # driven paths). This makes `./setup-customarchy.sh` behave exactly like
+  # the mosquitomarchy menu entry / shortcut.
   if [[ -t 0 && -t 1 && -z $MODE && $STATUS_ONLY == 0 && $UNINSTALL_DELEGATE == 0 && $YES == 0 ]]; then
-    launcher_menu
+    TUI="$HOME/.local/bin/mosquitomarchy-tui"
+    if [[ -x $TUI ]]; then
+      exec "$TUI"
+    fi
+    warn "TUI not built yet — falling back to the old wizard."
   fi
   # Early modes: pure delegation, no report needed.
   case $MODE in

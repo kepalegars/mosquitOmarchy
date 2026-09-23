@@ -354,21 +354,38 @@ snapshot_scratchpad() {
   special_clients > "$SCRATCHPAD_SNAPSHOT"
 }
 
+# scratchpad_occupied_by_others: reports the class|initialTitle lines of
+# scratchpad clients other than the patchbay itself (so a single-instance
+# qpwgraph already there does not count as "occupied").
+scratchpad_occupied_by_others() {
+  local line
+  while IFS= read -r line; do
+    [[ -z $line ]] && continue
+    local addr class init_title pid
+    IFS='|' read -r addr class init_title pid <<< "$line"
+    case $class in
+      qpwgraph|org.rncbc.qpwgraph|org.pq_graph.Qpwgraph) continue ;;
+    esac
+    printf "%s\n" "$class"
+  done < <(special_clients)
+}
+
 open_routing_tool() {
-  [[ $ROUTING_TOOL == no ]] && return 0
+  # Returns 0 = patched (parked in scratchpad or opened in current
+  # workspace after user consent), 1 = user refused (activation must abort),
+  # 2 = skipped (config disabled / qpwgraph missing / not needed).
+  [[ $ROUTING_TOOL == no ]] && return 2
 
   # Already parked in the scratchpad under this session → nothing to do.
   local existing
   existing=$(qpwgraph_addr)
   if [[ -n "$existing" ]]; then
     if grep -qF "$existing" "$SCRATCHPAD_SNAPSHOT" 2>/dev/null; then
-      # It was running before live mode started: leave it exactly as-is.
       echo "$existing" > "$PATCHBAY_ADDR_FILE"
       touch "$PATCHBAY_PREEXISTED"
       ok "mosquito routing tool already parked in the scratchpad."
       return 0
     fi
-    # Spawned by an earlier activation in the same session — re-park it.
     hyprctl dispatch movetoworkspacesilent "special:scratchpad,address:$existing" >/dev/null 2>&1 || true
     echo "$existing" > "$PATCHBAY_ADDR_FILE"
     ok "mosquito routing tool parked in the scratchpad (SUPER + S)."
@@ -376,17 +393,31 @@ open_routing_tool() {
   fi
 
   if [[ -f "$PATCHBAY_CLOSED_FLAG" ]]; then
-    return 0
+    return 2
   fi
   if ! command -v qpwgraph >/dev/null 2>&1; then
     warn "qpwgraph is not installed — the mosquito routing tool is skipped."
-    return 0
+    return 2
+  fi
+
+  # The scratchpad may already hold another app (a chat, a music player, a
+  # scratch terminal…) → ask the user BEFORE moving it to the scratchpad.
+  # Park qpwgraph in the current workspace instead, on accept; refuse → the
+  # caller aborts the whole activation.
+  local occupants=""
+  occupants=$(scratchpad_occupied_by_others | sort -u | tr '\n' ' ')
+  if [[ -n "$occupants" ]]; then
+    if ! confirm $"The scratchpad is already occupied (the mosquitomarchy routing tool can't be parked there). Patchbay will open in the CURRENT workspace. Continue?"; then
+      warn "Live Mode activation cancelled (scratchpad occupied)."
+      return 1
+    fi
+    ok "Opening patchbay in the current workspace (scratchpad kept as-is)."
   fi
 
   setsid --fork uwsm-app -- qpwgraph >/dev/null 2>&1 || \
     setsid --fork qpwgraph >/dev/null 2>&1 || true
 
-  local addr i clients
+  local addr i
   for i in $(seq 1 20); do
     sleep 0.3
     existing=$(qpwgraph_addr)
@@ -395,11 +426,17 @@ open_routing_tool() {
 
   if [[ -n "$existing" ]]; then
     echo "$existing" > "$PATCHBAY_ADDR_FILE"
-    hyprctl dispatch movetoworkspacesilent "special:scratchpad,address:$existing" >/dev/null 2>&1 || true
-    ok "mosquito routing tool parked in the scratchpad (SUPER + S)."
+    # Park it only if the scratchpad is free (no occupants).
+    if [[ -z $(scratchpad_occupied_by_others) ]]; then
+      hyprctl dispatch movetoworkspacesilent "special:scratchpad,address:$existing" >/dev/null 2>&1 || true
+      ok "mosquito routing tool parked in the scratchpad (SUPER + S)."
+    else
+      ok "mosquito routing tool launched in the current workspace."
+    fi
   else
-    warn "qpwgraph launched, but its window could not be parked in the scratchpad."
+    warn "qpwgraph launched, but its window could not be detected."
   fi
+  return 0
 }
 
 # restore_scratchpad: at deactivation, remove what live mode added and put
@@ -738,8 +775,15 @@ cmd_on() {
   # 6. Scratchpad windows out of the way.
   move_scratchpad_windows
 
-  # 7. Audio routing tool into the scratchpad (idempotent).
-  open_routing_tool
+  # 7. Audio routing tool into the scratchpad (idempotent). If the user
+  #    refuses the scratchpad-occupied prompt, abort the whole activation.
+  if ! open_routing_tool; then
+    if [[ $? -eq 1 ]]; then
+      trap - EXIT
+      rm -f "$ACTIVE_FLAG"
+      return 0
+    fi
+  fi
 
   # 8. Live theme switched from a DETACHED process: omarchy-theme-set's
   #    post-hooks restart terminals, and if this script runs inside one the

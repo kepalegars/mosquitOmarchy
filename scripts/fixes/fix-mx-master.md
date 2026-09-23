@@ -62,3 +62,25 @@ pointer block for the MX Master itself in `~/.config/hypr/mx-master.lua`
 the mouse device: the touchpad module's block (`touchpad.lua`) and the global
 `input.lua` block are never touched, and the two modules can be applied or
 removed in ANY order. `--remove` also removes this pointer block.
+
+
+## Together: touchpad + MX Master (or any mouse)
+
+Both modules compose without conflict — each writes its OWN marker block in
+`hyprland.lua` and its OWN device file, applied in any order:
+
+- the **touchpad** module writes `~/.config/hypr/touchpad.lua` with
+  `hl.device({ name = <touchpad>, … })` (adaptive / -0.2 / 0.6),
+- the **MX Master** module (or any mouse that picks its own settings) writes
+  `~/.config/hypr/mx-master.lua` with `hl.device({ name = <mouse>, … })`
+  (flat / 1.0 / same as the global mouse block in `input.lua`).
+
+Device blocks are the most specific Hyprland match, so the touchpad always
+gets its settings and the mouse always gets its own — apply either, both, or
+remove either in any order; the live config always reflects it.
+
+The same pattern applies to any pair of pointer devices: write one
+`hl.device` block per device, named after its `hyprctl devices` name. Add
+your own module by copying `scripts/fixes/fix-touchpad.sh` (or `fix-mx-master.sh`),
+swapping the device name and the values you want. The marker blocks and the
+`require()` line in `hyprland.lua` are independent.

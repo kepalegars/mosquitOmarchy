@@ -15,6 +15,22 @@ _mq_crash_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/crash.bash"
 
 notify(){ hyprctl notify -1 2500 "rgb(33ccff)" "$1" >/dev/null 2>&1 || true; }
 
+# A VM submap only makes sense when a VM window is actually open somewhere
+# (a normal workspace or the scratchpad). With no VM visible anywhere,
+# every SUPER+… shortcut belongs to Omarchy natively — silently refuse so
+# the native set is never shadowed for nothing.
+vm_visible() {
+  hyprctl -j clients 2>/dev/null | jq -e '
+    map(select(.class == "org.omarchy.omarchy-vm-tui"
+           or .class == "org.omarchy.winvm"
+           or .class == "winvm"
+           or (.class // "") | test("org\.omarchy\.|^winvm$"))) | length > 0' >/dev/null 2>&1
+}
+if ! vm_visible; then
+  notify "Focus: HOST — no VM window open (native Omarchy shortcuts)"
+  exit 0
+fi
+
 cur="$(hyprctl submap 2>/dev/null || echo default)"
 if [[ $cur == "omarchy-vm" ]]; then
   hyprctl eval 'hl.dispatch(hl.dsp.submap("reset"))' >/dev/null 2>&1 || true

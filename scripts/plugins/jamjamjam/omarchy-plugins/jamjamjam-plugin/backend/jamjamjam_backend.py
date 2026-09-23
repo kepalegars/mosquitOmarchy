@@ -588,6 +588,9 @@ class AudioAnalyzer:
         self.key = ""
         self.key_confidence = 0.0
         self.bpm = 0.0
+        # BPM stabilization: the readout only starts publishing a non-zero bpm
+        # after 10 seconds of consistent analysis (median history not noisy).
+        self._bpm_started_at: float = 0.0
         self.current_chord = ""
         self.current_chord_notes: list[str] = []
         self._chord_time = 0.0
@@ -609,8 +612,9 @@ class AudioAnalyzer:
         self._change_votes = 0
         self._pending_key = ""
         self._key_hold = 0
-        # True once a key has held for a couple of analyses: the plugin uses
-        # this to only draw the fretboard when a key is confidently in mind.
+        self._key_low_streak = 0
+        # True once a key has held for three confident analyses (≥ 0.2): the
+        # plugin only draws the fretboard when a key is confidently in mind.
         self.key_stable = False
         # Silence tracking: while the capture hears only noise the backend
         # reports noSignal so the UIs can show "can't find the chord".
@@ -738,18 +742,32 @@ class AudioAnalyzer:
         gap = score - candidates[1][0]
         confidence = max(0.0, min(1.0, gap * 4.0))
         name = f"{note_name(root, self.naming)}{mode}"
-        # Adopt a new key only once it has held for two analyses, so a single
-        # ambiguous chord can't flip the whole readout.
+        KEY_CONF_THRESHOLD = 0.2  # below this, the Krumhansl score is too noisy
         if name == self._pending_key:
             self._key_hold += 1
         else:
             self._pending_key = name
             self._key_hold = 1
-        if self._key_hold >= 2 or (not self.key and gap > 0.01):
-            self.key = name
-            self.key_confidence = confidence
-            if self._key_hold >= 2:
-                self.key_stable = True
+        if confidence >= KEY_CONF_THRESHOLD:
+            if self._key_hold >= 3 or (not self.key and confidence >= KEY_CONF_THRESHOLD):
+                self.key = name
+                self.key_confidence = confidence
+                self.key_stable = self._key_hold >= 3
+                self._key_low_streak = 0
+        else:
+            # The candidate is weak: do not overwrite a confident key.
+            # If the existing key has been "low confidence" for several
+            # analyses in a row, drop it (the song drifted, the mic got
+            # noisy, …). The plugin tells the UI to offer a reset.
+            if self.key and gap < 0.05:
+                self._key_low_streak += 1
+                if self._key_low_streak >= 3:
+                    self.key = ""
+                    self.key_confidence = 0.0
+                    self.key_stable = False
+                    self.song_changed = True
+            else:
+                self._key_low_streak = 0
 
     @property
     def _key_established(self) -> bool:
@@ -804,8 +822,20 @@ class AudioAnalyzer:
         while bpm > 175.0:
             bpm /= 2.0
         self._bpm_history.append(bpm)
-        self._bpm_history = self._bpm_history[-12:]
-        self.bpm = float(np.median(self._bpm_history))
+        # Keep a longer history than the median window so the "first valid
+        # bpm" age can be tracked across the BPM_MAX of ~12 entries (≈6 s of
+        # analysis). We mirror the time series in `_bpm_started_at`.
+        self._bpm_history = self._bpm_history[-32:]
+        if self._bpm_started_at == 0.0:
+            self._bpm_started_at = time.monotonic()
+        # BPM must hold for 10 seconds of continuous analysis before being
+        # published — before that the readout stays at 0 (the frontend shows
+        # a "finding tempo…" hint).
+        stable_for = time.monotonic() - self._bpm_started_at
+        if stable_for < 10.0:
+            self.bpm = 0.0
+        else:
+            self.bpm = float(np.median(self._bpm_history))
         # Time signature: does the bar repeat every 4 beats or every 3?
         three = correlations.get(best_lag * 3)
         four = correlations.get(best_lag * 4)
@@ -1810,16 +1840,46 @@ class AudioAnalyzerBackend:
         self.mic_muted = muted
 
     def open_tui(self) -> None:
+        # The Go TUI opens a /dev/tty when run with no controlling terminal,
+        # so spawning it detached via Popen leaves the user staring at
+        # nothing. Mirror the other mosquito managers (live-mode / move /
+        # audio plugin) and wrap it in a square terminal when needed.
         launcher = os.path.expanduser("~/.local/bin/jamjamjam-tui")
         if not os.path.isfile(launcher):
             self.dirty = True
             return
+        # Already running — bring it to the foreground instead of stacking.
+        pid_file = os.path.expanduser("~/.local/state/jamjamjam/tui.pid")
         try:
-            subprocess.Popen(
-                [launcher, "open"],
+            with open(pid_file, "r") as fh:
+                existing = int((fh.read() or "0").strip() or 0)
+        except (OSError, ValueError):
+            existing = 0
+        if existing and os.path.isdir(f"/proc/{existing}"):
+            env = os.environ.copy()
+            env["DISPLAY"] = env.get("DISPLAY", ":0")
+            env["WAYLAND_DISPLAY"] = env.get("WAYLAND_DISPLAY", "wayland-1")
+            subprocess.run(["loginctl", "activate"], env=env, check=False) if False else None
+            os.system(f"hyprctl dispatch bringactivetotop pid:{existing} >/dev/null 2>&1 || true")
+            return
+        cmd = [launcher, "open"]
+        if not (sys.stdout and sys.stdout.isatty()):
+            if os.path.exists("/usr/bin/foot"):
+                cmd = ["foot", "-W", "100x30", "--app-id=org.omarchy.mosquito-jamjamjam-tui", "-e", launcher, "open"]
+            elif os.path.exists("/usr/bin/xterm"):
+                cmd = ["xterm", "-e", launcher, "open"]
+        try:
+            proc = subprocess.Popen(
+                cmd,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, start_new_session=True,
             )
+            try:
+                os.makedirs(os.path.dirname(pid_file), exist_ok=True)
+                with open(pid_file, "w") as fh:
+                    fh.write(str(proc.pid))
+            except OSError:
+                pass
         except OSError:
             pass
 

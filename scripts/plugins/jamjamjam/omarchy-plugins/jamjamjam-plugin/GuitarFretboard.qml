@@ -88,7 +88,7 @@ Item {
         ctx.textAlign = "center"
         ctx.textBaseline = "middle"
         var sy2 = (sn + 0.5) * sp
-        ctx.fillText(stringNames[sn], fw * 0.28, sy2)
+        ctx.fillText(String(stringNames[sn] && stringNames[sn].name !== undefined ? stringNames[sn].name : stringNames[sn]), fw * 0.28, sy2)
       }
 
       // Fret markers (grey dots). The 12th fret gets the double-dot octave

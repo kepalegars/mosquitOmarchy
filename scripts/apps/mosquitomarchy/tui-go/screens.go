@@ -1441,13 +1441,28 @@ func (m model) rebuildFilteredSetup() navPicker {
 			items = append(items, tuikit.PickerItem{Display: it.Label, Value: v, Badge: mark})
 		}
 	}
-	header := "filter: " + m.filterText + "   (type to refine · esc clear · tab select · enter "
+	// Box-drawn filter input zone (small framed area) + the header already
+	// shows the typed query — keeps the filter visible above the bottom
+	// shortcut hint row (the picker body itself sits above the hint).
+	header := "  filter: ┃ " + m.filterText + " ▏  (type to refine · esc clear · tab select · enter "
 	if uninstall {
 		header += "uninstall"
 	} else {
 		header += "install"
 	}
-	return newNavPicker(header, items).SetSize(m.contentSize()).
+	header += ")"
+	// Hide quick-fixes folder entries (they are a separate quick-fix
+	// category in Setup, not part of the module tree).
+	filtered := make([]tuikit.PickerItem, 0, len(items))
+	for _, it := range items {
+		v := it.Value
+		// Item values start with "item:<folder>:<key>" — skip the "fixes" folder.
+		if strings.HasPrefix(v, "item:fixes:") {
+			continue
+		}
+		filtered = append(filtered, it)
+	}
+	return newNavPicker(header, filtered).SetSize(m.contentSize()).
 		SetHelpKeys(key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "act on the ticked")))
 }
