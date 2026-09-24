@@ -129,6 +129,9 @@ Panel {
 
   // Black or white, whichever reads best on the given fill (BT.601 luminance).
   readonly property int valueRowHeight: Style.space(34)
+  // Every settings row's label uses this fixed width so all the buttons /
+  // interactive zones start on the SAME vertical line.
+  readonly property int settingsLabelWidth: Style.space(120)
   readonly property int cardMetaHeight: Style.space(13)
 
   // ── Manual entry (right-click on the KEY / BPM cards) ─────────────
@@ -286,7 +289,9 @@ Panel {
               text: ""
               bordered: false
               selected: root.pinned
-              foreground: root.pinned ? root.accent : Color.urgent
+              // The music note STAYS red even when pinned (its own identity);
+              // pinning only changes the card fill/hover, never the glyph.
+              foreground: Color.urgent
               accent: root.accent
               horizontalPadding: Style.spacing.xs
               verticalPadding: 0
@@ -297,15 +302,25 @@ Panel {
             }
 
             Item {
-              // The TITLE is vertically centred on the ♪ icon's axis and
-              // enlarged (the version caption moved to the settings page).
+              // The TITLE is enlarged and shifted DOWN so the CENTER of its
+              // smallest lowercase letters (the x-height body) is aligned with
+              // the center of the ♪ box to its left (a plain verticalCenter
+              // leaves the lowercase body sitting too high).
               width: titleText.implicitWidth
               height: titleText.implicitHeight
 
+              FontMetrics {
+                id: titleFm
+                font: titleText.font
+              }
+
               Text {
                 id: titleText
-                anchors.verticalCenter: parent.verticalCenter
                 anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                // (descent − ascent)/2 + xHeight/2 → moves the x-height body
+                // center onto the anchor box's center.
+                anchors.verticalCenterOffset: (titleFm.descent - titleFm.ascent) / 2 + titleFm.xHeight / 2
                 text: "jamjamjam"
                 // Red while the analyzer is LIVE (mic/monitor capture running)
                 color: root.analyzing ? Color.urgent : root.foreground
@@ -333,7 +348,7 @@ Panel {
               horizontalPadding: 0
               verticalPadding: 0
               bordered: false
-              foreground: root.muted
+              foreground: root.accent
               accent: root.accent
               tooltipText: "Clear the detected key, BPM and chord history (r)"
               onClicked: if (root.service) root.service.resetAnalysis()
@@ -349,7 +364,7 @@ Panel {
               horizontalPadding: 0
               verticalPadding: 0
               bordered: false
-              foreground: root.paused ? root.accent : root.muted
+              foreground: root.accent
               accent: root.accent
               tooltipText: root.paused ? "Resume the analysis" : "Pause the analysis"
               onClicked: if (root.service) root.service.togglePaused()
@@ -387,7 +402,7 @@ Panel {
               verticalPadding: 0
               selected: root.settingsVisible
               bordered: false
-              foreground: root.settingsVisible ? root.accent : root.muted
+              foreground: root.accent
               accent: root.accent
               tooltipText: "Plugin settings (s) — hides the rest of the panel: note naming, chord zone, AEC, metronome click (volume/style/import)"
               onClicked: root.toggleSettings()
@@ -1181,6 +1196,7 @@ Panel {
             height: Style.space(110) + Style.space(190) + Style.space(56)
                     + Style.space(180)
                     + Style.spacing.md - Style.spacing.sm
+                    - Style.space(40)
             implicitHeight: height
             contentWidth: width
             contentHeight: settingsRows.implicitHeight
@@ -1201,6 +1217,7 @@ Panel {
 
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
+                  width: root.settingsLabelWidth
                   text: "NOTE NAMING"
                   color: root.muted
                   font.family: root.fontFamily
@@ -1240,6 +1257,7 @@ Panel {
 
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
+                  width: root.settingsLabelWidth
                   text: "CHORD ZONE"
                   color: root.muted
                   font.family: root.fontFamily
@@ -1282,6 +1300,7 @@ Panel {
 
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
+                  width: root.settingsLabelWidth
                   text: "TUNER AEC"
                   color: root.muted
                   font.family: root.fontFamily
@@ -1323,6 +1342,7 @@ Panel {
 
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
+                  width: root.settingsLabelWidth
                   text: "CLICK VOL"
                   color: root.muted
                   font.family: root.fontFamily
@@ -1347,6 +1367,7 @@ Panel {
 
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
+                  width: root.settingsLabelWidth
                   text: "CLICK STYLE"
                   color: root.muted
                   font.family: root.fontFamily
@@ -1384,6 +1405,7 @@ Panel {
 
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
+                  width: root.settingsLabelWidth
                   text: "CLICK CUSTOM"
                   color: root.muted
                   font.family: root.fontFamily
