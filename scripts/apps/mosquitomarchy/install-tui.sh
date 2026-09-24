@@ -27,7 +27,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/lib/gui-r
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/lib/elevate.bash"   # mq_sudo: native pkexec prompt when not root
 set -euo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TUI_GO="$REPO/scripts/apps/mosquitomarchy/tui-go"
 DISPATCHER="$REPO/scripts/apps/mosquitomarchy/mosquitomarchy"
 TUI_TMP_OUT="${TUI_TMP_OUT:-}"
@@ -43,6 +43,10 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy"
 HOOK_DIR="$HOME/.config/omarchy/hooks/post-boot.d"
 HOOK_FILE="$HOOK_DIR/zzz-mosquitomarchy-update-check"
 APPS_DIR="$HOME/.local/share/applications"
+MOSQ_APP_DIR="$REPO/scripts/apps/mosquitomarchy"
+ACTIONS_SRC="$MOSQ_APP_DIR/mosquitomarchy-actions"
+AGENT_CRASH_SRC="$MOSQ_APP_DIR/mosquitomarchy-agent-crash"
+SKILL_SRC="$MOSQ_APP_DIR/skills/mosquitomarchy-crash"
 
 ok()  { echo -e "\033[32m ●\033[0m $*"; }
 info(){ echo -e "\033[34m==>\033[0m $*"; }
@@ -78,6 +82,30 @@ build_tui() {
   ok "TUI built and deployed: $TUI_BIN"
   install -m 0755 "$DISPATCHER" "$DISPATCHER_DST"
   ok "Dispatcher deployed: $DISPATCHER_DST"
+}
+
+install_backend_links() {
+  # The Go TUI resolves mosquitomarchy-actions from ITS OWN directory (see
+  # tui-go/actions.go). The backend must be a SYMLINK (never a copy): it
+  # computes the path to mosquitomarchy-setup.sh relative to itself. Same for
+  # the crash-diagnosis tool + the AI skill any harness scans.
+  mkdir -p "$BIN_DIR" "$HOME/.agents/skills" 2>/dev/null || true
+  if [[ -f $ACTIONS_SRC ]]; then
+    chmod +x "$ACTIONS_SRC"
+    ln -sf "$ACTIONS_SRC" "$BIN_DIR/mosquitomarchy-actions"
+    ok "Backend linked: $BIN_DIR/mosquitomarchy-actions"
+  else
+    warn "mosquitomarchy-actions not found at $ACTIONS_SRC"
+  fi
+  if [[ -f $AGENT_CRASH_SRC ]]; then
+    chmod +x "$AGENT_CRASH_SRC"
+    ln -sf "$AGENT_CRASH_SRC" "$BIN_DIR/mosquitomarchy-agent-crash"
+    ok "Crash-diagnosis tool linked: $BIN_DIR/mosquitomarchy-agent-crash"
+  fi
+  if [[ -d $SKILL_SRC ]]; then
+    ln -sfn "$SKILL_SRC" "$HOME/.agents/skills/mosquitomarchy-crash"
+    ok "Crash skill linked: ~/.agents/skills/mosquitomarchy-crash"
+  fi
 }
 
 install_float_rule() {
@@ -172,12 +200,17 @@ do_status() {
   echo "post-boot hook   : $([[ -x $HOOK_FILE ]] && echo installed || echo absent)"
   echo "menu entry       : $(grep -qF install.mosquitomarchy "$SHELL_JSON" 2>/dev/null && echo registered || echo absent)"
   echo "shell plugins    : $(omarchy-shell shell listPlugins 2>/dev/null | python3 -c 'import json,sys;d=json.load(sys.stdin);print("on" if any(p["id"] in ("mosquito.confirm","custom.power") and p["enabled"] for p in d) else "partial/missing")')"
+  echo "backend actions  : $([[ -e $BIN_DIR/mosquitomarchy-actions ]] && echo linked || echo absent)"
+  echo "crash agent      : $([[ -e $BIN_DIR/mosquitomarchy-agent-crash ]] && echo linked || echo absent)"
+  echo "crash skill      : $([[ -e $HOME/.agents/skills/mosquitomarchy-crash ]] && echo linked || echo absent)"
   echo "go               : $(command -v go >/dev/null && go version | awk '{print $3}')"
 }
 
 do_remove() {
   info "Uninstalling the mosquito manager TUI"
   rm -f "$TUI_BIN" "$DISPATCHER_DST" && ok "Binaries removed."
+  rm -f "$BIN_DIR/mosquitomarchy-actions" "$BIN_DIR/mosquitomarchy-agent-crash" \
+    "$HOME/.agents/skills/mosquitomarchy-crash" && ok "Backend/crash links removed."
   rm -f "$APPS_DIR/install.mosquitomarchy.desktop" && update-desktop-database "$APPS_DIR" 2>/dev/null || true
   ok "Desktop entry removed."
   [[ -f $SHELL_JSON ]] && python3 - "$SHELL_JSON" <<'PY' || true
@@ -214,6 +247,7 @@ case "$REBUILD" in
 esac
 
 build_tui
+install_backend_links
 install_float_rule
 install_post_boot_hook
 install_shell_state
