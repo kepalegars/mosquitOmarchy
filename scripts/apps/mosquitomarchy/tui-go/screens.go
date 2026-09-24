@@ -558,7 +558,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				_, _ = runQuick("crash-notify", "on")
 			}
 			if m.top() == scrSettings {
-				m.pickPicker = newNavPicker("Settings:", settingsItems2()).SetSize(m.contentSize())
+				m.pickPicker = newNavPicker("Extras:", settingsItems2()).SetSize(m.contentSize())
 			} else if m.top() == scrSetup {
 				m.setupPicker = m.rebuildSetup()
 			}
@@ -1096,7 +1096,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			// Plugin-level toggles from the main menu (the "Settings" row
 			// right before Close).
 			m.push(scrSettings)
-			m.pickPicker = newNavPicker("Settings:", settingsItems2()).SetSize(m.contentSize())
+			m.pickPicker = newNavPicker("Extras:", settingsItems2()).SetSize(m.contentSize())
 			return m, nil
 		case "close":
 			return m.closeConfirm()
@@ -1430,7 +1430,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			} else {
 				_, _ = runQuick("crash-notify", "on")
 			}
-			m.pickPicker = newNavPicker("Settings:", settingsItems2()).SetSize(m.contentSize())
+			m.pickPicker = newNavPicker("Extras:", settingsItems2()).SetSize(m.contentSize())
 			return m, nil
 		}
 		if res.Value == "back" {
