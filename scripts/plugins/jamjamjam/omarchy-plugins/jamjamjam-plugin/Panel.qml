@@ -187,7 +187,9 @@ Panel {
         else if (key === "p") root.pinned = !root.pinned
         else if (key === "," && root.service) root.service.togglePaused()
         else if (key === "s") root.toggleSettings()
-        else if (key === "m") { root.midiSectionVisible = !root.midiSectionVisible; if (root.service) root.service.toggleMidi() }
+        // 'm' toggles the METRONOME (a single key for the common case; the
+        // MIDI toolbar button owns the MIDI section from here on)
+        else if (key === "m" && root.service) root.service.setMetronome(!root.metronomeEnabled)
       }
 
       Column {
@@ -400,10 +402,18 @@ Panel {
               }
 
               MouseArea {
+                id: bpmMouse
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: if (root.service) root.service.setMetronome(!root.metronomeEnabled)
+              }
+              // Long hover on the BPM zone shows the "m" metronome toggle
+              // (the panel's own tooltip pattern).
+              PanelToolTip {
+                visible: bpmMouse.containsMouse
+                text: "Toggle metronome — click or 'm'"
+                fontFamily: root.fontFamily
               }
 
               Column {
@@ -1012,16 +1022,18 @@ Panel {
             width: parent.width
             // Fixed scroll viewport: the pane spends EXACTLY the height the
             // main page was rendering at the moment settings were opened
-            // (captured in toggleSettings()). Breakdown of that reserve:
-            // headerItem + gap + settingsHeaderRow + gap + FLICK + gap +
-            // toolbarRow → solve for FLICK:
-            //   flick = reserve − header − settingsRow − toolbar − 3·gap.
-            // Floor 360 keeps the pane usable if the capture ran back when
-            // the panel was tiny.
-            height: Math.min(contentHeight, Math.max(Style.space(360),
+            // (captured in toggleSettings()). Vertical budget (measured on
+            // the open pane): header + gap + SETTINGS row + gap + FLICK +
+            // gap + toolbar → so:
+            //   flick = reserve − header − settingsRow − toolbar
+            //           − 2·column gap − 1·settingsContent gap.
+            // NO Math.min here: even when settings content is shorter than
+            // the pane, the pane keeps the main page's full size (whitespace
+            // at the bottom, scrollbar handles the overflow).
+            height: Math.max(Style.space(360),
                               root.settingsReserveH - root.headerHeight
                               - settingsHeaderRow.height - toolbarRow.height
-                              - 3 * column.spacing))
+                              - 2 * column.spacing - settingsContent.spacing)
             implicitHeight: height
             contentWidth: width
             contentHeight: settingsRows.implicitHeight

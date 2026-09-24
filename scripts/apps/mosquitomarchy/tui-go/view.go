@@ -34,22 +34,25 @@ func (m model) homeBannerReserve() int {
 }
 
 // filterBarLine composes the filter zone for the Setup/Uninstall screens:
-// when open ('f'), a small ACCENT-framed rectangular box sits right above
-// the shortcut hint bar. The empty state shows only a muted "filter"
-// inside; the typed keys render live in accent and the list refines.
+// when open ('f'), a small ACCENT-framed box (slightly taller than a plain
+// row) sits right above the shortcut hint bar. The empty state shows ONLY
+// the muted grey word "filtre" (the same grey the disabled picker rows use);
+// it is replaced by the typed text the moment you start typing. No extra
+// help text inside — the shortcuts bar already documents the keys.
 func (m model) filterBarLine(hint string) string {
 	if !m.filterOpen {
 		return hint
 	}
 	inner := m.filterText + "▏"
 	if m.filterText == "" {
-		inner = lipgloss.NewStyle().Foreground(tuikit.ColorMuted).Render("filter")
+		inner = lipgloss.NewStyle().Foreground(tuikit.ColorMuted).Render("filtre")
 	}
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(tuikit.ColorAccent).
 		Foreground(tuikit.ColorAccent).
-		Render(fmt.Sprintf(" %s  (type to refine · esc clear · f close) ", inner))
+		Padding(0, 3).
+		Render(" " + inner + " ")
 	w := m.contentSizeW()
 	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(box) + "\n" + hint
 }

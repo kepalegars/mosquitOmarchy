@@ -1,5 +1,10 @@
 # jamjamjam
 
+> **STATUS: ULTRA-ALPHA / very unstable.** Expect several features to be
+> missing or not working correctly yet (metronome sounds, AEC, chord box,
+> progressions, settings UX…) — this is NOT an end-usable plugin at this
+> stage; it is in active development on this machine only.
+
 Omarchy bar-widget plugin that analyzes audio in real time: detects the musical
 key, the BPM and the chord being played right now. Includes a guitar-neck scale
 visualizer, an input tuner, an optional Shazam song hook, and a full

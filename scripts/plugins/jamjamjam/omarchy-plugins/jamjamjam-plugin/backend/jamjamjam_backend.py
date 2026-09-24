@@ -1130,6 +1130,7 @@ class MidiSynth:
             met_on = self.metronome_enabled
             met_bpm = self.metronome_bpm
             met_beats = self.metronome_beats
+        metAccum = 0.0
         beat_len = 60.0 / met_bpm if met_on else 0.0
         with self._lock:
             click_gain = self.metronome_gain
@@ -1196,7 +1197,7 @@ class MidiSynth:
                     custom_step += 1
                     if custom_step >= len(custom_samples):
                         custom_done = True
-                    mixed += value
+                    metAccum += value
                 elif self.metronome_tick_left > 0.0:
                     if style == "wood":
                         freq = 900.0 if self.metronome_in_beat else 620.0
@@ -1223,14 +1224,18 @@ class MidiSynth:
                         value += 0.4 * math.sin(2.2 * phase) * env * accent
                     else:
                         value = math.sin(phase) * env * accent
-                    mixed += value * click_gain
+                    # Post-master path: the click does NOT follow the MIDI
+                    # volume (they slide together otherwise); the 1.5 boost
+                    # keeps it audible at any click volume.
+                    metAccum += value * click_gain * 1.5
                     step = 2.0 * math.pi * freq / SAMPLE_RATE
                     self.metronome_tick_phase = (phase + step) % (2.0 * math.pi)
+                    self.metronome_tick_left -= 1.0 / SAMPLE_RATE
                     self.metronome_tick_left -= 1.0 / SAMPLE_RATE
             elif custom_step > 0:
                 # Loop tail (metronome stopped mid-sample): clear counters.
                 custom_step = 0
-            sample = math.tanh(mixed * master) * 0.9
+            sample = metAccum + math.tanh(mixed * master) * 0.9
             output.append(max(-32767, min(32767, int(sample * 32767))))
         return output
 
