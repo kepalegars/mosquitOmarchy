@@ -1183,26 +1183,44 @@ class MetronomeClicks:
         return out
 
     def _build(self, style: str, f_down: float, f_up: float):
-        n = int(0.045 * self.rate)          # 45 ms sample budget
+        """CLAVE-style modal bank (the struck-wood sound real metronomes –
+        and every DAW factory click – actually mimic): 3 resonant modes
+        with NON-harmonic ratios + a 1 ms mallet contact burst, instant
+        attack, exponential decays. The old synthetic sine (pure tone +
+        2nd harmonic) read as TWO clicks or a beeper; this design is
+        documented in the percussion-synthesis literature (struck bars,
+        claves, woodblock) and is what the clean "DAW click" sound is.
+        """
+        n = int(0.055 * self.rate)          # 55 ms sample budget
         t = np.arange(n) / self.rate
-        rng = np.random.default_rng(len(self.cache) + hash(f_down) % 1_000_977)
+        rng = np.random.default_rng(int(abs(f_down)) + len(self.cache) * 977)
         out = {}
-        for freq, is_down in ((f_down, True), (f_up, False)):
-            accent = 1.0 if is_down else 0.65
-            # Fundamental modal sine: the tone reads clean even through small
-            # speakers (this is why most "electronic metronomes" use these).
-            modal = np.sin(2.0 * np.pi * freq * t)
-            # Modal ring (the tone that carries the pitch) decays over 11
-            # ms; the band-limited noise BURST dies ~1.6 ms (attack snap:
-            # texture without a second perceived click).
-            noise = self._bandpass(np.asarray(rng.standard_normal(n), dtype=np.float64), f_lo=freq*2.0, f_hi=freq*4.0)
-            env_tone = np.exp(-t / 0.011)
-            env_noise = np.exp(-t / 0.0016)
-            wave = 0.48 * modal * env_tone + 0.42 * noise * env_noise
+        for base, is_down in ((f_down, True), (f_up, False)):
+            accent = 1.0 if is_down else 0.62
+            wave = np.zeros(n, dtype=np.float64)
+            # Three sparse NON-harmonic modes of a struck bar: base · 1.28 ·
+            # 2.08, with decreasing ring time and amplitude (physical).
+            for f, tau, amp in (
+                (base,          0.018, 1.0),
+                (base * 1.2822, 0.011, 0.60),
+                (base * 2.0849, 0.006, 0.40),
+            ):
+                wave += amp * np.sin(2.0 * np.pi * f * t) * np.exp(-t / tau)
+            # 1.2 ms mallet-contact noise burst (no band-pass: at this
+            # length it IS the attack), peak-normalized to avoid clipping.
+            k = max(1, int(0.0012 * self.rate))
+            contact = np.asarray(rng.standard_normal(k), dtype=np.float64)
+            contact *= np.exp(-np.arange(k) / (0.0005 * self.rate))
+            contact /= float(np.max(np.abs(contact)) + 1e-9)
+            wave[:k] += contact * 0.55
+            # Instant attack; a short fade-out at the very end (never a
+            # click-tail discontinuity).
+            tail = int(0.004 * self.rate)
+            wave[-tail:] *= np.linspace(1.0, 0.0, tail)
+            wave *= accent
             peak = float(np.max(np.abs(wave))) + 1e-9
             wave /= peak
-            out["down" if is_down else "up"] = (
-                wave.astype(np.float32), accent)
+            out["down" if is_down else "up"] = (wave.astype(np.float32), accent)
         self.cache[style] = out
 
     def get(self, style: str, down_beat: bool) -> np.ndarray:
