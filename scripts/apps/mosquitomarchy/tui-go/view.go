@@ -85,6 +85,7 @@ func (m model) View() string {
 	m.info = m.info.SetSize(m.contentSize())
 	m.runner = m.runner.SetSize(m.contentSize())
 	m.healthPicker = m.healthPicker.SetSize(m.contentSize())
+	m.pickPicker = m.pickPicker.SetSize(m.contentSize())
 	m.kbPicker = m.kbPicker.SetSize(m.contentSize())
 	m.kbListPicker = m.kbListPicker.SetSize(m.contentSize())
 	m.kbCatPicker = m.kbCatPicker.SetSize(m.contentSize())
@@ -149,6 +150,10 @@ func (m model) View() string {
 		title = screenTitle("Keybindings — custom command", w)
 		body = m.kbInput.View()
 		bar = barLine(m.kbInput.ShortcutsHint())
+	case scrSettings:
+		title = screenTitle("Settings", w)
+		body = m.pickPicker.View()
+		bar = barLine(m.pickPicker.ShortcutsHint())
 	case scrBackup:
 		title = screenTitle("Backup / Restore", w)
 		body = m.backupBody()

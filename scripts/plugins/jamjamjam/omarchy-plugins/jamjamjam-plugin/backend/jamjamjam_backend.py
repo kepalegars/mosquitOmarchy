@@ -1138,71 +1138,71 @@ class AudioAnalyzer:
 
 
 class MetronomeClicks:
-    """Precomputed metronome click pool — MPC-2000XL / phosphor-core design.
+    """Precomputed metronome click pool with FOUR RADICALLY different
+    archetypes — the settings buttons must each produce a NOTABLY different
+    sound (the user asked for that explicitly; the previous pool only swapped
+    two sine frequencies and the louder "pop" all sounded alike).
 
-    ALL four styles share the SAME sound recipe (a 12 ms pop: sine burst at
-    the beat freq + faint texture noise, exponential decay e^(-t·500)) — what
-    CHANGES is the click frequencies, so each pick in the settings panel gives
-    a noticeably different character instead of one style being inaudible:
-
-      classic  1800 / 1200  (downbeat / offbeat) — the MPC reference
-      wood     1150 /  850  — woody "knock"
-      kick      620 /  420  — low thumper
-      beep     2800 / 2300  — bright electronic beeper
-
-    The DOWNBEAT is built 1.3× hotter in the WAVEFORM itself (phosphor-core's
-    CLICK_VOLUME * 1.3), and the (wave, accent) pair keeps accent=1.0 for
-    both beats — the level difference is INSIDE the waveform, so the gain
-    knob never makes the up-beat inaudible.
-
-    The 12 ms e^(-t·500) decay also guarantees NO residual tail bleeds over
-    the next beat (the classic "two clicks" perception bug), while the faint
-    texture noise gives the attack its percussive snap.
+    - classic = MPC-2000XL pop (phosphor-core): 12 ms sine burst (down 1800,
+      up 1200 Hz, e^{-500·t} decay) + faint deterministic noise — the clean
+      dry "pop" of a hiphop sequencer.
+    - wood    = woodblock clave: struck-bar modal bank with three
+                NON-harmonic modes (f, 1.2822·f, 2.0849·f), 1.2 ms mallet
+                contact burst, dry, NO long ring.
+    - kick    = low felt thump: the pitch GLIDES from 3× the target to the
+                target within 6 ms (a real kick shape), 30 ms decay.
+    - beep    = digital square beeper: constant amplitude flat cycles with
+                hard truncation, electronic.
     """
-
-    # Per-style frequency pairs (downbeat / offbeat), ALL distinct.
-    STYLE_F = {
-        "classic": (1800.0, 1200.0),
-        "wood":    (1150.0,  850.0),
-        "kick":     (620.0,  420.0),
-        "beep":    (2800.0, 2300.0),
-    }
 
     def __init__(self, sample_rate: int = SAMPLE_RATE):
         self.rate = int(sample_rate)
         self.cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-        for style, (f_down, f_up) in self.STYLE_F.items():
-            self._build(style, f_down, f_up)
+        self._build("classic", 1800.0, 1200.0, "classic")
+        self._build("wood", 1100.0, 880.0, "wood")
+        self._build("kick", 120.0, 90.0, "kick")
+        self._build("beep", 2800.0, 2300.0, "beep")
 
-    @staticmethod
-    def _generate_click(t: np.ndarray, freq: float, is_down: bool) -> np.ndarray:
-        # Phosphor-core's twelve-millisecond pop (~0.012 s), no sustain.
+    def _generate_click(self, t: np.ndarray, freq: float, is_down: bool,
+                        style: str) -> np.ndarray:
+        rng = np.random.default_rng(int(freq) or 7)
         decay = np.exp(-t * 500.0)
-        sine = np.sin(2.0 * np.pi * freq * t)
-        # Faint detuned noise for the percussive "snap" (deterministic,
-        # recreatable: sin(7919t)·cos(3571t), a phosphor-core convention).
-        noise = np.sin(2.0 * np.pi * 7919.0 * t) * np.cos(2.0 * np.pi * 3571.0 * t) * 0.3
-        wave = (sine + noise) * decay
-        # New approach: normalize BOTH clicks to the SAME peak — the ear
-        # differentiates them through the frequency, not the volume (the
-        # phosphor-core 1.3× boost made the up-beat nearly INAUDIBLE with
-        # a tiny metronome gain). The user asked to fix '2 & 4 too quiet'.
+        if style == "wood":
+            wave = np.zeros_like(t)
+            for f, tau, amp in (
+                (freq, 0.012, 1.0),
+                (freq * 1.2822, 0.007, 0.55),
+                (freq * 2.0849, 0.004, 0.35),
+            ):
+                wave += amp * np.sin(2.0 * np.pi * f * t) * np.exp(-t / tau)
+            contact = rng.standard_normal(64) * np.exp(-np.arange(64) / 48.0)
+            wave[:64] += contact * 0.5
+        elif style == "kick":
+            phase = 2.0 * np.pi * freq * (1.0 + 2.0 * np.exp(-t / 0.002))
+            wave = 0.6 * np.sin(phase * t) * np.exp(-t / 0.030)
+        elif style == "beep":
+            wave = np.sign(np.sin(2.0 * np.pi * freq * t)) * np.exp(-t / 0.010)
+        else:  # classic: MPC-style pop
+            sine = np.sin(2.0 * np.pi * freq * t)
+            noise = (np.sin(2.0 * np.pi * 7919.0 * t)
+                     * np.cos(2.0 * np.pi * 3571.0 * t) * 0.3)
+            wave = (sine + noise) * decay
         peak = float(np.max(np.abs(wave))) + 1e-9
         wave /= peak
         return wave.astype(np.float32)
 
-    def _build(self, style: str, f_down: float, f_up: float):
-        n = int(0.055 * self.rate)  # 55 ms window; the pop itself ≈ 12 ms
+    def _build(self, style: str, f_down: float, f_up: float, kind: str):
+        n = int(0.055 * self.rate)
         t = np.arange(n, dtype=np.float64) / self.rate
         self.cache[style] = (
-            self._generate_click(t, f_down, is_down=True),
-            self._generate_click(t, f_up, is_down=False),
+            self._generate_click(t, f_down, True, kind),
+            self._generate_click(t, f_up, False, kind),
         )
 
     def get(self, style: str, down_beat: bool) -> np.ndarray:
-        """Return the precomputed click waveform (a numpy float32 array)."""
         pair = self.cache.get(style) or self.cache["classic"]
         return pair[0] if down_beat else pair[1]
+
 
 class MidiSynth:
     """Very simple additive synth streaming to PipeWire through pw-cat."""
@@ -1768,7 +1768,13 @@ class AudioAnalyzerBackend:
         self.last_chord_throttle = 0.0
         self.analysis_timer = 0.0
         self.capture_target = ""
-        self.last_command_file_mtime = 0.0
+        # Last mtime must START at the CURRENT file (a leftover commands.json
+        # from a previous session — e.g. a stale {"op":"setMetronome"} — must
+        # NOT re-trigger on backend start. The mtime of the fresh file only).
+        try:
+            self.last_command_file_mtime = Path(self.command_file).stat().st_mtime
+        except OSError:
+            self.last_command_file_mtime = 0.0
         # System audio (monitor of the default sink) is the analysis source;
         # the default source (microphone) always feeds the tuner.
         self.monitor_target, self.input_target = default_audio_nodes()
@@ -2454,6 +2460,13 @@ class AudioAnalyzerBackend:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            # Stale / unreadable file:.consume it (truncate) so a LOCKED
+            # command file cannot be replayed again and again.
+            try:
+                path.write_text("")
+                self.last_command_file_mtime = path.stat().st_mtime
+            except OSError:
+                pass
             return
         op = str(payload.get("op", ""))
         known = {
@@ -2461,6 +2474,15 @@ class AudioAnalyzerBackend:
             "setVisible", "setHold", "setSource", "setMetronome",
             "setPaused", "togglePaused", "setConfig", "resumeAnalysis", "importClick",
         }
+        # CONSUMED = CLEARED: the command file is a one-shot TRANSPORT. Once a
+        # command is read, the file must be emptied, otherwise a session's
+        # leftover "setMetronome=true" re-applies every reload (the exact
+        # 'BPM active at shell launch' bug the user hit).
+        try:
+            path.write_text("")
+            self.last_command_file_mtime = path.stat().st_mtime
+        except OSError:
+            pass
         if op not in known:
             return
         try:

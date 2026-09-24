@@ -1086,6 +1086,17 @@ cmd_crash_notify() {
   printf '{"crashNotify": %s}\n' "$val"
 }
 
+# ─── was-an-AI-removal-ever-recorded? ─────────────────────────────────────
+# the is the small INNER LOG the user asked for: when 'un_remove_ai' runs, the
+# state file remove-all-ai appears; until then the Setup entry "bring back."
+# is GREYED (nothing to undo yet).
+cmd_ai_removed() {
+  [[ -f "$HOME/.local/state/mosquitomarchy/remove-all-ai" ]] && val=true || val=false
+  printf '{"removed": %s}\n' "$val"
+}
+
+
+
 case "$sub" in
   status)                   cmd_status ;;
   categories)               cmd_categories ;;
@@ -1119,6 +1130,7 @@ case "$sub" in
   add-shortcut)             cmd_add_shortcut ;;
   backup)                   cmd_backup ;;
   crash-notify)             cmd_crash_notify "${1:-on}" ;;
+  ai-removed)               cmd_ai_removed ;;
   restore)                  cmd_restore "${1:-}" ;;
   *) echo "mosquitomarchy-actions: unknown subcommand '$sub'." >&2; exit 2 ;;
 esac

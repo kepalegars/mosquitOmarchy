@@ -244,7 +244,7 @@ ensure_confirm_plugin() {
 
 if [[ $REMOVE == false ]]; then
   ensure_power_plugin || true
-  overlay_plugin_files "custom.power" "Panel.qml"
+  overlay_plugin_files "custom.power" "Panel.qml" "Model.js"
   ensure_indicators_plugin || true
   ensure_confirm_plugin || true
 fi

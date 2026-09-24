@@ -557,7 +557,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			} else {
 				_, _ = runQuick("crash-notify", "on")
 			}
-			m.setupPicker = m.rebuildSetup()
+			if m.top() == scrSettings {
+				m.pickPicker = newNavPicker("Settings:", settingsItems2()).SetSize(m.contentSize())
+			} else if m.top() == scrSetup {
+				m.setupPicker = m.rebuildSetup()
+			}
 			return m, nil
 		case "menu-entry":
 			return m.startWorking("Adding the menu entry", workingArgs("menu-entry", nil)...)
@@ -976,6 +980,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.kbKeyPicker, cmd = m.kbKeyPicker.Update(msg)
 	case scrKBInput:
 		m.kbInput, cmd = m.kbInput.Update(msg)
+	case scrSettings:
+		m.pickPicker, cmd = m.pickPicker.Update(msg)
 	case scrBackup:
 		m.backupPicker, cmd = m.backupPicker.Update(msg)
 	case scrBackupRestore:
@@ -1085,6 +1091,12 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		case "backup":
 			m.push(scrBackup)
 			m.backupPicker = newNavPicker("", backupActions()).SetSize(m.contentSize())
+			return m, nil
+		case "settings":
+			// Plugin-level toggles from the main menu (the "Settings" row
+			// right before Close).
+			m.push(scrSettings)
+			m.pickPicker = newNavPicker("Settings:", settingsItems2()).SetSize(m.contentSize())
 			return m, nil
 		case "close":
 			return m.closeConfirm()
@@ -1411,6 +1423,20 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 		return m, nil
 
+	case scrSettings:
+		if res.Value == "toggle-crash-notify" {
+			if crashNotify() {
+				_, _ = runQuick("crash-notify", "off")
+			} else {
+				_, _ = runQuick("crash-notify", "on")
+			}
+			m.pickPicker = newNavPicker("Settings:", settingsItems2()).SetSize(m.contentSize())
+			return m, nil
+		}
+		if res.Value == "back" {
+			m.pop()
+			return m, nil
+		}
 	case scrBackup:
 		switch res.Value {
 		case "backup":
@@ -1745,6 +1771,19 @@ func (m model) backupTreeItems() []tuikit.PickerItem {
 // aggregate ●/○ mark and the label per folder, and indented ├─/└─ children
 // with their own ●/○ marks when the folder is open. blinkOn toggles the
 // Accent flag on rows whose folder sets Accent (the blinking "mosquito").
+// aiRemovalDone reports whether a prior remove-ai uninstall marked the state
+// file (a tiny internal log inside ~/.local/state/mosquitomarchy). Setup
+// shows the "bring back..." entry GREYED when nothing was ever removed.
+func aiRemovalLogged() bool {
+	out, err := runQuick("ai-removed")
+	if err != nil {
+		return false
+	}
+	var v struct { Removed bool `json:"removed"` }
+	if err := json.Unmarshal(bytes.TrimSpace(out), &v); err != nil { return false }
+	return v.Removed
+}
+
 func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open map[string]bool, blinkOn bool) []tuikit.PickerItem {
 	itemsOf := func(folder string) []SetupItemRec {
 		out := make([]SetupItemRec, 0, 8)
@@ -1788,10 +1827,16 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 				if i == last {
 					branch = "└─ "
 				}
-				out = append(out, tuikit.PickerItem{
+				entry := tuikit.PickerItem{
 					Display: "    " + branch + pmark + "  " + it.Label,
 					Value:   setupValue(f.Folder, it.Key),
-				})
+				}
+				// "remove-ai" leaf: GREYED until a prior remove-ai uninstall
+				// was actually recorded (nothing to "bring back" otherwise).
+				if it.Key == "remove-ai" && !aiRemovalLogged() {
+					entry.Disabled = true
+				}
+				out = append(out, entry)
 			}
 		}
 	}
@@ -2015,6 +2060,15 @@ func crashNotifyLabel() string {
 		return "Crash notifications (AI diagnosis): on — Enter to disable"
 	}
 	return "Crash notifications (AI diagnosis): off — Enter to enable"
+}
+
+
+// settingsItems2 backs the new TOP-LEVEL Settings screen (before Close).
+func settingsItems2() []tuikit.PickerItem {
+	return []tuikit.PickerItem{
+		{Display: crashNotifyLabel(), Value: "toggle-crash-notify"},
+		{Display: "Back", Value: "back"},
+	}
 }
 
 func backupItems(items []tuikit.PickerItem) []tuikit.PickerItem { return items }
