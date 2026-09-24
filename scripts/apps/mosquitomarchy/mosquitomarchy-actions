@@ -1066,6 +1066,26 @@ shift || true
 # one prompt per install, including "Install selection". The old per-call
 # `sudo`->pkexec shim is now only a fallback inside mq_sudo_prime (see
 # scripts/lib/elevate.bash), so nothing is enabled here.
+# ─── Crash-notification AI-diag toggle ─────────────────────────────────────
+# Read or set the "crash notifications with AI diagnosis" switch: the log
+# file is ALWAYS written; only the desktop TOAST is off-able. State file:
+# ~/.local/state/mosquitomarchy/crash-notify ("off" = no toasts, "on"/absent
+# default = clickable toast "diagnose with AI"). The mosquitomarchy TUI's
+# Setup screen toggles the flag through this action.
+cmd_crash_notify() {
+  local flag="$HOME/.local/state/mosquitomarchy/crash-notify"
+  mkdir -p "$(dirname "$flag")" 2>/dev/null || true
+  local how="${1:-get}"
+  case "$how" in
+    get|"")
+      [[ -f $flag && "$(cat "$flag" 2>/dev/null)" == off ]] && val=false || val=true ;;
+    on|enable) printf 'on\n' > "$flag"; val=true ;;
+    off|disable) printf 'off\n' > "$flag"; val=false ;;
+    *) err "crash-notify <get|on|off>"; return 1 ;;
+  esac
+  printf '{"crashNotify": %s}\n' "$val"
+}
+
 case "$sub" in
   status)                   cmd_status ;;
   categories)               cmd_categories ;;
@@ -1098,6 +1118,7 @@ case "$sub" in
   menu-entry)               cmd_menu_entry ;;
   add-shortcut)             cmd_add_shortcut ;;
   backup)                   cmd_backup ;;
+  crash-notify)             cmd_crash_notify "${1:-on}" ;;
   restore)                  cmd_restore "${1:-}" ;;
   *) echo "mosquitomarchy-actions: unknown subcommand '$sub'." >&2; exit 2 ;;
 esac

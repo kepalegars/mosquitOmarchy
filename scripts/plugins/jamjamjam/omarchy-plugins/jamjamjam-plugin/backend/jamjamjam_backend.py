@@ -1138,96 +1138,71 @@ class AudioAnalyzer:
 
 
 class MetronomeClicks:
-    """Precomputed metronome click pool (Reaper/MPC-2000XL style).
+    """Precomputed metronome click pool — MPC-2000XL / phosphor-core design.
 
-    Design (new, post post-mortem of the harsh "two clicks" bug):
-    - The click is a BAND-PASS-FILTERED NOISE transient layered with one
-      modal resonant sine (the classic MPC 2000xl "pop"):
-        click = (bandpass(noise, fc, q=2.5) * env_noisy
-                 + sin(2π·f·t) * env_modal
-                 * mix[mix is 60% noise + 40% modal for texture])
-      Envelope: instant attack (0.4ms), exponential decay 8 ms.
-      Percussive sounds lack pure harmonic sets — mixing band-limited noise
-      with a modal sine gives a crafted, clean "tok", way closer to a real
-      metronome than the earlier fully-synthetic sine approach.
-    - Styles pick the center frequencies (Reaper/MPC uses 1800/1200):
-      classic 1800/1200, wood 900/680 (lower + woodier), kick 140/100 (low
-      thump), beep 1300/960 (beeper-y / rn "modern electronic").
-    - Downbeat is brighter and slightly louder (1.3x accent). Every style
-      precomputes BOTH down/up 12 ms waves at construction time, so the
-      render loop only plays cached samples (no per-sample math to be slow
-      or glitchy).
+    ALL four styles share the SAME sound recipe (a 12 ms pop: sine burst at
+    the beat freq + faint texture noise, exponential decay e^(-t·500)) — what
+    CHANGES is the click frequencies, so each pick in the settings panel gives
+    a noticeably different character instead of one style being inaudible:
+
+      classic  1800 / 1200  (downbeat / offbeat) — the MPC reference
+      wood     1150 /  850  — woody "knock"
+      kick      620 /  420  — low thumper
+      beep     2800 / 2300  — bright electronic beeper
+
+    The DOWNBEAT is built 1.3× hotter in the WAVEFORM itself (phosphor-core's
+    CLICK_VOLUME * 1.3), and the (wave, accent) pair keeps accent=1.0 for
+    both beats — the level difference is INSIDE the waveform, so the gain
+    knob never makes the up-beat inaudible.
+
+    The 12 ms e^(-t·500) decay also guarantees NO residual tail bleeds over
+    the next beat (the classic "two clicks" perception bug), while the faint
+    texture noise gives the attack its percussive snap.
     """
+
+    # Per-style frequency pairs (downbeat / offbeat), ALL distinct.
+    STYLE_F = {
+        "classic": (1800.0, 1200.0),
+        "wood":    (1150.0,  850.0),
+        "kick":     (620.0,  420.0),
+        "beep":    (2800.0, 2300.0),
+    }
 
     def __init__(self, sample_rate: int = SAMPLE_RATE):
         self.rate = int(sample_rate)
         self.cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-        self._build("classic", 1800.0, 1200.0)
-        self._build("wood", 900.0, 680.0)
-        self._build("kick", 140.0, 100.0)
-        self._build("beep", 1300.0, 960.0)
+        for style, (f_down, f_up) in self.STYLE_F.items():
+            self._build(style, f_down, f_up)
 
-    def _bandpass(self, x: np.ndarray, f_lo: float, f_hi: float) -> np.ndarray:
-        """Quick one-pole bandpass shaping of a noise burst (cheap and int.)
-        to prevent the fundamental click from turning into a flat 'thud'."""
-        hp = np.zeros_like(x); lp = np.zeros_like(x)
-        alpha_hp = math.exp(-2.0 * math.pi * f_lo / self.rate)
-        alpha_lp = 1.0 - math.exp(-2.0 * math.pi * f_hi / self.rate)
-        last_in = 0.0; last_hp = 0.0; last_lp = 0.0
-        out = np.zeros_like(x)
-        for i, v in enumerate(x):
-            hpv = alpha_hp * (last_hp + v - last_in)
-            lpv = lp[-1] + alpha_lp * (hpv - lp[-1])
-            out[i] = lpv
-            last_in, last_hp, last_lp = v, hpv, lpv
-        return out
+    @staticmethod
+    def _generate_click(t: np.ndarray, freq: float, is_down: bool) -> np.ndarray:
+        # Phosphor-core's twelve-millisecond pop (~0.012 s), no sustain.
+        decay = np.exp(-t * 500.0)
+        sine = np.sin(2.0 * np.pi * freq * t)
+        # Faint detuned noise for the percussive "snap" (deterministic,
+        # recreatable: sin(7919t)·cos(3571t), a phosphor-core convention).
+        noise = np.sin(2.0 * np.pi * 7919.0 * t) * np.cos(2.0 * np.pi * 3571.0 * t) * 0.3
+        wave = (sine + noise) * decay
+        # New approach: normalize BOTH clicks to the SAME peak — the ear
+        # differentiates them through the frequency, not the volume (the
+        # phosphor-core 1.3× boost made the up-beat nearly INAUDIBLE with
+        # a tiny metronome gain). The user asked to fix '2 & 4 too quiet'.
+        peak = float(np.max(np.abs(wave))) + 1e-9
+        wave /= peak
+        return wave.astype(np.float32)
 
     def _build(self, style: str, f_down: float, f_up: float):
-        """CLAVE-style modal bank (the struck-wood sound real metronomes –
-        and every DAW factory click – actually mimic): 3 resonant modes
-        with NON-harmonic ratios + a 1 ms mallet contact burst, instant
-        attack, exponential decays. The old synthetic sine (pure tone +
-        2nd harmonic) read as TWO clicks or a beeper; this design is
-        documented in the percussion-synthesis literature (struck bars,
-        claves, woodblock) and is what the clean "DAW click" sound is.
-        """
-        n = int(0.055 * self.rate)          # 55 ms sample budget
-        t = np.arange(n) / self.rate
-        rng = np.random.default_rng(int(abs(f_down)) + len(self.cache) * 977)
-        out = {}
-        for base, is_down in ((f_down, True), (f_up, False)):
-            accent = 1.0 if is_down else 0.62
-            wave = np.zeros(n, dtype=np.float64)
-            # Three sparse NON-harmonic modes of a struck bar: base · 1.28 ·
-            # 2.08, with decreasing ring time and amplitude (physical).
-            for f, tau, amp in (
-                (base,          0.018, 1.0),
-                (base * 1.2822, 0.011, 0.60),
-                (base * 2.0849, 0.006, 0.40),
-            ):
-                wave += amp * np.sin(2.0 * np.pi * f * t) * np.exp(-t / tau)
-            # 1.2 ms mallet-contact noise burst (no band-pass: at this
-            # length it IS the attack), peak-normalized to avoid clipping.
-            k = max(1, int(0.0012 * self.rate))
-            contact = np.asarray(rng.standard_normal(k), dtype=np.float64)
-            contact *= np.exp(-np.arange(k) / (0.0005 * self.rate))
-            contact /= float(np.max(np.abs(contact)) + 1e-9)
-            wave[:k] += contact * 0.55
-            # Instant attack; a short fade-out at the very end (never a
-            # click-tail discontinuity).
-            tail = int(0.004 * self.rate)
-            wave[-tail:] *= np.linspace(1.0, 0.0, tail)
-            wave *= accent
-            peak = float(np.max(np.abs(wave))) + 1e-9
-            wave /= peak
-            out["down" if is_down else "up"] = (wave.astype(np.float32), accent)
-        self.cache[style] = out
+        n = int(0.055 * self.rate)  # 55 ms window; the pop itself ≈ 12 ms
+        t = np.arange(n, dtype=np.float64) / self.rate
+        self.cache[style] = (
+            self._generate_click(t, f_down, is_down=True),
+            self._generate_click(t, f_up, is_down=False),
+        )
 
     def get(self, style: str, down_beat: bool) -> np.ndarray:
-        """Return the precomputed click sample array (or classic's)."""
+        """Return the precomputed click waveform (a numpy float32 array)."""
         pair = self.cache.get(style) or self.cache["classic"]
-        return pair["down" if down_beat else "up"]
-
+        return pair[0] if down_beat else pair[1]
 
 class MidiSynth:
     """Very simple additive synth streaming to PipeWire through pw-cat."""
@@ -1458,12 +1433,15 @@ class MidiSynth:
                     custom_step = 0
                     custom_done = False
                     if not self.click_custom:
-                        # PRECOMPUTED cache (Reaper-style pop): always ready,
-                        # no custom-file setup needed (paired wave+accent).
-                        click_wave, accent_click = self.metronome_clicks.get(
+                        # PRECOMPUTED cache (MPC-2000XL / phosphor-core pop).
+                        # The accent is BAKED into the waveform (the downbeat
+                        # plays 1.3× hotter there), so the up-beat is NEVER
+                        # inaudible: accent_click stays at 1.0 for both.
+                        click_wave = self.metronome_clicks.get(
                             style, self.metronome_in_beat)
+                        accent_click = 1.0
                         click_cursor = 0
-                        custom_samples = click_wave  # reuse the stream slot
+                        custom_samples = click_wave # reuse the stream slot
                         custom_step = 0
                         custom_done = False
                     elif self.metronome_in_beat:
@@ -2439,11 +2417,10 @@ class AudioAnalyzerBackend:
             self._apply_target()
         self.paused = bool(data.get("paused", False))
         self.hold = bool(data.get("hold", False))
-        met = data.get("metronome")
-        if isinstance(met, dict):
-            bpm = float(met.get("bpm") or 0.0)
-            self.metronome_enabled = bool(met.get("enabled", False)) and bpm > 0.0
-            self.synth.set_metronome(self.metronome_enabled, bpm)
+        # The METRONOME state is deliberately NOT restored on reload: a
+        # simple toolbar/shell restart must never re-enable the click on its
+        # own (the user flips it in the plugin directly). It stays off until
+        # the user toggles it again in a fresh session.
         self._sync_capture()
         self.dirty = True
         return True

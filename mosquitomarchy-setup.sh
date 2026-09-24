@@ -513,6 +513,7 @@ MODULES=(
   "handbrake:HandBrake (Qt GUI + CLI) + H.264/H.265 encoders + preset sync + Hyprland rules"
   "apps:Apps, tuis & webapps (catalog per type gui/tui/webapps + backup selection via setup-apps.sh)"
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
+  "remove-ai:Remove every AI surface (agents, AI-diag toasts, ollama loaders) — reversible from Setup"
   "battery:Battery backend (ultra-save + Lenovo charge-control + custom.power plugin) + coffee mode (mega-caffeine)"
   "brightness:Display brightness — Omarchy default, plus 0% = screen off"
   "achraff:'Achraff 67' visual theme + unlock/Plymouth logo (lock screen left stock)"
@@ -696,6 +697,7 @@ module_state(){
     jamjamjam-plugin) st_jamjamjam_plugin ;;
     live-mode) st_live_mode ;;
     mosquitomarchy) st_mosquitomarchy ;;
+    remove-ai) ai_state_on && echo ok || echo missing ;;
   esac
 }
 
@@ -2011,6 +2013,44 @@ un_ollama(){
   ok "helpers + OpenCode commands removed"
 }
 
+# ─── remove-all-ai (a REVERSABLE uninstall entry) ────────────────────────
+# Strips the AI surface from Omarchy:
+#   • ollama loaders / REAPER models / opencode commands,
+#   • the Omarchy menu "Agents" plugin (icon, bar entry, panel),
+#   • the mosquito AI-diagnosis crash notifications (crash-notify off).
+# REVERSIBLE from Setup by re-applying run_restore_ai (nothing is deleted
+# except what the user explicitly purged — the agents plugin and the
+# crash-notify flag are toggles, so the restore is a flip back).
+ai_state_on(){
+  [[ -f "$HOME/.local/state/mosquitomarchy/remove-all-ai" ]]
+}
+
+un_remove_ai() {
+  info "Removing every AI integration from this Omarchy (reversible from Setup)"
+  # 1) the ollama helpers + OpenCode commands (the ollama module's pieces)
+  un_ollama >/dev/null 2>&1 || true
+  mark_excluded ollama
+  # 2) the Omni Agents plugin in the Omarchy menu (QML plugin: icon + panel)
+  omarchy plugin disable omarchy.agents >/dev/null 2>&1 || true
+  ok "omarchy.agents plugin disabled in the Omarchy menu/bar"
+  # 3) Crash AI-diagnosis toasts off (crash-notify state file)
+  "$SCRIPTS/apps/mosquitomarchy/mosquitomarchy-actions" crash-notify off &&
+    ok "Crash notifications with AI diagnosis: OFF" || true
+  mkdir -p "$HOME/.local/state/mosquitomarchy"
+  printf '1\n' > "$HOME/.local/state/mosquitomarchy/remove-all-ai"
+  ok "AI removed from this Omarchy: agents hidden, AI-diag toasts gone, ollama loaders gone"
+}
+
+run_restore_ai() {
+  info "Re-enabling AI pieces removed by 'remove-all-ai'"
+  rm -f "$HOME/.local/state/mosquitomarchy/remove-all-ai"
+  "$SCRIPTS/apps/mosquitomarchy/mosquitomarchy-actions" crash-notify on &&
+    ok "Crash notifications with AI diagnosis: RE-ENABLED" || true
+  omarchy plugin enable omarchy.agents >/dev/null 2>&1 || true
+  ok "Agents plugin re-enabled in the Omarchy menu/bar"
+  warn "ollama loaders were NOT restored — re-run the 'ollama' module to bring them back."
+}
+
 un_guitarpro(){
   info "Uninstalling Guitar Pro 8 (wine)"
   rm -f "$BIN_DIR/guitarpro"
@@ -2368,6 +2408,7 @@ uninstall_module(){
     handbrake) un_handbrake ;;
     apps) un_apps ;;
     ollama) un_ollama ;;
+    remove-ai) un_remove_ai ;;
     battery) un_battery ;;
     brightness) un_brightness ;;
     keyboard-backlight) un_keyboard_backlight ;;
@@ -2782,6 +2823,7 @@ exec_modules(){
       handbrake) run_module handbrake run_handbrake ;;
       apps) run_module apps run_apps ;;
       ollama)  run_module ollama run_ollama ;;
+      remove-ai) run_module remove-ai run_restore_ai ;;
       battery) run_module battery run_battery ;;
       brightness) run_module brightness run_brightness ;;
       achraff) run_module achraff run_achraff ;;
@@ -2821,7 +2863,7 @@ CATEGORIES=(
   "fixes|Quick fixes|"
   "mosquito|mosquito|"
   "keybindings|Keybindings|keybindings"
-  "llm|LLM|ollama"
+  "lame|Language models (IA / AI)|ollama remove-ai"
   "themes|Themes|achraff"
   "vms|VMs|windows-vm macos-vm omarchy-vm"
   "menu|Menu entry|"

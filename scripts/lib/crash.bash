@@ -56,9 +56,15 @@ mq_crash_log(){
 }
 
 # mq_crash_notify <tool> <logfile> — clickable Omarchy toast → the AI.
+# TOGGLEABLE: the notification (and only it — the dated log on the disk stays)
+# can be disabled globally with MOSQUITOMARCHY_CRASH_NOTIFY=0, and the
+# mosquitomarchy module owns that switch: default ON, reversable from the
+# TUI's Setup screen (state file: MOSQUITOMARCHY/notifications-off).
 mq_crash_notify(){
   local tool="$1" log="$2"
   command -v omarchy-notification-send >/dev/null 2>&1 || return 0
+  local flag="$HOME/.local/state/mosquitomarchy/crash-notify"
+  [[ -f "$flag" ]] && [[ "$(cat "$flag" 2>/dev/null)" == off ]] && return 0
   omarchy-notification-send --urgency critical --glyph "$MQ_CRASH_GLYPH" \
     "mosquitOmarchy: $tool failed" \
     "Click to diagnose with AI" \

@@ -70,15 +70,11 @@ function batteryIcon(device, onBattery, states) {
   var chargingIcons = ["󰢜", "󰂆", "󰂇", "󰂈", "󰢝", "󰂉", "󰢞", "󰂊", "󰂋", "󰂅"]
   var defaultIcons = ["󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"]
   var index = Math.max(0, Math.min(9, Math.floor(d.percentage * 10)))
-  var threshold = chargeThresholdActive(d, onBattery, states)
-
-  if (threshold) return defaultIcons[index]
-  if (d.state === states.FullyCharged) return "󰂅"
-  // The BOLT stays whenever the AC is plugged in — even if the charge just
-  // stopped because the capacity limit was reached: without it, "fully
-  // charged" and "charger unplugged" would look identical and the user loses
-  // the "AC live" signal. (The plugged-but-not-charging state goes to the
-  // modeLabel text below, the ICON never reverts).
+  // The BOLT is the "AC live" symbol and it stays even when the charger is
+  // merely HOLDING the charge at its ceiling (most laptops pause the actual
+  // charge there). Without this rule "plugged at 100%" and "unplugged"
+  // would read identical. The plugged-not-charging nuance goes to the
+  // TEXT (the modeLabel output below).
   if (!onBattery) return chargingIcons[index]
   return defaultIcons[index]
 }

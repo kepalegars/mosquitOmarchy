@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -549,6 +551,14 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m.startWorking("Backing up (encrypted)", workingArgs("backup", m.pendingArgs)...)
 		case "restore":
 			return m.startWorking("Restoring", workingArgs("restore", []string{m.pendingFile})...)
+		case "toggle-crash-notify":
+			if crashNotify() {
+				_, _ = runQuick("crash-notify", "off")
+			} else {
+				_, _ = runQuick("crash-notify", "on")
+			}
+			m.setupPicker = m.rebuildSetup()
+			return m, nil
 		case "menu-entry":
 			return m.startWorking("Adding the menu entry", workingArgs("menu-entry", nil)...)
 		case "apply-patches":
@@ -1613,6 +1623,10 @@ func (m model) rebuildSetup() navPicker {
 	if !uninstall {
 		items = append(items, tuikit.PickerItem{Display: "Menu entry", Value: "menu-entry"})
 		items = append(items, tuikit.PickerItem{Display: "Add shortcut for mosquitOmarchy", Value: "add-shortcut"})
+		// Crash AI-diagnosis notifications: ON by default, toggleable.
+		items = append(items, tuikit.PickerItem{
+			Display: crashNotifyLabel(), Value: "toggle-crash-notify"})
+
 		install := tuikit.PickerItem{Display: "Install selection", Value: "install-selection"}
 		if m.selectedCount() == 0 {
 			install.Disabled = true
@@ -1978,6 +1992,29 @@ func (m model) statusView() string {
 		b.WriteString(dot + "  " + label + "\n\n")
 	}
 	return b.String()
+}
+
+// crashNotify reads the crash-notification flag ONCE (cheap bash query) and
+// returns its on/off state; the module item's label uses it.
+func crashNotify() bool {
+	out, err := runQuick("crash-notify", "get")
+	if err != nil || len(bytes.TrimSpace(out)) == 0 {
+		return true // default ON
+	}
+	var v struct {
+		CrashNotify bool `json:"crashNotify"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(out), &v); err != nil {
+		return true
+	}
+	return v.CrashNotify
+}
+
+func crashNotifyLabel() string {
+	if crashNotify() {
+		return "Crash notifications (AI diagnosis): on — Enter to disable"
+	}
+	return "Crash notifications (AI diagnosis): off — Enter to enable"
 }
 
 func backupItems(items []tuikit.PickerItem) []tuikit.PickerItem { return items }
