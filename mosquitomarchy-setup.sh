@@ -519,7 +519,7 @@ MODULES=(
   "keyboard-backlight:Keyboard backlight toggle + Trigger > Hardware entry"
   "touchpad:Touchpad (pointer acceleration + sensitivity — external mouse is not affected)"
   "mx-master:MX Master (any model) — thumb gesture button → SUPER (logiops daemon, system service)"
-  "keepassxc:KeePassXC secret service — REPLACES gnome-keyring completely (existing keyring secrets must be migrated manually; removing the gnome-keyring package is optional and asked during setup, its settings stay on disk)"
+  "keepassxc:KeePassXC secret service (apps module) — REPLACES gnome-keyring completely (existing keyring secrets must be migrated manually; package removal optional & asked). On FIRST KeePassXC launch choose YOUR .kdbx: the install pins it into keepassxc.ini (Remember*/LastOpened*) so EVERY web app's browser extension and secret service uses it — no more 'create a new database?' prompts. 'i' info below; pin a DIFFERENT file manually with scripts/apps/keepassxc/keepassxc-default-database.sh FILE.kdbx (README in that folder lists a manual select)"
   "keybindings:SUPER keybindings manager (app launches + quick functions — bindings.lua marker block)"
   "mosquitomarchy-update:Update watchdog (scripts update first, then Omarchy updates — notification + opencode conflict review)"
   "superfile:SuperFile — terminal file manager (menu entry + keybind + Omarchy theme)"
@@ -725,7 +725,7 @@ module_of_path(){
     scripts/fixes/fix-touchpad.sh)                           echo touchpad ;;
     scripts/fixes/fix-mx-master.sh)                          echo mx-master ;;
     scripts/fixes/fix-ableton-fullscreen.sh)                 echo ableton-fullscreen ;;
-    scripts/plugins/keepassxc/*)                                echo keepassxc ;;
+    scripts/apps/keepassxc/*)                                echo keepassxc ;;
     scripts/mosquitomarchy-update/*)                            echo mosquitomarchy-update ;;
     scripts/apps/superfile/*)                                echo superfile ;;
     scripts/apps/zen/*)                                      echo zen ;;
@@ -2248,7 +2248,7 @@ un_keepassxc(){
   # package if the user had asked setup to uninstall it — `sudo pacman -S
   # gnome-keyring` restores the package (its settings were kept on disk).
   info "Uninstalling the KeePassXC secret service (restores gnome-keyring)"
-  bash "$SCRIPTS/plugins/keepassxc/setup-keepassxc-integration.sh" --remove
+  bash "$SCRIPTS/apps/keepassxc/setup-keepassxc-integration.sh" --remove
 }
 
 un_keybindings(){
@@ -2634,7 +2634,7 @@ run_superfile(){ bash "$SUPERFILE_DIR/setup-superfile.sh" $([[ $YES == 1 ]] && e
 run_zen(){ bash "$ZEN_DIR/setup-zen.sh" $([[ $YES == 1 ]] && echo -y); }
 run_mx_master(){ bash "$MXMASTER_DIR/fix-mx-master.sh" $([[ $YES == 1 ]] && echo -y); }
 run_keepassxc(){
-  bash "$SCRIPTS/plugins/keepassxc/setup-keepassxc-integration.sh" $([[ $YES == 1 ]] && echo -y)
+  bash "$SCRIPTS/apps/keepassxc/setup-keepassxc-integration.sh" $([[ $YES == 1 ]] && echo -y)
 }
 
 run_keybindings(){
@@ -2814,10 +2814,10 @@ exec_modules(){
 
 # Categories of the "setup" action. id|label|modules (space-separated module ids).
 CATEGORIES=(
-  "apps|Apps|reaper audio ableton guitarpro davinci-resolve handbrake superfile zen"
+  "apps|Apps|reaper audio ableton guitarpro davinci-resolve handbrake superfile zen keepassxc"
   "tuis|TUIs|"
   "webapps|Webapps|"
-  "plugins|Plugins|mosquitomarchy jamjamjam-plugin battery brightness keyboard-backlight touchpad mx-master keepassxc"
+  "plugins|Plugins|mosquitomarchy jamjamjam-plugin battery brightness keyboard-backlight touchpad mx-master"
   "fixes|Quick fixes|"
   "mosquito|mosquito|"
   "keybindings|Keybindings|keybindings"

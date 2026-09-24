@@ -48,6 +48,10 @@
 #   ./setup-keepassxc-integration.sh --remove   # restore the omarchy default
 #   ./setup-keepassxc-integration.sh -y         # non-interactive (nothing asked)
 #
+# KEEPASSXC module — was in scripts/plugins/, now lives in scripts/apps/
+# (the module is an APP manager, no longer a plugin. Done in depth: module
+# path, README link, catalog entry and the TUI 'i' info all point here).
+#
 # Source: keepassxc docs topics/SecretService.adoc (the exact upstream
 # snippet), issues #6274/#13464 (masking gnome-keyring-daemon.service is the
 # documented fallback when the D-Bus override alone is not enough).
@@ -243,6 +247,9 @@ do_status(){
   echo "ini flagged  : $(fdo_enabled)"
   echo "autostart    : $([[ -f "$KPXC_AUTOSTART_DIR/$KPXC_AUTOSTART_SHADE" ]] && echo shadowed || echo stock)"
   echo "user masking : $(systemctl --user is-enabled gnome-keyring-daemon.service 2>/dev/null || echo n/a)"
+  local pin
+  pin="$(grep -E '^LastActiveDatabase=' "$KPXC_INI" 2>/dev/null | cut -d= -f2-)"
+  echo "pinned DB    : ${pin:-<none — first KeePassXC run chooses it, then it is pinned>}"
 }
 
 do_apply(){
@@ -255,12 +262,35 @@ do_apply(){
   ok "keepassxc.ini: [FdoSecrets] Enabled=true (backup: $KPXC_INI_BAK)"
   write_autostart_shade
   mask_daemon_service
-  start_keepassxc
   offer_gnome_keyring_removal
+  # DEFAULT DATABASE: at the KeePassXC FIRST launch the user chooses (creates
+  # or opens) the ONE .kdbx that everything else should use; this module
+  # records it into keepassxc.ini (pin step) so every FUTURE launch — and
+  # the browser extension + secret service flow of any web app — opens THAT
+  # database instead of offering "create a new database" every time.
+  info "Pin the default database, keyed to the one KeePassXC opens at its first run…"
+  local pin_script="$SCRIPT_DIR/keepassxc-default-database.sh"
+  # Non-blocking drive-by: the pin script waits up to 15 min for a .kdbx to
+  # appear / be opened, then pins it. This is the "first launch" flow.
+  if command -v keepassxc >/dev/null 2>&1; then
+    "$SCRIPT_DIR/keepassxc-default-database.sh" >/dev/null 2>&1 \
+      && ok "Default database pinned into keepassxc.ini (RememberLast + LastOpened)". \
+      || warn "Database pin NOT set — run 'scripts/apps/keepassxc/keepassxc-default-database.sh FILE.kdbx' manually once your DB exists (see the README in this folder)."
+  else
+    warn "keepassxc missing — skipping the default-database pin."
+  fi
   info "Still to do in the KeePassXC UI (encrypted in the database, not scriptable):"
   info "  Tools → Settings → Secret Service Integration → confirm enabled;"
   info "  Database → Database Settings → Secret Service Integration → expose a group."
   hr
+}
+
+# Utility for the module info (_i) as well: the .kdbx we pinned, if any.
+pin_info(){
+  echo -n ""
+  local p
+  p="$(dirname "${BASH_SOURCE[0]:-$0}")/keepassxc-default-database.sh"
+  [[ -f $p ]] && bash "$p" --status 2>/dev/null || true
 }
 
 do_remove(){
@@ -280,6 +310,14 @@ do_remove(){
   disown
   ok "gnome-keyring secret service started again."
   ok "KeePassXC database and settings were NEVER touched — they stay installed."
+  # Un-pin the remembered default database (the user's own). The whole
+  # Remember* / LastOpened* block is dropped from keepassxc.ini; the backup
+  # .pre-keepassxc stays untouched.
+  if [[ -f "$SCRIPT_DIR/keepassxc-default-database.sh" ]]; then
+    "$SCRIPT_DIR/keepassxc-default-database.sh" --clear \
+      && ok "Default-database pin cleared (stock behaviour — no remembered .kdbx)." \
+      || warn "database pin could not be cleared."
+  fi
 }
 
 case $MODE in
