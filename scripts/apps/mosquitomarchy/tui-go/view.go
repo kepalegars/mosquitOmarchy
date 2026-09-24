@@ -33,6 +33,23 @@ func (m model) homeBannerReserve() int {
 	return homeBannerReserve
 }
 
+// filterBarLine composes the filter zone for the Setup/Uninstall screens:
+// when open ('f'), a small rectangular box with the LIVE filter text and a
+// blinking-style cursor sits right above the shortcut hint bar; the type
+// stream also drives the live list filter.
+func (m model) filterBarLine(hint string) string {
+	if !m.filterOpen {
+		return hint
+	}
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(tuikit.ColorMuted).
+
+		Render(fmt.Sprintf("filter: ┃ %s▏  (type to refine · esc clear · f close)", m.filterText))
+	w := m.contentSizeW()
+	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(box) + "\n" + hint
+}
+
 func (m model) View() string {
 	if m.quit {
 		return ""
@@ -80,7 +97,7 @@ func (m model) View() string {
 			title = screenTitle("Setup", w)
 		}
 		body = m.setupPicker.View()
-		bar = barLine(m.setupPicker.ShortcutsHint())
+		bar = barLine(m.filterBarLine(m.setupPicker.ShortcutsHint()))
 	case scrSetupCat:
 		if m.treeMode == "uninstall" {
 			title = screenTitle("Uninstall — "+m.setupCatLabel(), w)
@@ -88,7 +105,7 @@ func (m model) View() string {
 			title = screenTitle("Setup — "+m.setupCatLabel(), w)
 		}
 		body = m.setupCatPicker.View()
-		bar = barLine(m.setupCatPicker.ShortcutsHint())
+		bar = barLine(m.filterBarLine(m.setupCatPicker.ShortcutsHint()))
 	case scrUpdate:
 		title = screenTitle("Update", w)
 		body = m.updateBody()

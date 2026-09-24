@@ -105,6 +105,10 @@ type model struct {
 	// substring filter that flattens the tree (leaf rows only, no category
 	// folders); tab still ticks rows and Enter acts on them.
 	filterText string
+	// filterOpen: the 'f' toggle that shows the rectangular filter zone
+	// above the shortcut bar (Setup/Uninstall + their subcategories). The
+	// zone echoes every pressed key in real time while filtering.
+	filterOpen bool
 	// kpxGnomeRm tracks the per-install-plan answer to "remove the
 	// gnome-keyring package?": 0 = not asked yet, 1 = yes, 2 = no.
 	kpxGnomeRm    int

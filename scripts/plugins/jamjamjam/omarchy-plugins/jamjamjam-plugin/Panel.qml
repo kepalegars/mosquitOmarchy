@@ -162,9 +162,10 @@ Panel {
         if (key === "r" && root.service) root.service.resetAnalysis()
         else if (key === "g" && root.service) root.service.openTui()
         else if (key === "h") root.pinned = !root.pinned
-        // 'p' pins, Shift+P (uppercase) pauses — textKey carries the case.
+        // 'p' pins AND unpins; ',' pauses (single key — Shift+P was
+        // unreliable through the catcher)
         else if (key === "p") root.pinned = !root.pinned
-        else if (key === "P" && root.service) root.service.togglePaused()
+        else if (key === "," && root.service) root.service.togglePaused()
         else if (key === "s") root.settingsVisible = !root.settingsVisible
         else if (key === "m") { root.midiSectionVisible = !root.midiSectionVisible; if (root.service) root.service.toggleMidi() }
       }
@@ -186,6 +187,7 @@ Panel {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.spacing.sm
+            readonly property int pinIconSize: Style.space(24)
 
             // Red music-note icon: click to pin the panel. Hovering shows the
             // hint. Pinned, the panel stays open and other apps stay usable.
@@ -193,7 +195,7 @@ Panel {
               id: pinButton
               anchors.verticalCenter: parent.verticalCenter
               iconText: "♪"
-              iconSize: Style.space(24)
+              iconSize: parent.pinIconSize
               text: ""
               bordered: false
               selected: root.pinned
@@ -202,32 +204,39 @@ Panel {
               horizontalPadding: Style.spacing.xs
               verticalPadding: 0
               tooltipText: root.pinned
-                ? "Pinned — the panel stays open; click to unpin and let it close normally"
-                : "Pin the panel — keep it open while you use other apps"
+                ? "Pinned — click (or press p) to unpin and let it close normally"
+                : "Pin the panel (p) — keep it open while you use other apps"
               onClicked: root.pinned = !root.pinned
             }
 
-            Column {
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: 0
-              // Tiny version caption above the title (manifest version, e.g.
-              // "v1.0.0"). Kept small/grey so it never competes with the
-              // bold subtitle.
+            Item {
+              // Title stack: the "jamjamjam" TITLE is vertically centred on
+              // the ♪ icon's height; the version caption (now noticeably
+              // smaller than the title) floats just above it, so the bold
+              // title itself sits exactly on the icon's axis.
+              width: Math.max(titleText.implicitWidth, versionText.implicitWidth)
+              height: titleText.implicitHeight + versionText.implicitHeight
+
               Text {
+                id: titleText
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "v" + (root.manifest && root.manifest.version !== undefined ? String(root.manifest.version) : "1.0.0")
-                color: Util.alpha(root.foreground, 0.55)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-              }
-              Text {
-                anchors.horizontalCenter: parent.horizontalCenter
+                // Centre the title on the icon's middle: from the Item's
+                // centre, shift up by half the caption's height.
+                y: (parent.parent.pinIconSize - titleText.implicitHeight) / 2 + (versionText.implicitHeight / 2)
                 text: "jamjamjam"
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.subtitle
                 font.bold: true
                 font.letterSpacing: Style.space(1)
+              }
+              Text {
+                id: versionText
+                anchors.horizontalCenter: titleText.horizontalCenter
+                text: "v" + (root.manifest && root.manifest.version !== undefined ? String(root.manifest.version) : "1.0.0")
+                color: Util.alpha(root.foreground, 0.55)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
               }
             }
           }
@@ -290,7 +299,7 @@ Panel {
               bordered: false
               foreground: root.settingsVisible ? root.accent : root.muted
               accent: root.accent
-              tooltipText: "Plugin settings"
+              tooltipText: "Plugin settings (s) — hides the rest of the panel: note naming, chord zone, AEC, metronome click (volume/style/import)"
               onClicked: root.settingsVisible = !root.settingsVisible
             }
           }
@@ -298,6 +307,7 @@ Panel {
 
         // ─── Key / BPM cards ──────────────────────────────────────
         Item {
+          visible: !root.settingsVisible
           width: parent.width
           height: Style.space(110)
           implicitHeight: Style.space(110)
@@ -349,7 +359,7 @@ Panel {
               }
             }
 
-            // BPM card — click toggles the metronome; while enabled the card
+            // BPM card — click toggles the metronome (,) — while enabled the card
             // flashes white once per beat at the analysed BPM.
             Rectangle {
               id: bpmCard
@@ -436,6 +446,7 @@ Panel {
 
         // ─── Tuner (input pitch detection) ────────────────────────
         Item {
+          visible: !root.settingsVisible
           width: parent.width
           height: root.tunerHeight
           implicitHeight: root.tunerHeight
@@ -584,103 +595,65 @@ Panel {
           }
         }
 
-        // ─── Chord notes heard right now (single line) ────────────
-        Column {
-          width: parent.width
-          spacing: 2
-
-          Text {
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            text: root.currentAudioChord !== ""
-              ? (root.chordNotes.length > 0 ? root.chordNotes.join(" ") : root.currentAudioChord)
-              : (root.noChordSignal ? "could not find the chord" : "· · ·")
-            color: root.currentAudioChord !== "" ? Color.urgent : root.muted
-            font.family: root.fontFamily
-            font.pixelSize: root.currentAudioChord !== "" ? Style.space(20) : Style.space(12)
-            font.bold: true
-          }
-
-          Text {
-            visible: root.analysisLocked
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            text: "⏸ key found — analysis stopped · press space to restart"
-            color: root.accent
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            font.bold: true
-          }
-
-          Text {
-            visible: root.songChanged
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            text: "⟳ new song detected — press r to reset the analysis"
-            color: Color.urgent
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            font.bold: true
-          }
-
-          Text {
-            visible: root.song && root.song.match !== null && root.song.match.title !== undefined
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            text: "♪ " + (root.song.match ? String(root.song.match.title || "") : "") + " — " + (root.song.match ? String(root.song.match.artist || "") : "")
-            color: root.accent
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-          }
-        }
-
-        // ─── Detected-chord zone (separate from the fretboard) ─────
-        // Toggleable from settings; when enabled it is ALWAYS visible at its
-        // fixed size — even with no chord detected (placeholder dash) — and
-        // is laid out outside the fretboard block, independent of its height.
-        Rectangle {
+        // ─── Detected-chord naming zone (the RED one) ─────────────
+        // Toggleable from settings and ALWAYS at its fixed max size when
+        // shown — even with nothing detected (placeholder dots) — and it is
+        // a separate block from the fretboard (independent of its height).
+        Item {
           id: chordZone
-          visible: root.showChordBox
+          visible: !root.settingsVisible && root.showChordBox
           width: parent.width
           height: root.chordBoxHeight
           implicitHeight: root.chordBoxHeight
-          radius: Style.cornerRadius
-          color: Util.alpha(Color.background, 0.55)
-          border.width: 1
-          border.color: Util.alpha(Color.foreground, 0.12)
 
-          Row {
-            anchors.fill: parent
-            anchors.margins: Style.spacing.sm
-            spacing: Style.spacing.md
+          Column {
+            width: parent.width
+            height: parent.height
+            spacing: 2
 
             Text {
-              anchors.verticalCenter: parent.verticalCenter
-              text: "CHORD"
-              color: root.muted
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              anchors.verticalCenterOffset: (root.analysisLocked || root.songChanged || (root.song && root.song.match)) ? -Style.space(8) : 0
+              text: root.currentAudioChord !== ""
+                ? (root.chordNotes.length > 0 ? root.chordNotes.join(" ") : root.currentAudioChord)
+                : (root.noChordSignal ? "could not find the chord" : "· · ·")
+              color: root.currentAudioChord !== "" ? Color.urgent : root.muted
               font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
+              font.pixelSize: root.currentAudioChord !== "" ? Style.space(20) : Style.space(12)
               font.bold: true
-              font.letterSpacing: Style.space(1)
             }
 
             Text {
-              anchors.verticalCenter: parent.verticalCenter
-              // MIDI chord (what you play) takes priority, then the audio
-              // chord the analyzer hears; nothing detected → placeholder.
-              text: {
-                var c = String(root.midiChord || "")
-                if (c === "") c = String(root.currentAudioChord || "")
-                return c !== "" ? c : "—"
-              }
-              color: {
-                var c = String(root.midiChord || root.currentAudioChord || "")
-                return c !== "" ? root.accent : root.muted
-              }
+              visible: root.analysisLocked
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              text: "⏸ key found — analysis stopped · press space to restart"
+              color: root.accent
               font.family: root.fontFamily
-              font.pixelSize: Style.space(34)
+              font.pixelSize: Style.font.caption
               font.bold: true
+            }
+
+            Text {
+              visible: root.songChanged
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              text: "⟳ new song detected — press r to reset the analysis"
+              color: Color.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            Text {
+              visible: root.song && root.song.match !== null && root.song.match.title !== undefined
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              text: "♪ " + (root.song.match ? String(root.song.match.title || "") : "") + " — " + (root.song.match ? String(root.song.match.artist || "") : "")
+              color: root.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
               elide: Text.ElideRight
             }
           }
@@ -688,12 +661,13 @@ Panel {
 
         // ─── Guitar fretboard ─────────────────────────────────────
         Item {
+          visible: !root.settingsVisible
           width: parent.width
           height: root.fretboardHeight
           implicitHeight: root.fretboardHeight
           clip: true
 
-          // (grey wrapper removed — show the content directly, layout is good as-is)
+          // (grey wrapper removed — show the content directly)
           Column {
             anchors.fill: parent
             anchors.margins: Style.spacing.sm
@@ -808,7 +782,7 @@ Panel {
         // ─── MIDI section (compact, no wrapper box) ───────────────
         Column {
           id: midiContent
-          visible: root.midiSectionVisible
+          visible: root.midiSectionVisible && !root.settingsVisible
           width: parent.width
           spacing: Style.spacing.sm
 
@@ -1017,7 +991,7 @@ Panel {
             width: parent.width
             // Fixed scroll viewport: the panel keeps its size when 's' is
             // pressed; anything beyond ~4 rows scrolls instead of growing.
-            height: Math.min(contentHeight, Style.space(300))
+            height: Math.min(contentHeight, Style.space(372))
             implicitHeight: height
             contentWidth: width
             contentHeight: settingsRows.implicitHeight
@@ -1336,7 +1310,7 @@ Panel {
             fontSize: Style.font.caption
             horizontalPadding: Style.spacing.sm
             verticalPadding: Style.spacing.xs
-            tooltipText: "Open the guitar-neck TUI: scale, live chord, tuner (g)"
+            tooltipText: "Open the guitar-neck TUI: scale, live chord, tuner (g)\nKeys: space analyze-hold · , pause · r reset · s settings · m MIDI · g TUI · p pin/unpin"
             onClicked: if (root.service) root.service.openTui()
 
             HoverHandler { id: openTuiHover }

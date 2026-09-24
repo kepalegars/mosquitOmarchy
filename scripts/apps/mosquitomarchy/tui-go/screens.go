@@ -342,13 +342,17 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				// in the SETUP tree triggers an explicit consent prompt —
 				// declining un-ticks it. The Uninstall tree never asks again.
 				if m.treeMode == "install" && strings.HasSuffix(v, ":keepassxc") && m.selected[v] {
+					// Rebuild FIRST so the ticked row shows up even while the
+					// consent prompt is on screen (the prompt pops over it).
+					m.setupCatPicker = m.rebuildSetupCat()
 					m.pendingAction = "keepassxc-consent"
 					m.pendingArgs = []string{v}
 					m.pendingMsg = "Select KeePassXC secret service?\n\nIt REPLACES gnome-keyring completely:\n• your existing gnome-keyring secrets must be migrated to KeePassXC MANUALLY (password/settings transfer comes later);\n• a second prompt during the install asks whether to also remove the gnome-keyring package — its settings stay on disk either way, reinstalling it recovers them;\n• uninstalling this module restores the Omarchy default (gnome-keyring)."
 					m.pendingNo = "Cancel"
 					m.pendingYes = "Select it"
 					m.push(scrConfirm)
-					m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+					// Focus Yes: plain Enter = "Select it" (the common answer).
+					m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
 					return m, nil
 				}
 			}
@@ -475,6 +479,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// Accepted: keep the selection; the module is in the plan only
 			// when the user installs it with Enter as usual.
 			m.toast, _ = m.toast.SetOK("keepassxc selected — the gnome-keyring questions come during the install")
+			// Refresh the visible tree immediately so the tick reads
+			// without having to leave the Plugins screen.
+			m.setupCatPicker = m.rebuildSetupCat()
 			return m, nil
 		}
 		switch m.pendingAction {
@@ -775,25 +782,44 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	case scrStatus:
 		m.info, cmd = m.info.Update(msg)
 	case scrSetup:
-		// Typing filter: printable keys update the live tree filter (the list
-		// flattens to matching leaf rows); backspace refines, esc clears (the
-		// first esc un-filters, only then does it go back).
+		// 'f' toggles the filter zone above the shortcut bar: a rectangular
+		// search input that echoes every pressed key in real time.
 		if km, ok := msg.(tea.KeyMsg); ok {
-			switch {
-			case km.String() == "backspace" && m.filterText != "":
-				r := []rune(m.filterText)
-				m.filterText = string(r[:len(r)-1])
-				m.setupPicker = m.rebuildSetup()
-				return m, nil
-			case km.String() == "esc" && m.filterText != "":
-				m.filterText = ""
+			switch km.String() {
+			case "f":
+				if m.filterOpen {
+					// Closing also clears the filter (list resets full).
+					m.filterOpen = false
+					m.filterText = ""
+				} else {
+					m.filterOpen = true
+				}
 				m.setupPicker = m.rebuildSetup()
 				return m, nil
 			}
-			if runes := km.Runes; len(runes) == 1 && unicode.IsPrint(runes[0]) {
-				m.filterText += string(runes[0])
-				m.setupPicker = m.rebuildSetup()
-				return m, nil
+		}
+		if m.filterOpen {
+			// While the filter zone is open, printable keys update the live
+			// tree filter (the list flattens to matching leaf rows) and
+			// BACKSPACE refines; esc closes the zone.
+			if km, ok := msg.(tea.KeyMsg); ok {
+				switch {
+				case km.String() == "backspace" && m.filterText != "":
+					r := []rune(m.filterText)
+					m.filterText = string(r[:len(r)-1])
+					m.setupPicker = m.rebuildSetup()
+					return m, nil
+				case km.String() == "esc":
+					m.filterOpen = false
+					m.filterText = ""
+					m.setupPicker = m.rebuildSetup()
+					return m, nil
+				}
+				if runes := km.Runes; len(runes) == 1 && unicode.IsPrint(runes[0]) {
+					m.filterText += string(runes[0])
+					m.setupPicker = m.rebuildSetup()
+					return m, nil
+				}
 			}
 		}
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
@@ -805,6 +831,45 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.setupPicker, cmd = m.setupPicker.Update(msg)
 	case scrSetupCat:
+		// Same filter convention as the Setup screen: 'f' opens the little
+		// rectangular LIVE filter zone above the shortcut bar; typing inside
+		// refines this category's rows; esc closes the zone.
+		if km, ok := msg.(tea.KeyMsg); ok {
+			switch km.String() {
+			case "f":
+				if m.filterOpen {
+					m.filterOpen = false
+					m.filterText = ""
+				} else {
+					m.filterOpen = true
+				}
+				m.setupCatPicker = m.rebuildSetupCat()
+				return m, nil
+			case "backspace", "esc":
+				if !m.filterOpen {
+					break
+				}
+				if km.String() == "backspace" && m.filterText == "" {
+					break
+				}
+				if km.String() == "backspace" {
+					r := []rune(m.filterText)
+					m.filterText = string(r[:len(r)-1])
+				} else {
+					m.filterOpen = false
+					m.filterText = ""
+				}
+				m.setupCatPicker = m.rebuildSetupCat()
+				return m, nil
+			}
+			if m.filterOpen {
+				if runes := km.Runes; len(runes) == 1 && unicode.IsPrint(runes[0]) {
+					m.filterText += string(runes[0])
+					m.setupCatPicker = m.rebuildSetupCat()
+					return m, nil
+				}
+			}
+		}
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
 			if v := m.setupCatPicker.SelectedValue(); v != "" {
 				if it, ok := m.setupByValue[v]; ok {
@@ -1451,6 +1516,10 @@ func (m model) rebuildFilteredSetup() navPicker {
 		header += "install"
 	}
 	header += ")"
+	enterDesc := "install selection"
+	if m.treeMode == "uninstall" {
+		enterDesc = "uninstall selection"
+	}
 	// Hide quick-fixes folder entries (they are a separate quick-fix
 	// category in Setup, not part of the module tree).
 	filtered := make([]tuikit.PickerItem, 0, len(items))
@@ -1464,7 +1533,7 @@ func (m model) rebuildFilteredSetup() navPicker {
 	}
 	return newNavPicker(header, filtered).SetSize(m.contentSize()).
 		SetHelpKeys(key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "act on the ticked")))
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterDesc)))
 }
 
 func (m model) rebuildSetup() navPicker {
@@ -1591,14 +1660,18 @@ func (m model) rebuildSetupCat() navPicker {
 			folders = append(folders, f)
 		}
 	}
+	ft := strings.ToLower(m.filterText)
 	for _, it := range m.setupItems {
 		if it.Folder == m.setupCat {
+			if ft != "" && !strings.Contains(strings.ToLower(it.Label), ft) {
+				continue
+			}
 			items = append(items, it)
 		}
 	}
 	enterHelp := "install selection"
 	if m.treeMode == "uninstall" {
-		enterHelp = "uninstall"
+		enterHelp = "uninstall selection"
 	}
 	p := newNavPicker("", pickerTreeItems(folders, items, m.selected, m.folderOpen, m.blinkOn)).SetSize(m.contentSize()).
 		SetHelpKeys(
