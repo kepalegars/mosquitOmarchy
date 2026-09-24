@@ -10,6 +10,26 @@ key, the BPM and the chord being played right now. Includes a guitar-neck scale
 visualizer, an input tuner, an optional Shazam song hook, and a full
 guitar-neck TUI with a hold-to-detect analysis button.
 
+
+## CPU / memory cost (bench)
+
+`bench_cpu_analysis.py` (next to the backend, in this folder) runs 10 s of the
+REAL pipeline against a synthesized guitar-like stream and prints a README
+line; runs in ~0.2 s by itself.
+
+Bench on this machine (2026-09-24):
+
+* analysis pass latency: mean 12.2 ms (p95 12.1 ms, max ~88 ms)
+* CADENCE: one analysis pass is scheduled ONCE PER SECOND (run_analysis_pass
+  loop at 1 Hz) — so the pass costs ~1.2 % of one CPU core.
+* memory: peak 21.8 MiB during the analysis (numpy buffers); the process size
+  stays well under 40 MiB.
+* tuner single pass over 4 s of mic audio: ~91 ms (runs only as long as the
+  panel is open — see the privacy section).
+
+README line: "analysis ≈ 12 ms once per second (1.2 % of one core); peak
+memory 21.8 MiB"
+
 ## Features
 
 * **Icon-only bar button** (♪) — a pulsing red dot appears while recording, and

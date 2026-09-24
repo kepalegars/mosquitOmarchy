@@ -92,6 +92,7 @@ cmd_categories(){
 # ─── Candidate items of one category ──────────────────────────────────────
 # Fills CAND_KEYS/CAND_LABELS then prints {"key":..,"label":..}
 cmd_candidates(){
+  TREE_MODE=setup
   local cat="${1:-}"
   category_candidates "$cat"
   local i
@@ -126,6 +127,7 @@ cmd_fixes(){
 # convention (CAND_LABELS) so the TUI shows only the name inline and keeps the
 # longer description behind the "i" key instead of crowding the row.
 cmd_setup(){
+  TREE_MODE=setup
   local c id label accent i e name info
   local sep='  —  '
   # Categories and their scripts are ALWAYS shown in alphabetical order, so a
@@ -160,6 +162,13 @@ cmd_setup(){
             info="${name#*"$sep"}"
             name="${name%%"$sep"*}"
           fi
+          # The Setup leaf for remove-ai must read exactly
+          # "bring back omarchy's agenting stuff" (the uninstall label is
+          # the "remove" version, but it never shows in this tree).
+          if [[ ${CAND_KEYS[$i]} == "remove-ai" ]]; then
+            name="bring back omarchy's agenting stuff"
+            info="re-enables the omarchy.agents plugin, the AI-diagnosis crash toasts, and the ollama loader helpers"
+          fi
           # Catalog shell-plugins (PLUG id|url|human-label) read badly by id:
           # show the human label instead.
           if [[ ${CAND_KEYS[$i]} == PLUG\ * ]]; then
@@ -192,6 +201,7 @@ _installed_state(){ # module id -> 0 when installed (ok/partial) and not exclude
   [[ $st == ok || $st == partial ]]
 }
 cmd_uninstall_tree(){
+  TREE_MODE=uninstall
   local c id label accent e name info spec mid
   local -a folders=() items=()
   load_excluded
@@ -233,12 +243,32 @@ cmd_uninstall_tree(){
       case $e in
         TUI\ *) name="${e#TUI }"; info="installed TUI (apps module)" ;;
         WEB\ *) name="${e#WEB }"; name="${name%%|*}"; info="installed webapp (apps module)" ;;
-        *) name="$e - v$(module_version "$e")"; info="$(module_desc "$e")" ;;
+        *)
+          # remove-ai only exists under the lame folder in Setup; label = the
+          # mode-aware "bring back omarchy's agenting stuff" wording.
+          if [[ $e == remove-ai ]]; then
+            name="item:lame:remove-ai"
+            info="$(module_desc "$e")"
+          else
+            name="$e - v$(module_version "$e")"
+            info="$(module_desc "$e")"
+          fi ;;
       esac
       items+=("$id/$name"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
         "$(json_str "$id")" "$(json_str "$e")" "$(json_str "$name")" "$(json_str "$info")")")
     done
   done
+  # remove-ai is an uninstall-ONLY action (Setup's version is "bring back…",
+  # shown/greyed elsewhere). Uninstall ALWAYS lists it — there is always
+  # something to remove (agents plugin, AI-diag toasts, ollama loaders).
+  mid="lame"
+  folders+=("lame"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+    "$(json_str "$mid")" "$(json_str "lame language models (ai..)")" false)")
+  items+=("lame/remove-ai"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+    "$(json_str "$mid")" "$(json_str "item:lame:remove-ai")" \
+    "$(json_str "remove-ai — v$(module_version remove-ai 2>/dev/null || echo 1.0.0)")" \
+    "$(json_str "remove omarchy's agenting stuff — strips the Agents plugin, the AI-diagnosis crash toasts and the ollama loaders (reversible from Setup)")")")
+
   # ── Extra uninstall-only categories (not part of Setup) ──
   # Patches: only when at least one installed app has an APPLIED patch.
   local -a pkeys=()

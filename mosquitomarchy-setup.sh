@@ -513,7 +513,7 @@ MODULES=(
   "handbrake:HandBrake (Qt GUI + CLI) + H.264/H.265 encoders + preset sync + Hyprland rules"
   "apps:Apps, tuis & webapps (catalog per type gui/tui/webapps + backup selection via setup-apps.sh)"
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
-  "remove-ai:bring back omarchy agenting stuff (IA removed from this Omarchy — agents, AI-diag toasts, ollama loaders reverted)"
+  "remove-ai:remove omarchy's agenting stuff (removes agents, AI-diag toasts, ollama loaders; Setup reverts it 'bring back omarchy's agenting stuff')"
   "battery:Battery backend (ultra-save + Lenovo charge-control + custom.power plugin) + coffee mode (mega-caffeine)"
   "brightness:Display brightness — Omarchy default, plus 0% = screen off"
   "achraff:'Achraff 67' visual theme + unlock/Plymouth logo (lock screen left stock)"
@@ -3019,6 +3019,12 @@ category_items(){ # catid -> echo the space-separated module ids of that categor
 
 module_desc(){ # module / pseudo id -> short description
   local row
+  # remove-ai gets a MODE-AWARE label: Setup says "bring back…", Uninstall
+  # says "remove…" (the exact phrasings the user asked for).
+  if [[ "$1" == remove-ai ]]; then
+    if [[ ${TREE_MODE:-setup} == uninstall ]]; then printf "remove omarchy's agenting stuff (agents, AI-diag toasts, ollama loaders; Setup restores)"; else printf "bring back omarchy's agenting stuff (re-enable the Agents plugin, the AI-diagnosis toasts, ollama loaders)"; fi
+    return 0
+  fi
   for row in "${MODULES[@]}"; do
     [[ "${row%%:*}" == "$1" ]] && { printf '%s' "${row#*:}"; return 0; }
   done
@@ -3081,7 +3087,14 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
       items="$(category_items "$cat")"
       for id in $items; do
         CAND_KEYS+=("$id")
-        CAND_LABELS+=("$id  —  $(module_desc "$id")")
+        # remove-ai's Setup label is EXACTLY "bring back omarchy's agenting
+        # stuff" — the uninstall one is the 'remove omarchy's…' phrasing and
+        # the tree branches below route it correctly.
+        if [[ $id == remove-ai ]]; then
+          CAND_LABELS+=("$id  —  bring back omarchy's agenting stuff (re-enables omarchy.agents, AI-diag toasts, ollama loaders)")
+        else
+          CAND_LABELS+=("$id  —  $(module_desc "$id")")
+        fi
       done
       # The themes category also offers building a theme from a wallpaper.
       if [[ $cat == themes && -d "$THEME_DIR/Wallpapers" ]] \

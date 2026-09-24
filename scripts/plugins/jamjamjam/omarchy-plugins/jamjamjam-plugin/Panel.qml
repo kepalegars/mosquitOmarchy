@@ -558,7 +558,8 @@ Panel {
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
                   text: "TUNER"
-                  color: root.muted
+                  color: root.micCut ? root.contrastOn(Color.urgent, 0.16)
+                    : (root.tunerActive ? root.contrastOn(root.accent, 0.14) : root.muted)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
@@ -568,7 +569,7 @@ Panel {
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
                   text: root.micCut ? "✕ mic muted" : "● default mic"
-                  color: root.micCut ? Color.urgent : root.muted
+                  color: root.micCut ? root.contrastOn(Color.urgent, 0.16) : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                 }
@@ -581,7 +582,8 @@ Panel {
                   : (root.tunerActive
                     ? (root.tunerNote + (root.tunerOctave > 0 ? String(root.tunerOctave) : ""))
                     : "—")
-                color: root.micCut ? Color.urgent : (root.tunerActive ? Color.urgent : root.muted)
+                color: root.micCut ? root.contrastOn(Color.urgent, 0.16)
+                  : (root.tunerActive ? root.contrastOn(root.accent, 0.14) : root.muted)
                 font.family: root.fontFamily
                 font.pixelSize: root.micCut ? Style.space(20) : Style.space(40)
                 font.bold: true

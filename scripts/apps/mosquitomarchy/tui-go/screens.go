@@ -1649,9 +1649,6 @@ func (m model) rebuildSetup() navPicker {
 	if !uninstall {
 		items = append(items, tuikit.PickerItem{Display: "Menu entry", Value: "menu-entry"})
 		items = append(items, tuikit.PickerItem{Display: "Add shortcut for mosquitOmarchy", Value: "add-shortcut"})
-		// Crash AI-diagnosis notifications: ON by default, toggleable.
-		items = append(items, tuikit.PickerItem{
-			Display: crashNotifyLabel(), Value: "toggle-crash-notify"})
 
 		install := tuikit.PickerItem{Display: "Install selection", Value: "install-selection"}
 		if m.selectedCount() == 0 {
