@@ -143,7 +143,19 @@ def natural_minor_scale_degrees(root_pc: int) -> list[int]:
 
 CONFIG_DIR = os.path.expanduser("~/.config/jamjamjam")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
-DEFAULT_CONFIG = {"noteNaming": "flats"}
+STATE_FILE = os.path.expanduser("~/.local/state/jamjamjam/state.json")
+DEFAULT_CONFIG = {
+    "noteNaming": "flats",
+    "showChordBox": True,
+    "aecEnabled": False,
+    "metronomeVolume": 0.7,
+    "clickStyle": "classic",
+    "clickCustom": False,
+    "customDown": "",
+    "customUp": "",
+}
+
+CLICK_STYLES = ("classic", "wood", "kick", "beep")
 
 
 def load_config() -> dict:
@@ -970,6 +982,15 @@ class MidiSynth:
         self.volume = max(0.0, min(1.0, volume))
         self.waveform = "sine"
         self.voices: dict[int, dict[str, float]] = {}
+        # Metronome click settings (UI-configurable). `metronome_gain` is the
+        # dedicated click volume (independent of the MIDI synth master vol);
+        # click_style picks the built-in tone, custom_* optional .wav samples
+        # loaded from disk that override the tone for down/up beats.
+        self.metronome_gain = 0.7
+        self.click_style = "classic"
+        self.click_custom = False
+        self.custom_down: list[float] | None = None
+        self.custom_up: list[float] | None = None
         self.metronome_enabled = False
         self.metronome_bpm = 120.0
         self.metronome_beats = 4
@@ -997,6 +1018,62 @@ class MidiSynth:
     def set_volume(self, volume: float) -> None:
         with self._lock:
             self.volume = max(0.0, min(1.0, volume))
+
+    def set_metronome_gain(self, gain: float) -> None:
+        with self._lock:
+            self.metronome_gain = max(0.0, min(1.0, float(gain)))
+
+    def set_click_style(self, style: str) -> None:
+        if style not in CLICK_STYLES:
+            return
+        with self._lock:
+            self.click_style = style
+            # Restart on the next tick cleanly.
+            self.metronome_tick_left = 0.0
+
+    def set_click_custom(self, enabled: bool, down: str = "", up: str = "") -> None:
+        """Enable/refresh custom click samples. Paths are reloaded when given;
+        missing/unreadable files fall back to the built-in tone."""
+        loaded_down = self._load_click_wav(down)
+        loaded_up = self._load_click_wav(up)
+        with self._lock:
+            if down and loaded_down is not None:
+                self.custom_down = loaded_down
+            if up and loaded_up is not None:
+                self.custom_up = loaded_up
+            if enabled:
+                self.click_custom = bool(self.custom_down or self.custom_up)
+            else:
+                self.click_custom = False
+
+    @staticmethod
+    def _load_click_wav(path: str) -> list[float] | None:
+        """Load a short mono-converted, resample-accepted .wav click sample."""
+        try:
+            import wave
+            with wave.open(path, "rb") as fh:
+                channels = fh.getnchannels()
+                width = fh.getsampwidth()
+                rate = fh.getframerate()
+                raw = fh.readframes(min(fh.getnframes(), rate * 2))
+            if width == 2:
+                samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+            elif width == 4:
+                samples = np.frombuffer(raw, dtype="<i4").astype(np.float32) / 2147483648.0
+            else:
+                samples = np.frombuffer(raw, dtype=np.uint8).astype(np.float32)
+                samples = (samples - 128.0) / 128.0
+            if channels > 1:
+                samples = samples.reshape(-1, channels).mean(axis=1)
+            if rate != SAMPLE_RATE and rate > 0:
+                idx = np.linspace(0, len(samples) - 1, num=int(len(samples) * SAMPLE_RATE / rate))
+                samples = np.interp(idx, np.arange(len(samples)), samples)
+            peak = float(np.max(np.abs(samples))) if len(samples) else 0.0
+            if peak > 0.0:
+                samples = samples / peak
+            return samples[: SAMPLE_RATE].tolist()
+        except (OSError, ValueError, ImportError):
+            return None
 
     def note_on(self, note: int, velocity: int) -> None:
         with self._lock:
@@ -1054,6 +1131,14 @@ class MidiSynth:
             met_bpm = self.metronome_bpm
             met_beats = self.metronome_beats
         beat_len = 60.0 / met_bpm if met_on else 0.0
+        with self._lock:
+            click_gain = self.metronome_gain
+            style = self.click_style
+            custom_down = self.custom_down if self.click_custom else None
+            custom_up = self.custom_up if self.click_custom else None
+        custom_step = 0
+        custom_done = False
+        custom_samples = None
         for _ in range(frame_count):
             mixed = 0.0
             finished = []
@@ -1095,15 +1180,56 @@ class MidiSynth:
                     self.metronome_in_beat = self.metronome_beat == 0
                     self.metronome_tick_left = 0.04
                     self.metronome_tick_phase = 0.0
-                if self.metronome_tick_left > 0.0:
-                    freq = 1760.0 if self.metronome_in_beat else 1100.0
-                    env = self.metronome_tick_left / 0.04
-                    accent = 0.55 if self.metronome_in_beat else 0.35
-                    value = math.sin(self.metronome_tick_phase) * env * accent
+                    # New beat: choose the sample for this beat (down or up)
+                    # and reset the custom-sample cursor.
+                    if self.metronome_in_beat:
+                        custom_samples = custom_down
+                    else:
+                        custom_samples = custom_up
+                    custom_done = custom_samples is None
+                    custom_step = 0
+                if not custom_done and custom_samples is not None and custom_step < len(custom_samples):
+                    # Custom .wav click: plays the FULL sample length (not
+                    # capped at the 0.04 s builtin tick), mono-converted and
+                    # peak-normalized at load, gained.
+                    value = float(custom_samples[custom_step]) * click_gain
+                    custom_step += 1
+                    if custom_step >= len(custom_samples):
+                        custom_done = True
                     mixed += value
+                elif self.metronome_tick_left > 0.0:
+                    if style == "wood":
+                        freq = 900.0 if self.metronome_in_beat else 620.0
+                        accent = 0.75 if self.metronome_in_beat else 0.5
+                    elif style == "kick":
+                        freq = 140.0 if self.metronome_in_beat else 100.0
+                        accent = 1.0 if self.metronome_in_beat else 0.65
+                    elif style == "beep":
+                        freq = 1400.0 if self.metronome_in_beat else 900.0
+                        accent = 0.55 if self.metronome_in_beat else 0.35
+                    else:  # classic
+                        freq = 1760.0 if self.metronome_in_beat else 1100.0
+                        accent = 0.55 if self.metronome_in_beat else 0.35
+                    env = self.metronome_tick_left / 0.04
+                    # Kick: exponential pitch decay to feel like a drum;
+                    # the others stay fixed-tone (classic/wood/beep).
+                    phase = self.metronome_tick_phase
+                    if style == "kick":
+                        decay = math.exp(-3.0 * (1.0 - env))
+                        value = math.sin(phase) * env * accent * decay * 2.0
+                    elif style == "wood":
+                        value = math.sin(phase) * env * accent
+                        # Add a soft knock overtone
+                        value += 0.4 * math.sin(2.2 * phase) * env * accent
+                    else:
+                        value = math.sin(phase) * env * accent
+                    mixed += value * click_gain
                     step = 2.0 * math.pi * freq / SAMPLE_RATE
-                    self.metronome_tick_phase = (self.metronome_tick_phase + step) % (2.0 * math.pi)
+                    self.metronome_tick_phase = (phase + step) % (2.0 * math.pi)
                     self.metronome_tick_left -= 1.0 / SAMPLE_RATE
+            elif custom_step > 0:
+                # Loop tail (metronome stopped mid-sample): clear counters.
+                custom_step = 0
             sample = math.tanh(mixed * master) * 0.9
             output.append(max(-32767, min(32767, int(sample * 32767))))
         return output
@@ -1399,8 +1525,17 @@ class AudioAnalyzerBackend:
         self.hold = False
         self.paused = False
         self.analysis_locked = False
+        # UI-configurable settings from config.json (chord box, AEC hint,
+        # metronome click). Applied onto the synth / published in snapshot.
+        self.show_chord_box = bool(self.config.get("showChordBox", True))
+        self.aec_enabled = bool(self.config.get("aecEnabled", False))
+        self._apply_click_config()
         self.input_source = "pc"
         self.metronome_enabled = False
+        # 90-second persistence: when the Panel is closed and reopened quickly
+        # (restart of the backend), the last written state snapshot is
+        # re-read if it is fresh enough so the analysis data is not lost.
+        self._restore_recent_state(max_age=90.0)
         # Accumulated-progression bookkeeping: a second analysis appends to the
         # existing sequence; if the key moved, the UIs advise a reset.
         self.needs_reset = False
@@ -1524,11 +1659,21 @@ class AudioAnalyzerBackend:
             "tuiActive": self._tui_active(),
             "needsReset": self.needs_reset,
             "mic": {"available": self.mic_available, "muted": self.mic_muted},
-            "config": {"noteNaming": self.naming},
+            "config": {
+                "noteNaming": self.naming,
+                "showChordBox": self.show_chord_box,
+                "aecEnabled": self.aec_enabled,
+            },
             "metronome": {
                 "enabled": self.metronome_enabled,
                 "bpm": round(self.synth.metronome_bpm, 1),
                 "beats": self.synth.metronome_beats,
+                "volume": self.synth.metronome_gain,
+                "style": self.synth.click_style,
+                "custom": self.synth.click_custom,
+                "customDown": self.config.get("customDown", ""),
+                "customUp": self.config.get("customUp", ""),
+                "styles": list(CLICK_STYLES),
             },
             "analyzer": {
                 "key": self.analyzer.key,
@@ -1662,10 +1807,61 @@ class AudioAnalyzerBackend:
                 self.naming = naming
                 self.analyzer.naming = naming
                 changed = True
+            if "showChordBox" in request:
+                self.config["showChordBox"] = bool(request.get("showChordBox", True))
+                self.show_chord_box = bool(self.config["showChordBox"])
+                changed = True
+            if "aecEnabled" in request:
+                self.config["aecEnabled"] = bool(request.get("aecEnabled", False))
+                self.aec_enabled = bool(self.config["aecEnabled"])
+                changed = True
+            if "metronomeVolume" in request:
+                self.config["metronomeVolume"] = max(
+                    0.0, min(1.0, float(request.get("metronomeVolume", 0.7))))
+                self.synth.set_metronome_gain(float(self.config["metronomeVolume"]))
+                changed = True
+            if "clickStyle" in request:
+                style = str(request.get("clickStyle", "classic"))
+                if style in CLICK_STYLES:
+                    self.config["clickStyle"] = style
+                    self.synth.set_click_style(style)
+                    changed = True
+            if "clickCustom" in request or "customDown" in request or "customUp" in request:
+                if "clickCustom" in request:
+                    self.config["clickCustom"] = bool(request.get("clickCustom", False))
+                if "customDown" in request:
+                    self.config["customDown"] = str(request.get("customDown", ""))
+                if "customUp" in request:
+                    self.config["customUp"] = str(request.get("customUp", ""))
+                self._apply_click_config()
+                changed = True
             if changed:
                 save_config(self.config)
                 self.dirty = True
-            return {"config": {"noteNaming": self.naming}}
+            return {"config": dict(self.config)}
+        if op == "importClick":
+            # Open a native file dialog (zenity/portal) and use the chosen
+            # .wav as the down (which=down) or up (which=up) click sample.
+            which = str(request.get("which", "down"))
+            if which not in ("down", "up"):
+                raise ValueError("which must be down or up")
+            cmd = [
+                "zenity", "--file-selection",
+                "--title", "Choose a .wav for the %s beat" % ("DOWN" if which == "down" else "UP"),
+                "--file-filter", "WAV audio | *.wav",
+            ]
+            try:
+                out = subprocess.check_output(cmd, timeout=60, text=True).strip()
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+                out = ""
+            if out and out.lower().endswith(".wav"):
+                key = "customDown" if which == "down" else "customUp"
+                self.config[key] = out
+                self._apply_click_config()
+                save_config(self.config)
+                self.dirty = True
+                return {"config": dict(self.config)}
+            return {}
         if op == "setMetronome":
             self.metronome_enabled = bool(request.get("enabled", True))
             bpm = float(request.get("bpm", 0) or 0)
@@ -1896,6 +2092,53 @@ class AudioAnalyzerBackend:
         except OSError:
             pass
 
+    def _restore_recent_state(self, max_age: float = 90.0) -> bool:
+        """90-second persistence: on backend restart, if a previous state
+        snapshot is fresh (< max_age seconds old), restore the lightweight UI
+        session flags from it (source, paused/hold/lock, metronome). The
+        audio analysis itself keeps building from the fresh chunks."""
+        try:
+            st = os.stat(self.state_file)
+        except OSError:
+            return False
+        if (time.time() - st.st_mtime) > max_age:
+            return False
+        try:
+            data = json.loads(Path(self.state_file).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, ValueError):
+            return False
+        if not isinstance(data, dict):
+            return False
+        src = data.get("inputSource")
+        if src in ("pc", "mic"):
+            self.input_source = src
+            self._apply_target()
+        self.paused = bool(data.get("paused", False))
+        self.hold = bool(data.get("hold", False))
+        met = data.get("metronome")
+        if isinstance(met, dict):
+            bpm = float(met.get("bpm") or 0.0)
+            self.metronome_enabled = bool(met.get("enabled", False)) and bpm > 0.0
+            self.synth.set_metronome(self.metronome_enabled, bpm)
+        self._sync_capture()
+        self.dirty = True
+        return True
+
+    def _apply_click_config(self) -> None:
+        """Push the config.json metronome settings into the synth."""
+        self.synth.set_metronome_gain(float(self.config.get("metronomeVolume", 0.7)))
+        style = str(self.config.get("clickStyle", "classic"))
+        if style in CLICK_STYLES:
+            self.synth.set_click_style(style)
+        if self.config.get("clickCustom"):
+            self.synth.set_click_custom(
+                True,
+                str(self.config.get("customDown", "") or ""),
+                str(self.config.get("customUp", "") or ""),
+            )
+        else:
+            self.synth.set_click_custom(False)
+
     def poll_command_file(self) -> None:
         if not self.command_file:
             return
@@ -1915,7 +2158,7 @@ class AudioAnalyzerBackend:
         known = {
             "resetAnalysis", "toggleRecording", "startRecording", "stopRecording",
             "setVisible", "setHold", "setSource", "setMetronome",
-            "setPaused", "togglePaused", "setConfig", "resumeAnalysis",
+            "setPaused", "togglePaused", "setConfig", "resumeAnalysis", "importClick",
         }
         if op not in known:
             return

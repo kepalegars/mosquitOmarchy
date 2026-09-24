@@ -101,6 +101,18 @@ Item {
     if (noteNaming === "flats" || noteNaming === "sharps") fields.noteNaming = String(noteNaming)
     send("setConfig", fields)
   }
+  function setConfigBool(key, value) {
+    // Generic config toggle: showChordBox, aecEnabled…
+    var fields = {}
+    fields[String(key)] = !!value
+    send("setConfig", fields)
+  }
+  function setMetronomeVolume(value) {
+    send("setConfig", { metronomeVolume: Math.max(0, Math.min(1, Number(value))) })
+  }
+  function setClickStyle(style) { send("setConfig", { clickStyle: String(style || "classic") }) }
+  function setClickCustom(enabled) { send("setConfig", { clickCustom: !!enabled }) }
+  function importClick(which) { send("importClick", { which: which === "up" ? "up" : "down" }) }
   function openTui() { send("openTui") }
   function resumeAnalysis() { send("resumeAnalysis") }
   function enableMidi(value) { send("enableMidi", { enabled: !!value }) }

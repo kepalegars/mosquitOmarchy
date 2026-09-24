@@ -19,12 +19,15 @@
 #                                  #   float rule, post-boot hook, binaries)
 #   ./install-tui.sh --rebuild-only  # just rebuild the Go binary in place
 #   ./install-tui.sh -y            # non-interactive
+# Sourcing this file only DEFINES the functions — the installer runs via
+# main_tui() at the bottom, guarded on direct execution, so
+# mosquitomarchy-setup.sh can reuse install_tui / remove_tui safely.
 # =============================================================================
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/lib/elevate.bash"   # mq_sudo: native pkexec prompt when not root
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/lib/elevate.bash"   # mq_sudo: native pkexec prompt when not root
 set -euo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TUI_GO="$REPO/scripts/apps/mosquitomarchy/tui-go"
 DISPATCHER="$REPO/scripts/apps/mosquitomarchy/mosquitomarchy"
 TUI_TMP_OUT="${TUI_TMP_OUT:-}"
@@ -199,14 +202,15 @@ PY
   fi
 }
 
+main_tui(){
 case "$REMOVE" in
-  true)  do_remove; exit 0 ;;
+  true)  do_remove; return 0 ;;
 esac
 case "$STATUS" in
-  true)  do_status; exit 0 ;;
+  true)  do_status; return 0 ;;
 esac
 case "$REBUILD" in
-  true)  build_tui; exit 0 ;;
+  true)  build_tui; return 0 ;;
 esac
 
 build_tui
@@ -216,3 +220,7 @@ install_shell_state
 install_menu_entry
 install_shell_plugin
 ok "mosquitOmarchy TUI installed. Launch with: omarchy-launch-tui mosquito"
+}
+
+# Run only when EXECUTED directly (not sourced by mosquitomarchy-setup.sh).
+main_tui

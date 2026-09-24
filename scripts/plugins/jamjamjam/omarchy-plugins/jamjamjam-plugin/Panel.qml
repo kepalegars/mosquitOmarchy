@@ -101,6 +101,11 @@ Panel {
 
   readonly property int headerHeight: Style.space(44)
   readonly property int fretboardHeight: showFretboard ? Style.space(180) : 0
+  // Chord zone: LAST-DETECTED chord, separate from the fretboard, toggled
+  // from settings, ALWAYS its fixed max height (placeholder when empty).
+  readonly property bool showChordBox: configState.showChordBox !== false
+  readonly property int chordBoxHeight: showChordBox ? Style.space(56) : 0
+  readonly property bool aecEnabled: configState.aecEnabled === true
   readonly property int tunerHeight: Style.space(190)
 
   function open() { controller.show() }
@@ -157,7 +162,9 @@ Panel {
         if (key === "r" && root.service) root.service.resetAnalysis()
         else if (key === "g" && root.service) root.service.openTui()
         else if (key === "h") root.pinned = !root.pinned
-        else if (key === "p" && root.service) root.service.togglePaused()
+        // 'p' pins, Shift+P (uppercase) pauses — textKey carries the case.
+        else if (key === "p") root.pinned = !root.pinned
+        else if (key === "P" && root.service) root.service.togglePaused()
         else if (key === "s") root.settingsVisible = !root.settingsVisible
         else if (key === "m") { root.midiSectionVisible = !root.midiSectionVisible; if (root.service) root.service.toggleMidi() }
       }
@@ -628,6 +635,57 @@ Panel {
           }
         }
 
+        // ─── Detected-chord zone (separate from the fretboard) ─────
+        // Toggleable from settings; when enabled it is ALWAYS visible at its
+        // fixed size — even with no chord detected (placeholder dash) — and
+        // is laid out outside the fretboard block, independent of its height.
+        Rectangle {
+          id: chordZone
+          visible: root.showChordBox
+          width: parent.width
+          height: root.chordBoxHeight
+          implicitHeight: root.chordBoxHeight
+          radius: Style.cornerRadius
+          color: Util.alpha(Color.background, 0.55)
+          border.width: 1
+          border.color: Util.alpha(Color.foreground, 0.12)
+
+          Row {
+            anchors.fill: parent
+            anchors.margins: Style.spacing.sm
+            spacing: Style.spacing.md
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: "CHORD"
+              color: root.muted
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: Style.space(1)
+            }
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              // MIDI chord (what you play) takes priority, then the audio
+              // chord the analyzer hears; nothing detected → placeholder.
+              text: {
+                var c = String(root.midiChord || "")
+                if (c === "") c = String(root.currentAudioChord || "")
+                return c !== "" ? c : "—"
+              }
+              color: {
+                var c = String(root.midiChord || root.currentAudioChord || "")
+                return c !== "" ? root.accent : root.muted
+              }
+              font.family: root.fontFamily
+              font.pixelSize: Style.space(34)
+              font.bold: true
+              elide: Text.ElideRight
+            }
+          }
+        }
+
         // ─── Guitar fretboard ─────────────────────────────────────
         Item {
           width: parent.width
@@ -927,7 +985,11 @@ Panel {
           }
         }
 
-        // ─── Plugin settings (gear) ───────────────────────────────
+        // ─── Plugin settings (gear) — FIXED pane, SCROLLABLE content ──
+        // The toggling via 's' / the gear only swaps the CONTENT of the same
+        // pane: the panel size never changes, and the content scrolls inside
+        // a bounded, wheel/drag-friendly Flickable so the whole set of
+        // settings fits whatever the configured panel height is.
         Column {
           id: settingsContent
           visible: root.settingsVisible
@@ -951,41 +1013,288 @@ Panel {
             }
           }
 
-          Row {
+          Flickable {
+            id: settingsFlick
             width: parent.width
-            spacing: Style.spacing.sm
+            // Fixed scroll viewport: the panel keeps its size when 's' is
+            // pressed; anything beyond ~4 rows scrolls instead of growing.
+            height: Math.min(contentHeight, Style.space(300))
+            implicitHeight: height
+            contentWidth: width
+            contentHeight: settingsRows.implicitHeight
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.VerticalFlick
 
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              text: "NOTE NAMING"
-              color: root.muted
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
-            }
-            Button {
-              anchors.verticalCenter: parent.verticalCenter
-              text: " FLATS "
-              selected: String(root.configState.noteNaming || "flats") === "flats"
-              bordered: true
-              foreground: String(root.configState.noteNaming || "flats") === "flats" ? root.accent : root.foreground
-              accent: root.accent
-              fontSize: Style.font.caption
-              horizontalPadding: Style.spacing.xs
-              verticalPadding: Style.spacing.xs
-              onClicked: if (root.service) root.service.setConfig("flats")
-            }
-            Button {
-              anchors.verticalCenter: parent.verticalCenter
-              text: " SHARPS "
-              selected: String(root.configState.noteNaming || "flats") === "sharps"
-              bordered: true
-              foreground: String(root.configState.noteNaming || "flats") === "sharps" ? root.accent : root.foreground
-              accent: root.accent
-              fontSize: Style.font.caption
-              horizontalPadding: Style.spacing.xs
-              verticalPadding: Style.spacing.xs
-              onClicked: if (root.service) root.service.setConfig("sharps")
+            Column {
+              id: settingsRows
+              width: parent.width
+              spacing: Style.spacing.sm
+
+              // Note naming (flats / sharps)
+              Row {
+                width: parent.width
+                spacing: Style.spacing.sm
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "NOTE NAMING"
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+                Button {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: " FLATS "
+                  selected: String(root.configState.noteNaming || "flats") === "flats"
+                  bordered: true
+                  foreground: String(root.configState.noteNaming || "flats") === "flats" ? root.accent : root.foreground
+                  accent: root.accent
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.xs
+                  verticalPadding: Style.spacing.xs
+                  onClicked: if (root.service) root.service.setConfig("flats")
+                }
+                Button {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: " SHARPS "
+                  selected: String(root.configState.noteNaming || "flats") === "sharps"
+                  bordered: true
+                  foreground: String(root.configState.noteNaming || "flats") === "sharps" ? root.accent : root.foreground
+                  accent: root.accent
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.xs
+                  verticalPadding: Style.spacing.xs
+                  onClicked: if (root.service) root.service.setConfig("sharps")
+                }
+              }
+
+              // Detected-chord zone toggle (chordZone visibility)
+              Row {
+                width: parent.width
+                spacing: Style.spacing.sm
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "CHORD ZONE"
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+                Button {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: " SHOWN "
+                  selected: root.showChordBox
+                  bordered: true
+                  foreground: root.showChordBox ? root.accent : root.foreground
+                  accent: root.accent
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.xs
+                  verticalPadding: Style.spacing.xs
+                  tooltipText: "The fixed-size chord zone above the fretboard"
+                  onClicked: if (root.service) root.service.setConfigBool("showChordBox", true)
+                }
+                Button {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: " HIDDEN "
+                  selected: !root.showChordBox
+                  bordered: true
+                  foreground: !root.showChordBox ? root.accent : root.foreground
+                  accent: root.accent
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.xs
+                  verticalPadding: Style.spacing.xs
+                  onClicked: if (root.service) root.service.setConfigBool("showChordBox", false)
+                }
+              }
+
+              // AEC (mic↔PC-audio phase subtraction for the tuner).
+              // Off by default; the hint is about output audio, NOT
+              // "speaker monitor" (the user despised that phrasing).
+              Row {
+                width: parent.width
+                spacing: Style.spacing.sm
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "TUNER AEC"
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+                Button {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: " ON "
+                  selected: root.aecEnabled
+                  bordered: true
+                  foreground: root.aecEnabled ? root.accent : root.foreground
+                  accent: root.accent
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.xs
+                  verticalPadding: Style.spacing.xs
+                  tooltipText: "Subtract the PC's own output audio from the mic — only when the output is loud enough to be heard (output audio)"
+                  onClicked: if (root.service) root.service.setConfigBool("aecEnabled", true)
+                }
+                Button {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: " OFF "
+                  selected: !root.aecEnabled
+                  bordered: true
+                  foreground: !root.aecEnabled ? root.accent : root.foreground
+                  accent: root.accent
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.xs
+                  verticalPadding: Style.spacing.xs
+                  tooltipText: "Standard tuner (mic only)"
+                  onClicked: if (root.service) root.service.setConfigBool("aecEnabled", false)
+                }
+              }
+
+              // ─── Metronome sound: volume + preset + custom import ──
+              Row {
+                width: parent.width
+                spacing: Style.spacing.sm
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "CLICK VOL"
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+                PanelSlider {
+                  anchors.verticalCenter: parent.verticalCenter
+                  bar: root.bar
+                  width: Style.space(160)
+                  value: Number(root.metronome.volume !== undefined ? root.metronome.volume : 0.7)
+                  minimum: 0
+                  maximum: 1
+                  step: 0.05
+                  onReleased: function(v) { if (root.service) root.service.setMetronomeVolume(v) }
+                }
+              }
+
+              Row {
+                width: parent.width
+                spacing: Style.spacing.sm
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "CLICK STYLE"
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+                Repeater {
+                  model: (root.metronome.styles || ["classic", "wood", "kick", "beep"])
+                  delegate: Button {
+                    required property string modelData
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: " " + modelData.toUpperCase() + " "
+                    selected: String(root.metronome.style || "classic") === modelData
+                        && !root.metronome.custom
+                    bordered: true
+                    foreground: (String(root.metronome.style || "classic") === modelData
+                                  && !root.metronome.custom) ? root.accent : root.foreground
+                    accent: root.accent
+                    fontSize: Style.font.caption
+                    horizontalPadding: Style.spacing.xs
+                    verticalPadding: Style.spacing.xs
+                    onClicked: {
+                      if (root.service) {
+                        root.service.setClickStyle(modelData)
+                        root.service.setClickCustom(false)
+                      }
+                    }
+                  }
+                }
+              }
+
+              Row {
+                width: parent.width
+                spacing: Style.spacing.sm
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "CLICK CUSTOM"
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+                Button {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: " IMPORT DOWN "
+                  bordered: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.xs
+                  verticalPadding: Style.spacing.xs
+                  tooltipText: "Pick a .wav for the down beat"
+                  onClicked: if (root.service) root.service.importClick("down")
+                }
+                Button {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: " IMPORT UP "
+                  bordered: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.xs
+                  verticalPadding: Style.spacing.xs
+                  tooltipText: "Pick a .wav for the UP beat"
+                  onClicked: if (root.service) root.service.importClick("up")
+                }
+                Button {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.metronome.custom ? " DEFAULT CLICKS " : " USE IMPORTED "
+                  selected: root.metronome.custom === true
+                  bordered: true
+                  foreground: root.metronome.custom === true ? root.accent : root.foreground
+                  accent: root.accent
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.xs
+                  verticalPadding: Style.spacing.xs
+                  tooltipText: root.metronome.custom === true
+                    ? "Back to the built-in preset sounds"
+                    : "Use the imported .wav files for down/up beats"
+                  onClicked: if (root.service) root.service.setClickCustom(!(root.metronome.custom === true))
+                }
+                Item {
+                  // fill so the row below the buttons (custom file names) wraps
+                  height: Style.font.caption
+                  width: Style.space(4)
+                }
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  visible: root.metronome.customDown || root.metronome.customUp
+                  width: parent.width
+                  text: root.metronome.customDown
+                    ? "↓ " + (root.metronome.customDown.split("/").pop() || "")
+                      + (root.metronome.customUp ? "   ↑ " + root.metronome.customUp.split("/").pop() : "")
+                    : ""
+                  elide: Text.ElideMiddle
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
+              Text {
+                width: parent.width
+                visible: !root.aecEnabled
+                color: Util.alpha(Color.foreground, 0.45)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                text: "AEC extracts the PC's own output audio from the tuner's mic (phase subtraction) when the output is loud enough to be picked up."
+                wrapMode: Text.WordWrap
+              }
             }
           }
         }

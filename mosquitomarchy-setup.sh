@@ -447,6 +447,18 @@ st_live_mode(){
   [[ -d "$HOME/.config/omarchy/plugins/mosquito.livemode" ]] || { echo partial; return; }
   echo ok
 }
+st_mosquitomarchy(){
+  # The manager TUI itself (former install-tui.sh): dispatcher + built binary
+  # + desktop entry + float rule + post-boot update hook.
+  [[ -x "$HOME/.local/bin/mosquitomarchy" ]] || { echo missing; return; }
+  [[ -x "$HOME/.local/bin/mosquitomarchy-tui" ]] || { echo missing; return; }
+  local miss=0
+  [[ -f "$HOME/.local/share/applications/install.mosquitomarchy.desktop" ]] || miss=$((miss+1))
+  grep -qF -e "mosquitomarchy-tui-floating" "$HOME/.config/hypr/hyprland.lua" 2>/dev/null || miss=$((miss+1))
+  [[ -x "$HOME/.config/omarchy/hooks/post-boot.d/zzz-mosquitomarchy-update-check" ]] || miss=$((miss+1))
+  if ((miss)); then echo partial; else echo ok; fi
+}
+
 st_guitarpro(){
   # Guitar Pro 8 via wine: dedicated prefix + GuitarPro.exe + launcher
   [[ -f "$HOME/.wine-guitarpro8/drive_c/Program Files/Arobas Music/Guitar Pro 8/GuitarPro.exe" ]] \
@@ -488,6 +500,7 @@ st_apps(){
 }
 
 MODULES=(
+  "mosquitomarchy:mosquitomarchy TUI — the manager interface itself (dispatcher + menu entry + float rule + post-boot update hook) — installed first"
   "reaper:REAPER + Hyprland/Wayland integration"
   "audio:yabridge stack + Bitwig 6.0 Beta 6 (local .deb) + local VST folders + cautions"
   "windows-vm:VM launcher + winvm (RAM/CPU/disk) + OEM debloat (auto-detected)"
@@ -682,6 +695,7 @@ module_state(){
     zen) st_zen ;;
     jamjamjam-plugin) st_jamjamjam_plugin ;;
     live-mode) st_live_mode ;;
+    mosquitomarchy) st_mosquitomarchy ;;
   esac
 }
 
@@ -716,6 +730,7 @@ module_of_path(){
     scripts/apps/zen/*)                                      echo zen ;;
     scripts/plugins/jamjamjam/*)                             echo jamjamjam-plugin ;;
     scripts/plugins/live-mode/*)                             echo live-mode ;;
+    scripts/apps/mosquitomarchy/install-tui.sh|scripts/apps/mosquitomarchy/mosquitomarchy|scripts/apps/mosquitomarchy/mosquitomarchy-actions) echo mosquitomarchy ;;
   esac
 }
 
@@ -2365,6 +2380,7 @@ uninstall_module(){
     zen) un_zen ;;
     jamjamjam-plugin) un_jamjamjam_plugin ;;
     live-mode) un_live_mode ;;
+    mosquitomarchy) un_mosquitomarchy ;;
     *) err "Unknown module: $id"; return 1 ;;
   esac
   # Remember the module as voluntarily uninstalled → not re-proposed
@@ -2647,6 +2663,19 @@ run_live_mode(){
   bash "$LIVE_MODE_DIR/setup-live-mode.sh" $([[ $YES == 1 ]] && echo -y)
 }
 
+run_mosquitomarchy(){
+  # The manager TUI (the interface this script drives): build the Go binary,
+  # deploy the dispatcher + desktop entry + float rule + post-boot hook.
+  # Idempotent, non-interactive; the former standalone install-tui.sh WAS
+  # this (the logic now lives in scripts/apps/mosquitomarchy/install-tui.sh
+  # and is reused here as a module).
+  bash "$SCRIPT_DIR/scripts/apps/mosquitomarchy/install-tui.sh" -y
+}
+
+un_mosquitomarchy(){
+  bash "$SCRIPT_DIR/scripts/apps/mosquitomarchy/install-tui.sh" --remove
+}
+
 # ───────────────────────── Interactive selection ─────────────────────────
 select_modules(){
   # One by one: install what is missing/partial, offer to update what is there,
@@ -2765,6 +2794,7 @@ exec_modules(){
       zen) run_module zen run_zen ;;
       jamjamjam-plugin) run_module jamjamjam-plugin run_jamjamjam_plugin ;;
       live-mode) run_module live-mode run_live_mode ;;
+      mosquitomarchy) run_module mosquitomarchy run_mosquitomarchy ;;
       *)
         # A selected id nothing handles must never look like a success.
         MODULE_FAILURES=$((MODULE_FAILURES + 1))
@@ -2786,7 +2816,7 @@ CATEGORIES=(
   "apps|Apps|reaper audio ableton guitarpro davinci-resolve handbrake superfile zen"
   "tuis|TUIs|"
   "webapps|Webapps|"
-  "plugins|Plugins|jamjamjam-plugin battery brightness keyboard-backlight touchpad mx-master keepassxc"
+  "plugins|Plugins|mosquitomarchy jamjamjam-plugin battery brightness keyboard-backlight touchpad mx-master keepassxc"
   "fixes|Quick fixes|"
   "mosquito|mosquito|"
   "keybindings|Keybindings|keybindings"
