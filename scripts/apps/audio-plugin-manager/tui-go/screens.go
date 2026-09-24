@@ -583,6 +583,7 @@ func (m *model) rebuildFixPicker() {
 		SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "toggle")),
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
@@ -665,6 +666,7 @@ func (m *model) rebuildFixPluginPicker() {
 	m.picker = tuikit.NewPicker("Plugin fixes — which plugin?", items).
 		SetSize(m.contentSize()).
 		SetHelpKeys(
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
@@ -1025,6 +1027,18 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case scrFixPluginPick:
+		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
+			// 'i' = what this screen is for (mosquitomarchy-style info).
+			m.info = tuikit.NewInfo(
+				"Plugin fixes — pick which plugin the fixes target.\n\n"+
+					"The next screen lists the available fixes (window/input handling, "+
+					"cursor warping…) with a plain-language description; press i there "+
+					"to read what a given fix does before applying it.\n\n"+
+					"Fixes are per-plugin and reversible: re-open this screen and untick "+
+					"them, or use 'Cleanup inconsistencies' in Settings.").SetSize(m.contentSize())
+			m.push(scrInfo)
+			return m, nil
+		}
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "s" {
 			// `s` cycles the same vendor→name→format→date sort the
 			// Installed-plugins list uses; set-sort-and-list persists it
@@ -1120,6 +1134,32 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case scrFixChoose:
+		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
+			// 'i' = info for the fix under the cursor, exactly like the
+			// mosquitomarchy 'i': title + full description + scope.
+			if v := m.picker.SelectedValue(); v != "" && !strings.HasPrefix(v, fixCategoryValuePrefix) {
+				for _, it := range m.fixCache {
+					if it.ID != v {
+						continue
+					}
+					txt := it.Title
+					if it.Description != "" {
+						txt += "\n\n" + it.Description
+					}
+					txt += "\n\nscope: " + it.Scope
+					if it.Category != "" {
+						txt += "   ·   category: " + it.Category
+					}
+					if it.Applied {
+						txt += "\n\nalready APPLIED for this plugin"
+					}
+					m.info = tuikit.NewInfo(txt).SetSize(m.contentSize())
+					m.push(scrInfo)
+					return m, nil
+				}
+			}
+			return m, nil
+		}
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "s" {
 			// `s` flips the fixes order between category-then-title A→Z
 			// and Z→A. Intercepted before the picker sees the key.
