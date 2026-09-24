@@ -286,6 +286,169 @@ def pw_dump_nodes() -> list[dict]:
     return nodes
 
 
+class AecSource:
+    """Discord-style mic↔PC-audio subtraction for the jamjamjam tuner.
+
+    The tuner listens to the MIC. When the PC plays something audible (music,
+    metronome, backing track…), the loudspeakers bleed into the mic and the
+    pitch estimate follows the PC audio instead of the guitar. With the AEC:
+
+      1. a second capture runs on the SINK MONITOR of the default output,
+      2. the loopback is cross-correlated against the mic to estimate the
+         real delay (0..50 ms of round-trip + room latency),
+      3. a numpy NLMS adaptive FIR (≈ 6.7 ms tail) maps the loopback onto
+         what the mic actually hears of it,
+      4. the estimate is SUBTRACTED from the mic before it reaches the tuner.
+
+    SUBTRACTION ONLY WHEN THE PC AUDIO IS ACTUALLY HEARD BY THE MIC: under
+    the correlation gate (headphones, speakers far away) the mic passes
+    through UNTOUCHED and the weights decay slowly toward the next loud
+    moment. Without numpy the filter short-circuits (mic untouched) so the
+    tuner never becomes slower because of it.
+    """
+
+    TAPS = 320               # FIR tail ≈ 6.7 ms at 48 kHz
+    MU = 0.08                # NLMS step
+    CORR_GATE = 0.18         # below this agreement: bypass the subtraction
+    SEARCH = 0.05            # delay estimation spans ±50 ms
+    EPS = 1e-6
+
+    def __init__(self, inner, sample_rate: int):
+        self.inner = inner
+        self.rate = int(sample_rate)
+        self.enabled = False
+        self.delay = 0
+        self.delay_checked = 0.0
+        self.keep = int(0.6 * self.rate)
+        self.mic: list[float] = []
+        self.loop: list[float] = []
+        self.w = np.zeros(self.TAPS, dtype=np.float32)
+        self.last_corr = 0.0
+        self.subtracting = False
+
+    def enable(self, on: bool) -> None:
+        self.enabled = bool(on) and HAVE_NUMPY
+        if not self.enabled:
+            self.w[:] = 0.0
+        self.delay_checked = 0.0
+
+    # ── inlets ────────────────────────────────────────────────────
+    def feed_loop(self, data: bytes) -> None:
+        """Playback side: the loopback recorder feeds this."""
+        if not data or not self.enabled:
+            return
+        try:
+            samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
+        except (ValueError, OverflowError):
+            return
+        self.loop.extend(samples.tolist())
+        if len(self.loop) > self.keep:
+            del self.loop[:-self.keep]
+
+    def feed(self, data: bytes) -> None:
+        """Mic side: the tuner recorder calls this instead of the raw tuner."""
+        if not data:
+            return
+        if not self.enabled or not HAVE_NUMPY:
+            self.inner.feed(data)
+            return
+        try:
+            mic = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
+        except (ValueError, OverflowError):
+            self.inner.feed(data)
+            return
+        self.mic.extend(mic.tolist())
+        if len(self.mic) > self.keep:
+            del self.mic[:-self.keep]
+        clean = self._subtracted()
+        if clean is None:
+            self.inner.feed(data)
+            return
+        out = np.clip(clean, -1.0, 1.0)
+        self.inner.feed((out * 32768.0).astype("<i2").tobytes())
+
+    # ── core ──────────────────────────────────────────────────────
+    def _delay_refresh_due(self) -> bool:
+        return (time.time() - self.delay_checked) >= 0.25
+
+    def _delay_estimate(self, mic, span):
+        """Cross-correlate the mic chunk against the loopback buffer."""
+        loop = np.array(self.loop, dtype=np.float32)
+        t0 = len(loop) - len(mic)
+        best_c, best_lag = -1.0, self.delay
+        mic_std = float(np.std(mic))
+        for lag in range(-span, span + 1):
+            s = t0 - lag
+            if s - self.TAPS * 0 < 0 or s + len(mic) > len(loop):
+                continue
+            seg = loop[s:s + len(mic)]
+            seg_std = float(np.std(seg))
+            if seg_std < 1e-5:
+                continue
+            corr = float(np.dot(mic, seg) / (len(mic) * mic_std * seg_std + self.EPS))
+            if abs(corr) > best_c:
+                best_c, best_lag = abs(corr), lag
+        self.last_corr = best_c
+        if best_c < self.CORR_GATE:
+            return False
+        self.delay = int(best_lag)
+        return True
+
+    def _subtracted(self):
+        """One processing step: realign if needed, then NLMS-subtract."""
+        span = int(self.SEARCH * self.rate)
+        multi = self.TAPS * 2
+        if len(self.mic) < self.TAPS or len(self.loop) < self.TAPS + span * 2 + 64:
+            return None
+        mic = np.array(self.mic[-multi:], dtype=np.float32)
+        mic_std = float(np.std(mic))
+        if mic_std < 1e-5:
+            return None
+        if self._delay_refresh_due() or self.delay == 0:
+            if not self._delay_estimate(mic, span):
+                # Not correlated enough — the mic does not hear the PC.
+                self.w *= 0.97
+                return None
+        # Pull the aligned loopback (already prefixed with the TAPS tail so
+        # the last len(mic) dots line up with the mic).
+        start = len(self.loop) - len(mic) - self.delay
+        if start - (self.TAPS - 1) < 0:
+            return None
+        hist = np.array(self.loop[start - self.TAPS + 1:start + len(mic)],
+                        dtype=np.float32)
+        if len(hist) < self.TAPS:
+            return None
+        # Sliding windows: row i = loop[i..i+TAPS-1]; the inner FIR dot fits
+        # y[i] for the aligned mic[i].
+        X = np.lib.stride_tricks.sliding_window_view(hist, self.TAPS)
+        X = X[:len(mic)]
+        if len(X) != len(mic):
+            return None
+        y = X @ self.w
+        res = mic - y
+        seg = X[:, -1]  # the aligned loopback sample that pairs with mic[i]
+        seg_std = float(np.std(seg))
+        if seg_std < 1e-5:
+            return None
+        corr = float(np.dot(mic, seg) / (len(mic) * mic_std * seg_std + self.EPS))
+        self.last_corr = corr
+        if abs(corr) < self.CORR_GATE:
+            # Not the PC's fault — the mic is hearing SOMETHING ELSE (the
+            # guitar); do NOT subtract anything from it.
+            self.w *= 0.97
+            self.subtracting = False
+            return None
+        # Block-NLMS update, VECTORIZED: weight gradient = Σ_n res[n]·X[n]
+        # with the per-sample normalisation (X@X / TAPS) folded in.
+        denom = (X * X).sum(axis=1) / self.TAPS + self.EPS
+        self.w += self.MU * (X.T @ (res / denom))
+        norm = float(np.dot(self.w, self.w))
+        if norm > 3.0:
+            self.w *= math.sqrt(3.0 / norm)
+        self.subtracting = True
+        return mic - y
+
+
 class Tuner:
     """Pitch detector on the system input, refreshed from a rolling ring."""
 
@@ -1231,10 +1394,13 @@ class MidiSynth:
                         freq = 1280 if self.metronome_in_beat else 960
                         accent = 0.85 if self.metronome_in_beat else 0.55
                         env = math.exp(-t_env / 0.026) * accent
-                    else:  # classic: pure sine, glassy short click
-                        freq = 1120 if self.metronome_in_beat else 860
-                        accent = 0.92 if self.metronome_in_beat else 0.6
-                        env = math.exp(-t_env / 0.016) * accent
+                    else:  # classic: REAPER-style factory sample tone
+                        # (its default metronome.wav ≈ 1.65 kHz downbeat,
+                        # 1.1 kHz quieter off-beat, short ~12ms decay — a
+                        # clean dry "tick", no beeper tail).
+                        freq = 1650 if self.metronome_in_beat else 1100
+                        accent = 0.95 if self.metronome_in_beat else 0.55
+                        env = math.exp(-t_env / 0.012) * accent
                     # 1.2 ms smooth attack (kills the pop; the old linear
                     # envelope started abruptly at full amplitude).
                     attack = 1.0 - math.exp(-t_env / 0.000012)
@@ -1526,6 +1692,11 @@ class AudioAnalyzerBackend:
         self.synth = MidiSynth(enabled=True, volume=0.4)
         self.tuner = Tuner() if tuner else None
         self.tuner_recorder: AudioRecorder | None = None
+        # AEC (mic↔PC-audio echo subtraction for the tuner): created only
+        # when the settings toggle is ON (aecEnabled), and REBUILT when the
+        # default sink monitor changes (the loopback must follow the output).
+        self.aec_source: AecSource | None = None
+        self.aec_recorder: AudioRecorder | None = None
         self.shazam = ShazamDetector()
         self.midi_in_process: subprocess.Popen[str] | None = None
         self.ports: list[dict[str, str]] = []
@@ -1582,18 +1753,46 @@ class AudioAnalyzerBackend:
         self._restart_tuner()
 
     def _restart_tuner(self):
-        """(Re)point the tuner's capture at the default microphone."""
+        """(Re)point the tuner's capture at the default microphone.
+
+        With AEC enabled, an AecSource sits BETWEEN the mic recorder and the
+        inner Tuner (it subtracts the aligned PC-audio estimate), and a second
+        capture runs on the sink monitor as the subtraction reference. The
+        loopback recorder share the same privacy gate in _sync_capture().
+        """
         if self.tuner is None:
             return
+        was_running = bool(self.tuner_recorder and self.tuner_recorder.running)
         target = self.input_target or ""
-        if self.tuner_recorder is None:
-            self.tuner_recorder = AudioRecorder(self.tuner, target=target, kind="source")
-        else:
-            if self.tuner_recorder.running:
+        analyzer = self.tuner
+        self.aec_source = None
+        if self.aec_enabled:
+            self.aec_source = AecSource(self.tuner, SAMPLE_RATE)
+            self.aec_source.enable(True)
+            analyzer = self.aec_source
+        if self.tuner_recorder is None or self.tuner_recorder.analyzer is not analyzer:
+            if self.tuner_recorder is not None and self.tuner_recorder.running:
                 self.tuner_recorder.stop()
+            self.tuner_recorder = AudioRecorder(analyzer, target=target, kind="source")
+        else:
             self.tuner_recorder.target = target
             self.tuner_recorder.kind = "source"
-        self._sync_capture()
+        # The loopback recorder mirrors the microphone one (same gate in
+        # _sync_capture, so it is never living while the plugin is closed).
+        if self.aec_source is not None:
+            if self.aec_recorder is None:
+                self.aec_recorder = AudioRecorder(
+                    self.aec_source, target=self.monitor_target or "",
+                    kind="monitor")
+            else:
+                self.aec_recorder.stop()
+                self.aec_recorder.target = self.monitor_target or ""
+                self.aec_recorder.kind = "monitor"
+        elif self.aec_recorder is not None:
+            self.aec_recorder.stop()
+            self.aec_recorder = None
+        if was_running:
+            self._sync_capture()
 
     def _tui_active(self) -> bool:
         """True while a jamjamjam-neck TUI owns the session (its pid is alive)."""
@@ -1666,6 +1865,14 @@ class AudioAnalyzerBackend:
             self.dirty = True
         elif not tuner_desired and self.tuner_recorder is not None and self.tuner_recorder.running:
             self.tuner_recorder.stop()
+            self.dirty = True
+        # The AEC loopback (sink monitor) lives with the mic: same privacy
+        # rule (never capturing while the plugin is closed).
+        if tuner_desired and self.aec_recorder is not None and not self.aec_recorder.running:
+            self.aec_recorder.start()
+            self.dirty = True
+        elif (not tuner_desired) and self.aec_recorder is not None and self.aec_recorder.running:
+            self.aec_recorder.stop()
             self.dirty = True
 
     def snapshot(self) -> dict:
@@ -1852,6 +2059,7 @@ class AudioAnalyzerBackend:
             if "aecEnabled" in request:
                 self.config["aecEnabled"] = bool(request.get("aecEnabled", False))
                 self.aec_enabled = bool(self.config["aecEnabled"])
+                self._restart_tuner()
                 changed = True
             if "metronomeVolume" in request:
                 self.config["metronomeVolume"] = max(
