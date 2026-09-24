@@ -144,11 +144,16 @@ Panel {
       anchors.fill: parent
       onCloseRequested: root.close()
       onTextKey: function(text) {
-        // When the panel is PINNED, only capture keys if this Panel has the
-        // active focus — otherwise let the key fall through to the app under
-        // the (semi-transparent) panel. Unpinned panels behave as before.
+        // When the panel is PINNED, only capture keys if the popup actually
+        // holds the keyboard focus — otherwise let the key fall through to
+        // the app under the (semi-transparent) panel. The old test compared
+        // against contentItem, which is wrong the moment ANY inner item
+        // (the pin button, a card…) is focused — that is why unpinning with
+        // 'p' "never worked". Compare against the keyCatcher's OWN focus
+        // state instead: the catcher is the panel's focusTarget, so if the
+        // user is typing inside the panel, IT has the focus chain.
         var key = String(text || "").toLowerCase()
-        if (root.pinned && root.Window.activeFocusItem !== root.contentItem) {
+        if (root.pinned && !keyCatcher.activeFocus && key !== "p") {
           return
         }
         if (key === " " || key === "space") {
@@ -321,7 +326,7 @@ Panel {
               width: (parent.width - parent.spacing * 2) * 0.42
               height: parent.height
               radius: Style.cornerRadius
-              color: Style.selectedFillFor(root.foreground, root.keyName !== "" ? root.accent : root.muted)
+              color: root.keyName !== "" ? Util.alpha(root.accent, 0.16) : "transparent"
 
               Column {
                 anchors.centerIn: parent
@@ -366,7 +371,7 @@ Panel {
               width: (parent.width - parent.spacing * 2) * 0.18
               height: parent.height
               radius: Style.cornerRadius
-              color: Style.selectedFillFor(root.foreground, root.bpm > 0 ? root.accent : root.muted)
+              color: root.bpm > 0 ? Util.alpha(root.accent, 0.16) : "transparent"
               border.color: root.metronomeEnabled ? Util.alpha(Color.foreground, 0.35 + root.beatPulse * 0.65) : "transparent"
               border.width: root.metronomeEnabled ? 1 : 0
 
@@ -414,7 +419,7 @@ Panel {
               width: (parent.width - parent.spacing * 2) * 0.40
               height: parent.height
               radius: Style.cornerRadius
-              color: Style.selectedFillFor(root.foreground, root.currentAudioChord !== "" ? Color.urgent : root.muted)
+              color: root.currentAudioChord !== "" ? Util.alpha(Color.urgent, 0.16) : "transparent"
 
               Column {
                 anchors.centerIn: parent
@@ -454,8 +459,7 @@ Panel {
           Rectangle {
             anchors.fill: parent
             radius: Style.cornerRadius
-            color: root.tunerActive ? Util.alpha(root.accent, 0.14)
-              : Style.selectedFillFor(root.foreground, root.muted)
+            color: root.tunerActive ? Util.alpha(root.accent, 0.14) : "transparent"
             border.color: root.inTune ? Util.alpha(root.accent, 0.85)
               : (root.tunerActive ? root.accent : "transparent")
             border.width: 1
@@ -991,7 +995,12 @@ Panel {
             width: parent.width
             // Fixed scroll viewport: the panel keeps its size when 's' is
             // pressed; anything beyond ~4 rows scrolls instead of growing.
-            height: Math.min(contentHeight, Style.space(372))
+            // Reserve = everything this pane hides (cards + tuner + chord
+            // zone + fretboard + three spacers) so the panel NEVER shrinks
+            // (or grows) when settings are toggled.
+            height: Math.min(contentHeight, Style.space(24) + Style.space(110)
+                              + root.tunerHeight + root.chordBoxHeight
+                              + root.fretboardHeight)
             implicitHeight: height
             contentWidth: width
             contentHeight: settingsRows.implicitHeight
@@ -1003,6 +1012,7 @@ Panel {
               id: settingsRows
               width: parent.width
               spacing: Style.spacing.sm
+              topPadding: Style.space(4)
 
               // Note naming (flats / sharps)
               Row {

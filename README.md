@@ -2,7 +2,7 @@
 
 Personal scripts for configuring Omarchy (Arch/Hyprland) oriented toward **audio production** (REAPER, Bitwig, Windows VST, local AI). All scripts are **idempotent**: safe to re-run on an already-configured machine.
 
-This README is the **complete reference** for the orchestrator (`mosquitomarchy-setup.sh` — install + backup/restore + per-module uninstall + repo update, all in one script) and the release archiver (`archive-customarchy.sh`), and it lists **every module** the repo ships, including modules bundled inside another one (e.g. Bitwig inside `audio`) and modules not selected in a given run. Each module's own install commands, options and caveats live in its folder's `README.md` — linked from the **Documentation** column of the module tables in [Modules](#modules).
+This README is the **complete reference** for the orchestrator (`mosquitomarchy-setup.sh` — install + backup/restore + per-module uninstall + repo update, all in one script) and the release archiver (`archive-mosquitomarchy.sh`), and it lists **every module** the repo ships, including modules bundled inside another one (e.g. Bitwig inside `audio`) and modules not selected in a given run. Each module's own install commands, options and caveats live in its folder's `README.md` — linked from the **Documentation** column of the module tables in [Modules](#modules).
 
 > **Resuming work on this repo (human or AI)?** Check [`JOURNAL.md`](JOURNAL.md) first — it tracks current status, the active roadmap, and the history of decisions, and is meant to be read before this README when picking the project back up.
 
@@ -12,7 +12,7 @@ This README is the **complete reference** for the orchestrator (`mosquitomarchy-
 
 ## Installation files
 
-The large installers are not in the repo; they are provided by the release archive (`archive-customarchy.sh`) or must be downloaded separately:
+The large installers are not in the repo; they are provided by the release archive (`archive-mosquitomarchy.sh`) or must be downloaded separately:
 
 | App | File | In repo? | In release archive? | Download |
 |---|---|---|---|---|
@@ -76,14 +76,14 @@ All scripts are **v1.0.0**, except three still at **v0.1.0**: the DaVinci Resolv
 ```
 mosquitOmarchy/
 ├── README.md · LICENSE · assets.links · .gitignore · .mise.toml
-├── archive-customarchy.sh       # "latest release" tar.gz (root)
+├── archive-mosquitomarchy.sh       # "latest release" tar.gz (root)
 ├── mosquitomarchy-setup.sh         # single orchestrator: backup/restore → modules → uninstall → repo update
 └── scripts/
     ├── gui-run.bash             # file-manager launch support (reopens installers in a terminal)
     ├── bootstrap.sh             # one-command start
     ├── deps                     # deps with no module folder of their own (currently: omagrab)
     ├── lib/                     # shared helpers: tui-kit/ (Go component library) + common.bash + crash.bash + keybindings.bash
-    ├── fixes/                   # small idempotent fixes (keyring, Papers, brightness, touchpad, MX Master, menu…)
+    ├── fixes/                   # small idempotent fixes (Papers, brightness, touchpad, MX Master, menu…)
     ├── plugins/                 # Omarchy shell plugins: power-management/ · jamjamjam/ · live-mode/
     ├── apps/                    # "apps" module: dispatchers + one folder per type
     │   ├── gui/  tui-tools/  webapps/  #   catalogs + install/uninstall per type
@@ -97,7 +97,7 @@ mosquitOmarchy/
 
 Each module folder has a `README.md` with the module's own details — linked in the **Documentation** column of the [Modules](#modules) tables. Each script resolves its resources via its own directory: moving an entire directory has no effect on paths.
 
-**Quick system fixes** live in `scripts/fixes/` (small idempotent fixes — keyring, Papers/Evince swap, perceptual brightness, keyboard backlight, touchpad, MX Master, theme). At startup, interactive mode proposes to apply them and opens a **multi-select** (Space = choose, Tab = navigate), each fix with its micro-explanation; `-y` applies them all automatically.
+**Quick system fixes** live in `scripts/fixes/` (small idempotent fixes — Papers/Evince swap, perceptual brightness, keyboard backlight, touchpad, MX Master, theme). At startup, interactive mode proposes to apply them and opens a **multi-select** (Space = choose, Tab = navigate), each fix with its micro-explanation; `-y` applies them all automatically.
 
 **File-manager launch**: right-click any `setup-*.sh` / `uninstall-*.sh` → **Run as a Program**.
 
@@ -108,7 +108,7 @@ Each module folder has a `README.md` with the module's own details — linked in
 | [bootstrap.sh](#one-command-start) | One-command start: clone (if needed) + setup + optional asset download |
 | [mosquitOmarchy](scripts/apps/mosquitomarchy/README.md) | The launcher TUI (Go/Bubble Tea): status / update / setup tree / backup-restore — the recommended interface |
 | [mosquitomarchy-setup.sh](#mosquitomarchy-setupsh) | Master: backup/restore → modules one by one → uninstall → repo update → report |
-| [archive-customarchy.sh](#archive-customarchysh) | Complete tar.gz archive of the repo (the "latest release") |
+| [archive-mosquitomarchy.sh](#archive-mosquitomarchysh) | Complete tar.gz archive of the repo (the "latest release") |
 
 ---
 
@@ -144,7 +144,7 @@ Grouped by priority (creative apps first, then desktop/power tuning, then mainte
 | `davinci` | DaVinci Resolve Studio or free + H.264/H.265 + optional OFX SpectraFilm | `scripts/apps/davinci/setup-davinci.sh` | [README](scripts/apps/davinci/README.md) |
 | `guitarpro` | Guitar Pro 8 via Wine (dedicated prefix) | `scripts/apps/guitarpro/setup-guitarpro.sh` | [README](scripts/apps/guitarpro/README.md) |
 | `ableton-move-converter` | mosquito Move Manager — Ableton Move → Ableton Live → Bitwig (menu: address / Move Manager / convert — native Omarchy prompts, MIDI export) | `scripts/apps/ableton-move-manager/setup-ableton-move-manager.sh` | [README](scripts/apps/ableton-move-manager/README.md) |
-| `jamjamjam-plugin` | JamJamJam bar plugin — real-time key/BPM/chord detection, chord progression grid, guitar fretboard (numbered degrees), MIDI chord mode + synth | `scripts/plugins/jamjamjam/setup-jamjamjam-plugin.sh` | [README](scripts/plugins/jamjamjam/README.md) |
+| `jamjamjam-plugin` | JamJamJam bar plugin — real-time key/BPM/chord detection, chord progression grid, guitar fretboard (numbered degrees), MIDI chord mode + synth. **Privacy:** the microphone is never captured while the plugin is closed, and no audio is ever written to disk (analysis data only, in the cache/state dir) | `scripts/plugins/jamjamjam/setup-jamjamjam-plugin.sh` | [README](scripts/plugins/jamjamjam/README.md) |
 | `handbrake` | HandBrake GUI + CLI, H.264/H.265 encoders, preset sync, Hyprland rules | `scripts/apps/handbrake/setup-handbrake.sh` | [README](scripts/apps/handbrake/README.md) |
 | `ollama` | Ollama + REAPER-oriented models (~14 GB) + OpenCode integration | `scripts/LLM/setup-ollama-audio-expert.sh` | [README](scripts/LLM/README.md) |
 | `reaper` | REAPER + Hyprland/Wayland integration | `scripts/apps/reaper/setup-reaper.sh` | [README](scripts/apps/reaper/README.md) |
@@ -219,7 +219,7 @@ Each uninstalled module is **remembered** (`~/.local/state/omarchy-custom-script
 
 ---
 
-## archive-customarchy.sh
+## archive-mosquitomarchy.sh
 
 On launch you choose among two archive types (or `--type=`):
 
@@ -231,12 +231,12 @@ On launch you choose among two archive types (or `--type=`):
 Always excluded (whatever the type): logs, `.venv`, Git history, previous archives. **Large installers** (Ableton zips/`.run`, Guitar Pro `.exe`, DaVinci zips) are embedded **automatically** in `print` archives (they are the personal backup of the installers), and **offered** (never forced) for the `release` archives. The file name embeds the type: `omarchy-scripts-print-<date>.tar.gz`, `omarchy-scripts-release-<date>.tar.gz`.
 
 ```bash
-./archive-customarchy.sh                 # interactive: type → heavy installers → tar.gz
-./archive-customarchy.sh -y              # defaults: type 'print', all heavy installers embedded
-./archive-customarchy.sh --type=release  # non-interactive: "clean" release (no backups)
-./archive-customarchy.sh --with-ableton --with-davinci
-./archive-customarchy.sh --list-heavy    # list the detected heavy files
-./archive-customarchy.sh --no-backups    # print only: skip the config backups
+./archive-mosquitomarchy.sh                 # interactive: type → heavy installers → tar.gz
+./archive-mosquitomarchy.sh -y              # defaults: type 'print', all heavy installers embedded
+./archive-mosquitomarchy.sh --type=release  # non-interactive: "clean" release (no backups)
+./archive-mosquitomarchy.sh --with-ableton --with-davinci
+./archive-mosquitomarchy.sh --list-heavy    # list the detected heavy files
+./archive-mosquitomarchy.sh --no-backups    # print only: skip the config backups
 ```
 
 ---

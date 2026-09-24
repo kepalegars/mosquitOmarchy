@@ -34,18 +34,22 @@ func (m model) homeBannerReserve() int {
 }
 
 // filterBarLine composes the filter zone for the Setup/Uninstall screens:
-// when open ('f'), a small rectangular box with the LIVE filter text and a
-// blinking-style cursor sits right above the shortcut hint bar; the type
-// stream also drives the live list filter.
+// when open ('f'), a small ACCENT-framed rectangular box sits right above
+// the shortcut hint bar. The empty state shows only a muted "filter"
+// inside; the typed keys render live in accent and the list refines.
 func (m model) filterBarLine(hint string) string {
 	if !m.filterOpen {
 		return hint
 	}
+	inner := m.filterText + "▏"
+	if m.filterText == "" {
+		inner = lipgloss.NewStyle().Foreground(tuikit.ColorMuted).Render("filter")
+	}
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(tuikit.ColorMuted).
-
-		Render(fmt.Sprintf("filter: ┃ %s▏  (type to refine · esc clear · f close)", m.filterText))
+		BorderForeground(tuikit.ColorAccent).
+		Foreground(tuikit.ColorAccent).
+		Render(fmt.Sprintf(" %s  (type to refine · esc clear · f close) ", inner))
 	w := m.contentSizeW()
 	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(box) + "\n" + hint
 }
@@ -203,12 +207,12 @@ func (m model) updateBody() string {
 	if m.updateRec.RepoUpdate {
 		lines = append(lines, tuikit.StyleWarn.Render("● update available!"))
 	} else {
-		lines = append(lines, tuikit.StyleOK.Render("all modules & scripts are up to date!"))
+		lines = append(lines, tuikit.StyleOK.Render("all scripts are up to date!"))
 	}
 	if n := len(m.updateRec.Modules); n == 0 {
-		lines = append(lines, tuikit.StyleMuted.Render("no update available for the installed modules"))
+		lines = append(lines, tuikit.StyleMuted.Render("nothing to re-apply for the installed modules"))
 	} else {
-		lines = append(lines, tuikit.StyleAccent.Render(fmt.Sprintf("● %d installed module(s) have updates — select them below and Apply", n)))
+		lines = append(lines, tuikit.StyleAccent.Render(fmt.Sprintf("● %d installed module(s) have updates — press i for the list, tab on the list to skip some", n)))
 	}
 	return lipgloss.JoinVertical(lipgloss.Center,
 		lipgloss.NewStyle().Width(m.contentSizeW()).Align(lipgloss.Center).Render(strings.Join(lines, "\n")),

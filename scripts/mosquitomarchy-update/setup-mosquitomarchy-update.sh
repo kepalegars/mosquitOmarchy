@@ -193,7 +193,7 @@ HOOK
 
 hr
 msg "Update watchdog (scripts repo first, then Omarchy updates)"
-if [[ -f "$DEST" ]] && rg -q -e 'customarchy' "$DEST"; then
+if [[ -f "$DEST" ]] && rg -q -e 'mosquitomarchy' "$DEST"; then
   warn "The hook is already installed: $DEST"
   ask "Re-install it (refresh the hook code)?" n || { ok "Kept as-is."; hr; exit 0; }
 fi

@@ -14,8 +14,16 @@ guitar-neck TUI with a hold-to-detect analysis button.
   Left-click opens the panel; right-click toggles recording.
 * **Capture lifecycle** — the panel's real-time analysis runs while the *panel is
   open*, unless a TUI owns the session (then only the TUI's hold captures) or
-  the analysis is paused; the tuner always listens to the microphone.
-  Capture auto-stops (and analysis is reset) once nothing needs it.
+  the analysis is paused. Capture auto-stops (and analysis is reset) once
+  nothing needs it.
+* **PRIVACY — the microphone is NEVER used while the plugin is closed.** The
+  tuner's mic capture is hard-gated in the backend: the microphone only runs
+  while the panel is open, an analysis hold is active, or the guitar-neck TUI
+  session is open. Nothing is captured in the background "just in case".
+* **PRIVACY — no audio is ever written to disk.** The captured audio lives only
+  in small in-memory ring buffers; what survives across sessions is analysis
+  metadata only (key/BPM/chord/tuner results, config, MIDI port choice) stored
+  under `~/.local/state/jamjamjam/` and `~/.config/jamjamjam/`.
 * **System-audio analysis** — captures the PipeWire monitor of the default sink
   automatically, so it hears exactly what the system plays (not the mic).
 * **INPUT PC/MIC** — the header button (a squared icon button: computer-screen =

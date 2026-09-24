@@ -19,7 +19,6 @@ They come in three groups:
 
 | id | Script | What it fixes |
 |---|---|---|
-| `keyring` | `fix-keyring.sh` | Kills the "Enter password to unlock your login keyring" prompt at app startup: creates an empty `login` keyring and removes the duplicates, points the default at it. |
 | `keepassxc-window` | `fix-keepassxc-window.sh` | KeePassXC window floats + centers in Hyprland instead of behaving badly when tiled (idempotent marked block in `hyprland.lua`; matches the native Wayland app-id and the XWayland class). |
 | `tui-theme` | `fix-tui-theme.sh` | Regenerates the current Omarchy palette (`omarchy theme refresh`) and rebuilds + redeploys both Go TUIs so their colors match the ACTIVE theme. The dynamic theme (palette re-read at each start) already ships in `scripts/lib/tui-kit`. |
 | `omarchy-menu` | `fix-omarchy-menu.sh` | Recovers a broken Omarchy menu (blank rows / empty Apps list) caused by a user-space clone of `omarchy.menu`: removes the clones, re-enables the stock menu, restarts the shell. |

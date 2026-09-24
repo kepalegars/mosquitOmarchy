@@ -6,7 +6,7 @@ description: >
   acted on, when pointed at a log under .local/crash-logs/, or when asked why a
   mosquitOmarchy module (setup, update, backup, VM, battery, TUI, ...) failed.
   Triggers: mosquitOmarchy, mosquitomarchy, crash log, "finished with errors",
-  customarchy, mosquitomarchy-setup, .local/crash-logs. The agent only PROPOSES;
+  mosquitomarchy, mosquitomarchy-setup, .local/crash-logs. The agent only PROPOSES;
   it never applies a change without the user confirming.
 ---
 

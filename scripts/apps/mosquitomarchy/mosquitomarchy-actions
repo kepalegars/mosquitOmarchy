@@ -814,6 +814,10 @@ cmd_update_repo(){
 # changed in the local scripts. This is the single "Update modules" action.
 cmd_update_modules(){
   YES=1
+  # Optional subset: module ids from the TUI's selectable list. When given,
+  # ONLY those modules are re-applied (the repo fast-forward happens as
+  # usual, so the scripts themselves are up to date either way).
+  local -a only=("$@")
   local before="" after="" p m row id state
   [[ -d "$REPO_DIR/.git" ]] && before="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
   if repo_update_avail; then
@@ -843,6 +847,21 @@ cmd_update_modules(){
       [[ -n $p && "$(module_of_path "$p")" == "$id" ]] && { ids+=("$id"); break; }
     done
   done
+
+  if ((${#only[@]})); then
+    # Re-apply just the subset the user kept selected in the TUI.
+    RESULTS=()
+    MODULE_FAILURES=0
+    SELECTED=("${only[@]}")
+    msg "Re-applying ${#only[@]} selected module(s)…"
+    exec_modules
+    if (( MODULE_FAILURES > 0 )); then
+      err "One or more modules failed to update."
+      return 1
+    fi
+    final_report
+    return 0
+  fi
 
   if ((${#ids[@]})); then
     RESULTS=()

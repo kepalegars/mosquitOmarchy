@@ -411,6 +411,15 @@ func (m model) healthKeys() []string {
 
 func (m model) updateSelectedCount() int { return len(m.updateSelected) }
 
+// preselectUpdate marks EVERY available changed module as selected so the
+// Update screen's module list starts fully ticked (the user can un-tick
+// anything they want to skip manually).
+func (m *model) preselectUpdate() {
+	for _, it := range m.updateRec.Modules {
+		m.updateSelected[it.Key] = true
+	}
+}
+
 // updateKeys returns the checked Update module keys as a stable slice (in
 // the order the modules are listed).
 func (m model) updateKeys() []string {

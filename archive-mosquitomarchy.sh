@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# archive-customarchy.sh — Archiving of the mosquitOmarchy repo as tar.gz.
+# archive-mosquitomarchy.sh — Archiving of the mosquitOmarchy repo as tar.gz.
 #
 # On launch you choose among THREE archive types:
 #
@@ -30,15 +30,15 @@
 # embedded automatically by the 'print' type (personal backup — that is the
 # point of a print archive). The release types ASK about them (never forced).
 # Usage:
-#   ./archive-customarchy.sh                     # interactive: type? installers? -> tar.gz
-#   ./archive-customarchy.sh -y                  # defaults (type 'print', all installers embedded)
-#   ./archive-customarchy.sh --type=release      # non-interactive: clean release (no backups)
-#   ./archive-customarchy.sh --type=release+patch# release including the personal extras
-#   ./archive-customarchy.sh --with-ableton      # include all Ableton installers (release types)
-#   ./archive-customarchy.sh --with-davinci      # include all DaVinci installers (release types)
-#   ./archive-customarchy.sh --list-heavy        # list the detected bulky installers
-#   ./archive-customarchy.sh --no-backups        # does not embed the backups folder (print only)
-#   ./archive-customarchy.sh -h                  # help
+#   ./archive-mosquitomarchy.sh                     # interactive: type? installers? -> tar.gz
+#   ./archive-mosquitomarchy.sh -y                  # defaults (type 'print', all installers embedded)
+#   ./archive-mosquitomarchy.sh --type=release      # non-interactive: clean release (no backups)
+#   ./archive-mosquitomarchy.sh --type=release+patch# release including the personal extras
+#   ./archive-mosquitomarchy.sh --with-ableton      # include all Ableton installers (release types)
+#   ./archive-mosquitomarchy.sh --with-davinci      # include all DaVinci installers (release types)
+#   ./archive-mosquitomarchy.sh --list-heavy        # list the detected bulky installers
+#   ./archive-mosquitomarchy.sh --no-backups        # does not embed the backups folder (print only)
+#   ./archive-mosquitomarchy.sh -h                  # help
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

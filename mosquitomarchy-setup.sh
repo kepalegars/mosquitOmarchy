@@ -20,7 +20,7 @@
 #   ./mosquitomarchy-setup.sh --update-repo     # git pull the scripts from GitHub (see "Updating")
 #
 # Backup / restore / per-module uninstall are integrated here: there is no
-# separate backup-customarchy.sh or uninstall-customarchy.sh anymore.
+# separate backup-mosquitomarchy.sh or uninstall-mosquitomarchy.sh anymore.
 #
 # Uninstalled modules are remembered (state file): if you uninstall a module
 # it is NOT re-proposed by this master (unless re-enabled with --include=).
@@ -375,7 +375,7 @@ st_keybindings(){
 st_mosquitomarchy_update(){
   # Update watchdog: post-boot hook installed + review banner available
   [[ -d "$HOME/.config/omarchy/hooks/post-boot.d" ]] || { echo missing; return; }
-  grep -rlq -e "customarchy" "$HOME/.config/omarchy/hooks/post-boot.d" 2>/dev/null \
+  grep -rlq -e "mosquitomarchy" "$HOME/.config/omarchy/hooks/post-boot.d" 2>/dev/null \
     && echo ok || echo partial
 }
 st_superfile(){
@@ -532,7 +532,6 @@ MODULES=(
 # Small idempotent one-shot fixes, proposed at startup (multi-select).
 # Each entry: id:micro explanation.
 FIXES=(
-  "keyring:Stop the 'default keyring' password prompt at app startup (create an empty login keyring + remove the duplicates)"
   "keepassxc-window:KeePassXC window floats/centers in Hyprland instead of misbehaving when tiled next to other windows"
   "tui-theme:Force-adapt the TUIs' theme to the current Omarchy theme (regenerate the palette + rebuild both Go TUIs; the dynamic theme already ships with tui-kit)"
   "omarchy-menu:Recover the Omarchy menu when clones leave blank rows / an empty Apps list (remove menu-plugin clones, re-enable omarchy.menu, restart the shell)"
@@ -554,7 +553,6 @@ fix_desc(){ # id -> description
 # can be picked alone or its whole category in one keystroke.
 fix_category(){
   case $1 in
-    keyring)          echo "Security" ;;
     keepassxc-window) echo "Windows & input" ;;
     tui-theme)        echo "Appearance" ;;
     omarchy-menu)     echo "Omarchy" ;;
@@ -651,7 +649,6 @@ fixes_pick(){ # fill FIXES_SELECTED with the chosen ids (global)
 run_fix(){ # single fix by id
   local id="$1"
   case $id in
-    keyring) bash "$SCRIPT_DIR/scripts/fixes/fix-keyring.sh" ;;
     keepassxc-window) bash "$SCRIPT_DIR/scripts/fixes/fix-keepassxc-window.sh" ;;
     tui-theme) bash "$SCRIPT_DIR/scripts/fixes/fix-tui-theme.sh" ;;
     omarchy-menu) bash "$SCRIPT_DIR/scripts/fixes/fix-omarchy-menu.sh" ;;
@@ -1634,7 +1631,7 @@ $MENU_MOSQUITO_START
     "icon": "\uf188",
     "label": "mosquitOmarchy",
     "description": "Configure this Omarchy machine (audio stack, VMs, themes, apps) — mosquitomarchy-setup launcher",
-    "aliases": ["mosquito", "customarchy", "mosquitomarchy"],
+    "aliases": ["mosquito", "mosquitomarchy", "mosquitomarchy"],
     "when": "test -x $BIN_DIR/mosquitomarchy",
     "action": "$BIN_DIR/mosquitomarchy"
   },
@@ -2273,11 +2270,11 @@ un_mosquitomarchy_update(){
   local hookd="$HOME/.config/omarchy/hooks/post-boot.d" removed=0 h
   for h in "$hookd"/*; do
     [[ -f $h ]] || continue
-    if rg -q -e 'customarchy' "$h" 2>/dev/null; then
+    if rg -q -e 'mosquitomarchy' "$h" 2>/dev/null; then
       rm -f "$h" && { ok "Hook removed: $(basename "$h")"; removed=1; }
     fi
   done
-  ((removed)) || warn "No customarchy post-boot hook found."
+  ((removed)) || warn "No mosquitomarchy post-boot hook found."
   rm -rf "$HOME/.local/state/omarchy-update-check" 2>/dev/null || true
 }
 

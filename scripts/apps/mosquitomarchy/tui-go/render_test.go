@@ -103,10 +103,10 @@ func TestUpdateBodyNoDuplicate(t *testing.T) {
 		}
 	}
 	body := m.updateBody()
-	if n := strings.Count(body, "no update available for the installed modules"); n != 1 {
+	if n := strings.Count(body, "nothing to re-apply for the installed modules"); n != 1 {
 		t.Fatalf("expected exactly one 'no update for installed modules' line, got %d:\n%s", n, body)
 	}
-	if n := strings.Count(body, "all modules & scripts are up to date!"); n != 1 {
+	if n := strings.Count(body, "all scripts are up to date!"); n != 1 {
 		t.Fatalf("expected the up-to-date line once, got %d:\n%s", n, body)
 	}
 }

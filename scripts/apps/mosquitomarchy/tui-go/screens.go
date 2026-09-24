@@ -312,6 +312,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				return m, nil
 			}
 			m.updateRec = msg.update
+			// Everything found changed is preselected: the Update screen
+			// lists the modules with ● marks and the user can un-tick any
+			// module they want to skip before pressing Update.
+			m.preselectUpdate()
 			if m.top() == scrUpdate {
 				m.updatePicker = m.rebuildUpdate()
 			}
@@ -473,6 +477,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.toast, _ = m.toast.SetWarn("keepassxc un-ticked")
 				return m, nil
 			}
+			if m.pendingAction == "keepassxc-gnomerm" {
+				// Declined = KEEP the gnome-keyring package. This is a
+				// legitimate answer, not a cancel: continue the apply.
+				m.kpxGnomeRm = 2
+				os.Setenv("MOSQUITOMARCHY_KEEPASSXC_REMOVE_GNOME_KEYRING", "0")
+				return m, fetchMissingAssetsCmd(m.pendingArgs)
+			}
 			return m, nil
 		}
 		if m.pendingAction == "keepassxc-consent" {
@@ -525,7 +536,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case "update":
 			return m.startWorking("Re-applying modules", workingArgs("update", m.pendingArgs)...)
 		case "update-modules":
-			return m.startWorking("Updating modules", workingArgs("update-modules", nil)...)
+			if n := m.updateSelectedCount(); n == 0 && len(m.updateRec.Modules) > 0 {
+				m.toast, _ = m.toast.SetWarn("all modules skipped — press tab on the Update screen to re-include them")
+				return m, nil
+			}
+			return m.startWorking("Updating modules", workingArgs("update-modules", m.updateKeys())...)
 		case "update-repo":
 			return m.startWorking("Updating the repo", workingArgs("update-repo", nil)...)
 		case "backup":
@@ -898,6 +913,25 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.setupCatPicker, cmd = m.setupCatPicker.Update(msg)
 	case scrUpdate:
+		// 'i' shows exactly which modules will be updated (the preselected
+		// list the user can edit with tab).
+		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
+			var lines []string
+			if m.updateRec.RepoUpdate {
+				lines = append(lines, "• mosquitOmarchy scripts repo — fast-forward to the GitHub version")
+			}
+			for _, key := range m.updateKeys() {
+				lines = append(lines, "• "+key)
+			}
+			if len(lines) == 0 {
+				lines = append(lines, "Nothing to update — everything is already current.")
+			}
+			m.info = tuikit.NewInfo(strings.Join(lines, "\n")).SetSize(m.contentSize())
+			m.push(scrInfo)
+			return m, nil
+		}
+		// Tab on the Update screen marks a module as SKIPPED (or re-includes
+		// it).
 		m.updatePicker, cmd = m.updatePicker.Update(msg)
 	case scrHealth:
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
@@ -1533,6 +1567,7 @@ func (m model) rebuildFilteredSetup() navPicker {
 	}
 	return newNavPicker(header, filtered).SetSize(m.contentSize()).
 		SetHelpKeys(key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "search")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterDesc)))
 }
 
@@ -1677,6 +1712,7 @@ func (m model) rebuildSetupCat() navPicker {
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
+			key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "search")),
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
@@ -1756,12 +1792,27 @@ func (m model) rebuildUpdate() navPicker {
 	if !hasUpdate {
 		upd.Disabled = true
 	}
-	items := []tuikit.PickerItem{
-		upd,
-		{Display: "Back", Value: "back"},
+	items := make([]tuikit.PickerItem, 0, len(m.updateRec.Modules)+2)
+	if len(m.updateRec.Modules) > 0 {
+		items = append(items, tuikit.PickerItem{Display: "Modules to update (tab = skip one):", Disabled: true})
+		for _, it := range m.updateRec.Modules {
+			mark := "○"
+			if m.updateSelected[it.Key] {
+				mark = "●"
+			}
+			items = append(items, tuikit.PickerItem{Display: it.Label, Value: it.Key, Badge: mark})
+		}
+		items = append(items, tuikit.PickerItem{Display: "", Disabled: true})
 	}
+	items = append(items,
+		upd,
+		tuikit.PickerItem{Display: "Back", Value: "back"},
+	)
 	p := newNavPicker("", items).SetSize(m.contentSize()).
-		SetHelpKeys(key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "update")))
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "skip module")),
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "what updates")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "update")))
 	return p.SelectIndex(idx)
 }
 

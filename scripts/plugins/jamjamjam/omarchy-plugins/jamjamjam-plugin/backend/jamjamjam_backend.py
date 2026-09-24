@@ -1549,10 +1549,11 @@ class AudioAnalyzerBackend:
         self._auto_start()
 
     def _auto_start(self):
-        # The tuner always listens to the default microphone (independent of
-        # the analysis INPUT setting), so it starts unconditionally.
-        if self.tuner is not None:
-            self._restart_tuner()
+        # PRIVACY GUARD: the tuner's mic capture must NEVER run while the
+        # panel (and any TUI session) is closed — set up the tuner WITHOUT
+        # starting its capture. _sync_capture() starts/stops it against the
+        # panel-visible/hold/TUI-active gate at every state change.
+        self._restart_tuner()
 
     def _restart_tuner(self):
         """(Re)point the tuner's capture at the default microphone."""
@@ -1566,7 +1567,7 @@ class AudioAnalyzerBackend:
                 self.tuner_recorder.stop()
             self.tuner_recorder.target = target
             self.tuner_recorder.kind = "source"
-        self.tuner_recorder.start()
+        self._sync_capture()
 
     def _tui_active(self) -> bool:
         """True while a jamjamjam-neck TUI owns the session (its pid is alive)."""
@@ -1628,6 +1629,17 @@ class AudioAnalyzerBackend:
             self.dirty = True
         elif not desired and self.recorder.running:
             self.recorder.stop()
+            self.dirty = True
+
+        # PRIVACY GUARD: the microphone (tuner) is captured ONLY while the
+        # plugin is actually in use (panel open, analysis hold active, or the
+        # neck TUI open). The mic must NEVER run while nothing is open.
+        tuner_desired = desired and (self.tuner is not None)
+        if tuner_desired and self.tuner_recorder is not None and not self.tuner_recorder.running:
+            self.tuner_recorder.start()
+            self.dirty = True
+        elif not tuner_desired and self.tuner_recorder is not None and self.tuner_recorder.running:
+            self.tuner_recorder.stop()
             self.dirty = True
 
     def snapshot(self) -> dict:

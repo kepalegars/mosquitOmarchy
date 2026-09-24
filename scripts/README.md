@@ -1,6 +1,6 @@
 # `scripts/` — mosquitOmarchy modules and helpers
 
-This folder holds everything except the two root orchestrators (`mosquitomarchy-setup.sh`, `archive-customarchy.sh`) and the repo meta files.
+This folder holds everything except the two root orchestrators (`mosquitomarchy-setup.sh`, `archive-mosquitomarchy.sh`) and the repo meta files.
 
 Unlike the other modules, the apps are grouped under `apps/` (one folder per app + shared helpers), with one `apps/README.md` for the whole group; the modules each bring their own `README.md`.
 
@@ -17,7 +17,7 @@ Unlike the other modules, the apps are grouped under `apps/` (one folder per app
 | `omarchy-vm/` | `omarchy-vm` module — Omarchy ISO VM in QEMU/KVM + TUI + passthrough |
 | `theme/` | `achraff` theme / `create-theme.sh` |
 | `mosquitomarchy-update/` | update watchdog : scripts repo check first, then pending Omarchy updates |
-| `fixes/` | idempotent fixes — keyring, Papers/Evince, brightness, keyboard backlight, touchpad, MX Master, menu, theme (`fix-*.sh`); proposed at `mosquitomarchy-setup.sh` startup |
+| `fixes/` | idempotent fixes — Papers/Evince, brightness, keyboard backlight, touchpad, MX Master, menu, theme (`fix-*.sh`); proposed at `mosquitomarchy-setup.sh` startup |
 | `bootstrap.sh` | one-command start (clone + setup + optional assets) — see the [root README](../README.md#one-command-start) |
 | `lib/keybindings.bash` | `keybindings` module primitives — managed SUPER bindings (used by the mosquitOmarchy TUI + `mosquitomarchy-actions`) |
 | `gui-run.bash` | shared helper : reopens a `setup-*.sh` launched from a file manager inside a terminal |
