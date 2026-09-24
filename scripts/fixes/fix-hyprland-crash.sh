@@ -44,7 +44,7 @@
 #   ./fix-hyprland-crash.sh --remove   # uninstall the hook + state, then exit
 #   ./fix-hyprland-crash.sh -h         # this help
 #
-# Can be registered as a quick fix in setup-customarchy.sh (id: hyprland-crash)
+# Can be registered as a quick fix in mosquitomarchy-setup.sh (id: hyprland-crash)
 # and added to $HOME/.config/omarchy/hooks/post-boot.d/ for boot-time healing.
 # =============================================================================
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/gui-run.bash"  # file-manager launch support — keeps `set -e` unaffected afterwards

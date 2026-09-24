@@ -44,8 +44,8 @@
 #
 # One-stop install/uninstall for the ableton-move-converter module:
 #   • install   -> this script (menu option 1 / -y; also triggered by the
-#                  'move-session' module of setup-customarchy.sh once wired)
-#   • uninstall -> this script --uninstall, or the module of setup-customarchy.sh
+#                  'move-session' module of mosquitomarchy-setup.sh once wired)
+#   • uninstall -> this script --uninstall, or the module of mosquitomarchy-setup.sh
 #
 # Optional udev rule + chromium policy + ydotool NOPASSWD rule require root
 # (run: sudo bash $0).
@@ -931,7 +931,7 @@ if [[ $REMOVE == true ]]; then
   remove_webapp_icon
   info "Uninstall complete: menu entry + udev rule + chromium policy + ydotool NOPASSWD + webapp icon removed."
   echo "  The binaries stay in $BIN_DIR (mosquito-move-manager (+ -tui/lib-move-manager-core.sh), move-bundle-to-midi, move-bundle-to-als, move-udev-refresh, move-manager-webapp):"
-  echo "    use the 'ableton-move-manager' module of setup-customarchy.sh --uninstall to remove them too."
+  echo "    use the 'ableton-move-manager' module of mosquitomarchy-setup.sh --uninstall to remove them too."
 elif (( STATUS_ONLY )); then
   do_status
 else

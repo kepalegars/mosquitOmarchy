@@ -1,8 +1,8 @@
 # Battery / power management — Omarchy module
 
 One-stop install/uninstall for the whole battery module:
-- **install** → `setup-battery-management.sh` (also the `battery` module of `setup-customarchy.sh`)
-- **uninstall** → `setup-battery-management.sh --remove`, or the `battery` module of `setup-customarchy.sh --uninstall`
+- **install** → `setup-battery-management.sh` (also the `battery` module of `mosquitomarchy-setup.sh`)
+- **uninstall** → `setup-battery-management.sh --remove`, or the `battery` module of `mosquitomarchy-setup.sh --uninstall`
 
 Deploys `ultra-save`, `power-helper`, `mega-caffeine`, `ultra-save-watch`; NOPASSWD sudoers + udev rule `99-lenovo-charge-threshold.rules` (Lenovo charge thresholds); removes the old systemd timer and the "System > Ultra-save" menu entry; adds a `Trigger > Toggle > Mega caffeine` menu entry.
 
@@ -15,7 +15,7 @@ It also provisions the **custom Omarchy plugins** (clone `omarchy.power` → `cu
 ./setup-battery-management.sh --remove   # removes udev+sudoers+menu, stops caffeine
 ```
 
-`--remove` stops an active coffee mode and clears its state (`~/.local/state/caffeine`); the binaries stay in `~/.local/bin` (remove them via the `battery` module of `setup-customarchy.sh --uninstall`).
+`--remove` stops an active coffee mode and clears its state (`~/.local/state/caffeine`); the binaries stay in `~/.local/bin` (remove them via the `battery` module of `mosquitomarchy-setup.sh --uninstall`).
 
 ## Battery icon colors (custom.power)
 

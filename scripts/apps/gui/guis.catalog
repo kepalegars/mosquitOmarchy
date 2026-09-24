@@ -8,7 +8,7 @@
 #   APP <pkg> | <label>   → GUI app (AUR or official package, via yay)
 #
 # Blank lines and lines starting with "#" are ignored.
-# The actual selection is saved by the backup (setup-customarchy.sh --backup) in apps.selected.
+# The actual selection is saved by the backup (mosquitomarchy-setup.sh --backup) in apps.selected.
 
 APP betterbird-fr-bin|Betterbird — e-mail (Thunderbird fork)
 APP bottles|Bottles — Windows games & apps (Wine)

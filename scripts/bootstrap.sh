@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bootstrap.sh — One-command bootstrap of mosquitOmarchy.
 #
-# Downloads (clones) the repo, then runs the setup-customarchy.sh entry point
+# Downloads (clones) the repo, then runs the mosquitomarchy-setup.sh entry point
 # with the requested options. The large installation files (Ableton zips,
 # Guitar Pro installer, Bitwig .deb/.jar) are NOT part of the repo: they are
 # downloaded on demand via scripts/apps/download-assets.sh (assets.links
@@ -48,20 +48,20 @@ err(){ printf " ${R}✗${N} %s\n" "$*" >&2; }
 hr(){ printf '%.0s─' {1..72}; echo; }
 
 # ───────────────────────── Repository location ─────────────────────────
-# run from a checkout → the repo root (setup-customarchy.sh) is found either
+# run from a checkout → the repo root (mosquitomarchy-setup.sh) is found either
 # in the script folder itself or one level up (bootstrap.sh lives in scripts/);
 # run via `curl | bash` (stdin) → it clones. A checkout without the root
-# setup-customarchy.sh is considered incomplete.
+# mosquitomarchy-setup.sh is considered incomplete.
 DETECTED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
 SRC=""
-if [[ -n "$DETECTED_DIR" ]] && [[ -f "$DETECTED_DIR/setup-customarchy.sh" ]]; then
+if [[ -n "$DETECTED_DIR" ]] && [[ -f "$DETECTED_DIR/mosquitomarchy-setup.sh" ]]; then
   SRC="$DETECTED_DIR"; msg "Repo found locally: $SRC"
-elif [[ -n "$DETECTED_DIR" ]] && [[ -f "$DETECTED_DIR/../setup-customarchy.sh" ]] && [[ -f "$DETECTED_DIR/lib/gui-run.bash" ]]; then
+elif [[ -n "$DETECTED_DIR" ]] && [[ -f "$DETECTED_DIR/../mosquitomarchy-setup.sh" ]] && [[ -f "$DETECTED_DIR/lib/gui-run.bash" ]]; then
   SRC="$(cd "$DETECTED_DIR/.." && pwd)"; msg "Repo found locally (bootstrap from scripts/): $SRC"
 fi
 if [[ -z "$SRC" ]]; then
   SRC="$INSTALL_DIR"
-  if [[ -d "$SRC/.git" && -f "$SRC/setup-customarchy.sh" ]]; then
+  if [[ -d "$SRC/.git" && -f "$SRC/mosquitomarchy-setup.sh" ]]; then
     msg "Repo already cloned: $SRC"
   else
     msg "Cloning $REPO_URL (branch $BRANCH) → $SRC"
@@ -70,14 +70,14 @@ if [[ -z "$SRC" ]]; then
     git clone --depth 1 --branch "$BRANCH" -- "$REPO_URL" "$SRC" || { err "Clone failed."; exit 1; }
     ok "Cloned: $SRC"
   fi
-  if [[ -f "$SRC/setup-customarchy.sh" ]]; then ok "setup-customarchy.sh present"
-  else err "Incomplete checkout — setup-customarchy.sh not found."; exit 1; fi
+  if [[ -f "$SRC/mosquitomarchy-setup.sh" ]]; then ok "mosquitomarchy-setup.sh present"
+  else err "Incomplete checkout — mosquitomarchy-setup.sh not found."; exit 1; fi
 fi
 cd "$SRC"
 
 # ───────────────────────── Execution ─────────────────────────
 if ((STATUS_ONLY)); then
-  bash ./setup-customarchy.sh --status
+  bash ./mosquitomarchy-setup.sh --status
   exit $?
 fi
 
@@ -88,5 +88,5 @@ else
   warn "Assets (zips/exe/deb) NOT downloaded — run ./scripts/apps/download-assets.sh later if needed."
 fi
 
-msg "Running the setup-customarchy.sh entry point"
-bash ./setup-customarchy.sh $([[ $YES == 1 ]] && echo -y)
+msg "Running the mosquitomarchy-setup.sh entry point"
+bash ./mosquitomarchy-setup.sh $([[ $YES == 1 ]] && echo -y)

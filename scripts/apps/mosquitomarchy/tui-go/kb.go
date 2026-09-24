@@ -71,7 +71,7 @@ var kbCatalog = []struct {
 		{"Mega-caffeine on", "mega-caffeine on", "cmd"},
 		{"Mega-caffeine off", "mega-caffeine off", "cmd"},
 		{"Mega-caffeine toggle", "mega-caffeine toggle", "cmd"},
-		{"mosquitOmarchy setup", "foot -e $HOME/mosquitOmarchy/setup-customarchy.sh", "cmd"},
+		{"mosquitOmarchy setup", "foot -e $HOME/mosquitOmarchy/mosquitomarchy-setup.sh", "cmd"},
 		{"SuperFile", "foot -e spf", "cmd"},
 	}},
 	{"move", "Ableton Move", []KbCatItem{

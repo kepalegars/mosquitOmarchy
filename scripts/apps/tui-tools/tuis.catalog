@@ -9,7 +9,7 @@
 #   PLUG <id> | <git-url> | <label> → Omarchy shell plugin (via `omarchy plugin add`)
 #
 # Blank lines and lines starting with "#" are ignored.
-# The actual selection is saved by the backup (setup-customarchy.sh --backup) in apps.selected.
+# The actual selection is saved by the backup (mosquitomarchy-setup.sh --backup) in apps.selected.
 #
 # NOTE: TUIs that the Omarchy ISO already installs by default (bat, btop,
 # dua-cli, eza, fd, fzf, lazygit, lazydocker, tldr, tmux, starship, zoxide,

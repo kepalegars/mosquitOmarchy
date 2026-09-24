@@ -1,5 +1,5 @@
 // Command mosquitomarchy-tui is the terminal interface for the
-// mosquitOmarchy setup launcher (see ../../setup-customarchy.sh for what
+// mosquitOmarchy setup launcher (see ../../mosquitomarchy-setup.sh for what
 // this does) — a real Bubble Tea program on the same kit the other mosquito
 // managers use, replacing the previous bash+gum launcher. The TUI is the
 // ONLY interface. One persistent tea.Program for the whole session: every
@@ -9,7 +9,7 @@
 //
 // Business logic (modules, categories, status, backup/restore, uninstall,
 // repo updates) is NOT reimplemented here — see mosquitomarchy-actions,
-// which sources the exact same setup-customarchy.sh the launcher used and
+// which sources the exact same mosquitomarchy-setup.sh the launcher used and
 // exposes it as plain, scriptable subcommands this program calls once every
 // decision (which category, which items, confirm/cancel) has already been
 // made here.

@@ -5,7 +5,7 @@ are **idempotent** (safe to re-run).
 
 They come in three groups:
 
-1. **Quick fixes** — wired into `setup-customarchy.sh` (the "quick fixes"
+1. **Quick fixes** — wired into `mosquitomarchy-setup.sh` (the "quick fixes"
    question, and the launcher's **setup → Quick fixes** category): small,
    one-shot, machine-level repairs.
 2. **Display / input / hardware modules** — real modules with their own
@@ -15,7 +15,7 @@ They come in three groups:
 
 ---
 
-## 1. Quick fixes (the `FIXES` array of `setup-customarchy.sh`)
+## 1. Quick fixes (the `FIXES` array of `mosquitomarchy-setup.sh`)
 
 | id | Script | What it fixes |
 |---|---|---|
@@ -27,7 +27,7 @@ They come in three groups:
 | `ableton-wine-scroll` | `fix-wine-scroll.sh` | While Ableton (Wine/XWayland) is open, the patched Wine's optional pointer features (precise scrolling, inertia, pinch zoom, middle-drag, warp emulation) create an XInput2 implicit device grab that freezes trackpad scrolling **in the other apps**. Sets those seven features to `disabled` in the `~/.wine-ableton` registry — the persistent form of upstream's `WINE_X11_POINTER_FEATURES=disabled` master switch (issue-122 clipping repair stays active). Reversible via `--remove`. |
 | `1px-seam` | `fix-1px-seam.sh` | Hair-thin transparent 1px line ("seam") flashing between the opaque Omarchy bar and a window touching it in borderless / no-gaps tiling: switches the blur to its legacy (non-optimized) path (`new_optimizations = false`, marked line in `looknfeel.lua`). Only useful when blur is enabled; reversible via `--remove`. |
 
-Run them all: `./setup-customarchy.sh` → **setup → Quick fixes** (or pick them
+Run them all: `./mosquitomarchy-setup.sh` → **setup → Quick fixes** (or pick them
 in the wizard's quick-fixes question).
 Run one directly: `bash scripts/fixes/<script>.sh`.
 
@@ -42,7 +42,7 @@ Run one directly: `bash scripts/fixes/<script>.sh`.
 
 Details and usage: see `display-fixes.md` (brightness + keyboard backlight),
 `fix-mx-master.md`, `fix-touchpad.md`. These are full orchestrator modules, so
-they also run through `setup-customarchy.sh` (setup → Plugins) and report their
+they also run through `mosquitomarchy-setup.sh` (setup → Plugins) and report their
 state in `--status`.
 
 ## 3. Optional helper (not in the quick-fix list)

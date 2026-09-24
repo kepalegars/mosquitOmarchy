@@ -8,10 +8,10 @@ At each desktop start it checks, **in priority order**:
 1. **mosquitOmarchy GitHub repo**: is there a newer version than the
    local checkout (`git -C ~/mosquitOmarchy ls-remote origin
    refs/heads/master`, 15 s timeout)? If yes → notification, and the
-   "update zone" rules apply (see `setup-customarchy.sh --help` / README):
+   "update zone" rules apply (see `mosquitomarchy-setup.sh --help` / README):
    - **Owner** → update the repo as fast as possible (commit + push).
    - **Users** → self-update **in an emergency** via
-     `./setup-customarchy.sh --update-repo`.
+     `./mosquitomarchy-setup.sh --update-repo`.
    - **Recommended** → wait for the owner's update instead of pulling yourself.
 2. Otherwise — **pending Omarchy-related updates** (`pacman -Qu` on the
    synced databases — no network at boot; a weekly best-effort refresh via
@@ -34,8 +34,8 @@ terminal running `opencode` with a pre-written review prompt:
 
 ```bash
 ./setup-mosquitomarchy-update.sh -y       # install the hook
-./setup-customarchy.sh                # offered as module "mosquitomarchy-update"
-./setup-customarchy.sh --uninstall    # per-module uninstall (or --uninstall mosquitomarchy-update)
+./mosquitomarchy-setup.sh                # offered as module "mosquitomarchy-update"
+./mosquitomarchy-setup.sh --uninstall    # per-module uninstall (or --uninstall mosquitomarchy-update)
 ```
 
 ## State / debug

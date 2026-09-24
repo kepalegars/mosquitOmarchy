@@ -1,17 +1,17 @@
 # mosquitOmarchy (the launcher TUI)
 
 The Go/Bubble Tea interface for the mosquitOmarchy setup launcher. It replaced
-the old `gum`-based `launcher_menu` of `setup-customarchy.sh`: every decision
+the old `gum`-based `launcher_menu` of `mosquitomarchy-setup.sh`: every decision
 (which module, which items, confirm/cancel) is made here, and every action
 shells out to the engine — no business logic is reimplemented in Go.
 
 ```
 mosquitomarchy              # dispatcher: opens the TUI (in a terminal, or in foot if detached)
 mosquitomarchy-tui          # the compiled Bubble Tea program (built by the installer)
-mosquitomarchy-actions      # non-interactive backend, sources setup-customarchy.sh in LIB_ONLY mode
+mosquitomarchy-actions      # non-interactive backend, sources mosquitomarchy-setup.sh in LIB_ONLY mode
 ```
 
-`setup-customarchy.sh` is still the engine and remains usable by hand; the TUI
+`mosquitomarchy-setup.sh` is still the engine and remains usable by hand; the TUI
 is the recommended interface.
 
 ## Screens
@@ -146,7 +146,7 @@ skills (OpenCode first) discovers it automatically.
 ## Backend (`mosquitomarchy-actions`)
 
 Read-only queries print JSON-Lines to stdout; actions print prose that the TUI
-streams live. It sources `setup-customarchy.sh` with
+streams live. It sources `mosquitomarchy-setup.sh` with
 `MOSQUITOMARCHY_LIB_ONLY=1` and `GUI_RUN_EXEC=1` (so `gui-run.bash` never
 re-opens a terminal under the Runner).
 
@@ -163,7 +163,7 @@ Root operations run through the native **pkexec** prompt (`mq_sudo`, plus a
 
 ## Build / deploy
 
-`ensure_mosquitomarchy_tui` in `setup-customarchy.sh` builds `tui-go/` with
+`ensure_mosquitomarchy_tui` in `mosquitomarchy-setup.sh` builds `tui-go/` with
 `go build` into `~/.local/bin/mosquitomarchy-tui`, symlinks
 `mosquitomarchy-actions` beside it (a symlink, not a copy, so the backend keeps
 finding the repo), copies the `mosquitomarchy` dispatcher, and adds a Hyprland

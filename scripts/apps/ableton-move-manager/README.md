@@ -482,8 +482,8 @@ live in Noto Color Emoji (installed, fontconfig fallback).
 
 ## Orchestrator integration
 
-The module is wired into `setup-customarchy.sh` as module `ableton-move-manager`
-(one `sudo bash setup-customarchy.sh` run installs/uninstalls everything):
+The module is wired into `mosquitomarchy-setup.sh` as module `ableton-move-manager`
+(one `sudo bash mosquitomarchy-setup.sh` run installs/uninstalls everything):
 - `MODULES` : `"ableton-move-manager:mosquito Move Manager — Ableton Move → Ableton Live → Bitwig (menu: address / Move Manager / convert — Go TUI, MIDI export)"`
 - `st_ableton_move_converter` : `~/.local/bin/{mosquito-move-manager,mosquito-move-manager-tui,lib-move-manager-core.sh,move-bundle-to-midi,move-udev-refresh,move-manager-webapp}` present → `ok`
 - `run_ableton_move_converter` : `bash scripts/apps/ableton-move-manager/setup-ableton-move-manager.sh -y`

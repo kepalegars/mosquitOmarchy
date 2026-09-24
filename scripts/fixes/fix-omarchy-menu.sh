@@ -101,10 +101,10 @@ PY
       cp -f "$newest" "$MENU"
       echo "  ✓ omarchy-menu.jsonc restored from $(basename "$newest")"
     fi
-    if [[ -f "$REPO/setup-customarchy.sh" ]] && ! grep -q '"install.mosquitomarchy"' "$MENU"; then
+    if [[ -f "$REPO/mosquitomarchy-setup.sh" ]] && ! grep -q '"install.mosquitomarchy"' "$MENU"; then
       ( export GUI_RUN_EXEC=1 MOSQUITOMARCHY_LIB_ONLY=1
         # shellcheck source=/dev/null
-        source "$REPO/setup-customarchy.sh"; install_menu_entry ) >/dev/null 2>&1 \
+        source "$REPO/mosquitomarchy-setup.sh"; install_menu_entry ) >/dev/null 2>&1 \
         && echo "  ✓ mosquitOmarchy menu entry re-registered" \
         || echo "  ! Could not re-register the mosquitOmarchy menu entry" >&2
     fi

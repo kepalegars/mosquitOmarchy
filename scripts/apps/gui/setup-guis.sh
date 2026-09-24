@@ -93,7 +93,7 @@ main(){
   # dedicated zen module (plugins/settings/chrome config deployment).
   if [[ ${ZEN_JUST_INSTALLED:-0} == 1 ]]; then
     warn "Zen Browser was installed — remember its config module:"
-    echo "    ./setup-customarchy.sh --include=zen   (or run ./setup-customarchy.sh without -y)"
+    echo "    ./mosquitomarchy-setup.sh --include=zen   (or run ./mosquitomarchy-setup.sh without -y)"
     echo "    (deploys the seed plugins/settings/chrome into the active profile)"
   fi
   # Post-install: KeePassXC was (re)installed → the Hyprland window fix and

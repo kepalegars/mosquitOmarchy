@@ -30,7 +30,7 @@
 #   ./theme/create-theme.sh            # interactive: image -> name -> theme
 #   ./theme/create-theme.sh IMAGE      # force an image from Wallpapers/
 #
-# NOTE: the ' achraff ' module of setup-customarchy.sh delegates here (the
+# NOTE: the ' achraff ' module of mosquitomarchy-setup.sh delegates here (the
 # achraf67.png image is forced), but this script remains usable standalone to
 # create any theme from an image in Wallpapers/.
 # =============================================================================

@@ -19,7 +19,7 @@ Run macOS in a QEMU/KVM virtual machine on Omarchy, from the
 ## Usage
 
 ```bash
-setup-customarchy.sh macos-vm            # or run in a module selection
+mosquitomarchy-setup.sh macos-vm            # or run in a module selection
 scripts/macos-vm/setup-macos-vm.sh       # idempotent; --remove to clean (keeps ~/VMs/macos)
 ~/.local/bin/osx-kvm-installer.sh        # first VM (or use the TUI)
 # TUI: menu Setup > macOS VM, or 'macos-vm-tui' in a terminal

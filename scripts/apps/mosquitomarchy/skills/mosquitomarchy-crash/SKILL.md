@@ -6,7 +6,7 @@ description: >
   acted on, when pointed at a log under .local/crash-logs/, or when asked why a
   mosquitOmarchy module (setup, update, backup, VM, battery, TUI, ...) failed.
   Triggers: mosquitOmarchy, mosquitomarchy, crash log, "finished with errors",
-  customarchy, setup-customarchy, .local/crash-logs. The agent only PROPOSES;
+  customarchy, mosquitomarchy-setup, .local/crash-logs. The agent only PROPOSES;
   it never applies a change without the user confirming.
 ---
 
@@ -17,7 +17,7 @@ run that ended in an error. Work from evidence, not from a plausible story.
 
 The repository is the mosquitOmarchy checkout (the log's `# cmd:` line and the
 log path both point inside it; `<repo>/.local/crash-logs/` is where logs live).
-Everything is plain shell (`scripts/`, `setup-customarchy.sh`) plus one Go TUI
+Everything is plain shell (`scripts/`, `mosquitomarchy-setup.sh`) plus one Go TUI
 (`scripts/apps/mosquitomarchy/tui-go/`).
 
 ## 1. Read the log first

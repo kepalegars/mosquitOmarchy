@@ -4,13 +4,13 @@
 # The module is now modular: one folder + catalog + script per type under
 # apps/gui, apps/tui-tools, apps/webapps (shared helpers in
 # lib/common.bash). This installer KEEPS the historical interface: it reads the
-# app selection saved by the backup (setup-customarchy.sh --backup) (apps.selected), lets you tick
+# app selection saved by the backup (mosquitomarchy-setup.sh --backup) (apps.selected), lets you tick
 # it (EVERYTHING checked by default, like before, plus the catalog entries not
 # in the backup) then calls each per-type installer with its selection subset
 # (see delegate_types() at the bottom of main()). Adding a type only requires a
 # catalog + folder + script in apps/ — the dispatcher picks them up.
 #
-# Complement to the backup (setup-customarchy.sh --backup) which, during a backup, can save the list
+# Complement to the backup (mosquitomarchy-setup.sh --backup) which, during a backup, can save the list
 # of apps, TUIs and webapps you have (multi-select) in the ' apps.selected ' file
 # inside the dated archive (~/omarchy-backups/).
 #

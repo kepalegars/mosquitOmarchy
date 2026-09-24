@@ -67,7 +67,7 @@ func decodeJSONLines[T any](out []byte) ([]T, error) {
 	return items, sc.Err()
 }
 
-// StatusRec is one module's status (setup-customarchy.sh's module_state:
+// StatusRec is one module's status (mosquitomarchy-setup.sh's module_state:
 // ok / partial / missing / na) plus whether the user uninstalled it.
 type StatusRec struct {
 	Id       string `json:"id"`

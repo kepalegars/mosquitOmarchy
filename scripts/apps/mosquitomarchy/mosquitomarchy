@@ -4,7 +4,7 @@
 #
 # The Go/Bubble Tea TUI (mosquitomarchy-tui, see tui-go/) is the ONLY
 # interface: it replaced the old gum-based `launcher_menu` in
-# setup-customarchy.sh. Every launch goes through this dispatcher — the
+# mosquitomarchy-setup.sh. Every launch goes through this dispatcher — the
 # Omarchy Install menu entry's action, a keybinding, or running
 # `mosquitomarchy` by hand all point here.
 #
@@ -29,11 +29,11 @@ TUI="$DIR/mosquitomarchy-tui"
 # neither matches: under `set -e` a failing `cd` in a command substitution would
 # kill the whole launch.
 _REPO=""
-if [[ -f "$DIR/../../../setup-customarchy.sh" ]]; then
+if [[ -f "$DIR/../../../mosquitomarchy-setup.sh" ]]; then
   _REPO="$(cd "$DIR/../../.." && pwd)"
 elif [[ -L "$DIR/mosquitomarchy-actions" ]]; then
   _cand="$(cd "$(dirname "$(readlink -f "$DIR/mosquitomarchy-actions")")/../../.." 2>/dev/null && pwd || true)"
-  [[ -n $_cand && -f "$_cand/setup-customarchy.sh" ]] && _REPO="$_cand"
+  [[ -n $_cand && -f "$_cand/mosquitomarchy-setup.sh" ]] && _REPO="$_cand"
 fi
 [[ -n $_REPO ]] && export MOSQUITOMARCHY_REPO="$_REPO"
 

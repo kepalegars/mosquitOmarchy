@@ -30,8 +30,8 @@
 #   ./setup-battery-management.sh --remove   # removes udev+sudoers+menu, stops caffeine
 #
 # One-stop install/uninstall for the whole battery module:
-#   • install   -> this script (also triggered by the 'battery' module of setup-customarchy.sh)
-#   • uninstall -> this script --remove, or the 'battery' module of setup-customarchy.sh --uninstall
+#   • install   -> this script (also triggered by the 'battery' module of mosquitomarchy-setup.sh)
+#   • uninstall -> this script --remove, or the 'battery' module of mosquitomarchy-setup.sh --uninstall
 #
 # Prerequisites: power-profiles-daemon, amd-pstate/intel_pstate, Omarchy.
 # =============================================================================
@@ -593,7 +593,7 @@ if [[ $REMOVE == true ]]; then
   echo "  Caffeine stopped and its state cleared."
   echo "  Ultra-save watchdog timer removed."
   echo "  The scripts stay in $BIN_DIR (ultra-save, power-helper, mega-caffeine, ultra-save-watch):"
-  echo "    use the 'battery' module of setup-customarchy.sh --uninstall to remove them too."
+  echo "    use the 'battery' module of mosquitomarchy-setup.sh --uninstall to remove them too."
 else
   info "Setup complete. Summary:"
   echo "  • ultra-save            -> $BIN_DIR/ultra-save (toggle/status)"

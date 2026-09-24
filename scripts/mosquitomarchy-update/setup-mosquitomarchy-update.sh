@@ -7,7 +7,7 @@
 #   1. the mosquitOmarchy GITHUB repo: is there a newer version than
 #      the local checkout? → notification, and the "update zone" rules apply:
 #        • OWNER → update the repo as fast as possible (commit + push).
-#        • USERS → self-update in an EMERGENCY via ./setup-customarchy.sh --update-repo.
+#        • USERS → self-update in an EMERGENCY via ./mosquitomarchy-setup.sh --update-repo.
 #        • RECOMMENDED → wait for the owner's update instead of pulling yourself.
 #   2. otherwise, pending Omarchy-related updates → PERSISTENT desktop
 #      notification, repeated at every boot until "omarchy update" is run.
@@ -29,7 +29,7 @@
 #   ./setup-mosquitomarchy-update.sh -y # install without confirmation
 #   ./setup-mosquitomarchy-update.sh -h # help
 #
-# Removal is handled by setup-customarchy.sh (module "mosquitomarchy-update").
+# Removal is handled by mosquitomarchy-setup.sh (module "mosquitomarchy-update").
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 set -euo pipefail
@@ -104,7 +104,7 @@ if command -v git >/dev/null 2>&1 && [[ -d "$REPO_DIR/.git" ]]; then
       cat > "$SCRIPTS_FLAG.msg" <<M
 Mise à jour des SCRIPTS disponible (repo mosquitOmarchy).
   • PROPRIÉTAIRE : poussez cette version dès que possible (recommandé).
-  • URGENCE     : auto-update via ./setup-customarchy.sh --update-repo
+  • URGENCE     : auto-update via ./mosquitomarchy-setup.sh --update-repo
                    (avant de tirer soi-même, voir la zone "Updating").
   • RECOMMANDÉ  : attendre la mise à jour du propriétaire.
 M
@@ -206,5 +206,5 @@ ok "Hook installed: $DEST"
 ok "At each boot: scripts-repo update check first, then pending Omarchy update → persistent notification + opencode review action."
 echo
 echo "  Debug/state (transient): ~/.local/state/omarchy-update-check/"
-echo "  Uninstall:                ./setup-customarchy.sh --uninstall  (module: mosquitomarchy-update)"
+echo "  Uninstall:                ./mosquitomarchy-setup.sh --uninstall  (module: mosquitomarchy-update)"
 hr

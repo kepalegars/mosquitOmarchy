@@ -24,7 +24,7 @@ or for demoing before installing on bare metal.
 ## Usage
 
 ```bash
-setup-customarchy.sh omarchy-vm          # through the orchestrator (setup only)
+mosquitomarchy-setup.sh omarchy-vm          # through the orchestrator (setup only)
 scripts/omarchy-vm/setup-omarchy-vm.sh   # idempotent; see --help
 
 omarchy-vm                 # start the default VM (QEMU GTK window)

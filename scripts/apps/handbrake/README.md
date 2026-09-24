@@ -42,7 +42,7 @@ follows at the next launch.
 
 The install appends a `Omarchy_Custom_Scripts_Handbrake` block to
 `~/.config/hypr/hyprland.lua` that exempts HandBrake from the default opacity
-(opaque window). It is removed by `setup-customarchy.sh --uninstall`.
+(opaque window). It is removed by `mosquitomarchy-setup.sh --uninstall`.
 
 ## CLI examples (compression with the provided presets)
 
@@ -83,6 +83,6 @@ jq -r '.. | .PresetName? // empty' ~/.config/ghb/presets.json
 
 ## Uninstall
 
-`./setup-customarchy.sh --uninstall` (module `handbrake`): removes the
+`./mosquitomarchy-setup.sh --uninstall` (module `handbrake`): removes the
 Hyprland block; with `--purge` it also removes the packages. Your presets and
 user data are kept.

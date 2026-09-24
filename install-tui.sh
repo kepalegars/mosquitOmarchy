@@ -3,7 +3,7 @@
 # install-tui.sh — Install the mosquitOmarchy Go/Bubble Tea TUI (and ONLY it)
 # =============================================================================
 # Small standalone installer for the new mosquito manager TUI (Bubble Tea).
-# Does the work that used to be bundled inside `setup-customarchy.sh`, but
+# Does the work that used to be bundled inside `mosquitomarchy-setup.sh`, but
 # without any of the other modules (apps, fixes, themes, …). Use it when you
 # only want the TUI + its menu entry + float rule + post-boot watchdog hook,
 # or to reinstall a stale build.

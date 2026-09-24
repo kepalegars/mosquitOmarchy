@@ -166,39 +166,39 @@ func wrapLines(s string, w int) string {
 	return strings.Join(out, "\n")
 }
 
-// wordWrap reflows one line at `w` columns (ansi-aware via lipgloss width).
+// wordWrap reflows one line at `w` columns (ansi-aware via lipgloss width),
+// greedy: a word moves to the next line when it would not fit, and is only
+// hard-split when it is alone longer than the whole width.
 func wordWrap(line string, w int) string {
 	if w <= 0 || lipgloss.Width(line) <= w {
 		return line
 	}
-	var b strings.Builder
-	cols := 0
-	cur := make([]rune, 0, 64)
-	flush := func() {
-		if cols > 0 {
-			if b.Len() > 0 {
-				b.WriteString("\n")
-			}
-			b.WriteString(string(cur))
-			cur = cur[:0]
-			cols = 0
+	var out []string
+	for _, word := range strings.Fields(line) {
+		// A single word longer than the whole width is hard-split.
+		for len(word) > w {
+			out = append(out, word[:w])
+			word = word[w:]
 		}
-	}
-	for _, r := range line {
-		if r == ' ' && cols == 0 {
+		ww := len(word)
+		if ww == 0 {
 			continue
 		}
-		cur = append(cur, r)
-		if r == ' ' || cols >= w-1 {
-			flush()
-		} else {
-			cols++
+		if len(out) == 0 {
+			out = append(out, word)
+			continue
 		}
+		prev := out[len(out)-1]
+		if lipgloss.Width(prev)+1+ww <= w {
+			out[len(out)-1] = prev + " " + word
+			continue
+		}
+		out = append(out, word)
 	}
-	if len(cur) > 0 {
-		flush()
+	if len(out) == 0 {
+		return line
 	}
-	return b.String()
+	return strings.Join(out, "\n")
 }
 
 // intersperse joins parts with sep between each pair (the old View used

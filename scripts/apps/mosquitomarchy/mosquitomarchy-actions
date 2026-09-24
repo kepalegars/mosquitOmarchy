@@ -2,9 +2,9 @@
 # mosquitomarchy-actions — non-interactive backend for the mosquitOmarchy Go
 # TUI (tui-go/). NOT an interface at all: it has no interactive UI (no gum /
 # launcher prompts) and is never launched directly by a user. It exists so
-# the Go program never has to reimplement any of setup-customarchy.sh's
+# the Go program never has to reimplement any of mosquitomarchy-setup.sh's
 # business logic (modules, categories, status, backup/restore, uninstall,
-# repo updates) — it sources the exact same setup-customarchy.sh the launcher
+# repo updates) — it sources the exact same mosquitomarchy-setup.sh the launcher
 # uses, in LIB_ONLY mode, and calls the same functions the interactive paths
 # call.
 #
@@ -23,10 +23,10 @@ set -euo pipefail
 
 SCRIPT_SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SELF")" && pwd)"
-SETUP="$SCRIPT_DIR/../../../setup-customarchy.sh"
+SETUP="$SCRIPT_DIR/../../../mosquitomarchy-setup.sh"
 APP_DIR="$(cd "$(dirname "$SETUP")" && pwd)"
 
-# gui-run.bash (sourced by setup-customarchy.sh) would `exec foot …` the
+# gui-run.bash (sourced by mosquitomarchy-setup.sh) would `exec foot …` the
 # moment it sees a non-tty stdin/stdout — exactly our case (child of the
 # TUI's Runner). Tell it we are already "in a terminal" (the TUI is it).
 export GUI_RUN_EXEC=1
@@ -43,7 +43,7 @@ export MOSQUITOMARCHY_TUI=1
 # auto-run `main "$@"`. `set -e` is transferred by the sourced `set -euo
 # pipefail` at its top — every query below must therefore be written to
 # succeed even for empty results.
-# shellcheck source=../../setup-customarchy.sh
+# shellcheck source=../../mosquitomarchy-setup.sh
 source "$SETUP"
 
 # ── JSON helpers (single-line, no trailing comma, escaped) ────────────────
@@ -972,7 +972,7 @@ cmd_restore(){
 # ─── Keybindings (mosquitOmarchy-managed SUPER bindings) ───────────────────
 # The manager is part of the TUI now; these subcommands are its backend. The
 # primitives (kb_ensure/kb_remove/kb_reset/kb_reload) live in
-# scripts/lib/keybindings.bash, sourced via setup-customarchy.sh.
+# scripts/lib/keybindings.bash, sourced via mosquitomarchy-setup.sh.
 cmd_kb_list(){
   kb_load_ours
   local k label cmd type def

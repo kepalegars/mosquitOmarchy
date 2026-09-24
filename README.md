@@ -2,7 +2,7 @@
 
 Personal scripts for configuring Omarchy (Arch/Hyprland) oriented toward **audio production** (REAPER, Bitwig, Windows VST, local AI). All scripts are **idempotent**: safe to re-run on an already-configured machine.
 
-This README is the **complete reference** for the orchestrator (`setup-customarchy.sh` — install + backup/restore + per-module uninstall + repo update, all in one script) and the release archiver (`archive-customarchy.sh`), and it lists **every module** the repo ships, including modules bundled inside another one (e.g. Bitwig inside `audio`) and modules not selected in a given run. Each module's own install commands, options and caveats live in its folder's `README.md` — linked from the **Documentation** column of the module tables in [Modules](#modules).
+This README is the **complete reference** for the orchestrator (`mosquitomarchy-setup.sh` — install + backup/restore + per-module uninstall + repo update, all in one script) and the release archiver (`archive-customarchy.sh`), and it lists **every module** the repo ships, including modules bundled inside another one (e.g. Bitwig inside `audio`) and modules not selected in a given run. Each module's own install commands, options and caveats live in its folder's `README.md` — linked from the **Documentation** column of the module tables in [Modules](#modules).
 
 > **Resuming work on this repo (human or AI)?** Check [`JOURNAL.md`](JOURNAL.md) first — it tracks current status, the active roadmap, and the history of decisions, and is meant to be read before this README when picking the project back up.
 
@@ -55,11 +55,11 @@ Once installed, **everything in this repo can be driven from one TUI**: `mosquit
 
 Any failed run also writes **one dated crash log per session** into the repo-local `.local/` folder (never committed, never archived) and sends a **clickable Omarchy notification**: it opens the default AI on the `mosquitomarchy-crash` skill, pointed at that log, to **propose** a fix without applying it. See [`scripts/lib/crash.bash`](scripts/lib/crash.bash) and the [mosquitOmarchy README](scripts/apps/mosquitomarchy/README.md#crash-reporting--ai-diagnosis).
 
-The TUI is the single interface; `setup-customarchy.sh` remains the engine (every TUI action shells out to it), so you should not need to call it by hand.
+The TUI is the single interface; `mosquitomarchy-setup.sh` remains the engine (every TUI action shells out to it), so you should not need to call it by hand.
 
 **Recommended once, so mosquitOmarchy is always one click away:** in the TUI go to **Setup → Menu entry → Yes**. This registers the entry in **Omarchy menu → Install → mosquitOmarchy** (`~/.config/omarchy/extensions/omarchy-menu.jsonc`); from then on you can reopen the TUI at any time from the launcher.
 
-The **one-line install** above (`curl … bootstrap.sh | bash -s -- --zips -y`) sets all of this up: it clones the repo, runs `setup-customarchy.sh -y`, builds the mosquitOmarchy TUI and registers the menu entry.
+The **one-line install** above (`curl … bootstrap.sh | bash -s -- --zips -y`) sets all of this up: it clones the repo, runs `mosquitomarchy-setup.sh -y`, builds the mosquitOmarchy TUI and registers the menu entry.
 
 ## Versions
 
@@ -77,7 +77,7 @@ All scripts are **v1.0.0**, except three still at **v0.1.0**: the DaVinci Resolv
 mosquitOmarchy/
 ├── README.md · LICENSE · assets.links · .gitignore · .mise.toml
 ├── archive-customarchy.sh       # "latest release" tar.gz (root)
-├── setup-customarchy.sh         # single orchestrator: backup/restore → modules → uninstall → repo update
+├── mosquitomarchy-setup.sh         # single orchestrator: backup/restore → modules → uninstall → repo update
 └── scripts/
     ├── gui-run.bash             # file-manager launch support (reopens installers in a terminal)
     ├── bootstrap.sh             # one-command start
@@ -107,27 +107,27 @@ Each module folder has a `README.md` with the module's own details — linked in
 |---|---|
 | [bootstrap.sh](#one-command-start) | One-command start: clone (if needed) + setup + optional asset download |
 | [mosquitOmarchy](scripts/apps/mosquitomarchy/README.md) | The launcher TUI (Go/Bubble Tea): status / update / setup tree / backup-restore — the recommended interface |
-| [setup-customarchy.sh](#setup-customarchysh) | Master: backup/restore → modules one by one → uninstall → repo update → report |
+| [mosquitomarchy-setup.sh](#mosquitomarchy-setupsh) | Master: backup/restore → modules one by one → uninstall → repo update → report |
 | [archive-customarchy.sh](#archive-customarchysh) | Complete tar.gz archive of the repo (the "latest release") |
 
 ---
 
-## setup-customarchy.sh
+## mosquitomarchy-setup.sh
 
 Single entry point, no standalone helper anymore: it integrates the **backup/restore**, the **per-module uninstall**, the **repo update** and the module installs. Flow: backup/restore offered → optional removal of Omarchy preinstalls (keeping your personal apps/tuis) → modules one by one (`-y` = install all missing + update the OK ones with `--update`) → theme at the end (skipped with `-y`) → optional per-module uninstall → final report (yes/no per module) + status.
 
 ```bash
-./setup-customarchy.sh                     # interactive
-./setup-customarchy.sh -y                  # defaults (auto backup, missing modules)
-./setup-customarchy.sh --update -y         # also re-runs the already-OK modules (idempotent)
-./setup-customarchy.sh --status            # module status only, no modification
-./setup-customarchy.sh --backup            # dated backup, then exit (passphrase prompt via gum TUI if available)
-./setup-customarchy.sh --backup --vst-backup=full   # idem + full VST archive (~/VST)
-./setup-customarchy.sh --list              # chronological list of the backups ([encrypted] = .tar.gz.gpg)
-./setup-customarchy.sh --restore[=FILE]    # restore a backup (chronological choice; encrypted → passphrase asked)
-./setup-customarchy.sh --uninstall [-y] [--purge]  # per-module uninstall (interactive; -y = all)
-./setup-customarchy.sh --update-repo       # git pull the scripts from GitHub (see "Repo updates")
-./setup-customarchy.sh --include=<mod>     # re-offer a module you previously uninstalled
+./mosquitomarchy-setup.sh                     # interactive
+./mosquitomarchy-setup.sh -y                  # defaults (auto backup, missing modules)
+./mosquitomarchy-setup.sh --update -y         # also re-runs the already-OK modules (idempotent)
+./mosquitomarchy-setup.sh --status            # module status only, no modification
+./mosquitomarchy-setup.sh --backup            # dated backup, then exit (passphrase prompt via gum TUI if available)
+./mosquitomarchy-setup.sh --backup --vst-backup=full   # idem + full VST archive (~/VST)
+./mosquitomarchy-setup.sh --list              # chronological list of the backups ([encrypted] = .tar.gz.gpg)
+./mosquitomarchy-setup.sh --restore[=FILE]    # restore a backup (chronological choice; encrypted → passphrase asked)
+./mosquitomarchy-setup.sh --uninstall [-y] [--purge]  # per-module uninstall (interactive; -y = all)
+./mosquitomarchy-setup.sh --update-repo       # git pull the scripts from GitHub (see "Repo updates")
+./mosquitomarchy-setup.sh --include=<mod>     # re-offer a module you previously uninstalled
 ```
 
 ### Modules
@@ -201,13 +201,13 @@ On restore, the **module dependencies are checked automatically**: any `deps` fi
 
 `--uninstall` goes through each module individually (interactive chooser, or `-y` for all). It removes `~/.local/bin` wrappers, menu entries, `omarchy-menu.jsonc` blocks, user systemd units, custom Omarchy plugins, Hyprland bindings, the Achraff theme. **Personal data** (`~/VST`, `~/.config/windows`, `~/.ollama`) is **preserved** by default — add `--purge` to delete it too.
 
-Each uninstalled module is **remembered** (`~/.local/state/omarchy-custom-scripts/excluded`): the master will no longer re-propose it — re-offer with `./setup-customarchy.sh --include=<mod>`.
+Each uninstalled module is **remembered** (`~/.local/state/omarchy-custom-scripts/excluded`): the master will no longer re-propose it — re-offer with `./mosquitomarchy-setup.sh --include=<mod>`.
 
-> System parts (packages, sudoers, udev, `bitwig.jar`, helpers in `/usr/local/bin`) require sudo: re-run `sudo bash ./setup-customarchy.sh --uninstall -y` to remove them too.
+> System parts (packages, sudoers, udev, `bitwig.jar`, helpers in `/usr/local/bin`) require sudo: re-run `sudo bash ./mosquitomarchy-setup.sh --uninstall -y` to remove them too.
 
 ### Repo updates
 
-**How it works** — `setup-customarchy.sh` embeds an "update zone": every time it is launched (whatever the command) and once per boot (via the `mosquitomarchy-update` hook, checked *before* pending Omarchy updates), it compares the local git `HEAD` to the GitHub `HEAD` (`git ls-remote`). If GitHub is ahead, it offers a fast-forward `git pull` — and, once pulled, `--update` re-applies every module in its latest form.
+**How it works** — `mosquitomarchy-setup.sh` embeds an "update zone": every time it is launched (whatever the command) and once per boot (via the `mosquitomarchy-update` hook, checked *before* pending Omarchy updates), it compares the local git `HEAD` to the GitHub `HEAD` (`git ls-remote`). If GitHub is ahead, it offers a fast-forward `git pull` — and, once pulled, `--update` re-applies every module in its latest form.
 
 **The update is strictly a `git pull --ff-only`** — it never runs `git clean`, `reset --hard` or `rebase`, so anything that lives next to the scripts and is **not tracked by the repository** is never touched or deleted by an update.
 
@@ -215,7 +215,7 @@ Each uninstalled module is **remembered** (`~/.local/state/omarchy-custom-script
 
 1. The owner commits and pushes as soon as a module changes.
 2. Every machine picks up the change on its own, via the update-zone check above — at the next boot or the next manual run, no announcement needed.
-3. In an emergency, a user can self-update immediately with `./setup-customarchy.sh --update-repo` (fast-forward only), but the **recommended** path is to wait for the owner's push rather than pulling ahead of it.
+3. In an emergency, a user can self-update immediately with `./mosquitomarchy-setup.sh --update-repo` (fast-forward only), but the **recommended** path is to wait for the owner's push rather than pulling ahead of it.
 
 ---
 
