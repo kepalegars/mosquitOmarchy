@@ -132,6 +132,41 @@ Panel {
     return (0.299 * fill.r + 0.587 * fill.g + 0.114 * fill.b) < 0.5 ? "#ffffff" : "#000000"
   }
 
+  // AUTO-CONTRAST helper: what color is actually BEHIND a text sitting on an
+  // alpha-tinted card? Compose the theme background with the tint first, then
+  // pick black/white for that composite (white text can make a card
+  // unreadable when its accent tint brightens the panel bg, and vice versa).
+  function toneComposite(fill, a) {
+    var bgc = Qt.color(Color.background)
+    var f = Qt.color(fill)
+    return Qt.rgba(
+      f.r * a + bgc.r * (1 - a),
+      f.g * a + bgc.g * (1 - a),
+      f.b * a + bgc.b * (1 - a),
+      1)
+  }
+  function contrastOn(fill, a) {
+    return root.contrastText(root.toneComposite(fill, a))
+  }
+
+  // KEY→Hz root hint: approximate frequency of the SCALE ROOT note the key
+  // implies (A4 = 440 Hz). Parsing handles flats/sharps names (Bb = A#, C#…).
+  function keyRootHz(keyLabel) {
+    // The lone keyLabel may be "F", "F♯m", "B♭ major" — trim to "m2" and cut
+    // at the first which is neither a note letter nor accidental.
+    var name = String(keyLabel || "")
+    if (name === "") return ""
+    var pc = { "C":0, "D":2, "E":4, "F":5, "G":7, "A":9, "B":11 }
+    var c = name.charAt(0).toUpperCase()
+    if (!(c in pc)) return ""
+    var idx = pc[c]
+    var rest = name.substring(1)
+    if (rest.charAt(0) === "#" || rest.charAt(0) === "♯") idx += 1
+    else if (rest.charAt(0) === "b" || rest.charAt(0) === "♭") idx -= 1
+    var hz = 440 * Math.pow(2, (idx - 9) / 12)
+    return "≈ " + Math.round(hz) + " Hz (root note · A4 = 440 Hz)"
+  }
+
   readonly property real gridRowHeight: Style.space(30)
 
   onOpenedChanged: {
@@ -217,8 +252,10 @@ Panel {
             Button {
               id: pinButton
               anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(26)
+              height: Style.space(26)
               iconText: "♪"
-              iconSize: parent.pinIconSize
+              iconSize: Style.space(18)
               text: ""
               bordered: false
               selected: root.pinned
@@ -272,9 +309,13 @@ Panel {
 
             Button {
               anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(26)
+              height: Style.space(26)
               iconText: "󰑓"
-              iconSize: Style.space(16)
+              iconSize: Style.space(15)
               text: ""
+              horizontalPadding: 0
+              verticalPadding: 0
               bordered: false
               foreground: root.muted
               accent: root.accent
@@ -284,9 +325,13 @@ Panel {
 
             Button {
               anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(26)
+              height: Style.space(26)
               iconText: root.paused ? "󰐊" : "󰏤"
-              iconSize: Style.space(16)
+              iconSize: Style.space(15)
               text: ""
+              horizontalPadding: 0
+              verticalPadding: 0
               bordered: false
               foreground: root.paused ? root.accent : root.muted
               accent: root.accent
@@ -302,7 +347,7 @@ Panel {
               iconSize: Style.space(15)
               text: ""
               selected: root.inputIsMic
-              bordered: true
+              bordered: false
               foreground: root.inputIsMic ? root.accent : root.foreground
               accent: root.accent
               horizontalPadding: 0
@@ -315,10 +360,15 @@ Panel {
 
             Button {
               anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(26)
+              height: Style.space(26)
               iconText: "󰒓"
-              iconSize: Style.space(16)
+              iconSize: Style.space(15)
               text: ""
+              horizontalPadding: 0
+              verticalPadding: 0
               selected: root.settingsVisible
+              bordered: false
               bordered: false
               foreground: root.settingsVisible ? root.accent : root.muted
               accent: root.accent
@@ -353,7 +403,7 @@ Panel {
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: "KEY"
-                  color: root.muted
+                  color: root.keyName !== "" ? root.contrastOn(root.accent, 0.16) : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
@@ -361,7 +411,7 @@ Panel {
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: root.keyName !== "" ? root.keyName : "—"
-                  color: root.keyName !== "" ? root.accent : root.muted
+                  color: root.keyName !== "" ? root.contrastOn(root.accent, 0.16) : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.space(32)
                   font.bold: true
@@ -379,6 +429,18 @@ Panel {
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                 }
+              }
+              MouseArea {
+                id: keyHzMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+              }
+              // Click KEY → root-note Hz tooltip (inline, A4 = 440 Hz).
+              PanelToolTip {
+                visible: keyHzMouse.containsMouse
+                text: root.keyRootHz(root.keyName) || "hover for the root Hz"
+                fontFamily: root.fontFamily
               }
             }
 
@@ -423,7 +485,7 @@ Panel {
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: (root.metronomeEnabled ? "BPM ♪ " : "BPM ") + root.beatsPerBar + "/4"
-                  color: root.metronomeEnabled ? root.accent : root.muted
+                  color: root.bpm > 0 ? root.contrastOn(root.accent, 0.16) : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
@@ -431,7 +493,7 @@ Panel {
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: root.bpm > 0 ? Math.round(root.bpm) : "—"
-                  color: root.bpm > 0 ? root.accent : root.muted
+                  color: root.bpm > 0 ? root.contrastOn(root.accent, 0.16) : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.space(32)
                   font.bold: true
@@ -454,7 +516,7 @@ Panel {
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: "CHORD"
-                  color: root.muted
+                  color: root.currentAudioChord !== "" ? root.contrastOn(Color.urgent, 0.16) : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
@@ -465,7 +527,7 @@ Panel {
                   horizontalAlignment: Text.AlignHCenter
                   elide: Text.ElideRight
                   text: root.currentAudioChord !== "" ? root.currentAudioChord : "· · ·"
-                  color: root.currentAudioChord !== "" ? Color.urgent : root.muted
+                  color: root.currentAudioChord !== "" ? root.contrastOn(Color.urgent, 0.16) : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: root.currentAudioChord !== "" ? Style.space(26) : Style.space(14)
                   font.bold: true
@@ -648,7 +710,7 @@ Panel {
               text: root.currentAudioChord !== ""
                 ? (root.chordNotes.length > 0 ? root.chordNotes.join(" ") : root.currentAudioChord)
                 : (root.noChordSignal ? "could not find the chord" : "· · ·")
-              color: root.currentAudioChord !== "" ? Color.urgent : root.muted
+              color: root.currentAudioChord !== "" ? root.contrastOn(Color.urgent, 0.16) : root.muted
               font.family: root.fontFamily
               font.pixelSize: root.currentAudioChord !== "" ? Style.space(20) : Style.space(12)
               font.bold: true

@@ -1182,13 +1182,21 @@ class MidiSynth:
                     self.metronome_tick_left = 0.04
                     self.metronome_tick_phase = 0.0
                     # New beat: choose the sample for this beat (down or up)
-                    # and reset the custom-sample cursor.
+                    # and reset the custom-sample cursor. When a custom
+                    # sample is chosen the BUILTIN tick timer is zeroed —
+                    # otherwise, once the custom sample finishes, the still
+                    # alive tick_left ran the builtin click too (both clicks
+                    # sounded "twice at once", imprecise and glitchy).
                     if self.metronome_in_beat:
                         custom_samples = custom_down
                     else:
                         custom_samples = custom_up
-                    custom_done = custom_samples is None
                     custom_step = 0
+                    if custom_samples is not None:
+                        custom_done = False
+                        self.metronome_tick_left = 0.0
+                    else:
+                        custom_done = True
                 if not custom_done and custom_samples is not None and custom_step < len(custom_samples):
                     # Custom .wav click: plays the FULL sample length (not
                     # capped at the 0.04 s builtin tick), mono-converted and

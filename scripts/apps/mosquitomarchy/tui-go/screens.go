@@ -851,7 +851,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// refines this category's rows; esc closes the zone.
 		if km, ok := msg.(tea.KeyMsg); ok {
 			switch km.String() {
-			case "f":
+			case "F": // SHIFT+F toggles the filter zone (esc also closes)
 				if m.filterOpen {
 					m.filterOpen = false
 					m.filterText = ""
@@ -1567,7 +1567,7 @@ func (m model) rebuildFilteredSetup() navPicker {
 	}
 	return newNavPicker(header, filtered).SetSize(m.contentSize()).
 		SetHelpKeys(key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
-			key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "search")),
+			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterDesc)))
 }
 
@@ -1629,7 +1629,7 @@ func (m model) rebuildSetup() navPicker {
 	}
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
 	return newNavPicker("", items).SetSize(m.contentSize()).
-		SetHelpKeys(key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "search"))).
+		SetHelpKeys(key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search"))).
 		SelectIndex(idx)
 }
 
@@ -1714,7 +1714,7 @@ func (m model) rebuildSetupCat() navPicker {
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
-			key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "search")),
+			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),

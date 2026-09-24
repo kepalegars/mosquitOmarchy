@@ -47,12 +47,16 @@ func (m model) filterBarLine(hint string) string {
 	if m.filterText == "" {
 		inner = lipgloss.NewStyle().Foreground(tuikit.ColorMuted).Render("filtre")
 	}
+	// Fixed 44-col field, centered: the box NEVER grows with the text, so
+	// there is no alternating left/right widening (a plain Align(Center)
+	// flipped the growth side every other keystroke).
+	inner = lipgloss.NewStyle().Width(44).Align(lipgloss.Center).Render(inner)
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(tuikit.ColorAccent).
 		Foreground(tuikit.ColorAccent).
-		Padding(0, 3).
-		Render(" " + inner + " ")
+		Padding(0, 4).
+		Render(inner)
 	w := m.contentSizeW()
 	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(box) + "\n" + hint
 }

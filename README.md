@@ -164,6 +164,8 @@ Grouped by priority (creative apps first, then desktop/power tuning, then mainte
 | `superfile` | SuperFile as the default file manager (+ optional FileChooser portal override) | `scripts/apps/superfile/setup-superfile.sh` | [README](scripts/apps/superfile/README.md) |
 | `keepassxc` | KeePassXC as the system Secret Service — **replaces gnome-keyring completely** (keyring secrets must be migrated manually; package removal optional & asked) | `scripts/plugins/keepassxc/setup-keepassxc-integration.sh` | [README](scripts/plugins/keepassxc/README.md) |
 | `touchpad` | Acceleration + touchpad sensitivity (mouse untouched) | `scripts/fixes/fix-touchpad.sh` | [README](scripts/fixes/fix-touchpad.md) |
+
+**Touchpad + MX Master together** — they compose, they don't collide: each fix ships its own `hl.device` block in its own file, with independent `require`s, and both take care of ONLY their own device (the pad and its sensitivity, the mouse with its own sensitivity). Apply them in any order (or only one); any other mouse can reuse the same pattern — copy a fix script, adjust the name/values. See [scripts/fixes/fix-touchpad.md](scripts/fixes/fix-touchpad.md#together-touchpad--mx-master-or-any-mouse).
 | `zen` | Zen Browser config — seed plugins (XPI), extension settings + chrome theme deployed into the active profile | `scripts/apps/zen/setup-zen.sh` | [README](scripts/apps/zen/README.md) |
 
 **Maintenance**
