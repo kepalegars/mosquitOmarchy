@@ -288,9 +288,10 @@ Panel {
               iconSize: Style.space(18)
               text: ""
               bordered: false
-              selected: root.pinned
-              // The music note STAYS red even when pinned (its own identity);
-              // pinning only changes the card fill/hover, never the glyph.
+              // `active` paints the selected FILL without the `selected`
+              // icon-recolor (Button.qml recolors the glyph only for
+              // `selected`), so the ♪ keeps its red identity while pinned.
+              active: root.pinned
               foreground: Color.urgent
               accent: root.accent
               horizontalPadding: Style.spacing.xs
@@ -318,9 +319,9 @@ Panel {
                 id: titleText
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
-                // (descent − ascent)/2 + xHeight/2 → moves the x-height body
-                // center onto the anchor box's center.
-                anchors.verticalCenterOffset: (titleFm.descent - titleFm.ascent) / 2 + titleFm.xHeight / 2
+                // Nudge DOWN so the lowercase x-height body's centre lands on
+                // the ♪ box's centre (the plain verticalCenter left it high).
+                anchors.verticalCenterOffset: Math.round(titleText.font.pixelSize * 0.22)
                 text: "jamjamjam"
                 // Red while the analyzer is LIVE (mic/monitor capture running)
                 color: root.analyzing ? Color.urgent : root.foreground
@@ -1196,7 +1197,7 @@ Panel {
             height: Style.space(110) + Style.space(190) + Style.space(56)
                     + Style.space(180)
                     + Style.spacing.md - Style.spacing.sm
-                    - Style.space(40)
+                    - Style.space(120)
             implicitHeight: height
             contentWidth: width
             contentHeight: settingsRows.implicitHeight
@@ -1480,28 +1481,27 @@ Panel {
                 text: "AEC extracts the PC's own output audio from the tuner's mic (phase subtraction) when the output is loud enough to be picked up."
                 wrapMode: Text.WordWrap
               }
-
-              // ─── Footer: version + every keybinding ───────────────
-              Text {
-                width: parent.width
-                topPadding: Style.spacing.sm
-                color: Util.alpha(root.foreground, 0.5)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                text: "jamjamjam v"
-                  + (root.manifest && root.manifest.version !== undefined ? String(root.manifest.version) : "1.0.0")
-                  + " · ultra-alpha (some features are still rough)"
-                wrapMode: Text.WordWrap
-              }
-              Text {
-                width: parent.width
-                color: Util.alpha(root.foreground, 0.6)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
-                text: "KEYS — space: analyze hold · r: reset · g: open neck TUI · s: settings · m: metronome · ,: pause · p: pin/unpin · n: note naming (in settings) · right-click KEY/BPM: manual entry (cleared by r)"
-              }
             }
+          }
+
+          // ─── Pinned footer (always at the very bottom of the pane) ──
+          Text {
+            width: parent.width
+            color: Util.alpha(root.foreground, 0.6)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+            text: "KEYS — space: analyze hold · r: reset · g: open neck TUI · s: settings · m: metronome · ,: pause · p: pin/unpin · n: note naming (in settings)"
+          }
+          Text {
+            width: parent.width
+            color: Util.alpha(root.foreground, 0.5)
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+            text: "jamjamjam v"
+              + (root.manifest && root.manifest.version !== undefined ? String(root.manifest.version) : "1.0.0")
+              + " · ultra-alpha (some features are still rough)"
           }
         }
 
