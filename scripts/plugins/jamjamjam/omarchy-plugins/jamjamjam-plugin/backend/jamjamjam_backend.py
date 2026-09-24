@@ -1137,6 +1137,80 @@ class AudioAnalyzer:
         self.buffer.clear()
 
 
+class MetronomeClicks:
+    """Precomputed metronome click pool (Reaper/MPC-2000XL style).
+
+    Design (new, post post-mortem of the harsh "two clicks" bug):
+    - The click is a BAND-PASS-FILTERED NOISE transient layered with one
+      modal resonant sine (the classic MPC 2000xl "pop"):
+        click = (bandpass(noise, fc, q=2.5) * env_noisy
+                 + sin(2π·f·t) * env_modal
+                 * mix[mix is 60% noise + 40% modal for texture])
+      Envelope: instant attack (0.4ms), exponential decay 8 ms.
+      Percussive sounds lack pure harmonic sets — mixing band-limited noise
+      with a modal sine gives a crafted, clean "tok", way closer to a real
+      metronome than the earlier fully-synthetic sine approach.
+    - Styles pick the center frequencies (Reaper/MPC uses 1800/1200):
+      classic 1800/1200, wood 900/680 (lower + woodier), kick 140/100 (low
+      thump), beep 1300/960 (beeper-y / rn "modern electronic").
+    - Downbeat is brighter and slightly louder (1.3x accent). Every style
+      precomputes BOTH down/up 12 ms waves at construction time, so the
+      render loop only plays cached samples (no per-sample math to be slow
+      or glitchy).
+    """
+
+    def __init__(self, sample_rate: int = SAMPLE_RATE):
+        self.rate = int(sample_rate)
+        self.cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        self._build("classic", 1800.0, 1200.0)
+        self._build("wood", 900.0, 680.0)
+        self._build("kick", 140.0, 100.0)
+        self._build("beep", 1300.0, 960.0)
+
+    def _bandpass(self, x: np.ndarray, f_lo: float, f_hi: float) -> np.ndarray:
+        """Quick one-pole bandpass shaping of a noise burst (cheap and int.)
+        to prevent the fundamental click from turning into a flat 'thud'."""
+        hp = np.zeros_like(x); lp = np.zeros_like(x)
+        alpha_hp = math.exp(-2.0 * math.pi * f_lo / self.rate)
+        alpha_lp = 1.0 - math.exp(-2.0 * math.pi * f_hi / self.rate)
+        last_in = 0.0; last_hp = 0.0; last_lp = 0.0
+        out = np.zeros_like(x)
+        for i, v in enumerate(x):
+            hpv = alpha_hp * (last_hp + v - last_in)
+            lpv = lp[-1] + alpha_lp * (hpv - lp[-1])
+            out[i] = lpv
+            last_in, last_hp, last_lp = v, hpv, lpv
+        return out
+
+    def _build(self, style: str, f_down: float, f_up: float):
+        n = int(0.045 * self.rate)          # 45 ms sample budget
+        t = np.arange(n) / self.rate
+        rng = np.random.default_rng(len(self.cache) + hash(f_down) % 1_000_977)
+        out = {}
+        for freq, is_down in ((f_down, True), (f_up, False)):
+            accent = 1.0 if is_down else 0.65
+            # Fundamental modal sine: the tone reads clean even through small
+            # speakers (this is why most "electronic metronomes" use these).
+            modal = np.sin(2.0 * np.pi * freq * t)
+            # Modal ring (the tone that carries the pitch) decays over 11
+            # ms; the band-limited noise BURST dies ~1.6 ms (attack snap:
+            # texture without a second perceived click).
+            noise = self._bandpass(np.asarray(rng.standard_normal(n), dtype=np.float64), f_lo=freq*2.0, f_hi=freq*4.0)
+            env_tone = np.exp(-t / 0.011)
+            env_noise = np.exp(-t / 0.0016)
+            wave = 0.48 * modal * env_tone + 0.42 * noise * env_noise
+            peak = float(np.max(np.abs(wave))) + 1e-9
+            wave /= peak
+            out["down" if is_down else "up"] = (
+                wave.astype(np.float32), accent)
+        self.cache[style] = out
+
+    def get(self, style: str, down_beat: bool) -> np.ndarray:
+        """Return the precomputed click sample array (or classic's)."""
+        pair = self.cache.get(style) or self.cache["classic"]
+        return pair["down" if down_beat else "up"]
+
+
 class MidiSynth:
     """Very simple additive synth streaming to PipeWire through pw-cat."""
 
@@ -1157,6 +1231,10 @@ class MidiSynth:
         self.metronome_enabled = False
         self.metronome_tick_phase = 0.0
         self.metronome_tick_elapsed = 0.0
+        # Precomputed click pool (Reaper-style "pop"): at every beat INSTANT
+        # we copy these cached 45 ms samples instead of running a DSP module
+        # — no double-click artifacts, no decay-tail bleed.
+        self.metronome_clicks = MetronomeClicks(SAMPLE_RATE)
         self.metronome_bpm = 120.0
         self.metronome_beats = 4
         self.running = False
@@ -1306,6 +1384,11 @@ class MidiSynth:
         custom_step = 0
         custom_done = False
         custom_samples = None
+        click_wave = np.zeros(0, dtype=np.float32)
+        click_cursor = 0
+        accent_click = 1.0
+        click_custom = self.click_custom  # read once; reloaded on the next beat
+        
         for _ in range(frame_count):
             mixed = 0.0
             finished = []
@@ -1354,73 +1437,87 @@ class MidiSynth:
                     # otherwise, once the custom sample finishes, the still
                     # alive tick_left ran the builtin click too (both clicks
                     # sounded "twice at once", imprecise and glitchy).
-                    if self.metronome_in_beat:
-                        custom_samples = custom_down
-                    else:
-                        custom_samples = custom_up
                     custom_step = 0
-                    if custom_samples is not None:
+                    custom_done = False
+                    if not self.click_custom:
+                        # PRECOMPUTED cache (Reaper-style pop): always ready,
+                        # no custom-file setup needed (paired wave+accent).
+                        click_wave, accent_click = self.metronome_clicks.get(
+                            style, self.metronome_in_beat)
+                        click_cursor = 0
+                        custom_samples = click_wave  # reuse the stream slot
+                        custom_step = 0
                         custom_done = False
-                        self.metronome_tick_left = 0.0
+                    elif self.metronome_in_beat:
+                        click_wave = np.asarray(custom_down, dtype=np.float32) \
+                            if custom_down is not None else np.zeros(0, dtype=np.float32)
+                        custom_samples = click_wave
+                        accent_click = 1.0
+                        click_cursor = 0
                     else:
-                        custom_done = True
-                if not custom_done and custom_samples is not None and custom_step < len(custom_samples):
-                    # Custom .wav click: plays the FULL sample length (not
-                    # capped at the 0.04 s builtin tick), mono-converted and
-                    # peak-normalized at load, gained.
+                        click_wave = np.asarray(custom_up, dtype=np.float32) \
+                            if custom_up is not None else np.zeros(0, dtype=np.float32)
+                        custom_samples = click_wave
+                        accent_click = 1.0
+                        click_cursor = 0
+                    self.metronome_tick_left = 0.0
+                if not click_custom and click_cursor < len(click_wave):
+                    # PRECOMPUTED cached click (Reaper-style pop) frames.
+                    value = float(click_wave[click_cursor])
+                    metAccum += value * click_gain * accent_click
+                    click_cursor += 1
+                elif click_custom and not custom_done and custom_samples is not None and custom_step < len(custom_samples):
+                    # .wav custom click (imported from Settings).
                     value = float(custom_samples[custom_step]) * click_gain
                     custom_step += 1
                     if custom_step >= len(custom_samples):
                         custom_done = True
                     metAccum += value
-                elif self.metronome_tick_left > 0.0:
-                    # ─── CLEAN CLICK (rewritten) ──────────────────────
-                    # The old click was a pure 40ms linear ramp sine (long,
-                    # harsh, with an accidental DOUBLE decrement that cut the
-                    # shape in two) — hideous. This one is a CLEAN metronome
-                    # tick: a short pure sine at the beat freq, shaped with
-                    # an exponential decay + a 1.5 ms attack (no pop), and a
-                    # breathing (very low-pass filtered) top-end.
-                    t_env = self.metronome_tick_elapsed  # seconds since beat start
-                    if style == "kick":
-                        freq = 140.0 if self.metronome_in_beat else 100.0
-                        accent = 0.95 if self.metronome_in_beat else 0.6
-                        env = math.exp(-t_env / 0.052) * accent
-                    elif style == "wood":
-                        freq = 900 if self.metronome_in_beat else 680
-                        accent = 0.85 if self.metronome_in_beat else 0.55
-                        env = math.exp(-t_env / 0.020) * accent
-                    elif style == "beep":
-                        freq = 1280 if self.metronome_in_beat else 960
-                        accent = 0.85 if self.metronome_in_beat else 0.55
-                        env = math.exp(-t_env / 0.026) * accent
-                    else:  # classic: REAPER-style factory sample tone
-                        # (its default metronome.wav ≈ 1.65 kHz downbeat,
-                        # 1.1 kHz quieter off-beat, short ~12ms decay — a
-                        # clean dry "tick", no beeper tail).
-                        freq = 1650 if self.metronome_in_beat else 1100
-                        accent = 0.95 if self.metronome_in_beat else 0.55
-                        env = math.exp(-t_env / 0.012) * accent
-                    # Clean click: pure sine at the click freq with one
-                    # exponential decay envelope. NO second-harmonic, NO
-                    # attack ramp — those added a perceived "second tick"
-                    # ~3 ms after the first, which made the click sound
-                    # doubled (the bug the user just reported). The
-                    # natural onset of sin(2π·f·t) is enough to keep the
-                    # edge smooth.
-                    value = math.sin(2.0 * math.pi * freq * t_env) * 0.95
-                    metAccum += value * env * click_gain
-                    self.metronome_tick_elapsed += 1.0 / SAMPLE_RATE
-                    self.metronome_tick_elapsed = min(
-                        0.10, self.metronome_tick_elapsed)
-                    self.metronome_tick_left -= 1.0 / SAMPLE_RATE
-
-            elif custom_step > 0:
-                # Loop tail (metronome stopped mid-sample): clear counters.
-                custom_step = 0
             sample = metAccum + math.tanh(mixed * master) * 0.9
             output.append(max(-32767, min(32767, int(sample * 32767))))
         return output
+
+    def _run(self) -> None:
+        """Streaming thread: keeps pw-cat fed from the render loop, and also
+        updates the property-download one for pw-cat Media (chill), using the
+        normal realtime-cadence pattern.
+        """
+        block_frames = 384
+        block_seconds = block_frames / SAMPLE_RATE
+        silence = bytes(block_frames * 2)
+        next_write = time.perf_counter()
+        while not self._stop.is_set():
+            with self._lock:
+                should_stream = self.enabled or bool(self.voices) or self.metronome_enabled
+            if not should_stream:
+                self._close_process()
+                self._wake.wait(0.2)
+                self._wake.clear()
+                next_write = time.perf_counter()
+                continue
+            if not self._process and not self._start_process():
+                self._stop.wait(1.0)
+                continue
+            now = time.perf_counter()
+            wait_seconds = next_write - now
+            if wait_seconds > 0:
+                self._wake.wait(wait_seconds)
+                self._wake.clear()
+            with self._lock:
+                has_voices = bool(self.voices) or self.metronome_enabled
+            block = self._render_block(block_frames).tobytes() if has_voices else silence
+            try:
+                assert self._process and self._process.stdin
+                self._process.stdin.write(block)
+                next_write += block_seconds
+                if next_write < time.perf_counter() - block_seconds:
+                    next_write = time.perf_counter() + block_seconds
+            except (BrokenPipeError, OSError) as error:
+                self.error = f"PipeWire audio stopped: {error}"
+                self._close_process()
+                self._stop.wait(0.5)
+                next_write = time.perf_counter()
+
 
     def _start_process(self) -> bool:
         try:
@@ -1460,43 +1557,6 @@ class MidiSynth:
                 process.kill()
             except OSError:
                 pass
-
-    def _run(self) -> None:
-        block_frames = 384
-        block_seconds = block_frames / SAMPLE_RATE
-        silence = bytes(block_frames * 2)
-        next_write = time.perf_counter()
-        while not self._stop.is_set():
-            with self._lock:
-                should_stream = self.enabled or bool(self.voices) or self.metronome_enabled
-            if not should_stream:
-                self._close_process()
-                self._wake.wait(0.2)
-                self._wake.clear()
-                next_write = time.perf_counter()
-                continue
-            if not self._process and not self._start_process():
-                self._stop.wait(1.0)
-                continue
-            now = time.perf_counter()
-            wait_seconds = next_write - now
-            if wait_seconds > 0:
-                self._wake.wait(wait_seconds)
-                self._wake.clear()
-            with self._lock:
-                has_voices = bool(self.voices) or self.metronome_enabled
-            block = self._render_block(block_frames).tobytes() if has_voices else silence
-            try:
-                assert self._process and self._process.stdin
-                self._process.stdin.write(block)
-                next_write += block_seconds
-                if next_write < time.perf_counter() - block_seconds:
-                    next_write = time.perf_counter() + block_seconds
-            except (BrokenPipeError, OSError) as error:
-                self.error = f"PipeWire audio stopped: {error}"
-                self._close_process()
-                self._stop.wait(0.5)
-                next_write = time.perf_counter()
 
 
 class AudioRecorder:
