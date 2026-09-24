@@ -1401,14 +1401,14 @@ class MidiSynth:
                         freq = 1650 if self.metronome_in_beat else 1100
                         accent = 0.95 if self.metronome_in_beat else 0.55
                         env = math.exp(-t_env / 0.012) * accent
-                    # 1.2 ms smooth attack (kills the pop; the old linear
-                    # envelope started abruptly at full amplitude).
-                    attack = 1.0 - math.exp(-t_env / 0.000012)
-                    env *= attack
-                    # Two-tone softness: a faint 2nd harmonic warms it up
-                    # so it no longer sounds like a beeper.
-                    value = math.sin(2.0 * math.pi * freq * t_env) * 0.82 + \
-                        math.sin(2.0 * math.pi * freq * 2.0 * t_env) * 0.14
+                    # Clean click: pure sine at the click freq with one
+                    # exponential decay envelope. NO second-harmonic, NO
+                    # attack ramp — those added a perceived "second tick"
+                    # ~3 ms after the first, which made the click sound
+                    # doubled (the bug the user just reported). The
+                    # natural onset of sin(2π·f·t) is enough to keep the
+                    # edge smooth.
+                    value = math.sin(2.0 * math.pi * freq * t_env) * 0.95
                     metAccum += value * env * click_gain
                     self.metronome_tick_elapsed += 1.0 / SAMPLE_RATE
                     self.metronome_tick_elapsed = min(

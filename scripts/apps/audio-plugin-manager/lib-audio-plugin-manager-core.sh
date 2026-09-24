@@ -696,19 +696,38 @@ install_plugin() {
     # prefix for NEW dll/vst3/clap files older than the snapshot and move
     # them into the shared folders so the install registers. Temp/Inno-set
     # staging files (is-*.tmp, Temp dirs) are excluded.
-    local -a cand=() f_pkg root2
+    # DEEPER scan: the user's Serum 2 case may drop its DLL into its own
+    # folder (Xfer/Serum2/), a custom installer-chosen path, or even
+    # AppData/Roaming. We keep the Temp/Inno exclusions (pure staging) but
+    # walk the whole drive_c once, prune common system DLL names, and
+    # accept files whose size is large enough to be a real plugin bundle.
+    local -a cand=() f_pkg
+    local f b size
     while IFS= read -r f; do
       [[ -n $f ]] || continue
       case "$f" in
-        *"/Temp/"*|*"/temp/"*|*"/Temp/"*|*"is-"*.tmp*) continue;;
-        *"/drive_c/windows/"*) continue;;
-        *"/ProgramData/"*"/Temp/"*) continue;;
+        *"/Temp/"*|*"/temp/"*|*"is-"*.tmp*|*"IS-"*.tmp*) continue;;
+        *"/drive_c/windows/"*|*"/drive_c/Windows/"*) continue;;
+        *"/drive_c/ProgramData/"*"/Temp/"*) continue;;
+        *"/drive_c/users/"*"/Temp/"*) continue;;
       esac
+      b="$(basename -- "$f")"
+      case "${b,,}" in
+        ntdll.dll|kernel32.dll|user32.dll|gdi32.dll|advapi32.dll|shell32.dll|ole32.dll|oleaut32.dll|combase32.dll|comdlg32.dll|version.dll|setupapi.dll|wininet.dll|ws2_32.dll|winmmbase.dll|winmm.dll|msvcrt.dll|msvcp140.dll|msvcp100.dll|msvcp120.dll|msvcp71.dll|msvcrt90.dll|api-ms-win-*|ucrtbase.dll|vcruntime140*.dll) continue;;
+      esac
+      size=$(stat -c '%s' -- "$f" 2>/dev/null || echo 0)
+      (( size > 450000 )) || continue
       cand+=("$f")
     done < <(
-      find "$wine_prefix/drive_c/Program Files" "$wine_prefix/drive_c/Program Files (x86)" \
-        -type f \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) \
-        -newer "$snap" -printf '%p\n' 2>/dev/null | sort -u
+      find "$wine_prefix/drive_c" \
+        \( -type f \( -iname '*.vst3' -o -iname '*.clap' \) \
+          -size +450k -newer "$snap" -printf '%p\n' \), \
+      find "$wine_prefix/drive_c" \
+        \( -type f -iname '*.dll' \
+            ! \( -ipath '*/Temp/*' -o -ipath '*/temp/*' -o -ipath '*/is-*.tmp*' -o -ipath '*/IS-*.tmp*' \) \
+            ! \( -ipath '*/windows/*' -o -ipath '*/Windows/*' \) \
+            -size +450k -newer "$snap" -printf '%p\n' \) \
+        2>/dev/null | sort -u
     )
     if ((${#cand[@]} > 0)); then
       msg "Detected ${#cand[@]} new plugin file(s) inside the prefix (outside the shared folders):"
