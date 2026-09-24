@@ -42,6 +42,21 @@ Panel {
   readonly property real metronomeBpm: root.bpm > 0 ? root.bpm : Number(metronome.bpm || 120)
   property bool beatPulse: false
   property bool settingsVisible: false
+  // IMperative resize: the settings pane fits the size the MAIN page was
+  // rendering at the moment the user CAME INTO settings (not a constant).
+  // Captured in toggleSettings() right before the main blocks are hidden, so
+  // the panel never changes size only because settings are toggled — even if
+  // nothing else changed in between.
+  property real settingsReserveH: 0
+  function toggleSettings() {
+    if (!root.settingsVisible) {
+      // Capture BEFORE hiding the main content: the pane will occupy
+      // exactly this much (header + SETTINGS row + flick + toolbar + the
+      // three column gaps must add up to it).
+      root.settingsReserveH = column.implicitHeight
+    }
+    root.settingsVisible = !root.settingsVisible
+  }
 
   // One white flash per beat while the metronome runs, at the analysed BPM.
   Timer {
@@ -171,7 +186,7 @@ Panel {
         // unreliable through the catcher)
         else if (key === "p") root.pinned = !root.pinned
         else if (key === "," && root.service) root.service.togglePaused()
-        else if (key === "s") root.settingsVisible = !root.settingsVisible
+        else if (key === "s") root.toggleSettings()
         else if (key === "m") { root.midiSectionVisible = !root.midiSectionVisible; if (root.service) root.service.toggleMidi() }
       }
 
@@ -184,6 +199,7 @@ Panel {
 
         // ─── Header: title + reset icon ───────────────────────────
         Item {
+          id: headerItem
           width: parent.width
           height: root.headerHeight
           implicitHeight: root.headerHeight
@@ -305,7 +321,7 @@ Panel {
               foreground: root.settingsVisible ? root.accent : root.muted
               accent: root.accent
               tooltipText: "Plugin settings (s) — hides the rest of the panel: note naming, chord zone, AEC, metronome click (volume/style/import)"
-              onClicked: root.settingsVisible = !root.settingsVisible
+              onClicked: root.toggleSettings()
             }
           }
         }
@@ -974,6 +990,7 @@ Panel {
           spacing: Style.spacing.sm
 
           Item {
+            id: settingsHeaderRow
             width: parent.width
             height: Style.space(30)
             implicitHeight: Style.space(30)
@@ -993,15 +1010,18 @@ Panel {
           Flickable {
             id: settingsFlick
             width: parent.width
-            // Fixed scroll viewport: the panel keeps its size when 's' is
-            // pressed; anything beyond ~4 rows scrolls instead of growing.
-            // Reserve = everything this pane hides (cards + tuner + chord
-            // zone + fretboard + spacer) so the panel NEVER shrinks (or
-            // grows) when settings are toggled. floor of 180 keeps the size
-            // when the fretboard is hidden in the normal view.
-            height: Math.max(contentHeight, Style.space(24) + Style.space(110)
-                              + root.tunerHeight + root.chordBoxHeight
-                              + Math.max(Style.space(180), root.fretboardHeight))
+            // Fixed scroll viewport: the pane spends EXACTLY the height the
+            // main page was rendering at the moment settings were opened
+            // (captured in toggleSettings()). Breakdown of that reserve:
+            // headerItem + gap + settingsHeaderRow + gap + FLICK + gap +
+            // toolbarRow → solve for FLICK:
+            //   flick = reserve − header − settingsRow − toolbar − 3·gap.
+            // Floor 360 keeps the pane usable if the capture ran back when
+            // the panel was tiny.
+            height: Math.min(contentHeight, Math.max(Style.space(360),
+                              root.settingsReserveH - root.headerHeight
+                              - settingsHeaderRow.height - toolbarRow.height
+                              - 3 * column.spacing))
             implicitHeight: height
             contentWidth: width
             contentHeight: settingsRows.implicitHeight
@@ -1287,6 +1307,7 @@ Panel {
         // MIDI hugs the left edge, "Open TUI" is flush with the right edge so
         // it lines up with the card row above it.
         Item {
+          id: toolbarRow
           width: parent.width
           height: Math.max(midiToolbarButton.implicitHeight, openTuiButton.implicitHeight)
           implicitHeight: height

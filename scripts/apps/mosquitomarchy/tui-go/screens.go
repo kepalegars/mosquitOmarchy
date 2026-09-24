@@ -1628,7 +1628,9 @@ func (m model) rebuildSetup() navPicker {
 		items = append(items, un)
 	}
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
-	return newNavPicker("", items).SetSize(m.contentSize()).SelectIndex(idx)
+	return newNavPicker("", items).SetSize(m.contentSize()).
+		SetHelpKeys(key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "search"))).
+		SelectIndex(idx)
 }
 
 // categorySelectedCount counts the checked items of one category.
