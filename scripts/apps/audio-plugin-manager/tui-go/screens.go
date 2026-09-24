@@ -847,8 +847,14 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case scrRunnerSuccessConfirm:
 		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
 			if res.Canceled || !res.Yes {
-				// "See log" -- dismiss the prompt, stay on the runner screen.
+				// "See log" -- open the FULL run log in the universal Info
+				// screen (same bounded, wrapping, scrollable, framed log
+				// view mosquitomarchy uses), so the details read like any
+				// other full-screen log in the mosquito TUIs.
+				m.info = tuikit.NewInfo(m.runner.Output()).
+					SetSize(m.contentSize())
 				m.pop()
+				m.push(scrInfo)
 				return m, nil
 			}
 			// "OK" -- return to the main menu.

@@ -538,6 +538,7 @@ FIXES=(
   "hyprland-crash:Recover a Hyprland desktop after a crash (broken/truncated hyprland.lua, fatal Lua escapes, lost keyboard layout, missing Omarchy shell) — self-heals at every boot via a post-boot hook"
   "ableton-wine-scroll:Ableton/Wine: stop the patched Wine's optional pointer features (XInput2 grab) from freezing trackpad scrolling in other apps while Live is open (persistent master switch in the prefix, reversible)"
   "1px-seam:Hair-thin transparent 1px line between the Omarchy bar and a window in borderless/no-gaps tiling — switch the blur to its legacy path (helps when blur is enabled; reversible)"
+  "ableton-fullscreen:Ableton Live Full Screen is shifted/broken (content sits off where you click) — launches Live with WINE_WIN32_FULLSCREEN_CLASS=off (documented ableton-linux cure; drag-the-window alternative): (reversible)"
   "omarchy-bar:The Omarchy toolbar disappeared (toggled off / slid off-screen) — clear the bar-off toggle and re-sync the shell"
 )
 
@@ -559,6 +560,7 @@ fix_category(){
     omarchy-bar)      echo "Omarchy" ;;
     hyprland-crash)   echo "Recovery" ;;
     ableton-wine-scroll) echo "Windows & input" ;;
+    ableton-fullscreen) echo "Windows & input" ;;
     *)                echo "Other" ;;
   esac
 }
@@ -654,6 +656,7 @@ run_fix(){ # single fix by id
     omarchy-menu) bash "$SCRIPT_DIR/scripts/fixes/fix-omarchy-menu.sh" ;;
     hyprland-crash) bash "$SCRIPT_DIR/scripts/fixes/fix-hyprland-crash.sh" ;;
     ableton-wine-scroll) bash "$SCRIPT_DIR/scripts/fixes/fix-wine-scroll.sh" ;;
+    ableton-fullscreen) bash "$SCRIPT_DIR/scripts/fixes/fix-ableton-fullscreen.sh" ;;
     1px-seam) bash "$SCRIPT_DIR/scripts/fixes/fix-1px-seam.sh" ;;
     omarchy-bar) bash "$SCRIPT_DIR/scripts/fixes/fix-omarchy-bar.sh" ;;
     *) err "Unknown fix: $id"; return 1 ;;
@@ -721,6 +724,7 @@ module_of_path(){
     scripts/fixes/backlight/*|scripts/fixes/fix-keyboard-backlight-menu.sh) echo keyboard-backlight ;;
     scripts/fixes/fix-touchpad.sh)                           echo touchpad ;;
     scripts/fixes/fix-mx-master.sh)                          echo mx-master ;;
+    scripts/fixes/fix-ableton-fullscreen.sh)                 echo ableton-fullscreen ;;
     scripts/plugins/keepassxc/*)                                echo keepassxc ;;
     scripts/mosquitomarchy-update/*)                            echo mosquitomarchy-update ;;
     scripts/apps/superfile/*)                                echo superfile ;;

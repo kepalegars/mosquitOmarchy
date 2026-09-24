@@ -639,6 +639,31 @@ install_plugin() {
     -type f \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) \
     -printf '%p\n' 2>/dev/null | sort > "$snap" || true
 
+  # Pre-installation patch — Sonible installers (SmartEQ4 and friends) use an
+  # Inno Setup SKIN (ISSKINU.DLL) whose runtime needs native MFC42u; without
+  # it the installer dies with "Runtime error: Cannot import dll: …is-xxx.tmp\
+  # ISSKINU.DLL" before showing anything. STRONG detection: the installer
+  # path/name mentions sonible or smarteq. The patch ONLY adds the mfc42
+  # runtime (native dlls into the prefix, winetricks-managed) — idempotent.
+  if [[ "$(basename "$file")" == *[Ss]mart[Ee][Qq]*4* ]] || \
+     [[ "$(basename "$file")" == *[Ss]onible* ]] || \
+     [[ "$file" == *[Ss]onible* ]] || \
+     [[ "$file" == *[Ss]mart[Ee][Qq]* ]]; then
+    if ! ls "$wine_prefix/drive_c/windows/syswow64/mfc42u.dll" \
+            "$wine_prefix/drive_c/windows/system32/mfc42u.dll" >/dev/null 2>&1; then
+      if ui_confirm "S prerequisite: Sonible installers (this file: $(basename "$file")) need MFC42u.dll — the Inno-Setup ISSKINU.DLL skin runtime (wine fails with 'Cannot import dll ISSKINU.DLL' without it). Apply the pre-installation patch (winetricks mfc42 into the prefix) now?"; then
+        msg "Pre-installation patch: winetricks mfc42 (MFC42/MFC42u into $wine_prefix)"
+        if ! WINEPREFIX="$wine_prefix" winetricks mfc42; then
+          warn "winetricks mfc42 failed — the installer may still hit the ISSKINU.DLL error. Install it manually: WINEPREFIX=$wine_prefix winetricks mfc42"
+        else
+          ok "Pre-installation patch applied (MFC42 present in $wine_prefix)"
+        fi
+      fi
+    else
+      ok "Sonible installer detected — MFC42u already present in the prefix"
+    fi
+  fi
+
   msg "Running $file through wine (prefix: $wine_prefix — the installer shows its own window)…"
   WINEPREFIX="$wine_prefix" wine "$file" || warn "(wine exited with a non-zero code — continuing)"
 
@@ -662,6 +687,42 @@ install_plugin() {
       -newer "$snap" -printf '%p\n' 2>/dev/null | sort -u
   )
   rm -f "$snap"
+
+  if ((${#newfiles[@]} == 0)); then
+    # Fallback scan: some installers (Serum 2, Sonible…) write their plugin
+    # into a path inside the prefix that is NOT one of the shared linked
+    # folders (a custom destination the user picked, e.g. under
+    # C:\Program Files\WOW64 Audio Plugin Manager style trees). Scan the
+    # prefix for NEW dll/vst3/clap files older than the snapshot and move
+    # them into the shared folders so the install registers. Temp/Inno-set
+    # staging files (is-*.tmp, Temp dirs) are excluded.
+    local -a cand=() f_pkg root2
+    while IFS= read -r f; do
+      [[ -n $f ]] || continue
+      case "$f" in
+        *"/Temp/"*|*"/temp/"*|*"/Temp/"*|*"is-"*.tmp*) continue;;
+        *"/drive_c/windows/"*) continue;;
+        *"/ProgramData/"*"/Temp/"*) continue;;
+      esac
+      cand+=("$f")
+    done < <(
+      find "$wine_prefix/drive_c/Program Files" "$wine_prefix/drive_c/Program Files (x86)" \
+        -type f \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) \
+        -newer "$snap" -printf '%p\n' 2>/dev/null | sort -u
+    )
+    if ((${#cand[@]} > 0)); then
+      msg "Detected ${#cand[@]} new plugin file(s) inside the prefix (outside the shared folders):"
+      printf '    %s\n' "${cand[@]}" >&2
+      for f_pkg in "${cand[@]}"; do
+        base="$(basename "$f_pkg")"
+        case "${f_pkg##*.}" in vst3|VST3) dst="$VST_VST3";; clap|CLAP) dst="$VST_CLAP";; *) dst="$VST_VST2";; esac
+        mkdir -p "$dst"
+        cp -a "$f_pkg" "$dst/" 2>/dev/null || true
+        ok "$base recovered from the prefix → $dst/"
+        newfiles+=("$dst/$base")
+      done
+    fi
+  fi
 
   if ((${#newfiles[@]} == 0)); then
     # An install that produced NO plugin file is a FAILED (or aborted by

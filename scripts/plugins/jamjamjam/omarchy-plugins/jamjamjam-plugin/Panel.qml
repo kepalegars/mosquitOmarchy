@@ -996,11 +996,12 @@ Panel {
             // Fixed scroll viewport: the panel keeps its size when 's' is
             // pressed; anything beyond ~4 rows scrolls instead of growing.
             // Reserve = everything this pane hides (cards + tuner + chord
-            // zone + fretboard + three spacers) so the panel NEVER shrinks
-            // (or grows) when settings are toggled.
-            height: Math.min(contentHeight, Style.space(24) + Style.space(110)
+            // zone + fretboard + spacer) so the panel NEVER shrinks (or
+            // grows) when settings are toggled. floor of 180 keeps the size
+            // when the fretboard is hidden in the normal view.
+            height: Math.max(contentHeight, Style.space(24) + Style.space(110)
                               + root.tunerHeight + root.chordBoxHeight
-                              + root.fretboardHeight)
+                              + Math.max(Style.space(180), root.fretboardHeight))
             implicitHeight: height
             contentWidth: width
             contentHeight: settingsRows.implicitHeight

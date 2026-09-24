@@ -69,6 +69,8 @@ Links wine prefixes (`~/.wine` for yabridge, `~/.wine-ableton` for Ableton) to s
 
 ## mosquito Audio Plugin Manager — mosquito-audio-plugin-manager
 
+**Tested-plugins registry (ProtonDB-style, updated often):** [`PLUGIN-TESTS.md`](PLUGIN-TESTS.md) — one block per install: version, ✅/⚠️/❌ status, special treatment (pre-install patches, recovered files…). Read it BEFORE reporting a failed install.
+
 Renamed from "VST Manager" — the tool now handles *both* plugin universes: Windows VST
 plugins run through Wine/yabridge, and genuinely native Linux plugins (LV2/CLAP/
 native-Linux-VST3, no Wine at all). **Installed plugins** (the unified plugin
