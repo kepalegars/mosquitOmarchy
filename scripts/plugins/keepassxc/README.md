@@ -14,6 +14,21 @@ gnome-keyring — the upstream-documented way:
   KeePassXC writes when the integration is ticked (verified against
   `src/core/Config.cpp`, 2.7.12: `FdoSecrets/Enabled`).
 
+
+## Default database — pin yours
+
+`keepassxc-default-database.sh` (this folder, idempotent) opens YOUR .kdbx on
+every KeePassXC launch:
+
+- auto-detects the newest `*.kdbx` in `$HOME` (pass a path to override)
+- writes `RememberLastDatabases/RememberLastKeyFiles`, and
+  `LastOpenedDatabases` / `LastActiveDatabase` = that database
+- that kills the "create a new database?" dialog that kept popping when a web
+  app's browser extension asked KeePassXC through the FdoSecrets channel.
+
+`--status` shows what is pinned, `--clear` restores the stock behaviour.
+
+
 ## What stays manual by design
 
 - **The secrets transfer**: every gnome-keyring secret must be ported to the
