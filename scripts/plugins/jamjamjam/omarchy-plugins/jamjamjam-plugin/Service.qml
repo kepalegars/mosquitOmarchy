@@ -94,6 +94,8 @@ Item {
   function setHold(value) { send("setHold", { active: !!value }) }
   function setSource(value) { send("setSource", { source: value === "mic" ? "mic" : "pc" }) }
   function setMetronome(value) { send("setMetronome", { enabled: !!value }) }
+  function setManualKey(key) { send("setManualKey", { key: String(key || "") }) }
+  function setManualBpm(bpm) { send("setManualBpm", { bpm: Number(bpm) || 0 }) }
   function setPaused(value) { send("setPaused", { active: !!value }) }
   function togglePaused() { send("togglePaused") }
   function setConfig(noteNaming) {

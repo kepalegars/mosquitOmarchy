@@ -1784,6 +1784,11 @@ class AudioAnalyzerBackend:
         self.hold = False
         self.paused = False
         self.analysis_locked = False
+        # MANUAL overrides (right-click a KEY/BPM card): pinned values that
+        # SURVIVE until a reset ('r'/resetAnalysis) clears them back to the
+        # detector's live state.
+        self.manual_key = ""
+        self.manual_bpm = 0.0
         # UI-configurable settings from config.json (chord box, AEC hint,
         # metronome click). Applied onto the synth / published in snapshot.
         self.show_chord_box = bool(self.config.get("showChordBox", True))
@@ -1983,10 +1988,11 @@ class AudioAnalyzerBackend:
                 "styles": list(CLICK_STYLES),
             },
             "analyzer": {
-                "key": self.analyzer.key,
-                "keyConfidence": round(self.analyzer.key_confidence, 3),
-                "keyStable": self.analyzer.key_stable,
-                "bpm": round(self.analyzer.bpm, 1) if self.analyzer.bpm else 0,
+                "key": self.manual_key or self.analyzer.key,
+                "keyConfidence": (1.0 if self.manual_key else round(self.analyzer.key_confidence, 3)),
+                "keyStable": bool(self.manual_key) or self.analyzer.key_stable,
+                "bpm": (round(self.manual_bpm, 1) if self.manual_bpm
+                        else (round(self.analyzer.bpm, 1) if self.analyzer.bpm else 0)),
                 "beatsPerBar": self.analyzer.beats_per_bar,
                 "timeSignature": f"{self.analyzer.beats_per_bar}/4",
                 "currentChord": self.analyzer.current_chord,
@@ -2039,12 +2045,35 @@ class AudioAnalyzerBackend:
                 self.analyzer.reset()
             return {}
         if op == "resetAnalysis":
+            # A reset wipes the MANUAL overrides too: the cards go back to the
+            # detector's live state (the only way to leave a manual entry).
+            self.manual_key = ""
+            self.manual_bpm = 0.0
             self.analyzer.reset()
             self.needs_reset = False
             self._progression_key = ""
             self.analysis_locked = False
             self._sync_capture()
+            self.dirty = True
             return {}
+        if op == "setManualKey":
+            # Right-click on the KEY card: pin a key manually (e.g. "F#m").
+            # Persists until reset. Empty string clears the override.
+            self.manual_key = str(request.get("key", "")).strip()
+            self.dirty = True
+            return {"key": self.manual_key}
+        if op == "setManualBpm":
+            # Right-click on the BPM card: pin a tempo manually. Persists
+            # until reset. 0 clears the override.
+            try:
+                bpm = float(request.get("bpm", 0) or 0)
+            except (TypeError, ValueError):
+                bpm = 0.0
+            self.manual_bpm = bpm if bpm > 0 else 0.0
+            if self.metronome_enabled and self.manual_bpm > 0:
+                self.synth.set_metronome(True, self.manual_bpm)
+            self.dirty = True
+            return {"bpm": self.manual_bpm}
         if op == "setVisible":
             visible = bool(request.get("visible", True))
             if visible and not self.panel_visible:
@@ -2318,8 +2347,9 @@ class AudioAnalyzerBackend:
         if results:
             self.dirty = True
             self.shazam.feed(self.analyzer.buffer.last(6.0))
-            if self.metronome_enabled and self.analyzer.bpm > 0:
-                self.synth.set_metronome(True, self.analyzer.bpm)
+            bpm_now = self.manual_bpm or self.analyzer.bpm
+            if self.metronome_enabled and bpm_now > 0:
+                self.synth.set_metronome(True, bpm_now)
             # Stop hunting once the key is confidently established; space (or a
             # global hold) resumes/restarts it. Skipped while the neck TUI owns
             # the session, which wants continuous detection.
@@ -2473,6 +2503,7 @@ class AudioAnalyzerBackend:
             "resetAnalysis", "toggleRecording", "startRecording", "stopRecording",
             "setVisible", "setHold", "setSource", "setMetronome",
             "setPaused", "togglePaused", "setConfig", "resumeAnalysis", "importClick",
+            "setManualKey", "setManualBpm",
         }
         # CONSUMED = CLEARED: the command file is a one-shot TRANSPORT. Once a
         # command is read, the file must be emptied, otherwise a session's

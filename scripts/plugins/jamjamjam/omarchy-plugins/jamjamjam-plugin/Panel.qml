@@ -37,6 +37,11 @@ Panel {
   // Analysis is LIVE: the mic/monitor capture confirms it is on right now
   // (subscriber = hold active, panel opened, or the neck TUI session).
   readonly property bool analyzing: snapshot.recording === true
+  // Manual entry (right-click on the KEY/BPM cards): an inline editor. Only
+  // a reset returns those cards to their live state.
+  property bool manualEditing: false
+  property string manualTarget: ""   // "key" | "bpm"
+  readonly property string dashGlyph: "—"
   readonly property bool tuiActive: snapshot.tuiActive === true
   readonly property bool needsReset: snapshot.needsReset === true
   readonly property var configState: snapshot.config || ({ noteNaming: "flats" })
@@ -123,6 +128,31 @@ Panel {
   function toggle() { opened ? close() : open() }
 
   // Black or white, whichever reads best on the given fill (BT.601 luminance).
+  readonly property int valueRowHeight: Style.space(34)
+  readonly property int cardMetaHeight: Style.space(13)
+
+  // ── Manual entry (right-click on the KEY / BPM cards) ─────────────
+  // Pins a value that survives until a reset ('r' / resetAnalysis). The
+  // inline editor takes the keyboard (the key catcher is blocked meanwhile).
+  function beginManual(target) {
+    root.manualTarget = String(target)
+    root.manualEditing = true
+    manualInput.text = target === "key"
+      ? String(root.keyName || "")
+      : (root.bpm > 0 ? String(Math.round(root.bpm)) : "")
+    manualInput.forceActiveFocus()
+    manualInput.selectAll()
+  }
+  function commitManual() {
+    if (root.manualTarget === "key") {
+      if (root.service) root.service.setManualKey(manualInput.text)
+    } else if (root.manualTarget === "bpm") {
+      if (root.service) root.service.setManualBpm(manualInput.text)
+    }
+    root.manualEditing = false
+  }
+  function cancelManual() { root.manualEditing = false }
+
   function contrastText(fill) {
     return (0.299 * fill.r + 0.587 * fill.g + 0.114 * fill.b) < 0.5 ? "#ffffff" : "#000000"
   }
@@ -187,6 +217,8 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      // While the inline manual editor is open, all keys go to the editor.
+      blocked: root.manualEditing
       onCloseRequested: root.close()
       onTextKey: function(text) {
         // When the panel is PINNED, only capture keys if the popup actually
@@ -265,34 +297,22 @@ Panel {
             }
 
             Item {
-              // Title stack: the "jamjamjam" TITLE is vertically centred on
-              // the ♪ icon's height; the version caption (now noticeably
-              // smaller than the title) floats just above it, so the bold
-              // title itself sits exactly on the icon's axis.
-              width: Math.max(titleText.implicitWidth, versionText.implicitWidth)
-              height: titleText.implicitHeight + versionText.implicitHeight
+              // The TITLE is vertically centred on the ♪ icon's axis and
+              // enlarged (the version caption moved to the settings page).
+              width: titleText.implicitWidth
+              height: titleText.implicitHeight
 
               Text {
                 id: titleText
-                anchors.horizontalCenter: parent.horizontalCenter
-                // Centre the title on the icon's middle: from the Item's
-                // centre, shift up by half the caption's height.
-                y: (parent.parent.pinIconSize - titleText.implicitHeight) / 2 + (versionText.implicitHeight / 2)
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.left: parent.left
                 text: "jamjamjam"
                 // Red while the analyzer is LIVE (mic/monitor capture running)
                 color: root.analyzing ? Color.urgent : root.foreground
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.subtitle
+                font.pixelSize: Style.font.heading
                 font.bold: true
                 font.letterSpacing: Style.space(1)
-              }
-              Text {
-                id: versionText
-                anchors.horizontalCenter: titleText.horizontalCenter
-                text: "v" + (root.manifest && root.manifest.version !== undefined ? String(root.manifest.version) : "1.0.0")
-                color: Util.alpha(root.foreground, 0.55)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
               }
             }
           }
@@ -344,7 +364,9 @@ Panel {
               text: ""
               selected: root.inputIsMic
               bordered: false
-              foreground: root.inputIsMic ? root.accent : root.foreground
+              // Both the PC-audio and the mic icons are drawn in the theme
+              // accent (same treatment as the other header buttons).
+              foreground: root.accent
               accent: root.accent
               horizontalPadding: 0
               verticalPadding: 0
@@ -384,8 +406,9 @@ Panel {
             anchors.fill: parent
             spacing: Style.spacing.sm
 
-            // Key card
+            // ── KEY card: right-click to pin a manual key (reset clears) ──
             Rectangle {
+              id: keyCard
               width: (parent.width - parent.spacing * 2) * 0.42
               height: parent.height
               radius: Style.cornerRadius
@@ -405,21 +428,20 @@ Panel {
                 }
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
-                  text: root.keyName !== "" ? root.keyName : "—"
+                  height: root.valueRowHeight
+                  verticalAlignment: Text.AlignVCenter
+                  text: root.keyName !== "" ? root.keyName : root.dashGlyph
                   color: root.keyName !== "" ? root.contrastOn(root.accent, 0.16) : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.space(32)
                   font.bold: true
                 }
-                Item {
-                  width: parent.width
-                  height: Style.space(4)
-                  visible: root.keyName !== ""
-                }
                 Text {
-                  visible: root.keyName !== ""
                   anchors.horizontalCenter: parent.horizontalCenter
-                  text: "conf " + Math.round(root.analyzer.keyConfidence * 100) + "%"
+                  height: root.cardMetaHeight
+                  text: root.keyName !== ""
+                    ? "conf " + Math.round(root.analyzer.keyConfidence * 100) + "%"
+                    : ""
                   color: root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -429,18 +451,22 @@ Panel {
                 id: keyHzMouse
                 anchors.fill: parent
                 hoverEnabled: true
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
                 cursorShape: Qt.PointingHandCursor
+                onClicked: function(mouse) {
+                  if (mouse.button === Qt.RightButton) root.beginManual("key")
+                }
               }
-              // Click KEY → root-note Hz tooltip (inline, A4 = 440 Hz).
               PanelToolTip {
-                visible: keyHzMouse.containsMouse
-                text: root.keyRootHz(root.keyName) || "hover for the root Hz"
+                visible: keyHzMouse.containsMouse && !root.manualEditing
+                text: (root.keyRootHz(root.keyName) || "hover for the root Hz")
+                  + "  ·  right-click to set a manual key"
                 fontFamily: root.fontFamily
               }
             }
 
-            // BPM card — click toggles the metronome (,) — while enabled the card
-            // flashes white once per beat at the analysed BPM.
+            // ── BPM card: left-click toggles the metronome, right-click pins
+            //    a manual tempo (reset clears) ──
             Rectangle {
               id: bpmCard
               width: (parent.width - parent.spacing * 2) * 0.18
@@ -458,21 +484,6 @@ Panel {
                 Behavior on opacity { NumberAnimation { duration: 60 } }
               }
 
-              MouseArea {
-                id: bpmMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: if (root.service) root.service.setMetronome(!root.metronomeEnabled)
-              }
-              // Long hover on the BPM zone shows the "m" metronome toggle
-              // (the panel's own tooltip pattern).
-              PanelToolTip {
-                visible: bpmMouse.containsMouse
-                text: "Toggle metronome — click or 'm'"
-                fontFamily: root.fontFamily
-              }
-
               Column {
                 anchors.centerIn: parent
                 spacing: Style.spacing.xs
@@ -487,17 +498,43 @@ Panel {
                 }
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
-                  text: root.bpm > 0 ? Math.round(root.bpm) : "—"
+                  height: root.valueRowHeight
+                  verticalAlignment: Text.AlignVCenter
+                  text: root.bpm > 0 ? Math.round(root.bpm) : root.dashGlyph
                   color: root.bpm > 0 ? root.contrastOn(root.accent, 0.16) : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.space(32)
                   font.bold: true
                 }
+                // Same reserved meta row as KEY so the labels line up.
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  height: root.cardMetaHeight
+                  text: ""
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
+              MouseArea {
+                id: bpmMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                cursorShape: Qt.PointingHandCursor
+                onClicked: function(mouse) {
+                  if (mouse.button === Qt.RightButton) root.beginManual("bpm")
+                  else if (root.service) root.service.setMetronome(!root.metronomeEnabled)
+                }
+              }
+              PanelToolTip {
+                visible: bpmMouse.containsMouse && !root.manualEditing
+                text: "Metronome (m)  ·  right-click to set a manual BPM"
+                fontFamily: root.fontFamily
               }
             }
 
-            // Chord card: the detected chord name only (the notes have their
-            // own line below).
+            // ── CHORD card: same three-row layout (label / value / meta) and
+            //    the SAME dash as the other cards ──
             Rectangle {
               width: (parent.width - parent.spacing * 2) * 0.40
               height: parent.height
@@ -518,19 +555,76 @@ Panel {
                 }
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
+                  height: root.valueRowHeight
+                  verticalAlignment: Text.AlignVCenter
                   width: parent.width
                   horizontalAlignment: Text.AlignHCenter
                   elide: Text.ElideRight
-                  text: root.currentAudioChord !== "" ? root.currentAudioChord : "—"
+                  text: root.currentAudioChord !== "" ? root.currentAudioChord : root.dashGlyph
                   color: root.currentAudioChord !== "" ? root.contrastOn(Color.urgent, 0.16) : root.muted
                   font.family: root.fontFamily
-                  font.pixelSize: root.currentAudioChord !== "" ? Style.space(26) : Style.space(14)
+                  font.pixelSize: Style.space(32)
                   font.bold: true
+                }
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  height: root.cardMetaHeight
+                  text: ""
+                  font.pixelSize: Style.font.caption
+                }
+              }
+            }
+          }
+
+          // Inline manual editor overlay (right-click on KEY/BPM).
+          Rectangle {
+            id: manualEditor
+            visible: root.manualEditing
+            anchors.fill: parent
+            radius: Style.cornerRadius
+            color: Util.alpha(Color.background, 0.92)
+            border.width: 1
+            border.color: root.accent
+
+            Column {
+              anchors.centerIn: parent
+              spacing: Style.spacing.sm
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: root.manualTarget === "key"
+                  ? "Manual KEY (e.g. F#m, Bb) — Enter to apply, Esc to cancel"
+                  : "Manual BPM (40–240) — Enter to apply, Esc to cancel"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Style.space(180)
+                height: Style.space(30)
+                radius: Style.cornerRadius
+                color: Util.alpha(Color.foreground, 0.08)
+                border.width: 1
+                border.color: root.accent
+                TextInput {
+                  id: manualInput
+                  anchors.fill: parent
+                  anchors.leftMargin: Style.space(6)
+                  anchors.rightMargin: Style.space(6)
+                  verticalAlignment: TextInput.AlignVCenter
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  selectByMouse: true
+                  focus: root.manualEditing
+                  Keys.onEscapePressed: root.cancelManual()
+                  onAccepted: root.commitManual()
                 }
               }
             }
           }
         }
+
 
         // ─── Tuner (input pitch detection) ────────────────────────
         Item {
@@ -1363,6 +1457,27 @@ Panel {
                 font.pixelSize: Style.font.caption
                 text: "AEC extracts the PC's own output audio from the tuner's mic (phase subtraction) when the output is loud enough to be picked up."
                 wrapMode: Text.WordWrap
+              }
+
+              // ─── Footer: version + every keybinding ───────────────
+              Text {
+                width: parent.width
+                topPadding: Style.spacing.sm
+                color: Util.alpha(root.foreground, 0.5)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                text: "jamjamjam v"
+                  + (root.manifest && root.manifest.version !== undefined ? String(root.manifest.version) : "1.0.0")
+                  + " · ultra-alpha (some features are still rough)"
+                wrapMode: Text.WordWrap
+              }
+              Text {
+                width: parent.width
+                color: Util.alpha(root.foreground, 0.6)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+                text: "KEYS — space: analyze hold · r: reset · g: open neck TUI · s: settings · m: metronome · ,: pause · p: pin/unpin · n: note naming (in settings) · right-click KEY/BPM: manual entry (cleared by r)"
               }
             }
           }
