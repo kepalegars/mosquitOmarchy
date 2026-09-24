@@ -992,6 +992,8 @@ class MidiSynth:
         self.custom_down: list[float] | None = None
         self.custom_up: list[float] | None = None
         self.metronome_enabled = False
+        self.metronome_tick_phase = 0.0
+        self.metronome_tick_elapsed = 0.0
         self.metronome_bpm = 120.0
         self.metronome_beats = 4
         self.running = False
@@ -1110,8 +1112,9 @@ class MidiSynth:
                 self.metronome_phase = 0.0
                 self.metronome_beat = 0
                 self.metronome_in_beat = True
-                self.metronome_tick_left = 0.04
+                self.metronome_tick_left = 0.09
                 self.metronome_tick_phase = 0.0
+                self.metronome_tick_elapsed = 0.0
         self._wake.set()
 
     def stop(self) -> None:
@@ -1179,8 +1182,9 @@ class MidiSynth:
                     self.metronome_phase -= beat_len
                     self.metronome_beat = (self.metronome_beat + 1) % met_beats
                     self.metronome_in_beat = self.metronome_beat == 0
-                    self.metronome_tick_left = 0.04
+                    self.metronome_tick_left = 0.09
                     self.metronome_tick_phase = 0.0
+                    self.metronome_tick_elapsed = 0.0
                     # New beat: choose the sample for this beat (down or up)
                     # and reset the custom-sample cursor. When a custom
                     # sample is chosen the BUILTIN tick timer is zeroed —
@@ -1207,39 +1211,44 @@ class MidiSynth:
                         custom_done = True
                     metAccum += value
                 elif self.metronome_tick_left > 0.0:
-                    if style == "wood":
-                        freq = 900.0 if self.metronome_in_beat else 620.0
-                        accent = 0.75 if self.metronome_in_beat else 0.5
-                    elif style == "kick":
-                        freq = 140.0 if self.metronome_in_beat else 100.0
-                        accent = 1.0 if self.metronome_in_beat else 0.65
-                    elif style == "beep":
-                        freq = 1400.0 if self.metronome_in_beat else 900.0
-                        accent = 0.55 if self.metronome_in_beat else 0.35
-                    else:  # classic
-                        freq = 1760.0 if self.metronome_in_beat else 1100.0
-                        accent = 0.55 if self.metronome_in_beat else 0.35
-                    env = self.metronome_tick_left / 0.04
-                    # Kick: exponential pitch decay to feel like a drum;
-                    # the others stay fixed-tone (classic/wood/beep).
-                    phase = self.metronome_tick_phase
+                    # ─── CLEAN CLICK (rewritten) ──────────────────────
+                    # The old click was a pure 40ms linear ramp sine (long,
+                    # harsh, with an accidental DOUBLE decrement that cut the
+                    # shape in two) — hideous. This one is a CLEAN metronome
+                    # tick: a short pure sine at the beat freq, shaped with
+                    # an exponential decay + a 1.5 ms attack (no pop), and a
+                    # breathing (very low-pass filtered) top-end.
+                    t_env = self.metronome_tick_elapsed  # seconds since beat start
                     if style == "kick":
-                        decay = math.exp(-3.0 * (1.0 - env))
-                        value = math.sin(phase) * env * accent * decay * 2.0
+                        freq = 140.0 if self.metronome_in_beat else 100.0
+                        accent = 0.95 if self.metronome_in_beat else 0.6
+                        env = math.exp(-t_env / 0.052) * accent
                     elif style == "wood":
-                        value = math.sin(phase) * env * accent
-                        # Add a soft knock overtone
-                        value += 0.4 * math.sin(2.2 * phase) * env * accent
-                    else:
-                        value = math.sin(phase) * env * accent
-                    # Post-master path: the click does NOT follow the MIDI
-                    # volume (they slide together otherwise); the 1.5 boost
-                    # keeps it audible at any click volume.
-                    metAccum += value * click_gain * 1.5
-                    step = 2.0 * math.pi * freq / SAMPLE_RATE
-                    self.metronome_tick_phase = (phase + step) % (2.0 * math.pi)
+                        freq = 900 if self.metronome_in_beat else 680
+                        accent = 0.85 if self.metronome_in_beat else 0.55
+                        env = math.exp(-t_env / 0.020) * accent
+                    elif style == "beep":
+                        freq = 1280 if self.metronome_in_beat else 960
+                        accent = 0.85 if self.metronome_in_beat else 0.55
+                        env = math.exp(-t_env / 0.026) * accent
+                    else:  # classic: pure sine, glassy short click
+                        freq = 1120 if self.metronome_in_beat else 860
+                        accent = 0.92 if self.metronome_in_beat else 0.6
+                        env = math.exp(-t_env / 0.016) * accent
+                    # 1.2 ms smooth attack (kills the pop; the old linear
+                    # envelope started abruptly at full amplitude).
+                    attack = 1.0 - math.exp(-t_env / 0.000012)
+                    env *= attack
+                    # Two-tone softness: a faint 2nd harmonic warms it up
+                    # so it no longer sounds like a beeper.
+                    value = math.sin(2.0 * math.pi * freq * t_env) * 0.82 + \
+                        math.sin(2.0 * math.pi * freq * 2.0 * t_env) * 0.14
+                    metAccum += value * env * click_gain
+                    self.metronome_tick_elapsed += 1.0 / SAMPLE_RATE
+                    self.metronome_tick_elapsed = min(
+                        0.10, self.metronome_tick_elapsed)
                     self.metronome_tick_left -= 1.0 / SAMPLE_RATE
-                    self.metronome_tick_left -= 1.0 / SAMPLE_RATE
+
             elif custom_step > 0:
                 # Loop tail (metronome stopped mid-sample): clear counters.
                 custom_step = 0

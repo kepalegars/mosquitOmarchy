@@ -34,6 +34,9 @@ Panel {
   readonly property var mic: snapshot.mic || ({ available: true, muted: false })
   readonly property bool micCut: mic.available === false || mic.muted === true
   readonly property bool paused: snapshot.paused === true
+  // Analysis is LIVE: the mic/monitor capture confirms it is on right now
+  // (subscriber = hold active, panel opened, or the neck TUI session).
+  readonly property bool analyzing: snapshot.recording === true
   readonly property bool tuiActive: snapshot.tuiActive === true
   readonly property bool needsReset: snapshot.needsReset === true
   readonly property var configState: snapshot.config || ({ noteNaming: "flats" })
@@ -42,23 +45,11 @@ Panel {
   readonly property real metronomeBpm: root.bpm > 0 ? root.bpm : Number(metronome.bpm || 120)
   property bool beatPulse: false
   property bool settingsVisible: false
-  // IMperative resize: the settings pane fits the size the MAIN page was
-  // rendering at the moment the user CAME INTO settings (not a constant).
-  // Captured in toggleSettings() right before the main blocks are hidden, so
-  // the panel never changes size only because settings are toggled — even if
-  // nothing else changed in between.
-  property real settingsReserveH: 0
+  // FIXED settings size: the settings pane occupies the layout-cost of the
+  // main page it replaces (cards + tuner + chord zone + fretboard + the
+  // hidden column gaps minus the visible ones), CONSTANT — it does not
+  // follow whatever the main page was rendering at open time.
   function toggleSettings() {
-    if (!root.settingsVisible) {
-      // Capture BEFORE hiding the main content: the pane will occupy
-      // exactly this much (header + SETTINGS row + flick + toolbar + the
-      // three column gaps must add up to it).
-      root.settingsReserveH = column.implicitHeight
-      console.log("jamjamjam: settings open — captured reserve columnH",
-                  Math.round(column.implicitHeight), "popupH",
-                  Math.round(popup.contentHeight), "header",
-                  root.headerHeight, "toolbar", Math.round(toolbarRow.height))
-    }
     root.settingsVisible = !root.settingsVisible
   }
 
@@ -288,7 +279,8 @@ Panel {
                 // centre, shift up by half the caption's height.
                 y: (parent.parent.pinIconSize - titleText.implicitHeight) / 2 + (versionText.implicitHeight / 2)
                 text: "jamjamjam"
-                color: root.foreground
+                // Red while the analyzer is LIVE (mic/monitor capture running)
+                color: root.analyzing ? Color.urgent : root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.subtitle
                 font.bold: true
@@ -529,7 +521,7 @@ Panel {
                   width: parent.width
                   horizontalAlignment: Text.AlignHCenter
                   elide: Text.ElideRight
-                  text: root.currentAudioChord !== "" ? root.currentAudioChord : "· · ·"
+                  text: root.currentAudioChord !== "" ? root.currentAudioChord : "—"
                   color: root.currentAudioChord !== "" ? root.contrastOn(Color.urgent, 0.16) : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: root.currentAudioChord !== "" ? Style.space(26) : Style.space(14)
@@ -712,7 +704,7 @@ Panel {
               anchors.verticalCenterOffset: (root.analysisLocked || root.songChanged || (root.song && root.song.match)) ? -Style.space(8) : 0
               text: root.currentAudioChord !== ""
                 ? (root.chordNotes.length > 0 ? root.chordNotes.join(" ") : root.currentAudioChord)
-                : (root.noChordSignal ? "could not find the chord" : "· · ·")
+                : "—"
               color: root.currentAudioChord !== "" ? root.contrastOn(Color.urgent, 0.16) : root.muted
               font.family: root.fontFamily
               font.pixelSize: root.currentAudioChord !== "" ? Style.space(20) : Style.space(12)
@@ -1085,20 +1077,14 @@ Panel {
           Flickable {
             id: settingsFlick
             width: parent.width
-            // Fixed scroll viewport: the pane spends EXACTLY the height the
-            // main page was rendering at the moment settings were opened
-            // (captured in toggleSettings()). Vertical budget (measured on
-            // the open pane): header + gap + SETTINGS row + gap + FLICK +
-            // gap + toolbar → so:
-            //   flick = reserve − header − settingsRow − toolbar
-            //           − 2·column gap − 1·settingsContent gap.
-            // NO Math.min here: even when settings content is shorter than
-            // the pane, the pane keeps the main page's full size (whitespace
-            // at the bottom, scrollbar handles the overflow).
-            height: Math.max(Style.space(360),
-                              root.settingsReserveH - root.headerHeight
-                              - settingsHeaderRow.height - toolbarRow.height
-                              - 2 * column.spacing - settingsContent.spacing)
+            // FIXED height sized to the layout-cost of the page it replaces
+            // (cards 110 + tuner 190 + chord zone 56 + fretboard 180) so
+            // toggling settings NEVER changes the panel size — a constant,
+            // independent of what the main page was rendering when you
+            // toggled into it.
+            height: Style.space(110) + Style.space(190) + Style.space(56)
+                    + Style.space(180)
+                    + Style.spacing.md - Style.spacing.sm
             implicitHeight: height
             contentWidth: width
             contentHeight: settingsRows.implicitHeight
