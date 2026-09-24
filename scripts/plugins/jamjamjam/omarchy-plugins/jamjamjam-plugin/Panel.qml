@@ -54,6 +54,10 @@ Panel {
       // exactly this much (header + SETTINGS row + flick + toolbar + the
       // three column gaps must add up to it).
       root.settingsReserveH = column.implicitHeight
+      console.log("jamjamjam: settings open — captured reserve columnH",
+                  Math.round(column.implicitHeight), "popupH",
+                  Math.round(popup.contentHeight), "header",
+                  root.headerHeight, "toolbar", Math.round(toolbarRow.height))
     }
     root.settingsVisible = !root.settingsVisible
   }
@@ -368,7 +372,6 @@ Panel {
               horizontalPadding: 0
               verticalPadding: 0
               selected: root.settingsVisible
-              bordered: false
               bordered: false
               foreground: root.settingsVisible ? root.accent : root.muted
               accent: root.accent

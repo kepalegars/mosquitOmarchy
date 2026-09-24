@@ -1251,8 +1251,12 @@ class MidiSynth:
         try:
             self._process = subprocess.Popen(
                 [
-                    "pw-cat", "--playback", "--raw", "--format", "s16", "--rate", str(SAMPLE_RATE),
-                    "--channels", "1", "--latency", "128", "--media-role", "Music", "-",
+                    # Name the stream "jamjamjam" so the audio panel (and
+                    # wpctl) shows the plugin, not a generic "pw-cat".
+                    "pw-cat", "-P", 'media.name=jamjamjam, application.name="jamjamjam (synth)", node.name="jamjamjam-click"',
+                    "--playback", "--raw", "--format", "s16", "--rate", str(SAMPLE_RATE),
+                    "--channels", "1", "--latency", "128", "--media-role", "Music",
+                    "-",
                 ],
                 stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, bufsize=0,
             )

@@ -801,7 +801,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// search input that echoes every pressed key in real time.
 		if km, ok := msg.(tea.KeyMsg); ok {
 			switch km.String() {
-			case "f":
+			case "F", "shift+F":
 				if m.filterOpen {
 					// Closing also clears the filter (list resets full).
 					m.filterOpen = false
@@ -851,7 +851,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// refines this category's rows; esc closes the zone.
 		if km, ok := msg.(tea.KeyMsg); ok {
 			switch km.String() {
-			case "F": // SHIFT+F toggles the filter zone (esc also closes)
+			case "F", "shift+F": // SHIFT+F toggles the filter zone (esc also closes)
 				if m.filterOpen {
 					m.filterOpen = false
 					m.filterText = ""
