@@ -218,7 +218,7 @@ Panel {
                 text: "v" + (root.manifest && root.manifest.version !== undefined ? String(root.manifest.version) : "1.0.0")
                 color: Util.alpha(root.foreground, 0.55)
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.micro
+                font.pixelSize: Style.font.bodySmall
               }
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -804,7 +804,6 @@ Panel {
               }
             }
           }
-        }
 
         // ─── MIDI section (compact, no wrapper box) ───────────────
         Column {
@@ -1273,11 +1272,11 @@ Panel {
                 }
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
-                  visible: root.metronome.customDown || root.metronome.customUp
+                  visible: String(root.metronome.customDown || "") !== "" || String(root.metronome.customUp || "") !== ""
                   width: parent.width
-                  text: root.metronome.customDown
-                    ? "↓ " + (root.metronome.customDown.split("/").pop() || "")
-                      + (root.metronome.customUp ? "   ↑ " + root.metronome.customUp.split("/").pop() : "")
+                  text: String(root.metronome.customDown || "") !== ""
+                    ? "↓ " + String(root.metronome.customDown || "").split("/").pop()
+                      + (String(root.metronome.customUp || "") !== "" ? "   ↑ " + String(root.metronome.customUp || "").split("/").pop() : "")
                     : ""
                   elide: Text.ElideMiddle
                   color: root.muted
