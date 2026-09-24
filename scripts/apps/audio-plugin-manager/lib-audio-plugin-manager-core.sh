@@ -675,6 +675,59 @@ ensure_mfc42() {
   fi
 }
 
+# match_installed_plugin <installer-path> — when an installer produced NO new
+# file because the plugin is ALREADY installed (a reinstall/update, or files
+# written with archive timestamps that pre-date the run), match the installer
+# to existing plugin files by name tokens so the run still counts as success.
+# Tokens come from the installer filename and its parent folder, minus generic
+# installer words and pure numbers (e.g. "Install_Xfer_Serum2_2.0.16.exe" in
+# ".../Serum 2/WIN/" -> "serum2" / "serum").
+match_installed_plugin() {
+  local installer="$1" dir base tok
+  base="$(basename -- "$installer")"; base="${base%.*}"
+  dir="$(basename -- "$(dirname -- "$installer")")"
+  local -a toks=()
+  _mt_add_tokens() {
+    local raw="$1" t
+    raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' ' ')"
+    for t in $raw; do
+      case "$t" in
+        install|installer|setup|win|windows|win64|win32|x64|x86|amd64|no|password|exe|v|version|r2r|rls|mac|linux|dmg|zip|audio|plugins?|vst|vst3|vst2|clap) continue ;;
+      esac
+      [[ "$t" =~ ^[0-9]+([.][0-9]+)*$ ]] && continue
+      (( ${#t} >= 4 )) && toks+=("$t")
+    done
+  }
+  _mt_add_tokens "$base"
+  _mt_add_tokens "$dir"
+  ((${#toks[@]})) || return 0
+  # Longest tokens first: a more specific match wins.
+  local -a sorted
+  mapfile -t sorted < <(printf '%s\n' "${toks[@]}" | awk '{print length, $0}' | sort -rn | cut -d' ' -f2- | awk '!seen[$0]++')
+  local f low best=0
+  local -a hits=()
+  while IFS= read -r f; do
+    low="$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')"
+    for tok in "${sorted[@]}"; do
+      (( ${#tok} > best )) || continue
+      if [[ $low == *"$tok"* ]]; then
+        hits+=("$f")
+        [[ ${#tok} -gt best ]] && best=${#tok}
+        break
+      fi
+    done
+  done < <(list_shared_plugin_files)
+  # Keep only hits matching the MOST specific token length.
+  for f in "${hits[@]:-}"; do
+    [[ -n $f ]] || continue
+    low="$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')"
+    for tok in "${sorted[@]}"; do
+      [[ ${#tok} == "$best" ]] || continue
+      [[ $low == *"$tok"* ]] && { printf '%s\n' "$f"; break; }
+    done
+  done | sort -u
+}
+
 install_plugin() {
   local file="$1" wine_prefix="${2:-$(default_prefix)}" f dst base
   # The prefix must point at the shared folders BEFORE the installer runs,
@@ -764,6 +817,21 @@ install_plugin() {
 
   rm -f "$before" "$after" "$before_pfx" "$after_pfx"
 
+
+  if ((${#newfiles[@]} == 0)); then
+    # Reinstall/update: the plugin is already there and the installer
+    # rewrote it in place (possibly with an old archive mtime), so no NEW
+    # path appeared. Match the installer to the existing plugin(s).
+    local -a matched=()
+    while IFS= read -r f; do [[ -n $f ]] && matched+=("$f"); done < <(match_installed_plugin "$file")
+    if ((${#matched[@]})); then
+      msg "Installer produced no NEW file — matching already-installed plugin(s) found:"
+      for f in "${matched[@]}"; do
+        ok "$(basename "$f") (already installed — matched to $(basename "$file"))"
+        newfiles+=("$f")
+      done
+    fi
+  fi
 
   if ((${#newfiles[@]} == 0)); then
     # An install that produced NO plugin file is a FAILED (or aborted by
