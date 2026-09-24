@@ -1189,15 +1189,11 @@ Panel {
           Flickable {
             id: settingsFlick
             width: parent.width
-            // FIXED height sized to the layout-cost of the page it replaces
-            // (cards 110 + tuner 190 + chord zone 56 + fretboard 180) so
-            // toggling settings NEVER changes the panel size — a constant,
-            // independent of what the main page was rendering when you
-            // toggled into it.
-            height: Style.space(110) + Style.space(190) + Style.space(56)
-                    + Style.space(180)
-                    + Style.spacing.md - Style.spacing.sm
-                    - Style.space(120)
+            // The settings pane sizes to its CONTENT (no big empty area):
+            // it shrinks to whatever the settings rows need, capped so a
+            // long list still scrolls. The pinned footer (version) sits
+            // below, always at the very bottom.
+            height: Math.min(settingsRows.implicitHeight, Style.space(360))
             implicitHeight: height
             contentWidth: width
             contentHeight: settingsRows.implicitHeight
