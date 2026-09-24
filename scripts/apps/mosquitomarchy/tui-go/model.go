@@ -59,7 +59,7 @@ type model struct {
 	// are toggled with tab (same multi-select convention as Setup/Update) and
 	// only the checked ones are re-applied.
 	healthPicker navPicker
-	// pickPicker backs the TOP-LEVEL "Settings" screen (plugin toggles).
+	// pickPicker backs the TOP-LEVEL "Extras" screen (plugin toggles).
 	pickPicker navPicker
 	backupPicker navPicker
 	// backupOptPicker drives the Backup options screen; backupAppsPicker is
@@ -220,7 +220,7 @@ func mainMenuItems() []tuikit.PickerItem {
 		{Display: "Uninstall", Value: "uninstall"},
 		{Display: "Health check", Value: "health"},
 		{Display: "Backup / Restore", Value: "backup"},
-		{Display: "Settings", Value: "settings"},
+		{Display: "Extras", Value: "settings"},
 		{Display: "Close", Value: "close"},
 	}
 }

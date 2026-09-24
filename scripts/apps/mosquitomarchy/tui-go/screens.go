@@ -1093,7 +1093,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.backupPicker = newNavPicker("", backupActions()).SetSize(m.contentSize())
 			return m, nil
 		case "settings":
-			// Plugin-level toggles from the main menu (the "Settings" row
+			// Plugin-level toggles from the main menu (the "Extras" row
 			// right before Close).
 			m.push(scrSettings)
 			m.pickPicker = newNavPicker("Extras:", settingsItems2()).SetSize(m.contentSize())
@@ -2054,9 +2054,9 @@ func crashNotify() bool {
 
 func crashNotifyLabel() string {
 	if crashNotify() {
-		return "Crash notifications (AI diagnosis): on — Enter to disable"
+		return "Crash notifications (AI diagnosis): on"
 	}
-	return "Crash notifications (AI diagnosis): off — Enter to enable"
+	return "Crash notifications (AI diagnosis): off"
 }
 
 

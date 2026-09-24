@@ -151,7 +151,7 @@ func (m model) View() string {
 		body = m.kbInput.View()
 		bar = barLine(m.kbInput.ShortcutsHint())
 	case scrSettings:
-		title = screenTitle("Settings", w)
+		title = screenTitle("Extras", w)
 		body = m.pickPicker.View()
 		bar = barLine(m.pickPicker.ShortcutsHint())
 	case scrBackup:
