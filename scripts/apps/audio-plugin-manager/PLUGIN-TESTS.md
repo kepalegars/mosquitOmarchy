@@ -28,14 +28,25 @@ Format:
 - Remaining note: none — scan fallback makes the status a plain success, the
   log line ends with the plugin being registered.
 
-## SmartEQ4 (Sonible) — VST2/VST3 — ⏳ (patch ready)
-- The Sonible InnoSetup installer FAILS on the stock wine prefix with
-  "Runtime error (at -1:0): Cannot import dll: <utf8>…\is-XXXX.tmp\ISSKINU.DLL"
-  — the InnoSetup SKIN runtime needs native MFC42/MFC42u.
-- The audio-plugin-manager now runs a PRE-INSTALLATION PATCH (winetricks mfc42
-  into the target prefix) whenever the installer path/name earns the STRONG
-  detection (smarteq/sonible). Confirm the prompt and the install proceeds.
-  (Same scheme likely fixes other Sonible installers — to be tested.)
+## SmartEQ4 (Sonible / smart chain 1.0.0) — VST2 + VST3 — ✅ (with runtime fix)
+- Installed 2026-09-24 23:46 into ~/.wine-vst, sharing into
+  `vst/Sonible/smartEQ4.dll` and `vst3/Sonible/smartEQ4.vst3` (the installer
+  wrote them in a `Sonible/` subfolder with OLD archive mtimes — 2024-04-03).
+
+- Pre-install MFC42 (ISSKINU.DLL Inno skin runtime) is now AUTOMATIC on every
+  Sonible installer — the TUI's non-interactive runner had been silently
+  refusing the old prompt, which is why SmartEQ4 kept failing with
+  "Cannot import dll: …ISSKINU.DLL".
+- SECOND crash fixed the same day: the plugin imports
+  `sonible_onnxruntime_v1-15-1.dll`, which the installer drops in the PREFIX
+  system32 while yabridge loads the plugin from the SHARED folder under
+  whatever prefix the DAW owns (`wine prefix: <default>`) → import_dll not
+  found → Bitwig/REAPER's plugin host died hard at startup (exit 134). Fix:
+  `fix_sonible_runtime_deps()` (post_install) copies every `sonible_*.dll`
+  runtime NEXT TO each installed sonible plugin; applied on this machine for
+  both the VST2 and VST3 copies.
+- After the fix + `yabridgectl sync`: the plugin should load in the DAWs
+  (rescan the plugin list once).
 
 ## CrispyTuner — ⚠️
 - Editor needs an input rule; the entry after an install offers the plugin

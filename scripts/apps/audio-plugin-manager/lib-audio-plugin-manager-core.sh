@@ -728,6 +728,41 @@ match_installed_plugin() {
   done | sort -u
 }
 
+# fix_sonible_runtime_deps <prefix> — Sonible plugins (smartEQ4 …) import
+# `sonible_onnxruntime_v1-15-1.dll`, which their installer drops into the
+# PREFIX system32. yabridge hosts load the plugin from the SHARED folder and
+# may run under a DIFFERENT wine prefix (the DAW's own, shown as
+# "wine prefix: <default>"), where that runtime is missing → import_dll not
+# found → the yabridge host dies hard and the DAW (Bitwig, REAPER…) crashes
+# at startup. Fix: copy the sonible runtime NEXT TO every installed sonible
+# plugin (its Contents/x86_64-win bundle dir for VST3 bundles, the plugin
+# folder otherwise) so Windows' LoadLibrary finds it in the module's own
+# directory whatever prefix loads it. Idempotent.
+fix_sonible_runtime_deps() {
+  local prefix="$1" src p dir
+  [[ -d $prefix/drive_c ]] || return 0
+  local -a runtimes=()
+  while IFS= read -r src; do
+    [[ -n $src ]] && runtimes+=("$src")
+  done < <(find "$prefix/drive_c/windows/system32" "$prefix/drive_c/windows/syswow64" \
+             -maxdepth 1 -iname 'sonible_*.dll' -printf '%p\n' 2>/dev/null | sort -u)
+  ((${#runtimes[@]})) || return 0
+  local -a targets=()
+  while IFS= read -r p; do
+    [[ -n $p ]] && targets+=("$p")
+  done < <(list_shared_plugin_files | grep -i sonible | sort -u)
+  for p in "${targets[@]:-}"; do
+    [[ -n $p ]] || continue
+    dir="$(dirname "$p")"
+    [[ -d $dir ]] || continue
+    for src in "${runtimes[@]}"; do
+      if [[ ! -e "$dir/$(basename "$src")" ]]; then
+        cp -f -- "$src" "$dir/" && ok "sonible runtime → $dir/$(basename "$src")"
+      fi
+    done
+  done
+}
+
 install_plugin() {
   local file="$1" wine_prefix="${2:-$(default_prefix)}" f dst base
   # The prefix must point at the shared folders BEFORE the installer runs,
@@ -902,6 +937,11 @@ register_standalones_from_prefix() {
 }
 
 post_install() {
+  local pf
+  for pf in "${WINE_PREFIXES[@]:-}"; do
+    fix_sonible_runtime_deps "$pf"
+  done
+  fix_sonible_runtime_deps "$(default_prefix)"
   if command -v yabridgectl >/dev/null; then
     yabridgectl sync >/dev/null 2>&1 && ok "yabridgectl sync OK"
   fi
