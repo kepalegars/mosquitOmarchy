@@ -739,7 +739,12 @@ match_installed_plugin() {
 # folder otherwise) so Windows' LoadLibrary finds it in the module's own
 # directory whatever prefix loads it. Idempotent.
 fix_sonible_runtime_deps() {
-  local prefix="$1" src p dir
+  # Overload semantics: $1 = the SOURCE prefix. The runtime is ALSO written
+  # into EVERY other known wine prefix's system32 (the DAWs may load the
+  # plugin under the DEFAULT ~/.wine or under Ableton's), because Windows'
+  # LoadLibrary looks in the .exe dir + System32 of the ACTIVE prefix — not
+  # in the plugin's own folder.
+  local prefix="$1" src p dir other
   [[ -d $prefix/drive_c ]] || return 0
   local -a runtimes=()
   while IFS= read -r src; do
@@ -761,6 +766,22 @@ fix_sonible_runtime_deps() {
       fi
     done
   done
+  # And into every OTHER wine prefix's system32 (the active one when the
+  # DAW loads the bridge). Covers ~/.wine (the DAWs' default), ~/.wine-ableton…
+  while IFS= read -r other; do
+    [[ -n $other && -d $other/drive_c/windows/system32 ]] || continue
+    for src in "${runtimes[@]}"; do
+      [[ -e "$other/drive_c/windows/system32/$(basename "$src")" ]] && continue
+      cp -f -- "$src" "$other/drive_c/windows/system32/" && \
+        ok "sonible runtime → $other/drive_c/windows/system32/"
+    done
+  done < <(
+    {
+      printf '%s\n' "$HOME/.wine" "$HOME/.wine-ableton"
+      for p in "${WINE_PREFIXES[@]:-}"; do printf '%s\n' "$p"; done
+      default_prefix 2>/dev/null || true
+    } | grep -vxF -- "$prefix" | sort -u
+  )
 }
 
 install_plugin() {
