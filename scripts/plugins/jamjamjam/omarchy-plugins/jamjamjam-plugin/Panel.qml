@@ -156,6 +156,27 @@ Panel {
   }
   function cancelManual() { root.manualEditing = false }
 
+  // TAP TEMPO: keep the last 6 inter-tap intervals; the BPM is 60 / mean.
+  readonly property int tapMax: 6
+  property var tapTimes: []
+  property real tapLast: 0
+  function tapTempoBeat() {
+    var now = Date.now()
+    if (root.tapLast <= 0 || (now - root.tapLast) > 2500) {
+      // First tap of a new phrase: reset the buffer.
+      root.tapTimes = []
+    } else {
+      var interval = now - root.tapLast
+      root.tapTimes.push(interval)
+      if (root.tapTimes.length > root.tapMax) root.tapTimes.shift()
+      var bpm = Math.round(60000 / root.tapTimes
+        .reduce(function(a, b) { return a + b }, 0) / root.tapTimes.length)
+      bpm = Math.max(40, Math.min(240, bpm))
+      manualInput.text = String(bpm)
+    }
+    root.tapLast = now
+  }
+
   function contrastText(fill) {
     return (0.299 * fill.r + 0.587 * fill.g + 0.114 * fill.b) < 0.5 ? "#ffffff" : "#000000"
   }
@@ -609,32 +630,56 @@ Panel {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: root.manualTarget === "key"
                   ? "Manual KEY (e.g. F#m, Bb) — Enter to apply, Esc to cancel"
-                  : "Manual BPM (40–240) — Enter to apply, Esc to cancel"
+                  : "Manual BPM — Enter to apply, Esc to cancel"
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
-              Rectangle {
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: Style.space(180)
+              Item {
+                width: parent.width
                 height: Style.space(30)
-                radius: Style.cornerRadius
-                color: Util.alpha(Color.foreground, 0.08)
-                border.width: 1
-                border.color: root.accent
-                TextInput {
-                  id: manualInput
-                  anchors.fill: parent
-                  anchors.leftMargin: Style.space(6)
-                  anchors.rightMargin: Style.space(6)
-                  verticalAlignment: TextInput.AlignVCenter
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  selectByMouse: true
-                  focus: root.manualEditing
-                  Keys.onEscapePressed: root.cancelManual()
-                  onAccepted: root.commitManual()
+
+                Rectangle {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  width: Style.space(180)
+                  height: parent.height
+                  radius: Style.cornerRadius
+                  color: Util.alpha(Color.foreground, 0.08)
+                  border.width: 1
+                  border.color: root.accent
+                  TextInput {
+                    id: manualInput
+                    anchors.fill: parent
+                    anchors.leftMargin: Style.space(6)
+                    anchors.rightMargin: Style.space(6)
+                    verticalAlignment: TextInput.AlignVCenter
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    selectByMouse: true
+                    focus: root.manualEditing
+                    Keys.onEscapePressed: root.cancelManual()
+                    onAccepted: root.commitManual()
+                  }
+                }
+
+                // TAP button: tap repeatedly on the beat and the tempo is
+                // inferred from the average inter-tap interval (clean tap
+                // tempo, at least 3 taps, resets after 2.5 s of silence).
+                Button {
+                  id: tapButton
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(64)
+                  height: parent.height
+                  text: "TAP"
+                  bordered: true
+                  foreground: root.accent
+                  accent: root.accent
+                  fontSize: Style.font.caption
+                  tooltipText: "Tap on the beat to set the tempo"
+                  onClicked: root.tapTempoBeat()
+                  visible: root.manualTarget === "bpm"
                 }
               }
             }
@@ -1468,15 +1513,6 @@ Panel {
                 }
               }
 
-              Text {
-                width: parent.width
-                visible: !root.aecEnabled
-                color: Util.alpha(Color.foreground, 0.45)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                text: "AEC extracts the PC's own output audio from the tuner's mic (phase subtraction) when the output is loud enough to be picked up."
-                wrapMode: Text.WordWrap
-              }
             }
           }
 
