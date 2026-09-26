@@ -648,6 +648,41 @@ link_prefix_to_vst() {
 
 # ─── Detection helpers (mtime-independent) ────────────────────────────────
 # Every plugin file currently in the shared folders.
+
+# ─── Known plugin → recommended wine prefix (reinstall culture) ──────────
+# Some plugins have a PREFERENCE table in PLUGIN-TESTS.md; the defaults feed
+# the install wizard's prefix choice (default first, recommended right
+# after). Key: lowercase substring matched against the INSTALLER path.
+recommended_prefix_for_plugins() {
+  cat <<'REC'
+serum|.wine-vst
+sonible|.wine-vst
+smarteq|.wine-vst
+smart chain|.wine-vst
+crispytuner|.wine-vst
+plugin alliance|.wine-vst
+ableton|.wine-ableton
+REC
+}
+
+recommended_prefix_for() {
+  local f="$1" low
+  low="$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')"
+  local row pat pfx
+  while IFS='|' read -r pat pfx; do
+    [[ -n $pat ]] || continue
+    case "$low" in
+      *"$pat"*) printf '%s\n' "$HOME/$pfx"; return 0 ;;
+    esac
+  done < <(recommended_prefix_for_plugins)
+  return 1
+}
+
+# is_known_plugin <installer> — the "recommended" marker wording.
+is_known_plugin() {
+  recommended_prefix_for "$1" >/dev/null 2>&1
+}
+
 list_shared_plugin_files() {
   find "$VST_VST2" "$VST_VST3" "$VST_CLAP" \
     -type f \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) \

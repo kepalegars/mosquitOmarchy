@@ -305,11 +305,27 @@ PYWIZARD
     ;;
 
   list-prefixes)
+    # The DEFAULT prefix FIRST (recommended); a plugin's known prefix carries
+    # a RECOMMENDED note when the installer matches a recorded plugin.
+    rec=""
+    [[ -n ${2:-} ]] && rec="$(recommended_prefix_for "$2")" || rec=""
+    dp="$(default_prefix)"
+    ordered=()
+    [[ -n $rec ]] && ordered+=("$rec")
     for p in "${WINE_PREFIXES[@]}"; do
-      jq -nc --arg path "$p" --arg label "$(basename "$p")" '{path:$path,label:$label}'
+      [[ $p == "$rec" ]] && continue
+      [[ $p == "$dp" ]] && continue
+      ordered+=("$p")
+    done
+    ordered+=("$dp")
+    for p in "${ordered[@]}"; do
+      note=""
+      if [[ -n $rec && $p == "$rec" ]]; then
+        note="  (RECOMMENDED — matches this plugin)"
+      fi
+      jq -nc --arg path "$p" --arg label "$(basename "$p")$note" '{path:$path,label:$label}'
     done
     ;;
-
   default-prefix)
     jq -nc --arg path "$(default_prefix)" '{path:$path}'
     ;;

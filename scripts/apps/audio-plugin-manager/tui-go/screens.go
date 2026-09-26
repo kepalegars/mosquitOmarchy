@@ -49,7 +49,19 @@ func (m *model) enterCmd() tea.Cmd {
 		m.uninstallChecked = map[string]bool{}
 		return fetchItems("uninstall", "list-uninstallable")
 	case scrInstallPrefixChoice:
-		m.confirm = tuikit.NewConfirm("Install into the default wine prefix?", "No, new prefix", "Yes")
+		// The standard ask: default prefix first — with the RECOMMENDED
+		// wording when the installer matches a plugin the tests know.
+		if knownPluginInstaller(m.installFile) {
+			if m.installRecommendedPrefix != "" {
+				m.confirm = tuikit.NewConfirm(
+					"Install into the DEFAULT wine prefix?\n\n(known plugin — RECOMMENDED prefix: "+baseName(m.installRecommendedPrefix)+")",
+					"No, new prefix", "Yes")
+			} else {
+				m.confirm = tuikit.NewConfirm("Install into the default wine prefix? (known plugin — recommended here)", "No, new prefix", "Yes")
+			}
+		} else {
+			m.confirm = tuikit.NewConfirm("Install into the default wine prefix?", "No, new prefix", "Yes")
+		}
 		return nil
 	case scrSuperfileInstallConfirm:
 		m.confirm = tuikit.NewConfirm(
@@ -58,7 +70,7 @@ func (m *model) enterCmd() tea.Cmd {
 		return nil
 	case scrInstallPrefixPick:
 		m.loading = true
-		return fetchPrefixes()
+		return prefixListCmd(m.installFile)
 	case scrInstallPrefixName:
 		m.input = tuikit.NewTextInput("Name of the new wine prefix (e.g. 'early' → ~/.wine-early):", "")
 		return m.input.Init()
@@ -1986,4 +1998,34 @@ func wineRuntimeLabel() string {
 		return "system wine-staging (no DComp) — Enter: switch to ableton (RECOMMENDED)"
 	}
 	return "ableton d2d1-nspa (RECOMMENDED) — Enter: switch to system wine-staging"
+}
+
+// knownPluginInstaller reports whether the picked installer matches a plugin
+// whose tests are RECORDED (the registry in PLUGIN-TESTS.md — serum 2, the
+// sonible/smart chain ranges, crispy tuner…); recommended_prefix comes from
+// the same table.
+func knownPluginInstaller(path string) bool {
+	out, err := runQuick("is-known-plugin", path)
+	return err == nil && len(bytes.TrimSpace(out)) > 0
+}
+
+func recommendedPrefixCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("recommended-prefix", path)
+		if err != nil {
+			return recommendedPrefixMsg{err: err}
+		}
+		var v struct {
+			Prefix string `json:"prefix"`
+		}
+		if e := json.Unmarshal(bytes.TrimSpace(out), &v); e != nil {
+			return recommendedPrefixMsg{err: e}
+		}
+		return recommendedPrefixMsg{prefix: v.Prefix}
+	}
+}
+
+type recommendedPrefixMsg struct {
+	prefix string
+	err    error
 }

@@ -190,8 +190,18 @@ func fetchItems(kind string, args ...string) tea.Cmd {
 }
 
 func fetchPrefixes() tea.Cmd {
+	return prefixListCmd("")
+}
+
+// prefixListCmd lists the wine prefixes; an optional installer path switches
+// on the RECOMMENDED marker for the prefix that matches the plugin.
+func prefixListCmd(installer string) tea.Cmd {
 	return func() tea.Msg {
-		out, err := runQuick("list-prefixes")
+		args := []string{"list-prefixes"}
+		if installer != "" {
+			args = append(args, installer)
+		}
+		out, err := runQuick(args...)
 		if err != nil {
 			return prefixesMsg{err: err}
 		}

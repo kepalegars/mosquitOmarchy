@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
+	"encoding/json"
 	tea "github.com/charmbracelet/bubbletea"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
@@ -109,13 +111,14 @@ type model struct {
 
 	// flow state, threaded across the install / uninstall / prefix-move
 	// wizards
-	installFile   string
-	installPrefix string
-	installNew    bool
-	moveKey       string
-	moveFrom      string
-	moveTo        string
-	moveNew       bool
+	installFile              string
+	installRecommendedPrefix string
+	installPrefix            string
+	installNew               bool
+	moveKey                  string
+	moveFrom                 string
+	moveTo                   string
+	moveNew                  bool
 
 	// unified Plugin list (scrPluginList): pluginCache is the last fetched
 	// row set, pluginChecked is the in-progress hide/show mark per row
@@ -835,6 +838,16 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// in one shot by the bash side.
 			if isWineInstaller(msg.path) {
 				m.installFile = msg.path
+				// Fetch the RECOMMENDED prefix (when the installer matches
+				// a recorded plugin) so the ask can name it.
+				out, eErr := runQuick("recommended-prefix", msg.path)
+				if eErr == nil {
+					var v struct {
+						Prefix string `json:"prefix"`
+					}
+					_ = json.Unmarshal(bytes.TrimSpace(out), &v)
+					m.installRecommendedPrefix = v.Prefix
+				}
 				m.push(scrInstallPrefixChoice)
 				return m, m.enterCmd()
 			}
