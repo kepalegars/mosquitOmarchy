@@ -1633,13 +1633,53 @@ menu_entry_block(){
   cat <<MENU_EOF
 $MENU_MOSQUITO_START
   // icon asset: ${icon_asset:-none found in the repo}
-  "install.mosquitomarchy": {
+  // ─── The mosquito category in the Setup tree (the insect icon, the
+  // same one as mosquitomarchy) — every mosquito TUI grouped here.
+  "setup.mosquito": {
+    "icon": "\uf188",
+    "label": "mosquito",
+    "description": "All the mosquito manager TUIs (setup/plugins/audio/move/live/jam)",
+    "aliases": ["mosquito", "mosquitomarchy"]
+  },
+  "setup.mosquito.manager": {
     "icon": "\uf188",
     "label": "mosquitOmarchy",
-    "description": "Configure this Omarchy machine (audio stack, VMs, themes, apps) — mosquitomarchy-setup launcher",
-    "aliases": ["mosquito", "mosquitomarchy", "mosquitomarchy"],
+    "description": "The main manager: modules, fixes, backups, updates",
+    "aliases": ["mosquito", "manager", "setup"],
     "when": "test -x $BIN_DIR/mosquitomarchy",
     "action": "$BIN_DIR/mosquitomarchy"
+  },
+  "setup.mosquito.audio-plugins": {
+    "icon": "\uf1b7",
+    "label": "Audio plugin manager (wine VST)",
+    "description": "Install/uninstall Windows wine plugins, per-plugin fixes, prefixes",
+    "aliases": ["plugins", "vst", "wine"],
+    "when": "test -x $BIN_DIR/mosquito-audio-plugin-manager-tui",
+    "action": "omarchy-launch-or-focus-tui mosquito-audio-plugin-manager-tui"
+  },
+  "setup.mosquito.move": {
+    "icon": "\uf166",
+    "label": "Move manager",
+    "description": "Ableton Move manager — convert, address, routes (wine Ableton)",
+    "aliases": ["move", "ableton-move"],
+    "when": "test -x $BIN_DIR/mosquito-move-manager-tui",
+    "action": "omarchy-launch-or-focus-tui mosquito-move-manager-tui"
+  },
+  "setup.mosquito.live": {
+    "icon": "\uf311",
+    "label": "Live Mode",
+    "description": "Performance session mode: stay-awake, thermal guard, routing tool",
+    "aliases": ["live", "live-mode"],
+    "when": "test -x $BIN_DIR/mosquito-live-mode-tui",
+    "action": "omarchy-launch-or-focus-tui mosquito-live-mode-tui"
+  },
+  "setup.mosquito.jam": {
+    "icon": "\ud83c\udfb8",
+    "label": "JamJamJam neck",
+    "description": "Guitar-neck TUI: scale display, live chord, tuner",
+    "aliases": ["jam", "guitar", "neck"],
+    "when": "test -x $BIN_DIR/jamjamjam-tui",
+    "action": "omarchy-launch-or-focus-tui jamjamjam-tui"
   },
 $MENU_MOSQUITO_END
 MENU_EOF

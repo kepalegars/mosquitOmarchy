@@ -500,6 +500,21 @@ is_native_win_app() {
 # Scan ~/VST for plugin files. Emits "path<TAB>type" lines (type = format).
 # No depth cap (same as the install detection) so bundle-depth installs
 # (VST3/…/Plugin.vst3/Contents/…) show up in every list.
+# is_runtime_dep_dll <file> — dependency runtime shims that installers drop
+# NEXT TO plugins for wine hosts (sonible_onnxruntime_v1-15-1.dll, MSVC
+# bundles…). They are NOT plugins: they must not be offered as orphans, never
+# registered, and never counted by the reconciler.
+is_runtime_dep_dll() {
+  local low
+  low="$(basename -- "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$low" in
+    sonible_*.dll|*onnx*.dll|*openxr*.dll|*openal32.dll|*msvcp*.dll|*vcruntime*.dll|\
+    *vc_redist*.dll|*api-ms-win-*.dll|*ucrtbase.dll|*crashpad*.dll|*libmmd.dll|\
+    *mfc*.dll|*concrt*.dll|*vcomp*.dll|*firewall*.dll) return 0 ;;
+  esac
+  return 1
+}
+
 scan_plugins() {
   local f ext base
   # Also matches a hidden plugin (see toggle_vst_plugin_hidden(): renamed
@@ -510,6 +525,8 @@ scan_plugins() {
     -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' -o -iname '*.so' \
     -o -iname '*.dll.hidden' -o -iname '*.vst3.hidden' -o -iname '*.clap.hidden' -o -iname '*.so.hidden' \
     \) 2>/dev/null | while IFS= read -r f; do
+    # Runtime dependency DLLs are never plugin candidates.
+    is_runtime_dep_dll "$f" && continue
     base="${f%.hidden}"
     ext="${base##*.}"; ext="${ext,,}"
     case "$ext" in
