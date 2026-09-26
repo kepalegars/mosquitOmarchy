@@ -42,7 +42,8 @@ clear_pinned() {
   local tmp; tmp=$(mktemp)
   sed '/^LastOpenedDatabases=/d; /^LastActiveDatabase=/d' "$GLOBALS" > "$tmp"
   mv "$tmp" "$GLOBALS"
-  ok "database pin removed (stock no-default-database behaviour restored)"
+  rm -f "$HOME/.config/autostart/mosquitomarchy-keepassxc.desktop"
+  ok "database pin removed (stock no-default-database behaviour restored; login autostart removed)"
 }
 
 mode="${1:-apply}"
@@ -109,5 +110,27 @@ with open(path, "w", encoding="utf-8") as fh:
 PY
 ok "remember-last-databases + LastOpenedDatabases/LastActiveDatabase pinned to:"
 info "$TARGET"
+
+# AUTOSTART AT LOGIN — keepassxc opens at the session start. The user
+# unlocks it ONCE; from then on every app's secret request is served from
+# the already-unlocked DB, no repeated prompts until logout/shutdown.
+# (Without this, the D-Bus activation started keepassxc lazily on the first
+# app asking for secrets — i.e. the unwelcome unlock dialog popping up
+# mid-work, driven by app launches.)
+mkdir -p "$HOME/.config/autostart"
+cat > "$HOME/.config/autostart/mosquitomarchy-keepassxc.desktop" <<DESK
+[Desktop Entry]
+Type=Application
+Name=KeePassXC (mosquitomarchy default DB)
+Comment=Open the pinned database at login; unlock once per session
+Exec=keepassxc "$TARGET"
+Terminal=false
+X-GNOME-Autostart-enabled=true
+StartupNotify=false
+Categories=Utility;
+DESK
+chmod 0644 "$HOME/.config/autostart/mosquitomarchy-keepassxc.desktop"
+ok "Autostart installed: keepassxc opens "$TARGET" at login (unlock once, then no more prompts)"
+
 info "Open KeePassXC once (unlock it), then every web app (browser extension + FdoSecrets)"
 info "uses THAT database. The 'create a new database' prompt disappears."

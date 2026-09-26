@@ -156,25 +156,33 @@ Panel {
   }
   function cancelManual() { root.manualEditing = false }
 
-  // TAP TEMPO: keep the last 6 inter-tap intervals; the BPM is 60 / mean.
-  readonly property int tapMax: 6
-  property var tapTimes: []
+  // TAP TEMPO: sum of the last inter-taps (mean of ≤6, clamped 40-240);
+  // a gap > 2.5 s starts a fresh phrase. Focus returns to the field so
+  // Enter applies without an extra click.
   property real tapLast: 0
+  property real tapSum: 0
+  property int tapCount: 0
   function tapTempoBeat() {
     var now = Date.now()
     if (root.tapLast <= 0 || (now - root.tapLast) > 2500) {
-      // First tap of a new phrase: reset the buffer.
-      root.tapTimes = []
+      root.tapSum = 0
+      root.tapCount = 0
     } else {
-      var interval = now - root.tapLast
-      root.tapTimes.push(interval)
-      if (root.tapTimes.length > root.tapMax) root.tapTimes.shift()
-      var bpm = Math.round(60000 / root.tapTimes
-        .reduce(function(a, b) { return a + b }, 0) / root.tapTimes.length)
-      bpm = Math.max(40, Math.min(240, bpm))
+      root.tapSum += (now - root.tapLast)
+      root.tapCount += 1
+      if (root.tapCount > 6) {
+        // Classic tap decaying average: keep the tail smooth.
+        root.tapSum = Math.max(50, root.tapSum * 0.8)
+        root.tapCount = 5
+      }
+      var bpm = Math.round(60000 * root.tapCount / root.tapSum)
+      if (!isFinite(bpm)) bpm = 120
+      if (bpm < 40) bpm = 40
+      if (bpm > 240) bpm = 240
       manualInput.text = String(bpm)
     }
     root.tapLast = now
+    manualInput.forceActiveFocus()
   }
 
   function contrastText(fill) {
@@ -622,6 +630,14 @@ Panel {
             color: Util.alpha(Color.background, 0.92)
             border.width: 1
             border.color: root.accent
+            // The overlay keeps the focus chain and forwards keys to the
+            // field, so Esc (and Enter) work even if the inner editor loses
+            // focus (e.g. after clicking TAP or anywhere else).
+            focus: root.manualEditing
+            Keys.forwardTo: [manualInput]
+            Keys.onEscapePressed: root.cancelManual()
+            Keys.onReturnPressed: root.commitManual()
+            Keys.onEnterPressed: root.commitManual()
 
             Column {
               anchors.centerIn: parent
@@ -635,13 +651,17 @@ Panel {
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
+              // Manual-input row: the text field sits LEFT and stretches to
+              // just before the TAP button (no overlap at any width).
               Item {
                 width: parent.width
                 height: Style.space(30)
 
                 Rectangle {
-                  anchors.horizontalCenter: parent.horizontalCenter
-                  width: Style.space(180)
+                  id: bpmField
+                  anchors.left: parent.left
+                  anchors.right: tapButton.left
+                  anchors.rightMargin: Style.spacing.sm
                   height: parent.height
                   radius: Style.cornerRadius
                   color: Util.alpha(Color.foreground, 0.08)
@@ -663,14 +683,14 @@ Panel {
                   }
                 }
 
-                // TAP button: tap repeatedly on the beat and the tempo is
-                // inferred from the average inter-tap interval (clean tap
-                // tempo, at least 3 taps, resets after 2.5 s of silence).
+                // TAP: tap repeatedly on the beat; the BPM is the average of
+                // the last inter-taps (smoothed), resets after 2.5 s of
+                // silence. For the BPM editor only.
                 Button {
                   id: tapButton
                   anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
-                  width: Style.space(64)
+                  width: Style.space(74)
                   height: parent.height
                   text: "TAP"
                   bordered: true
