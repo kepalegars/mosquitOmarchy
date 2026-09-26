@@ -85,6 +85,56 @@ type CatRec struct {
 
 // ItemRec is a selectable setup/fix/update row: candidates use "key", fixes
 // and update modules use "id" — the same run payload either way.
+
+// fetchMenuEntriesCmd loads the marked mosquito menu blocks from the
+// backend's menu-entries list.
+func fetchMenuEntriesCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("menu-entries", "list")
+		if err != nil {
+			return menuEntriesMsg{err: err}
+		}
+		var rows []MenuEntryRec
+		for _, line := range bytes.Split(bytes.TrimSpace(out), []byte("\n")) {
+			if len(bytes.TrimSpace(line)) == 0 {
+				continue
+			}
+			parts := strings.SplitN(string(line), "\t", 3)
+			if len(parts) != 3 {
+				continue
+			}
+			rows = append(rows, MenuEntryRec{Name: parts[0], Present: parts[1] == "true", Label: parts[2]})
+		}
+		return menuEntriesMsg{rows: rows}
+	}
+}
+
+type menuEntriesMsg struct {
+	rows []MenuEntryRec
+	err  error
+}
+
+// menuEntriesApplyCmd strips or restores one menu entry by name.
+func menuEntriesApplyCmd(name string, restore bool) tea.Cmd {
+	verb := "strip"
+	if restore {
+		verb = "restore"
+	}
+	return func() tea.Msg {
+		if _, err := runQuick("menu-entries", verb, name); err != nil {
+			return menuEntriesMsg{err: err}
+		}
+		return menuEntriesMsg{}
+	}
+}
+
+// MenuEntryRec is one row of the "Menu entries" cleaner.
+type MenuEntryRec struct {
+	Name    string `json:"name"`
+	Present bool   `json:"present"`
+	Label   string `json:"label"`
+}
+
 type ItemRec struct {
 	Key   string `json:"key"`
 	Label string `json:"label"`

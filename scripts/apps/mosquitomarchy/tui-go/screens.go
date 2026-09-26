@@ -563,6 +563,23 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.setupPicker = m.rebuildSetup()
 			}
 			return m, nil
+		case "menu-entries":
+			// "Menu entries" cleaner screen: the marked mosquito blocks with
+			// a checkbox each.
+			m.push(scrMenuEntries)
+			if m.menuEntryChecked == nil {
+				m.menuEntryChecked = map[string]bool{}
+				m.menuEntryOrig = map[string]bool{}
+			}
+			for _, e := range m.menuEntries {
+				m.menuEntryChecked[e.Name] = e.Present
+				m.menuEntryOrig[e.Name] = e.Present
+			}
+			idx := 0
+			if len(m.menuEntries) > 0 {
+				_ = idx
+			}
+			return m, fetchMenuEntriesCmd()
 		case "menu-entry":
 			return m.startWorking("Adding the menu entry", workingArgs("menu-entry", nil)...)
 		case "apply-patches":
@@ -852,6 +869,17 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 		}
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
+			if m.setupPicker.SelectedValue() == "menu-entries" {
+				m.info = tuikit.NewInfo(
+					"Menu entries — every marked block mosquito installs into the\n"+
+					"Omarchy menu (mega caffeine, live mode, mosquito Move Manager,\n"+
+					"mosquitomarchy itself).\n\n"+
+					"Enter opens the cleaner; the tick mark = the entry is present.\n"+
+					"Un-check the ones you do not want and press Enter to strip them\n"+
+					"from the Omarchy menu (re-check + Enter restores them).").SetSize(m.contentSize())
+				m.push(scrInfo)
+				return m, nil
+			}
 			if m.setupPicker.SelectedValue() == "menu-entry" {
 				m.info = tuikit.NewInfo(menuEntryInfo).SetSize(m.contentSize())
 				m.push(scrInfo)
@@ -984,6 +1012,72 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.pickPicker, cmd = m.pickPicker.Update(msg)
 	case scrBackup:
 		m.backupPicker, cmd = m.backupPicker.Update(msg)
+	case scrMenuEntries:
+		if me, ok := msg.(menuEntriesMsg); ok {
+			if me.err != nil {
+				m.toast, _ = m.toast.SetErr(me.err.Error())
+				return m, nil
+			}
+			if len(me.rows) > 0 {
+				m.menuEntries = me.rows
+			}
+			if m.menuEntryChecked == nil {
+				m.menuEntryChecked, m.menuEntryOrig = map[string]bool{}, map[string]bool{}
+			}
+			for _, e := range m.menuEntries {
+				if _, seen := m.menuEntryChecked[e.Name]; !seen {
+					m.menuEntryChecked[e.Name] = e.Present
+					m.menuEntryOrig[e.Name] = e.Present
+				}
+			}
+			m.rebuildMenuEntriesPicker()
+			return m, nil
+		}
+		if tg, ok := msg.(tuikit.PickerToggleMsg); ok {
+			name := strings.TrimPrefix(tg.Value, "mentry:")
+			for i, e := range m.menuEntries {
+				if e.Name == name {
+					m.menuEntries[i].Present = !m.menuEntries[i].Present
+				}
+			}
+			if m.menuEntryChecked != nil {
+				m.menuEntryChecked[name] = !m.menuEntryChecked[name]
+			}
+			m.rebuildMenuEntriesPicker()
+			return m, nil
+		}
+		if res, ok := msg.(tuikit.PickerResultMsg); ok {
+			if res.Canceled {
+				m.pop()
+				return m, nil
+			}
+			// Enter: apply the delta (strip for entries the user unticked,
+			// restore for the ones re-ticked), then refresh.
+			changed := []string{}
+			if m.menuEntryChecked != nil {
+				for _, e := range m.menuEntries {
+					if v, ok := m.menuEntryChecked[e.Name]; ok && v != m.menuEntryOrig[e.Name] {
+						changed = append(changed, e.Name)
+					}
+				}
+			}
+			if len(changed) == 0 {
+				m.pop()
+				return m, nil
+			}
+			for _, name := range changed {
+				restore := m.menuEntryChecked[name]
+				if _, eErr := runQuick("menu-entries", func() string {
+					if restore {
+						return "restore"
+					}
+					return "strip"
+				}(), name); eErr != nil {
+					m.toast, _ = m.toast.SetErr("could not apply " + name)
+				}
+			}
+			return m, fetchMenuEntriesCmd()
+		}
 	case scrBackupRestore:
 		m.backupPicker, cmd = m.backupPicker.Update(msg)
 	case scrBackupOptions:
@@ -1649,6 +1743,10 @@ func (m model) rebuildSetup() navPicker {
 	if !uninstall {
 		items = append(items, tuikit.PickerItem{Display: "Menu entry", Value: "menu-entry"})
 		items = append(items, tuikit.PickerItem{Display: "Add shortcut for mosquitOmarchy", Value: "add-shortcut"})
+		// "Menu entries" cleaner: un-check the entries mosquito adds
+		// automatically to the Omarchy menu (mega caffeine, live mode, the
+		// move converter, mosquitomarchy itself).
+		items = append(items, tuikit.PickerItem{Display: "Menu entries", Value: "menu-entries"})
 
 		install := tuikit.PickerItem{Display: "Install selection", Value: "install-selection"}
 		if m.selectedCount() == 0 {
@@ -2069,3 +2167,30 @@ func settingsItems2() []tuikit.PickerItem {
 }
 
 func backupItems(items []tuikit.PickerItem) []tuikit.PickerItem { return items }
+
+// rebuildMenuEntriesPicker renders the "Menu entries" cleaner: a tick mark =
+// the marked menu block is present in the Omarchy menu. Tab/x toggle,
+// Enter applies the delta (strip/restore via the backend).
+func (m model) rebuildMenuEntriesPicker() navPicker {
+	// rows
+	items := make([]tuikit.PickerItem, 0, len(m.menuEntries)+1)
+	for _, e := range m.menuEntries {
+		mark := "○ missing"
+		if e.Present {
+			mark = "● installed"
+		}
+		items = append(items, tuikit.PickerItem{
+			Display: e.Label + "  (" + mark + ")",
+			Value:   "mentry:" + e.Name,
+			Badge:   "",
+		})
+	}
+	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
+	p := newNavPicker("Menu entries — un-check what must NOT be in the Omarchy menu (Enter applies):", items).SetSize(m.contentSize()).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "toggle")),
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
+		)
+	return p.SelectIndex(0)
+}

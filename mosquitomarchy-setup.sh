@@ -1636,7 +1636,7 @@ $MENU_MOSQUITO_START
   // ─── The mosquito category in the Setup tree (the insect icon, the
   // same one as mosquitomarchy) — every mosquito TUI grouped here.
   "setup.mosquito": {
-    "icon": "\uf188",
+    "icon": "\uf07b",
     "label": "mosquito",
     "description": "All the mosquito manager TUIs (setup/plugins/audio/move/live/jam)",
     "aliases": ["mosquito", "mosquitomarchy"]
@@ -1666,8 +1666,8 @@ $MENU_MOSQUITO_START
     "action": "omarchy-launch-or-focus-tui mosquito-move-manager-tui"
   },
   "setup.mosquito.live": {
-    "icon": "\uf311",
-    "label": "Live Mode",
+    "icon": "⚪",
+    "label": "Live Mode Manager",
     "description": "Performance session mode: stay-awake, thermal guard, routing tool",
     "aliases": ["live", "live-mode"],
     "when": "test -x $BIN_DIR/mosquito-live-mode-tui",
@@ -1675,7 +1675,7 @@ $MENU_MOSQUITO_START
   },
   "setup.mosquito.jam": {
     "icon": "\ud83c\udfb8",
-    "label": "JamJamJam neck",
+    "label": "jamjamjam tui",
     "description": "Guitar-neck TUI: scale display, live chord, tuner",
     "aliases": ["jam", "guitar", "neck"],
     "when": "test -x $BIN_DIR/jamjamjam-tui",

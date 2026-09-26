@@ -24,6 +24,7 @@ const (
 	scrKBInput
 	scrBackup
 	scrBackupRestore
+	scrMenuEntries
 	scrSettings
 	scrConfirm
 	scrWorking
@@ -104,6 +105,14 @@ type model struct {
 	kbListPicker navPicker // the "Managed keybindings" list (distinct picker: popping back to the menu must not keep showing the list)
 	kbItems      []KbRec
 	kbSel        map[string]bool
+	// menuEntries drives the "Menu entries" cleaner screen: the marked
+	// mosquito menu blocks (mega-caffeine, live-mode, move converter,
+	// mosquitomarchy) with a present mark; unchecking + Enter strips the
+	// block from omarchy-menu.jsonc (re-check restores).
+	menuEntries      []MenuEntryRec
+	menuEntryChecked map[string]bool
+	menuEntryOrig    map[string]bool
+
 	// Setup/Uninstall tree typing filter: printable keys build a live
 	// substring filter that flattens the tree (leaf rows only, no category
 	// folders); tab still ticks rows and Enter acts on them.

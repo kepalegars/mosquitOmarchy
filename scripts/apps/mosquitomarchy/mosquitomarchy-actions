@@ -1119,6 +1119,77 @@ cmd_ai_removed() {
 
 
 
+
+# ─── Menu entries toggle (the marked mosquito blocks) ────────────────
+# Lets the TUI un-check the menu entries mosquito adds automatically
+# (mega caffeine, live-mode Trigger entries, the move converter and
+# mosquitomarchy itself): `list` shows name<TAB>present<TAB>label;
+# `strip  <name>` removes that marked block from omarchy-menu.jsonc;
+# `restore <name>` re-runs the module's menu installer.
+MENU_JSONC="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
+
+menu_entries_marker() {
+  case "$1" in
+    mosquitomarchy) printf 'mosquitOmarchy setup' ;;
+    mega-caffeine)  printf 'managed by setup-battery-management.sh' ;;
+
+
+    live-mode)      printf 'live-mode' ;;
+    move-converter) printf 'ableton-move-converter' ;;
+    *)              printf '%s' "$1" ;;
+  esac
+}
+
+cmd_menu_entries() {
+  local how="${1:-list}" id mark start end tmp b present label line
+  local -a NAMES=(mosquitomarchy mega-caffeine live-mode move-converter)
+  local -a LABELS=("mosquitOmarchy (Setup)" "Mega caffeine (Trigger ▸ Toggle)" "Live mode entries (Trigger ▸ Music)" "mosquito Move Manager (Trigger ▸ Music)")
+  case "$how" in
+    list)
+      for b in "${NAMES[@]}"; do
+        present=false
+        mark="$(menu_entries_marker "$b")"
+        grep -qF "$mark" "$MENU_JSONC" 2>/dev/null && present=true || true
+        label=""
+        for line in ${!NAMES[@]}; do
+          [[ ${NAMES[$line]} == "$b" ]] && label="${LABELS[$line]}" && break
+        done
+        printf '%s\t%s\t%s\n' "$b" "$present" "$label"
+      done
+      ;;
+    strip)
+      id="${2:?menu id required}"
+      mark="$(menu_entries_marker "$id")"
+      start=$(grep -nF "$mark" "$MENU_JSONC" | head -1 | cut -d: -f1) || true
+      end=$(grep -nF "$mark" "$MENU_JSONC" | head -2 | tail -1 | cut -d: -f1)
+      if [[ -n $start && -n $end && $end -gt $start ]]; then
+        tmp=$(mktemp)
+        head -n $((start - 1)) "$MENU_JSONC" > "$tmp"
+        tail -n +$((end + 1)) "$MENU_JSONC" >> "$tmp"
+        mv "$tmp" "$MENU_JSONC"
+        (omarchy menu refresh >/dev/null 2>&1 || true)
+        ok "menu entry removed: $id"
+      else
+        err "no marked block found for '$id' in $MENU_JSONC"
+      fi
+      ;;
+    restore)
+      id="${2:?menu id required}"
+      case "$id" in
+        mosquitomarchy) bash "$HOME/mosquitOmarchy/mosquitomarchy-setup.sh" >/dev/null 2>&1 \
+          && ok "menu re-added: mosquitomarchy" || warn "restore failed: mosquitomarchy" ;;
+        mega-caffeine)  bash "$HOME/mosquitOmarchy/scripts/plugins/power-management/setup-battery-management.sh" >/dev/null 2>&1 \
+          && ok "menu re-added: mega-caffeine" || warn "restore failed: mega-caffeine" ;;
+        live-mode)      bash "$HOME/mosquitOmarchy/scripts/plugins/live-mode/setup-live-mode.sh" >/dev/null 2>&1 \
+          && ok "menu re-added: live-mode" || warn "restore failed: live-mode" ;;
+        move-converter) bash "$HOME/mosquitOmarchy/scripts/apps/ableton-move-manager/setup-ableton-move-manager.sh" >/dev/null 2>&1 \
+          && ok "menu re-added: move-converter" || warn "restore failed: move-converter" ;;
+      esac
+      ;;
+    *) err "menu-entries <list|strip|restore> <name>"; return 1 ;;
+  esac
+}
+
 case "$sub" in
   status)                   cmd_status ;;
   categories)               cmd_categories ;;
@@ -1153,6 +1224,7 @@ case "$sub" in
   backup)                   cmd_backup ;;
   crash-notify)             cmd_crash_notify "${1:-on}" ;;
   ai-removed)               cmd_ai_removed ;;
+  menu-entries)             cmd_menu_entries "$@" ;;
   restore)                  cmd_restore "${1:-}" ;;
   *) echo "mosquitomarchy-actions: unknown subcommand '$sub'." >&2; exit 2 ;;
 esac

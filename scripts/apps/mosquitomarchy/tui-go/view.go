@@ -158,6 +158,10 @@ func (m model) View() string {
 		title = screenTitle("Backup / Restore", w)
 		body = m.backupBody()
 		bar = barLine(m.backupPicker.ShortcutsHint())
+	case scrMenuEntries:
+		title = screenTitle("Menu entries", w)
+		body = m.pickPicker2View()
+		bar = barLine(m.pickPicker2Hint())
 	case scrBackupRestore:
 		title = screenTitle("Restore a backup", w)
 		body = m.backupPicker.View()
@@ -255,4 +259,15 @@ func screenTitle(text string, maxW int) string {
 		Width(maxW).
 		Align(lipgloss.Center).
 		Render(tuikit.StyleAccent.Bold(true).Render(text))
+}
+
+// pickPicker2View renders the menu-entries picker body.
+func (m model) pickPicker2View() string {
+	p := m.rebuildMenuEntriesPicker()
+	return p.View()
+}
+
+func (m model) pickPicker2Hint() string {
+	p := m.rebuildMenuEntriesPicker()
+	return p.ShortcutsHint()
 }
