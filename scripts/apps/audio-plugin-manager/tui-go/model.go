@@ -255,6 +255,7 @@ func settingsItems(s Status) []tuikit.PickerItem {
 		{Display: "Plugins folder: " + s.PluginsRoot, Value: "pick_plugins_root"},
 		{Display: "Default plugin installation file directory: " + s.DownloadsDir, Value: "pick_downloads_dir"},
 		{Display: "Plugin window handler: " + handler, Value: "toggle_plugin_handler"},
+		{Display: "Wine runtime: " + wineRuntimeLabel(), Value: "toggle_wine_runtime"},
 		{Display: "Rescan for untracked plugins", Value: "rescan"},
 		{Display: "Cleanup inconsistencies", Value: "cleanup"},
 		{Display: "Back", Value: "back"},

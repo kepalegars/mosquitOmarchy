@@ -801,6 +801,57 @@ fix_sonible_runtime_deps() {
   )
 }
 
+# ── Wine runtime selection for wine plugin hosting (v2) ───────────────────
+# Two wine runtimes exist (both work for plain plugins; ONLY the ableton
+# wine-d2d1-nspa runtime implements Windows DirectComposition — serum-style
+# VST3 editors crash under the stock staging build):
+#   system  → /usr/bin/wine (wine-staging; recommended for INSTALLERS that
+#             expect a stock wine? no — both fine; default = ableton now)
+#   ableton → ~/.local/opt/wine-d2d1-nspa-11.13/bin/wine (RECOMMENDED:
+#             complete DComp + NSPA patches; the runtime Ableton itself uses)
+# State: ~/.config/audio-plugin-manager/wine-runtime ("system"|"ableton").
+# Recommendation is shown in the picker; the installed tests (PLUGIN-TESTS.md)
+# carry it too.
+apm_wine_runtime_file() { printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/audio-plugin-manager/wine-runtime"; }
+
+apm_wine_runtime() {
+  local v
+  v="$(cat "$(apm_wine_runtime_file)" 2>/dev/null || true)"
+  case "$v" in system|ableton) printf '%s\n' "$v" ;; *) printf 'ableton\n' ;; esac
+}
+
+apm_set_wine_runtime() {
+  local v="${1:-ableton}"
+  case "$v" in system|ableton) ;; *) return 1 ;; esac
+  mkdir -p "$(dirname "$(apm_wine_runtime_file)")"
+  printf '%s\n' "$v" > "$(apm_wine_runtime_file)"
+  ok "Wine runtime for wine plugins: $v"
+}
+
+# Resolves the ACTIVE runtime's env: WINE var (path to wine) + PATH prefix.
+apm_wine_env_for_runtime() {
+  local rt bin
+  rt="$(apm_wine_runtime)"
+  if [[ $rt == ableton ]]; then
+    bin="$HOME/.local/opt/wine-d2d1-nspa-11.13/bin"
+    if [[ -x $bin/wine ]]; then
+      printf 'PATH=%s\n' "$bin:$PATH"
+    fi
+  fi
+  printf '\n'
+}
+
+# The wine command for THIS runtime (used by install_plugin and friends).
+apm_wine() {
+  local rt bin
+  rt="$(apm_wine_runtime)"
+  if [[ $rt == ableton ]]; then
+    bin="${HOME}/.local/opt/wine-d2d1-nspa-11.13/bin"
+    [[ -x $bin/wine ]] && { printf '%s\n' "$bin/wine"; return 0; }
+  fi
+  printf '%s\n' "wine"
+}
+
 install_plugin() {
   local file="$1" wine_prefix="${2:-$(default_prefix)}" f dst base
   # The prefix must point at the shared folders BEFORE the installer runs,
@@ -827,8 +878,8 @@ install_plugin() {
     ensure_mfc42 "$wine_prefix"
   fi
 
-  msg "Running $file through wine (prefix: $wine_prefix — the installer shows its own window)…"
-  WINEPREFIX="$wine_prefix" wine "$file" || warn "(wine exited with a non-zero code — continuing)"
+  msg "Running $file through wine ($(apm_wine_runtime) runtime; prefix: $wine_prefix — the installer shows its own window)…"
+  WINEPREFIX="$wine_prefix" "$(apm_wine)" "$file" || warn "(wine exited with a non-zero code — continuing)"
 
   list_shared_plugin_files > "$after" 2>/dev/null || true
   list_prefix_plugin_files "$wine_prefix" > "$after_pfx" 2>/dev/null || true

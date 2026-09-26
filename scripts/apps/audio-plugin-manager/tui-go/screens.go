@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -856,8 +858,8 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// (no "old log" frame lingering on top).
 				m.info = tuikit.NewInfo(m.runner.Output()).
 					SetSize(m.contentSize())
-				m.pop()    // dismiss the confirm
-				m.pop()    // drop the runner screen
+				m.pop() // dismiss the confirm
+				m.pop() // drop the runner screen
 				m.push(scrInfo)
 				return m, nil
 			}
@@ -1030,11 +1032,11 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
 			// 'i' = what this screen is for (mosquitomarchy-style info).
 			m.info = tuikit.NewInfo(
-				"Plugin fixes — pick which plugin the fixes target.\n\n"+
-					"The next screen lists the available fixes (window/input handling, "+
-					"cursor warping…) with a plain-language description; press i there "+
-					"to read what a given fix does before applying it.\n\n"+
-					"Fixes are per-plugin and reversible: re-open this screen and untick "+
+				"Plugin fixes — pick which plugin the fixes target.\n\n" +
+					"The next screen lists the available fixes (window/input handling, " +
+					"cursor warping…) with a plain-language description; press i there " +
+					"to read what a given fix does before applying it.\n\n" +
+					"Fixes are per-plugin and reversible: re-open this screen and untick " +
 					"them, or use 'Cleanup inconsistencies' in Settings.").SetSize(m.contentSize())
 			m.push(scrInfo)
 			return m, nil
@@ -1878,6 +1880,21 @@ func (m model) handleAudioSettingsChoice(v string) (tea.Model, tea.Cmd) {
 	case "pick_downloads_dir":
 		m.loading = true
 		return m, pickFolderCmd("pick-downloads-dir", "Default plugin installation file directory", m.status.DownloadsDir)
+	case "toggle_wine_runtime":
+		rt := ""
+		if o, err := runQuick("get-wine-runtime"); err == nil {
+			var v struct {
+				Runtime string `json:"runtime"`
+			}
+			_ = json.Unmarshal(bytes.TrimSpace(o), &v)
+			rt = v.Runtime
+		}
+		next := "ableton"
+		if rt == "ableton" {
+			next = "system"
+		}
+		_, _ = runQuick("set-wine-runtime", next)
+		return m, m.enterCmd()
 	case "toggle_plugin_handler":
 		// Flips classic ⇄ hyprland (the plugin editor window manager:
 		// "classic" = floating decorated windows, the shape that actually
@@ -1948,4 +1965,25 @@ func (m model) handleVstMenuChoice(v string) (tea.Model, tea.Cmd) {
 		return m, toggleHide32BitAndRefetch()
 	}
 	return m, nil
+}
+
+// wineRuntimeLabel resolves the current APM wine runtime choice and builds
+// the Settings row: the ABLETON runtime is RECOMMENDED (its wine-d2d1-nspa
+// build implements Windows DirectComposition, which stock wine-staging
+// lacks — serum-style VST3 editors crash there).
+func wineRuntimeLabel() string {
+	out, err := runQuick("get-wine-runtime")
+	if err != nil || len(bytes.TrimSpace(out)) == 0 {
+		return "ableton (recommended)"
+	}
+	var v struct {
+		Runtime string `json:"runtime"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(out), &v); err != nil {
+		return "ableton (recommended)"
+	}
+	if v.Runtime == "system" {
+		return "system wine-staging (no DComp) — Enter: switch to ableton (RECOMMENDED)"
+	}
+	return "ableton d2d1-nspa (RECOMMENDED) — Enter: switch to system wine-staging"
 }

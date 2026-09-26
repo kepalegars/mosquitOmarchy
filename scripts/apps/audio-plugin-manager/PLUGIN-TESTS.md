@@ -55,3 +55,20 @@ Format:
 ---
 Rule: DON'T list a plugin until you have TESTED it in the DAW (load + render +
 UI opens), not only "files exist".
+
+## Wine runtime for wine plugins (the install offer)
+
+Two runtimes — the APM Settings screen offers both (Enter toggles):
+
+| runtime | build | use |
+|---|---|---|
+| **ableton wine-d2d1-nspa 11.13** *(RECOMMENDED)* | the ableton-linux fork | Complete **DirectComposition** + NSPA patches — wine VST3 GUIs that use DComp (Serum 2!) open fine. The SAME runtime Ableton uses, so plugins behave identically in both hosts. |
+| system wine-staging 11.17 | stock Arch wine-staging | DComp is **stubbed** → wine VST3 editors that use DComp crash on open (`c0000409` inside dcomp → libyabridge throws → REAPER SIGABRT). Only OK for plugins with plain Win32 GUIs. |
+
+The APM Install flow runs the chosen runtime's wine (shown in the log), and
+`yabridgectl sync` sees the same PATH, so scan/run stay coherent. The DAWs
+(REAPER/Bitwig) launch through `fix-daw-wine-runtime.sh` wrappers which use
+the SAME runtime — set them to match the APM choice.
+
+**Recommended for tested plugins** (this machine): Serum 2 ✅ (ableton
+runtime REQUIRED for its editor), SmartEQ4 ✅, CrispyTuner ✅, ScaleFinder ✅.

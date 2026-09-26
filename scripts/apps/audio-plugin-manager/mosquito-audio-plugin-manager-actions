@@ -337,6 +337,13 @@ PYWIZARD
     install_plugin "$file" "$prefix" "$tag"
     ;;
 
+  get-wine-runtime)
+    jq -nc --arg rt "$(apm_wine_runtime)" '{runtime:$rt}'
+    ;;
+  set-wine-runtime)
+    apm_set_wine_runtime "${1:?runtime system|ableton required}" >/dev/null 2>&1
+    jq -nc --arg rt "$(apm_wine_runtime)" '{runtime:$rt}'
+    ;;
   set-plugin-handler)
     # $1 = classic|hyprland (persisted through prefs, applied to future
     # installs AND re-applied to the shared yabridge.toml write)
