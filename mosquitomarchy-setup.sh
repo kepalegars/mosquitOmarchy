@@ -1635,7 +1635,7 @@ $MENU_MOSQUITO_START
   // ─── The mosquito category in the Setup tree (the insect icon, the
   // same one as mosquitomarchy) — every mosquito TUI grouped here.
   "setup.mosquito": {
-    "icon": "\uf00e4",
+    "icon": "\uf07b",
     "label": "mosquito",
     "description": "All the mosquito manager TUIs (setup/plugins/audio/move/live/jam)",
     "aliases": ["mosquito", "mosquitomarchy"]
@@ -1649,7 +1649,7 @@ $MENU_MOSQUITO_START
     "action": "$BIN_DIR/mosquitomarchy"
   },
   "setup.mosquito.audio-plugins": {
-    "icon": "\uf0431",
+    "icon": "\uf15b",
     "label": "Audio plugin manager (wine VST)",
     "description": "Install/uninstall Windows wine plugins, per-plugin fixes, prefixes",
     "aliases": ["plugins", "vst", "wine"],
@@ -1657,7 +1657,7 @@ $MENU_MOSQUITO_START
     "action": "omarchy-launch-or-focus-tui mosquito-audio-plugin-manager-tui"
   },
   "setup.mosquito.move": {
-    "icon": "\uf04e1",
+    "icon": "\uf02c1",
     "label": "Move manager",
     "description": "Ableton Move manager — convert, address, routes (wine Ableton)",
     "aliases": ["move", "ableton-move"],
