@@ -13,7 +13,7 @@ Read this before trusting a number.
 
 | | status | evidence |
 |---|---|---|
-| **tempo** | works, with a known ambiguity | 11/16 synthetic accented click tracks exact in streaming mode, 14/18 in file mode, remaining errors are half/double readings |
+| **tempo** | works, with a known ambiguity | 13/17 synthetic accented click tracks exact in file mode; the 4 misses are 2 half-time, 1 double-time and 1 off-grid. Streaming: 11/16, all with the estimate stable to within 1 BPM between adjacent windows. |
 | **key** | works on real material | 15/17 diatonic scales, the 2 misses being F#/Gb spelling rather than a wrong note |
 | **time signature** | **not implemented** | no rule tried survived validation; `estimate_metre` returns nothing on purpose |
 | **key from a bare triad** | unreliable | 2/6 — a triad alone is genuinely ambiguous between a key and its relative |
@@ -90,6 +90,20 @@ plausible-looking nonsense, which is why they are written down:
 both consistent descriptions of the same onsets; what separates them is that the
 true tempo does not jump, which is the continuity term's job. Where the material
 is genuinely ambiguous, the alternates are shown and the user picks.
+
+The four file-mode misses are not all the same mistake, and lumping them together
+as "octave errors" would overstate how well this works:
+
+| signal | reads | kind |
+|---|---|---|
+| 90 BPM | 45.0 | half-time |
+| 174 BPM | 86.8 | half-time |
+| 96 BPM, 8th-note accents | 192.8 | double-time |
+| 100 BPM, 16th-note accents, bar accent outside the window | 133.7 | off-grid |
+
+So the known weakness is real but narrow: it shows on synthetic subdivision
+patterns, and the half-time cases are the ones a listener would most notice. On
+material with a visible bar accent and a beat-level pulse it is exact.
 
 ## Key
 
