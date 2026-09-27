@@ -2634,6 +2634,29 @@ plugin_health_json() {
     problems+=("no loadable binary in the shared plugin folders (only an uninstaller was installed, or the installer never wrote the VST)")
   fi
 
+  # ── the binary may be sitting in the quarantine ──
+  # An uninstall MOVES the plugin aside instead of deleting it (that is the
+  # whole point of ~/.cache/vst-quarantine), so the usual verdict "the installer
+  # never wrote the VST" is wrong in that case and the useful advice is not
+  # "reinstall" but "move it back". smartEQ4 was exactly this: the VST2 and VST3
+  # binaries are 77 MB files in a quarantine dir, while every symlink in
+  # ~/.vst{,3}/yabridge points at a target that no longer exists.
+  local quar="" qhit
+  if [[ -d "$HOME/.cache/vst-quarantine" ]]; then
+    while IFS= read -r qhit; do
+      [[ -n $qhit ]] || continue
+      quar="${quar:+$quar }$(dirname "$qhit")"
+    done < <(find "$HOME/.cache/vst-quarantine" -maxdepth 4 \
+                  \( -name '*.vst3' -o -name '*.vst2' -o -name '*.vst2.so' -o -name '*.dll' -o -name '*.clap' \) \
+                  2>/dev/null |
+               awk -v want="$stem" '{ n=$0; gsub(/[^[:alnum:]]/,"",n); n=tolower(n);
+                                     if (index(n, want) || index(want, n)) { print; exit } }' |
+               sort -u)
+  fi
+  if [[ -n $quar ]] && (( ! found )); then
+    problems+=("its binary is NOT lost: it is in the vst-quarantine, moved aside by an uninstall ($quar) -- restore it by copying it back into the shared folder, no installer needed")
+  fi
+
   # ── yabridge entries that point at nothing ──
   # A plugin can look installed -- there is a .so, a directory, a name in
   # yabridge's tree -- while its shared-folder binary has been deleted, and then
