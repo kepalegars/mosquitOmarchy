@@ -145,22 +145,13 @@ install_shell_state() {
 }
 
 install_menu_entry() {
-  mkdir -p "$APPS_DIR"
-  cat > "$APPS_DIR/install.mosquitomarchy.desktop" <<'DESKTOP'
-[Desktop Entry]
-Type=Application
-Name=mosquitOmarchy
-GenericName=Manager TUI
-Comment=mosquitOmarchy manager — modules, fixes, backups
-Exec=omarchy-launch-tui mosquito
-Icon=preferences-system
-Terminal=false
-Categories=System;Settings;
-StartupNotify=true
-DESKTOP
-  chmod 0644 "$APPS_DIR/install.mosquitomarchy.desktop"
+  # No more ~/.local/share/applications .desktop: a .desktop is an APP in the
+  # Omarchy menu "Apps" provider — the user wants the manager ONLY in the
+  # Setup ▸ mosquito category (the marked menu block). Old copies (from
+  # earlier versions) are removed to avoid duplicate entries.
+  rm -f "$APPS_DIR/install.mosquitomarchy.desktop"
   update-desktop-database "$APPS_DIR" 2>/dev/null || true
-  ok "Desktop entry installed: install.mosquitomarchy.desktop"
+  ok "No apps .desktop for the manager (Setup ▸ mosquito entry carries it)"
 }
 
 install_shell_plugin() {

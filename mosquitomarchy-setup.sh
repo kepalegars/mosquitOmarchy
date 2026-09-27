@@ -453,7 +453,6 @@ st_mosquitomarchy(){
   [[ -x "$HOME/.local/bin/mosquitomarchy" ]] || { echo missing; return; }
   [[ -x "$HOME/.local/bin/mosquitomarchy-tui" ]] || { echo missing; return; }
   local miss=0
-  [[ -f "$HOME/.local/share/applications/install.mosquitomarchy.desktop" ]] || miss=$((miss+1))
   grep -qF -e "mosquitomarchy-tui-floating" "$HOME/.config/hypr/hyprland.lua" 2>/dev/null || miss=$((miss+1))
   [[ -x "$HOME/.config/omarchy/hooks/post-boot.d/zzz-mosquitomarchy-update-check" ]] || miss=$((miss+1))
   if ((miss)); then echo partial; else echo ok; fi
