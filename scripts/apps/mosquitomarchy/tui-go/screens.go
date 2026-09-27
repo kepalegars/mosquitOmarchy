@@ -479,6 +479,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.toast, _ = m.toast.SetWarn("keepassxc un-ticked")
 				return m, nil
 			}
+			if m.pendingAction == "preinstalls-remove" {
+				// "Keep them" (or Cancel): the ticked selection is left as it
+				// was and the picker is NOT left behind, since a cancel that
+				// stays on a half-done screen is easy to misread.
+				m.toast, _ = m.toast.SetWarn("preinstalls kept")
+				return m, nil
+			}
 			if m.pendingAction == "davinci-spektra" {
 				// Declined = install Resolve without the optional OFX. That is a
 				// legitimate answer, not a cancel: continue the apply.
@@ -515,6 +522,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			// Continue the apply that was interrupted by this question.
 			return m, fetchMissingAssetsCmd(m.pendingArgs)
+
+		case "preinstalls-remove":
+			// The only path that ever reaches `pacman -Rns`: an explicit "Remove
+			// them". Reached from Enter AND from back, both through the same
+			// confirmation.
+			return m, preinstallsRemoveCmd(m.pendingArgs)
 
 		case "davinci-spektra":
 			if msg.Yes {
@@ -1397,23 +1410,46 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		return m, nil
 
 	case scrPreinstalls:
-		if res.Canceled {
-			m.pop()
+		// The ticked-and-removable list, which is what would be handed to
+		// `pacman -Rns`.
+		preinstallsTargets := func() []string {
+			var out []string
+			for _, r := range m.preinstalls {
+				if m.preinstallChecked[r.Name] && r.Removable {
+					out = append(out, r.Name)
+				}
+			}
+			return out
+		}
+		// Nothing ticked -> just leave. Never pop straight out of a screen whose
+		// whole purpose is destructive without saying what is about to happen.
+		askRemove := func() (model, tea.Cmd) {
+			pkgs := preinstallsTargets()
+			if len(pkgs) == 0 {
+				m.toast, _ = m.toast.SetWarn("nothing ticked — no preinstall is removed")
+				m.pop()
+				return m, nil
+			}
+			names := strings.Join(pkgs, ", ")
+			m.pendingAction = "preinstalls-remove"
+			m.pendingArgs = pkgs
+			m.pendingMsg = fmt.Sprintf("Remove %d Omarchy preinstall(s)?\n\n%s\n\nThey are removed with `pacman -Rns`; their settings stay on disk, so reinstalling the package brings the app back.", len(pkgs), names)
+			m.pendingNo = "Keep them"
+			m.pendingYes = "Remove them"
+			m.push(scrConfirm)
+			// Focus "Keep them": a removal must be a deliberate yes.
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(0)
 			return m, nil
+		}
+		if res.Canceled {
+			return askRemove()
 		}
 		if res.Value == "back" || res.Value == "" {
-			m.pop()
-			return m, nil
+			// The user asked for "back" to apply the selection too. It now asks
+			// the same question Enter does instead of removing silently.
+			return askRemove()
 		}
-		// Enter removes exactly the ticked ones. Untick everything and press
-		// Enter -> a clear error, not a silent "success" that removed nothing.
-		var pkgs []string
-		for _, r := range m.preinstalls {
-			if m.preinstallChecked[r.Name] {
-				pkgs = append(pkgs, r.Name)
-			}
-		}
-		return m, preinstallsRemoveCmd(pkgs)
+		return askRemove()
 	case scrSetupCat:
 		// Level 2: the folder tree. Enter installs ONLY the items checked in
 		// this category (Uninstall mode: Enter uninstalls the checked items, or
@@ -2335,7 +2371,7 @@ func backupItems(items []tuikit.PickerItem) []tuikit.PickerItem { return items }
 // longer installed (or is one of the user's own) is shown greyed and cannot be
 // ticked, so the list does not silently shrink between two visits.
 func (m model) rebuildPreinstallPicker() navPicker {
-	items := []tuikit.PickerItem{{Display: "Omarchy preinstalls (tab = keep, enter = remove the ticked ones):", Value: "", Disabled: true}}
+	items := []tuikit.PickerItem{{Display: "Omarchy preinstalls (tab = keep; enter or back asks before removing the ticked ones):", Value: "", Disabled: true}}
 	checked := 0
 	for _, r := range m.preinstalls {
 		mark := "○"
