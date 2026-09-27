@@ -1634,6 +1634,16 @@ $MENU_MOSQUITO_START
   // icon asset: ${icon_asset:-none found in the repo}
   // ─── The mosquito category in the Setup tree (the insect icon, the
   // same one as mosquitomarchy) — every mosquito TUI grouped here.
+  //
+  // ICONS MUST BE NERD FONT CODEPOINTS, never emoji. Menu.qml renders an icon
+  // with `row.iconFont.length > 0 ? row.iconFont : root.fontFamily`, and
+  // root.fontFamily is the Nerd Font -- so an emoji with no "iconFont" of its
+  // own is looked up in a font that has no glyph for it and renders as a blank
+  // cell. That is how the jamjamjam row lost its guitar: the icon was the
+  // emoji U+1F3B8, which BitstromWera Nerd Font does not contain (verified
+  // against its cmap). U+EF4E (fa-guitar) is the one that is really there.
+  // An entry using a glyph from Omarchy's own icon font must say so, the way
+  // setup.omarchyvm does with "iconFont": "omarchy".
   "setup.mosquito": {
     "icon": "\uf07b",
     "label": "mosquito",
@@ -1657,7 +1667,7 @@ $MENU_MOSQUITO_START
     "action": "omarchy-launch-or-focus-tui mosquito-audio-plugin-manager-tui"
   },
   "setup.mosquito.move": {
-    "icon": "\uf02c1",
+    "icon": "\uf00a",
     "label": "Move manager",
     "description": "Ableton Move manager — convert, address, routes (wine Ableton)",
     "aliases": ["move", "ableton-move"],
@@ -1665,7 +1675,7 @@ $MENU_MOSQUITO_START
     "action": "omarchy-launch-or-focus-tui mosquito-move-manager-tui"
   },
   "setup.mosquito.live": {
-    "icon": "\uf040c",
+    "icon": "\ueba6",
     "label": "Live Mode Manager",
     "description": "Performance session mode: stay-awake, thermal guard, routing tool",
     "aliases": ["live", "live-mode"],
@@ -1673,7 +1683,7 @@ $MENU_MOSQUITO_START
     "action": "omarchy-launch-or-focus-tui mosquito-live-mode-tui"
   },
   "setup.mosquito.jam": {
-    "icon": "\ud83c\udfb8",
+    "icon": "\uef4e",
     "label": "jamjamjam tui",
     "description": "Guitar-neck TUI: scale display, live chord, tuner",
     "aliases": ["jam", "guitar", "neck"],
@@ -1874,7 +1884,60 @@ install_menu_entry(){
   else
     warn "omarchy-menu.jsonc no longer validates — fix $MENU manually."
   fi
+  menu_audit "$MENU"
   return 0
+}
+
+# Two menu defects that are invisible until someone reports "the icon is gone",
+# and that no JSON validator catches. Both are checked here so the next run says
+# so out loud instead of leaving the user to spot it.
+menu_audit(){
+  local file="$1"
+  [[ -f $file ]] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  local font
+  font="$(fc-match -f '%{file}' 'BitstromWera Nerd Font' 2>/dev/null | head -1)"
+  python3 - "$file" "$font" <<'PY'
+import json, re, sys
+path, font = sys.argv[1], (sys.argv[2] if len(sys.argv) > 2 else "")
+raw = open(path, encoding="utf-8").read()
+
+# 1) duplicate top-level keys. JSON.parse (what MenuModel.js uses) keeps the
+#    LAST one, so a stale entry left outside a managed block silently overrides
+#    the one the generator just wrote -- the row the user sees is not the row
+#    that was installed.
+ids = re.findall(r'^\s*"([^"]+)"\s*:\s*\{\s*$', raw, flags=re.M)
+seen, dup = set(), []
+for i in ids:
+    if i in seen and i not in dup: dup.append(i)
+    seen.add(i)
+for i in dup:
+    print(f"  !! duplicate menu key: {i} — a stale copy outside a managed block wins (last wins).")
+
+# 2) icons that cannot render. Menu.qml uses iconFont when set, else the Nerd
+#    Font; an emoji (or a codepoint above U+FFFF written as a 5-digit \u escape)
+#    is looked up in a font that has no such glyph and draws a blank cell.
+cmap = set()
+if font:
+    try:
+        from fontTools.ttLib import TTFont
+        cmap = set(TTFont(font, fontNumber=0).getBestCmap())
+    except Exception:
+        cmap = set()
+stripped = re.sub(r'^\s*//[^\n]*', '', raw, flags=re.M)
+stripped = re.sub(r',(\s*[}\]])', r'\1', stripped)
+try:
+    data = json.loads(stripped)
+except Exception:
+    sys.exit(0)   # menu_json_valid already reports the syntax failure
+for k, v in sorted(data.items()):
+    if not isinstance(v, dict): continue
+    icon, fnt = v.get("icon", ""), v.get("iconFont", "")
+    if not icon or fnt: continue
+    if cmap and (len(icon) != 1 or ord(icon[0]) not in cmap):
+        where = f"U+{ord(icon[0]):04X}" if len(icon) == 1 else f"{icon!r} ({len(icon)} chars)"
+        print(f"  !! invisible icon on {k}: {where} is not in the Nerd Font — use a 4-hex-digit glyph, or set \"iconFont\" for a private-use font.")
+PY
 }
 
 # Removes one or more .desktop entries

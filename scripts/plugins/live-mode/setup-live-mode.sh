@@ -237,7 +237,7 @@ menu_block() {
   cat <<MC_EOF
 $MENU_START
   "trigger.music.live-mode": {
-    "icon": "🔴",
+    "icon": "\uEA71",
     "label": "Live Mode",
     "description": "Max performance, audio optimized: stays awake, thermal guard, routing tool in scratchpad, no gaps/tint",
     "aliases": ["live", "live-mode", "performance", "mode-live", "rehearsal", "mosquito"],
@@ -246,7 +246,7 @@ $MENU_START
     "action": "$BIN_DIR/live-mode toggle"
   },
   "trigger.music.live-mode-manage": {
-    "icon": "⚪",
+    "icon": "\uf111",
     "label": "Live Mode Manager",
     "description": "Configure the next Live Mode session (thermal limit, background apps, routing tool)",
     "aliases": ["manage", "live-mode-manager", "live-manager", "mosquito"],
