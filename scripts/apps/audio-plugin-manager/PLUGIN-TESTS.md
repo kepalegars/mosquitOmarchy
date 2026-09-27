@@ -28,41 +28,36 @@ Format:
 - Remaining note: none — scan fallback makes the status a plain success, the
   log line ends with the plugin being registered.
 
-## SmartEQ4 (Sonible / smart chain 1.0.0) — VST2 + VST3 — ❌ NOT LOADABLE (quarantined)
+## SmartEQ4 (Sonible / smart chain 1.0.0) — VST2 + VST3 — ✅ RESTORED from quarantine
 - Installed 2026-09-24 23:46 into ~/.wine-vst, sharing into
   `vst/Sonible/smartEQ4.dll` and `vst3/Sonible/smartEQ4.vst3` (the installer
   wrote them in a `Sonible/` subfolder with OLD archive mtimes — 2024-04-03).
   Both binaries were real: 77 MB each.
-- **Then an uninstall moved them to the quarantine on 2026-09-27 01:17**
-  (`~/.cache/vst-quarantine/20260927-011720-uninstall/Sonible/smartEQ4.dll` and
-  `…-011724-uninstall/Sonible/smartEQ4.vst3`, plus the 6 MB
-  `sonible_onnxruntime_v1-15-1.dll`). The shared folder is now empty, so:
-  - `~/.vst/yabridge/Sonible/smartEQ4.dll` and the `.vst3` bundle are **dangling
-    symlinks** — the wrapper `.so` is still there, the plugin cannot load;
-  - `yabridgectl status` reports **0** Sonible entries, because it only lists
-    what it can resolve;
-  - `plugin-health smartEQ4` → `payload:0, healthy:false`.
-- Still installed and harmless: the ONNX runtime in the prefixes' `system32`,
-  and the models in `~/.wine-vst/drive_c/Program Files/Common Files/sonible/
-  smarteq4/*.nn`. That is why the plugin manager once looked "installed".
-- **The binary is not lost.** It can be brought back by copying those two
-  quarantined files into the shared folders and running `yabridgectl sync` —
-  no installer required. Not done here: the files come from the RC2025 bundle
-  (see the top of this file), and that is the user's call, not a silent repair.
+- An uninstall then **moved them to the quarantine** on 2026-09-27 01:17
+  (`~/.cache/vst-quarantine/20260927-0117{20,24}-uninstall/Sonible/`). The shared
+  folder kept only `sonible_onnxruntime_v1-15-1.dll` and the `.nn` models, which
+  is why the manager looked "installed" while the host saw nothing:
+  the yabridge entries were dangling symlinks and `yabridgectl status` listed
+  0 Sonible entries (it only lists what it can resolve).
+- **Restored 2026-09-27** — no installer needed, the quarantined files were
+  copied back into the shared folders and `yabridgectl sync` re-linked them:
+    - `vst/Sonible/smartEQ4.dll`   → VST2, 64-bit, synced
+    - `vst3/Sonible/smartEQ4.vst3` → VST3, legacy, 64-bit, synced
+    - `plugin-health smartEQ4` → `payload:1, kind:vst3, healthy:true`
+  The quarantine copies were left in place as a fallback.
+- Two failure modes seen the first time, both real and both still relevant to a
+  future re-install:
 
-Two failure modes seen while it WAS installed, both real and both still
-relevant to a restore:
-
-- Pre-install MFC42 (ISSKINU.DLL Inno skin runtime) must be AUTOMATIC on every
-  Sonible installer — the TUI's non-interactive runner had been silently
-  refusing the old prompt, which is why SmartEQ4 kept failing with
-  "Cannot import dll: …ISSKINU.DLL".
-- The plugin imports `sonible_onnxruntime_v1-15-1.dll`, which the installer
-  drops in the PREFIX system32 while yabridge loads the plugin from the SHARED
-  folder under whatever prefix the DAW owns (`wine prefix: <default>`) →
-  import_dll not found → Bitwig/REAPER's plugin host died hard at startup
-  (exit 134). Fix: `fix_sonible_runtime_deps()` (post_install) copies every
-  `sonible_*.dll` runtime NEXT TO each installed sonible plugin.
+  - Pre-install MFC42 (ISSKINU.DLL Inno skin runtime) must be AUTOMATIC on every
+    Sonible installer — the TUI's non-interactive runner had been silently
+    refusing the old prompt, which is why SmartEQ4 kept failing with
+    "Cannot import dll: …ISSKINU.DLL".
+  - The plugin imports `sonible_onnxruntime_v1-15-1.dll`, which the installer
+    drops in the PREFIX system32 while yabridge loads the plugin from the SHARED
+    folder under whatever prefix the DAW owns (`wine prefix: <default>`) →
+    import_dll not found → Bitwig/REAPER's plugin host died hard at startup
+    (exit 134). Fix: `fix_sonible_runtime_deps()` (post_install) copies every
+    `sonible_*.dll` runtime NEXT TO each installed sonible plugin.
 
 ## CrispyTuner — ⚠️
 - Editor needs an input rule; the entry after an install offers the plugin
@@ -94,9 +89,9 @@ wrapper (`~/.local/bin/reaper`). Bitwig launches through its own
 `fix-daw-wine-runtime.sh` wrapper.
 
 **Tested and loading on this machine**: Serum 2 ✅ (ableton runtime REQUIRED for
-its editor — see the REAPER launcher note below), CrispyTuner ✅, ScaleFinder ✅.
-**Not loading**: SmartEQ4 — binaries in the quarantine, links dangling (see its
-section above).
+its editor — see the REAPER launcher note below), CrispyTuner ✅, ScaleFinder ✅,
+SmartEQ4 ✅ (restored from quarantine — see its section above).
+`check-all-plugins` now runs clean on all five.
 
 ---
 

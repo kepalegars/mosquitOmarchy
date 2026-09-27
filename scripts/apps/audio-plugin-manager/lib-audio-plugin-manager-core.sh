@@ -761,9 +761,17 @@ is_known_plugin() {
 }
 
 list_shared_plugin_files() {
-  find "$VST_VST2" "$VST_VST3" "$VST_CLAP" \
+  # Same filtering as scan_plugins(): a runtime dependency DLL dropped next to a
+  # plugin (sonible_onnxruntime_v1-15-1.dll) is not a plugin, and listing it
+  # made the health report claim smartEQ4's own runtime was a broken install.
+  local f
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    is_runtime_dep_dll "$f" && continue
+    printf '%s\n' "$f"
+  done < <(find "$VST_VST2" "$VST_VST3" "$VST_CLAP" \
     -type f \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) \
-    -printf '%p\n' 2>/dev/null | sort
+    -printf '%p\n' 2>/dev/null | sort)
 }
 
 # Every plugin-like file inside the prefix (used to recover plugins an
@@ -2623,8 +2631,11 @@ plugin_health_json() {
     while IFS= read -r hit; do
       [[ -n $hit ]] || continue
       found=1
-      case "$hit" in *.vst3) kind="vst3" ;; *.vst2) kind="vst2" ;; *.clap) kind="clap" ;; esac
-    done < <(find "$root" -maxdepth 2 \( -name '*.vst3' -o -name '*.vst2' -o -name '*.clap' \) 2>/dev/null |
+      # A VST2 is a plain .dll -- there is no ".vst2" file extension. Matching
+      # only *.vst3|*.vst2|*.clap made a perfectly good, yabridge-synced VST2
+      # (smartEQ4.dll) report "no loadable binary in the shared plugin folders".
+      case "$hit" in *.vst3) kind="vst3" ;; *.dll) kind="vst2" ;; *.vst2|*.clap) kind="${hit##*.}" ;; esac
+    done < <(find "$root" -maxdepth 2 \( -name '*.vst3' -o -name '*.dll' -o -name '*.vst2' -o -name '*.clap' \) 2>/dev/null |
              awk -v want="$stem" '{ n=$0; gsub(/[^[:alnum:]]/,"",n); n=tolower(n);
                                      if (index(n, want) || index(want, n)) { print; exit } }')
   done

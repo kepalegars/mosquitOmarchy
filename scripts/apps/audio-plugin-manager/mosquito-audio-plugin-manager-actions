@@ -386,11 +386,15 @@ PYWIZARD
 
   check-all-plugins)
     # One JSON line per known plugin in the shared folders, for a health report.
-    local p
-    while IFS= read -r p; do
-      [[ -n $p ]] || continue
-      plugin_health_json "$p"
+    # No `local` here: this dispatcher is a top-level `case`, not a function,
+    # and `local` outside a function is a hard bash error -- the command failed
+    # outright with "local: can only be used in a function".
+    _apm_p=""
+    while IFS= read -r _apm_p; do
+      [[ -n $_apm_p ]] || continue
+      plugin_health_json "$_apm_p"
     done < <(list_shared_plugin_files 2>/dev/null | sort -u)
+    unset _apm_p
     ;;
 
   recommended-fixes)
