@@ -225,6 +225,9 @@ type SetupItemRec struct {
 	Label   string `json:"label"`
 	Info    string `json:"info"`
 	Checked bool   `json:"checked"`
+	// Disabled greys the row and refuses Enter. The backend uses it to keep an
+	// option visible in its "nothing left to do" state instead of dropping it.
+	Disabled bool `json:"disabled"`
 }
 
 // backupOptionsMsg carries the backup content tree + environment facts.

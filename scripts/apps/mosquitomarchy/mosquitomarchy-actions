@@ -328,18 +328,21 @@ cmd_uninstall_tree(){
       "$(json_str fixes)" "$(json_str "fix:$fid")" "$(json_str "$fid")" \
       "$(json_str "$(fix_desc "$fid")")")")
   done
-  # Preinstalls: only offered while at least one stock app is still removable,
-  # so the folder greys out on its own once everything is gone.
-  if preinstalls_removable; then
-    local nrem=0 p
-    while read -r p; do [[ -n $p ]] || continue; preinstall_removable "$p" && ((nrem++)); done < <(stock_preinstalls)
-    folders+=("Preinstalls"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
-      "$(json_str preinstalls)" "$(json_str "Preinstalls")" false)")
-    items+=("preinstalls/choose"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
-      "$(json_str preinstalls)" "$(json_str "preinstalls:choose")" \
-      "$(json_str "Choose which Omarchy preinstalls to remove")" \
-      "$(json_str "$nrem stock app(s) still removable; the list below only shows what is actually installed")")")
-  fi
+  # Preinstalls: the folder is ALWAYS listed, and greys out on its own once no
+  # stock app is removable any more. It used to be dropped from the tree
+  # entirely, so the option silently disappeared instead of turning into the
+  # "nothing left to do here" state the other options use.
+  local nrem=0 p
+  while read -r p; do [[ -n $p ]] || continue; preinstall_removable "$p" && ((nrem++)); done < <(stock_preinstalls)
+  folders+=("Preinstalls"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+    "$(json_str preinstalls)" "$(json_str "Preinstalls")" false)")
+  items+=("preinstalls/choose"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s,"disabled":%s}' \
+    "$(json_str preinstalls)" "$(json_str "preinstalls:choose")" \
+    "$(json_str "Choose which Omarchy preinstalls to remove")" \
+    "$(json_str "$( ((nrem)) && printf '%d stock app(s) still removable; the list below only shows what is actually installed' "$nrem" \
+        || printf 'nothing left to remove: every Omarchy preinstall is either already removed or is one of your own apps (kept on purpose)')")" \
+    "$( ((nrem)) && printf false || printf true)")")
+  unset p
 
   local line
   while IFS= read -r line; do [[ -n $line ]] && printf '%s\n' "${line#*$'\t'}"; done \

@@ -1431,6 +1431,14 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		if len(eff) == 0 {
 			eff = m.highlightedKey()
 		}
+		// A greyed row is not an action: Enter on it says why instead of
+		// opening a screen that would have nothing selectable in it.
+		if len(eff) == 1 {
+			if it, ok := m.setupByValue[setupValue(m.setupCat, eff[0])]; ok && it.Disabled {
+				m.toast, _ = m.toast.SetWarn(it.Info)
+				return m, nil
+			}
+		}
 		if len(eff) == 1 && eff[0] == "keybindings" {
 			m.kbMode = "setup"
 			if m.treeMode == "uninstall" {
@@ -2069,6 +2077,12 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 				entry := tuikit.PickerItem{
 					Display: "    " + branch + pmark + "  " + it.Label,
 					Value:   setupValue(f.Folder, it.Key),
+				}
+				// The backend greys a row that has nothing left to do (Preinstalls
+				// once every stock app is gone or is your own). It stays listed so
+				// the option does not silently vanish.
+				if it.Disabled {
+					entry.Disabled = true
 				}
 				// "remove-ai" means the OPPOSITE thing in each tree, so the
 				// grey-out rule has to follow the mode. Setup offers "bring back
