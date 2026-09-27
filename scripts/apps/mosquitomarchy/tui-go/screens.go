@@ -479,6 +479,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.toast, _ = m.toast.SetWarn("keepassxc un-ticked")
 				return m, nil
 			}
+			if m.pendingAction == "davinci-spektra" {
+				// Declined = install Resolve without the optional OFX. That is a
+				// legitimate answer, not a cancel: continue the apply.
+				m.dvcSpektra = 2
+				os.Setenv("MOSQUITOMARCHY_DAVINCI_SPEKTRAFILM", "0")
+				return m, fetchMissingAssetsCmd(m.pendingArgs)
+			}
 			if m.pendingAction == "keepassxc-gnomerm" {
 				// Declined = KEEP the gnome-keyring package. This is a
 				// legitimate answer, not a cancel: continue the apply.
@@ -509,6 +516,18 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// Continue the apply that was interrupted by this question.
 			return m, fetchMissingAssetsCmd(m.pendingArgs)
 
+		case "davinci-spektra":
+			if msg.Yes {
+				m.dvcSpektra = 1
+				os.Setenv("MOSQUITOMARCHY_DAVINCI_SPEKTRAFILM", "1")
+				m.toast, _ = m.toast.SetOK("spektrFilm OFX will be installed with Resolve")
+			} else {
+				m.dvcSpektra = 2
+				os.Setenv("MOSQUITOMARCHY_DAVINCI_SPEKTRAFILM", "0")
+			}
+			// Continue the apply that was interrupted by this question.
+			return m, fetchMissingAssetsCmd(m.pendingArgs)
+
 		case "kb-add":
 			return m.startWorking("Binding the key", workingArgs("kb-add", m.pendingArgs)...)
 		case "kb-remove":
@@ -527,6 +546,22 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.pendingNo = "Keep it"
 				m.pendingYes = "Remove it"
 				m.push(scrConfirm)
+				m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+				return m, nil
+			}
+			// DaVinci ships an optional free OFX plugin. setup-davinci.sh only
+			// offers it under `((YES == 0)) && ask`, and the TUI applies with
+			// YES=1, so it was never proposed from here. Ask now, where the
+			// answer can still be a real question, and hand the decision to
+			// the script as --with-spektrafilm.
+			if planHasDavinci(m.pendingArgs) && m.dvcSpektra == 0 {
+				m.pendingAction = "davinci-spektra"
+				m.pendingMsg = "Install the free spektrFilm OFX too?\n\nPhotochemical film simulation for Resolve (SpektraFilm 114c.de, free). Installed into Resolve's OFX folder, removable later from the DaVinci uninstall."
+				m.pendingNo = "Resolve only"
+				m.pendingYes = "Add spektrFilm"
+				m.push(scrConfirm)
+				// Focus "Resolve only": the plugin is optional, so the plain
+				// Enter answer should be the one that does not change the plan.
 				m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 				return m, nil
 			}
@@ -580,8 +615,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				_ = idx
 			}
 			return m, fetchMenuEntriesCmd()
-		case "menu-entry":
-			return m.startWorking("Adding the menu entry", workingArgs("menu-entry", nil)...)
 		case "apply-patches":
 			args := append([]string{"apps"}, m.pendingPatchKeys...)
 			return m.startWorking("Applying the patch", workingArgs("run-patch", args)...)
@@ -871,17 +904,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
 			if m.setupPicker.SelectedValue() == "menu-entries" {
 				m.info = tuikit.NewInfo(
-					"Menu entries — every marked block mosquito installs into the\n"+
-					"Omarchy menu (mega caffeine, live mode, mosquito Move Manager,\n"+
-					"mosquitomarchy itself).\n\n"+
-					"Enter opens the cleaner; the tick mark = the entry is present.\n"+
-					"Un-check the ones you do not want and press Enter to strip them\n"+
-					"from the Omarchy menu (re-check + Enter restores them).").SetSize(m.contentSize())
-				m.push(scrInfo)
-				return m, nil
-			}
-			if m.setupPicker.SelectedValue() == "menu-entry" {
-				m.info = tuikit.NewInfo(menuEntryInfo).SetSize(m.contentSize())
+					"Menu entries — every marked block mosquito installs into the\n" +
+						"Omarchy menu (mega caffeine, live mode, mosquito Move Manager,\n" +
+						"mosquitomarchy itself).\n\n" +
+						"Each line starts from what is installed right now. The tick is what\n" +
+						"Enter will make true: un-tick an installed entry to strip it from the\n" +
+						"Omarchy menu, tick a missing one to add it back. Only the lines you\n" +
+						"actually changed are applied.").SetSize(m.contentSize())
 				m.push(scrInfo)
 				return m, nil
 			}
@@ -1065,10 +1094,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			for _, e := range m.menuEntries {
 				if _, seen := m.menuEntryChecked[e.Name]; !seen {
-					// DEFAULT: everything UNCHECKED — the user opts IN to any
-					// entry they want kept (Enter applies strip/restore).
-					m.menuEntryChecked[e.Name] = false
-					m.menuEntryOrig[e.Name] = false
+					// DEFAULT = what is installed right now. The picker applies a
+					// DELTA, so with everything unticked as the default the only
+					// rows that ever differed were the ticked ones, and Enter could
+					// only ever restore: the strip half of the screen was dead code.
+					// Starting from the real state makes untick=strip reachable.
+					m.menuEntryChecked[e.Name] = e.Present
+					m.menuEntryOrig[e.Name] = e.Present
 				}
 			}
 			m.rebuildMenuEntriesPicker()
@@ -1076,11 +1108,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		if tg, ok := msg.(tuikit.PickerToggleMsg); ok {
 			name := strings.TrimPrefix(tg.Value, "mentry:")
-			for i, e := range m.menuEntries {
-				if e.Name == name {
-					m.menuEntries[i].Present = !m.menuEntries[i].Present
-				}
-			}
+			// Only the desired state flips here. Present stays as the backend
+			// reported it, so "(installed)" keeps telling the truth until the
+			// apply really ran and the list came back from disk.
 			if m.menuEntryChecked != nil {
 				m.menuEntryChecked[name] = !m.menuEntryChecked[name]
 			}
@@ -1152,6 +1182,19 @@ func planHasKeepassxc(plan []string) bool {
 	for _, group := range plan {
 		for _, k := range strings.Split(group, "\t") {
 			if k == "keepassxc" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// planHasDavinci reports whether an install plan contains the davinci module
+// (the spektrFilm question applies).
+func planHasDavinci(plan []string) bool {
+	for _, group := range plan {
+		for _, k := range strings.Split(group, "\t") {
+			if k == "davinci-resolve" {
 				return true
 			}
 		}
@@ -1242,15 +1285,6 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		// the "Menu entry" option runs the menu registration directly.
 		if res.Value == "back" {
 			m.pop()
-			return m, nil
-		}
-		if res.Value == "menu-entry" {
-			m.pendingAction = "menu-entry"
-			m.pendingMsg = "Add mosquitOmarchy to the Omarchy menu?\n\nRegisters (or refreshes) the entry in the Omarchy Install menu so the TUI can be opened from the launcher at any time."
-			m.pendingNo = "Cancel"
-			m.pendingYes = "Yes"
-			m.push(scrConfirm)
-			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 			return m, nil
 		}
 		if strings.HasPrefix(res.Value, "item:") {
@@ -1799,10 +1833,14 @@ func (m model) rebuildSetup() navPicker {
 		items = append(items, it)
 	}
 	if !uninstall {
-		items = append(items, tuikit.PickerItem{Display: "Menu entry", Value: "menu-entry"})
 		// "Menu entries" cleaner: un-check the entries mosquito adds
 		// automatically to the Omarchy menu (mega caffeine, live mode, the
 		// move converter, mosquitomarchy itself).
+		//
+		// The old "Menu entry" yes/no row is gone: install_menu_entry already
+		// registers the entry on every Setup run, so a row that only asked
+		// "add it again?" duplicated that and confused the singular/plural.
+		// "Menu entries" is the screen that actually manages them.
 		items = append(items, tuikit.PickerItem{Display: "Menu entries", Value: "menu-entries"})
 
 		install := tuikit.PickerItem{Display: "Install selection", Value: "install-selection"}
@@ -1864,9 +1902,6 @@ func (m model) categorySummary(cat string) string {
 	}
 	return strings.Join(names, "\n")
 }
-
-// menuEntryInfo is the "i" popup for the Setup "Menu entry" option.
-const menuEntryInfo = "Menu entry\n\nAdds (or refreshes) the mosquitOmarchy entry in the Omarchy Install menu — Omarchy menu → Install → mosquitOmarchy — so this TUI can be opened at any time from the launcher without a terminal or a manual path.\n\nIdempotent: running it again just keeps the entry up to date."
 
 // setupCatLabel returns the display label of the open category.
 func (m model) setupCatLabel() string {
@@ -1931,8 +1966,12 @@ func aiRemovalLogged() bool {
 	if err != nil {
 		return false
 	}
-	var v struct { Removed bool `json:"removed"` }
-	if err := json.Unmarshal(bytes.TrimSpace(out), &v); err != nil { return false }
+	var v struct {
+		Removed bool `json:"removed"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(out), &v); err != nil {
+		return false
+	}
 	return v.Removed
 }
 
@@ -2220,7 +2259,6 @@ func crashNotifyLabel() string {
 	return "Crash notifications (AI diagnosis): off"
 }
 
-
 // settingsItems2 backs the new TOP-LEVEL Settings screen (before Close).
 func settingsItems2() []tuikit.PickerItem {
 	return []tuikit.PickerItem{
@@ -2271,18 +2309,25 @@ func (m model) rebuildMenuEntriesPicker() navPicker {
 	// rows
 	items := make([]tuikit.PickerItem, 0, len(m.menuEntries)+1)
 	for _, e := range m.menuEntries {
-		mark := "○ missing"
+		// The tick is the DESIRED state (what Enter will apply) and the word is
+		// the CURRENT one. They used to be the same field, so ticking an absent
+		// entry made it announce itself as "installed" before anything ran.
+		mark := "not installed"
 		if e.Present {
-			mark = "● installed"
+			mark = "installed"
+		}
+		tick := "☐"
+		if m.menuEntryChecked[e.Name] {
+			tick = "☑"
 		}
 		items = append(items, tuikit.PickerItem{
-			Display: e.Label + "  (" + mark + ")",
+			Display: tick + " " + e.Label + "  (" + mark + ")",
 			Value:   "mentry:" + e.Name,
 			Badge:   "",
 		})
 	}
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
-	p := newNavPicker("Menu entries — un-check what must NOT be in the Omarchy menu (Enter applies):", items).SetSize(m.contentSize()).
+	p := newNavPicker("Menu entries — tick = keep in the Omarchy menu (Enter applies the change):", items).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "toggle")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),

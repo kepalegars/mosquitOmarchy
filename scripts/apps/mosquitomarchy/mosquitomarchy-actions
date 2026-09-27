@@ -1146,16 +1146,54 @@ cmd_ai_removed() {
 # `restore <name>` re-runs the module's menu installer.
 MENU_JSONC="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
 
+# The menu KEY of each entry, which is what the list/strip logic matches on.
+# These used to be labels and comment fragments ("mosquitOmarchy setup",
+# "managed by setup-battery-management.sh", "ableton-move-converter"), so once
+# the entries were regrouped under setup.mosquito.* the Move Manager was
+# reported as missing and could not be stripped: the marker it looked for no
+# longer existed anywhere in omarchy-menu.jsonc.
 menu_entries_marker() {
   case "$1" in
-    mosquitomarchy) printf 'mosquitOmarchy setup' ;;
-    mega-caffeine)  printf 'managed by setup-battery-management.sh' ;;
-
-
-    live-mode)      printf 'live-mode' ;;
-    move-converter) printf 'ableton-move-converter' ;;
+    mosquitomarchy) printf 'setup.mosquito.manager' ;;
+    mega-caffeine)  printf 'trigger.toggle.mega-caffeine' ;;
+    live-mode)      printf 'trigger.music.live-mode' ;;
+    move-converter) printf 'setup.mosquito.move' ;;
     *)              printf '%s' "$1" ;;
   esac
+}
+
+# menu_strip_key <jsonc> <key> -- delete the whole top-level object whose key is
+# <key>, braces included. The previous implementation took the marker's line
+# plus the SECOND line containing the marker as the block bounds, which only
+# worked for the two-line comment+key pairs the installer used to emit; a real
+# key appears once, so the bounds were empty and the strip always errored out.
+menu_strip_key() {
+  local file="$1" key="$2"
+  python3 - "$file" "$key" <<'PYEOF'
+import re, sys
+path, key = sys.argv[1], sys.argv[2]
+lines = open(path, encoding="utf-8").read().splitlines(keepends=True)
+start = None
+for i, line in enumerate(lines):
+    if re.match(r'\s*"%s"\s*:\s*\{' % re.escape(key), line):
+        start = i
+        break
+if start is None:
+    sys.exit(1)
+depth, end = 0, None
+for j in range(start, len(lines)):
+    depth += lines[j].count("{") - lines[j].count("}")
+    if depth == 0:
+        end = j
+        break
+if end is None:
+    sys.exit(1)
+# swallow a trailing comma left behind by the removal
+if end + 1 < len(lines) and re.match(r'\s*,\s*$', lines[end + 1]):
+    end += 1
+del lines[start:end + 1]
+open(path, "w", encoding="utf-8").writelines(lines)
+PYEOF
 }
 
 # Every stock preinstall with its state, so the picker can show the whole Omarchy
@@ -1189,7 +1227,7 @@ cmd_menu_entries() {
       for b in "${NAMES[@]}"; do
         present=false
         mark="$(menu_entries_marker "$b")"
-        grep -qF "$mark" "$MENU_JSONC" 2>/dev/null && present=true || true
+        grep -qE "^[[:space:]]*\"${mark//./\\.}\"[[:space:]]*:" "$MENU_JSONC" 2>/dev/null && present=true || true
         label=""
         for line in ${!NAMES[@]}; do
           [[ ${NAMES[$line]} == "$b" ]] && label="${LABELS[$line]}" && break
@@ -1200,29 +1238,33 @@ cmd_menu_entries() {
     strip)
       id="${2:?menu id required}"
       mark="$(menu_entries_marker "$id")"
-      start=$(grep -nF "$mark" "$MENU_JSONC" | head -1 | cut -d: -f1) || true
-      end=$(grep -nF "$mark" "$MENU_JSONC" | head -2 | tail -1 | cut -d: -f1)
-      if [[ -n $start && -n $end && $end -gt $start ]]; then
-        tmp=$(mktemp)
-        head -n $((start - 1)) "$MENU_JSONC" > "$tmp"
-        tail -n +$((end + 1)) "$MENU_JSONC" >> "$tmp"
-        mv "$tmp" "$MENU_JSONC"
+      if menu_strip_key "$MENU_JSONC" "$mark"; then
         (omarchy menu refresh >/dev/null 2>&1 || true)
         ok "menu entry removed: $id"
       else
-        err "no marked block found for '$id' in $MENU_JSONC"
+        err "no entry keyed '$mark' found in $MENU_JSONC"
       fi
       ;;
     restore)
       id="${2:?menu id required}"
       case "$id" in
-        mosquitomarchy) bash "$HOME/mosquitOmarchy/mosquitomarchy-setup.sh" >/dev/null 2>&1 \
+        # NOT the whole engine: `mosquitomarchy-setup.sh` with no target runs the
+        # launcher, does nothing without a tty and still exits 0, so this printed
+        # "menu re-added" while the entry stayed missing. The launcher row is part
+        # of the setup.mosquito.* block that install_menu_entry rewrites.
+        mosquitomarchy) install_menu_entry >/dev/null 2>&1 \
           && ok "menu re-added: mosquitomarchy" || warn "restore failed: mosquitomarchy" ;;
         mega-caffeine)  bash "$HOME/mosquitOmarchy/scripts/plugins/power-management/setup-battery-management.sh" >/dev/null 2>&1 \
           && ok "menu re-added: mega-caffeine" || warn "restore failed: mega-caffeine" ;;
         live-mode)      bash "$HOME/mosquitOmarchy/scripts/plugins/live-mode/setup-live-mode.sh" >/dev/null 2>&1 \
           && ok "menu re-added: live-mode" || warn "restore failed: live-mode" ;;
-        move-converter) bash "$HOME/mosquitOmarchy/scripts/apps/ableton-move-manager/setup-ableton-move-manager.sh" >/dev/null 2>&1 \
+        # NOT the module's own setup script: that one needs root (udev rule,
+        # chromium policy, ydotool NOPASSWD) so -y opens dialogs and then blocks
+        # on `sudo` for a password, and without a flag it refuses to start at
+        # all ("stdin without a TTY: a flag is required") -- the restore never
+        # worked. The Move Manager row lives in the setup.mosquito.* menu block,
+        # which install_menu_entry owns and rewrites idempotently without root.
+        move-converter) install_menu_entry >/dev/null 2>&1 \
           && ok "menu re-added: move-converter" || warn "restore failed: move-converter" ;;
       esac
       ;;

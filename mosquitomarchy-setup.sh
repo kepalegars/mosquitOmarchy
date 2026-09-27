@@ -2670,7 +2670,29 @@ run_davinci(){
   # davinci/ (the file name picks the edition). H.264/H.265 handled according to
   # the edition; the libav patch / FFmpeg plugin proposed. With -y: auto libav
   # patch (free), FFmpeg plugin not forced (Studio), SpectraFilm not forced.
-  bash "$DAVINCI_DIR/setup-davinci.sh" $([[ $YES == 1 ]] && echo -y)
+  #
+  # spektrFilm (the free photochemical film-simulation OFX) is asked HERE rather
+  # than left to setup-davinci.sh's own prompt: the TUI runs this module with
+  # YES=1, and setup-davinci.sh only offers it under `((YES == 0)) && ask`, so
+  # from the TUI it was neither proposed nor installed. The decision is taken
+  # where it can still be a real question, then handed over as an explicit flag.
+  local -a extra=()
+  [[ $YES == 1 ]] && extra+=(-y)
+  local spek="${MOSQUITOMARCHY_DAVINCI_SPEKTRAFILM:-}"
+  if [[ -z $spek ]]; then
+    if ask "Also install the free spektrFilm OFX (photochemical film simulation) into Resolve?" n; then
+      spek=1
+    else
+      spek=0
+    fi
+  fi
+  if [[ $spek == 1 ]]; then
+    extra+=(--with-spektrafilm)
+    msg "spektrFilm OFX: requested (--with-spektrafilm)"
+  else
+    msg "spektrFilm OFX: skipped"
+  fi
+  bash "$DAVINCI_DIR/setup-davinci.sh" "${extra[@]}"
 }
 
 run_ableton_move_converter(){
@@ -3011,7 +3033,6 @@ CATEGORIES=(
   "lame|lame language models (ai..)|ollama remove-ai"
   "themes|Themes|achraff"
   "vms|VMs|windows-vm macos-vm omarchy-vm"
-  "menu|Menu entry|"
 )
 
 launcher_pick(){ # $1 = header, rest = one label per line → echoes the picked label
@@ -3391,15 +3412,11 @@ launcher_run_category(){
         ok "No quick fix selected."
       fi
       ;;
-    menu)
-      # Ask first; if yes, ONLY register the menu entry (no module status,
-      # no other check).
-      if ask "Add the mosquitOmarchy setup to the Omarchy install menu?" y; then
-        install_menu_entry
-      else
-        ok "Menu entry not added."
-      fi
-      ;;
+    # NOTE: there is no "menu" category any more. It used to be a yes/no
+    # "Menu entry" row, but install_menu_entry already registers (and refreshes)
+    # the entry on every Setup run, so the row duplicated it and forced a
+    # singular/plural choice with "Menu entries", which is the screen that
+    # actually lists and manages the four entries.
     *)
       category_pick "$id"
       if ((${#CATEGORY_SELECTED[@]})); then

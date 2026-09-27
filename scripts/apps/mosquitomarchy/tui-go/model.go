@@ -62,7 +62,7 @@ type model struct {
 	// only the checked ones are re-applied.
 	healthPicker navPicker
 	// pickPicker backs the TOP-LEVEL "Extras" screen (plugin toggles).
-	pickPicker navPicker
+	pickPicker   navPicker
 	backupPicker navPicker
 	// backupOptPicker drives the Backup options screen; backupAppsPicker is
 	// the apps/tuis/webapps content tree.
@@ -112,12 +112,12 @@ type model struct {
 	// block from omarchy-menu.jsonc (re-check restores).
 	// preinstalls drives Uninstall ▸ Preinstalls: the full Omarchy stock list,
 	// with the already-removed apps greyed out instead of hidden.
-	preinstalls      []PreinstallRec
+	preinstalls       []PreinstallRec
 	preinstallChecked map[string]bool
 	preinstallPicker  navPicker
-	menuEntries      []MenuEntryRec
-	menuEntryChecked map[string]bool
-	menuEntryOrig    map[string]bool
+	menuEntries       []MenuEntryRec
+	menuEntryChecked  map[string]bool
+	menuEntryOrig     map[string]bool
 
 	// Setup/Uninstall tree typing filter: printable keys build a live
 	// substring filter that flattens the tree (leaf rows only, no category
@@ -129,7 +129,12 @@ type model struct {
 	filterOpen bool
 	// kpxGnomeRm tracks the per-install-plan answer to "remove the
 	// gnome-keyring package?": 0 = not asked yet, 1 = yes, 2 = no.
-	kpxGnomeRm    int
+	kpxGnomeRm int
+	// dvcSpektra tracks the per-install-plan answer to "install the free
+	// spektrFilm OFX too?". 0 = not asked yet. Kept separate from kpxGnomeRm
+	// because the two questions belong to different modules, and a plan can
+	// contain both.
+	dvcSpektra    int
 	kbCatPicker   navPicker
 	kbItemPicker  navPicker
 	kbCatItems    []KbCatItem
@@ -150,7 +155,7 @@ type model struct {
 	backupSelFile string
 
 	// pending* hold a confirm's/action's decision.
-	pendingAction string // "apply" | "update" | "update-repo" | "backup" | "restore" | "menu-entry"
+	pendingAction string // "apply" | "update" | "update-repo" | "backup" | "restore" | "menu-entries"
 	pendingArgs   []string
 	pendingFile   string
 	// pendingPass holds the first encrypted-backup passphrase while the
