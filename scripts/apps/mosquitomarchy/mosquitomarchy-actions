@@ -24,6 +24,14 @@ set -euo pipefail
 SCRIPT_SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SELF")" && pwd)"
 SETUP="$SCRIPT_DIR/../../../mosquitomarchy-setup.sh"
+# Deployed run (~/.local/bin/mosquitomarchy-actions is a real COPY here, not
+# a symlink): ~/.. from ~/.local/bin is NOT the repo — search known repos.
+if [[ ! -f $SETUP ]]; then
+  for cand in "$HOME/mosquitOmarchy/mosquitomarchy-setup.sh" \
+              "$HOME/mosquitOmarchy/scripts/apps/mosquitomarchy/../../../mosquitomarchy-setup.sh"; do
+    [[ -f $cand ]] && { SETUP="$cand"; break; }
+  done
+fi
 APP_DIR="$(cd "$(dirname "$SETUP")" && pwd)"
 
 # gui-run.bash (sourced by mosquitomarchy-setup.sh) would `exec foot …` the
@@ -44,6 +52,13 @@ export MOSQUITOMARCHY_TUI=1
 # pipefail` at its top — every query below must therefore be written to
 # succeed even for empty results.
 # shellcheck source=../../mosquitomarchy-setup.sh
+# Deployed copy (~/.local/bin/mosquitomarchy-actions) is a symlink INTO the
+# repo — dirname "$(readlink -f "$0")" resolves the repo, so the source sits
+# there even when the caller invoked the bin path directly.
+if [[ ! -f $SETUP ]]; then
+  alt="$(dirname "$(readlink -f "${BASH_SOURCE[0]:-$0}")")/../../../mosquitomarchy-setup.sh"
+  [[ -f $alt ]] && SETUP="$alt"
+fi
 source "$SETUP"
 
 # ── JSON helpers (single-line, no trailing comma, escaped) ────────────────
