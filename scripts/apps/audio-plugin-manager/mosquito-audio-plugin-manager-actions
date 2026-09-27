@@ -307,8 +307,13 @@ PYWIZARD
   list-prefixes)
     # The DEFAULT prefix FIRST (recommended); a plugin's known prefix carries
     # a RECOMMENDED note when the installer matches a recorded plugin.
+    # The installer is $1 here, NOT $2: the dispatcher does `cmd="${1:-}"; shift`
+    # before the case, so every option reads its arguments from $1. Reading $2
+    # here always found an empty string, `rec` stayed empty, and the RECOMMENDED
+    # marker never reached the list -- which is why a known plugin's prefix was
+    # never highlighted, for any plugin.
     rec=""
-    [[ -n ${2:-} ]] && rec="$(recommended_prefix_for "$2")" || rec=""
+    [[ -n ${1:-} ]] && rec="$(recommended_prefix_for "$1")" || rec=""
     dp="$(default_prefix)"
     ordered=()
     [[ -n $rec ]] && ordered+=("$rec")
@@ -317,7 +322,13 @@ PYWIZARD
       [[ $p == "$dp" ]] && continue
       ordered+=("$p")
     done
-    ordered+=("$dp")
+    # The recommended prefix is very often the default one. It is already in
+    # `ordered` by then, and appending the default unconditionally listed it
+    # twice -- the same path under the same RECOMMENDED label, so selecting the
+    # second entry installed into a prefix the list had already shown.
+    seen_dp=0
+    for p in "${ordered[@]}"; do [[ $p == "$dp" ]] && seen_dp=1; done
+    [[ $seen_dp == 0 ]] && ordered+=("$dp")
     for p in "${ordered[@]}"; do
       note=""
       if [[ -n $rec && $p == "$rec" ]]; then

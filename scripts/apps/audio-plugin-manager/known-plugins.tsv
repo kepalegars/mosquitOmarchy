@@ -25,7 +25,18 @@
 #              ~/.config/audio-plugin-manager/wine-runtime.
 #   needs32    yes when the plugin ships a 32-bit VST that must be bridged, no
 #              when the plugin is 64-bit only, unknown when not established.
+#   fixes      space-separated fix ids applied on first install (5th column), e.g.
+#              "wine_gui_input wine_tooltip". Applied automatically; the ids
+#              resolve in the fixes catalog. Empty = nothing to apply.
+#   recommended  space-separated subset of `fixes` worth recommending to the user
+#              (6th column), or "no" to apply them silently. This is what makes
+#              the wizard say "fix applied (recommended)" instead of applying a
+#              change the user never agreed to.
 #   note       shown in the wizard next to the recommendation.
+#
+# All seven columns are read; known_plugin_fixes() takes column 5 and
+# known_plugin_recommended_fixes() takes column 6, so a row must keep the empty
+# placeholders ("| |||") rather than trimming the fields it does not use.
 #
 # The runtime column only records what has actually been observed on this
 # machine.  "unknown" is a deliberate value, not a placeholder: it means nobody

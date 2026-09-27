@@ -717,7 +717,8 @@ known_plugin_record() {
   while IFS='|' read -r pat _; do
     [[ -n $pat ]] || continue
     case "$low" in
-      *"$pat"*) recommended_prefix_for_plugins |
+      *"$pat"*)
+        recommended_prefix_for_plugins |
         awk -F'|' -v want="$pat" '$1==want{print; exit}'
         return 0 ;;
     esac
@@ -725,24 +726,40 @@ known_plugin_record() {
   return 1
 }
 
+# known_plugin_field <record> <n> -- column n (1-based) of a record.
+#
+# The records are PIPE-separated (see the format note in known-plugins.tsv),
+# so `cut -fN` was wrong: cut splits on TAB, and a record has no tab, so every
+# call returned the WHOLE line. That is not a cosmetic mistake -- it made
+# recommended_runtime_for() answer the entire record instead of "ableton",
+# known_plugin_needs32() answer the record instead of yes/no/unknown, and
+# recommended_prefix_for() answer a record where a prefix path belongs. The
+# visible symptom was a category list that knew crispy but not sonible: those
+# lookups all fed on this.
+known_plugin_field() {
+  local rec="$1" n="$2"
+  [[ -n $rec && -n $n ]] || return 1
+  printf '%s' "$rec" | awk -F'|' -v n="$n" '{ print $n; exit }'
+}
+
 # The wine runtime a known plugin's editor needs, or empty when not established.
 recommended_runtime_for() {
   local rec
   rec="$(known_plugin_record "$1" 2>/dev/null)" || return 1
-  printf '%s' "$rec" | cut -f3
+  known_plugin_field "$rec" 3
 }
 
 # Does the known plugin need a 32-bit bridge?  yes|no|unknown
 known_plugin_needs32() {
   local rec
   rec="$(known_plugin_record "$1" 2>/dev/null)" || return 1
-  printf '%s' "$rec" | cut -f4
+  known_plugin_field "$rec" 4
 }
 
 recommended_prefix_for() {
   local rec pfx
   rec="$(known_plugin_record "$1" 2>/dev/null)" || return 1
-  pfx="$(printf '%s' "$rec" | cut -f2)"
+  pfx="$(known_plugin_field "$rec" 2)"
   [[ -n $pfx ]] || return 1
   # ".wine-vst" is relative to $HOME and its leading dot is part of the name.
   # Stripping it ("${pfx#.}") silently produced ~/wine-vst, a different
@@ -1146,12 +1163,17 @@ install_plugin() {
   local fix_token fix_rec
   fix_rec="$(known_plugin_record "$file" 2>/dev/null || true)"
   fix_token=""
-  [[ -n $fix_rec ]] && fix_token="$(printf '%s' "$fix_rec" | cut -f1)"
+  [[ -n $fix_rec ]] && fix_token="$(known_plugin_field "$fix_rec" 1)"
   if [[ -n $fix_token ]]; then
     apply_known_fixes_for "$fix_token"
   else
     msg "no known-plugin record for $(basename "$file") -- no per-product fix applied"
   fi
+  # The editor's wine runtime, if this product needs a specific one. Applied
+  # AFTER announcing it, right here, because the crash it prevents is the one
+  # the user cannot diagnose on their own: the plugin is installed, yabridge
+  # lists it, REAPER shows it, and it dies the moment the editor opens.
+  ensure_daw_runtime_for_known_plugin "$fix_rec"
   # Hand the freshly installed plugin to the caller in the same
   # self-describing shape list-all-plugins uses, then offer any remaining
   # plugin-scope fixes. The line is plain text on stdout so the Go TUI's
@@ -1164,6 +1186,45 @@ install_plugin() {
   esac
   printf 'installed-plugin: %s\n' "$installed_value"
   propose_fixes_after_install "$installed_value"
+}
+
+# A plugin's known record says which wine runtime its EDITOR needs (column 3).
+# When that is "ableton", the editor can only be created under the patched
+# DirectComposition build; the DAWs therefore have to launch with it. This was
+# the Serum 2 bug: everything about the install was correct and the editor still
+# took the host down, because REAPER's launcher used the system wine.
+#
+# Proposes first, then applies: the runtime switch is a change to how the user's
+# DAWs start, so it is stated plainly rather than done silently.
+ensure_daw_runtime_for_known_plugin() {
+  local rec="$1" token want active
+  [[ -n $rec ]] || return 0
+  token="$(known_plugin_field "$rec" 1)"
+  want="$(known_plugin_field "$rec" 3)"
+  [[ $want == ableton ]] || return 0
+
+  local helper="$HOME/mosquitOmarchy/scripts/lib/wine-runtime-daw.bash"
+  if [[ ! -f $helper ]]; then
+    helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/lib/wine-runtime-daw.bash"
+  fi
+  if [[ ! -f $helper ]]; then
+    warn "$token: its editor needs the ableton wine runtime, but the shared runtime helper is missing — REAPER/Bitwig will keep the system wine and the editor may crash on open."
+    return 0
+  fi
+
+  msg "$token: its editor is a DirectComposition surface and needs the ableton wine runtime."
+  active="$(apm_wine_runtime 2>/dev/null || echo system)"
+  if [[ $active == system ]]; then
+    warn "the plugin manager's runtime is 'system' (no DComp) — switching it to 'ableton' so installs and scans use the same wine the editor needs."
+    apm_set_wine_runtime ableton || warn "could not write the runtime choice; change it in Settings."
+  fi
+
+  # shellcheck source=../lib/wine-runtime-daw.bash
+  if source "$helper" && mosquitomarchy_apply_daw_wine_runtime; then
+    ok "REAPER + Bitwig launchers now use the patched runtime — the $token editor will open."
+  else
+    warn "no wine-d2d1-nspa runtime under ~/.local/opt: REAPER/Bitwig keep the system wine and the $token editor will crash on open. Run the Ableton setup, or scripts/fixes/fix-daw-wine-runtime.sh."
+  fi
 }
 
 register_standalones_from_prefix() {
@@ -2704,8 +2765,14 @@ plugin_health_json() {
   fi
 
   # ── runtime ──
+  # Ask known-plugins.tsv which runtime this product's editor needs, instead of
+  # hard-coding "serum/xfer": the hard-coded pair left every other DComp editor
+  # (smartEQ among them) with a null wantRuntime, so the health check could not
+  # warn that it was running under a wine that cannot create its editor. The
+  # heuristic stays as a fallback for a product the table has no row for yet.
   local want_rt="" active
-  if [[ $low == *serum* || $low == *xfer* ]]; then
+  want_rt="$(recommended_runtime_for "$base" 2>/dev/null || true)"
+  if [[ -z $want_rt && ( $low == *serum* || $low == *xfer* ) ]]; then
     want_rt=ableton
   fi
   active="$(apm_wine_runtime 2>/dev/null || echo system)"
@@ -2753,7 +2820,7 @@ fixes_for_installer_json() {
   local file="$1" rec token
   rec="$(known_plugin_record "$file" 2>/dev/null || true)"
   token=""
-  [[ -n $rec ]] && token="$(printf '%s' "$rec" | cut -f1)"
+  [[ -n $rec ]] && token="$(known_plugin_field "$rec" 1)"
 
   local id title scope desc category plugin rec needs_installed
   while IFS='|' read -r id title scope desc category plugin rec; do
