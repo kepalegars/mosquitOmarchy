@@ -3200,6 +3200,29 @@ module_desc(){ # module / pseudo id -> short description
   esac
 }
 
+# split_name_desc <fallback-name> <text> -> CAND_NAME / CAND_DESC
+# Catalog labels are written by hand and often read "<name> — <what it does>",
+# sometimes repeating the name ("TUI calcure|calcure — terminal calendar").
+# Returns the human name in CAND_NAME and the description in CAND_DESC, with
+# that leading repetition dropped.
+split_name_desc(){
+  local fallback="$1" text="$2" head
+  if [[ $text == *" — "* ]]; then
+    head="${text%% — *}"
+    CAND_NAME="$head"
+    CAND_DESC="${text#* — }"
+  else
+    CAND_NAME="$text"
+    CAND_DESC=""
+  fi
+  [[ -n $CAND_NAME ]] || CAND_NAME="$fallback"
+  # "calcure — terminal calendar" under the name "calcure" says it twice.
+  if [[ $CAND_DESC == "$CAND_NAME"* && ${#CAND_NAME} -lt ${#CAND_DESC} ]]; then
+    CAND_DESC="${CAND_DESC:${#CAND_NAME}}"
+    CAND_DESC="${CAND_DESC# — }"
+  fi
+}
+
 category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
   CAND_KEYS=(); CAND_LABELS=()
   local cat="$1" id items e name line kind
@@ -3210,9 +3233,14 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
         load_catalog || true
         for e in "${CAT_WEB[@]:-}"; do
           [[ -n $e ]] || continue
+          # WEB is "name|url|icon" -- the name is its own field, there is no
+          # "label — description" pair to split, so split_name_desc would take
+          # the URL as the name. The URL is the useful thing to keep for `i`.
           name="${e%%|*}"
+          CAND_NAME="$name"
+          CAND_DESC="${e#*|}"; CAND_DESC="${CAND_DESC%%|*}"
           CAND_KEYS+=("WEB $e")
-          CAND_LABELS+=("$name  —  ${e#*|}")
+          if [[ -n $CAND_DESC ]]; then CAND_LABELS+=("$CAND_NAME  —  $CAND_DESC"); else CAND_LABELS+=("$CAND_NAME"); fi
         done
       elif [[ -f $CAT_FILE_TUI ]]; then
         while IFS= read -r line || [[ -n $line ]]; do
@@ -3222,13 +3250,24 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
           case $kind in
             TUI)
               name="${line#*[ ]}"; name="${name%%|*}"
+              split_name_desc "$name" "${line#*|}"
               CAND_KEYS+=("TUI $name")
-              CAND_LABELS+=("$name  —  ${line#*|}")
+              if [[ -n $CAND_DESC ]]; then CAND_LABELS+=("$CAND_NAME  —  $CAND_DESC"); else CAND_LABELS+=("$CAND_NAME"); fi
               ;;
             PLUG)
-              e="${line#*[ ]}"; name="${e%%|*}"
+              # A plugin's catalog label may itself read "Name — what it does"
+              # (nosignal.monitor-settings -> "Monitor Settings — Hyprland
+              # display/monitor panel"). Split it so the row shows the name and
+              # only `i` shows the rest; the raw plugin id is the fallback when
+              # the label has no dash.
+              e="${line#*[ ]}"
+              split_name_desc "${e%%|*}" "$(printf '%s' "$e" | cut -d'|' -f3)"
               CAND_KEYS+=("PLUG $e")
-              CAND_LABELS+=("$name  —  $(printf '%s' "$e" | cut -d'|' -f3)")
+              if [[ -n $CAND_DESC ]]; then
+                CAND_LABELS+=("$CAND_NAME  —  $CAND_DESC")
+              else
+                CAND_LABELS+=("$CAND_NAME")
+              fi
               ;;
           esac
         done < "$CAT_FILE_TUI"

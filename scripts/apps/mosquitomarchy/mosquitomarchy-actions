@@ -113,8 +113,19 @@ cmd_candidates(){
   local i
   local -a rows=()
   for ((i=0; i<${#CAND_KEYS[@]}; i++)); do
-    rows+=("${CAND_LABELS[$i]}"$'\t'"$(printf '{"key":%s,"label":%s}' \
-      "$(json_str "${CAND_KEYS[$i]}")" "$(json_str "${CAND_LABELS[$i]}")")")
+    # CAND_LABELS is "<name>  —  <description>". The row must show the name
+    # only: the description is what the `i` popup is for, and inlined it made
+    # every TUIs row a full sentence. SetupItemRec already has an Info field,
+    # it was simply never filled, so `i` had nothing to show but the label.
+    # Both halves must come from the SAME string: truncating $lab first and
+    # then asking for the part after the separator found nothing left to split.
+    local lab="${CAND_LABELS[$i]}" desc=""
+    if [[ $lab == *"  —  "* ]]; then
+      desc="${CAND_LABELS[$i]#*  —  }"
+      lab="${CAND_LABELS[$i]%%  —  *}"
+    fi
+    rows+=("${CAND_LABELS[$i]}"$'\t'"$(printf '{"key":%s,"label":%s,"info":%s}' \
+      "$(json_str "${CAND_KEYS[$i]}")" "$(json_str "$lab")" "$(json_str "$desc")")")
   done
   local line
   while IFS= read -r line; do
@@ -184,11 +195,11 @@ cmd_setup(){
             name="bring back omarchy's agentic stuff"
             info="re-enables the omarchy.agents plugin, the AI-diagnosis crash toasts, and the ollama loader helpers"
           fi
-          # Catalog shell-plugins (PLUG id|url|human-label) read badly by id:
-          # show the human label instead.
-          if [[ ${CAND_KEYS[$i]} == PLUG\ * ]]; then
-            name="$(printf '%s' "${CAND_KEYS[$i]}" | cut -d'|' -f3)"
-          fi
+          # Catalog shell-plugins used to be relabelled here from the raw
+          # id|url|human-label field, which re-inlined the description the split
+          # above had just removed (the row read "Monitor Settings — Hyprland
+          # display/monitor panel"). category_candidates now returns the human
+          # name for PLUG rows, so this override only had to be dropped.
           local label="$name - v$(module_version "${CAND_KEYS[$i]}")"
           # remove-ai's Setup row reads EXACTLY "bring back omarchy's agentic
           # stuff" (no version suffix; it is an action, not a versioned module).
@@ -260,8 +271,22 @@ cmd_uninstall_tree(){
       "$(json_str "$id")" "$(json_str "$label")" "$accent")")
     for e in "${keys[@]}"; do
       case $e in
-        TUI\ *) name="${e#TUI }"; info="installed TUI (apps module)" ;;
-        WEB\ *) name="${e#WEB }"; name="${name%%|*}"; info="installed webapp (apps module)" ;;
+        # A TUI key is "TUI <pkg>|<pkg> — <what it is>" straight from the
+        # catalog, so showing it verbatim filled the Uninstall tree with rows
+        # like "calcure|calcure — terminal calendar/planner". split_name_desc
+        # takes the human name and drops the repetition.
+        TUI\ *) local trest tpkg ttext
+                trest="${e#TUI }"
+                tpkg="${trest%%|*}"; ttext="${trest#*|}"
+                [[ $ttext == "$trest" ]] && ttext="$trest"
+                split_name_desc "$tpkg" "$ttext"
+                name="$CAND_NAME - v$(module_version "$tpkg")"
+                info="installed TUI (apps module)$( [[ -n $CAND_DESC ]] && printf ' — %s' "$CAND_DESC")" ;;
+        WEB\ *) local wrest wname wurl
+                wrest="${e#WEB }"
+                wname="${wrest%%|*}"; wurl="${wrest#*|}"; wurl="${wurl%%|*}"
+                name="$wname"
+                info="installed webapp (apps module)$( [[ -n $wurl && $wurl != "$wrest" ]] && printf ' — %s' "$wurl")" ;;
         *)
           if [[ $e == remove-ai ]]; then
             # Uninstall wording (Setup shows the "bring back…" version).
