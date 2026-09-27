@@ -314,3 +314,54 @@ func TestSetupInfoKey(t *testing.T) {
 		t.Fatalf("info does not contain the description: %q", m.info.View())
 	}
 }
+
+// TestCategoryInfoKey covers the rows that used to swallow "i": a category row
+// at the top level and a folder row inside a tree. Before, only a leaf item
+// answered, so there was no way to read what a category covers without
+// opening it and reading every row.
+func TestCategoryInfoKey(t *testing.T) {
+	build := func() model {
+		m := initialModel()
+		m.nav = []screen{scrMain, scrSetup, scrSetupCat}
+		m.w, m.h = 120, 40
+		m.setupFolders = []FolderRec{{Folder: "apps", Label: "Apps"}}
+		m.setupItems = []SetupItemRec{
+			{Folder: "apps", Key: "reaper", Label: "reaper - v8.0.0", Info: "REAPER + Wayland integration"},
+			{Folder: "apps", Key: "handbrake", Label: "handbrake - v1.9.0", Info: "video transcoder"},
+		}
+		m.setupByValue = map[string]SetupItemRec{}
+		for _, it := range m.setupItems {
+			m.setupByValue[setupValue(it.Folder, it.Key)] = it
+		}
+		m.setupCat = "apps"
+		m.folderOpen["apps"] = true
+		return m
+	}
+
+	// Top level: the category row itself. (nav has to END on scrSetup here --
+	// ending on scrSetupCat would exercise the folder row instead.)
+	m := build()
+	m.nav = []screen{scrMain, scrSetup}
+	m.setupPicker = m.rebuildSetup().SelectIndex(0)
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	if m.top() != scrInfo {
+		t.Fatalf("i on a top-level category did not open info (top=%d)", m.top())
+	}
+	txt := m.info.View()
+	for _, want := range []string{"Apps", "2 items", "REAPER + Wayland integration", "video transcoder"} {
+		if !strings.Contains(txt, want) {
+			t.Fatalf("category info missing %q: %q", want, txt)
+		}
+	}
+
+	// Inside the tree: the folder row.
+	m = build()
+	m.setupCatPicker = m.rebuildSetupCat().SelectIndex(0) // the folder row
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	if m.top() != scrInfo {
+		t.Fatalf("i on a folder row did not open info (top=%d)", m.top())
+	}
+	if !strings.Contains(m.info.View(), "2 items") {
+		t.Fatalf("folder info does not list the items: %q", m.info.View())
+	}
+}

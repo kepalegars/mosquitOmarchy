@@ -902,6 +902,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 		}
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
+			if v := m.setupPicker.SelectedValue(); strings.HasPrefix(v, "cat:") {
+				m.info = tuikit.NewInfo(m.categoryInfo(strings.TrimPrefix(v, "cat:"))).SetSize(m.contentSize())
+				m.push(scrInfo)
+				return m, nil
+			}
 			if m.setupPicker.SelectedValue() == "menu-entries" {
 				m.info = tuikit.NewInfo(
 					"Menu entries — every marked block mosquito installs into the\n" +
@@ -957,6 +962,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 		}
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
+			if v := m.setupCatPicker.SelectedValue(); strings.HasPrefix(v, "cat:") {
+				m.info = tuikit.NewInfo(m.categoryInfo(strings.TrimPrefix(v, "cat:"))).SetSize(m.contentSize())
+				m.push(scrInfo)
+				return m, nil
+			}
 			if v := m.setupCatPicker.SelectedValue(); v != "" {
 				if it, ok := m.setupByValue[v]; ok {
 					txt := it.Label
@@ -1792,6 +1802,43 @@ func (m model) rebuildFilteredSetup() navPicker {
 		SetHelpKeys(key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterDesc)))
+}
+
+// categoryInfo composes the "i" popup for one Setup/Uninstall category: what
+// the category is for, then every row in it with its own description. The leaf
+// rows already had an "i" (label + Info), but the category rows answered
+// nothing, so the only way to read what a category covers was to open it.
+func (m model) categoryInfo(folder string) string {
+	label := folder
+	for _, f := range m.setupFolders {
+		if f.Folder == folder {
+			label = f.Label
+			break
+		}
+	}
+	items := m.setupItemsOf(folder)
+	var b strings.Builder
+	b.WriteString(label)
+	if n := len(items); n == 1 {
+		b.WriteString("\n\n1 item")
+	} else {
+		fmt.Fprintf(&b, "\n\n%d items", n)
+	}
+	if n := m.categorySelectedCount(folder); n > 0 {
+		fmt.Fprintf(&b, " — %d ticked", n)
+	}
+	if len(items) == 0 {
+		b.WriteString(". Nothing to do here right now.")
+		return b.String()
+	}
+	b.WriteString(":")
+	for _, it := range items {
+		b.WriteString("\n• " + it.Label)
+		if it.Info != "" && it.Info != it.Label {
+			b.WriteString(" — " + it.Info)
+		}
+	}
+	return b.String()
 }
 
 func (m model) rebuildSetup() navPicker {
