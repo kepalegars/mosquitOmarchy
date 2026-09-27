@@ -229,7 +229,14 @@ Panel {
   onOpenedChanged: {
     // Analysis follows the panel lifecycle: reset + start on open,
     // stop as soon as the panel is not visible.
-    if (!opened) root.pinned = false
+    if (!opened) {
+      root.pinned = false
+      // A manual editor left open when the panel closes used to keep
+      // manualEditing true, and on the NEXT open the key catcher was still
+      // `blocked` -- every shortcut (p, g, m, r, comma) silently dead until
+      // Escape was pressed on a field that was no longer there.
+      root.manualEditing = false
+    }
     if (root.service) root.service.setVisible(opened)
   }
 
@@ -275,9 +282,15 @@ Panel {
         }
         if (key === "r" && root.service) root.service.resetAnalysis()
         else if (key === "g" && root.service) root.service.openTui()
-        else if (key === "h") root.pinned = !root.pinned
         // 'p' pins AND unpins; ',' pauses (single key — Shift+P was
-        // unreliable through the catcher)
+        // unreliable through the catcher).
+        //
+        // There is deliberately NO 'h' binding here: Omarchy's
+        // PanelKeyCatcher matches `event.text === "h"` as a cursor-left move
+        // and sets event.accepted BEFORE the single-char textKey branch, so an
+        // 'h' case in this handler is unreachable. Arrow/hjkl all feed
+        // moveRequested, which this panel does not use. 'p' is the only pin
+        // key, which is also what the panel's own hint and tooltip advertise.
         else if (key === "p") root.pinned = !root.pinned
         else if (key === "," && root.service) root.service.togglePaused()
         else if (key === "s") root.toggleSettings()
@@ -638,6 +651,19 @@ Panel {
             Keys.onEscapePressed: root.cancelManual()
             Keys.onReturnPressed: root.commitManual()
             Keys.onEnterPressed: root.commitManual()
+            // Clicking anywhere outside the fields (the TAP button, the card
+            // itself, the panel background) must end the edit. Otherwise the
+            // overlay keeps the focus chain AND keeps the catcher blocked, so
+            // the shortcuts stay dead with nothing on screen to explain it.
+            MouseArea {
+              anchors.fill: parent
+              z: -1
+              acceptedButtons: Qt.LeftButton | Qt.RightButton
+              onClicked: function(mouse) {
+                mouse.accepted = false
+                root.cancelManual()
+              }
+            }
 
             Column {
               anchors.centerIn: parent

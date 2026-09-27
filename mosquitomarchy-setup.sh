@@ -1635,13 +1635,13 @@ $MENU_MOSQUITO_START
   // ─── The mosquito category in the Setup tree (the insect icon, the
   // same one as mosquitomarchy) — every mosquito TUI grouped here.
   "setup.mosquito": {
-    "icon": "\uf07b",
+    "icon": "\uf00e4",
     "label": "mosquito",
     "description": "All the mosquito manager TUIs (setup/plugins/audio/move/live/jam)",
     "aliases": ["mosquito", "mosquitomarchy"]
   },
   "setup.mosquito.manager": {
-    "icon": "\uf00e4",
+    "icon": "\uf188",
     "label": "mosquitOmarchy",
     "description": "The main manager: modules, fixes, backups, updates",
     "aliases": ["mosquito", "manager", "setup"],
@@ -1649,7 +1649,7 @@ $MENU_MOSQUITO_START
     "action": "$BIN_DIR/mosquitomarchy"
   },
   "setup.mosquito.audio-plugins": {
-    "icon": "\uf062e",
+    "icon": "\uf0431",
     "label": "Audio plugin manager (wine VST)",
     "description": "Install/uninstall Windows wine plugins, per-plugin fixes, prefixes",
     "aliases": ["plugins", "vst", "wine"],
@@ -1657,7 +1657,7 @@ $MENU_MOSQUITO_START
     "action": "omarchy-launch-or-focus-tui mosquito-audio-plugin-manager-tui"
   },
   "setup.mosquito.move": {
-    "icon": "\uf044a",
+    "icon": "\uf04e1",
     "label": "Move manager",
     "description": "Ableton Move manager — convert, address, routes (wine Ableton)",
     "aliases": ["move", "ableton-move"],
@@ -1665,7 +1665,7 @@ $MENU_MOSQUITO_START
     "action": "omarchy-launch-or-focus-tui mosquito-move-manager-tui"
   },
   "setup.mosquito.live": {
-    "icon": "⚪",
+    "icon": "\uf040c",
     "label": "Live Mode Manager",
     "description": "Performance session mode: stay-awake, thermal guard, routing tool",
     "aliases": ["live", "live-mode"],
@@ -1829,10 +1829,16 @@ install_menu_entry(){
   strip_mosquitomarchy_menu_entry
   local icon_asset block open_line start_line end_line tmp
   icon_asset="$(mosquitomarchy_icon || true)"
+  # NOTE: the menu icons are Nerd Font codepoints from the Omarchy icon font
+  # (BitstromWera Nerd Font), NOT this raster asset. icon_asset is only
+  # recorded in the block as a comment for whoever wants to draw a matching
+  # PNG, so do not report it as "the mosquito icon" -- it is the move manager's
+  # own icon and saying otherwise is what made it look like the launcher had
+  # been given the wrong picture.
   if [[ -n $icon_asset ]]; then
-    ok "Mosquito icon found: $icon_asset"
+    msg "Menu icons: Nerd Font codepoints (fa-bug for the mosquito launcher). Raster asset referenced in the block: $(basename "$icon_asset")"
   else
-    warn "No mosquito icon in the repo — using the generic Nerd Font bug glyph."
+    msg "Menu icons: Nerd Font codepoints (fa-bug for the mosquito launcher)."
   fi
   block="$(menu_entry_block "$icon_asset")"
 
