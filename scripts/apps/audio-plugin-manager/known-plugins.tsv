@@ -33,34 +33,34 @@
 # recommendation it cannot back.
 #
 # ── products ────────────────────────────────────────────────────────────────
-serum|.wine-vst|ableton|no|Serum 2's editor is a DirectComposition surface; it crashes under stock wine-staging, and the d2d1-nspa runtime is the only local build with DComp + NSPA
-install xfer|.wine-vst|ableton|unknown|Xfer (Serum, Pigments, Massive)
-xfer|.wine-vst|ableton|unknown|
-sonible|.wine-vst|ableton|unknown|smartEQ / smart:chain vendor
-smartchain|.wine-vst|ableton|unknown|
-smart chain|.wine-vst|ableton|unknown|
-smarteq|.wine-vst|ableton|unknown|
-smart:eq|.wine-vst|ableton|unknown|
-smart_eq|.wine-vst|ableton|unknown|
-crispytuner|.wine-vst|ableton|unknown|Editor needs XWayland input; see the wine_gui_input fix
-crispy|.wine-vst|ableton|unknown|
-plugin alliance|.wine-vst|ableton|unknown|
-izotope|.wine-vst|ableton|unknown|
-fabfilter|.wine-vst|ableton|unknown|
-sony forge|.wine-vst|ableton|unknown|
-spitfire|.wine-vst|ableton|unknown|
-valhalla|.wine-vst|ableton|unknown|
-blue cat|.wine-vst|ableton|unknown|
-kilohearts|.wine-vst|ableton|unknown|
-melda|.wine-vst|ableton|unknown|
-orchestral|.wine-vst|ableton|unknown|
-u-he|.wine-vst|ableton|unknown|
-kontakt|.wine-vst|ableton|unknown|
-melodyne|.wine-vst|ableton|unknown|
-scaletuner|.wine-vst|ableton|unknown|
-pitch|.wine-vst|ableton|unknown|
-graillon|.wine-vst|ableton|unknown|
-reaper rewire|.wine-vst|ableton|unknown|
-compressor|.wine-vst|ableton|unknown|
+serum|.wine-vst|ableton|no|||Serum 2's editor is a DirectComposition surface; it crashes under stock wine-staging, and the d2d1-nspa runtime is the only local build with DComp + NSPA
+install xfer|.wine-vst|ableton|unknown|||Xfer (Serum, Pigments, Massive)
+xfer|.wine-vst|ableton|unknown|||
+sonible|.wine-vst|ableton|unknown|||smartEQ / smart:chain vendor
+smartchain|.wine-vst|ableton|unknown|||
+smart chain|.wine-vst|ableton|unknown|||
+smarteq|.wine-vst|ableton|unknown|||
+smart:eq|.wine-vst|ableton|unknown|||
+smart_eq|.wine-vst|ableton|unknown|||
+crispytuner|.wine-vst|ableton|unknown|wine_gui_input wine_tooltip|wine_gui_input wine_tooltip|Editor needs XWayland input; see the wine_gui_input fix
+crispy|.wine-vst|ableton|unknown|wine_gui_input wine_tooltip|wine_gui_input wine_tooltip|Editor needs XWayland input; see the wine_gui_input fix
+plugin alliance|.wine-vst|ableton|unknown|||
+izotope|.wine-vst|ableton|unknown|||
+fabfilter|.wine-vst|ableton|unknown|||
+sony forge|.wine-vst|ableton|unknown|||
+spitfire|.wine-vst|ableton|unknown|||
+valhalla|.wine-vst|ableton|unknown|||
+blue cat|.wine-vst|ableton|unknown|||
+kilohearts|.wine-vst|ableton|unknown|||
+melda|.wine-vst|ableton|unknown|||
+orchestral|.wine-vst|ableton|unknown|||
+u-he|.wine-vst|ableton|unknown|||
+kontakt|.wine-vst|ableton|unknown|||
+melodyne|.wine-vst|ableton|unknown|||
+scaletuner|.wine-vst|ableton|unknown|||
+pitch|.wine-vst|ableton|unknown|||
+graillon|.wine-vst|ableton|unknown|||
+reaper rewire|.wine-vst|ableton|unknown|||
+compressor|.wine-vst|ableton|unknown|||
 # ── reserved ────────────────────────────────────────────────────────────────
-ableton|.wine-ableton|ableton|no|Kept out of the shared VST folders deliberately; its own prefix
+ableton|.wine-ableton|ableton|no|||Kept out of the shared VST folders deliberately; its own prefix

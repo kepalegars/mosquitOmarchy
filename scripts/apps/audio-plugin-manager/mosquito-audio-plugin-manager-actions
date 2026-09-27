@@ -345,7 +345,7 @@ PYWIZARD
     file="${1:?installer path required}"
     rec="$(known_plugin_record "$file" 2>/dev/null || true)"
     known=false; [[ -n $rec ]] && known=true
-    IFS='|' read -r token prefix_rel runtime needs32 note <<<"$rec"
+    IFS='|' read -r token prefix_rel runtime needs32 fixes recommended note <<<"$rec"
     # The leading dot of ".wine-vst" is part of the directory name, so the
     # relative prefix is joined verbatim; stripping it yielded ~/wine-vst.
     prefix=""
@@ -408,11 +408,13 @@ PYWIZARD
     if [[ -z $rec ]]; then
       jq -nc --arg file "$file" '{file:$file, known:false}'
     else
-      IFS='|' read -r token prefix_rel runtime needs32 note <<<"$rec"
+      IFS='|' read -r token prefix_rel runtime needs32 fixes recommended note <<<"$rec"
       jq -nc --arg file "$file" --arg token "$token" --arg prefix_rel "$prefix_rel" \
-        --arg runtime "$runtime" --arg needs32 "$needs32" --arg note "$note" \
+        --arg runtime "$runtime" --arg needs32 "$needs32" --arg fixes "$fixes" \
+        --arg recommended "$recommended" --arg note "$note" \
         '{file:$file, known:true, token:$token, prefix:$prefix_rel, runtime:$runtime,
-          needs32:$needs32, note:$note}'
+          needs32:$needs32, fixes:($fixes|split(" ")|map(select(length>0))),
+          recommended:($recommended|split(" ")|map(select(length>0))), note:$note}'
     fi
     ;;
 

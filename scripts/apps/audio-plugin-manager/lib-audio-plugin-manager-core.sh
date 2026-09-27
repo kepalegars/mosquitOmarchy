@@ -692,7 +692,24 @@ recommended_prefix_for_plugins() {
   done < "$KNOWN_PLUGINS_FILE"
 }
 
-# known_plugin_record <installer-path> -> "token|prefix|runtime|needs32|note"
+# dll_exports_plugin_entry <file> -- does this DLL actually export a plugin
+# entry point?  VST2 exports VSTPluginMain*, VST3 GetPluginFactory, AAX
+# GetEffectProcessorFactory.  A size threshold cannot tell a plugin from a
+# dependency: sonible_onnxruntime_v1-15-1.dll is 6.1 MB, well over any cut-off,
+# and it is a *runtime dependency* -- the smartEQ4 install registered it as a
+# plugin, which is why a fix was offered against it and why no smartEQ4 ever
+# appeared.  Reading the PE export table is decisive instead of a guess.  If
+# objdump is unavailable we answer "assume plugin" so a missing tool can never
+# hide a real plugin; it just reverts to the old behaviour.
+dll_exports_plugin_entry() {
+  local f="$1"
+  [[ -f $f ]] || return 1
+  command -v objdump >/dev/null 2>&1 || return 0
+  objdump -p "$f" 2>/dev/null \
+    | grep -qE '(VSTPluginMain|GetPluginFactory|GetEffectProcessorFactory)'
+}
+
+# known_plugin_record <installer-path> -> "token|prefix|runtime|needs32|fixes|recommended|note"
 # First hit wins, so the file's ordering is the matching order.
 known_plugin_record() {
   local f="$1" low row pat
@@ -1015,6 +1032,14 @@ install_plugin() {
       case "${b,,}" in
         ntdll.dll|kernel32.dll|user32.dll|gdi32.dll|advapi32.dll|shell32.dll|ole32.dll|oleaut32.dll|combase32.dll|comdlg32.dll|version.dll|setupapi.dll|wininet.dll|ws2_32.dll|winmmbase.dll|winmm.dll|msvcrt.dll|msvcp140.dll|msvcp100.dll|msvcp120.dll|msvcp71.dll|msvcrt90.dll|api-ms-win-*|ucrtbase.dll|vcruntime140*.dll) continue;;
       esac
+      # A .vst3/.clap BUNDLE is a directory, and stat on a directory returns the
+      # directory size (4096), so a size threshold silently dropped every bundle
+      # -- including Serum2, which yabridge itself reports as "bundle". The
+      # threshold is only meaningful for a single file.
+      if [[ -d $f ]]; then
+        cand+=("$f")
+        continue
+      fi
       size=$(stat -c '%s' -- "$f" 2>/dev/null || echo 0)
       (( size > 450000 )) || continue
       cand+=("$f")
@@ -1023,14 +1048,34 @@ install_plugin() {
     if ((${#cand[@]} > 0)); then
       msg "Detected ${#cand[@]} new plugin file(s) inside the prefix (outside the shared folders):"
       printf '    %s\n' "${cand[@]}" >&2
+      local -a deps=()
       for f_pkg in "${cand[@]}"; do
         base="$(basename "$f_pkg")"
-        case "${f_pkg##*.}" in vst3|VST3) dst="$VST_VST3";; clap|CLAP) dst="$VST_CLAP";; *) dst="$VST_VST2";; esac
+        case "${f_pkg##*.}" in
+          vst3|VST3) dst="$VST_VST3";;
+          clap|CLAP) dst="$VST_CLAP";;
+          dll|DLL)
+            # A bare .dll the installer dropped outside any VST folder is a
+            # candidate VST2 -- but only if it exports a plugin entry point.
+            # Otherwise it is a dependency of the plugin and installing it into
+            # the VST2 folder just creates an entry that yabridge will ignore.
+            if dll_exports_plugin_entry "$f_pkg"; then
+              dst="$VST_VST2"
+            else
+              deps+=("$base")
+              continue
+            fi ;;
+          *) dst="$VST_VST2";;
+        esac
         mkdir -p "$dst"
         cp -a "$f_pkg" "$dst/" 2>/dev/null || true
         ok "$base recovered from the prefix → $dst/"
         newfiles+=("$dst/$base")
       done
+      if ((${#deps[@]} > 0)); then
+        warn "not registering ${#deps[@]} runtime dependenc(y/ies) as plugins: ${deps[*]}"
+        msg "  (they are libraries the plugin loads, not plugins -- left in the prefix on purpose)"
+      fi
     fi
   fi
 
@@ -1086,8 +1131,19 @@ install_plugin() {
   # Known per-plugin fixes (e.g. CrispyTuner's editor input) are applied on
   # first install so the GUI works out of the box; state + Lua block are
   # idempotent, so re-installing never duplicates rules.
-  local fixname; fixname="$(basename "${newfiles[0]}")"; fixname="${fixname%%.*}"
-  apply_known_fixes_for "$fixname"
+  # Attribute the fix to the PRODUCT, via the installer's own known-plugin
+  # record.  newfiles[0] is the wrong key: on a partial install it is whatever
+  # the installer wrote first, which for smartEQ4 was its onnxruntime runtime
+  # library rather than the plugin.
+  local fix_token fix_rec
+  fix_rec="$(known_plugin_record "$file" 2>/dev/null || true)"
+  fix_token=""
+  [[ -n $fix_rec ]] && fix_token="$(printf '%s' "$fix_rec" | cut -f1)"
+  if [[ -n $fix_token ]]; then
+    apply_known_fixes_for "$fix_token"
+  else
+    msg "no known-plugin record for $(basename "$file") -- no per-product fix applied"
+  fi
   # Hand the freshly installed plugin to the caller in the same
   # self-describing shape list-all-plugins uses, then offer any remaining
   # plugin-scope fixes. The line is plain text on stdout so the Go TUI's
@@ -2444,11 +2500,18 @@ fixes_state_init() {
 # visible and selectable for every plugin, since the same Wine issues can
 # show up elsewhere. Fixes with an empty 6th field are generic. Fields 1/2/3
 # must keep their fixed index (fix_id_valid/fix_scope_of/fix_title_for).
+# id|title|scope|description|category|plugin|recommended
+# `plugin` is empty for a fix that applies to any known Wine plugin; otherwise it
+# is the product it belongs to. `recommended` is yes only when applying the fix is
+# what is actually known to make the plugin work HERE -- it is the difference
+# between "this fix exists" and "this fix is what your problem is". The wizard
+# marks recommended ones so a fix the user did not ask for is never presented as
+# an equal candidate next to the one that matters.
 fixes_catalog() {
   cat <<'FIXCAT'
-wine_gui_input|Wine plugin GUI input (Hyprland/XWayland)|plugin|Plugin editor windows float, unblurred and receive XWayland input even when the plugin asks not to (fixes inert / non-clickable GUIs such as CrispyTuner in Bitwig or REAPER). Applied per plugin, matched on the window title because these editors usually have an empty class.|Plugin windows|CrispyTuner
-wine_tooltip|Ableton/Wine hover tooltips|plugin|Keeps the hover tooltips Wine plugins (e.g. CrispyTuner) create inside Ableton floating, unblurred, animation-free and never focused, so hovering them stops stealing input from the plugin. Applied once, independently of the chosen plugin.|CrispyTuner specific|CrispyTuner
-cursor_no_warp|Stop the cursor recentering|global|Hyprland 0.56.2 has no per-window warp rule: this is a GLOBAL cursor option (cursor:no_warps + cursor:persistent_warps). Affects the whole desktop, not just Wine — only enable after confirming the recentering is Hyprland focus-warp and not Wine's own pointer handling.|Cursor|
+wine_gui_input|Wine plugin GUI input (Hyprland/XWayland)|plugin|Plugin editor windows float, unblurred and receive XWayland input even when the plugin asks not to (fixes inert / non-clickable GUIs such as CrispyTuner in Bitwig or REAPER). Applied per plugin, matched on the window title because these editors usually have an empty class.|Plugin windows|CrispyTuner|yes
+wine_tooltip|Ableton/Wine hover tooltips|plugin|Keeps the hover tooltips Wine plugins (e.g. CrispyTuner) create inside Ableton floating, unblurred, animation-free and never focused, so hovering them stops stealing input from the plugin. Applied once, independently of the chosen plugin.|CrispyTuner specific|CrispyTuner|yes
+cursor_no_warp|Stop the cursor recentering|global|Hyprland 0.56.2 has no per-window warp rule: this is a GLOBAL cursor option (cursor:no_warps + cursor:persistent_warps). Affects the whole desktop, not just Wine — only enable after confirming the recentering is Hyprland focus-warp and not Wine's own pointer handling.|Cursor||no
 FIXCAT
 }
 
@@ -2658,8 +2721,8 @@ fixes_for_installer_json() {
   token=""
   [[ -n $rec ]] && token="$(printf '%s' "$rec" | cut -f1)"
 
-  local id title scope desc category plugin needs_installed
-  while IFS='|' read -r id title scope desc category plugin; do
+  local id title scope desc category plugin rec needs_installed
+  while IFS='|' read -r id title scope desc category plugin rec; do
     [[ -n $id ]] || continue
     needs_installed=false
     # Generic fixes apply to any known wine plugin; a product-specific fix only
@@ -2680,16 +2743,20 @@ fixes_for_installer_json() {
     [[ $scope == plugin ]] && needs_installed=true
     jq -nc --arg id "$id" --arg title "$title" --arg scope "$scope" --arg desc "$desc" \
       --arg category "$category" --arg plugin "$plugin" --argjson needsInstalled "$needs_installed" \
+      --argjson recommended "$([[ $rec == yes ]] && echo true || echo false)" \
       '{id:$id,title:$title,scope:$scope,description:$desc,category:$category,
-        plugin:(if $plugin=="" then null else $plugin end), needsInstalled:$needsInstalled}'
+        plugin:(if $plugin=="" then null else $plugin end), needsInstalled:$needsInstalled,
+        recommended:$recommended}'
   done < <(fixes_catalog)
 }
 
 fixes_list_json() {
-  while IFS='|' read -r id title scope desc category plugin; do
+  local id title scope desc category plugin rec
+  while IFS='|' read -r id title scope desc category plugin rec; do
     [[ -n $id ]] || continue
     jq -nc --arg id "$id" --arg title "$title" --arg scope "$scope" --arg desc "$desc" --arg category "$category" --arg plugin "$plugin" \
-      '{id:$id,title:$title,scope:$scope,description:$desc,category:$category,plugin:$plugin}'
+      --argjson recommended "$([[ $rec == yes ]] && echo true || echo false)" \
+      '{id:$id,title:$title,scope:$scope,description:$desc,category:$category,plugin:$plugin,recommended:$recommended}'
   done < <(fixes_catalog)
 }
 
@@ -2955,20 +3022,42 @@ fix_remove() {
 # Install-time dependencies: plugins whose editor needs a fix applied
 # automatically the first time they are installed. Pattern (case-insensitive
 # substring) <TAB> fix ids.
+# product -> fix ids, read from the SAME data file as prefix/runtime so a plugin's
+# fixes can never be attributed to a product the table does not know. Fixes were
+# a second heredoc keyed on the installed FILE name, which is how a smartEQ4
+# install came to offer a fix against "sonible_onnxruntime_v1-15-1": the runtime
+# dependency was the only new file the installer wrote, so its basename was taken
+# for the product.
 known_plugin_fixes() {
-  cat <<'FIXDEPS'
-CrispyTuner	wine_gui_input	wine_tooltip
-FIXDEPS
+  awk -F'|' '!/^#/ && NF>=7 { print $1 "|" $5 }' "$KNOWN_PLUGINS_FILE"
 }
 
+# The fixes RECOMMENDED for a product (column 6), i.e. the ones known to be what
+# makes it work here rather than merely available.
+known_plugin_recommended_fixes() {
+  awk -F'|' '!/^#/ && NF>=7 && $6!="no" && $6!="" { print $1 "|" $6 }' "$KNOWN_PLUGINS_FILE"
+}
+
+# apply_known_fixes_for <token> [--installer <path>]
+# The product is identified by its token in known-plugins.tsv, never by the name
+# of whichever file the installer happened to write. Passing a file basename here
+# is what made a smartEQ4 install target its onnxruntime dependency.
 apply_known_fixes_for() {
-  local name="$1" pat ids fix
-  [[ -n $name ]] || return 0
-  while IFS=$'\t' read -r pat ids; do
-    [[ -n $pat ]] || continue
-    [[ "${name,,}" == *"${pat,,}"* ]] || continue
-    for fix in $ids; do fix_apply "$pat" "$fix"; done
-    msg "known fixes applied for $pat: $ids"
+  local want="$1" pat ids fix
+  [[ -n $want ]] || return 0
+  while IFS='|' read -r pat ids; do
+    [[ -n $pat && -n $ids ]] || continue
+    [[ "${pat,,}" == "${want,,}" ]] || continue
+    local rec_ids opt_ids
+    opt_ids="$(awk -F'|' -v w="$pat" '$1==w{print $6}' <<<"$(known_plugin_recommended_fixes)")"
+    for fix in $ids; do
+      fix_apply "$pat" "$fix"
+      if [[ " $rec_ids " == *" $fix "* ]]; then
+        ok "fix applied (recommended): $fix"
+      else
+        msg "fix applied (not recommended -- applied because it is listed for $pat): $fix"
+      fi
+    done
   done < <(known_plugin_fixes)
 }
 
