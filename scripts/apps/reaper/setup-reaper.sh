@@ -68,27 +68,29 @@ touch "$CONF"
 sed -i '/-- >>> reaper-setup >>>/,/-- <<< reaper-setup <<</d' "$CONF"
 cat >> "$CONF" <<'EOF'
 -- >>> reaper-setup >>> main window tiled ; every other REAPER-classed window
--- (prefs, save confirmation, media explorer, any dialog) floating, centered,
--- opaque, no blur, exempt from the Omarchy default opacity. REAPER reuses the
--- "REAPER" class for all of its windows, so the main window is told apart by
--- its title, which always contains "REAPER v<version>" (unlike prefs/
--- dialogs). All static rules: class/title are known at window-open time now
--- that REAPER runs on native Xwayland instead of xwayland-satellite (which
--- relayed them late and needed a runtime hook to work around it -- no longer
--- necessary).
--- Rules are processed top to bottom, last match wins per field:
--- 1) broad: every REAPER window floats, opaque, no blur, centered on monitor
---    -- without this, dialogs/confirmations opened flush at the monitor's
---    top-left corner instead of a sane spot.
--- 2) but REAPER's own popup menus (File/Edit/right-click, always titled
---    exactly "menu") and empty-titled transient windows (tooltips) must NOT
---    be forced to the monitor center -- they need to stay wherever REAPER
---    put them (near the click/cursor), so center is turned back off for them.
--- 3) the main window is tiled instead (center only affects floating windows,
---    so this doesn't need to touch center at all).
-o.window({ class = "^REAPER$" }, { tag = "-default-opacity", float = true, opaque = true, no_blur = true, center = true })
-o.window({ class = "^REAPER$", title = "^menu$" }, { center = false })
-o.window({ class = "^REAPER$", title = "^$" }, { center = false })
+-- (prefs, save confirmation, media explorer, any dialog) floating, opaque, no
+-- blur, exempt from the Omarchy default opacity. REAPER reuses the "REAPER"
+-- class for all of its windows, so the main window is told apart by its title,
+-- which always contains "REAPER v<version>" (unlike prefs/dialogs).
+--
+-- WHY center IS NOT FORCED ANY MORE. It used to be on the broad rule, so that
+-- REAPER's own dialogs would not open flush against the monitor's top-left
+-- corner. That is a cosmetic problem, and it was paid for with a functional
+-- one: a VST3 editor window is also classed REAPER, and `center` MOVES it away
+-- from the screen origin. Wine's X11 window embedding computes the pointer
+-- coordinates a VST editor receives from its own window's position, so under
+-- XWayland an editor that is not at (0,0) gets every click offset by that
+-- distance -- the window is visible, the knobs highlight, nothing you click
+-- does what you aimed at. Reported upstream for exactly this stack
+-- (REAPER + yabridge + Wine >= 9.22 + Wayland) in robbert-vdh/yabridge#409,
+-- where the documented behaviour is "they do not even register mouse input"
+-- and the workaround is to nudge the window by a pixel.
+--
+-- Letting the editor sit where REAPER puts it keeps REAPER's own placement
+-- (the pre-existing behaviour) and, for an editor that happens to open near
+-- the origin, the offset stays small. Nothing is forced onto the plugin
+-- windows any more.
+o.window({ class = "^REAPER$" }, { tag = "-default-opacity", float = true, opaque = true, no_blur = true })
 o.window({ class = "^REAPER$", title = ".*REAPER v[0-9].*" }, { float = false, tile = true })
 -- <<< reaper-setup <<<
 EOF

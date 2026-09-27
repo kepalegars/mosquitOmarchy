@@ -574,57 +574,133 @@ MANAGED = "trigger.music.ableton-move-converter"
 START_MARKER = sys.argv[2]
 END_MARKER = sys.argv[3]
 
+# Superseded entry points. Only these may be purged.
+PROTECTED_PREFIXES = ("setup.",)
+LEGACY_ACTIONS = (
+    "vst-manager",
+    "vst-install",
+    "vst-converter",
+    "mosquitomarchy-move-converter",
+    "ableton-move-converter",
+    "move-converter",
+)
+
 def is_ours(key, value):
     if key == MANAGED:
         return False
     k = key.lower()
-    if "move" not in k:
+    # Never delete a Setup-screen entry. Those belong to the mosquitomarchy TUI
+    # setup ("Setup > mosquito > Move manager"), not to this purge.
+    if k.startswith(PROTECTED_PREFIXES):
         return False
-    blob = json.dumps(value, ensure_ascii=False).lower()
-    marks = ("move-session", "move_session", "ableton move", "bitwig")
-    return any(m in blob or m in k for m in marks)
+    if not isinstance(value, dict):
+        return False
+    # A legacy menu entry is one that still launches a SUPERSEDED binary. The
+    # previous predicate matched on the word "move" appearing in the key or the
+    # value, which also matched the current, perfectly valid
+    # "setup.mosquito.move" entry (its description says "Ableton Move manager"
+    # and its action runs mosquito-move-manager-tui). Running the setup
+    # therefore deleted a menu entry that is supposed to exist, and a user
+    # building from the repo ended up with no Move Manager in Setup. Match the
+    # binary instead of the word.
+    action = str(value.get("action", "")).lower()
+    return any(a in action for a in LEGACY_ACTIONS)
 
-def scrub(node):
-    removed = 0
+def collect(node, path=()):
+    out = []
     if isinstance(node, dict):
-        for k in list(node):
-            if is_ours(k, node[k]):
-                del node[k]
-                removed += 1
-            elif isinstance(node[k], (dict, list)):
-                removed += scrub(node[k])
+        for k, v in node.items():
+            here = path + (k,)
+            if is_ours(k, v):
+                out.append(here)
+            elif isinstance(v, (dict, list)):
+                out.extend(collect(v, here))
     elif isinstance(node, list):
-        for item in node:
+        for i, item in enumerate(node):
             if isinstance(item, (dict, list)):
-                removed += scrub(item)
-    return removed
+                out.extend(collect(item, path + (i,)))
+    return out
 
-removed = scrub(tree)
+victims = collect(tree)
 
-# Reattach the marker comments around the managed block so that
-# install_menu/remove_menu can still locate it after the rewrite (a plain
-# json.dumps would drop every comment). Brace counting finds the block end.
-def reattach(out):
-    m = re.search(r'"%s"\s*:\s*\{' % re.escape(MANAGED), out)
+# Remove each victim from the ORIGINAL TEXT, by brace counting, instead of
+# re-serialising the whole file. A json.dumps(indent=2) rewrite drops every
+# comment in omarchy-menu.jsonc -- including the
+# ">>> Omarchy_Custom_Scripts - mosquitomarchy setup >>>" markers that
+# mosquitomarchy-setup.sh uses to find and replace its own block. Once those
+# markers are gone the next mosquitomarchy-setup run cannot strip its block and
+# appends a second copy of every mosquito entry. Cutting only the offending
+# object leaves the rest of the file, comments included, byte-for-byte intact.
+def cut(text, key):
+    m = re.search(r'"%s"\s*:\s*[\{\[]' % re.escape(key), text)
     if not m:
-        return out
-    start = m.start()
+        return None
+    open_ch = text[m.end() - 1]
+    close_ch = '}' if open_ch == '{' else ']'
     depth = 0
     i = m.end() - 1
-    while i < len(out):
-        c = out[i]
-        if c == '{':
+    end = None
+    while i < len(text):
+        c = text[i]
+        if c == open_ch:
             depth += 1
-        elif c == '}':
+        elif c == close_ch:
             depth -= 1
             if depth == 0:
+                end = i + 1
                 break
         i += 1
-    return out[:start] + START_MARKER + '\n' + out[start:i + 1] + '\n' + END_MARKER + out[i + 1:]
+    if end is None:
+        return None
+    # Swallow the separating comma and, if the object was alone on its line,
+    # the whole line and its indentation.
+    while end < len(text) and text[end] in ' \t':
+        end += 1
+    if end < len(text) and text[end] == ',':
+        end += 1
+    else:
+        # last entry in its object: eat a trailing comma BEFORE it instead
+        j = m.start()
+        while j > 0 and text[j - 1] in ' \t':
+            j -= 1
+        if j > 0 and text[j - 1] == ',':
+            m = re.match(r',', text[j - 1:]) and m
+            text = text[:j - 1] + text[j:]
+            j = m.start()
+    ls = text.rfind('\n', 0, m.start()) + 1
+    if text[ls:m.start()].strip() == '':
+        m_start = ls
+    else:
+        m_start = m.start()
+    le = text.find('\n', end)
+    le = len(text) if le == -1 else le + 1
+    if text[end:le].strip() == '':
+        pass
+    else:
+        le = end
+    return text[:m_start] + text[le:]
 
-out = reattach(re.sub(r' +', ' ', json.dumps(tree, ensure_ascii=False, indent=2)).replace('\n  ', '\n  '))
+out = raw
+removed = 0
+# `path` is the FILE path (sys.argv[1]) -- do not shadow it with the loop
+# variable, or the io.open() below is handed a tuple instead of a filename.
+for vpath in victims:
+    for key in reversed(vpath):
+        if not isinstance(key, str):
+            continue
+        new = cut(out, key)
+        if new is not None:
+            out = new
+            removed += 1
+            break
+
+if removed == 0:
+    sys.stderr.write("no legacy converter menu entry to purge — file left untouched\n")
+    sys.exit(0)
+
 io.open(path, 'w', encoding='utf-8').write(out)
-sys.stderr.write("purged %d legacy converter menu entry/ies with markers kept\n" % removed)
+sys.stderr.write("purged %d legacy converter menu entry/ies; every comment and marker left intact\n" % removed)
+
 PYEOF
 )
 

@@ -55,6 +55,10 @@ func (m *model) enterCmd() tea.Cmd {
 		// installer is a known one and where it is expected to live), and say
 		// whether it matches the default so the choice is explicit.
 		rec := m.installRecommendedPrefix
+		const (
+			noPrefixLabel = "No, new prefix"
+			yesUseLabel   = "Yes, use it"
+		)
 		switch {
 		case knownPluginInstaller(m.installFile) && rec != "":
 			def := m.installDefaultPrefix
@@ -64,15 +68,26 @@ func (m *model) enterCmd() tea.Cmd {
 			} else {
 				extra += "\n(not the default: " + def + ")"
 			}
+			// tuikit.NewConfirm focuses button 0, which is the FIRST label
+			// passed here — so Enter really is "No, new prefix". The old text
+			// claimed "Enter = use it", which was the opposite of what the
+			// dialog did. Say what Enter does, name the shortcut for the other
+			// answer, and show which one is pre-selected.
 			m.confirm = tuikit.NewConfirm(
-				"Install into the DEFAULT wine prefix?"+extra+"\n\nEnter = use it   ·   \"No, new prefix\" = pick/create another",
-				"No, new prefix", "Yes, use it")
+				"Install into the DEFAULT wine prefix?"+extra+
+					"\n\nEnter = \""+noPrefixLabel+"\" (pre-selected)   ·   y = \""+yesUseLabel+"\"",
+				noPrefixLabel, yesUseLabel)
 		case knownPluginInstaller(m.installFile):
 			m.confirm = tuikit.NewConfirm(
-				"Install into the DEFAULT wine prefix?\n\nKnown plugin, but no recorded recommendation for this file.",
-				"No, new prefix", "Yes, use it")
+				"Install into the DEFAULT wine prefix?"+
+					"\n\nKnown plugin, but no recorded recommendation for this file."+
+					"\n\nEnter = \""+noPrefixLabel+"\" (pre-selected)   ·   y = \""+yesUseLabel+"\"",
+				noPrefixLabel, yesUseLabel)
 		default:
-			m.confirm = tuikit.NewConfirm("Install into the default wine prefix?", "No, new prefix", "Yes")
+			m.confirm = tuikit.NewConfirm(
+				"Install into the default wine prefix?"+
+					"\n\nEnter = \""+noPrefixLabel+"\" (pre-selected)   ·   y = \"Yes\"",
+				noPrefixLabel, "Yes")
 		}
 		return nil
 	case scrSuperfileInstallConfirm:
