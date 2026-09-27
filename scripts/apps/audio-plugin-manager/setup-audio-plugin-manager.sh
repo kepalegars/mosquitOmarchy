@@ -7,6 +7,7 @@
 #   1. One interface, one core (same architecture as the sibling
 #      mosquito-move-manager module — kept deliberately consistent):
 #        - lib-audio-plugin-manager-core.sh   shared logic, not an entry point
+#        - known-plugins.tsv                  data: the known plugin library
 #        - mosquito-audio-plugin-manager-tui        real terminal UI (Go, Bubble Tea),
 #                                   THE ONLY interface
 #        - mosquito-audio-plugin-manager            stable dispatcher — the ONLY file the
@@ -101,6 +102,17 @@ deploy_one() {
 }
 deploy_one "lib-audio-plugin-manager-core.sh"
 deploy_one "mosquito-audio-plugin-manager-actions"
+
+# known-plugins.tsv is DATA, not code: it must ship next to the library or every
+# installer silently reports "unknown plugin" again, with no error to notice.
+# It cannot go through deploy_one, which runs `bash -n` over its argument.
+deploy_data() {
+  local name="$1" src="$SCRIPT_DIR/$1" dst="$BIN_DIR/$1"
+  [[ -f $src ]] || die "$name not found next to this script ($src)"
+  cp "$src" "$dst"
+  ok "$name deployed: $dst"
+}
+deploy_data "known-plugins.tsv"
 
 # mosquito-audio-plugin-manager-tui is a compiled Go/Bubble Tea program (see tui-go/
 # and the shared ../../tui-kit component library) — same architecture and

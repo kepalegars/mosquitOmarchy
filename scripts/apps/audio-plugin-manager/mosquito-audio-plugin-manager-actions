@@ -336,11 +336,84 @@ PYWIZARD
   # recommendation" (the bug: neither verb existed, so the RECOMMENDED line
   # never appeared for Serum / SmartEQ).
   recommended-prefix)
+    # A known plugin gets a recommendation on three axes, not one.  Reporting
+    # only the prefix is what made the wizard look like it "did not detect
+    # Serum": the prefix was already right, so nothing on screen changed, while
+    # the thing that actually mattered -- that Serum 2's editor is a
+    # DirectComposition surface needing the d2d1-nspa runtime -- was not
+    # expressible in the old two-column table.
     file="${1:?installer path required}"
-    pfx="$(recommended_prefix_for "$file" 2>/dev/null || true)"
-    known=false; [[ -n $pfx ]] && known=true
-    jq -nc --arg prefix "$pfx" --arg file "$file" --argjson known "$known" \
-      '{prefix:$prefix, known:$known, file:$file, default:(env.HOME + "/.wine-vst")}'
+    rec="$(known_plugin_record "$file" 2>/dev/null || true)"
+    known=false; [[ -n $rec ]] && known=true
+    IFS='|' read -r token prefix_rel runtime needs32 note <<<"$rec"
+    # The leading dot of ".wine-vst" is part of the directory name, so the
+    # relative prefix is joined verbatim; stripping it yielded ~/wine-vst.
+    prefix=""
+    if [[ -n $prefix_rel ]]; then
+      case "$prefix_rel" in /*) prefix="$prefix_rel" ;; *) prefix="$HOME/$prefix_rel" ;; esac
+    fi
+    # The active runtime, so the TUI can say "already using it" vs "switching".
+    active_rt="$(apm_wine_runtime 2>/dev/null || echo system)"
+    rt_installed=false
+    if [[ $runtime == ableton && -x "$HOME/.local/opt/wine-d2d1-nspa-11.13/bin/wine" ]]; then
+      rt_installed=true
+    fi
+    jq -nc --arg prefix "$prefix" --arg file "$file" --argjson known "$known" \
+      --arg token "${token:-}" --arg runtime "${runtime:-}" --arg needs32 "${needs32:-}" \
+      --arg note "${note:-}" --arg activeRuntime "$active_rt" --argjson runtimeInstalled "$rt_installed" \
+      '{prefix:$prefix, known:$known, file:$file, default:(env.HOME + "/.wine-vst"),
+        token:$token, runtime:(if $runtime=="" then null else $runtime end),
+        needs32:(if $needs32=="" or $needs32=="unknown" then null else ($needs32=="yes") end),
+        note:(if $note=="" then null else $note end),
+        activeRuntime:$activeRuntime, runtimeInstalled:$runtimeInstalled}'
+    ;;
+
+  recommended-runtime)
+    file="${1:?installer path required}"
+    rt="$(recommended_runtime_for "$file" 2>/dev/null || true)"
+    jq -nc --arg runtime "$rt" --arg active "$(apm_wine_runtime 2>/dev/null || echo system)" \
+      '{runtime:(if $runtime=="" then null else $runtime end), active:$active,
+        changeNeeded:(if $runtime!="" and $runtime!=$active then true else false end)}'
+    ;;
+
+  yabridge-check)
+    yabridge_check_json
+    ;;
+
+  plugin-health)
+    plugin_health_json "${1:?plugin name or path required}"
+    ;;
+
+  check-all-plugins)
+    # One JSON line per known plugin in the shared folders, for a health report.
+    local p
+    while IFS= read -r p; do
+      [[ -n $p ]] || continue
+      plugin_health_json "$p"
+    done < <(list_shared_plugin_files 2>/dev/null | sort -u)
+    ;;
+
+  recommended-fixes)
+    # The fixes worth offering for this installer, before it is even run.
+    # $1 = installer path (falls back to matching against the plugin name once
+    # installed, via list-plugin-fixes).
+    file="${1:?installer path required}"
+    fixes_for_installer_json "$file"
+    ;;
+
+  known-plugin-record)
+    # The raw row from known-plugins.tsv, for docs and debugging.
+    file="${1:?installer path required}"
+    rec="$(known_plugin_record "$file" 2>/dev/null || true)"
+    if [[ -z $rec ]]; then
+      jq -nc --arg file "$file" '{file:$file, known:false}'
+    else
+      IFS='|' read -r token prefix_rel runtime needs32 note <<<"$rec"
+      jq -nc --arg file "$file" --arg token "$token" --arg prefix_rel "$prefix_rel" \
+        --arg runtime "$runtime" --arg needs32 "$needs32" --arg note "$note" \
+        '{file:$file, known:true, token:$token, prefix:$prefix_rel, runtime:$runtime,
+          needs32:$needs32, note:$note}'
+    fi
     ;;
 
   is-known-plugin)

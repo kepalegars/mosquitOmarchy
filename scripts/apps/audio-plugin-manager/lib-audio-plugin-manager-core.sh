@@ -649,55 +649,91 @@ link_prefix_to_vst() {
 # ─── Detection helpers (mtime-independent) ────────────────────────────────
 # Every plugin file currently in the shared folders.
 
-# ─── Known plugin → recommended wine prefix (reinstall culture) ──────────
-# Some plugins have a PREFERENCE table in PLUGIN-TESTS.md; the defaults feed
-# the install wizard's prefix choice (default first, recommended right
-# after). Key: lowercase substring matched against the INSTALLER path.
+# ─── Known plugin library ───────────────────────────────────────────
+# The per-plugin table lives in known-plugins.tsv next to this script, not in a
+# heredoc here.  It used to be inline, which meant the one table that encodes
+# everything we know about individual plugins could not be reviewed on its own,
+# extended without touching a 134 KB shell file, or cited in a bug report.
+# Format and column meanings are documented in that file.
+APM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The table is a data file, so it has to travel with the code.  The dispatcher and
+# the library are deployed side by side into ~/.local/bin, and the table was not
+# -- which made every installer report known:false with no error anywhere, the
+# same silent failure as the missing verbs had been.  Look next to the library
+# first, then in the repository checkout.
+apm_resolve_known_plugins_file() {
+  local c
+  for c in "${APM_KNOWN_PLUGINS_FILE:-}" "$APM_DIR/known-plugins.tsv" \
+           "$HOME/.local/bin/known-plugins.tsv" \
+           "$HOME/mosquitOmarchy/scripts/apps/audio-plugin-manager/known-plugins.tsv"; do
+    [[ -n $c && -r $c ]] && { printf '%s\n' "$c"; return 0; }
+  done
+  return 1
+}
+KNOWN_PLUGINS_FILE="$(apm_resolve_known_plugins_file || true)"
+KNOWN_PLUGINS_TABLE_MISSING=false
+[[ -n $KNOWN_PLUGINS_FILE ]] || KNOWN_PLUGINS_TABLE_MISSING=true
+
+# Emits one pipe-separated row per known plugin: token, prefix, runtime,
+# needs32, note.  See known-plugins.tsv for the column meanings.  Tolerates a missing or unreadable file: an absent table means
+# "no recommendation", never a crash in the install wizard.
 recommended_prefix_for_plugins() {
-  cat <<'REC'
-serum|.wine-vst
-install xfer|.wine-vst
-sonible|.wine-vst
-smartchain|.wine-vst
-smart chain|.wine-vst
-smarteq|.wine-vst
-smart:eq|.wine-vst
-smart_eq|.wine-vst
-crispytuner|.wine-vst
-crispy|.wine-vst
-plugin alliance|.wine-vst
-izotope|.wine-vst
-fabfilter|.wine-vst
-sony forge|.wine-vst
-spitfire|.wine-vst
-valhalla|.wine-vst
-blue cat|.wine-vst
-kilohearts|.wine-vst
-melda|.wine-vst
-orchestral|.wine-vst
-u-he|.wine-vst
-kontakt|.wine-vst
-reaper rewire|.wine-vst
-melodyne|.wine-vst
-compressor|.wine-vst
-scaletuner|.wine-vst
-pitch;.wine-vst
-graillon|.wine-vst
-ableton|.wine-ableton
-REC
+  if [[ $KNOWN_PLUGINS_TABLE_MISSING == true ]]; then
+    printf 'audio-plugin-manager: known-plugins.tsv not found next to %s nor in the checkout; no plugin will be recognised\n' "$APM_DIR" >&2
+    return 0
+  fi
+  [[ -r $KNOWN_PLUGINS_FILE ]] || return 0
+  local line
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    case "$line" in '#'*) continue ;; esac
+    printf '%s\n' "$line"
+  done < "$KNOWN_PLUGINS_FILE"
 }
 
-recommended_prefix_for() {
-  local f="$1" low
+# known_plugin_record <installer-path> -> "token|prefix|runtime|needs32|note"
+# First hit wins, so the file's ordering is the matching order.
+known_plugin_record() {
+  local f="$1" low row pat
   low="$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')"
-  local row pat pfx
-  while IFS='|' read -r pat pfx; do
+  while IFS='|' read -r pat _; do
     [[ -n $pat ]] || continue
     case "$low" in
-      *"$pat"*) printf '%s\n' "$HOME/$pfx"; return 0 ;;
+      *"$pat"*) recommended_prefix_for_plugins |
+        awk -F'|' -v want="$pat" '$1==want{print; exit}'
+        return 0 ;;
     esac
   done < <(recommended_prefix_for_plugins)
   return 1
+}
+
+# The wine runtime a known plugin's editor needs, or empty when not established.
+recommended_runtime_for() {
+  local rec
+  rec="$(known_plugin_record "$1" 2>/dev/null)" || return 1
+  printf '%s' "$rec" | cut -f3
+}
+
+# Does the known plugin need a 32-bit bridge?  yes|no|unknown
+known_plugin_needs32() {
+  local rec
+  rec="$(known_plugin_record "$1" 2>/dev/null)" || return 1
+  printf '%s' "$rec" | cut -f4
+}
+
+recommended_prefix_for() {
+  local rec pfx
+  rec="$(known_plugin_record "$1" 2>/dev/null)" || return 1
+  pfx="$(printf '%s' "$rec" | cut -f2)"
+  [[ -n $pfx ]] || return 1
+  # ".wine-vst" is relative to $HOME and its leading dot is part of the name.
+  # Stripping it ("${pfx#.}") silently produced ~/wine-vst, a different
+  # directory that no plugin would ever be installed into.
+  case "$pfx" in
+    /*) printf '%s\n' "$pfx" ;;
+    *)  printf '%s/%s\n' "$HOME" "$pfx" ;;
+  esac
 }
 
 # is_known_plugin <installer> — the "recommended" marker wording.
@@ -2419,6 +2455,235 @@ FIXCAT
 fix_id_valid() { fixes_catalog | cut -d'|' -f1 | grep -qx -- "$1"; }
 fix_scope_of() { fixes_catalog | awk -F'|' -v id="$1" '$1==id{print $3}'; }
 fix_title_for() { fixes_catalog | awk -F'|' -v id="$1" '$1==id{print $2}'; }
+
+# yabridge_check_json
+# A precise answer to "is 32-bit bridging set up, and if not why not".
+#
+# This exists because two different things are both called "32-bit support" and
+# only one of them can be missing.  32-bit VSTs need *both* a 32-bit Wine and a
+# 32-bit yabridge host; installing one without the other changes nothing, and
+# `yabridgectl` reports only the host.  On Arch the `yabridge` package ships
+# yabridge-host.exe and its .so and nothing else, and there is no lib32-yabridge
+# in the repositories, so the host cannot simply be installed -- a 32-bit mingw
+# build of it is the only route.  Saying "install lib32-wine-staging" (the advice
+# this replaced) would have left the host missing and the error unchanged.
+yabridge_check_json() {
+  local host64="" host32="" wine32="" wine64="" pkg="" missing=() howto=()
+  if command -v yabridgectl >/dev/null 2>&1; then
+    host64="$(command -v yabridge-host.exe 2>/dev/null || true)"
+    [[ -z $host64 ]] && host64="$(ls /usr/bin/yabridge-host.exe 2>/dev/null || true)"
+    local line
+    line="$(yabridgectl status 2>/dev/null | grep 'yabridge-host-32.exe:' || true)"
+    if [[ -n $line && $line != *"<not found>"* ]]; then
+      host32="$(printf '%s' "$line" | sed 's/.*: //' | tr -d "'\" ")"
+    fi
+  fi
+  if command -v yabridge >/dev/null 2>&1; then
+    pkg="$(pacman -Q yabridge 2>/dev/null || true)"
+  fi
+
+  # Which wine runtimes can load 32-bit PE files at all?  i386-unix is the marker:
+  # a 64-bit-only build has no way to start a 32-bit process under it.
+  # Report only the runtime in use plus the system one.  Listing every
+  # wine-* directory under ~/.local/opt also lists the transaction and rollback
+  # copies left by previous updates, which buries the one that matters.
+  local rt seen64=" "
+  for rt in "$HOME/.local/opt/wine-d2d1-nspa-"*/lib/wine /usr/lib/wine; do
+    [[ -d $rt ]] || continue
+    if [[ -d $rt/i386-unix ]]; then
+      wine32="$rt"
+    else
+      case "$seen64" in
+        *" $rt "*) continue ;;
+      esac
+      seen64="$seen64$rt "
+      wine64="${wine64:+$wine64, }$rt"
+    fi
+  done
+
+  [[ -n $host64 ]] || missing+=("yabridge-host.exe (64-bit) is not installed")
+  if [[ -z $host32 ]]; then
+    missing+=("yabridge-host-32.exe is missing: the Arch yabridge package ships only the 64-bit host and there is no lib32-yabridge in the repositories")
+  fi
+  if [[ -z $wine32 ]]; then
+    missing+=("no 32-bit Wine (no i386-unix in any available runtime), so a 32-bit host could not run even if it were installed")
+  fi
+
+  if [[ -z $host32 || -z $wine32 ]]; then
+    howto+=("32-bit VST support needs both pieces; neither alone is enough")
+    howto+=("the host: build yabridge-host-32.exe from a 32-bit mingw toolchain (yabridge's own docs cover this), because no package provides it")
+    howto+=("the runtime: a Wine build with 32-bit support -- wine-staging's multilib package, or a custom build such as the d2d1-nspa one here, which is 64-bit only")
+  fi
+
+  local missing_json="[]" howto_json="[]"
+  ((${#missing[@]})) && missing_json="$(printf '%s\n' "${missing[@]}" | jq -R . | jq -sc .)"
+  ((${#howto[@]})) && howto_json="$(printf '%s\n' "${howto[@]}" | jq -R . | jq -sc .)"
+  jq -nc --arg pkg "$pkg" --arg host64 "$host64" --arg host32 "$host32" \
+    --arg wine32 "$wine32" --arg wine64 "$wine64" \
+    --argjson missing "$missing_json" --argjson howto "$howto_json" \
+    '{yabridge:$pkg, host64:(if $host64=="" then null else $host64 end),
+      host32:(if $host32=="" then null else $host32 end),
+      wine32:(if $wine32=="" then null else $wine32 end),
+      wine64only:(if $wine64=="" then null else $wine64 end),
+      canBridge32:($host32!="" and $wine32!=""), missing:$missing, howto:$howto}'
+}
+
+# plugin_health_json <name-or-path>
+# Reports what is actually true about one plugin, rather than what a window rule
+# could change.  The fixes catalog is entirely Hyprland window decoration, so it
+# has nothing to say about the two failures that actually happen here: an editor
+# that crashes because it needs DirectComposition, and a plugin that yabridge
+# cannot load because the binary is not in the shared folder.  Those are setup
+# facts, and a diagnostic that only knew about window rules would report
+# "healthy" for both.
+#
+# Checks, in order of how badly they break things:
+#   payload     the shared folder has a real binary, not just an uninstaller
+#   runtime     the active wine runtime is the one the product needs
+#   bridge      yabridge is registered for the plugin's type
+#   host32      a 32-bit host exists, for 32-bit VSTs
+plugin_health_json() {
+  local name="$1" base problems=() notes=()
+  base="$(basename "$name")"
+  local low; low="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')"
+
+  # ── payload: does the shared folder hold something loadable? ──
+  # Matched against the real shared roots (VST_VST3 and friends), not a guessed
+  # PLUGIN_ROOT: with the wrong variable every plugin came back "no payload",
+  # including Serum2, whose .vst3 is sitting in the shared folder.
+  local found=0 kind="" stem hit
+  # compare on a normalised stem so "smartEQ4" also matches "smarteq"
+  stem="$(printf '%s' "$base" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]')"
+  [[ -n $stem ]] || stem="$low"
+  for root in "$VST_VST3" "$VST_VST2" "$VST_CLAP"; do
+    [[ -d $root ]] || continue
+    while IFS= read -r hit; do
+      [[ -n $hit ]] || continue
+      found=1
+      case "$hit" in *.vst3) kind="vst3" ;; *.vst2) kind="vst2" ;; *.clap) kind="clap" ;; esac
+    done < <(find "$root" -maxdepth 2 \( -name '*.vst3' -o -name '*.vst2' -o -name '*.clap' \) 2>/dev/null |
+             awk -v want="$stem" '{ n=$0; gsub(/[^[:alnum:]]/,"",n); n=tolower(n);
+                                     if (index(n, want) || index(want, n)) { print; exit } }')
+  done
+  local shared="$found"
+
+  if (( ! found )); then
+    problems+=("no loadable binary in the shared plugin folders (only an uninstaller was installed, or the installer never wrote the VST)")
+  fi
+
+  # ── yabridge entries that point at nothing ──
+  # A plugin can look installed -- there is a .so, a directory, a name in
+  # yabridge's tree -- while its shared-folder binary has been deleted, and then
+  # the host is simply not there.  `yabridgectl status` will not mention it
+  # either, because the listing is built from the files it can resolve.  This is
+  # exactly the smartEQ4 state: the wrapper .so and the yabridge directory are
+  # both present and the plugin still cannot load, because the .dll symlink is
+  # dangling.  A stale link is worth naming explicitly, because "reinstall" is
+  # the wrong advice when the real fix is relinking.
+  local stale=0 stale_where=""
+  for yb in "$HOME/.vst/yabridge" "$HOME/.vst3/yabridge" "$HOME/.clap/yabridge"; do
+    [[ -d $yb ]] || continue
+    while IFS= read -r entry; do
+      [[ -n $entry ]] || continue
+      # Compare case-insensitively: the file on disk is "smartEQ4.dll" while the
+      # normalised stem is "smarteq4", so a plain glob never matched and the
+      # dangling link went unreported.
+      local base_lc; base_lc="$(printf '%s' "$(basename "$entry")" | tr '[:upper:]' '[:lower:]')"
+      case "$base_lc" in
+        *"$stem"*) ;;
+        *) continue ;;
+      esac
+      if [[ -L $entry && ! -e $entry ]]; then
+        stale=1
+        case " $stale_where " in
+          *" $(dirname "$entry") "*) ;;
+          *) stale_where="${stale_where:+$stale_where }$(dirname "$entry")" ;;
+        esac
+      fi
+    done < <(find "$yb" -maxdepth 2 -mindepth 1 2>/dev/null)
+  done
+  if (( stale )); then
+    problems+=("yabridge still has entries for this plugin but they are dangling symlinks, so the host cannot load it:$stale_where")
+  fi
+
+  # ── runtime ──
+  local want_rt="" active
+  if [[ $low == *serum* || $low == *xfer* ]]; then
+    want_rt=ableton
+  fi
+  active="$(apm_wine_runtime 2>/dev/null || echo system)"
+  if [[ -n $want_rt && $active != "$want_rt" ]]; then
+    problems+=("needs the '$want_rt' wine runtime (DirectComposition); the active one is '$active'")
+  fi
+  if [[ $want_rt == ableton && ! -x "$HOME/.local/opt/wine-d2d1-nspa-11.13/bin/wine" ]]; then
+    problems+=("the '$want_rt' runtime is recommended but not installed on this machine")
+  fi
+
+  # ── 32-bit host ──
+  local host32=no
+  if command -v yabridgectl >/dev/null 2>&1; then
+    if yabridgectl status 2>/dev/null | grep -q 'yabridge-host-32.exe: .'; then
+      local line; line="$(yabridgectl status 2>/dev/null | grep 'yabridge-host-32.exe:' || true)"
+      [[ $line == *yabridge-host-32.exe:* && $line != *"<not found>"* ]] && host32=yes
+    fi
+  fi
+
+  local problem_json="[]" p
+  if (( ${#problems[@]} )); then
+    problem_json="$(printf '%s\n' "${problems[@]}" | jq -R . | jq -sc .)"
+  fi
+  jq -nc --arg plugin "$base" --argjson payload "$shared" --arg kind "${kind:-}" \
+    --arg activeRuntime "$active" --arg wantRuntime "$want_rt" --arg host32 "$host32" \
+    --argjson problems "$problem_json" \
+    '{plugin:$plugin, payload:$payload, kind:(if $kind=="" then null else $kind end),
+      activeRuntime:$activeRuntime,
+      wantRuntime:(if $wantRuntime=="" then null else $wantRuntime end),
+      host32:($host32=="yes"), problems:$problems,
+      healthy:($problems|length==0)}'
+}
+
+# fixes_for_installer_json <installer-path>
+# The fixes worth *offering* for this installer, before it has been run.  This is
+# the "propose fixes by default" path: the wizard calls it right after the prefix
+# question so the fixes are a decision the user makes up front rather than
+# something they have to go looking for afterwards.
+#
+# Only fixes that can apply at this point are returned.  A fix that needs the
+# plugin to be installed (per-plugin window rules matched on the live window
+# title) is still listed, but flagged needsInstalled, because offering to match a
+# window that does not exist yet would be a promise the code cannot keep.
+fixes_for_installer_json() {
+  local file="$1" rec token
+  rec="$(known_plugin_record "$file" 2>/dev/null || true)"
+  token=""
+  [[ -n $rec ]] && token="$(printf '%s' "$rec" | cut -f1)"
+
+  local id title scope desc category plugin needs_installed
+  while IFS='|' read -r id title scope desc category plugin; do
+    [[ -n $id ]] || continue
+    needs_installed=false
+    # Generic fixes apply to any known wine plugin; a product-specific fix only
+    # when this installer is that product.  A plugin we do not recognise gets
+    # nothing: guessing would be worse than silence.
+    if [[ -z $plugin ]]; then
+      [[ -n $token ]] || continue
+    elif [[ -n $token ]]; then
+      local low; low="$(printf '%s' "$token")"
+      case "$plugin" in
+        # the token is the detection key, the plugin field the product name;
+        # accept either spelling, case-insensitively
+        *) [[ "${low// /}" == "${plugin// /}" || "${plugin,,}" == *"${low// /}"* ]] || continue ;;
+      esac
+    else
+      continue
+    fi
+    [[ $scope == plugin ]] && needs_installed=true
+    jq -nc --arg id "$id" --arg title "$title" --arg scope "$scope" --arg desc "$desc" \
+      --arg category "$category" --arg plugin "$plugin" --argjson needsInstalled "$needs_installed" \
+      '{id:$id,title:$title,scope:$scope,description:$desc,category:$category,
+        plugin:(if $plugin=="" then null else $plugin end), needsInstalled:$needsInstalled}'
+  done < <(fixes_catalog)
+}
 
 fixes_list_json() {
   while IFS='|' read -r id title scope desc category plugin; do

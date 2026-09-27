@@ -72,3 +72,35 @@ the SAME runtime — set them to match the APM choice.
 
 **Recommended for tested plugins** (this machine): Serum 2 ✅ (ableton
 runtime REQUIRED for its editor), SmartEQ4 ✅, CrispyTuner ✅, ScaleFinder ✅.
+
+---
+
+## The known plugin library lives in `known-plugins.tsv`
+
+Everything the manager knows about *individual* products — which Wine prefix
+they belong in, which Wine runtime their editor needs, whether they need a
+32-bit bridge — is in **`known-plugins.tsv`**, next to this file. It used to be a
+heredoc inside `lib-audio-plugin-manager-core.sh`, where it could not be
+reviewed on its own, extended without editing a 134 KB shell file, or cited in a
+report. The file's own header documents every column.
+
+Adding a product means adding one line:
+
+    myvendor|.wine-vst|ableton|unknown|what the runtime column is based on
+
+Match order matters — matching is first-hit-wins on a lowercased substring of
+the installer path, so specific tokens go before catch-alls. `runtime` records
+only what has been observed on this machine; `unknown` is a deliberate value
+meaning nobody has established it, and the wizard says so rather than inventing
+a recommendation.
+
+Two commands report what the library currently says:
+
+    mosquito-audio-plugin-manager-actions recommended-prefix /path/to/installer.exe
+    mosquito-audio-plugin-manager-actions known-plugin-record /path/to/installer.exe
+
+And two report whether a plugin is actually working, which is a different
+question the table cannot answer:
+
+    mosquito-audio-plugin-manager-actions plugin-health smartEQ4
+    mosquito-audio-plugin-manager-actions yabridge-check
