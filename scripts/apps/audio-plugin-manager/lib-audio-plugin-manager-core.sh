@@ -656,11 +656,33 @@ link_prefix_to_vst() {
 recommended_prefix_for_plugins() {
   cat <<'REC'
 serum|.wine-vst
+install xfer|.wine-vst
 sonible|.wine-vst
-smarteq|.wine-vst
+smartchain|.wine-vst
 smart chain|.wine-vst
+smarteq|.wine-vst
+smart:eq|.wine-vst
+smart_eq|.wine-vst
 crispytuner|.wine-vst
+crispy|.wine-vst
 plugin alliance|.wine-vst
+izotope|.wine-vst
+fabfilter|.wine-vst
+sony forge|.wine-vst
+spitfire|.wine-vst
+valhalla|.wine-vst
+blue cat|.wine-vst
+kilohearts|.wine-vst
+melda|.wine-vst
+orchestral|.wine-vst
+u-he|.wine-vst
+kontakt|.wine-vst
+reaper rewire|.wine-vst
+melodyne|.wine-vst
+compressor|.wine-vst
+scaletuner|.wine-vst
+pitch;.wine-vst
+graillon|.wine-vst
 ableton|.wine-ableton
 REC
 }
@@ -680,7 +702,9 @@ recommended_prefix_for() {
 
 # is_known_plugin <installer> — the "recommended" marker wording.
 is_known_plugin() {
-  recommended_prefix_for "$1" >/dev/null 2>&1
+  recommended_prefix_for "$1" >/dev/null 2>&1 && return 0
+  is_sonible_installer "$1" && return 0
+  return 1
 }
 
 list_shared_plugin_files() {

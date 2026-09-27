@@ -49,17 +49,29 @@ func (m *model) enterCmd() tea.Cmd {
 		m.uninstallChecked = map[string]bool{}
 		return fetchItems("uninstall", "list-uninstallable")
 	case scrInstallPrefixChoice:
-		// The standard ask: default prefix first — with the RECOMMENDED
-		// wording when the installer matches a plugin the tests know.
-		if knownPluginInstaller(m.installFile) {
-			if m.installRecommendedPrefix != "" {
-				m.confirm = tuikit.NewConfirm(
-					"Install into the DEFAULT wine prefix?\n\n(known plugin — RECOMMENDED prefix: "+baseName(m.installRecommendedPrefix)+")",
-					"No, new prefix", "Yes")
+		// The standard ask: default prefix first. When the installer matches a
+		// plugin the tests know, ALWAYS name the recommended prefix — even when
+		// it IS the default (that's the point: the user must see that this
+		// installer is a known one and where it is expected to live), and say
+		// whether it matches the default so the choice is explicit.
+		rec := m.installRecommendedPrefix
+		switch {
+		case knownPluginInstaller(m.installFile) && rec != "":
+			def := m.installDefaultPrefix
+			extra := "\n\nKnown plugin — RECOMMENDED prefix: " + rec
+			if rec == def {
+				extra += "\n(this is the default prefix)"
 			} else {
-				m.confirm = tuikit.NewConfirm("Install into the default wine prefix? (known plugin — recommended here)", "No, new prefix", "Yes")
+				extra += "\n(not the default: " + def + ")"
 			}
-		} else {
+			m.confirm = tuikit.NewConfirm(
+				"Install into the DEFAULT wine prefix?"+extra+"\n\nEnter = use it   ·   \"No, new prefix\" = pick/create another",
+				"No, new prefix", "Yes, use it")
+		case knownPluginInstaller(m.installFile):
+			m.confirm = tuikit.NewConfirm(
+				"Install into the DEFAULT wine prefix?\n\nKnown plugin, but no recorded recommendation for this file.",
+				"No, new prefix", "Yes, use it")
+		default:
 			m.confirm = tuikit.NewConfirm("Install into the default wine prefix?", "No, new prefix", "Yes")
 		}
 		return nil

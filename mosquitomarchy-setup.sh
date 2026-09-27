@@ -1641,7 +1641,7 @@ $MENU_MOSQUITO_START
     "aliases": ["mosquito", "mosquitomarchy"]
   },
   "setup.mosquito.manager": {
-    "icon": "\uf188",
+    "icon": "\uf00e4",
     "label": "mosquitOmarchy",
     "description": "The main manager: modules, fixes, backups, updates",
     "aliases": ["mosquito", "manager", "setup"],
@@ -1649,7 +1649,7 @@ $MENU_MOSQUITO_START
     "action": "$BIN_DIR/mosquitomarchy"
   },
   "setup.mosquito.audio-plugins": {
-    "icon": "\uf0074",
+    "icon": "\uf062e",
     "label": "Audio plugin manager (wine VST)",
     "description": "Install/uninstall Windows wine plugins, per-plugin fixes, prefixes",
     "aliases": ["plugins", "vst", "wine"],
@@ -1657,7 +1657,7 @@ $MENU_MOSQUITO_START
     "action": "omarchy-launch-or-focus-tui mosquito-audio-plugin-manager-tui"
   },
   "setup.mosquito.move": {
-    "icon": "\uf0ed5",
+    "icon": "\uf044a",
     "label": "Move manager",
     "description": "Ableton Move manager — convert, address, routes (wine Ableton)",
     "aliases": ["move", "ableton-move"],

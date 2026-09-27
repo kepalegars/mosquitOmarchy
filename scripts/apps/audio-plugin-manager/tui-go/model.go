@@ -113,6 +113,7 @@ type model struct {
 	// wizards
 	installFile              string
 	installRecommendedPrefix string
+	installDefaultPrefix     string
 	installPrefix            string
 	installNew               bool
 	moveKey                  string
@@ -843,10 +844,13 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				out, eErr := runQuick("recommended-prefix", msg.path)
 				if eErr == nil {
 					var v struct {
-						Prefix string `json:"prefix"`
+						Prefix  string `json:"prefix"`
+						Known   bool   `json:"known"`
+						Default string `json:"default"`
 					}
 					_ = json.Unmarshal(bytes.TrimSpace(out), &v)
 					m.installRecommendedPrefix = v.Prefix
+					m.installDefaultPrefix = v.Default
 				}
 				m.push(scrInstallPrefixChoice)
 				return m, m.enterCmd()

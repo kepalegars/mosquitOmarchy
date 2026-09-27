@@ -330,6 +330,31 @@ PYWIZARD
     jq -nc --arg path "$(default_prefix)" '{path:$path}'
     ;;
 
+  # ── known-plugin detection (the install wizard's RECOMMENDED prefix) ──────
+  # The TUI asks these two before showing the prefix choice. They MUST exit 0
+  # and answer in JSON, otherwise the wizard silently degrades to "no
+  # recommendation" (the bug: neither verb existed, so the RECOMMENDED line
+  # never appeared for Serum / SmartEQ).
+  recommended-prefix)
+    file="${1:?installer path required}"
+    pfx="$(recommended_prefix_for "$file" 2>/dev/null || true)"
+    known=false; [[ -n $pfx ]] && known=true
+    jq -nc --arg prefix "$pfx" --arg file "$file" --argjson known "$known" \
+      '{prefix:$prefix, known:$known, file:$file, default:(env.HOME + "/.wine-vst")}'
+    ;;
+
+  is-known-plugin)
+    file="${1:?installer path required}"
+    if is_known_plugin "$file"; then
+      echo "known"
+    fi
+    ;;
+
+  known-plugins)
+    # Every token the detection knows about (for the TUI hint / docs).
+    recommended_prefix_for_plugins
+    ;;
+
   create-prefix)
     name="${1:?name required}"
     slug="$(printf '%s' "$name" | tr ' ' '-' | tr -cd '[:alnum:]-' | tr '[:upper:]' '[:lower:]')"
