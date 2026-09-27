@@ -79,6 +79,14 @@ var kbCatalog = []struct {
 		{"Move: Move Manager webapp", "$HOME/.local/bin/move-manager-webapp", "launch"},
 		{"Move: convert a set → MIDI", "$HOME/.local/bin/mosquito-move-manager --midi", "cmd"},
 	}},
+	// Its own category, right above "Custom command" — mosquitomarchy is the
+	// one thing this TUI exists for, so burying its launcher under a list of
+	// brightness presets made it undiscoverable. The "quick function" entry
+	// below still runs the shell launcher; this one opens the TUI.
+	{"mosquito", "mosquitOmarchy", []KbCatItem{
+		{"mosquitOmarchy (TUI)", "$HOME/.local/bin/mosquitomarchy-tui", "cmd"},
+		{"mosquitOmarchy (shell launcher)", "foot -e $HOME/mosquitOmarchy/mosquitomarchy-setup.sh", "cmd"},
+	}},
 	{"custom", "custom command", nil},
 }
 
@@ -214,6 +222,8 @@ func kbCatLabel(title string) string {
 		return "Ableton Move"
 	case "custom command":
 		return "Custom command"
+	case "mosquitOmarchy":
+		return "mosquitOmarchy"
 	}
 	return title
 }

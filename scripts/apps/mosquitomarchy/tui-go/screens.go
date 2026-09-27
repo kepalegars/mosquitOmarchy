@@ -1559,7 +1559,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 
 	case scrKBCat:
 		// "Add a keybinding" categories: Package app / Quick function /
-		// Ableton Move / Custom command (no prefix — the header names it).
+		// Ableton Move / mosquitOmarchy / Custom command (no prefix — the
+		// header names it).
 		if res.Canceled || res.Value == "back" {
 			m.pop()
 			return m, nil
