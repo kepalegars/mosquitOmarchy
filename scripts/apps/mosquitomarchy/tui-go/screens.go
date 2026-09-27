@@ -1012,6 +1012,45 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.pickPicker, cmd = m.pickPicker.Update(msg)
 	case scrBackup:
 		m.backupPicker, cmd = m.backupPicker.Update(msg)
+	case scrPreinstalls:
+		if pm, ok := msg.(preinstallsMsg); ok {
+			if pm.err != nil {
+				m.toast, _ = m.toast.SetErr(pm.err.Error())
+				return m, nil
+			}
+			if pm.done != "" {
+				m.pop()
+				m.toast, _ = m.toast.SetOK("preinstalls removed")
+				return m, tea.Batch(fetchTreeCmd("uninstall-tree"), blinkCmd())
+			}
+			if len(pm.rows) > 0 {
+				m.preinstalls = pm.rows
+				if m.preinstallChecked == nil {
+					m.preinstallChecked = map[string]bool{}
+				}
+				for _, r := range pm.rows {
+					// Everything still removable starts TICKED: the ask is
+					// "which do you want to KEEP", and an unticked row is kept.
+					if _, seen := m.preinstallChecked[r.Name]; !seen {
+						m.preinstallChecked[r.Name] = r.Removable
+					}
+				}
+			}
+			m.preinstallPicker = m.rebuildPreinstallPicker()
+			return m, nil
+		}
+		if tg, ok := msg.(tuikit.PickerToggleMsg); ok {
+			if m.preinstallChecked != nil {
+				m.preinstallChecked[tg.Value] = !m.preinstallChecked[tg.Value]
+			}
+			m.preinstallPicker = m.rebuildPreinstallPicker()
+			return m, nil
+		}
+		if _, ok := msg.(tuikit.PickerResultMsg); ok {
+			return m, nil
+		}
+		m.preinstallPicker, cmd = m.preinstallPicker.Update(msg)
+		return m, cmd
 	case scrMenuEntries:
 		if me, ok := msg.(menuEntriesMsg); ok {
 			if me.err != nil {
@@ -1313,6 +1352,24 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		m.setupCatPicker = m.rebuildSetupCat()
 		return m, nil
 
+	case scrPreinstalls:
+		if res.Canceled {
+			m.pop()
+			return m, nil
+		}
+		if res.Value == "back" || res.Value == "" {
+			m.pop()
+			return m, nil
+		}
+		// Enter removes exactly the ticked ones. Untick everything and press
+		// Enter -> a clear error, not a silent "success" that removed nothing.
+		var pkgs []string
+		for _, r := range m.preinstalls {
+			if m.preinstallChecked[r.Name] {
+				pkgs = append(pkgs, r.Name)
+			}
+		}
+		return m, preinstallsRemoveCmd(pkgs)
 	case scrSetupCat:
 		// Level 2: the folder tree. Enter installs ONLY the items checked in
 		// this category (Uninstall mode: Enter uninstalls the checked items, or
@@ -1338,6 +1395,14 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.push(scrKB)
 			m.kbPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).SetSize(m.contentSize())
 			return m, fetchKbCmd()
+		}
+		// Uninstall ▸ Preinstalls opens its own picker: the whole Omarchy stock
+		// list with the removed ones greyed, instead of being swept wholesale.
+		if len(eff) == 1 && eff[0] == "preinstalls:choose" {
+			m.push(scrPreinstalls)
+			m.preinstallChecked = map[string]bool{}
+			m.preinstallPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).SetSize(m.contentSize())
+			return m, fetchPreinstallsCmd()
 		}
 		if m.treeMode == "uninstall" {
 			keys := m.selectedKeysOfCat(m.setupCat)
@@ -1837,7 +1902,7 @@ func (m model) rebuildSetupCat() navPicker {
 	if m.treeMode == "uninstall" {
 		enterHelp = "uninstall selection"
 	}
-	p := newNavPicker("", pickerTreeItems(folders, items, m.selected, m.folderOpen, m.blinkOn)).SetSize(m.contentSize()).
+	p := newNavPicker("", pickerTreeItems(folders, items, m.selected, m.folderOpen, m.blinkOn, m.treeMode)).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
@@ -1851,7 +1916,7 @@ func (m model) rebuildSetupCat() navPicker {
 
 // backupTreeItems is the same tree for the backup content selection.
 func (m model) backupTreeItems() []tuikit.PickerItem {
-	return pickerTreeItems(m.backupFolders, m.backupItems, m.backupChecked, m.backupOpen, false)
+	return pickerTreeItems(m.backupFolders, m.backupItems, m.backupChecked, m.backupOpen, false, "backup")
 }
 
 // pickerTreeItems builds the shared folder/item tree rows: a ▸/▾ chevron, an
@@ -1871,7 +1936,7 @@ func aiRemovalLogged() bool {
 	return v.Removed
 }
 
-func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open map[string]bool, blinkOn bool) []tuikit.PickerItem {
+func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open map[string]bool, blinkOn bool, mode string) []tuikit.PickerItem {
 	itemsOf := func(folder string) []SetupItemRec {
 		out := make([]SetupItemRec, 0, 8)
 		for _, it := range items {
@@ -1918,9 +1983,15 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 					Display: "    " + branch + pmark + "  " + it.Label,
 					Value:   setupValue(f.Folder, it.Key),
 				}
-				// "remove-ai" leaf: GREYED until a prior remove-ai uninstall
-				// was actually recorded (nothing to "bring back" otherwise).
-				if it.Key == "remove-ai" && !aiRemovalLogged() {
+				// "remove-ai" means the OPPOSITE thing in each tree, so the
+				// grey-out rule has to follow the mode. Setup offers "bring back
+				// omarchy's agentic stuff": nothing to bring back if no removal
+				// was ever logged, hence greyed. Uninstall offers "remove
+				// omarchy's agentic stuff": that is exactly what the user wants
+				// precisely when the agentic parts are still present, i.e. when
+				// NO removal was logged -- greying it there made the option
+				// permanently unselectable, which is what it was reported as.
+				if it.Key == "remove-ai" && mode != "uninstall" && !aiRemovalLogged() {
 					entry.Disabled = true
 				}
 				out = append(out, entry)
@@ -2159,6 +2230,39 @@ func settingsItems2() []tuikit.PickerItem {
 }
 
 func backupItems(items []tuikit.PickerItem) []tuikit.PickerItem { return items }
+
+// rebuildPreinstallPicker lists EVERY stock app, as asked: an app that is no
+// longer installed (or is one of the user's own) is shown greyed and cannot be
+// ticked, so the list does not silently shrink between two visits.
+func (m model) rebuildPreinstallPicker() navPicker {
+	items := []tuikit.PickerItem{{Display: "Omarchy preinstalls (tab = keep, enter = remove the ticked ones):", Value: "", Disabled: true}}
+	checked := 0
+	for _, r := range m.preinstalls {
+		mark := "○"
+		if m.preinstallChecked[r.Name] {
+			mark = "●"
+			checked++
+		}
+		it := tuikit.PickerItem{Display: mark + "  " + r.Label, Value: r.Name}
+		switch {
+		case !r.Installed:
+			it.Display += "  (already removed)"
+			it.Disabled = true
+		case r.Protected:
+			it.Display += "  (your own app — kept)"
+			it.Disabled = true
+		}
+		items = append(items, it)
+	}
+	items = append(items,
+		tuikit.PickerItem{Display: fmt.Sprintf("Remove the %d ticked preinstall(s)", checked), Value: "apply"},
+		tuikit.PickerItem{Display: "Back", Value: "back"},
+	)
+	return newNavPicker("", items).SetSize(m.contentSize()).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "keep / unkeep")),
+		)
+}
 
 // rebuildMenuEntriesPicker renders the "Menu entries" cleaner: a tick mark =
 // the marked menu block is present in the Omarchy menu. Tab/x toggle,

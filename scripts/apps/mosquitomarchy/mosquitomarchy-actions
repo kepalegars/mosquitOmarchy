@@ -303,15 +303,18 @@ cmd_uninstall_tree(){
       "$(json_str fixes)" "$(json_str "fix:$fid")" "$(json_str "$fid")" \
       "$(json_str "$(fix_desc "$fid")")")")
   done
-  # Menu entry + global shortcut.
-  folders+=("Menu & shortcuts"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
-    "$(json_str menu)" "$(json_str "Menu & shortcuts")" false)")
-  items+=("menu/entry"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
-    "$(json_str menu)" "$(json_str "menu:entry")" \
-    "$(json_str "Omarchy menu entry (mosquitOmarchy)")" "$(json_str "remove install.mosquitomarchy")")")
-  items+=("menu/shortcut"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
-    "$(json_str menu)" "$(json_str "shortcut")" \
-    "$(json_str "Keyboard shortcut SUPER + ALT + M")" "$(json_str "remove the mosquitOmarchy shortcut")")")
+  # Preinstalls: only offered while at least one stock app is still removable,
+  # so the folder greys out on its own once everything is gone.
+  if preinstalls_removable; then
+    local nrem=0 p
+    while read -r p; do [[ -n $p ]] || continue; preinstall_removable "$p" && ((nrem++)); done < <(stock_preinstalls)
+    folders+=("Preinstalls"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+      "$(json_str preinstalls)" "$(json_str "Preinstalls")" false)")
+    items+=("preinstalls/choose"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+      "$(json_str preinstalls)" "$(json_str "preinstalls:choose")" \
+      "$(json_str "Choose which Omarchy preinstalls to remove")" \
+      "$(json_str "$nrem stock app(s) still removable; the list below only shows what is actually installed")")")
+  fi
 
   local line
   while IFS= read -r line; do [[ -n $line ]] && printf '%s\n' "${line#*$'\t'}"; done \
@@ -1155,6 +1158,28 @@ menu_entries_marker() {
   esac
 }
 
+# Every stock preinstall with its state, so the picker can show the whole Omarchy
+# list (as asked) while rendering an already-uninstalled app greyed/unselectable
+# instead of silently dropping it from the list.
+cmd_preinstalls(){
+  local p installed removable protected
+  while read -r p; do
+    [[ -n $p ]] || continue
+    installed=false; removable=false; protected=false
+    pkg_has "$p" && installed=true
+    preinstall_protected "$p" >/dev/null 2>&1 && protected=true
+    preinstall_removable "$p" && removable=true
+    printf '{"name":%s,"label":%s,"installed":%s,"protected":%s,"removable":%s}\n' \
+      "$(json_str "$p")" "$(json_str "$(preinstall_label "$p")")" \
+      "$installed" "$protected" "$removable"
+  done < <(stock_preinstalls)
+}
+
+cmd_preinstalls_remove(){
+  (($#)) || { warn "preinstalls-remove needs the packages to remove."; return 1; }
+  run_remove_preinstalls "$@"
+}
+
 cmd_menu_entries() {
   local how="${1:-list}" id mark start end tmp b present label line
   local -a NAMES=(mosquitomarchy mega-caffeine live-mode move-converter)
@@ -1222,6 +1247,8 @@ case "$sub" in
   fixes)                    cmd_fixes ;;
   setup)                    cmd_setup ;;
   uninstall-tree)           cmd_uninstall_tree ;;
+  preinstalls)              cmd_preinstalls ;;
+  preinstalls-remove)       cmd_preinstalls_remove "$@" ;;
   backup-options)           cmd_backup_options ;;
   backups)                  cmd_backups ;;
   update-check)             cmd_update_check ;;

@@ -158,6 +158,10 @@ func (m model) View() string {
 		title = screenTitle("Backup / Restore", w)
 		body = m.backupBody()
 		bar = barLine(m.backupPicker.ShortcutsHint())
+	case scrPreinstalls:
+		title = screenTitle("Omarchy preinstalls", w)
+		body = m.preinstallPicker.View()
+		bar = barLine(m.preinstallPicker.ShortcutsHint())
 	case scrMenuEntries:
 		title = screenTitle("Menu entries", w)
 		body = m.pickPicker2View()

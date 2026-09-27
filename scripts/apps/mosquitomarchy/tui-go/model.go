@@ -32,6 +32,7 @@ const (
 	scrInfo
 	scrBackupOptions
 	scrBackupApps
+	scrPreinstalls
 )
 
 // BackupOpts are the Backup screen's content choices.
@@ -109,6 +110,11 @@ type model struct {
 	// mosquito menu blocks (mega-caffeine, live-mode, move converter,
 	// mosquitomarchy) with a present mark; unchecking + Enter strips the
 	// block from omarchy-menu.jsonc (re-check restores).
+	// preinstalls drives Uninstall ▸ Preinstalls: the full Omarchy stock list,
+	// with the already-removed apps greyed out instead of hidden.
+	preinstalls      []PreinstallRec
+	preinstallChecked map[string]bool
+	preinstallPicker  navPicker
 	menuEntries      []MenuEntryRec
 	menuEntryChecked map[string]bool
 	menuEntryOrig    map[string]bool

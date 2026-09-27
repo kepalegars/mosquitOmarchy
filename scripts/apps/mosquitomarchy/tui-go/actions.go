@@ -128,6 +128,59 @@ func menuEntriesApplyCmd(name string, restore bool) tea.Cmd {
 	}
 }
 
+// PreinstallRec is one Omarchy stock app in the Uninstall ▸ Preinstalls list.
+// Installed&&!protected is what makes it selectable; the rest render greyed.
+type PreinstallRec struct {
+	Name      string `json:"name"`
+	Label     string `json:"label"`
+	Installed bool   `json:"installed"`
+	Protected bool   `json:"protected"`
+	Removable bool   `json:"removable"`
+}
+
+func fetchPreinstallsCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("preinstalls")
+		if err != nil {
+			return preinstallsMsg{err: err}
+		}
+		var rows []PreinstallRec
+		for _, line := range bytes.Split(bytes.TrimSpace(out), []byte("\n")) {
+			if len(bytes.TrimSpace(line)) == 0 {
+				continue
+			}
+			var r PreinstallRec
+			if err := json.Unmarshal(line, &r); err != nil {
+				continue
+			}
+			rows = append(rows, r)
+		}
+		return preinstallsMsg{rows: rows}
+	}
+}
+
+type preinstallsMsg struct {
+	rows []PreinstallRec
+	done string // backend output of a removal, shown in the runner
+	err  error
+}
+
+// preinstallsRemoveCmd hands the CHECKED packages to the backend; everything
+// left unchecked is simply absent from the list and therefore kept.
+func preinstallsRemoveCmd(pkgs []string) tea.Cmd {
+	return func() tea.Msg {
+		if len(pkgs) == 0 {
+			return preinstallsMsg{err: fmt.Errorf("nothing selected — every stock preinstall is kept")}
+		}
+		args := append([]string{"preinstalls-remove"}, pkgs...)
+		out, err := runQuick(args...)
+		if err != nil {
+			return preinstallsMsg{err: err}
+		}
+		return preinstallsMsg{done: strings.TrimSpace(string(out))}
+	}
+}
+
 // MenuEntryRec is one row of the "Menu entries" cleaner.
 type MenuEntryRec struct {
 	Name    string `json:"name"`

@@ -2689,21 +2689,41 @@ run_apps(){
 
 PROTECT_OMARCHY_PKGS=(omacut omacalc omawrite)   # Omarchy core utilities, never removed
 
-run_remove_preinstalls(){
-  # Removes the Omarchy preinstalls ("stock" apps) while AVOIDING the personal
-  # apps listed in the "apps" module (libreoffice, pinta, obsidian,
-  # lazydocker...). The user's webapps and tuis are preserved (only the "stock"
-  # packages are removed; omarchy-webapp-remove-all and omarchy-tui-remove-all
-  # are not swept to avoid destroying personal apps/tuis).
-  #
-  # The "stock" list is omarchy-remove-preinstalls's (omarchy-install-preinstalls).
-  local -a stock=(aether cliamp libreoffice-fresh xournalpp pinta obsidian \
-                  obs-studio kdenlive moonlight-qt lazydocker omacut omacalc omawrite)
-  local -a keep=() drop=() keep_note=() p
-  # Protected apps: those the "apps" module installs (installed catalogs
-  # or a backup selection) + the Omarchy core utilities.
-  local catfiles=("$SCRIPT_DIR/scripts/apps/gui/guis.catalog" "$SCRIPT_DIR/scripts/apps/tui-tools/tuis.catalog") catf
-  local line kind name
+# ─── Omarchy preinstalls ("stock" apps) ───────────────────────────────────
+# ONE list, because run_remove_preinstalls and preinstalls_removable used to
+# disagree: the remover swept 13 packages (including omacut/omacalc/omawrite)
+# while the predicate only looked at 9, so a machine with only omacut installed
+# was reported as having nothing to remove while omacut was removable.
+stock_preinstalls(){
+  printf '%s\n' aether cliamp libreoffice-fresh xournalpp pinta obsidian \
+                  obs-studio kdenlive moonlight-qt lazydocker omacut omacalc omawrite
+}
+
+preinstall_label(){
+  case "$1" in
+    aether)            printf 'Aether (web browser)' ;;
+    cliamp)            printf 'Cliamp (terminal Claude Code client)' ;;
+    libreoffice-fresh) printf 'LibreOffice' ;;
+    xournalpp)         printf 'Xournal++' ;;
+    pinta)             printf 'Pinta' ;;
+    obsidian)          printf 'Obsidian' ;;
+    obs-studio)        printf 'OBS Studio' ;;
+    kdenlive)          printf 'Kdenlive' ;;
+    moonlight-qt)      printf 'Moonlight' ;;
+    lazydocker)        printf 'Lazydocker' ;;
+    omacut)            printf 'omarchy-cut' ;;
+    omacalc)           printf 'omarchy-calc' ;;
+    omawrite)          printf 'omarchy-write' ;;
+    *)                 printf '%s' "$1" ;;
+  esac
+}
+
+# Personal apps the "apps" module owns: those are NEVER swept by the preinstall
+# removal, because the user installed them on purpose (or restored them from a
+# backup), not as part of the Omarchy ISO.
+preinstall_protected(){
+  local -a keep=("$@") catfiles=() catf line kind name
+  catfiles=("$SCRIPT_DIR/scripts/apps/gui/guis.catalog" "$SCRIPT_DIR/scripts/apps/tui-tools/tuis.catalog")
   for catf in "${catfiles[@]}"; do
     [[ -f $catf ]] || continue
     while IFS= read -r line || [[ -n $line ]]; do
@@ -2716,33 +2736,68 @@ run_remove_preinstalls(){
     done < "$catf"
   done
   keep+=("${PROTECT_OMARCHY_PKGS[@]}")
-
-  for p in "${stock[@]}"; do
-    if pkg_has "$p"; then
-      local protect=0 q
-      for q in "${keep[@]}"; do [[ $q == "$p" ]] && protect=1 && break; done
-      if ((protect)); then keep_note+=("$p"); else drop+=("$p"); fi
-    fi
+  local p q
+  for p in "$@"; do
+    for q in "${keep[@]:-}"; do [[ $q == "$p" ]] && { printf '%s\n' "$p"; return 0; }; done
   done
+  return 1
+}
+
+# A stock preinstall is REMOVABLE when it is still installed and not one of the
+# user's own apps. "Still installed" is what makes the Uninstall ▸ Preinstalls
+# entry grey out once everything is gone, and what makes an already-removed app
+# render greyed and unselectable in the picker.
+preinstall_removable(){
+  pkg_has "$1" || return 1
+  preinstall_protected "$1" >/dev/null 2>&1 && return 1
+  return 0
+}
+
+preinstalls_removable(){
+  local p
+  while read -r p; do
+    [[ -n $p ]] || continue
+    preinstall_removable "$p" && return 0
+  done < <(stock_preinstalls)
+  return 1
+}
+
+# Removes exactly the packages given (already filtered by the picker), or every
+# removable stock preinstall when called with no argument.
+run_remove_preinstalls(){
+  local -a drop=() keep_note=() p
+  local -A asked=()
+  if (($#)); then
+    for p in "$@"; do asked["$p"]=1; done
+  fi
+  while read -r p; do
+    [[ -n $p ]] || continue
+    # Only stock packages: an argument naming something else is refused rather
+    # than handed to pacman, so this can never remove a non-preinstall.
+    local is_stock=false
+    local q
+    while read -r q; do [[ $q == "$p" ]] && { is_stock=true; break; }; done < <(stock_preinstalls)
+    $is_stock || { warn "not a stock preinstall, ignored: $p"; continue; }
+    # An explicit list wins over the protection rule only in the sense that the
+    # picker already showed the user what it would keep; a protected package is
+    # still refused, because it belongs to the apps module.
+    if preinstall_protected "$p" >/dev/null 2>&1; then
+      keep_note+=("$p"); continue
+    fi
+    if (($#)) && [[ -z ${asked["$p"]:-} ]]; then continue; fi
+    pkg_has "$p" || continue
+    drop+=("$p")
+  done < <(stock_preinstalls)
   if ((${#drop[@]} == 0)); then
-    warn "No stock preinstall to remove (or all protected: ${keep_note[*]:-})."
+    warn "No stock preinstall to remove (or all protected: ${keep_note[*]:-none})."
     return 0
   fi
 
   msg "Removing Omarchy preinstalls (stock): ${drop[*]}"
-  msg "  Protected (personal apps / utilities): ${keep_note[*]:-}"
+  ((${#keep_note[@]})) && msg "  Kept (your own apps): ${keep_note[*]}"
   mq_sudo pacman -Rns --noconfirm "${drop[@]}" \
     && ok "Preinstalls removed: ${drop[*]}" \
     || { err "Failed to remove preinstalls."; return 1; }
-}
-
-preinstalls_removable(){
-  # Says whether stock preinstalls (unprotected) are still installed
-  local -a stock=(aether cliamp libreoffice-fresh xournalpp pinta obsidian \
-                  obs-studio kdenlive moonlight-qt lazydocker)
-  local p
-  for p in "${stock[@]}"; do pkg_has "$p" && return 0; done
-  return 1
 }
 
 run_ollama(){
