@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# jamjamjam-bpm — tempo, time signature and key for jamjamjam.
+#
+#   jamjamjam-bpm analyse FILE...        analyse one or more audio files
+#   jamjamjam-bpm watch [--source NAME]  live analysis of a PipeWire source
+#   jamjamjam-bpm doctor                 check the capture chain and deps
+#
+# The analysis is local (numpy only).  The network is used for one thing only,
+# as a cross-check of the tempo we measured, when an ISRC is supplied: no free
+# API publishes key or time signature, so those are always measured, never
+# guessed from a catalogue.  See README.md for the full rationale.
+set -euo pipefail
+
+# Resolve the symlink first: this script is linked into ~/.local/bin, and
+# dirname on the link would point the loader at the symlink's directory, where
+# bpm_cli.py and lib_bpm_core.py do not live.
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+export PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+PY="${PYTHON:-python3}"
+
+die() { printf 'jamjamjam-bpm: %s\n' "$*" >&2; exit 1; }
+
+doctor() {
+  local ok=0
+  printf 'jamjamjam-bpm doctor\n\n'
+  if command -v "$PY" >/dev/null 2>&1; then
+    printf '  %-22s %s\n' "python3" "$("$PY" -c 'import sys;print(sys.version.split()[0])')"
+  else
+    printf '  %-22s MISSING\n' python3; ok=1
+  fi
+  if "$PY" -c 'import numpy' 2>/dev/null; then
+    printf '  %-22s %s\n' "numpy" "$("$PY" -c 'import numpy;print(numpy.__version__)')"
+  else
+    printf '  %-22s MISSING (pip install --user numpy)\n' numpy; ok=1
+  fi
+  for tool in ffmpeg pw-cat pactl; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf '  %-22s %s\n' "$tool" "$(command -v "$tool")"
+    else
+      printf '  %-22s missing\n' "$tool"
+      [[ $tool == ffmpeg ]] && ok=1
+    fi
+  done
+  printf '\n'
+  # pw-cat has no --list-sources; PipeWire is enumerated through the Pulse
+  # compatibility layer, and the name PipeWire shows as "source name" is what
+  # pw-cat --target accepts.
+  if command -v pactl >/dev/null 2>&1; then
+    printf '  capture sources (use the name after \"name:\"):\n'
+    pactl list short sources 2>/dev/null | grep -v '.monitor$' | sed 's/^/    /' | head -20 || true
+  fi
+  return $ok
+}
+
+watch() {
+  local source_name="" isrc="" naming=flats
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --source) source_name="${2:?--source needs a value}"; shift 2 ;;
+      --isrc) isrc="${2:?--isrc needs a value}"; shift 2 ;;
+      --naming) naming="${2:?--naming needs flats|sharps}"; shift 2 ;;
+      *) die "unknown option for watch: $1" ;;
+    esac
+  done
+  exec "$PY" -c '
+import sys, subprocess, json, select
+sys.path.insert(0, sys.argv[1])
+import lib_bpm_core as C
+
+name = sys.argv[2] if sys.argv[2] else None
+cmd = ["pw-cat", "--record", "-f", "s16", "-c", "2", "-r", "48000"]
+if name:
+    cmd += ["--target", name]
+proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+est = C.TempoEstimator(48000, window=8.0, hop=0.25)
+now = 0.0
+import math
+block = 48000 // 10
+carry = b""
+while True:
+    data = proc.stdout.read(block * 4)
+    if not data:
+        break
+    carry += data
+    n = (len(carry) // 4) * 4
+    chunk, carry = carry[:n], carry[n:]
+    import numpy as np
+    samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float64) / 32768.0
+    est.feed(samples)
+    now += len(samples) / 48000.0
+    if est.tick(now):
+        r = est.result(now)
+        state = "LOCKED" if r.bpm.locked else ("~" if r.bpm.bpm else ".")
+        alts = ("  alts " + ",".join(f"{a:g}" for a in r.bpm.alternates)) if r.bpm.alternates else ""
+        print(
+            f"{now:7.1f}s  {r.bpm.bpm:7.2f} bpm  {state:6s} m={r.bpm.margin:4.2f}"
+            f"  {r.key.key or \"-\":10s} {r.metre.time_signature:4s}{alts}",
+            flush=True,
+        )
+' "$SCRIPT_DIR" "$source_name"
+}
+
+[[ $# -ge 1 ]] || { doctor; exit 0; }
+cmd="$1"; shift
+case "$cmd" in
+  analyse|analyze)
+    [[ $# -ge 1 ]] || die "analyse needs at least one file"
+    exec "$PY" "$SCRIPT_DIR/bpm_cli.py" "$@"
+    ;;
+  watch) watch "$@" ;;
+  doctor) doctor ;;
+  -h|--help|help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command '$cmd' (try: analyse, watch, doctor)" ;;
+esac
