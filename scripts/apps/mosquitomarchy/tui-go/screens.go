@@ -508,8 +508,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			// Continue the apply that was interrupted by this question.
 			return m, fetchMissingAssetsCmd(m.pendingArgs)
-		case "add-shortcut":
-			return m.startWorking("Adding the shortcut", workingArgs("add-shortcut", nil)...)
+
 		case "kb-add":
 			return m.startWorking("Binding the key", workingArgs("kb-add", m.pendingArgs)...)
 		case "kb-remove":
@@ -572,8 +571,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.menuEntryOrig = map[string]bool{}
 			}
 			for _, e := range m.menuEntries {
-				m.menuEntryChecked[e.Name] = e.Present
-				m.menuEntryOrig[e.Name] = e.Present
+				// DEFAULT: everything UNCHECKED (user opts in per entry).
+				m.menuEntryChecked[e.Name] = false
+				m.menuEntryOrig[e.Name] = false
 			}
 			idx := 0
 			if len(m.menuEntries) > 0 {
@@ -1026,8 +1026,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			for _, e := range m.menuEntries {
 				if _, seen := m.menuEntryChecked[e.Name]; !seen {
-					m.menuEntryChecked[e.Name] = e.Present
-					m.menuEntryOrig[e.Name] = e.Present
+					// DEFAULT: everything UNCHECKED — the user opts IN to any
+					// entry they want kept (Enter applies strip/restore).
+					m.menuEntryChecked[e.Name] = false
+					m.menuEntryOrig[e.Name] = false
 				}
 			}
 			m.rebuildMenuEntriesPicker()
@@ -1208,15 +1210,6 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.pendingMsg = "Add mosquitOmarchy to the Omarchy menu?\n\nRegisters (or refreshes) the entry in the Omarchy Install menu so the TUI can be opened from the launcher at any time."
 			m.pendingNo = "Cancel"
 			m.pendingYes = "Yes"
-			m.push(scrConfirm)
-			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
-			return m, nil
-		}
-		if res.Value == "add-shortcut" {
-			m.pendingAction = "add-shortcut"
-			m.pendingMsg = "Add a keyboard shortcut (SUPER + ALT + M) to open mosquitOmarchy at any time?"
-			m.pendingNo = "Cancel"
-			m.pendingYes = "Add shortcut"
 			m.push(scrConfirm)
 			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 			return m, nil
@@ -1742,7 +1735,6 @@ func (m model) rebuildSetup() navPicker {
 	}
 	if !uninstall {
 		items = append(items, tuikit.PickerItem{Display: "Menu entry", Value: "menu-entry"})
-		items = append(items, tuikit.PickerItem{Display: "Add shortcut for mosquitOmarchy", Value: "add-shortcut"})
 		// "Menu entries" cleaner: un-check the entries mosquito adds
 		// automatically to the Omarchy menu (mega caffeine, live mode, the
 		// move converter, mosquitomarchy itself).
