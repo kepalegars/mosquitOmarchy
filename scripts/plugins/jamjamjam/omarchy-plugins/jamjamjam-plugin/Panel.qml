@@ -17,6 +17,28 @@ Panel {
   // receiving pointer input, so clicks fall through and other apps stay usable.
   property bool pinned: false
 
+  // Pinning has to survive the bar's single-popout coordinator too. The bar
+  // allows one popout at a time: opening any other toolbar panel (wifi,
+  // bluetooth…) makes it call closeForPopoutSwitch() on whoever currently holds
+  // the popout — Bar.qml requestPopout() — so the JamJamJam panel vanished the
+  // moment the wifi menu opened, pin or no pin. Pinning only shrank the input
+  // region; it never exempted the panel from that hand-off.
+  //
+  // While pinned we therefore decline the hand-off and both panels stay up,
+  // which is what "pinned" promises. Unpinned keeps the shell's behaviour
+  // (switch panels rather than stack them).
+  //
+  // The three lines below mirror Panel.closeForPopoutSwitch() instead of
+  // calling it: a same-named function here shadows the inherited one, and
+  // QML has no Panel.prototype to reach the base implementation through, so
+  // delegating would either be impossible or recurse into this override.
+  function closeForPopoutSwitch() {
+    if (root.pinned) return
+    popoutSwitchClosing = true
+    close()
+    Qt.callLater(function() { popoutSwitchClosing = false })
+  }
+
   readonly property var snapshot: service ? service.snapshot : ({})
   readonly property var analyzer: snapshot.analyzer || ({ key: "", keyConfidence: 0, bpm: 0, currentChord: "", progression: [] })
   readonly property bool keyStable: analyzer.keyStable === true

@@ -109,6 +109,15 @@ if [[ -f "$DESKTOP" ]] && ask "Remove the menu shortcut?" y; then
     && update-desktop-database "$(dirname "$DESKTOP")" 2>/dev/null || true
 fi
 
+# The themed icon is installed alongside the shortcut; leaving it behind would
+# strand a guitarpro.png in the user's icon theme with no entry referencing it.
+if [[ -f "$HOME/.local/share/icons/hicolor/256x256/apps/guitarpro.png" ]] && ask "Remove the installed menu icon?" y; then
+  rm -f "$HOME/.local/share/icons/hicolor/256x256/apps/guitarpro.png"
+  command -v gtk-update-icon-cache >/dev/null 2>&1 \
+    && gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" >/dev/null 2>&1 || true
+  ok "Icon removed"
+fi
+
 # Wine start-menu leftovers (duplicates created by the Windows installer)
 if ask "Remove the Wine start-menu leftovers (wine/Programs/…, duplicates)?" y; then
   apps="$HOME/.local/share/applications" dd="$HOME/.local/share/desktop-directories" removed=0

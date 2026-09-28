@@ -93,6 +93,16 @@ Output is plain `key\tvalue` per line (like `omarchy-battery-status --shell`) so
 
 **Coffee mode**: close the laptop, let everything run — tints the screen red (`hyprsunset`), blocks sleep when the lid is closed (`systemd-inhibit`), monitors shutdown conditions. Duration in **natural language** (`90`, `1h30`, `2 days`, empty = unlimited); auto stop if CPU > **85 °C** or battery < **10 %** (adjustable thresholds).
 
+The activation toast reads *"Always awake **no matter what**\* for &lt;duration&gt;"*, and
+the `*` is that CPU safeguard, spelled out on a second line of the same toast:
+*"\* CPU above 85 °C stops it anyway"*. The asterisk is not decoration — the
+session really does end on thermal shutdown, so the toast states the limit
+instead of implying an unconditional promise. The number is interpolated from
+`TEMP_LIMIT` at send time, so raising the threshold (e.g.
+`mega-caffeine on --temp-limit 90`) changes the line shown. Under **live mode**
+the guard belongs to `live-mode-watch`, which caps the CPU frequency rather than
+killing coffee mode, so no thermal stop happens there at all.
+
 ```bash
 mega-caffeine on|off|toggle|status            # --status: JSON for widgets
 mega-caffeine on --duration "2h30"            # no prompt

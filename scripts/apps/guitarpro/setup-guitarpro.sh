@@ -18,7 +18,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PFX="$HOME/.wine-guitarpro8"
 GP_EXE="$PFX/drive_c/Program Files/Arobas Music/Guitar Pro 8/GuitarPro.exe"
-ICON="$SCRIPT_DIR/icon.png"
+ICON_SRC="$SCRIPT_DIR/icon.png"
+# The icon is INSTALLED as a themed XDG icon and referenced BY NAME. It used to
+# be written into the .desktop as Icon=$SCRIPT_DIR/icon.png, i.e. an absolute
+# path inside the checkout: renaming the repo (Omarchy_Custom_Scripts ->
+# mosquitOmarchy) silently invalidated it and the entry showed up in the app
+# menu with no icon at all, while everything else about it looked correct. A
+# name lookup survives the repo moving and is what every menu actually resolves.
+ICON_NAME="guitarpro"
+ICON_DST="$HOME/.local/share/icons/hicolor/256x256/apps/$ICON_NAME.png"
 DESKTOP_DST="$HOME/.local/share/applications/guitarpro.desktop"
 LAUNCHER="$HOME/.local/bin/guitarpro"
 EXE_NAME="guitar-pro-8-setup.exe"
@@ -105,6 +113,10 @@ do_status(){
   else warn "Launcher : missing"; fi
   if [[ -f "$DESKTOP_DST" ]]; then ok "Menu shortcut : $DESKTOP_DST"
   else warn "Menu shortcut : missing"; fi
+  # An entry can be "present" and still render with no icon, so report the two
+  # halves separately: the themed icon on disk, and what the entry references.
+  if [[ -f "$ICON_DST" ]]; then ok "Icon installed : $ICON_DST"
+  else warn "Icon missing : $ICON_DST (menu entry shows a generic icon)"; fi
   if [[ -f "$SCRIPT_DIR/$EXE_NAME" ]]; then ok "Installer : present"
   else warn "Installer missing : put $EXE_NAME in $SCRIPT_DIR"; fi
   if [[ -d "$PATCH_DIR" ]] && [[ -n "$(find "$PATCH_DIR" -maxdepth 1 -type f ! -name '.*' 2>/dev/null | head -1)" ]]
@@ -342,13 +354,23 @@ LAUNCHEOF
   # 8) Create the .desktop shortcut
   msg "Creating the menu shortcut"
   mkdir -p "$(dirname "$DESKTOP_DST")"
+  # Install the icon first, so the entry can reference it by name.
+  if [[ -f $ICON_SRC ]]; then
+    mkdir -p "$(dirname "$ICON_DST")"
+    install -m 0644 "$ICON_SRC" "$ICON_DST"
+    command -v gtk-update-icon-cache >/dev/null 2>&1 \
+      && gtk-update-icon-cache -f -t ~/.local/share/icons/hicolor >/dev/null 2>&1 || true
+    ok "Icon installed: $ICON_DST"
+  else
+    warn "Icon source missing ($ICON_SRC) — the menu entry will show a generic icon"
+  fi
   cat > "$DESKTOP_DST" <<DESKEOF
 [Desktop Entry]
 Type=Application
 Name=Guitar Pro 8
 Comment=Score and tablature editor
 Exec=$LAUNCHER
-Icon=$ICON
+Icon=$ICON_NAME
 Terminal=false
 Categories=AudioVideo;Audio;Music;Utility;
 MimeType=application/x-guitarpro;audio/x-gp3;audio/x-gp4;audio/x-gp5;audio/x-gp;
