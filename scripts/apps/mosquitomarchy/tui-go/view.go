@@ -36,16 +36,18 @@ func (m model) homeBannerReserve() int {
 // filterBarLine composes the filter zone for the Setup/Uninstall screens:
 // when open ('f'), a small ACCENT-framed box (slightly taller than a plain
 // row) sits right above the shortcut hint bar. The empty state shows ONLY
-// the muted grey word "filtre" (the same grey the disabled picker rows use);
-// it is replaced by the typed text the moment you start typing. No extra
-// help text inside — the shortcuts bar already documents the keys.
+// the grey word "filter" — in the SAME grey the unusable picker rows use
+// (ColorDisabled, not ColorMuted), so a placeholder that is not a real
+// control does not read as a brighter, more actionable one. It is replaced
+// by the typed text the moment you start typing. No extra help text inside —
+// the shortcuts bar already documents the keys.
 func (m model) filterBarLine(hint string) string {
 	if !m.filterOpen {
 		return hint
 	}
 	inner := m.filterText + "▏"
 	if m.filterText == "" {
-		inner = lipgloss.NewStyle().Foreground(tuikit.ColorMuted).Render("filtre")
+		inner = lipgloss.NewStyle().Foreground(tuikit.ColorDisabled).Render("filter")
 	}
 	// Fixed 44-col field, centered: the box NEVER grows with the text, so
 	// there is no alternating left/right widening (a plain Align(Center)
@@ -243,13 +245,17 @@ func (m model) updateBody() string {
 
 // backupBody explains how backups work, above the options.
 func (m model) backupBody() string {
+	// Kept deliberately short. The body is vertically centred in the gap
+	// between the title and the shortcut bar, so a tall paragraph overflows
+	// that gap on a normal terminal: the centring collapses and the help
+	// text glues straight to the title, which is the one thing the layout
+	// rule forbids — and it made this screen read as a wall of text with
+	// no title rather than as a titled page like every other screen.
 	explain := []string{
-		"Backups are dated archives of your configuration — Hyprland, terminal,",
-		"shell, Omarchy extensions and plugins, keymaps, app preferences — written",
-		"to ~/omarchy-backups as omarchy-backup-<date>.tar.gz.",
-		"",
-		"Choose a PLAIN archive, or an ENCRYPTED one (AES-256 .gpg): the encrypted form asks for a passphrase you will re-enter to restore it.",
-		"Restoring overwrites the files an archive contains with the archived versions.",
+		"Dated archives of your configuration, written to",
+		"~/omarchy-backups as omarchy-backup-<date>.tar.gz — plain, or",
+		"ENCRYPTED (AES-256 .gpg, asks for a passphrase).",
+		"Restoring overwrites the files an archive contains.",
 	}
 	head := lipgloss.NewStyle().Width(m.contentSizeW()).Align(lipgloss.Center).
 		Render(tuikit.StyleHelp.Render(strings.Join(explain, "\n")))

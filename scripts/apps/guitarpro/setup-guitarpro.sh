@@ -18,7 +18,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PFX="$HOME/.wine-guitarpro8"
 GP_EXE="$PFX/drive_c/Program Files/Arobas Music/Guitar Pro 8/GuitarPro.exe"
-ICON_SRC="$SCRIPT_DIR/icon.png"
+# The icon ships as an SVG (guitar-pro.svg) and is rasterised to the themed
+# XDG PNG the menu references by name. A raster source is still accepted so an
+# existing icon.png keeps working, but SVG wins: it is what the repo carries.
+ICON_SRC_SVG="$SCRIPT_DIR/guitar-pro.svg"
+ICON_SRC_PNG="$SCRIPT_DIR/icon.png"
+ICON_SRC=""
+[[ -f $ICON_SRC_SVG ]] && ICON_SRC="$ICON_SRC_SVG"
+[[ -z $ICON_SRC && -f $ICON_SRC_PNG ]] && ICON_SRC="$ICON_SRC_PNG"
 # The icon is INSTALLED as a themed XDG icon and referenced BY NAME. It used to
 # be written into the .desktop as Icon=$SCRIPT_DIR/icon.png, i.e. an absolute
 # path inside the checkout: renaming the repo (Omarchy_Custom_Scripts ->
@@ -27,6 +34,7 @@ ICON_SRC="$SCRIPT_DIR/icon.png"
 # name lookup survives the repo moving and is what every menu actually resolves.
 ICON_NAME="guitarpro"
 ICON_DST="$HOME/.local/share/icons/hicolor/256x256/apps/$ICON_NAME.png"
+ICON_SIZE=256
 DESKTOP_DST="$HOME/.local/share/applications/guitarpro.desktop"
 LAUNCHER="$HOME/.local/bin/guitarpro"
 EXE_NAME="guitar-pro-8-setup.exe"
@@ -363,14 +371,35 @@ LAUNCHEOF
   msg "Creating the menu shortcut"
   mkdir -p "$(dirname "$DESKTOP_DST")"
   # Install the icon first, so the entry can reference it by name.
-  if [[ -f $ICON_SRC ]]; then
+  if [[ -n $ICON_SRC ]]; then
     mkdir -p "$(dirname "$ICON_DST")"
-    install -m 0644 "$ICON_SRC" "$ICON_DST"
-    command -v gtk-update-icon-cache >/dev/null 2>&1 \
+    if [[ $ICON_SRC == *.svg ]]; then
+      # rsvg-convert keeps the vector crisp at any size; magick/convert are the
+      # fallbacks. Without one of them the PNG is simply not installed and the
+      # entry falls back to a generic icon, which is reported below.
+      if command -v rsvg-convert >/dev/null 2>&1; then
+        rsvg-convert -w "$ICON_SIZE" -h "$ICON_SIZE" "$ICON_SRC" -o "$ICON_DST" \
+          && ok "Icon rendered from $(basename "$ICON_SRC") to $ICON_DST" \
+          || warn "Could not rasterise $ICON_SRC"
+      elif command -v magick >/dev/null 2>&1; then
+        magick -background none "$ICON_SRC" -resize "${ICON_SIZE}x${ICON_SIZE}" "$ICON_DST" \
+          && ok "Icon rendered from $(basename "$ICON_SRC") to $ICON_DST" \
+          || warn "Could not rasterise $ICON_SRC"
+      elif command -v convert >/dev/null 2>&1; then
+        convert -background none "$ICON_SRC" -resize "${ICON_SIZE}x${ICON_SIZE}" "$ICON_DST" \
+          && ok "Icon rendered from $(basename "$ICON_SRC") to $ICON_DST" \
+          || warn "Could not rasterise $ICON_SRC"
+      else
+        warn "No SVG rasteriser (rsvg-convert / magick / convert) — icon not installed"
+      fi
+    else
+      install -m 0644 "$ICON_SRC" "$ICON_DST"
+      ok "Icon installed: $ICON_DST"
+    fi
+    [[ -f $ICON_DST ]] && command -v gtk-update-icon-cache >/dev/null 2>&1 \
       && gtk-update-icon-cache -f -t ~/.local/share/icons/hicolor >/dev/null 2>&1 || true
-    ok "Icon installed: $ICON_DST"
   else
-    warn "Icon source missing ($ICON_SRC) — the menu entry will show a generic icon"
+    warn "Icon source missing ($ICON_SRC_SVG) — the menu entry will show a generic icon"
   fi
   cat > "$DESKTOP_DST" <<DESKEOF
 [Desktop Entry]

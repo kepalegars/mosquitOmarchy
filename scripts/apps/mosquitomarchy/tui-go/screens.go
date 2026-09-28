@@ -382,7 +382,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.toggleUpdate(msg.Value)
 			m.updatePicker = m.rebuildUpdate()
 		case scrHealth:
-			m.toggleHealth(msg.Value)
+			// "Back" is navigation, not a healable piece: ticking it would
+			// draw a selection mark on a row that has nothing to re-apply.
+			if msg.Value != "back" {
+				m.toggleHealth(msg.Value)
+			}
 			m.healthPicker = m.rebuildHealth()
 		case scrSetup:
 			if strings.HasPrefix(msg.Value, "item:") {
@@ -610,24 +614,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.setupPicker = m.rebuildSetup()
 			}
 			return m, nil
-		case "menu-entries":
-			// "Menu entries" cleaner screen: the marked mosquito blocks with
-			// a checkbox each.
-			m.push(scrMenuEntries)
-			if m.menuEntryChecked == nil {
-				m.menuEntryChecked = map[string]bool{}
-				m.menuEntryOrig = map[string]bool{}
-			}
-			for _, e := range m.menuEntries {
-				// DEFAULT: everything UNCHECKED (user opts in per entry).
-				m.menuEntryChecked[e.Name] = false
-				m.menuEntryOrig[e.Name] = false
-			}
-			idx := 0
-			if len(m.menuEntries) > 0 {
-				_ = idx
-			}
-			return m, fetchMenuEntriesCmd()
 		case "apply-patches":
 			args := append([]string{"apps"}, m.pendingPatchKeys...)
 			return m.startWorking("Applying the patch", workingArgs("run-patch", args)...)
@@ -1107,11 +1093,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if me, ok := msg.(menuEntriesMsg); ok {
 			if me.err != nil {
 				m.toast, _ = m.toast.SetErr(me.err.Error())
+				m.menuEntriesLoaded = true
 				return m, nil
 			}
 			if len(me.rows) > 0 {
 				m.menuEntries = me.rows
 			}
+			m.menuEntriesLoaded = true
 			if m.menuEntryChecked == nil {
 				m.menuEntryChecked, m.menuEntryOrig = map[string]bool{}, map[string]bool{}
 			}
@@ -1390,6 +1378,21 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 			return m, nil
 		}
+		if res.Value == "menu-entries" {
+			// "Menu entries" is a level-1 Setup row but NOT a category
+			// folder, so it needs its own branch here. Without it the value
+			// fell through to the category path below, folderOfValue() returned
+			// "" and Setup opened an empty category screen instead: the screen
+			// looked broken because the menu-entries screen was never pushed.
+			// (The branch used to live in the ConfirmResultMsg switch, where
+			// nothing could ever reach it.)
+			m.push(scrMenuEntries)
+			m.menuEntryChecked = map[string]bool{}
+			m.menuEntryOrig = map[string]bool{}
+			m.menuEntries = nil
+			m.menuEntriesLoaded = false
+			return m, fetchMenuEntriesCmd()
+		}
 		m.filterText = ""
 		m.setupCat = folderOfValue(res.Value)
 		m.folderOpen[m.setupCat] = true
@@ -1550,6 +1553,10 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 	case scrHealth:
 		// Esc on the list backs out; Enter confirms the pieces the user kept
 		// checked (tab), mirroring the Setup/Update flow down to a Confirm.
+		if m.healthPicker.SelectedValue() == "back" {
+			m.pop()
+			return m, nil
+		}
 		keys := m.healthKeys()
 		if len(keys) == 0 {
 			m.toast, _ = m.toast.SetWarn("nothing selected — press tab to pick the pieces to re-apply")
@@ -2119,6 +2126,15 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 				// the option does not silently vanish.
 				if it.Disabled {
 					entry.Disabled = true
+					// A greyed row with no reason reads as a bug. The backend
+					// already explains itself in `info` ("nothing left to
+					// remove: every Omarchy preinstall is either already
+					// removed or is one of your own apps"), so show that
+					// instead of leaving "Choose which … to remove" sitting
+					// there looking like a dead button.
+					if it.Info != "" {
+						entry.Sub = it.Info
+					}
 				}
 				// "remove-ai" means the OPPOSITE thing in each tree, so the
 				// grey-out rule has to follow the mode. Setup offers "bring back
@@ -2174,19 +2190,79 @@ func (m model) rebuildUpdate() navPicker {
 
 func (m model) rebuildHealth() navPicker {
 	idx := m.healthPicker.Index()
-	items := make([]tuikit.PickerItem, 0, len(m.healthItems))
+	items := make([]tuikit.PickerItem, 0, len(m.healthItems)+1)
+	// The rows used to be the raw module ids ("macos-vm", "menu"), so the
+	// screen read like a debug dump and the labels the backend already
+	// provides were only reachable through "i". The label is what identifies
+	// the piece to the user; the id only has to stay in the Value for heal.
 	for _, it := range m.healthItems {
 		mark := "○"
 		if m.healthChecked[it.ID] {
 			mark = "●"
 		}
-		items = append(items, tuikit.PickerItem{Display: it.ID, Value: it.ID, Badge: mark})
+		// The catalog label is a full sentence ("Live mode — performance
+		// session mode (stay-awake + thermal guard + …)"), which wraps over
+		// three rows and buries the list. Show the piece's own name and keep
+		// the sentence as the sub-line, where it is one truncated line.
+		display, long := healthShortLabel(it)
+		row := tuikit.PickerItem{Display: display, Value: it.ID, Badge: mark}
+		if it.Detail != "" {
+			row.Sub = it.Detail
+		} else if long != "" {
+			row.Sub = long
+		}
+		items = append(items, row)
 	}
-	p := newNavPicker("Files went missing on these modules :", items).SetSize(m.contentSize()).
+	// Every other screen ends with a Back row. This one had none, so the only
+	// way out was Esc, which does not read as "this is a page you can leave".
+	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
+
+	// The headline goes in as a disabled row rather than as the picker's
+	// header: NewPicker's header becomes the bubbles list Title, which this
+	// theme does not draw, so anything passed there is invisible.
+	head := tuikit.PickerItem{Display: healthHeadline(len(m.healthItems)), Value: "", Disabled: true}
+	items = append([]tuikit.PickerItem{head}, items...)
+
+	p := newNavPicker("", items).SetSize(m.contentSize()).
 		SetHelpKeys(key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select/reapply")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "re-apply")))
+	// The headline row shifted everything down by one; keep the focused row
+	// where it was instead of jumping to the top on every rebuild.
+	if idx > 0 {
+		idx--
+	}
 	return p.SelectIndex(idx)
+}
+
+// healthHeadline states the finding in one plain sentence. The old header
+// ("Files went missing on these modules :") described the mechanism rather
+// than the result, and it was wrong for the infrastructure rows, which are not
+// modules at all.
+func healthHeadline(n int) string {
+	switch n {
+	case 0:
+		return "Everything is in place — nothing to re-apply."
+	case 1:
+		return "1 piece needs attention (tick it, then Enter re-applies it):"
+	default:
+		return fmt.Sprintf("%d pieces need attention (tick the ones to re-apply, then Enter):", n)
+	}
+}
+
+// healthShortLabel splits a catalog label into the piece's own name and the
+// explanatory tail, so the row stays one line. "Live mode — performance
+// session mode (…)" becomes "Live mode" + the rest as sub-text. Infra rows
+// have no " — " and are already short, so they come back unchanged.
+func healthShortLabel(it HealthRec) (short, long string) {
+	label := it.Label
+	if label == "" {
+		return it.ID, ""
+	}
+	if i := strings.Index(label, " — "); i > 0 {
+		return label[:i], label[i+3:]
+	}
+	return label, ""
 }
 
 func categoryItems(cats []CatRec) []tuikit.PickerItem {
@@ -2406,6 +2482,12 @@ func (m model) rebuildPreinstallPicker() navPicker {
 func (m model) rebuildMenuEntriesPicker() navPicker {
 	// rows
 	items := make([]tuikit.PickerItem, 0, len(m.menuEntries)+1)
+	if !m.menuEntriesLoaded {
+		// Distinguishes "still fetching" and "the backend found nothing"
+		// from "loaded fine": without it both cases render a lone "Back"
+		// row, which is what made the screen look simply broken.
+		items = append(items, tuikit.PickerItem{Display: "loading…", Value: "", Disabled: true})
+	}
 	for _, e := range m.menuEntries {
 		// The tick is the DESIRED state (what Enter will apply) and the word is
 		// the CURRENT one. They used to be the same field, so ticking an absent

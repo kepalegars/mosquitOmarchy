@@ -116,6 +116,7 @@ type model struct {
 	preinstallChecked map[string]bool
 	preinstallPicker  navPicker
 	menuEntries       []MenuEntryRec
+	menuEntriesLoaded bool
 	menuEntryChecked  map[string]bool
 	menuEntryOrig     map[string]bool
 

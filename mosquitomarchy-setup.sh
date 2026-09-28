@@ -258,26 +258,44 @@ st_windows_vm(){
 }
 st_macos_vm(){
   [[ -x "$HOME/.local/bin/osx-kvm-installer.sh" ]] || { echo missing; return; }
-  [[ -x "$HOME/.local/bin/macos-vm-tui.sh" ]] || { echo partial; return; }
-  [[ -x "$HOME/.local/bin/launch-macos-tui.sh" ]] || { echo partial; return; }
-  local block_ok=1
-  if [[ -f $MENU ]] && ! grep -qF "Omarchy_Custom_Scripts_MacosVm" "$MENU"; then block_ok=0; fi
+  local miss=""
+  [[ -x "$HOME/.local/bin/macos-vm-tui.sh" ]] || miss="${miss:+$miss, }macos-vm-tui.sh"
+  [[ -x "$HOME/.local/bin/launch-macos-tui.sh" ]] || miss="${miss:+$miss, }launch-macos-tui.sh"
+  # The menu row and the keybinding are separate files, so name each one that
+  # is absent instead of collapsing the lot into "some files went missing".
+  if [[ -f $MENU ]] && ! grep -qF "Omarchy_Custom_Scripts_MacosVm" "$MENU"; then
+    miss="${miss:+$miss, }its Omarchy menu row"
+  fi
+  if [[ -f $HYPRLAND ]] && ! grep -qF "Omarchy_Custom_Scripts_MacosVm" "$HYPRLAND"; then
+    miss="${miss:+$miss, }its Hyprland rule"
+  fi
   # Keybinding is owned by mosquitOmarchy (its marker block) → look for the
   # macOS entry inside that block instead of a dedicated marker.
-  if [[ -f $BINDINGS ]] && ! grep -qF 'Omarchy_Custom_Scripts_Keys' "$BINDINGS"; then block_ok=0; fi
-  if [[ -f $BINDINGS ]] && ! grep -qF '"macOS VM Manager"' "$BINDINGS"; then block_ok=0; fi
-  if [[ -f $HYPRLAND ]] && ! grep -qF "Omarchy_Custom_Scripts_MacosVm" "$HYPRLAND"; then block_ok=0; fi
-  ((block_ok)) && echo ok || echo partial
+  if [[ -f $BINDINGS ]] && ! grep -qF 'Omarchy_Custom_Scripts_Keys' "$BINDINGS"; then
+    miss="${miss:+$miss, }the keybindings block"
+  fi
+  if [[ -f $BINDINGS ]] && ! grep -qF '"macOS VM Manager"' "$BINDINGS"; then
+    miss="${miss:+$miss, }its SUPER+ALT keybinding"
+  fi
+  [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
+  echo ok
 }
 st_omarchy_vm(){
   [[ -x "$HOME/.local/bin/omarchy-vm" ]] || { echo missing; return; }
-  [[ -x "$HOME/.local/bin/omarchy-vm-tui.sh" ]] || { echo partial; return; }
-  [[ -x "$HOME/.local/bin/launch-omarchy-tui.sh" ]] || { echo partial; return; }
-  local block_ok=1
-  if [[ -f $MENU ]] && ! grep -qF "Omarchy_Custom_Scripts_OmarchyVm" "$MENU"; then block_ok=0; fi
-  if [[ -f $HYPRLAND ]] && ! grep -qF "Omarchy_Custom_Scripts_OmarchyVm" "$HYPRLAND"; then block_ok=0; fi
-  if [[ -f $BINDINGS ]] && ! grep -qF '"Omarchy VM Manager"' "$BINDINGS"; then block_ok=0; fi
-  ((block_ok)) && echo ok || echo partial
+  local miss=""
+  [[ -x "$HOME/.local/bin/omarchy-vm-tui.sh" ]] || miss="${miss:+$miss, }omarchy-vm-tui.sh"
+  [[ -x "$HOME/.local/bin/launch-omarchy-tui.sh" ]] || miss="${miss:+$miss, }launch-omarchy-tui.sh"
+  if [[ -f $MENU ]] && ! grep -qF "Omarchy_Custom_Scripts_OmarchyVm" "$MENU"; then
+    miss="${miss:+$miss, }its Omarchy menu row"
+  fi
+  if [[ -f $HYPRLAND ]] && ! grep -qF "Omarchy_Custom_Scripts_OmarchyVm" "$HYPRLAND"; then
+    miss="${miss:+$miss, }its Hyprland rule"
+  fi
+  if [[ -f $BINDINGS ]] && ! grep -qF '"Omarchy VM Manager"' "$BINDINGS"; then
+    miss="${miss:+$miss, }its SUPER+ALT keybinding"
+  fi
+  [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
+  echo ok
 }
 st_ableton(){
   # Native Linux Ableton Live (ableton-linux project): launcher + dedicated wine prefix
@@ -438,13 +456,19 @@ st_jamjamjam_plugin(){
 }
 st_live_mode(){
   # Live mode: the whole set is 4 binaries + the sudoers root helper + the
-  # QML overlay plugin + the Trigger > Music entries.
+  # QML overlay plugin. The sudoers part needs root, so a normal (non-sudo)
+  # setup run legitimately leaves it out — the detail says so, because
+  # "partially installed" on its own left the Health check unreadable.
   [[ -x "$HOME/.local/bin/live-mode" ]] || { echo missing; return; }
-  [[ -x "$HOME/.local/bin/live-mode-watch" ]] || { echo partial; return; }
-  [[ -x "$HOME/.local/bin/live-mode-root" ]] || { echo partial; return; }
-  [[ -x "$HOME/.local/bin/mosquito-live-mode-tui" ]] || { echo partial; return; }
-  [[ -f /etc/sudoers.d/live-mode ]] || { echo partial; return; }
-  [[ -d "$HOME/.config/omarchy/plugins/mosquito.livemode" ]] || { echo partial; return; }
+  local miss=""
+  [[ -x "$HOME/.local/bin/live-mode-watch" ]] || miss="${miss:+$miss, }live-mode-watch"
+  [[ -x "$HOME/.local/bin/live-mode-root" ]] || miss="${miss:+$miss, }live-mode-root"
+  [[ -x "$HOME/.local/bin/mosquito-live-mode-tui" ]] || miss="${miss:+$miss, }mosquito-live-mode-tui"
+  # The sudoers file cannot be written without root, so it is reported as
+  # needing sudo rather than as a plain missing file.
+  [[ -f /etc/sudoers.d/live-mode ]] || miss="${miss:+$miss, }/etc/sudoers.d/live-mode (needs root: sudo bash scripts/plugins/live-mode/setup-live-mode.sh)"
+  [[ -d "$HOME/.config/omarchy/plugins/mosquito.livemode" ]] || miss="${miss:+$miss, }the mosquito.livemode plugin"
+  [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
   echo ok
 }
 st_mosquitomarchy(){
@@ -525,7 +549,7 @@ MODULES=(
   "superfile:SuperFile — terminal file manager (menu entry + keybind + Omarchy theme)"
   "zen:Zen Browser config — plugins + settings + chrome theme (deployed into the active profile)"
   "jamjamjam-plugin:JamJamJam bar plugin — key/BPM/chord detection, chord progression grid, guitar fretboard scale, MIDI chord mode + synth"
-  "live-mode:Live mode — performance session mode (stay-awake + thermal guard + routing tool in scratchpad: live-mode / live-mode-watch / live-mode-root + Trigger > Music entries + QML overlay)"
+  "live-mode:Live mode — performance session mode (stay-awake + thermal guard + routing tool in scratchpad: live-mode / live-mode-watch / live-mode-root + its row in Setup > mosquito + QML overlay)"
 )
 
 # ───────────────────────── Quick system fixes ─────────────────────────

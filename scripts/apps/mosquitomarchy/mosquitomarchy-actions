@@ -81,7 +81,8 @@ cmd_status(){
   local row id state label excl
   for row in "${MODULES[@]}"; do
     id="${row%%:*}" label="${row#*:}"
-    state="$(module_state "$id")"
+    # module_state may append ":detail"; the tree only ever needs the state.
+    state="$(module_state "$id")"; state="${state%%:*}"
     excl=false
     is_excluded "$id" && excl=true
     printf '{"id":%s,"label":%s,"state":%s,"excluded":%s}\n' \
@@ -443,7 +444,7 @@ cmd_update_check(){
   for row in "${MODULES[@]}"; do
     id="${row%%:*}"
     is_excluded "$id" && continue
-    state="$(module_state "$id")"
+    state="$(module_state "$id")"; state="${state%%:*}"
     [[ $state == ok || $state == partial ]] || continue
     for p in "${changed[@]:-}"; do
       [[ -n $p && "$(module_of_path "$p")" == "$id" ]] && { cand+=("$id"); break; }
@@ -571,16 +572,21 @@ cmd_patches(){
 # update hook, crash skill). Nothing when everything matches.
 cmd_health(){
   load_excluded
-  local row id state
+  local row id state raw detail
   for row in "${MODULES[@]}"; do
     id="${row%%:*}"; is_excluded "$id" && continue
     # `apps` is an umbrella over the catalogs and is almost always "partial"
     # by design (you never install every catalog entry): not drift.
     [[ $id == apps ]] && continue
-    state="$(module_state "$id" 2>/dev/null)"; state="${state%%:*}"
-    [[ $state == partial ]] && printf '{"kind":"module","id":%s,"label":%s,"detail":%s}\n' \
-      "$(json_str "$id")" "$(json_str "${row#*:}")" \
-      "$(json_str "partially installed — some files went missing")"
+    # `st_*` may answer "partial:<what is missing>". That detail is the whole
+    # point of the Health screen: "some files went missing" told the user
+    # nothing about which files, or that one of them needs root.
+    raw="$(module_state "$id" 2>/dev/null)"
+    state="${raw%%:*}"; detail="${raw#*:}"
+    [[ $state == partial ]] || continue
+    [[ $detail == "$raw" ]] && detail="partially installed — some files went missing"
+    printf '{"kind":"module","id":%s,"label":%s,"detail":%s}\n' \
+      "$(json_str "$id")" "$(json_str "${row#*:}")" "$(json_str "$detail")"
   done
   [[ -x "$BIN_DIR/mosquitomarchy" && -x "$BIN_DIR/mosquitomarchy-tui" ]] || \
     printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
@@ -588,9 +594,16 @@ cmd_health(){
   [[ -f $HYPRLAND ]] && ! grep -qF 'mosquitomarchy-tui-floating' "$HYPRLAND" && \
     printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
       "$(json_str float)" "$(json_str "TUI float rule")" "$(json_str "Hyprland float rule missing")"
-  [[ -f $MENU ]] && ! grep -q '"install.mosquitomarchy"' "$MENU" && \
+  # The menu entry used to be a top-level "install.mosquitomarchy" object. It
+  # now lives in the managed Setup > mosquito block as setup.mosquito.manager,
+  # so this test reported the entry missing on a perfectly healthy install --
+  # the health check had simply never been updated to the new mechanism. Test
+  # the key the installer actually writes, via the same marker map the
+  # "Menu entries" screen uses, so the two can never disagree again.
+  [[ -f $MENU ]] && ! grep -qE "^[[:space:]]*\"$(menu_entries_marker mosquitomarchy)\"[[:space:]]*:" "$MENU" 2>/dev/null && \
     printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
-      "$(json_str menu)" "$(json_str "Omarchy menu entry")" "$(json_str "install.mosquitomarchy missing")"
+      "$(json_str menu)" "$(json_str "Omarchy menu entry")" \
+      "$(json_str "the mosquitOmarchy row is missing from the Omarchy menu")"
   [[ -f $HYPR_DIR/bindings.lua ]] && ! grep -q 'mosquitOmarchy' "$HYPR_DIR/bindings.lua" && \
     printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
       "$(json_str shortcut)" "$(json_str "Keyboard shortcut")" "$(json_str "SUPER + ALT + M missing")"
@@ -628,9 +641,10 @@ cmd_heal(){
   if in_want tui; then
     ensure_mosquitomarchy_tui || warn "Launcher re-deploy reported an issue."
   fi
-  # 2. Omarchy menu entry.
+  # 2. Omarchy menu entry (same key test as cmd_health, so heal only fires on
+  # what health actually reported).
   if in_want menu; then
-    grep -q '"install.mosquitomarchy"' "$MENU" 2>/dev/null || install_menu_entry || true
+    grep -qE "^[[:space:]]*\"$(menu_entries_marker mosquitomarchy)\"[[:space:]]*:" "$MENU" 2>/dev/null || install_menu_entry || true
   fi
   # 3. Shortcut — only when the user had accepted the prompt.
   if in_want shortcut && [[ -f "$HOME/.local/state/mosquitomarchy/shortcut-prompted" ]]; then
@@ -653,7 +667,7 @@ cmd_heal(){
 
   # 6. Re-apply the ticked partially-installed modules (or all, when no selection).
   load_excluded
-  local row id state
+  local row id state raw detail
   SELECTED=()
   RESULTS=()
   for row in "${MODULES[@]}"; do
@@ -1182,11 +1196,40 @@ MENU_JSONC="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
 # longer existed anywhere in omarchy-menu.jsonc.
 menu_entries_marker() {
   case "$1" in
+    # Every entry below is a key that really exists in the installed menu.
+    # `live-mode` used to map to trigger.music.live-mode, which no longer
+    # exists: the Live Mode row moved into the managed Setup > mosquito block
+    # as setup.mosquito.live. Pointing at the dead key meant the TUI could
+    # only ever report it "not installed" and could never restore it.
     mosquitomarchy) printf 'setup.mosquito.manager' ;;
-    mega-caffeine)  printf 'trigger.toggle.mega-caffeine' ;;
-    live-mode)      printf 'trigger.music.live-mode' ;;
+    audio-plugins) printf 'setup.mosquito.audio-plugins' ;;
     move-converter) printf 'setup.mosquito.move' ;;
+    live-mode)      printf 'setup.mosquito.live' ;;
+    jamjamjam)      printf 'setup.mosquito.jam' ;;
+    mega-caffeine)  printf 'trigger.toggle.mega-caffeine' ;;
     *)              printf '%s' "$1" ;;
+  esac
+}
+
+# menu_entry_label <id> -- where the entry actually lives in the menu, as the
+# user sees it. Kept next to menu_entries_marker so the two cannot drift.
+menu_entry_label() {
+  case "$1" in
+    mosquitomarchy) printf 'mosquitOmarchy' ;;
+    audio-plugins)  printf 'Audio Plugin Manager' ;;
+    move-converter) printf 'mosquito Move Manager' ;;
+    live-mode)      printf 'Live Mode Manager' ;;
+    jamjamjam)      printf 'JamJamJam' ;;
+    mega-caffeine)  printf 'Mega caffeine' ;;
+    *)              printf '%s' "$1" ;;
+  esac
+}
+
+# menu_entry_zone <id> -- the menu section the entry sits in.
+menu_entry_zone() {
+  case "$1" in
+    mega-caffeine) printf 'Trigger ▸ Toggle' ;;
+    *)             printf 'Setup ▸ mosquito' ;;
   esac
 }
 
@@ -1247,19 +1290,19 @@ cmd_preinstalls_remove(){
 }
 
 cmd_menu_entries() {
-  local how="${1:-list}" id mark start end tmp b present label line
-  local -a NAMES=(mosquitomarchy mega-caffeine live-mode move-converter)
-  local -a LABELS=("mosquitOmarchy (Setup)" "Mega caffeine (Trigger ▸ Toggle)" "Live mode entries (Trigger ▸ Music)" "mosquito Move Manager (Trigger ▸ Music)")
+  local how="${1:-list}" id mark tmp b present label
+  # Every entry mosquitOmarchy installs, not just the first four: the menu
+  # also carries the Audio Plugin Manager and JamJamJam rows, and a
+  # "Menu entries" screen that hides rows the user can see in their own menu
+  # is exactly what made it look broken.
+  local -a NAMES=(mosquitomarchy audio-plugins move-converter live-mode jamjamjam mega-caffeine)
   case "$how" in
     list)
       for b in "${NAMES[@]}"; do
         present=false
         mark="$(menu_entries_marker "$b")"
         grep -qE "^[[:space:]]*\"${mark//./\\.}\"[[:space:]]*:" "$MENU_JSONC" 2>/dev/null && present=true || true
-        label=""
-        for line in ${!NAMES[@]}; do
-          [[ ${NAMES[$line]} == "$b" ]] && label="${LABELS[$line]}" && break
-        done
+        label="$(menu_entry_label "$b") ($(menu_entry_zone "$b"))"
         printf '%s\t%s\t%s\n' "$b" "$present" "$label"
       done
       ;;
@@ -1280,20 +1323,22 @@ cmd_menu_entries() {
         # launcher, does nothing without a tty and still exits 0, so this printed
         # "menu re-added" while the entry stayed missing. The launcher row is part
         # of the setup.mosquito.* block that install_menu_entry rewrites.
-        mosquitomarchy) install_menu_entry >/dev/null 2>&1 \
-          && ok "menu re-added: mosquitomarchy" || warn "restore failed: mosquitomarchy" ;;
+        #
+        # That block is ATOMIC: install_menu_entry rewrites the whole of it, so
+        # restoring any one of its rows brings its siblings back too. The TUI
+        # re-lists straight after applying, so the rows show their real state
+        # again rather than the one that was asked for.
+        mosquitomarchy|audio-plugins|move-converter|live-mode|jamjamjam)
+          install_menu_entry >/dev/null 2>&1 \
+            && ok "menu re-added: $id" || warn "restore failed: $id" ;;
         mega-caffeine)  bash "$HOME/mosquitOmarchy/scripts/plugins/power-management/setup-battery-management.sh" >/dev/null 2>&1 \
           && ok "menu re-added: mega-caffeine" || warn "restore failed: mega-caffeine" ;;
-        live-mode)      bash "$HOME/mosquitOmarchy/scripts/plugins/live-mode/setup-live-mode.sh" >/dev/null 2>&1 \
-          && ok "menu re-added: live-mode" || warn "restore failed: live-mode" ;;
         # NOT the module's own setup script: that one needs root (udev rule,
         # chromium policy, ydotool NOPASSWD) so -y opens dialogs and then blocks
         # on `sudo` for a password, and without a flag it refuses to start at
         # all ("stdin without a TTY: a flag is required") -- the restore never
         # worked. The Move Manager row lives in the setup.mosquito.* menu block,
         # which install_menu_entry owns and rewrites idempotently without root.
-        move-converter) install_menu_entry >/dev/null 2>&1 \
-          && ok "menu re-added: move-converter" || warn "restore failed: move-converter" ;;
       esac
       ;;
     *) err "menu-entries <list|strip|restore> <name>"; return 1 ;;

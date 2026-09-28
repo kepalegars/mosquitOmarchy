@@ -422,3 +422,119 @@ func TestPreinstallsNeedConfirm(t *testing.T) {
 		t.Fatalf("asked for confirmation with nothing ticked")
 	}
 }
+
+// TestMenuEntriesReachableFromSetup guards the routing of the level-1
+// "Menu entries" row. It is not a category folder, so it needs its own
+// branch in screenPicked: without one the value fell through to the
+// category path, folderOfValue() returned "" and Setup opened an empty
+// category screen — the menu-entries screen was never pushed, so the
+// screen looked simply broken.
+func TestMenuEntriesReachableFromSetup(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrSetup}
+	m.w, m.h = 120, 40
+
+	m, cmd := m.update(tuikit.PickerResultMsg{Value: "menu-entries"})
+	if m.top() != scrMenuEntries {
+		t.Fatalf("top = %d, want scrMenuEntries(%d)", m.top(), scrMenuEntries)
+	}
+	if cmd == nil {
+		t.Fatal("no fetch command: the list would stay empty forever")
+	}
+	// Before the reply lands the screen must say so, not show a lone "Back".
+	if v := m.View(); !strings.Contains(v, "loading") {
+		t.Fatalf("expected a loading row, got:\n%s", v)
+	}
+
+	rows := []MenuEntryRec{
+		{Name: "mega-caffeine", Present: true, Label: "Mega caffeine"},
+		{Name: "live-mode", Present: false, Label: "Live mode entries"},
+	}
+	m, _ = m.update(menuEntriesMsg{rows: rows})
+	if !m.menuEntriesLoaded {
+		t.Fatal("menuEntriesLoaded not set after a successful reply")
+	}
+	// The default must be the real installed state, otherwise a row cannot
+	// be re-ticked and the strip half of the screen is unreachable.
+	if !m.menuEntryChecked["mega-caffeine"] || m.menuEntryChecked["live-mode"] {
+		t.Fatalf("ticks should mirror the installed state, got %v", m.menuEntryChecked)
+	}
+	v := m.View()
+	for _, want := range []string{"Mega caffeine", "Live mode entries", "installed", "not installed", "Back"} {
+		if !strings.Contains(v, want) {
+			t.Fatalf("menu-entries screen missing %q:\n%s", want, v)
+		}
+	}
+}
+
+// TestMenuEntriesBackendFailure checks a failed fetch does not leave the
+// screen stuck on "loading…" forever.
+func TestMenuEntriesBackendFailure(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrSetup, scrMenuEntries}
+	m.w, m.h = 120, 40
+	m, _ = m.update(menuEntriesMsg{err: fmt.Errorf("boom")})
+	if v := m.View(); strings.Contains(v, "loading") {
+		t.Fatalf("still loading after a failure:\n%s", v)
+	}
+}
+
+// TestHealthScreenIsReadable covers the three things that made the Health
+// check page unclear: raw module ids instead of names, a header that named
+// the mechanism rather than the result, and no way out but Esc.
+func TestHealthScreenIsReadable(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain}
+	m.w, m.h = 120, 40
+	items := []HealthRec{
+		{Kind: "module", ID: "live-mode",
+			Label:  "Live mode — performance session mode (stay-awake + thermal guard)",
+			Detail: "missing /etc/sudoers.d/live-mode (needs root)"},
+		{Kind: "infra", ID: "menu", Label: "Omarchy menu entry", Detail: "the row is missing"},
+	}
+	m, _ = m.update(healthMsg{items: items})
+	if m.top() != scrHealth {
+		t.Fatalf("top = %d, want scrHealth(%d)", m.top(), scrHealth)
+	}
+	v := m.View()
+	// A Back row: this screen is a page, and every other page has one.
+	if !strings.Contains(v, "Back") {
+		t.Fatalf("no Back row on the health screen:\n%s", v)
+	}
+	// The short name, not the whole catalog sentence.
+	if !strings.Contains(v, "Live mode") {
+		t.Fatalf("short label missing:\n%s", v)
+	}
+	if strings.Contains(v, "stay-awake + thermal guard") {
+		t.Fatalf("the long catalog sentence is still in the row list:\n%s", v)
+	}
+	// The finding, not the mechanism.
+	if !strings.Contains(v, "needs root") {
+		t.Fatalf("detail not shown:\n%s", v)
+	}
+	if !strings.Contains(v, "2 pieces need attention") {
+		t.Fatalf("headline does not state the finding:\n%s", v)
+	}
+	// Enter on Back leaves instead of opening the re-apply confirmation.
+	m, _ = m.update(tuikit.PickerResultMsg{Value: "back"})
+	if m.top() == scrHealth {
+		t.Fatal("Back did not leave the health screen")
+	}
+}
+
+// TestHealthBackCannotBeTicked makes sure the navigation row cannot be
+// selected for re-apply, which would heal an id that is not a module.
+func TestHealthBackCannotBeTicked(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrHealth}
+	m.w, m.h = 120, 40
+	m.healthItems = []HealthRec{{Kind: "infra", ID: "menu", Label: "Omarchy menu entry"}}
+	m.healthChecked = map[string]bool{"menu": true}
+	m, _ = m.update(tuikit.PickerToggleMsg{Value: "back"})
+	if m.healthChecked["back"] {
+		t.Fatal("Back was ticked as if it were a healable piece")
+	}
+	if keys := m.healthKeys(); len(keys) != 1 || keys[0] != "menu" {
+		t.Fatalf("healthKeys = %v, want [menu]", keys)
+	}
+}
