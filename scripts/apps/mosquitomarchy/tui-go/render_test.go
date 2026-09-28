@@ -459,11 +459,33 @@ func TestMenuEntriesReachableFromSetup(t *testing.T) {
 	if !m.menuEntryChecked["mega-caffeine"] || m.menuEntryChecked["live-mode"] {
 		t.Fatalf("ticks should mirror the installed state, got %v", m.menuEntryChecked)
 	}
+	// The dot carries the state, so the rows must be distinguishable by it:
+	// ● for the entry that is in the menu, ○ for the one that is not. The
+	// words "installed"/"not installed" are deliberately absent — they only
+	// restated the dot and doubled the width of every line.
 	v := m.View()
-	for _, want := range []string{"Mega caffeine", "Live mode entries", "installed", "not installed", "Back"} {
+	if strings.Contains(v, "installed") {
+		t.Fatalf("the (installed) wording is back:\n%s", v)
+	}
+	for _, want := range []string{"Mega caffeine", "Live mode entries", "Back"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("menu-entries screen missing %q:\n%s", want, v)
 		}
+	}
+	rowsOnScreen := []string{}
+	for _, l := range strings.Split(v, "\n") {
+		if strings.Contains(l, "Mega caffeine") || strings.Contains(l, "Live mode entries") {
+			rowsOnScreen = append(rowsOnScreen, strings.TrimSpace(l))
+		}
+	}
+	if len(rowsOnScreen) != 2 {
+		t.Fatalf("want both entry rows, got %v", rowsOnScreen)
+	}
+	if !strings.Contains(rowsOnScreen[0], "●") {
+		t.Fatalf("installed entry should be a filled dot: %q", rowsOnScreen[0])
+	}
+	if !strings.Contains(rowsOnScreen[1], "○") {
+		t.Fatalf("absent entry should be an empty dot: %q", rowsOnScreen[1])
 	}
 }
 
@@ -641,5 +663,176 @@ func TestMenuEntriesRespondsToKeys(t *testing.T) {
 	// Dots, not checkboxes.
 	if v := m.View(); strings.Contains(v, "☑") || strings.Contains(v, "☐") {
 		t.Fatalf("checkbox glyphs still on screen:\n%s", v)
+	}
+}
+
+// TestHealthCursorDoesNotDrift is the "the cursor jumps when I tick" report.
+// rebuildHealth carried a raw index and decremented it "to compensate for the
+// headline row", but it always prepends that headline, so the index it read
+// already counted it: every repaint moved the cursor up one row. Ticking a fix
+// therefore marked a row that was not the focused one, and the next tick looked
+// like it jumped again.
+func TestHealthCursorDoesNotDrift(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrHealth}
+	m.w, m.h = 120, 40
+	m.healthItems = []HealthRec{
+		{Kind: "infra", ID: "menu", Label: "Omarchy menu", Detail: "d1"},
+		{Kind: "infra", ID: "sudo", Label: "Live Mode", Detail: "d2"},
+		{Kind: "infra", ID: "vm", Label: "macOS VMs", Detail: "d3"},
+	}
+	m, _ = m.update(healthMsg{items: m.healthItems})
+	// The disabled headline must not hold the cursor on open, or the screen
+	// looks like it has no cursor at all.
+	if got := m.healthPicker.SelectedValue(); got == "" {
+		t.Fatalf("cursor is on the disabled headline row, not a fix (idx %d)", m.healthPicker.Index())
+	}
+	for i := 0; i < 2; i++ {
+		m, _ = m.update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	before := m.healthPicker.SelectedValue()
+	if before != "vm" {
+		t.Fatalf("down x2 = %q, want vm", before)
+	}
+	// The rows arrive ticked (they are all there to be re-applied), so the
+	// first press unticks. Alternate, so each rebuild is exercised with the row
+	// both ticked and un-ticked, and check the cursor never moves.
+	if !m.healthChecked["vm"] {
+		t.Fatal("a freshly listed fix should start ticked")
+	}
+	want := true
+	for n := 0; n < 3; n++ {
+		m, _ = m.update(tuikit.PickerToggleMsg{Value: before})
+		want = !want
+		if got := m.healthPicker.SelectedValue(); got != before {
+			t.Fatalf("tick %d moved the cursor to %q (was %q)", n, got, before)
+		}
+		if m.healthChecked["vm"] != want {
+			t.Fatalf("tick %d: checked = %v, want %v", n, m.healthChecked["vm"], want)
+		}
+	}
+	// Moving still works after a rebuild.
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyUp})
+	if got := m.healthPicker.SelectedValue(); got != "sudo" {
+		t.Fatalf("up after rebuild = %q, want sudo", got)
+	}
+}
+
+// TestUpdateScreenNamesTheSource covers the "I only see one update option and
+// I cannot tell where it comes from" report. The screen offered a single
+// "Update modules" row even when the only pending change was a repo
+// fast-forward, and the module list was reachable only through the "i" popup.
+func TestUpdateScreenNamesTheSource(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrUpdate}
+	m.w, m.h = 120, 40
+
+	// Repo only: the module row must be greyed out (it would do nothing) and
+	// the repo must be a named row of its own.
+	m, _ = m.update(queryMsg{kind: "update", update: UpdateRec{RepoUpdate: true}})
+	v := m.View()
+	if !strings.Contains(v, "Update mosquitOmarchy (repo + scripts)") {
+		t.Fatalf("no named repo row:\n%s", v)
+	}
+	upd := m.updatePicker
+	mods := false
+	for _, it := range upd.items {
+		if it.Value == "update-modules" {
+			mods = it.Disabled
+		}
+	}
+	if !mods {
+		t.Fatal("Update modules should be disabled when no module has changes")
+	}
+
+	// A module update must still be listed with its own row.
+	m, _ = m.update(queryMsg{kind: "update", update: UpdateRec{Modules: []ItemRec{{Key: "battery", Label: "Battery"}}}})
+	v = m.View()
+	if !strings.Contains(v, "Battery") {
+		t.Fatalf("module row missing:\n%s", v)
+	}
+	if strings.Contains(v, "Update mosquitOmarchy (repo + scripts)") {
+		t.Fatal("repo row shown with no repo update pending")
+	}
+}
+
+// TestUpdateIsVisibleFromTheMainMenu: a pending update was only ever visible
+// inside the Update screen and as a long line in the Setup tree. The root list
+// was built once at startup, before any check had run, and never rebuilt, so
+// the square could not appear there at all.
+func TestUpdateIsVisibleFromTheMainMenu(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain}
+	m.w, m.h = 120, 40
+	if v := m.View(); strings.Contains(v, "■") {
+		t.Fatalf("a square is shown before anything is known:\n%s", v)
+	}
+	m, _ = m.update(queryMsg{kind: "update", update: UpdateRec{RepoUpdate: true}})
+	if v := m.View(); !strings.Contains(v, "■") {
+		t.Fatalf("no update square on the main menu after a pending repo update:\n%s", v)
+	}
+	// It must vanish again once nothing is pending.
+	m, _ = m.update(queryMsg{kind: "update", update: UpdateRec{}})
+	if v := m.View(); strings.Contains(v, "■") {
+		t.Fatalf("square still there with nothing pending:\n%s", v)
+	}
+	// The Setup row is now the same short line as the menu option.
+	m2 := initialModel()
+	m2.nav = []screen{scrMain, scrSetup}
+	m2.w, m2.h = 120, 40
+	m2, _ = m2.update(queryMsg{kind: "update", update: UpdateRec{RepoUpdate: true}})
+	row := ""
+	for _, it := range m2.setupPicker.items {
+		if it.Value == "updates" {
+			row = it.Display
+		}
+	}
+	if row == "" {
+		t.Fatal("Setup lost its update row")
+	}
+	if len([]rune(row)) > 12 {
+		t.Fatalf("Setup update row is still a sentence: %q", row)
+	}
+}
+
+// TestMenuEntriesAppliesBothWays: un-ticking an entry and pressing Enter did
+// nothing. Enter was handled in the scrMenuEntries case of the key switch, but
+// PickerResultMsg is caught by the global case and routed to screenPicked,
+// which had no scrMenuEntries case, so it fell off the end. The ticks then
+// looked lost on re-entry because nothing had been applied.
+func TestMenuEntriesAppliesBothWays(t *testing.T) {
+	build := func() model {
+		m := initialModel()
+		m.nav = []screen{scrMain, scrSetup, scrMenuEntries}
+		m.w, m.h = 120, 40
+		m, _ = m.update(menuEntriesMsg{rows: []MenuEntryRec{
+			{Name: "live-mode", Present: true, Label: "Live mode entries"},
+		}})
+		return m
+	}
+	// Un-tick → Enter must ask to apply, not silently do nothing.
+	m := build()
+	m, _ = m.update(tuikit.PickerToggleMsg{Value: "mentry:live-mode"})
+	if m.menuEntryChecked["live-mode"] {
+		t.Fatal("un-tick did not take")
+	}
+	m, _ = m.update(tuikit.PickerResultMsg{Value: "mentry:live-mode"})
+	if m.top() != scrConfirm {
+		t.Fatalf("Enter went to screen %d, want the Confirm", m.top())
+	}
+	if m.pendingAction != "menu-entries" {
+		t.Fatalf("pendingAction = %q, want menu-entries", m.pendingAction)
+	}
+	if len(m.pendingArgs) != 1 || m.pendingArgs[0] != "live-mode" {
+		t.Fatalf("pendingArgs = %v, want [live-mode]", m.pendingArgs)
+	}
+	// No change → no confirm, and say so instead of popping.
+	m2 := build()
+	m2, _ = m2.update(tuikit.PickerResultMsg{Value: "mentry:live-mode"})
+	if m2.top() == scrConfirm {
+		t.Fatal("asked to apply with nothing changed")
+	}
+	if m2.top() != scrMenuEntries {
+		t.Fatalf("no-change Enter left the screen (now %d)", m2.top())
 	}
 }

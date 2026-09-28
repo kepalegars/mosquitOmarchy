@@ -211,7 +211,7 @@ func initialModel() model {
 		backupOpts:     BackupOpts{VST: "list", Keepass: true},
 		treeMode:       "install",
 	}
-	m.mainPicker = newNavPicker("", mainMenuItems())
+	m.mainPicker = newNavPicker("", m.mainMenuItems())
 	m.setupPicker = newNavPicker("", nil)
 	m.setupCatPicker = newNavPicker("", nil)
 	m.updatePicker = newNavPicker("", nil)
@@ -223,7 +223,12 @@ func initialModel() model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(tuikit.ThemeWatchCmd(), firstRunCmd())
+	// The update check runs at STARTUP, not only when Setup is opened. A
+	// pending repo fast-forward used to be invisible until you went looking
+	// for it: the main menu was built once before any check had run, and the
+	// Setup tree — the only place the row appeared — is not where people
+	// start when they just want the thing current.
+	return tea.Batch(tuikit.ThemeWatchCmd(), firstRunCmd(), fetchUpdateCheckCmd())
 }
 
 func (m model) top() screen { return m.nav[len(m.nav)-1] }
@@ -239,10 +244,19 @@ func (m *model) pop() {
 
 func (m *model) replace(s screen) { m.nav[len(m.nav)-1] = s }
 
-func mainMenuItems() []tuikit.PickerItem {
+// mainMenuItems builds the root menu. The Update row carries the same square
+// the Setup and Uninstall trees use on a row that has something waiting, so a
+// pending update is visible from the main menu instead of only after going
+// into Updates. It is rebuilt on every update-check result, which is why it
+// takes the model rather than being a package-level list.
+func (m model) mainMenuItems() []tuikit.PickerItem {
+	upd := tuikit.PickerItem{Display: "Update", Value: "update"}
+	if m.updatePending() {
+		upd.TrailingBadge = "■"
+	}
 	return []tuikit.PickerItem{
 		{Display: "Status", Value: "status"},
-		{Display: "Update", Value: "update"},
+		upd,
 		{Display: "Setup", Value: "setup"},
 		{Display: "Uninstall", Value: "uninstall"},
 		{Display: "Health check", Value: "health"},
@@ -250,6 +264,12 @@ func mainMenuItems() []tuikit.PickerItem {
 		{Display: "Extras", Value: "settings"},
 		{Display: "Close", Value: "close"},
 	}
+}
+
+// rebuildMainMenu refreshes the root list, keeping the cursor on the same row.
+func (m model) rebuildMainMenu() navPicker {
+	return newNavPicker("", m.mainMenuItems()).SetSize(m.contentSize()).
+		KeepCursor(m.mainPicker.SelectedValue())
 }
 
 func (m model) contentSize() (int, int) {
@@ -375,6 +395,14 @@ func toggleTreeFolder(items []SetupItemRec, checked map[string]bool, folder stri
 			delete(checked, setupValue(folder, it.Key))
 		}
 	}
+}
+
+// updatePending reports whether anything is waiting to be updated: a repo
+// fast-forward, or at least one installed module whose files changed. One
+// predicate for the main-menu square, the Setup row and the Update screen, so
+// the three can never disagree about whether an update exists.
+func (m model) updatePending() bool {
+	return m.updateRec.RepoUpdate || len(m.updateRec.Modules) > 0
 }
 
 // selectedCount counts the checked Setup items.

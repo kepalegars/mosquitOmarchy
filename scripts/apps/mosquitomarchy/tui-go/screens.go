@@ -314,6 +314,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				return m, nil
 			}
 			m.updateRec = msg.update
+			// The main menu's Update square is the one place a pending update
+			// is visible without opening anything, so it has to be rebuilt when
+			// the check result lands — the root list is built once at startup
+			// and never revisited otherwise, which is why the square only ever
+			// appeared after going into Setup (that screen rebuilds) and never
+			// on the main menu.
+			if m.top() == scrMain {
+				m.mainPicker = m.rebuildMainMenu()
+			}
 			// Everything found changed is preselected: the Update screen
 			// lists the modules with ● marks and the user can un-tick any
 			// module they want to skip before pressing Update.
@@ -603,6 +612,20 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, fetchMissingAssetsCmd(m.pendingArgs)
 		case "update":
 			return m.startWorking("Re-applying modules", workingArgs("update", m.pendingArgs)...)
+		case "menu-entries":
+			// Strip or restore each changed entry, then re-list so the rows
+			// show what is really in the menu file instead of the state that
+			// was asked for.
+			for _, name := range m.pendingArgs {
+				how := "strip"
+				if m.menuEntryChecked[name] {
+					how = "restore"
+				}
+				if _, eErr := runQuick("menu-entries", how, name); eErr != nil {
+					m.toast, _ = m.toast.SetErr("could not apply " + name)
+				}
+			}
+			return m, fetchMenuEntriesCmd()
 		case "update-modules":
 			if n := m.updateSelectedCount(); n == 0 && len(m.updateRec.Modules) > 0 {
 				m.toast, _ = m.toast.SetWarn("all modules skipped — press tab on the Update screen to re-include them")
@@ -1134,43 +1157,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		// PickerToggleMsg is consumed by the global switch at the top of
 		// update(), which returns before this case is ever reached.
-		if res, ok := msg.(tuikit.PickerResultMsg); ok {
-			if res.Canceled {
-				m.pop()
-				return m, nil
-			}
-			// Enter: apply the delta (strip for entries the user unticked,
-			// restore for the ones re-ticked), then refresh.
-			changed := []string{}
-			if m.menuEntryChecked != nil {
-				for _, e := range m.menuEntries {
-					if v, ok := m.menuEntryChecked[e.Name]; ok && v != m.menuEntryOrig[e.Name] {
-						changed = append(changed, e.Name)
-					}
-				}
-			}
-			if len(changed) == 0 {
-				m.pop()
-				return m, nil
-			}
-			for _, name := range changed {
-				restore := m.menuEntryChecked[name]
-				if _, eErr := runQuick("menu-entries", func() string {
-					if restore {
-						return "restore"
-					}
-					return "strip"
-				}(), name); eErr != nil {
-					m.toast, _ = m.toast.SetErr("could not apply " + name)
-				}
-			}
-			return m, fetchMenuEntriesCmd()
-		}
-		// Everything else is a key. This case used to end without a return, so
-		// in Go it fell through into case scrBackupRestore and every arrow key
-		// was applied to the BACKUP picker instead of the one on screen —
-		// which is what made this screen look frozen: it drew, but responded
-		// to nothing.
+		// Enter and Esc arrive here as PickerResultMsg and are handled by
+		// screenPicked (the global case at the top of update routes them
+		// there). Catching one here too would swallow it: this is the very
+		// bug that made Enter do nothing on this screen.
 		if _, ok := msg.(tuikit.PickerResultMsg); ok {
 			return m, nil
 		}
@@ -1547,6 +1537,16 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 
 	case scrUpdate:
 		switch res.Value {
+		case "update-repo":
+			// Its own row so a pending fast-forward is a separate, named
+			// action instead of being bundled behind "Update modules".
+			m.pendingAction = "update-repo"
+			m.pendingMsg = "Update mosquitOmarchy?\n\nThe local scripts repo is fast-forwarded to the GitHub version, and the setup script re-runs so the fresh scripts are the ones in use."
+			m.pendingNo = "Cancel"
+			m.pendingYes = "Update"
+			m.push(scrConfirm)
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+			return m, nil
 		case "update-modules":
 			m.pendingAction = "update-modules"
 			ver := m.updateRec.RepoVersion
@@ -1563,6 +1563,48 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.pop()
 			return m, nil
 		}
+		return m, nil
+
+	case scrMenuEntries:
+		// Enter applies the delta. This branch did not exist: Enter was handled
+		// in the scrMenuEntries case of the key switch, but PickerResultMsg is
+		// caught by the global case at the top of update() and routed to
+		// screenPicked, which had no scrMenuEntries case — so it fell off the
+		// end of the switch and did nothing. Un-ticking an entry and pressing
+		// Enter silently did nothing, and the ticks reset when the screen was
+		// re-entered because the backend was re-read with nothing applied.
+		if res.Canceled || res.Value == "back" {
+			m.pop()
+			return m, nil
+		}
+		changed := []string{}
+		for _, e := range m.menuEntries {
+			if v, ok := m.menuEntryChecked[e.Name]; ok && v != m.menuEntryOrig[e.Name] {
+				changed = append(changed, e.Name)
+			}
+		}
+		if len(changed) == 0 {
+			m.toast, _ = m.toast.SetWarn("no change to apply")
+			return m, nil
+		}
+		m.pendingAction = "menu-entries"
+		m.pendingArgs = changed
+		var b strings.Builder
+		for i, name := range changed {
+			verb := "remove from the menu"
+			if m.menuEntryChecked[name] {
+				verb = "add back to the menu"
+			}
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString("• " + name + " — " + verb)
+		}
+		m.pendingMsg = fmt.Sprintf("Apply %d menu entry change(s)?\n\n%s", len(changed), b.String())
+		m.pendingNo = "Cancel"
+		m.pendingYes = "Apply"
+		m.push(scrConfirm)
+		m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 		return m, nil
 
 	case scrHealth:
@@ -1924,12 +1966,13 @@ func (m model) rebuildSetup() navPicker {
 		// Advertise available updates first (mosquitOmarchy scripts/repo + the
 		// changed apps/tuis/modules the update-check found) so Setup surfaces
 		// them automatically.
-		if n := len(m.updateRec.Modules); m.updateRec.RepoUpdate || n > 0 {
-			label := "⟳ mosquitOmarchy update available — update the repo/scripts"
-			if !m.updateRec.RepoUpdate && n > 0 {
-				label = fmt.Sprintf("⟳ %d module update(s) available", n)
-			}
-			items = append(items, tuikit.PickerItem{Display: label, Value: "updates"})
+		// One short row, "Update ■", sized like every other line in this menu.
+		// It used to spell the whole sentence out ("⟳ mosquitOmarchy update
+		// available — update the repo/scripts", then a second variant with a
+		// module count), which was twice the width of the options around it
+		// and read as a banner pasted into a list.
+		if m.updatePending() {
+			items = append(items, tuikit.PickerItem{Display: "Update", Value: "updates", TrailingBadge: "■"})
 		}
 	}
 	for _, f := range m.setupFolders {
@@ -2179,13 +2222,31 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 // rebuildUpdate rebuilds the Update screen picker with ○/● checkboxes, the
 // "Apply N" row and (when the repo has changes) the repo-update row.
 func (m model) rebuildUpdate() navPicker {
-	idx := m.updatePicker.Index()
-	hasUpdate := m.updateRec.RepoUpdate || len(m.updateRec.Modules) > 0
+	prev := m.updatePicker.SelectedValue()
+	items := make([]tuikit.PickerItem, 0, len(m.updateRec.Modules)+3)
+
+	// Name the source of the update. The screen used to offer a single row
+	// called "Update modules" whether or not there was any module to update,
+	// and the module list was only ever visible by going through the separate
+	// "what updates" popup — so a pending REPO fast-forward, the thing most
+	// people actually need, looked like one anonymous checkbox with no
+	// indication of where it came from. This is the same square the main
+	// menu and the Setup tree use for "something is waiting here".
+	if m.updateRec.RepoUpdate {
+		items = append(items, tuikit.PickerItem{
+			Display: "Update mosquitOmarchy (repo + scripts)",
+			Value:   "update-repo",
+			// Trailing, like every other square in the app, so the marker
+			// always sits after the label and never shifts the text column.
+			TrailingBadge: "■",
+		})
+	}
 	upd := tuikit.PickerItem{Display: "Update modules", Value: "update-modules"}
-	if !hasUpdate {
+	if len(m.updateRec.Modules) == 0 {
+		// Only the repo changed, so "Update modules" had nothing to do and ran
+		// a no-op fast-forward that looked like the update had been applied.
 		upd.Disabled = true
 	}
-	items := make([]tuikit.PickerItem, 0, len(m.updateRec.Modules)+2)
 	if len(m.updateRec.Modules) > 0 {
 		items = append(items, tuikit.PickerItem{Display: "Modules to update (tab = skip one):", Disabled: true})
 		for _, it := range m.updateRec.Modules {
@@ -2206,11 +2267,14 @@ func (m model) rebuildUpdate() navPicker {
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "skip module")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "what updates")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "update")))
-	return p.SelectIndex(idx)
+	if prev == "" {
+		return p.selectFirst()
+	}
+	return p.KeepCursor(prev)
 }
 
 func (m model) rebuildHealth() navPicker {
-	idx := m.healthPicker.Index()
+	prev := m.healthPicker.SelectedValue()
 	items := make([]tuikit.PickerItem, 0, len(m.healthItems)+1)
 	// The rows used to be the raw module ids ("macos-vm", "menu"), so the
 	// screen read like a debug dump and the labels the backend already
@@ -2248,12 +2312,22 @@ func (m model) rebuildHealth() navPicker {
 		SetHelpKeys(key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select/reapply")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "re-apply")))
-	// The headline row shifted everything down by one; keep the focused row
-	// where it was instead of jumping to the top on every rebuild.
-	if idx > 0 {
-		idx--
+	// Keep the focused row where it was, matching by value like the Setup tree
+	// does. This used to carry a raw index and decrement it by one "to
+	// compensate for the headline row" — but rebuildHealth always prepends
+	// that headline, so the index being read ALREADY counted it, and the
+	// decrement moved the cursor up a row on every repaint. That is what made
+	// ticking a fix seem to shift the selection: the mark landed one row
+	// above the row you were on, and the next tick appeared to jump again.
+	if prev == "" {
+		// First build: there is nothing to restore yet, and index 0 is the
+		// disabled headline. Selecting it put the cursor on a row that cannot
+		// be acted on and drew no arrow, so the screen opened looking like it
+		// had no cursor at all. Start on the first real fix, like every other
+		// list.
+		return p.selectFirst()
 	}
-	return p.SelectIndex(idx)
+	return p.KeepCursor(prev)
 }
 
 // healthHeadline states the finding in one plain sentence. The old header
@@ -2514,21 +2588,19 @@ func (m model) rebuildMenuEntriesPicker() navPicker {
 		// The tick is the DESIRED state (what Enter will apply) and the word is
 		// the CURRENT one. They used to be the same field, so ticking an absent
 		// entry made it announce itself as "installed" before anything ran.
-		mark := "not installed"
-		if e.Present {
-			mark = "installed"
-		}
-		// Filled/empty dots, not ☑/☐: the tick already says "present" in the
-		// word beside it, and the checkbox glyphs read as a different control
-		// from the ○/● the Setup and Uninstall trees use for the same idea.
+		// The dot IS the state: ● = will be in the menu when you press Enter,
+		// ○ = will be removed. The word "(installed)" used to sit beside every
+		// row and only restated what the dot already said, at the cost of
+		// doubling the width of the line. An entry that is currently absent
+		// but ticked now (a pending restore) still reads correctly, because
+		// the dot shows the DESIRED state, not the current one.
 		tick := "○"
 		if m.menuEntryChecked[e.Name] {
 			tick = "●"
 		}
 		items = append(items, tuikit.PickerItem{
-			Display: tick + "  " + e.Label + "  (" + mark + ")",
+			Display: tick + " " + e.Label,
 			Value:   "mentry:" + e.Name,
-			Badge:   "",
 		})
 	}
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
