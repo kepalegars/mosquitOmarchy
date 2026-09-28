@@ -91,11 +91,33 @@ func (p navPicker) Index() int {
 }
 
 func (p navPicker) selectedIndex() int {
-	v := p.SelectedValue()
+	return p.IndexOf(p.SelectedValue())
+}
+
+// IndexOf returns the position of a row value, or -1 when the value is not in
+// the list. Needed to carry the cursor across a REBUILD: a filtered list is a
+// different set in a different order, so a saved row NUMBER means something
+// else afterwards, while the value still identifies the row.
+// Len reports the number of rows, so callers can tell an unbuilt picker
+// (no rows yet) from a legitimately empty one.
+func (p navPicker) Len() int { return len(p.items) }
+
+func (p navPicker) IndexOf(v string) int {
 	for i := range p.items {
 		if p.items[i].Value == v {
 			return i
 		}
 	}
-	return 0
+	return -1
+}
+
+// KeepCursor rebuilds a picker and restores the row the user was on, matching
+// by value. Without it every periodic rebuild (the blink, the update poll)
+// dropped the cursor back to the first row, so moving down a filtered list was
+// undone a second later.
+func (p navPicker) KeepCursor(prev string) navPicker {
+	if i := p.IndexOf(prev); i >= 0 {
+		return p.SelectIndex(i)
+	}
+	return p
 }

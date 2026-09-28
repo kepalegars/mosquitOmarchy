@@ -403,6 +403,21 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				}
 				m.kbListPicker = m.rebuildKBList()
 			}
+		case scrMenuEntries:
+			// Handled HERE and not in the scrMenuEntries screen case below:
+			// this global switch runs first and returned unconditionally, so
+			// the screen's own PickerToggleMsg branch was dead code and tab/x
+			// did nothing at all on the Menu entries screen.
+			if m.menuEntryChecked != nil {
+				name := strings.TrimPrefix(msg.Value, "mentry:")
+				if name != msg.Value {
+					// Only the DESIRED state flips here. Present stays as the
+					// backend reported it, so "(installed)" keeps telling the
+					// truth until the apply really ran.
+					m.menuEntryChecked[name] = !m.menuEntryChecked[name]
+					m.menuEntriesPicker = m.rebuildMenuEntriesPicker()
+				}
+			}
 		}
 		return m, nil
 
@@ -1114,20 +1129,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					m.menuEntryOrig[e.Name] = e.Present
 				}
 			}
-			m.rebuildMenuEntriesPicker()
+			m.menuEntriesPicker = m.rebuildMenuEntriesPicker()
 			return m, nil
 		}
-		if tg, ok := msg.(tuikit.PickerToggleMsg); ok {
-			name := strings.TrimPrefix(tg.Value, "mentry:")
-			// Only the desired state flips here. Present stays as the backend
-			// reported it, so "(installed)" keeps telling the truth until the
-			// apply really ran and the list came back from disk.
-			if m.menuEntryChecked != nil {
-				m.menuEntryChecked[name] = !m.menuEntryChecked[name]
-			}
-			m.rebuildMenuEntriesPicker()
-			return m, nil
-		}
+		// PickerToggleMsg is consumed by the global switch at the top of
+		// update(), which returns before this case is ever reached.
 		if res, ok := msg.(tuikit.PickerResultMsg); ok {
 			if res.Canceled {
 				m.pop()
@@ -1160,6 +1166,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			return m, fetchMenuEntriesCmd()
 		}
+		// Everything else is a key. This case used to end without a return, so
+		// in Go it fell through into case scrBackupRestore and every arrow key
+		// was applied to the BACKUP picker instead of the one on screen —
+		// which is what made this screen look frozen: it drew, but responded
+		// to nothing.
+		if _, ok := msg.(tuikit.PickerResultMsg); ok {
+			return m, nil
+		}
+		m.menuEntriesPicker, cmd = m.menuEntriesPicker.Update(msg)
 	case scrBackupRestore:
 		m.backupPicker, cmd = m.backupPicker.Update(msg)
 	case scrBackupOptions:
@@ -1849,10 +1864,16 @@ func (m model) rebuildFilteredSetup() navPicker {
 		}
 		filtered = append(filtered, it)
 	}
-	return newNavPicker(header, filtered).SetSize(m.contentSize()).
+	p := newNavPicker(header, filtered).SetSize(m.contentSize()).
 		SetHelpKeys(key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterDesc)))
+	// Carry the cursor over from the list being replaced. This function used
+	// to return the picker with no SelectIndex at all, so it always started at
+	// row 0: with a filter active, the blink that repaints the mosquito row
+	// fired about once a second and threw the cursor back to the first match,
+	// which made the filtered list impossible to walk.
+	return p.KeepCursor(m.setupPicker.SelectedValue())
 }
 
 // categoryInfo composes the "i" popup for one Setup/Uninstall category: what
@@ -2482,6 +2503,7 @@ func (m model) rebuildPreinstallPicker() navPicker {
 func (m model) rebuildMenuEntriesPicker() navPicker {
 	// rows
 	items := make([]tuikit.PickerItem, 0, len(m.menuEntries)+1)
+	prev := m.menuEntriesPicker.SelectedValue()
 	if !m.menuEntriesLoaded {
 		// Distinguishes "still fetching" and "the backend found nothing"
 		// from "loaded fine": without it both cases render a lone "Back"
@@ -2496,12 +2518,15 @@ func (m model) rebuildMenuEntriesPicker() navPicker {
 		if e.Present {
 			mark = "installed"
 		}
-		tick := "☐"
+		// Filled/empty dots, not ☑/☐: the tick already says "present" in the
+		// word beside it, and the checkbox glyphs read as a different control
+		// from the ○/● the Setup and Uninstall trees use for the same idea.
+		tick := "○"
 		if m.menuEntryChecked[e.Name] {
-			tick = "☑"
+			tick = "●"
 		}
 		items = append(items, tuikit.PickerItem{
-			Display: tick + " " + e.Label + "  (" + mark + ")",
+			Display: tick + "  " + e.Label + "  (" + mark + ")",
 			Value:   "mentry:" + e.Name,
 			Badge:   "",
 		})
@@ -2513,5 +2538,8 @@ func (m model) rebuildMenuEntriesPicker() navPicker {
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
 		)
-	return p.SelectIndex(0)
+	// Keep the row the user is on when this is a toggle repaint. Resetting to
+	// 0 meant tab/x was not a toggle you could repeat down the list: every
+	// press jumped you back to the top.
+	return p.KeepCursor(prev)
 }

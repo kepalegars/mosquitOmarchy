@@ -119,6 +119,12 @@ type model struct {
 	menuEntriesLoaded bool
 	menuEntryChecked  map[string]bool
 	menuEntryOrig     map[string]bool
+	// menuEntriesPicker is the STORED picker for that screen. It used to be
+	// rebuilt from scratch inside View() on every frame and its result thrown
+	// away, so no key ever reached it: arrows were handled by the backup
+	// picker (this switch case fell through into scrBackupRestore) and the
+	// screen looked frozen.
+	menuEntriesPicker navPicker
 
 	// Setup/Uninstall tree typing filter: printable keys build a live
 	// substring filter that flattens the tree (leaf rows only, no category

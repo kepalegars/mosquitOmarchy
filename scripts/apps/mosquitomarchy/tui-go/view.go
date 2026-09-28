@@ -166,8 +166,17 @@ func (m model) View() string {
 		bar = barLine(m.preinstallPicker.ShortcutsHint())
 	case scrMenuEntries:
 		title = screenTitle("Menu entries", w)
-		body = m.pickPicker2View()
-		bar = barLine(m.pickPicker2Hint())
+		// The stored picker, not a fresh rebuild: pickPicker2View/…Hint each
+		// called rebuildMenuEntriesPicker and discarded the result, so the rows
+		// on screen were a throwaway object with no cursor and no key routing.
+		// Before the first fetch lands it is empty, so fall back to a build so
+		// the "loading…" row is not a blank body.
+		me := m.menuEntriesPicker
+		if me.Len() == 0 {
+			me = m.rebuildMenuEntriesPicker()
+		}
+		body = me.View()
+		bar = barLine(me.ShortcutsHint())
 	case scrBackupRestore:
 		title = screenTitle("Restore a backup", w)
 		body = m.backupPicker.View()

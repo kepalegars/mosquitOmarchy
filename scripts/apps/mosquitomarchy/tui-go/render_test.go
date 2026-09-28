@@ -538,3 +538,108 @@ func TestHealthBackCannotBeTicked(t *testing.T) {
 		t.Fatalf("healthKeys = %v, want [menu]", keys)
 	}
 }
+
+// TestHealthCursorStaysOnTheTitle guards the health page's marker. Each fix is
+// drawn on two lines (name, then what is wrong with it), and the row marker
+// used to be redrawn on the description line as well — so a row showed its ●
+// twice and the marker appeared to travel down the list as the cursor moved.
+// The marker belongs to the name alone.
+func TestHealthCursorStaysOnTheTitle(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrHealth}
+	m.w, m.h = 120, 40
+	m.healthItems = []HealthRec{
+		{Kind: "infra", ID: "menu", Label: "Omarchy menu", Detail: "missing its menu entry"},
+		{Kind: "infra", ID: "sudo", Label: "Live Mode", Detail: "/etc/sudoers.d/live-mode needs root"},
+	}
+	m, _ = m.update(healthMsg{items: m.healthItems})
+
+	lines := strings.Split(m.View(), "\n")
+	for _, l := range lines {
+		if strings.Contains(l, "needs root") && strings.Contains(l, "●") {
+			t.Fatalf("row marker leaked onto the description line: %q", l)
+		}
+	}
+	marked := 0
+	for _, l := range lines {
+		if strings.Contains(l, "●") {
+			marked++
+			if strings.Contains(l, "missing its menu entry") || strings.Contains(l, "needs root") {
+				t.Fatalf("marker on a description line: %q", l)
+			}
+		}
+	}
+	if marked != 2 {
+		t.Fatalf("want one marker per ticked row (2), got %d:\n%s", marked, m.View())
+	}
+}
+
+// TestSetupFilterKeepsTheCursor covers the search bug: rebuildFilteredSetup
+// returned a picker with no SelectIndex, so the ~1s blink that repaints the
+// mosquito row rebuilt the filtered list at row 0 and threw the cursor back to
+// the first match about a second after the user moved it.
+func TestSetupFilterKeepsTheCursor(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrSetup}
+	m.w, m.h = 120, 40
+	m.treeMode = "install"
+	m.filterOpen = true
+	m.setupFolders = []FolderRec{{Folder: "wifi"}, {Folder: "webcam"}, {Folder: "wacom"}}
+	m.setupItems = []SetupItemRec{
+		{Folder: "wifi", Key: "iwd", Label: "wpa supplicant"},
+		{Folder: "webcam", Key: "tool", Label: "webcam tools"},
+		{Folder: "wacom", Key: "tablet", Label: "tablet driver"},
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	if m.filterText != "w" || m.setupPicker.Len() < 2 {
+		t.Fatalf("filter 'w' gave %q over %d rows", m.filterText, m.setupPicker.Len())
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyDown})
+	moved := m.setupPicker.SelectedValue()
+	if moved == "item:wifi:iwd" {
+		t.Fatal("down did not move the cursor")
+	}
+	// The blink repaints the list; the cursor must survive it.
+	m.setupPicker = m.rebuildSetup()
+	if got := m.setupPicker.SelectedValue(); got != moved {
+		t.Fatalf("blink reset the cursor: %q -> %q", moved, got)
+	}
+	// Narrowing the filter keeps the cursor when the row still matches.
+	m.filterText = "web"
+	m.setupPicker = m.rebuildSetup()
+	if got, want := m.setupPicker.SelectedValue(), "item:webcam:tool"; got != want {
+		t.Fatalf("narrowing the filter moved the cursor to %q, want %q", got, want)
+	}
+}
+
+// TestMenuEntriesRespondsToKeys is the freeze. The screen rendered rows from a
+// picker rebuilt inside View() and thrown away, and the Update case fell
+// through into scrBackupRestore, so arrows drove the backup picker and the
+// screen looked frozen. It must now keep a stored picker and answer keys.
+func TestMenuEntriesRespondsToKeys(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrSetup}
+	m.w, m.h = 120, 40
+	m, _ = m.update(tuikit.PickerResultMsg{Value: "menu-entries"})
+	m, _ = m.update(menuEntriesMsg{rows: []MenuEntryRec{
+		{Name: "mosquitomarchy", Present: true, Label: "mosquitOmarchy"},
+		{Name: "live-mode", Present: true, Label: "Live Mode Manager"},
+		{Name: "mega-caffeine", Present: false, Label: "Mega caffeine"},
+	}})
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyDown})
+	if got := m.menuEntriesPicker.SelectedValue(); got != "mentry:live-mode" {
+		t.Fatalf("down key went elsewhere: %q", got)
+	}
+	// Tab toggles without throwing the cursor back to the top.
+	m, _ = m.update(tuikit.PickerToggleMsg{Value: "mentry:live-mode"})
+	if got := m.menuEntriesPicker.SelectedValue(); got != "mentry:live-mode" {
+		t.Fatalf("toggle reset the cursor: %q", got)
+	}
+	if m.menuEntryChecked["live-mode"] {
+		t.Fatal("tab did not clear the tick")
+	}
+	// Dots, not checkboxes.
+	if v := m.View(); strings.Contains(v, "☑") || strings.Contains(v, "☐") {
+		t.Fatalf("checkbox glyphs still on screen:\n%s", v)
+	}
+}

@@ -275,7 +275,13 @@ func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, ite
 		}
 		desc = ansi.Truncate(desc, descAvail, "…")
 		descStyled := d.descStyle(index, m.Index()).Render(desc)
-		row += "\n" + indicator + d.badgeCell(pi) + descStyled
+		// The description sits on its own line but belongs to the SAME row, so
+		// it repeats NEITHER the selection cursor NOR the badge. Both used to
+		// be redrawn on the sub-line, which on a ticked row (● / ▶) put a
+		// second marker under the row and made the cursor look like it was
+		// wandering down the list as you moved. Blank cells of the same width
+		// keep the sub-line aligned with its title.
+		row += "\n" + "   " + strings.Repeat(" ", d.badgeSlot) + descStyled
 	}
 	if d.maxRowW > 0 {
 		row = lipgloss.NewStyle().Width(d.maxRowW).Align(lipgloss.Left).Render(row)
