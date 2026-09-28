@@ -21,6 +21,7 @@
 # Prerequisites: python3 with numpy; pw-cat, pw-record, aseqdump (PipeWire + ALSA).
 # =============================================================================
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../..//lib/marker-strip.bash"  # marker_strip: safe managed-block removal
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -189,13 +190,18 @@ install_tui() {
 
 CONF_HYPR="$REAL_HOME/.config/hypr/hyprland.lua"
 TILE_START="-- >>> jamjamjam-neck-tiled >>> guitar neck TUI opens tiled"
-TILE_END="-- >>> jamjamjam-neck-tiled <<<"
+# The closing marker said ">>>" instead of "<<<". Nothing in the strip logic ever
+# matched it, so every run APPENDED a fresh block instead of replacing the
+# previous one: the rule for the neck TUI was duplicated in hyprland.lua after
+# each setup, and the malformed block also broke the marker accounting for every
+# other block in the file.
+TILE_END="-- <<< jamjamjam-neck-tiled <<<"
 
 install_hypr_rule() {
   mkdir -p "$(dirname "$CONF_HYPR")"
   touch "$CONF_HYPR"
   # Strip an earlier block (idempotent install).
-  sed -i "/$TILE_START/,/$TILE_END/d" "$CONF_HYPR"
+  marker_strip "$CONF_HYPR" "$TILE_START" "$TILE_END"
   cat >> "$CONF_HYPR" <<EOF
 $TILE_START
 -- The jamjamjam neck TUI opens like every other mosquito terminal TUI:
@@ -219,7 +225,7 @@ install_analyze_bind() {
   mkdir -p "$(dirname "$BINDINGS_LUA")"
   touch "$BINDINGS_LUA"
   # Strip an earlier block (idempotent install).
-  sed -i "/$ANALYZE_BIND_START/,/$ANALYZE_BIND_END/d" "$BINDINGS_LUA"
+  marker_strip "$BINDINGS_LUA" "$ANALYZE_BIND_START" "$ANALYZE_BIND_END"
   cat >> "$BINDINGS_LUA" <<EOF
 $ANALYZE_BIND_START
 -- Hold to run the jamjamjam analysis while the neck TUI is open, even when the
@@ -240,7 +246,7 @@ EOF
 
 remove_analyze_bind() {
   [[ -f "$BINDINGS_LUA" ]] || return 0
-  sed -i "/$ANALYZE_BIND_START/,/$ANALYZE_BIND_END/d" "$BINDINGS_LUA"
+  marker_strip "$BINDINGS_LUA" "$ANALYZE_BIND_START" "$ANALYZE_BIND_END"
   rm -f "$ANALYZE_BIN"
   if command -v hyprctl >/dev/null 2>&1; then
     hyprctl reload >/dev/null 2>&1 || true

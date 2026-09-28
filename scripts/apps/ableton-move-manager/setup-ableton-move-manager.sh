@@ -584,10 +584,24 @@ LEGACY_ACTIONS = (
     "ableton-move-converter",
     "move-converter",
 )
+# The retired Trigger > Music entries. They normally disappear with this script's
+# own managed block, but a menu written by an older version may carry them
+# WITHOUT markers, in which case nothing else would ever clean them up. Matched
+# by key, since their action (mosquito-move-manager) is the current one and so
+# does not look legacy.
+RETIRED_KEYS = (
+    "trigger.music.ableton-move-converter",
+    # The parent submenu: it was declared by this script solely to hold the entry
+    # above, so removing the entry but leaving "trigger.music" behind would show
+    # an empty Music submenu in the launcher.
+    "trigger.music",
+)
 
 def is_ours(key, value):
     if key == MANAGED:
         return False
+    if key.lower() in RETIRED_KEYS:
+        return True
     k = key.lower()
     # Never delete a Setup-screen entry. Those belong to the mosquitomarchy TUI
     # setup ("Setup > mosquito > Move manager"), not to this purge.
@@ -722,20 +736,16 @@ purge_legacy_entries() {
 }
 
 menu_block() {
+  # The Move Manager deliberately publishes NOTHING in the omarchy menu. Its
+  # launcher lives under Setup > mosquito > Move manager (declared by
+  # mosquitomarchy-setup.sh), the single place these tools are listed; the
+  # Trigger > Music copy — and the "trigger.music" parent it needed, since that
+  # submenu would otherwise be left empty — were removed at the user's request.
+  #
+  # The markers stay so this remains idempotent: an old block is replaced by
+  # nothing instead of being appended to.
   cat <<MC_EOF
 $MENU_START
-  "trigger.music": {
-    "icon": "\uf001",
-    "label": "Music"
-  },
-  "trigger.music.ableton-move-converter": {
-    "icon": "\uf0ec",
-    "label": "mosquito Move Manager",
-    "description": "Move → Move Manager → Ableton Live → Bitwig: import sets, save .als exports or export MIDI, then open in Bitwig",
-    "aliases": ["move", "movemanager", "move-manager", "ableton-move", "bitwig", "converter", "midi", "mosquito"],
-    "when": "test -x $BIN_DIR/mosquito-move-manager",
-    "action": "$BIN_DIR/mosquito-move-manager"
-  },
 $MENU_END
 MC_EOF
 }
@@ -783,7 +793,11 @@ install_menu() {
   else
     open_line=$(grep -n '^{[[:space:]]*$' "$MENU" | head -1 | cut -d: -f1 || true)
     if grep -qF '"trigger.music.ableton-move-converter"' "$MENU"; then
-      warn "Menu already contains the ableton-move-converter entry without managed markers — manual fix needed (no duplicate inserted)."
+      # purge_legacy_entries runs first and is supposed to have removed this; if
+      # it is still here the purge failed (unreadable file, or a shape the
+      # brace-counting did not match). Say so instead of the old wording, which
+      # implied the entry was legitimate and only had to be left alone.
+      warn "A retired trigger > music entry survived the purge in $MENU — remove it manually."
       return 0
     fi
     tmp=$(mktemp)
@@ -799,7 +813,7 @@ install_menu() {
     mv "$tmp" "$MENU"
   fi
   if write_menu; then
-    ok "Menu bar entry ensured: Trigger > Music > Ableton Move Set to Bitwig converter"
+    ok "Menu bar entry ensured: Setup > mosquito > Move manager"
   else
     warn "Menu JSONC invalid after adding the entry — fix $MENU manually."
   fi
@@ -1081,7 +1095,7 @@ else
   echo "  • Disconnect warn  -> udev rule (notifies only while the Move Manager webapp is actively in use)"
   echo "  • Folders          -> $MOVE_DIR/{ablbundle,als,bwproject,bwproject/midi}"
   echo "  • Omarchy overlay  -> mosquito.confirm plugin (native Yes/No prompts)"
-  echo "  • Omarchy menu     -> Trigger > Music > mosquito Move Manager (menu: address / Move Manager / convert)"
+  echo "  • Omarchy menu     -> Setup > mosquito > Move manager (TUI: address / Move Manager / convert)"
   echo
   echo "  Run the menu from the Omarchy launcher or with: mosquito-move-manager"
   echo "  (if not run as root, run once: sudo bash $0 for the udev rule + chromium policy + ydotool NOPASSWD)"

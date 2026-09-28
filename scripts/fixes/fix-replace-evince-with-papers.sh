@@ -31,6 +31,7 @@
 #                                  # (papers/evince packages are left alone)
 #   ./fix-replace-evince-with-papers.sh -h
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/gui-run.bash"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/..//lib/marker-strip.bash"  # marker_strip: safe managed-block removal
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -139,7 +140,7 @@ show_evince_menus(){
 install_float_rule(){
   mkdir -p "$HOME/.config/hypr"
   touch "$CONF"
-  sed -i "/$FLOAT_MARK_START/,/$FLOAT_MARK_END/d" "$CONF"
+  marker_strip "$CONF" "$FLOAT_MARK_START" "$FLOAT_MARK_END"
   cat >> "$CONF" <<EOF
 $FLOAT_MARK_START float Papers instead of tiling it — a document viewer
 -- opens as a normal ("untiled") floating window, like KeePassXC above.
@@ -152,7 +153,7 @@ EOF
 }
 
 remove_float_rule(){
-  [[ -f $CONF ]] && sed -i "/$FLOAT_MARK_START/,/$FLOAT_MARK_END/d" "$CONF"
+  [[ -f $CONF ]] && marker_strip "$CONF" "$FLOAT_MARK_START" "$FLOAT_MARK_END"
   hyprctl reload >/dev/null 2>&1 || true
   ok "Papers float rule removed from $CONF"
 }

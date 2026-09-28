@@ -519,14 +519,7 @@ start_caffeine() {
   setsid --fork bash "$SELF" --monitor </dev/null >/dev/null 2>&1 &
   refresh_widgets
 
-  # The asterisk is the footnote defined in scripts/plugins/power-management/README.md:
-  # "no matter what" is not unconditional. monitor() aborts the session when the
-  # CPU passes TEMP_LIMIT (or the battery floor), so saying so in the toast is the
-  # difference between a claim and a description. TEMP_LIMIT is interpolated
-  # rather than hard-coded: it is overridable (--temp-limit / CAFFEINE_TEMP_LIMIT)
-  # and a fixed 85 would go stale the moment the threshold is retuned.
-  notify "Mega caffeine" "Always awake <b>no matter what</b>* for $(fmt_duration "$MAX_MINUTES")
-* CPU above ${TEMP_LIMIT}°C stops it anyway" normal persist
+  notify "Mega caffeine" "Always awake <b>no matter what</b>* for $(fmt_duration "$MAX_MINUTES")" normal persist
   ok "Mega caffeine activated."
 }
 

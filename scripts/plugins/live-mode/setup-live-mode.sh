@@ -15,6 +15,7 @@
 #   sudo bash setup-live-mode.sh        (full install)
 #   sudo bash setup-live-mode.sh --uninstall
 #   bash setup-live-mode.sh --status    (read-only, no sudo)
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/marker-strip.bash"  # marker_strip: safe managed-block removal
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -114,22 +115,26 @@ install_hypr_rule() {
   mkdir -p "$(dirname "$CONF_HYPR")"
   touch "$CONF_HYPR"
   # Strip an earlier block (idempotent install).
-  sed -i "/$FLOAT_START/,/$FLOAT_END/d" "$CONF_HYPR"
+  marker_strip "$CONF_HYPR" "$FLOAT_START" "$FLOAT_END"
   cat >> "$CONF_HYPR" <<EOF
 $FLOAT_START
--- All three mosquito terminal managers float + center, and none of them
--- forces a pixel size: every dispatcher launches foot with -W 92x92, so the
--- terminal keeps its square geometry and no title gets clipped.
+-- Live Mode's own TUI floats + centered, and no pixel size is forced: its
+-- dispatcher launches foot with -W 92x92, so the terminal keeps its square
+-- geometry and no title gets clipped.
+--
+-- Only its OWN TUI. This block used to also carry the audio-plugin-manager and
+-- move-manager TUIs, which duplicated the rules their own setup scripts already
+-- install under "mosquito-audio-plugin-manager-tui-setup" and
+-- "move-manager-tui-setup" — two identical o.window lines for the same class in
+-- the same file. Whoever needs those rules now owns them in one place only.
 o.window("org.omarchy.mosquito-live-mode-tui", { float = true, center = true })
-o.window("org.omarchy.mosquito-audio-plugin-manager-tui", { float = true, center = true })
-o.window("org.omarchy.mosquito-move-manager-tui", { float = true, center = true })
 $FLOAT_END
 EOF
-  ok "Hyprland rule installed: mosquito TUI managers open untiled (foot 92x92)"
+  ok "Hyprland rule installed: mosquito live-mode TUI opens untiled (foot 92x92)"
 }
 
 remove_hypr_rule() {
-  sed -i "/$FLOAT_START/,/$FLOAT_END/d" "$CONF_HYPR" 2>/dev/null || true
+  marker_strip "$CONF_HYPR" "$FLOAT_START" "$FLOAT_END" 2>/dev/null || true
   ok "Hyprland float rule removed"
 }
 
@@ -233,29 +238,95 @@ ensure_menu_readable() {
   fi
 }
 
+# Remove the Trigger > Music live-mode objects from a menu that has no managed
+# markers, editing the raw text. Brace counting, not json.dumps: the menu is
+# JSONC and a re-serialisation silently drops every comment, including the
+# ">>> ... <<<" markers mosquitomarchy-setup.sh uses to replace its own block.
+remove_legacy_unmarked() {
+  [[ -f $MENU ]] || return 1
+  local out
+  out=$(python3 - "$MENU" <<'PY' 2>&1
+import io, re, sys
+
+path = sys.argv[1]
+text = io.open(path, encoding='utf-8').read()
+original = text
+KEYS = ('trigger.music.live-mode-manage', 'trigger.music.live-mode')
+
+
+def cut(text, key):
+    m = re.search(r'"%s"\s*:\s*\{' % re.escape(key), text)
+    if not m:
+        return None
+    start = m.start()
+    depth = 0
+    i = m.end() - 1
+    end = None
+    while i < len(text):
+        if text[i] == '{':
+            depth += 1
+        elif text[i] == '}':
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+        i += 1
+    if end is None:
+        return None
+    # Swallow the separating comma, whichever side it sits on.
+    j = end
+    while j < len(text) and text[j] in ' \t':
+        j += 1
+    if j < len(text) and text[j] == ',':
+        end = j + 1
+    else:
+        k = start
+        while k > 0 and text[k - 1] in ' \t':
+            k -= 1
+        if k > 0 and text[k - 1] == ',':
+            text = text[:k - 1] + text[k:]
+            start = k - 1
+    # Take the whole line when the object sits alone on it, indentation included.
+    ls = text.rfind('\n', 0, start) + 1
+    head = ls if text[ls:start].strip() == '' else start
+    le = text.find('\n', end)
+    le = len(text) if le == -1 else le + 1
+    tail = le if text[end:le].strip() == '' else end
+    return text[:head] + text[tail:]
+
+
+for key in KEYS:
+    while True:
+        nxt = cut(text, key)
+        if nxt is None:
+            break
+        text = nxt
+
+if text == original:
+    sys.exit(1)
+io.open(path, 'w', encoding='utf-8').write(text)
+sys.stderr.write('legacy live-mode entries removed')
+PY
+  ) || return 1
+  printf '%s' "$out" >/dev/null
+  return 0
+}
+
 menu_block() {
+  # Live Mode deliberately publishes NOTHING in the omarchy menu. Its launcher
+  # lives under Setup > mosquito > Live Mode Manager (declared by
+  # mosquitomarchy-setup.sh), which is the single place these tools are listed;
+  # the Trigger > Music duplicates were removed at the user's request.
+  #
+  # The markers are kept even though the block is now empty: they are what makes
+  # this script idempotent, so a leftover block from an older version is always
+  # replaced (by nothing) instead of being appended to a second time.
   cat <<MC_EOF
 $MENU_START
-  "trigger.music.live-mode": {
-    "icon": "\uEA71",
-    "label": "Live Mode",
-    "description": "Max performance, audio optimized: stays awake, thermal guard, routing tool in scratchpad, no gaps/tint",
-    "aliases": ["live", "live-mode", "performance", "mode-live", "rehearsal", "mosquito"],
-    "when": "test -x $BIN_DIR/live-mode",
-    "checked": "test -f $REAL_HOME/.local/state/live-mode/active",
-    "action": "$BIN_DIR/live-mode toggle"
-  },
-  "trigger.music.live-mode-manage": {
-    "icon": "\uf111",
-    "label": "Live Mode Manager",
-    "description": "Configure the next Live Mode session (thermal limit, background apps, routing tool)",
-    "aliases": ["manage", "live-mode-manager", "live-manager", "mosquito"],
-    "when": "test -x $BIN_DIR/mosquito-live-mode-tui",
-    "action": "$BIN_DIR/live-mode manage"
-  },
 $MENU_END
 MC_EOF
 }
+
 
 menu_block_range() {
   local file="$1" start="" end="" l
@@ -291,9 +362,18 @@ install_menu() {
     tail -n +$((end_line + 1)) "$MENU" >> "$tmp"
     mv "$tmp" "$MENU"
   else
+    # No managed markers, but a live-mode entry is present: a menu written by a
+    # version from before the markers existed. Cut it out of the raw text rather
+    # than bailing out — "manual fix needed" left the duplicates in the menu
+    # forever, and re-serialising the file with json.dumps would have thrown away
+    # every comment, including mosquitomarchy-setup.sh's own markers.
     if grep -qF '"trigger.music.live-mode"' "$MENU"; then
-      warn "Menu already contains the live-mode entry without managed markers — manual fix needed."
-      return 0
+      if remove_legacy_unmarked; then
+        ok "Removed the unmarked legacy live-mode entries (they no longer belong in the menu)."
+      else
+        warn "Could not remove the unmarked legacy live-mode entries — fix $MENU manually."
+        return 0
+      fi
     fi
     open_line=$(grep -n '^{[[:space:]]*$' "$MENU" | head -1 | cut -d: -f1 || true)
     tmp=$(mktemp)
@@ -309,7 +389,7 @@ install_menu() {
     mv "$tmp" "$MENU"
   fi
   if write_menu; then
-    ok "Menu entries ensured: Trigger > Music > Live Mode / Live Mode Manager"
+    ok "Menu checked: no trigger > music > live-mode entry (it lives under Setup > mosquito)"
   else
     warn "Menu JSONC invalid after adding the entries — fix $MENU manually."
   fi
@@ -370,10 +450,12 @@ status() {
     echo "  ✗ not installed"
   fi
   echo "── Menu entries ──────────────────────────────────────────"
-  if [[ -f $MENU ]] && grep -q '"trigger.music.live-mode"' "$MENU"; then
-    echo "  ✓ trigger > music > Live Mode (+ manage)"
+  # Reported the other way round now: the menu should NOT carry these any more,
+  # so finding one is the problem, not the goal.
+  if [[ -f $MENU ]] && grep -qF '"trigger.music.live-mode"' "$MENU"; then
+    echo "  ✗ stale trigger > music > Live Mode still in the menu — re-run the setup"
   else
-    echo "  ✗ not present"
+    echo "  ✓ no trigger > music > live-mode entry (lives under Setup > mosquito)"
   fi
 }
 
@@ -414,7 +496,7 @@ if [[ $YES -eq 1 ]]; then
   install_menu
   install_hypr_rule
   refresh_hypr
-  ok "Live mode installed. Use it via:  live-mode toggle   (or Trigger ▸ Music ▸ Live Mode)."
+  ok "Live mode installed. Use it via:  live-mode toggle   (or Setup ▸ mosquito ▸ Live Mode Manager)."
   exit 0
 fi
 
