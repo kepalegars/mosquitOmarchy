@@ -345,8 +345,16 @@ GP_EXE="$GP_EXE"
 # Load the audio environment if present
 [[ -f "\$PFX/.guitarpro-audio-env" ]] && source "\$PFX/.guitarpro-audio-env"
 
-# Launch Guitar Pro 8
-exec WINEARCH=win64 WINEPREFIX="\$PFX" wine "\$GP_EXE" "\$@"
+# Launch Guitar Pro 8.
+# WINEARCH/WINEPREFIX are EXPORTED, not passed as a prefix to exec: an
+# environment assignment only applies to a simple command, and \`exec\` is a
+# special builtin that takes a command word — so \`exec WINEARCH=win64 ...\`
+# looks for a program literally named "WINEARCH=win64" and dies with
+# "exec: WINEARCH=win64: not found". That is what made the menu entry do
+# nothing at all: the install was fine, the launcher could never run.
+export WINEARCH=win64
+export WINEPREFIX="\$PFX"
+exec wine "\$GP_EXE" "\$@"
 LAUNCHEOF
   chmod +x "$LAUNCHER"
   ok "Launcher: $LAUNCHER"
