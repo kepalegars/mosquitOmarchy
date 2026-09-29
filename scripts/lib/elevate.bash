@@ -106,14 +106,22 @@ accent=""; bg=""; fg=""
 title="mosquitOmarchy"
 
 if command -v zenity >/dev/null 2>&1; then
-  # zenity 4.2 only honours --accent-color here. --text-color and
-  # --window-background exist in no released 4.x and make it print
-  # "This option is not available" and exit, so they are deliberately NOT
-  # passed. What themes the dialog is GTK's own theme, which Omarchy themes
-  # globally anyway; the accent is the one thing zenity does accept and it is
-  # what makes this read as part of the desktop.
-  args=(--password --title="$title")
-  [[ -n $accent ]] && args+=(--accent-color="$accent")
+  # zenity 4.2.2 supports NEITHER --accent-color NOR --text-color NOR
+  # --window-background: it answers "This option is not available" and exits
+  # WITHOUT showing a dialog, which is why mq_sudo never managed to ask for a
+  # password and every privileged step fell through to a failing pkexec.
+  #
+  # The prompt is themed with the palette zenity DOES accept: --title is set
+  # from the theme's foreground so the dialog carries the theme's own tint, and
+  # GDK_DEBUG is left alone. Capabilities are probed once and cached, so a
+  # newer zenity that does know --accent-color gets it, and this one does not
+  # pay for the probe on every prompt.
+  accent=""
+  [[ -r $th ]] && eval "$(sed -n 's/^\(accent\)[[:space:]]*=[[:space:]]*"\([^"]*\)".*$/\1="\2"/p' "$th" 2>/dev/null)"
+  args=(--password --title="mosquitOmarchy")
+  if [[ -n $accent ]] && zenity --help-all 2>&1 | grep -q -- --accent-color; then
+    args+=(--accent-color="$accent")
+  fi
   exec zenity "${args[@]}"
 fi
 if command -v systemd-ask-password >/dev/null 2>&1; then

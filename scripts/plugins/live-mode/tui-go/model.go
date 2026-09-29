@@ -236,7 +236,13 @@ func (m *model) applyAllPendingExcept(except string) {
 // cycleSetting steps the row under the cursor, shows the new value as a
 // pending label without saving it, and arms the dwell timer that writes it
 // if the user leaves the value alone.
-func (m *model) cycleSetting(dir int) (tea.Model, tea.Cmd) {
+// It is a VALUE method, like every other step in this app, and returns the
+// value. It used to be a pointer method returning `m`, so it handed the
+// runtime a *model where it expects a model: Bubble Tea type-asserts the
+// result of Update back to the concrete type, so pressing Left or Right — the
+// only path that reaches this function — panicked with "interface
+// conversion: tea.Model is *main.model, not main.model" and the TUI died.
+func (m model) cycleSetting(dir int) (tea.Model, tea.Cmd) {
 	row := m.picker.SelectedValue()
 	if m.pending == nil {
 		m.pending = map[string]string{}

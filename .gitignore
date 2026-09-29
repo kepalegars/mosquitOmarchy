@@ -46,6 +46,10 @@ __pycache__/
 # "tui-go" — the same artefact as above, from the same command.
 **/tui-go/0
 scripts/plugins/jamjamjam/tui-go/jamjamjam-tui
+# A bare `go build .` in a directory whose main package is "live-mode-tui" also
+# drops a binary with the PACKAGE name next to the real one. Only the
+# mosquito-live-mode-tui name is deployed and tracked.
+scripts/plugins/live-mode/tui-go/live-mode-tui
 
 # ── Sensitive / never on a repository (even private) ──
 # Authorization files (Ableton license), license-workaround tools

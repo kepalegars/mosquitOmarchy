@@ -473,9 +473,15 @@ st_live_mode(){
   [[ -x "$HOME/.local/bin/live-mode-watch" ]] || miss="${miss:+$miss, }live-mode-watch"
   [[ -x "$HOME/.local/bin/live-mode-root" ]] || miss="${miss:+$miss, }live-mode-root"
   [[ -x "$HOME/.local/bin/mosquito-live-mode-tui" ]] || miss="${miss:+$miss, }mosquito-live-mode-tui"
-  # The sudoers file cannot be written without root, so it is reported as
-  # needing sudo rather than as a plain missing file.
-  [[ -f /etc/sudoers.d/live-mode ]] || miss="${miss:+$miss, }/etc/sudoers.d/live-mode (needs root: sudo bash scripts/plugins/live-mode/setup-live-mode.sh)"
+  # The sudoers file itself CANNOT be checked from here: /etc/sudoers.d is
+  # drwxr-x--- root, so a plain [[ -f ]] says "no" for a file that is really
+  # there, and asking sudo to answer needs a password — which a status read
+  # must never demand (that is what made a correctly installed module report
+  # itself partial and every run end in "Install finished with errors").
+  # setup-live-mode.sh writes a user-readable marker once the file is written
+  # AND validated by visudo, and that is what is read here.
+  [[ -f "$HOME/.local/state/mosquitomarchy/live-mode-sudoers" ]] \
+    || miss="${miss:+$miss, }the live-mode sudoers grant (rerun: sudo bash scripts/plugins/live-mode/setup-live-mode.sh)"
   [[ -d "$HOME/.config/omarchy/plugins/mosquito.livemode" ]] || miss="${miss:+$miss, }the mosquito.livemode plugin"
   [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
   echo ok

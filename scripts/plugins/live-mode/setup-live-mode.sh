@@ -16,6 +16,7 @@
 #   sudo bash setup-live-mode.sh --uninstall
 #   bash setup-live-mode.sh --status    (read-only, no sudo)
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/marker-strip.bash"  # marker_strip: safe managed-block removal
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/elevate.bash"  # mq_sudo: themed prompt, one question per run
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -147,30 +148,66 @@ refresh_hypr() {
 # ---------------------------------------------------------------------------
 
 install_sudoers() {
-  if [[ $EUID -ne 0 ]]; then
-    warn "Sudoers requires root — run: sudo bash $0"
-    return 1
-  fi
-  cat > "$SUDOERS_FILE" <<SUDOEOF
+  # Ask for the elevation instead of only warning that it is needed.
+  #
+  # This used to bail out with "Sudoers requires root — run: sudo bash <this
+  # script>". That made the module report `partial` on every install, so the
+  # run ended in "Install finished with errors" while the user had in fact
+  # installed everything and had never been asked for a password: the file the
+  # module exists to write was simply never written, and nothing prompted.
+  #
+  # mq_sudo raises the same password prompt Omarchy uses everywhere else
+  # (themed, one question per run) and the rest of the run reuses that cache.
+  local body
+  body="$(cat <<SUDOEOF
 $REAL_USER ALL=(root) NOPASSWD: $BIN_DIR/live-mode-root apply, $BIN_DIR/live-mode-root restore, $BIN_DIR/live-mode-root status, $BIN_DIR/live-mode-root thermal-cap *, $BIN_DIR/live-mode-root thermal-restore
 Defaults! $BIN_DIR/live-mode-root env_keep += "DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS"
 SUDOEOF
-  chmod 440 "$SUDOERS_FILE"
-  if visudo -cf "$SUDOERS_FILE" &>/dev/null; then
+)"
+  if [[ $EUID -ne 0 ]]; then
+    printf '\033[34m==>\033[0m Asking for the password to write %s (one question; the rest of the run reuses it)…\n' "$SUDOERS_FILE"
+  fi
+  # The body goes through STDIN, never through the environment or the command
+  # line: pkexec scrubs the environment, and a sudoers line is full of spaces
+  # and quotes, so both of those are ways to write a different file than the
+  # one you meant. stdin is identical under sudo and under pkexec.
+  if ! printf '%s\n' "$body" | mq_sudo tee "$SUDOERS_FILE" >/dev/null; then
+    err "Could not write $SUDOERS_FILE"
+    return 1
+  fi
+  mq_sudo chmod 440 "$SUDOERS_FILE" 2>/dev/null || chmod 440 "$SUDOERS_FILE" 2>/dev/null || true
+  # visudo must run as root too: the file is root-owned 0440, and a sudoers
+  # check that runs as the user cannot read it, so it reported "invalid" for a
+  # perfectly good file and the script deleted it again.
+  if mq_sudo visudo -cf "$SUDOERS_FILE" &>/dev/null; then
+    # Marker for the status check. /etc/sudoers.d is drwxr-x--- root, so
+    # "is the sudoers file there?" is NOT a question the user account can
+    # answer, and answering it needs a password — which a status read must
+    # never demand. The setup therefore records the outcome somewhere the user
+    # CAN read, and the status reads that. It is written last, so it only exists
+    # once the file really is installed and validated.
+    mkdir -p "$REAL_HOME/.local/state/mosquitomarchy"
+    printf 'installed\n' > "$REAL_HOME/.local/state/mosquitomarchy/live-mode-sudoers"
     ok "Sudoers installed (NOPASSWD live-mode-root + env_keep)"
   else
-    rm -f "$SUDOERS_FILE"
+    mq_sudo rm -f "$SUDOERS_FILE" 2>/dev/null || rm -f "$SUDOERS_FILE" 2>/dev/null || true
     err "Sudoers invalid — removed."
     return 1
   fi
 }
 
 remove_sudoers() {
-  if [[ $EUID -ne 0 ]]; then
-    warn "Removing the sudoers file requires root — run: sudo bash $0 --uninstall"
+  # Same as install: ask, do not only warn. A leftover sudoers grant is a
+  # privilege the user believes they revoked, so it must not silently stay
+  # behind because the uninstall could not raise a password.
+  [[ -f "$SUDOERS_FILE" ]] || { ok "No sudoers file to remove."; return 0; }
+  if mq_sudo rm -f "$SUDOERS_FILE"; then
+    rm -f "$REAL_HOME/.local/state/mosquitomarchy/live-mode-sudoers"
+    ok "Sudoers removed."
+  else
+    err "Could not remove $SUDOERS_FILE — remove it with: sudo rm -f '$SUDOERS_FILE'"
     return 1
   fi
-  [[ -f "$SUDOERS_FILE" ]] && rm -f "$SUDOERS_FILE" && ok "Sudoers removed."
 }
 
 # ---------------------------------------------------------------------------
