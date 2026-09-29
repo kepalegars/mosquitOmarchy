@@ -45,6 +45,11 @@ __pycache__/
 # file literally called "0" next to a main.go that sits in a directory called
 # "tui-go" — the same artefact as above, from the same command.
 **/tui-go/0
+# A stray "0" in the repo ROOT has the same cause: `go build -C <dir> .` run
+# from a shell whose working directory is the repo root writes the binary under
+# the name of the directory, and a redirection that loses its target lands here.
+# Keep it out of history rather than trying to remember which command does it.
+/0
 scripts/plugins/jamjamjam/tui-go/jamjamjam-tui
 # A bare `go build .` in a directory whose main package is "live-mode-tui" also
 # drops a binary with the PACKAGE name next to the real one. Only the

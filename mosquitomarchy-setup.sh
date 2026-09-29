@@ -1984,7 +1984,7 @@ $MENU_MOSQUITO_START
   // same one as mosquitomarchy) — every mosquito TUI grouped here.
   //
   // ICONS MUST BE NERD FONT CODEPOINTS, never emoji. Menu.qml renders an icon
-  // with `row.iconFont.length > 0 ? row.iconFont : root.fontFamily`, and
+  // with \`row.iconFont.length > 0 ? row.iconFont : root.fontFamily\`, and
   // root.fontFamily is the Nerd Font -- so an emoji with no "iconFont" of its
   // own is looked up in a font that has no glyph for it and renders as a blank
   // cell. That is how the jamjamjam row lost its guitar: the icon was the

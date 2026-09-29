@@ -350,16 +350,28 @@ PY
 }
 
 menu_block() {
-  # Live Mode deliberately publishes NOTHING in the omarchy menu. Its launcher
-  # lives under Setup > mosquito > Live Mode Manager (declared by
-  # mosquitomarchy-setup.sh), which is the single place these tools are listed;
-  # the Trigger > Music duplicates were removed at the user's request.
+  # One entry: a TOGGLE, not a launcher. The manager TUI stays under
+  # Setup > mosquito (mosquitomarchy-setup.sh owns that), and the old
+  # Trigger > Music duplicates are gone; what was missing was the one row that
+  # actually turns live mode on, which is the thing you reach for mid-set.
   #
-  # The markers are kept even though the block is now empty: they are what makes
-  # this script idempotent, so a leftover block from an older version is always
-  # replaced (by nothing) instead of being appended to a second time.
+  # `checked` must reflect the real state, so the row ticks itself off when the
+  # session is over. It is a command substitution, evaluated by the menu on
+  # every open, so it cannot go stale the way a written-out state file does.
+  #
+  # These MUST be // comments: the menu is JSONC and the installer validates it
+  # by stripping // lines.
   cat <<MC_EOF
 $MENU_START
+  "trigger.toggle.live-mode": {
+    "icon": "\uf0f4",
+    "label": "Live Mode",
+    "description": "Performance session mode: keep the machine awake, thermal guard, no idle suspend",
+    "aliases": ["live", "live-mode", "lmm", "toggle-live"],
+    "when": "test -x $BIN_DIR/live-mode",
+    "checked": "$BIN_DIR/live-mode --active",
+    "action": "$BIN_DIR/live-mode toggle"
+  },
 $MENU_END
 MC_EOF
 }
@@ -426,7 +438,7 @@ install_menu() {
     mv "$tmp" "$MENU"
   fi
   if write_menu; then
-    ok "Menu checked: no trigger > music > live-mode entry (it lives under Setup > mosquito)"
+    ok "Menu checked: Trigger > Toggle > Live Mode entry present"
   else
     warn "Menu JSONC invalid after adding the entries — fix $MENU manually."
   fi
@@ -474,7 +486,19 @@ status() {
     fi
   done
   echo "── Sudoers (/etc/sudoers.d/live-mode) ────────────────────"
-  if [[ -f $SUDOERS_FILE ]]; then
+  # The file is root-owned and unreadable by the user on purpose, so a plain
+  # -f test reported "not installed" for a sudoers file that was very much
+  # there — the install had just succeeded a line earlier. The marker written
+  # at install time is the user-readable proof; fall back to -f only when the
+  # user CAN read it (e.g. running as root).
+  if [[ -f "$HOME/.local/state/mosquitomarchy/live-mode-sudoers" ]]; then
+    echo "  ✓ installed (written $(cat "$HOME/.local/state/mosquitomarchy/live-mode-sudoers" 2>/dev/null || echo earlier))"
+    if [[ -r $SUDOERS_FILE ]]; then
+      grep -q live-mode-root "$SUDOERS_FILE" && echo "  ✓ live-mode-root NOPASSWD present"
+    else
+      echo "  • contents unreadable as $(id -un) — that is normal, it is root-owned"
+    fi
+  elif [[ -f $SUDOERS_FILE ]]; then
     echo "  ✓ installed"
     grep -q live-mode-root "$SUDOERS_FILE" && echo "  ✓ live-mode-root NOPASSWD present"
   else
@@ -487,12 +511,19 @@ status() {
     echo "  ✗ not installed"
   fi
   echo "── Menu entries ──────────────────────────────────────────"
-  # Reported the other way round now: the menu should NOT carry these any more,
-  # so finding one is the problem, not the goal.
+  # Two different rows: the TOGGLE under Trigger > Toggle, and the manager TUI
+  # under Setup > mosquito (that one is declared by mosquitomarchy-setup.sh, so
+  # it is not this script's business). The old Trigger > Music pair must stay
+  # gone.
+  if [[ -f $MENU ]] && grep -qF '"trigger.toggle.live-mode"' "$MENU"; then
+    echo "  ✓ trigger > toggle > Live Mode (toggles the session)"
+  else
+    echo "  ✗ trigger > toggle > Live Mode is missing — re-run the setup"
+  fi
   if [[ -f $MENU ]] && grep -qF '"trigger.music.live-mode"' "$MENU"; then
     echo "  ✗ stale trigger > music > Live Mode still in the menu — re-run the setup"
   else
-    echo "  ✓ no trigger > music > live-mode entry (lives under Setup > mosquito)"
+    echo "  ✓ no stale trigger > music > live-mode entry"
   fi
 }
 

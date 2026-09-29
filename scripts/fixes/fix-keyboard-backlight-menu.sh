@@ -278,6 +278,71 @@ else
 fi
 rm -f "$BLOCK_TMP"
 
+# A pre-marker copy of the same key (an older, unmanaged version of this very
+# entry) used to sit earlier in the file. Two objects with one key is a
+# duplicate the menu warns about, and which one wins depends on parse order —
+# so the older, unmanaged copy has to go. Cut it by brace counting on the raw
+# text, because re-serialising the file as JSON would throw away every comment
+# in the menu, including the ">>> ... <<<" markers the other scripts rely on.
+remove_unmanaged_copy() {
+  [[ -f $MENU ]] || return 1
+  python3 - "$MENU" "$BLOCK_START" <<'PYEOF' || return 1
+import re, sys
+
+path, block_start = sys.argv[1], sys.argv[2]
+lines = open(path, encoding="utf-8").read().splitlines(keepends=True)
+
+# Everything from the managed marker onwards is ours; anything before it is not.
+marker_line = None
+for i, l in enumerate(lines):
+    if block_start in l:
+        marker_line = i
+        break
+if marker_line is None:
+    sys.exit(1)
+
+def spans(text):
+    """Yield (start, end_exclusive) of every top-level-ish object of our key."""
+    for m in re.finditer(r'"trigger\.hardware\.keyboard-backlight"\s*:\s*\{', text):
+        start, depth, i = m.start(), 0, m.end() - 1
+        while i < len(text):
+            depth += text[i].count("{") - text[i].count("}")
+            if depth == 0:
+                yield m.start(), i + 1
+                break
+            i += 1
+
+NL = chr(10)
+text = "".join(lines)
+# marker_line indexes `lines`; the split below needs an offset into `text`.
+cut = sum(len(l) for l in lines[:marker_line])
+head, tail = text[:cut], text[cut:]
+found = False
+for start, end in reversed(list(spans(head))):
+    found = True
+    head = head[:start] + head[end:]
+    # The cut leaves ", " before the following object. Take the comma with it,
+    # then the line break the now-empty line leaves behind.
+    rest = head[start:]
+    stripped = rest.lstrip(" " + NL + chr(13) + chr(9))
+    if stripped.startswith(","):
+        head = head[:start] + stripped[1:]
+    else:
+        before = head[:start].rstrip(" " + NL + chr(13) + chr(9))
+        if before.endswith(","):
+            head = before + head[start:].lstrip(" " + NL + chr(13) + chr(9))
+    if not head.endswith(NL):
+        head += NL
+if not found or head + tail == text:
+    sys.exit(1)
+open(path, "w", encoding="utf-8").write(head + tail)
+PYEOF
+}
+
+if remove_unmanaged_copy; then
+  ok "Removed the unmanaged duplicate of the Keyboard Backlight entry"
+fi
+
 # Automatic comma repair + validity check
 if ! write_menu >/dev/null; then
   warn "Could not repair the JSON automatically."

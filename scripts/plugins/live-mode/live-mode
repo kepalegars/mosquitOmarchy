@@ -39,6 +39,8 @@ Commands:
   on [yes]      Activate live mode (confirmation unless 'yes' given)
   off [yes]     Deactivate live mode (confirmation unless 'yes' given)
   status        Show current live mode state
+  --active      Exit 0 and print "true" when a session is live, else "false"
+                (machine-readable, for the omarchy menu's \"checked\" field)
   toggle        Toggle live mode on/off
   manage [--replace]  Open the Live Manager (configures the next session; live mode must be off)
                       --replace closes any other open Live Manager first
@@ -910,6 +912,13 @@ case "${1:-}" in
   on)      cmd_on "${2:-}" ;;
   off)     cmd_off "${2:-}" ;;
   status)  cmd_status ;;
+  --active)
+    # The omarchy menu runs a menu row's "checked" as a shell command and takes
+    # its stdout verbatim as a boolean, so this has to print exactly true/false
+    # and nothing else. Parsing `status` instead would mean grepping a sentence
+    # written for humans, and "OFF" contains no "ON" only by luck.
+    if is_active; then echo true; else echo false; fi
+    ;;
   toggle)  is_active && cmd_off || cmd_on ;;
   manage)  cmd_manage "${2:-}" ;;
   *)       usage ;;
