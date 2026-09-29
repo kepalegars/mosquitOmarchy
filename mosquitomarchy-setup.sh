@@ -3484,7 +3484,7 @@ CATEGORIES=(
   "apps|Apps|reaper audio ableton guitarpro davinci-resolve extracto handbrake superfile zen keepassxc"
   "tuis|TUIs|"
   "webapps|Webapps|"
-  "plugins|Plugins|mosquitomarchy jamjamjam-plugin battery brightness keyboard-backlight touchpad mx-master"
+  "plugins|Plugins|mosquitomarchy battery brightness keyboard-backlight touchpad mx-master"
   "fixes|Quick fixes|"
   "mosquito|mosquito|"
   "keybindings|Keybindings|keybindings"
