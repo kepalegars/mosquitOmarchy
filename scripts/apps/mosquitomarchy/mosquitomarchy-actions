@@ -1203,13 +1203,41 @@ cmd_crash_notify() {
   printf '{"crashNotify": %s}\n' "$val"
 }
 
-# ─── was-an-AI-removal-ever-recorded? ─────────────────────────────────────
-# the is the small INNER LOG the user asked for: when 'un_remove_ai' runs, the
-# state file remove-all-ai appears; until then the Setup entry "bring back."
-# is GREYED (nothing to undo yet).
+# ─── is any agentic piece of omarchy still missing? ─────────────────────────
+# The Setup row reads "bring back omarchy's agentic stuff", so the only
+# question that matters is whether there is anything LEFT to bring back.
+#
+# It used to answer that with the remove-all-ai marker file, i.e. "did THIS
+# module ever run?". That is the wrong question: an Omarchy whose agentic bits
+# were removed by other means has nothing to bring back either, yet the marker
+# was absent, so the row stayed enabled and offered a restore that could not
+# change anything. So probe the machine instead, and treat the marker as only
+# one of the signals — it is still the cheapest and most reliable "a removal
+# definitely happened" evidence when the user removed the pieces themselves.
 cmd_ai_removed() {
-  [[ -f "$HOME/.local/state/mosquitomarchy/remove-all-ai" ]] && val=true || val=false
-  printf '{"removed": %s}\n' "$val"
+  local removed=false marker="$HOME/.local/state/mosquitomarchy/remove-all-ai"
+  [[ -f $marker ]] && removed=true
+
+  # 1) the Agents plugin: enabled state lives in the omarchy plugin list, and
+  #    a missing plugin directory means the source itself is gone.
+  if ! omarchy plugin list 2>/dev/null | grep -qiE '^omarchy\.agents\b.*(enabled|true)'; then
+    removed=true
+  fi
+  # 2) the ollama loaders run_restore_ai cannot re-create (it says so itself).
+  if ! compgen -G "$HOME/.local/share/omarchy/bin/*ollama*" >/dev/null 2>&1; then
+    removed=true
+  fi
+  # 3) crash-notify's AI diagnosis switch.
+  if [[ $("$0" crash-notify 2>/dev/null | grep -c '"crashNotify": true') -eq 0 ]]; then
+    removed=true
+  fi
+  # 4) Claude Code: either the shim is gone or mise no longer pins it.
+  if [[ ! -e "$HOME/.local/share/mise/shims/claude" ]] \
+     && { ! command -v mise >/dev/null 2>&1 || ! mise ls claude >/dev/null 2>&1; }; then
+    removed=true
+  fi
+
+  printf '{"removed": %s}\n' "$removed"
 }
 
 

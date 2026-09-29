@@ -110,9 +110,14 @@ type PickerItem struct {
 // Fold glyphs for PickerItem.Fold. A folder row shows one of these in the
 // cursor slot while it is selected; on every other row the slot is either the
 // "▶" cursor or blank, so exactly one marker is visible per row.
+//
+// These are the FULL-SIZE triangles, U+25B6 and U+25BC, on purpose. The small
+// ones (U+25B8 ▸ and U+25BE ▾) sit two steps lower in the same block and drew
+// visibly smaller than the "▶" that occupies the very same slot on every other
+// row, so moving onto a folder made the cursor shrink. One size everywhere.
 const (
-	FoldCollapsed = "▸"
-	FoldExpanded  = "▾"
+	FoldCollapsed = "▶"
+	FoldExpanded  = "▼"
 )
 
 // inert reports whether the cursor must not stop on this row: an unavailable

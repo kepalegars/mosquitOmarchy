@@ -981,26 +981,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.statusPicker, cmd = m.statusPicker.Update(msg)
 	case scrSetup:
-		// 'a' applies the current selection (install, or uninstall in
-		// uninstall mode). Enter is now context-sensitive — on a module it
-		// installs that one, on a category it folds it — so the batch apply
-		// needs its own key, and 'a' is the mnemonic.
-		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "a" && !m.filterOpen {
-			plan := m.applyPlan()
-			if len(plan) == 0 {
-				m.toast, _ = m.toast.SetWarn("nothing selected — tick something first (tab)")
-				return m, nil
-			}
-			m.pendingAction = "apply"
-			m.pendingArgs = plan
-			m.kpxGnomeRm = 0
-			m.pendingMsg = fmt.Sprintf("Install %d selected item(s)?\n\n%s", m.selectedCount(), m.selectionSummary())
-			m.pendingNo = "Cancel"
-			m.pendingYes = "Install"
-			m.push(scrConfirm)
-			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
-			return m, nil
-		}
 		// 'f' toggles the filter zone above the shortcut bar: a rectangular
 		// search input that echoes every pressed key in real time.
 		if km, ok := msg.(tea.KeyMsg); ok {
@@ -1474,20 +1454,12 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.pop()
 			return m, nil
 		}
-		// Enter on a CATEGORY row folds it. The apply step is not a row any
-		// more — it is Enter on the page itself, handled by the key switch —
-		// so there is nothing to "open" here and pretending otherwise was what
-		// made a single navigation round trip necessary to install a module.
+		// Enter on a CATEGORY row does NOTHING, on purpose. Folding is the
+		// left/right arrows' job and they already do it, so Enter folding too
+		// meant the key meant two different things depending on what it landed
+		// on. Enter is reserved for the one thing only a user can ask for:
+		// install (or uninstall) the module under the cursor.
 		if strings.HasPrefix(res.Value, tuikit.TreeFolderPrefix) {
-			id := strings.TrimPrefix(res.Value, tuikit.TreeFolderPrefix)
-			if m.folderOpen[id] {
-				delete(m.folderOpen, id)
-			} else {
-				m.folderOpen[id] = true
-			}
-			keep := res.Value
-			m.setupPicker = m.rebuildSetup()
-			m.setupPicker = m.setupPicker.KeepCursor(keep)
 			return m, nil
 		}
 		// Enter on a MODULE row installs just that one: a single click for a
@@ -2142,7 +2114,18 @@ func (m model) rebuildSetup() navPicker {
 				Info:     it.Info,
 				Disabled: it.Disabled,
 			}
-			if it.Disabled && row.Info == "" {
+			// "bring back omarchy's agentic stuff" only makes sense while
+			// something is still missing. This used to be decided in
+			// pickerTreeItems, which the flat Setup page no longer goes
+			// through, so the row stayed tappable and offered a restore that
+			// could change nothing.
+			if it.Key == "remove-ai" && !uninstall && !aiRemovalLogged() {
+				row.Disabled = true
+				if row.Info == "" {
+					row.Info = "already there — nothing to bring back"
+				}
+			}
+			if row.Disabled && row.Info == "" {
 				row.Info = "nothing left to do here"
 			}
 			seen[f.Folder] = append(seen[f.Folder], row)
@@ -2176,9 +2159,9 @@ func (m model) rebuildSetup() navPicker {
 	}
 	out = append(out, tuikit.PickerItem{Display: "Back", Value: "back"})
 
-	enterHelp := "install"
+	enterHelp := "install this"
 	if uninstall {
-		enterHelp = "uninstall"
+		enterHelp = "uninstall this"
 	}
 	return newNavPicker("", out).SetSize(m.contentSize()).
 		SetHelpKeys(
@@ -2186,8 +2169,7 @@ func (m model) rebuildSetup() navPicker {
 			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "open")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "close")),
-			key.NewBinding(key.WithKeys("a"), key.WithHelp("a", enterHelp)),
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open / install this")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		).
 		SelectIndex(idx)
 }
@@ -2354,8 +2336,13 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 				if i == last {
 					branch = "└─ "
 				}
+				// Same rule as rebuildPreinstallPicker: the mark belongs in
+				// Badge. Rows are centered, so a mark inside Display made
+				// every line a different width and none of them shared a
+				// starting column.
 				entry := tuikit.PickerItem{
-					Display: "    " + branch + pmark + "  " + it.Label,
+					Display: "    " + branch + it.Label,
+					Badge:   pmark,
 					Value:   setupValue(f.Folder, it.Key),
 				}
 				// The backend greys a row that has nothing left to do (Preinstalls
@@ -2932,13 +2919,18 @@ func (m model) rebuildPreinstallPicker() navPicker {
 			mark = "●"
 			checked++
 		}
-		it := tuikit.PickerItem{Display: mark + "  " + r.Label, Value: r.Name}
+		// The mark goes in Badge, not glued onto Display. Rows are CENTERED as
+		// a block, so a tick baked into the text made every line a different
+		// width and therefore a different starting column — the list visibly
+		// jumped, and a long "(your own app — kept)" shifted it again. Badge
+		// sits in a fixed-width leading slot, so the labels stay in one column.
+		it := tuikit.PickerItem{Display: r.Label, Value: r.Name, Badge: mark}
 		switch {
 		case !r.Installed:
-			it.Display += "  (already removed)"
+			it.Suffix = "(already removed)"
 			it.Disabled = true
 		case r.Protected:
-			it.Display += "  (your own app — kept)"
+			it.Suffix = "(your own app — kept)"
 			it.Disabled = true
 		}
 		items = append(items, it)

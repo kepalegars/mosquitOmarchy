@@ -101,9 +101,10 @@ func TestSetupLeafValueRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSetupEnterOnCategoryFolds covers ←/→ and Enter on a category row: the
-// category collapses in place, and we stay on the same screen.
-func TestSetupEnterOnCategoryFolds(t *testing.T) {
+// TestSetupEnterOnCategoryDoesNothing pins the rule that Enter only ever
+// installs. Folding belongs to the arrows alone; letting Enter fold as well
+// meant the same key meant "toggle" or "install" depending on the row.
+func TestSetupEnterOnCategoryDoesNothing(t *testing.T) {
 	m := flatSetup()
 	idx := -1
 	for i, it := range m.setupPicker.items {
@@ -118,25 +119,41 @@ func TestSetupEnterOnCategoryFolds(t *testing.T) {
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if m.top() != scrSetup {
-		t.Fatalf("Enter on a category left the Setup page (top=%d)", m.top())
+		t.Fatalf("Enter on a category must stay on the page, top=%d", m.top())
 	}
-	if m.folderOpen["apps"] {
-		t.Fatal("Enter on an open category should fold it")
+	if !m.folderOpen["apps"] {
+		t.Fatal("Enter must not fold: that is the arrows' job")
 	}
-	for _, it := range m.setupPicker.items {
-		if it.Value == setupValue("apps", "reaper") {
-			t.Fatal("folded category still lists its children")
-		}
+	if m.pendingAction != "" || m.top() == scrConfirm {
+		t.Fatal("Enter on a category must not start an install")
 	}
 
-	// Right arrow re-opens it, and the cursor stays on the same row.
-	m.setupPicker = m.setupPicker.SelectIndex(0)
-	mm, _ := m.update(tuikit.PickerSortMsg{Dir: 1})
-	if !mm.folderOpen["apps"] {
-		t.Fatal("→ should re-open the category")
+	// The arrows still do it, both ways.
+	mm, _ := m.update(tuikit.PickerSortMsg{Dir: -1})
+	if mm.folderOpen["apps"] {
+		t.Fatal("← should fold the category")
 	}
 	if mm.setupPicker.SelectedValue() != folderValue("apps") {
 		t.Fatalf("cursor jumped on fold: %q", mm.setupPicker.SelectedValue())
+	}
+	// While collapsed, the children really are gone from the list.
+	for _, it := range mm.setupPicker.items {
+		if it.Value == setupValue("apps", "reaper") {
+			t.Fatal("← left the children listed under a collapsed category")
+		}
+	}
+	mm, _ = mm.update(tuikit.PickerSortMsg{Dir: 1})
+	if !mm.folderOpen["apps"] {
+		t.Fatal("→ should re-open the category")
+	}
+	found := false
+	for _, it := range mm.setupPicker.items {
+		if it.Value == setupValue("apps", "reaper") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("→ did not bring the children back")
 	}
 }
 
@@ -193,33 +210,6 @@ func TestSetupEnterOnModuleUninstalls(t *testing.T) {
 	}
 	if len(m.pendingArgs) != 1 || m.pendingArgs[0] != "live-mode" {
 		t.Fatalf("pendingArgs = %q, want [live-mode]", m.pendingArgs)
-	}
-}
-
-// TestSetupApplyKey covers the "a" shortcut that applies the whole ticked
-// selection in one run, including the "nothing ticked" guard.
-func TestSetupApplyKey(t *testing.T) {
-	m := flatSetup()
-	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	if m.top() != scrSetup {
-		t.Fatalf("'a' with an empty selection should stay put and warn, top=%d", m.top())
-	}
-
-	m.selected[setupValue("apps", "reaper")] = true
-	m.selected[setupValue("mosquito", "live-mode")] = true
-	m.setupPicker = m.rebuildSetup()
-	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	if m.top() != scrConfirm {
-		t.Fatalf("'a' with a selection should confirm, top=%d", m.top())
-	}
-	if m.pendingAction != "apply" {
-		t.Fatalf("pendingAction = %q want apply", m.pendingAction)
-	}
-	if len(m.pendingArgs) != 2 {
-		t.Fatalf("pendingArgs = %q, want one group per ticked category", m.pendingArgs)
-	}
-	if !strings.Contains(m.pendingArgs[0], "reaper") || !strings.Contains(m.pendingArgs[1], "live-mode") {
-		t.Fatalf("pendingArgs lost a ticked module: %q", m.pendingArgs)
 	}
 }
 
