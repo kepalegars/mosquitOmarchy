@@ -147,36 +147,74 @@ install_shell_state() {
 install_menu_entry() {
   # No more ~/.local/share/applications .desktop: a .desktop is an APP in the
   # Omarchy menu "Apps" provider — the user wants the manager ONLY in the
-  # Setup ▸ mosquito category (the marked menu block). Old copies (from
-  # earlier versions) are removed to avoid duplicate entries.
+  # Setup ▸ mosquito category (the marked menu block in omarchy-menu.jsonc).
+  # Old copies (from earlier versions) are removed to avoid duplicate entries.
   rm -f "$APPS_DIR/install.mosquitomarchy.desktop"
   update-desktop-database "$APPS_DIR" 2>/dev/null || true
-  ok "No apps .desktop for the manager (Setup ▸ mosquito entry carries it)"
+
+  # And the shell.json reference to it goes too, because it dangles. The bar
+  # layout used to list "install.mosquitomarchy" in entries.right, which only
+  # ever resolved to that .desktop; with the .desktop gone the bar asks for an
+  # entry NOTHING provides, so it renders a permanent empty slot. The launcher
+  # belongs in the Omarchy menu (setup.mosquito, written by
+  # mosquitomarchy-setup.sh's restore_flow), not in the bar.
+  strip_shell_entry
+
+  if menu_entry_present; then
+    ok "Menu entry present (Setup ▸ mosquito ▸ mosquitOmarchy)"
+  else
+    warn "Not in the Omarchy menu yet — run the 'mosquitomarchy' module of mosquitomarchy-setup.sh."
+  fi
 }
 
-install_shell_plugin() {
-  mkdir -p "$(dirname "$SHELL_JSON")"
-  if [[ -f "$SHELL_JSON" ]] && grep -qF 'install.mosquitomarchy' "$SHELL_JSON"; then
-    ok "Shell entry already registered."
-  else
-    if [[ -f "$SHELL_JSON" ]]; then
-      python3 - "$SHELL_JSON" <<'PY'
-import json, sys
+# Removes the dead "install.mosquitomarchy" bar entry from shell.json, leaving
+# the rest of the layout untouched. Best-effort: a shell.json we cannot parse
+# is reported, never rewritten blind.
+strip_shell_entry() {
+  [[ -f $SHELL_JSON ]] || return 0
+  grep -qF 'install.mosquitomarchy' "$SHELL_JSON" || return 0
+  python3 - "$SHELL_JSON" <<'PY'
+import json, os, sys
 p = sys.argv[1]
-with open(p) as fh:
-    data = json.load(fh)
-right = data.setdefault("entries", {}).setdefault("right", [])
-if "install.mosquitomarchy" not in right:
-    right.append("install.mosquitomarchy")
+try:
+    with open(p) as fh:
+        data = json.load(fh)
+except Exception as e:
+    sys.stderr.write("shell.json is not valid JSON (%s) — left untouched\n" % e)
+    sys.exit(1)
+removed = 0
+for side in ("left", "center", "right"):
+    row = data.get("entries", {}).get(side)
+    if isinstance(row, list) and "install.mosquitomarchy" in row:
+        data["entries"][side] = [e for e in row if e != "install.mosquitomarchy"]
+        removed += 1
+if not removed:
+    sys.exit(0)
 with open(p, "w") as fh:
     json.dump(data, fh, indent=2)
     fh.write("\n")
 PY
-    else
-      printf '{"entries":{"right":["install.mosquitomarchy"]}}\n' > "$SHELL_JSON"
-    fi
-    ok "Shell entry registered (install.mosquitomarchy)."
+  if [[ $? == 0 ]]; then
+    ok "Removed the dangling 'install.mosquitomarchy' bar entry (it pointed at a deleted .desktop)."
+  else
+    warn "Could not clean the stale 'install.mosquitomarchy' entry from shell.json."
   fi
+}
+
+# Is the launcher actually in the Omarchy menu? That is the marked
+# "setup.mosquito" key inside mosquitomarchy-setup.sh's own menu block.
+menu_entry_present() {
+  local menu="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
+  [[ -f $menu ]] || return 1
+  grep -qF '"setup.mosquito"' "$menu"
+}
+
+install_shell_plugin() {
+  mkdir -p "$(dirname "$SHELL_JSON")"
+  # The bar gets NO entry for the manager: it would point at an .desktop that
+  # deliberately does not exist. strip_shell_entry() removes a leftover one;
+  # nothing adds it back.
+  strip_shell_entry
   # Make sure the plugin is actually enabled (other plugin resets may have
   # disabled it; the update-check watchdog needs it active).
   omarchy plugin enable mosquito.indicators >/dev/null 2>&1 || true
@@ -189,8 +227,19 @@ do_status() {
   echo "dispatcher      : $([[ -x $DISPATCHER_DST ]] && echo "present" || echo absent)"
   echo "hyprland float   : $(grep -qF -e "$FLOAT_BEGIN" "$HYPRLAND" 2>/dev/null && echo installed || echo absent)"
   echo "post-boot hook   : $([[ -x $HOOK_FILE ]] && echo installed || echo absent)"
-  echo "menu entry       : $(grep -qF install.mosquitomarchy "$SHELL_JSON" 2>/dev/null && echo registered || echo absent)"
-  echo "shell plugins    : $(omarchy-shell shell listPlugins 2>/dev/null | python3 -c 'import json,sys;d=json.load(sys.stdin);print("on" if any(p["id"] in ("mosquito.confirm","custom.power") and p["enabled"] for p in d) else "partial/missing")')"
+  # "menu entry" used to be grepped out of shell.json, which reported the
+  # DEAD bar entry as a success: the .desktop it named was removed on purpose,
+  # so the check passed on a thing that could not launch anything. The real
+  # launcher is the "setup.mosquito" key in omarchy-menu.jsonc.
+  echo "menu entry       : $(menu_entry_present && echo "registered (Setup ▸ mosquito)" || echo "ABSENT — run the 'mosquitomarchy' module")"
+  # A leftover of the same dangling reference, called out separately so it is
+  # not mistaken for a working bar button.
+  if [[ -f $SHELL_JSON ]] && grep -qF 'install.mosquitomarchy' "$SHELL_JSON"; then
+    echo "stale bar entry  : YES — shell.json still asks for install.mosquitomarchy (no such .desktop)"
+  else
+    echo "stale bar entry  : none"
+  fi
+  echo "shell plugins    : $(omarchy-shell shell listPlugins 2>/dev/null | python3 -c 'import json,sys;d=json.load(sys.stdin);on=lambda i:any(p["id"]==i and p["enabled"] for p in d);print("on" if on("mosquito.confirm") and on("mosquito.indicators") else "partial/missing")')"
   echo "backend actions  : $([[ -e $BIN_DIR/mosquitomarchy-actions ]] && echo linked || echo absent)"
   echo "crash agent      : $([[ -e $BIN_DIR/mosquitomarchy-agent-crash ]] && echo linked || echo absent)"
   echo "crash skill      : $([[ -e $HOME/.agents/skills/mosquitomarchy-crash ]] && echo linked || echo absent)"
@@ -204,16 +253,11 @@ do_remove() {
     "$HOME/.agents/skills/mosquitomarchy-crash" && ok "Backend/crash links removed."
   rm -f "$APPS_DIR/install.mosquitomarchy.desktop" && update-desktop-database "$APPS_DIR" 2>/dev/null || true
   ok "Desktop entry removed."
-  [[ -f $SHELL_JSON ]] && python3 - "$SHELL_JSON" <<'PY' || true
-import json, sys
-try:
-    with open(sys.argv[1]) as fh: d = json.load(fh)
-    right = d.get("entries", {}).get("right", [])
-    d.setdefault("entries", {})["right"] = [r for r in right if r != "install.mosquitomarchy"]
-    with open(sys.argv[1], "w") as fh:
-        json.dump(d, fh, indent=2); fh.write("\n")
-except Exception: pass
-PY
+  # The same helper the install path uses, so both clean every bar side and a
+  # malformed shell.json is reported instead of swallowed (this inline python
+  # had a bare "except: pass", so a parse failure left the entry behind and
+  # printed "Shell entry removed" anyway).
+  strip_shell_entry
   ok "Shell entry removed."
   rm -f "$HOOK_FILE" && ok "Post-boot hook removed."
   if [[ -f $HYPRLAND ]] && grep -qF -e "$FLOAT_BEGIN" "$HYPRLAND"; then
