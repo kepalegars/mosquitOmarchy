@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# battery-status fixtures: each case builds a fake /sys/class/power_supply tree
+# so the detection logic can be proven without a laptop, a charger, or a
+# peripheral. Source the helpers, call `fixture <name>`, read the env var it
+# exports.
+set -uo pipefail
+
+BAT_STATUS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/battery-status"
+
+_fixture_root=""
+fixture() { # name is documentation only; the tree is what matters
+  _fixture_root="$(mktemp -d /tmp/opencode/batfix.XXXXXX)"
+  export OMARCHY_POWER_SUPPLY_PATH="$_fixture_root"
+}
+
+# add_battery <capacity%> <status> [power_now_uW] [energy_full_uWh] [start] [end]
+add_battery() {
+  # add_battery <cap%> <status> [power_now_uW] [energy_full_uWh] [start] [end] [time_to_X_now_s]
+  # The optional 7th arg pins time_to_empty_now / time_to_full_now to an exact
+  # value. Without it we derive one from the remaining charge, which is only an
+  # approximation — the kernel/upower value is what the machine really reports
+  # (the live reading for case 1 is 1h 36m = 5760 s, not the 1h 25m a naive
+  # remaining/draw division produces).
+  local cap="$1" st="$2" pn="${3:-}" ef="${4:-}" start="${5:-0}" end="${6:-100}" tsec="${7:-}"
+  local d="$_fixture_root/BAT0"
+  mkdir -p "$d"
+  echo Battery > "$d/type"
+  echo "$cap" > "$d/capacity"
+  echo "$st" > "$d/status"
+  printf '%s\n' "$start" > "$d/charge_control_start_threshold"
+  printf '%s\n' "$end" > "$d/charge_control_end_threshold"
+  [[ -n $ef ]] && echo "$ef" > "$d/energy_full"
+  [[ -n $pn ]] && echo "$pn" > "$d/power_now"
+  if [[ -n $tsec ]]; then
+    case "$st" in
+      Charging) echo "$tsec" > "$d/time_to_full_now" ;;
+      *)       echo "$tsec" > "$d/time_to_empty_now" ;;
+    esac
+  fi
+  return 0
+}
+
+# add_mains <online 0|1>
+add_mains() {
+  local d="$_fixture_root/AC"
+  mkdir -p "$d"
+  echo Mains > "$d/type"
+  echo "$1" > "$d/online"
+}
+
+# add_usb <online 0|1>  -- what a USB-C peripheral or PD source looks like
+add_usb() {
+  local d="$_fixture_root/ucsi-source-psy-USBC000:001"
+  mkdir -p "$d"
+  echo USB > "$d/type"
+  echo "$1" > "$d/online"
+  echo "System" > "$d/scope"
+}
+
+cleanup_fixture() { [[ -n $_fixture_root && -d $_fixture_root ]] && rm -rf "$_fixture_root"; }
+trap cleanup_fixture EXIT
+
+pass=0; fail=0
+expect_eq() { # label expected actual
+  if [[ "$2" == "$3" ]]; then
+    pass=$((pass+1)); printf '  ok   %s\n' "$1"
+  else
+    fail=$((fail+1)); printf '  FAIL %s\n       attendu: %s\n       obtenu : %s\n' "$1" "$2" "$3"
+  fi
+}
+expect_exit() { # label expected_rc command...
+  local label="$1" want="$2"; shift 2
+  local got=0
+  "$@" >/dev/null 2>&1 || got=$?
+  expect_eq "$label" "$want" "$got"
+}
+
+run() { "$BAT_STATUS" "$@" 2>/dev/null; }
+
+echo "== cas 1: aucun chargeur, décharge normale =="
+fixture; add_battery 47 Discharging 13841000 42000000 0 100 5760; add_mains 0; add_usb 0
+expect_eq "état = discharging" "discharging" "$(run --json | jq -r .state)"
+expect_eq "external=false" "false" "$(run --json | jq -r .externalPower)"
+expect_eq "taux = 13.8" "13.8" "$(run --json | jq -r .rate)"
+expect_eq "temps = 1h 36m" "1h 36m" "$(run --json | jq -r .time)"
+
+echo "== cas 2: périphérique USB-C branché (le bug) =="
+fixture; add_battery 47 Discharging 13841000 42000000 0 100 5760; add_mains 0; add_usb 1
+expect_eq "état = discharging (pas plugged)" "discharging" "$(run --json | jq -r .state)"
+expect_eq "external=false (périphérique ≠ chargeur)" "false" "$(run --json | jq -r .externalPower)"
+expect_exit "--external sort 1" 1 run --external
+expect_eq "pas de mention 'not charging'" "discharging" "$(run --json | jq -r .state)"
+
+echo "== cas 3: vrai chargeur sur AC (Mains) =="
+fixture; add_battery 40 Charging 18000000 42000000 0 100; add_mains 1; add_usb 0
+expect_eq "état = charging" "charging" "$(run --json | jq -r .state)"
+expect_eq "external=true" "true" "$(run --json | jq -r .externalPower)"
+expect_exit "--external sort 0" 0 run --external
+
+echo "== cas 4: chargeur USB-C PD (USB online + batterie en charge) =="
+fixture; add_battery 40 Charging 18000000 42000000 0 100; add_mains 0; add_usb 1
+expect_eq "état = charging" "charging" "$(run --json | jq -r .state)"
+expect_eq "external=true" "true" "$(run --json | jq -r .externalPower)"
+
+echo "== cas 5: chargeur USB-C, batterie pleine =="
+fixture; add_battery 100 FullyCharged 0 42000000 0 100; add_mains 0; add_usb 1
+expect_eq "état = full" "full" "$(run --json | jq -r .state)"
+expect_eq "taux = null (pas de 0.0W inventé)" "null" "$(run --json | jq -r '.rate')"
+expect_eq "temps = - (pas de champ vide)" "-" "$(run --json | jq -r .time)"
+
+echo "== cas 6: chargeur branché, batterie à 0 W sous seuil =="
+fixture; add_battery 80 "Not charging" 0 42000000 60 80; add_mains 0; add_usb 1
+expect_eq "état = holding" "holding" "$(run --json | jq -r .state)"
+expect_eq "external=true (chargeur présent)" "true" "$(run --json | jq -r .externalPower)"
+expect_eq "seuil = 60-80" "60" "$(run --json | jq -r .threshold.start)"
+expect_eq "taux = null" "null" "$(run --json | jq -r '.rate')"
+expect_eq "texte = holding at charge limit" "Battery 80%  ·  holding at charge limit  ·  42Wh" "$(run)"
+
+echo "== cas 7: décharge sous le seuil de bruit → pas de '0.0W' =="
+fixture; add_battery 44 Discharging 50000 42000000 0 100; add_mains 0; add_usb 0
+expect_eq "taux = null" "null" "$(run --json | jq -r '.rate')"
+expect_eq "temps = -" "-" "$(run --json | jq -r .time)"
+expect_eq "--shell n'émet PAS de clé rate" "0" "$(run --shell | grep -c '^rate' || true)"
+
+echo "== cas 7b: --shell émet un rate valide quand le courant coule =="
+fixture; add_battery 47 Discharging 13841000 42000000 0 100 5760; add_mains 0; add_usb 0
+expect_eq "rate = 13.8W" "13.8W" "$(run --shell | awk -F'\t' '/^rate/{print $2}')"
+expect_eq "state = discharging" "discharging" "$(run --shell | awk -F'\t' '/^state/{print $2}')"
+expect_eq "external-power = false" "false" "$(run --shell | awk -F'\t' '/^external-power/{print $2}')"
+
+echo "== cas 8: pas de batterie =="
+fixture; add_mains 1
+expect_eq "json vide" "{}" "$(run --json)"
+expect_eq "texte = No battery" "No battery" "$(run)"
+
+echo
+printf 'battery-status: %d ok, %d échec(s)\n' "$pass" "$fail"
+(( fail == 0 ))

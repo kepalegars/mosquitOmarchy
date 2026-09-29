@@ -127,6 +127,82 @@ notify() {
 
 is_running() { [[ -f "$STATE_FILE" ]] && [[ $(cat "$STATE_FILE") == "on" ]]; }
 
+# True when the lid-block inhibitor this session started is still alive.
+# A reboot kills the inhibitor but leaves the on-disk state behind, so the
+# state file alone is not proof of anything.
+inhibit_alive() {
+  local pid
+  pid=$(cat "$INHIBIT_PID_FILE" 2>/dev/null || true)
+  if [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+  # `setsid --fork` backgrounded the inhibitor: $! records the pid of the
+  # setsid parent, which exits right after forking its child — so the stored
+  # pid is routinely stale while the real inhibitor (systemd-inhibit → sleep
+  # infinity) is still running. Judge by the live process instead of a stale
+  # pid, or clear_stale_state would read the session as gone and instantly
+  # self-deactivate a freshly started coffee. Same pattern stop_lid_block
+  # kills by; the [..] stops the pgrep from matching its own command line.
+  pgrep -f "[s]ystemd-inhibit --what=handle-lid-switch:sleep" >/dev/null
+}
+
+# A reboot (or a kill) leaves state=on with no inhibitor behind: the coffee
+# icon stayed red and the menu entry stayed ticked, so the machine looked
+# like it was holding the user awake when nothing was running. The marker
+# files are the evidence — they only ever exist while a session is up.
+# Clear them and record "off". This NEVER re-activates anything: it only
+# discards a session that is already gone.
+clear_stale_state() {
+  is_running || return 0
+  inhibit_alive && return 0
+  # Live mode owns its own indicator state and runs no inhibitor; if its
+  # flag is there, the session is genuinely still on.
+  is_live_mode && return 0
+
+  # Only announce the cleanup when something is actually left to clean, so a
+  # plain `--status` poll from the indicator stays silent.
+  local had
+  had=false
+  for f in "$INHIBIT_PID_FILE" "$MAX_END_FILE" "$BATTERY_OVERRIDE_FILE" "$STAYAWAKE_PREV_FILE" "$TINT_PREV_FILE"; do
+    [[ -e $f ]] && had=true
+  done
+  # ALWAYS rewrite the state, even with nothing left to clean: the menu entry
+  # reads this file directly, so a reboot that happened to leave no marker
+  # files behind still showed a ticked coffee entry.
+  echo off > "$STATE_FILE"
+  [[ $had == true ]] || return 0
+
+  warn "Mega caffeine was left on by a reboot — the session was gone, clearing the stale state."
+  stop_lid_block
+  restore_tint
+  rm -f "$ULTRASAVE_WAS_FILE" "$MAX_END_FILE" "$BATTERY_OVERRIDE_FILE" "$INHIBIT_PID_FILE"
+  # The previous stay-awake value is meaningless now (the session that
+  # recorded it is gone), so just make sure the forced "on" is not left
+  # behind, without inventing a restore target.
+  rm -f "$STAYAWAKE_PREV_FILE"
+  if [[ -e $STAYAWAKE_FILE ]]; then
+    # It was forced on by that dead session: turn it back off.
+    apply_stayawake off
+  fi
+  refresh_widgets
+}
+
+# Exit status for the menu's "checked" expression: 0 when a session is really
+# running. The menu evaluates that expression on every refresh, so it is also
+# the earliest place a reboot's leftovers get noticed. The indicator's own
+# `--status` poll covers the icon, but neither of them ran on login, which is
+# why the coffee stayed red until the user opened the menu.
+menu_active() {
+  clear_stale_state
+  # Explicit 0/1: the cleanup runs commands (hyprctl, omarchy-shell) whose own
+  # exit codes would otherwise leak out of the function and be read as the
+  # answer to "is it on?".
+  if is_running; then
+    return 0
+  fi
+  return 1
+}
+
 # Live mode (scripts/plugins/live-mode): mega caffeine is locked on for the session.
 LIVE_FLAG="${CAFFEINE_LIVE_FLAG:-$HOME/.local/state/live-mode/active}"
 is_live_mode() { [[ -f "$LIVE_FLAG" ]]; }
@@ -285,7 +361,10 @@ cpu_temp() {
   [[ -n $temp ]] && echo $((temp / 1000)) || echo 0
 }
 
-current_tint() { hyprctl hyprsunset temperature 2>/dev/null | grep -oE '[0-9]+' | head -1; }
+# `|| true` for the same reason as in restore_tint: this is a probe, and under
+# `set -e` a missing hyprctl must read as "no tint" instead of aborting
+# whatever called it.
+current_tint() { hyprctl hyprsunset temperature 2>/dev/null | grep -oE '[0-9]+' | head -1 || true; }
 
 hyprsunset_running() { pgrep -x hyprsunset >/dev/null; }
 
@@ -319,10 +398,16 @@ restore_tint() {
   local prev hvrs
   prev=$(cat "$TINT_PREV_FILE" 2>/dev/null || true)
   hvrs=$(cat "$TINT_HYPRSUNSET_FILE" 2>/dev/null || true)
+  # The `|| true` is load-bearing, not noise. These run under `set -e`, and a
+  # bare failing hyprctl (no Wayland session, hyprctl missing, hyprsunset not
+  # running) killed the whole function mid-way: the caller never reached the
+  # rm calls, so the reboot-leftover files survived and the state file was left
+  # half-cleaned. Restoring a colour is cosmetic and must never be able to
+  # abort the cleanup that reports "caffeine is really off".
   if [[ -n $prev && $prev != "$RED_TEMP" ]]; then
-    hyprctl hyprsunset temperature "$prev" >/dev/null 2>&1
+    hyprctl hyprsunset temperature "$prev" >/dev/null 2>&1 || true
   else
-    hyprctl hyprsunset temperature "$IDENTITY_TEMP" >/dev/null 2>&1
+    hyprctl hyprsunset temperature "$IDENTITY_TEMP" >/dev/null 2>&1 || true
   fi
   if [[ $hvrs != "yes" ]]; then
     sleep 0.3
@@ -519,7 +604,11 @@ start_caffeine() {
   setsid --fork bash "$SELF" --monitor </dev/null >/dev/null 2>&1 &
   refresh_widgets
 
-  notify "Mega caffeine" "Always awake <b>no matter what</b>* for $(fmt_duration "$MAX_MINUTES")" normal persist
+  if (( MAX_MINUTES > 0 )); then
+    notify "Mega caffeine" "Always awake <b>no matter what*</b> for $(fmt_duration "$MAX_MINUTES")" normal persist
+  else
+    notify "Mega caffeine" "Always awake <b>no matter what*</b> for unlimited time" normal persist
+  fi
   ok "Mega caffeine activated."
 }
 
@@ -615,6 +704,7 @@ monitor() {
 # ---------------------------------------------------------------------------
 
 print_status() {
+  clear_stale_state
   if is_running; then
     local t b end now remain
     t=$(cpu_temp)
@@ -636,6 +726,9 @@ print_status() {
 }
 
 status_json() {
+  # A status poll is the only thing that reliably runs after a reboot, so
+  # this is where a stale "on" gets noticed and cleared.
+  clear_stale_state
   local enabled=false
   is_running && enabled=true
   local end=0 now=0 remainingMinutes=0 unlimited=false stayawake
@@ -688,6 +781,10 @@ case "${1:-toggle}" in
     ;;
   toggle)
     shift
+    # Clear a reboot's leftovers BEFORE deciding, or the stale "on" makes a
+    # toggle read as "turn it off" and the menu item can never be switched
+    # back on until it is clicked twice.
+    clear_stale_state
     if is_running; then
       stop_caffeine
     else
@@ -700,6 +797,12 @@ case "${1:-toggle}" in
     ;;
   --status)
     status_json
+    ;;
+  --active)
+    # Exit code for the menu's "checked" field. Separate from `is_running` so
+    # the menu gets the honest answer (state AND a live inhibitor) instead of
+    # reading a state file a reboot left behind.
+    menu_active
     ;;
   probe|--probe)
     msg "probe: cpu=$(cpu_temp)°C battery=$(battery_pct)% tint=$(current_tint || echo -)K hyprsunset=$(hyprsunset_running && echo running || echo stopped)"

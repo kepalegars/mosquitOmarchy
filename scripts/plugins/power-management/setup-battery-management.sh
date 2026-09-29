@@ -111,6 +111,15 @@ if [[ $REMOVE == false ]]; then
   deploy_bin "ultra-save"
   deploy_bin "power-helper"
   deploy_bin "mega-caffeine"
+  # battery-status: corrected battery telemetry. The stock
+  # omarchy-battery-status / omarchy-power-present pair reports a USB-C
+  # PERIPHERAL as a charger (any type=USB supply with online=1), which made the
+  # machine claim it was charging while the battery drained, and rendered an
+  # empty time / 0.0W / no charging icon on real USB-C PD chargers that never
+  # flip the AC (type=Mains) flag. This fork decides from the battery's own
+  # status and only reports "-" instead of inventing a 0.0W. Tests:
+  # scripts/plugins/power-management/battery-status-test
+  deploy_bin "battery-status"
 
   [[ -d "$BIN_DIR" ]] && PATH="$BIN_DIR:$PATH"
 fi
@@ -497,7 +506,16 @@ $MENU_MC_START
     "description": "Coffee mode: laptop closed without sleeping, red tint, natural-language duration",
     "aliases": ["coffee", "cafe", "mode-cafe", "power-mode", "mosquito"],
     "when": "test -x $REAL_HOME/.local/bin/mega-caffeine",
-    "checked": "[[ \"\$(cat $REAL_HOME/.local/state/caffeine/state 2>/dev/null)\" == on ]]",
+    // NOT a plain read of ~/.local/state/caffeine/state: a reboot leaves that
+    // file saying "on" with no session behind it, so the entry stayed ticked
+    // and clicking it ran a "turn it off" for something already dead. The
+    // script's --active checks the state AND that the inhibitor is really
+    // running, and clears the leftover on the way.
+    //
+    // These MUST be // comments: the menu is JSONC and the installer validates
+    // it by stripping // lines. A # line here produced a menu that looked
+    // right in a diff and would not parse at all.
+    "checked": "$REAL_HOME/.local/bin/mega-caffeine --active",
     "action": "$REAL_HOME/.local/bin/mega-caffeine toggle"
   },
 $MENU_MC_END
@@ -592,7 +610,7 @@ if [[ $REMOVE == true ]]; then
   info "Uninstall complete: udev + sudoers + menu entry removed."
   echo "  Caffeine stopped and its state cleared."
   echo "  Ultra-save watchdog timer removed."
-  echo "  The scripts stay in $BIN_DIR (ultra-save, power-helper, mega-caffeine, ultra-save-watch):"
+  echo "  The scripts stay in $BIN_DIR (ultra-save, power-helper, mega-caffeine, battery-status, ultra-save-watch):"
   echo "    use the 'battery' module of mosquitomarchy-setup.sh --uninstall to remove them too."
 else
   info "Setup complete. Summary:"
@@ -600,6 +618,7 @@ else
   echo "  • Watchdog              -> $BIN_DIR/ultra-save-watch (timer every 60s)"
   echo "  • Plugin helper         -> $BIN_DIR/power-helper + /usr/local/bin"
   echo "  • Coffee mode           -> $BIN_DIR/mega-caffeine (toggle/status)"
+  echo "  • Battery status        -> $BIN_DIR/battery-status (corrected charger/0W detection)"
   echo "  • Charge control (udev) -> thresholds writable by wheel (Lenovo P14s)"
   echo "  • Omarchy widget        -> custom.power plugin (charge limit + ultra-save)"
   echo "  • Omarchy overlay       -> mosquito.confirm plugin (native Yes/No prompts)"

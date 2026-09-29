@@ -65,9 +65,21 @@ Panel {
     var device = UPower.displayDevice
     return device && device.isPresent && device.state === UPowerDeviceState.FullyCharged && !root.chargeThresholdActive
   }
+  // "discharging" is what every label, phrase and profile choice keys off, and
+  // upstream takes it straight from UPower.onBattery. That inherits upower's
+  // own peripheral-as-charger confusion: a USB-C mouse cable could flip it to
+  // "not on battery" while the battery kept draining, which then rendered an
+  // empty "Time to full", a 0.0W rate and a non-charging icon. Prefer the
+  // corrected state that battery-status --shell reports, and only fall back to
+  // UPower.onBattery while that key has not arrived yet (first paint, or a
+  // refresh that briefly returned nothing).
   readonly property bool discharging: {
-    var device = UPower.displayDevice
-    return !!(device && device.isPresent && UPower.onBattery)
+    var d = UPower.displayDevice
+    if (!(d && d.isPresent)) return false
+    var s = batteryInfo.state
+    if (s === "discharging") return true
+    if (s === "charging" || s === "full" || s === "holding" || s === "plugged") return false
+    return !!UPower.onBattery
   }
   readonly property bool chargeThresholdActive: {
     var device = UPower.displayDevice
@@ -349,7 +361,15 @@ Panel {
 
   Process {
     id: batteryProc
-    command: ["omarchy-battery-status", "--shell"]
+    // mosquito's battery-status instead of omarchy-battery-status: the stock
+    // one reports a USB-C PERIPHERAL as a charger (any type=USB online=1) and
+    // renders a blank time / 0.0W / no charging icon on real USB-C PD chargers
+    // that never flip the AC (type=Mains) flag. Same --shell key/value
+    // contract, corrected state (charging|discharging|full|holding|plugged),
+    // "-" instead of an empty field, plus an extra external-power key. See
+    // scripts/plugins/power-management/battery-status in the mosquitOmarchy
+    // repo and its battery-status-test fixtures.
+    command: ["battery-status", "--shell"]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateKeyValue(text, "battery") }
   }
 
