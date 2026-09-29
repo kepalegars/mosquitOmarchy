@@ -2030,7 +2030,7 @@ $MENU_MOSQUITO_START
     "icon": "\ueba6",
     "label": "Live Mode Manager",
     "description": "Performance session mode: stay-awake, thermal guard, routing tool",
-    "aliases": ["live", "live-mode", "mlm", "mim"],
+    "aliases": ["live", "live-mode", "mlm", "mlmm", "mim"],
     "when": "test -x $BIN_DIR/mosquito-live-mode-tui",
     "action": "omarchy-launch-or-focus-tui mosquito-live-mode-tui"
   },
