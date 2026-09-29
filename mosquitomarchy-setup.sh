@@ -500,6 +500,19 @@ st_handbrake(){
     && grep -qF -- "Omarchy_Custom_Scripts_Handbrake" "$HOME/.config/hypr/hyprland.lua" \
     && echo ok || echo partial
 }
+st_extracto(){
+  # extracto is a simple custom install script for file-roller: the package is
+  # what brings Nautilus' Extract Here / Create Archive back, and our glue is
+  # the Nautilus script + the hidden package entry + the Hyprland rule. Report
+  # partial when the package is there but our glue is not.
+  pkg_has file-roller || { echo missing; return; }
+  local s="$HOME/.local/share/nautilus/scripts/Extract with password"
+  local s_old="$HOME/.local/share/nautilus/scripts/Extract-with-password"
+  local h="$HOME/.config/hypr/hyprland.lua"
+  local d="$HOME/.local/share/applications/org.gnome.FileRoller.desktop"
+  [[ -f $s || -f $s_old ]] && { [[ -f $h ]] && grep -qF -- "extracto-setup" "$h"; } \
+    && { [[ -f $d ]] && grep -q '^NoDisplay=true' "$d" && grep -q '^Exec=' "$d"; } && echo ok || echo partial
+}
 st_apps(){
   # "apps" module: no single binary — reports how many apps/tuis from the
   # catalogs (per type) are not installed (webapps are tracked by omarchy).
@@ -547,6 +560,7 @@ MODULES=(
   "keybindings:SUPER keybindings manager (app launches + quick functions — bindings.lua marker block)"
   "mosquitomarchy-update:Update watchdog (scripts update first, then Omarchy updates — notification + opencode conflict review)"
   "superfile:SuperFile — terminal file manager (menu entry + keybind + Omarchy theme)"
+  "extracto:Simple custom install script for file-roller — restores Nautilus' Extract Here / Create Archive (file-roller + 7zip + unrar) and adds a password-aware extraction script; no desktop entry"
   "zen:Zen Browser config — plugins + settings + chrome theme (deployed into the active profile)"
   "jamjamjam-plugin:JamJamJam bar plugin — key/BPM/chord detection, chord progression grid, guitar fretboard scale, MIDI chord mode + synth"
   "live-mode:Live mode — performance session mode (stay-awake + thermal guard + routing tool in scratchpad: live-mode / live-mode-watch / live-mode-root + its row in Setup > mosquito + QML overlay)"
@@ -716,6 +730,7 @@ module_state(){
     keybindings) st_keybindings ;;
     keepassxc) st_keepassxc ;; mosquitomarchy-update) st_mosquitomarchy_update ;;
     superfile) st_superfile ;;
+    extracto) st_extracto ;;
     zen) st_zen ;;
     jamjamjam-plugin) st_jamjamjam_plugin ;;
     live-mode) st_live_mode ;;
@@ -740,6 +755,7 @@ module_of_path(){
     scripts/apps/davinci/*)                                  echo davinci ;;
     scripts/apps/ableton-move-*|scripts/apps/ableton-move/*) echo ableton-move-manager ;;
     scripts/apps/handbrake/*)                                echo handbrake ;;
+    scripts/apps/extracto/*)                                 echo extracto ;;
     scripts/apps/gui/*|scripts/apps/tui-tools/*|scripts/apps/webapps/*|\
     scripts/apps/setup-apps.sh|scripts/apps/uninstall-apps.sh|scripts/lib/common.bash) echo apps ;;
     scripts/LLM/*)                                           echo ollama ;;
@@ -2293,6 +2309,35 @@ PY
   fi
 }
 
+un_extracto(){
+  info "Uninstalling extracto (module extracto)"
+  # Our own glue first: the script knows the exact markers/paths it wrote.
+  if [[ -x "$EXTRACTO_DIR/setup-extracto.sh" ]]; then
+    bash "$EXTRACTO_DIR/setup-extracto.sh" --remove
+  else
+    # Fall back to removing the markers by hand if the script is gone.
+    [[ -f "$HYPRLAND" ]] && sed -i "\|extracto-setup >>>|,/extracto-setup <<<|d" "$HYPRLAND" 2>/dev/null && ok "Hyprland block removed" || true
+    rm -f "$HOME/.local/share/nautilus/scripts/Extract with password" "$HOME/.local/share/nautilus/scripts/Extract-with-password" && ok "Nautilus script removed" || true
+    rm -f "$HOME/.local/share/applications/org.gnome.FileRoller.desktop" && ok "file-roller entry un-hidden" || true
+  fi
+  [[ -f "$HYPRLAND" ]] && hyprctl reload >/dev/null 2>&1 || true
+  # Hand the archive mime defaults back to Nautilus so the user is not left
+  # with dangling associations pointing at a file-roller that may go away.
+  command -v xdg-mime >/dev/null 2>&1 && {
+    for t in application/zip application/x-7z-compressed application/x-iso9660-image; do
+      xdg-mime default org.gnome.Nautilus.desktop "$t" 2>/dev/null || true
+    done
+    ok "archive defaults handed back to Nautilus"
+  }
+  if (( PURGE )); then
+    mq_sudo pacman -Rns --noconfirm file-roller unrar 2>/dev/null \
+      && ok "file-roller/unrar packages removed (7zip kept: other tools use it)" \
+      || warn "packages not removed (sudo required or already absent)"
+  else
+    warn "file-roller/7zip/unrar kept (--purge to remove file-roller)."
+  fi
+}
+
 un_apps(){
   # Delegates to apps/uninstall-apps.sh: removes the apps / tuis / webapps of the
   # catalogs (per type: gui/ tui/ webapps/) — packages via pacman -Rns +
@@ -2583,6 +2628,7 @@ uninstall_module(){
     davinci-resolve) un_davinci ;;
     ableton-move-manager) un_ableton_move_converter ;;
     handbrake) un_handbrake ;;
+    extracto) un_extracto ;;
     apps) un_apps ;;
     ollama) un_ollama ;;
     remove-ai) un_remove_ai ;;
@@ -2682,6 +2728,7 @@ ABLETON_DIR="$APPS_DIR/ableton"
 GUITARPRO_DIR="$APPS_DIR/guitarpro"
 DAVINCI_DIR="$APPS_DIR/davinci"
 HANDBRAKE_DIR="$APPS_DIR/handbrake"
+EXTRACTO_DIR="$APPS_DIR/extracto"
 MOVE_CONVERTER_DIR="$SCRIPTS/apps/ableton-move-manager"
 BATTERY_DIR="$SCRIPTS/plugins/power-management"
 DISPLAY_DIR="$SCRIPTS/fixes"
@@ -2793,6 +2840,15 @@ run_handbrake(){
   # HandBrake Qt GUI + CLI, H.264/H.265 encoders, presets sync (presets/ folder)
   # and Hyprland compatibility rules. Presets must NOT be running in the GUI.
   bash "$HANDBRAKE_DIR/setup-handbrake.sh" $([[ $YES == 1 ]] && echo -y)
+}
+
+run_extracto(){
+  # Archive Extractor: file-roller (Nautilus "Extract Here" / "Create
+  # Archive") + 7zip for password-protected archives, our default mime
+  # associations, the menu entry and the floating Hyprland rule.
+  [[ -x "$EXTRACTO_DIR/setup-extracto.sh" ]] \
+    && bash "$EXTRACTO_DIR/setup-extracto.sh" $([[ $YES == 1 ]] && echo -y) \
+    || { warn "$EXTRACTO_DIR/setup-extracto.sh not found"; return 1; }
 }
 
 run_apps(){
@@ -3075,6 +3131,7 @@ exec_modules(){
       davinci-resolve) run_module davinci-resolve run_davinci ;;
       ableton-move-manager) run_module ableton-move-manager run_ableton_move_converter ;;
       handbrake) run_module handbrake run_handbrake ;;
+      extracto) run_module extracto run_extracto ;;
       apps) run_module apps run_apps ;;
       ollama)  run_module ollama run_ollama ;;
       remove-ai) run_module remove-ai run_restore_ai ;;
