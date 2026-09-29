@@ -289,7 +289,12 @@ func (m model) titleLine() string {
 // bare dash. No input-source label sits next to it.
 func (m model) tunerText() string {
 	if !m.state.Mic.Available || m.state.Mic.Muted {
-		return tuikit.StyleWarn.Render("TUNER mic muted") + " " + tuikit.StyleMuted.Render(m.tunerGauge(0, false))
+		// Red, matching the panel's "mic muted" treatment: a cut mic is an
+		// error state, not a warning. ColorRed is the theme's true red --
+		// ColorErr is the warm orange and StyleWarn is yellow, both of which
+		// read as "fine, just no note" rather than "your mic is off".
+		return lipgloss.NewStyle().Foreground(tuikit.ColorRed).Render("TUNER mic muted") +
+			" " + tuikit.StyleMuted.Render(m.tunerGauge(0, false))
 	}
 	t := m.state.Tuner
 	if !t.Active {

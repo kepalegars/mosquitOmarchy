@@ -114,6 +114,15 @@ Panel {
   readonly property color foreground: Color.popups.text
   readonly property color accent: Color.accent
   readonly property color muted: Color.muted
+  // A cut microphone is a hard error, so it renders in the shell's error
+  // colour. Color has no `red` member (only foreground/background/accent/
+  // urgent/muted) — asking for one yields `undefined`, which QML rejects
+  // with "Unable to assign [undefined] to QColor" and then paints black on
+  // a near-black card. Color.urgent is the supported error token and is fed
+  // straight from the theme's `red`/`color1` key by Color.loadColors(), so
+  // on achraff-67 it is #ed1c24; themes without either key still get the
+  // built-in #a55555 red rather than nothing at all.
+  readonly property color micAlert: Color.urgent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   property bool midiSectionVisible: false
@@ -772,17 +781,33 @@ Panel {
 
             Column {
               anchors.centerIn: parent
+              // A Column is as wide as its widest VISIBLE child, and the
+              // children shown here change with the state: the "TUNER
+              // ● default mic" row and both hint lines are hidden while the
+              // mic is cut, and the big centre label also drops from
+              // Style.space(40) to Style.space(26). Every change resized the
+              // Column, and the cents track below is derived from it — so the
+              // gauge and its needle jumped on each state change. Pinning the
+              // Column to a fraction of the tuner box makes the layout
+              // identical in every state; every child already centres itself
+              // on parent.
+              width: parent.width - Style.space(96)
               spacing: Style.spacing.sm
 
               Row {
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: Style.spacing.sm
+                // The "TUNER" caption stays, but the input label beside it is
+                // HIDDEN while the mic is cut: it used to read "✕ mic" here
+                // while the big "mic muted" text sat right underneath, so the
+                // same condition was announced twice in the same box. One
+                // message, one place.
+                visible: !root.micCut
 
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
                   text: "TUNER"
-                  color: root.micCut ? root.contrastOn(Color.urgent, 0.16)
-                    : (root.tunerActive ? root.contrastOn(root.accent, 0.14) : root.muted)
+                  color: root.tunerActive ? root.contrastOn(root.accent, 0.14) : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
@@ -791,8 +816,8 @@ Panel {
 
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
-                  text: root.micCut ? "✕ mic muted" : "● default mic"
-                  color: root.micCut ? root.contrastOn(Color.urgent, 0.16) : root.muted
+                  text: "● default mic"
+                  color: root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                 }
@@ -805,21 +830,23 @@ Panel {
                   : (root.tunerActive
                     ? (root.tunerNote + (root.tunerOctave > 0 ? String(root.tunerOctave) : ""))
                     : "—")
-                color: root.micCut ? root.contrastOn(Color.urgent, 0.16)
+                color: root.micCut ? root.micAlert
                   : (root.tunerActive ? root.contrastOn(root.accent, 0.14) : root.muted)
                 font.family: root.fontFamily
-                font.pixelSize: root.micCut ? Style.space(20) : Style.space(40)
+                font.pixelSize: root.micCut ? Style.space(26) : Style.space(40)
                 font.bold: true
               }
 
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: root.micCut
-                  ? "unmute the default mic"
-                  : (root.tunerActive
-                    ? (root.tunerFreq > 0 ? "≈ " + root.tunerFreq.toFixed(1) + " Hz"
-                      : (root.inTune ? "in tune" : "·"))
-                    : "Sing or play a note…")
+                // No idle hint: while the tuner is off this line shows
+                // nothing at all rather than an invitation to play. It only
+                // appears once there is a reading, and it stays hidden while
+                // the mic is cut so the "mic muted" line is the whole message.
+                visible: root.tunerActive && !root.micCut
+                text: root.tunerFreq > 0
+                  ? "≈ " + root.tunerFreq.toFixed(1) + " Hz"
+                  : (root.inTune ? "in tune" : "·")
                 color: root.muted
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -877,11 +904,17 @@ Panel {
 
                 Rectangle {
                   id: tunerNeedle
-                  visible: root.tunerActive
+                  // Always drawn, like the track and the ticks around it.
+                  // It used to vanish whenever the tuner went idle or the mic
+                  // was cut, which left a half-drawn gauge and made the box
+                  // look like it had lost a part. With no signal root.cents
+                  // is 0, so the needle simply parks at centre.
                   width: 3
                   height: parent.height
                   radius: 1.5
-                  color: root.inTune ? root.accent : Color.urgent
+                  color: !root.tunerActive
+                    ? Util.alpha(Color.foreground, 0.4)
+                    : (root.inTune ? root.accent : Color.urgent)
                   x: {
                     var t = Math.max(-1, Math.min(1, root.cents / 50))
                     return (parent.width - width) / 2 + (parent.width - width) / 2 * t
@@ -891,13 +924,14 @@ Panel {
 
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: root.micCut
-                  ? "mic muted — unmute it to tune"
-                  : (root.tunerActive
-                    ? (root.inTune
-                      ? "IN TUNE"
-                      : ((root.cents < 0 ? "♭" : "♯") + " " + Math.round(Math.abs(root.cents)) + "¢"))
-                    : "Sing or play into the mic")
+                // No idle hint here either: with the tuner off this line is
+                // simply absent instead of inviting the user to play, and it
+                // also stays hidden while the mic is cut so "mic muted" is
+                // the only thing in the box.
+                visible: root.tunerActive && !root.micCut
+                text: root.inTune
+                  ? "IN TUNE"
+                  : ((root.cents < 0 ? "♭" : "♯") + " " + Math.round(Math.abs(root.cents)) + "¢")
                 color: root.inTune ? root.accent : root.muted
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption

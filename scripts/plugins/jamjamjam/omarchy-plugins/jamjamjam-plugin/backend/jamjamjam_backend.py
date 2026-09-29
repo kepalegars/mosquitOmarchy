@@ -2363,6 +2363,14 @@ class AudioAnalyzerBackend:
         """Refresh the microphone tuner independently of the analyzer recorder."""
         if self.tuner is None or self.tuner_recorder is None or not self.tuner_recorder.running:
             return
+        # The pitch detector spins on muted (silence) input and would show a
+        # moving needle with no audible note: surface a muted/absent mic as
+        # "no note" instead of a stale active reading.
+        if not self.mic_available or self.mic_muted:
+            if self.tuner_result.get("active"):
+                self.tuner_result = {"active": False, "freq": 0.0, "note": "", "octave": 0, "cents": 0.0}
+                self.dirty = True
+            return
         self.tuner_result = self.tuner.analyze()
         self.dirty = True
 
