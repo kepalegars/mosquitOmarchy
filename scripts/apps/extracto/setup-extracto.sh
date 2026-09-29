@@ -161,11 +161,26 @@ fi
 # ---------------------------------------------------------------------------
 msg "== 1/4 Packages (file-roller + 7zip + unrar) =="
 # file-roller = GUI + Nautilus C extension. 7zip = 7z/zip-AES/ISO/lha/lrzip.
-# unrar = the only backend that reliably applies a RAR password. --needed so
-# re-running never reinstalls.
-mq_sudo pacman -S --needed --noconfirm file-roller 7zip unrar || {
-  warn "some archive packages failed to install — continuing with what is there."
-}
+# unrar = the backend that applies a RAR password. --needed so re-running never
+# reinstalls.
+#
+# Skip pacman entirely when the three are already there. A plain
+# `pacman -S --needed` on an up-to-date machine still prints, in RED:
+#   warning: file-roller-44.7-1 is up to date -- skipping
+#   warning: 7zip-26.03-1 is up to date -- skipping
+#   warning: unrar-1:7.2.7-1 is up to date -- skipping
+#    there is nothing to do
+# which reads as a failure in a log that otherwise ends "completed without
+# error" — three red "warning" lines for a step that did exactly what was
+# asked. (The TUI judges a run by its exit code, not by these markers, so the
+# module really did pass; it just LOOKED broken.)
+if have file-roller && have 7z && have unrar; then
+  ok "already installed: file-roller + 7zip + unrar (nothing to do)"
+else
+  mq_sudo pacman -S --needed --noconfirm file-roller 7zip unrar || {
+    warn "some archive packages failed to install — continuing with what is there."
+  }
+fi
 
 if ! have file-roller; then
   err "file-roller is not available; Nautilus archive support cannot be restored."
@@ -253,7 +268,7 @@ fi
 # Done.
 # ---------------------------------------------------------------------------
 msg "== Done =="
-ok "file-roller + 7zip + unrar installed"
+ok "file-roller + 7zip + unrar present"
 ok "Nautilus: right-click an archive → Extract Here (and Create Archive)"
 ok "double-clicking an archive opens file-roller"
 echo
