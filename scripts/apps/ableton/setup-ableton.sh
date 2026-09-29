@@ -589,29 +589,22 @@ step_hypr_rules(){
   cat >> "$HYPR_FILE" <<'EOF'
 -- >>> ableton-setup >>> Ableton Live window handling.
 --
--- ABLETON REUSES ONE CLASS FOR EVERY WINDOW: the main window, the Browser, the
--- Device view, Session view, the plugin GUIs and the Max for Live editors are
--- all the same to the compositor. So the main window cannot be told apart by
--- class — a rule on the class would tile the floating dialogs too, and a rule
--- that floats everything would leave the main window floating.
--- It IS told apart by TITLE, and the shape of that title is the opposite of
--- what you would guess. Ableton puts the SONG FIRST and the product name LAST:
---   main window : "Untitled - Ableton Live 12 Suite", "MySong - Ableton Live 12 Suite"
---   its dialogs : "Ableton Live 12 Suite - Device", "Browser", "Device", "Session"
--- so the product name is what FOLLOWS the " - " separator, and
--- "^(.*) - Ableton Live" matches the main window and none of the dialogs.
--- (Anchoring on the product name instead matched every dialog and missed the
--- main window entirely, which is why Ableton kept coming up untiled.)
--- This is the same title-vs-class split the REAPER rules and Omarchy's own
--- davinci-resolve.lua use, for the same reason.
+-- Two rules, both of which the Ableton installer already needed:
+--   1. the Windows installer (wine / XWayland) floats — it is a small
+--      wizard with its own sizing and it crashes the tiled layout otherwise;
+--   2. every Ableton window is fully opaque, because Omarchy's default
+--      translucency makes a dark DAW unreadable.
 --
--- Order matters in Hyprland (a later matching rule wins), so the broad
--- class-wide rules come first and the main-window rule last.
+-- There is deliberately NO rule forcing the main window to tile. The Ableton
+-- installer never needed one: a DAW window opens into the tiled layout on its
+-- own (verified — Ableton lands on the same 1536x934 slot as every other
+-- single-window workspace). An explicit "tile the main window" rule was added
+-- and then removed: it changed nothing visible, and it was the only new thing
+-- in the config able to interfere with fullscreen, which the user reported
+-- breaking the moment it landed. Window rules apply at map time, so a rule
+-- that duplicates the default is pure downside.
 o.window({ class = "^ableton live 12 .*install.*$" }, { float = true })
 o.window({ class = "^ableton.*$" }, { tag = "-default-opacity", opaque = true })
--- Main window: tiled as soon as it opens, instead of floating wherever the
--- compositor happens to drop it.
-o.window({ class = "^ableton.*$", title = "^(.*) - Ableton Live" }, { float = false, tile = true })
 -- <<< ableton-setup <<<
 EOF
   added=1

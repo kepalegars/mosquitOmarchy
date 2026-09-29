@@ -29,6 +29,19 @@ var (
 	ColorErr      lipgloss.Color
 	ColorRed      lipgloss.Color
 	ColorBorder   lipgloss.Color
+	// ColorSubtle is the NEUTRAL tone for interface text — shortcut hints,
+	// legends, sub-titles, sub-lines. It is deliberately NOT the theme's
+	// "muted": achraff-67 defines muted as a saturated green (#4e9237), so
+	// every caption came out green, and a caption is not a status. dark_
+	// foreground is the theme's own neutral (a warm grey there, and a dim
+	// white in a light theme), so the same code reads correctly on both.
+	ColorSubtle lipgloss.Color
+	// ColorOnSurface is the high-contrast neutral for a structural glyph that
+	// sits on the panel (the folder icon): the theme's own foreground, so it is
+	// light on a dark theme and dark on a light one, and NEVER the theme's
+	// accent — on achraff-67 that is a lime, which made an unselected folder
+	// glow green.
+	ColorOnSurface lipgloss.Color
 
 	StyleHeader   lipgloss.Style
 	StyleMuted    lipgloss.Style
@@ -38,6 +51,9 @@ var (
 	StyleWarn     lipgloss.Style
 	StyleErr      lipgloss.Style
 	StyleHelp     lipgloss.Style
+	// StyleSubtle is a dimmer, italic variant for secondary lines that should
+	// recede further than a shortcut hint.
+	StyleSubtle lipgloss.Style
 	StyleModal    lipgloss.Style
 	StyleFrame    lipgloss.Style
 )
@@ -109,6 +125,8 @@ func applyPalette(p map[string]string) {
 	ColorMuted = pick("muted", "240")
 	ColorDisabled = pick("dark_foreground", "238")
 	ColorHeader = pick("bright_foreground", "99")
+	ColorSubtle = pick("dark_foreground", "245")
+	ColorOnSurface = pick("bright_foreground", "252")
 	ColorOK = pick("green", "42")
 	ColorWarn = pick("yellow", "214")
 	// Errors render in the theme's warm orange rather than its pure red --
@@ -130,7 +148,8 @@ func applyPalette(p map[string]string) {
 	StyleOK = lipgloss.NewStyle().Foreground(ColorOK)
 	StyleWarn = lipgloss.NewStyle().Foreground(ColorWarn)
 	StyleErr = lipgloss.NewStyle().Foreground(ColorErr)
-	StyleHelp = lipgloss.NewStyle().Foreground(ColorMuted)
+	StyleHelp = lipgloss.NewStyle().Foreground(ColorSubtle)
+	StyleSubtle = lipgloss.NewStyle().Foreground(ColorSubtle).Italic(true)
 	StyleModal = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ColorAccent).Padding(1, 2)
 	StyleFrame = lipgloss.NewStyle().Padding(1, 2)
 }

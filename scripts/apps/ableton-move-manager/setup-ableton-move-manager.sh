@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom — "mosquito Move Manager" (ableton-move-converter module)
+# Omarchy Custom — "mosquito Move Manager" (ableton-move-manager module)
 # =============================================================================
 # Central installer for the Ableton Move → Ableton Live → Bitwig Studio
 # workflow. Reproduces on a fresh machine:
@@ -42,7 +42,7 @@
 #   ./setup-ableton-move-manager.sh --status   # current state, without modifying anything
 #   ./setup-ableton-move-manager.sh -h         # help
 #
-# One-stop install/uninstall for the ableton-move-converter module:
+# One-stop install/uninstall for the ableton-move-manager module:
 #   • install   -> this script (menu option 1 / -y; also triggered by the
 #                  'move-session' module of mosquitomarchy-setup.sh once wired)
 #   • uninstall -> this script --uninstall, or the module of mosquitomarchy-setup.sh
@@ -96,12 +96,16 @@ REAL_HOME="${REAL_HOME:-$HOME}"
 BIN_DIR="$REAL_HOME/.local/bin"
 MENU_DIR="$REAL_HOME/.config/omarchy/extensions"
 MENU="$MENU_DIR/omarchy-menu.jsonc"
-MENU_START="// >>> Omarchy_Custom_Scripts - ableton-move-converter (managed by setup-ableton-move-manager.sh)"
-MENU_END="// <<< Omarchy_Custom_Scripts - ableton-move-converter (managed by setup-ableton-move-manager.sh)"
-# Legacy markers from the pre-rename installer — still present on some installs,
-# migrated to the new ones at the next install/remove (no duplicate entry).
-LEGACY_MENU_START="// >>> Omarchy_Custom_Scripts - managed by setup-move-session.sh"
-LEGACY_MENU_END="// <<< Omarchy_Custom_Scripts - managed by setup-move-session.sh"
+MENU_START="// >>> Omarchy_Custom_Scripts - ableton-move-manager (managed by setup-ableton-move-manager.sh)"
+MENU_END="// <<< Omarchy_Custom_Scripts - ableton-move-manager (managed by setup-ableton-move-manager.sh)"
+# Legacy markers, migrated to the current ones at the next install/remove (so
+# an install that still carries an old block never ends up with two). The
+# converter name is the immediate predecessor of ableton-move-manager; the
+# move-session one is older still.
+LEGACY_MENU_START="// >>> Omarchy_Custom_Scripts - ableton-move-converter (managed by setup-ableton-move-manager.sh)"
+LEGACY_MENU_END="// <<< Omarchy_Custom_Scripts - ableton-move-converter (managed by setup-ableton-move-manager.sh)"
+LEGACY_MENU_START2="// >>> Omarchy_Custom_Scripts - managed by setup-move-session.sh"
+LEGACY_MENU_END2="// <<< Omarchy_Custom_Scripts - managed by setup-move-session.sh"
 UDEV_SRC="$SCRIPT_DIR/99-ableton-move.rules"
 UDEV_DST="/etc/udev/rules.d/99-ableton-move.rules"
 CHROMIUM_POLICY_SRC="$SCRIPT_DIR/99-ableton-move-chromium-policy.json"
@@ -511,6 +515,15 @@ remove_stale_binary() {
     rm -f "$BIN_DIR/ableton-move-converter"
     ok "Stale legacy binary removed ($BIN_DIR/ableton-move-converter, renamed to mosquito-move-manager)"
   fi
+  # The INSTALLER was deployed under the old name too, and nothing ever removed
+  # it: scripts/apps/ableton-move-manager/setup-ableton-move-converter.sh (39 KB)
+  # kept sitting in ~/.local/bin next to the real one under its current name,
+  # which is both a stale duplicate and a second entry anyone could run by
+  # mistake.
+  if [[ -f "$BIN_DIR/setup-ableton-move-converter.sh" ]]; then
+    rm -f "$BIN_DIR/setup-ableton-move-converter.sh"
+    ok "Stale legacy installer removed ($BIN_DIR/setup-ableton-move-converter.sh)"
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -755,12 +768,12 @@ MC_EOF
 # a mutated/duplicate block is disambiguated: it is always replaced coherently.
 menu_block_range() {
   local file="$1" start="" end="" l
-  for m in "$MENU_START" "$LEGACY_MENU_START"; do
+  for m in "$MENU_START" "$LEGACY_MENU_START" "$LEGACY_MENU_START2"; do
     l=$(grep -nF "$m" "$file" 2>/dev/null | head -1 | cut -d: -f1)
     if [[ -n $l ]]; then start=$l; break; fi
   done
   [[ -n $start ]] || return 1
-  for m in "$MENU_END" "$LEGACY_MENU_END"; do
+  for m in "$MENU_END" "$LEGACY_MENU_END" "$LEGACY_MENU_END2"; do
     l=$(grep -nF "$m" "$file" 2>/dev/null | awk -F: -v s="$start" '$1 >= s { print $1; exit }')
     if [[ -n $l ]]; then end=$l; break; fi
   done

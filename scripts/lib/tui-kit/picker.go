@@ -226,9 +226,14 @@ func (d pickerDelegate) leadCell(pi PickerItem, selected bool) string {
 		return ""
 	}
 	if pi.Folder {
-		st := lipgloss.NewStyle().Foreground(ColorMuted)
+		// Neutral at rest, the theme's brightest neutral when selected. NOT the
+		// accent: on achraff-67 the accent is a lime, and an unselected folder
+		// glowing green read as a status, not as a shape. A glyph cannot be
+		// filled in a terminal, so "white when selected" is carried by the
+		// brightest foreground + bold weight.
+		st := lipgloss.NewStyle().Foreground(ColorOnSurface)
 		if selected {
-			st = lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
+			st = lipgloss.NewStyle().Foreground(ColorOnSurface).Bold(true)
 		}
 		return st.Render(FolderGlyph) + strings.Repeat(" ", max(0, d.badgeSlot-1))
 	}
