@@ -446,17 +446,20 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// Left/Right collapse/expand the folder under the cursor (the
 		// audio-plugin-manager's folder convention), not a sort.
 		switch m.top() {
-		case scrSetupCat:
-			folder := folderOfValue(m.setupCatPicker.SelectedValue())
-			if folder == "" {
-				return m, nil
+		case scrSetup:
+			// Left/Right fold the category under the cursor, on the ONE page:
+			// there is no second level to go into any more, so the arrows that
+			// used to sort here have nothing else to do.
+			if prefix, id, ok := tuikit.TreeSplit(m.setupPicker.SelectedValue()); ok && prefix == tuikit.TreeFolderPrefix {
+				if msg.Dir > 0 {
+					m.folderOpen[id] = true
+				} else {
+					delete(m.folderOpen, id)
+				}
+				keep := m.setupPicker.SelectedValue()
+				m.setupPicker = m.rebuildSetup()
+				m.setupPicker = m.setupPicker.KeepCursor(keep)
 			}
-			if msg.Dir > 0 {
-				m.folderOpen[folder] = true
-			} else {
-				delete(m.folderOpen, folder)
-			}
-			m.setupCatPicker = m.rebuildSetupCat()
 		case scrBackupOptions:
 			// Left/Right cycles/toggles the focused option (the "on/off /
 			// short list" convention): ← previous · → next.
@@ -973,6 +976,26 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.statusPicker, cmd = m.statusPicker.Update(msg)
 	case scrSetup:
+		// 'a' applies the current selection (install, or uninstall in
+		// uninstall mode). Enter is now context-sensitive — on a module it
+		// installs that one, on a category it folds it — so the batch apply
+		// needs its own key, and 'a' is the mnemonic.
+		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "a" && !m.filterOpen {
+			plan := m.applyPlan()
+			if len(plan) == 0 {
+				m.toast, _ = m.toast.SetWarn("nothing selected — tick something first (tab)")
+				return m, nil
+			}
+			m.pendingAction = "apply"
+			m.pendingArgs = plan
+			m.kpxGnomeRm = 0
+			m.pendingMsg = fmt.Sprintf("Install %d selected item(s)?\n\n%s", m.selectedCount(), m.selectionSummary())
+			m.pendingNo = "Cancel"
+			m.pendingYes = "Install"
+			m.push(scrConfirm)
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+			return m, nil
+		}
 		// 'f' toggles the filter zone above the shortcut bar: a rectangular
 		// search input that echoes every pressed key in real time.
 		if km, ok := msg.(tea.KeyMsg); ok {
@@ -1387,7 +1410,12 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.pop()
 			return m, nil
 		}
-		if strings.HasPrefix(res.Value, "item:") {
+		// The typing-filter view (m.filterText != "") is the ONLY case whose
+		// rows are bare "item:<folder>:<key>" leaves: there Enter acts on the
+		// ticked set. In the normal tree the item rows are handled further
+		// down, so without this guard the filter branch swallowed every module
+		// press and the apply/uninstall of a single module was impossible.
+		if m.filterText != "" && strings.HasPrefix(res.Value, "item:") {
 			// Typing-filter rows: Enter acts on the ticked leaf rows (or the
 			// focused row when nothing is ticked) — install in the Setup tree,
 			// uninstall in the Uninstall tree.
@@ -1436,36 +1464,61 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.updatePicker = m.rebuildUpdate()
 			return m, fetchUpdateCheckCmd()
 		}
-		if res.Value == "install-selection" {
-			plan := m.applyPlan()
-			if len(plan) == 0 {
-				m.toast, _ = m.toast.SetWarn("nothing selected")
-				return m, nil
-			}
-			m.pendingAction = "apply"
-			m.pendingArgs = plan
-			m.kpxGnomeRm = 0 // each install plan answers the gnome-keyring question again
-			m.pendingMsg = fmt.Sprintf("Install %d selected item(s)?\n\n%s", m.selectedCount(), m.selectionSummary())
-			m.pendingNo = "Cancel"
-			m.pendingYes = "Install"
-			m.push(scrConfirm)
-			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+		// Back closes the page, exactly as before.
+		if res.Value == "back" {
+			m.pop()
 			return m, nil
 		}
-		if res.Value == "uninstall-selection" {
-			keys := m.allSelectedKeys()
-			if len(keys) == 0 {
-				m.toast, _ = m.toast.SetWarn("nothing selected")
+		// Enter on a CATEGORY row folds it. The apply step is not a row any
+		// more — it is Enter on the page itself, handled by the key switch —
+		// so there is nothing to "open" here and pretending otherwise was what
+		// made a single navigation round trip necessary to install a module.
+		if strings.HasPrefix(res.Value, tuikit.TreeFolderPrefix) {
+			id := strings.TrimPrefix(res.Value, tuikit.TreeFolderPrefix)
+			if m.folderOpen[id] {
+				delete(m.folderOpen, id)
+			} else {
+				m.folderOpen[id] = true
+			}
+			keep := res.Value
+			m.setupPicker = m.rebuildSetup()
+			m.setupPicker = m.setupPicker.KeepCursor(keep)
+			return m, nil
+		}
+		// Enter on a MODULE row installs just that one: a single click for a
+		// single module, with no tick-then-apply round trip. Tab is still there
+		// to select several and apply them in one go.
+		if strings.HasPrefix(res.Value, tuikit.TreeItemPrefix) {
+			v := res.Value
+			if it, ok := m.setupByValue[v]; ok {
+				if it.Disabled {
+					m.toast, _ = m.toast.SetErr("nothing to do here")
+					return m, nil
+				}
+				folder, key := splitSetupValue(v)
+				// Uninstall mirrors install on the same page: Enter on a module
+				// removes exactly that one, in either mode.
+				if m.treeMode == "uninstall" {
+					m.pendingAction = "uninstall"
+					m.pendingArgs = []string{key}
+					m.pendingMsg = fmt.Sprintf("Uninstall %s?", it.Label)
+					m.pendingNo = "Cancel"
+					m.pendingYes = "Uninstall"
+					m.push(scrConfirm)
+					m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
+					return m, nil
+				}
+				plan := []string{strings.Join([]string{folder, key}, "\t")}
+				m.pendingAction = "apply"
+				m.pendingArgs = plan
+				m.kpxGnomeRm = 0
+				m.pendingMsg = fmt.Sprintf("Install %s?", it.Label)
+				m.pendingNo = "Cancel"
+				m.pendingYes = "Install"
+				m.push(scrConfirm)
+				m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
 				return m, nil
 			}
-			m.pendingAction = "uninstall"
-			m.pendingArgs = keys
-			m.pendingMsg = fmt.Sprintf("Uninstall %d selected item(s)?\n\n%s", len(keys), m.selectionSummary())
-			m.pendingNo = "Cancel"
-			m.pendingYes = "Uninstall"
-			m.push(scrConfirm)
-			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
-			return m, nil
 		}
 		if res.Value == "menu-entries" {
 			// "Menu entries" is a level-1 Setup row but NOT a category
@@ -1497,8 +1550,10 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.kbPicker = m.rebuildKB()
 			return m, nil
 		}
-		m.push(scrSetupCat)
-		m.setupCatPicker = m.rebuildSetupCat()
+		// Everything else on this page folds in place now (Enter on a category
+		// toggles it), so there is no second level to enter. This branch is
+		// unreachable for categories; it stays as a no-op guard so a future
+		// row that somehow falls through does not push a dead screen.
 		return m, nil
 
 	case scrPreinstalls:
@@ -2039,77 +2094,96 @@ func (m model) categoryInfo(folder string) string {
 	return b.String()
 }
 
+// rebuildSetup renders Setup and Uninstall as ONE flat page: every category is
+// a folder row and its modules are right there underneath it, folded open or
+// shut with Left/Right. There is no second level any more.
+//
+// It used to be two levels — a page of categories, Enter to descend into one,
+// tick rows, back, then an "Install selection" row to apply. That cost a whole
+// navigation round trip to select a single module and made the apply step a
+// separate thing to remember. Now Tab ticks a module where it is listed,
+// Left/Right folds the folder, and Enter applies the whole selection at once.
 func (m model) rebuildSetup() navPicker {
 	if m.filterText != "" {
 		return m.rebuildFilteredSetup()
 	}
 	idx := m.setupPicker.Index()
 	uninstall := m.treeMode == "uninstall"
-	items := make([]tuikit.PickerItem, 0, len(m.setupFolders)+4)
-	if !uninstall {
-		// Advertise available updates first (mosquitOmarchy scripts/repo + the
-		// changed apps/tuis/modules the update-check found) so Setup surfaces
-		// them automatically.
-		// One short row, "Update ■", sized like every other line in this menu.
-		// It used to spell the whole sentence out ("⟳ mosquitOmarchy update
-		// available — update the repo/scripts", then a second variant with a
-		// module count), which was twice the width of the options around it
-		// and read as a banner pasted into a list.
-		if m.updatePending() {
-			items = append(items, tuikit.PickerItem{Display: "Update", Value: "updates", TrailingBadge: "■"})
-		}
-	}
-	for _, f := range m.setupFolders {
-		// A Setup category IS a folder: it opens a submenu, it is not an
-		// installable option. The kit gives it the folder glyph + a bold
-		// label, so level 1 reads as "these are containers" at a glance.
-		it := tuikit.PickerItem{Display: f.Label, Value: folderValue(f.Folder), Folder: true}
-		// Keybindings is NOT a category of scripts: it is ONE screen. No
-		// count, no checkbox folder — Enter opens the manager directly.
-		if f.Folder != "keybindings" {
-			total := len(m.setupItemsOf(f.Folder))
-			if sel := m.categorySelectedCount(f.Folder); sel > 0 {
-				// A square (like the audio manager's applied-fix badge) plus the
-				// selected count: this category has checked items in its submenu.
-				it.Suffix = fmt.Sprintf("  (%d/%d)", sel, total)
-				it.TrailingBadge = "■"
-			} else if total > 0 {
-				it.Suffix = fmt.Sprintf("  (%d)", total)
-			}
-		}
-		if f.Accent {
-			it.Accent = m.blinkOn
-		}
-		items = append(items, it)
-	}
-	if !uninstall {
-		// "Menu entries" cleaner: un-check the entries mosquito adds
-		// automatically to the Omarchy menu (mega caffeine, live mode, the
-		// move converter, mosquitomarchy itself).
-		//
-		// The old "Menu entry" yes/no row is gone: install_menu_entry already
-		// registers the entry on every Setup run, so a row that only asked
-		// "add it again?" duplicated that and confused the singular/plural.
-		// "Menu entries" is the screen that actually manages them.
-		items = append(items, tuikit.PickerItem{Display: "Menu entries", Value: "menu-entries"})
+	out := make([]tuikit.PickerItem, 0, len(m.setupFolders)+8)
 
-		install := tuikit.PickerItem{Display: "Install selection", Value: "install-selection"}
-		if m.selectedCount() == 0 {
-			install.Disabled = true
-		}
-		items = append(items, install)
-	} else {
-		// Mirror of "Install selection": uninstall everything ticked in any
-		// submenu at once (greyed out and skipped when nothing is checked).
-		un := tuikit.PickerItem{Display: "Uninstall selection", Value: "uninstall-selection"}
-		if m.selectedCount() == 0 {
-			un.Disabled = true
-		}
-		items = append(items, un)
+	if !uninstall && m.updatePending() {
+		// Advertise an available update first, so Setup surfaces it on its
+		// own. One short row, sized like every other line in this menu.
+		out = append(out, tuikit.PickerItem{Display: "Update", Value: "updates", TrailingBadge: "■"})
 	}
-	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
-	return newNavPicker("", items).SetSize(m.contentSize()).
-		SetHelpKeys(key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search"))).
+
+	// Map the backend's records onto the kit's generic tree, skipping the
+	// quick-fixes folder: fixes are their own category, not module rows.
+	seen := map[string][]tuikit.TreeItem{}
+	for _, f := range m.setupFolders {
+		if f.Folder == "fixes" {
+			continue
+		}
+		for _, it := range m.setupItemsOf(f.Folder) {
+			v := setupValue(f.Folder, it.Key)
+			// BuildFolderTree writes the "item:" prefix itself, so the id here
+			// is the value the host will look up — setupValue()'s suffix,
+			// "<folder>:<key>" — with the folder in it so Enter can route a
+			// single-module install back to the right category.
+			row := tuikit.TreeItem{
+				ID:       f.Folder + ":" + it.Key,
+				Label:    it.Label,
+				Checked:  m.selected[v],
+				Info:     it.Info,
+				Disabled: it.Disabled,
+			}
+			if it.Disabled && row.Info == "" {
+				row.Info = "nothing left to do here"
+			}
+			seen[f.Folder] = append(seen[f.Folder], row)
+		}
+	}
+
+	// The folders are emitted one at a time above (open state applied per
+	// folder), so the tree is assembled here rather than by a single
+	// BuildFolderTree call: BuildFolderTree needs every folder's children up
+	// front, and open state is per folder.
+	for _, f := range m.setupFolders {
+		if f.Folder == "fixes" {
+			continue
+		}
+		tf := tuikit.TreeFolder{
+			ID:     f.Folder,
+			Label:  f.Label,
+			Total:  len(m.setupItemsOf(f.Folder)),
+			Marked: m.categorySelectedCount(f.Folder),
+			Accent: f.Accent,
+		}
+		if f.Folder == "keybindings" {
+			tf.Total, tf.Marked = 0, 0
+		}
+		out = append(out, tuikit.BuildFolderTree([]tuikit.TreeFolder{tf}, seen, m.folderOpen, m.blinkOn)...)
+	}
+
+	if !uninstall {
+		// "Menu entries" manages the rows mosquito adds to the Omarchy menu.
+		out = append(out, tuikit.PickerItem{Display: "Menu entries", Value: "menu-entries"})
+	}
+	out = append(out, tuikit.PickerItem{Display: "Back", Value: "back"})
+
+	enterHelp := "install"
+	if uninstall {
+		enterHelp = "uninstall"
+	}
+	return newNavPicker("", out).SetSize(m.contentSize()).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "select")),
+			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
+			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "open")),
+			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "close")),
+			key.NewBinding(key.WithKeys("a"), key.WithHelp("a", enterHelp)),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open / install this")),
+		).
 		SelectIndex(idx)
 }
 

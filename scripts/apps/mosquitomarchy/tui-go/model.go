@@ -343,7 +343,18 @@ func (m model) contentSizeW() int {
 }
 
 // setupValue is the stable picker/selection key for a Setup item.
-func setupValue(folder, key string) string { return "item:" + folder + ":" + key }
+func setupValue(folder, key string) string { return tuikit.TreeItemPrefix + folder + ":" + key }
+
+// splitSetupValue is the inverse of setupValue: it takes a leaf row's value
+// ("item:<folder>:<key>") back to the folder and the key, so Enter on a single
+// module can install that one without going through the tick list.
+func splitSetupValue(v string) (folder, key string) {
+	rest := strings.TrimPrefix(v, tuikit.TreeItemPrefix)
+	if i := strings.Index(rest, ":"); i >= 0 {
+		return rest[:i], rest[i+1:]
+	}
+	return "", rest
+}
 
 // folderValue is the picker key for a Setup folder row.
 func folderValue(folder string) string { return "cat:" + folder }

@@ -44,7 +44,11 @@ func TestBackupOptionsArrows(t *testing.T) {
 // checked items shows a ■ and its selected count, and "Install selection" is
 // disabled while nothing is checked.
 func TestSetupLevel1Markers(t *testing.T) {
-	newModel := func(selectReaper bool) model {
+	// Setup is ONE flat page now: category rows with their modules indented
+	// under them. This checks the parts that survived the rework — the "n/m"
+	// count on a category, the tree rows, and the removal of the
+	// "Install selection" row that Enter and `a` replaced.
+	newModel := func(selectReaper bool, open map[string]bool) model {
 		m := initialModel()
 		m.nav = []screen{scrMain, scrSetup}
 		m.w, m.h = 120, 40
@@ -56,6 +60,9 @@ func TestSetupLevel1Markers(t *testing.T) {
 		if selectReaper {
 			m.selected[setupValue("apps", "reaper")] = true
 		}
+		for k, v := range open {
+			m.folderOpen[k] = v
+		}
 		m.setupPicker = m.rebuildSetup()
 		return m
 	}
@@ -65,27 +72,39 @@ func TestSetupLevel1Markers(t *testing.T) {
 				return it
 			}
 		}
-		t.Fatalf("row %q not found", value)
+		t.Fatalf("row %q not found in %d rows", value, len(m.setupPicker.items))
 		return tuikit.PickerItem{}
 	}
 
-	m := newModel(true)
+	// Open the "apps" folder so its module row is present.
+	m := newModel(true, map[string]bool{"apps": true})
 	apps := find(m, folderValue("apps"))
-	if apps.TrailingBadge != "■" || !strings.Contains(apps.Suffix, "1/1") {
-		t.Fatalf("apps row should mark its selection: badge=%q suffix=%q", apps.TrailingBadge, apps.Suffix)
+	if !strings.Contains(apps.Suffix, "1/1") {
+		t.Fatalf("apps row should count its selection: suffix=%q", apps.Suffix)
 	}
-	if find(m, folderValue("tuis")).TrailingBadge != "" {
-		t.Fatal("tuis row should have no selection marker")
+	if !apps.Folder {
+		t.Fatal("apps row must be flagged Folder")
 	}
-	if find(m, "install-selection").Disabled {
-		t.Fatal("Install selection should be enabled when something is checked")
+	// The module lives on the SAME page now, indented under its category.
+	leaf := find(m, setupValue("apps", "reaper"))
+	if !strings.Contains(leaf.Display, "reaper") {
+		t.Fatalf("module row missing on the flat page: %q", leaf.Display)
+	}
+	// A collapsed folder shows no children.
+	closed := newModel(true, map[string]bool{"apps": false})
+	for _, it := range closed.setupPicker.items {
+		if it.Value == setupValue("apps", "reaper") {
+			t.Fatal("collapsed folder should not list its children")
+		}
+	}
+	// The "Install selection" row is gone; Enter / `a` apply directly.
+	for _, it := range m.setupPicker.items {
+		if it.Value == "install-selection" || it.Value == "uninstall-selection" {
+			t.Fatalf("selection row %q should no longer exist", it.Value)
+		}
 	}
 	if got := m.applyPlanCat("apps"); len(got) != 1 || !strings.Contains(got[0], "reaper") {
 		t.Fatalf("applyPlanCat(apps) = %q", got)
-	}
-
-	if find(newModel(false), "install-selection").Disabled != true {
-		t.Fatal("Install selection should be disabled with no selection")
 	}
 }
 

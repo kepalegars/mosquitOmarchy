@@ -54,8 +54,8 @@ var (
 	// StyleSubtle is a dimmer, italic variant for secondary lines that should
 	// recede further than a shortcut hint.
 	StyleSubtle lipgloss.Style
-	StyleModal    lipgloss.Style
-	StyleFrame    lipgloss.Style
+	StyleModal  lipgloss.Style
+	StyleFrame  lipgloss.Style
 )
 
 func init() {
