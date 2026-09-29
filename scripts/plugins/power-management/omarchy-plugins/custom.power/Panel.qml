@@ -238,8 +238,37 @@ Panel {
   function updateUltraStatus(raw) {
     var next = Model.parseKeyValue(raw)
     if (Object.keys(next).length === 0) return
+    var was = root.ultraSaveOn
     root.ultraSaveOn = next.state === "on"
     if (next.profile) root.liveProfile = next.profile
+    // Ultra-save is off: the charge-limit toast has nothing left to warn
+    // about, so it goes away by itself. It is sent with -t 0 (a notice the
+    // user must be able to come back to), and nothing else ever took it down —
+    // it survived the user turning ultra-save off, so the screen kept showing
+    // a warning about a mode that was no longer running. Every path that
+    // disables ultra-save converges here: the toggle, the AC plug-in, and the
+    // timer below.
+    if (was && !root.ultraSaveOn) {
+      ultraSaveLimitTimer.stop()
+      root.dismissChargeLimitNotice()
+    }
+  }
+
+  // Turns ultra-save off on purpose (not a toggle): the timer fires this when
+  // the charge limit was reached, and the toggle already calls power-helper
+  // itself.
+  function disableUltraSave() {
+    if (ultraOffProc.running) return
+    ultraOffProc.command = ["power-helper", "ultrasave", "off"]
+    ultraOffProc.running = true
+  }
+
+  // Takes the charge-limit notice down. The title must match the one it was
+  // sent with, or the daemon dismisses nothing and the toast stays put.
+  function dismissChargeLimitNotice() {
+    if (dismissNotifyProc.running) return
+    dismissNotifyProc.command = ["omarchy-notification-dismiss", "Charge limit reached"]
+    dismissNotifyProc.running = true
   }
 
   function updateChargeStatus(raw) {
@@ -326,6 +355,27 @@ Panel {
       "-g", glyph, "-u", "low", "-t", "0"
     ]
     chargeNotifyProc.running = true
+    // The limit exists so the battery lasts; ultra-save (dimmed screen, CPU
+    // caps, power-saver profile) is what makes it last, and past the ceiling it
+    // has nothing left to protect. Rather than leave it on until the user
+    // notices, give them a minute to read the notice and then turn it off by
+    // itself. Only armed while ultra-save is actually running — arming it
+    // otherwise would "disable" a mode that was already off and, on the way,
+    // dismiss a notice about a mode that was never on.
+    if (root.ultraSaveOn) ultraSaveLimitTimer.restart()
+  }
+
+  // The 1 minute the charge-limit notice stays up before ultra-save is turned
+  // off for the user. It is stopped (and the notice dismissed) the moment
+  // ultra-save goes off by any other route, so it can never fire into a state
+  // that no longer needs it.
+  Timer {
+    id: ultraSaveLimitTimer
+    interval: 60000
+    repeat: false
+    onTriggered: {
+      if (root.ultraSaveOn) root.disableUltraSave()
+    }
   }
 
   IpcHandler {
@@ -419,6 +469,20 @@ Panel {
 
   Process {
     id: chargeNotifyProc
+  }
+
+  // ultra-save turned off by the charge-limit timer (an explicit "off", never
+  // a toggle, so it cannot turn a mode ON by accident).
+  Process {
+    id: ultraOffProc
+    onExited: root.refreshPowerStatus()
+  }
+
+  // Takes the charge-limit toast back down. Fire-and-forget: nothing depends
+  // on the exit code, and a refresh here would fight the refresh the
+  // ultra-save transition already triggers.
+  Process {
+    id: dismissNotifyProc
   }
 
   Timer {
