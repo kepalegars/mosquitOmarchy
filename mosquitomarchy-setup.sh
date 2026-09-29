@@ -3173,7 +3173,7 @@ exec_modules(){
 
 # Categories of the "setup" action. id|label|modules (space-separated module ids).
 CATEGORIES=(
-  "apps|Apps|reaper audio ableton guitarpro davinci-resolve handbrake superfile zen keepassxc"
+  "apps|Apps|reaper audio ableton guitarpro davinci-resolve extracto handbrake superfile zen keepassxc"
   "tuis|TUIs|"
   "webapps|Webapps|"
   "plugins|Plugins|mosquitomarchy jamjamjam-plugin battery brightness keyboard-backlight touchpad mx-master"
