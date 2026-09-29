@@ -122,12 +122,22 @@ const (
 // Disabled alone.
 func inert(pi PickerItem) bool { return pi.Disabled || pi.Heading }
 
-// FolderGlyph marks a container row (PickerItem.Folder) in the leading slot,
-// in place of the ○/● checkbox. U+F07B is nf-fa-folder from the Nerd Font
-// range, which is what the terminals here are configured with
-// (CaskaydiaMono Nerd Font) — verified present in that font's cmap, so it
-// renders as a folder and not as a tofu box.
-const FolderGlyph = ""
+// Folder icons, drawn in the leading slot in place of the ○/● checkbox.
+//
+// They are U+25A2/U+25A3, i.e. Geometric Shapes — the SAME Unicode block as
+// the fold arrows (U+25B8/U+25BE), the cursor (U+25B6), the tick (U+25A0) and
+// the ○/● marks this picker already draws everywhere. A terminal that can
+// render the rest of the tree can render these, so the folder no longer needs
+// a Nerd Font glyph (U+F07B) to look like a folder: on a machine without
+// Nerd Font installed that codepoint was a tofu box, which is exactly the
+// "does this font have it?" fragility we were asked to drop.
+//
+// Empty for closed, filled for open, so the state is legible without relying
+// on the fold arrow alone.
+const (
+	FolderClosed = "▢"
+	FolderOpen   = "▣"
+)
 
 // trailingBadgeGap is the number of spaces placed between a row's title and
 // its TrailingBadge, so the marker reads as a suffix ("name  ■") rather than
@@ -226,16 +236,21 @@ func (d pickerDelegate) leadCell(pi PickerItem, selected bool) string {
 		return ""
 	}
 	if pi.Folder {
-		// Neutral at rest, the theme's brightest neutral when selected. NOT the
-		// accent: on achraff-67 the accent is a lime, and an unselected folder
-		// glowing green read as a status, not as a shape. A glyph cannot be
-		// filled in a terminal, so "white when selected" is carried by the
-		// brightest foreground + bold weight.
-		st := lipgloss.NewStyle().Foreground(ColorOnSurface)
+		// The glyph itself carries open vs closed, and the colour carries
+		// selected vs idle. A glyph cannot literally be "filled in" per state,
+		// so the selection cue is brightness + weight — the folder lights up
+		// when the cursor is on it. NOT the accent: on achraff-67 the accent is
+		// a lime, and an unselected folder glowing green read as a status
+		// rather than as a shape.
+		st := lipgloss.NewStyle().Foreground(ColorSubtle)
 		if selected {
 			st = lipgloss.NewStyle().Foreground(ColorOnSurface).Bold(true)
 		}
-		return st.Render(FolderGlyph) + strings.Repeat(" ", max(0, d.badgeSlot-1))
+		glyph := FolderClosed
+		if pi.Fold == FoldExpanded {
+			glyph = FolderOpen
+		}
+		return st.Render(glyph) + strings.Repeat(" ", max(0, d.badgeSlot-1))
 	}
 	return d.badgeCell(pi)
 }
@@ -520,7 +535,9 @@ func NewPicker(header string, items []PickerItem) Picker {
 		// folder glyph was clipped away and the folder rendered identically to
 		// a leaf — the one case the glyph exists to disambiguate.
 		if it.Folder {
-			if bw := lipgloss.Width(FolderGlyph) + 1; bw > badgeSlot {
+			// Both folder glyphs are one column wide, so measuring the closed
+			// one covers the open one too.
+			if bw := lipgloss.Width(FolderClosed) + 1; bw > badgeSlot {
 				badgeSlot = bw
 			}
 		}
