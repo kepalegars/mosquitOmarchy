@@ -2022,7 +2022,10 @@ func (m model) rebuildSetup() navPicker {
 		}
 	}
 	for _, f := range m.setupFolders {
-		it := tuikit.PickerItem{Display: f.Label, Value: folderValue(f.Folder)}
+		// A Setup category IS a folder: it opens a submenu, it is not an
+		// installable option. The kit gives it the folder glyph + a bold
+		// label, so level 1 reads as "these are containers" at a glance.
+		it := tuikit.PickerItem{Display: f.Label, Value: folderValue(f.Folder), Folder: true}
 		// Keybindings is NOT a category of scripts: it is ONE screen. No
 		// count, no checkbox folder — Enter opens the manager directly.
 		if f.Folder != "keybindings" {
@@ -2204,20 +2207,25 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 				marked++
 			}
 		}
-		mark := "○"
-		if len(children) > 0 && marked == len(children) {
-			mark = "●"
-		}
 		fold := tuikit.FoldCollapsed
 		if open[f.Folder] {
 			fold = tuikit.FoldExpanded
 		}
-		out = append(out, tuikit.PickerItem{
-			Display: mark + "  " + f.Label,
+		// Folder: a folder glyph in the leading slot + a bold label, with the
+		// "all of them ticked" mark moved to the trailing count. The leading
+		// column now only says what KIND of row this is, so a folder can be
+		// told from a leaf without reading the name.
+		folder := tuikit.PickerItem{
+			Display: f.Label,
 			Value:   folderValue(f.Folder),
 			Accent:  f.Accent && blinkOn,
 			Fold:    fold,
-		})
+			Folder:  true,
+		}
+		if total := len(children); total > 0 {
+			folder.Suffix = fmt.Sprintf("  (%d/%d)", marked, total)
+		}
+		out = append(out, folder)
 		if open[f.Folder] {
 			last := len(children) - 1
 			for i, it := range children {
@@ -2646,6 +2654,10 @@ func (m model) statusTree() []tuikit.PickerItem {
 			Display: m.categoryDisplayLabel(c),
 			Value:   "status-cat:" + c,
 			Accent:  c == "mosquito" && m.blinkOn,
+			Folder:  true,
+			// A Status category is a label, not a drill-in: the modules are
+			// all listed at once, so the cursor must step over the header.
+			Heading: true,
 		})
 		for _, s := range mods {
 			appendModule(s, "    ├─ ")
@@ -2654,7 +2666,7 @@ func (m model) statusTree() []tuikit.PickerItem {
 	// Modules with no category (the `apps` pseudo-module, mosquitomarchy-update)
 	// go last under an "Other" header so nothing is ever hidden.
 	if len(loose) > 0 {
-		items = append(items, tuikit.PickerItem{Display: "Other", Value: "status-cat:other"})
+		items = append(items, tuikit.PickerItem{Display: "Other", Value: "status-cat:other", Folder: true, Heading: true})
 		for _, s := range loose {
 			appendModule(s, "    ├─ ")
 		}

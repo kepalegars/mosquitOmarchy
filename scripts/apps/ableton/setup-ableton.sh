@@ -594,12 +594,16 @@ step_hypr_rules(){
 -- all the same to the compositor. So the main window cannot be told apart by
 -- class — a rule on the class would tile the floating dialogs too, and a rule
 -- that floats everything would leave the main window floating.
--- It IS told apart by TITLE: the main window's title starts with the product
--- name ("Ableton Live 12 Suite", "Ableton Live 12 Suite - <saved set>"),
--- while Ableton's own floating dialogs are titled after what they are
--- ("Browser", "Device", "Session", "Clip View") and a plugin editor after the
--- plugin. This is the same split the REAPER rules and Omarchy's own
--- davinci-resolve.lua use, for exactly the same reason.
+-- It IS told apart by TITLE, and the shape of that title is the opposite of
+-- what you would guess. Ableton puts the SONG FIRST and the product name LAST:
+--   main window : "Untitled - Ableton Live 12 Suite", "MySong - Ableton Live 12 Suite"
+--   its dialogs : "Ableton Live 12 Suite - Device", "Browser", "Device", "Session"
+-- so the product name is what FOLLOWS the " - " separator, and
+-- "^(.*) - Ableton Live" matches the main window and none of the dialogs.
+-- (Anchoring on the product name instead matched every dialog and missed the
+-- main window entirely, which is why Ableton kept coming up untiled.)
+-- This is the same title-vs-class split the REAPER rules and Omarchy's own
+-- davinci-resolve.lua use, for the same reason.
 --
 -- Order matters in Hyprland (a later matching rule wins), so the broad
 -- class-wide rules come first and the main-window rule last.
@@ -607,7 +611,7 @@ o.window({ class = "^ableton live 12 .*install.*$" }, { float = true })
 o.window({ class = "^ableton.*$" }, { tag = "-default-opacity", opaque = true })
 -- Main window: tiled as soon as it opens, instead of floating wherever the
 -- compositor happens to drop it.
-o.window({ class = "^ableton.*$", title = "^(Ableton Live[^/]*)" }, { float = false, tile = true })
+o.window({ class = "^ableton.*$", title = "^(.*) - Ableton Live" }, { float = false, tile = true })
 -- <<< ableton-setup <<<
 EOF
   added=1

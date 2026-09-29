@@ -80,9 +80,31 @@ type PickerItem struct {
 	// so a folder row shows exactly one marker: the cursor when it is not
 	// selected, and the fold state (rotating 90°) when it is. This is why the
 	// fold glyph must NOT be part of Display: as a label prefix it used to sit
-	// right next to the selection cursor ("▶ ▾ ○  Cursor") and read as a second,
+	// right next to the selection cursor ("▶ ▸ ○  Cursor") and read as a second,
 	// competing indicator. Empty = a plain row that only ever shows the cursor.
 	Fold string
+	// Folder marks this row as a CONTAINER (a category that holds other rows)
+	// rather than a selectable item. It swaps the leading ○/● checkbox for a
+	// folder glyph and bolds the title, so a folder can be told from a leaf at
+	// a glance without reading it — a tree of identical marks is unreadable
+	// once it is more than a screen deep.
+	//
+	// The glyph is brightest while the row holds the cursor, which is as close
+	// to "the folder fills in when selected" as a terminal gets: a glyph
+	// cannot be filled, so the cue is carried by weight and brightness.
+	//
+	// Folders stay SELECTABLE (Enter expands/collapses them); use Heading for a
+	// row that is neither.
+	Folder bool
+	// Heading marks a non-selectable section title: the cursor SKIPS it and
+	// Enter does nothing, but it still renders as a heading (accent block) and
+	// is not greyed out.
+	//
+	// Disabled was the previous tool for this and is wrong twice over: the
+	// cursor still landed on it in some screens, and Disabled renders the title
+	// in StyleDisabled, so a section title came out looking like an unavailable
+	// option instead of a header.
+	Heading bool
 }
 
 // Fold glyphs for PickerItem.Fold. A folder row shows one of these in the
@@ -92,6 +114,20 @@ const (
 	FoldCollapsed = "▸"
 	FoldExpanded  = "▾"
 )
+
+// inert reports whether the cursor must not stop on this row: an unavailable
+// option (Disabled) or a section title (Heading). Both are skipped by every
+// navigation path and are inert on Enter/Tab; they differ only in how they
+// RENDER (greyed vs accent heading), which is why the render switch tests
+// Disabled alone.
+func inert(pi PickerItem) bool { return pi.Disabled || pi.Heading }
+
+// FolderGlyph marks a container row (PickerItem.Folder) in the leading slot,
+// in place of the ○/● checkbox. U+F07B is nf-fa-folder from the Nerd Font
+// range, which is what the terminals here are configured with
+// (CaskaydiaMono Nerd Font) — verified present in that font's cmap, so it
+// renders as a folder and not as a tofu box.
+const FolderGlyph = ""
 
 // trailingBadgeGap is the number of spaces placed between a row's title and
 // its TrailingBadge, so the marker reads as a suffix ("name  ■") rather than
@@ -177,6 +213,30 @@ type pickerDelegate struct {
 // badgeCell renders a row's badge on its fixed leading slot: the accent
 // glyph followed by enough spaces to fill badgeSlot, or plain spaces when
 // the row has no badge. Returns "" when the picker reserved no slot.
+// leadCell renders the row's LEADING slot: the folder glyph for a container
+// row, otherwise the ○/● checkbox badge. Returns blank padding of exactly
+// d.badgeSlot columns so every row's title starts on the same offset.
+//
+// A folder's glyph is muted when the row is idle and bright+bold while the
+// cursor is on it. A glyph cannot literally be "filled" in a terminal, so the
+// selection cue is carried by weight and brightness — which reads as the
+// folder lighting up rather than as a second checkbox state.
+func (d pickerDelegate) leadCell(pi PickerItem, selected bool) string {
+	if d.badgeSlot <= 0 {
+		return ""
+	}
+	if pi.Folder {
+		st := lipgloss.NewStyle().Foreground(ColorMuted)
+		if selected {
+			st = lipgloss.NewStyle().Foreground(ColorAccent).Bold(true)
+		}
+		return st.Render(FolderGlyph) + strings.Repeat(" ", max(0, d.badgeSlot-1))
+	}
+	return d.badgeCell(pi)
+}
+
+// badgeCell renders a row's ○/● leading badge in the accent colour, padded to
+// the shared badge column.
 func (d pickerDelegate) badgeCell(pi PickerItem) string {
 	if d.badgeSlot <= 0 {
 		return ""
@@ -221,6 +281,18 @@ func (d pickerDelegate) titleStyleFor(pi PickerItem, index, selected int) lipglo
 			Bold(true)
 	}
 	return d.titleStyle(index, selected)
+}
+
+// folderTitleStyle is titleStyleFor plus BOLD for a container row, so a folder
+// reads as a container from the weight alone — it stays identifiable when the
+// row is scrolled half out of view or when the leading glyph is easy to miss.
+// Everything else (Accent, terminal box) is delegated unchanged.
+func (d pickerDelegate) folderTitleStyle(pi PickerItem, index, selected int) lipgloss.Style {
+	st := d.titleStyleFor(pi, index, selected)
+	if pi.Folder {
+		st = st.Bold(true)
+	}
+	return st
 }
 
 func (d pickerDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
@@ -271,7 +343,7 @@ func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, ite
 		// Accent block, so only the title blinks.
 		suffix = d.titleStyle(index, m.Index()).Render(pi.Suffix)
 	}
-	titleStyled := d.badgeCell(pi) + d.titleStyleFor(pi, index, m.Index()).Render(title) + suffix + d.trailingCell(pi)
+	titleStyled := d.leadCell(pi, index == m.Index()) + d.folderTitleStyle(pi, index, m.Index()).Render(title) + suffix + d.trailingCell(pi)
 	// Fixed 3-column slot before the title: three spaces when unselected,
 	// one space + "▶ " (styled) when selected — *exactly* three visible
 	// columns in both cases, so the title always starts on the same
@@ -438,6 +510,15 @@ func NewPicker(header string, items []PickerItem) Picker {
 	// lines its markers up in the same place.
 	trailSlot := trailingBadgeGap + 1
 	for _, it := range items {
+		// A folder reserves the leading slot on its own: without this a tree
+		// of pure folders (no ○/● badges anywhere) had badgeSlot == 0, so the
+		// folder glyph was clipped away and the folder rendered identically to
+		// a leaf — the one case the glyph exists to disambiguate.
+		if it.Folder {
+			if bw := lipgloss.Width(FolderGlyph) + 1; bw > badgeSlot {
+				badgeSlot = bw
+			}
+		}
 		if it.Badge != "" {
 			if bw := lipgloss.Width(it.Badge) + 1; bw > badgeSlot {
 				badgeSlot = bw
@@ -614,15 +695,15 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 			return p, func() tea.Msg { return PickerResultMsg{Canceled: true} }
 		case key.Matches(m, key.NewBinding(key.WithKeys("enter"))):
 			if it, ok := p.list.SelectedItem().(PickerItem); ok {
-				if it.Disabled {
-					return p, nil // inert: never choose an unavailable option
+				if inert(it) {
+					return p, nil // inert: never choose a heading or an unavailable option
 				}
 				return p, func() tea.Msg { return PickerResultMsg{Value: it.Value} }
 			}
 			return p, nil
 		case key.Matches(m, key.NewBinding(key.WithKeys("tab"))):
 			if it, ok := p.list.SelectedItem().(PickerItem); ok {
-				if it.Disabled {
+				if inert(it) {
 					return p, nil
 				}
 				// Tab toggles the CURRENT item only — the cursor stays
@@ -693,7 +774,7 @@ func (p Picker) advanceDown() (Picker, bool) {
 	n := len(items)
 	start := p.list.Index()
 	for i := start + 1; i < n; i++ {
-		if it, ok := items[i].(PickerItem); ok && it.Disabled {
+		if it, ok := items[i].(PickerItem); ok && inert(it) {
 			continue
 		}
 		p.list.Select(i)
@@ -712,7 +793,7 @@ func (p Picker) advanceUp() (Picker, bool) {
 	items := p.list.Items()
 	start := p.list.Index()
 	for i := start - 1; i >= 0; i-- {
-		if it, ok := items[i].(PickerItem); ok && it.Disabled {
+		if it, ok := items[i].(PickerItem); ok && inert(it) {
 			continue
 		}
 		p.list.Select(i)
@@ -754,7 +835,7 @@ func (p Picker) clampDisabled(dir int) Picker {
 	}
 	onDisabled := func() bool {
 		it, ok := p.list.SelectedItem().(PickerItem)
-		return !ok || it.Disabled
+		return !ok || inert(it)
 	}
 	for step := 0; step < total && onDisabled(); step++ {
 		move(dir)
@@ -853,6 +934,12 @@ func (p Picker) SelectIndex(i int) Picker {
 		i = n - 1
 	}
 	p.list.Select(i)
+	// Never come to rest on an inert row. Hosts call SelectIndex to PRESERVE
+	// the cursor across a rebuild, and a rebuild can insert a heading before
+	// the row that was focused — which parked the cursor on a section title
+	// where Enter does nothing. Step forward to the next selectable row, or
+	// back if this was the last row.
+	p = p.clampDisabled(1)
 	return p
 }
 

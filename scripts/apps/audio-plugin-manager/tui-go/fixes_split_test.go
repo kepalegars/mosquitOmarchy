@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	tuikit "mosquitomarchy.local/tui-kit"
 )
 
 // The fixes catalog splits into generic fixes (no `plugin`) and
@@ -40,7 +42,7 @@ func TestFixPickerSplitsPluginSpecificBelow(t *testing.T) {
 		return -1
 	}
 
-	sep := find(fixSeparator())
+	sep := find(fixSeparator(items))
 	title := find("Plugin specific fixes")
 	if sep == -1 {
 		t.Fatalf("separator row missing; got %v", displays)
@@ -59,32 +61,37 @@ func TestFixPickerSplitsPluginSpecificBelow(t *testing.T) {
 		t.Errorf("title must use the theme accent (PickerItem.Accent)")
 	}
 
-	// A folder header's Display is just "<mark>  <label>" — the fold glyph now
-	// lives in PickerItem.Fold (drawn by the kit in the cursor slot), never in
-	// the label. Generic category headers must appear BEFORE the separator.
+	// A folder row's Display is now the bare LABEL: the kit draws a folder
+	// glyph in the leading slot and bolds it, and the fold state lives in
+	// PickerItem.Fold (the cursor slot). So a category header is found by exact
+	// label, and it must be flagged Folder with a Fold of ▾ when expanded.
 	findHeader := func(label string) int {
-		for i, d := range displays {
-			if strings.HasSuffix(d, "  "+label) {
+		for i, r := range rows {
+			if r.Display == label {
 				return i
 			}
 		}
 		return -1
 	}
-	headerFold := func(label string) string {
+	headerOf := func(label string) tuikit.PickerItem {
 		for _, r := range rows {
-			if strings.HasSuffix(r.Display, "  "+label) {
-				return r.Fold
+			if r.Display == label {
+				return r
 			}
 		}
-		return ""
+		return tuikit.PickerItem{}
 	}
 	for _, cat := range []string{"Cursor", "Plugin windows"} {
 		i := findHeader(cat)
 		if i == -1 || i > sep {
 			t.Errorf("generic category %q should be above the separator (i=%d sep=%d)", cat, i, sep)
 		}
-		if headerFold(cat) != "▾" {
-			t.Errorf("expanded generic category %q should carry Fold=▾, got %q", cat, headerFold(cat))
+		h := headerOf(cat)
+		if !h.Folder {
+			t.Errorf("category %q must be flagged Folder so it gets the folder glyph", cat)
+		}
+		if h.Fold != "▾" {
+			t.Errorf("expanded category %q should carry Fold=▾, got %q", cat, h.Fold)
 		}
 	}
 	// Product groups must appear AFTER the title, labelled by plugin name only.
@@ -95,6 +102,15 @@ func TestFixPickerSplitsPluginSpecificBelow(t *testing.T) {
 	}
 	if serum == -1 || serum < title {
 		t.Errorf("Serum 2 group should be under the specific title (i=%d title=%d)", serum, title)
+	}
+	// Both section titles must be unselectable: the cursor steps over them.
+	for _, ti := range []int{title, find(fixGenericTitle())} {
+		if ti == -1 {
+			continue
+		}
+		if !rows[ti].Heading {
+			t.Errorf("section title %q must be Heading so the cursor skips it", rows[ti].Display)
+		}
 	}
 	// The catalog's own "<Product> specific" category label must NOT be used.
 	for _, d := range displays {

@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	tuikit "mosquitomarchy.local/tui-kit"
@@ -323,19 +325,24 @@ func treeItemsToPicker(items []uninstallTreeItem, checked map[string]bool, expan
 					marked++
 				}
 			}
-			mark := "○"
-			if len(n.Plugins) > 0 && marked == len(n.Plugins) {
-				mark = "●"
-			}
 			fold := tuikit.FoldCollapsed
 			if expanded[n.Value] {
 				fold = tuikit.FoldExpanded
 			}
-			out = append(out, tuikit.PickerItem{
-				Display: mark + "  " + n.Display,
+			// Folder: the kit draws a folder glyph in the leading slot and
+			// bolds the label; the all-or-none checkbox mark becomes a
+			// "done/total" count in the trailing slot, so the leading column
+			// only ever says what KIND of row this is.
+			folder := tuikit.PickerItem{
+				Display: n.Display,
 				Value:   n.Value,
 				Fold:    fold,
-			})
+				Folder:  true,
+			}
+			if total := len(n.Plugins); total > 0 {
+				folder.Suffix = fmt.Sprintf("  %d/%d", marked, total)
+			}
+			out = append(out, folder)
 			// Sub-plugins render ONLY inside the expanded folder, and
 			// always indented under it — never as siblings anywhere.
 			if expanded[n.Value] {
@@ -490,16 +497,24 @@ func fixItemsToPicker(items []FixItem, checked map[string]bool, expanded map[str
 	}
 
 	out := []tuikit.PickerItem{}
+	// The rule is sized to the widest row on the page (a fix title plus its
+	// tags, at its indented child position) so it closes the section instead of
+	// stopping in the middle of it. A fixed 28-column rule was narrower than
+	// most fix titles, which read as a rule that had been cut short.
+	sep := fixSeparator(items)
+	if len(generic) > 0 {
+		out = append(out, tuikit.PickerItem{Display: fixGenericTitle(), Value: fixGenericTitleValue, Accent: true, Heading: true})
+	}
 	out = append(out, fixCategoryGroup(generic, checked, expanded, false)...)
 
 	// The product-specific section, if any.
 	if len(specific) > 0 {
-		// Horizontal separator: a full-width rule, non-selectable.
-		out = append(out, tuikit.PickerItem{Display: fixSeparator(), Value: fixSeparatorValue, Disabled: true})
-		// Section title in the theme's accent colour (PickerItem.Accent paints
-		// the title in a solid accent block), so it reads as a heading rather
-		// than as another greyed row.
-		out = append(out, tuikit.PickerItem{Display: fixSpecificTitle(), Value: fixSpecificTitleValue, Accent: true})
+		// Horizontal rule between the two sections, non-selectable.
+		out = append(out, tuikit.PickerItem{Display: sep, Value: fixSeparatorValue, Disabled: true, Heading: true})
+		// Section title in the theme's accent colour, and NOT selectable: the
+		// cursor must step over it. It used to be a plain Accent row, so the
+		// cursor parked on a heading and Enter did nothing there.
+		out = append(out, tuikit.PickerItem{Display: fixSpecificTitle(), Value: fixSpecificTitleValue, Accent: true, Heading: true})
 		// Grouped by PLUGIN NAME (not the catalog category), so the header
 		// reads just "CrispyTuner" / "Serum 2" — the product it belongs to.
 		out = append(out, fixCategoryGroup(specific, checked, expanded, true)...)
@@ -507,19 +522,46 @@ func fixItemsToPicker(items []FixItem, checked map[string]bool, expanded map[str
 	return out
 }
 
-// Values for the two non-selectable section rows. They can never collide with
-// a fix id ([a-z_]+) nor with a category header ("__fixcat__:" prefix).
+// Values for the non-selectable section rows. They can never collide with a
+// fix id ([a-z_]+) nor with a category header ("__fixcat__:" prefix).
 const (
 	fixSeparatorValue     = "__fixsep__"
 	fixSpecificTitleValue = "__fixspectitle__"
+	fixGenericTitleValue  = "__fixgenerictitle__"
 )
 
-// fixSeparator is a horizontal rule. It uses the same glyph family as the
-// file-tree angles above it so the rule reads as part of the list, and it is
-// sized to the standard row so it lines up with the folder rows.
-func fixSeparator() string {
-	return "────────────────────────────"
+// childIndent is the prefix a fix row carries when it sits inside a category
+// folder ("    └─ "). The separator is measured with it, so the rule lines up
+// with the text it is meant to close.
+const childIndent = "    └─ "
+
+// fixSeparator is a horizontal rule spanning the widest fix row on the page.
+// It uses the same glyph family as the file-tree angles so it reads as part of
+// the list. Falls back to a short rule when the catalog is empty, so a
+// degenerate screen still renders something.
+func fixSeparator(items []FixItem) string {
+	width := 0
+	for _, it := range items {
+		if w := lipgloss.Width(childIndent + it.Title + fixRowTags(it)); w > width {
+			width = w
+		}
+	}
+	if width < 8 {
+		width = 28
+	}
+	return strings.Repeat("─", width)
 }
+
+// fixGenericTitle heads the fixes that are not scoped to one product.
+//
+// "Applies to any plugin" is the wording, and it is chosen over the obvious
+// "Global fixes" on purpose: these fixes are still applied PER PLUGIN (you
+// tick them for a plugin, and a fix that opens its editor window is written
+// per plugin), so calling them global would be a different and wrong claim —
+// only the cursor one is actually global, and it already says so with its
+// [global] tag. The heading answers the question the two sections are split on:
+// does this fix need a product, or does it work on any?
+func fixGenericTitle() string { return "Applies to any plugin" }
 
 // fixSpecificTitle is the heading for the product-specific section.
 func fixSpecificTitle() string { return "Plugin specific fixes" }
@@ -565,31 +607,35 @@ func fixCategoryGroup(items []FixItem, checked map[string]bool, expanded map[str
 		cat := keyFor(it)
 		if !seen[cat] {
 			seen[cat] = true
-			// Header mark: ● only when every fix in the category is on.
-			all := true
-			any := false
-			for _, other := range items {
-				if keyFor(other) != cat {
-					continue
-				}
-				any = true
-				if !checked[other.ID] {
-					all = false
-				}
-			}
-			hmark := "○"
-			if all && any {
-				hmark = "●"
-			}
 			fold := tuikit.FoldCollapsed
 			if expanded[cat] {
 				fold = tuikit.FoldExpanded
 			}
-			out = append(out, tuikit.PickerItem{
-				Display: hmark + "  " + cat,
+			// Folder (not Badge): the row is a container, so the kit draws a
+			// folder glyph instead of the ○/● checkbox and bolds the label.
+			// The all-or-none mark moves to the TRAILING slot as "done/total",
+			// so nothing is lost and the leading column now says only "what
+			// kind of row is this".
+			entry := tuikit.PickerItem{
+				Display: cat,
 				Value:   fixCategoryValuePrefix + cat,
 				Fold:    fold,
-			})
+				Folder:  true,
+			}
+			done, total := 0, 0
+			for _, other := range items {
+				if keyFor(other) != cat {
+					continue
+				}
+				total++
+				if checked[other.ID] {
+					done++
+				}
+			}
+			if total > 0 {
+				entry.Suffix = fmt.Sprintf("  %d/%d", done, total)
+			}
+			out = append(out, entry)
 		}
 		// Children render only while the category is expanded.
 		if !expanded[cat] {
