@@ -27,9 +27,8 @@ archive actions, exactly as they were before Nautilus dropped built-in support.
   actions (list, test, open without extracting, delete inside an archive).
 - **7zip** backs the password-protected and exotic formats (zip AES, 7z, ISO,
   lha, lrzip) that libarchive alone refuses.
-- **unrar** is the only backend that reliably applies a RAR password —
-  libarchive (which file-roller uses for RAR) does not prompt and silently
-  does nothing, so file-roller's "Extract Here" fails on encrypted RAR.
+- **unrar** backs RAR. With both installed, file-roller's own **Extract Here**
+  prompts for the password itself and hands it to the right backend.
 - Sets the common formats to open **with file-roller** (mimeapps.default), so
   double-clicking an archive really opens it.
 - **Hides file-roller's own package .desktop** so the apps menu is not
@@ -42,20 +41,17 @@ archive actions, exactly as they were before Nautilus dropped built-in support.
   file with no `Exec` and do nothing. `NoDisplay` still hides it from the
   Omarchy menu (which skips both `Hidden` and `NoDisplay`) while keeping the
   entry launchable.
-- Installs a **Nautilus script**, `Extract with password`
-  (`~/.local/share/nautilus/scripts/`), which prompts for the password and
-  extracts with the backend that applies it. This is the fix for
-  password-protected RAR (and any archive file-roller cannot decrypt). It
-  appears in Nautilus' right-click → **Scripts** menu; it is not a desktop entry.
 - Adds a per-class Hyprland rule: file-roller is a floating GTK4 dialog, so it
   is floated + centered and exempted from the default window opacity.
 
+Nothing is written to `~/.local/share/nautilus/scripts/` and no desktop entry
+is created: packages plus a few config edits, that is the whole module.
+
 ## Password-protected archives
 
-- **Right-click the archive → Scripts → Extract with password**, enter the
-  password. RAR is handled by unrar, everything else by 7z — both apply the
-  password.
-- file-roller's own **Extract Here** still covers unencrypted archives.
+- **Right-click the archive → Extract Here** and enter the password when
+  file-roller asks. RAR goes through unrar, zip-AES / 7z / ISO through 7z.
+- Double-clicking an archive opens file-roller, which prompts the same way.
 
 ## Usage
 

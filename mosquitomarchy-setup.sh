@@ -503,14 +503,12 @@ st_handbrake(){
 st_extracto(){
   # extracto is a simple custom install script for file-roller: the package is
   # what brings Nautilus' Extract Here / Create Archive back, and our glue is
-  # the Nautilus script + the hidden package entry + the Hyprland rule. Report
-  # partial when the package is there but our glue is not.
+  # the hidden package entry + the Hyprland rule. Report partial when the
+  # package is there but our glue is not.
   pkg_has file-roller || { echo missing; return; }
-  local s="$HOME/.local/share/nautilus/scripts/Extract with password"
-  local s_old="$HOME/.local/share/nautilus/scripts/Extract-with-password"
   local h="$HOME/.config/hypr/hyprland.lua"
   local d="$HOME/.local/share/applications/org.gnome.FileRoller.desktop"
-  [[ -f $s || -f $s_old ]] && { [[ -f $h ]] && grep -qF -- "extracto-setup" "$h"; } \
+  [[ -f $h ]] && grep -qF -- "extracto-setup" "$h" \
     && { [[ -f $d ]] && grep -q '^NoDisplay=true' "$d" && grep -q '^Exec=' "$d"; } && echo ok || echo partial
 }
 st_apps(){
@@ -560,7 +558,7 @@ MODULES=(
   "keybindings:SUPER keybindings manager (app launches + quick functions — bindings.lua marker block)"
   "mosquitomarchy-update:Update watchdog (scripts update first, then Omarchy updates — notification + opencode conflict review)"
   "superfile:SuperFile — terminal file manager (menu entry + keybind + Omarchy theme)"
-  "extracto:Simple custom install script for file-roller — restores Nautilus' Extract Here / Create Archive (file-roller + 7zip + unrar) and adds a password-aware extraction script; no desktop entry"
+  "extracto:Simple custom install script for file-roller — restores Nautilus' Extract Here / Create Archive (file-roller + 7zip + unrar, file-roller prompts for the password itself); no desktop entry, no Nautilus script"
   "zen:Zen Browser config — plugins + settings + chrome theme (deployed into the active profile)"
   "jamjamjam-plugin:JamJamJam bar plugin — key/BPM/chord detection, chord progression grid, guitar fretboard scale, MIDI chord mode + synth"
   "live-mode:Live mode — performance session mode (stay-awake + thermal guard + routing tool in scratchpad: live-mode / live-mode-watch / live-mode-root + its row in Setup > mosquito + QML overlay)"
@@ -2323,7 +2321,9 @@ un_extracto(){
   else
     # Fall back to removing the markers by hand if the script is gone.
     [[ -f "$HYPRLAND" ]] && sed -i "\|extracto-setup >>>|,/extracto-setup <<<|d" "$HYPRLAND" 2>/dev/null && ok "Hyprland block removed" || true
-    rm -f "$HOME/.local/share/nautilus/scripts/Extract with password" "$HOME/.local/share/nautilus/scripts/Extract-with-password" && ok "Nautilus script removed" || true
+    # Legacy: extracto no longer installs a Nautilus script, but older installs
+    # still have one under either spelling.
+    rm -f "$HOME/.local/share/nautilus/scripts/Extract with password" "$HOME/.local/share/nautilus/scripts/Extract-with-password" && ok "legacy Nautilus script removed" || true
     rm -f "$HOME/.local/share/applications/org.gnome.FileRoller.desktop" && ok "file-roller entry un-hidden" || true
   fi
   [[ -f "$HYPRLAND" ]] && hyprctl reload >/dev/null 2>&1 || true

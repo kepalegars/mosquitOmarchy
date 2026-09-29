@@ -12,22 +12,20 @@
 #     regains "Extract Here" / "Create Archive" and the per-archive actions
 #     (list, test, open without extracting, delete inside an archive).
 #   - 7zip backs the password-protected and exotic formats (zip AES, 7z, ISO,
-#     lha, lrzip) that libarchive alone refuses; unrar is the only backend that
-#     reliably applies a RAR password (libarchive silently fails on encrypted
-#     RAR — file-roller's "Extract Here" does nothing for them).
+#     lha, lrzip) that libarchive alone refuses, unrar backs RAR. With both
+#     present, file-roller's own "Extract Here" prompts for the password
+#     itself — no helper script of ours is involved.
 #   - sets the common formats to open WITH file-roller (mimeapps.default), so
 #     double-clicking an archive really opens it.
 #   - hides file-roller's own package .desktop from the apps menu with a user
 #     NoDisplay=true override (a FULL copy of the package file — see step 4 for
 #     why a bare Hidden stub breaks "Open With"), so the menu is not cluttered
 #     with a second archive entry.
-#   - installs a Nautilus SCRIPT, "Extract with password"
-#     (~/.local/share/nautilus/scripts/), which prompts for the password and
-#     extracts with the backend that applies it. This is the fix for
-#     password-protected RAR (and any archive file-roller cannot decrypt). It
-#     appears in Nautilus' right-click → Scripts menu; it is not a desktop entry.
 #   - adds a per-class Hyprland rule: file-roller is a floating GTK4 dialog, so
 #     it is floated + centered and exempted from the default window opacity.
+#
+# That is the whole module: packages + defaults + two config edits. It installs
+# NOTHING into ~/.local/share/nautilus/scripts and no desktop entry of its own.
 #
 # Idempotent: may be re-run without risk.
 #
@@ -45,7 +43,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REAL_HOME="${HOME}"
 HYPR="$REAL_HOME/.config/hypr/hyprland.lua"
 APPS_DIR="$REAL_HOME/.local/share/applications"
-NAUTILUS_SCRIPTS="$REAL_HOME/.local/share/nautilus/scripts"
 FR_PKG_DESKTOP="$APPS_DIR/org.gnome.FileRoller.desktop"
 START="-- >>> extracto-setup >>>"
 END="-- <<< extracto-setup <<<"
@@ -84,7 +81,7 @@ while (( $# )); do a="$1"; case "$a" in
   -y|--yes) YES=1 ;;
   --status) STATUS_ONLY=1 ;;
   --remove) REMOVE=1 ;;
-  -h|--help) sed -n '2,46p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
   *) echo "Unknown option: $a (supported: -y --status --remove)" >&2; exit 1 ;;
 esac; shift; done
 
@@ -109,11 +106,6 @@ show_status() {
     ok "hyprland block present"
   else
     warn "hyprland block absent"
-  fi
-  if [[ -f $NAUTILUS_SCRIPTS/Extract-with-password || -f "$NAUTILUS_SCRIPTS/Extract with password" ]]; then
-    ok "Nautilus script present (right-click → Scripts → Extract with password)"
-  else
-    warn "Nautilus script absent"
   fi
   if [[ -f $FR_PKG_DESKTOP ]] && grep -q '^NoDisplay=true' "$FR_PKG_DESKTOP"; then
     if grep -q '^Exec=' "$FR_PKG_DESKTOP"; then
@@ -143,13 +135,17 @@ if [[ $REMOVE == 1 ]]; then
     hyprctl reload >/dev/null 2>&1 || true
     ok "hyprland block removed"
   fi
-  # The script was renamed from "Extract-with-password"; clear both spellings.
-  legacy_script="$NAUTILUS_SCRIPTS/Extract-with-password"
-  script="$NAUTILUS_SCRIPTS/Extract with password"
-  if [[ -f $script || -f $legacy_script ]]; then
-    rm -f "$script" "$legacy_script"
-    ok "Nautilus script removed"
-  fi
+  # Legacy cleanup: extracto used to install a Nautilus script ("Extract with
+  # password", previously "Extract-with-password"). It is gone — file-roller
+  # prompts for the password itself — but --remove must still clear both
+  # spellings out of an older install.
+  for legacy_script in "$REAL_HOME/.local/share/nautilus/scripts/Extract with password" \
+                       "$REAL_HOME/.local/share/nautilus/scripts/Extract-with-password"; do
+    if [[ -f $legacy_script ]]; then
+      rm -f "$legacy_script"
+      ok "legacy Nautilus script removed ($(basename "$legacy_script"))"
+    fi
+  done
   # Un-hide file-roller's package entry so it shows in the apps menu again.
   if [[ -f $FR_PKG_DESKTOP ]] && grep -qE '^(Hidden|NoDisplay)=true' "$FR_PKG_DESKTOP"; then
     rm -f "$FR_PKG_DESKTOP"
@@ -163,7 +159,7 @@ fi
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
-msg "== 1/5 Packages (file-roller + 7zip + unrar) =="
+msg "== 1/4 Packages (file-roller + 7zip + unrar) =="
 # file-roller = GUI + Nautilus C extension. 7zip = 7z/zip-AES/ISO/lha/lrzip.
 # unrar = the only backend that reliably applies a RAR password. --needed so
 # re-running never reinstalls.
@@ -180,7 +176,7 @@ ok "file-roller: $(command -v file-roller)"
 # ---------------------------------------------------------------------------
 # 2. Defaults: open these archive types in file-roller (double-click works).
 # ---------------------------------------------------------------------------
-msg "== 2/5 Default app for archive types =="
+msg "== 2/4 Default app for archive types =="
 if have xdg-mime; then
   for t in "${MIME_TYPES[@]}"; do
     xdg-mime default org.gnome.FileRoller.desktop "$t" 2>/dev/null || true
@@ -198,7 +194,7 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Hyprland rule: file-roller is a floating dialog, not a tiled app.
 # ---------------------------------------------------------------------------
-msg "== 3/5 Hyprland rule (float + center file-roller) =="
+msg "== 3/4 Hyprland rule (float + center file-roller) =="
 if [[ -f $HYPR ]]; then
   sed -i "\|${START#--}|,/${END#--}/d" "$HYPR"
   cat >> "$HYPR" <<'EOF'
@@ -224,7 +220,7 @@ fi
 #    and a user file of the same name SHADOWS it (user dirs win over system
 #    dirs), so a package update cannot bring the entry back.
 # ---------------------------------------------------------------------------
-msg "== 4/5 Hide file-roller's package menu entry (no desktop entry of our own) =="
+msg "== 4/4 Hide file-roller's package menu entry (no desktop entry of our own) =="
 FR_SRC_DESKTOP="/usr/share/applications/org.gnome.FileRoller.desktop"
 mkdir -p "$APPS_DIR"
 if [[ -f $FR_SRC_DESKTOP ]]; then
@@ -254,29 +250,15 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Nautilus script: password-protected extraction (the RAR fix).
-# ---------------------------------------------------------------------------
-msg "== 5/5 Nautilus script (Extract with password) =="
-mkdir -p "$NAUTILUS_SCRIPTS"
-# Spaces, not dashes: Nautilus shows the file name verbatim in the Scripts
-# submenu, so "Extract-with-password" reads as a hyphenated slug there.
-rm -f "$NAUTILUS_SCRIPTS/Extract-with-password"
-cp "$SCRIPT_DIR/extract-with-password" "$NAUTILUS_SCRIPTS/Extract with password"
-chmod +x "$NAUTILUS_SCRIPTS/Extract with password"
-bash -n "$NAUTILUS_SCRIPTS/Extract with password" || { err "script syntax invalid"; exit 1; }
-ok "Nautilus script installed → right-click an archive → Scripts → Extract with password"
-
-# ---------------------------------------------------------------------------
 # Done.
 # ---------------------------------------------------------------------------
 msg "== Done =="
 ok "file-roller + 7zip + unrar installed"
 ok "Nautilus: right-click an archive → Extract Here (and Create Archive)"
-ok "password-protected archives: Scripts → Extract with password (works for RAR)"
+ok "double-clicking an archive opens file-roller"
 echo
 msg "Password-protected archives:"
-echo "  • right-click the archive → Scripts → Extract with password, enter the password."
-echo "  • RAR is handled by unrar, everything else by 7z — both apply the password."
-echo "  • file-roller's own Extract Here still covers unencrypted archives."
+echo "  • right-click the archive → Extract Here; file-roller asks for the password."
+echo "  • RAR goes through unrar, zip-AES / 7z / ISO through 7z — both apply it."
 echo
 echo "Done. Run './setup-extracto.sh --status' to verify."
