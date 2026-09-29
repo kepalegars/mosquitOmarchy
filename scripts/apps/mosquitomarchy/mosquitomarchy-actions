@@ -768,7 +768,25 @@ cmd_install(){
     _verify_selection_installed "$cat" "${CATEGORY_SELECTED[@]}" || bad=1
     (( MODULE_FAILURES > 0 )) && bad=1
     if ((bad)); then
-      err "Install finished with errors — see the messages above."
+      # Name the modules that did not land, so the failure is actionable: the
+      # log already says WHICH one, but the summary line is what stays on
+      # screen, and "finished with errors" on its own sends the user hunting
+      # through a long log. The count distinguishes "one module missed" from
+      # "the batch is a mess".
+      local -a notok=()
+      local nk
+      for nk in "${CATEGORY_SELECTED[@]:-}"; do
+        [[ -n $nk && $nk != TUI\ * && $nk != WEB\ * && $nk != PLUG\ * && $nk != theme ]] || continue
+        local nst; nst="$(module_state "$nk" 2>/dev/null || true)"; nst="${nst%%:*}"
+        [[ -z $nst || $nst == ok ]] || notok+=("$nk ($nst)")
+      done
+      if ((${#notok[@]})); then
+        err "Install finished with errors — not fully installed: ${notok[*]}"
+      else
+        # No module is actually short: something else in the run failed
+        # (a script's own non-zero step). Say so rather than blaming a module.
+        err "Install finished with errors — see the messages above."
+      fi
       return 1
     fi
     ok "Install finished successfully."
