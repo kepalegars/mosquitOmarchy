@@ -66,6 +66,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case menuEntriesMsg:
+		// Handled GLOBALLY, not under scrMenuEntries: the menu blocks are now
+		// listed under their own folder on the Setup page, so the fetch that
+		// fills that folder arrives while Setup is the current screen. Scoped
+		// to the entries screen, the result was dropped and the folder stayed
+		// empty.
+		return m.applyMenuEntries(msg), nil
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		m.mainPicker = m.mainPicker.SetSize(m.mainContentSize())
@@ -218,8 +225,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				return m, fetchKbCmd()
 			}
 			// A global uninstall also removes the keybindings the user ticked
-			// on the Uninstall ▸ keybindings screen (the selection persists
-			// while walking the other uninstall pages).
+			// in the Keybindings manager (the selection persists while walking
+			// the other uninstall pages, so ticking them once is enough).
 			if m.pendingAction == "uninstall" {
 				keys := m.kbCheckedKeys()
 				if len(keys) > 0 {
@@ -452,9 +459,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// audio-plugin-manager's folder convention), not a sort.
 		switch m.top() {
 		case scrSetup:
-			// Left/Right fold the category under the cursor, on the ONE page:
+			// Left/Right fold the folder under the cursor, on the ONE page:
 			// there is no second level to go into any more, so the arrows that
-			// used to sort here have nothing else to do.
+			// used to sort here have nothing else to do. "Menu entries" folds
+			// like a category; its blocks open their own page on Enter.
 			if prefix, id, ok := tuikit.TreeSplit(m.setupPicker.SelectedValue()); ok && prefix == tuikit.TreeFolderPrefix {
 				if msg.Dir > 0 {
 					m.folderOpen[id] = true
@@ -1211,41 +1219,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.preinstallPicker, cmd = m.preinstallPicker.Update(msg)
 		return m, cmd
 	case scrMenuEntries:
-		if me, ok := msg.(menuEntriesMsg); ok {
-			if me.err != nil {
-				m.toast, _ = m.toast.SetErr(me.err.Error())
-				m.menuEntriesLoaded = true
-				return m, nil
-			}
-			if len(me.rows) > 0 {
-				m.menuEntries = me.rows
-			}
-			m.menuEntriesLoaded = true
-			if m.menuEntryChecked == nil {
-				m.menuEntryChecked, m.menuEntryOrig = map[string]bool{}, map[string]bool{}
-			}
-			// ALWAYS re-seed the baseline from what the list just reported, never
-			// only for names we have not seen yet. A fetch happens on entry AND
-			// right after an apply, and the second one is where the old rule broke
-			// the screen: after stripping an entry the backend correctly said
-			// absent, but the baseline still said "present" because the name was
-			// already known, so ticking it again produced checked == orig and
-			// Enter answered "no changes to apply" for a restore the user had
-			// genuinely asked for. The list is a fresh read of the menu file, so
-			// it is the only trustworthy baseline; the user's in-flight ticks are
-			// re-derived from it.
-			for _, e := range m.menuEntries {
-				// DEFAULT = what is installed right now. The picker applies a
-				// DELTA, so with everything unticked as the default the only
-				// rows that ever differed were the ticked ones, and Enter could
-				// only ever restore: the strip half of the screen was dead code.
-				// Starting from the real state makes untick=strip reachable.
-				m.menuEntryChecked[e.Name] = e.Present
-				m.menuEntryOrig[e.Name] = e.Present
-			}
-			m.menuEntriesPicker = m.rebuildMenuEntriesPicker()
-			return m, nil
-		}
 		// PickerToggleMsg is consumed by the global switch at the top of
 		// update(), which returns before this case is ever reached.
 		// Enter and Esc arrive here as PickerResultMsg and are handled by
@@ -1357,10 +1330,17 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.filterText = ""
 			m.push(scrSetup)
 			m.setupPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).SetSize(m.contentSize())
-			// Auto-check for updates (mosquitOmarchy scripts/repo + changed
+			// The menu entries are listed under their own folder on this page,
+			// so they have to be fetched here too — they used to be fetched
+			// only when their screen was opened.
+			m.menuEntryChecked = map[string]bool{}
+			m.menuEntryOrig = map[string]bool{}
+			m.menuEntries = nil
+			m.menuEntriesLoaded = false
+			// Auto-check for updates (mosquitomarchy scripts/repo + changed
 			// apps/tuis/modules) when Setup opens, so its first screen can
 			// advertise them.
-			return m, tea.Batch(fetchTreeCmd("setup"), blinkCmd(), fetchUpdateCheckCmd())
+			return m, tea.Batch(fetchTreeCmd("setup"), blinkCmd(), fetchUpdateCheckCmd(), fetchMenuEntriesCmd())
 		case "uninstall":
 			// Same category/folder tree as Setup, but only the INSTALLED
 			// entries, and Enter uninstalls instead of installing.
@@ -1371,6 +1351,13 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.push(scrSetup)
 			m.setupPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).SetSize(m.contentSize())
 			return m, tea.Batch(fetchTreeCmd("uninstall-tree"), blinkCmd())
+		case "keybindings":
+			// Its own row in the main menu, next to the other tools, rather
+			// than buried as one more folder inside Setup and Uninstall: the
+			// two trees only ever added a hop before reaching the same screen.
+			m.push(scrKB)
+			m.kbPicker = m.rebuildKB()
+			return m, nil
 		case "health":
 			// Re-apply any mosquitOmarchy piece / module whose files went missing.
 			return m, fetchHealthCmd()
@@ -1518,15 +1505,6 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		// Keybindings is a single screen, not a category folder: open its
 		// manager directly (Setup flavor here; Uninstall flavor when the tree
 		// is the uninstall one).
-		if m.setupCat == "keybindings" {
-			m.kbMode = "setup"
-			if m.treeMode == "uninstall" {
-				m.kbMode = "uninstall"
-			}
-			m.push(scrKB)
-			m.kbPicker = m.rebuildKB()
-			return m, nil
-		}
 		// Everything else on this page folds in place now (Enter on a category
 		// toggles it), so there is no second level to enter. This branch is
 		// unreachable for categories; it stays as a no-op guard so a future
@@ -1598,15 +1576,6 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 				m.toast, _ = m.toast.SetWarn(it.Info)
 				return m, nil
 			}
-		}
-		if len(eff) == 1 && eff[0] == "keybindings" {
-			m.kbMode = "setup"
-			if m.treeMode == "uninstall" {
-				m.kbMode = "uninstall"
-			}
-			m.push(scrKB)
-			m.kbPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).SetSize(m.contentSize())
-			return m, fetchKbCmd()
 		}
 		// Uninstall ▸ Preinstalls opens its own picker: the whole Omarchy stock
 		// list with the removed ones greyed, instead of being swept wholesale.
@@ -1745,8 +1714,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		return m, nil
 
 	case scrKB:
-		// The Keybindings menu: both flavors open "Managed keybindings" in
-		// its own submenu; setup also offers "Add a keybinding".
+		// The Keybindings menu: "Managed keybindings" lists them with the
+		// removal ticks and the Reset row, "Add a keybinding" starts the flow.
 		switch res.Value {
 		case "managed":
 			m.push(scrKBList)
@@ -2154,8 +2123,27 @@ func (m model) rebuildSetup() navPicker {
 	}
 
 	if !uninstall {
-		// "Menu entries" manages the rows mosquito adds to the Omarchy menu.
-		out = append(out, tuikit.PickerItem{Display: "Menu entries", Value: "menu-entries"})
+		// "Menu entries" is a folder like any other, not a lone row that
+		// opened a screen of its own: the arrows fold it, and its blocks are
+		// listed under it on the same page. Ticking one still happens on the
+		// entries page, where the backend result lands.
+		meChildren := make([]tuikit.TreeItem, 0, len(m.menuEntries))
+		for _, e := range m.menuEntries {
+			meChildren = append(meChildren, tuikit.TreeItem{
+				ID:      e.Name,
+				Label:   e.Label,
+				Checked: m.menuEntryChecked[e.Name],
+			})
+		}
+		// Fold by default: the list is long, and this row is a corner of Setup
+		// rather than the page's subject.
+		if _, seen := m.folderOpen[menuEntriesFolder]; !seen {
+			m.folderOpen[menuEntriesFolder] = false
+		}
+		out = append(out, tuikit.BuildFolderTree(
+			[]tuikit.TreeFolder{{ID: menuEntriesFolder, Label: "Menu entries", Total: len(meChildren)}},
+			map[string][]tuikit.TreeItem{menuEntriesFolder: meChildren},
+			m.folderOpen, m.blinkOn)...)
 	}
 	out = append(out, tuikit.PickerItem{Display: "Back", Value: "back"})
 
@@ -2945,6 +2933,47 @@ func (m model) rebuildPreinstallPicker() navPicker {
 		)
 }
 
+// applyMenuEntries folds a fetch result into the model: it re-seeds the tick
+// baseline from what the menu file really contains, then rebuilds both the
+// entries screen and the Setup folder that lists them.
+//
+// The baseline must be re-seeded on EVERY fetch, never only for names we have
+// not seen: a fetch happens when Setup opens and again right after an apply,
+// and the second one is where the old rule broke the screen — after stripping
+// an entry the backend correctly said absent, but the baseline still said
+// present because the name was already known, so ticking it again produced
+// checked == orig and Enter answered "no changes to apply" for a restore the
+// user had genuinely asked for.
+//
+// DEFAULT = what is installed right now. The picker applies a DELTA, so with
+// everything unticked as the default only the ticked rows ever differed and
+// Enter could only ever restore: the strip half of the screen was dead code.
+func (m model) applyMenuEntries(me menuEntriesMsg) model {
+	if me.err != nil {
+		m.toast, _ = m.toast.SetErr(me.err.Error())
+		m.menuEntriesLoaded = true
+		return m
+	}
+	if len(me.rows) > 0 {
+		m.menuEntries = me.rows
+	}
+	m.menuEntriesLoaded = true
+	if m.menuEntryChecked == nil {
+		m.menuEntryChecked, m.menuEntryOrig = map[string]bool{}, map[string]bool{}
+	}
+	for _, e := range m.menuEntries {
+		m.menuEntryChecked[e.Name] = e.Present
+		m.menuEntryOrig[e.Name] = e.Present
+	}
+	m.menuEntriesPicker = m.rebuildMenuEntriesPicker()
+	// The Setup page shows them under their folder, so it has to be rebuilt
+	// too or the folder keeps the list it had before the fetch.
+	if m.top() == scrSetup {
+		m.setupPicker = m.rebuildSetup()
+	}
+	return m
+}
+
 // rebuildMenuEntriesPicker renders the "Menu entries" cleaner: a tick mark =
 // the marked menu block is present in the Omarchy menu. Tab/x toggle,
 // Enter applies the delta (strip/restore via the backend).
@@ -2972,8 +3001,12 @@ func (m model) rebuildMenuEntriesPicker() navPicker {
 		if m.menuEntryChecked[e.Name] {
 			tick = "●"
 		}
+		// Badge, not inline: rows are centered, so a tick baked into Display
+		// gave every line a different width and none of them a shared start
+		// column. Same rule as the preinstalls rows.
 		items = append(items, tuikit.PickerItem{
-			Display: tick + " " + e.Label,
+			Display: e.Label,
+			Badge:   tick,
 			Value:   "mentry:" + e.Name,
 		})
 	}

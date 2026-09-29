@@ -104,11 +104,10 @@ type model struct {
 	healthItems []HealthRec
 	blinkOn     bool
 
-	// Keybindings manager (the old setup-keybindings.sh, now a TUI screen).
-	// kbMode is "setup" (Setup ▸ keybindings) or "uninstall" (Uninstall ▸
-	// keybindings, list first + Reset). kbSel PERSISTS across navigation in
-	// uninstall mode so a global uninstall run removes the ticked combos.
-	kbMode       string
+	// Keybindings manager (the old setup-keybindings.sh, now a TUI screen,
+	// reached from the main menu). It is one screen with no flavor: adding and
+	// removing both live here. kbSel PERSISTS across navigation so a global
+	// uninstall run still removes the ticked combos.
 	kbPicker     navPicker // the Keybindings MENU
 	kbListPicker navPicker // the "Managed keybindings" list (distinct picker: popping back to the menu must not keep showing the list)
 	kbItems      []KbRec
@@ -267,6 +266,7 @@ func (m model) mainMenuItems() []tuikit.PickerItem {
 		upd,
 		{Display: "Setup", Value: "setup"},
 		{Display: "Uninstall", Value: "uninstall"},
+		{Display: "Keybindings", Value: "keybindings"},
 		{Display: "Health check", Value: "health"},
 		{Display: "Backup / Restore", Value: "backup"},
 		{Display: "Extras", Value: "settings"},
@@ -344,6 +344,11 @@ func (m model) contentSizeW() int {
 
 // setupValue is the stable picker/selection key for a Setup item.
 func setupValue(folder, key string) string { return tuikit.TreeItemPrefix + folder + ":" + key }
+
+// menuEntriesFolder is the pseudo-folder id for the "Menu entries" section of
+// Setup. It is not a module category: its children are the marked blocks
+// mosquito adds to the Omarchy menu, and they are toggled, not installed.
+const menuEntriesFolder = "menu-entries"
 
 // splitSetupValue is the inverse of setupValue: it takes a leaf row's value
 // ("item:<folder>:<key>") back to the folder and the key, so Enter on a single

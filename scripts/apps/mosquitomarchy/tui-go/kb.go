@@ -138,18 +138,19 @@ func (m model) kbCheckedKeys() []string {
 	return out
 }
 
-// rebuildKB renders the Keybindings MENU — the screen Enter on the Setup/
-// Uninstall "Keybindings" row opens. It is a plain menu (no checkboxes): the
-// managed list and the add flow each live in their own properly-named
-// submenu; uninstall mode keeps the same menu (its list screen carries the
-// Reset row and its tick selection persists).
+// rebuildKB renders the Keybindings MENU — the screen the main menu's
+// "Keybindings" row opens. It is a plain menu (no checkboxes): the managed
+// list and the add flow each live in their own properly-named submenu. The
+// list carries the removal tick selection and the Reset row, so adding and
+// removing live in one place instead of being split across two tree flavors.
 func (m model) rebuildKB() navPicker {
 	idx := m.kbPicker.Index()
+	// One screen for both trees: adding and removing were split across the
+	// Setup and Uninstall flavors, which is why the same manager had two
+	// partial menus.
 	items := []tuikit.PickerItem{
 		{Display: "Managed keybindings", Value: "managed"},
-	}
-	if m.kbMode == "setup" {
-		items = append(items, tuikit.PickerItem{Display: "Add a keybinding", Value: "add"})
+		{Display: "Add a keybinding", Value: "add"},
 	}
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
 	p := newNavPicker("Keybindings — SUPER combos managed by mosquitomarchy (bindings.lua block)", items).
@@ -177,16 +178,14 @@ func (m model) rebuildKBList() navPicker {
 		}
 		items = append(items, tuikit.PickerItem{Display: display, Value: "kb:" + it.Key, Badge: mark})
 	}
-	if m.kbMode == "uninstall" {
-		if len(m.kbItems) == 0 {
-			items = append(items, tuikit.PickerItem{Display: "No keybindings managed by mosquitOmarchy", Value: "", Disabled: true})
-		}
-		items = append(items, tuikit.PickerItem{Display: "Reset — remove ALL keybindings managed by mosquitOmarchy", Value: "reset"})
+	// The Reset row used to be gated on uninstall mode, because Setup had no
+	// way to reach this screen's removal side. There is one Keybindings screen
+	// now, so the row and the empty-list line are always there.
+	if len(m.kbItems) == 0 {
+		items = append(items, tuikit.PickerItem{Display: "No keybindings managed by mosquitomarchy", Value: "", Disabled: true})
 	}
-	header := "Managed keybindings"
-	if m.kbMode == "uninstall" {
-		header = "Managed keybindings — tick the ones to remove"
-	}
+	items = append(items, tuikit.PickerItem{Display: "Reset — remove ALL keybindings managed by mosquitomarchy", Value: "reset"})
+	header := "Managed keybindings — tick the ones to remove"
 	p := newNavPicker(header, items).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
