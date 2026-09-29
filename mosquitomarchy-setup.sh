@@ -3333,6 +3333,25 @@ category_items(){ # catid -> echo the space-separated module ids of that categor
   done
 }
 
+# The category (Setup folder id) a module belongs to, or empty when it is in
+# none. Built from the SAME CATEGORIES rows the Setup/Uninstall trees use, so
+# the Status screen is grouped exactly like them and can never drift from what
+# Setup actually offers. The mosquito folder's members are hard-coded in
+# category_candidates (its candidates are pseudo-modules, not CATEGORIES ids),
+# so they are matched explicitly.
+module_category(){ # module id -> category id
+  case "$1" in
+    ableton-move-manager|audio-plugin-manager|jamjamjam-plugin|battery|live-mode) echo mosquito; return 0 ;;
+  esac
+  local c
+  for c in "${CATEGORIES[@]}"; do
+    [[ "${c%%|*}" == fixes || "${c%%|*}" == menu ]] && continue
+    case " $(category_items "${c%%|*}") " in
+      *" $1 "*) printf '%s' "${c%%|*}"; return 0 ;;
+    esac
+  done
+}
+
 module_desc(){ # module / pseudo id -> short description
   local row
   # remove-ai gets a MODE-AWARE label: Setup says "bring back…", Uninstall

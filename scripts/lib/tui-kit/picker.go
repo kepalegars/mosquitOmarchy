@@ -74,7 +74,24 @@ type PickerItem struct {
 	// ordinary style (not the Accent block), e.g. a "  (6)" count that must
 	// stay in the normal colour next to an accented title.
 	Suffix string
+	// Fold marks this row as a folder that expands/collapses, and carries the
+	// glyph to show for it (FoldCollapsed "▸" or FoldExpanded "▾"). The glyph
+	// is drawn IN THE CURSOR SLOT, replacing "▶" while the row is selected —
+	// so a folder row shows exactly one marker: the cursor when it is not
+	// selected, and the fold state (rotating 90°) when it is. This is why the
+	// fold glyph must NOT be part of Display: as a label prefix it used to sit
+	// right next to the selection cursor ("▶ ▾ ○  Cursor") and read as a second,
+	// competing indicator. Empty = a plain row that only ever shows the cursor.
+	Fold string
 }
+
+// Fold glyphs for PickerItem.Fold. A folder row shows one of these in the
+// cursor slot while it is selected; on every other row the slot is either the
+// "▶" cursor or blank, so exactly one marker is visible per row.
+const (
+	FoldCollapsed = "▸"
+	FoldExpanded  = "▾"
+)
 
 // trailingBadgeGap is the number of spaces placed between a row's title and
 // its TrailingBadge, so the marker reads as a suffix ("name  ■") rather than
@@ -260,9 +277,18 @@ func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, ite
 	// columns in both cases, so the title always starts on the same
 	// offset and the ▶ glyph's East-Asian-Ambiguous width quirk can't
 	// shift anything for either row of a pair.
+	//
+	// A FOLDER row swaps "▶" for its fold glyph (▸ collapsed / ▾ expanded) in
+	// that same slot, so the cursor and the fold state are ONE marker, never
+	// two side by side ("▶ ▾ ○  Cursor"). The slot stays 3 columns wide either
+	// way, so no row shifts when the cursor lands on a folder.
 	indicator := "   "
 	if index == m.Index() {
-		indicator = " " + lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render("▶ ")
+		glyph := "▶ "
+		if pi.Fold != "" {
+			glyph = pi.Fold + " "
+		}
+		indicator = " " + lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render(glyph)
 	}
 	// Compose the row (3-col indicator slot + styled title), then snap
 	// every row to the uniform width right-padded inside a

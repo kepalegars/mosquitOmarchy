@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The fixes catalog splits into generic fixes (no `plugin`) and
 // product-specific fixes (scoped to one product). The picker must show the
@@ -56,16 +59,37 @@ func TestFixPickerSplitsPluginSpecificBelow(t *testing.T) {
 		t.Errorf("title must use the theme accent (PickerItem.Accent)")
 	}
 
-	// Generic category headers must appear BEFORE the separator.
-	for _, cat := range []string{"▾ ○  Cursor", "▾ ○  Plugin windows"} {
-		i := find(cat)
+	// A folder header's Display is just "<mark>  <label>" — the fold glyph now
+	// lives in PickerItem.Fold (drawn by the kit in the cursor slot), never in
+	// the label. Generic category headers must appear BEFORE the separator.
+	findHeader := func(label string) int {
+		for i, d := range displays {
+			if strings.HasSuffix(d, "  "+label) {
+				return i
+			}
+		}
+		return -1
+	}
+	headerFold := func(label string) string {
+		for _, r := range rows {
+			if strings.HasSuffix(r.Display, "  "+label) {
+				return r.Fold
+			}
+		}
+		return ""
+	}
+	for _, cat := range []string{"Cursor", "Plugin windows"} {
+		i := findHeader(cat)
 		if i == -1 || i > sep {
 			t.Errorf("generic category %q should be above the separator (i=%d sep=%d)", cat, i, sep)
 		}
+		if headerFold(cat) != "▾" {
+			t.Errorf("expanded generic category %q should carry Fold=▾, got %q", cat, headerFold(cat))
+		}
 	}
 	// Product groups must appear AFTER the title, labelled by plugin name only.
-	crispy := find("▾ ○  CrispyTuner")
-	serum := find("▾ ○  Serum 2")
+	crispy := findHeader("CrispyTuner")
+	serum := findHeader("Serum 2")
 	if crispy == -1 || crispy < title {
 		t.Errorf("CrispyTuner group should be under the specific title (i=%d title=%d)", crispy, title)
 	}
@@ -74,7 +98,7 @@ func TestFixPickerSplitsPluginSpecificBelow(t *testing.T) {
 	}
 	// The catalog's own "<Product> specific" category label must NOT be used.
 	for _, d := range displays {
-		if d == "▾ ○  CrispyTuner specific" || d == "▾ ○  Serum 2 specific" {
+		if strings.HasSuffix(d, "  CrispyTuner specific") || strings.HasSuffix(d, "  Serum 2 specific") {
 			t.Errorf("must not render the catalog category label %q; the plugin name is the label", d)
 		}
 	}

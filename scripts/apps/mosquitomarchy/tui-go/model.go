@@ -76,8 +76,15 @@ type model struct {
 	passInput tuikit.TextInput
 
 	statusRecs []StatusRec
-	backupRecs []BackupRec
-	updateRec  UpdateRec
+	// Status screen: the same folder tree as Setup/Uninstall (a module's
+	// category comes from the backend), but a module row carries a STATUS dot
+	// instead of a checkbox, and Enter / `i` only read — nothing is installed,
+	// stripped or ticked here.
+	statusPicker  navPicker
+	statusFolders []string
+	statusOpen    map[string]bool
+	backupRecs    []BackupRec
+	updateRec     UpdateRec
 
 	// Setup tree: folders in display order, their items (flat, folder-tagged),
 	// and a value -> item index for the "i" info popup.
@@ -205,6 +212,7 @@ func initialModel() model {
 		healthChecked:  map[string]bool{},
 		kbSel:          map[string]bool{},
 		folderOpen:     map[string]bool{},
+		statusOpen:     map[string]bool{},
 		setupByValue:   map[string]SetupItemRec{},
 		backupChecked:  map[string]bool{},
 		backupOpen:     map[string]bool{},

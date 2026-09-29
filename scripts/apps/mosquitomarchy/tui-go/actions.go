@@ -69,10 +69,15 @@ func decodeJSONLines[T any](out []byte) ([]T, error) {
 
 // StatusRec is one module's status (mosquitomarchy-setup.sh's module_state:
 // ok / partial / missing / na) plus whether the user uninstalled it.
+// Detail is the ":detail" half of a compound state (e.g. "missing foo bar"
+// after "partial:") and Category is the Setup folder the module belongs to, so
+// Status can be grouped exactly like Setup/Uninstall.
 type StatusRec struct {
 	Id       string `json:"id"`
 	Label    string `json:"label"`
 	State    string `json:"state"`
+	Detail   string `json:"detail"`
+	Category string `json:"category"`
 	Excluded bool   `json:"excluded"`
 }
 

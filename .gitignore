@@ -33,6 +33,16 @@ scripts/apps/bitwig/PATCH/
 __pycache__/
 *.pyc
 
+# ── Go build leftovers ──
+# `go build ./...` inside a tui-go/ directory writes a binary named after that
+# DIRECTORY ("tui-go"), and a bare `go build .` there drops a "tui-go" too. The
+# two TUIs that ship a prebuilt binary keep their own tracked names
+# (mosquitomarchy-tui, audio-plugin-manager-tui); jamjamjam-tui is built by
+# setup-jamjamjam-plugin.sh from source and is deliberately NOT tracked.
+# None of the "tui-go" files belong in the repo.
+**/tui-go/tui-go
+scripts/plugins/jamjamjam/tui-go/jamjamjam-tui
+
 # ── Sensitive / never on a repository (even private) ──
 # Authorization files (Ableton license), license-workaround tools
 # (DaVinci patch-resolve.sh). Everything touching the patch stays local

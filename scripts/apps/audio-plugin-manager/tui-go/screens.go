@@ -303,8 +303,10 @@ func toggleFolderPlugins(items []Item, folderValue string, checked map[string]bo
 // function backs BOTH the uninstall screen and the "Installed plugins" setup
 // list, so folder grouping cannot drift between them.
 // Folder rules (matching the fixes picker's folder convention exactly):
-//   - a folder row is "<chevron> <mark>  <name>": the chevron is "▾" when
-//     the folder is expanded and "▸" when collapsed, and the mark is ● only
+//   - a folder row is "<mark>  <name>" plus PickerItem.Fold, which the kit
+//     draws IN the cursor slot (▸ collapsed / ▾ expanded) so the fold state
+//     and the selection cursor are one marker, never "▶ ▸ <name>". The mark is
+//     ● only
 //     when every plugin in the folder is selected;
 //   - sub-plugins render ONLY while the folder is expanded, indented with a
 //     file-tree angle ("    ├─ " / "    └─ "), the last child using the
@@ -325,13 +327,14 @@ func treeItemsToPicker(items []uninstallTreeItem, checked map[string]bool, expan
 			if len(n.Plugins) > 0 && marked == len(n.Plugins) {
 				mark = "●"
 			}
-			chevron := "▸" // collapsed
+			fold := tuikit.FoldCollapsed
 			if expanded[n.Value] {
-				chevron = "▾"
+				fold = tuikit.FoldExpanded
 			}
 			out = append(out, tuikit.PickerItem{
-				Display: chevron + " " + mark + "  " + n.Display,
+				Display: mark + "  " + n.Display,
 				Value:   n.Value,
+				Fold:    fold,
 			})
 			// Sub-plugins render ONLY inside the expanded folder, and
 			// always indented under it — never as siblings anywhere.
@@ -459,7 +462,8 @@ func fixIsPluginSpecific(it FixItem) bool { return it.Plugin != "" }
 
 // fixItemsToPicker renders the "Plugin fixes" catalog as a single
 // multi-select list. Generic fixes (no specific plugin) come first, grouped by
-// their category as a folder: a "▾/▸ ○/●  <Category>" parent row followed by
+// their category as a folder: a "<mark>  <Category>" parent row (whose fold
+// glyph rides in the cursor slot) followed by
 // its fixes indented under it with a file-tree angle. Toggling the parent
 // flips every fix in that category; individual fixes toggle on their own.
 // Uses the app-wide ○/● circle convention and global fixes are tagged so it is
@@ -577,13 +581,14 @@ func fixCategoryGroup(items []FixItem, checked map[string]bool, expanded map[str
 			if all && any {
 				hmark = "●"
 			}
-			chevron := "▸" // collapsed
+			fold := tuikit.FoldCollapsed
 			if expanded[cat] {
-				chevron = "▾"
+				fold = tuikit.FoldExpanded
 			}
 			out = append(out, tuikit.PickerItem{
-				Display: chevron + " " + hmark + "  " + cat,
+				Display: hmark + "  " + cat,
 				Value:   fixCategoryValuePrefix + cat,
+				Fold:    fold,
 			})
 		}
 		// Children render only while the category is expanded.
@@ -684,12 +689,28 @@ func (m *model) rebuildFixPicker() {
 		m.fixFolderExpanded = map[string]bool{}
 	}
 	for _, it := range m.fixCache {
-		cat := fixCategoryOf(it)
-		if _, ok := m.fixFolderExpanded[cat]; !ok {
-			m.fixFolderExpanded[cat] = true
+		// BOTH keys must be pre-expanded, and they are different strings:
+		// fixCategoryOf(it) is the catalog category the generic groups are
+		// keyed by, while a plugin-specific fix is grouped by its `Plugin`
+		// name ("CrispyTuner"). Registering only the category is what left
+		// the "Plugin specific fixes" section stuck COLLAPSED — its headers
+		// were keys nothing had ever expanded, so the section rendered as a
+		// title followed by nothing.
+		for _, k := range []string{fixCategoryOf(it), it.Plugin} {
+			if k == "" {
+				continue
+			}
+			if _, ok := m.fixFolderExpanded[k]; !ok {
+				m.fixFolderExpanded[k] = true
+			}
 		}
 	}
-	header := "Choose the fixes to apply or remove for " + m.fixPlugin
+	// The header names the PLUGIN, not the folder it happens to live in: a
+	// picker value is "vst:<type>:<full/path>" and the title used to print all
+	// of it, which both overflowed the panel and repeated what the list below
+	// already says. pluginStemOf reduces it to the same canonical stem the
+	// applied-fix state is keyed by.
+	header := "Choose the fixes to apply or remove for " + pluginStemOf(m.fixPlugin)
 	sidx := m.picker.Index()
 	m.picker = tuikit.NewPicker(header,
 		fixItemsToPicker(sortedFixItems(m.fixCache, m.fixSortDesc), m.fixChecked, m.fixFolderExpanded)).

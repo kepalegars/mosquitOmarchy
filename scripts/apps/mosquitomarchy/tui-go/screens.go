@@ -295,7 +295,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			m.statusRecs = msg.status
 			if m.top() == scrStatus {
-				m.info = tuikit.NewInfo(m.statusView()).SetSize(m.contentSize())
+				m.statusPicker = newNavPicker("", m.statusTree()).SetSize(m.contentSize())
 			}
 		case "backups":
 			if msg.err != nil {
@@ -744,7 +744,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		return m, nil
 
 	case tuikit.InfoDismissedMsg:
-		if m.top() == scrInfo || m.top() == scrStatus {
+		// The Status screen pushes a real scrInfo popup for `i`, so dismissal
+		// always pops scrInfo and lands back on the picker. scrStatus is no
+		// longer an Info pane of its own.
+		if m.top() == scrInfo {
 			m.pop()
 		}
 		return m, nil
@@ -896,7 +899,30 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	case scrMain:
 		m.mainPicker, cmd = m.mainPicker.Update(msg)
 	case scrStatus:
-		m.info, cmd = m.info.Update(msg)
+		// `i` and Enter both read the module under the cursor (the detail
+		// popup); Enter on a folder header or "Back" behaves like the folder
+		// rows elsewhere (header = no-op, Back leaves). Status is READ-ONLY:
+		// there is no action to run from here. `esc` leaves the screen.
+		if km, ok := msg.(tea.KeyMsg); ok {
+			switch km.String() {
+			case "esc":
+				m.pop()
+				return m, nil
+			case "i", "enter":
+				v := m.statusPicker.SelectedValue()
+				if strings.HasPrefix(v, "status:") {
+					m.info = tuikit.NewInfo(m.statusDetail(strings.TrimPrefix(v, "status:"))).SetSize(m.contentSize())
+					m.push(scrInfo)
+					return m, nil
+				}
+				if v == "back" {
+					m.pop()
+					return m, nil
+				}
+				return m, nil // a category header: nothing to open
+			}
+		}
+		m.statusPicker, cmd = m.statusPicker.Update(msg)
 	case scrSetup:
 		// 'f' toggles the filter zone above the shortcut bar: a rectangular
 		// search input that echoes every pressed key in real time.
@@ -1260,7 +1286,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		switch res.Value {
 		case "status":
 			m.push(scrStatus)
-			m.info = tuikit.NewInfo("loading…").SetSize(m.contentSize())
+			m.statusOpen = map[string]bool{}
+			m.statusPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).SetSize(m.contentSize())
 			return m, fetchStatusCmd()
 		case "update":
 			m.push(scrUpdate)
@@ -2125,7 +2152,8 @@ func (m model) backupTreeItems() []tuikit.PickerItem {
 	return pickerTreeItems(m.backupFolders, m.backupItems, m.backupChecked, m.backupOpen, false, "backup")
 }
 
-// pickerTreeItems builds the shared folder/item tree rows: a ▸/▾ chevron, an
+// pickerTreeItems builds the shared folder/item tree rows: a Fold glyph (drawn in
+// the cursor slot by the kit), an
 // aggregate ●/○ mark and the label per folder, and indented ├─/└─ children
 // with their own ●/○ marks when the folder is open. blinkOn toggles the
 // Accent flag on rows whose folder sets Accent (the blinking "mosquito").
@@ -2169,14 +2197,15 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 		if len(children) > 0 && marked == len(children) {
 			mark = "●"
 		}
-		chevron := "▸"
+		fold := tuikit.FoldCollapsed
 		if open[f.Folder] {
-			chevron = "▾"
+			fold = tuikit.FoldExpanded
 		}
 		out = append(out, tuikit.PickerItem{
-			Display: chevron + " " + mark + "  " + f.Label,
+			Display: mark + "  " + f.Label,
 			Value:   folderValue(f.Folder),
 			Accent:  f.Accent && blinkOn,
+			Fold:    fold,
 		})
 		if open[f.Folder] {
 			last := len(children) - 1
@@ -2490,27 +2519,175 @@ func (m model) backupsList() []tuikit.PickerItem {
 }
 
 // statusView builds the module status text with state dots.
-func (m model) statusView() string {
-	var b strings.Builder
-	for _, s := range m.statusRecs {
-		dot := "·"
-		switch s.State {
-		case "ok":
-			dot = tuikit.StyleOK.Render("●")
-		case "partial":
-			dot = tuikit.StyleWarn.Render("◐")
-		case "missing":
-			dot = tuikit.StyleErr.Render("○")
-		case "na":
-			dot = tuikit.StyleMuted.Render("·")
-		}
-		label := s.Label
-		if s.Excluded {
-			label += tuikit.StyleMuted.Render("  (uninstalled by you)")
-		}
-		b.WriteString(dot + "  " + label + "\n\n")
+// ── Status screen ───────────────────────────────────────────────────────────
+// The Status screen used to be a static list of coloured dots dumped into a
+// read-only Info pane, with a blank line between every module: no cursor, no
+// per-row `i`, and the dots were the only thing on screen. It is now a real
+// PICKER, laid out like Setup/Uninstall: modules grouped under their category
+// folder (the backend tells us the category), a cursor you can move, and `i`
+// on a module that opens its own detail. The circle is a STATUS dot, not a
+// selection checkbox — nothing is ticked here.
+//
+//   - A row's leading circle is the module's state: ● ok, ◐ partial, ○ missing,
+//     · na. It is styled with the theme colours like before, but the colour no
+//     longer has to carry the meaning on its own: `i` spells the state out.
+//   - `i` (or Enter) on a module shows its FULL detail — the compound state's
+//     ":detail" half, e.g. "partial: missing its Omarchy menu row, its SUPER+ALT
+//     keybinding" — plus the module id. It does NOT repeat the (long) module
+//     description: the title in the list is already the description, and the
+//     user asked for the status, not the marketing copy.
+func statusDot(state string) string {
+	switch state {
+	case "ok":
+		return tuikit.StyleOK.Render("●")
+	case "partial":
+		return tuikit.StyleWarn.Render("◐")
+	case "missing":
+		return tuikit.StyleErr.Render("○")
+	default: // na
+		return tuikit.StyleMuted.Render("·")
 	}
-	return b.String()
+}
+
+// statusLabel renders a module's short label for the status list: the module
+// id (NOT the long "what it does" description Setup shows), plus an explicit
+// "uninstalled by you" marker when the user excluded it. The long description
+// belongs to Setup; Status is about state, and the row stays one clean word.
+func statusLabel(s StatusRec) string {
+	label := s.Id
+	if s.Excluded {
+		label += tuikit.StyleMuted.Render("  (uninstalled by you)")
+	}
+	return label
+}
+
+// rebuildStatus rebuilds the Status screen's picker, preserving the cursor and
+// restoring the folder help keys, exactly like rebuildSetup.
+func (m model) rebuildStatus() navPicker {
+	idx := m.statusPicker.Index()
+	return newNavPicker("", m.statusTree()).SetSize(m.contentSize()).SelectIndex(idx)
+}
+
+// statusCategories returns the module categories in Setup's display order, the
+// backend's own CATEGORIES order, so Status is organised exactly like Setup.
+// Categories that end up with no module (a folder with nothing installed) are
+// dropped — a Status row for an empty category is a dead end.
+func (m model) statusCategories() []string {
+	seen := map[string]bool{}
+	for _, s := range m.statusRecs {
+		if s.Category != "" {
+			seen[s.Category] = true
+		}
+	}
+	// Reuse the Setup/Uninstall folder order when it is loaded; otherwise fall
+	// back to first-seen order so the list is still deterministic.
+	order := make([]string, 0, len(seen))
+	added := map[string]bool{}
+	for _, f := range m.setupFolders {
+		if seen[f.Folder] && !added[f.Folder] {
+			order = append(order, f.Folder)
+			added[f.Folder] = true
+		}
+	}
+	if len(order) == 0 {
+		for _, s := range m.statusRecs {
+			if s.Category != "" && !added[s.Category] {
+				order = append(order, s.Category)
+				added[s.Category] = true
+			}
+		}
+	}
+	return order
+}
+
+// statusTree builds the folder tree of the Status screen. Every category is
+// shown OPEN (status is read-only — there is nothing to fold away and the user
+// asked for the list to be browsable with a single cursor), and each child is
+// a module row.
+func (m model) statusTree() []tuikit.PickerItem {
+	byCat := map[string][]StatusRec{}
+	var loose []StatusRec // modules the backend could not place in a category
+	for _, s := range m.statusRecs {
+		if s.Category == "" {
+			loose = append(loose, s)
+			continue
+		}
+		byCat[s.Category] = append(byCat[s.Category], s)
+	}
+	cats := m.statusCategories()
+	items := make([]tuikit.PickerItem, 0, len(m.statusRecs)+len(cats)+1)
+	appendModule := func(s StatusRec, prefix string) {
+		it := tuikit.PickerItem{
+			Display: prefix + statusDot(s.State) + "  " + statusLabel(s),
+			Value:   "status:" + s.Id,
+		}
+		// A missing/na module is still SELECTABLE (you want `i` on it) — do NOT
+		// set Disabled. Only the visual dot communicates the state.
+		items = append(items, it)
+	}
+	for _, c := range cats {
+		mods := byCat[c]
+		if len(mods) == 0 {
+			continue
+		}
+		// A folder header: the folder glyph, open (▾) since everything is open.
+		items = append(items, tuikit.PickerItem{
+			Display: m.categoryDisplayLabel(c),
+			Value:   "status-cat:" + c,
+			Accent:  c == "mosquito" && m.blinkOn,
+		})
+		for _, s := range mods {
+			appendModule(s, "    ├─ ")
+		}
+	}
+	// Modules with no category (the `apps` pseudo-module, mosquitomarchy-update)
+	// go last under an "Other" header so nothing is ever hidden.
+	if len(loose) > 0 {
+		items = append(items, tuikit.PickerItem{Display: "Other", Value: "status-cat:other"})
+		for _, s := range loose {
+			appendModule(s, "    ├─ ")
+		}
+	}
+	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
+	return items
+}
+
+// categoryDisplayLabel turns a category id into the human label the backend
+// published for it (Setup's own folder label), falling back to the id when the
+// tree has not been loaded yet. Keeps Status headers identical to Setup's.
+func (m model) categoryDisplayLabel(id string) string {
+	for _, f := range m.setupFolders {
+		if f.Folder == id {
+			return f.Label
+		}
+	}
+	return id
+}
+
+// statusDetail is the `i`/Enter text for ONE module: its id and its pure
+// status (state word + the ":detail" half when there is one). No module
+// description — the list row is already the module's name.
+func (m model) statusDetail(id string) string {
+	for _, s := range m.statusRecs {
+		if s.Id != id {
+			continue
+		}
+		var b strings.Builder
+		b.WriteString(tuikit.StyleHeader.Render(id) + "\n\n")
+		state := s.State
+		if s.Excluded {
+			state += "  (uninstalled by you)"
+		}
+		b.WriteString("Status:  " + state + "\n")
+		if s.Detail != "" {
+			b.WriteString("Detail:  " + s.Detail + "\n")
+		}
+		if s.Category != "" {
+			b.WriteString("Category: " + s.Category + "\n")
+		}
+		return b.String()
+	}
+	return "unknown module: " + id
 }
 
 // crashNotify reads the crash-notification flag ONCE (cheap bash query) and

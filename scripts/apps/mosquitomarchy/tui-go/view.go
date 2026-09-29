@@ -84,6 +84,7 @@ func (m model) View() string {
 	m.backupPicker = m.backupPicker.SetSize(m.contentSize())
 	m.backupOptPicker = m.backupOptPicker.SetSize(m.contentSize())
 	m.backupAppsPicker = m.backupAppsPicker.SetSize(m.contentSize())
+	m.statusPicker = m.statusPicker.SetSize(m.contentSize())
 	m.info = m.info.SetSize(m.contentSize())
 	m.runner = m.runner.SetSize(m.contentSize())
 	m.healthPicker = m.healthPicker.SetSize(m.contentSize())
@@ -102,8 +103,8 @@ func (m model) View() string {
 		version = "v" + appVersion
 	case scrStatus:
 		title = screenTitle("Status", w)
-		body = m.info.View()
-		bar = barLine(m.info.ShortcutsHint())
+		body = m.statusPicker.View()
+		bar = barLine(m.statusPicker.ShortcutsHint())
 	case scrSetup:
 		if m.treeMode == "uninstall" {
 			title = screenTitle("Uninstall", w)

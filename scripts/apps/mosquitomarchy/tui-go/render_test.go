@@ -133,24 +133,30 @@ func TestSetupUpdatesOption(t *testing.T) {
 }
 
 // TestStatusScroll checks the status screen actually scrolls, and that the
-// scroll offset survives the defensive SetSize the host performs every render
-// (the bug that made it snap back to the top).
+// TestStatusScroll asserts the Status picker is navigable and its render never
+// panics across the full module list. (It used to be a static Info dump with a
+// scroll offset; the screen is a real cursor-bearing picker now.)
 func TestStatusScroll(t *testing.T) {
 	m := initialModel()
 	m.nav = []screen{scrMain, scrStatus}
 	m.w, m.h = 100, 24
 	recs := make([]StatusRec, 60)
 	for i := range recs {
-		recs[i] = StatusRec{Id: fmt.Sprintf("m%02d", i), Label: fmt.Sprintf("Module %02d", i), State: "ok"}
+		recs[i] = StatusRec{Id: fmt.Sprintf("m%02d", i), State: "ok", Category: "apps"}
 	}
 	m.statusRecs = recs
-	m.info = tuikit.NewInfo(m.statusView()).SetSize(m.contentSize())
-	before := m.info.View()
+	m.statusPicker = m.rebuildStatus()
+	if len(m.statusPicker.items) == 0 {
+		t.Fatal("status picker is empty")
+	}
+	first := m.statusPicker.Index()
+	view := m.statusPicker.View()
+	if view == "" {
+		t.Fatal("status rendered an empty frame")
+	}
 	m, _ = m.update(tea.KeyMsg{Type: tea.KeyDown})
-	// The host re-sizes defensively on every render; the offset must survive.
-	m.info = m.info.SetSize(m.contentSize())
-	if m.info.View() == before {
-		t.Fatal("status did not scroll")
+	if m.statusPicker.Index() == first {
+		t.Fatal("status did not move the cursor down")
 	}
 }
 
@@ -167,9 +173,10 @@ func TestViewRenders(t *testing.T) {
 		m, _ = m.update(tea.WindowSizeMsg{Width: 120, Height: 40})
 		switch s {
 		case scrStatus:
-			m.statusRecs = []StatusRec{{Id: "reaper", Label: "REAPER", State: "ok"},
-				{Id: "bad", Label: "Bad thing", State: "missing"}}
-			m.info = tuikit.NewInfo(m.statusView()).SetSize(m.contentSize())
+			m.statusRecs = []StatusRec{
+				{Id: "reaper", State: "ok", Category: "apps"},
+				{Id: "bad", State: "missing", Category: "apps", Detail: "no binary"}}
+			m.statusPicker = m.rebuildStatus()
 		case scrSetup:
 			m.setupFolders = []FolderRec{{Folder: "apps", Label: "Apps"}, {Folder: "mosquito", Label: "mosquito", Accent: true}}
 			m.setupItems = []SetupItemRec{
