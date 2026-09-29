@@ -15,7 +15,7 @@
 #   ./bootstrap.sh --status       # module status without modifying anything
 #
 #   # Repo NOT yet cloned → a single terminal command (repo is public):
-#   curl -fsSL https://raw.githubusercontent.com/kepalegars/mosquitOmarchy/master/scripts/bootstrap.sh | bash -s -- --zips -y
+#   curl -fsSL https://raw.githubusercontent.com/kepalegars/mosquitOmarchy/master/bootstrap.sh | bash -s -- --zips -y
 #
 # Security: asset downloads are verified by sha256 (assets.links);
 # the script does nothing unless you explicitly ask it to (no silent sudo:
@@ -24,7 +24,7 @@ set -euo pipefail
 
 # ── Repository settings (overridable — package root is github.com/kepalegars/mosquitOmarchy) ──
 REPO_URL="${BOOTSTRAP_REPO_URL:-https://github.com/kepalegars/mosquitOmarchy.git}"
-RAW_BOOTSTRAP_URL="${BOOTSTRAP_RAW_URL:-https://raw.githubusercontent.com/kepalegars/mosquitOmarchy/master/scripts/bootstrap.sh}"
+RAW_BOOTSTRAP_URL="${BOOTSTRAP_RAW_URL:-https://raw.githubusercontent.com/kepalegars/mosquitOmarchy/master/bootstrap.sh}"
 BRANCH="${BOOTSTRAP_BRANCH:-master}"
 INSTALL_DIR="${BOOTSTRAP_INSTALL_DIR:-$HOME/mosquitOmarchy}"
 
@@ -48,10 +48,11 @@ err(){ printf " ${R}✗${N} %s\n" "$*" >&2; }
 hr(){ printf '%.0s─' {1..72}; echo; }
 
 # ───────────────────────── Repository location ─────────────────────────
-# run from a checkout → the repo root (mosquitomarchy-setup.sh) is found either
-# in the script folder itself or one level up (bootstrap.sh lives in scripts/);
-# run via `curl | bash` (stdin) → it clones. A checkout without the root
-# mosquitomarchy-setup.sh is considered incomplete.
+# run from a checkout → the repo root (mosquitomarchy-setup.sh) sits NEXT to
+# this script, which is the repo root itself; run via `curl | bash` (stdin) →
+# it clones. A checkout without the root mosquitomarchy-setup.sh is considered
+# incomplete. The `../` branch is kept only so an older checkout, where this
+# script still lived in scripts/, keeps working.
 DETECTED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
 SRC=""
 if [[ -n "$DETECTED_DIR" ]] && [[ -f "$DETECTED_DIR/mosquitomarchy-setup.sh" ]]; then

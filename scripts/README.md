@@ -1,6 +1,6 @@
 # `scripts/` — mosquitOmarchy modules and helpers
 
-This folder holds everything except the two root orchestrators (`mosquitomarchy-setup.sh`, `archive-mosquitomarchy.sh`) and the repo meta files.
+This folder holds everything except the two root entry points (`mosquitomarchy-setup.sh` — the orchestrator — and `bootstrap.sh` — the one-command start) and the repo meta files. The release archiver, `archive-mosquitomarchy.sh`, lives HERE, next to the other tooling.
 
 Unlike the other modules, the apps are grouped under `apps/` (one folder per app + shared helpers), with one `apps/README.md` for the whole group; the modules each bring their own `README.md`.
 

@@ -27,21 +27,21 @@ The large installers are not in the repo; they are provided by the release archi
 **Repo already cloned:**
 
 ```bash
-./scripts/bootstrap.sh                        # interactive: full setup
-./scripts/bootstrap.sh --zips -y              # auto setup + downloads missing large installer files
-./scripts/bootstrap.sh --status               # module status, no changes made
-./scripts/bootstrap.sh --repo=https://github.com/kepalegars/mosquitOmarchy.git --dir=PATH  # override repo URL / clone destination
+./bootstrap.sh                        # interactive: full setup
+./bootstrap.sh --zips -y              # auto setup + downloads missing large installer files
+./bootstrap.sh --status               # module status, no changes made
+./bootstrap.sh --repo=https://github.com/kepalegars/mosquitOmarchy.git --dir=PATH  # override repo URL / clone destination
 ```
 
 **Repo not yet present** (large installer files are **not** in the repo):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kepalegars/mosquitOmarchy/master/scripts/bootstrap.sh | bash -s -- --zips -y
+curl -fsSL https://raw.githubusercontent.com/kepalegars/mosquitOmarchy/master/bootstrap.sh | bash -s -- --zips -y
 ```
 
 > The repo is at <https://github.com/kepalegars/mosquitOmarchy>. `bootstrap.sh` clones it by
 > default; if you keep a fork, override `REPO_URL` / `RAW_BOOTSTRAP_URL` / `BRANCH` at the
-> top of `scripts/bootstrap.sh` or pass `--repo=URL`.
+> top of `bootstrap.sh` or pass `--repo=URL`.
 
 ## Manage everything from mosquitOmarchy (the TUI)
 
@@ -76,11 +76,11 @@ All scripts are **v1.0.0**, except three still at **v0.1.0**: the DaVinci Resolv
 ```
 mosquitOmarchy/
 ├── README.md · LICENSE · assets.links · .gitignore · .mise.toml
-├── archive-mosquitomarchy.sh       # "latest release" tar.gz (root)
+├── bootstrap.sh                  # one-command start (clone + setup)
 ├── mosquitomarchy-setup.sh         # single orchestrator: backup/restore → modules → uninstall → repo update
 └── scripts/
+    ├── archive-mosquitomarchy.sh # "latest release" tar.gz of the repo
     ├── gui-run.bash             # file-manager launch support (reopens installers in a terminal)
-    ├── bootstrap.sh             # one-command start
     ├── deps                     # deps with no module folder of their own (currently: omagrab)
     ├── lib/                     # shared helpers: tui-kit/ (Go component library) + common.bash + crash.bash + keybindings.bash
     ├── fixes/                   # small idempotent fixes (Papers, brightness, touchpad, MX Master, menu…)
@@ -282,12 +282,12 @@ On launch you choose among two archive types (or `--type=`):
 Always excluded (whatever the type): logs, `.venv`, Git history, previous archives. **Large installers** (Ableton zips/`.run`, Guitar Pro `.exe`, DaVinci zips) are embedded **automatically** in `print` archives (they are the personal backup of the installers), and **offered** (never forced) for the `release` archives. The file name embeds the type: `omarchy-scripts-print-<date>.tar.gz`, `omarchy-scripts-release-<date>.tar.gz`.
 
 ```bash
-./archive-mosquitomarchy.sh                 # interactive: type → heavy installers → tar.gz
-./archive-mosquitomarchy.sh -y              # defaults: type 'print', all heavy installers embedded
-./archive-mosquitomarchy.sh --type=release  # non-interactive: "clean" release (no backups)
-./archive-mosquitomarchy.sh --with-ableton --with-davinci
-./archive-mosquitomarchy.sh --list-heavy    # list the detected heavy files
-./archive-mosquitomarchy.sh --no-backups    # print only: skip the config backups
+./scripts/archive-mosquitomarchy.sh                 # interactive: type → heavy installers → tar.gz
+./scripts/archive-mosquitomarchy.sh -y              # defaults: type 'print', all heavy installers embedded
+./scripts/archive-mosquitomarchy.sh --type=release  # non-interactive: "clean" release (no backups)
+./scripts/archive-mosquitomarchy.sh --with-ableton --with-davinci
+./scripts/archive-mosquitomarchy.sh --list-heavy    # list the detected heavy files
+./scripts/archive-mosquitomarchy.sh --no-backups    # print only: skip the config backups
 ```
 
 ---
@@ -306,7 +306,7 @@ Quick functions catalog includes the package helpers already installed on the sy
 
 ```bash
 git clone https://github.com/kepalegars/mosquitOmarchy ~/mosquitOmarchy && cd ~/mosquitOmarchy
-./scripts/bootstrap.sh --zips -y          # downloads large files + auto setup
+./bootstrap.sh --zips -y          # downloads large files + auto setup
 ```
 
 Then, manually (also shown in the final report):

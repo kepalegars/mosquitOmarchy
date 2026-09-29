@@ -42,7 +42,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$SCRIPT_DIR"                          # repo root (the script lives at the root)
+# The repo ROOT is the parent: this script lives in scripts/, next to the other
+# tooling, not at the top level. Resolved from the location rather than assumed,
+# so the archive covers the repo whether it is run from scripts/ or by absolute
+# path from anywhere.
+ROOT="$(dirname "$SCRIPT_DIR")"
 PROJECT_NAME="$(basename "$ROOT")"
 BACKUP_DIR="${OMARCHY_BACKUP_DIR:-$HOME/omarchy-backups}"
 OUT_DIR="${OMARCHY_ARCHIVE_OUT:-$ROOT}"
@@ -127,16 +131,16 @@ resolve_type(){
 # installers (zips) in davinci/. They are NEVER embedded without
 # validation (size).
 HARD=()                 # all the detected "heavy" files
-is_ableton(){ [[ "$1" == "$SCRIPT_DIR"/scripts/apps/ableton/* ]]; }
-is_davinci(){ [[ "$1" == "$SCRIPT_DIR"/scripts/apps/davinci/* ]]; }
-is_guitarpro(){ [[ "$1" == "$SCRIPT_DIR"/scripts/apps/guitarpro/* ]]; }
+is_ableton(){ [[ "$1" == "$ROOT"/scripts/apps/ableton/* ]]; }
+is_davinci(){ [[ "$1" == "$ROOT"/scripts/apps/davinci/* ]]; }
+is_guitarpro(){ [[ "$1" == "$ROOT"/scripts/apps/guitarpro/* ]]; }
 
 detect_heavy(){
   HARD=()
   local f
-  for f in "$SCRIPT_DIR"/scripts/apps/ableton/*.zip "$SCRIPT_DIR"/scripts/apps/ableton/*.run \
-           "$SCRIPT_DIR"/scripts/apps/guitarpro/*.exe \
-           "$SCRIPT_DIR"/scripts/apps/davinci/DaVinci_Resolve_*_Linux.zip; do
+  for f in "$ROOT"/scripts/apps/ableton/*.zip "$ROOT"/scripts/apps/ableton/*.run \
+           "$ROOT"/scripts/apps/guitarpro/*.exe \
+           "$ROOT"/scripts/apps/davinci/DaVinci_Resolve_*_Linux.zip; do
     if [[ -f $f ]]; then HARD+=("$f"); fi
   done
 }
