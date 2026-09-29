@@ -1186,7 +1186,12 @@ cmd_ai_removed() {
 # mosquitomarchy itself): `list` shows name<TAB>present<TAB>label;
 # `strip  <name>` removes that marked block from omarchy-menu.jsonc;
 # `restore <name>` re-runs the module's menu installer.
-MENU_JSONC="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
+# The env override is what lets the TUI's Go tests exercise the real
+# strip/restore code path against a throwaway file. Without it, a test that
+# pressed "apply" was editing the user's LIVE menu: the suite silently left
+# `move-converter` and `live-mode` stripped out of the real
+# omarchy-menu.jsonc. Never point this at the live file from a test.
+MENU_JSONC="${MOSQUITOMARCHY_MENU_JSONC:-$HOME/.config/omarchy/extensions/omarchy-menu.jsonc}"
 
 # The menu KEY of each entry, which is what the list/strip logic matches on.
 # These used to be labels and comment fragments ("mosquitOmarchy setup",

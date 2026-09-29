@@ -547,9 +547,31 @@ scan_wine_programs() {
     for d in "$p/drive_c/Program Files"/* "$p/drive_c/Program Files (x86)"/*; do
       [[ -d "$d" ]] || continue
       find "$d" -maxdepth 1 -type f \( -iname 'unins*.exe' -o -iname 'uninstall*.exe' \) \
-        2>/dev/null | grep -q . && printf '%s\n' "$d"
+        2>/dev/null | grep -q . || continue
+      # A folder reduced to its own uninstaller is a dead category: nothing
+      # left to show, only an empty row in the plugin list / uninstall tree.
+      wine_program_folder_dead "$d" && continue
+      printf '%s\n' "$d"
     done
   done
+}
+
+# wine_program_folder_dead <folder> — returns 0 when the folder holds
+# nothing but its own uninstaller and trivial debris (unins*.exe/dat,
+# *.log, desktop.ini). The uninstall flow parks the whole folder in the
+# quarantine before it uninstalls, so a folder left with only those files
+# can be dropped entirely instead of lingering as an empty category row.
+wine_program_folder_dead() {
+  local f base
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    base="$(basename "$f")"
+    case "$base" in
+      unins*.exe|unins*.dat|uninst*.exe|uninst*.dat|*.log|desktop.ini) continue ;;
+    esac
+    return 1 # still holds real payload
+  done < <(find "$1" -type f 2>/dev/null)
+  return 0
 }
 
 # yabridge chainloader present next to a plugin file?
@@ -1245,12 +1267,219 @@ register_standalones_from_prefix() {
   done
 }
 
+# ── yabridge driver: keep the fixed build ahead of the distro package ───────
+# The distro yabridge (5.1.1) predates the Wine 9.22+ embedding fix: an
+# embedded VST editor only learns its real position on a reconfigure event,
+# so mouse clicks are offset by the window position and only register when
+# the editor sits at (0,0) — the reason this manager used to force every
+# plugin GUI to the top-left via Hyprland rules. The fix lives only in git
+# master ([Unreleased] in CHANGELOG.md). This driver builds master into
+# ~/.local/share/yabridge — the flat, canonical location both yabridgectl and
+# yabridge's runtime search need — records the built commit, and rebuilds
+# whenever master moves forward. post_install() forces a refresh after every
+# plugin install; every other entry point (status, TUI) checks the remote on
+# a throttled cadence so a new commit lands within the day without a manual
+# rebuild.
+#
+# Two machine facts keep this working:
+#  - yabridgectl's config must pin yabridge_home = $YABRIDGE_DST, otherwise
+#    sync copies the distro chainloaders (which point back at /usr) back into
+#    ~/.vst*.
+#  - the distro `yabridge` package must be removed: its /usr/bin/yabridge-host.exe
+#    always wins the chainloader's host lookup, so the fixed runtime would
+#    never load. yabridgectl can stay (it reads yabridge_home and syncs from
+#    our build).
+YABRIDGE_SRC="${YABRIDGE_SRC:-$HOME/.local/opt/yabridge-master}"
+YABRIDGE_DST="${YABRIDGE_DST:-$HOME/.local/share/yabridge}"
+YABRIDGE_URL="${YABRIDGE_URL:-https://github.com/robbert-vdh/yabridge}"
+YABRIDGE_STATE="$STATE_DIR/yabridge-driver.json"
+YABRIDGE_LOCK="$STATE_DIR/yabridge-driver.lock"
+YABRIDGE_LOG="$STATE_DIR/yabridge-build.log"
+YABRIDGE_STATEVERSION=1
+# Seconds between two non-forced remote polls. Frequent enough to land a new
+# fix within a day, cheap enough to run on every status/menu.
+YABRIDGE_POLL="${YABRIDGE_POLL:-21600}"
+
+yabridge_artifacts() {
+  printf '%s\n' \
+    libyabridge-chainloader-vst2.so libyabridge-chainloader-vst3.so \
+    libyabridge-chainloader-clap.so libyabridge-vst2.so libyabridge-vst3.so \
+    libyabridge-clap.so yabridge-host.exe yabridge-host.exe.so
+}
+
+yabridge_commit() { [[ -f $YABRIDGE_STATE ]] || return 0; jq -r '.commit // ""' "$YABRIDGE_STATE" 2>/dev/null || true; }
+yabridge_built_date() { [[ -f $YABRIDGE_STATE ]] || return 0; jq -r '.date // 0' "$YABRIDGE_STATE" 2>/dev/null || true; }
+yabridge_checked() { [[ -f $YABRIDGE_STATE ]] || return 0; jq -r '.checked // 0' "$YABRIDGE_STATE" 2>/dev/null || true; }
+
+# The flat install is current when the recorded commit matches and every
+# artifact is present in $YABRIDGE_DST.
+yabridge_installed() {
+  [[ -f "$YABRIDGE_DST/libyabridge-chainloader-vst2.so" ]] || return 1
+  local a
+  for a in $(yabridge_artifacts); do
+    [[ -e "$YABRIDGE_DST/$a" ]] || return 1
+  done
+  return 0
+}
+
+# Is the distro `yabridge` package still installed and shadowing our build?
+yabridge_distro_shadowing() {
+  [[ -e /usr/bin/yabridge-host.exe || -e /usr/lib/libyabridge-vst2.so ]]
+}
+
+# Pin yabridgectl to our build. "set --path" on the Arch package panics
+# (clap_builder bug), so the config is written directly: yabridge_home must be
+# a *top-level* key, never inside the [last_known_config] table.
+yabridge_pin_yabridgectl() {
+  local cfg="${YABRIDGE_CFG:-$HOME/.config/yabridgectl/config.toml}"
+  [[ -f $cfg ]] || return 0
+  mkdir -p "$(dirname "$cfg")" 2>/dev/null
+  if grep -q "^yabridge_home *= *\"$YABRIDGE_DST\"" "$cfg" 2>/dev/null; then
+    return 0
+  fi
+  # Shell-quote the path: it is a double-quoted TOML string.
+  local quoted
+  quoted="$(printf '%s' "$YABRIDGE_DST" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+  {
+    printf 'yabridge_home = "%s"\n' "$quoted"
+    grep -v "^yabridge_home" "$cfg"
+  } > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
+}
+
+yabridge_write_state() {
+  local commit="$1" checked="${2:-$(date +%s)}" built="${3:-}"
+  [[ -n $built ]] || built="$(date +%s)"
+  jq -nc --arg commit "$commit" --argjson date "$built" \
+    --argjson checked "$checked" --argjson version "$YABRIDGE_STATEVERSION" \
+    --arg src "$YABRIDGE_SRC" --arg dst "$YABRIDGE_DST" \
+    '{version:$version, commit:$commit, date:$date, checked:$checked, src:$src, dst:$dst}' \
+    > "$YABRIDGE_STATE"
+}
+
+# Mark that the remote was polled, keeping the original build date intact.
+yabridge_touch_check() {
+  [[ -f $YABRIDGE_STATE ]] || return 0
+  jq --argjson checked "$(date +%s)" '.checked = $checked' "$YABRIDGE_STATE" > "$YABRIDGE_STATE.tmp" \
+    && mv "$YABRIDGE_STATE.tmp" "$YABRIDGE_STATE"
+}
+
+# Build master into $YABRIDGE_DST (flat layout) w/ sources in $YABRIDGE_SRC.
+# Serialized with flock so a throttled status check can never race post_install.
+yabridge_build() {
+  local ok=1
+  exec 9>"$YABRIDGE_LOCK"
+  flock 9 || { warn "yabridge build already running — skipping."; return 1; }
+
+  msg "yabridge: syncing master ($YABRIDGE_URL)"
+  if [[ ! -d "$YABRIDGE_SRC/.git" ]]; then
+    mkdir -p "$(dirname "$YABRIDGE_SRC")"
+    git clone --depth 1 --branch master "$YABRIDGE_URL" "$YABRIDGE_SRC" >>"$YABRIDGE_LOG" 2>&1 || {
+      err "yabridge: could not clone the repository"; ok=0; }
+  else
+    git -C "$YABRIDGE_SRC" fetch origin master --depth 1 >>"$YABRIDGE_LOG" 2>&1 && \
+      git -C "$YABRIDGE_SRC" reset --hard FETCH_HEAD >>"$YABRIDGE_LOG" 2>&1 || {
+      warn "yabridge: could not refresh the clone — building what we have"; }
+  fi
+
+  local commit
+  commit="$(git -C "$YABRIDGE_SRC" rev-parse HEAD 2>/dev/null || echo unknown)"
+  if [[ $ok == 1 && $(yabridge_commit) == "$commit" ]] && yabridge_installed; then
+    # Already built and installed for exactly this commit — nothing to do.
+    ok "yabridge: already built at $commit"
+    yabridge_write_state "$commit" "$(date +%s)"
+    return 0
+  fi
+
+  if [[ $ok == 1 ]]; then
+    msg "yabridge: building master ($commit) — this takes a couple of minutes the first time"
+    if ! command -v meson >/dev/null 2>&1 || ! command -v ninja >/dev/null 2>&1; then
+      err "yabridge: meson and ninja are required to build yabridge"
+      return 1
+    fi
+    mkdir -p "$YABRIDGE_DST"
+    if ( cd "$YABRIDGE_SRC" && meson setup build --buildtype=release --cross-file=cross-wine.conf \
+          --unity=on --unity-size=1000 >>"$YABRIDGE_LOG" 2>&1 && \
+          ninja -C build >>"$YABRIDGE_LOG" 2>&1 ); then
+      ok "yabridge: build finished"
+    else
+      err "yabridge: build failed — see $YABRIDGE_LOG"
+      return 1
+    fi
+  fi
+
+  msg "yabridge: installing into $YABRIDGE_DST"
+  local a
+  for a in $(yabridge_artifacts); do
+    cp -af "$YABRIDGE_SRC/build/$a" "$YABRIDGE_DST/" 2>/dev/null || { err "yabridge: missing artifact $a"; ok=0; }
+  done
+  chmod 755 "$YABRIDGE_DST"/libyabridge-*.so "$YABRIDGE_DST"/*.exe "$YABRIDGE_DST"/*.exe.so 2>/dev/null
+  if [[ $ok == 1 ]]; then
+    yabridge_pin_yabridgectl
+    ok "yabridge: installed master revision ${commit:0:8}"
+    # A fresh build invalidates the running winelib host: yabridge-host is
+    # short-lived (spawned per plugin), so nothing else to clean up.
+    yabridge_write_state "$commit" "$(date +%s)"
+    return 0
+  fi
+  return 1
+}
+
+# The driver entry point. Force refreshes the remote check+build immediately
+# (post_install); otherwise it is throttled by $YABRIDGE_POLL.
+yabridge_ensure() {
+  local force="${1:-}"
+  # No sensible state dir (tests, exotic setups) — stay out of the way.
+  [[ -n $STATE_DIR && -d $STATE_DIR ]] || return 0
+  command -v git >/dev/null 2>&1 || { warn "yabridge: git is required to track master"; return 0; }
+
+  if [[ $force != force ]]; then
+    local now; now="$(date +%s)"
+    local last; last="$(yabridge_checked)"
+    if (( now - last < YABRIDGE_POLL )); then
+      if yabridge_installed; then return 0; fi
+    fi
+  fi
+
+  # Poll the remote; rebuild only when master moved past what we built.
+  local head
+  head="$(git ls-remote "$YABRIDGE_URL" refs/heads/master 2>/dev/null | awk '{print $1}')"
+  if [[ -z $head ]]; then
+    if yabridge_installed; then return 0; fi
+    warn "yabridge: could not reach GitHub — rebuilding from the local clone"
+    head="$(git -C "$YABRIDGE_SRC" rev-parse HEAD 2>/dev/null || echo unknown)"
+    [[ $head == unknown || $(yabridge_commit) != "$head" ]] || return 0
+  fi
+  if [[ $(yabridge_commit) == "$head" ]] && yabridge_installed; then
+    yabridge_touch_check
+    ok "yabridge: master is current ($(printf '%s' "${head:0:8}"))"
+    return 0
+  fi
+
+  yabridge_build || return 1
+  yabridge_pin_yabridgectl
+  return 0
+}
+
+# yabridge_state_json — for the actions backend / TUI row.
+yabridge_state_json() {
+  local commit built_date distro="no"
+  commit="$(yabridge_commit)"
+  built_date="$(yabridge_built_date)"
+  yabridge_distro_shadowing && distro="yes"
+  jq -nc --arg dir "$YABRIDGE_DST" --arg commit "$commit" --arg built "$built_date" \
+    --arg installed "$(yabridge_installed && echo yes || echo no)" --arg distro "$distro" \
+    '{dir:$dir, commit:$commit, built:$built, installed:$installed, distro:$distro}'
+}
+
 post_install() {
+  yabridge_ensure force || true
+
   local pf
   for pf in "${WINE_PREFIXES[@]:-}"; do
     fix_sonible_runtime_deps "$pf"
   done
   fix_sonible_runtime_deps "$(default_prefix)"
+  yabridge_pin_yabridgectl
   if command -v yabridgectl >/dev/null; then
     yabridgectl sync >/dev/null 2>&1 && ok "yabridgectl sync OK"
   fi
@@ -1563,6 +1792,17 @@ uninstall_target() {
   remove_vst_dir "$target"
   post_install
   ok "Done — see $qdir"
+
+  # 7. An uninstall that empties its windows folder now drops the folder
+  #    itself: it was already copied WHOLE into the quarantine (step 2), so
+  #    nothing is lost, and a folder reduced to its own uninstaller used to
+  #    linger as a dead "category" row in the plugin list and the uninstall
+  #    tree (the user's "I removed every Crispy plugin and the folder still
+  #    shows in the list").
+  if [[ -n ${winedir:-} && -d $winedir ]] && wine_program_folder_dead "$winedir"; then
+    rm -rf "$winedir"
+    ok "windows folder removed (kept in quarantine): $(basename "$winedir")"
+  fi
 }
 
 # Hide/show a VST plugin without uninstalling it: rename the file under the
@@ -1789,6 +2029,8 @@ EOF
 # ── Status (one-shot CLI only, not a menu option) ───────────────────────────
 status_report() {
   local plist line f type label verdict acc
+  # Throttled yabridge refresh: keep master current without a manual rebuild.
+  yabridge_ensure || true
   plist=$(scan_plugins)
   if [[ -z $plist ]]; then
     warn "No plugin found in $VST_ROOT/{vst,vst3,clap}"
@@ -2330,6 +2572,41 @@ cleanup() {
   fi
 }
 
+# Permanently empty the two quarantine folders where uninstalls park files
+# instead of deleting them (~/.cache/vst-quarantine for Windows/VST plugins,
+# ~/.cache/audio-plugin-manager-quarantine for native LV2/CLAP/VST3 bundles).
+# Deliberately destructive — the parked files are gone for good, so the
+# caller (the Go TUI) double-confirms first. Human ok()/warn() lines to
+# stdout always, then a machine-readable report when stdout is not a
+# terminal (the actions script's `empty_quarantine | tail -1`):
+#   {"dirs":[{"dir":"/abs/path","removed":N},...]}
+empty_quarantine() {
+  local -a dirs=( "$HOME/.cache/vst-quarantine" "$HOME/.cache/audio-plugin-manager-quarantine" )
+  local -a reports=()
+  local d remains bytes
+  for d in "${dirs[@]}"; do
+    [[ -d $d ]] || continue
+    remains="$(find "$d" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)"
+    bytes="$(du -sb -- "$d" 2>/dev/null | awk '{print $1}')" || bytes=0
+    if (( remains == 0 )); then
+      ok "already empty: $d"
+      reports+=("$(jq -nc --arg dir "$d" --argjson removed 0 --argjson bytes "${bytes:-0}" '{dir:$dir,removed:0,bytes:$bytes}')")
+      continue
+    fi
+    rm -rf "$d"/* 2>/dev/null
+    rm -rf "$d"/.[!.]* "$d"/..?* 2>/dev/null
+    ok "quarantine emptied: $d ($remains entr(y/ies) permanently deleted, ${bytes:-0} bytes)"
+    reports+=("$(jq -nc --arg dir "$d" --argjson removed "$remains" --argjson bytes "${bytes:-0}" '{dir:$dir,removed:'"$remains"',bytes:'"${bytes:-0}"'}')")
+  done
+  if [[ ! -t 1 ]]; then
+    if ((${#reports[@]} == 0)); then
+      jq -nc '{dirs:[]}'
+    else
+      printf '{"dirs":[%s]}\n' "$(IFS=,; echo "${reports[*]}")"
+    fi
+  fi
+}
+
 # ── Interactive menu ────────────────────────────────────────────────────────
 # Omarchy's app launcher shows a "Launching <app>…" OSD (AppLibrary.qml) that
 # only closes when an app opens a toplevel window. This menu opens none, so the
@@ -2604,6 +2881,9 @@ yabridge_check_json() {
   if command -v yabridgectl >/dev/null 2>&1; then
     host64="$(command -v yabridge-host.exe 2>/dev/null || true)"
     [[ -z $host64 ]] && host64="$(ls /usr/bin/yabridge-host.exe 2>/dev/null || true)"
+    # Our own master build (the driver's canonical home) supersedes the
+    # distro package; report it as the real source of the 64-bit host.
+    [[ -z $host64 ]] && host64="$(ls "$YABRIDGE_DST/yabridge-host.exe" 2>/dev/null || true)"
     local line
     line="$(yabridgectl status 2>/dev/null | grep 'yabridge-host-32.exe:' || true)"
     if [[ -n $line && $line != *"<not found>"* ]]; then

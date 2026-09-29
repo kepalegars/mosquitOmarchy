@@ -178,7 +178,8 @@ func (d pickerDelegate) badgeCell(pi PickerItem) string {
 // trailingCell renders a row's TrailingBadge: two spaces then the accent
 // glyph, appended AFTER the title so it reads as a suffix ("name  ■"). It is
 // never a leading slot — the title keeps its normal column. Returns "" when
-// the picker reserved no trailing slot or the row has no badge.
+// the row has no badge (the reserved column still exists, so the label does
+// not move when a marker is added or removed).
 func (d pickerDelegate) trailingCell(pi PickerItem) string {
 	if d.trailSlot <= 0 || pi.TrailingBadge == "" {
 		return ""
@@ -219,9 +220,10 @@ func (d pickerDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 // sits immediately to the left of the text and moves with the text — the
 // whole row (indicator + text) is rendered as one line and then centered
 // in the row width, so short and long options read as one aligned column
-// and nothing is ever left-aligned. The DefaultDelegate's left-border
-// highlight is stripped (see titleStyle) so the centered text doesn't get a
-// stray "│" next to the cursor.
+// that starts at the same column on every row — the line's START is the
+// anchor, never the center of the option text itself. The
+// DefaultDelegate's left-border highlight is stripped (see titleStyle) so
+// the centered text doesn't get a stray "│" next to the cursor.
 func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, item list.Item) {
 	if m.Width() <= 0 {
 		return
@@ -265,8 +267,9 @@ func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, ite
 	// Compose the row (3-col indicator slot + styled title), then snap
 	// every row to the uniform width right-padded inside a
 	// Width(maxRowW) block, and center that block in the list width:
-	// every occupied column is identical across rows — one shared
-	// text column, no stair-stepping, never left-anchored.
+	// every occupied column is identical across rows — every line starts
+	// at the same column (the line's START is the anchor, never the
+	// center of the option text), no stair-stepping.
 	row := indicator + titleStyled
 	if d.ShowDescription && desc != "" {
 		descAvail := avail - d.badgeSlot
@@ -387,6 +390,10 @@ type Picker struct {
 	// ? more · tab select · ←/→ sort" string without re-implementing
 	// bubbles' help renderer.
 	extraHints []string
+	// helpNote is an optional freestanding line shown in the "?" overlay
+	// under the shortcuts — a path, a caveat, anything that isn't a key
+	// binding (SetHelpNote). Empty = no note.
+	helpNote string
 }
 
 func NewPicker(header string, items []PickerItem) Picker {
@@ -396,7 +403,14 @@ func NewPicker(header string, items []PickerItem) Picker {
 	// Reserve one fixed leading slot for badges when any row sets one, so a
 	// badged row and an unbadged row still share the same title column.
 	badgeSlot := 0
-	trailSlot := 0
+	// The trailing column is reserved UNCONDITIONALLY, on every picker, whether
+	// or not any row currently carries a marker. Reserving it only when a badge
+	// appears is what made a row jump: the row block is centered, so widening
+	// it by the badge width re-centered the whole list and every other option
+	// slid left to make room. With the column always present, a marker appears
+	// and disappears without moving a single label, and every screen in the app
+	// lines its markers up in the same place.
+	trailSlot := trailingBadgeGap + 1
 	for _, it := range items {
 		if it.Badge != "" {
 			if bw := lipgloss.Width(it.Badge) + 1; bw > badgeSlot {
@@ -519,6 +533,16 @@ func (p Picker) SetHelpKeys(keys ...key.Binding) Picker {
 			p.extraHints = append(p.extraHints, h.Key+" "+h.Desc)
 		}
 	}
+	return p
+}
+
+// SetHelpNote appends a freestanding line to the picker's "?" help overlay,
+// below the shortcut list — a path, a caveat, anything that isn't a key
+// binding. The host decides the wording (e.g. the audio plugin manager's
+// Settings help shows the manual quarantine access paths). Empty string
+// removes any previously set note. Purely cosmetic; see FullHelpText.
+func (p Picker) SetHelpNote(note string) Picker {
+	p.helpNote = note
 	return p
 }
 
@@ -737,9 +761,10 @@ func (p Picker) View() string {
 	// keep the accent captured when NewPicker ran).
 	p.list.Styles.Title = StyleHeader
 	// Each row is centered inside the picker's own width by renderCentered
-	// (which pads every row to maxRowW first so widths match and centers
-	// are aligned across items). bubbles composes those rows vertically;
-	// StyleFrame wraps the whole panel with Padding(1, 2).
+	// (which pads every row to maxRowW first so widths match and every
+	// line starts at the same column — the anchor is the line's START,
+	// not the center of the option text). bubbles composes those rows
+	// vertically; StyleFrame wraps the whole panel with Padding(1, 2).
 	body := p.list.View()
 	return StyleFrame.Render(body)
 }
@@ -760,8 +785,11 @@ func (p Picker) FullHelpText() string {
 		"",
 		StyleHelp.Render(strings.Join(all, "\n")),
 		"",
-		StyleHelp.Render("press ? or any other key to close"),
 	}
+	if p.helpNote != "" {
+		lines = append(lines, StyleHelp.Render(p.helpNote), "")
+	}
+	lines = append(lines, StyleHelp.Render("press ? or any other key to close"))
 	return lipgloss.JoinVertical(lipgloss.Center, lines...)
 }
 

@@ -32,6 +32,58 @@ func TestTrailingBadgeRendersAfterTitle(t *testing.T) {
 	}
 }
 
+// TestTrailingBadgeDoesNotMoveLabels pins the reported symptom: the Update
+// row's square slid the other options to the left. The row block is centered,
+// so letting a marker widen the block re-centered the entire list. The
+// trailing column is now reserved on every picker, which means a label must
+// keep its exact column whether a marker is shown or not.
+func TestTrailingBadgeDoesNotMoveLabels(t *testing.T) {
+	labels := []string{"Status", "Update", "Setup", "Uninstall"}
+	base := []PickerItem{
+		{Display: "Status", Value: "a"},
+		{Display: "Update", Value: "b"},
+		{Display: "Setup", Value: "c"},
+		{Display: "Uninstall", Value: "d"},
+	}
+	withBadge := append([]PickerItem(nil), base...)
+	withBadge[1].TrailingBadge = "■"
+
+	columns := func(p Picker) map[string]int {
+		out := map[string]int{}
+		for _, line := range strings.Split(stripANSI(p.View()), "\n") {
+			for _, l := range labels {
+				if i := strings.Index(line, l); i >= 0 {
+					if _, seen := out[l]; !seen {
+						out[l] = i
+					}
+				}
+			}
+		}
+		return out
+	}
+
+	plain := columns(NewPicker("", base).SetSize(70, 10))
+	badged := columns(NewPicker("", withBadge).SetSize(70, 10))
+	for _, l := range labels {
+		if badged[l] != plain[l] {
+			t.Fatalf("%q moved from column %d to %d when a marker appeared", l, plain[l], badged[l])
+		}
+	}
+
+	found := false
+	for _, line := range strings.Split(stripANSI(NewPicker("", withBadge).SetSize(70, 10).View()), "\n") {
+		if i := strings.Index(line, "■"); i >= 0 {
+			found = true
+			if i <= badged["Update"] {
+				t.Fatalf("marker column %d is not right of its label column %d", i, badged["Update"])
+			}
+		}
+	}
+	if !found {
+		t.Fatal("trailing marker was not rendered")
+	}
+}
+
 // TestLeadingBadgeStillWorks is a guard that the new trailing slot did not
 // disturb the pre-existing leading Badge convention.
 func TestLeadingBadgeStillWorks(t *testing.T) {

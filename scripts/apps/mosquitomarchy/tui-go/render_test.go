@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -834,5 +835,89 @@ func TestMenuEntriesAppliesBothWays(t *testing.T) {
 	}
 	if m2.top() != scrMenuEntries {
 		t.Fatalf("no-change Enter left the screen (now %d)", m2.top())
+	}
+}
+
+// sandboxMenu points the actions backend at a throwaway menu file for the
+// duration of a test. This is mandatory, not a nicety: `apply` really does
+// run the strip/restore code, and without the override the test suite was
+// editing the user's LIVE omarchy-menu.jsonc — which is how `move-converter`
+// and `live-mode` came to be missing from the real menu.
+func sandboxMenu(t *testing.T, present ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	menu := filepath.Join(dir, "omarchy-menu.jsonc")
+	var b strings.Builder
+	b.WriteString("{\n")
+	for _, k := range present {
+		fmt.Fprintf(&b, "  %q: {\n    \"label\": \"%s\",\n    \"action\": \"/bin/true\"\n  },\n", k, k)
+	}
+	b.WriteString("  \"unrelated\": { \"label\": \"keep me\", \"action\": \"/bin/true\" }\n}\n")
+	if err := os.WriteFile(menu, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MOSQUITOMARCHY_MENU_DIR", dir)
+	t.Setenv("MOSQUITOMARCHY_MENU_JSONC", menu)
+	return menu
+}
+
+// Regression: the reported "I ticked it back and it said no changes to
+// apply". The tick baseline was seeded once and then left stale, so after a
+// real strip the backend correctly reported the entry absent while the
+// baseline still said present — re-ticking it then looked like no change.
+func TestMenuEntriesRestoresAfterARealStrip(t *testing.T) {
+	menu := sandboxMenu(t, "setup.mosquito.live", "setup.mosquito.jamjamjam")
+	m := initialModel()
+	m.nav = []screen{scrMain, scrSetup, scrMenuEntries}
+	m.w, m.h = 120, 40
+	// Entry is installed: both maps say so.
+	m, _ = m.update(menuEntriesMsg{rows: []MenuEntryRec{
+		{Name: "live-mode", Present: true, Label: "Live mode entries"},
+		{Name: "jamjamjam", Present: true, Label: "JamJamJam"},
+	}})
+	// User un-ticks it, applies: the picker runs the strip.
+	m, _ = m.update(tuikit.PickerToggleMsg{Value: "mentry:live-mode"})
+	m, _ = m.update(tuikit.PickerResultMsg{Value: "mentry:live-mode"})
+	if m.pendingAction != "menu-entries" {
+		t.Fatalf("strip not queued (pendingAction = %q)", m.pendingAction)
+	}
+	m, _ = m.update(tuikit.ConfirmResultMsg{Yes: true})
+	// The apply really hit the backend, on the sandbox file.
+	if raw, rerr := os.ReadFile(menu); rerr != nil {
+		t.Fatal(rerr)
+	} else if strings.Contains(string(raw), "setup.mosquito.live") {
+		t.Fatalf("apply did not strip the entry from the menu file:\n%s", raw)
+	}
+	// The list now comes back from the menu file saying it is gone.
+	m, _ = m.update(menuEntriesMsg{rows: []MenuEntryRec{
+		{Name: "live-mode", Present: false, Label: "Live mode entries"},
+		{Name: "jamjamjam", Present: true, Label: "JamJamJam"},
+	}})
+	if m.menuEntryOrig["live-mode"] {
+		t.Fatal("baseline still claims a stripped entry is present")
+	}
+	if m.menuEntryChecked["live-mode"] {
+		t.Fatal("stripped entry is still shown as selected")
+	}
+	// The user ticks it back to restore it. This is the exact moment the
+	// screen used to claim there was nothing to apply.
+	m, _ = m.update(tuikit.PickerToggleMsg{Value: "mentry:live-mode"})
+	if m.menuEntryChecked["live-mode"] == m.menuEntryOrig["live-mode"] {
+		t.Fatal("re-ticking a stripped entry produced no delta")
+	}
+	m, _ = m.update(tuikit.PickerResultMsg{Value: "mentry:live-mode"})
+	if m.top() != scrConfirm {
+		t.Fatalf("restore went to screen %d, want the Confirm", m.top())
+	}
+	if len(m.pendingArgs) != 1 || m.pendingArgs[0] != "live-mode" {
+		t.Fatalf("pendingArgs = %v, want [live-mode]", m.pendingArgs)
+	}
+	// Confirm the restore too: the whole point of the fix is that the second
+	// half of the round trip works.
+	m, _ = m.update(tuikit.ConfirmResultMsg{Yes: true})
+	if raw, rerr := os.ReadFile(menu); rerr != nil {
+		t.Fatal(rerr)
+	} else if !strings.Contains(string(raw), "setup.mosquito.live") {
+		t.Fatalf("apply did not restore the entry to the menu file:\n%s", raw)
 	}
 }

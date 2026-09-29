@@ -536,7 +536,7 @@ st_apps(){
 }
 
 MODULES=(
-  "mosquitomarchy:mosquitomarchy TUI — the manager interface itself (dispatcher + menu entry + float rule + post-boot update hook) — installed first"
+  "mosquitomarchy:mosquitomarchy-deployer — the manager interface itself (dispatcher + menu entry + float rule + post-boot update hook) — installed first"
   "reaper:REAPER + Hyprland/Wayland integration"
   "audio:yabridge stack + Bitwig 6.0 Beta 6 (local .deb) + local VST folders + cautions"
   "windows-vm:VM launcher + winvm (RAM/CPU/disk) + OEM debloat (auto-detected)"
@@ -1616,7 +1616,9 @@ restore_flow(){
 BIN_DIR="$HOME/.local/bin"
 MOSQUITOMARCHY_APP_DIR="$SCRIPT_DIR/scripts/apps/mosquitomarchy"
 APPS_DIR="$HOME/.local/share/applications"
-MENU_DIR="$HOME/.config/omarchy/extensions"
+# Overridable so the TUI's Go tests can exercise menu install/strip against a
+# throwaway directory. Unset in normal use, this is the user's real menu.
+MENU_DIR="${MOSQUITOMARCHY_MENU_DIR:-$HOME/.config/omarchy/extensions}"
 MENU="$MENU_DIR/omarchy-menu.jsonc"
 MENU_MOSQUITO_START="// >>> Omarchy_Custom_Scripts - mosquitOmarchy setup (managed by mosquitomarchy-setup.sh)"
 MENU_MOSQUITO_END="// <<< Omarchy_Custom_Scripts - mosquitOmarchy setup (managed by mosquitomarchy-setup.sh)"
@@ -1684,6 +1686,10 @@ $MENU_MOSQUITO_START
   // against its cmap). U+EF4E (fa-guitar) is the one that is really there.
   // An entry using a glyph from Omarchy's own icon font must say so, the way
   // setup.omarchyvm does with "iconFont": "omarchy".
+  // ALIASES are matched verbatim (case-insensitive) by the menu search in
+  // addition to the label, so every mosquito TUI is reachable by the short
+  // acronyms people actually type: "apm"/"mapm", "mm"/"mmm", "lmm", "jjj"…
+  // Keep them lowercase; the search lowercases both sides anyway.
   "setup.mosquito": {
     "icon": "\uf07b",
     "label": "mosquito",
@@ -1694,7 +1700,7 @@ $MENU_MOSQUITO_START
     "icon": "\uf188",
     "label": "mosquitOmarchy",
     "description": "The main manager: modules, fixes, backups, updates",
-    "aliases": ["mosquito", "manager", "setup"],
+    "aliases": ["mosquito", "manager", "setup", "mm", "mmm", "mom"],
     "when": "test -x $BIN_DIR/mosquitomarchy",
     "action": "$BIN_DIR/mosquitomarchy"
   },
@@ -1702,7 +1708,7 @@ $MENU_MOSQUITO_START
     "icon": "\uf15b",
     "label": "Audio plugin manager (wine VST)",
     "description": "Install/uninstall Windows wine plugins, per-plugin fixes, prefixes",
-    "aliases": ["plugins", "vst", "wine"],
+    "aliases": ["plugins", "vst", "wine", "apm", "mapm"],
     "when": "test -x $BIN_DIR/mosquito-audio-plugin-manager-tui",
     "action": "omarchy-launch-or-focus-tui mosquito-audio-plugin-manager-tui"
   },
@@ -1710,7 +1716,7 @@ $MENU_MOSQUITO_START
     "icon": "\uf00a",
     "label": "Move manager",
     "description": "Ableton Move manager — convert, address, routes (wine Ableton)",
-    "aliases": ["move", "ableton-move"],
+    "aliases": ["move", "ableton-move", "ableton", "mm", "mmm", "mam"],
     "when": "test -x $BIN_DIR/mosquito-move-manager-tui",
     "action": "omarchy-launch-or-focus-tui mosquito-move-manager-tui"
   },
@@ -1718,7 +1724,7 @@ $MENU_MOSQUITO_START
     "icon": "\ueba6",
     "label": "Live Mode Manager",
     "description": "Performance session mode: stay-awake, thermal guard, routing tool",
-    "aliases": ["live", "live-mode"],
+    "aliases": ["live", "live-mode", "mlm", "mim"],
     "when": "test -x $BIN_DIR/mosquito-live-mode-tui",
     "action": "omarchy-launch-or-focus-tui mosquito-live-mode-tui"
   },
@@ -1726,7 +1732,7 @@ $MENU_MOSQUITO_START
     "icon": "\uef4e",
     "label": "jamjamjam tui",
     "description": "Guitar-neck TUI: scale display, live chord, tuner",
-    "aliases": ["jam", "guitar", "neck"],
+    "aliases": ["jam", "guitar", "neck", "jjj", "jjm", "mjj"],
     "when": "test -x $BIN_DIR/jamjamjam-tui",
     "action": "omarchy-launch-or-focus-tui jamjamjam-tui"
   },

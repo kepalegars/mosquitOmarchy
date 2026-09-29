@@ -146,8 +146,13 @@ func (m model) View() string {
 			bar = barLine(m.picker.ShortcutsHint())
 		}
 	case scrFixPluginPick:
+		// The sub-title keeps the sort state and the □/■ symbol legend (which
+		// is not a key legend) but drops the key list: the keys already live in
+		// the bottom bar (picker.ShortcutsHint). Two shortcut zones on one page
+		// drift apart -- this one had started claiming "enter choose" while the
+		// bar said something else.
 		title = screenTitleWithSub("Plugin fixes",
-			"□ = no fixes applied · ■ = fixes applied · enter choose · s sort · ←/→ folders · sort: "+sortModeLabel(m.status.SortMode),
+			"□ = no fixes applied · ■ = fixes applied · sort: "+sortModeLabel(m.status.SortMode),
 			m.contentSizeW())
 		if m.loading {
 			body = "loading…"
@@ -156,8 +161,10 @@ func (m model) View() string {
 			bar = barLine(m.picker.ShortcutsHint())
 		}
 	case scrFixChoose:
+		// Sort only, for the same reason as scrFixPluginPick above: the key
+		// legend belongs to the bottom bar, not to the title.
 		title = screenTitleWithSub("Choose the fixes to apply or remove for "+m.fixPlugin,
-			"Tab toggle · s sort · ←/→ folders · enter apply · sort: "+fixSortLabel(m.fixSortDesc),
+			"sort: "+fixSortLabel(m.fixSortDesc),
 			m.contentSizeW())
 		if m.loading {
 			body = "loading…"
@@ -227,7 +234,9 @@ func (m model) View() string {
 		scrUninstallConfirm, scrInstallPrefixChoice, scrPrefixMoveConfirm,
 		scrSuperfileInstallConfirm, scrPluginListSaveConfirm,
 		scrPluginsRootConfirm, scrRunnerSuccessConfirm, scrQuitConfirm,
-		scrWizardRoot, scrInstallFixesConfirm:
+		scrWizardRoot, scrInstallFixesConfirm,
+		scrCleanupConfirm, scrQuarantineClearConfirm,
+		scrQuarantineClearDone:
 		body = m.confirm.View()
 		bar = barLine(m.confirm.ShortcutsHint())
 	case scrInstallPrefixName, scrPrefixMoveTargetName:

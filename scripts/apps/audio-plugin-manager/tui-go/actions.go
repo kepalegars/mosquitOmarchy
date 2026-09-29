@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -102,6 +103,7 @@ type Status struct {
 	PluginsRoot        string `json:"plugins_root"`
 	DownloadsDir       string `json:"downloads_dir"`
 	WizardDone         bool   `json:"wizard_done"`
+	QuarantineEntries  int    `json:"quarantine_entries"`
 }
 
 type statusMsg struct {
@@ -401,6 +403,77 @@ func cleanupCmd() tea.Cmd {
 			_ = json.Unmarshal(bytes.TrimSpace(lines[n-1]), &report)
 		}
 		return cleanupMsg{report: report}
+	}
+}
+
+// quarantineDirReport is one emptied quarantine folder as reported by the
+// `empty-quarantine` action.
+type quarantineDirReport struct {
+	Dir     string `json:"dir"`
+	Removed int    `json:"removed"`
+	Bytes   int64  `json:"bytes"`
+}
+
+// quarantineReport is the `empty-quarantine` action's single JSON report.
+type quarantineReport struct {
+	Dirs []quarantineDirReport `json:"dirs"`
+}
+
+type quarantineClearMsg struct {
+	report quarantineReport
+	out    []byte // full run output, shown by the result prompt's "See log"
+	err    error
+}
+
+// quarantineClearCmd runs the destructive "empty the quarantine" pass and
+// reports which folder hold how many entries (and how many bytes) were
+// permanently deleted.
+func quarantineClearCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("empty-quarantine")
+		if err != nil {
+			return quarantineClearMsg{err: err}
+		}
+		var report quarantineReport
+		lines := bytes.Split(bytes.TrimSpace(out), []byte{'\n'})
+		if n := len(lines); n > 0 {
+			_ = json.Unmarshal(bytes.TrimSpace(lines[n-1]), &report)
+		}
+		return quarantineClearMsg{report: report, out: out}
+	}
+}
+
+// humanBytes renders a byte count the way the rest of the suite does: the
+// most readable binary unit, one decimal, no trailing space.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return strconv.FormatInt(n, 10) + " B"
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// reconcileDoneMsg reports a "keep in log / remove everywhere" decision
+// applied through remove-missing — a dedicated message because the remove
+// path pops TWO confirm screens (the shared-log prompt and its second
+// "really?" prompt) where the generic actionOKMsg pops a single one.
+type reconcileDoneMsg struct {
+	what string
+	err  error
+}
+
+func removeMissingCmd(what string, keys []string) tea.Cmd {
+	return func() tea.Msg {
+		args := append([]string{"remove-missing"}, keys...)
+		if _, err := runQuick(args...); err != nil {
+			return reconcileDoneMsg{err: err}
+		}
+		return reconcileDoneMsg{what: what}
 	}
 }
 

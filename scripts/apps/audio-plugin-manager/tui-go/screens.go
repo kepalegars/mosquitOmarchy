@@ -32,7 +32,9 @@ func (m *model) enterCmd() tea.Cmd {
 		m.loading = true
 		return fetchStatus()
 	case scrSettings:
-		m.picker = tuikit.NewPicker("Settings", m.settingsItemsWithPending()).SetSize(m.contentSize())
+		m.picker = tuikit.NewPicker("Settings", m.settingsItemsWithPending()).
+			SetSize(m.contentSize()).
+			SetHelpNote(settingsHelpNote())
 		return nil
 	case scrVstMenu:
 		m.picker = tuikit.NewPicker("Windows VST Plugins (Wine)", m.vstMenuItemsWithPending()).SetSize(m.contentSize())
@@ -55,6 +57,13 @@ func (m *model) enterCmd() tea.Cmd {
 		// installer is a known one and where it is expected to live), and say
 		// whether it matches the default so the choice is explicit.
 		rec := m.installRecommendedPrefix
+		// The two buttons carry the whole answer, and NO "Enter = ... / y = ..."
+		// legend line: it was noise, and the two implementations (this dialog
+		// and the bash prompt) drifted apart until it lied about what Enter did.
+		// tuikit.NewConfirm keeps [No, Yes] in that order and focuses index 0,
+		// so Enter would answer "No, new prefix" — the opposite of what the
+		// question asks. SetFocus(1) moves the focus to "Yes" so Enter agrees
+		// with the question instead of contradicting it.
 		const (
 			noPrefixLabel = "No, new prefix"
 			yesUseLabel   = "Yes, use it"
@@ -68,26 +77,18 @@ func (m *model) enterCmd() tea.Cmd {
 			} else {
 				extra += "\n(not the default: " + def + ")"
 			}
-			// tuikit.NewConfirm focuses button 0, which is the FIRST label
-			// passed here — so Enter really is "No, new prefix". The old text
-			// claimed "Enter = use it", which was the opposite of what the
-			// dialog did. Say what Enter does, name the shortcut for the other
-			// answer, and show which one is pre-selected.
 			m.confirm = tuikit.NewConfirm(
-				"Install into the DEFAULT wine prefix?"+extra+
-					"\n\nEnter = \""+noPrefixLabel+"\" (pre-selected)   ·   y = \""+yesUseLabel+"\"",
-				noPrefixLabel, yesUseLabel)
+				"Install into the DEFAULT wine prefix?"+extra,
+				noPrefixLabel, yesUseLabel).SetFocus(1)
 		case knownPluginInstaller(m.installFile):
 			m.confirm = tuikit.NewConfirm(
 				"Install into the DEFAULT wine prefix?"+
-					"\n\nKnown plugin, but no recorded recommendation for this file."+
-					"\n\nEnter = \""+noPrefixLabel+"\" (pre-selected)   ·   y = \""+yesUseLabel+"\"",
-				noPrefixLabel, yesUseLabel)
+					"\n\nKnown plugin, but no recorded recommendation for this file.",
+				noPrefixLabel, yesUseLabel).SetFocus(1)
 		default:
 			m.confirm = tuikit.NewConfirm(
-				"Install into the default wine prefix?"+
-					"\n\nEnter = \""+noPrefixLabel+"\" (pre-selected)   ·   y = \"Yes\"",
-				noPrefixLabel, "Yes")
+				"Install into the default wine prefix?",
+				noPrefixLabel, "Yes").SetFocus(1)
 		}
 		return nil
 	case scrSuperfileInstallConfirm:
@@ -449,21 +450,92 @@ func fixCategoryOf(it FixItem) string {
 	return it.Category
 }
 
+// fixIsPluginSpecific reports whether a fix belongs to ONE named product (its
+// `plugin` field is set, e.g. "CrispyTuner", "Serum 2"). Those are the fixes
+// that get their own "Plugin specific fixes" section, labelled by the plugin
+// name alone. A fix with an empty plugin field is generic and stays in the
+// shared categories above.
+func fixIsPluginSpecific(it FixItem) bool { return it.Plugin != "" }
+
 // fixItemsToPicker renders the "Plugin fixes" catalog as a single
-// multi-select list where each category is a folder: a
-// "▾/▸ ○/●  <Category>" parent row followed by its fixes indented under it
-// with a file-tree angle. Toggling the parent flips every fix in that
-// category; individual fixes toggle on their own. Uses the app-wide ○/●
-// circle convention and global fixes are tagged so it is obvious they are
-// not plugin-scoped; plugin-specific fixes stay visible/selectable for every
-// plugin (they are never filtered) and need no tag — their category already
-// names the product.
-// The folder row's chevron/child-visibility follows expanded exactly as
-// treeItemsToPicker does for the other two screens.
+// multi-select list. Generic fixes (no specific plugin) come first, grouped by
+// their category as a folder: a "▾/▸ ○/●  <Category>" parent row followed by
+// its fixes indented under it with a file-tree angle. Toggling the parent
+// flips every fix in that category; individual fixes toggle on their own.
+// Uses the app-wide ○/● circle convention and global fixes are tagged so it is
+// obvious they are not plugin-scoped.
+//
+// Plugin-specific fixes (scoped to one product) are collected at the BOTTOM,
+// under a horizontal separator and a "Plugin specific fixes" title, each
+// product forming its own group labelled with the plugin name alone. This
+// keeps the shared fixes up top and the product-specific ones clearly set
+// apart, instead of interleaving categories like "CrispyTuner specific" among
+// the generic ones. A product-specific fix is NEVER hidden: it stays visible
+// and selectable for every plugin, since the same Wine issues can show up
+// elsewhere. The folder row's chevron/child-visibility follows expanded
+// exactly as treeItemsToPicker does for the other two screens.
 func fixItemsToPicker(items []FixItem, checked map[string]bool, expanded map[string]bool) []tuikit.PickerItem {
+	// Split once: generic = no specific plugin, specific = scoped to a product.
+	var generic, specific []FixItem
+	for _, it := range items {
+		if fixIsPluginSpecific(it) {
+			specific = append(specific, it)
+		} else {
+			generic = append(generic, it)
+		}
+	}
+
+	out := []tuikit.PickerItem{}
+	out = append(out, fixCategoryGroup(generic, checked, expanded, false)...)
+
+	// The product-specific section, if any.
+	if len(specific) > 0 {
+		// Horizontal separator: a full-width rule, non-selectable.
+		out = append(out, tuikit.PickerItem{Display: fixSeparator(), Value: fixSeparatorValue, Disabled: true})
+		// Section title in the theme's accent colour (PickerItem.Accent paints
+		// the title in a solid accent block), so it reads as a heading rather
+		// than as another greyed row.
+		out = append(out, tuikit.PickerItem{Display: fixSpecificTitle(), Value: fixSpecificTitleValue, Accent: true})
+		// Grouped by PLUGIN NAME (not the catalog category), so the header
+		// reads just "CrispyTuner" / "Serum 2" — the product it belongs to.
+		out = append(out, fixCategoryGroup(specific, checked, expanded, true)...)
+	}
+	return out
+}
+
+// Values for the two non-selectable section rows. They can never collide with
+// a fix id ([a-z_]+) nor with a category header ("__fixcat__:" prefix).
+const (
+	fixSeparatorValue     = "__fixsep__"
+	fixSpecificTitleValue = "__fixspectitle__"
+)
+
+// fixSeparator is a horizontal rule. It uses the same glyph family as the
+// file-tree angles above it so the rule reads as part of the list, and it is
+// sized to the standard row so it lines up with the folder rows.
+func fixSeparator() string {
+	return "────────────────────────────"
+}
+
+// fixSpecificTitle is the heading for the product-specific section.
+func fixSpecificTitle() string { return "Plugin specific fixes" }
+
+// fixCategoryGroup renders a set of fix items as expandable categories
+// (folder header + indented children), preserving the input order. When
+// groupByPlugin is true the folder label is the fix's product (its `plugin`
+// field) instead of its catalog category, so the product-specific section is
+// headed by the plugin name alone. It is the shared body used for both the
+// generic group and the product-specific group.
+func fixCategoryGroup(items []FixItem, checked map[string]bool, expanded map[string]bool, groupByPlugin bool) []tuikit.PickerItem {
+	// keyFor is the group a fix belongs to: the plugin name in the specific
+	// section, the catalog category otherwise.
+	keyFor := func(it FixItem) string { return fixCategoryOf(it) }
+	if groupByPlugin {
+		keyFor = func(it FixItem) string { return it.Plugin }
+	}
 	hasCategory := false
 	for _, it := range items {
-		if it.Category != "" {
+		if fixCategoryOf(it) != "" || it.Category != "" {
 			hasCategory = true
 			break
 		}
@@ -483,17 +555,17 @@ func fixItemsToPicker(items []FixItem, checked map[string]bool, expanded map[str
 	seen := map[string]bool{}
 	lastOf := map[string]int{}
 	for i, it := range items {
-		lastOf[fixCategoryOf(it)] = i
+		lastOf[keyFor(it)] = i
 	}
 	for i, it := range items {
-		cat := fixCategoryOf(it)
+		cat := keyFor(it)
 		if !seen[cat] {
 			seen[cat] = true
 			// Header mark: ● only when every fix in the category is on.
 			all := true
 			any := false
 			for _, other := range items {
-				if fixCategoryOf(other) != cat {
+				if keyFor(other) != cat {
 					continue
 				}
 				any = true
@@ -1358,9 +1430,18 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case scrReconcileMissingRemove:
 		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
 			if !res.Canceled && res.Yes {
+				// "remove everywhere": both reconcile prompts are popped
+				// NOW (they no longer describe reality), the keys are
+				// cleared, and the remove-missing result is reported as a
+				// toast — the generic actionOKMsg would pop only one screen
+				// and leave the "add to log / remove everywhere" prompt on
+				// screen forever even after a successful removal.
 				what := fmt.Sprintf("removed everywhere: %d plugin(s)", len(m.missingKeys))
-				args := append([]string{"remove-missing"}, m.missingKeys...)
-				return m, runFireAndForget(what, args...)
+				keys := m.missingKeys
+				m.missingKeys = nil
+				m.pop() // leave this second confirm
+				m.pop() // leave the first "add to log" prompt
+				return m, removeMissingCmd(what, keys)
 			}
 			m.pop() // back to the first prompt ("add to log" / esc)
 			return m, m.enterCmd()
@@ -1376,6 +1457,38 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.enterCmd()
 			}
 			return m, cleanupCmd()
+		}
+		var cmd tea.Cmd
+		m.confirm, cmd = m.confirm.Update(msg)
+		return m, cmd
+
+	case scrQuarantineClearConfirm:
+		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
+			m.pop()
+			if res.Canceled || !res.Yes {
+				return m, m.enterCmd()
+			}
+			return m, quarantineClearCmd()
+		}
+		var cmd tea.Cmd
+		m.confirm, cmd = m.confirm.Update(msg)
+		return m, cmd
+
+	case scrQuarantineClearDone:
+		// The install-style end-of-empty prompt: "See log" opens the full
+		// run + per-folder report in the universal Info screen; "OK" heads
+		// back to the main menu.
+		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
+			if res.Canceled || !res.Yes {
+				m.info = tuikit.NewInfo(m.quarantineDetail).
+					SetSize(m.contentSize())
+				m.pop() // leave the result prompt
+				m.push(scrInfo)
+				return m, nil
+			}
+			m.pop()
+			m.nav = []screen{scrMain}
+			return m, m.enterCmd()
 		}
 		var cmd tea.Cmd
 		m.confirm, cmd = m.confirm.Update(msg)
@@ -1940,6 +2053,32 @@ func (m model) handleAudioSettingsChoice(v string) (tea.Model, tea.Cmd) {
 		// receives interaction on this compositor; "hyprland" = plain
 		// toplevels). Broad/global — confirm before applying.
 		return m, m.requestPluginHandlerChange(togglePluginHandlerTarget(m.status.PluginWinHandler))
+	case "cleanup":
+		// The row lives here too (settings screen); mirror the main-menu
+		// confirm-then-run flow.
+		m.confirm = tuikit.NewConfirm(
+			"Clean up all plugin log/file inconsistencies?\n\nNon-destructive: missing plugins are kept in the log, untracked files on disk are registered into the log, and dangling menu entries are removed. Nothing is deleted — no real file or log entry is ever removed here.",
+			"No", "Yes")
+		m.push(scrCleanupConfirm)
+		return m, nil
+	case "empty_quarantine":
+		// Permanently delete everything parked by past uninstalls — the
+		// one case where the manager really deletes files, so an explicit
+		// double confirmation spells out that this cannot be undone.
+		// The row is normally greyed out and unreachable when the quarantine
+		// is empty; this guard covers the remaining paths into it (a stale
+		// status, an action chosen from a search) and answers with the
+		// "nothing to delete" message instead of a confirmation that would
+		// delete nothing.
+		if m.status.QuarantineEntries == 0 {
+			m.toast, _ = m.toast.SetOK("Quarantine is already empty — nothing to delete")
+			return m, nil
+		}
+		m.confirm = tuikit.NewConfirm(
+			fmt.Sprintf("Permanently DELETE everything the quarantine holds?\n\n%d parked entr(y/ies) (~/.cache/vst-quarantine and ~/.cache/audio-plugin-manager-quarantine/) are gone for good — this cannot be undone. Open a file manager on either path to browse them manually first if you want to keep anything.", m.status.QuarantineEntries),
+			"No, keep them", "Yes, delete all")
+		m.push(scrQuarantineClearConfirm)
+		return m, nil
 	}
 	return m, nil
 }
@@ -2022,9 +2161,9 @@ func wineRuntimeLabel() string {
 		return "ableton (recommended)"
 	}
 	if v.Runtime == "system" {
-		return "system wine-staging (no DComp) — Enter: switch to ableton (RECOMMENDED)"
+		return "system wine-staging"
 	}
-	return "ableton d2d1-nspa (RECOMMENDED) — Enter: switch to system wine-staging"
+	return "ableton (recommended)"
 }
 
 // knownPluginInstaller reports whether the picked installer matches a plugin

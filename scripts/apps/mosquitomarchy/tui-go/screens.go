@@ -1141,16 +1141,24 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			if m.menuEntryChecked == nil {
 				m.menuEntryChecked, m.menuEntryOrig = map[string]bool{}, map[string]bool{}
 			}
+			// ALWAYS re-seed the baseline from what the list just reported, never
+			// only for names we have not seen yet. A fetch happens on entry AND
+			// right after an apply, and the second one is where the old rule broke
+			// the screen: after stripping an entry the backend correctly said
+			// absent, but the baseline still said "present" because the name was
+			// already known, so ticking it again produced checked == orig and
+			// Enter answered "no changes to apply" for a restore the user had
+			// genuinely asked for. The list is a fresh read of the menu file, so
+			// it is the only trustworthy baseline; the user's in-flight ticks are
+			// re-derived from it.
 			for _, e := range m.menuEntries {
-				if _, seen := m.menuEntryChecked[e.Name]; !seen {
-					// DEFAULT = what is installed right now. The picker applies a
-					// DELTA, so with everything unticked as the default the only
-					// rows that ever differed were the ticked ones, and Enter could
-					// only ever restore: the strip half of the screen was dead code.
-					// Starting from the real state makes untick=strip reachable.
-					m.menuEntryChecked[e.Name] = e.Present
-					m.menuEntryOrig[e.Name] = e.Present
-				}
+				// DEFAULT = what is installed right now. The picker applies a
+				// DELTA, so with everything unticked as the default the only
+				// rows that ever differed were the ticked ones, and Enter could
+				// only ever restore: the strip half of the screen was dead code.
+				// Starting from the real state makes untick=strip reachable.
+				m.menuEntryChecked[e.Name] = e.Present
+				m.menuEntryOrig[e.Name] = e.Present
 			}
 			m.menuEntriesPicker = m.rebuildMenuEntriesPicker()
 			return m, nil

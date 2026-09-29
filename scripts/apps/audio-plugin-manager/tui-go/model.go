@@ -80,13 +80,15 @@ const (
 	scrReconcileMissingRemove
 	scrReconcileOrphansTick
 	scrCleanupConfirm
-	scrPluginsRootConfirm   // "move every plugin to X?" before migrating
-	scrPluginsRootMigrating // runner: migrate_plugins_root in progress
-	scrRunnerSuccessConfirm // "See log / OK" result prompt after install/uninstall/move/migrate (success OR failure wording)
-	scrFixPluginPick        // "Plugin fixes": pick the plugin first
-	scrFixChoose            // then Tab-select the fixes to apply/remove
-	scrInstallFixesConfirm  // after a successful install: "Apply fixes for <plugin> now?"
-	scrPluginHandlerConfirm // confirm a plugin-window-handler change (global Hyprland rules)
+	scrQuarantineClearConfirm // "Empty the quarantine" confirm (destructive)
+	scrQuarantineClearDone    // result prompt: "See log / OK" after emptying
+	scrPluginsRootConfirm     // "move every plugin to X?" before migrating
+	scrPluginsRootMigrating   // runner: migrate_plugins_root in progress
+	scrRunnerSuccessConfirm   // "See log / OK" result prompt after install/uninstall/move/migrate (success OR failure wording)
+	scrFixPluginPick          // "Plugin fixes": pick the plugin first
+	scrFixChoose              // then Tab-select the fixes to apply/remove
+	scrInstallFixesConfirm    // after a successful install: "Apply fixes for <plugin> now?"
+	scrPluginHandlerConfirm   // confirm a plugin-window-handler change (global Hyprland rules)
 
 	scrWizardRoot // first-launch wizard: choose/confirm the plugins folder
 	scrWizardDaw  // then stream the "point every installed DAW at it" report
@@ -197,6 +199,7 @@ type model struct {
 
 	reconcileChecked bool
 	missingKeys      []string // keys of "in the log but NOT on this computer" plugins
+	quarantineDetail string   // full emptied-quarantine report, shown by "See log"
 	quit             bool
 
 	// first-launch wizard state: wizardStarted guards against re-offering
@@ -254,6 +257,23 @@ func settingsItems(s Status) []tuikit.PickerItem {
 	if s.PluginWinHandler == "classic" {
 		handler = "Classic (float + decorations)"
 	}
+	// The quarantine row carries its own state: how many parked entries are
+	// waiting. With none, the row is greyed out and inert (the picker skips a
+	// Disabled item) instead of opening a destructive confirmation that would
+	// delete nothing.
+	quarantineLabel := "Empty the quarantine"
+	quarantineItem := tuikit.PickerItem{Display: quarantineLabel, Value: "empty_quarantine"}
+	if s.QuarantineEntries == 0 {
+		quarantineLabel = "Empty the quarantine (already empty)"
+		quarantineItem = tuikit.PickerItem{
+			Display:  quarantineLabel,
+			Value:    "empty_quarantine",
+			Disabled: true,
+		}
+	} else {
+		quarantineLabel = fmt.Sprintf("Empty the quarantine (%d parked)", s.QuarantineEntries)
+		quarantineItem.Display = quarantineLabel
+	}
 	return []tuikit.PickerItem{
 		{Display: "File picker: " + fp, Value: "switch_file_picker"},
 		{Display: "Plugins folder: " + s.PluginsRoot, Value: "pick_plugins_root"},
@@ -262,6 +282,7 @@ func settingsItems(s Status) []tuikit.PickerItem {
 		{Display: "Wine runtime: " + wineRuntimeLabel(), Value: "toggle_wine_runtime"},
 		{Display: "Rescan for untracked plugins", Value: "rescan"},
 		{Display: "Cleanup inconsistencies", Value: "cleanup"},
+		quarantineItem,
 		{Display: "Back", Value: "back"},
 	}
 }
@@ -325,6 +346,13 @@ func toggleTarget(on bool) string {
 		return "on"
 	}
 	return "off"
+}
+
+// settingsHelpNote is the freestanding line shown under the shortcuts in
+// the Settings screen's "?" overlay: the manual path to browse the two
+// quarantine folders that uninstalls fill instead of deleting anything.
+func settingsHelpNote() string {
+	return "Manual quarantine access:\n~/.cache/vst-quarantine\n~/.cache/audio-plugin-manager-quarantine"
 }
 
 // settingsItemsWithPending overlays the not-yet-applied Left/Right value on
@@ -480,7 +508,8 @@ func (m *model) applyAllPendingExcept(except string) tea.Cmd {
 func (m *model) rebuildSettingsPicker() {
 	sidx := m.picker.Index()
 	m.picker = tuikit.NewPicker("Settings", m.settingsItemsWithPending()).
-		SetSize(m.contentSize())
+		SetSize(m.contentSize()).
+		SetHelpNote(settingsHelpNote())
 	m.picker = m.picker.SelectIndex(sidx)
 }
 
@@ -654,7 +683,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// title under it (see view.go's main screen banner).
 			m.picker = tuikit.NewPicker("", mainItems()).SetSize(m.contentSize())
 		case scrSettings:
-			m.picker = tuikit.NewPicker("Settings", m.settingsItemsWithPending()).SetSize(m.contentSize())
+			m.picker = tuikit.NewPicker("Settings", m.settingsItemsWithPending()).
+				SetSize(m.contentSize()).
+				SetHelpNote(settingsHelpNote())
 		case scrVstMenu:
 			m.picker = tuikit.NewPicker("Windows VST Plugins", m.vstMenuItemsWithPending()).SetSize(m.contentSize())
 		}
@@ -692,6 +723,18 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.toast, _ = m.toast.SetErr(msg.err.Error())
 		return m, nil
+
+	case reconcileDoneMsg:
+		// remove-missing finished; both reconcile confirm screens were
+		// already popped, so we land straight back on the menu with the
+		// outcome as a toast.
+		m.loading = false
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr(msg.err.Error())
+			return m, nil
+		}
+		m.toast, _ = m.toast.SetOK(msg.what)
+		return m, fetchStatus()
 
 	case installFixesCheckMsg:
 		// A successful install just finished; the fixes catalog was fetched
@@ -799,6 +842,41 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.info = tuikit.NewInfo(b.String()).SetSize(m.contentSize())
 		m.replace(scrInfo)
+		return m, nil
+
+	case quarantineClearMsg:
+		// "empty-quarantine" ran (destructive): offer the install-style
+		// "See log / OK" result prompt with the deleted count AND the freed
+		// space, like every uninstall/install ends. Nothing was there → a
+		// toast and straight back to the menu.
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr(msg.err.Error())
+			m.pop()
+			return m, m.enterCmd()
+		}
+		var b strings.Builder
+		total := int64(0)
+		freed := int64(0)
+		for _, d := range msg.report.Dirs {
+			total += int64(d.Removed)
+			freed += d.Bytes
+		}
+		if total == 0 {
+			m.toast, _ = m.toast.SetOK("Quarantine: nothing to delete")
+			m.pop()
+			return m, m.enterCmd()
+		}
+		b.WriteString(fmt.Sprintf("%d entry(ies) permanently deleted, %s freed:\n", total, humanBytes(freed)))
+		for _, d := range msg.report.Dirs {
+			b.WriteString(fmt.Sprintf("  • %s: %d entry(ies), %s\n", d.Dir, d.Removed, humanBytes(d.Bytes)))
+		}
+		b.WriteString("\n")
+		b.Write(bytes.TrimSpace(msg.out))
+		m.quarantineDetail = b.String()
+		m.confirm = tuikit.NewConfirm(
+			fmt.Sprintf("%d entry(ies) permanently deleted, %s freed. Quarantine is empty.", total, humanBytes(freed)),
+			"See log", "OK")
+		m.replace(scrQuarantineClearDone)
 		return m, nil
 
 	case rescanMsg:
