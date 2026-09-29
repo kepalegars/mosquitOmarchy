@@ -32,8 +32,15 @@ func setUpBackend(t *testing.T) {
 
 // feedStreamedRun feeds a model the complete message sequence of a streamed
 // action: one RunnerLineMsg per captured output line, then a terminal
-// RunnerDoneMsg. After the done message the runner screen must have popped
-// back to the main menu. Retains the model for further assertions.
+// RunnerDoneMsg.
+//
+// After the done message the runner screen must have popped, and the run must
+// have landed on a prompt offering the log — for a SUCCESS as well as a
+// failure. It used to assert the main menu, which only held because success had
+// no prompt at all and dropped straight back; the success path now asks
+// "View the full log, or go back?" like the failure path always did, so a
+// successful install can finally be read. Retains the model for further
+// assertions.
 func feedStreamedRun(t *testing.T, m model, out []byte, runErr error) model {
 	t.Helper()
 	for _, ln := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
@@ -47,8 +54,8 @@ func feedStreamedRun(t *testing.T, m model, out []byte, runErr error) model {
 		}
 	}
 	m, _ = m.update(tuikit.RunnerDoneMsg{Err: runErr})
-	if m.top() != scrMain {
-		t.Fatalf("after done, top = %d, want %d", m.top(), scrMain)
+	if m.top() != scrConfirm {
+		t.Fatalf("after done, top = %d, want the log prompt (%d)", m.top(), scrConfirm)
 	}
 	return m
 }

@@ -155,9 +155,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				return m, nil
 			}
 			m.toast, _ = m.toast.SetOK("done")
-			// A successful run consumed the selection: clear the checkmarks so
-			// the tree does not keep the installed/removed items ticked.
-			if m.pendingAction == "apply" || m.pendingAction == "uninstall" {
+			// The selection is consumed FIRST, while pendingAction still names
+			// the action: overwriting it below would make this test never match.
+			wasApplyOrUninstall := m.pendingAction == "apply" || m.pendingAction == "uninstall"
+			if wasApplyOrUninstall {
 				m.selected = map[string]bool{}
 				if m.top() == scrSetupCat {
 					m.setupCatPicker = m.rebuildSetupCat()
@@ -165,6 +166,17 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					m.setupPicker = m.rebuildSetup()
 				}
 			}
+			// A SUCCESSFUL run used to get a bare toast and drop straight back
+			// to the previous screen, with no way to read what happened and no
+			// mention of the log. The failure path has always asked; success now
+			// asks the same question.
+			reportCrash(m.workingLabel, out)
+			m.pendingAction = "run-done-log"
+			m.pendingMsg = "The action finished successfully.\n\nView the full log, or go back?"
+			m.pendingNo = "Back"
+			m.pendingYes = "See log"
+			m.push(scrConfirm)
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 			// After a successful app apply, propose the patch script(s) that are
 			// actually present (and stay silent when there is none).
 			if m.pendingAction == "apply" && len(m.pendingArgs) > 0 {
@@ -665,10 +677,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case "close":
 			m.quit = true
 			return m, tea.Quit
-		case "run-errors":
+		case "run-errors", "run-done-log":
 			// Show the full streamed log in the scrollable Info screen; the
 			// prompt itself was already popped, so closing the log returns to
-			// the previous menu.
+			// the previous menu. "run-done-log" is the same prompt on the
+			// success path — a successful run has just as much to show.
 			m.info = tuikit.NewInfo(m.lastOutput).SetSize(m.contentSize())
 			m.push(scrInfo)
 			return m, nil
@@ -919,18 +932,43 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			case "esc":
 				m.pop()
 				return m, nil
-			case "i", "enter":
+			case "right", "left", "enter":
+				// Categories fold/unfold exactly like Setup's folders, with
+				// the same keys: right/Enter opens, left closes. They used to
+				// be inert headings, so a category could not be reached at all
+				// and the list could not be narrowed.
 				v := m.statusPicker.SelectedValue()
-				if strings.HasPrefix(v, "status:") {
+				if cat, ok := statusCatOf(v); ok {
+					if km.String() == "left" {
+						m.statusOpen[cat] = false
+					} else {
+						m.statusOpen[cat] = true
+					}
+					keep := m.statusPicker.SelectedValue()
+					m.statusPicker = m.rebuildStatus()
+					m.statusPicker = m.statusPicker.KeepCursor(keep)
+					return m, nil
+				}
+				if km.String() == "enter" {
+					if strings.HasPrefix(v, "status:") {
+						m.info = tuikit.NewInfo(m.statusDetail(strings.TrimPrefix(v, "status:"))).SetSize(m.contentSize())
+						m.push(scrInfo)
+						return m, nil
+					}
+					if v == "back" {
+						m.pop()
+						return m, nil
+					}
+				}
+				// left/right on a module row are the kit's sort keys; let them
+				// through unchanged.
+			case "i":
+				if v := m.statusPicker.SelectedValue(); strings.HasPrefix(v, "status:") {
 					m.info = tuikit.NewInfo(m.statusDetail(strings.TrimPrefix(v, "status:"))).SetSize(m.contentSize())
 					m.push(scrInfo)
 					return m, nil
 				}
-				if v == "back" {
-					m.pop()
-					return m, nil
-				}
-				return m, nil // a category header: nothing to open
+				return m, nil
 			}
 		}
 		m.statusPicker, cmd = m.statusPicker.Update(msg)
@@ -2582,9 +2620,35 @@ func statusLabel(s StatusRec) string {
 
 // rebuildStatus rebuilds the Status screen's picker, preserving the cursor and
 // restoring the folder help keys, exactly like rebuildSetup.
+// rebuildStatus rebuilds the Status picker, preserving the cursor.
+//
+// EVERY category is opened first, unconditionally. Status is a health
+// overview: a collapsed category hides modules the user came to read, and
+// "open by default" has to hold on a REBUILD too, not only on first open —
+// otherwise a collapse would be undone by the next refresh and the control
+// would feel broken. A category the user has since collapsed keeps its state.
 func (m model) rebuildStatus() navPicker {
 	idx := m.statusPicker.Index()
-	return newNavPicker("", m.statusTree()).SetSize(m.contentSize()).SelectIndex(idx)
+	if m.statusOpen == nil {
+		m.statusOpen = map[string]bool{}
+	}
+	for _, s := range m.statusRecs {
+		if s.Category != "" {
+			if _, seen := m.statusOpen[s.Category]; !seen {
+				m.statusOpen[s.Category] = true
+			}
+		}
+	}
+	if _, seen := m.statusOpen["other"]; !seen {
+		m.statusOpen["other"] = true
+	}
+	return newNavPicker("", m.statusTree()).SetSize(m.contentSize()).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "status")),
+			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "open")),
+			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "close")),
+		).
+		SelectIndex(idx)
 }
 
 // statusCategories returns the module categories in Setup's display order, the
@@ -2635,44 +2699,70 @@ func (m model) statusTree() []tuikit.PickerItem {
 	}
 	cats := m.statusCategories()
 	items := make([]tuikit.PickerItem, 0, len(m.statusRecs)+len(cats)+1)
-	appendModule := func(s StatusRec, prefix string) {
-		it := tuikit.PickerItem{
-			Display: prefix + statusDot(s.State) + "  " + statusLabel(s),
+
+	// Children are INDENTED, with no "├─"/"└─" tree angles.
+	//
+	// Those angles were the file-tree convention and they read as a branch
+	// hanging from the row above: on a list where a heading is inert and the
+	// rows under it are the real content, a "└─" on the last child drew a line
+	// back up towards the heading, which made each block look like it belonged
+	// to the PREVIOUS category. Indentation alone says "these are under that
+	// heading" without implying a connector.
+	appendModule := func(s StatusRec) {
+		items = append(items, tuikit.PickerItem{
+			Display: "    " + statusDot(s.State) + "  " + statusLabel(s),
 			Value:   "status:" + s.Id,
-		}
-		// A missing/na module is still SELECTABLE (you want `i` on it) — do NOT
-		// set Disabled. Only the visual dot communicates the state.
-		items = append(items, it)
+		})
+		// A missing/na module stays SELECTABLE (you want `i` on it); only the
+		// dot communicates the state.
 	}
+
+	// Folders fold like Setup's: a real row, selected normally, with the fold
+	// glyph in the cursor slot. They were inert headings, which made them
+	// impossible to reach and therefore impossible to collapse.
+	appendFolder := func(cat, label string, mods []StatusRec, accent bool) {
+		fold := tuikit.FoldExpanded
+		if !m.statusOpen[cat] {
+			fold = tuikit.FoldCollapsed
+		}
+		items = append(items, tuikit.PickerItem{
+			Display: label,
+			Value:   "status-cat:" + cat,
+			Accent:  accent,
+			Folder:  true,
+			Fold:    fold,
+		})
+		if !m.statusOpen[cat] {
+			return
+		}
+		for _, s := range mods {
+			appendModule(s)
+		}
+	}
+
 	for _, c := range cats {
 		mods := byCat[c]
 		if len(mods) == 0 {
 			continue
 		}
-		// A folder header: the folder glyph, open (▾) since everything is open.
-		items = append(items, tuikit.PickerItem{
-			Display: m.categoryDisplayLabel(c),
-			Value:   "status-cat:" + c,
-			Accent:  c == "mosquito" && m.blinkOn,
-			Folder:  true,
-			// A Status category is a label, not a drill-in: the modules are
-			// all listed at once, so the cursor must step over the header.
-			Heading: true,
-		})
-		for _, s := range mods {
-			appendModule(s, "    ├─ ")
-		}
+		appendFolder(c, m.categoryDisplayLabel(c), mods, c == "mosquito" && m.blinkOn)
 	}
 	// Modules with no category (the `apps` pseudo-module, mosquitomarchy-update)
-	// go last under an "Other" header so nothing is ever hidden.
+	// go last under "Other" so nothing is ever hidden.
 	if len(loose) > 0 {
-		items = append(items, tuikit.PickerItem{Display: "Other", Value: "status-cat:other", Folder: true, Heading: true})
-		for _, s := range loose {
-			appendModule(s, "    ├─ ")
-		}
+		appendFolder("other", "Other", loose, false)
 	}
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
 	return items
+}
+
+// statusCatOf extracts the category id from a status folder row value
+// ("status-cat:<id>"), reporting false for anything else (a module row, Back).
+func statusCatOf(v string) (string, bool) {
+	if strings.HasPrefix(v, "status-cat:") {
+		return strings.TrimPrefix(v, "status-cat:"), true
+	}
+	return "", false
 }
 
 // categoryDisplayLabel turns a category id into the human label the backend

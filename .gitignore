@@ -41,6 +41,10 @@ __pycache__/
 # setup-jamjamjam-plugin.sh from source and is deliberately NOT tracked.
 # None of the "tui-go" files belong in the repo.
 **/tui-go/tui-go
+# `go build -C <dir> .` writes the binary as the DIRECTORY name, producing a
+# file literally called "0" next to a main.go that sits in a directory called
+# "tui-go" — the same artefact as above, from the same command.
+**/tui-go/0
 scripts/plugins/jamjamjam/tui-go/jamjamjam-tui
 
 # ── Sensitive / never on a repository (even private) ──

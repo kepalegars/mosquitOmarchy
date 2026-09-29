@@ -56,8 +56,16 @@ func (p navPicker) Update(msg tea.Msg) (navPicker, tea.Cmd) {
 
 func (p navPicker) step(dir int) navPicker {
 	cur := p.selectedIndex()
+	// Land on the next SELECTABLE row in one go.
+	//
+	// It used to select the neighbouring index and let the kit's clamp push off
+	// an inert row, but the clamp always steps in ONE fixed direction: aiming
+	// up at a section heading (which is inert) had it step back DOWN onto the
+	// row we came from, so the cursor never moved — going up was stuck at the
+	// last row of a folder. Resolving the target here makes the direction the
+	// one the user asked for.
 	for i := cur + dir; i >= 0 && i < len(p.items); i += dir {
-		if p.items[i].Disabled {
+		if p.items[i].Disabled || p.items[i].Heading {
 			continue
 		}
 		p.Picker = p.Picker.SelectIndex(i)
@@ -68,7 +76,7 @@ func (p navPicker) step(dir int) navPicker {
 
 func (p navPicker) selectFirst() navPicker {
 	for i := 0; i < len(p.items); i++ {
-		if !p.items[i].Disabled {
+		if !p.items[i].Disabled && !p.items[i].Heading {
 			p.Picker = p.Picker.SelectIndex(i)
 			return p
 		}
@@ -78,7 +86,7 @@ func (p navPicker) selectFirst() navPicker {
 
 func (p navPicker) selectLast() navPicker {
 	for i := len(p.items) - 1; i >= 0; i-- {
-		if !p.items[i].Disabled {
+		if !p.items[i].Disabled && !p.items[i].Heading {
 			p.Picker = p.Picker.SelectIndex(i)
 			return p
 		}
