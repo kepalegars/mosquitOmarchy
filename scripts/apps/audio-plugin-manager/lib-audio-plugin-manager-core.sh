@@ -3217,15 +3217,53 @@ fix_plugin_canonical() {
 # the TUI never matched a stem query, leaving an applied fix unchecked and
 # reporting "no change" on re-apply. A "__global__" entry also counts, so a
 # global rule (or one mis-recorded globally) still reads as applied.
+#
+# The comparison is CASE-INSENSITIVE, and that is not cosmetic. An
+# install-time fix is recorded under the known-plugins.tsv key, which is
+# lowercase by convention ("crispytuner"), while every later query uses the
+# real product stem ("CrispyTuner"). Compared exactly, an install that had
+# already applied wine_gui_input read back as NOT applied, so the TUI offered
+# it again, the user re-applied it under the proper name, and fixes.json ended
+# up holding the same plugin twice. Matching case-insensitively makes the two
+# spellings one entry everywhere.
 fix_applied_for_plugin() {
   local id="$1" plugin="$2" want stored
   want="$(fix_plugin_canonical "$plugin")"
+  # Fold BOTH sides: comparing a raw "CrispyTuner" against a lowercased
+  # "crisryptuner" never matches, which would leave every install-time fix
+  # reading as not applied.
+  want="${want,,}"
   while IFS= read -r stored; do
     [[ -n $stored ]] || continue
     [[ $stored == __global__ ]] && return 0
-    [[ "$(fix_plugin_canonical "$stored")" == "$want" ]] && return 0
+    stored="$(fix_plugin_canonical "$stored")"
+    [[ "${stored,,}" == "$want" ]] && return 0
   done < <(fix_applied_plugins "$id")
   return 1
+}
+
+# fix_token_stem <known-plugins key> — the product stem the manager itself
+# knows this plugin by, or the key unchanged when it cannot be resolved.
+#
+# The table's keys are lowercase slugs chosen for MATCHING ("crispytuner",
+# "smart:eq"), not for display. Recording a fix under the slug writes
+# "crispytuner" into fixes.json and into the "applied for:" comment of the
+# generated Hyprland rule, where the product's real name belongs. This looks
+# the stem up among the plugins the manager has on record (it is called after
+# the plugin was registered), so an install-time fix is recorded the way every
+# later query will look for it.
+fix_token_stem() {
+  local token="$1" key stem
+  [[ -n $token ]] || return 0
+  while IFS= read -r key; do
+    [[ -n $key ]] || continue
+    stem="$(fix_plugin_canonical "$key")"
+    if [[ "${stem,,}" == "${token,,}" ]]; then
+      printf '%s\n' "$stem"
+      return 0
+    fi
+  done < <(jq -r '(.plugins // {}) | keys[]' "$STATE_FILE" 2>/dev/null)
+  printf '%s\n' "$token"
 }
 
 # fix_dedupe_stems — reads plugin entries on stdin, one per line, and writes
@@ -3473,10 +3511,24 @@ apply_known_fixes_for() {
   while IFS='|' read -r pat ids; do
     [[ -n $pat && -n $ids ]] || continue
     [[ "${pat,,}" == "${want,,}" ]] || continue
-    local rec_ids opt_ids
-    opt_ids="$(awk -F'|' -v w="$pat" '$1==w{print $6}' <<<"$(known_plugin_recommended_fixes)")"
+    # The fix ids the table marks as RECOMMENDED for this product, so the
+    # report can say which ones are the ones that actually make it work here.
+    #
+    # This read `rec_ids` without ever assigning it, while the variable that
+    # WAS computed (`opt_ids`) was never read. Under `set -u` the first
+    # iteration dies with "rec_ids: unbound variable" — which aborted
+    # apply_known_fixes_for in the middle of the loop, so a product with two
+    # fixes (CrispyTuner: wine_gui_input + wine_tooltip) had only the FIRST
+    # one applied and the install reported an error while the plugin itself
+    # installed perfectly. The user saw exactly that.
+    local rec_ids stem
+    rec_ids="$(awk -F'|' -v w="$pat" '$1==w{print $6}' <<<"$(known_plugin_recommended_fixes)")"
+    # Record under the product's real stem, not the table's lowercase slug:
+    # the slug is for matching, the stem is what every later query uses and
+    # what belongs in fixes.json and in the rule's "applied for:" comment.
+    stem="$(fix_token_stem "$pat")"
     for fix in $ids; do
-      fix_apply "$pat" "$fix"
+      fix_apply "$stem" "$fix"
       if [[ " $rec_ids " == *" $fix "* ]]; then
         ok "fix applied (recommended): $fix"
       else
