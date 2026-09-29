@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -278,5 +279,59 @@ func TestStatusArrivesFullyExpanded(t *testing.T) {
 		if it.Value == "status-cat:tuis" && it.Fold != tuikit.FoldExpanded {
 			t.Fatalf("folding apps also folded tuis — the map is not per-category")
 		}
+	}
+}
+
+// TestSetupBlinkKeepsTheCursor is the regression for "moving the cursor in
+// Setup feels slow and broken". rebuildSetup used to hand back a brand-new
+// picker, so the cursor fell back to row 0 — and rebuildSetup runs on the
+// accent blink, twice a second, so holding "down" fought it and the cursor
+// crawled upward instead of down.
+func TestSetupBlinkKeepsTheCursor(t *testing.T) {
+	m := flatSetup()
+	m.setupPicker = m.rebuildSetup()
+	last := len(m.setupPicker.items) - 1
+	m.setupPicker = m.setupPicker.SelectIndex(last)
+	if got := m.setupPicker.Index(); got != last {
+		t.Fatalf("could not park the cursor on the last row: %d != %d", got, last)
+	}
+
+	// Two blink ticks, exactly what the timer delivers.
+	for i := 0; i < 2; i++ {
+		m, _ = m.update(blinkMsg{})
+		if got := m.setupPicker.Index(); got != last {
+			t.Fatalf("blink tick %d moved the cursor from %d to %d", i+1, last, got)
+		}
+	}
+}
+
+// TestSetupBlinkSkipsWorkWhenTheAccentRowIsOffscreen covers the other half: the
+// blink only changes the "mosquito" category's accent, so when that row is not
+// in the viewport there is nothing to repaint. It must not rebuild regardless —
+// the rebuild is what costs, not the flag.
+func TestSetupBlinkSkipsWorkWhenTheAccentRowIsOffscreen(t *testing.T) {
+	m := flatSetup()
+	m.setupFolders = nil
+	m.setupItems = nil
+	// A long list of flat leaves with no "mosquito" category in it at all.
+	m.setupFolders = []FolderRec{{Folder: "apps", Label: "Apps"}}
+	for i := 0; i < 40; i++ {
+		m.setupItems = append(m.setupItems, SetupItemRec{
+			Folder: "apps", Key: fmt.Sprintf("k%02d", i), Label: fmt.Sprintf("Module %02d", i),
+		})
+		m.setupByValue[setupValue("apps", fmt.Sprintf("k%02d", i))] = SetupItemRec{
+			Folder: "apps", Key: fmt.Sprintf("k%02d", i), Label: fmt.Sprintf("Module %02d", i),
+		}
+	}
+	m.folderOpen["apps"] = false
+	m.w, m.h = 60, 12
+	m.setupPicker = m.rebuildSetup()
+	if m.setupPicker.RowVisible(folderValue("mosquito")) {
+		t.Fatal("there is no mosquito category in this list, so nothing can be visible")
+	}
+	before := m.setupPicker
+	m, _ = m.update(blinkMsg{})
+	if before.Index() != m.setupPicker.Index() {
+		t.Fatalf("the blink moved the cursor: %d -> %d", before.Index(), m.setupPicker.Index())
 	}
 }

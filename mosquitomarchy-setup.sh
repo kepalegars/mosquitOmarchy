@@ -562,7 +562,7 @@ MODULES=(
   "handbrake:HandBrake (Qt GUI + CLI) + H.264/H.265 encoders + preset sync + Hyprland rules"
   "apps:Apps, tuis & webapps (catalog per type gui/tui/webapps + backup selection via setup-apps.sh)"
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
-  "remove-ai:remove omarchy's agentic stuff (removes agents, AI-diag toasts, ollama loaders; Setup reverts it 'bring back omarchy's agentic stuff')"
+  "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships. Reversible from Setup."
   "battery:Battery backend (ultra-save + Lenovo charge-control + custom.power plugin) + coffee mode (mega-caffeine)"
   "brightness:Display brightness — Omarchy default, plus 0% = screen off"
   "achraff:'Achraff 67' visual theme + unlock/Plymouth logo (lock screen left stock)"
@@ -2473,30 +2473,30 @@ un_ollama(){
 }
 
 # ─── remove-all-ai (a REVERSABLE uninstall entry) ────────────────────────
-# Strips the AI surface from Omarchy:
-#   • ollama loaders / REAPER models / opencode commands,
-#   • the Omarchy menu "Agents" plugin (icon, bar entry, panel),
-#   • the mosquito AI-diagnosis crash notifications (crash-notify off).
-# REVERSIBLE from Setup by re-applying run_restore_ai (nothing is deleted
-# except what the user explicitly purged — the agents plugin and the
-# crash-notify flag are toggles, so the restore is a flip back).
+# Exactly what Omarchy ships as its agentic surface, and nothing else:
+#   * the omarchy.agents bar widget (icon + panel + the menu entry that offers
+#     to install an agent),
+#   * the mosquito AI-diagnosis crash toasts.
+#
+# It deliberately does NOT touch ollama or Claude Code. Neither is part of a
+# default Omarchy install - they are tools a user adds on top - so removing
+# them here meant this module deleted things it had never installed, and
+# restoring it re-pinned Claude and then told the user to re-run the ollama
+# module. A "bring back what Omarchy ships" toggle must be exactly reversible.
 ai_state_on(){
   [[ -f "$HOME/.local/state/mosquitomarchy/remove-all-ai" ]]
 }
 
 un_remove_ai() {
-  info "Removing every AI integration from this Omarchy (reversible from Setup)"
-  # 1) the ollama helpers + OpenCode commands (the ollama module's pieces)
-  un_ollama >/dev/null 2>&1 || true
-  mark_excluded ollama
-  # 2) the Omni Agents plugin in the Omarchy menu (QML plugin: icon + panel)
+  info "Removing the agentic surface Omarchy ships (reversible from Setup)"
+  # 1) the Agents plugin in the Omarchy menu/bar (QML plugin: icon + panel)
   omarchy plugin disable omarchy.agents >/dev/null 2>&1 || true
   ok "omarchy.agents plugin disabled in the Omarchy menu/bar"
-  # 2b) remove the agents widget from the BAR LAYOUT too (disabling the
+  # 1b) remove the agents widget from the BAR LAYOUT too (disabling the
   #     plugin is not enough: the bar keeps an empty slot / re-adds it).
-  python3 - <<'PY'
-import json, os
-p = os.path.expanduser("~/.config/omarchy/shell.json")
+  python3 - "$HOME/.config/omarchy/shell.json" <<'AGENTLAYOUT_PY'
+import json, os, sys
+p = sys.argv[1]
 try:
     d = json.load(open(p))
 except (OSError, ValueError):
@@ -2507,52 +2507,50 @@ for k, v in layout.items():
         layout[k] = [i for i in v if i.get("id") != "omarchy.agents"]
 json.dump(d, open(p, "w"), indent=2)
 open(p, "a").write("\n")
-PY
-  # 3) Crash AI-diagnosis toasts off (crash-notify state file)
+AGENTLAYOUT_PY
+  # 2) Crash AI-diagnosis toasts off (crash-notify state file)
   "$SCRIPTS/apps/mosquitomarchy/mosquitomarchy-actions" crash-notify off &&
     ok "Crash notifications with AI diagnosis: OFF" || true
-  # 4) Claude Code (installed through mise, NOT pacman — that is why it never
-  #    showed in "packages"): uninstall every version, drop the pinned tool,
-  #    remove the shim + the url-handler desktop entry. Its data dir is
-  #    backed up, then removed.
-  if command -v mise >/dev/null 2>&1; then
-    if mise ls claude >/dev/null 2>&1; then
-      mise uninstall claude --all >/dev/null 2>&1 && ok "Claude Code (mise) uninstalled"
-    fi
-  fi
-  rm -f "$HOME/.local/share/mise/shims/claude" 2>/dev/null || true
-  rm -f "$HOME/.local/share/applications/claude-code-url-handler.desktop" 2>/dev/null || true
-  if [[ -f "$HOME/.config/mise/config.toml" ]] && grep -q '^claude[[:space:]]*=' "$HOME/.config/mise/config.toml"; then
-    cp -f "$HOME/.config/mise/config.toml" "$HOME/.config/mise/config.toml.pre-remove-ai"
-    sed -i '/^claude[[:space:]]*=/d' "$HOME/.config/mise/config.toml"
-    ok "Claude removed from ~/.config/mise/config.toml"
-  fi
-  if [[ -d "$HOME/.claude" ]]; then
-    mkdir -p "$HOME/omarchy-backups"
-    tar czf "$HOME/omarchy-backups/claude-removed-$(date +%Y%m%d-%H%M%S).tar.gz" -C "$HOME" .claude 2>/dev/null || true
-    rm -rf "$HOME/.claude"
-    ok "~/.claude backed up (omarchy-backups) then removed"
-  fi
   mkdir -p "$HOME/.local/state/mosquitomarchy"
   printf '1\n' > "$HOME/.local/state/mosquitomarchy/remove-all-ai"
-  ok "AI removed from this Omarchy: agents hidden, AI-diag toasts gone, ollama loaders gone, Claude Code gone"
+  ok "Agentic surface removed: agents widget hidden, AI-diagnosis toasts gone"
 }
 
 run_restore_ai() {
-  info "Re-enabling AI pieces removed by 'remove-all-ai'"
+  info "Re-enabling the agentic surface Omarchy ships"
   rm -f "$HOME/.local/state/mosquitomarchy/remove-all-ai"
-  "$SCRIPTS/apps/mosquitomarchy/mosquitomarchy-actions" crash-notify on &&
-    ok "Crash notifications with AI diagnosis: RE-ENABLED" || true
-  omarchy plugin enable omarchy.agents >/dev/null 2>&1 || true
-  ok "Agents plugin re-enabled in the Omarchy menu/bar"
-  # Claude Code: re-pin the tool so mise installs it again on the next run
-  # (its data dir backup stays in ~/omarchy-backups).
-  if command -v mise >/dev/null 2>&1 && [[ -f "$HOME/.config/mise/config.toml" ]] \
-     && ! grep -q '^claude[[:space:]]*=' "$HOME/.config/mise/config.toml"; then
-    printf 'claude = "latest"\n' >> "$HOME/.config/mise/config.toml"
-    ok "Claude re-pinned in mise config — run 'mise install' to fetch it"
+  if "$SCRIPTS/apps/mosquitomarchy/mosquitomarchy-actions" crash-notify on; then
+    ok "Crash notifications with AI diagnosis: RE-ENABLED"
+  else
+    warn "Could not re-enable the AI-diagnosis crash toasts"
   fi
-  warn "ollama loaders were NOT restored — re-run the 'ollama' module to bring them back."
+  # `|| true` used to swallow the failure AND print a success line right after
+  # it, so a failed enable was reported as done and the row stayed greyed with
+  # no explanation. Say what happened instead.
+  if omarchy plugin enable omarchy.agents >/dev/null 2>&1; then
+    ok "Agents plugin re-enabled in the Omarchy menu/bar"
+  else
+    warn "Could not enable omarchy.agents - run: omarchy plugin enable omarchy.agents"
+  fi
+  # The bar layout entry too: enabling the plugin does not put the widget back
+  # in the bar, which is the half the user actually sees.
+  python3 - "$HOME/.config/omarchy/shell.json" <<'AGENTLAYOUT_PY'
+import json, os, sys
+p = sys.argv[1]
+try:
+    d = json.load(open(p))
+except (OSError, ValueError):
+    raise SystemExit(0)
+layout = d.get("bar", {}).get("layout", {})
+if not any(
+    isinstance(v, list) and any(i.get("id") == "omarchy.agents" for i in v)
+    for v in layout.values()
+):
+    layout.setdefault("center", []).append({"id": "omarchy.agents"})
+    json.dump(d, open(p, "w"), indent=2)
+    open(p, "a").write("\n")
+AGENTLAYOUT_PY
+  ok "Agentic surface back: agents widget in the bar, AI-diagnosis toasts on"
 }
 
 un_guitarpro(){

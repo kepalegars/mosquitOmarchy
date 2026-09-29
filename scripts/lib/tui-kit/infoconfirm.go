@@ -90,7 +90,9 @@ func (c InfoConfirm) View() string {
 		if focused {
 			s = s.Background(ColorAccent).Foreground(accentForeground()).Bold(true)
 		} else {
-			s = s.Foreground(ColorMuted)
+			// Same tone as the shortcut legends under the dialog — see
+			// confirm.go: an unfocused answer is still a real option.
+			s = s.Foreground(ColorSubtle)
 		}
 		return s.Render(label)
 	}

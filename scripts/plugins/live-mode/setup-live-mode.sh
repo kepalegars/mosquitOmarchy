@@ -364,7 +364,9 @@ menu_block() {
   cat <<MC_EOF
 $MENU_START
   "trigger.toggle.live-mode": {
-    "icon": "\uf0f4",
+    // fa-circle: the old fa-leaf read as a green plant next to the red frame
+    // this row announces. The menu has no per-entry colour, so the glyph is it.
+    "icon": "\uf111",
     "label": "Live Mode",
     "description": "Performance session mode: keep the machine awake, thermal guard, no idle suspend",
     "aliases": ["live", "live-mode", "lmm", "toggle-live"],

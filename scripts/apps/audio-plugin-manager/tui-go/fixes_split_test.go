@@ -90,8 +90,12 @@ func TestFixPickerSplitsPluginSpecificBelow(t *testing.T) {
 		if !h.Folder {
 			t.Errorf("category %q must be flagged Folder so it gets the folder glyph", cat)
 		}
-		if h.Fold != "▾" {
-			t.Errorf("expanded category %q should carry Fold=▾, got %q", cat, h.Fold)
+		// Compare against the kit constant, not a literal: the glyph is U+25BE
+		// or U+25BC depending on nothing more than whether it matches the
+		// cursor's own size, and hard-coding it here made this test fail (and
+		// say nothing useful) the moment that changed.
+		if h.Fold != tuikit.FoldExpanded {
+			t.Errorf("expanded category %q should carry Fold=tuikit.FoldExpanded, got %q", cat, h.Fold)
 		}
 	}
 	// Product groups must appear AFTER the title, labelled by plugin name only.

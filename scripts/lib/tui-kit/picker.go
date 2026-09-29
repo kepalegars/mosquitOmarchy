@@ -941,6 +941,16 @@ func (p Picker) Index() int {
 	return p.list.Index()
 }
 
+// VisibleRows is how many item rows fit in the current viewport, or 0 when the
+// picker has not been sized yet (nothing is known to be on screen, so callers
+// should treat that as "assume visible" rather than skipping work).
+func (p Picker) VisibleRows() int {
+	if !p.ready {
+		return 0
+	}
+	return p.list.Paginator.PerPage
+}
+
 // SelectIndex moves the cursor to the given 0-based row. The index is
 // CLAMPED to the real range: bubbles' list.Select does not clamp, so a
 // rebuild that shortens the list (e.g. collapsing a folder removes its

@@ -133,7 +133,11 @@ func (c Confirm) View() string {
 		if focused {
 			s = s.Background(ColorAccent).Foreground(lipgloss.Color("0")).Bold(true)
 		} else {
-			s = s.Foreground(ColorMuted)
+			// Same tone as the shortcut legends under the dialog, not the
+			// dimmer ColorMuted: an answer you are NOT currently on is still a
+			// first-class option, and reading it darker than the hints made
+			// "See log" / "OK" look disabled next to the focused one.
+			s = s.Foreground(ColorSubtle)
 		}
 		return s.Render(label)
 	}

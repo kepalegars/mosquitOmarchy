@@ -119,6 +119,28 @@ func (p navPicker) IndexOf(v string) int {
 	return -1
 }
 
+// RowVisible reports whether a row is inside the currently rendered window.
+//
+// A timer-driven rebuild (the accent blink) exists to change one row that may
+// be scrolled out of sight. Asking first turns "rebuild the whole tree twice a
+// second" into "rebuild only while that row is actually on screen", which is
+// what stops the list from feeling like it fights the cursor.
+func (p navPicker) RowVisible(v string) bool {
+	i := p.IndexOf(v)
+	if i < 0 {
+		return false
+	}
+	perPage := p.Picker.VisibleRows()
+	if perPage <= 0 {
+		return true
+	}
+	// The list is paginated from the top, so a row is on screen when its
+	// absolute index falls inside the current page's slice.
+	page := p.Index() / perPage
+	start := page * perPage
+	return i >= start && i < start+perPage
+}
+
 // KeepCursor rebuilds a picker and restores the row the user was on, matching
 // by value. Without it every periodic rebuild (the blink, the update poll)
 // dropped the cursor back to the first row, so moving down a filtered list was

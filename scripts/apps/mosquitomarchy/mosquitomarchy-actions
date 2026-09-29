@@ -211,7 +211,7 @@ cmd_setup(){
           # the "remove" version, but it never shows in this tree).
           if [[ ${CAND_KEYS[$i]} == "remove-ai" ]]; then
             name="bring back omarchy's agentic stuff"
-            info="re-enables the omarchy.agents plugin, the AI-diagnosis crash toasts, and the ollama loader helpers"
+            info="re-enables the omarchy.agents bar widget and the AI-diagnosis crash toasts — what Omarchy ships, nothing more"
           fi
           # Catalog shell-plugins used to be relabelled here from the raw
           # id|url|human-label field, which re-inlined the description the split
@@ -1215,28 +1215,29 @@ cmd_crash_notify() {
 # one of the signals — it is still the cheapest and most reliable "a removal
 # definitely happened" evidence when the user removed the pieces themselves.
 cmd_ai_removed() {
-  local removed=false marker="$HOME/.local/state/mosquitomarchy/remove-all-ai"
-  [[ -f $marker ]] && removed=true
+  local removed=false
 
-  # 1) the Agents plugin: enabled state lives in the omarchy plugin list, and
-  #    a missing plugin directory means the source itself is gone.
-  if ! omarchy plugin list 2>/dev/null | grep -qiE '^omarchy\.agents\b.*(enabled|true)'; then
+  # What counts as "the agentic stuff" is EXACTLY what Omarchy ships: the
+  # omarchy.agents bar widget, the AI-diagnosis crash toasts, and the menu
+  # entries that offer to install an agent. Not ollama and not Claude Code --
+  # those are tools a user adds on top, they are not part of the default
+  # install, and this module must not install more than Omarchy does.
+  #
+  # 1) the Agents plugin, read from omarchy's own state.
+  if ! omarchy plugin list 2>/dev/null | grep -qiE '^omarchy\.agents\b.*\benabled\b'; then
     removed=true
   fi
-  # 2) the ollama loaders run_restore_ai cannot re-create (it says so itself).
-  if ! compgen -G "$HOME/.local/share/omarchy/bin/*ollama*" >/dev/null 2>&1; then
-    removed=true
-  fi
-  # 3) crash-notify's AI diagnosis switch.
+  # 2) the AI-diagnosis crash toasts.
   if [[ $("$0" crash-notify 2>/dev/null | grep -c '"crashNotify": true') -eq 0 ]]; then
     removed=true
   fi
-  # 4) Claude Code: either the shim is gone or mise no longer pins it.
-  if [[ ! -e "$HOME/.local/share/mise/shims/claude" ]] \
-     && { ! command -v mise >/dev/null 2>&1 || ! mise ls claude >/dev/null 2>&1; }; then
-    removed=true
-  fi
 
+  # The remove-all-ai marker is deliberately NOT consulted: it records that the
+  # removal RAN, not that anything is still missing. Keeping it in the answer
+  # meant that once the user (or an uninstall run) had removed the agentic bits
+  # and then put them back by other means, the row stayed greyed forever with
+  # no way to clear it, and one that was stale the other way offered a restore
+  # with nothing to do.
   printf '{"removed": %s}\n' "$removed"
 }
 
@@ -1273,6 +1274,10 @@ menu_entries_marker() {
     audio-plugins) printf 'setup.mosquito.audio-plugins' ;;
     move-converter) printf 'setup.mosquito.move' ;;
     live-mode)      printf 'setup.mosquito.live' ;;
+    # The toggle is a SECOND, separate row: setup.mosquito.live only opens the
+    # manager TUI, while this one is what actually turns a session on. Listing
+    # only the manager is why "Live Mode" was nowhere in Menu entries.
+    live-mode-toggle) printf 'trigger.toggle.live-mode' ;;
     jamjamjam)      printf 'setup.mosquito.jam' ;;
     mega-caffeine)  printf 'trigger.toggle.mega-caffeine' ;;
     *)              printf '%s' "$1" ;;
@@ -1287,6 +1292,7 @@ menu_entry_label() {
     audio-plugins)  printf 'Audio Plugin Manager' ;;
     move-converter) printf 'mosquito Move Manager' ;;
     live-mode)      printf 'Live Mode Manager' ;;
+    live-mode-toggle) printf 'Live Mode' ;;
     jamjamjam)      printf 'JamJamJam' ;;
     mega-caffeine)  printf 'Mega caffeine' ;;
     *)              printf '%s' "$1" ;;
@@ -1296,7 +1302,7 @@ menu_entry_label() {
 # menu_entry_zone <id> -- the menu section the entry sits in.
 menu_entry_zone() {
   case "$1" in
-    mega-caffeine) printf 'Trigger ▸ Toggle' ;;
+    mega-caffeine|live-mode-toggle) printf 'Trigger ▸ Toggle' ;;
     *)             printf 'Setup ▸ mosquito' ;;
   esac
 }
@@ -1363,7 +1369,7 @@ cmd_menu_entries() {
   # also carries the Audio Plugin Manager and JamJamJam rows, and a
   # "Menu entries" screen that hides rows the user can see in their own menu
   # is exactly what made it look broken.
-  local -a NAMES=(mosquitomarchy audio-plugins move-converter live-mode jamjamjam mega-caffeine)
+  local -a NAMES=(mosquitomarchy audio-plugins move-converter live-mode live-mode-toggle jamjamjam mega-caffeine)
   case "$how" in
     list)
       for b in "${NAMES[@]}"; do
@@ -1401,6 +1407,16 @@ cmd_menu_entries() {
             && ok "menu re-added: $id" || warn "restore failed: $id" ;;
         mega-caffeine)  bash "$HOME/mosquitOmarchy/scripts/plugins/power-management/setup-battery-management.sh" >/dev/null 2>&1 \
           && ok "menu re-added: mega-caffeine" || warn "restore failed: mega-caffeine" ;;
+        # Its own module's installer, but WITHOUT -y: the sudoers part of it
+        # needs root and the password prompt is the point. --status is the
+        # cheap check first so a healthy install does not prompt for nothing.
+        live-mode-toggle)
+          if bash "$HOME/mosquitOmarchy/scripts/plugins/live-mode/setup-live-mode.sh" --status >/dev/null 2>&1; then
+            bash "$HOME/mosquitOmarchy/scripts/plugins/live-mode/setup-live-mode.sh" >/dev/null 2>&1 \
+              && ok "menu re-added: live-mode toggle" || warn "restore failed: live-mode toggle"
+          else
+            warn "live-mode is not installed — run the live-mode module first"
+          fi ;;
         # NOT the module's own setup script: that one needs root (udev rule,
         # chromium policy, ydotool NOPASSWD) so -y opens dialogs and then blocks
         # on `sudo` for a password, and without a flag it refuses to start at
@@ -1447,7 +1463,11 @@ case "$sub" in
   menu-entry)               cmd_menu_entry ;;
   add-shortcut)             cmd_add_shortcut ;;
   backup)                   cmd_backup ;;
-  crash-notify)             cmd_crash_notify "${1:-on}" ;;
+  # No argument means "tell me", not "turn it on". The default was ${1:-on},
+  # so `crash-notify` READ as if the toasts were on even when the flag file
+  # said off -- which is how the agentic row kept claiming there was something
+  # to bring back after it had been taken away.
+  crash-notify)             cmd_crash_notify "${1:-get}" ;;
   ai-removed)               cmd_ai_removed ;;
   menu-entries)             cmd_menu_entries "$@" ;;
   restore)                  cmd_restore "${1:-}" ;;

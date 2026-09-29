@@ -105,6 +105,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// as Setup is left (no re-arm).
 		switch m.top() {
 		case scrSetup:
+			// The only thing blinkOn changes is the accent on the "mosquito"
+			// category. If that row is not in the visible window there is
+			// nothing on screen to blink, so skip the rebuild entirely rather
+			// than rebuild the whole tree twice a second for a row nobody can
+			// see.
+			if !m.setupPicker.RowVisible(folderValue("mosquito")) {
+				m.blinkOn = !m.blinkOn
+				return m, blinkCmd()
+			}
 			m.blinkOn = !m.blinkOn
 			m.setupPicker = m.rebuildSetup()
 			return m, blinkCmd()
@@ -2147,10 +2156,15 @@ func (m model) rebuildSetup() navPicker {
 	}
 	out = append(out, tuikit.PickerItem{Display: "Back", Value: "back"})
 
-	enterHelp := "install this"
+	enterHelp := "install selection"
 	if uninstall {
-		enterHelp = "uninstall this"
+		enterHelp = "uninstall selection"
 	}
+	// KeepCursor is not optional here. rebuildSetup builds a FRESH picker, so
+	// without it the cursor jumped back to the top — and rebuildSetup runs on
+	// every blink tick, so holding "down" fought the blink and the cursor
+	// crawled. It also matters for the fold, which rebuilds the list under a
+	// cursor that is sitting on the very row that caused it.
 	return newNavPicker("", out).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "select")),
@@ -2159,7 +2173,10 @@ func (m model) rebuildSetup() navPicker {
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "close")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		).
-		SelectIndex(idx)
+		KeepCursor(m.setupPicker.SelectedValue()).
+		// Fallback for when the row the cursor was on is genuinely gone (the
+		// typing filter just hid it): land on the same index, not on row 0.
+		SelectIndex(min(idx, len(out)-1))
 }
 
 // categorySelectedCount counts the checked items of one category.
