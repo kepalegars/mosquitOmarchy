@@ -14,7 +14,8 @@
 #   ./mosquitomarchy-setup.sh --include=<mod>  # re-offer a module you previously uninstalled
 #   ./mosquitomarchy-setup.sh --uninstall # per-module uninstall (interactive [--purge: also the data])
 #   ./mosquitomarchy-setup.sh --backup   # dated backup now, then exit
-#   ./mosquitomarchy-setup.sh --backup --vst-backup=full   # idem + full VST archive (~/VST)
+#   ./mosquitomarchy-setup.sh --backup   # dated backup; OFFERS the plugin folders
+#   ./mosquitomarchy-setup.sh --backup --vst-backup=full   # idem + plugin folders archived (non-interactive)
 #   ./mosquitomarchy-setup.sh --list     # chronological list of the backups
 #   ./mosquitomarchy-setup.sh --restore[=FILE]  # restore a backup (chronological choice)
 #   ./mosquitomarchy-setup.sh --update-repo     # git pull the scripts from GitHub (see "Updating")
@@ -45,7 +46,7 @@ LIB_ONLY="${MOSQUITOMARCHY_LIB_ONLY:-0}"
 YES=0 STATUS_ONLY=0 UPDATE_OK=0 UNINSTALL_DELEGATE=0 PURGE=0
 MODE=""          # "" = normal ; backup | list | restore | update-repo
 RESTORE_FILE=""
-VST_MODE=""
+VST_MODE=""      # "" = ask (interactive) ; list | full | none
 INCLUDES=()
 if (( ! LIB_ONLY )); then
   for a in "$@"; do case "$a" in
@@ -56,13 +57,21 @@ if (( ! LIB_ONLY )); then
     --purge) PURGE=1 ;;
     --include=*) INCLUDES+=("${a#*=}") ;;
     --backup) MODE=backup ;;
-    --vst-backup=*) VST_MODE="${a#*=}" ;;
+    --vst-backup=*)
+      VST_MODE="${a#*=}"
+      case "$VST_MODE" in
+        ask|list|full|none) ;;
+        # A typo must not silently fall back to "ask", which would start
+        # asking about the plugin folders during a non-interactive run.
+        *) echo "--vst-backup expects ask|list|full|none, got '$VST_MODE'" >&2; exit 1 ;;
+      esac
+      ;;
     --list) MODE=list ;;
     --restore) MODE=restore ;;
     --restore=*) MODE=restore; RESTORE_FILE="${a#*=}" ;;
     --update-repo) MODE=update-repo ;;
     -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
-    *) echo "Unknown option: $a (supported: -y --status --update --uninstall --include=<mod> --backup [--vst-backup=list|full|none] --list --restore[=FILE] --update-repo)" >&2; exit 1 ;;
+    *) echo "Unknown option: $a (supported: -y --status --update --uninstall --include=<mod> --backup [--vst-backup=ask|list|full|none] --list --restore[=FILE] --update-repo)" >&2; exit 1 ;;
   esac; done
 fi
 
@@ -825,23 +834,80 @@ latest_backup_file(){
   ls -t "$BACKUP_DIR"/omarchy-backup-*.tar.gz* 2>/dev/null | head -1
 }
 
-# ─── VST source folder detection (local, separate from the VM) ───
-# Root resolution mirrors the audio stack's resolve_vst_root(): explicit
-# override, then the modern default $HOME/Music/Audio Plugins when it holds
-# plugin files, then the legacy $HOME/VST (always the fallback — restores of
-# old archives extract there with the uppercase folder names intact).
+# ─── VST / plugin folder detection, driven by the audio plugin manager ──────
+# The audio plugin manager owns the plugin folder: it is the thing that
+# installs into it, the thing yabridgectl is pointed at, and the thing whose
+# Settings can move it. So the backup asks IT where the folder is instead of
+# re-implementing the resolution — a second guess is what made a backup
+# silently skip the folder after a "Plugins folder" migration, and a restore
+# drop the plugins back into a path the manager no longer uses.
+#
+# VST_SRC_BASE is therefore the manager's own root when it answers, and only
+# falls back to the historical auto-detection when it does not (manager not
+# installed, or its query failed).
+APM_ACTIONS="$HOME/.local/bin/mosquito-audio-plugin-manager-actions"
+
+# The manager is installed when its actions script answers.
+apm_installed(){
+  [[ -x "$APM_ACTIONS" ]] || return 1
+  "$APM_ACTIONS" status-json >/dev/null 2>&1
+}
+
+# apm_plugins_root — the folder the audio plugin manager installs into, or
+# empty when it cannot be asked. Read through its own actions script so the
+# backup never disagrees with the manager about that path.
+apm_plugins_root(){
+  apm_installed || return 1
+  local root
+  root="$("$APM_ACTIONS" status-json 2>/dev/null | jq -r '.plugins_root // empty' 2>/dev/null)"
+  [[ -n $root ]] || return 1
+  printf '%s\n' "$root"
+}
+
+# apm_state_file — the manager's machine-scoped state log, the file that
+# records which plugins it installed. Located the same way the manager's own
+# core lib does: next to the deployed scripts.
+apm_state_file(){
+  local c
+  for c in "$HOME/.local/bin/audio-plugin-manager-state.json" \
+           "$SCRIPT_DIR/scripts/apps/audio-plugin-manager/audio-plugin-manager-state.json" \
+           "$HOME/mosquitOmarchy/scripts/apps/audio-plugin-manager/audio-plugin-manager-state.json"; do
+    [[ -f $c ]] && { printf '%s\n' "$c"; return 0; }
+  done
+  return 1
+}
+
+# apm_installed_plugin_count — how many plugins the manager's log says are
+# installed. This is the signal that makes the backup OFFER the plugin folder
+# at all: with nothing installed there is nothing to archive, and offering it
+# would only ever produce an empty tar.
+apm_installed_plugin_count(){
+  local f
+  f="$(apm_state_file)" || { echo 0; return; }
+  jq -r '(.plugins // {}) | length' "$f" 2>/dev/null || echo 0
+}
+
+# Root resolution for the BACKUP: the manager first, then the historical
+# auto-detection (explicit override, $HOME/Music/Audio Plugins, legacy
+# $HOME/VST) so a machine without the manager still backs up its plugins.
 VST_SRC_BASE="${AUDIOSTACK_VST_ROOT:-}"
+if [[ -z "$VST_SRC_BASE" ]]; then
+  VST_SRC_BASE="$(apm_plugins_root || true)"
+fi
+VST_ROOT_FROM_APM=""
+[[ -n "$VST_SRC_BASE" ]] && apm_installed && VST_ROOT_FROM_APM=1
 if [[ -z "$VST_SRC_BASE" ]]; then
   if find "$HOME/Music/Audio Plugins" -mindepth 2 \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) 2>/dev/null | grep -q .; then
     VST_SRC_BASE="$HOME/Music/Audio Plugins"
-  elif find "$HOME/VST" -mindepth 2 \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) 2>/dev/null | grep -q .; then
-    VST_SRC_BASE="$HOME/VST"
   else
     VST_SRC_BASE="$HOME/VST"
   fi
 fi
+# The per-format subfolders actually in use, with the manager's own lowercase
+# names (vst/vst3/clap/clap-native/vst3-native/lv2) alongside the legacy
+# uppercase ones an older archive used.
 VST_DIRS=()
-for sub in VST2 VST3 CLAP vst vst3 clap; do
+for sub in vst vst3 clap clap-native vst3-native lv2 VST2 VST3 CLAP; do
   [[ -d "$VST_SRC_BASE/$sub" ]] && VST_DIRS+=("$VST_SRC_BASE/$sub")
 done
 has_vst_sources=$(( ${#VST_DIRS[@]} > 0 && 1 ))
@@ -1135,6 +1201,217 @@ backup_encrypt(){
   unset pass confirm 2>/dev/null || true
 }
 
+# plugins_tree_file_count / plugins_tree_bytes_mb — the size of what a plugin
+# folder backup would cost, asked BEFORE the user commits to it. Counted over
+# the per-format subfolders only, not the whole root, so an unrelated README or
+# a manager state file in the root cannot inflate the figure.
+plugins_tree_file_count(){
+  local sub n=0
+  for sub in "${VST_DIRS[@]}"; do
+    n=$(( n + $(find "$sub" -type f 2>/dev/null | wc -l) ))
+  done
+  printf '%s' "$n"
+}
+
+plugins_tree_bytes_mb(){
+  local sub b=0
+  for sub in "${VST_DIRS[@]}"; do
+    b=$(( b + $(du -sb "$sub" 2>/dev/null | cut -f1) ))
+  done
+  printf '%s' "$(( b / 1048576 ))"
+}
+
+# backup_plugins_inventory <tmp> — writes plugins/manifest.txt: every plugin
+# file with its size and mtime, the folder the files came from, and the
+# yabridgectl configuration, so an inventory-only backup is still actionable
+# by hand. Also records the folder the manager was pointing at, which is what
+# lets a restore notice a mismatch instead of silently extracting somewhere
+# the manager does not look.
+backup_plugins_inventory(){
+  local tmp="$1" sub
+  : > "$tmp/plugins/manifest.txt"
+  for sub in "${VST_DIRS[@]}"; do
+    find "$sub" -type f -printf '%s\t%T@\t%p\n' 2>/dev/null >> "$tmp/plugins/manifest.txt" || true
+  done
+  local total_files total_bytes
+  total_files=$(wc -l < "$tmp/plugins/manifest.txt" 2>/dev/null || echo 0)
+  total_bytes=$(awk '{s+=$1} END{printf "%.0f", s/1048576}' "$tmp/plugins/manifest.txt" 2>/dev/null || echo 0)
+  { echo "# mosquitOmarchy plugin inventory"
+    echo "# plugin folder at backup time: $VST_SRC_BASE"
+    echo "# source of truth: audio plugin manager (mosquito-audio-plugin-manager-actions status-json)"
+    echo "# plugins in the manager's log: $(apm_installed_plugin_count)"
+    echo "# files: $total_files (~${total_bytes} MB)"
+    echo "# paths in yabridgectl:"
+    [[ -f "$HOME/.config/yabridgectl/config.toml" ]] && cat "$HOME/.config/yabridgectl/config.toml"
+  } | cat - "$tmp/plugins/manifest.txt" > "$tmp/plugins/manifest.txt.tmp" 2>/dev/null \
+    && mv "$tmp/plugins/manifest.txt.tmp" "$tmp/plugins/manifest.txt" || true
+  ok "plugins/manifest.txt ($total_files files, ~${total_bytes} MB)"
+}
+
+# backup_plugins_archive <tmp> — the real files, as plugins/plugins.tar.gz.
+#
+# The tar is rooted at the PARENT of the plugin folder, so the archive holds
+# "<folder>/<format>/…" exactly as it sat on disk. That is deliberate: it keeps
+# the archive self-describing (you can see which folder it came from without
+# consulting the manifest) and lets a restore that extracts into a DIFFERENT
+# parent still land the folder under its original name.
+backup_plugins_archive(){
+  local tmp="$1" sub
+  local parent relbase
+  parent="$(dirname "$VST_SRC_BASE")"
+  relbase="$(basename "$VST_SRC_BASE")"
+  local mb; mb="$(plugins_tree_bytes_mb)"
+  (( mb > 500 )) && warn "Size: ~${mb} MB — archiving…"
+  local -a tar_targets=()
+  for sub in "${VST_DIRS[@]}"; do
+    tar_targets+=("$relbase/${sub#"$VST_SRC_BASE/"}")
+  done
+  ( cd "$parent" && tar czf "$tmp/plugins/plugins.tar.gz" "${tar_targets[@]}" 2>/dev/null )
+  if [[ -f "$tmp/plugins/plugins.tar.gz" ]]; then
+    ok "plugins/plugins.tar.gz ($(du -h "$tmp/plugins/plugins.tar.gz" | cut -f1)) — plugin folders archived"
+  else
+    err "Failed to create plugins/plugins.tar.gz (disk space?)"
+  fi
+}
+
+# restore_plugins <tmp> — puts an archived plugin folder back where the audio
+# plugin manager looks for it NOW.
+#
+# The archive is rooted at the parent of the folder as it was at backup time
+# ("Audio Plugins/vst3/…"). Extracting it into $HOME — what the restore used to
+# do — only works while the manager still points at that exact folder. Change
+# the folder in the manager's Settings and the plugins land in an orphan
+# directory no DAW and no yabridgectl will ever read. So: ask the manager for
+# its CURRENT root and extract into ITS parent, and say so when that differs
+# from the folder the archive was taken from, instead of letting the mismatch
+# pass silently.
+restore_plugins(){
+  local tmp="$1"
+  local arc="$tmp/plugins/plugins.tar.gz"
+  # Old archives (and pre-rename ones) may still carry the previous name.
+  [[ -f "$arc" ]] || arc="$tmp/plugins/plugins-vst.tar.gz"
+  [[ -f "$arc" ]] || return 1
+
+  # The folder the archive was taken from, read from the manifest header.
+  local archived_root=""
+  if [[ -f "$tmp/plugins/manifest.txt" ]]; then
+    archived_root="$(sed -n 's/^# plugin folder at backup time: //p' "$tmp/plugins/manifest.txt" | head -1)"
+  fi
+  # Also recoverable from the tar itself, for an archive whose manifest is
+  # missing (an inventory-only backup, or a hand-assembled one): the first
+  # path component IS the folder name.
+  if [[ -z "$archived_root" ]]; then
+    archived_root="$(tar tzf "$arc" 2>/dev/null | head -1 | cut -d/ -f1)"
+  fi
+  local archived_name
+  archived_name="$(basename "${archived_root:-$HOME}")"
+
+  local current_root; current_root="$(apm_plugins_root || true)"
+
+  # Extract to a scratch dir first. The archive is rooted at the folder's own
+  # name, so extracting straight into a DIFFERENT parent would recreate the
+  # OLD folder name there and leave the manager still looking at an empty one
+  # — the exact "I restored but nothing shows up" case. Going through scratch
+  # lets us move the folder to wherever the manager actually points.
+  #
+  # The scratch dir is created NEXT TO THE TARGET, not in /tmp: mktemp's TMPDIR
+  # is frequently a different filesystem, and `mv` across filesystems is a
+  # copy that fails on a non-empty destination ("inter-device move failed").
+  local deploy_root="${current_root:-$archived_root}"
+  [[ -n "$deploy_root" ]] || deploy_root="$HOME"
+  local target_dir
+  target_dir="$(dirname "$deploy_root")"
+  mkdir -p "$target_dir" 2>/dev/null || target_dir="$HOME"
+  local scratch; scratch="$(mktemp -d "$target_dir/.mosquitomarchy-restore.XXXXXX")" \
+    || scratch="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$scratch'" RETURN
+
+  if ! tar xzf "$arc" -C "$scratch" 2>/dev/null; then
+    err "Extraction of the plugin archive failed."
+    return 1
+  fi
+  [[ -d "$scratch/$archived_name" ]] || {
+    err "The archive does not contain the expected '$archived_name' folder."
+    return 1
+  }
+
+  if [[ -n "$current_root" && "$current_root" != "$archived_root" ]]; then
+    warn "The archive was taken from '$archived_root' but the plugin manager now uses '$current_root'."
+    if ask "Deploy the plugins into the manager's current folder ('$current_root')?" y; then
+      mkdir -p "$(dirname "$current_root")"
+      # cp -a (not mv): a cross-device mv is a copy that also tries to remove
+      # the source, and it errors out on a non-empty destination. Copying the
+      # contents in is also the merge we want here.
+      #
+      # A handful of shipped files are read-only (a .vst3 bundle's
+      # desktop.ini is typically -r--r--r--), so `cp -a` can legitimately
+      # fail on those ALREADY being identical. That must not be reported as a
+      # failed restore: the useful signal is "the folder is not writable at
+      # all", so a failed copy is followed by a writability probe before
+      # declaring anything.
+      local cp_err
+      cp_err="$(cp -a "$scratch/$archived_name/." "$current_root/" 2>&1)" || true
+      if [[ -n $cp_err ]]; then
+        if touch "$current_root/.mosquitomarchy-write-test" 2>/dev/null; then
+          rm -f "$current_root/.mosquitomarchy-write-test"
+          # Writable: only a few immutable files (already identical) failed.
+          local n_bad
+          n_bad="$(printf '%s\n' "$cp_err" | grep -c 'cannot create\|Permission denied' || true)"
+          warn "Some files could not be overwritten (usually a read-only file already identical): $(printf '%s\n' "$cp_err" | head -1)"
+          ok "Plugin folders deployed to $current_root (renamed from '$archived_name'${n_bad:+, $n_bad file(s) skipped})."
+        else
+          err "$current_root is not writable — deploy the plugins with: sudo cp -a '$scratch/$archived_name/.' '$current_root/'"
+          return 1
+        fi
+      else
+        ok "Plugin folders deployed to $current_root (renamed from '$archived_name')."
+      fi
+    else
+      # The scratch dir is removed on return, so do not point at it — say how
+      # to do it by hand instead, which is what the user actually wants next.
+      info "Not deployed."
+      info "To place them there yourself, from the extracted backup:"
+      info "    tar xzf plugins.tar.gz            # yields '$archived_name/'"
+      info "    cp -a '$archived_name/.' '${current_root}/'"
+    fi
+  else
+    # Same folder (or the manager is not answering): merge into the folder
+    # where it already belongs.
+    local target_parent
+    if [[ -n "$current_root" ]]; then
+      target_parent="$(dirname "$current_root")"
+    else
+      target_parent="${archived_root%/*}"
+      [[ -n "$target_parent" ]] || target_parent="$HOME"
+      warn "The audio plugin manager is not answering — deploying to '$target_parent' (best guess)."
+    fi
+    mkdir -p "$target_parent/$archived_name"
+    # Merge, never replace: the folder may already hold plugins the archive
+    # does not know about, and silently deleting them would be worse than a
+    # duplicate warning. A read-only file that is already identical is not a
+    # failure (see the same note in the branch above).
+    local cp_err2
+    cp_err2="$(cp -a "$scratch/$archived_name/." "$target_parent/$archived_name/" 2>&1)" || true
+    if [[ -n $cp_err2 ]] && ! touch "$target_parent/$archived_name/.mosquitomarchy-write-test" 2>/dev/null; then
+      err "$target_parent/$archived_name is not writable — retry with sudo."
+      return 1
+    fi
+    rm -f "$target_parent/$archived_name/.mosquitomarchy-write-test"
+    [[ -n $cp_err2 ]] && warn "Some read-only files could not be overwritten: $(printf '%s\n' "$cp_err2" | head -1)"
+    ok "Plugin folders restored into $target_parent/$archived_name"
+  fi
+
+  # Tell the manager's side of the world the files are back: its log tracks
+  # what it installed, and yabridgectl needs to re-scan for the DAWs.
+  if apm_installed; then
+    "$APM_ACTIONS" yabridge-ensure >/dev/null 2>&1 || true
+  fi
+  if command -v yabridgectl >/dev/null; then
+    yabridgectl sync >/dev/null 2>&1 && ok "yabridgectl sync done" || warn "yabridgectl sync still to run"
+  fi
+}
+
 do_backup(){
   msg "Backup mosquitOmarchy (dated file in $BACKUP_DIR)"
   mkdir -p "$BACKUP_DIR"
@@ -1237,45 +1514,66 @@ do_backup(){
   # apps/setup-apps.sh re-reads to reinstall the same selection (all checked).
   backup_apps_selection "$tmp"
 
-  # --- 2. VST plugins (optional) ---
-  local mode="${VST_MODE:-list}"
-  if [[ $mode != "none" && $has_vst_sources == 1 ]]; then
+  # --- 2. Plugin folders (optional, offered only when there is something) ---
+  #
+  # The question is asked only when it makes sense, and the three conditions
+  # are all about not wasting the user's time or disk:
+  #   1. --vst-backup=none always skips it (explicit, non-interactive).
+  #   2. The audio plugin manager must be installed. Without it nothing owns
+  #      the folder, so we cannot say which folder to archive nor where a
+  #      restore should put it back — the option is simply not offered.
+  #   3. The manager's log must list at least one installed plugin. With an
+  #      empty log there is nothing to archive, and an empty tar in every
+  #      backup is worse than no tar.
+  # When it is offered, the folder is the manager's own plugins root, and a
+  # restore puts it back where the manager points NOW (see do_restore).
+  local mode="${VST_MODE:-ask}"
+  local want_plugins=0
+  local apm_count; apm_count="$(apm_installed_plugin_count)"
+
+  if [[ $mode == none ]]; then
+    info "Plugin folders: skipped (--vst-backup=none)."
+  elif ! apm_installed; then
+    info "Plugin folders: not offered — the audio plugin manager is not installed."
+  elif (( apm_count == 0 )); then
+    info "Plugin folders: not offered — the plugin manager's log lists no installed plugin."
+  elif [[ $mode == full ]]; then
+    want_plugins=1
+    ok "Plugin folders: full archive requested (--vst-backup=full)."
+  elif [[ $mode == list ]]; then
+    ok "Plugin folders: inventory requested (--vst-backup=list)."
     mkdir -p "$tmp/plugins"
-    local sub total_files=0 total_bytes=0
-    for sub in "${VST_DIRS[@]}"; do
-      local sub_rel="${sub#"$HOME/"}"
-      find "$sub" -type f -printf '%s\t%T@\t%p\n' 2>/dev/null >> "$tmp/plugins/manifest.txt" || true
-    done
-    total_files=$(wc -l < "$tmp/plugins/manifest.txt" 2>/dev/null || echo 0)
-    total_bytes=$(awk '{s+=$1} END{printf "%.0f", s/1048576}' "$tmp/plugins/manifest.txt" 2>/dev/null || echo 0)
-    { echo "# VST plugins detected: $total_files files (~${total_bytes} MB)"
-      echo "# Source: $VST_SRC_BASE"
-      echo "# Paths in yabridgectl:"
-      [[ -f "$HOME/.config/yabridgectl/config.toml" ]] && cat "$HOME/.config/yabridgectl/config.toml"
-    } | cat - "$tmp/plugins/manifest.txt" > "$tmp/plugins/manifest.txt.tmp" 2>/dev/null \
-      && mv "$tmp/plugins/manifest.txt.tmp" "$tmp/plugins/manifest.txt" || true
-    ok "plugins/manifest.txt ($total_files files, ~${total_bytes} MB)"
-    if [[ $mode == "full" ]]; then
-      local parent relbase
-      parent="$(dirname "$VST_SRC_BASE")"
-      relbase="$(basename "$VST_SRC_BASE")"
-      if ((total_bytes > 500)); then
-        warn "Size: ~${total_bytes} MB — archiving..."
-      fi
-      local -a tar_targets=()
-      for sub in "${VST_DIRS[@]}"; do
-        tar_targets+=("$relbase/${sub#"$VST_SRC_BASE/"}")
-      done
-      ( cd "$parent" && tar czf "$tmp/plugins/plugins-vst.tar.gz" "${tar_targets[@]}" 2>/dev/null )
-      if [[ -f "$tmp/plugins/plugins-vst.tar.gz" ]]; then
-        local arc_size; arc_size=$(du -h "$tmp/plugins/plugins-vst.tar.gz" | cut -f1)
-        ok "plugins/plugins-vst.tar.gz ($arc_size) — full VST archive"
-      else
-        err "Failed to create plugins/plugins-vst.tar.gz (disk space?)"
+    backup_plugins_inventory "$tmp"
+  elif (( YES == 1 )); then
+    # -y must NOT archive the plugin folder on its own. ask() answers "yes"
+    # under -y, and a plugin folder is easily several GB: a plain
+    # `--backup -y` would start writing it with nobody having agreed. The
+    # non-interactive default stays the inventory, which costs a few kB; ask
+    # for the files explicitly with --vst-backup=full.
+    ok "Plugin folders: inventory only (-y is non-interactive)."
+    mkdir -p "$tmp/plugins"
+    backup_plugins_inventory "$tmp"
+  else
+    # Interactive: the actual question, with the folder and the size the user
+    # is about to commit to.
+    if (( has_vst_sources == 1 )); then
+      local _files _bytes
+      _files="$(plugins_tree_file_count)"
+      _bytes="$(plugins_tree_bytes_mb)"
+      if ask "Back up the plugin folders too? ($VST_SRC_BASE — $_files files, ~${_bytes} MB, $apm_count plugin(s) in the manager's log)" n; then
+        want_plugins=1
       fi
     else
-      warn "Inventory-only mode: rerun with --backup --vst-backup=full to include the real files (~${total_bytes} MB)."
+      warn "Plugin folders: the manager points at $VST_SRC_BASE but it holds no per-format subfolder — skipping."
     fi
+  fi
+
+  if (( want_plugins == 1 )) && [[ $has_vst_sources == 1 ]]; then
+    mkdir -p "$tmp/plugins"
+    backup_plugins_inventory "$tmp"
+    backup_plugins_archive "$tmp"
+  elif (( want_plugins == 1 )); then
+    warn "Plugin folders: nothing to archive under $VST_SRC_BASE."
   fi
 
   # --- 3. RESTORE.md (embedded help: manual OR via ./mosquitomarchy-setup.sh --restore) ---
@@ -1321,30 +1619,38 @@ If the backup file ends in .tar.gz.gpg, decrypt it first:
 
     for pkg in \$(cat aurlist.txt); do yay -S "\$pkg"; done
 EOF
-  if [[ -f "$tmp/plugins/plugins-vst.tar.gz" ]]; then
-    cat >> "$tmp/RESTORE.md" <<'EOF'
+  if [[ -f "$tmp/plugins/plugins.tar.gz" || -f "$tmp/plugins/plugins-vst.tar.gz" ]]; then
+    cat >> "$tmp/RESTORE.md" <<EOF
 
-## 4. VST plugins (full archive)
+## 4. Plugin folders (full archive)
 
-    tar xzf plugins/plugins-vst.tar.gz -C $HOME   # restores the VST folders from the archive
+The archive is rooted at the parent of the plugin folder, so extracting it into
+the folder's parent restores the whole layout.
+
+    tar xzf plugins/plugins.tar.gz -C "$(dirname "$(mosquito-audio-plugin-manager-actions status-json | jq -r .plugins_root)")"
     yabridgectl sync
 
+> Preferred: \`./mosquitomarchy-setup.sh --restore\` does this for you and asks
+> the audio plugin manager where its folder is NOW, so a folder moved in the
+> manager's Settings after the backup still lands somewhere the manager reads.
+> The folder at backup time was: $VST_SRC_BASE
+>
 > The DAW config files (REAPER reaper-vstplugins*.ini) are in
 > config-backup.tar.gz. Open the DAW and rerun the plugin scan.
 EOF
   elif [[ -f "$tmp/plugins/manifest.txt" ]]; then
     cat >> "$tmp/RESTORE.md" <<EOF
 
-## 4. VST plugins (inventory only)
+## 4. Plugin folders (inventory only)
 
     # Inventory kept in plugins/manifest.txt — reinstall the plugins
     # from their official sites or re-copy the license archives into
-    # the agreed folders ($VST_SRC_BASE's vst/vst3/clap, or the legacy
-    # uppercase VST2/VST3/CLAP).
+    # the folder the audio plugin manager points at
+    # ($(apm_plugins_root || echo "$VST_SRC_BASE")'s vst/vst3/clap).
 EOF
   else
     echo "" >> "$tmp/RESTORE.md"
-    echo "No VST folder found to back up." >> "$tmp/RESTORE.md"
+    echo "No plugin folder to back up (no audio plugin manager, or its log lists no installed plugin)." >> "$tmp/RESTORE.md"
   fi
   cat >> "$tmp/RESTORE.md" <<'EOF'
 
@@ -1516,15 +1822,11 @@ restore_backup(){
     fi
   fi
 
-  # --- VST plugins ---
-  if [[ -f "$tmp/plugins/plugins-vst.tar.gz" ]]; then
-    if ask "Restore the VST plugins (archive extracts into this HOME)?" y; then
-      tar xzf "$tmp/plugins/plugins-vst.tar.gz" -C "$HOME"
-      if command -v yabridgectl >/dev/null; then
-        yabridgectl sync 2>/dev/null && ok "yabridgectl sync done" || warn "yabridgectl sync to run yourself"
-      fi
-      ok "VST plugins restored"
-    fi
+  # --- Plugin folders ---
+  # restore_plugins puts them back where the manager points NOW, and says so
+  # when that is not where they came from.
+  if [[ -f "$tmp/plugins/plugins.tar.gz" || -f "$tmp/plugins/plugins-vst.tar.gz" ]]; then
+    restore_plugins "$tmp"
   elif [[ -f "$tmp/plugins/manifest.txt" ]]; then
     warn "Plugin inventory kept in the archive (plugins/manifest.txt) —"
     warn "reinstall the plugins from their sources ($VST_SRC_BASE)."
@@ -3646,7 +3948,7 @@ launcher_backup(){
   echo "      KeePassXC passwords & settings (NEVER written to the repo)."
   echo "    - pkglist.txt / aurlist.txt : the exact packages to reinstall."
   echo "    - apps.selected : your apps / TUIs / webapps selection."
-  echo "    - optionally the VST plugins (--vst-backup=full)."
+  echo "    - optionally the plugin folders the audio plugin manager uses."
   echo "    - optional in-place GPG AES-256 encryption → .gpg suffix."
   echo "  RESTORE lists the backups (chronological) and puts the files back"
   echo "    EXACTLY where they were (decrypts the .gpg archives first). It"

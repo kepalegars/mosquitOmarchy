@@ -122,7 +122,7 @@ Single entry point, no standalone helper anymore: it integrates the **backup/res
 ./mosquitomarchy-setup.sh --update -y         # also re-runs the already-OK modules (idempotent)
 ./mosquitomarchy-setup.sh --status            # module status only, no modification
 ./mosquitomarchy-setup.sh --backup            # dated backup, then exit (passphrase prompt via gum TUI if available)
-./mosquitomarchy-setup.sh --backup --vst-backup=full   # idem + full VST archive (~/VST)
+./mosquitomarchy-setup.sh --backup --vst-backup=full   # idem + plugin folders archived (no question)
 ./mosquitomarchy-setup.sh --list              # chronological list of the backups ([encrypted] = .tar.gz.gpg)
 ./mosquitomarchy-setup.sh --restore[=FILE]    # restore a backup (chronological choice; encrypted → passphrase asked)
 ./mosquitomarchy-setup.sh --uninstall [-y] [--purge]  # per-module uninstall (interactive; -y = all)
@@ -180,7 +180,7 @@ A module marked `—` in `--status` is not applicable on this machine (e.g. VM w
 
 ### Backup / restore (integrated)
 
-Each backup is a dated file `~/omarchy-backups/omarchy-backup-<timestamp>.tar.gz`. Contents: config (`~/.config/hypr`, `REAPER`, `windows`, `opencode`, Omarchy bar/plugins, `yabridgectl`, Zen active-profile plugins/settings/chrome, omagrab binary+config, and — when KeePassXC is installed — its settings + the `Passwords.kdbx` database), package lists (`pkglist.txt`/`aurlist.txt`), `apps.selected` (reinstalled by `setup-apps.sh`), `RESTORE.md`, and optional VST plugins:
+Each backup is a dated file `~/omarchy-backups/omarchy-backup-<timestamp>.tar.gz`. Contents: config (`~/.config/hypr`, `REAPER`, `windows`, `opencode`, Omarchy bar/plugins, `yabridgectl`, Zen active-profile plugins/settings/chrome, omagrab binary+config, and — when KeePassXC is installed — its settings + the `Passwords.kdbx` database), package lists (`pkglist.txt`/`aurlist.txt`), `apps.selected` (reinstalled by `setup-apps.sh`), `RESTORE.md`, and — **offered, not automatic** — the plugin folders the audio plugin manager uses:
 
 On `--backup` the archive is then **encrypted in place** with an AES-256
 passphrase (gpg — same cipher as LUKS, file level, no sudo): the plain
@@ -193,9 +193,56 @@ or argv — gpg reads it via stdin).
 
 | Mode | Content |
 |---|---|
-| `full` | `plugins/plugins-vst.tar.gz` complete (several GB) |
-| `list` (default) | `plugins/manifest.txt`: inventory + yabridgectl config |
+| *(interactive, default)* | **asks**: *"Back up the plugin folders too?"* with the folder, the file count and the size, then archives them if you say yes |
+| `full` | `plugins/plugins.tar.gz` — the folder itself (can be several GB) |
+| `list` | `plugins/manifest.txt` — inventory (size + mtime per file) + yabridgectl config |
 | `none` | nothing |
+
+#### The plugin folders in a backup
+
+The **audio plugin manager owns the plugin folder**: it installs into it,
+`yabridgectl` is pointed at it, and its *Settings → Plugins folder* can move it.
+So the backup asks **it** where the folder is
+(`mosquito-audio-plugin-manager-actions status-json` → `plugins_root`) rather than
+guessing a path, and a restore puts the plugins back where the manager points
+**now** — see below.
+
+The option is only offered when all of this is true, so it never appears for
+nothing and never produces an empty tar:
+
+1. the plugin manager is **installed** (without it, nothing owns the folder, so
+   neither the backup nor a restore can know where to put it);
+2. its log lists **at least one installed plugin**
+   (`audio-plugin-manager-state.json` → `.plugins`);
+3. you did not pass `--vst-backup=none`.
+
+`-y` (non-interactive) keeps the cheap **inventory** only. A plugin folder is
+easily several GB and `ask()` answers "yes" under `-y`, so a plain
+`--backup -y` would start writing it with nobody having agreed; ask for the files
+explicitly with `--vst-backup=full`.
+
+The archive is rooted at the **parent** of the plugin folder, so it holds
+`Audio Plugins/vst3/…` and says which folder it came from without needing the
+manifest.
+
+#### Restoring the plugin folders
+
+`./mosquitomarchy-setup.sh --restore` reads the manifest header, compares the
+folder the archive was taken from with the folder the manager uses **now**, and
+asks before deploying when they differ:
+
+```
+warn: The archive was taken from '/home/u/Music/Audio Plugins' but the
+      plugin manager now uses '/home/u/VST'
+ASK: Deploy the plugins into the manager's current folder ('/home/u/VST')?
+```
+
+It extracts to a scratch directory and copies the folder to the manager's
+current location (merging, never replacing — plugins already there are kept),
+then runs `yabridgectl sync`. If the manager is not installed, it says so and
+deploys to the recorded folder instead of guessing silently. Read-only files
+that are already identical (a `.vst3` bundle's `desktop.ini` is typically
+`-r--r--r--`) are reported as skipped, not as a failed restore.
 
 On restore, the battery plugins (`custom.power`, `mosquito.indicators`, `mosquito.confirm`) are **excluded** from the config and recreated by the `battery` module (no old frozen copies).
 
