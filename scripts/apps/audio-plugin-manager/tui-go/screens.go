@@ -1439,6 +1439,17 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case scrInfo:
+		if _, ok := msg.(tuikit.InfoCopiedMsg); ok {
+			// `c` on an Info (a log, a fix description): the copy itself is
+			// silent, so say whether it worked.
+			c := msg.(tuikit.InfoCopiedMsg)
+			if c.Err != nil {
+				m.toast, _ = m.toast.SetErr("copy failed: " + c.Err.Error())
+			} else {
+				m.toast, _ = m.toast.SetOK(fmt.Sprintf("copied to the clipboard (%d bytes)", c.Bytes))
+			}
+			return m, nil
+		}
 		if _, ok := msg.(tuikit.InfoDismissedMsg); ok {
 			m.pop()
 			return m, m.enterCmd()

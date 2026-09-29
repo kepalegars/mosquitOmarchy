@@ -1,6 +1,10 @@
 package tuikit
 
 import (
+	"errors"
+	"os/exec"
+	"strings"
+
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -51,6 +55,15 @@ func (i Info) SetSize(w, h int) Info {
 	return i
 }
 
+// InfoCopiedMsg is sent after `c` copies an Info body to the clipboard. The
+// host shows the confirmation; Info itself has no toast of its own, because a
+// modal that rendered its own toast would have to fight the modal for the
+// screen.
+type InfoCopiedMsg struct {
+	Bytes int
+	Err   error
+}
+
 func (i Info) Init() tea.Cmd { return nil }
 
 func (i Info) Update(msg tea.Msg) (Info, tea.Cmd) {
@@ -58,6 +71,18 @@ func (i Info) Update(msg tea.Msg) (Info, tea.Cmd) {
 		switch km.String() {
 		case "esc", "enter", "q", "ctrl+c":
 			return i, func() tea.Msg { return InfoDismissedMsg{} }
+		case "c":
+			// Copy the WHOLE body, not what the viewport happens to show: the
+			// point of this shortcut is to get a log out of the TUI, and a
+			// truncated copy is the one case where it is useless.
+			//
+			// Deliberately does not dismiss the Info: the user is reading a
+			// log and wants to paste the bit they are looking at somewhere.
+			body := i.text
+			return i, func() tea.Msg {
+				n, err := copyToClipboard(body)
+				return InfoCopiedMsg{Bytes: n, Err: err}
+			}
 		}
 		var cmd tea.Cmd
 		i.viewport, cmd = i.viewport.Update(msg)
@@ -66,19 +91,61 @@ func (i Info) Update(msg tea.Msg) (Info, tea.Cmd) {
 	return i, nil
 }
 
+// copyToClipboard puts text on the system clipboard, trying the Wayland tool
+// first and the X11 ones after, and reports how many bytes went in.
+//
+// wl-copy is detached on purpose: it FORKs to keep owning the selection, so
+// waiting for it would hang the TUI until something else takes the clipboard.
+// The byte count is measured on the input, since nothing reads it back.
+func copyToClipboard(text string) (int, error) {
+	n := len(text)
+	switch {
+	case lookPath("wl-copy"):
+		// `wl-copy` with no argument reads stdin and stays in the background
+		// to serve the selection; the shell backgrounds it so Info's Update
+		// does not block on it.
+		cmd := exec.Command("sh", "-c", "wl-copy")
+		cmd.Stdin = strings.NewReader(text)
+		cmd.Stdout, cmd.Stderr = nil, nil
+		if err := cmd.Start(); err != nil {
+			return 0, err
+		}
+		// Reap it in the background; a wl-copy that outlives us is normal.
+		go func() { _ = cmd.Wait() }()
+		return n, nil
+	case lookPath("xclip"):
+		return n, feedTo(exec.Command("xclip", "-selection", "clipboard"), text)
+	case lookPath("xsel"):
+		return n, feedTo(exec.Command("xsel", "--clipboard", "--input"), text)
+	}
+	return 0, errors.New("no clipboard tool found (install wl-clipboard, xclip or xsel)")
+}
+
+// feedTo pipes text into a clipboard command's stdin and waits for it.
+func feedTo(cmd *exec.Cmd, text string) error {
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
+}
+
+func lookPath(bin string) bool {
+	_, err := exec.LookPath(bin)
+	return err == nil
+}
+
 func (i Info) View() string {
 	body := i.viewport.View()
 	return StyleModal.Render(body)
 }
 
 // ShortcutsHint returns the bottom-row shortcut hint for this Info:
-// "↑/↓ scroll · esc/enter to continue" when the body is long enough to
-// scroll, "esc/enter to continue" otherwise (nothing to scroll → no scroll
-// hint, which used to show even when the log fit entirely on the page).
+// "↑/↓ scroll · c copy · esc/enter to continue" when the body is long enough to
+// scroll, "c copy · esc/enter to continue" otherwise. `c` is always offered —
+// this is the screen that shows logs, and getting a log out of it is the whole
+// point (a truncated copy would be useless, so it copies the entire body).
 func (i Info) ShortcutsHint() string {
 	scrollable := i.viewport.Height > 0 && i.viewport.TotalLineCount() > i.viewport.Height
 	if scrollable {
-		return StyleHelp.Render("↑/↓ scroll · esc/enter to continue")
+		return StyleHelp.Render("↑/↓ scroll · c copy · esc/enter to continue")
 	}
-	return StyleHelp.Render("esc/enter to continue")
+	return StyleHelp.Render("c copy · esc/enter to continue")
 }

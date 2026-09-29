@@ -743,6 +743,17 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.pop()
 		return m, nil
 
+	case tuikit.InfoCopiedMsg:
+		// `c` on any Info (a log, an `i` popup): report what happened, since
+		// the copy is silent and a keypress that appears to do nothing is
+		// indistinguishable from one that failed.
+		if msg.Err != nil {
+			m.toast, _ = m.toast.SetErr("copy failed: " + msg.Err.Error())
+			return m, nil
+		}
+		m.toast, _ = m.toast.SetOK(fmt.Sprintf("log copied to the clipboard (%d bytes)", msg.Bytes))
+		return m, nil
+
 	case tuikit.InfoDismissedMsg:
 		// The Status screen pushes a real scrInfo popup for `i`, so dismissal
 		// always pops scrInfo and lands back on the picker. scrStatus is no
