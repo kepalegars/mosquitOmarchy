@@ -92,6 +92,18 @@ cat >> "$CONF" <<'EOF'
 -- windows any more.
 o.window({ class = "^REAPER$" }, { tag = "-default-opacity", float = true, opaque = true, no_blur = true })
 o.window({ class = "^REAPER$", title = ".*REAPER v[0-9].*" }, { float = false, tile = true })
+--
+-- REAPER's own small modal dialogs -- the unsaved-changes / save confirmation
+-- ("REAPER Query") and its error/warning/info boxes ("REAPER Error", ...) --
+-- are bare Win32 message boxes (measured: 234x66 and 194x77) that Wine maps at
+-- (0,0), so they showed up as tiny boxes glued to the monitor's top-left
+-- corner. Matching them by TITLE is what makes this safe: the class is the
+-- same "REAPER" as every dialog and as a VST3 editor window, but a plugin
+-- editor's title is the plugin's own name ("Serum", "ReaEQ"), never one of
+-- these, and the main window's title ("REAPER v7.79 - EVALUATION LICENSE")
+-- cannot match "^REAPER " followed by a dialog word. So this rule cannot move
+-- an editor and cannot reintroduce the yabridge#409 click-offset bug.
+o.window({ class = "^REAPER$", title = "^REAPER (Query|Error|Warning|Info|Message|MsgBox|Confirm)$" }, { float = true, center = true, size = { 440, 200 } })
 -- <<< reaper-setup <<<
 EOF
 hyprctl reload >/dev/null 2>&1 || true
