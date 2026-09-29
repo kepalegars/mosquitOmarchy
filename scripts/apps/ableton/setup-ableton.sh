@@ -539,37 +539,79 @@ step_block_updates(){
 # ───────────────────────── Hyprland windows (float installer + opaque) ─────────────────────────
 HYPR_FILE="$HOME/.config/hypr/hyprland.lua"
 step_hypr_rules(){
-  msg "Ableton windows: Hyprland rules (float installer + opaque)"
+  msg "Ableton windows: Hyprland rules (tile main window, float installer, opaque)"
 
   if [[ ! -f "$HYPR_FILE" ]]; then
     warn "hyprland config missing: $HYPR_FILE — rules not applied."
-    echo "   Add manually:  $rule"
+    echo "   Add manually: see scripts/apps/ableton/setup-ableton.sh step_hypr_rules"
     return 0
   fi
 
-  local f_rule='o.window({ class = "^ableton live 12 .*install.*$" }, { float = true })'
-  local o_rule='o.window({ class = "^ableton.*$" }, { tag = "-default-opacity", opaque = true })'
+  # The rules live in ONE marked block that is rewritten on every run. Appending
+  # a line per rule (the previous shape) meant an edited or removed rule could
+  # never be updated: the grep guard saw the old text, printed nothing, and the
+  # stale rule stayed in hyprland.lua forever.
   local added=0
 
   # NB: we no longer touch the cursor/touchpad management. We removed the Ableton
   # scroll_touchpad rule (and any cursor= option in input.lua): it broke the
   # two-finger scroll in Nautilus. The rest is left to the Omarchy default.
 
-  if grep -qF -- "$f_rule" "$HYPR_FILE"; then
-    ok "Float installer rule already present"
-  else
-    printf -- 'o.window({ class = "^ableton live 12 .*install.*$" }, { float = true })\n' >> "$HYPR_FILE"
+  # Strip a previously injected block so re-running after an edit actually
+  # updates hyprland.lua (idempotent update, not just idempotent insert).
+  if grep -qF -- '-- >>> ableton-setup >>>' "$HYPR_FILE"; then
+    sed -i '/-- >>> ableton-setup >>>/,/-- <<< ableton-setup <<</d' "$HYPR_FILE"
     added=1
-    ok "Float installer rule added"
   fi
 
-  if grep -qF -- "$o_rule" "$HYPR_FILE"; then
-    ok "Opaque rule already present"
-  else
-    printf -- 'o.window({ class = "^ableton.*$" }, { tag = "-default-opacity", opaque = true })\n' >> "$HYPR_FILE"
-    added=1
-    ok "Opaque rule added"
-  fi
+  # Remove the LEGACY rules, appended bare by the previous version of this
+  # step (no marker around them, so nothing could ever remove or update them).
+  # They are byte-for-byte the two rules the marked block re-adds, so deleting
+  # the unmarked copies leaves exactly one of each. Done AFTER the block strip
+  # so a fresh block is never caught by it.
+  local -a legacy_rules=(
+    'o.window({ class = "^ableton live 12 .*install.*$" }, { float = true })'
+    'o.window({ class = "^ableton.*$" }, { tag = "-default-opacity", opaque = true })'
+  )
+  local legacy
+  for legacy in "${legacy_rules[@]}"; do
+    if grep -qF -- "$legacy" "$HYPR_FILE"; then
+      # Compare-and-swap, so the file is only rewritten when the rule is
+      # really there (grep -q then sed -i is a silent no-op on a race).
+      if grep -qxF -- "$legacy" "$HYPR_FILE"; then
+        grep -vxF -- "$legacy" "$HYPR_FILE" > "$HYPR_FILE.tmp" && mv "$HYPR_FILE.tmp" "$HYPR_FILE"
+        ok "legacy unmarked rule removed"
+        added=1
+      fi
+    fi
+  done
+
+  cat >> "$HYPR_FILE" <<'EOF'
+-- >>> ableton-setup >>> Ableton Live window handling.
+--
+-- ABLETON REUSES ONE CLASS FOR EVERY WINDOW: the main window, the Browser, the
+-- Device view, Session view, the plugin GUIs and the Max for Live editors are
+-- all the same to the compositor. So the main window cannot be told apart by
+-- class — a rule on the class would tile the floating dialogs too, and a rule
+-- that floats everything would leave the main window floating.
+-- It IS told apart by TITLE: the main window's title starts with the product
+-- name ("Ableton Live 12 Suite", "Ableton Live 12 Suite - <saved set>"),
+-- while Ableton's own floating dialogs are titled after what they are
+-- ("Browser", "Device", "Session", "Clip View") and a plugin editor after the
+-- plugin. This is the same split the REAPER rules and Omarchy's own
+-- davinci-resolve.lua use, for exactly the same reason.
+--
+-- Order matters in Hyprland (a later matching rule wins), so the broad
+-- class-wide rules come first and the main-window rule last.
+o.window({ class = "^ableton live 12 .*install.*$" }, { float = true })
+o.window({ class = "^ableton.*$" }, { tag = "-default-opacity", opaque = true })
+-- Main window: tiled as soon as it opens, instead of floating wherever the
+-- compositor happens to drop it.
+o.window({ class = "^ableton.*$", title = "^(Ableton Live[^/]*)" }, { float = false, tile = true })
+-- <<< ableton-setup <<<
+EOF
+  added=1
+  ok "Hyprland rules written (main window tiled, installer floating, all opaque)"
 
   if (( added )); then
     if command -v hyprctl >/dev/null && hyprctl reload >/dev/null 2>&1; then
