@@ -26,7 +26,7 @@ func header(maxW int) string {
 const homeBannerReserve = 14
 const narrowReserve = 4
 
-func (m model) homeBannerReserve() int {
+func (m *model) homeBannerReserve() int {
 	if m.w < 74 || m.h < 24 {
 		return narrowReserve
 	}
@@ -71,29 +71,66 @@ func (m model) View() string {
 	var version string
 	w, _ := m.contentSize()
 
+	// contentSize() walks the nav stack and re-derives the budget; it was being
+	// called nineteen times per frame through here and through contentSizeW(),
+	// and contentSize() alone showed up as 1.8ms in a CPU profile. One call per
+	// frame is enough.
+	cw := w
 	barLine := func(hint string) string {
-		return tuikit.BottomBar(m.toast.View(), hint, m.contentSizeW())
+		return tuikit.BottomBar(m.toast.View(), hint, cw)
 	}
 
-	// Defensive re-size: a picker sized at another screen's budget can
-	// overflow under the banner for one frame. m is a value copy.
+	// Re-size ONLY the pickers this frame can actually draw.
+	//
+	// This used to SetSize all seventeen of them on every frame, "defensively".
+	// SetSize is not free: each call re-runs bubbles' pagination four times to
+	// settle PerPage/TotalPages, so seventeen of them cost roughly sixty-eight
+	// list measurements per frame. In Setup that alone was 13ms of the ~16ms
+	// frame budget, which is why moving the cursor there felt like it had a
+	// delay while the very same list was instant on the Status screen.
+	//
+	// Sizing the top screen's picker (plus the root menu, which a few overlays
+	// fall back to) is enough: a picker is laid out the moment its screen is
+	// entered, and a hidden one cannot be seen to be mis-sized.
 	m.mainPicker = m.mainPicker.SetSize(m.mainContentSize())
-	m.setupPicker = m.setupPicker.SetSize(m.contentSize())
-	m.setupCatPicker = m.setupCatPicker.SetSize(m.contentSize())
-	m.updatePicker = m.updatePicker.SetSize(m.contentSize())
-	m.backupPicker = m.backupPicker.SetSize(m.contentSize())
-	m.backupOptPicker = m.backupOptPicker.SetSize(m.contentSize())
-	m.backupAppsPicker = m.backupAppsPicker.SetSize(m.contentSize())
-	m.statusPicker = m.statusPicker.SetSize(m.contentSize())
+	switch m.top() {
+	case scrMain, scrSettings, scrBackupRestore:
+		m.pickPicker = m.pickPicker.SetSize(m.contentSize())
+	case scrSetup:
+		m.setupPicker = m.setupPicker.SetSize(m.contentSize())
+	case scrSetupCat:
+		m.setupCatPicker = m.setupCatPicker.SetSize(m.contentSize())
+	case scrStatus:
+		m.statusPicker = m.statusPicker.SetSize(m.contentSize())
+	case scrUpdate:
+		m.updatePicker = m.updatePicker.SetSize(m.contentSize())
+	case scrHealth:
+		m.healthPicker = m.healthPicker.SetSize(m.contentSize())
+	case scrKB:
+		m.kbPicker = m.kbPicker.SetSize(m.contentSize())
+	case scrKBList:
+		m.kbListPicker = m.kbListPicker.SetSize(m.contentSize())
+	case scrKBCat:
+		m.kbCatPicker = m.kbCatPicker.SetSize(m.contentSize())
+	case scrKBItems:
+		m.kbItemPicker = m.kbItemPicker.SetSize(m.contentSize())
+	case scrKBKeys, scrKBInput:
+		m.kbKeyPicker = m.kbKeyPicker.SetSize(m.contentSize())
+	case scrBackup:
+		m.backupPicker = m.backupPicker.SetSize(m.contentSize())
+	case scrBackupOptions:
+		m.backupOptPicker = m.backupOptPicker.SetSize(m.contentSize())
+	case scrBackupApps:
+		m.backupAppsPicker = m.backupAppsPicker.SetSize(m.contentSize())
+	case scrPreinstalls:
+		m.preinstallPicker = m.preinstallPicker.SetSize(m.contentSize())
+	case scrMenuEntries:
+		m.menuEntriesPicker = m.menuEntriesPicker.SetSize(m.contentSize())
+	}
+	// The info overlay and the runner are drawn on top of whatever screen is
+	// current, so they always need the current budget.
 	m.info = m.info.SetSize(m.contentSize())
 	m.runner = m.runner.SetSize(m.contentSize())
-	m.healthPicker = m.healthPicker.SetSize(m.contentSize())
-	m.pickPicker = m.pickPicker.SetSize(m.contentSize())
-	m.kbPicker = m.kbPicker.SetSize(m.contentSize())
-	m.kbListPicker = m.kbListPicker.SetSize(m.contentSize())
-	m.kbCatPicker = m.kbCatPicker.SetSize(m.contentSize())
-	m.kbItemPicker = m.kbItemPicker.SetSize(m.contentSize())
-	m.kbKeyPicker = m.kbKeyPicker.SetSize(m.contentSize())
 
 	switch m.top() {
 	case scrMain:

@@ -37,7 +37,7 @@ const narrowHeaderRows = 4
 // homeBannerReserve is the row budget the home screen keeps for the boxed
 // "mosquito" title (or just the subtitle on short terminals) so bubbletea
 // never clips its top rows. Width-aware: too narrow → skip the box.
-func (m model) homeBannerReserve() int {
+func (m *model) homeBannerReserve() int {
 	if m.w < 74 {
 		return narrowHeaderRows
 	}
@@ -59,7 +59,7 @@ func (m model) homeBannerReserve() int {
 // ("move.local ●"), the one-row toast/shortcut bar, the picker frame's
 // own 2-row padding, and 2 spare rows — so the composed FrameScreen
 // output is always exactly the window height and never overflows.
-func (m model) contentSize() (int, int) {
+func (m *model) contentSize() (int, int) {
 	return m.contentSizeFor(m.top() == scrMain)
 }
 
@@ -71,11 +71,11 @@ func (m model) contentSize() (int, int) {
 // user popped back — the boxed exit row appeared then vanished on the next
 // rebuild. The home picker is now always sized for the home budget, so the
 // pop frame and the frame that follows are identical.
-func (m model) mainContentSize() (int, int) {
+func (m *model) mainContentSize() (int, int) {
 	return m.contentSizeFor(true)
 }
 
-func (m model) contentSizeFor(isMain bool) (int, int) {
+func (m *model) contentSizeFor(isMain bool) (int, int) {
 	w := m.w - 8
 	if w > 92 {
 		w = 92
@@ -117,15 +117,21 @@ func (m model) View() string {
 	if m.discretion {
 		return ""
 	}
-	// Defensive: render the active picker at the CURRENT screen's budget so
-	// a picker sized for a previous screen's one-line title can never
-	// overflow under the 8-row home banner (the "interface too high, title
-	// hidden briefly" bug on returning to page 1). m is a value copy.
+	// Size the picker this frame will actually draw, not all five. SetSize
+	// re-runs bubbles' pagination to settle PerPage/TotalPages, so sizing the
+	// hidden ones cost real frame time for no visible result; and the model
+	// here is ~190KB, which a value receiver copies on every call.
 	m.mainPicker = m.mainPicker.SetSize(m.mainContentSize())
-	m.settingsPicker = m.settingsPicker.SetSize(m.contentSize())
-	m.abletonPicker = m.abletonPicker.SetSize(m.contentSize())
-	m.bundlePicker = m.bundlePicker.SetSize(m.contentSize())
-	m.routePicker = m.routePicker.SetSize(m.contentSize())
+	switch m.top() {
+	case scrSettings:
+		m.settingsPicker = m.settingsPicker.SetSize(m.contentSize())
+	case scrAbletonVersion:
+		m.abletonPicker = m.abletonPicker.SetSize(m.contentSize())
+	case scrBundlePick:
+		m.bundlePicker = m.bundlePicker.SetSize(m.contentSize())
+	case scrRoutePick:
+		m.routePicker = m.routePicker.SetSize(m.contentSize())
+	}
 	var body, title, bar string
 	var version string
 	// The Toast replaces the shortcut hint in the bottom bar whenever it's
@@ -278,7 +284,7 @@ func (m model) View() string {
 
 // contentSizeW returns the content width without re-running the full
 // contentSize.
-func (m model) contentSizeW() int {
+func (m *model) contentSizeW() int {
 	w, _ := m.contentSize()
 	return w
 }

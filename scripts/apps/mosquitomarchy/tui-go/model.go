@@ -238,7 +238,13 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(tuikit.ThemeWatchCmd(), firstRunCmd(), fetchUpdateCheckCmd())
 }
 
-func (m model) top() screen { return m.nav[len(m.nav)-1] }
+// top, contentSize and their friends take a POINTER receiver. The model holds
+// ~360KB of pickers, so a value receiver copied the whole thing on every call
+// — and View() calls these several times per frame. That single detail cost
+// about a third of the frame budget, which is what made Setup feel laggy
+// while the identical list on the Status screen (a different code path) did
+// not.
+func (m *model) top() screen { return m.nav[len(m.nav)-1] }
 
 func (m *model) push(s screen) { m.nav = append(m.nav, s) }
 
@@ -280,7 +286,7 @@ func (m model) rebuildMainMenu() navPicker {
 		KeepCursor(m.mainPicker.SelectedValue())
 }
 
-func (m model) contentSize() (int, int) {
+func (m *model) contentSize() (int, int) {
 	w := m.w - 8
 	if w > 92 {
 		w = 92
@@ -305,7 +311,7 @@ func (m model) contentSize() (int, int) {
 // matter which screen is on top; the main picker is always laid out with it
 // so a background rebuild that lands while a sub-screen is up keeps the
 // picker at the home budget (no one-frame overflow when popping back).
-func (m model) mainContentSize() (int, int) {
+func (m *model) mainContentSize() (int, int) {
 	w := m.w - 8
 	if w > 92 {
 		w = 92
@@ -325,7 +331,7 @@ func (m model) mainContentSize() (int, int) {
 }
 
 // mainBudget applies the home-screen reserve to a height extent.
-func (m model) mainBudget(h int) int {
+func (m *model) mainBudget(h int) int {
 	th := m.homeBannerReserve()
 	reserved := m.h - th - 2 /*bar: notify+hint*/ - 2 /*frame pad*/ - 2 /*spare*/
 	if reserved > 26 {
@@ -337,7 +343,7 @@ func (m model) mainBudget(h int) int {
 	return h
 }
 
-func (m model) contentSizeW() int {
+func (m *model) contentSizeW() int {
 	w, _ := m.contentSize()
 	return w
 }

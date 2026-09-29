@@ -409,10 +409,55 @@ func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, ite
 		// keep the sub-line aligned with its title.
 		row += "\n" + "   " + strings.Repeat(" ", d.badgeSlot) + descStyled
 	}
-	if d.maxRowW > 0 {
-		row = lipgloss.NewStyle().Width(d.maxRowW).Align(lipgloss.Left).Render(row)
+	// Pad to the uniform block width EXPLICITLY, then centre that block once.
+	//
+	// lipgloss's Width().Align(Left) was doing the padding implicitly, and it
+	// does not do it faithfully for a string that already carries colour codes
+	// and a multi-line sub-row: the rendered lines came out 76/78/80 columns
+	// wide instead of all maxRowW, so the centring used a different pad per row
+	// and the tree stair-stepped — the "lame language models" block and its
+	// children sat in a different column from every other folder. This is the
+	// layout rule the whole app leans on: one width, one alignment, one column.
+	row = d.fitBlock(row, m.Width())
+	fmt.Fprint(w, row) //nolint: errcheck
+}
+
+// fitBlock pads every line of a composed row to d.maxRowW with the SAME
+// trailing column, then centres the whole block once in width. Centring the
+// block (rather than each line) is what makes every line start at the same
+// column: they all have identical width, so identical leading pad.
+func (d pickerDelegate) fitBlock(row string, width int) string {
+	lines := strings.Split(row, "\n")
+	// The block width is d.maxRowW and NOTHING else. Deriving it from the
+	// widest line of THIS row is the whole bug: the delegate renders one row
+	// at a time, so a long row grew the block, got less leading pad, and slid
+	// left of its neighbours — which is exactly the "lame language models"
+	// block sitting in a different column from everything else. maxRowW is
+	// measured ONCE, over every item, in NewPicker; it is the shared width.
+	block := d.maxRowW
+	// If the shared block is wider than the viewport there is nothing to
+	// centre: every row overflows equally and the block is clipped by the
+	// terminal. Pad is then 0 for all of them, which is still a shared origin.
+	pad := 0
+	if width > block {
+		pad = (width - block) / 2
 	}
-	fmt.Fprint(w, lipgloss.NewStyle().Width(m.Width()).Align(lipgloss.Center).Render(row)) //nolint: errcheck
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		lw := lipgloss.Width(l)
+		if lw > width {
+			l = ansi.Truncate(l, width, "")
+			lw = width
+		}
+		// Right-pad to the block width so every line occupies identical
+		// columns; the leading pad is the same for all of them, so they all
+		// start at the same column regardless of their own content.
+		if padw := block - lw; padw > 0 {
+			l += strings.Repeat(" ", padw)
+		}
+		out = append(out, strings.Repeat(" ", pad)+l)
+	}
+	return strings.Join(out, "\n")
 }
 
 // titleStyle builds the per-row title style AT RENDER TIME so the colors
@@ -459,7 +504,21 @@ func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem)
 			avail = 1
 		}
 	}
-	title := ansi.Truncate(pi.Display, avail, "…")
+	// The Suffix is part of the row and must be measured and drawn here. It was
+	// silently dropped, so every greyed row lost the one thing that explained
+	// WHY it is greyed: the preinstalls screen shows "(already removed)" and
+	// "(your own app — kept)" through Suffix, so a disabled row read as a bare
+	// name with no reason attached.
+	suffixW := lipgloss.Width(pi.Suffix)
+	titleAvail := avail - suffixW
+	if titleAvail < 1 {
+		titleAvail = 1
+	}
+	title := ansi.Truncate(pi.Display, titleAvail, "…")
+	suffix := ""
+	if pi.Suffix != "" {
+		suffix = StyleDisabled.Render(pi.Suffix)
+	}
 	var titleStyled string
 	if isTerminalValue(pi.Value) {
 		// A terminal row keeps its accent box even while disabled: the box
@@ -469,7 +528,10 @@ func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem)
 	} else {
 		titleStyled = StyleDisabled.Render(title)
 	}
-	row := "   " + d.badgeCell(pi) + titleStyled + d.trailingCell(pi)
+	// Same fixed 3-column indicator slot as renderCentered, so a greyed row
+	// and an enabled one start at the same column. The cursor never lands on
+	// a disabled row, so the slot is always blank here.
+	row := "   " + d.badgeCell(pi) + titleStyled + suffix + d.trailingCell(pi)
 	if d.ShowDescription && pi.Sub != "" {
 		descAvail := avail - d.badgeSlot
 		if descAvail < 1 {
@@ -478,10 +540,9 @@ func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem)
 		desc := ansi.Truncate(pi.Sub, descAvail, "…")
 		row += "\n" + "   " + d.badgeCell(pi) + StyleDisabled.Render(desc)
 	}
-	if d.maxRowW > 0 {
-		row = lipgloss.NewStyle().Width(d.maxRowW).Align(lipgloss.Left).Render(row)
-	}
-	fmt.Fprint(w, lipgloss.NewStyle().Width(m.Width()).Align(lipgloss.Center).Render(row)) //nolint: errcheck
+	// Same layout rule as renderCentered — see fitBlock. A greyed row that is
+	// padded and centred differently is the same stair-stepping.
+	fmt.Fprint(w, d.fitBlock(row, m.Width())) //nolint: errcheck
 }
 
 // newPickerDelegate builds a fresh delegate at call time (inside NewPicker,

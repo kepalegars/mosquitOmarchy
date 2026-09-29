@@ -2932,10 +2932,10 @@ func (m model) rebuildPreinstallPicker() navPicker {
 		it := tuikit.PickerItem{Display: r.Label, Value: r.Name, Badge: mark}
 		switch {
 		case !r.Installed:
-			it.Suffix = "(already removed)"
+			it.Suffix = "  (already removed)"
 			it.Disabled = true
 		case r.Protected:
-			it.Suffix = "(your own app — kept)"
+			it.Suffix = "  (your own app — kept)"
 			it.Disabled = true
 		}
 		items = append(items, it)

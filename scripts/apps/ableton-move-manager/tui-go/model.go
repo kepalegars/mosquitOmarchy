@@ -173,7 +173,7 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(fetchStatus(), tuikit.ThemeWatchCmd())
 }
 
-func (m model) top() screen { return m.nav[len(m.nav)-1] }
+func (m *model) top() screen { return m.nav[len(m.nav)-1] }
 
 // isActiveWork reports whether the manager is in a step that must not be
 // treated as a replaceable visible instance: any conversion/Bitwig handoff,

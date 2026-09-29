@@ -103,18 +103,31 @@ func BuildFolderTree(folders []TreeFolder, items map[string][]TreeItem, open map
 		}
 		last := len(children) - 1
 		for i, it := range children {
-			mark := "○"
-			if it.Checked {
-				mark = "●"
-			}
 			branch := "├─ "
 			if i == last {
 				branch = "└─ "
 			}
+			// The tree lines are the ONLY thing this composes into Display.
+			// The mark goes in Badge and the cursor in the fixed indicator
+			// slot, both of which the kit lays out in a column of their own.
+			// Baking the mark into the label as well is what made children
+			// start a different column from their folder: the label carried
+			// four extra spaces plus a box-drawing mark plus the badge, while
+			// the folder row had none of that.
+			// Checked lives in Badge so the kit owns the marker column. An
+			// explicit Badge on the TreeItem still wins: a host that puts a
+			// state glyph there knows better than the generic ○/●.
+			badge := it.Badge
+			if badge == "" {
+				badge = "○"
+				if it.Checked {
+					badge = "●"
+				}
+			}
 			row := PickerItem{
-				Display: "    " + branch + mark + "  " + it.Label,
+				Display: "    " + branch + it.Label,
 				Value:   TreeValue(TreeItemPrefix, it.ID),
-				Badge:   it.Badge,
+				Badge:   badge,
 			}
 			if it.Disabled {
 				row.Disabled = true

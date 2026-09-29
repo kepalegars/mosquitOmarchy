@@ -2508,9 +2508,16 @@ for k, v in layout.items():
 json.dump(d, open(p, "w"), indent=2)
 open(p, "a").write("\n")
 AGENTLAYOUT_PY
-  # 2) Crash AI-diagnosis toasts off (crash-notify state file)
-  "$SCRIPTS/apps/mosquitomarchy/mosquitomarchy-actions" crash-notify off &&
-    ok "Crash notifications with AI diagnosis: OFF" || true
+  # 2) The AI-diagnosis crash toasts, for EVERY mosquitomarchy tool. The switch
+  #    is the one flag in ~/.local/state/mosquitomarchy/crash-notify, read by
+  #    lib/crash.bash, so every TUI and every install script that sources it
+  #    goes quiet at once -- this is the "crash notifications of all the
+  #    mosquito TUIs" the module is expected to take down with it.
+  if "$SCRIPTS/apps/mosquitomarchy/mosquitomarchy-actions" crash-notify off >/dev/null; then
+    ok "AI-diagnosis crash toasts: OFF (all mosquitomarchy tools)"
+  else
+    warn "Could not turn the AI-diagnosis crash toasts off -- run: mosquitomarchy-actions crash-notify off"
+  fi
   mkdir -p "$HOME/.local/state/mosquitomarchy"
   printf '1\n' > "$HOME/.local/state/mosquitomarchy/remove-all-ai"
   ok "Agentic surface removed: agents widget hidden, AI-diagnosis toasts gone"

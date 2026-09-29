@@ -76,3 +76,6 @@ SECRET-README.md
 # Extracted DaVinci OFX plugin bundle (downloaded/manual)
 scripts/apps/davinci/*.bundle/
 scripts/apps/davinci/*.bundle
+
+# `go test -cpuprofile` leaves the test binary behind in the package dir.
+*.test

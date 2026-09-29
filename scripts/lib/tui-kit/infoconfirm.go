@@ -88,7 +88,13 @@ func (c InfoConfirm) View() string {
 	btn := func(label string, focused bool) string {
 		s := lipgloss.NewStyle().Padding(0, 2)
 		if focused {
-			s = s.Background(ColorAccent).Foreground(accentForeground()).Bold(true)
+			// The focused answer is carried by the FILLED BACKGROUND; the
+			// label itself stays a neutral instead of the lime accent, which
+			// read as a status ("go!") rather than as one of the answers. It has
+			// to be the light neutral: ColorSubtle on the accent fill is
+			// unreadable, so the two states differ in weight and background,
+			// not in hue.
+			s = s.Background(ColorAccent).Foreground(ColorOnSurface).Bold(true)
 		} else {
 			// Same tone as the shortcut legends under the dialog — see
 			// confirm.go: an unfocused answer is still a real option.
