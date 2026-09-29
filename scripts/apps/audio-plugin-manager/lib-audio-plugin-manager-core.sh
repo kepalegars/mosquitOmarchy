@@ -2853,17 +2853,32 @@ fixes_state_init() {
 # between "this fix exists" and "this fix is what your problem is". The wizard
 # marks recommended ones so a fix the user did not ask for is never presented as
 # an equal candidate next to the one that matters.
+# The fix catalog. Columns, pipe-separated:
+#   id | title | scope (global|plugin) | description | category | product | rec (yes|no) | vst
+#
+# The LAST column is which plugin format a fix applies to: "any" (the default,
+# omitted below means any) applies to the product's VST2 AND VST3 copies at
+# once, while "vst2" or "vst3" restricts it to that one format. It matters
+# because a fix is recorded per PRODUCT STEM, not per file: one entry covers
+# both formats at once, which is what a user means by "apply the fix to this
+# plugin" — the editor windows of the VST2 and the VST3 copy are the same
+# window and need the same rule. Only a genuinely one-format fix (a patch that
+# rewrites a .vst2 binary) says so, and its row is tagged so the restriction is
+# visible instead of implied.
 fixes_catalog() {
   cat <<'FIXCAT'
-wine_gui_input|Wine plugin GUI input (Hyprland/XWayland)|plugin|Plugin editor windows float, unblurred and receive XWayland input even when the plugin asks not to (fixes inert / non-clickable GUIs such as CrispyTuner in Bitwig or REAPER). Applied per plugin, matched on the window title because these editors usually have an empty class.|Plugin windows|CrispyTuner|yes
-wine_tooltip|Ableton/Wine hover tooltips|plugin|Keeps the hover tooltips Wine plugins (e.g. CrispyTuner) create inside Ableton floating, unblurred, animation-free and never focused, so hovering them stops stealing input from the plugin. Applied once, independently of the chosen plugin.|CrispyTuner specific|CrispyTuner|yes
-cursor_no_warp|Stop the cursor recentering|global|Hyprland 0.56.2 has no per-window warp rule: this is a GLOBAL cursor option (cursor:no_warps + cursor:persistent_warps). Affects the whole desktop, not just Wine — only enable after confirming the recentering is Hyprland focus-warp and not Wine's own pointer handling.|Cursor||no
+wine_gui_input|Wine plugin GUI input (Hyprland/XWayland)|plugin|Plugin editor windows float, unblurred and receive XWayland input even when the plugin asks not to (fixes inert / non-clickable GUIs such as CrispyTuner in Bitwig or REAPER). Applied per plugin, matched on the window title because these editors usually have an empty class.|Plugin windows|CrispyTuner|yes|any
+wine_tooltip|Ableton/Wine hover tooltips|plugin|Keeps the hover tooltips Wine plugins (e.g. CrispyTuner) create inside Ableton floating, unblurred, animation-free and never focused, so hovering them stops stealing input from the plugin. Applied once, independently of the chosen plugin.|CrispyTuner specific|CrispyTuner|yes|any
+cursor_no_warp|Stop the cursor recentering|global|Hyprland 0.56.2 has no per-window warp rule: this is a GLOBAL cursor option (cursor:no_warps + cursor:persistent_warps). Affects the whole desktop, not just Wine — only enable after confirming the recentering is Hyprland focus-warp and not Wine's own pointer handling.|Cursor||no|any
 FIXCAT
 }
 
 fix_id_valid() { fixes_catalog | cut -d'|' -f1 | grep -qx -- "$1"; }
 fix_scope_of() { fixes_catalog | awk -F'|' -v id="$1" '$1==id{print $3}'; }
 fix_title_for() { fixes_catalog | awk -F'|' -v id="$1" '$1==id{print $2}'; }
+# Which plugin format a fix targets: "any" (VST2 AND VST3), "vst2" or "vst3".
+# An empty last column means "any" — a fix only narrows the format on purpose.
+fix_vst_of() { fixes_catalog | awk -F'|' -v id="$1" '$1==id{v=$8; print (v==""?"any":v)}'; }
 
 # yabridge_check_json
 # A precise answer to "is 32-bit bridging set up, and if not why not".
@@ -3103,8 +3118,9 @@ fixes_for_installer_json() {
   [[ -n $rec ]] && token="$(known_plugin_field "$rec" 1)"
 
   local id title scope desc category plugin rec needs_installed
-  while IFS='|' read -r id title scope desc category plugin rec; do
+  while IFS='|' read -r id title scope desc category plugin rec vst; do
     [[ -n $id ]] || continue
+    [[ -n $vst ]] || vst=any
     needs_installed=false
     # Generic fixes apply to any known wine plugin; a product-specific fix only
     # when this installer is that product.  A plugin we do not recognise gets
@@ -3124,20 +3140,22 @@ fixes_for_installer_json() {
     [[ $scope == plugin ]] && needs_installed=true
     jq -nc --arg id "$id" --arg title "$title" --arg scope "$scope" --arg desc "$desc" \
       --arg category "$category" --arg plugin "$plugin" --argjson needsInstalled "$needs_installed" \
+      --arg vst "$vst" \
       --argjson recommended "$([[ $rec == yes ]] && echo true || echo false)" \
       '{id:$id,title:$title,scope:$scope,description:$desc,category:$category,
         plugin:(if $plugin=="" then null else $plugin end), needsInstalled:$needsInstalled,
-        recommended:$recommended}'
+        recommended:$recommended, vst:$vst}'
   done < <(fixes_catalog)
 }
 
 fixes_list_json() {
   local id title scope desc category plugin rec
-  while IFS='|' read -r id title scope desc category plugin rec; do
+  while IFS='|' read -r id title scope desc category plugin rec vst; do
     [[ -n $id ]] || continue
-    jq -nc --arg id "$id" --arg title "$title" --arg scope "$scope" --arg desc "$desc" --arg category "$category" --arg plugin "$plugin" \
+    [[ -n $vst ]] || vst=any
+    jq -nc --arg id "$id" --arg title "$title" --arg scope "$scope" --arg desc "$desc" --arg category "$category" --arg plugin "$plugin" --arg vst "$vst" \
       --argjson recommended "$([[ $rec == yes ]] && echo true || echo false)" \
-      '{id:$id,title:$title,scope:$scope,description:$desc,category:$category,plugin:$plugin,recommended:$recommended}'
+      '{id:$id,title:$title,scope:$scope,description:$desc,category:$category,plugin:$plugin,recommended:$recommended,vst:$vst}'
   done < <(fixes_catalog)
 }
 
@@ -3157,7 +3175,7 @@ fixes_applied_plugins() {
     while IFS= read -r p; do
       [[ -n $p && $p != __global__ ]] || continue
       fix_plugin_canonical "$p"
-    done | sort -u
+    done | fix_dedupe_stems | sort -f -u
 }
 
 # fixes_state_path_of <plugin> — the bare plugin path behind a picker value
@@ -3210,14 +3228,28 @@ fix_applied_for_plugin() {
   return 1
 }
 
+# fix_dedupe_stems — reads plugin entries on stdin, one per line, and writes
+# back only the first spelling of each case-insensitive duplicate.
+#
+# A fix is recorded per PRODUCT STEM, never per plugin file, so a product
+# shipped as both a .vst2 and a .vst3 is ONE entry and the fix reaches both (the
+# rules match the editor's window TITLE, which carries the product name, not
+# the file). What broke the one-entry rule was spelling: state written by
+# different installs had drifted to "CrispyTuner" AND "crispytuner", and
+# jq's `unique` compares exactly, so both survived. The result was a duplicated
+# plugin row, a doubled title regex, and two rule lines for one product. This
+# collapses them, keeping the first spelling seen.
+fix_dedupe_stems() {
+  awk '{ k = tolower($0); if (!(k in seen)) { seen[k] = 1; print } }'
+}
+
 # fix_set_applied_list <fix-id> <plugin...> — replaces the recorded plugin
 # list for a fix id with exactly the given entries (already canonical).
 fix_set_applied_list() {
   local id="$1"; shift
-  local -a list=("$@")
   local tmp json
-  if ((${#list[@]})); then
-    json="$(printf '%s\n' "${list[@]}" | jq -R . | jq -s 'unique')"
+  if (($#)); then
+    json="$(printf '%s\n' "$@" | fix_dedupe_stems | jq -R . | jq -s 'unique')"
   else
     json='[]'
   fi
@@ -3227,17 +3259,18 @@ fix_set_applied_list() {
 
 # list-plugin-fixes <plugin>: every fix with an "applied" flag for that plugin.
 fixes_for_plugin_json() {
-  local plugin="$1" id title scope desc category pfix applied
-  while IFS='|' read -r id title scope desc category pfix; do
+  local plugin="$1" id title scope desc category pfix rec vst applied
+  while IFS='|' read -r id title scope desc category pfix rec vst; do
     [[ -n $id ]] || continue
+    [[ -n $vst ]] || vst=any
     applied=false
     # One matcher for both scopes now: fix_applied_for_plugin treats a
     # "__global__" record as applied for any plugin (so a global fix is
     # globally on and a global-but-recorded-per-plugin fix still lights up
     # for that plugin), and a per-plugin record matches only its plugin.
     fix_applied_for_plugin "$id" "$plugin" && applied=true
-    jq -nc --arg id "$id" --arg title "$title" --arg scope "$scope" --arg desc "$desc" --arg category "$category" --arg plugin "$pfix" --argjson applied "$applied" \
-      '{id:$id,title:$title,scope:$scope,description:$desc,category:$category,plugin:$plugin,applied:$applied}'
+    jq -nc --arg id "$id" --arg title "$title" --arg scope "$scope" --arg desc "$desc" --arg category "$category" --arg plugin "$pfix" --arg vst "$vst" --argjson applied "$applied" \
+      '{id:$id,title:$title,scope:$scope,description:$desc,category:$category,plugin:$plugin,applied:$applied,vst:$vst}'
   done < <(fixes_catalog)
 }
 
@@ -3359,13 +3392,21 @@ fix_apply() {
     if [[ $scope == global ]]; then
       list=("__global__")
     else
+      # The target goes FIRST so the case-insensitive dedupe in
+      # fix_set_applied_list keeps THIS spelling. It matters: an old state
+      # could hold both "CrispyTuner" and "crispytuner", and appending the
+      # target last made the lowercase leftover win, so re-applying a fix to
+      # CrispyTuner silently downgraded its name in the recorded list and in
+      # the "applied for:" comment of the written Hyprland rule.
+      list=("$target")
       local p
       while IFS= read -r p; do
         [[ -n $p ]] || continue
-        [[ "$(fix_plugin_canonical "$p")" == "$target" ]] && continue
+        # Case-insensitive, for the same reason the dedupe is: a leftover
+        # "crispytuner" must not survive next to the target "CrispyTuner".
+        [[ "${p,,}" == "${target,,}" ]] && continue
         list+=("$p")
       done < <(fix_applied_plugins "$fix")
-      list+=("$target")
     fi
     fix_set_applied_list "$fix" "${list[@]}"
     local -a plugins=()
@@ -3389,7 +3430,10 @@ fix_remove() {
     while IFS= read -r p; do
       [[ -n $p ]] || continue
       [[ $p == __global__ ]] && continue
-      [[ "$(fix_plugin_canonical "$p")" == "$target" ]] && continue
+      # Case-insensitive: unticking "CrispyTuner" must also clear a stale
+      # "crispytuner" recorded by an older build, or the fix stays applied and
+      # the row re-checks itself on the next load.
+      [[ "${p,,}" == "${target,,}" ]] && continue
       list+=("$p")
     done < <(fix_applied_plugins "$fix")
     fix_set_applied_list "$fix" "${list[@]}"

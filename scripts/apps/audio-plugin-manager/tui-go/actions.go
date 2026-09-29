@@ -819,6 +819,13 @@ type FixItem struct {
 	Category    string `json:"category"`
 	Plugin      string `json:"plugin"`
 	Applied     bool   `json:"applied"`
+	// Vst is the plugin format this fix targets: "any" (the default) covers
+	// the product's VST2 AND VST3 copies at once, while "vst2"/"vst3" restricts
+	// it to one format. A fix is recorded per PRODUCT STEM, so "any" really
+	// does reach both formats — the rules match the editor window's title,
+	// which is the same window for both. Only a genuinely one-format fix says
+	// so, and its row is tagged so the restriction is visible.
+	Vst string `json:"vst"`
 }
 
 // fixesMsg carries the catalog fetched for a plugin.

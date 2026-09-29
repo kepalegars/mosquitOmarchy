@@ -214,38 +214,55 @@ VST plugin list instead).
 Some Wine plugins misbehave under Hyprland/Wayland in ways that are not the plugin's
 fault: their editor window can come up unclickable, or their hover tooltips can steal
 input from the editor. **Plugin fixes** (a top-level menu item) asks which plugin to fix,
-then shows the catalog grouped into expanded category folders (▾ Plugin windows,
-▾ CrispyTuner specific, ▾ Cursor): **Tab** or **x** toggles the highlighted fix, and
-toggling a category row selects/deselects every fix in it; **Enter** applies the newly
-checked fixes and **removes** the unchecked ones that were applied, in one go. Fixes
-already applied for the plugin are shown checked on entry (the state is matched no matter
-which shape it was recorded in), and the plugin chooser marks plugins that already carry
-at least one applied fix with an accent ● next to the name. Fixes designed for one
-product are grouped under a `<Plugin> specific` category, which already names the
-product, so the row carries no extra tag; they are **never hidden** — a plugin-specific
-fix stays visible and selectable for every plugin.
+then shows the catalog in two sections. **Tab** or **x** toggles the highlighted fix, and
+toggling a folder row selects/deselects every fix in it; **Enter** applies the newly
+checked fixes and **removes** the unchecked ones that were applied, in one go.
+
+- **Generic fixes** — no single product, grouped in their own category folders
+  (▾ Cursor).
+- **Plugin specific fixes** — below a separator and an accent heading, one group per
+  product labelled by the **product name alone** (▾ CrispyTuner, ▾ Serum 2). The
+  catalog's own "<Product> specific" category is never used as a label. These fixes stay
+  visible and selectable for every plugin: the same Wine issues show up elsewhere.
+
+Both sections are expanded when the screen opens, and a folder row's fold glyph (▸/▾)
+replaces the selection cursor while the row is focused, so exactly one marker is visible
+per row.
+
+**A fix is recorded per product, not per plugin file**, and the rules match the editor
+window's *title* — which is the same window for a product's VST2 and VST3 copies. So one
+tick covers **both formats at once**; you never apply a fix twice. Only a fix that is
+genuinely one-format (a patch rewriting a `.vst2` binary) declares it in the catalog's
+last column, and its row is then tagged `[VST2 only]` / `[VST3 only]` so the restriction
+is visible rather than implied. `i` spells the same thing out on the info popup.
+
+Fixes already applied for the plugin are shown checked on entry (the state is matched no
+matter which shape it was recorded in), and the plugin chooser marks plugins that already
+carry at least one applied fix with an accent ● next to the name.
 Each fix is written as its own marked, idempotent block in
 `~/.config/hypr/hyprland.lua` (`-- >>> mosquito_fix_<id>` … `-- <<< mosquito_fix_<id>`),
 and `hyprctl reload` is run afterwards. The applied state lives in
 `~/.config/audio-plugin-manager/fixes.json`; the Lua block is always regenerated from it,
 so re-applying never stacks duplicate rules and removing the last plugin for a fix removes
-its block.
+its block. The product list is deduplicated case-insensitively — a state that had drifted
+to both `CrispyTuner` and `crispytuner` collapses to one entry and one rule on the next
+apply, and re-applying a fix for a product restores that product's own capitalisation.
 
 - **Wine plugin GUI input (Hyprland/XWayland)** — forces the selected plugin's editor
   window to float, stay unblurred, and receive XWayland input even when the plugin asks
   not to. Matched on the window *title* (these editors usually report an empty class — the
-  class rule is generic and hitless). This is the fix for CrispyTuner's inert GUI, grouped
-  under the **CrispyTuner specific** category (the category names the product; no per-row
-  tag).
+  class rule is generic and hitless). This is the fix for CrispyTuner's inert GUI; it
+  lives in the **Plugin specific fixes** section, under the **CrispyTuner** group.
 - **Ableton/Wine hover tooltips** — keeps the tooltip windows Ableton plugs (e.g.
   CrispyTuner) create floating, unblurred, animation-free and never focused, so hovering
   them stops stealing input from the editor. Applied once, independently of the plugin;
-  grouped under the **CrispyTuner specific** folder.
+  same **CrispyTuner** group.
 - **Stop the cursor recentering (global)** — Hyprland 0.56.2 has **no per-window warp
   rule**, so this is a *global* desktop option (`cursor:no_warps` +
   `cursor:persistent_warps`). It affects every app, not just Wine; enable it only after
   confirming the recentering is Hyprland focus-warp and not Wine's own pointer handling.
-  It is **not** applied automatically.
+  It is **not** applied automatically. It sits in the generic **Cursor** group, tagged
+  `[global]`.
 
 Known plugins get their required fixes **applied automatically on first install** (the
 dependency map is `known_plugin_fixes()` in the core lib; currently CrispyTuner →

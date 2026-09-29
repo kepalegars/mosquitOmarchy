@@ -609,15 +609,25 @@ func fixCategoryGroup(items []FixItem, checked map[string]bool, expanded map[str
 	return out
 }
 
-// fixRowTags is the trailing tag block on a fix row: "  [global]" for a
-// desktop-wide fix. Plugin-specific fixes carry no tag anymore — the fix's
-// category folder already conveys which product it belongs to, so the old
-// "[plugin: X]" suffix was redundant noise.
+// fixRowTags is the trailing tag block on a fix row. "[global]" marks a
+// desktop-wide fix; "[VST2]"/"[VST3]" mark a fix that applies to ONE plugin
+// format only. An "any" fix gets NO tag on purpose: it covers the product's
+// VST2 and VST3 at once, which is the normal case and needs no explaining —
+// tagging every row "VST2+VST3" would be noise. A fix that narrows the format
+// says so, because silently not touching the other format is exactly the kind
+// of thing that looks like a bug.
 func fixRowTags(it FixItem) string {
+	var tags string
 	if it.Scope == "global" {
-		return "  [global]"
+		tags += "  [global]"
 	}
-	return ""
+	switch it.Vst {
+	case "vst2":
+		tags += "  [VST2 only]"
+	case "vst3":
+		tags += "  [VST3 only]"
+	}
+	return tags
 }
 
 // sortedFixItems returns the fixes catalog in the screen's current order:
@@ -1283,6 +1293,18 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 					txt += "\n\nscope: " + it.Scope
 					if it.Category != "" {
 						txt += "   ·   category: " + it.Category
+					}
+					// Say which formats the fix covers: "any" reaches the
+					// product's VST2 and VST3 together, so the user does not
+					// have to apply it twice wondering why the other format
+					// is missing.
+					switch it.Vst {
+					case "vst2":
+						txt += "\n\napplies to: VST2 only"
+					case "vst3":
+						txt += "\n\napplies to: VST3 only"
+					default:
+						txt += "\n\napplies to: this product's VST2 and VST3 (one fix covers both)"
 					}
 					if it.Applied {
 						txt += "\n\nalready APPLIED for this plugin"
