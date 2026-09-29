@@ -246,3 +246,47 @@ func TestSetupCountSuffixIsPerCategory(t *testing.T) {
 		}
 	}
 }
+
+// TestStatusArrivesFullyExpanded is the regression for "Status opens with every
+// folder closed, then opening one flips the lot": the rows were built straight
+// from statusTree() when the backend answered, bypassing the rebuild that seeds
+// statusOpen, so nothing was expanded and the first fold touched every key.
+func TestStatusArrivesFullyExpanded(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrStatus}
+	m.w, m.h = 100, 34
+	m.setupFolders = []FolderRec{{Folder: "apps", Label: "Apps"}, {Folder: "tuis", Label: "TUIs"}}
+	m.statusRecs = []StatusRec{
+		{Id: "reaper", Category: "apps", State: "ok"},
+		{Id: "extracto", Category: "apps", State: "missing"},
+		{Id: "bat", Category: "tuis", State: "ok"},
+	}
+	// nil is the shape a fresh model can reach, and the reason the function
+	// needs a pointer receiver at all.
+	m.statusOpen = nil
+	m.statusPicker = m.rebuildStatus()
+
+	folded := map[string]bool{}
+	for _, it := range m.statusPicker.items {
+		if it.Value == "status-cat:apps" || it.Value == "status-cat:tuis" {
+			if it.Fold != tuikit.FoldExpanded {
+				folded[it.Value] = true
+			}
+		}
+	}
+	if len(folded) != 0 {
+		t.Fatalf("Status must open fully expanded, these came in folded: %v", folded)
+	}
+	// The map is now shared with the caller, so folding one category is the
+	// only thing the next rebuild may change.
+	m.statusOpen["apps"] = false
+	m.statusPicker = m.rebuildStatus()
+	for _, it := range m.statusPicker.items {
+		if it.Value == "status-cat:apps" && it.Fold != tuikit.FoldCollapsed {
+			t.Fatalf("apps stayed expanded after ←")
+		}
+		if it.Value == "status-cat:tuis" && it.Fold != tuikit.FoldExpanded {
+			t.Fatalf("folding apps also folded tuis — the map is not per-category")
+		}
+	}
+}

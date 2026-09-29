@@ -307,7 +307,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			m.statusRecs = msg.status
 			if m.top() == scrStatus {
-				m.statusPicker = newNavPicker("", m.statusTree()).SetSize(m.contentSize())
+				// rebuildStatus, NOT a bare statusTree(): it is the one that
+				// seeds statusOpen with the categories we now know about, all
+				// expanded. Calling statusTree() directly built the rows before
+				// that seeding, so Status arrived with every folder collapsed
+				// and the first ←/→ then flipped the whole set at once.
+				m.statusPicker = m.rebuildStatus()
 			}
 		case "backups":
 			if msg.err != nil {
@@ -2701,7 +2706,12 @@ func statusLabel(s StatusRec) string {
 // "open by default" has to hold on a REBUILD too, not only on first open —
 // otherwise a collapse would be undone by the next refresh and the control
 // would feel broken. A category the user has since collapsed keeps its state.
-func (m model) rebuildStatus() navPicker {
+// rebuildStatus takes a POINTER receiver on purpose: it has to be able to
+// create statusOpen when it is still nil. A value receiver would only seed a
+// map belonging to its own copy, and the categories would stay collapsed for
+// the caller — the state we were chasing when Status opened with every folder
+// shut.
+func (m *model) rebuildStatus() navPicker {
 	idx := m.statusPicker.Index()
 	if m.statusOpen == nil {
 		m.statusOpen = map[string]bool{}
