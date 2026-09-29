@@ -144,9 +144,16 @@ def fix_commas(text):
                     j += 1
                     continue
                 break
-            if j < len(lines) and re.match(r'^[ \t]*"', lines[j]) and \
-               len(lines[j]) - len(lines[j].lstrip()) == indent:
-                lines[i] = l.rstrip() + ','
+            # The next entry only has to be a SIBLING object — same nesting
+            # level or deeper. It used to require EXACTLY the same indentation,
+            # so a "}" at one indent followed by a quoted key at another (what
+            # this block actually writes, and what the other injectors in this
+            # repo produce) never got its comma and the whole menu stopped
+            # parsing — which broke every later menu write, not just this one.
+            if j < len(lines) and re.match(r'^[ \t]*"', lines[j]):
+                nindent = len(lines[j]) - len(lines[j].lstrip())
+                if nindent >= indent:
+                    lines[i] = l.rstrip() + ','
         i += 1
     return '\n'.join(lines)
 

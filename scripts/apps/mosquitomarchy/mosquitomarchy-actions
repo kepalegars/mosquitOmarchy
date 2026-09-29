@@ -65,6 +65,13 @@ source "$SETUP"
 json_esc(){ printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 json_str(){ printf '"%s"' "$(json_esc "$1")"; }
 
+# A JSON BOOLEAN, unquoted. json_str() always wraps its argument in quotes,
+# which is right for a string and wrong for a bool: passing `excluded` through
+# it emitted "excluded":"false", a string, and the Go StatusRec declares
+# Excluded bool — so the entire Status screen failed to decode with
+# "cannot unmarshal string into Go struct field StatusRec.excluded of type bool".
+json_bool(){ [[ $1 == true ]] && printf 'true' || printf 'false'; }
+
 # ── Route sudo to pkexec (native polkit prompt) for this backend ───────────
 # The TUI's Runner gives the child no tty, so a plain `sudo` password prompt
 # can never appear. Elevation is now primed ONCE per run by mq_sudo_prime
@@ -90,9 +97,13 @@ cmd_status(){
     cat="$(module_category "$id")"
     excl=false
     is_excluded "$id" && excl=true
+    # Every string field goes through json_str. `excluded` is the one that was
+    # missed: a bare $excl emitted "excluded":"false" (a STRING), and the Go
+    # StatusRec has Excluded bool — so the whole Status screen died on
+    # "json: cannot unmarshal string into Go struct field StatusRec.excluded".
     printf '{"id":%s,"label":%s,"state":%s,"detail":%s,"category":%s,"excluded":%s}\n' \
       "$(json_str "$id")" "$(json_str "$label - v$(module_version "$id")")" \
-      "$(json_str "$state")" "$(json_str "$detail")" "$(json_str "$cat")" "$(json_str "$excl")"
+      "$(json_str "$state")" "$(json_str "$detail")" "$(json_str "$cat")" "$(json_bool "$excl")"
   done
 }
 
