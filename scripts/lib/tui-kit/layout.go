@@ -14,6 +14,16 @@ import (
 // notification — so a toast appearing or auto-disappearing never shifts the
 // body or the title. Hosts must therefore reserve two rows for the bar in
 // their contentSize budget (see the three managers' contentSize()).
+// BarRows is what BottomBar occupies: the notification line and the shortcut
+// hint, one each. A toast replaces the notification line, never adds to it, so
+// the height is constant and a host can budget for it.
+//
+// It belongs here for the same reason as Picker.FrameRows: every host that
+// composes a screen has to subtract these two, and a host that counts one and
+// not the other ships a screen that is one row too tall — which is enough for a
+// terminal to scroll the title off the top.
+const BarRows = 2
+
 func BottomBar(notify, hint string, w int) string {
 	if notify == "" {
 		notify = " "
