@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# ultra-save-watch — prevents ultra-save from freezing the desktop under load.
+# Runs periodically via a systemd --user timer (mosquito-ultra-save-watch.timer,
+# installed by setup-battery-management.sh). No-op while ultra-save is OFF.
+#
+# When ultra-save is ON and the CPU is saturated (sustained busy + load average
+# near the core count — e.g. Reaper/Ableton rendering on a 30% frequency cap),
+# sends a critical, persistent Omarchy notification (no percentages in the
+# text) recommending a different power profile. It bypasses Do-Not-Disturb so it
+# shows even when notifications are silenced. Clicking the notification
+# disables ultra-save immediately (sudo NOPASSWD from the battery-management
+# sudoers), which reverses the frequency/boost caps and brings the machine back
+# to usable speeds. A cooldown avoids nagging.
+
+set -euo pipefail
+
+# Crash reporting (mosquitOmarchy): a failure stores a dated log and offers a
+# clickable AI diagnosis. Install scripts are deliberately exempt.
+_mq_crash_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/lib/crash.bash"
+[[ -f $_mq_crash_lib ]] && { source "$_mq_crash_lib"; mq_crash_guard "ultra-save-watch"; }
+
+# ── Real user (timer runs as user; keep $REAL_HOME robust) ──────────────
+REAL_USER="${SUDO_USER:-${LOGNAME:-$USER}}"
+REAL_HOME=$(eval echo "~$REAL_USER" 2>/dev/null || echo "$HOME")
+
+# ── Config ────────────────────────────────────────────────────────────────
+# Busy % over a 1s sample; the watch averages N samples and warns only when
+# EVERY sample exceeds it (a sustained saturation, not a transient burst).
+BUSY_THRESHOLD=80
+SAMPLES=3
+# Warn when the 1-minute load average is at least this × nproc.
+LOAD_FACTOR=1.0
+# Seconds to wait before sending the same warning again.
+COOLDOWN_SEC=600
+# ──────────────────────────────────────────────────────────────────────────
+STATE_DIR="$REAL_HOME/.local/state/ultra-save"
+STATE_FILE="$STATE_DIR/state"
+LAST_WARN_FILE="$STATE_DIR/last-warn"
+BIN_DIR="$REAL_HOME/.local/bin"
+
+info() { echo "ultra-save-watch: $*"; }
+
+cpu_busy_pct() {
+  # Reads /proc/stat twice, 1s apart; prints the percent of time NOT idle.
+  # Fields: cpu  user nice system idle iowait irq softirq steal …
+  local u1 s1 n1 i1 io1 ir1 si1 st1
+  local u2 s2 n2 i2 io2 ir2 si2 st2
+  read -r _ u1 n1 s1 i1 io1 ir1 si1 st1 _rest < /proc/stat
+  sleep 1
+  read -r _ u2 n2 s2 i2 io2 ir2 si2 st2 _rest < /proc/stat
+  local busy1 busy2 total1 total2
+  busy1=$(( u1 + n1 + s1 + ir1 + si1 + st1 ))
+  busy2=$(( u2 + n2 + s2 + ir2 + si2 + st2 ))
+  total1=$(( busy1 + i1 + io1 ))
+  total2=$(( busy2 + i2 + io2 ))
+  if (( total1 > 0 && total2 > 0 )); then
+    awk "BEGIN{printf \"%d\", (($busy2 - $busy1) * 100) / ($total2 - $total1)}"
+  else
+    echo 0
+  fi
+}
+
+load_vs_cores() {
+  # Prints load1/nproc as a 0-1 ratio of the core count.
+  local load nproc
+  load=$(awk '{print $1}' /proc/loadavg 2>/dev/null || echo 0)
+  nproc=$(nproc)
+  (( nproc > 0 )) || nproc=1
+  awk -v l="$load" -v c="$nproc" "BEGIN{printf \"%.2f\", l / c}"
+}
+
+in_cooldown() {
+  [[ -f $LAST_WARN_FILE ]] || return 1
+  local last now
+  last=$(cat "$LAST_WARN_FILE" 2>/dev/null || echo 0)
+  now=$(date +%s)
+  (( now - last < COOLDOWN_SEC ))
+}
+
+check() {
+  # No-op unless ultra-save is active.
+  if [[ ! -f $STATE_FILE ]] || ! grep -q '^on$' "$STATE_FILE" 2>/dev/null; then
+    info "ultra-save is off — nothing to watch."
+    return 0
+  fi
+
+  local i pct saturated=1
+  local -a busy=()
+  for ((i=0; i<SAMPLES; i++)); do
+    pct=$(cpu_busy_pct)
+    busy+=("$pct")
+    (( pct >= BUSY_THRESHOLD )) || saturated=0
+  done
+
+  local ratio
+  ratio=$(load_vs_cores)
+  if (( ! saturated )) && [[ $(awk -v r="$ratio" -v f="$LOAD_FACTOR" "BEGIN{print (r >= f) ? 1 : 0}") != 1 ]]; then
+    info "load ok (busy ${busy[*]}%, load1 ${ratio}×cores) — staying quiet."
+    return 0
+  fi
+
+  if in_cooldown; then
+    info "load critical but in cooldown (${COOLDOWN_SEC}s) — staying quiet."
+    return 0
+  fi
+  date +%s > "$LAST_WARN_FILE"
+
+  local busy_str
+  busy_str=$(IFS=,; echo "${busy[*]}")
+  info "CPU saturated under ultra-save (busy ${busy_str}%, load1 ${ratio}×cores) — warning."
+
+  if [[ -x "$BIN_DIR/ultra-save" ]] && command -v omarchy-notification-send >/dev/null 2>&1; then
+    # The click disables ultra-save (NOPASSWD sudoers entry from the battery
+    # module). The Exec uses unquoted separate words so argv stays verbatim.
+    # app_name=notify-send is the DND bypass channel Omarchy reserves for
+    # emergency CLI alerts, so the toast shows even in silent mode; -t 0 keeps
+    # it on screen until it is clicked or dismissed. Glyph: snowflake (E35E).
+    omarchy-notification-send --app-name notify-send -g "" -u critical -t 0 \
+      "Ultra-save is maxed out" \
+      "Your computer is about to be frozen by the power cap. Click this notification to disable ultra-save now." \
+      --exec sudo -n "$BIN_DIR/ultra-save" off
+  else
+    info "⚠ Notification daemon unavailable — run: sudo "$BIN_DIR/ultra-save" off"
+  fi
+}
+
+case "${1:-check}" in
+  check|watch) check ;;
+  *) echo "Usage: $0 [check]" >&2; exit 1 ;;
+esac

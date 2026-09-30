@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "jamjamjam-plugin",
+  "name": "jamjamjam",
+  "version": "1.0.0",
+  "author": "mosquito",
+  "license": "MIT",
+  "description": "Real-time audio analysis: detect key, BPM, chord progressions, with guitar fretboard and MIDI synth.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "jamjamjam",
+    "description": "Analyze audio key, BPM, chords in real-time",
+    "category": "Media",
+    "defaultSection": "left",
+    "allowMultiple": false,
+    "defaults": {},
+    "schema": []
+  }
+}

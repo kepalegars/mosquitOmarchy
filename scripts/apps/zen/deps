@@ -1,0 +1,7 @@
+# Zen browser config module — dependencies
+# Restore-time mechanism: when restoring a backup, the orchestrator reads
+# every module's `deps` file and installs the missing official packages.
+#
+# The browser itself is normally provided by the "apps" module
+# (APP zen-browser-bin), but the restore flow installs it too if absent.
+zen-browser-bin

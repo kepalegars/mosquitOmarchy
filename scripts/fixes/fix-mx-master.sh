@@ -1,0 +1,419 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Omarchy Custom - MX Master: thumb gesture button remapped to SUPER (logiops)
+# =============================================================================
+# Maps the big gesture button under the thumb of a Logitech MX Master (any
+# model) to the SUPER (Meta) key, momentarily: while held, SUPER is held too.
+#
+# Uses logiops (unsupported Logitech HID++ daemon), not the Logitech Options
+# Plus app (Windows/macOS only):
+#   /etc/logid.cfg   device blocks for every known MX Master model name,
+#                    each remapping the gesture button (cid 0xc3) to a
+#                    Keypress of KEY_LEFTMETA; only the block whose name
+#                    matches the connected device is applied (logid ignores
+#                    the others).
+#   logid.service    systemd unit (root), enabled + started by this script.
+#
+# What this script does:
+#   1. Installs logiops from the AUR if missing (yay).
+#   2. Writes /etc/logid.cfg (idempotent, keeps a .bak of any existing file).
+#   3. Enables + starts logid (systemctl, root).
+#
+# The pointing/scrolling behavior of the mouse is left untouched: only the
+# gesture button is reassigned.
+#
+# Default values (environment variables to change them):
+#   MX_MASTER_BUTTON   cid to remap              0xc3 (thumb gesture button)
+#   MX_MASTER_KEY      key to send               KEY_LEFTMETA (SUPER)
+#   MX_MASTER_NAME     exact device name to use  (else all known MX Master
+#                      model names are configured)
+#
+# Usage:
+#   ./fix-mx-master.sh          # install + configure (idempotent)
+#   ./fix-mx-master.sh --status # status (package, config, service)
+#   ./fix-mx-master.sh --remove # removes config + service, restores .bak
+#   ./fix-mx-master.sh -y       # non-interactive
+#
+# Root: /etc writes + systemctl require sudo; the script calls it internally.
+# =============================================================================
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/elevate.bash"  # mq_sudo: native pkexec prompt when not root
+set -euo pipefail
+
+info() { echo -e "\033[1;34m==>\033[0m $*"; }
+ok()   { echo -e "\033[1;32m ✓\033[0m $*"; }
+warn() { echo -e "\033[1;33m !\033[0m $*"; }
+err()  { echo -e "\033[1;31m ✗\033[0m $*" >&2; }
+
+CFG="/etc/logid.cfg"
+BTN="${MX_MASTER_BUTTON:-0xc3}"
+KEY="${MX_MASTER_KEY:-KEY_LEFTMETA}"
+BLOCK="mosquitOmarchy-mx-master"
+
+# ── Mouse-only pointer block (combinable with the touchpad module) ──────────
+# Besides the gesture button, this module also writes a per-DEVICE block for
+# the MX Master itself: pointer settings RESERVED to the mouse (they never
+# touch the touchpad, which the touchpad module configures separately). Both
+# modules use their own marker-delimited files + require blocks, so applying
+# them in ANY order composes cleanly; removing one never touches the other.
+HYPR_DIR="$HOME/.config/hypr"
+HYPRLAND_LUA="$HYPR_DIR/hyprland.lua"
+MM_LUA="$HYPR_DIR/mx-master.lua"
+MM_BLOCK_START="-- >>> Omarchy_Custom_Scripts_MxMaster"
+MM_BLOCK_END="-- <<< Omarchy_Custom_Scripts_MxMaster"
+MM_SENS="${MX_MASTER_SENSITIVITY:-0}"      # mouse pointer sensitivity (libinput scale -1..1, 0 = stock)
+MM_DPI="${MX_MASTER_DPI:-1000}"            # logid per-dpi (400–4000; 1000 is the good desktop default)
+MM_MATRIX_SCROLL="${MX_MASTER_SCROLL_FACTOR:-1.0}"  # per-device hyprland scroll factor
+MM_ACCEL="${MX_MASTER_ACCEL:-flat}"        # global input.lua mouse profile
+
+mx_device_name(){
+  if [[ -n ${MX_MASTER_DEVICE:-} ]]; then printf '%s\n' "$MX_MASTER_DEVICE"; return 0; fi
+  # The HKDF HID name (e.g. "Logitech Wireless Mouse MX Master 3") is what
+  # both logid and the hyprland block leave alone in their own way. Read the
+  # uevent file directly so we can pick the SANE model name in one pass.
+  local n
+  for h in /sys/class/hidraw/hidraw*; do
+    [[ -e $h/device/uevent ]] || continue
+    while IFS= read -r line; do
+      [[ $line == HID_NAME=* ]] || continue
+      n="${line#HID_NAME=}"
+      case "$n" in
+        *"MX Master 3S"*) echo "MX Master 3S"; exit 0;;
+        *"Wireless Mouse MX Master 3"*) echo "Wireless Mouse MX Master 3"; exit 0;;
+        *"MX Master 3 for Mac"*) echo "MX Master 3 for Mac"; exit 0;;
+        *"Wireless Mouse MX Master 2S"*) echo "Wireless Mouse MX Master 2S"; exit 0;;
+        *"Wireless Mouse MX Master"*) echo "Wireless Mouse MX Master"; exit 0;;
+      esac
+    done < "$h/device/uevent"
+  done
+  return 1
+}
+
+gen_mx_lua(){
+  local name="$1"
+  mkdir -p "$HYPR_DIR"
+  local tmp; tmp=$(mktemp)
+  {
+    echo "$MM_BLOCK_START"
+    echo "-- MX MASTER only (device \"$name\"): pointer settings reserved to the mouse."
+    echo "-- The touchpad keeps ITS block (touchpad.lua, touchpad module); the global"
+    echo "-- input.lua block stays untouched. Generated by fix-mx-master.sh."
+    # Name variant A: the raw HID (Logitech Wireless Mouse MX Master 3)
+    echo "hl.device({"
+    echo "    name = \"$name\","
+    echo "    -- Pointer profile: flat (no acceleration). Sensitivity $MM_SENS —"
+    echo "    -- (the old default 1.0 made the cursor crawl; 0 keeps the device at"
+    echo "    --  its own DPI curve: a slower, more controllable pointer)."
+    echo "    accel_profile = \"$MM_ACCEL\","
+    echo "    sensitivity = $MM_SENS,"
+    echo "    -- SCROLL: force plain 'notch' scrolling. Hi-res wheel events from"
+    echo "    -- logiops + libinput WHEEL_STATE_ACCUMULATING on Hyprland caused"
+    echo "    -- the erratic jumps/double-lines the user saw (PixlOne #523, Arch"
+    echo "    -- forum 'MX Master 3S scroll'). Notch = 1 detent = 1 scroll step,"
+    echo "    -- factor $MM_MATRIX_SCROLL (1.0 = unchanged)."
+    echo "    scroll_method = \"notch\","
+    echo "    scroll_factor = $MM_MATRIX_SCROLL,"
+    echo "    natural_scroll = false,"
+    echo "})"
+    # Name variant B: the libinput/hyprctl id (logitech-wireless-mouse-mx-...).
+    lib_id="$(hyprctl devices 2>/dev/null | awk -F'\t' '/logitech.*mx.?master/ {print $3; exit}' | tr -d '[:space:]')"
+    if [[ -n "$lib_id" ]]; then
+      echo "hl.device({"
+      echo "    name = \"$lib_id\","
+      echo "    accel_profile = \"$MM_ACCEL\","
+      echo "    sensitivity = $MM_SENS,"
+      echo "    scroll_method = \"notch\","
+      echo "    scroll_factor = $MM_MATRIX_SCROLL,"
+      echo "    natural_scroll = false,"
+      echo "})"
+    fi
+    echo "$MM_BLOCK_END"
+  } > "$tmp"
+  mv "$tmp" "$MM_LUA"
+  ok "mx-master.lua written ($name — mouse-only pointer + notch scroll block)"
+}
+
+ensure_mx_require(){
+  [[ -f $HYPRLAND_LUA ]] || { warn "$HYPRLAND_LUA not found — the mouse pointer block file is written but not required."; return 0; }
+  if grep -qF -- "$MM_BLOCK_START" "$HYPRLAND_LUA"; then
+    local tmp; tmp=$(mktemp)
+    awk -v b="$MM_BLOCK_START" -v e="$MM_BLOCK_END" '
+      $0 ~ b { inb=1; print; print "require(\"hypr.mx-master\")"; next }
+      $0 ~ e { inb=0; print; next }
+      !inb { print }
+    ' "$HYPRLAND_LUA" > "$tmp" && mv "$tmp" "$HYPRLAND_LUA"
+    ok "require hypr.mx-master refreshed in hyprland.lua"
+    return 0
+  fi
+  # Append our OWN block (the touchpad module has its separate one).
+  printf '\n%s\nrequire("hypr.mx-master")\n%s\n' "$MM_BLOCK_START" "$MM_BLOCK_END" >> "$HYPRLAND_LUA"
+  ok "require hypr.mx-master added to hyprland.lua"
+}
+
+remove_mx_pointer_block(){
+  if [[ -f $MM_LUA ]]; then rm -f "$MM_LUA" && ok "mx-master.lua removed (mouse pointer block)."; fi
+  if [[ -f $HYPRLAND_LUA ]] && grep -qF -- "$MM_BLOCK_START" "$HYPRLAND_LUA"; then
+    local tmp; tmp=$(mktemp)
+    awk -v b="$MM_BLOCK_START" -v e="$MM_BLOCK_END" '
+      $0 ~ b { inb=1; next }
+      $0 ~ e { inb=0; next }
+      !inb { print }
+    ' "$HYPRLAND_LUA" > "$tmp" && mv "$tmp" "$HYPRLAND_LUA"
+    ok "require hypr.mx-master removed from hyprland.lua (touchpad block untouched)."
+  fi
+}
+
+# Known MX Master model names as logid reports them (HID++ device name) —
+# TESTED.md in the logiops upstream. Only the block matching the connected
+# device is applied; the others are inert.
+# The EXACT names /sys/class/hidraw/*/device/uevent HID_NAME reports — these
+# are the strings logid matches its blocks on. NOT the hyprctl (libinput) ids
+# (those are lowercased "logitech-wireless-mouse-mx-master-3", a surface the
+# logid config can't use). The connected block only fires with an exact
+# substring of whichever model we physically have connected.
+KNOWN_NAMES=(
+  "MX Master 3S"
+  "Wireless Mouse MX Master 3"
+  "Logitech Wireless Mouse MX Master 3"
+  "MX Master 3 for Mac"
+  "Wireless Mouse MX Master 2S"
+  "Wireless Mouse MX Master"
+)
+
+if [[ ! -d /usr/share/omarchy ]]; then
+  echo "This script is meant for Omarchy." >&2
+  exit 1
+fi
+
+STATUS_ONLY=false REMOVE=false YES=0
+for a in "$@"; do case "$a" in
+  -y|--yes) YES=1 ;;
+  --status) STATUS_ONLY=true ;;
+  --remove) REMOVE=true ;;
+  -h|--help) sed -n '1,42p' "$0"; exit 0 ;;
+  *) echo "Unknown option: $a (supported: -y --status --remove)" >&2; exit 1 ;;
+esac; done
+
+priv() {  # run a command as root (already root → direct, else mq_sudo)
+  mq_sudo "$@"
+}
+
+# -----------------------------------------------------------------------------
+# Device name → the block logid applies. MX_MASTER_NAME overrides detection.
+# -----------------------------------------------------------------------------
+device_names() {
+  if [[ -n ${MX_MASTER_NAME:-} ]]; then printf '%s\n' "$MX_MASTER_NAME"; return 0; fi
+  printf '%s\n' "${KNOWN_NAMES[@]}"
+}
+
+connected_mx() {
+  # Print the normalized model names whose HID device is physically present.
+  local n
+  for h in /sys/class/hidraw/hidraw*; do
+    [[ -e $h/device/uevent ]] || continue
+    while IFS= read -r line; do
+      [[ $line == HID_NAME=* ]] || continue
+      n="${line#HID_NAME=}"
+      case "$n" in
+        *"Wireless Mouse MX Master 3"*) echo "Wireless Mouse MX Master 3";;
+        *"MX Master 3S"*)                echo "MX Master 3S";;
+        *"MX Master 3 for Mac"*)         echo "MX Master 3 for Mac";;
+        *"Wireless Mouse MX Master 2S"*) echo "Wireless Mouse MX Master 2S";;
+        *"Wireless Mouse MX Master"*)    echo "Wireless Mouse MX Master";;
+      esac
+    done < "$h/device/uevent"
+  done
+}
+
+# -----------------------------------------------------------------------------
+# 1. install logiops (AUR) if missing
+# -----------------------------------------------------------------------------
+ensure_logid() {
+  command -v logid >/dev/null 2>&1 && { ok "logiops installed ($(command -v logid))"; return 0; }
+  if ((YES == 0)); then
+    local ans
+    read -rp "logiops (Logitech HID++ daemon, AUR) is missing — install it via yay? [Y/N] " ans || { err "no input."; exit 1; }
+    [[ $ans =~ ^[yYoO]$ ]] || { err "aborted by user."; exit 1; }
+  fi
+  command -v yay >/dev/null 2>&1 || { err "yay missing — install an AUR helper first (sudo pacman -S --needed base-devel; git clone https://aur.archlinux.org/yay.git)."; exit 1; }
+  if yay -S --noconfirm logiops; then
+    ok "logiops installed via yay"
+  else
+    err "yay failed to install logiops — run 'yay -S logiops' manually and retry."
+    exit 1
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# 2. write /etc/logid.cfg (idempotent, marker-guided, user file backed up)
+# -----------------------------------------------------------------------------
+gen_cfg() {
+  local out="$1" n
+  {
+    # libconfig comment; a marker lets us spot "generated by our module".
+    echo "// $BLOCK — generated by mx-master/fix-mx-master.sh"
+    echo "// Gesture button (thumb, cid $BTN) -> $KEY (momentary). Leftovers:"
+    echo "//   running logid with -c <file> overrides /etc/logid.cfg;"
+    echo "//   revert: sudo systemctl stop logid; sudo systemctl disable logid."
+    echo ""
+    echo "devices: ("
+    local first=1
+    while IFS= read -r n; do
+      [[ -n $n ]] || continue
+      [[ $first == 1 ]] || echo ","
+      first=0
+      cat <<CFG_BLOCK
+      {
+        name: "$n";
+        // Genuine DPI (a real desktop default: 1000, not the 4000 max)
+        dpi: $MM_DPI;
+        buttons: (
+          {
+            // $BLOCK: thumb gesture button -> $KEY
+            cid: $BTN;
+            action = {
+              type: "Keypress";
+              keys: ["$KEY"];
+            };
+          }
+        );
+        // SMART-SHIFT OFF: the auto free-wheel mode legit *bugs* everywhere:
+        // on Hyprland it reads as a noisy accidental scroll, sudden ZOOM
+        // gestures, pauses without a detent. Force the ratchet wheel.
+        smartshift: {
+          on: false;
+          threshold: 20;
+        };
+        // HI-RES SCROLL OFF: logid's hires (REL_WHEEL_HI_RES) path with
+        // Hyprland/libinput produces the double-scrolled, stuck wheel
+        // behaviour (PixlOne #523 / #442), and it only smooths in browsers.
+        // The notch path already reads accurately. (Re-enable ONLY via
+        // /etc/logid.cfg by hand.)
+        hiresscroll: {
+          hires: false;
+          invert: false;
+        };
+      }
+CFG_BLOCK
+    done <<< "$(device_names)"
+    echo ""
+    echo ");"
+  } > "$out"
+}
+
+install_cfg() {
+  local tmp
+  tmp=$(mktemp)
+  gen_cfg "$tmp"
+  if [[ -f $CFG ]]; then
+    if grep -q -- "$BLOCK" "$CFG"; then
+      # Our block already managed — replace whole file from our pristine copy.
+      ok "existing /etc/logid.cfg (ours) refreshed"
+    else
+      # Preserve the user's previous config once.
+      if [[ ! -f $CFG.bak ]]; then
+        priv cp "$CFG" "$CFG.bak"
+        info "backed up your previous config: $CFG.bak"
+      fi
+    fi
+  fi
+  priv install -m 0644 -o root -g root "$tmp" "$CFG"
+  rm -f "$tmp"
+  ok "/etc/logid.cfg written (gesture button -> $KEY)"
+}
+
+# -----------------------------------------------------------------------------
+# 3. systemd: enable + start logid
+# -----------------------------------------------------------------------------
+ensure_service() {
+  priv systemctl daemon-reload >/dev/null 2>&1 || true
+  if ! priv systemctl is-enabled logid >/dev/null 2>&1; then
+    priv systemctl enable logid >/dev/null 2>&1 || warn "logid.service not enabled (systemctl enable logid)."
+  fi
+  priv systemctl restart logid >/dev/null 2>&1 && ok "logid.service restarted" \
+    || { warn "logid.service failed to start — see: sudo systemctl status logid"; return 1; }
+  sleep 1
+  priv systemctl is-active logid >/dev/null 2>&1 && ok "logid.service active" \
+    || warn "logid.service not active — device may be off (reconnect) or unsupported."
+}
+
+# -----------------------------------------------------------------------------
+# --status
+# -----------------------------------------------------------------------------
+do_status() {
+  info "MX Master thumb gesture button -> SUPER (logiops)"
+  echo "  • logid:             $(command -v logid >/dev/null 2>&1 && echo "present $(command -v logid)" || echo "NOT installed")"
+  echo "  • config:            $([[ -f $CFG ]] && echo present || echo absent)"
+  if [[ -f $CFG ]]; then
+    grep -q -- "$BLOCK" "$CFG" && echo "  • managed block:    yes ($KEY on cid $BTN)" || echo "  • managed block:    no"
+  else
+    echo "  • managed block:    no"
+  fi
+  echo "  • service:           $(priv systemctl is-enabled logid 2>/dev/null || echo disabled) / $(priv systemctl is-active logid 2>/dev/null || echo inactive)"
+  echo "  • pointer: sens=$MM_SENS dpi=$MM_DPI (mouse-only, hyprland block $MM_LUA)"
+  echo "  • scroll: ratchet (smartshift off) + notch scroll (no hires bug)"
+  echo "  • configured models:"
+  local n hit
+  while IFS= read -r n; do
+    hit=no
+    grep -qxF -- "$n" <<< "$(connected_mx)" && hit=yes
+    echo "      $([[ $hit == yes ]] && echo "●" || echo "○") $n"
+  done <<< "$(device_names)"
+}
+
+# -----------------------------------------------------------------------------
+# --remove
+# -----------------------------------------------------------------------------
+do_remove() {
+  priv systemctl disable --now logid >/dev/null 2>&1 && ok "logid.service disabled+stopped" || warn "logid.service not active/enabled."
+  if [[ -f $CFG.bak ]]; then
+    priv mv "$CFG.bak" "$CFG"
+    ok "$CFG restored from backup"
+  elif [[ -f $CFG ]]; then
+    priv rm -f "$CFG"
+    ok "$CFG removed"
+  else
+    ok "$CFG already absent."
+  fi
+  remove_mx_pointer_block
+  hyprctl reload >/dev/null 2>&1 || true
+}
+
+# -----------------------------------------------------------------------------
+# MAIN
+# -----------------------------------------------------------------------------
+if [[ $STATUS_ONLY == true ]]; then
+  do_status
+  exit 0
+fi
+
+if [[ $REMOVE == true ]]; then
+  do_remove
+  exit 0
+fi
+
+ensure_logid
+install_cfg
+ensure_service
+
+# Mouse-only pointer block (per-device, never touches the touchpad).
+sys_name="$(cat /sys/class/hidraw/*/device/uevent 2>/dev/null | awk -F'HID_NAME=' '$2 ~ /[Mm][Xx] [Mm]aster/ {print $2; exit}')"
+name="${MX_MASTER_DEVICE:-$sys_name}"
+[[ -n "$name" ]] || name="$(mx_device_name)"
+if [[ -n "${name:-}" ]]; then
+  gen_mx_lua "$name"
+  ensure_mx_require
+else
+  warn "No MX Master device detected (hyprctl devices) — connect the mouse and rerun to add its pointer block."
+fi
+
+hyprctl reload >/dev/null 2>&1 || true
+
+echo ""
+info "Setup complete. Hold the thumb gesture button — SUPER is held. Tap = quick SUPER tap."
+echo "  • Key      -> $KEY (cid $BTN — gesture button of the MX Master)"
+echo "  • Config   -> $CFG"
+echo "  • Service  -> logid (systemctl)"
+echo "  • Pointer  -> $MM_LUA (mouse-only device block)"
+echo "  • Remove   -> $0 --remove"
+echo "  • Status   -> $0 --status"

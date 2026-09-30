@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "mosquito.livemode",
+  "name": "Live Mode Frame",
+  "version": "1.0.0",
+  "author": "Mosquito",
+  "description": "Thin red frame drawn around the screen while live mode is active",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Frame.qml"
+  }
+}

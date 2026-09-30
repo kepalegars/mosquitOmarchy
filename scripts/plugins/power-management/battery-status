@@ -1,0 +1,440 @@
+#!/usr/bin/env bash
+# =============================================================================
+# battery-status — mosquito fork of omarchy's battery telemetry.
+#
+# WHY A FORK. Two defects in the upstream pair (omarchy-battery-status +
+# omarchy-power-present) show up on this machine, a Lenovo USB-C laptop:
+#
+#   1. FALSE CHARGER DETECTION. omarchy-power-present accepts `type == "USB"`
+#      as external power. Every USB-C peripheral that negotiates power (a
+#      phone, a dock, a USB-C hub, a display) registers as
+#      `/sys/class/power_supply/ucsi-source-psy-USBC*: type=USB, online=1`,
+#      so plugging in a mouse cable made the machine claim it was charging
+#      while the battery kept draining. A peripheral is not a charger.
+#
+#   2. "0 W, no time left, no charging icon" on a real USB-C PD charger. The
+#      shell's power panel takes `discharging` from UPower's `onBattery` and the
+#      rate/time from omarchy-battery-status. A PD charger attached over
+#      UCSI often does NOT flip the `AC` (type=Mains) `online` flag, so upower
+#      keeps saying "on battery"; with `charge_control_end_threshold=100` the
+#      battery then sits at ~0 W, and upower reports no `time to empty` at all.
+#      The panel rendered "Time to full" with an empty value, "0.0W", and a
+#      non-charging icon. The truth was "charging, but drawing too little to
+#      measure" — and that must never be presented as "discharging, 0 W".
+#
+# WHAT THIS DOES DIFFERENTLY.
+#   * External power = a Mains supply that is online, OR a USB-C source that is
+#     online *and* actually moving energy into the battery (state charging /
+#     fully-charged / pending-charge, or the battery rate is negative under a
+#     charge-threshold hold). A USB-C peripheral alone is NOT external power.
+#   * The charge direction is derived from the battery's own `status` and the
+#     sign of the rate, not from whether some unrelated device is plugged in.
+#   * A rate below the noise floor reports as "-" instead of a fake "0.0W", and
+#     an unknown time reports as "-" instead of an empty field, so the panel
+#     can never show a blank next to a number it invented.
+#
+# Usage:
+#   battery-status              # human line (omarchy's format, corrected)
+#   battery-status --shell      # key\tvalue per line (panel input format)
+#   battery-status --json       # single JSON object
+#   battery-status --external   # exit 0 when real external power is present
+#   battery-status --fingerprint # short digest of every sysfs input we read
+#
+# Environment:
+#   OMARCHY_POWER_SUPPLY_PATH   sysfs root (default /sys/class/power_supply);
+#                              pointing it at a fixture tree is what makes the
+#                              logic testable without a real laptop.
+#   BATTERY_STATUS_IDLE_W      rate below which the reading is noise (0.1)
+# =============================================================================
+set -euo pipefail
+
+PS_ROOT="${OMARCHY_POWER_SUPPLY_PATH:-/sys/class/power_supply}"
+IDLE_W="${BATTERY_STATUS_IDLE_W:-0.1}"
+
+# Read a sysfs attribute, tolerating absence/permission noise. Empty on failure.
+_attr() { [[ -r $1 ]] && cat "$1" 2>/dev/null || true; }
+
+_microunits_to_w() { awk -v v="${1:-}" 'BEGIN{ if (v == "") exit 0; printf "%.3f", v/1000000 }'; }
+
+# ---------------------------------------------------------------------------
+# Enumerate supplies
+# ---------------------------------------------------------------------------
+BAT_NAME=""
+battery_supply() {
+  if [[ -n $BAT_NAME ]]; then printf '%s\n' "$BAT_NAME"; return 0; fi
+  local d
+  # Prefer a real BAT* device (the conventional name), then any type=Battery.
+  for d in "$PS_ROOT"/BAT*; do
+    [[ -d $d ]] || continue
+    BAT_NAME=$(basename "$d")
+    printf '%s\n' "$BAT_NAME"
+    return 0
+  done
+  for d in "$PS_ROOT"/*; do
+    [[ -d $d ]] || continue
+    [[ $(_attr "$d/type") == "Battery" ]] || continue
+    BAT_NAME=$(basename "$d")
+    printf '%s\n' "$BAT_NAME"
+    return 0
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Rate. power_now is authoritative; fall back to current_now*voltage_now for
+# drivers that do not implement energy reporting. Both are micro-* units.
+# ---------------------------------------------------------------------------
+battery_rate_w() {
+  local bat pn cn vn
+  bat=$(battery_supply) || { echo 0; return 0; }
+  pn=$(_attr "$PS_ROOT/$bat/power_now")
+  if [[ -n $pn ]]; then
+    _microunits_to_w "$pn"
+    return 0
+  fi
+  cn=$(_attr "$PS_ROOT/$bat/current_now")
+  vn=$(_attr "$PS_ROOT/$bat/voltage_now")
+  if [[ -n $cn && -n $vn ]]; then
+    awk -v a="$cn" -v v="$vn" 'BEGIN{ printf "%.3f", a*v/1000000000000 }'
+    return 0
+  fi
+  echo 0
+}
+
+battery_status_raw() {
+  local bat
+  bat=$(battery_supply) || { echo ""; return 0; }
+  _attr "$PS_ROOT/$bat/status"
+}
+
+battery_capacity() {
+  local bat e
+  bat=$(battery_supply) || { echo ""; return 0; }
+  e=$(_attr "$PS_ROOT/$bat/energy_full")
+  [[ -n $e ]] || e=$(_attr "$PS_ROOT/$bat/charge_full")
+  # Same shape as the rate: one decimal, trailing ".0" dropped, so the panel
+  # shows "42Wh" and never "42.000Wh".
+  awk -v e="${e:-}" 'BEGIN{ if (e == "") exit 0; s = sprintf("%.1f", e/1000000); sub(/\.0$/, "", s); print s }'
+}
+
+battery_percentage() {
+  local bat c
+  bat=$(battery_supply) || { echo ""; return 0; }
+  c=$(_attr "$PS_ROOT/$bat/capacity")
+  [[ -n $c ]] || { echo ""; return 0; }
+  printf '%d\n' "$c"
+}
+
+charge_thresholds() {
+  local bat s e
+  bat=$(battery_supply) || { echo " "; echo " "; return 0; }
+  s=$(_attr "$PS_ROOT/$bat/charge_control_start_threshold")
+  e=$(_attr "$PS_ROOT/$bat/charge_control_end_threshold")
+  printf '%s\n%s\n' "${s:-0}" "${e:-100}"
+}
+
+# ---------------------------------------------------------------------------
+# External power — the fork's core correction.
+#
+# A USB-C *source* is only a charger if energy is actually arriving. We accept
+# it only when the battery says so (charging / fully-charged / pending-charge)
+# or when it is holding at a charge threshold that is below full. A peripheral
+# that merely reports online=1 while the battery is discharging is NOT a
+# charger, and this is the case upstream misreads.
+# ---------------------------------------------------------------------------
+mains_online() {
+  local s
+  for s in "$PS_ROOT"/*; do
+    [[ -d $s ]] || continue
+    [[ $(_attr "$s/type") == "Mains" ]] || continue
+    [[ $(_attr "$s/online") == "1" ]] && { echo true; return 0; }
+  done
+  echo false
+}
+
+usb_source_online() {
+  local s
+  for s in "$PS_ROOT"/*; do
+    [[ -d $s ]] || continue
+    [[ $(_attr "$s/type") == "USB" ]] || continue
+    [[ $(_attr "$s/online") == "1" ]] && { echo true; return 0; }
+  done
+  echo false
+}
+
+is_charging_status() {
+  case "${1:-}" in
+    Charging|charging|FullyCharged|fully-charged|pending-charge) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# True only for a real charger. Order matters: a Mains supply is authoritative
+# even when the battery is holding at its threshold.
+external_power() {
+  local st mains usb start end
+  mains=$(mains_online)
+  st=$(battery_status_raw)
+  if [[ $mains == true ]]; then echo true; return 0; fi
+
+  usb=$(usb_source_online)
+  [[ $usb == true ]] || { echo false; return 0; }
+
+  # USB-C source present. Is energy actually flowing in?
+  if is_charging_status "$st"; then echo true; return 0; fi
+
+  # Battery holding at a charge threshold below full: the charger is present
+  # and the machine is deliberately not charging. That is *external power*,
+  # not "discharging at 0 W".
+  local th; mapfile -t th < <(charge_thresholds)
+  start=${th[0]:-0} end=${th[1]:-100}
+  if [[ $st == "Not charging" && $end -lt 100 && $end -gt 0 ]]; then
+    echo true; return 0
+  fi
+
+  echo false
+}
+
+# The state we report. Deliberately independent of UPower's onBattery, which
+# inherits the same peripheral-as-charger confusion through the daemon.
+report_state() {
+  local st ext hold=0 th end
+  st=$(battery_status_raw)
+  ext=$(external_power)
+  mapfile -t th < <(charge_thresholds)
+  end=${th[1]:-100}
+
+  if [[ $ext == true ]]; then
+    # Plugged in. Is the battery deliberately parked at a limit?
+    if [[ $st == "Not charging" && $end -lt 100 && $end -gt 0 ]]; then
+      hold=1
+    fi
+    if is_charging_status "$st"; then
+      if [[ $st == "FullyCharged" || $st == "fully-charged" ]]; then echo full; return 0; fi
+      echo charging; return 0
+    fi
+    if (( hold == 1 )); then echo holding; return 0; fi
+    # External power present but the battery is neither charging nor holding a
+    # threshold (e.g. full, or a charger that negotiated 0 W). Not discharging.
+    echo plugged; return 0
+  fi
+
+  case "$st" in
+    Discharging|discharging) echo discharging ;;
+    *) echo discharging ;;   # a battery with no charger is discharging by definition
+  esac
+}
+
+# Rate rendering. A reading under the noise floor is not a measurement; report
+# "-" so nothing downstream invents a "0.0W".
+format_rate() {
+  local rate abs
+  rate=$(battery_rate_w)
+  if [[ -z $rate ]]; then echo "-"; return 0; fi
+  abs=$(awk -v r="$rate" 'BEGIN{ printf "%.4f", (r<0?-r:r) }')
+  if awk -v a="$abs" -v t="$IDLE_W" 'BEGIN{ exit !(a < t) }'; then
+    echo "-"; return 0
+  fi
+  awk -v r="$rate" 'BEGIN{
+    s = sprintf("%.1f", r); sub(/\.0$/, "", s); print s
+  }'
+}
+
+# Time rendering. Only meaningful while current is actually flowing, and only
+# in a direction we know; otherwise "-" (never an empty field). Order of truth:
+# the kernel's time_to_*_now when present, then upower's "time to empty/full"
+# (which many drivers only expose through the daemon, not sysfs), then a
+# capacity/draw estimate. Matches what omarchy-battery-status reads, so the
+# panel's live number does not change shape when we take over.
+format_time() {
+  local state rate abs secs
+  state=$(report_state)
+  rate=$(battery_rate_w)
+  abs=$(awk -v r="${rate:-0}" 'BEGIN{ printf "%.4f", (r<0?-r:r) }')
+  # No measurable current → no meaningful time; do not invent one.
+  if awk -v a="$abs" -v t="$IDLE_W" 'BEGIN{ exit !(a < t) }'; then
+    case "$state" in
+      charging) echo "unknown" ;;
+      *) echo "-" ;;
+    esac
+    return 0
+  fi
+  secs=$(time_seconds)
+  if [[ -n $secs && $secs -gt 60 ]]; then
+    awk -v s="$secs" 'BEGIN{ h=int(s/3600); m=int((s%3600)/60); if (h>0 && m>0) printf "%dh %dm", h, m; else if (h>0) printf "%dh", h; else printf "%dm", m }'
+    return 0
+  fi
+  case "$state" in
+    charging) echo "unknown" ;;
+    *) echo "-" ;;
+  esac
+}
+
+# Time-to-X in seconds for the CURRENT direction: kernel sysfs first, then
+# upower (value + unit), then a capacity/draw estimate. Empty when unknown.
+time_seconds() {
+  local bat f secs
+  bat=$(battery_supply) || { echo ""; return 0; }
+  case "$(report_state)" in
+    charging)    f=time_to_full_now ;;
+    discharging) f=time_to_empty_now ;;
+    *)           echo ""; return 0 ;;
+  esac
+  secs=$(_attr "$PS_ROOT/$bat/$f")
+  if [[ -n $secs ]]; then echo "$secs"; return 0; fi
+
+  # upower: "time to empty:  1.5 hours" / "time to full:  42.0 minutes"
+  local updev
+  updev=$(upower -e 2>/dev/null | grep BAT | head -n 1)
+  if [[ -n $updev ]]; then
+    upower -i "$updev" 2>/dev/null | awk -v want="$f" '
+      /time to (empty|full):/ {
+        key = (index($0, "empty") ? "time_to_empty_now" : "time_to_full_now")
+        if (key != want) next
+        # upower prints "time to empty:  1.3 hours" -- value first, unit last,
+        # so the number is $(NF-1) and the unit is $NF (the reverse of what you
+        # would guess from "N unit" and silently yields an empty string).
+        unit = $NF; v = $(NF-1)
+        if (v == "never") { print ""; exit }
+        if (unit ~ /^second/) print int(v)
+        else if (unit ~ /^minute/) print int(v*60)
+        else if (unit ~ /^hour/) print int(v*3600)
+        exit
+      }'
+    return 0
+  fi
+  echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+emit_shell() {
+  local pct state rate size time start end
+  pct=$(battery_percentage)
+  [[ -n $pct ]] || { echo "no battery"; exit 0; }
+  state=$(report_state)
+  rate=$(format_rate)
+  size=$(battery_capacity)
+  time=$(format_time)
+  mapfile -t th < <(charge_thresholds)
+  start=${th[0]:-0} end=${th[1]:-100}
+
+  printf 'percentage\t%s%%\n' "$pct"
+  printf 'state\t%s\n' "$state"
+  # Only emit a rate when there is one to report. Emitting "rate\tW" (the
+  # upstream shape with an empty value) or a fabricated "0.0W" is what made the
+  # panel show a number it invented; a missing key leaves its own "-".
+  [[ $rate != "-" ]] && printf 'rate\t%sW\n' "$rate"
+  printf 'size\t%sWh\n' "${size:-}"
+  printf 'time\t%s\n' "$time"
+  if [[ -n $end && $end -lt 100 ]]; then
+    if [[ -n $start && $start != "$end" ]]; then
+      printf 'threshold\t%s-%s%%\n' "$start" "$end"
+    else
+      printf 'threshold\t%s%%\n' "$end"
+    fi
+  fi
+  printf 'external-power\t%s\n' "$(external_power)"
+}
+
+emit_human() {
+  local pct state rate size time watt
+  pct=$(battery_percentage)
+  [[ -n $pct ]] || { echo "No battery"; exit 0; }
+  state=$(report_state)
+  rate=$(format_rate)
+  size=$(battery_capacity)
+  time=$(format_time)
+  watt=""; [[ $rate != "-" ]] && watt="${rate}W"
+  [[ -n $size ]] && watt="${watt:+$watt / }${size}Wh"
+  # Only emit the trailing watt segment when there is something to say, so a
+  # silent 0 W never leaves a dangling "· " with nothing after it.
+  local tail=""; [[ -n $watt ]] && tail="  ·  $watt"
+  case "$state" in
+    charging)      echo "Battery ${pct}%  ·  ${time} to full${tail}" ;;
+    discharging)   echo "Battery ${pct}%  ·  ${time} left${tail}" ;;
+    holding)       echo "Battery ${pct}%  ·  holding at charge limit${tail}" ;;
+    full)          echo "Battery ${pct}%  ·  fully charged${tail}" ;;
+    plugged)       echo "Battery ${pct}%  ·  plugged in, not charging${tail}" ;;
+    *)             echo "Battery ${pct}%  ·  ${state}${tail}" ;;
+  esac
+}
+
+emit_json() {
+  local pct state rate size time start end
+  pct=$(battery_percentage)
+  [[ -n $pct ]] || { echo '{}'; exit 0; }
+  state=$(report_state)
+  rate=$(format_rate)
+  size=$(battery_capacity)
+  time=$(format_time)
+  mapfile -t th < <(charge_thresholds)
+  start=${th[0]:-0} end=${th[1]:-100}
+  local rate_num=null
+  [[ $rate != "-" ]] && rate_num=$rate
+  local size_num=null
+  [[ -n $size ]] && size_num=$size
+  jq -cn \
+    --argjson percentage "$pct" \
+    --arg state "$state" \
+    --argjson rate "$rate_num" \
+    --argjson capacity "$size_num" \
+    --arg time "$time" \
+    --arg external "$(external_power)" \
+    --argjson thresholdStart "$start" \
+    --argjson thresholdEnd "$end" \
+    '{percentage:$percentage,state:$state,rate:$rate,capacity:$capacity,time:$time,externalPower:($external=="true"),threshold:{start:$thresholdStart,end:$thresholdEnd}}'
+}
+
+# ---------------------------------------------------------------------------
+# Fingerprint — "has anything I care about changed since last time?"
+#
+# The bar widget used to learn that the charger was plugged or unplugged only
+# by re-running the FULL --shell probe, which the panel does on a timer while
+# it is open and never while it is closed. So with the panel shut the bar icon
+# sat on its last state: plug in a charger and the charging bolt only appeared
+# once you clicked the icon, which opened the panel and ran the probe.
+#
+# This mode is the cheap detector that makes the widget self-refreshing: it
+# digests every sysfs attribute the rest of this script reads, so an unchanged
+# digest PROVES no input changed and the expensive probe can be skipped, and a
+# changed digest means something worth re-reporting happened. It is deliberately
+# a digest of the raw inputs rather than a second copy of the detection logic —
+# two implementations of "is a charger present" would eventually disagree, and
+# the disagreement would show up as an icon that lies.
+#
+# Reads only, spawns nothing: cat + md5sum. Callers poll it often and act on
+# the value changing.
+# ---------------------------------------------------------------------------
+battery_fingerprint() {
+  local bat acc=""
+  bat=$(battery_supply) || { printf 'no-battery\n'; return 0; }
+
+  for f in status capacity power_now current_now voltage_now \
+           energy_full charge_full charge_control_start_threshold \
+           charge_control_end_threshold time_to_empty_now \
+           time_to_full_now; do
+    acc+="$f=$(_attr "$PS_ROOT/$bat/$f");"
+  done
+
+  # Every supply's type/online pair: a Mains or USB source appearing or
+  # flipping is the plug/unplug event this exists to catch.
+  local s
+  for s in "$PS_ROOT"/*; do
+    [[ -d $s ]] || continue
+    acc+="$(basename "$s")/type=$(_attr "$s/type");"
+    acc+="$(basename "$s")/online=$(_attr "$s/online");"
+  done
+
+  printf '%s' "$acc" | md5sum | cut -c1-16
+}
+
+case "${1:-}" in
+  "")           emit_human ;;
+  --shell)      emit_shell ;;
+  --json)       emit_json ;;
+  --external)   [[ $(external_power) == true ]] ;;
+  --fingerprint) battery_fingerprint ;;
+  *) echo "Usage: $0 [--shell|--json|--external|--fingerprint]" >&2; exit 2 ;;
+esac

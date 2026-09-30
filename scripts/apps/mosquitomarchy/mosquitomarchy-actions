@@ -1,0 +1,1489 @@
+#!/usr/bin/env bash
+# mosquitomarchy-actions — non-interactive backend for the mosquitOmarchy Go
+# TUI (tui-go/). NOT an interface at all: it has no interactive UI (no gum /
+# launcher prompts) and is never launched directly by a user. It exists so
+# the Go program never has to reimplement any of mosquitomarchy-setup.sh's
+# business logic (modules, categories, status, backup/restore, uninstall,
+# repo updates) — it sources the exact same mosquitomarchy-setup.sh the launcher
+# uses, in LIB_ONLY mode, and calls the same functions the interactive paths
+# call.
+#
+# The split: Go owns every DECISION (which category, which items, confirm/
+# cancel) — that is the actual "interface". This script only performs ACTIONS
+# once a decision is already made.
+#
+# Two kinds of subcommands:
+#   • read-only queries  → JSON to stdout for Go to parse (one record per
+#     line, or a single object — see each case). Nothing else prints.
+#   • actions            → thin direct calls into the sourced functions.
+#     Output is the modules' own stdout/stderr prose, which the TUI's Runner
+#     streams live. YES is forced to 1 so every "ask?" auto-yes and child
+#     scripts receive -y; no prompt can ever block a pipe.
+set -euo pipefail
+
+SCRIPT_SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SELF")" && pwd)"
+SETUP="$SCRIPT_DIR/../../../mosquitomarchy-setup.sh"
+# Deployed run (~/.local/bin/mosquitomarchy-actions is a real COPY here, not
+# a symlink): ~/.. from ~/.local/bin is NOT the repo — search known repos.
+if [[ ! -f $SETUP ]]; then
+  for cand in "$HOME/mosquitOmarchy/mosquitomarchy-setup.sh" \
+              "$HOME/mosquitOmarchy/scripts/apps/mosquitomarchy/../../../mosquitomarchy-setup.sh"; do
+    [[ -f $cand ]] && { SETUP="$cand"; break; }
+  done
+fi
+APP_DIR="$(cd "$(dirname "$SETUP")" && pwd)"
+
+# gui-run.bash (sourced by mosquitomarchy-setup.sh) would `exec foot …` the
+# moment it sees a non-tty stdin/stdout — exactly our case (child of the
+# TUI's Runner). Tell it we are already "in a terminal" (the TUI is it).
+export GUI_RUN_EXEC=1
+# patch-ableton.sh re-execs itself in a disposable `foot` window when it has no
+# tty but a DISPLAY — which would open a window instead of streaming into the
+# TUI's Runner. Tell it we are held so it runs inline.
+export ABLE_PATCH_HELD=1
+export MOSQUITOMARCHY_LIB_ONLY=1
+# Tell the engine it is driven by the TUI: suppress the launcher's FINAL REPORT
+# and "Left to do by hand" checklist (see final_report).
+export MOSQUITOMARCHY_TUI=1
+
+# Library-only source: defines every function, skips the flag parsing and the
+# auto-run `main "$@"`. `set -e` is transferred by the sourced `set -euo
+# pipefail` at its top — every query below must therefore be written to
+# succeed even for empty results.
+# shellcheck source=../../mosquitomarchy-setup.sh
+# Deployed copy (~/.local/bin/mosquitomarchy-actions) is a symlink INTO the
+# repo — dirname "$(readlink -f "$0")" resolves the repo, so the source sits
+# there even when the caller invoked the bin path directly.
+if [[ ! -f $SETUP ]]; then
+  alt="$(dirname "$(readlink -f "${BASH_SOURCE[0]:-$0}")")/../../../mosquitomarchy-setup.sh"
+  [[ -f $alt ]] && SETUP="$alt"
+fi
+source "$SETUP"
+
+# ── JSON helpers (single-line, no trailing comma, escaped) ────────────────
+json_esc(){ printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+json_str(){ printf '"%s"' "$(json_esc "$1")"; }
+
+# A JSON BOOLEAN, unquoted. json_str() always wraps its argument in quotes,
+# which is right for a string and wrong for a bool: passing `excluded` through
+# it emitted "excluded":"false", a string, and the Go StatusRec declares
+# Excluded bool — so the entire Status screen failed to decode with
+# "cannot unmarshal string into Go struct field StatusRec.excluded of type bool".
+json_bool(){ [[ $1 == true ]] && printf 'true' || printf 'false'; }
+
+# ── Route sudo to pkexec (native polkit prompt) for this backend ───────────
+# The TUI's Runner gives the child no tty, so a plain `sudo` password prompt
+# can never appear. Elevation is now primed ONCE per run by mq_sudo_prime
+# (scripts/lib/elevate.bash) through a GUI askpass, and the resulting sudo cache
+# serves every later root step. That helper also installs its own `sudo`->
+# pkexec shim as a fallback when sudo cannot be primed, so no shim is generated
+# here anymore.
+
+# ─── Module status ─────────────────────────────────────────────────────────
+# One JSON record per line: {"id":..,"label":..,"state":..,"excluded":bool}
+cmd_status(){
+  load_excluded
+  apply_includes
+  local row id state detail label excl cat
+  for row in "${MODULES[@]}"; do
+    id="${row%%:*}" label="${row#*:}"
+    # module_state may append ":detail" (e.g. "partial:missing foo bar"). The
+    # State screen's `i` shows that detail, so both halves travel in the JSON
+    # instead of the detail being dropped here.
+    state="$(module_state "$id")"
+    detail=""
+    if [[ $state == *:* ]]; then detail="${state#*:}"; state="${state%%:*}"; fi
+    cat="$(module_category "$id")"
+    excl=false
+    is_excluded "$id" && excl=true
+    # Every string field goes through json_str. `excluded` is the one that was
+    # missed: a bare $excl emitted "excluded":"false" (a STRING), and the Go
+    # StatusRec has Excluded bool — so the whole Status screen died on
+    # "json: cannot unmarshal string into Go struct field StatusRec.excluded".
+    printf '{"id":%s,"label":%s,"state":%s,"detail":%s,"category":%s,"excluded":%s}\n' \
+      "$(json_str "$id")" "$(json_str "$label - v$(module_version "$id")")" \
+      "$(json_str "$state")" "$(json_str "$detail")" "$(json_str "$cat")" "$(json_bool "$excl")"
+  done
+}
+
+# ─── Setup categories ──────────────────────────────────────────────────────
+# {"id":..,"label":..}
+cmd_categories(){
+  local c id label
+  local -a rows=()
+  for c in "${CATEGORIES[@]}"; do
+    id="${c%%|*}"; label="${c#*|}"; label="${label%%|*}"
+    rows+=("$label"$'\t'"$(printf '{"id":%s,"label":%s}' "$(json_str "$id")" "$(json_str "$label")")")
+  done
+  local line
+  while IFS= read -r line; do
+    [[ -n $line ]] && printf '%s\n' "${line#*$'\t'}"
+  done < <(printf '%s\n' "${rows[@]}" | LC_ALL=C sort -f)
+}
+
+# ─── Candidate items of one category ──────────────────────────────────────
+# Fills CAND_KEYS/CAND_LABELS then prints {"key":..,"label":..}
+cmd_candidates(){
+  TREE_MODE=setup
+  local cat="${1:-}"
+  category_candidates "$cat"
+  local i
+  local -a rows=()
+  for ((i=0; i<${#CAND_KEYS[@]}; i++)); do
+    # CAND_LABELS is "<name>  —  <description>". The row must show the name
+    # only: the description is what the `i` popup is for, and inlined it made
+    # every TUIs row a full sentence. SetupItemRec already has an Info field,
+    # it was simply never filled, so `i` had nothing to show but the label.
+    # Both halves must come from the SAME string: truncating $lab first and
+    # then asking for the part after the separator found nothing left to split.
+    local lab="${CAND_LABELS[$i]}" desc=""
+    if [[ $lab == *"  —  "* ]]; then
+      desc="${CAND_LABELS[$i]#*  —  }"
+      lab="${CAND_LABELS[$i]%%  —  *}"
+    fi
+    rows+=("${CAND_LABELS[$i]}"$'\t'"$(printf '{"key":%s,"label":%s,"info":%s}' \
+      "$(json_str "${CAND_KEYS[$i]}")" "$(json_str "$lab")" "$(json_str "$desc")")")
+  done
+  local line
+  while IFS= read -r line; do
+    [[ -n $line ]] && printf '%s\n' "${line#*$'\t'}"
+  done < <(printf '%s\n' "${rows[@]}" | LC_ALL=C sort -f)
+}
+
+# ─── Quick fixes ──────────────────────────────────────────────────────────
+# Flat list (the TUI groups by its own category logic if needed).
+cmd_fixes(){
+  local e id
+  for e in "${FIXES[@]:-}"; do
+    id="${e%%:*}"
+    printf '{"key":%s,"label":%s,"cat":%s,"info":%s}\n' \
+      "$(json_str "$id")" "$(json_str "${e#*:}")" "$(json_str "$(fix_category "$id")")" \
+      "$(json_str "${e#*:}")"
+  done
+}
+
+# ─── Full setup tree (folders = categories, children = installable items) ──
+# One JSON record per line:
+#   folder: {"folder":id,"label":label,"accent":bool}
+#   item:   {"folder":id,"key":key,"label":name,"info":description}
+# The label/info split mirrors the bash launcher's "name  —  description"
+# convention (CAND_LABELS) so the TUI shows only the name inline and keeps the
+# longer description behind the "i" key instead of crowding the row.
+cmd_setup(){
+  TREE_MODE=setup
+  local c id label accent i e name info
+  local sep='  —  '
+  # Categories and their scripts are ALWAYS shown in alphabetical order, so a
+  # growing catalog never turns into a hunt. The sort key is the label (or the
+  # folder id for a child), never the JSON payload; the payload rides after a
+  # TAB and is stripped before printing.
+  local -a folders=() items=()
+  for c in "${CATEGORIES[@]}"; do
+    id="${c%%|*}"; label="${c#*|}"; label="${label%%|*}"
+    # The Omarchy menu registration is shown INSIDE the mosquito folder (see
+    # the mosquito case below), never as its own top-level Setup folder.
+    [[ $id == menu ]] && continue
+    accent=false
+    [[ $id == mosquito ]] && accent=true
+    folders+=("$label"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+      "$(json_str "$id")" "$(json_str "$label")" "$accent")")
+    case $id in
+      fixes)
+        local fe fid
+        for fe in "${FIXES[@]:-}"; do
+          fid="${fe%%:*}"
+          items+=("fixes/$fid"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+            "$(json_str "$id")" "$(json_str "$fid")" "$(json_str "$fid")" \
+            "$(json_str "${fe#*:}")")")
+        done
+        ;;
+      *)
+        category_candidates "$id"
+        for ((i=0; i<${#CAND_KEYS[@]}; i++)); do
+          name="${CAND_LABELS[$i]}"; info=""
+          if [[ $name == *"$sep"* ]]; then
+            info="${name#*"$sep"}"
+            name="${name%%"$sep"*}"
+          fi
+          # The Setup leaf for remove-ai must read exactly
+          # "bring back omarchy's agentic stuff" (the uninstall label is
+          # the "remove" version, but it never shows in this tree).
+          if [[ ${CAND_KEYS[$i]} == "remove-ai" ]]; then
+            name="bring back omarchy's agentic stuff"
+            # No description: the label already says what the row does, and a
+            # 100-column blurb under it was one of the two rows that made the
+            # Setup page overflow the pane.
+            info=""
+          fi
+          # Catalog shell-plugins used to be relabelled here from the raw
+          # id|url|human-label field, which re-inlined the description the split
+          # above had just removed (the row read "Monitor Settings — Hyprland
+          # display/monitor panel"). category_candidates now returns the human
+          # name for PLUG rows, so this override only had to be dropped.
+          local label="$name - v$(module_version "${CAND_KEYS[$i]}")"
+          # remove-ai's Setup row reads EXACTLY "bring back omarchy's agentic
+          # stuff" (no version suffix; it is an action, not a versioned module).
+          [[ ${CAND_KEYS[$i]} == remove-ai ]] && label="$name"
+          items+=("$id/$name"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+            "$(json_str "$id")" "$(json_str "${CAND_KEYS[$i]}")" \
+            "$(json_str "$label")" "$(json_str "$info")")")
+        done
+        ;;
+    esac
+  done
+  local line
+  while IFS= read -r line; do
+    [[ -n $line ]] && printf '%s\n' "${line#*$'\t'}"
+  done < <(printf '%s\n' "${folders[@]}" | LC_ALL=C sort -f)
+  while IFS= read -r line; do
+    [[ -n $line ]] && printf '%s\n' "${line#*$'\t'}"
+  done < <(printf '%s\n' "${items[@]}" | LC_ALL=C sort -f)
+}
+
+# ─── Uninstall tree (installed entries, Setup categories/order) ────────────
+# Same folders and order as `setup`, but only the INSTALLED entries. Each item
+# carries the exact key the `uninstall` action expects: a module id, or a
+# catalog selection line (APP/TUI/WEB) routed to the apps module's uninstaller.
+_installed_state(){ # module id -> 0 when installed (ok/partial) and not excluded
+  local id="$1" st
+  is_excluded "$id" 2>/dev/null && return 1
+  st="$(module_state "$id" 2>/dev/null)"; st="${st%%:*}"
+  [[ $st == ok || $st == partial ]]
+}
+cmd_uninstall_tree(){
+  TREE_MODE=uninstall
+  local c id label accent e name info spec mid
+  local -a folders=() items=()
+  load_excluded
+  load_catalog 2>/dev/null || true
+  detect_installed_apps 2>/dev/null || true
+  for c in "${CATEGORIES[@]}"; do
+    id="${c%%|*}"; label="${c#*|}"; label="${label%%|*}"
+    # `menu` and `fixes` are not modules: nothing to uninstall there.
+    [[ $id == menu || $id == fixes ]] && continue
+    local -a keys=()
+    case $id in
+      tuis)
+        for e in "${INSTALLED_TUI[@]:-}"; do [[ -n $e ]] && keys+=("TUI $e"); done
+        ;;
+      webapps)
+        for e in "${INSTALLED_WEB[@]:-}"; do [[ -n $e ]] && keys+=("WEB $e"); done
+        ;;
+      mosquito)
+        local pk
+        for pk in ableton-move-manager audio-plugin-manager jamjamjam-plugin battery live-mode; do
+          case $pk in
+            audio-plugin-manager) _installed_state audio && keys+=("$pk") ;;
+            *) _installed_state "$pk" && keys+=("$pk") ;;
+          esac
+        done
+        ;;
+      *)
+        local mid
+        for mid in $(category_items "$id"); do
+          _installed_state "$mid" && keys+=("$mid")
+        done
+        ;;
+    esac
+    ((${#keys[@]})) || continue
+    accent=false; [[ $id == mosquito ]] && accent=true
+    folders+=("$label"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+      "$(json_str "$id")" "$(json_str "$label")" "$accent")")
+    for e in "${keys[@]}"; do
+      case $e in
+        # A TUI key is "TUI <pkg>|<pkg> — <what it is>" straight from the
+        # catalog, so showing it verbatim filled the Uninstall tree with rows
+        # like "calcure|calcure — terminal calendar/planner". split_name_desc
+        # takes the human name and drops the repetition.
+        TUI\ *) local trest tpkg ttext
+                trest="${e#TUI }"
+                tpkg="${trest%%|*}"; ttext="${trest#*|}"
+                [[ $ttext == "$trest" ]] && ttext="$trest"
+                split_name_desc "$tpkg" "$ttext"
+                name="$CAND_NAME - v$(module_version "$tpkg")"
+                info="installed TUI (apps module)$( [[ -n $CAND_DESC ]] && printf ' — %s' "$CAND_DESC")" ;;
+        WEB\ *) local wrest wname wurl
+                wrest="${e#WEB }"
+                wname="${wrest%%|*}"; wurl="${wrest#*|}"; wurl="${wurl%%|*}"
+                name="$wname"
+                info="installed webapp (apps module)$( [[ -n $wurl && $wurl != "$wrest" ]] && printf ' — %s' "$wurl")" ;;
+        *)
+          if [[ $e == remove-ai ]]; then
+            # Uninstall wording (Setup shows the "bring back…" version).
+            name="remove omarchy's agentic stuff"
+            info=""
+          else
+            name="$e - v$(module_version "$e")"
+            info="$(module_desc "$e")"
+          fi ;;
+      esac
+      items+=("$id/$name"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+        "$(json_str "$id")" "$(json_str "$e")" "$(json_str "$name")" "$(json_str "$info")")")
+    done
+  done
+  # ── Extra uninstall-only categories (not part of Setup) ──
+  # Patches: only when at least one installed app has an APPLIED patch.
+  local -a pkeys=()
+  for mid in $(category_items apps); do
+    _installed_state "$mid" || continue
+    spec="$(_manual_patch_spec "$mid")"; [[ -n $spec ]] || continue
+    [[ -f "$APPS_DIR/$spec" ]] || continue
+    _patch_applied "$APPS_DIR/$spec" && pkeys+=("$mid")
+  done
+  if ((${#pkeys[@]})); then
+    folders+=("Patches"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+      "$(json_str patches)" "$(json_str "Patches")" false)")
+    for mid in "${pkeys[@]}"; do
+      items+=("patches/$mid"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+        "$(json_str patches)" "$(json_str "patch:$mid")" \
+        "$(json_str "$mid — remove patch")" "$(json_str "restores the original files")")")
+    done
+  fi
+  # Quick fixes that can actually be removed (support --remove/--uninstall).
+  folders+=("Quick fixes"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+    "$(json_str fixes)" "$(json_str "Quick fixes")" false)")
+  local fid
+  for fid in hyprland-crash ableton-wine-scroll 1px-seam; do
+    items+=("fixes/$fid"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+      "$(json_str fixes)" "$(json_str "fix:$fid")" "$(json_str "$fid")" \
+      "$(json_str "$(fix_desc "$fid")")")")
+  done
+  # Preinstalls is a row again, and it is TICKABLE. The long description that
+  # used to sit under it is gone for good: the page no longer doubles in height
+  # when one row carries a sub-line, so a long label is just a long label now
+  # and the row says plainly what ticking it is for.
+  folders+=("Preinstalls"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+    "$(json_str preinstalls)" "$(json_str "Preinstalls")" false)")
+  items+=("preinstalls/choose"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s,"disabled":%s}' \
+    "$(json_str preinstalls)" "$(json_str "preinstalls:choose")" \
+    "$(json_str "Choose which Omarchy preinstalls to remove")" \
+    "$(json_str "tick it, then the list opens when you apply")" false)")
+
+  local line
+  while IFS= read -r line; do [[ -n $line ]] && printf '%s\n' "${line#*$'\t'}"; done \
+    < <(printf '%s\n' "${folders[@]}" | LC_ALL=C sort -f)
+  while IFS= read -r line; do [[ -n $line ]] && printf '%s\n' "${line#*$'\t'}"; done \
+    < <(printf '%s\n' "${items[@]}" | LC_ALL=C sort -f)
+}
+
+# ─── Backups present in BACKUP_DIR ────────────────────────────────────────
+# Most recent first: {"file":..,"size":..,"date":..}
+cmd_backups(){
+  local -a files=()
+  local f sz name date
+  for f in "$BACKUP_DIR"/omarchy-backup-*.tar.gz*; do [[ -f $f ]] && files+=("$f"); done
+  for ((i=${#files[@]}-1; i>=0; i--)); do
+    f="${files[$i]}"; name="$(basename "$f")"
+    sz=$(du -h "$f" | cut -f1)
+    date="$(backup_desc "$name")"
+    printf '{"file":%s,"size":%s,"date":%s}\n' \
+      "$(json_str "$name")" "$(json_str "$sz")" "$(json_str "$date")"
+  done
+}
+
+# ─── Backup content options (installed apps/tuis/webapps + facts) ──────────
+# Emits the same content tree the old interactive backup asked about, so the
+# TUI can offer it. Each item's key IS the exact "apps.selected" line
+# ("APP pkg" / "TUI pkg" / "WEB name|url|icon"); the TUI writes back the
+# checked keys and passes the file to `backup --selection=`.
+cmd_backup_options(){
+  load_catalog || true
+  detect_installed_apps
+  local had_prev=0
+  load_previous_selection 2>/dev/null && had_prev=1
+  local keepass=false zen=false
+  # The screen only shows a row for what the backup can actually take, and the
+  # backup's own conditions are the reference (see do_backup): KeePassXC needs
+  # the package AND its config folder, Zen needs the app AND a live profile.
+  # A machine without either shows neither row, instead of offering a toggle
+  # that silently does nothing.
+  if pkg_has keepassxc && [[ -d "$HOME/.config/keepassxc" ]]; then keepass=true; fi
+  if pkg_has zen-browser-bin && [[ -f "$HOME/.config/zen/profiles.ini" ]] && [[ -d "$HOME/.config/zen" ]]; then zen=true; fi
+  printf '{"opts":true,"keepass":%s,"zen":%s}\n' "$keepass" "$zen"
+
+  local e name label checked p
+  if ((${#INSTALLED_APP[@]})); then
+    printf '{"folder":"apps","label":"Apps"}\n'
+    for e in "${INSTALLED_APP[@]}"; do
+      name="${e%%|*}"; label="${e#*|}"
+      checked=true
+      if ((had_prev)); then
+        checked=false
+        for p in "${PREV_APP[@]:-}"; do [[ $p == "$name" ]] && { checked=true; break; }; done
+      fi
+      printf '{"folder":"apps","key":%s,"label":%s,"checked":%s}\n' \
+        "$(json_str "APP $name")" "$(json_str "$label")" "$checked"
+    done
+  fi
+  if ((${#INSTALLED_TUI[@]})); then
+    printf '{"folder":"tuis","label":"TUIs"}\n'
+    for e in "${INSTALLED_TUI[@]}"; do
+      name="${e%%|*}"; label="${e#*|}"
+      checked=true
+      if ((had_prev)); then
+        checked=false
+        for p in "${PREV_TUI[@]:-}"; do [[ $p == "$name" ]] && { checked=true; break; }; done
+      fi
+      printf '{"folder":"tuis","key":%s,"label":%s,"checked":%s}\n' \
+        "$(json_str "TUI $name")" "$(json_str "$label")" "$checked"
+    done
+  fi
+  if ((${#INSTALLED_WEB[@]})); then
+    printf '{"folder":"webapps","label":"Webapps"}\n'
+    for e in "${INSTALLED_WEB[@]}"; do
+      name="${e%%|*}"
+      checked=true
+      if ((had_prev)); then
+        checked=false
+        for p in "${PREV_WEB[@]:-}"; do [[ $p == "$name" ]] && { checked=true; break; }; done
+      fi
+      printf '{"folder":"webapps","key":%s,"label":%s,"checked":%s}\n' \
+        "$(json_str "WEB $e")" "$(json_str "$name")" "$checked"
+    done
+  fi
+}
+
+# ─── Repo update check (read-only mirror of launcher_update) ──────────────
+# Single JSON object: {"repo_update":bool,"modules":[{"key":..,"label":..}]}
+cmd_update_check(){
+  local old_head="" new_head="" p m row id state
+  local -a changed=() cand=() ids=()
+  local repo_update=false
+  [[ -d "$REPO_DIR/.git" ]] && old_head="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+  if repo_update_avail; then repo_update=true; fi
+  [[ -d "$REPO_DIR/.git" ]] && new_head="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+  if [[ -n $old_head && -n $new_head && $old_head != "$new_head" ]]; then
+    mapfile -t changed < <(git -C "$REPO_DIR" diff --name-only "$old_head" "$new_head" 2>/dev/null)
+  fi
+  mapfile -t -O "${#changed[@]}" changed < <(
+    git -C "$REPO_DIR" diff --name-only HEAD 2>/dev/null
+    git -C "$REPO_DIR" diff --name-only --cached 2>/dev/null
+  )
+  load_excluded
+  apply_includes
+  for row in "${MODULES[@]}"; do
+    id="${row%%:*}"
+    is_excluded "$id" && continue
+    state="$(module_state "$id")"; state="${state%%:*}"
+    [[ $state == ok || $state == partial ]] || continue
+    for p in "${changed[@]:-}"; do
+      [[ -n $p && "$(module_of_path "$p")" == "$id" ]] && { cand+=("$id"); break; }
+    done
+  done
+  for row in "${MODULES[@]}"; do
+    id="${row%%:*}"
+    for m in "${cand[@]:-}"; do [[ $m == "$id" ]] && ids+=("$row") && break; done
+  done
+  printf '{"repo_update":%s,"repo_version":%s,"modules":[' \
+    "$([[ $repo_update == true ]] && echo true || echo false)" "$(json_str "$REPO_VERSION")"
+  local i=0
+  for row in "${ids[@]}"; do
+    ((i)) && printf ','
+    printf '{"key":%s,"label":%s}' "$(json_str "${row%%:*}")" "$(json_str "${row#*:}")"
+    i=$((i+1))
+  done
+  printf ']}\n'
+}
+
+# ─── Missing manually-downloaded installers for a selection ────────────────
+# Emits one JSON record per selected app whose manual installer is absent:
+#   {"folder":..,"key":..,"label":..,"file":..,"url":..}
+# Nothing when everything is present. This is what lets the TUI prompt, BEFORE
+# running anything, with the exact file name to drop in the module folder.
+_manual_asset_spec(){ # appkey -> "expected-file|url" (empty: no manual file)
+  case "$1" in
+    ableton)   printf '%s|%s' 'Ableton_Live_<edition>_<version>_64.zip' 'https://www.ableton.com/en/account/' ;;
+    bitwig)    printf '%s|%s' 'bitwig-studio-*.deb' 'https://www.bitwig.com/download/' ;;
+    guitarpro) printf '%s|%s' 'guitar-pro-8-setup.exe' 'https://www.guitar-pro.com/' ;;
+    davinci|davinci-resolve)   printf '%s|%s' 'DaVinci_Resolve_[Studio_]<version>_Linux.zip' 'https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion' ;;
+    *)         printf '' ;;
+  esac
+}
+_manual_asset_present(){ # appkey -> 0 if its installer file exists
+  local key="$1" f
+  case "$key" in
+    ableton)
+      for f in "$APPS_DIR"/ableton/Ableton*.zip "$APPS_DIR"/ableton/ableton*.zip; do [[ -f $f ]] && return 0; done ;;
+    bitwig)
+      for f in "$APPS_DIR"/bitwig/bitwig*.deb; do [[ -f $f ]] && return 0; done ;;
+    guitarpro)
+      [[ -f $APPS_DIR/guitarpro/guitar-pro-8-setup.exe ]] && return 0 ;;
+    davinci|davinci-resolve)
+      for f in "$APPS_DIR"/davinci/*[Rr]esolve*.zip "$APPS_DIR"/davinci/[Dd]a[Vv]inci*.zip; do [[ -f $f ]] && return 0; done ;;
+  esac
+  return 1
+}
+# A Blackmagic zip that is NOT DaVinci Resolve (e.g. Fusion Studio) → a clear
+# hint instead of a bare "missing".
+_manual_asset_note(){ # appkey -> human note (empty when nothing to add)
+  case "$1" in
+    davinci|davinci-resolve)
+      local bad
+      bad="$(compgen -G "$APPS_DIR/davinci/*[Ff]usion*.zip" 2>/dev/null | head -1)"
+      [[ -z $bad ]] && bad="$(compgen -G "$APPS_DIR/davinci/Blackmagic_*.zip" 2>/dev/null | head -1)"
+      [[ -n $bad ]] && printf '%s is a Blackmagic Fusion Studio installer, not DaVinci Resolve.' "$(basename "$bad")"
+      ;;
+  esac
+}
+cmd_missing_assets(){
+  local folder="${1:-}"; shift || true
+  [[ $folder == apps ]] || return 0
+  local key spec expected url note
+  for key in "$@"; do
+    spec="$(_manual_asset_spec "$key")"
+    [[ -n $spec ]] || continue
+    expected="${spec%%|*}"; url="${spec#*|}"
+    _manual_asset_present "$key" && continue
+    note="$(_manual_asset_note "$key")"
+    printf '{"folder":%s,"key":%s,"label":%s,"file":%s,"url":%s,"note":%s}\n' \
+      "$(json_str "$folder")" "$(json_str "$key")" "$(json_str "$key")" \
+      "$(json_str "$expected")" "$(json_str "$url")" "$(json_str "$note")"
+  done
+}
+
+# ─── Patch scripts present for a selection ────────────────────────────────
+# Emits {"folder":..,"key":..,"label":..,"script":..} for each selected app
+# whose PATCH script is present in its module folder (nothing when absent).
+# This is what the TUI uses to PROPOSE the patch after an install — and to stay
+# silent when there is no patch, as the pre-TUI launcher did.
+_manual_patch_spec(){ # appkey -> module-relative patch script (empty: none)
+  case "$1" in
+    ableton)   printf 'ableton/PATCH/patch-ableton.sh' ;;
+    bitwig)    printf 'bitwig/PATCH/patch-bitwig.sh' ;;
+    guitarpro) printf 'guitarpro/PATCH/patch-guitarpro' ;;
+    davinci|davinci-resolve)   printf 'davinci/PATCH/patch-resolve.sh' ;;
+    *)         printf '' ;;
+  esac
+}
+
+# Report whether a patch script says its patch is applied (all four support a
+# read-only --check that prints "applied"/"in place"/"patched").
+_patch_applied(){
+  local out
+  out="$(bash "$1" --check 2>/dev/null || true)"
+  grep -qiE 'applied|in place|patched' <<<"$out"
+}
+
+cmd_patches(){
+  local folder="${1:-}"; shift || true
+  [[ $folder == apps ]] || return 0
+  load_excluded
+  local key spec path applied
+  for key in "$@"; do
+    spec="$(_manual_patch_spec "$key")"
+    [[ -n $spec ]] || continue
+    # Only propose a patch for an app that is actually INSTALLED: a failed
+    # install must never offer the patch (the patch would fail anyway).
+    _installed_state "$key" || continue
+    path="$APPS_DIR/$spec"
+    [[ -f $path ]] || continue
+    applied=false
+    _patch_applied "$path" && applied=true
+    printf '{"folder":%s,"key":%s,"label":%s,"script":%s,"applied":%s}\n' \
+      "$(json_str "$folder")" "$(json_str "$key")" "$(json_str "$key")" \
+      "$(json_str "$path")" "$applied"
+  done
+}
+
+# ─── Health check: what drifted from the chosen install ────────────────────
+# {"kind":"module|infra","id":..,"label":..,"detail":..} for every installed
+# module whose artifacts went missing (state "partial") and every mosquitOmarchy
+# piece that must be present (TUI binary, float rule, menu entry, shortcut,
+# update hook, crash skill). Nothing when everything matches.
+cmd_health(){
+  load_excluded
+  local row id state raw detail
+  for row in "${MODULES[@]}"; do
+    id="${row%%:*}"; is_excluded "$id" && continue
+    # `apps` is an umbrella over the catalogs and is almost always "partial"
+    # by design (you never install every catalog entry): not drift.
+    [[ $id == apps ]] && continue
+    # `st_*` may answer "partial:<what is missing>". That detail is the whole
+    # point of the Health screen: "some files went missing" told the user
+    # nothing about which files, or that one of them needs root.
+    raw="$(module_state "$id" 2>/dev/null)"
+    state="${raw%%:*}"; detail="${raw#*:}"
+    [[ $state == partial ]] || continue
+    [[ $detail == "$raw" ]] && detail="partially installed — some files went missing"
+    printf '{"kind":"module","id":%s,"label":%s,"detail":%s}\n' \
+      "$(json_str "$id")" "$(json_str "${row#*:}")" "$(json_str "$detail")"
+  done
+  [[ -x "$BIN_DIR/mosquitomarchy" && -x "$BIN_DIR/mosquitomarchy-tui" ]] || \
+    printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
+      "$(json_str tui)" "$(json_str "mosquitOmarchy TUI")" "$(json_str "launcher binary missing")"
+  [[ -f $HYPRLAND ]] && ! grep -qF 'mosquitomarchy-tui-floating' "$HYPRLAND" && \
+    printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
+      "$(json_str float)" "$(json_str "TUI float rule")" "$(json_str "Hyprland float rule missing")"
+  # The menu entry used to be a top-level "install.mosquitomarchy" object. It
+  # now lives in the managed Setup > mosquito block as setup.mosquito.manager,
+  # so this test reported the entry missing on a perfectly healthy install --
+  # the health check had simply never been updated to the new mechanism. Test
+  # the key the installer actually writes, via the same marker map the
+  # "Menu entries" screen uses, so the two can never disagree again.
+  [[ -f $MENU ]] && ! grep -qE "^[[:space:]]*\"$(menu_entries_marker mosquitomarchy)\"[[:space:]]*:" "$MENU" 2>/dev/null && \
+    printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
+      "$(json_str menu)" "$(json_str "Omarchy menu entry")" \
+      "$(json_str "the mosquitOmarchy row is missing from the Omarchy menu")"
+  [[ -f $HYPR_DIR/bindings.lua ]] && ! grep -q 'mosquitOmarchy' "$HYPR_DIR/bindings.lua" && \
+    printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
+      "$(json_str shortcut)" "$(json_str "Keyboard shortcut")" "$(json_str "SUPER + ALT + M missing")"
+  [[ -x "$HOME/.config/omarchy/hooks/post-boot.d/zzz-mosquitomarchy-update-check" ]] || \
+    printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
+      "$(json_str hook)" "$(json_str "Update-check hook")" "$(json_str "post-boot hook missing")"
+  [[ -e "$HOME/.agents/skills/mosquitomarchy-crash" ]] || \
+    printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
+      "$(json_str skill)" "$(json_str "Crash skill")" "$(json_str "skill symlink missing")"
+  return 0
+}
+
+# ─── Heal: re-apply every missing piece of the chosen install ──────────────
+# Each infra piece is keyed by its short id (tui, menu, shortcut, hook, skill);
+# modules use their module id. With no args, everything found by cmd_health is
+# re-applied; with args, only the ticked ids are (the TUI's Health check list
+# sends its checked rows).
+cmd_heal(){
+  local want=("$@")
+  [[ ${#want[@]} -gt 0 ]] && msg "Health check: re-applying ${#want[@]} selected piece(s)…"
+  YES=1
+  MODULE_FAILURES=0
+  msg "Health check: re-applying the missing pieces…"
+
+  # `in_want id`: wanted when the user gave a selection and `id` is in it, or
+  # when no selection was given (heal everything found).
+  in_want(){
+    [[ ${#want[@]} -eq 0 ]] && return 0
+    local w
+    for w in "${want[@]}"; do [[ $w == "$1" ]] && return 0; done
+    return 1
+  }
+
+  # 1. Launcher infra (idempotent): TUI binary + dispatcher + float rule + crash tool + skill.
+  if in_want tui; then
+    ensure_mosquitomarchy_tui || warn "Launcher re-deploy reported an issue."
+  fi
+  # 2. Omarchy menu entry (same key test as cmd_health, so heal only fires on
+  # what health actually reported).
+  if in_want menu; then
+    grep -qE "^[[:space:]]*\"$(menu_entries_marker mosquitomarchy)\"[[:space:]]*:" "$MENU" 2>/dev/null || install_menu_entry || true
+  fi
+  # 3. Shortcut — only when the user had accepted the prompt.
+  if in_want shortcut && [[ -f "$HOME/.local/state/mosquitomarchy/shortcut-prompted" ]]; then
+    kb_ensure "SUPER + ALT + M" "mosquitOmarchy" "$HOME/.local/bin/mosquitomarchy" cmd \
+      || warn "Shortcut re-add reported an issue."
+    if (( KB_CHANGED )); then
+      kb_reload || warn "Shortcut re-add reported an issue."
+    fi
+  fi
+  # 4. Update-check hook.
+  if in_want hook; then
+    [[ -x "$HOME/.config/omarchy/hooks/post-boot.d/zzz-mosquitomarchy-update-check" ]] \
+      || run_mosquitomarchy_update >/dev/null 2>&1 || true
+  fi
+  # 5. Crash skill symlink (the codebase `mosquitomarchy-crash` skill the agent reads).
+  if in_want skill; then
+    mkdir -p "$HOME/.agents/skills"
+    ln -sfn "$APP_DIR/skills/mosquitomarchy-crash" "$HOME/.agents/skills/mosquitomarchy-crash"
+  fi
+
+  # 6. Re-apply the ticked partially-installed modules (or all, when no selection).
+  load_excluded
+  local row id state raw detail
+  SELECTED=()
+  RESULTS=()
+  for row in "${MODULES[@]}"; do
+    id="${row%%:*}"; is_excluded "$id" && continue
+    [[ $id == apps ]] && continue   # umbrella, not a single install (see cmd_health)
+    if ! in_want "$id"; then
+      continue
+    fi
+    # `|| true` INSIDE the substitution: a failing module_state must not abort
+    # the whole heal under `set -e` (a bare `var="$(cmd)"` would).
+    state="$(module_state "$id" 2>/dev/null || true)"; state="${state%%:*}"
+    [[ $state == partial ]] && SELECTED+=("$id")
+  done
+  if ((${#SELECTED[@]})); then
+    msg "Re-applying ${#SELECTED[@]} partially-installed module(s)…"
+    exec_modules
+  else
+    ok "No partially-installed module to re-apply."
+  fi
+
+  if (( MODULE_FAILURES > 0 )); then
+    err "Health check finished with errors — see the messages above."
+    return 1
+  fi
+  ok "Health check done — everything is back in place."
+  return 0
+}
+
+# ─── Actions (streamed to the Runner) ─────────────────────────────────────
+# Verify, after an install run, that the selected items are REALLY installed.
+# This is the safety net against every silent no-op: a skipped/unknown entry, a
+# module that returned 0 without installing, an apps-module run that swallowed
+# its failure. A module whose state cannot be read (no module_state function) is
+# not flagged, to avoid false negatives.
+_verify_selection_installed(){ # cat keys...
+  local cat="$1"; shift
+  local bad=0 k name st
+  for k in "$@"; do
+    [[ -n $k ]] || continue
+    case $k in
+      TUI\ *)  name="${k#TUI }"; name="${name%%|*}"
+               pkg_has "$name" || { err "Not installed: $name"; bad=1; } ;;
+      WEB\ *)  name="${k#WEB }"; name="${name%%|*}"
+               is_webapp_installed "$name" || { err "Not installed: $name"; bad=1; } ;;
+      PLUG\ *) : ;;  # Omarchy shell plugin: no simple id check
+      theme)   : ;;  # theme build is verified by the script's own output
+      *)
+               # The FINAL STATE decides (ultra-optimized check: one
+               # module_state call per module, direct disk probes). `ok` =
+               # fully deployed; `partial` = something declared installed is
+               # missing → NOT a success (the Health check re-applies it);
+               # `missing` obviously not either.
+               st="$(module_state "$k" 2>/dev/null || true)"; st="${st%%:*}"
+               if [[ -n $st ]]; then
+                 [[ $st == ok ]] || { err "Module '$k' is NOT fully installed (state: $st)."; bad=1; }
+               fi
+               ;;
+    esac
+  done
+  return $bad
+}
+
+# Install a setup category with the given candidate keys.
+cmd_install(){
+  local cat="${1:-}"
+  shift
+  CATEGORY_SELECTED=("$@")
+  YES=1
+  MODULE_FAILURES=0
+  # An explicit TUI selection overrides a previous "uninstalled by you": lift
+  # the exclusion (persistently) so category_run does not silently skip it and
+  # report a false success.
+  load_excluded
+  local k bad=0
+  for k in "${CATEGORY_SELECTED[@]:-}"; do
+    [[ -n $k ]] || continue
+    is_excluded "$k" && unexclude "$k"
+  done
+  if ((${#CATEGORY_SELECTED[@]})); then
+    category_run "$cat"
+    _verify_selection_installed "$cat" "${CATEGORY_SELECTED[@]}" || bad=1
+    (( MODULE_FAILURES > 0 )) && bad=1
+    if ((bad)); then
+      # Name the modules that did not land, so the failure is actionable: the
+      # log already says WHICH one, but the summary line is what stays on
+      # screen, and "finished with errors" on its own sends the user hunting
+      # through a long log. The count distinguishes "one module missed" from
+      # "the batch is a mess".
+      local -a notok=()
+      local nk
+      for nk in "${CATEGORY_SELECTED[@]:-}"; do
+        [[ -n $nk && $nk != TUI\ * && $nk != WEB\ * && $nk != PLUG\ * && $nk != theme ]] || continue
+        local nst; nst="$(module_state "$nk" 2>/dev/null || true)"; nst="${nst%%:*}"
+        [[ -z $nst || $nst == ok ]] || notok+=("$nk ($nst)")
+      done
+      if ((${#notok[@]})); then
+        err "Install finished with errors — not fully installed: ${notok[*]}"
+      else
+        # No module is actually short: something else in the run failed
+        # (a script's own non-zero step). Say so rather than blaming a module.
+        err "Install finished with errors — see the messages above."
+      fi
+      return 1
+    fi
+    ok "Install finished successfully."
+  else
+    warn "nothing selected for '$cat' — nothing installed."
+  fi
+}
+
+# Apply quick fixes (ids from cmd_fixes).
+cmd_fixes_run(){
+  RESULTS=()
+  FIXES_SELECTED=("$@")
+  YES=1
+  MODULE_FAILURES=0
+  run_fixes || true
+  if (( MODULE_FAILURES > 0 )); then
+    err "One or more quick fixes failed — see the messages above."
+    return 1
+  fi
+  final_report
+}
+
+# Re-apply the given installed modules (update flow).
+cmd_update(){
+  SELECTED=("$@")
+  YES=1
+  RESULTS=()
+  MODULE_FAILURES=0
+  exec_modules
+  if (( MODULE_FAILURES > 0 )); then
+    err "One or more modules failed to re-apply."
+    return 1
+  fi
+  final_report
+}
+
+# Apply a multi-category Setup selection in ONE streamed run.
+# Each argument is one group of TAB-separated fields: "<folder>\t<key>\t…"
+# (keys may contain spaces and "|", but never a tab). Groups run in the given
+# order. The TUI's Setup tree uses this so a single Runner shows the whole
+# batch instead of chaining per-category runs.
+# Run the patch script(s) for the selected apps (streamed). Apps without a
+# patch script are skipped; the TUI only asks for the ones it found.
+cmd_run_patch(){
+  local folder="${1:-}"; shift || true
+  if [[ $folder != apps ]]; then warn "no patch for '$folder'."; return 0; fi
+  YES=1
+  local key spec path rc=0
+  for key in "$@"; do
+    spec="$(_manual_patch_spec "$key")"
+    [[ -n $spec ]] || { warn "no patch script for '$key' — skipped."; continue; }
+    path="$APPS_DIR/$spec"
+    [[ -f $path ]] || { warn "patch script not found for '$key' — skipped."; continue; }
+    msg "Applying the $key patch: $(basename "$path")"
+    case "$key" in
+      ableton) bash "$path" -y || rc=1 ;;
+      bitwig)  mq_sudo bash "$path" || rc=1 ;;
+      davinci|davinci-resolve) mq_sudo bash "$path" || rc=1 ;;
+      *)       bash "$path" || rc=1 ;;
+    esac
+  done
+  if ((rc)); then
+    err "One or more patch scripts failed."
+  else
+    ok "Patch step finished."
+  fi
+  return $rc
+}
+
+# Revert (remove) the patch script(s) for the selected apps (streamed).
+cmd_remove_patch(){
+  local folder="${1:-}"; shift || true
+  if [[ $folder != apps ]]; then warn "no patch for '$folder'."; return 0; fi
+  YES=1
+  local key spec path rc=0
+  for key in "$@"; do
+    spec="$(_manual_patch_spec "$key")"
+    [[ -n $spec ]] || { warn "no patch script for '$key' — skipped."; continue; }
+    path="$APPS_DIR/$spec"
+    [[ -f $path ]] || { warn "patch script not found for '$key' — skipped."; continue; }
+    msg "Reverting the $key patch: $(basename "$path")"
+    case "$key" in
+      bitwig|davinci|davinci-resolve) mq_sudo bash "$path" --revert || rc=1 ;;
+      *)              bash "$path" --revert || rc=1 ;;
+    esac
+  done
+  if ((rc)); then
+    err "One or more patch reverts failed."
+  else
+    ok "Patch removal finished."
+  fi
+  return $rc
+}
+
+cmd_apply(){
+  local group folder
+  YES=1
+  for group in "$@"; do
+    local -a arr=()
+    IFS=$'\t' read -r -a arr <<< "$group"
+    folder="${arr[0]:-}"
+    local -a keys=("${arr[@]:1}")
+    case $folder in
+      fixes)
+        ((${#keys[@]})) && cmd_fixes_run "${keys[@]}"
+        ;;
+      menu)
+        cmd_menu_entry
+        ;;
+      *)
+        # A folder may mix installable keys with the special menu-entry key
+        # (the mosquito folder carries it), so route each key.
+        local -a inst=()
+        local k
+        for k in "${keys[@]:-}"; do
+          [[ -n $k ]] || continue
+          if [[ $k == menu-entry ]]; then
+            cmd_menu_entry
+          else
+            inst+=("$k")
+          fi
+        done
+        ((${#inst[@]})) && cmd_install "$folder" "${inst[@]}"
+        ;;
+    esac
+  done
+}
+
+# Git pull the repo (update zone).
+cmd_update_repo(){
+  YES=1
+  if [[ -d "$REPO_DIR/.git" ]] && command -v git >/dev/null 2>&1; then
+    update_repo_ff
+  else
+    err "No git repo at $REPO_DIR (or git missing) — nothing to update."
+  fi
+}
+
+# Update modules: fast-forward the LOCAL repo from GitHub FIRST (so both
+# versions are in sync), then re-apply the installed modules whose files
+# changed. With no repo update (or no connection), it re-applies the modules
+# changed in the local scripts. This is the single "Update modules" action.
+cmd_update_modules(){
+  YES=1
+  # Optional subset: module ids from the TUI's selectable list. When given,
+  # ONLY those modules are re-applied (the repo fast-forward happens as
+  # usual, so the scripts themselves are up to date either way).
+  local -a only=("$@")
+  local before="" after="" p m row id state
+  [[ -d "$REPO_DIR/.git" ]] && before="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+  if repo_update_avail; then
+    msg "Updating the local scripts repo from GitHub first (keeps both versions in sync)…"
+    update_repo_ff || warn "Repo update failed — continuing with the local scripts."
+  fi
+  [[ -d "$REPO_DIR/.git" ]] && after="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+
+  local -a changed=()
+  if [[ -n $before && -n $after && $before != "$after" ]]; then
+    mapfile -t changed < <(git -C "$REPO_DIR" diff --name-only "$before" "$after" 2>/dev/null)
+  fi
+  mapfile -t -O "${#changed[@]}" changed < <(
+    git -C "$REPO_DIR" diff --name-only HEAD 2>/dev/null
+    git -C "$REPO_DIR" diff --name-only --cached 2>/dev/null
+  )
+
+  load_excluded
+  apply_includes
+  local -a ids=()
+  for row in "${MODULES[@]}"; do
+    id="${row%%:*}"
+    is_excluded "$id" && continue
+    state="$(module_state "$id")"
+    [[ $state == ok || $state == partial ]] || continue
+    for p in "${changed[@]:-}"; do
+      [[ -n $p && "$(module_of_path "$p")" == "$id" ]] && { ids+=("$id"); break; }
+    done
+  done
+
+  if ((${#only[@]})); then
+    # Re-apply just the subset the user kept selected in the TUI.
+    RESULTS=()
+    MODULE_FAILURES=0
+    SELECTED=("${only[@]}")
+    msg "Re-applying ${#only[@]} selected module(s)…"
+    exec_modules
+    if (( MODULE_FAILURES > 0 )); then
+      err "One or more modules failed to update."
+      return 1
+    fi
+    final_report
+    return 0
+  fi
+
+  if ((${#ids[@]})); then
+    RESULTS=()
+    MODULE_FAILURES=0
+    SELECTED=("${ids[@]}")
+    msg "Re-applying ${#ids[@]} changed installed module(s)…"
+    exec_modules
+    if (( MODULE_FAILURES > 0 )); then
+      err "One or more modules failed to update."
+      return 1
+    fi
+    final_report
+  else
+    ok "No installed module needs re-applying — everything is up to date."
+  fi
+}
+
+# Uninstall modules one by one (never the gum chooser). Catalog keys from the
+# uninstall tree (APP/TUI/WEB …) are routed to the apps module's uninstaller.
+cmd_uninstall(){
+  local -a modules=() catalog=() patches=() fixids=() menuops=()
+  local id
+  for id in "$@"; do
+    case "$id" in
+      APP\ *|TUI\ *|WEB\ *|PLUG\ *) catalog+=("$id") ;;
+      patch:*) patches+=("${id#patch:}") ;;
+      fix:*)   fixids+=("${id#fix:}") ;;
+      menu:*|shortcut) menuops+=("$id") ;;
+      *) modules+=("$id") ;;
+    esac
+  done
+  YES=1
+  MODULE_FAILURES=0
+  if ((${#modules[@]})); then
+    for id in "${modules[@]}"; do
+      uninstall_module "$id" || MODULE_FAILURES=$((MODULE_FAILURES + 1))
+    done
+    un_shared_menu
+  fi
+  if ((${#patches[@]})); then
+    cmd_remove_patch apps "${patches[@]}" || MODULE_FAILURES=$((MODULE_FAILURES + 1))
+  fi
+  if ((${#fixids[@]})); then
+    local fid flag script
+    for fid in "${fixids[@]}"; do
+      case $fid in
+        hyprland-crash)      flag=--remove;    script=scripts/fixes/fix-hyprland-crash.sh ;;
+        ableton-wine-scroll) flag=--uninstall; script=scripts/fixes/fix-wine-scroll.sh ;;
+        1px-seam)            flag=--remove;    script=scripts/fixes/fix-1px-seam.sh ;;
+        *) warn "Quick fix '$fid' is not removable — skipped."; continue ;;
+      esac
+      if [[ -f "$SCRIPT_DIR/$script" ]] && bash "$SCRIPT_DIR/$script" "$flag" -y; then
+        ok "Quick fix '$fid' removed."
+      else
+        MODULE_FAILURES=$((MODULE_FAILURES + 1)); err "Quick fix '$fid' removal failed."
+      fi
+    done
+  fi
+  if ((${#menuops[@]})); then
+    for id in "${menuops[@]}"; do
+      case $id in
+        menu:entry)
+          if strip_mosquitomarchy_menu_entry; then ok "mosquitOmarchy menu entry removed."; fi ;;
+        shortcut)
+          if kb_remove "SUPER + ALT + M"; then
+            kb_reload || true
+            ok "Keyboard shortcut SUPER + ALT + M removed."
+          else
+            MODULE_FAILURES=$((MODULE_FAILURES + 1)); err "Shortcut removal failed."
+          fi ;;
+      esac
+    done
+  fi
+  if ((${#catalog[@]})); then
+    local tmpf; tmpf="$(mktemp)"
+    printf '%s\n' "${catalog[@]}" > "$tmpf"
+    msg "Uninstalling ${#catalog[@]} catalog entr(ies)…"
+    if bash "$SCRIPT_DIR/scripts/apps/uninstall-apps.sh" --from-backup="$tmpf" -y; then
+      ok "Catalog uninstall done."
+    else
+      MODULE_FAILURES=$((MODULE_FAILURES + 1))
+      err "uninstall-apps.sh ran into problems"
+    fi
+    rm -f "$tmpf"
+  fi
+  if (( MODULE_FAILURES > 0 )); then
+    err "Uninstall finished with errors — see the messages above."
+    return 1
+  fi
+}
+
+# Register the mosquitOmarchy menu entry (menu category).
+cmd_menu_entry(){
+  YES=1
+  install_menu_entry || { err "Could not register the mosquitOmarchy menu entry."; return 1; }
+}
+
+# Dated backup now. Options (all optional):
+#   --vst=list|full|none   VST plugin handling (default: list)
+#   --keepass=yes|no       include KeePassXC passwords when installed
+#   --zen=yes|no           include the Zen browser settings (default: yes)
+#   --selection=FILE       apps.selected content (the TUI's checkbox tree)
+cmd_backup(){
+  local vst="list" keepass="yes" zen="yes" sel="" a
+  for a in "$@"; do
+    case $a in
+      --vst=*) vst="${a#*=}" ;;
+      --keepass=*) keepass="${a#*=}" ;;
+      --zen=*) zen="${a#*=}" ;;
+      --selection=*) sel="${a#*=}" ;;
+    esac
+  done
+  YES=1
+  VST_MODE="$vst"
+  # Plain ifs, never `[[ … ]] && export`: under `set -e` a false condition
+  # makes the whole && list return 1, which is a landmine that moves as soon
+  # as the caller stops swallowing the status.
+  if [[ $keepass == no ]]; then export BACKUP_SKIP_KEEPASS=1; fi
+  if [[ $zen == no ]]; then export BACKUP_SKIP_ZEN=1; fi
+  if [[ -n $sel && -f $sel ]]; then export BACKUP_APPS_SELECTION_FILE="$sel"; fi
+  do_backup || true
+}
+
+# Restore a backup file by name (from cmd_backups).
+cmd_restore(){
+  local file="${1:-}"
+  [[ -n $file ]] || { err "mosquitomarchy-actions restore: missing backup name."; exit 1; }
+  YES=1
+  RESTORE_FILE="$file"
+  restore_flow || true
+}
+
+# ─── Keybindings (mosquitOmarchy-managed SUPER bindings) ───────────────────
+# The manager is part of the TUI now; these subcommands are its backend. The
+# primitives (kb_ensure/kb_remove/kb_reset/kb_reload) live in
+# scripts/lib/keybindings.bash, sourced via mosquitomarchy-setup.sh.
+cmd_kb_list(){
+  kb_load_ours
+  local k label cmd type def
+  for k in "${KB_OWN_ORDER[@]}"; do
+    [[ -n "$k" ]] || continue
+    IFS='|' read -r label cmd type <<<"${KB_OURS[$k]}"
+    def="$(kb_friendly_default "$k")"
+    printf '{"key":%s,"label":%s,"cmd":%s,"type":%s,"replaces":%s}\n' \
+      "$(json_str "$k")" "$(json_str "$label")" "$(json_str "$cmd")" \
+      "$(json_str "$type")" "$(json_str "$def")"
+  done
+  return 0
+}
+
+cmd_kb_free(){
+  kb_load_ours
+  kb_free_keys
+  return 0
+}
+
+cmd_kb_add(){ # <combo> <label> <cmd> <type>
+  (($# >= 4)) || { err "Usage: kb-add <combo> <label> <cmd> <type>"; return 1; }
+  local combo="$1" label="$2" cmd="$3" type="$4"
+  combo="$(tr 'a-z' 'A-Z' <<< "$combo" | sed -E 's/ *\+ */ + /g; s/^ +//; s/ +$//')"
+  [[ "$combo" =~ ^([A-Z0-9_]+( +\+ )?)+[A-Z0-9_]+$ ]] || { err "Invalid combo format: $combo"; return 1; }
+  # A combo bound OUTSIDE our managed block would duplicate: refuse and let
+  # the TUI tell the user to pick another key.
+  if [[ -f "$KB_CONF" ]] && sed "/$KB_BEGIN/,/$KB_END/d" "$KB_CONF" 2>/dev/null \
+      | rg -x -F "o.bind(\"$combo\"" -N >/dev/null 2>&1; then
+    err "Already bound outside the managed block: $combo"
+    return 1
+  fi
+  kb_ensure "$combo" "$label" "$cmd" "$type"
+  ok "Bound: $combo → $label"
+}
+
+cmd_kb_remove(){ # combo…
+  (($#)) || { err "Usage: kb-remove <combo>…"; return 1; }
+  kb_remove "$@"
+  ok "Keybinding removal done."
+}
+
+cmd_kb_reset(){
+  kb_reset
+  ok "All mosquitOmarchy-managed keybindings removed."
+}
+
+cmd_kb_reload(){
+  kb_reload
+}
+
+# Register the global shortcut (SUPER + ALT + M) that opens mosquitOmarchy.
+# Also marks the first-run prompt as answered.
+cmd_add_shortcut(){
+  YES=1
+  mkdir -p "$HOME/.local/state/mosquitomarchy" 2>/dev/null || true
+  : > "$HOME/.local/state/mosquitomarchy/shortcut-prompted" 2>/dev/null || true
+  kb_ensure "SUPER + ALT + M" "mosquitOmarchy" "$HOME/.local/bin/mosquitomarchy" cmd
+  if (( KB_CHANGED )); then
+    kb_reload || warn "Hyprland reload reported an issue."
+  else
+    ok "Shortcut already in place."
+  fi
+}
+
+# ─── dispatch ──────────────────────────────────────────────────────────────
+sub="${1:-}"
+shift || true
+# Elevation is primed ONCE per action (mq_sudo_prime, called from
+# exec_modules/run_fixes/uninstall_module and lazily by mq_sudo): the first root
+# step prompts through the GUI askpass, everything after reuses the sudo cache —
+# one prompt per install, including "Install selection". The old per-call
+# `sudo`->pkexec shim is now only a fallback inside mq_sudo_prime (see
+# scripts/lib/elevate.bash), so nothing is enabled here.
+# ─── Crash-notification AI-diag toggle ─────────────────────────────────────
+# Read or set the "crash notifications with AI diagnosis" switch: the log
+# file is ALWAYS written; only the desktop TOAST is off-able. State file:
+# ~/.local/state/mosquitomarchy/crash-notify ("off" = no toasts, "on"/absent
+# default = clickable toast "diagnose with AI"). The mosquitomarchy TUI's
+# Setup screen toggles the flag through this action.
+cmd_crash_notify() {
+  local flag="$HOME/.local/state/mosquitomarchy/crash-notify"
+  mkdir -p "$(dirname "$flag")" 2>/dev/null || true
+  local how="${1:-get}"
+  case "$how" in
+    get|"")
+      [[ -f $flag && "$(cat "$flag" 2>/dev/null)" == off ]] && val=false || val=true ;;
+    on|enable) printf 'on\n' > "$flag"; val=true ;;
+    off|disable) printf 'off\n' > "$flag"; val=false ;;
+    *) err "crash-notify <get|on|off>"; return 1 ;;
+  esac
+  printf '{"crashNotify": %s}\n' "$val"
+}
+
+# ─── is any agentic piece of omarchy still missing? ─────────────────────────
+# The Setup row reads "bring back omarchy's agentic stuff", so the only
+# question that matters is whether there is anything LEFT to bring back.
+#
+# It used to answer that with the remove-all-ai marker file, i.e. "did THIS
+# module ever run?". That is the wrong question: an Omarchy whose agentic bits
+# were removed by other means has nothing to bring back either, yet the marker
+# was absent, so the row stayed enabled and offered a restore that could not
+# change anything. So probe the machine instead, and treat the marker as only
+# one of the signals — it is still the cheapest and most reliable "a removal
+# definitely happened" evidence when the user removed the pieces themselves.
+cmd_ai_removed() {
+  local removed=false
+
+  # What counts as "the agentic stuff" is EXACTLY what Omarchy ships: the
+  # omarchy.agents bar widget, the AI-diagnosis crash toasts, and the menu
+  # entries that offer to install an agent. Not ollama and not Claude Code --
+  # those are tools a user adds on top, they are not part of the default
+  # install, and this module must not install more than Omarchy does.
+  #
+  # 1) the Agents plugin, read from omarchy's own state.
+  if ! omarchy plugin list 2>/dev/null | grep -qiE '^omarchy\.agents\b.*\benabled\b'; then
+    removed=true
+  fi
+  # 2) the AI-diagnosis crash toasts.
+  if [[ $("$0" crash-notify 2>/dev/null | grep -c '"crashNotify": true') -eq 0 ]]; then
+    removed=true
+  fi
+
+  # The remove-all-ai marker is deliberately NOT consulted: it records that the
+  # removal RAN, not that anything is still missing. Keeping it in the answer
+  # meant that once the user (or an uninstall run) had removed the agentic bits
+  # and then put them back by other means, the row stayed greyed forever with
+  # no way to clear it, and one that was stale the other way offered a restore
+  # with nothing to do.
+  printf '{"removed": %s}\n' "$removed"
+}
+
+
+
+
+# ─── Menu entries toggle (the marked mosquito blocks) ────────────────
+# Lets the TUI un-check the menu entries mosquito adds automatically
+# (mega caffeine, live-mode Trigger entries, the move converter and
+# mosquitomarchy itself): `list` shows name<TAB>present<TAB>label;
+# `strip  <name>` removes that marked block from omarchy-menu.jsonc;
+# `restore <name>` re-runs the module's menu installer.
+# The env override is what lets the TUI's Go tests exercise the real
+# strip/restore code path against a throwaway file. Without it, a test that
+# pressed "apply" was editing the user's LIVE menu: the suite silently left
+# `move-converter` and `live-mode` stripped out of the real
+# omarchy-menu.jsonc. Never point this at the live file from a test.
+MENU_JSONC="${MOSQUITOMARCHY_MENU_JSONC:-$HOME/.config/omarchy/extensions/omarchy-menu.jsonc}"
+
+# The menu KEY of each entry, which is what the list/strip logic matches on.
+# These used to be labels and comment fragments ("mosquitOmarchy setup",
+# "managed by setup-battery-management.sh", "ableton-move-converter"), so once
+# the entries were regrouped under setup.mosquito.* the Move Manager was
+# reported as missing and could not be stripped: the marker it looked for no
+# longer existed anywhere in omarchy-menu.jsonc.
+menu_entries_marker() {
+  case "$1" in
+    # Every entry below is a key that really exists in the installed menu.
+    # `live-mode` used to map to trigger.music.live-mode, which no longer
+    # exists: the Live Mode row moved into the managed Setup > mosquito block
+    # as setup.mosquito.live. Pointing at the dead key meant the TUI could
+    # only ever report it "not installed" and could never restore it.
+    mosquitomarchy) printf 'setup.mosquito.manager' ;;
+    audio-plugins) printf 'setup.mosquito.audio-plugins' ;;
+    move-converter) printf 'setup.mosquito.move' ;;
+    live-mode)      printf 'setup.mosquito.live' ;;
+    # The toggle is a SECOND, separate row: setup.mosquito.live only opens the
+    # manager TUI, while this one is what actually turns a session on. Listing
+    # only the manager is why "Live Mode" was nowhere in Menu entries.
+    live-mode-toggle) printf 'trigger.toggle.live-mode' ;;
+    jamjamjam)      printf 'setup.mosquito.jam' ;;
+    mega-caffeine)  printf 'trigger.toggle.mega-caffeine' ;;
+    *)              printf '%s' "$1" ;;
+  esac
+}
+
+# menu_entry_label <id> -- where the entry actually lives in the menu, as the
+# user sees it. Kept next to menu_entries_marker so the two cannot drift.
+menu_entry_label() {
+  case "$1" in
+    mosquitomarchy) printf 'mosquitOmarchy' ;;
+    audio-plugins)  printf 'Audio Plugin Manager' ;;
+    move-converter) printf 'mosquito Move Manager' ;;
+    live-mode)      printf 'Live Mode Manager' ;;
+    live-mode-toggle) printf 'Live Mode' ;;
+    jamjamjam)      printf 'JamJamJam' ;;
+    mega-caffeine)  printf 'Mega caffeine' ;;
+    *)              printf '%s' "$1" ;;
+  esac
+}
+
+# menu_entry_zone <id> -- the menu section the entry sits in.
+menu_entry_zone() {
+  case "$1" in
+    mega-caffeine|live-mode-toggle) printf 'Trigger ▸ Toggle' ;;
+    *)             printf 'Setup ▸ mosquito' ;;
+  esac
+}
+
+# menu_strip_key <jsonc> <key> -- delete the whole top-level object whose key is
+# <key>, braces included. The previous implementation took the marker's line
+# plus the SECOND line containing the marker as the block bounds, which only
+# worked for the two-line comment+key pairs the installer used to emit; a real
+# key appears once, so the bounds were empty and the strip always errored out.
+menu_strip_key() {
+  local file="$1" key="$2"
+  python3 - "$file" "$key" <<'PYEOF'
+import re, sys
+path, key = sys.argv[1], sys.argv[2]
+lines = open(path, encoding="utf-8").read().splitlines(keepends=True)
+start = None
+for i, line in enumerate(lines):
+    if re.match(r'\s*"%s"\s*:\s*\{' % re.escape(key), line):
+        start = i
+        break
+if start is None:
+    sys.exit(1)
+depth, end = 0, None
+for j in range(start, len(lines)):
+    depth += lines[j].count("{") - lines[j].count("}")
+    if depth == 0:
+        end = j
+        break
+if end is None:
+    sys.exit(1)
+# swallow a trailing comma left behind by the removal
+if end + 1 < len(lines) and re.match(r'\s*,\s*$', lines[end + 1]):
+    end += 1
+del lines[start:end + 1]
+open(path, "w", encoding="utf-8").writelines(lines)
+PYEOF
+}
+
+# Every stock preinstall with its state, so the picker can show the whole Omarchy
+# list (as asked) while rendering an already-uninstalled app greyed/unselectable
+# instead of silently dropping it from the list.
+cmd_preinstalls(){
+  local p installed removable protected
+  while read -r p; do
+    [[ -n $p ]] || continue
+    installed=false; removable=false; protected=false
+    pkg_has "$p" && installed=true
+    preinstall_protected "$p" >/dev/null 2>&1 && protected=true
+    preinstall_removable "$p" && removable=true
+    printf '{"name":%s,"label":%s,"installed":%s,"protected":%s,"removable":%s}\n' \
+      "$(json_str "$p")" "$(json_str "$(preinstall_label "$p")")" \
+      "$installed" "$protected" "$removable"
+  done < <(stock_preinstalls)
+}
+
+cmd_preinstalls_remove(){
+  (($#)) || { warn "preinstalls-remove needs the packages to remove."; return 1; }
+  run_remove_preinstalls "$@"
+}
+
+cmd_menu_entries() {
+  local how="${1:-list}" id mark tmp b present label
+  # Every entry mosquitOmarchy installs, not just the first four: the menu
+  # also carries the Audio Plugin Manager and JamJamJam rows, and a
+  # "Menu entries" screen that hides rows the user can see in their own menu
+  # is exactly what made it look broken.
+  local -a NAMES=(mosquitomarchy audio-plugins move-converter live-mode live-mode-toggle jamjamjam mega-caffeine)
+  case "$how" in
+    list)
+      for b in "${NAMES[@]}"; do
+        present=false
+        mark="$(menu_entries_marker "$b")"
+        grep -qE "^[[:space:]]*\"${mark//./\\.}\"[[:space:]]*:" "$MENU_JSONC" 2>/dev/null && present=true || true
+        label="$(menu_entry_label "$b") ($(menu_entry_zone "$b"))"
+        printf '%s\t%s\t%s\n' "$b" "$present" "$label"
+      done
+      ;;
+    strip)
+      id="${2:?menu id required}"
+      mark="$(menu_entries_marker "$id")"
+      if menu_strip_key "$MENU_JSONC" "$mark"; then
+        (omarchy menu refresh >/dev/null 2>&1 || true)
+        ok "menu entry removed: $id"
+      else
+        err "no entry keyed '$mark' found in $MENU_JSONC"
+      fi
+      ;;
+    restore)
+      id="${2:?menu id required}"
+      case "$id" in
+        # NOT the whole engine: `mosquitomarchy-setup.sh` with no target runs the
+        # launcher, does nothing without a tty and still exits 0, so this printed
+        # "menu re-added" while the entry stayed missing. The launcher row is part
+        # of the setup.mosquito.* block that install_menu_entry rewrites.
+        #
+        # That block is ATOMIC: install_menu_entry rewrites the whole of it, so
+        # restoring any one of its rows brings its siblings back too. The TUI
+        # re-lists straight after applying, so the rows show their real state
+        # again rather than the one that was asked for.
+        mosquitomarchy|audio-plugins|move-converter|live-mode|jamjamjam)
+          install_menu_entry >/dev/null 2>&1 \
+            && ok "menu re-added: $id" || warn "restore failed: $id" ;;
+        mega-caffeine)  bash "$HOME/mosquitOmarchy/scripts/plugins/power-management/setup-battery-management.sh" >/dev/null 2>&1 \
+          && ok "menu re-added: mega-caffeine" || warn "restore failed: mega-caffeine" ;;
+        # Its own module's installer, but WITHOUT -y: the sudoers part of it
+        # needs root and the password prompt is the point. --status is the
+        # cheap check first so a healthy install does not prompt for nothing.
+        live-mode-toggle)
+          if bash "$HOME/mosquitOmarchy/scripts/plugins/live-mode/setup-live-mode.sh" --status >/dev/null 2>&1; then
+            bash "$HOME/mosquitOmarchy/scripts/plugins/live-mode/setup-live-mode.sh" >/dev/null 2>&1 \
+              && ok "menu re-added: live-mode toggle" || warn "restore failed: live-mode toggle"
+          else
+            warn "live-mode is not installed — run the live-mode module first"
+          fi ;;
+        # NOT the module's own setup script: that one needs root (udev rule,
+        # chromium policy, ydotool NOPASSWD) so -y opens dialogs and then blocks
+        # on `sudo` for a password, and without a flag it refuses to start at
+        # all ("stdin without a TTY: a flag is required") -- the restore never
+        # worked. The Move Manager row lives in the setup.mosquito.* menu block,
+        # which install_menu_entry owns and rewrites idempotently without root.
+      esac
+      ;;
+    *) err "menu-entries <list|strip|restore> <name>"; return 1 ;;
+  esac
+}
+
+case "$sub" in
+  status)                   cmd_status ;;
+  categories)               cmd_categories ;;
+  candidates)               cmd_candidates "${1:-}" ;;
+  missing-assets)           cmd_missing_assets "${1:-}" "${@:2}" ;;
+  patches)                  cmd_patches "${1:-}" "${@:2}" ;;
+  health)                   cmd_health ;;
+  heal)                     cmd_heal ;;
+  kb-list)                  cmd_kb_list ;;
+  kb-free)                  cmd_kb_free ;;
+  kb-add)                   cmd_kb_add "$@" ;;
+  kb-remove)                cmd_kb_remove "$@" ;;
+  kb-reset)                 cmd_kb_reset ;;
+  kb-reload)                cmd_kb_reload ;;
+  fixes)                    cmd_fixes ;;
+  setup)                    cmd_setup ;;
+  uninstall-tree)           cmd_uninstall_tree ;;
+  preinstalls)              cmd_preinstalls ;;
+  preinstalls-remove)       cmd_preinstalls_remove "$@" ;;
+  backup-options)           cmd_backup_options ;;
+  backups)                  cmd_backups ;;
+  update-check)             cmd_update_check ;;
+  install)                  cmd_install "${1:-}" "${@:2}" ;;
+  apply)                    cmd_apply "$@" ;;
+  run-patch)                cmd_run_patch "$@" ;;
+  remove-patch)             cmd_remove_patch "$@" ;;
+  fixes-run)                cmd_fixes_run "$@" ;;
+  update)                   cmd_update "$@" ;;
+  update-modules)           cmd_update_modules ;;
+  update-repo)              cmd_update_repo ;;
+  uninstall)                cmd_uninstall "$@" ;;
+  menu-entry)               cmd_menu_entry ;;
+  add-shortcut)             cmd_add_shortcut ;;
+  # "$@" or the backup silently ignores EVERY option it is given: --vst=,
+  # --keepass=, --zen= and --selection= were all dropped on the floor, so the
+  # TUI's toggles (and the apps.selected tree it writes) never reached
+  # do_backup, which fell back to its own defaults.
+  backup)                   cmd_backup "$@" ;;
+  # No argument means "tell me", not "turn it on". The default was ${1:-on},
+  # so `crash-notify` READ as if the toasts were on even when the flag file
+  # said off -- which is how the agentic row kept claiming there was something
+  # to bring back after it had been taken away.
+  crash-notify)             cmd_crash_notify "${1:-get}" ;;
+  ai-removed)               cmd_ai_removed ;;
+  menu-entries)             cmd_menu_entries "$@" ;;
+  restore)                  cmd_restore "${1:-}" ;;
+  *) echo "mosquitomarchy-actions: unknown subcommand '$sub'." >&2; exit 2 ;;
+esac

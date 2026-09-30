@@ -1,0 +1,27 @@
+# assets.links — Download locations for the big installation files.
+#
+# The install zips/exe/deb (several GB) are NOT in the Git repo (the repo must
+# stay light and under the GitHub limit). This file centralizes where each one
+# can be downloaded, for apps/ and its subfolders.
+#
+# Line format:  <relative_destination_path> | <url> | <sha256 (optional)>
+# "destination_path" is relative to the repo root (e.g. apps/ableton/...).
+# If sha256 is set, download-assets.sh verifies it after downloading
+# (the Ableton .run is already verified by setup-ableton.sh --check-update).
+#
+# Deliberately ABSENT: DaVinci Resolve — the Blackmagic zip (~7 GB) is placed
+# by hand in apps/davinci/ by the user (download outside the scripts).
+
+# ─── Ableton Live (editions) ───
+# The native installer install-ableton-latest.run downloads itself via
+# setup-ableton.sh --check-update; only the edition zips are listed here.
+apps/ableton/ableton_live_intro_12.4.5_64.zip | TON_HEBERGEUR/ableton_live_intro_12.4.5_64.zip | 28427dbc4a33dd082ebe3b2f6942023087199a386cbf62edb73d0ffb80440e2b
+apps/ableton/ableton_live_suite_12.3.6_64.zip | TON_HEBERGEUR/ableton_live_suite_12.3.6_64.zip | 270fe1027e6174ffb8ae061841b11338da326d75dd939df72d9c5ea1544f2074
+apps/ableton/ableton_live_suite_12.4.5_64.zip | TON_HEBERGEUR/ableton_live_suite_12.4.5_64.zip | 67fe60e07cff6d22823504eab0efab4c60075ec8f53e0388dbb47ec9558cb9ad
+
+# ─── Guitar Pro 8 ───
+apps/guitarpro/guitar-pro-8-setup.exe | TON_HEBERGEUR/guitar-pro-8-setup.exe | 642eb400725ee7493de1695dafdd2cc12836c72ed6c4ea37799fbd767ea35d6e
+
+# ─── Bitwig (audio module) ───
+apps/bitwig/bitwig-studio-6.0-beta-6.deb | TON_HEBERGEUR/bitwig-studio-6.0-beta-6.deb | 65946f603eeed3bbce2ac7027c722291254c1bb31ce30d81face524b2fbd33df
+apps/bitwig/PATCH/bitwig.jar | TON_HEBERGEUR/bitwig.jar | 6468ee6602239dc8185dcc2653d80c7d449b6ee5515d17667aaef3efd396cc54

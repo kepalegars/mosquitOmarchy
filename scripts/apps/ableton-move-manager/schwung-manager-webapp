@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# schwung-manager-webapp — Schwung Manager in a dedicated Chromium profile
+#
+# Schwung (the Move device's community module system) serves its manager
+# UI on http://move[N].local:7700. This wrapper opens it in its own
+# Chromium profile (no collision with the Move Manager webapp on port 80,
+# and any future host-side schwung module downloads can be scoped here).
+#
+# Only one instance of this profile runs at a time (same singleton logic
+# as move-manager-webapp). The download folder is NOT specialized here:
+# schwung installs modules directly on the Move over the network; there
+# is nothing host-side to deposit into <projects>/ablbundle.
+set -euo pipefail
+
+CFG="${XDG_CONFIG_HOME:-$HOME/.config}/move-session"
+# shellcheck disable=SC1091
+[[ -f $CFG/prefs ]] && . "$CFG/prefs" || true
+
+MOVE_ADDRESS="${MOVE_ADDRESS:-}"
+URL="http://move${MOVE_ADDRESS}.local:7700"
+
+PROFILE="${XDG_CACHE_HOME:-$HOME/.cache}/schwung-manager"
+
+close_existing_instance() {
+  pkill -f -- "--user-data-dir=$PROFILE" >/dev/null 2>&1 || true
+  local waited=0
+  while [[ -e "$PROFILE/SingletonLock" ]] && (( waited < 30 )); do
+    sleep 0.2; waited=$((waited + 1))
+  done
+}
+
+close_existing_instance
+
+exec chromium \
+  --app="$URL" \
+  --user-data-dir="$PROFILE" \
+  --no-first-run \
+  --no-default-browser-check \
+  --unsafely-treat-insecure-origin-as-secure="$URL" \
+  "$@"

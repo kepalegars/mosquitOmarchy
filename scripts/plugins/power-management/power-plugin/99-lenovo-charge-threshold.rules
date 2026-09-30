@@ -1,0 +1,12 @@
+# Lenovo ThinkPad charge threshold write access for the wheel group.
+#
+# The exposed battery charge-control attributes live in sysfs and do not map
+# to a /dev node, so the device-level GROUP= only applies to the (non-existent)
+# node here. We therefore RUN a chown + chmod: the chown sets the group to
+# `wheel`, and the chmod adds a 0660 mode so members of `wheel` can write the
+# thresholds via the custom.power plugin without sudo. Both are idempotent.
+# (chown alone does NOT touch the mode — that's why the explicit chmod is here.)
+# See https://github.com/ublue-os/packages/issues/219 for context.
+
+ACTION=="add|change", KERNEL=="BAT[0-1]", SUBSYSTEM=="power_supply", TEST=="/sys%p/charge_control_start_threshold", RUN+="/bin/chown root:wheel /sys%p/charge_control_start_threshold", RUN+="/bin/chmod 0660 /sys%p/charge_control_start_threshold"
+ACTION=="add|change", KERNEL=="BAT[0-1]", SUBSYSTEM=="power_supply", TEST=="/sys%p/charge_control_end_threshold", RUN+="/bin/chown root:wheel /sys%p/charge_control_end_threshold", RUN+="/bin/chmod 0660 /sys%p/charge_control_end_threshold"

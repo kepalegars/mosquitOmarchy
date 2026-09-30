@@ -1,0 +1,41 @@
+#!/bin/bash
+# brightness-0 — Omarchy's DEFAULT display brightness, plus 0% = screen off.
+#
+# This is a thin wrapper around `omarchy-brightness-display` (no curve change,
+# no calibration): it only adds the missing 0% step.
+#   brightness-0 down  -> stock 5%- steps, but at 1% it goes to 0% = screen OFF
+#   brightness-0 up    -> turns the screen back ON if it is off, else stock +5%
+#   brightness-0 ...   -> anything else is passed straight through
+#
+# Generated/shipped by fix-optimized-brightness.sh (mosquitOmarchy).
+set -uo pipefail
+
+focused_monitor() { omarchy-hyprland-monitor-focused 2>/dev/null || true; }
+
+dpms_off() {
+  command -v jq >/dev/null 2>&1 || return 1
+  local mon; mon="$(focused_monitor)"
+  hyprctl monitors -j 2>/dev/null \
+    | jq -e --arg m "$mon" '.[] | select(.name == $m) | .dpmsStatus == false' >/dev/null 2>&1
+}
+
+case "${1:-}" in
+  down)
+    cur="$(omarchy-brightness-display 2>/dev/null || true)"
+    if [[ $cur =~ ^[0-9]+$ ]] && (( cur <= 1 )); then
+      omarchy-brightness-display off          # 0% -> screen off
+    else
+      omarchy-brightness-display 5%-          # exactly Omarchy's default step
+    fi
+    ;;
+  up)
+    if dpms_off; then
+      omarchy-brightness-display on           # bring it back from 0%
+    else
+      omarchy-brightness-display +5%          # exactly Omarchy's default step
+    fi
+    ;;
+  *)
+    exec omarchy-brightness-display "$@"
+    ;;
+esac

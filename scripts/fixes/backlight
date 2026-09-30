@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# backlight — display brightness via a perceptual (gamma) curve
+# mapped onto the panel's REAL luminance (actual_brightness), so every step
+# produces an observable change and 0% turns the panel off (like Windows).
+#
+# Why not raw -> actual directly: the amdgpu backlight has coarse hardware
+# steps in the low range (actual_brightness plateaus at 771, 1025, 1279, ...).
+# Working in raw hides those and creates dead zones. Instead we target an
+# actual_brightness (perceived luminance) and back out the raw value by
+# interpolation on a per-panel calibration table.
+#
+# Usage: backlight [--no-osd] [+N%|N%-|abs%|off|on]
+#   +5%  / 5%-   coarse step
+#   +1%  / 1%-   precise step
+#   50%          absolute percentage (0% turns the display off)
+#   off / on     explicit DPMS toggle
+
+set -euo pipefail
+
+# ── Tunables ─────────────────────────────────────────────────────────
+GAMMA=1.6            # perceptual exponent; ~1.6 spreads the low band nicely
+                     # (higher = darker low %, more plateau; 1.0 = linear)
+# Calibration table: ACTUAL -> RAW (measured on this panel, ascending actual).
+# Interpolated linearly between points.
+declare -a _A=() _R=()
+read_table() {
+  _A=(780 1040 1300 1560 1820 2080 2341 2601 2861 3121 3381 3901 4161 4681 5721 6501 7542 8582 9622 12223 16904 21065 26266 35368 55133 63715)
+  _R=(2400 2500 5000 6500 8500 9000 10000 11000 12000 13000 14000 15000 16000 18000 20000 22000 25000 27000 30000 35000 40000 45000 50000 55000 62000 64764)
+}
+# ─────────────────────────────────────────────────────────────────────
+
+read_table
+
+no_osd=0
+step=""
+for a in "$@"; do
+  case "$a" in
+    --no-osd) no_osd=1 ;;
+    *)        step="$a" ;;
+  esac
+done
+
+ACTUAL_MIN="${_A[0]}"
+ACTUAL_MAX="${_A[-1]}"
+
+# ── Resolve backlight device ────────────────────────────────────────
+device="$(omarchy-hw-display 2>/dev/null || true)"
+[[ -z "$device" ]] && { echo "no backlight device" >&2; exit 1; }
+
+actual_now() { cat "/sys/class/backlight/$device/actual_brightness"; }
+
+# raw value for a desired actual_brightness (linear interpolation on table).
+raw_of_actual() {
+  local target="$1" n kmax k ikey
+  n="${#_A[@]}"
+  kmax=$((n - 1))
+  if (( $(awk -v t="$target" -v m="${_A[0]}" 'BEGIN{ if (t <= m) print 1 }') )); then
+    echo "${_R[0]}"; return
+  fi
+  if (( $(awk -v t="$target" -v m="${_A[$kmax]}" 'BEGIN{ if (t >= m) print 1 }') )); then
+    echo "${_R[$kmax]}"; return
+  fi
+  for ((k=1; k<n; k++)); do
+    ikey=$((k))
+    if (( $(awk -v t="$target" -v a="${_A[$ikey]}" 'BEGIN{ if (t <= a) print 1 }') )); then
+      local lo=$((ikey-1))
+      awk -v t="$target" -v a0="${_A[$lo]}" -v a1="${_A[$ikey]}" -v r0="${_R[$lo]}" -v r1="${_R[$ikey]}" \
+        'BEGIN{ printf "%d", r0 + (t-a0)/(a1-a0)*(r1-r0) + 0.5 }'
+      return
+    fi
+  done
+  echo "${_R[$kmax]}"
+}
+
+# actual_brightness for a given percentage (gamma curve over ACTUAL range).
+actual_of_pct() {
+  local pct="$1" p
+  p=$(awk -v p="$pct" 'BEGIN{ p=p<1?1:p; p=p>100?100:p; printf "%.4f", p/100 }')
+  awk -v p="$p" -v lo="$ACTUAL_MIN" -v hi="$ACTUAL_MAX" -v g="$GAMMA" 'BEGIN{
+    printf "%d", lo + (hi - lo) * p^g + 0.5
+  }'
+}
+
+# percentage corresponding to a given actual_brightness (inverse of above).
+pct_of_actual() {
+  local actual="$1"
+  awk -v a="$actual" -v lo="$ACTUAL_MIN" -v hi="$ACTUAL_MAX" -v g="$GAMMA" 'BEGIN{
+    if (a < lo) a = lo; if (a > hi) a = hi;
+    printf "%.2f", 100 * (((a - lo)/(hi - lo))^(1.0/g))
+  }'
+}
+
+round_pct() { awk -v x="$1" 'BEGIN{ printf "%.0f", x }'; }
+
+if [[ -z "$step" ]]; then
+  echo "$(pct_of_actual "$(actual_now)")"
+  exit 0
+fi
+
+if [[ "$step" == "off" || "$step" == "0%" ]]; then
+  hyprctl dispatch 'hl.dsp.dpms({ action = "disable" })' >/dev/null 2>&1
+  exit 0
+fi
+if [[ "$step" == "on" ]]; then
+  hyprctl monitors -j 2>/dev/null | jq -e '[.[] | select(.disabled == false)] | length > 0 and all(.dpmsStatus)' >/dev/null 2>&1 && exit 0
+  hyprctl dispatch 'hl.dsp.dpms({ action = "enable" })' >/dev/null 2>&1
+  exit 0
+fi
+
+# ── Serialise overlapping key presses ──────────────────────────────
+exec {lock_fd}>"${XDG_RUNTIME_DIR:-/tmp}/backlight.lock"
+flock -n "$lock_fd" || exit 0
+
+cur_pct="$(pct_of_actual "$(actual_now)")"
+
+if [[ "$step" =~ ^\+([0-9]+)%$ ]]; then
+  d="${BASH_REMATCH[1]}"
+  target=$(awk -v c="$cur_pct" -v d="$d" 'BEGIN{ t=c+d; if(t>100)t=100; printf "%.2f", t }')
+elif [[ "$step" =~ ^([0-9]+)%-$ ]]; then
+  d="${BASH_REMATCH[1]}"
+  target=$(awk -v c="$cur_pct" -v d="$d" 'BEGIN{ t=c-d; if(t<0)t=0; printf "%.2f", t }')
+elif [[ "$step" =~ ^([0-9]+)%$ ]]; then
+  target="${BASH_REMATCH[1]}"
+else
+  echo "unknown step: $step" >&2
+  exit 1
+fi
+
+# Reaching 0% turns the display off entirely (matches Windows behaviour).
+if awk -v t="$target" 'BEGIN{ exit !(t <= 0) }'; then
+  hyprctl dispatch 'hl.dsp.dpms({ action = "disable" })' >/dev/null 2>&1
+  exit 0
+fi
+
+# If the panel was turned off (0%), raising the brightness must wake it first.
+if awk -v t="$target" -v c="$cur_pct" 'BEGIN{ exit !(t > c) }'; then
+  hyprctl monitors -j 2>/dev/null | jq -e '[.[] | select(.disabled == false)] | length > 0 and all(.dpmsStatus)' >/dev/null 2>&1 \
+    || hyprctl dispatch 'hl.dsp.dpms({ action = "enable" })' >/dev/null 2>&1
+fi
+
+raw="$(raw_of_actual "$(actual_of_pct "$target")")"
+brightnessctl -d "$device" set "$raw" >/dev/null
+
+display_pct="$(pct_of_actual "$(actual_now)")"
+(( no_osd )) || omarchy-osd -i brightness -p "$(round_pct "$display_pct")"

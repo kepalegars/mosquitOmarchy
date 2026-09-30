@@ -1,0 +1,432 @@
+#!/usr/bin/env bash
+# mosquito-move-manager-actions — non-interactive backend for the Go TUI
+# (mosquito-move-manager-tui, tui-go/). NOT an interface at all — it has
+# no interactive UI of its own (no ui_ready_or_die gate here), and it's
+# never launched directly by a user. It exists so the Go program never has
+# to reimplement any of this module's actual business logic (Wine paths,
+# Ableton/Bitwig orchestration, state prefs) — it sources the exact same
+# lib-move-manager-core.sh the TUI's dispatcher uses, unmodified, and
+# calls the same functions the interactive paths call.
+#
+# The split: Go owns every DECISION (which bundle, which route, confirm/
+# cancel, address text, settings toggles) — that's the actual "interface".
+# This script only performs ACTIONS once a decision is already made, so the
+# UI primitives are stubbed rather than implemented for real:
+#   - ui_confirm always answers "no" — any *secondary*, optional confirm
+#     still embedded in a reused function (e.g. export_midi's "open the
+#     folder?" follow-up) safely no-ops; the one decision that actually
+#     matters for a given action was already made by Go before it got here.
+#   - ui_select / ui_input error loudly instead of hanging or guessing —
+#     reaching either means an action needs a decision Go didn't make yet,
+#     a design bug in the split to fix, not something to paper over.
+# (These stubs also win over the core's own guarded ui_* primitives: the
+# core only defines them when ${MOSQUITO_MOVE_MANAGER_NATIVE_UI} is set,
+# which the dispatcher — never this file — sets.)
+# Every subcommand below is either read-only (emits JSON/JSON-Lines to
+# stdout for Go to parse) or a thin, direct call into an existing core
+# function — no business logic lives in this file.
+set -euo pipefail
+
+ui_confirm() { return 1; }
+ui_select() { echo "BUG: ui_select reached in actions mode ($*)" >&2; return 2; }
+ui_input() { echo "BUG: ui_input reached in actions mode ($*)" >&2; return 2; }
+ui_ready_or_die() { :; }
+
+SELF="${BASH_SOURCE[0]}"
+MODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MOSQUITO_MOVE_MANAGER_LIB_ONLY=1 source "$MODULE_DIR/lib-move-manager-core.sh"
+
+load_prefs
+migrate_projects_dir_name
+resolve_projects_dir
+ensure_folders
+
+# Extended capabilities (convert-a-preset, Schwung, Bitwig Move integration).
+# Defines functions only — no side effects, no auto-run.
+source "$MODULE_DIR/lib-move-manager-features.sh"
+
+# ── Per-conversion session log ───────────────────────────────────────────
+# start_conversion_log() (core) creates the file and announces its path on
+# stderr, and log()/progress() tee every message-line into it. fd 3 keeps
+# the original stdout so the machine-readable ALS_PATH= sentinel stays on a
+# clean stream (fd 1 is never redirected here — a broad `exec > >(tee …)`
+# would leave the runner waiting on EOF from a background Wine/Bitwig child
+# that inherited the pipe, the exact pipe-trap the launch code avoids).
+_actions_open_log() {
+  local tag="$1" reuse="${2:-false}"
+  exec 3>&1
+  start_conversion_log "$tag" "$reuse" || true
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  status-json)
+    connected=false
+    detect_move && connected=true
+    av_label=""
+    [[ -n ${LEARNED_ABLETON_EXE:-} && -f ${LEARNED_ABLETON_EXE:-} ]] && av_label="$(ableton_exe_label "$LEARNED_ABLETON_EXE")"
+    spf_installed=false
+    command -v spf >/dev/null 2>&1 && spf_installed=true
+    open_als_ydotool=true
+    [[ ${OPEN_ALS_WITH_YDOTOOL:-true} == true ]] || open_als_ydotool=false
+    jq -nc --argjson connected "$connected" --arg host "$(move_host)" --arg address "$MOVE_ADDRESS" \
+      --argjson hide_converted "$HIDE_BWPROJECT_CONVERTED" --arg move_dir "$MOVE_DIR" \
+      --arg ableton_version "$av_label" \
+      --arg file_picker "$(current_file_picker)" --argjson superfile_installed "$spf_installed" \
+      --argjson open_als_ydotool "$open_als_ydotool" \
+      '{connected:$connected,host:$host,address:$address,hide_converted:$hide_converted,move_dir:$move_dir,ableton_version:$ableton_version,file_picker:$file_picker,superfile_installed:$superfile_installed,open_als_ydotool:$open_als_ydotool}'
+    ;;
+
+  set-file-picker)
+    mode="${1:?default or superfile required}"
+    mkdir -p "$(dirname "$FILE_PICKER_MODE_FILE")"
+    printf '%s\n' "$mode" > "$FILE_PICKER_MODE_FILE"
+    ;;
+
+  ensure-superfile)
+    ensure_superfile_installed
+    ;;
+
+  list-bundles)
+    scan_bundles
+    for f in "${BUNDLES[@]}"; do
+      base="$(basename "$f")"
+      label="$base"
+      if [[ $base == *-converted-midi* ]]; then
+        label="$base (converted to MIDI)"
+      elif [[ $base == *-converted-bwproject* ]]; then
+        label="$base (converted to Bitwig)"
+      elif is_legacy_converted "$base"; then
+        label="$base (converted)"
+      fi
+      jq -nc --arg path "$f" --arg label "$label" '{path:$path,label:$label}'
+    done
+    ;;
+
+  list-ableton-exes)
+    while IFS= read -r -d '' exe; do
+      jq -nc --arg path "$exe" --arg label "$(ableton_exe_label "$exe")" '{path:$path,label:$label}'
+    done < <(find_ableton_exes)
+    ;;
+
+  set-address)
+    MOVE_ADDRESS="${1:-}"
+    save_prefs
+    ;;
+
+  toggle-hide-converted)
+    [[ $HIDE_BWPROJECT_CONVERTED == true ]] && HIDE_BWPROJECT_CONVERTED=false || HIDE_BWPROJECT_CONVERTED=true
+    save_prefs
+    ;;
+
+  toggle-open-als-ydotool)
+    [[ ${OPEN_ALS_WITH_YDOTOOL:-true} == true ]] && OPEN_ALS_WITH_YDOTOOL=false || OPEN_ALS_WITH_YDOTOOL=true
+    save_prefs
+    ;;
+
+  select-ableton-version)
+    LEARNED_ABLETON_EXE="${1:?exe path required}"
+    save_prefs
+    ;;
+
+  clear-als)
+    if [[ -d $ALS_DIR ]]; then
+      rm -rf -- "${ALS_DIR:?}"/* "${ALS_DIR:?}"/.[!.]* 2>/dev/null || true
+    fi
+    ;;
+
+  export-midi)
+    _actions_open_log "export-midi"
+    export_midi "${1:?bundle path required}"
+    ;;
+
+  export-als)
+    # Writes the live log, then flags the resulting .als via the same
+    # ALS_PATH= convention open-ableton-route uses — the TUI parses it and
+    # owns the "open in Bitwig?" decision (scrBitwigOpenConfirm).
+    _actions_open_log "export-als"
+    export_als "${1:?bundle path required}" || exit 1
+    printf 'ALS_PATH=%s\n' "${ALS_EXPORTED_PATH:-}" >&3
+    ;;
+
+  check-ableton-conflict)
+    running=false
+    configured_ableton_running && running=true
+    jq -nc --argjson running "$running" '{running:$running}'
+    ;;
+
+  close-ableton-and-wait)
+    # The conversation is not a conversion yet, but the user has confirmed the
+    # existing Ableton will be closed: hide the manager window for the whole
+    # close wait, exactly as a clean launch hides it in
+    # open_ableton_route_phase1 — otherwise the window stays visible through
+    # the conflict-close path while it is hidden on the normal path. Only a
+    # failure shows it again, so the TUI's retry prompt is readable (the
+    # subsequent open-ableton-route re-hides on success).
+    manager_window_hide || true
+    rc=0
+    close_configured_ableton_and_wait || rc=$?
+    if (( rc != 0 )); then
+      manager_window_show || true
+    fi
+    exit "$rc"
+    ;;
+
+  open-ableton-route)
+    # Split from open_ableton_route(): the "already open?" conflict check
+    # is Go's own decision now (check-ableton-conflict/close-ableton-and-
+    # wait above, called first when needed) — this only runs phase1
+    # (Ableton launch/wait/.als detection), streamed as-is so its
+    # progress()/warn()/err() lines are the Runner's live progress (the
+    # Runner merges the child's stdout+stderr). The final ALS_PATH= line
+    # is this wrapper's own addition (not printed by the shared core, so
+    # native's real terminal never sees it) — same "last line is the
+    # sentinel" convention open-manager-and-wait's DOWNLOADED= line uses.
+    #
+    # 1>&2 is deliberate: phase1 runs the whole wait/detect phase and emits
+    # its user-facing "save your project in …" lines with ok()/msg() (which
+    # write to stdout). Routing phase1's stdout to stderr keeps THIS action's
+    # stdout to exactly one line (ALS_PATH=…), which is what the TUI parses.
+    # Nothing needs phase1's stdout: the resolved path travels back in the
+    # PHASE1_ALS_RESULT global, never on stdout.
+    #
+    # The phase's own exit status IS propagated (2 = closed but no .als
+    # found, 1 = Ableton never appeared). The sentinel is printed first even
+    # on failure, so the TUI both sees the error AND can tell the two
+    # failure modes apart (empty path + rc 2 → "no set detected").
+    rc=0
+    _actions_open_log "open-ableton-route"
+    open_ableton_route_phase1 "${1:?bundle path required}" 1>&2 || rc=$?
+    if (( rc != 0 )); then
+      # The Ableton phase hid the manager window; bring it back so the error
+      # the TUI is about to show is actually readable.
+      manager_window_show || true
+    fi
+    printf 'ALS_PATH=%s\n' "${PHASE1_ALS_RESULT:-}" >&3
+    exit "$rc"
+    ;;
+
+  finish-bitwig-open)
+    # Reuse the log opened by the Ableton phase this follow-up belongs to
+    # (open-ableton-route or export-als) so one conversion is one file. The
+    # allowed predecessor tags are explicit: a log from a *different* kind
+    # (a preset/MIDI conversion) is never appended to.
+    _actions_open_log "finish-bitwig-open" "open-ableton-route export-als"
+    als="${2:-}"
+    if [[ -z $als || ! -f $als ]]; then
+      # No explicit path (defensive callers): pick the newest .als in the als
+      # working folder right now.
+      als="$(newest_als_in_dir "$ALS_DIR")"
+      if [[ -n $als ]]; then
+        progress "newest .als in $ALS_DIR: $als"
+      else
+        err "no .als in $ALS_DIR to open in Bitwig"
+        manager_window_show || true
+        exit 2
+      fi
+    fi
+    rc=0
+    finish_bitwig_open "${1:?bundle path required}" "$als" || rc=$?
+    if (( rc == 0 )); then
+      # Success: the manager is about to go into hidden discretion mode —
+      # make sure its window stays off-screen.
+      manager_window_hide || true
+    else
+      # Failure: the window was hidden for the Ableton phase; show it again
+      # so the error on the TUI's log screen is readable.
+      manager_window_show || true
+    fi
+    # The Bitwig PID (if any) is the instance the TUI's discretion watchdog
+    # waits on: it exits automatically when this process goes away. Printed on
+    # the sentinel fd 3, same convention as ALS_PATH=.
+    printf 'BITWIG_PID=%s\n' "$(bitwig_pids 2>/dev/null | head -n1)" >&3
+    exit "$rc"
+    ;;
+
+  open-manager)
+    # Split from the old open-manager-and-wait: opening (below) and waiting
+    # (manager-poll, drived by the Go TUI, which owns every decision --
+    # including the mid-wait "set downloaded, close the Manager?" confirm
+    # that ui_confirm's stub here can't show). Writes the session baseline
+    # used by manager-poll's newest_downloaded_bundle().
+    detect_move || echo "Move not detected (USB 2982 / move.local) — still opening the Move Manager."
+    phase_webapp
+    echo "Opening the Move Manager…"
+    echo "  $(move_url)"
+    date +%s > "$MANAGER_BASELINE_FILE"
+    open_webapp
+    ;;
+
+  manager-poll)
+    # Read-only status for the TUI's wait loop: is the manager window still
+    # up, and which bundle (if any) finished downloading since the session
+    # baseline (newest_downloaded_bundle, mtime-vs-baseline).
+    running=false
+    manager_running && running=true
+    newest="$(newest_downloaded_bundle "$MANAGER_BASELINE_FILE" 2>/dev/null || true)"
+    jq -nc --argjson running "$running" --arg newest "$newest" '{running:$running,newest:$newest}'
+    ;;
+
+  close-manager)
+    close_manager_now
+    ;;
+
+  finish-manager-session)
+    # Runs once the user closed the Manager: deposits anything downloaded
+    # outside ablbundle (auto-download folders) into BUNDLE_DIR.
+    deposit_downloads
+    ;;
+
+  raise-own-window)
+    # Brings the TUI's own terminal to the front (so its prompts are visible
+    # when the floating Move Manager is on top) — omarchy-hyprland-focus-app
+    # matches our window class, same helper bitwig focusing uses.
+    command -v omarchy-hyprland-focus-app >/dev/null 2>&1 || exit 0
+    omarchy-hyprland-focus-app "org.omarchy.mosquito-move-manager-tui" >/dev/null 2>&1 || true
+    ;;
+
+  change-working-dir)
+    change_working_directory
+    echo "MOVE_DIR=$MOVE_DIR"
+    ;;
+
+  pick-file)
+    # Only reached when the picker preference is "default" — the Go TUI
+    # handles "superfile" itself (pickBundleFileViaSuperfileEmbedded(),
+    # tea.ExecProcess), running it directly in its own terminal instead of
+    # through this script, so it never spawns a separate window.
+    file="$(pick_file_manually "Select an Ableton Move set" 2>/dev/null)" || file=""
+    jq -nc --arg path "${file:-}" '{path:$path}'
+    ;;
+
+  # ──────── convert-a-preset (Ableton .adg → Move device preset) ────────
+  preset-status-json)
+    # Info the TUI shows while the flow loads: where .adg output goes, which
+    # Wine prefix the samples get search-rooted to (from Settings' Ableton
+    # choice), and where the picker starts.
+    root="$(adg_preset_search_root)"
+    default_dir="$(adg_presets_default_dir)"
+    connected=false
+    detect_move && connected=true
+    # bw_default_dir is deliberately the SAME folder as default_dir: the
+    # .bwpreset picker starts where the .adg picker does (the drum-rack
+    # presets folder of the Settings-chosen Ableton install), not $MOVE_DIR.
+    # The conversion output still lands in $PRESETS_DIR.
+    jq -nc --arg out "$PRESETS_DIR" --arg search_root "$root" \
+      --arg default_dir "$default_dir" --arg bw_default_dir "$default_dir" \
+      --argjson connected "$connected" \
+      '{presets_dir:$out, search_root:$search_root, default_dir:$default_dir, bw_default_dir:$bw_default_dir, connected:$connected}'
+    ;;
+
+  pick-adg)
+    # "Convert a preset" source selection — the equivalent of pick-file for
+    # .adg files (starts at the Ableton preset folder of the chosen version).
+    file="$(pick_adg_file "Select an Ableton Live preset (.adg)" 2>/dev/null)" || file=""
+    jq -nc --arg path "${file:-}" '{path:$path}'
+    ;;
+
+  convert-preset)
+    # Streamed runner: converts one or more .adg presets into $PRESETS_DIR.
+    # Exit 0 even when a bundle is skipped (the .adg output is kept). Each run
+    # gets its OWN conversion log — never the previous conversion's file.
+    _actions_open_log "convert-preset"
+    convert_adg_presets "$@"
+    ;;
+
+  # ────── convert a Bitwig preset (.bwpreset → Move preset) ──────
+  pick-bwpreset)
+    # Bitwig counterpart of pick-adg: starts in the manager working dir.
+    file="$(pick_bwpreset_file "Select a Bitwig preset (.bwpreset)" 2>/dev/null)" || file=""
+    jq -nc --arg path "${file:-}" '{path:$path}'
+    ;;
+
+  convert-bwpreset)
+    # Streamed runner: converts one or more .bwpreset files into $PRESETS_DIR
+    # (the manager's <working-dir>/Presets), using the module-local converter.
+    # Its own per-conversion log, same as every other conversion.
+    _actions_open_log "convert-bwpreset"
+    convert_bwpresets "$@"
+    ;;
+
+  # ───────────────────────────── Schwung ──────────────────────────────
+  schwung-status)
+    schwung_status_json
+    ;;
+
+  schwung-latest)
+    version="$(schwung_latest_version)"
+    jq -nc --arg version "${version:-}" '{version:$version}'
+    ;;
+
+  schwung-install)
+    # Interactive official installer — runs in a visible terminal, blocks.
+    schwung_run_installer "Schwung installer" "${SCHWUNG_BASE_URL}/scripts/install.sh" \
+      && echo "OK Schwung installer finished"
+    ;;
+
+  schwung-update)
+    schwung_run_installer "Schwung updater" "${SCHWUNG_BASE_URL}/scripts/install.sh" \
+      && echo "OK Schwung up to date"
+    ;;
+
+  schwung-uninstall)
+    schwung_run_installer "Schwung uninstaller" "${SCHWUNG_BASE_URL}/scripts/uninstall.sh" \
+      && echo "OK Schwung removed"
+    ;;
+
+  open-schwung-manager)
+    detect_move || echo "Move not detected (USB 2982 / move.local) — still opening the Schwung Manager."
+    open_schwung_manager
+    ;;
+
+  schwung-manager-poll)
+    running=false
+    schwung_manager_running && running=true
+    jq -nc --argjson running "$running" '{running:$running}'
+    ;;
+
+  close-schwung-manager)
+    close_schwung_manager_now
+    ;;
+
+  # ───────────────────── Bitwig Move integration ───────────────────────
+  bitwig-move-status)
+    bitwig_move_status_json
+    ;;
+
+  bitwig-move-install)
+    # Streamed: controller scripts + build/install the on-device module
+    # (visible terminal for ssh). Follows with the controller-setup tip.
+    bitwig_move_install && echo "TIP In Bitwig: Settings → Controllers → Add Controller → vendor Ableton, then controller Move (ports midiin4/midiou4); restart Bitwig after install."
+    ;;
+
+  bitwig-move-uninstall)
+    bitwig_move_uninstall
+    echo "OK Bitwig controller scripts removed (restart Bitwig so the Ableton vendor disappears)"
+    ;;
+
+  bitwig-move-uninstall-module)
+    # Removes the on-device Move Bitwig module in a visible terminal (the
+    # vendored uninstall.sh when present, else ssh rm -rf). Like install,
+    # the terminal carries ssh's output/errors.
+    bitwig_move_uninstall_module
+    echo "OK removing the Move module on the device (check the terminal for ssh output)"
+    ;;
+
+  open-bitwig)
+    open_bitwig_now
+    ;;
+
+  bitwig-running)
+    running=false
+    bitwig_running && running=true
+    jq -nc --argjson running "$running" '{running:$running}'
+    ;;
+
+  *)
+    echo "mosquito-move-manager-actions: unknown action '$cmd'" >&2
+    exit 2
+    ;;
+esac

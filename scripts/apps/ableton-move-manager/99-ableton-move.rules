@@ -1,0 +1,8 @@
+# Ableton Move — warn when the Move disconnects while the Move Manager
+# webapp is actively in use (ableton-move-converter module)
+# Vendor 0x2982 = Ableton AG (all product IDs: Move, Note, Push 3…)
+# The script is deployed to ~/.local/bin/move-udev-refresh by
+# setup-ableton-move-manager.sh. It's a no-op unless the Move Manager's
+# own Chromium profile is currently running — no notification on connect,
+# and none at all outside of active Manager use.
+ACTION=="remove", SUBSYSTEM=="usb", ATTR{idVendor}=="2982", RUN+="/home/mosquito/.local/bin/move-udev-refresh"

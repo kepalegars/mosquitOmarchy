@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# jamjamjam-analyze — global push-to-talk trigger for the jamjamjam neck TUI.
+#
+# Bound by setup-jamjamjam-plugin.sh to the RIGHT CTRL key:
+#   press   -> jamjamjam-analyze start   (begins the held analysis)
+#   release -> jamjamjam-analyze stop    (ends it, results appear)
+#
+# It only acts while the neck TUI is open (tui.pid alive), so the global key is
+# inert the rest of the time. Right Ctrl stops acting as Ctrl and becomes the
+# dedicated analyze hold.
+set -euo pipefail
+
+REAL_HOME=$(eval echo "~${LOGNAME:-$USER}" 2>/dev/null || echo "$HOME")
+STATE_DIR="$REAL_HOME/.local/state/jamjamjam"
+PID_FILE="$STATE_DIR/tui.pid"
+CMD_FILE="$STATE_DIR/commands.json"
+SHELL_CFG="/usr/share/omarchy/shell"
+
+action="${1:-}"
+case "$action" in
+  start|stop|toggle) ;;
+  *) echo "usage: jamjamjam-analyze start|stop|toggle" >&2; exit 2 ;;
+esac
+
+tui_open() {
+  [[ -f "$PID_FILE" ]] || return 1
+  local pid
+  pid=$(cat "$PID_FILE" 2>/dev/null || true)
+  [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+}
+
+# Only while the TUI owns the session.
+tui_open || exit 0
+
+if [[ "$action" == "toggle" ]]; then
+  if python3 - "$STATE_DIR/state.json" <<'PY'
+import json, sys
+try:
+    sys.exit(0 if json.load(open(sys.argv[1])).get("hold") else 1)
+except Exception:
+    sys.exit(1)
+PY
+  then
+    action=stop
+  else
+    action=start
+  fi
+fi
+
+active=false
+[[ "$action" == "start" ]] && active=true
+
+# Fast path: the shell IPC reaches the plugin instantly.
+if command -v quickshell >/dev/null 2>&1; then
+  if quickshell ipc -p "$SHELL_CFG" call jamjamjam-plugin setHold "$active" >/dev/null 2>&1; then
+    exit 0
+  fi
+fi
+
+# Fallback: the standalone backend polls commands.json.
+mkdir -p "$STATE_DIR"
+tmp="$CMD_FILE.tmp"
+printf '{"op":"setHold","active":%s}' "$active" > "$tmp"
+mv "$tmp" "$CMD_FILE"

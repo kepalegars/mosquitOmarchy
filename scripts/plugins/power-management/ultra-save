@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+# ultra-save — Ultra-low-power toggle for Linux laptops
+# Target: 6-8W on battery. AMD Ryzen 7000 + power-profiles-daemon.
+#
+# Usage:  ultra-save on|off|toggle|status
+
+set -euo pipefail
+
+# ── Detect real user (sudo changes $HOME to /root) ───────────────────
+REAL_USER="${SUDO_USER:-${LOGNAME:-$USER}}"
+REAL_HOME=$(eval echo "~$REAL_USER" 2>/dev/null || echo "$HOME")
+
+# ── Config ────────────────────────────────────────────────────────────
+CPU_MAX_PCT=30
+DIM_BRIGHTNESS_PCT=20
+STATE_DIR="${REAL_HOME}/.local/state/ultra-save"
+STATE_FILE="$STATE_DIR/state"
+PREV_PROFILE_FILE="$STATE_DIR/prev_profile"
+PREV_BRIGHTNESS_FILE="$STATE_DIR/prev_brightness"
+# ──────────────────────────────────────────────────────────────────────
+
+mkdir -p "$STATE_DIR"
+
+BACKLIGHT_PATH=""
+for p in /sys/class/backlight/amdgpu1 /sys/class/backlight/amdgpu_bl1 /sys/class/backlight/intel_backlight; do
+    [[ -d "$p" ]] && BACKLIGHT_PATH="$p" && break
+done
+
+# ── Helpers ───────────────────────────────────────────────────────────
+
+w() {
+    [[ -f "$1" ]] && echo "$2" > "$1" 2>/dev/null || true
+}
+
+get_brightness_pct() {
+    [[ -z "$BACKLIGHT_PATH" ]] && { echo 100; return; }
+    local max cur
+    max=$(cat "$BACKLIGHT_PATH/max_brightness" 2>/dev/null || echo 100)
+    cur=$(cat "$BACKLIGHT_PATH/brightness" 2>/dev/null || echo 100)
+    (( max > 0 )) && echo $(( cur * 100 / max )) || echo 100
+}
+
+set_brightness_pct() {
+    [[ -z "$BACKLIGHT_PATH" ]] && return
+    local max b
+    max=$(cat "$BACKLIGHT_PATH/max_brightness" 2>/dev/null || echo 100)
+    b=$(( max * $1 / 100 ))
+    w "$BACKLIGHT_PATH/brightness" "$b"
+}
+
+is_on() {
+    [[ -f "$STATE_FILE" ]] && grep -q "^on$" "$STATE_FILE" 2>/dev/null
+}
+
+save_prev_profile() {
+    local cur
+    cur=$(powerprofilesctl get 2>/dev/null || echo "balanced")
+    echo "$cur" > "$PREV_PROFILE_FILE"
+}
+
+restore_prev_profile() {
+    local prev="balanced"
+    [[ -f "$PREV_PROFILE_FILE" ]] && prev=$(cat "$PREV_PROFILE_FILE")
+    powerprofilesctl set "$prev" 2>/dev/null || powerprofilesctl set balanced 2>/dev/null || true
+}
+
+# ── ENABLE ────────────────────────────────────────────────────────────
+
+enable() {
+    [[ $EUID -ne 0 ]] && { echo "Run as root (sudo)." >&2; exit 1; }
+    is_on && { echo "Already on."; return 0; }
+
+    # Live mode (scripts/plugins/live-mode) locks ultra-save off for max performance.
+    if [[ -f "${REAL_HOME}/.local/state/live-mode/active" ]]; then
+        echo "Blocked by live mode (performance max)." >&2
+        exit 1
+    fi
+
+    # Save current state before changing anything
+    save_prev_profile
+
+    local brightness_pct
+    brightness_pct=$(get_brightness_pct)
+    echo "$brightness_pct" > "$PREV_BRIGHTNESS_FILE"
+
+    echo "Enabling ultra-save mode..."
+
+    # 1. CPU: disable boost
+    w /sys/devices/system/cpu/cpufreq/boost "0"
+
+    # 2. CPU: cap frequency
+    local fmin fmax cap
+    fmin=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq 2>/dev/null || echo 1800000)
+    fmax=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo 5100000)
+    cap=$(( fmin + (fmax - fmin) * CPU_MAX_PCT / 100 ))
+    for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
+        w "$f" "$cap"
+    done
+
+    # 3. CPU: EPP to power
+    for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+        w "$f" "power"
+    done
+
+    # 4. CPU: governor powersave
+    for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+        w "$f" "powersave"
+    done
+
+    # 5. Power-profiles-daemon → power-saver
+    powerprofilesctl set power-saver 2>/dev/null || true
+
+    # 6. AMD GPU: low power
+    for f in /sys/class/drm/card*/device/power_dpm_force_performance_level; do
+        w "$f" "low"
+    done
+
+    # 7. i915 Intel GPU (if present)
+    for param in enable_fbc enable_psr enable_dc; do
+        [[ -f "/sys/module/i915/parameters/$param" ]] && w "/sys/module/i915/parameters/$param" "1" 2>/dev/null || true
+    done
+
+    # 8. PCIe ASPM
+    w /sys/module/pcie_aspm/parameters/policy "powersupersave" 2>/dev/null || true
+
+    # 9. WiFi power save
+    for iface in /sys/class/net/wl*; do
+        [[ -d "$iface" ]] || continue
+        local dev="${iface##*/}"
+        command -v iw &>/dev/null && iw dev "$dev" set power_save on 2>/dev/null || true
+    done
+
+    # 10. Audio codec power save (3s — avoids glitches)
+    w /sys/module/snd_hda_intel/parameters/power_save "3"
+    w /sys/module/snd_hda_intel/parameters/power_save_controller "Y"
+
+    # 11. powertop auto-tune
+    command -v powertop &>/dev/null && powertop --auto-tune 2>/dev/null || true
+
+    # 12. Dim display (only if above threshold)
+    if [[ "$brightness_pct" -gt "$DIM_BRIGHTNESS_PCT" ]]; then
+        set_brightness_pct "$DIM_BRIGHTNESS_PCT"
+    fi
+
+    # 13. VM / kernel
+    w /proc/sys/vm/dirty_writeback_centisecs "1500"
+    w /proc/sys/kernel/nmi_watchdog "0"
+    sysctl -w kernel.sysrq=0 &>/dev/null || true
+    w /proc/sys/vm/stat_interval "10"
+    w /proc/sys/vm/laptop_mode "5"
+
+    # 14. Runtime PM for NVMe, USB, PCI
+    for f in /sys/block/nvme*/device/power/control /sys/bus/usb/devices/*/power/control /sys/bus/pci/devices/*/power/control; do
+        w "$f" "auto"
+    done
+
+    # 15. NIC rings
+    for f in /sys/class/net/*/queues/rx/rps_sock_flow_entries; do
+        w "$f" "128" 2>/dev/null || true
+    done
+
+    # Save state
+    echo "on" > "$STATE_FILE"
+
+    echo "Ultra-save: ON"
+}
+
+# ── DISABLE ───────────────────────────────────────────────────────────
+
+disable() {
+    [[ $EUID -ne 0 ]] && { echo "Run as root (sudo)." >&2; exit 1; }
+    is_on || { echo "Already off."; return 0; }
+
+    echo "Disabling ultra-save mode..."
+
+    # 1. CPU: uncap
+    local fmax
+    fmax=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo 5100000)
+    for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
+        w "$f" "$fmax"
+    done
+    w /sys/devices/system/cpu/cpufreq/boost "1" 2>/dev/null || true
+
+    # 2. CPU: EPP to balanced_performance
+    for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+        w "$f" "balance_performance"
+    done
+
+    # 3. CPU: governor schedutil
+    for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+        w "$f" "schedutil"
+    done
+
+    # 4. Restore previous power profile
+    restore_prev_profile
+
+    # 5. AMD GPU: auto
+    for f in /sys/class/drm/card*/device/power_dpm_force_performance_level; do
+        w "$f" "auto"
+    done
+
+    # 6. PCIe ASPM → default
+    w /sys/module/pcie_aspm/parameters/policy "default" 2>/dev/null || true
+
+    # 7. WiFi power save off
+    for iface in /sys/class/net/wl*; do
+        [[ -d "$iface" ]] || continue
+        local dev="${iface##*/}"
+        command -v iw &>/dev/null && iw dev "$dev" set power_save off 2>/dev/null || true
+    done
+
+    # 8. Audio power save off
+    w /sys/module/snd_hda_intel/parameters/power_save "0"
+
+    # 9. Restore display brightness
+    local prev_bright="100"
+    [[ -f "$PREV_BRIGHTNESS_FILE" ]] && prev_bright=$(cat "$PREV_BRIGHTNESS_FILE")
+    set_brightness_pct "$prev_bright"
+
+    # 10. VM / kernel
+    w /proc/sys/vm/dirty_writeback_centisecs "500"
+    w /proc/sys/kernel/nmi_watchdog "1"
+    sysctl -w kernel.sysrq=1 &>/dev/null || true
+    w /proc/sys/vm/stat_interval "1"
+    w /proc/sys/vm/laptop_mode "0"
+
+    # 11. Runtime PM off
+    for f in /sys/bus/pci/devices/*/power/control /sys/block/nvme*/device/power/control; do
+        w "$f" "on"
+    done
+
+    # Stop powertop if running
+    pkill -f "powertop --auto-tune" 2>/dev/null || true
+
+    local prev_profile="balanced"
+    [[ -f "$PREV_PROFILE_FILE" ]] && prev_profile=$(cat "$PREV_PROFILE_FILE")
+
+    echo "off" > "$STATE_FILE"
+
+    echo "Ultra-save: OFF → $prev_profile"
+}
+
+# ── STATUS ────────────────────────────────────────────────────────────
+
+status() {
+    local state="off"
+    is_on && state="on"
+
+    local bat_pct bat_status power_w
+    bat_pct=$(cat /sys/class/power_supply/BAT*/capacity 2>/dev/null | head -1 || echo "?")
+    bat_status=$(cat /sys/class/power_supply/BAT*/status 2>/dev/null | head -1 || echo "?")
+
+    local rapl="/sys/class/powercap/intel-rapl:0/energy_uj"
+    if [[ -r "$rapl" ]]; then
+        local e1 e2
+        e1=$(cat "$rapl" 2>/dev/null); sleep 1; e2=$(cat "$rapl" 2>/dev/null)
+        [[ -n "$e1" && -n "$e2" && "$e2" != "$e1" ]] && \
+            power_w=$(awk "BEGIN {printf \"%.1f\", ($e2 - $e1) / 1000000.0}")
+    fi
+    if [[ -z "${power_w:-}" ]]; then
+        local pn
+        pn=$(cat /sys/class/power_supply/BAT*/power_now 2>/dev/null | head -1 || echo "0")
+        [[ "$pn" != "0" ]] && power_w=$(awk "BEGIN {printf \"%.1f\", $pn / 1000000}")
+    fi
+
+    local brightness boost epp gov aspm profile
+    brightness=$(get_brightness_pct)
+    boost=$(cat /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || echo "?")
+    epp=$(cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference 2>/dev/null || echo "?")
+    gov=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo "?")
+    aspm=$(cat /sys/module/pcie_aspm/parameters/policy 2>/dev/null | grep -oP '\[\K[^\]]+' || echo "?")
+    profile=$(powerprofilesctl get 2>/dev/null || echo "?")
+
+    cat <<EOF
+╔══════════════════════════════════════════════╗
+║           ULTRA-SAVE STATUS                  ║
+╠══════════════════════════════════════════════╣
+║  Mode:          $state
+║  Power:         ${power_w:-?}W
+║  Battery:       ${bat_pct}% (${bat_status})
+║  Brightness:    ${brightness}%
+║──────────────────────────────────────────────║
+║  CPU Governor:  $gov
+║  CPU EPP:       $epp
+║  CPU Boost:     $boost
+║  CPU Max Freq:  $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null | awk '{printf "%.0f MHz", $1/1000}' || echo "?")
+║──────────────────────────────────────────────║
+║  Power Profile: $profile
+║  PCIe ASPM:     $aspm
+╚══════════════════════════════════════════════╝
+EOF
+}
+
+# ── Main ──────────────────────────────────────────────────────────────
+
+case "${1:-toggle}" in
+    on)      enable ;;
+    off)     disable ;;
+    toggle)
+        if is_on; then disable; else enable; fi
+        ;;
+    status)  status ;;
+    *)       echo "Usage: ultra-save {on|off|toggle|status}" >&2; exit 1 ;;
+esac

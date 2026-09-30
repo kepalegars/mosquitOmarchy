@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# =============================================================================
+# move-manager-webapp — Move Manager in a dedicated Chromium profile
+#
+# The Move device serves its webapp on http://move[N].local. Chromium's
+# download folder cannot be scoped per site, so the Move Manager gets its own
+# profile + download directory: everything the webapp downloads lands straight
+# into <projects>/ablbundle (displayed as "mosquito Move Manager" in the App Launcher).
+#
+# Only one instance of this profile runs at a time: launching again closes
+# whatever window is already open and replaces it, regardless of how that
+# earlier one was started (this wrapper, the app-grid entry, or a manual
+# `chromium --user-data-dir=…`).
+#
+# The download destination + "ask where to save" are written straight into
+# the profile's own Preferences, not just passed as a CLI flag — so a set
+# downloaded even without going through this wrapper still lands in the
+# right folder silently. --unsafely-treat-insecure-origin-as-secure treats
+# this one plain-http origin as secure, so Chromium doesn't block the
+# download as "insecure" (the Move only ever serves http://, there's no
+# https:// to use instead).
+# =============================================================================
+set -euo pipefail
+
+CFG="${XDG_CONFIG_HOME:-$HOME/.config}/move-session"
+# shellcheck disable=SC1091
+[[ -f $CFG/prefs ]] && . "$CFG/prefs" || true
+
+MOVE_ADDRESS="${MOVE_ADDRESS:-}"
+URL="http://move${MOVE_ADDRESS}.local"
+
+if [[ -n ${MOVE_PROJECTS_DIR:-} ]]; then
+  MOVE_DIR="$MOVE_PROJECTS_DIR"
+else
+  MUSIC_DIR="${MOVE_MUSIC_DIR:-$(xdg-user-dir MUSIC 2>/dev/null || true)}"
+  MUSIC_DIR="${MUSIC_DIR:-$HOME/Music}"
+  MOVE_DIR="$MUSIC_DIR/Ableton Move Projects"
+fi
+BUNDLE_DIR="$MOVE_DIR/ablbundle"
+mkdir -p "$BUNDLE_DIR"
+
+PROFILE="${XDG_CACHE_HOME:-$HOME/.cache}/move-manager"
+
+close_existing_instance() {
+  pkill -f -- "--user-data-dir=$PROFILE" >/dev/null 2>&1 || true
+  # Give Chromium a moment to release its singleton lock before relaunching.
+  local waited=0
+  while [[ -e "$PROFILE/SingletonLock" ]] && (( waited < 30 )); do
+    sleep 0.2; waited=$((waited + 1))
+  done
+}
+
+seed_profile_prefs() {
+  command -v jq >/dev/null 2>&1 || return 0
+  local dir="$PROFILE/Default" file tmp
+  mkdir -p "$dir"
+  file="$dir/Preferences"
+  tmp=$(mktemp)
+  if [[ -s $file ]] && jq empty "$file" >/dev/null 2>&1; then
+    jq --arg dir "$BUNDLE_DIR" \
+      '.download.default_directory = $dir
+       | .download.prompt_for_download = false
+       | .download.directory_upgrade = true
+       | .savefile.default_directory = $dir' \
+      "$file" > "$tmp" 2>/dev/null && mv "$tmp" "$file"
+  else
+    jq -n --arg dir "$BUNDLE_DIR" \
+      '{download: {default_directory: $dir, prompt_for_download: false, directory_upgrade: true}, savefile: {default_directory: $dir}}' \
+      > "$tmp" && mv "$tmp" "$file"
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+}
+
+close_existing_instance
+seed_profile_prefs
+
+exec chromium \
+  --app="$URL" \
+  --user-data-dir="$PROFILE" \
+  --download-default-directory="$BUNDLE_DIR" \
+  --no-first-run \
+  --no-default-browser-check \
+  --unsafely-treat-insecure-origin-as-secure="$URL" \
+  "$@"

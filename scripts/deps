@@ -1,0 +1,15 @@
+# Global runtime deps for things this repo does NOT install via a module
+# script, but still relies on being present after a restore — external
+# tools that are only backed up/restored (config + binary), not set up here.
+#
+# Read by setup-customarchy.sh's restore-time deps mechanism (collect_deps):
+# every `deps` file anywhere under scripts/ is globbed and its packages are
+# installed if missing (`sudo pacman -S --needed`). Module-specific deps
+# (e.g. scripts/apps/zen/deps) stay colocated with their own module;
+# this file is for cases with no module folder of their own.
+#
+# - omagrab (https://github.com/28allday/omagrab): the user's own external
+#   tool, backed up/restored as ~/.local/bin/omagrab + ~/.config/omagrab.
+yt-dlp
+ffmpeg
+wl-clipboard

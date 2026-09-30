@@ -1,0 +1,10 @@
+[env]
+_.path = "{{ cwd }}/bin"
+
+[tools]
+# Needed to build the Go/Bubble Tea TUIs under scripts/*/tui-go/ and the
+# shared scripts/lib/tui-kit/ component library (mosquito-move-manager-tui /
+# mosquito-vst-manager-tui). Build-time only -- the deployed binaries don't
+# need Go at runtime, and the install scripts fall back to native-only if
+# it's missing.
+go = "latest"

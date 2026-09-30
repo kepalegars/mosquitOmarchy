@@ -1,0 +1,800 @@
+#!/usr/bin/env python3
+"""move-bundle-to-als — convert an Ableton Move set to a native Live `.als`.
+
+Accepts a downloaded `.abletonbundle` / `.ablbundle` (a zip containing
+`Song.abl` + `Samples/`) or a bare `Song.abl`/`.abl`. The Move set format is
+the Ableton song JSON schema (`song.json`); notes carry an absolute MIDI note
+number and are already in beats, so no scale math or PPQ conversion is needed.
+
+The output is a gzipped `<Ableton>` XML document (the same container Live
+itself writes). It reproduces, element-for-element, the structures Live 12
+produces when it imports a Move set (verified against a real "Set 12 (1).als"
+saved by Live 12.4.5): a MidiTrack per song track with a clip slot per scene,
+MidiClips with KeyTracks/MidiNoteEvent, an empty DeviceChain (the Move's
+factory instrument pads are NOT embedded — no path to the factory packs
+exists outside a device), the Master track carrying the set tempo/signature,
+and Scenes/Transport.
+
+Standard library only — no external XML/gzip tooling required.
+
+This is a BETA converter: it is verified to produce a well-formed Live set
+(gzip + parse round-trip) but not yet confirmed against the Bitwig `.als`
+importer, which is the downstream consumer in the move manager flow. Save a
+copy of the original bundle before replacing anything.
+"""
+
+from __future__ import annotations
+
+import argparse
+import gzip
+import json
+import math
+import os
+import sys
+import zipfile
+import xml.etree.ElementTree as ET
+
+ALSBON_MAJOR = "5"
+ALSBON_MINOR = "12.0_12402"
+SCHEMA_CHANGE_COUNT = "5"
+CREATOR = "Ableton Move — exported by Omarchy move-bundle-to-als"
+
+
+class Ids:
+    """Sequential unique pointee ids (Live's Id= attributes are file-wide)."""
+
+    def __init__(self) -> None:
+        self.n = 100
+
+    def take(self) -> int:
+        self.n += 1000
+        return self.n
+
+
+def num(x: object) -> str:
+    """Shortest repr that round-trips a float; Live files do the same."""
+    v = float(x)
+    return repr(v)
+
+
+def V(tag: str, **attrs) -> ET.Element:
+    """Leaf element; None values are dropped, the rest str()'d."""
+    return ET.Element(tag, {k: str(v) for k, v in attrs.items() if v is not None})
+
+
+def idref_picker(ids: Ids, picker: str = "PickerRole2") -> ET.Element:
+    return None
+
+
+# Live's ~"picker" parameter block that prefixes every mixer/sequencer
+# element with On/ModulationSourceCount/ParametersListWrapper/Pointee/...
+def parameter_header(ids: Ids, pointee: int, on_automation: int | None = None) -> list[ET.Element]:
+    out = [
+        V("LomId", Value=0),
+        V("LomIdView", Value=0),
+        V("IsExpanded", Value=True),
+        V("BreakoutIsExpanded", Value=False),
+    ]
+    on = ET.Element("On")
+    on.append(V("LomId", Value=0))
+    on.append(V("Manual", Value=True))
+    if on_automation is not None:
+        on.append(V("MidiCCOnOffThresholds"))
+    out.append(on)
+    out.append(V("ModulationSourceCount", Value=0))
+    out.append(V("ParametersListWrapper", LomId=0))
+    out.append(V("Pointee", **{"Id": pointee}))
+    out.append(V("LastSelectedTimeableIndex", Value=0))
+    out.append(V("LastSelectedClipEnvelopeIndex", Value=0))
+    last = ET.Element("LastPresetRef")
+    last.append(V("Value"))
+    out.append(last)
+    out.append(ET.Element("LockedScripts"))
+    out.append(V("IsFolded", Value=False))
+    out.append(V("ShouldShowPresetName", Value=True))
+    out.append(V("UserName", Value=""))
+    out.append(V("Annotation", Value=""))
+    src = ET.Element("SourceContext")
+    src.append(V("Value"))
+    out.append(src)
+    out.append(V("MpePitchBendUsesTuning", Value=True))
+    out.append(V("ViewData", Value="{}"))
+    return out
+
+
+def params_on(ids: Ids, pointee: int) -> ET.Element:
+    on = ET.Element("On")
+    on.append(V("LomId", Value=0))
+    on.append(V("Manual", Value=True))
+    on.append(V("MidiCCOnOffThresholds"))
+    return on
+
+
+def automation_target(ids: Ids) -> ET.Element:
+    at = ET.Element("AutomationTarget", {"Id": str(ids.take())})
+    at.append(V("LockEnvelope", Value=0))
+    return at
+
+
+def modulation_target(ids: Ids) -> ET.Element:
+    mt = ET.Element("ModulationTarget", {"Id": str(ids.take())})
+    mt.append(V("LockEnvelope", Value=0))
+    return mt
+
+
+def routing(tag: str, target: str, also_target: str = "") -> ET.Element:
+    r = ET.Element(tag)
+    r.append(V("Target", Value=target))
+    r.append(V("UpperDisplayString", Value=""))     # placeholder, replaced below
+    r.append(V("LowerDisplayString", Value=""))
+    # Referenced values from a Live set are static/assumed.
+    return r
+
+
+def mixer(ids: Ids, *, master: bool = False, tempo: float | None = None,
+          numerator: int = 4, denominator: int = 4) -> ET.Element:
+    base = ids.take()
+    mix = ET.Element("Mixer")
+    mix.extend(parameter_header(ids, base))
+    sends = ET.Element("Sends")
+    mix.append(sends)
+    speaker = ET.Element("Speaker")
+    speaker.append(V("LomId", Value=0))
+    speaker.append(V("Manual", Value=True))
+    speaker.append(automation_target(ids))
+    speaker.append(ET.Element("MidiCCOnOffThresholds"))
+    mix.append(speaker)
+    mix.append(V("SoloSink", Value=False))
+    mix.append(V("PanMode", Value=0))
+    pan = ET.Element("Pan")
+    pan.append(V("LomId", Value=0))
+    pan.append(V("Manual", Value=0))
+    pan.append(ET.Element("MidiControllerRange"))
+    pan.append(automation_target(ids))
+    pan.append(modulation_target(ids))
+    mix.append(pan)
+    mix.append(V("SplitStereoPanL", Value=-1))
+    mix.append(V("SplitStereoPanR", Value=1))
+    vol = ET.Element("Volume")
+    vol.append(V("LomId", Value=0))
+    vol.append(V("Manual", Value=0.75 if not master else 1.0))
+    vol.append(ET.Element("MidiControllerRange"))
+    vol.append(automation_target(ids))
+    vol.append(modulation_target(ids))
+    mix.append(vol)
+    mix.append(V("ViewStateSessionTrackWidth", Value=93))
+    cs = ET.Element("CrossFadeState")
+    cs.append(V("LomId", Value=0))
+    cs.append(V("Manual", Value=0))
+    cs.append(ET.Element("MidiControllerRange"))
+    cs.append(automation_target(ids))
+    mix.append(cs)
+    mix.append(V("SendsListWrapper", LomId=0))
+
+    if not master:
+        return mix
+
+    tempo_el = ET.Element("Tempo")
+    tempo_el.append(V("LomId", Value=0))
+    tempo_el.append(V("Manual", Value=num(tempo)))
+    mc = ET.Element("MidiControllerRange")
+    mc.append(V("Min", Value=60))
+    mc.append(V("Max", Value=200))
+    tempo_el.append(mc)
+    tempo_el.append(automation_target(ids))
+    tempo_el.append(modulation_target(ids))
+    mix.append(tempo_el)
+
+    ts = ET.Element("TimeSignature")
+    tss = ET.Element("TimeSignatures")
+    rts = ET.Element("RemoteableTimeSignature", {"Id": "0"})
+    rts.append(V("Numerator", Value=numerator))
+    rts.append(V("Denominator", Value=denominator))
+    rts.append(V("Time", Value=0))
+    tss.append(rts)
+    ts.append(tss)
+    mix.append(ts)
+
+    gga = ET.Element("GlobalGrooveAmount")
+    gga.append(V("LomId", Value=0))
+    gga.append(V("Manual", Value=0))
+    gga.append(ET.Element("MidiControllerRange"))
+    gga.append(automation_target(ids))
+    gga.append(modulation_target(ids))
+    mix.append(gga)
+
+    cf = ET.Element("CrossFade")
+    cf.append(V("LomId", Value=0))
+    cf.append(V("Manual", Value=0))
+    cfr = ET.Element("MidiControllerRange")
+    cfr.append(V("Min", Value=-1))
+    cfr.append(V("Max", Value=1))
+    cf.append(cfr)
+    cf.append(automation_target(ids))
+    cf.append(modulation_target(ids))
+    mix.append(cf)
+    mix.append(V("TempoAutomationViewBottom", Value=60))
+    mix.append(V("TempoAutomationViewTop", Value=200))
+    uta = ET.Element("UserTempoAutomation")
+    uta.append(V("Value"))
+    mix.append(uta)
+    return mix
+
+
+def main_sequencer(ids: Ids, clip_slots: list[ET.Element]) -> ET.Element:
+    base = ids.take()
+    seq = ET.Element("MainSequencer")
+    seq.append(V("LomId", Value=0))
+    seq.append(V("LomIdView", Value=0))
+    seq.append(V("IsExpanded", Value=True))
+    seq.append(V("BreakoutIsExpanded", Value=False))
+    seq.append(params_on(ids, base))
+    seq.append(V("ModulationSourceCount", Value=0))
+    seq.append(V("ParametersListWrapper", LomId=0))
+    seq.append(V("Pointee", **{"Id": base}))
+    seq.append(V("LastSelectedTimeableIndex", Value=0))
+    seq.append(V("LastSelectedClipEnvelopeIndex", Value=0))
+    last = ET.Element("LastPresetRef")
+    last.append(V("Value"))
+    seq.append(last)
+    seq.append(ET.Element("LockedScripts"))
+    seq.append(V("IsFolded", Value=False))
+    seq.append(V("ShouldShowPresetName", Value=True))
+    seq.append(V("UserName", Value=""))
+    seq.append(V("Annotation", Value=""))
+    src = ET.Element("SourceContext")
+    src.append(V("Value"))
+    seq.append(src)
+    seq.append(V("MpePitchBendUsesTuning", Value=True))
+    seq.append(V("ViewData", Value="{}"))
+    slotlist = ET.Element("ClipSlotList")
+    for slot in clip_slots:
+        slotlist.append(slot)
+    seq.append(slotlist)
+    seq.append(V("MonitoringEnum", Value=1))
+    rec = ET.Element("Recorder")
+    rec.append(V("IsArmed", Value=True))
+    rec.append(V("TakeCounter", Value=0))
+    seq.append(rec)
+    return seq
+
+
+def clip_slot(ids: Ids, index: int, clip: ET.Element | None) -> ET.Element:
+    slot = ET.Element("ClipSlot", {"Id": str(index)})
+    slot.append(V("LomId", Value=0))
+    wrap = ET.Element("ClipSlot")
+    if clip is not None:
+        val = ET.Element("Value")
+        val.append(clip)
+        wrap.append(val)
+    slot.append(wrap)
+    slot.append(V("HasStop", Value=clip is not None))
+    return slot
+
+
+def midi_clip(ids: Ids, notes: list[dict], *, numerator: int, denominator: int,
+              clip_color: str = "12") -> ET.Element:
+    last = 0.0
+    for n in notes:
+        last = max(last, float(n.get("startTime", 0.0)) + float(n.get("duration", 0.0)))
+    length = max(1.0, math.ceil(last * 4) / 4.0)
+
+    clip = ET.Element("MidiClip", {"Id": "0", "Time": "0"})
+    clip.append(V("LomId", Value=0))
+    clip.append(V("LomIdView", Value=0))
+    clip.append(V("CurrentStart", Value=0))
+    clip.append(V("CurrentEnd", Value=num(length)))
+    loop = ET.Element("Loop")
+    loop.append(V("LoopStart", Value=0))
+    loop.append(V("LoopEnd", Value=num(length)))
+    loop.append(V("StartRelative", Value=0))
+    loop.append(V("LoopOn", Value=True))
+    loop.append(V("OutMarker", Value=num(length)))
+    loop.append(V("HiddenLoopStart", Value=0))
+    loop.append(V("HiddenLoopEnd", Value=num(length)))
+    clip.append(loop)
+    clip.append(V("Name", Value=""))
+    clip.append(V("Annotation", Value=""))
+    clip.append(V("Color", Value=clip_color))
+    clip.append(V("LaunchMode", Value=0))
+    clip.append(V("LaunchQuantisation", Value=0))
+    ts = ET.Element("TimeSignature")
+    tss = ET.Element("TimeSignatures")
+    rts = ET.Element("RemoteableTimeSignature", {"Id": "0"})
+    rts.append(V("Numerator", Value=numerator))
+    rts.append(V("Denominator", Value=denominator))
+    rts.append(V("Time", Value=0))
+    tss.append(rts)
+    ts.append(tss)
+    clip.append(ts)
+    env = ET.Element("Envelopes")
+    env.append(ET.Element("Envelopes"))
+    clip.append(env)
+    stp = ET.Element("ScrollerTimePreserver")
+    stp.append(V("LeftTime", Value=0))
+    stp.append(V("RightTime", Value=0))
+    clip.append(stp)
+    tsel = ET.Element("TimeSelection")
+    tsel.append(V("AnchorTime", Value=0))
+    tsel.append(V("OtherTime", Value=0))
+    clip.append(tsel)
+    clip.append(V("Legato", Value=False))
+    clip.append(V("Ram", Value=False))
+    gs = ET.Element("GrooveSettings")
+    gs.append(V("GrooveId", Value=0))
+    clip.append(gs)
+    clip.append(V("Disabled", Value=False))
+    clip.append(V("VelocityAmount", Value=0))
+    fa = ET.Element("FollowAction")
+    fa.append(V("FollowTime", Value=4))
+    fa.append(V("IsLinked", Value=True))
+    fa.append(V("LoopIterations", Value=1))
+    fa.append(V("FollowActionA", Value=4))
+    fa.append(V("FollowActionB", Value=0))
+    fa.append(V("FollowChanceA", Value=100))
+    fa.append(V("FollowChanceB", Value=0))
+    fa.append(V("JumpIndexA", Value=1))
+    fa.append(V("JumpIndexB", Value=1))
+    fa.append(V("FollowActionEnabled", Value=False))
+    clip.append(fa)
+    grid = ET.Element("Grid")
+    grid.append(V("FixedNumerator", Value=1))
+    grid.append(V("FixedDenominator", Value=16))
+    grid.append(V("GridIntervalPixel", Value=20))
+    grid.append(V("Ntoles", Value=2))
+    grid.append(V("SnapToGrid", Value=True))
+    grid.append(V("Fixed", Value=False))
+    clip.append(grid)
+    clip.append(V("FreezeStart", Value=0))
+    clip.append(V("FreezeEnd", Value=0))
+    clip.append(V("IsWarped", Value=True))
+    clip.append(V("TakeId", Value=-1))
+    clip.append(V("IsInKey", Value=False))
+    si = ET.Element("ScaleInformation")
+    si.append(V("Root", Value=0))
+    si.append(V("Name", Value=4))
+    clip.append(si)
+    clip.append(V("AutomationEnvelopesListWrapper", LomId=0))
+    clip.append(notes_element(ids, notes))
+    clip.append(V("BankSelectCoarse", Value=-1))
+    clip.append(V("BankSelectFine", Value=-1))
+    clip.append(V("ProgramChange", Value=-1))
+    clip.append(V("NoteEditorFoldInZoom", Value=-1))
+    clip.append(V("NoteEditorFoldInScroll", Value=0))
+    clip.append(V("NoteEditorFoldOutZoom", Value=176))
+    clip.append(V("NoteEditorFoldOutScroll", Value=-44))
+    clip.append(V("NoteEditorFoldScaleZoom", Value=-1))
+    clip.append(V("NoteEditorFoldScaleScroll", Value=0))
+    clip.append(V("NoteSpellingPreference", Value=0))
+    clip.append(V("AccidentalSpellingPreference", Value=3))
+    clip.append(V("PreferFlatRootNote", Value=False))
+    egrid = ET.Element("ExpressionGrid")
+    egrid.append(V("FixedNumerator", Value=1))
+    egrid.append(V("FixedDenominator", Value=16))
+    egrid.append(V("GridIntervalPixel", Value=20))
+    egrid.append(V("Ntoles", Value=2))
+    egrid.append(V("SnapToGrid", Value=False))
+    egrid.append(V("Fixed", Value=False))
+    clip.append(egrid)
+    return clip
+
+
+def notes_element(ids: Ids, notes: list[dict]) -> ET.Element:
+    note_id = 1
+    keytracks = ET.Element("KeyTracks")
+    by_pitch: dict[int, list[dict]] = {}
+    order: list[int] = []
+    for n in notes:
+        pitch = int(n.get("noteNumber", 0))
+        if pitch not in by_pitch:
+            by_pitch[pitch] = []
+            order.append(pitch)
+        by_pitch[pitch].append(n)
+    for kt_idx, pitch in enumerate(order):
+        kt = ET.Element("KeyTrack", {"Id": str(kt_idx)})
+        knotes = ET.Element("Notes")
+        for n in by_pitch[pitch]:
+            ev = ET.Element("MidiNoteEvent")
+            ev.set("Time", num(n.get("startTime", 0.0)))
+            ev.set("Duration", num(n.get("duration", 0.1)))
+            ev.set("Velocity", str(max(1, min(127, int(round(float(n.get("velocity", 100.0))))))))
+            ev.set("OffVelocity", str(max(0, min(127, int(round(float(n.get("offVelocity", 0.0))))))))
+            ev.set("NoteId", str(note_id))
+            note_id += 1
+            knotes.append(ev)
+        kt.append(knotes)
+        kt.append(V("MidiKey", Value=pitch))
+        keytracks.append(kt)
+
+    notes_el = ET.Element("Notes")
+    notes_el.append(keytracks)
+
+    pencils = ET.Element("PerNoteEventStore")
+    event_lists = ET.Element("EventLists")
+    pencils.append(event_lists)
+    notes_el.append(pencils)
+
+    notes_el.append(ET.Element("NoteProbabilityGroups"))
+
+    prob = ET.Element("ProbabilityGroupIdGenerator")
+    prob.append(V("NextId", Value=1))
+    notes_el.append(prob)
+
+    nid = ET.Element("NoteIdGenerator")
+    nid.append(V("NextId", Value=max(1, note_id)))
+    notes_el.append(nid)
+    return notes_el
+
+
+def device_chain(ids: Ids, clip_slots: list[ET.Element], *, master: bool = False,
+                 tempo: float | None = None, numerator: int = 4, denominator: int = 4) -> ET.Element:
+    dc = ET.Element("DeviceChain")
+    al = ET.Element("AutomationLanes")
+    al_inner = ET.Element("AutomationLanes")
+    al_inner.append(ET.Element("AutomationLane", {"Id": "0"}))
+    al.append(al_inner)
+    al.append(V("AreAdditionalAutomationLanesFolded", Value=False))
+    dc.append(al)
+    cevs = ET.Element("ClipEnvelopeChooserViewState")
+    cevs.append(V("SelectedDevice", Value=0))
+    cevs.append(V("SelectedEnvelope", Value=0))
+    cevs.append(V("PreferModulationVisible", Value=False))
+    dc.append(cevs)
+    if not master:
+        air = ET.Element("AudioInputRouting")
+        air.append(V("Target", Value="AudioIn/External/S0"))
+        air.append(V("UpperDisplayString", Value="Ext. In"))
+        air.append(V("LowerDisplayString", Value="1/2"))
+        mpe = ET.Element("MpeSettings")
+        mpe.append(V("ZoneType", Value=0))
+        mpe.append(V("FirstNoteChannel", Value=1))
+        mpe.append(V("LastNoteChannel", Value=15))
+        mpe.append(V("MpePitchBendUsesTuning", Value=True))
+        air.append(mpe)
+        dc.append(air)
+        mir = ET.Element("MidiInputRouting")
+        mir.append(V("Target", Value="MidiIn/External.All/"))
+        mir.append(V("UpperDisplayString", Value="Ext: All Ins"))
+        mir.append(V("LowerDisplayString", Value=""))
+        mir.append(mpe)
+        dc.append(mir)
+    aor = ET.Element("AudioOutputRouting")
+    aor.append(V("Target", Value="AudioOut/Main"))
+    aor.append(V("UpperDisplayString", Value="Main"))
+    aor.append(V("LowerDisplayString", Value=""))
+    aor.append(routing_mpe())
+    dc.append(aor)
+    if not master:
+        mor = ET.Element("MidiOutputRouting")
+        mor.append(V("Target", Value="MidiOut/None"))
+        mor.append(V("UpperDisplayString", Value="None"))
+        mor.append(V("LowerDisplayString", Value=""))
+        mor.append(routing_mpe())
+        dc.append(mor)
+    dc.append(mixer(ids, master=master, tempo=tempo, numerator=numerator, denominator=denominator))
+    dc.append(main_sequencer(ids, clip_slots))
+    inner = ET.Element("DeviceChain")
+    inner.append(ET.Element("Devices"))
+    dc.append(inner)
+    return dc
+
+
+def routing_mpe() -> ET.Element:
+    mpe = ET.Element("MpeSettings")
+    mpe.append(V("ZoneType", Value=0))
+    mpe.append(V("FirstNoteChannel", Value=1))
+    mpe.append(V("LastNoteChannel", Value=15))
+    mpe.append(V("MpePitchBendUsesTuning", Value=True))
+    return mpe
+
+
+def midi_track(ids: Ids, index: int, name: str, color: object,
+               clip_slots: list[ET.Element]) -> ET.Element:
+    tr = ET.Element("MidiTrack", {"Id": str(index)})
+    tr.append(V("LomId", Value=0))
+    tr.append(V("LomIdView", Value=0))
+    tr.append(V("IsContentSelectedInDocument", Value=False))
+    tr.append(V("PreferredContentViewMode", Value=0))
+    delay = ET.Element("TrackDelay")
+    delay.append(V("Manual", Value=0))
+    tr.append(delay)
+    tr.append(V("Name", Value=name))
+    tr.append(V("Color", Value=color))
+    tr.append(ET.Element("AutomationEnvelopes"))
+    tr.append(V("TrackGroupId", Value=-1))
+    tr.append(V("TrackUnfolded", Value=True))
+    tr.append(V("DevicesListWrapper", LomId=0))
+    tr.append(V("ClipSlotsListWrapper", LomId=0))
+    tr.append(V("ArrangementClipsListWrapper", LomId=0))
+    tr.append(V("TakeLanesListWrapper", LomId=0))
+    tr.append(V("ViewData", Value="{}"))
+    tr.append(ET.Element("TakeLanes"))
+    tr.append(V("LinkedTrackGroupId", Value=0))
+    tr.append(V("SavedPlayingSlot", Value=-1))
+    tr.append(V("SavedPlayingOffset", Value=0))
+    tr.append(V("Freeze", Value=False))
+    tr.append(V("PostProcessFreezeClips", Value=False))
+    tr.append(device_chain(ids, clip_slots))
+    tr.append(V("ReWireDeviceMidiTargetId", Value=-1))
+    pb = ET.Element("PitchbendRange")
+    pb.append(V("Upper", Value=2))
+    pb.append(V("Lower", Value=2))
+    tr.append(pb)
+    tr.append(V("IsTuned", Value=False))
+    tr.append(V("ControllerLayoutRemoteable", Value=0))
+    tr.append(V("ControllerLayoutCustomization", Value=0))
+    return tr
+
+
+def main_track(ids: Ids, tempo: float, numerator: int, denominator: int,
+               n_slots: int) -> ET.Element:
+    slots = [clip_slot(ids, i, None) for i in range(n_slots)]
+    mt = ET.Element("MainTrack", **{"SelectedToolPanel": "7", "SelectedTransformationName": "",
+                                    "SelectedGeneratorName": ""})
+    mt.append(V("LomId", Value=0))
+    mt.append(V("LomIdView", Value=0))
+    mt.append(V("IsContentSelectedInDocument", Value=True))
+    mt.append(V("PreferredContentViewMode", Value=0))
+    delay = ET.Element("TrackDelay")
+    delay.append(V("Manual", Value=0))
+    mt.append(delay)
+    mt.append(V("Name", Value="Master"))
+    mt.append(V("Color", Value=1107296256))
+    mt.append(ET.Element("AutomationEnvelopes"))
+    mt.append(V("TrackGroupId", Value=-1))
+    mt.append(V("TrackUnfolded", Value=True))
+    mt.append(V("DevicesListWrapper", LomId=0))
+    mt.append(V("ClipSlotsListWrapper", LomId=0))
+    mt.append(V("ArrangementClipsListWrapper", LomId=0))
+    mt.append(V("TakeLanesListWrapper", LomId=0))
+    mt.append(V("ViewData", Value="{}"))
+    mt.append(ET.Element("TakeLanes"))
+    mt.append(V("LinkedTrackGroupId", Value=0))
+    mt.append(device_chain(ids, slots, master=True, tempo=tempo,
+                           numerator=numerator, denominator=denominator))
+    return mt
+
+
+def prehear_track(ids: Ids, n_slots: int) -> ET.Element:
+    slots = [clip_slot(ids, i, None) for i in range(n_slots)]
+    pt = ET.Element("PreHearTrack", **{"SelectedToolPanel": "7", "SelectedTransformationName": "",
+                                       "SelectedGeneratorName": ""})
+    pt.append(V("LomId", Value=0))
+    pt.append(V("LomIdView", Value=0))
+    pt.append(V("IsContentSelectedInDocument", Value=True))
+    pt.append(V("PreferredContentViewMode", Value=0))
+    delay = ET.Element("TrackDelay")
+    delay.append(V("Manual", Value=0))
+    pt.append(delay)
+    pt.append(V("Name", Value="PreHear"))
+    pt.append(V("Color", Value=1107296256))
+    pt.append(ET.Element("AutomationEnvelopes"))
+    pt.append(V("TrackGroupId", Value=-1))
+    pt.append(V("TrackUnfolded", Value=True))
+    pt.append(V("DevicesListWrapper", LomId=0))
+    pt.append(V("ClipSlotsListWrapper", LomId=0))
+    pt.append(V("ArrangementClipsListWrapper", LomId=0))
+    pt.append(V("TakeLanesListWrapper", LomId=0))
+    pt.append(V("ViewData", Value="{}"))
+    pt.append(ET.Element("TakeLanes"))
+    pt.append(V("LinkedTrackGroupId", Value=0))
+    pt.append(device_chain(ids, slots))
+    return pt
+
+
+def scene(ids: Ids, index: int) -> ET.Element:
+    sc = ET.Element("Scene", {"Id": str(index)})
+    fa = ET.Element("FollowAction")
+    fa.append(V("FollowTime", Value=4))
+    fa.append(V("IsLinked", Value=True))
+    fa.append(V("LoopIterations", Value=1))
+    fa.append(V("FollowActionA", Value=4))
+    fa.append(V("FollowActionB", Value=0))
+    fa.append(V("FollowChanceA", Value=100))
+    fa.append(V("FollowChanceB", Value=0))
+    fa.append(V("JumpIndexA", Value=1))
+    fa.append(V("JumpIndexB", Value=1))
+    fa.append(V("FollowActionEnabled", Value=False))
+    sc.append(fa)
+    sc.append(V("Name", Value=""))
+    sc.append(V("Annotation", Value=""))
+    sc.append(V("Color", Value=-1))
+    sc.append(V("Tempo", Value=120))
+    sc.append(V("IsTempoEnabled", Value=False))
+    sc.append(V("TimeSignatureId", Value=0))
+    sc.append(V("IsTimeSignatureEnabled", Value=False))
+    sc.append(V("LomId", Value=0))
+    sc.append(V("ClipSlotsListWrapper", LomId=0))
+    return sc
+
+
+def load_song(path: str) -> tuple[str, dict]:
+    """Return (set_name, song dict) from a bundle, .abl or prepared .als."""
+    base = os.path.basename(path)
+    if zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path) as zf:
+            candidates = [n for n in zf.namelist() if n.lower().endswith((".abl", ".als"))]
+            candidates.sort(key=lambda n: (n.lower() != "song.abl", len(n)))
+            if not candidates:
+                raise ValueError("no Song.abl/.abl/.als entry in the bundle")
+            doc = candidates[0]
+            return os.path.splitext(base)[0], json.loads(zf.read(doc).decode("utf-8", "replace"))
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        return os.path.splitext(base)[0], json.load(fh)
+
+
+def build_liveset(ids: Ids, song: dict) -> ET.Element:
+    tempo = float(song.get("tempo", 120.0))
+    ts = song.get("timeSignature", {}) or {}
+    numerator = int(ts.get("upper", 4))
+    denominator = int(ts.get("lower", 4) or 4)
+
+    tracks_el = ET.Element("Tracks")
+    track_models = [t for t in song.get("tracks", []) if t.get("kind") == "midi"]
+    for i, t in enumerate(track_models):
+        name = t.get("name") or f"Track {i + 1}"
+        color = t.get("color")
+        if color is None:
+            color = -1
+        try:
+            color = int(color)
+        except (TypeError, ValueError):
+            color = -1
+        slots: list[ET.Element] = []
+        clip_slots_data = t.get("clipSlots", [])
+        for j, slot in enumerate(clip_slots_data):
+            clip = slot.get("clip")
+            slots.append(clip_slot(ids, j,
+                                   midi_clip(ids, clip.get("notes", []),
+                                             numerator=numerator, denominator=denominator)
+                                   if clip else None))
+        tracks_el.append(midi_track(ids, i, name, color, slots))
+
+    n_slots = max((len(t.get("clipSlots", [])) for t in track_models), default=8)
+    n_slots = max(n_slots, 1)
+
+    ls = ET.Element("LiveSet")
+    ls.append(V("NextPointeeId", Value=ids.n + 5000))
+    ls.append(V("OverwriteProtectionNumber", Value=1))
+    ls.append(V("LomId", Value=0))
+    ls.append(V("LomIdView", Value=0))
+    ls.append(tracks_el)
+    ls.append(main_track(ids, tempo, numerator, denominator, n_slots))
+    ls.append(prehear_track(ids, n_slots))
+    sends = ET.Element("SendsPre")
+    ls.append(sends)
+    scenes = ET.Element("Scenes")
+    for i in range(n_slots):
+        scenes.append(scene(ids, i))
+    ls.append(scenes)
+    transport = ET.Element("Transport")
+    transport.append(V("PhaseNudgeTempo", Value=10))
+    transport.append(V("LoopOn", Value=True))
+    transport.append(V("LoopStart", Value=0))
+    transport.append(V("LoopLength", Value=4 * max(numerator // denominator, 1) * 4))
+    transport.append(V("LoopIsSongStart", Value=True))
+    transport.append(V("CurrentTime", Value=0))
+    transport.append(V("PunchIn", Value=False))
+    transport.append(V("PunchOut", Value=False))
+    transport.append(V("MetronomeTickDuration", Value=0))
+    transport.append(V("DrawMode", Value=False))
+    ls.append(transport)
+    ls.append(V("SessionScrollPos", X=0, Y=0))
+    ls.append(V("SelectedBreakpointValue", Value=0))
+    ls.append(ET.Element("SignalModulations"))
+    ls.append(V("GlobalQuantisation", Value=4))
+    ls.append(V("AutoQuantisation", Value=0))
+    grid = ET.Element("Grid")
+    grid.append(V("FixedNumerator", Value=1))
+    grid.append(V("FixedDenominator", Value=16))
+    grid.append(V("GridIntervalPixel", Value=20))
+    grid.append(V("Ntoles", Value=2))
+    grid.append(V("SnapToGrid", Value=True))
+    grid.append(V("Fixed", Value=False))
+    ls.append(grid)
+    si = ET.Element("ScaleInformation")
+    si.append(V("Root", Value=0))
+    si.append(V("Name", Value=4))
+    ls.append(si)
+    ls.append(V("InKey", Value=False))
+    ls.append(V("SmpteFormat", Value=0))
+    tsel = ET.Element("TimeSelection")
+    tsel.append(V("AnchorTime", Value=0))
+    tsel.append(V("OtherTime", Value=0))
+    ls.append(tsel)
+    ls.append(ET.Element("SequencerNavigator"))
+    ls.append(V("IsContentSplitterOpen", Value=True))
+    ls.append(V("IsExpressionSplitterOpen", Value=True))
+    ls.append(ET.Element("ExpressionLanes"))
+    ls.append(ET.Element("ContentLanes"))
+    ls.append(V("ViewStateFxSlotCount", Value=4))
+    ls.append(V("ViewStateSessionMixerVolumeSectionHeight", Value=120))
+    ls.append(V("ViewStateArrangerMixerVolumeSectionHeight", Value=120))
+    ls.append(V("ShouldSceneTempoAndTimeSignatureBeVisible", Value=False))
+    ls.append(V("WaveformVerticalZoomFactor", Value=1))
+    ls.append(V("IsWaveformVerticalZoomActive", Value=True))
+    ls.append(ET.Element("Locators"))
+    ls.append(ET.Element("DetailClipKeyMidis"))
+    ls.append(V("TracksListWrapper", LomId=0))
+    ls.append(V("VisibleTracksListWrapper", LomId=0))
+    ls.append(V("ReturnTracksListWrapper", LomId=0))
+    ls.append(V("ScenesListWrapper", LomId=0))
+    ls.append(V("CuePointsListWrapper", LomId=0))
+    ls.append(V("SelectedDocumentViewInMainWindow", Value=1))
+    ls.append(V("Annotation", Value=""))
+    ls.append(V("SoloOrPflSavedValue", Value=True))
+    ls.append(V("SoloInPlace", Value=True))
+    ls.append(V("CrossfadeCurve", Value=2))
+    ls.append(V("LatencyCompensation", Value=2))
+    ls.append(V("HighlightedTrackIndex", Value=0))
+    ls.append(ET.Element("GroovePool"))
+    ls.append(V("AutomationMode", Value=False))
+    ls.append(V("SnapAutomationToGrid", Value=True))
+    ls.append(V("ArrangementOverdub", Value=False))
+    ls.append(V("ColorSequenceIndex", Value=1198212728))
+    ls.append(ET.Element("AutoColorPickerForPlayerAndGroupTracks"))
+    ls.append(ET.Element("AutoColorPickerForReturnAndMainTracks"))
+    ls.append(V("ViewData", Value="{}"))
+    ls.append(V("ResetNonautomatedMidiControllersOnClipStarts", Value=True))
+    ls.append(V("MidiFoldIn", Value=False))
+    ls.append(V("MidiFoldMode", Value=-99))
+    ls.append(V("MultiClipFocusMode", Value=False))
+    ls.append(V("MultiClipLoopBarHeight", Value=0))
+    ls.append(V("MidiPrelisten", Value=False))
+    ls.append(ET.Element("LinkedTrackGroups"))
+    ls.append(V("NoteSpellingPreference", Value=0))
+    ls.append(V("AccidentalSpellingPreference", Value=3))
+    ls.append(V("PreferFlatRootNote", Value=False))
+    ls.append(ET.Element("TuningSystems"))
+    ls.append(V("TrackHeaderWidth", Value=93))
+    ls.append(V("ViewStateMainWindowClipDetailOpen", Value=False))
+    ls.append(V("ViewStateMainWindowHiddenOtherDocViewTypeClipDetailOpen", Value=False))
+    ls.append(V("ViewStateMainWindowHiddenOtherDocViewTypeDeviceDetailOpen", Value=True))
+    ls.append(V("ViewStateMainWindowDeviceDetailOpen", Value=True))
+    ls.append(V("ViewStateSecondWindowClipDetailOpen", Value=True))
+    ls.append(V("ViewStateSecondWindowDeviceDetailOpen", Value=False))
+    ls.append(ET.Element("ViewStates"))
+    ls.append(ET.Element("NoteAlgorithms"))
+    return ls
+
+
+def convert(path: str, outdir: str) -> str:
+    name, song = load_song(path)
+    if name.lower().endswith(".als") and not zipfile.is_zipfile(path):
+        raise ValueError("native Live .als files are not converted — open them in Ableton first")
+
+    ids = Ids()
+    ls = build_liveset(ids, song)
+    root = ET.Element("Ableton",
+                     {"MajorVersion": ALSBON_MAJOR, "MinorVersion": ALSBON_MINOR,
+                      "SchemaChangeCount": SCHEMA_CHANGE_COUNT, "Creator": CREATOR})
+    root.append(ls)
+
+    ET.indent(root, space="\t")
+    xml = b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + ET.tostring(root, encoding="utf-8")
+
+    os.makedirs(outdir, exist_ok=True)
+    out = os.path.join(outdir, f"{os.path.splitext(name)[0]}.als")
+    with gzip.GzipFile(filename=out, mode="wb", mtime=0) as fh:
+        fh.write(xml)
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("set", help=".abletonbundle/.ablbundle (zip) or .abl/Song.abl file")
+    ap.add_argument("-o", "--output", default=".", help="output directory (default: current)")
+    args = ap.parse_args()
+
+    try:
+        out = convert(args.set, args.output)
+    except (OSError, ValueError, json.JSONDecodeError, KeyError, ET.ParseError) as e:
+        print(f"move-bundle-to-als: error: {e}", file=sys.stderr)
+        return 1
+    print(out)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

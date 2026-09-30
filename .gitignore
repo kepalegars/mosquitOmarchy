@@ -1,0 +1,87 @@
+# ── Large binaries / installation archives (provided separately, never on GitHub) ──
+# These files are downloaded on demand via apps/download-assets.sh
+# (assets.links catalog). Do NOT commit them: they far exceed the
+# GitHub repository limit (100 MB per file) and bloat the clone.
+scripts/apps/ableton/*.zip
+scripts/apps/davinci/*.zip
+scripts/apps/guitarpro/*.exe
+scripts/apps/**/*.run
+scripts/apps/bitwig/*.deb
+
+# ── Logs & transient install files ──
+*.log
+*.part
+
+# ── Crash logs: local-only, one dated log per failed mosquitOmarchy run ──
+# Written by scripts/lib/crash.bash into .local/crash-logs/. NEVER pushed and
+# NEVER archived (archive-customarchy.sh excludes .local/ too).
+.local/
+
+# ── Machine-scoped state (mosquito Audio Plugin Manager): per-machine, never committed ──
+# audio-plugin-manager-state.json is the installed-plugins truth log; the
+# yabridge-driver.* pair is the same thing for the yabridge build/install
+# bookkeeping the core writes next to itself (YABRIDGE_STATE / YABRIDGE_LOCK).
+# All three describe THIS machine, and differ on every other one.
+scripts/apps/audio-plugin-manager/audio-plugin-manager-state.json
+scripts/apps/audio-plugin-manager/yabridge-driver.json
+scripts/apps/audio-plugin-manager/yabridge-driver.lock
+
+# ── Patches (whole folders): provided separately, never on GitHub ──
+# All the files (including each app's patches) are recovered via the
+# LATEST RELEASE of the repository (archive from archive-customarchy.sh) —
+# not on the repo.
+scripts/apps/ableton/PATCH/
+scripts/apps/guitarpro/PATCH/
+scripts/apps/davinci/PATCH/
+scripts/apps/bitwig/PATCH/
+
+# ── Python environments / caches for the patches ──
+__pycache__/
+*.pyc
+
+# ── Go build leftovers ──
+# `go build ./...` inside a tui-go/ directory writes a binary named after that
+# DIRECTORY ("tui-go"), and a bare `go build .` there drops a "tui-go" too. The
+# two TUIs that ship a prebuilt binary keep their own tracked names
+# (mosquitomarchy-tui, audio-plugin-manager-tui); jamjamjam-tui is built by
+# setup-jamjamjam-plugin.sh from source and is deliberately NOT tracked.
+# None of the "tui-go" files belong in the repo.
+**/tui-go/tui-go
+# `go build -C <dir> .` writes the binary as the DIRECTORY name, producing a
+# file literally called "0" next to a main.go that sits in a directory called
+# "tui-go" — the same artefact as above, from the same command.
+**/tui-go/0
+# A stray "0" in the repo ROOT has the same cause: `go build -C <dir> .` run
+# from a shell whose working directory is the repo root writes the binary under
+# the name of the directory, and a redirection that loses its target lands here.
+# Keep it out of history rather than trying to remember which command does it.
+/0
+scripts/plugins/jamjamjam/tui-go/jamjamjam-tui
+# A bare `go build .` in a directory whose main package is "live-mode-tui" also
+# drops a binary with the PACKAGE name next to the real one. Only the
+# mosquito-live-mode-tui name is deployed and tracked.
+scripts/plugins/live-mode/tui-go/live-mode-tui
+
+# ── Sensitive / never on a repository (even private) ──
+# Authorization files (Ableton license), license-workaround tools
+# (DaVinci patch-resolve.sh). Everything touching the patch stays local
+# (and/or in the release archive).
+scripts/apps/guitarpro/guitar-pro-8-licence.md
+
+# ── Password files / archives: ultra-safety, NEVER in a repository ──
+# KeePassXC databases and backup archives (the backups normally live in
+# $HOME/omarchy-backups, outside the repo — this is a last-resort guard if
+# one is ever copied here by mistake).
+*.kdbx
+*.kdbx.*
+omarchy-backup-*.tar.gz
+omarchy-backup-*.tar.gz.gpg
+
+# ── User-only notes (see archive-customarchy.sh release) ──
+SECRET-README.md
+# Extracted DaVinci OFX plugin bundle (downloaded/manual)
+scripts/apps/davinci/*.bundle/
+scripts/apps/davinci/*.bundle
+
+# `go test -cpuprofile` leaves the test binary behind in the package dir.
+*.test

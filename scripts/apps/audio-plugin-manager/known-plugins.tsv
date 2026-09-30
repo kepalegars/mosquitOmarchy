@@ -1,0 +1,77 @@
+# Known plugin library — read by the audio plugin manager.
+#
+# This file is the single place where per-plugin knowledge lives.  It used to be
+# a heredoc inside lib-audio-plugin-manager-core.sh, which meant the table could
+# not be reviewed, extended or referenced on its own — the thing you asked for.
+#
+# Format: pipe-separated, `#` starts a comment, blank lines ignored.
+# (Pipe rather than tab, to match fixes_catalog and the other tables here; a `|`
+# must not appear inside a note.)
+#
+#   token      lowercase substring matched against the INSTALLER path.  Matching
+#              is first-hit-wins in file order, so put specific tokens first
+#              ("install xfer" before "xfer") and the vendor-wide catch-alls
+#              last.
+#   prefix     wine prefix, relative to $HOME.  ".wine-vst" is the default for
+#              plugins, ".wine-ableton" is reserved for Ableton and its own
+#              components.
+#   runtime    wine runtime the plugin's EDITOR needs:
+#                system   stock wine-staging (/usr/bin/wine)
+#                ableton  ~/.local/opt/wine-d2d1-nspa-11.13 — the only runtime
+#                         here with the DirectComposition + NSPA patches
+#              "ableton" is set where a stock staging build is known to crash the
+#              editor.  This is a *recommendation surfaced in the wizard*, not a
+#              silent change: the active runtime stays whatever is configured in
+#              ~/.config/audio-plugin-manager/wine-runtime.
+#   needs32    yes when the plugin ships a 32-bit VST that must be bridged, no
+#              when the plugin is 64-bit only, unknown when not established.
+#   fixes      space-separated fix ids applied on first install (5th column), e.g.
+#              "wine_gui_input wine_tooltip". Applied automatically; the ids
+#              resolve in the fixes catalog. Empty = nothing to apply.
+#   recommended  space-separated subset of `fixes` worth recommending to the user
+#              (6th column), or "no" to apply them silently. This is what makes
+#              the wizard say "fix applied (recommended)" instead of applying a
+#              change the user never agreed to.
+#   note       shown in the wizard next to the recommendation.
+#
+# All seven columns are read; known_plugin_fixes() takes column 5 and
+# known_plugin_recommended_fixes() takes column 6, so a row must keep the empty
+# placeholders ("| |||") rather than trimming the fields it does not use.
+#
+# The runtime column only records what has actually been observed on this
+# machine.  "unknown" is a deliberate value, not a placeholder: it means nobody
+# has established the answer yet, and the wizard says so rather than implying a
+# recommendation it cannot back.
+#
+# ── products ────────────────────────────────────────────────────────────────
+serum|.wine-vst|ableton|no|||Serum 2's editor is a DirectComposition surface; it crashes under stock wine-staging, and the d2d1-nspa runtime is the only local build with DComp + NSPA
+install xfer|.wine-vst|ableton|unknown|||Xfer (Serum, Pigments, Massive)
+xfer|.wine-vst|ableton|unknown|||
+sonible|.wine-vst|ableton|unknown|||smartEQ / smart:chain vendor
+smartchain|.wine-vst|ableton|unknown|||
+smart chain|.wine-vst|ableton|unknown|||
+smarteq|.wine-vst|ableton|unknown|||
+smart:eq|.wine-vst|ableton|unknown|||
+smart_eq|.wine-vst|ableton|unknown|||
+crispytuner|.wine-vst|ableton|unknown|wine_gui_input wine_tooltip|wine_gui_input wine_tooltip|Editor needs XWayland input; see the wine_gui_input fix
+crispy|.wine-vst|ableton|unknown|wine_gui_input wine_tooltip|wine_gui_input wine_tooltip|Editor needs XWayland input; see the wine_gui_input fix
+plugin alliance|.wine-vst|ableton|unknown|||
+izotope|.wine-vst|ableton|unknown|||
+fabfilter|.wine-vst|ableton|unknown|||
+sony forge|.wine-vst|ableton|unknown|||
+spitfire|.wine-vst|ableton|unknown|||
+valhalla|.wine-vst|ableton|unknown|||
+blue cat|.wine-vst|ableton|unknown|||
+kilohearts|.wine-vst|ableton|unknown|||
+melda|.wine-vst|ableton|unknown|||
+orchestral|.wine-vst|ableton|unknown|||
+u-he|.wine-vst|ableton|unknown|||
+kontakt|.wine-vst|ableton|unknown|||
+melodyne|.wine-vst|ableton|unknown|||
+scaletuner|.wine-vst|ableton|unknown|||
+pitch|.wine-vst|ableton|unknown|||
+graillon|.wine-vst|ableton|unknown|||
+reaper rewire|.wine-vst|ableton|unknown|||
+compressor|.wine-vst|ableton|unknown|||
+# ── reserved ────────────────────────────────────────────────────────────────
+ableton|.wine-ableton|ableton|no|||Kept out of the shared VST folders deliberately; its own prefix
