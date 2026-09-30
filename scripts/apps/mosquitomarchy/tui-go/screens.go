@@ -1755,7 +1755,10 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.pendingAction = "update-modules"
 			ver := m.updateRec.RepoVersion
 			if ver == "" {
-				ver = "0.1.0"
+				// The backend sends the repo's VERSION. An empty one means the
+				// fetch failed or the file is missing, and saying "v0.1.0" here
+				// would state a version nothing ships any more.
+				ver = "unknown"
 			}
 			m.pendingMsg = fmt.Sprintf("Update modules?\n\nLocal scripts repo: v%s.\n\nIf a GitHub update is available, the local repo is fast-forwarded FIRST so both versions stay in sync (joining the GitHub version), then the changed installed modules are re-applied. With no repo update (or no connection), the installed modules are re-applied from the local scripts.", ver)
 			m.pendingNo = "Cancel"
