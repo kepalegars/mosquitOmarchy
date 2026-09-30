@@ -17,21 +17,56 @@ func header(maxW int) string {
 }
 
 const (
-	headerRows       = 15 // 8 framed-mosquito rows + 5 subtitle rows + slack
-	narrowHeaderRows = 5  // subtitle only
+	// Rows the home screen needs beyond the banner and the list: the version
+	// line, the shortcut bar, and the picker's own frame. The last two come
+	// from the kit, so they cannot drift from the styles that produce them.
+	chromeRows = 1 + tuikit.BarRows + tuikit.FrameRows
+	// The fewest body rows worth showing; below this the banner gives way to
+	// the subtitle, and below THAT the list takes what is left.
+	minBodyRows = 4
 )
 
-// homeBannerReserve is the row budget the home screen keeps for the boxed
-// "mosquito" title (or just the subtitle on short/narrow terminals) so
-// bubbletea never clips its top rows.
+// homeHeaderRows is what the home screen actually spends on its banner, in the
+// given content width, and it is ONE answer for both the draw and the layout
+// budget.
+//
+// It used to be a pair of constants (15 full / 5 narrow) chosen by a width and
+// height threshold, while contentSize() measured the REAL header height
+// separately. Those two disagreed: the constants said 15 rows, the header is
+// actually 13, and the threshold kept the full banner at heights where the
+// arithmetic could not afford it. The result was a home screen taller than the
+// terminal, which bubbletea clips FROM THE TOP — so the framed mosquito and the
+// "live mode manager" subtitle simply vanished, and the list started at the top
+// of the window. That is the bug the user reported.
+//
+// Deciding it from the arithmetic cannot disagree with itself: the banner is
+// drawn if — and only if — what it costs still leaves a usable list.
+func (m model) homeHeaderRows(w int) int {
+	full := lipgloss.Height(header(w))
+	if m.h-full-chromeRows < minBodyRows {
+		return lipgloss.Height(tuikit.MosquitoSubtitle("live mode manager", w))
+	}
+	return full
+}
+
+// bannerWidth is the width the home banner is DRAWN at.
+//
+// The banner is centred across the full window, not across the list's own
+// content column, so it is drawn at m.w-2. The budget has to be measured at
+// that same width: measured at the narrower content column the art can come out
+// a different number of rows tall, and a banner that is drawn taller than it
+// was budgeted is a screen that overflows.
+func (m model) bannerWidth() int {
+	w := m.w - 2
+	if w < 40 {
+		w = m.w
+	}
+	return w
+}
+
+// homeBannerReserve is what the banner costs, at the width it is drawn at.
 func (m model) homeBannerReserve() int {
-	if m.w < 74 {
-		return narrowHeaderRows
-	}
-	if m.h < 22 {
-		return narrowHeaderRows
-	}
-	return headerRows
+	return m.homeHeaderRows(m.bannerWidth())
 }
 
 // appVersion is the version of this SCRIPT (the live-mode module).
@@ -61,11 +96,8 @@ func (m model) View() string {
 		// cap) would center it inside the content lane only, and because the
 		// version row makes the title block exactly window-wide, FrameScreen
 		// skips its own re-centering pass, so the banner would stick left.
-		w := m.w - 2
-		if w < 40 {
-			w = m.w
-		}
-		if m.homeBannerReserve() == headerRows {
+		w := m.bannerWidth()
+		if m.homeBannerReserve() > lipgloss.Height(tuikit.MosquitoSubtitle("live mode manager", w)) {
 			return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(header(w))
 		}
 		return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).
@@ -124,14 +156,31 @@ func (m model) contentSize() (int, int) {
 		h = m.h - 4
 	}
 	if m.top() == scrMain {
-		th := lipgloss.Height(header(w))
-		reserved := m.h - th - 2 /*bar: notify+hint*/ - 2 /*frame pad*/ - 2 /*spare*/
-		if reserved > 26 {
-			reserved = 26
+		// The home budget, counted from every row the screen spends on
+		// something other than the list:
+		//
+		//   the banner          homeHeaderRows, the SAME answer the draw uses
+		//   the version line    FrameScreenVersion prepends it to the title
+		//   the shortcut bar    one row (a toast replaces it, same height)
+		//   the shortcut bar    BarRows, the notification line plus the hint
+		//   the picker's frame  FrameRows, which Picker.View adds to whatever
+		//                      height it was given
+		//
+		// Missing the frame rows is what made the home screen taller than the
+		// window: the kit centres the body in the gap but lets it overflow the
+		// BOTTOM, so a body that is two rows too tall pushes the whole screen
+		// past the last terminal row — and a terminal that receives more lines
+		// than it has SCROLLS, taking the title out of view. That is the report:
+		// no boxed mosquito, no "live mode manager" subtitle.
+		banner := m.homeHeaderRows(m.bannerWidth())
+		avail := m.h - banner - 1 /*version*/ - tuikit.BarRows - tuikit.FrameRows
+		if avail > 26 {
+			avail = 26
 		}
-		if reserved >= 8 {
-			h = reserved
+		if avail < 4 {
+			avail = 4
 		}
+		h = avail
 	}
 	return w, h
 }

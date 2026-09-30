@@ -1147,6 +1147,21 @@ func (p Picker) clampDisabled(dir int) Picker {
 	return p
 }
 
+// FrameRows is what a picker's own frame adds around the list: one row above
+// and one below (StyleFrame's Padding(1, 2)).
+//
+// A host budgets a picker's height as if that height were the whole block, and
+// it is not: Picker.View() returns the framed list, so it is FrameRows taller
+// than the height it was given. Forgetting those two rows is how a screen ends
+// up taller than the terminal — and bubbletea clips from the TOP, so the title
+// disappears rather than the list being cut at the bottom. That is exactly what
+// the live-mode manager showed: no boxed mosquito, and the "live mode manager"
+// subtitle gone.
+//
+// Exported so the number is read from the style that produces it rather than
+// guessed per host, and so it cannot drift when the frame changes.
+const FrameRows = 2
+
 func (p Picker) View() string {
 	if !p.ready {
 		return "" // zero Picker: nothing to draw (see SetSize)
