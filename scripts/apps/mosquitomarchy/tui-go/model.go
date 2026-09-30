@@ -511,7 +511,19 @@ func (m model) filteredCheckedKeys() []string {
 	}
 	ft := strings.ToLower(m.filterText)
 	var out []string
+	// The Preinstalls row is not a module and it is not named after one, so the
+	// text filter would silently drop it from the ticked set. It is a request to
+	// open the stock-app list, not a module to install, so it rides along with
+	// the selection whatever the user typed: filtering to "reaper" and applying
+	// must not quietly forget that the preinstalls list was asked for.
+	pre := setupValue(preinstallsFolder, preinstallsKey)
+	if m.selected[pre] {
+		out = append(out, preinstallsKey)
+	}
 	for _, f := range m.setupFolders {
+		if f.Folder == preinstallsFolder {
+			continue // already handled above, and it is never a module
+		}
 		for _, it := range m.setupItemsOf(f.Folder) {
 			if !strings.Contains(strings.ToLower(it.Label), ft) {
 				continue

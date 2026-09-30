@@ -1597,6 +1597,12 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		// to select several and apply them in one go.
 		if strings.HasPrefix(res.Value, tuikit.TreeItemPrefix) {
 			v := res.Value
+			// The Preinstalls row opens its list. It is not a module, so it
+			// must not fall through to the install path below and produce a
+			// confirmation for removing a package called "preinstalls:choose".
+			if _, key := splitSetupValue(v); key == preinstallsKey {
+				return m.openPreinstalls()
+			}
 			if it, ok := m.setupByValue[v]; ok {
 				if it.Disabled {
 					m.toast, _ = m.toast.SetErr("nothing to do here")
@@ -2056,16 +2062,70 @@ func workingArgs(sub string, args []string) []string {
 // and shown only after, so a removal can never be confirmed before the list of
 // apps it is about to remove has been read.
 func (m model) startUninstall(keys []string, prompt string) (model, tea.Cmd) {
-	if len(keys) == 0 {
+	// The Preinstalls row is not a module. It is ticked like any other row and
+	// means "let me choose which stock apps go too", so its key has to come out
+	// of the list before the command is built — handing "preinstalls:choose" to
+	// the uninstall would ask the backend to remove a package by that name.
+	mods, wantPre := splitPreinstallsKey(keys)
+	// Callers hand the key over in two shapes — "reaper" from the tree row,
+	// "apps:reaper" from the filter's ticked set — and the backend wants the
+	// bare module key. Normalise here rather than at every call site.
+	for i, k := range mods {
+		if c := strings.IndexByte(k, ':'); c >= 0 {
+			mods[i] = k[c+1:]
+		}
+	}
+	if len(mods) == 0 && !wantPre {
 		return m, nil
 	}
-	m.uninstallWait = append([]string(nil), keys...)
+	m.uninstallWait = mods
 	m.uninstallMsg = prompt
 	m.pendingAction = "uninstall"
-	m.pendingArgs = append([]string(nil), keys...)
+	m.pendingArgs = append([]string(nil), mods...)
 	m.pendingMsg = prompt
 	m.pendingNo = "Cancel"
 	m.pendingYes = "Uninstall"
+	// The preinstalls list opens only when its row is TICKED. That is the whole
+	// point of keeping the row: the step is opt-in, visible in the tree, and
+	// decided before anything is confirmed. Unticked, the uninstall goes
+	// straight to its own confirmation and never visits the page.
+	if !wantPre {
+		return m.resumeUninstall()
+	}
+	m.push(scrPreinstalls)
+	m.preinstallChecked = map[string]bool{}
+	m.preinstallPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).
+		SetSize(m.contentSize())
+	return m, fetchPreinstallsCmd()
+}
+
+// preinstallsFolder / preinstallsKey identify the Preinstalls row of the
+// Uninstall tree. It is a request to open the stock-app list, never something
+// to uninstall.
+const (
+	preinstallsFolder = "preinstalls"
+	preinstallsKey    = "preinstalls:choose"
+)
+
+// splitPreinstallsKey separates the modules to uninstall from the preinstalls
+// request, reporting whether the request was there at all.
+func splitPreinstallsKey(keys []string) (mods []string, wantPre bool) {
+	mods = make([]string, 0, len(keys))
+	for _, k := range keys {
+		if k == preinstallsKey {
+			wantPre = true
+			continue
+		}
+		mods = append(mods, k)
+	}
+	return mods, wantPre
+}
+
+// openPreinstalls visits the stock-app list on its own, with no uninstall
+// waiting behind it. That is what Enter (and therefore "i") on the Preinstalls
+// row does: look at the list, tick what should go, and nothing else happens.
+func (m model) openPreinstalls() (model, tea.Cmd) {
+	m.uninstallWait, m.uninstallMsg = nil, ""
 	m.push(scrPreinstalls)
 	m.preinstallChecked = map[string]bool{}
 	m.preinstallPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).

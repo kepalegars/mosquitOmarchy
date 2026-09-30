@@ -349,11 +349,16 @@ cmd_uninstall_tree(){
       "$(json_str fixes)" "$(json_str "fix:$fid")" "$(json_str "$fid")" \
       "$(json_str "$(fix_desc "$fid")")")")
   done
-  # Preinstalls is NOT a row of the tree. It used to be, and it was the one
-  # row whose own label plus description were long enough to widen the whole
-  # page past the pane. Choosing which stock apps to remove is now a step of
-  # the uninstall itself — see the TUI, which opens it right before the
-  # uninstallations start — so the tree has nothing left to show for it.
+  # Preinstalls is a row again, and it is TICKABLE. The long description that
+  # used to sit under it is gone for good: the page no longer doubles in height
+  # when one row carries a sub-line, so a long label is just a long label now
+  # and the row says plainly what ticking it is for.
+  folders+=("Preinstalls"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+    "$(json_str preinstalls)" "$(json_str "Preinstalls")" false)")
+  items+=("preinstalls/choose"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s,"disabled":%s}' \
+    "$(json_str preinstalls)" "$(json_str "preinstalls:choose")" \
+    "$(json_str "Choose which Omarchy preinstalls to remove")" \
+    "$(json_str "tick it, then the list opens when you apply")" false)")
 
   local line
   while IFS= read -r line; do [[ -n $line ]] && printf '%s\n' "${line#*$'\t'}"; done \
