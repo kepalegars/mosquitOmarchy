@@ -1053,12 +1053,14 @@ func TestEnterOnMenuEntriesOpensTheScreen(t *testing.T) {
 	}
 }
 
-// "i" is the same action as Enter, on every row. It used to be wired to the
-// info popup with branches for a category and for Menu entries, and a module
-// row fell straight through to the picker — so the one key that was supposed
-// to install something did nothing on the thing you install, while looking
-// like it worked on the rows it never mattered for.
-func TestInstallKeyActsOnAModuleRow(t *testing.T) {
+// "i" is INFO, and Enter is the action.
+//
+// It used to be the other way round: `i` re-dispatched Enter, so `i` installed
+// the selection and the description lived on `?`. The reason recorded at the
+// time was that `i` had no branch for a plain module row, so it did nothing at
+// all on the thing you install — but the gap was a missing branch, not a wrong
+// key, and a module row is an "item:" row the info handler already answers.
+func TestInfoKeyDescribesAModuleRow(t *testing.T) {
 	m := flatSetup()
 	m.setupPicker = m.rebuildSetup()
 	idx := indexOfValue(m.setupPicker, setupValue("apps", "reaper"))
@@ -1068,8 +1070,50 @@ func TestInstallKeyActsOnAModuleRow(t *testing.T) {
 	m.setupPicker = m.setupPicker.SelectIndex(idx)
 	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
 
+	if m.top() != scrInfo {
+		t.Fatalf("i on a module row went to screen %d, want the info popup (%d)", m.top(), scrInfo)
+	}
+	// And it must not have queued an install behind it.
+	if m.pendingAction != "" {
+		t.Errorf("i queued the action %q; describing a module must not install it", m.pendingAction)
+	}
+}
+
+// The category row keeps its own description, which is a different shape from a
+// module's: what the group is for, not what the one entry is.
+func TestInfoKeyDescribesACategoryRow(t *testing.T) {
+	m := flatSetup()
+	m.setupPicker = m.rebuildSetup()
+	idx := indexOfValue(m.setupPicker, tuikit.TreeValue(tuikit.TreeFolderPrefix, "apps"))
+	if idx < 0 {
+		t.Skip("this fixture has no category row")
+	}
+	m.setupPicker = m.setupPicker.SelectIndex(idx)
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	if m.top() != scrInfo {
+		t.Fatalf("i on a category row went to screen %d, want the info popup (%d)", m.top(), scrInfo)
+	}
+}
+
+// Enter still does the installing. The two keys must not have been swapped into
+// each other's jobs: describing a module is not installing it, and installing a
+// module must not need a second key.
+func TestEnterStillActsOnAModuleRow(t *testing.T) {
+	m := flatSetup()
+	m.setupPicker = m.rebuildSetup()
+	idx := indexOfValue(m.setupPicker, setupValue("apps", "reaper"))
+	if idx < 0 {
+		t.Fatal("reaper row not found")
+	}
+	m.setupPicker = m.setupPicker.SelectIndex(idx)
+	// pressKey, not a bare update: Enter is turned into a PickerResultMsg by
+	// the PICKER, and a command's message lands on the next update. The old
+	// test could call update once because `i` re-dispatched the result
+	// synchronously, re-entering update from inside update.
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+
 	if m.top() != scrConfirm {
-		t.Fatalf("i on a module row did not ask for confirmation (top=%d)", m.top())
+		t.Fatalf("Enter on a module row did not ask for confirmation (top=%d)", m.top())
 	}
 	if m.pendingAction != "apply" {
 		t.Fatalf("pendingAction = %q, want apply", m.pendingAction)
@@ -1079,9 +1123,9 @@ func TestInstallKeyActsOnAModuleRow(t *testing.T) {
 	}
 }
 
-// ...and in the Uninstall tree it removes that module, through the preinstalls
-// step like Enter does.
-func TestUninstallKeyActsOnAModuleRow(t *testing.T) {
+// ...and in the Uninstall tree Enter removes that module, through the
+// preinstalls step, like it always did.
+func TestEnterRemovesAModuleRowInTheUninstallTree(t *testing.T) {
 	m := flatSetup()
 	m.treeMode = "uninstall"
 	m.setupPicker = m.rebuildSetup()
@@ -1090,10 +1134,10 @@ func TestUninstallKeyActsOnAModuleRow(t *testing.T) {
 		t.Fatal("live-mode row not found")
 	}
 	m.setupPicker = m.setupPicker.SelectIndex(idx)
-	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if m.top() != scrConfirm {
-		t.Fatalf("i on a module row went to screen %d, want the confirmation(%d)", m.top(), scrConfirm)
+		t.Fatalf("Enter on a module row went to screen %d, want the confirmation(%d)", m.top(), scrConfirm)
 	}
 	if m.pendingAction != "uninstall" || len(m.pendingArgs) != 1 || m.pendingArgs[0] != "live-mode" {
 		t.Fatalf("pendingAction=%q pendingArgs=%q, want uninstall [live-mode]", m.pendingAction, m.pendingArgs)

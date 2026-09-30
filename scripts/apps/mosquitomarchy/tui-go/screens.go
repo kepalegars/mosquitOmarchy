@@ -1116,23 +1116,18 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				}
 			}
 		}
-		// "i" IS Enter. It used to be wired to the info popup here, and the
-		// popup was the ONLY thing it did: the handler below had a branch for a
-		// category row and one for "menu-entries", and a plain module row fell
-		// straight through to the picker — so `i` did nothing at all on the
-		// thing you actually install. The legend never mentioned it either.
+		// "i" opens the INFO for the row under the cursor, and Enter performs
+		// the action.
 		//
-		// Rather than re-implement the action a second time (and have the two
-		// copies drift, which is how the module case went missing in the first
-		// place), `i` re-dispatches the very message Enter produces for the row
-		// under the cursor. It therefore behaves identically on every row this
-		// page has — module, category, Menu entries, Update, Back.
-		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
-			return m.update(tuikit.PickerResultMsg{Value: m.setupPicker.SelectedValue()})
-		}
-		// The info popup moved here to make room. "?" is free in this TUI and
-		// is what a key that opens a description is expected to be.
-		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "?" {
+		// It used to be the other way round: `i` re-dispatched Enter, so `i`
+		// installed the selection, and the description moved to `?`. The reason
+		// given at the time was that `i` had no info branch for a plain module
+		// row, so it did nothing at all on the thing you actually install — but
+		// the gap was a missing branch, not a wrong key. The branch exists now
+		// (a module row is an "item:" row, and the handler below answers it from
+		// setupByValue), so `i` can go back to doing what its help text and
+		// every other screen in these apps say it does.
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "i" || km.String() == "?") {
 			v := m.setupPicker.SelectedValue()
 			// Menu entries FIRST: it is a cat: row, but its description is not
 			// built from setupItems (it has none), so the generic branch below
@@ -2324,8 +2319,7 @@ func (m model) rebuildSetup() navPicker {
 		SetContentWidth(pinned).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "select")),
-			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", enterHelp)),
-			key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "info")),
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "open")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "close")),
