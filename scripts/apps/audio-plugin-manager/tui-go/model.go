@@ -291,12 +291,21 @@ func settingsItems(s Status) []tuikit.PickerItem {
 		quarantineLabel = fmt.Sprintf("Empty the quarantine (%d parked)", s.QuarantineEntries)
 		quarantineItem.Display = quarantineLabel
 	}
+	autoFix, fixPrompt := "Off", "Off"
+	if s.AutoFixOn {
+		autoFix = "On"
+	}
+	if s.FixPromptOn {
+		fixPrompt = "On"
+	}
 	return []tuikit.PickerItem{
 		{Display: "File picker: " + fp, Value: "switch_file_picker"},
 		{Display: "Plugins folder: " + s.PluginsRoot, Value: "pick_plugins_root"},
 		{Display: "Default plugin installation file directory: " + s.DownloadsDir, Value: "pick_downloads_dir"},
 		{Display: "Plugin window handler: " + handler, Value: "toggle_plugin_handler"},
 		{Display: "Wine runtime: " + wineRuntimeLabel(), Value: "toggle_wine_runtime"},
+		{Display: "Re-apply already-installed fixes on install: " + autoFix, Value: "toggle_auto_fix"},
+		{Display: "Ask \"apply fixes now?\" after an install: " + fixPrompt, Value: "toggle_fix_prompt"},
 		{Display: "Rescan for untracked plugins", Value: "rescan"},
 		{Display: "Cleanup inconsistencies", Value: "cleanup"},
 		quarantineItem,
@@ -754,39 +763,54 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, fetchStatus()
 
 	case installFixesCheckMsg:
-		// A successful install just finished; the fixes catalog was fetched
-		// for the new plugin. Offer the remaining plugin-scope fixes in a
-		// clear confirm, or fall straight back to the normal success prompt
-		// when there is nothing to propose.
-		var toApply []string
+		// A successful install just finished. Two INDEPENDENT switches decide
+		// what happens next, and they are about different things:
+		//
+		//   AUTO_FIX   — a fix ALREADY applied to this plugin gets rewritten
+		//                silently on every install. Invisible, but still a
+		//                write. OFF: nothing is applied without being asked.
+		//   FIX_PROMPT — the plugin is NEW, fixes exist for it, and this is
+		//                the only moment the user is told. OFF: no question at
+		//                the end of an install; the fixes stay reachable under
+		//                "Plugin fixes", so nothing is lost, only unvolunteered.
+		//
+		// They are separate settings because they answer different questions:
+		// "stop rewriting my rules behind my back" and "stop asking me".
+		m.installFixPlugin = msg.plugin
+		m.installFixVendor = msg.vendor
+
+		// Already-applied fixes, re-applied only when AUTO_FIX allows it.
+		// A fix the user has NOT applied is never touched here — that is what
+		// the question below is for.
+		var already []string
 		for _, it := range msg.items {
-			if it.Scope == "plugin" && !it.Applied {
-				toApply = append(toApply, it.ID)
+			if it.Scope == "plugin" && it.Applied {
+				already = append(already, it.ID)
 			}
 		}
-		if msg.err == nil && len(toApply) > 0 {
-			m.installFixPlugin = msg.plugin
-			m.installFixVendor = msg.vendor
-			// The question is about the SUITE, because that is what the user
-			// installed: FabFilter is nineteen plugins, and offering the fix for
-			// only the one that happened to finish first meant running the same
-			// dialog eighteen more times. When the vendor is unknown the
-			// question falls back to naming the single plugin.
-			if msg.vendor != "" {
-				m.confirm = tuikit.NewConfirm(
-					"Plugin installed. Apply fixes to every "+msg.vendor+" plugin now?",
-					"No", "Yes")
-			} else {
-				m.confirm = tuikit.NewConfirm(
-					"Plugin installed. Apply fixes for "+baseName(pluginPathOf(msg.plugin))+" now?",
-					"No", "Yes")
-			}
-			m.push(scrInstallFixesConfirm)
-			return m, nil
+		m.loading = true
+		if msg.autoFix && len(already) > 0 {
+			// The re-apply runs FIRST and on its own, so the prompt below is not
+			// racing it: the user answers against a settled state.
+			return m, reapplyAppliedFixesCmd(msg.vendor, msg.plugin, already)
 		}
-		m.confirm = tuikit.NewConfirm("Success! The step completed without errors.", "See log", "OK")
-		m.push(scrRunnerSuccessConfirm)
-		return m, nil
+		return m.afterInstallFixesPrompt(msg)
+
+	case afterInstallFixesMsg:
+		// The silent re-apply (if any) finished; now the question.
+		m.loading = false
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetWarn("fix re-apply failed: " + msg.err.Error())
+		}
+		return m.afterInstallFixesPrompt(msg.carry)
+
+	case fixPrefsMsg:
+		// The two post-install switches changed. The Settings screen is built
+		// from Status, so the status is REFETCHED rather than patched from the
+		// value we just sent: the file on disk stays the single source of
+		// truth, and a write that silently failed cannot leave the row claiming
+		// the opposite of what is stored.
+		return m, fetchStatus()
 
 	case folderOpenedMsg:
 		// Opening a folder must never navigate away from the list it was

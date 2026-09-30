@@ -2295,6 +2295,13 @@ func (m model) handleAudioSettingsChoice(v string) (tea.Model, tea.Cmd) {
 		}
 		m.push(scrSuperfileInstallConfirm)
 		return m, m.enterCmd()
+	case "toggle_auto_fix":
+		// Each switch is written on its own and the PAIR is read back, so the
+		// row shows what the file now says rather than what we asked for — the
+		// two are independent settings and must not drift together.
+		return m, setFixPrefCmd("AUTO_FIX", !m.status.AutoFixOn)
+	case "toggle_fix_prompt":
+		return m, setFixPrefCmd("FIX_PROMPT", !m.status.FixPromptOn)
 	case "rescan":
 		return m, rescanCmd()
 	case "pick_plugins_root":

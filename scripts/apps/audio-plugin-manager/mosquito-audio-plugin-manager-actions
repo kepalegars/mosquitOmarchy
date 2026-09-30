@@ -89,7 +89,9 @@ case "$cmd" in
       --arg plugin_win_handler "${PLUGIN_WIN_HANDLER:-hyprland}" \
       --argjson wizard_done "$([[ ${WIZARD_DONE:-0} == 1 ]] || $prefs_existed && echo true || echo false)" \
       --argjson quarantine_entries "$quarantine_entries" \
-      '{file_picker:$file_picker,superfile_installed:$superfile_installed,hide_vst2:$hide_vst2,hide_32bit:$hide_32bit,sort_mode:$sort_mode,plugins_root:$plugins_root,downloads_dir:$downloads_dir,plugin_win_handler:$plugin_win_handler,wizard_done:$wizard_done,quarantine_entries:$quarantine_entries}'
+      --argjson auto_fix_on "$([[ $(apm_fix_pref_get AUTO_FIX) == yes ]] && echo true || echo false)" \
+      --argjson fix_prompt_on "$([[ $(apm_fix_pref_get FIX_PROMPT) == yes ]] && echo true || echo false)" \
+      '{file_picker:$file_picker,superfile_installed:$superfile_installed,hide_vst2:$hide_vst2,hide_32bit:$hide_32bit,sort_mode:$sort_mode,plugins_root:$plugins_root,downloads_dir:$downloads_dir,plugin_win_handler:$plugin_win_handler,wizard_done:$wizard_done,quarantine_entries:$quarantine_entries,auto_fix_on:$auto_fix_on,fix_prompt_on:$fix_prompt_on}'
     ;;
 
   set-plugins-root)
@@ -338,7 +340,7 @@ PYWIZARD
     cut -f6 < "$_apm_g" > "$_apm_v"
     _wpm_cache_populate "$_apm_v"
 
-    while IFS=$'\t' read -r sortkey label grp formats enabled value variants; do
+    while IFS=$'\t' read -r sortkey label grp formats enabled value variants key; do
       [[ -n $value ]] || continue
       # Parent is the VENDOR row value, and it has to match the folder rows this
       # same action emits further down ("vendor:<name>"). It used to be the wine
@@ -594,6 +596,18 @@ PYWIZARD
     install_plugin "$file" "$prefix" "$tag"
     ;;
 
+  get-fix-prefs)
+    jq -nc --arg auto "$(apm_fix_pref_get AUTO_FIX)" --arg prompt "$(apm_fix_pref_get FIX_PROMPT)" \
+      '{auto_fix:$auto, fix_prompt:$prompt}'
+    ;;
+  set-fix-prefs)
+    # $1 = AUTO_FIX|FIX_PROMPT, $2 = yes|no
+    apm_fix_pref_set "${1:?key required}" "${2:?value yes|no required}" >/dev/null 2>&1 \
+      || { echo "could not save the fix preference" >&2; exit 1; }
+    jq -nc --arg auto "$(apm_fix_pref_get AUTO_FIX)" --arg prompt "$(apm_fix_pref_get FIX_PROMPT)" \
+      '{auto_fix:$auto, fix_prompt:$prompt}'
+    ;;
+
   get-wine-runtime)
     jq -nc --arg rt "$(apm_wine_runtime)" '{runtime:$rt}'
     ;;
@@ -808,20 +822,70 @@ EOF
     ;;
 
   reconcile-orphans)
-    while IFS=$'\t' read -r f t; do
-      [[ -n $f ]] || continue
-      state_has "$(plugin_key "$f")" && continue
-      jq -nc --arg display "$(basename "$f")  ($(plugin_group_label "$f"))" --arg value "$f" '{display:$display,value:$value}'
-    done <<< "$(scan_plugins)"
+    # ONE ROW PER PLUGIN, like every other list in this TUI.
+    #
+    # It walked scan_plugins, which is one line per FILE, so a plugin present
+    # as vst2 + vst3 + clap was announced as three separate untracked plugins —
+    # 50 rows for 23 plugins on this machine, most of them the same name with a
+    # different extension. The user reads that as the manager having lost the
+    # plot, and they then have to tick the same plugin three times.
+    #
+    # The row is the same shape list-plugin-folders emits, and the value is the
+    # plugin's own list value so "add" can act on it the way every other screen
+    # acts on a plugin.
+    _apm_ro="${TMPDIR:-/tmp}/apm-orphans.$$"
+    plugin_group_rows > "$_apm_ro"
+    # Field 8 is the canonical plugin_key the state log indexes on.
+    while IFS=$'\t' read -r sortkey label grp formats enabled value variants key; do
+      [[ -n $value ]] || continue
+      state_has "$key" && continue
+      jq -nc --arg display "$label" --arg value "$value" --arg vendor "$grp" \
+        --arg formats "$formats" --arg variants "$variants" \
+        '{display:$display, value:$value, kind:"plugin", vendor:$vendor, formats:$formats, variants:$variants}'
+    done < "$_apm_ro"
+    rm -f "$_apm_ro"
     ;;
 
   add-orphan)
-    f="${1:?file required}"
+    # $1 = a plugin list value ("vst:<type>:<path>") or a bare path, as the
+    # reconcile screen holds it.
+    #
+    # Registers EVERY file of that plugin, not just the one that was picked. The
+    # reconcile screen is one row per plugin, so adding one row used to leave
+    # the other formats untracked — the plugin then came BACK on the next open
+    # as an orphan, once per format. That is the "it still says untracked"
+    # loop this closes.
+    target="${1:?file required}"
+    path="$target"
+    case "$target" in
+      vst:*:*) path="${target#vst:*:}" ;;
+      native:*) path="${target#native:}" ;;
+    esac
+    # plugin_group_rows already merged the plugin's formats into field 7
+    # (semicolon-separated). Reading them from there is exact: re-matching by
+    # label across rows was not, because two plugins can share a name
+    # ("FabFilter Micro" and "FabFilter Micro (Mono)").
+    _apm_ao="${TMPDIR:-/tmp}/apm-ao.$$"
+    plugin_group_rows > "$_apm_ao"
+    files="$(awk -F'\t' -v v="$target" '$6==v{print $7; exit}' "$_apm_ao" | tr ';' '\n')"
+    rm -f "$_apm_ao"
+    [[ -n $files ]] || files="$target"
+
+    first=""
     prefix="$(default_prefix)"
-    src="$(wine_source_of "$f" 2>/dev/null)" || src=""
+    src="$(wine_source_of "$path" 2>/dev/null)" || src=""
     [[ -n $src ]] && prefix="${src%%/drive_c/*}"
-    state_register_install "$(plugin_key "$f")" "$prefix" "$f"
-    echo "added to the manager: $(basename "$f")"
+    while IFS= read -r f; do
+      [[ -n $f ]] || continue
+      bare="$f"
+      case "$f" in
+        vst:*:*) bare="${f#vst:*:}" ;;
+        native:*) bare="${f#native:}" ;;
+      esac
+      [[ -n $first ]] || first="$bare"
+      state_register_install "$(plugin_key "$bare")" "$prefix" "$bare"
+    done <<< "$files"
+    echo "added to the manager: $(basename "$first")"
     ;;
 
   cleanup)

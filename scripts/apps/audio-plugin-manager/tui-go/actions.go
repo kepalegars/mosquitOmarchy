@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	tuikit "mosquitomarchy.local/tui-kit"
 )
 
 func actionsBin() string {
@@ -172,6 +174,11 @@ func (p PluginItem) AllValues() []string {
 }
 
 type Status struct {
+	// AutoFixOn / FixPromptOn mirror the backend's fix-prefs file. Both default
+	// to true when the read fails, because the backend's own default is "on" and
+	// a failed read must not quietly disable a feature.
+	AutoFixOn   bool `json:"auto_fix_on"`
+	FixPromptOn bool `json:"fix_prompt_on"`
 	FilePicker         string `json:"file_picker"`
 	PluginWinHandler   string `json:"plugin_win_handler"`
 	SuperfileInstalled bool   `json:"superfile_installed"`
@@ -1067,7 +1074,62 @@ type installFixesCheckMsg struct {
 	// vendor is the folder this plugin groups under, when known. Non-empty it
 	// means the question can be about the whole suite instead of this plugin.
 	vendor string
-	err    error
+	// autoFix / fixPrompt are the two independent switches read from the
+	// backend. They are carried on the message rather than re-read here, so the
+	// decision is made once, at the moment the catalog arrives, from the same
+	// values the Settings screen shows.
+	autoFix   bool
+	fixPrompt bool
+	err       error
+}
+
+// fixPrefsCmd reads the two post-install fix switches.
+//
+// They live on the Status rather than in a struct of their own: the Settings
+// screen is built from Status, and a second source of truth would be a second
+// thing that can disagree with what the user last toggled.
+func fixPrefsCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("get-fix-prefs")
+		if err != nil {
+			return fixPrefsMsg{}
+		}
+		var v struct {
+			AutoFix   string `json:"auto_fix"`
+			FixPrompt string `json:"fix_prompt"`
+		}
+		_ = json.Unmarshal(bytes.TrimSpace(out), &v)
+		return fixPrefsMsg{autoFix: v.AutoFix != "no", fixPrompt: v.FixPrompt != "no"}
+	}
+}
+
+// fixPrefsMsg carries the two switches. Both default to true when the read
+// fails: the backend's own default is "on", so a failed read must not silently
+// turn a feature off.
+type fixPrefsMsg struct{ autoFix, fixPrompt bool }
+
+// setFixPrefCmd writes one switch and returns the fresh pair, so the caller
+// does not have to guess what the other one is.
+func setFixPrefCmd(key string, on bool) tea.Cmd {
+	return func() tea.Msg {
+		v := "no"
+		if on {
+			v = "yes"
+		}
+		if _, err := runQuick("set-fix-prefs", key, v); err != nil {
+			return fixPrefsMsg{autoFix: true, fixPrompt: true}
+		}
+		out, err := runQuick("get-fix-prefs")
+		if err != nil {
+			return fixPrefsMsg{autoFix: on, fixPrompt: true}
+		}
+		var p struct {
+			AutoFix   string `json:"auto_fix"`
+			FixPrompt string `json:"fix_prompt"`
+		}
+		_ = json.Unmarshal(bytes.TrimSpace(out), &p)
+		return fixPrefsMsg{autoFix: p.AutoFix != "no", fixPrompt: p.FixPrompt != "no"}
+	}
 }
 
 // checkInstallFixesCmd reuses list-plugin-fixes on the value the installer
@@ -1102,7 +1164,22 @@ func checkInstallFixesCmd(plugin string) tea.Cmd {
 			return installFixesCheckMsg{plugin: plugin, vendor: vendor, err: err}
 		}
 		items, err := decodeJSONLines[FixItem](out)
-		return installFixesCheckMsg{plugin: plugin, vendor: vendor, items: items, err: err}
+		// Read the two switches here, alongside the catalog, so the handler
+		// below decides from one snapshot: the vendor, the catalog, and what
+		// the user has allowed to happen automatically.
+		autoFix, fixPrompt := true, true
+		if out, e := runQuick("get-fix-prefs"); e == nil {
+			var v struct {
+				AutoFix   string `json:"auto_fix"`
+				FixPrompt string `json:"fix_prompt"`
+			}
+			if json.Unmarshal(bytes.TrimSpace(out), &v) == nil {
+				autoFix = v.AutoFix != "no"
+				fixPrompt = v.FixPrompt != "no"
+			}
+		}
+		return installFixesCheckMsg{plugin: plugin, vendor: vendor, items: items,
+			autoFix: autoFix, fixPrompt: fixPrompt, err: err}
 	}
 }
 
@@ -1158,3 +1235,78 @@ func openFolderCmd(value string) tea.Cmd {
 }
 
 type handlerErrMsg struct{ err error }
+
+// afterInstallFixesMsg reports the end of the SILENT re-apply, and carries the
+// original catalog on so the question can still be asked from the same data.
+type afterInstallFixesMsg struct {
+	carry installFixesCheckMsg
+	err   error
+}
+
+// reapplyAppliedFixesCmd rewrites the fixes this plugin ALREADY carries, for
+// the whole vendor when one is known.
+//
+// This is the write the AUTO_FIX switch is about. It is silent by design — the
+// rules were already there, this only refreshes them — which is exactly why it
+// needs a switch: a write nobody sees is a write nobody can object to.
+func reapplyAppliedFixesCmd(vendor, plugin string, fixIDs []string) tea.Cmd {
+	return func() tea.Msg {
+		carry := installFixesCheckMsg{plugin: plugin, vendor: vendor, autoFix: true, fixPrompt: true}
+		if len(fixIDs) == 0 {
+			return afterInstallFixesMsg{carry: carry}
+		}
+		var err error
+		if vendor != "" {
+			_, err = runQuick(append([]string{"apply-fixes-vendor", vendor}, fixIDs...)...)
+		} else {
+			_, err = runQuick(append([]string{"apply-fixes", plugin}, fixIDs...)...)
+		}
+		return afterInstallFixesMsg{carry: carry, err: err}
+	}
+}
+
+// afterInstallFixesPrompt decides what the end of an install looks like: the
+// question, or the plain success dialog.
+//
+// Split out because the prompt is reached from two places — straight from the
+// install, and after the silent re-apply — and it has to read the same either
+// way.
+func (m model) afterInstallFixesPrompt(msg installFixesCheckMsg) (model, tea.Cmd) {
+	if msg.err != nil {
+		m.confirm = tuikit.NewConfirm("Success! The step completed without errors.", "See log", "OK")
+		m.replace(scrRunnerSuccessConfirm)
+		return m, nil
+	}
+	if !msg.fixPrompt {
+		// The question is off. Say the install worked and stop there; the
+		// fixes remain one row away under "Plugin fixes".
+		m.confirm = tuikit.NewConfirm("Success! The step completed without errors.", "See log", "OK")
+		m.replace(scrRunnerSuccessConfirm)
+		return m, nil
+	}
+	var toApply []string
+	for _, it := range msg.items {
+		if it.Scope == "plugin" && !it.Applied {
+			toApply = append(toApply, it.ID)
+		}
+	}
+	if len(toApply) == 0 {
+		m.confirm = tuikit.NewConfirm("Success! The step completed without errors.", "See log", "OK")
+		m.replace(scrRunnerSuccessConfirm)
+		return m, nil
+	}
+	// The question is about the SUITE: FabFilter is nineteen plugins and the
+	// useful action is "fix them all". Without a known vendor it names the one
+	// plugin that finished installing.
+	if msg.vendor != "" {
+		m.confirm = tuikit.NewConfirm(
+			"Plugin installed. Apply fixes to every "+msg.vendor+" plugin now?",
+			"No", "Yes")
+	} else {
+		m.confirm = tuikit.NewConfirm(
+			"Plugin installed. Apply fixes for "+baseName(pluginPathOf(msg.plugin))+" now?",
+			"No", "Yes")
+	}
+	m.replace(scrInstallFixesConfirm)
+	return m, nil
+}

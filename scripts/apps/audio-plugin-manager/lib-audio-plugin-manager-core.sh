@@ -4265,8 +4265,64 @@ plugin_group_rows() {
       name)   sortkey="${g_label[$k]}" ;;
       *)      sortkey="$grp" ;;
     esac
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$sortkey" "${g_label[$k]}" "$grp" "${g_formats[$k]}" "${g_enabled[$k]}" "${g_first[$k]}" "${g_variants[$k]}"
+    # Field 8 is the canonical plugin_key, the same string the state log indexes
+    # on. The reconcile screen has to ask "is this plugin tracked?" and it
+    # cannot rebuild the key from the display label — "FabFilter Micro" and
+    # "FabFilter Micro (Mono)" are different plugins, and the vendor folder is
+    # already split out into field 3, so the key is not derivable from the row.
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$sortkey" "${g_label[$k]}" "$grp" "${g_formats[$k]}" "${g_enabled[$k]}" "${g_first[$k]}" "${g_variants[$k]}" "$k"
   done
+  return 0
+}
+
+# ── Fix-on-install behaviour (two independent switches) ────────────────────
+#
+# The post-install flow has two steps that can each be unwanted, and they are
+# wanted to be turned off SEPARATELY:
+#
+#   AUTO_FIX  — a fix that is ALREADY applied to this plugin gets re-applied
+#               automatically at install time, with no question asked. This is
+#               the "the fix currently applied to this plugin is applied again"
+#               case: the same rule is rewritten, silently, on every install.
+#   FIX_PROMPT— the "apply fixes now?" question at the end of an install. This
+#               is the DISCOVERY step: the plugin is new, fixes exist for it,
+#               and this is the only place the user is told.
+#
+# Turning off the second must not turn off the first and vice versa, so they
+# are two settings rather than one "don't touch fixes after install" switch.
+# Both default to ON: absent means unchanged, which is what a settings file
+# written by an older build should do.
+FIX_PREF_FILE=""
+
+apm_fix_pref_file() {
+  printf '%s\n' "${FIX_PREF_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/audio-plugin-manager/fix-prefs}"
+}
+
+apm_fix_pref_get() {
+  # $1 = AUTO_FIX | FIX_PROMPT
+  local v
+  # The file is KEY="value" (the same shell-sourceable shape as the Live Mode
+  # settings), so the quotes have to come off. They were left on here and every
+  # lookup fell through to the default — the switch appeared to do nothing.
+  v="$(grep -E "^$1=" "$(apm_fix_pref_file)" 2>/dev/null | tail -1 | cut -d= -f2-)"
+  v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+  case "$v" in no) printf 'no\n' ;; *) printf 'yes\n' ;; esac
+}
+
+apm_fix_pref_set() {
+  local key="$1" v="${2:-yes}" f tmp
+  case "$v" in yes|no) ;; *) return 1 ;; esac
+  f="$(apm_fix_pref_file)"
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 1
+  tmp="$(mktemp)" || return 1
+  # Rewrite just this key, keep the other one and anything else in the file.
+  if [[ -f $f ]]; then
+    grep -vE "^$key=" "$f" > "$tmp" 2>/dev/null || true
+  fi
+  printf '%s="%s"\n' "$key" "$v" >> "$tmp"
+  sort -o "$tmp" "$tmp" 2>/dev/null || true
+  mv -f "$tmp" "$f" || return 1
+  chmod 0644 "$f" 2>/dev/null || true
   return 0
 }
