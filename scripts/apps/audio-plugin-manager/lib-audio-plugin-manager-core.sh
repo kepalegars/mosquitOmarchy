@@ -3456,8 +3456,97 @@ fixes_for_plugin_json() {
 }
 
 # RE2/Lua-safe rendering of a plugin name into a Hyprland title regex.
+# fix_re_escape — escape a plugin name for BOTH engines that see it.
+#
+# The title goes into hyprland.lua as a Lua string that is ALSO a regex, so it
+# has to satisfy two different sets of rules at once:
+#
+#   * the regex engine wants the metacharacters escaped: \( \. \* \+ …
+#   * Lua 5.4 accepts ONLY \" and \\ as escapes. ANY other \<char> is an
+#     "invalid escape sequence" and the whole config file fails to load.
+#
+# re.escape() alone produced the second kind, so a plugin with a space or a
+# dash in its name — which is most of them, "FabFilter Pro-C 2" — wrote
+# "FabFilter\ Pro\-C\ 2" and took hyprland.lua down with
+#
+#   invalid escape sequence near '"(?i).*FabFilter\ '
+#
+# This was not a regression from the vendor-wide fix apply, it was a latent bug
+# it exposed: fixes used to be applied one plugin at a time, so the names that
+# reach this function were mostly single words and the bad escapes never landed
+# in the file.
+#
+# So: escape for the regex, then express every escape Lua cannot carry as a
+# character class instead — "[(]" means the same thing to the regex as "\(" and
+# needs no backslash at all. Space, dash, slash, underscore and dot are not
+# regex metacharacters, so they are emitted bare rather than escaped at all.
+# fix_re_escape — escape a plugin name for BOTH engines that see it.
+#
+# The title lands in hyprland.lua as a Lua string that is ALSO a regex, so it
+# has to satisfy two rule sets at once:
+#
+#   * the regex engine wants its metacharacters escaped
+#   * Lua 5.4 accepts ONLY \" and \\ as escapes. Any other \<char> is an
+#     "invalid escape sequence" and the WHOLE config file fails to load.
+#
+# re.escape() alone produced the second kind, so a plugin with a space or a
+# dash in its name — which is most of them, "FabFilter Pro-C 2" — wrote
+# "FabFilter\\ Pro\\-C\\ 2" and took hyprland.lua down with
+#
+#   invalid escape sequence near '"(?i).*FabFilter\\ '
+#
+# That was not a regression from the vendor-wide fix apply, it was a latent bug
+# it exposed: fixes used to be applied one plugin at a time, so the names that
+# reached this function were mostly single words and the bad escapes never made
+# it into the file.
+#
+# So: escape for the regex, then express every escape Lua cannot carry as a
+# CHARACTER CLASS instead — "[(]" means the same to the regex as "\\(" and
+# needs no backslash at all. Space, dash, slash, underscore and dot are not
+# regex metacharacters, so they are emitted bare rather than escaped.
+#
+# "^" gets "[a^]" rather than "[^]": a caret FIRST in a class is negation, so
+# "[^]" is an unterminated set and takes the file down. Anywhere but first it
+# is a plain literal.
 fix_re_escape() {
-  python3 -c 'import re,sys; print(re.escape(sys.argv[1]).replace(chr(34), chr(92)+chr(34)))' "$1"
+  python3 - "$1" <<'FIX_ESC_PY'
+import re, sys
+B = chr(92)
+# Chars re.escape() touches that are NOT regex metacharacters.
+BARE = set(" .-_/")
+name = sys.argv[1]
+r = re.escape(name)
+out, i = [], 0
+while i < len(r):
+    c = r[i]
+    # re.escape leaves a quote alone (not a metachar) but an unescaped quote
+    # ENDS the Lua string, silently truncating the rule.
+    if c == chr(34):
+        out.append(B + chr(34)); i += 1; continue
+    if c != B:
+        out.append(c); i += 1; continue
+    # re.escape writes a literal backslash as a doubled pair; Lua must yield
+    # one, so the source carries two.
+    if i + 1 < len(r) and r[i + 1] == B:
+        out.append(B + B); i += 2; continue
+    if i + 1 >= len(r):
+        out.append(B); i += 1; continue
+    nxt = r[i + 1]
+    if nxt == chr(34):
+        out.append(B + chr(34)); i += 2; continue
+    if nxt in BARE:
+        out.append(nxt); i += 2; continue
+    if nxt == "-":
+        out.append("-")
+    elif nxt == "]":
+        out.append("]")
+    elif nxt == "^":
+        out.append("[a^]")
+    else:
+        out.append("[" + nxt + "]")
+    i += 2; continue
+print("".join(out))
+FIX_ESC_PY
 }
 
 # fix_render_rules <fix> <plugin...> — the Lua body (comments + rules) for a
