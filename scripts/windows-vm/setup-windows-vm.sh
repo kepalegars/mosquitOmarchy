@@ -83,11 +83,84 @@ harden_shared_dirs(){
 }
 harden_shared_dirs
 
-if [[ $REMOVE == false ]] && [[ ! -f $COMPOSE ]]; then
+# Defined up here, not in the helper block further down: the "no VM yet?" step
+# below runs BEFORE the launcher, and it needs to ask a question.
+have() { command -v "$1" >/dev/null 2>&1; }
+confirm() {
+	if have gum; then
+		gum confirm "$1"
+	else
+		read -r -p "$1 [y/N] " r
+		[[ $r =~ ^[yY] ]]
+	fi
+}
+
+# -----------------------------------------------------------------------------
+# 0b. No VM yet? Install it, using Omarchy's own installer.
+# -----------------------------------------------------------------------------
+#
+# This script used to only WARN and stop there, which left the user with a
+# launcher that could not launch anything and a manager for a machine that did
+# not exist. The install is now offered, and it is DELEGATED rather than
+# reimplemented.
+#
+# Delegating is not laziness, it is the security model. Omarchy keeps the compose
+# in a root-owned directory on purpose: a root-invoked `docker compose up` must
+# never consume a file the user could have rewritten, or a process running as
+# the user could bind-mount / into a privileged container. Writing our own
+# compose would put that back exactly where it was removed from — the same
+# reason the /oem volume was abandoned for the shared folder.
+#
+# `omarchy-windows-vm install` is fully interactive (gum prompts for RAM, cores,
+# disk, username and password) and needs root, so it cannot be answered for the
+# user; the prompts are Omarchy's and the answers are the user's. We run it,
+# then re-detect: if it worked we carry straight on to the launcher, the
+# manager, the menu entries and the debloat in this same run.
+vm_installed() { [[ -f $OMPOSE ]]; }
+
+run_omarchy_install() {
+  if ! command -v omarchy-windows-vm >/dev/null 2>&1; then
+    warn "'omarchy-windows-vm' not found — this looks like an Omarchy install, but the command is missing."
+    warn "Install the VM manually, then re-run this script."
+    return 1
+  fi
+  info "Handing over to 'omarchy-windows-vm install' (needs root; long download)"
+  info "It will ask for RAM, CPU cores, disk size, and the Windows account."
+  if [[ -t 0 ]]; then
+    confirm "Install the Windows VM now via omarchy-windows-vm?" || { warn "Skipped."; return 1; }
+  else
+    # Non-interactive (CI, a menu action): never escalate without a human.
+    warn "Not a terminal — not running a privileged install unattended."
+    return 1
+  fi
+  # `install` needs root; without sudoless docker it goes through a polkit
+  # prompt. Either way the user authorises it in front of the prompts.
+  if [[ ${OMARCHY_SUDOLESS_DOCKER:-false} == true ]] || docker info >/dev/null 2>&1; then
+    omarchy-windows-vm install || return 1
+  else
+    sudo -v || return 1
+    sudo omarchy-windows-vm install || return 1
+  fi
+  # Re-detect rather than trusting the exit code: the installer writes the
+  # compose near the end, and a partial run must not be reported as success.
+  if vm_installed; then
+    COMPOSE="$OMARCHY_WINDOWS_COMPOSE"
+    [[ -f $COMPOSE ]] || COMPOSE="$LEGACY_COMPOSE"
+    harden_shared_dirs
+    ok "Windows VM installed (compose: $COMPOSE)"
+    return 0
+  fi
+  warn "The installer finished but no compose is present — treating it as not installed."
+  return 1
+}
+
+if [[ $REMOVE == false ]] && ! vm_installed; then
   warn "Windows VM not installed (no docker-compose.yml at $OMARCHY_WINDOWS_COMPOSE or $LEGACY_COMPOSE)."
-  warn "Run first: omarchy-windows-vm install   (long download)."
-  warn "The 'winvm' manager and the launcher will still be installed."
-  warn "Debloat will be skipped until the VM exists (rerun this script afterwards)."
+  run_omarchy_install || true
+  if ! vm_installed; then
+    warn "Continuing without a VM: the 'winvm' manager and the launcher are still installed."
+    warn "The debloat step is skipped until the VM exists — re-run this script afterwards."
+  fi
 fi
 
 # -----------------------------------------------------------------------------
@@ -243,9 +316,21 @@ Type=Application
 Categories=System;Virtualization;
 EOF
   fi
+  # The second launcher, so the VM can be (re)installed from the app grid too and
+  # not only from the menu. It re-runs this script, which is idempotent.
+  cat > "$APPS_DIR/windows-vm-setup.desktop" << EOF
+[Desktop Entry]
+Name=Setup Windows VM
+Comment=Install or refresh the Windows VM (launcher, manager, menu, debloat)
+Exec=uwsm app -- setup-windows-vm
+Icon=windows
+Terminal=false
+Type=Application
+Categories=System;Virtualization;
+EOF
   rm -f "$APPS_DIR/windows-vm-usb.desktop"
   command -v update-desktop-database >/dev/null && update-desktop-database "$APPS_DIR" 2>/dev/null || true
-  ok "Menu entry 'Windows' now points to windows-vm-usb"
+  ok "Menu entries: 'Windows' launches the VM, 'Setup Windows VM' refreshes it"
 fi
 
 # -----------------------------------------------------------------------------
@@ -263,7 +348,7 @@ COMPOSE_FILE="/var/lib/omarchy/windows/docker-compose.yml"
 CONTAINER="omarchy-windows"
 WEB_URL="http://127.0.0.1:8006"
 
-have() { command -v "$1" >/dev/null 2>&1; }
+# have() is defined at the top of this file, before the "no VM yet?" step.
 die() { echo "❌ $*" >&2; exit 1; }
 
 require_config() {
@@ -300,14 +385,6 @@ get_conf() { awk -v k="$1:" '$1==k {gsub(/"/, "", $2); print $2; exit}' "$COMPOS
 
 set_conf() { sed -i "s|^\([[:space:]]*$1:[[:space:]]*\).*|\1\"$2\"|" "$COMPOSE_FILE"; }
 
-confirm() {
-	if have gum; then
-		gum confirm "$1"
-	else
-		read -r -p "$1 [y/N] " r
-		[[ $r =~ ^[yY] ]]
-	fi
-}
 
 total_ram_gb() { awk '/MemTotal/ {printf "%d", $2/1048576}' /proc/meminfo; }
 
@@ -617,6 +694,27 @@ $BLOCK_WINVM_START
     "description": "RAM, CPU, disk, start/stop management (winvm)",
     "aliases": ["winvm", "vm", "windows"],
     "action": "omarchy-launch-or-focus-tui winvm"
+  },
+  "setup.winvm.launch": {
+    "icon": "󰖳",
+    "label": "Launch Windows VM",
+    "description": "Start the VM and connect over RDP (external drives redirected)",
+    "aliases": ["winvm-launch"],
+    "action": "omarchy-launch-floating-terminal-with-presentation windows-vm-usb"
+  },
+  "setup.winvm.setup": {
+    "icon": "󰍲",
+    "label": "Setup / update Windows VM",
+    "description": "Install the VM if missing, refresh the launcher, manager and debloat",
+    "aliases": ["winvm-setup"],
+    "action": "omarchy-launch-floating-terminal-with-presentation setup-windows-vm"
+  },
+  "setup.winvm.remove": {
+    "icon": "󰍲",
+    "label": "Remove Windows VM",
+    "description": "Delete the VM and its disk image (keeps this script and the helpers)",
+    "aliases": ["winvm-remove"],
+    "action": "omarchy-launch-floating-terminal-with-presentation 'omarchy-windows-vm remove'"
   }
 $BLOCK_WINVM_END
 BLOCK_EOF
@@ -682,11 +780,23 @@ remove_menu_block() {
 }
 
 if [[ $REMOVE == false ]]; then
-  info "Adding the 'Setup > Windows VM' entry to the Omarchy menu"
+  info "Installing setup-windows-vm on PATH"
+  if [[ -f $SCRIPT_DIR/setup-windows-vm.sh ]]; then
+    cp -f "$SCRIPT_DIR/setup-windows-vm.sh" "$BIN_DIR/setup-windows-vm"
+    chmod +x "$BIN_DIR/setup-windows-vm"
+    ok "setup-windows-vm installed (the entries below re-run it)"
+  fi
+  info "Adding the 'Setup > Windows VM' entries to the Omarchy menu"
   insert_menu_block
-  ok "Menu configured: Setup > Windows VM (interactive TUI)"
+  ok "Menu configured: Windows VM / Launch / Setup / Remove"
+  # Omarchy's own "Install > Windows" entry is gated on the .desktop NOT
+  # existing, so writing our launcher above already hides it. Its "Remove >
+  # Windows" entry is gated on the .desktop existing, so it is now visible —
+  # ours does the same job with a description that says the disk goes too.
+  ok "Omarchy's native 'Install > Windows' entry is hidden (we ship a launcher)"
 else
   remove_menu_block
+  rm -f "$BIN_DIR/setup-windows-vm" "$APPS_DIR/windows-vm-setup.desktop"
 fi
 
 # -----------------------------------------------------------------------------
