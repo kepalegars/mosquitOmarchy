@@ -33,6 +33,11 @@ const (
 	scrBackupOptions
 	scrBackupApps
 	scrPreinstalls
+	// scrQuickFixes is the Quick fixes list, reached from its folder row in
+	// Setup. It existed in the shell launcher (launcher_run_category -> fixes)
+	// and the TUI replaced that launcher without ever carrying the category
+	// across, so Setup had no way to reach a single quick fix.
+	scrQuickFixes
 )
 
 // BackupOpts are the Backup screen's content choices.
@@ -155,8 +160,17 @@ type model struct {
 	uninstallMsg      string
 	menuEntries       []MenuEntryRec
 	menuEntriesLoaded bool
-	menuEntryChecked  map[string]bool
-	menuEntryOrig     map[string]bool
+	// quickFixes is the Quick fixes catalog (fetched from the backend) and
+	// quickFixChecked the ticks on its own screen. pendingFixIDs is the marked
+	// set the confirmation is about, held while the dialog is up so the answer
+	// carries the exact list that was shown.
+	quickFixes       []ItemRec
+	quickFixChecked  map[string]bool
+	quickFixPicker   navPicker
+	quickFixLoaded   bool
+	pendingFixIDs    []string
+	menuEntryChecked map[string]bool
+	menuEntryOrig    map[string]bool
 	// crashNotify is the CACHED state of the crash-notification setting. The
 	// label used to be built by shelling out to the backend every time the
 	// Extras list was rebuilt, so simply opening the screen — and rebuilding
