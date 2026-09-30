@@ -149,7 +149,14 @@ patchbay_watch() {
       done
       [[ -n "$new" ]] && {
         echo "$new" > "$STATE_DIR/patchbay_addr"
-        hyprctl dispatch movetoworkspacesilent "special:scratchpad,address:$new" >/dev/null 2>&1 || true
+        # The Lua dispatcher form, inlined rather than shared: this watchdog is
+        # its own process and does not source live-mode, so park_in_scratchpad()
+        # is not in scope here. The classic form it replaces is a LUA SYNTAX
+        # ERROR on Hyprland 0.56 ("special:scratchpad" — the colon) and was
+        # swallowed by 2>&1, so the window was never parked.
+        hyprctl dispatch "hl.dsp.window.move({ window = \"address:$new\", workspace = \"special:scratchpad\" })" \
+          >/dev/null 2>&1 \
+          || hyprctl dispatch "movetoworkspacesilent special:scratchpad,address:$new" >/dev/null 2>&1 || true
       }
     }
   fi

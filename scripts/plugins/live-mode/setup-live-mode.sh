@@ -364,9 +364,14 @@ menu_block() {
   cat <<MC_EOF
 $MENU_START
   "trigger.toggle.live-mode": {
-    // fa-circle: the old fa-leaf read as a green plant next to the red frame
-    // this row announces. The menu has no per-entry colour, so the glyph is it.
-    "icon": "\uf111",
+    // U+1F534 RED CIRCLE, not fa-circle (U+F111). The menu has no per-entry
+    // colour at all — MenuModel.labelFor() only ever appends a tick — so the
+    // glyph is the only thing that CAN carry the red this row is supposed to
+    // announce, and a Nerd Font glyph renders in the menu's single foreground
+    // colour: the old \uf111 came out as a plain circle in the text colour,
+    // which is why it never read as the live/performance indicator it is.
+    // A colour emoji is the one glyph class that brings its own colour.
+    "icon": "\ud83d\udd34",
     "label": "Live Mode",
     "description": "Performance session mode: keep the machine awake, thermal guard, no idle suspend",
     "aliases": ["live", "live-mode", "lmm", "toggle-live"],

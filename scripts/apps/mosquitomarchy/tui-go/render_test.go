@@ -131,23 +131,24 @@ func TestUpdateBodyNoDuplicate(t *testing.T) {
 	}
 }
 
-// TestSetupUpdatesOption checks Setup advertises available updates.
-func TestSetupUpdatesOption(t *testing.T) {
-	m := initialModel()
-	m.nav = []screen{scrMain, scrSetup}
-	m.w, m.h = 120, 40
-	m.setupFolders = []FolderRec{{Folder: "apps", Label: "Apps"}}
-	m.setupItems = []SetupItemRec{{Folder: "apps", Key: "x", Label: "x"}}
-	m.updateRec = UpdateRec{RepoUpdate: true}
-	m.setupPicker = m.rebuildSetup()
-	found := false
-	for _, it := range m.setupPicker.items {
-		if it.Value == "updates" {
-			found = true
+// Setup must NOT carry an Update row, ever. It used to appear only when a
+// background check had already found something, so it popped in and out of the
+// tree and moved every other row when it did. Update is its own entry on the
+// main menu, and this asserts Setup stays free of it.
+func TestSetupHasNoUpdateRow(t *testing.T) {
+	for _, rec := range []UpdateRec{{}, {RepoUpdate: true}, {Modules: []ItemRec{{Key: "reaper"}}}} {
+		m := initialModel()
+		m.nav = []screen{scrMain, scrSetup}
+		m.w, m.h = 120, 40
+		m.setupFolders = []FolderRec{{Folder: "apps", Label: "Apps"}}
+		m.setupItems = []SetupItemRec{{Folder: "apps", Key: "x", Label: "x"}}
+		m.updateRec = rec
+		m.setupPicker = m.rebuildSetup()
+		for _, it := range m.setupPicker.items {
+			if it.Value == "updates" {
+				t.Fatalf("Setup grew an Update row back (update=%+v)", rec)
+			}
 		}
-	}
-	if !found {
-		t.Fatal("Setup should advertise available updates")
 	}
 }
 
@@ -827,22 +828,23 @@ func TestUpdateIsVisibleFromTheMainMenu(t *testing.T) {
 	if v := m.View(); strings.Contains(v, "■") {
 		t.Fatalf("square still there with nothing pending:\n%s", v)
 	}
-	// The Setup row is now the same short line as the menu option.
+	// Update is reachable from the main menu, which is where it lives now — and
+	// Setup has no opinion about it at all.
 	m2 := initialModel()
 	m2.nav = []screen{scrMain, scrSetup}
 	m2.w, m2.h = 120, 40
 	m2, _ = m2.update(queryMsg{kind: "update", update: UpdateRec{RepoUpdate: true}})
-	row := ""
 	for _, it := range m2.setupPicker.items {
 		if it.Value == "updates" {
-			row = it.Display
+			t.Fatal("Setup must not carry the update row any more")
 		}
 	}
-	if row == "" {
-		t.Fatal("Setup lost its update row")
-	}
-	if len([]rune(row)) > 12 {
-		t.Fatalf("Setup update row is still a sentence: %q", row)
+	m3 := initialModel()
+	m3.nav = []screen{scrMain}
+	m3.w, m3.h = 120, 40
+	m3, _ = m3.update(queryMsg{kind: "update", update: UpdateRec{RepoUpdate: true}})
+	if !strings.Contains(m3.View(), "Update") {
+		t.Fatalf("the main menu no longer advertises the update:\n%s", m3.View())
 	}
 }
 

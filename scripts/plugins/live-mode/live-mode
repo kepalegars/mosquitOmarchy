@@ -39,8 +39,9 @@ Commands:
   on [yes]      Activate live mode (confirmation unless 'yes' given)
   off [yes]     Deactivate live mode (confirmation unless 'yes' given)
   status        Show current live mode state
-  --active      Exit 0 and print "true" when a session is live, else "false"
-                (machine-readable, for the omarchy menu's \"checked\" field)
+  --active      Exit 0 when a session is live, 1 otherwise. The omarchy
+                menu reads the EXIT CODE of a row's "checked" expression,
+                so that is the answer -- printing true/false is ignored.
   toggle        Toggle live mode on/off
   manage [--replace]  Open the Live Manager (configures the next session; live mode must be off)
                       --replace closes any other open Live Manager first
@@ -297,6 +298,58 @@ toggle_gaps_off() {
 # move_scratchpad_windows: the pre-live convention pushes windows whose title
 # starts with "-scratch" onto the last empty workspace so they stop stealing
 # focus during the session.
+# hypr_dispatch <lua-expression> [classic-fallback] — run a Hyprland dispatcher.
+#
+# WHY THIS EXISTS. Every call in this file used the classic one-token syntax
+# (`hyprctl dispatch movetoworkspacesilent "special:scratchpad,address:0x..."`).
+# Hyprland 0.56 (this machine) no longer accepts it: the argument goes through a
+# Lua parser, and "special:scratchpad" is a Lua SYNTAX ERROR because of the
+# colon, so the call died with
+#
+#   error: [string "return hl.dispatch(movetoworkspacesilent spec..."]:1:
+#          ')' expected near 'special'
+#
+# Every one of those calls was silenced with `>/dev/null 2>&1 || true`, so the
+# patchbay simply never got parked and the scratchpad lifecycle did nothing
+# while reporting nothing. The Lua form is
+# `hl.dsp.window.move({ window = "address:0x..", workspace = "special:.." })`.
+#
+# The classic form is kept as a fallback so the script still works on an older
+# Hyprland. Returns 0 when a dispatcher was accepted; never prints, never fatal.
+hypr_dispatch() {
+  local out
+  command -v hyprctl >/dev/null 2>&1 || return 1
+  out=$(hyprctl dispatch "$1" 2>&1) || true
+  case "$out" in
+    *error*|*unknown*|*"nil value"*|*"expected a dispatcher"*|*"window not found"*) ;;
+    *) return 0 ;;
+  esac
+  [[ -n ${2:-} ]] || return 1
+  out=$(hyprctl dispatch "$2" 2>&1) || true
+  case "$out" in
+    *error*|*unknown*|*"nil value"*|*"expected a dispatcher"*) return 1 ;;
+  esac
+  return 0
+}
+
+# park_in_scratchpad <address> — move one window to the scratchpad silently.
+park_in_scratchpad() {
+  local addr="$1"
+  [[ -n $addr ]] || return 1
+  hypr_dispatch \
+    "hl.dsp.window.move({ window = \"address:$addr\", workspace = \"special:scratchpad\" })" \
+    "movetoworkspacesilent special:scratchpad,address:$addr"
+}
+
+# close_window <address>
+close_window() {
+  local addr="$1"
+  [[ -n $addr ]] || return 1
+  hypr_dispatch \
+    "hl.dsp.window.close({ window = \"address:$addr\" })" \
+    "closewindow address:$addr"
+}
+
 move_scratchpad_windows() {
   local clients workspaces last_empty scratchpad_ids
   clients=$(hyprctl -j clients 2>/dev/null) || return 0
@@ -314,7 +367,9 @@ move_scratchpad_windows() {
   [[ -z "$last_empty" ]] && { warn "No empty workspace for scratchpad windows."; return 0; }
 
   while IFS= read -r addr; do
-    [[ -n "$addr" ]] && hyprctl dispatch movetoworkspace "$last_empty" "address:$addr" >/dev/null 2>&1 || true
+    [[ -n "$addr" ]] && hypr_dispatch \
+      "hl.dsp.window.move({ window = \"address:$addr\", workspace = \"$last_empty\" })" \
+      "movetoworkspace $last_empty address:$addr" >/dev/null 2>&1 || true
   done <<< "$scratchpad_ids"
   ok "Scratchpad windows moved to workspace $last_empty."
 }
@@ -388,7 +443,7 @@ open_routing_tool() {
       ok "mosquito routing tool already parked in the scratchpad."
       return 0
     fi
-    hyprctl dispatch movetoworkspacesilent "special:scratchpad,address:$existing" >/dev/null 2>&1 || true
+    park_in_scratchpad "$existing" >/dev/null 2>&1 || true
     echo "$existing" > "$PATCHBAY_ADDR_FILE"
     ok "mosquito routing tool parked in the scratchpad (SUPER + S)."
     return 0
@@ -430,7 +485,7 @@ open_routing_tool() {
     echo "$existing" > "$PATCHBAY_ADDR_FILE"
     # Park it only if the scratchpad is free (no occupants).
     if [[ -z $(scratchpad_occupied_by_others) ]]; then
-      hyprctl dispatch movetoworkspacesilent "special:scratchpad,address:$existing" >/dev/null 2>&1 || true
+      park_in_scratchpad "$existing" >/dev/null 2>&1 || true
       ok "mosquito routing tool parked in the scratchpad (SUPER + S)."
     else
       ok "mosquito routing tool launched in the current workspace."
@@ -450,7 +505,7 @@ restore_scratchpad() {
   if [[ -n "$ours" ]] && ! grep -qF "$ours" "$SCRATCHPAD_SNAPSHOT" 2>/dev/null; then
     hyprctl -j clients 2>/dev/null | jq -e --arg a "$ours" \
       'map(select(.address == $a)) | length > 0' >/dev/null 2>&1 && {
-      hyprctl dispatch closewindow "address:$ours" >/dev/null 2>&1 || true
+      close_window "$ours" >/dev/null 2>&1 || true
       ok "Session's mosquito routing tool closed (scratchpad back to its pre-live state)."
     }
   fi
@@ -913,11 +968,26 @@ case "${1:-}" in
   off)     cmd_off "${2:-}" ;;
   status)  cmd_status ;;
   --active)
-    # The omarchy menu runs a menu row's "checked" as a shell command and takes
-    # its stdout verbatim as a boolean, so this has to print exactly true/false
-    # and nothing else. Parsing `status` instead would mean grepping a sentence
-    # written for humans, and "OFF" contains no "ON" only by luck.
-    if is_active; then echo true; else echo false; fi
+    # THE ANSWER IS THE EXIT CODE, NOT THE OUTPUT.
+    #
+    # The omarchy menu batches every row's "checked" expression into one script
+    # and evaluates each as `if { <expression>; } then echo <id>:c:1; ...`, so
+    # what decides a tick is the command's STATUS. Printing "false" and exiting
+    # 0 therefore reads as TRUE: the row sat permanently ticked, claiming a
+    # live session when none was, and clicking it offered to turn off
+    # something that had never been on. The comment that used to sit here
+    # claimed the menu took stdout as the boolean, which is exactly backwards
+    # and is why the bug survived.
+    #
+    # mega-caffeine's --active already answers by exit status (1 when
+    # inactive), which is why only this one row was stuck on.
+    # exit, not return: this dispatch is a bare `case` at the top level, not a
+    # function body. Anything else is a shell error and exits non-zero, which
+    # would have read as "active" — the same bug as before, in a new costume.
+    if is_active; then
+      exit 0
+    fi
+    exit 1
     ;;
   toggle)  is_active && cmd_off || cmd_on ;;
   manage)  cmd_manage "${2:-}" ;;

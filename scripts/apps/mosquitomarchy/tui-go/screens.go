@@ -2475,11 +2475,11 @@ func visibleSetupRows(full []tuikit.PickerItem, open map[string]bool) []tuikit.P
 func (m model) buildSetupRows(uninstall bool, open map[string]bool, idx map[string]*setupCategory) []tuikit.PickerItem {
 	out := make([]tuikit.PickerItem, 0, len(m.setupFolders)+8)
 
-	if !uninstall && m.updatePending() {
-		// Advertise an available update first, so Setup surfaces it on its
-		// own. One short row, sized like every other line in this menu.
-		out = append(out, tuikit.PickerItem{Display: "Update", Value: "updates", TrailingBadge: "■"})
-	}
+	// Setup no longer carries an Update row. The Update screen is its own entry
+	// on the main menu, and the row here only ever appeared when a check had
+	// already found something — so it popped in and out of the tree depending on
+	// a background check, which moved every other row on the page. The update is
+	// still advertised on the main menu and still one key away.
 
 	seen := make(map[string][]tuikit.TreeItem, len(idx))
 	for f, c := range idx {
