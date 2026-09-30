@@ -2223,8 +2223,42 @@ func (m model) setupRows(uninstall bool, open map[string]bool) []tuikit.PickerIt
 			map[string][]tuikit.TreeItem{menuEntriesFolder: meChildren},
 			open, m.blinkOn)...)
 	}
+	// A category with something ticked inside it carries the accent square at
+	// the end of its row — the same marker the plugin manager puts on a folder
+	// that has an applied fix. Setup and Uninstall are mostly a wall of
+	// category names with a count on the right, and the count alone does not
+	// say whether the ticked thing is in there yet, so the two are easy to
+	// confuse. The square answers that at a glance, and because it only
+	// appears once something is ticked, it never becomes noise.
+	out = tuikit.WithCategoryMark(out, func(v string) int {
+		_, cat, ok := tuikit.TreeSplit(v)
+		if !ok {
+			return 0
+		}
+		if cat == menuEntriesFolder {
+			// Menu entries are not setup items — they live in their own cache
+			// and are ticked on their own page — so categorySelectedCount()
+			// would always report 0 here and the folder would never light up.
+			return m.menuEntriesCheckedCount()
+		}
+		return m.categorySelectedCount(cat)
+	})
+
 	out = append(out, tuikit.PickerItem{Display: "Back", Value: "back"})
 	return out
+}
+
+// menuEntriesCheckedCount counts the ticked menu entries, so the "Menu
+// entries" folder carries the same accent square as a module category instead
+// of staying bare while things inside it are ticked.
+func (m model) menuEntriesCheckedCount() int {
+	n := 0
+	for _, e := range m.menuEntries {
+		if m.menuEntryChecked[e.Name] {
+			n++
+		}
+	}
+	return n
 }
 
 // categorySelectedCount counts the checked items of one category.

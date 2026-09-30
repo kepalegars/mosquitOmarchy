@@ -152,6 +152,72 @@ func ParentFolderOf(items []PickerItem, folderPrefix, value string) (folder stri
 	return owner, true
 }
 
+// MarkBadge is the filled square a container row carries when something inside
+// it is selected. Same glyph, same accent colour and same trailing slot as the
+// plugin manager's "a fix is already applied here" marker, so "there is
+// something in here" reads identically on every screen.
+const MarkBadge = "■"
+
+// WithCategoryMark stamps MarkBadge on every folder row that has at least one
+// selected child, and leaves every other row — and every folder with nothing
+// selected — exactly as it was.
+//
+// It is a function rather than a rule baked into BuildFolderTree on purpose:
+// the marker is a per-host decision, and a host that always wants it can call
+// this once on the rows it just built. marked is asked for the folder row's own
+// Value, so a host keyed on ids can strip them with TreeSplit, and a host whose
+// folder values ARE the id can use them directly.
+//
+// The square goes in TrailingBadge, never the leading Badge: the leading slot
+// already says what KIND of row this is (folder glyph, checkbox), and the mark
+// is about content, so it belongs at the end where the plugin manager puts it.
+func WithCategoryMark(items []PickerItem, marked func(folderValue string) int) []PickerItem {
+	if marked == nil {
+		return items
+	}
+	for i := range items {
+		if !items[i].Folder {
+			continue
+		}
+		if marked(items[i].Value) > 0 {
+			items[i].TrailingBadge = MarkBadge
+		}
+	}
+	return items
+}
+
+// ParentFolderFlag answers the same question as ParentFolderOf for a host that
+// marks its folder rows with Folder:true instead of giving them a recognisable
+// value prefix. The plugin manager builds its own trees that way (a folder's
+// Value is an opaque id), so there is no prefix to key on — the flag is the
+// only thing that says "this row is a container".
+func ParentFolderFlag(items []PickerItem, value string) (folder string, ok bool) {
+	target := -1
+	for i, it := range items {
+		if it.Value == value {
+			target = i
+			break
+		}
+	}
+	if target < 0 {
+		return "", false
+	}
+	if items[target].Folder {
+		// Already on the folder itself: that folder is the one to fold.
+		return items[target].Value, true
+	}
+	owner := ""
+	for _, it := range items[:target] {
+		if it.Folder {
+			owner = it.Value
+		}
+	}
+	if owner == "" {
+		return "", false
+	}
+	return owner, true
+}
+
 // BuildFolderTree renders the folders and their items as PickerItems.
 //
 // open is the host's fold state: a folder whose id is absent or false is

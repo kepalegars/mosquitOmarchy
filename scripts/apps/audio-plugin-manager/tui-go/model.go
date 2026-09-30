@@ -149,6 +149,15 @@ type model struct {
 	// which is the whole point of the grouping.
 	folderExpanded map[string]bool
 
+	// folderFoldedByUser records folders the user has explicitly collapsed or
+	// expanded on the Plugin fixes list. rebuildFixPluginPicker force-opens any
+	// folder holding an already-applied fix, so without this the auto-open
+	// undid the fold on the very next rebuild: pressing ← closed the folder
+	// and it sprang straight back open, which is why folders could not be
+	// folded there while the same gesture worked everywhere else. A folder in
+	// this set is never force-opened again.
+	folderFoldedByUser map[string]bool
+
 	pendingPluginsRoot string // picked in scrSettings, confirmed in scrPluginsRootConfirm
 
 	// "Plugin fixes" flow: fixPlugin is the plugin chosen on

@@ -501,3 +501,62 @@ func TestUninstallFoldingDoesNotReflowThePage(t *testing.T) {
 		t.Errorf("expanding preinstalls MOVED existing rows.\n collapsed: %v\n expanded:  %v", closed, open)
 	}
 }
+
+// A category with something ticked inside it wears the accent square at the end
+// of its row, exactly like the plugin manager's folder that has an applied fix.
+// Setup and Uninstall are mostly a wall of category names with a count on the
+// right, and the count alone does not say whether the ticked module is in there
+// yet — the two were easy to confuse.
+func TestCategoryRowsCarryTheAccentSquareWhenSomethingIsTicked(t *testing.T) {
+	m := flatSetup()
+	m.folderOpen = map[string]bool{"apps": true, "mosquito": true}
+	m.selected[setupValue("apps", "reaper")] = true
+
+	view := ansi.Strip(m.rebuildSetup().View())
+	rows := map[string]string{}
+	for _, l := range strings.Split(view, "\n") {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		for _, name := range []string{"Apps", "mosquito", "Menu entries"} {
+			if strings.Contains(l, name) {
+				rows[name] = l
+			}
+		}
+	}
+	if got := rows["Apps"]; !strings.Contains(got, tuikit.MarkBadge) {
+		t.Errorf("the ticked category has no %q: %q", tuikit.MarkBadge, got)
+	}
+	// Nothing ticked inside the others, so no square — otherwise it is noise.
+	for _, name := range []string{"mosquito", "Menu entries"} {
+		if got := rows[name]; strings.Contains(got, tuikit.MarkBadge) {
+			t.Errorf("untouched category %q still shows the %q: %q", name, tuikit.MarkBadge, got)
+		}
+	}
+}
+
+// Rows must start at a FIXED column, not a column that slides to the middle of
+// the pane. The row block used to be centered, which made its width the left
+// margin, so a list of short names left ~28 blank columns before the first row.
+func TestRowsStartAtTheLeftEdgeNotCentred(t *testing.T) {
+	m := flatSetup()
+	m.folderOpen = map[string]bool{"apps": true, "mosquito": true}
+	cw, _ := m.contentSize()
+	view := m.rebuildSetup().View()
+	widest := 0
+	for _, l := range strings.Split(view, "\n") {
+		if strings.TrimSpace(ansi.Strip(l)) == "" {
+			continue
+		}
+		// The cursor slot is 3 columns; anything beyond that on the FIRST row
+		// means the block itself was pushed right.
+		pad := len(ansi.Strip(l)) - len(strings.TrimLeft(ansi.Strip(l), " "))
+		if pad > widest {
+			widest = pad
+		}
+	}
+	// A centred block left roughly a third of the pane empty (28 of 92).
+	if widest > cw/3 {
+		t.Errorf("first column starts at %d of a %d-wide pane — the block is still centred", widest, cw)
+	}
+}

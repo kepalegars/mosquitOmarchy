@@ -822,6 +822,14 @@ func (m *model) rebuildFixPluginPicker() {
 			if !n.Folder {
 				continue
 			}
+			// A folder holding an already-applied fix opens itself, so the
+			// ■ marker is not hidden behind a closed folder. But only until
+			// the user says otherwise: re-forcing this on every rebuild made
+			// the folder impossible to fold (← closed it, the rebuild
+			// reopened it on the next line).
+			if m.folderFoldedByUser[n.Value] {
+				continue
+			}
 			for _, p := range n.Plugins {
 				if m.fixAppliedPlugins[pluginStemOf(p.Value)] {
 					appliedFolders[n.Value] = true
@@ -1166,16 +1174,23 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// to `s`. Both screens share m.folderExpanded and the same
 			// treeItemsToPicker, so the gesture and the rendering stay in
 			// lockstep.
-			if fv := selectedFolderValueIn(pluginItemsAsItems(m.pluginCache), m.picker.SelectedValue()); fv != "" {
+			if fv, inFolder := tuikit.ParentFolderFlag(m.picker.Items(), m.picker.SelectedValue()); inFolder {
 				if m.folderExpanded == nil {
 					m.folderExpanded = map[string]bool{}
 				}
-				if sm.Dir > 0 {
-					m.folderExpanded[fv] = true
-				} else {
-					delete(m.folderExpanded, fv)
+				m.folderExpanded[fv] = sm.Dir > 0
+				keep := m.picker.SelectedValue()
+				if sm.Dir < 0 {
+					// The row under the cursor went away with its children.
+					keep = fv
 				}
 				m.rebuildPluginPicker()
+				for i, it := range m.picker.Items() {
+					if it.Value == keep {
+						m.picker = m.picker.SelectIndex(i)
+						break
+					}
+				}
 			}
 			return m, nil
 		}
@@ -1288,18 +1303,33 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if sm, ok := msg.(tuikit.PickerSortMsg); ok {
-			// Left/Right fold the folder row under the cursor, sharing the
-			// same folderExpanded map and tree renderer as Installed plugins.
-			if fv := selectedFolderValueIn(pluginItemsAsItems(m.fixPluginCache), m.picker.SelectedValue()); fv != "" {
+			// Left/Right fold the folder the cursor is IN, not only the one it
+			// is on — the same rule as every other folder list, so walking down
+			// into a folder and pressing ← closes it from any of its rows.
+			if fv, inFolder := tuikit.ParentFolderFlag(m.picker.Items(), m.picker.SelectedValue()); inFolder {
 				if m.folderExpanded == nil {
 					m.folderExpanded = map[string]bool{}
 				}
-				if sm.Dir > 0 {
-					m.folderExpanded[fv] = true
-				} else {
-					delete(m.folderExpanded, fv)
+				if m.folderFoldedByUser == nil {
+					m.folderFoldedByUser = map[string]bool{}
+				}
+				// Record the user's choice so the auto-open of folders with
+				// applied fixes stops overriding it.
+				m.folderFoldedByUser[fv] = true
+				m.folderExpanded[fv] = sm.Dir > 0
+				keep := m.picker.SelectedValue()
+				if sm.Dir < 0 {
+					// The row under the cursor went away with its children, so
+					// land on the folder we just closed.
+					keep = fv
 				}
 				m.rebuildFixPluginPicker()
+				for i, it := range m.picker.Items() {
+					if it.Value == keep {
+						m.picker = m.picker.SelectIndex(i)
+						break
+					}
+				}
 			}
 			return m, nil
 		}
@@ -1314,8 +1344,12 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.folderExpanded == nil {
 					m.folderExpanded = map[string]bool{}
 				}
+				if m.folderFoldedByUser == nil {
+					m.folderFoldedByUser = map[string]bool{}
+				}
+				m.folderFoldedByUser[res.Value] = true
 				if m.folderExpanded[res.Value] {
-					delete(m.folderExpanded, res.Value)
+					m.folderExpanded[res.Value] = false
 				} else {
 					m.folderExpanded[res.Value] = true
 				}
