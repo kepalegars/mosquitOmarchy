@@ -2573,3 +2573,39 @@ Changes DEPLOYED to ~/.local/bin. Not committed/pushed yet (explicit request nee
 **Follow-up 27 (2026-09-18)**: Ableton→Bitwig post-save pipeline completed; `test-ableton.sh` removed.
 
 - Added `ableton_window_count` + `wait_ableton_windows_closed_stable` (stable close gate: window count must stay 0 for 3 consecutive checks) and `wait_for_als_stable` (size+mtime unchanged across polls). `wait_ableton_close_manual` (Off path) and `wait_ableton_close` (On path) now use the stable gate, so Wine/DXGI/JUCE teardown never races detection. `detect_new_als` emits the chosen path only after stabilization. Decision unchanged (in WORKDIR → open directly; else `<name> - backup/` folder + copy, open the copy), and the resolved path flows to `finish_bitwig_open` (Bitwig opens only after save + close). The existing Ctrl+Q/Enter/xdotool/window-detection code was NOT touched. Scratch `test-ableton.sh` deleted.
+
+## Open TODO — live mode (added 2026-09-30, NOT started)
+
+Deferred by the user on purpose: "oublie le truc sur le setup battery, j'ai réglé ça
+moi meme. occupe toi des 4 points plugin manager et note quelque part les points
+pour live mode pour les faire ensuite". The plugin-manager work landed first; these
+are the live-mode items that were queued in the same request.
+
+1. **Option in the Live Mode Manager: fence package installation.**
+   Re-introduce the pacman fence *as a setting*, default OFF. The fence was removed
+   in `7728430` because it blocked every package operation for the whole session
+   (`db.lck`), which the user hit as
+   `error: failed to init transaction (unable to lock database)`. It was never
+   justified — live mode installs nothing — but the user liked the idea of pinning
+   the machine, so it must come back only if the user can turn it off. Implement as
+   `FENCE_PACKAGES=yes|no` in `~/.config/live-mode/settings`, read by
+   `live-mode-root apply` (create `db.lck`) and `restore` (remove it), with a row in
+   `scripts/plugins/live-mode/tui-go/{settings.go,model.go}` following the existing
+   toggle pattern (`SWITCH_THEME`, `POWER_PROFILE_PROMPT`). The restore must keep
+   the `fuser` guard added in `7728430`: never delete a lock a running pacman owns.
+
+2. **The activation prompt must state what will actually happen.**
+   `live-mode` hardcodes its confirmation card (see the `confirm $'Activate Live
+   Mode?\n• Max performance…'` call in `cmd_on`): it always lists
+   "mosquito patchbay in scratchpad", "Notifications silenced" and "Gaps disabled"
+   regardless of the manager's settings. Build the bullet list from the effective
+   settings instead (`ROUTING_TOOL`, `NO_GAPS`, `SILENCE_NOTIFICATIONS`,
+   `SWITCH_THEME`, `CLOSE_APPS`, `THERMAL_LIMIT_C`, and once it exists the new
+   fence option), so a disabled option is not announced as something that is about
+   to happen. Same rule as the power-profile question: say what will be done, or
+   do not claim it.
+
+Context for whoever picks this up: the guard for the power profile already lives in
+`power-helper profile-set` (bash, testable) rather than in QML, and the DND guard in
+`live-mode-watch enforce_dnd` (0.4s loop). Live mode's own `open_patchbay` /
+`force_dnd_on` / `toggle_gaps_off` are the three things the prompt describes.

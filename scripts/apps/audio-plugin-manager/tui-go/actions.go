@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -57,6 +58,45 @@ type Item struct {
 	// first and its sub-plugins nested below.
 	Kind   string `json:"kind"`
 	Parent string `json:"parent"`
+	// Formats is the comma-separated list of formats this plugin is installed
+	// in ("vst2,vst3,clap"), carried on the row so the tree can show it.
+	//
+	// This is the replacement for the three identical rows the list used to
+	// emit for a plugin present in three formats: the user asked for the name
+	// and the formats, not the same name three times.
+	Formats string `json:"formats"`
+}
+
+// FormatSuffix renders the format list for a plugin row, or "" when there is
+// nothing to say. Short names only ("v2" for vst2) so the tree stays narrow:
+// these lists are the widest rows on the page and there can be a dozen per
+// folder.
+func (i Item) FormatSuffix() string { return formatSuffix(i.Formats) }
+
+func formatSuffix(formats string) string {
+	if formats == "" {
+		return ""
+	}
+	parts := strings.Split(formats, ",")
+	short := make([]string, 0, len(parts))
+	for _, f := range parts {
+		switch strings.TrimSpace(f) {
+		case "vst2":
+			short = append(short, "v2")
+		case "vst3":
+			short = append(short, "v3")
+		case "clap":
+			short = append(short, "clap")
+		case "":
+			continue
+		default:
+			short = append(short, f)
+		}
+	}
+	if len(short) == 0 {
+		return ""
+	}
+	return "  [" + strings.Join(short, " ") + "]"
 }
 
 type PrefixItem struct {
@@ -91,6 +131,44 @@ type PluginItem struct {
 	Enabled bool   `json:"enabled"`
 	Kind    string `json:"kind"`
 	Parent  string `json:"parent"`
+	// Vendor is the folder this plugin groups under, and Formats the
+	// comma-separated list it is installed in ("vst2,vst3,clap").
+	//
+	// Both exist because the flat list used to emit ONE ROW PER FILE, so a
+	// plugin present as vst2 + vst3 + clap appeared three times under the same
+	// name: the same plugin had to be picked three times to act on it, and a
+	// vendor's count read as a file count rather than a plugin count.
+	Vendor string `json:"vendor"`
+	// Formats is the display side of that merge — it is what the user asked to
+	// see instead of three identical rows: the name, and which formats it is
+	// in.
+	Formats string `json:"formats"`
+	// Variants is every installed file of this plugin, semicolon-separated
+	// ("vst:<type>:<path>"). One row acts on all of them, which is the point:
+	// hiding or showing "FabFilter Pro-Q" should not mean doing it three times.
+	Variants string `json:"variants"`
+}
+
+// AllValues returns every installed file of the plugin: its own value plus the
+// variants the backend grouped under it. Acting on a plugin means acting on all
+// of its formats — picking only the first would hide the vst2 copy and leave the
+// vst3 one in the DAW.
+func (p PluginItem) AllValues() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			return
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	add(p.Value)
+	for _, v := range strings.Split(p.Variants, ";") {
+		add(v)
+	}
+	return out
 }
 
 type Status struct {
@@ -145,6 +223,10 @@ type actionErrMsg struct{ err error }
 // only set when the result came from an `s` sort-cycle (cycleSortCmd) -- it
 // tells the model which sort mode is now active, since the bash side already
 // persisted it.
+// installFixesCheckMsg carries the fixes catalog fetched right after a plugin
+// was installed, plus the vendor it belongs to when that is known.
+type installFixesCheckMsgVendor struct{}
+
 type pluginListMsg struct {
 	items []PluginItem
 	mode  string
@@ -178,6 +260,22 @@ func decodeJSONLines[T any](out []byte) ([]T, error) {
 
 func fetchStatus() tea.Cmd {
 	return fetchStatusMsg
+}
+
+// fetchPluginFolders loads the merged, vendor-grouped plugin list as Items, for
+// the Uninstall screen. It is the same list the Installed-plugins and fixes
+// screens use, so a plugin is one row everywhere — the uninstall tree used to
+// list a plugin once per installed format, so removing "FabFilter Pro-Q" meant
+// picking the same name three times.
+func fetchPluginFolders(kind string) tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("list-plugin-folders")
+		if err != nil {
+			return itemsMsg{kind: kind, err: err}
+		}
+		items, err := decodeJSONLines[Item](out)
+		return itemsMsg{kind: kind, items: items, err: err}
+	}
 }
 
 func fetchItems(kind string, args ...string) tea.Cmd {
@@ -631,9 +729,14 @@ func nativeInstallCmd(path string) tea.Cmd {
 }
 
 // fetchAllPlugins loads the unified Plugin list (VST + native together).
+//
+// It asks for list-plugin-folders, which merges the formats of one plugin into
+// a single row carrying the formats it is installed in. The older
+// list-all-plugins emitted one row per FILE, so a plugin present as
+// vst2 + vst3 + clap appeared three times under the same name.
 func fetchAllPlugins() tea.Cmd {
 	return func() tea.Msg {
-		out, err := runQuick("list-all-plugins")
+		out, err := runQuick("list-plugin-folders")
 		if err != nil {
 			return pluginListMsg{err: err}
 		}
@@ -647,7 +750,13 @@ func fetchAllPlugins() tea.Cmd {
 // immediately re-lists, in one round trip.
 func cycleSortCmd(mode string) tea.Cmd {
 	return func() tea.Msg {
-		out, err := runQuick("set-sort-and-list", mode)
+		// Set the sort, then read the SAME grouped list the first load used —
+		// switching sort must not change the rows from merged-per-plugin back
+		// to one-per-file.
+		if _, err := runQuick("set-sort-and-list", mode); err != nil {
+			return pluginListMsg{err: err, mode: mode}
+		}
+		out, err := runQuick("list-plugin-folders")
 		if err != nil {
 			return pluginListMsg{err: err, mode: mode}
 		}
@@ -828,9 +937,13 @@ type FixItem struct {
 	Vst string `json:"vst"`
 }
 
-// fixesMsg carries the catalog fetched for a plugin.
+// fixesMsg carries the catalog fetched for a plugin, or for a whole vendor
+// when Vendor is set — in which case "Applied" means "applied to at least one
+// plugin of that vendor", which is what a check on the row has to mean when
+// Enter will apply to all of them.
 type fixesMsg struct {
 	plugin string
+	vendor string
 	items  []FixItem
 	err    error
 }
@@ -847,6 +960,61 @@ func fetchPluginFixes(plugin string) tea.Cmd {
 		}
 		items, err := decodeJSONLines[FixItem](out)
 		return fixesMsg{plugin: plugin, items: items, err: err}
+	}
+}
+
+// fetchFixesForVendorCmd loads the fix catalog for a WHOLE vendor: the union of
+// what applies to any of its plugins, deduplicated.
+//
+// list-plugin-fixes only answers for one plugin, so a vendor-wide run has to
+// ask per plugin and merge. A fix that already applies to a member is reported
+// as applied, because Enter will touch all of them and a row that claimed
+// "not applied" would be re-applied for no reason.
+func fetchFixesForVendorCmd(vendor string) tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("list-vendor-plugins", vendor)
+		if err != nil {
+			return fixesMsg{vendor: vendor, err: err}
+		}
+		plugins, err := decodeJSONLines[PluginItem](out)
+		if err != nil {
+			return fixesMsg{vendor: vendor, err: err}
+		}
+		byID := map[string]FixItem{}
+		var order []string
+		var anyErr error
+		for _, p := range plugins {
+			raw, e := runQuick("list-plugin-fixes", p.Value)
+			if e != nil {
+				if anyErr == nil {
+					anyErr = e
+				}
+				continue
+			}
+			items, e := decodeJSONLines[FixItem](raw)
+			if e != nil {
+				continue
+			}
+			for _, it := range items {
+				prev, seen := byID[it.ID]
+				if !seen {
+					order = append(order, it.ID)
+					byID[it.ID] = it
+					continue
+				}
+				// Already collected from another plugin of the same vendor:
+				// keep the first, but remember that it applies to one of them.
+				if it.Applied {
+					prev.Applied = true
+					byID[it.ID] = prev
+				}
+			}
+		}
+		out2 := make([]FixItem, 0, len(order))
+		for _, id := range order {
+			out2 = append(out2, byID[id])
+		}
+		return fixesMsg{vendor: vendor, items: out2, err: anyErr}
 	}
 }
 
@@ -872,26 +1040,81 @@ func syncFixesCmd(plugin string, toApply, toRemove []string) tea.Cmd {
 	}
 }
 
+// syncVendorFixesCmd applies a set of fixes to EVERY plugin of one vendor.
+//
+// The user installs a suite (FabFilter), not one plugin, and wants the fix for
+// the suite. fix_apply() is per-plugin underneath, so this is a loop — but the
+// user should not have to run the dialog nineteen times, and the recorded state
+// and the Hyprland rule are exactly what a single-plugin apply produces.
+func syncVendorFixesCmd(vendor string, fixIDs []string) tea.Cmd {
+	return func() tea.Msg {
+		if len(fixIDs) == 0 {
+			return actionErrMsg{err: errors.New("no fix selected")}
+		}
+		if _, err := runQuick(append([]string{"apply-fixes-vendor", vendor}, fixIDs...)...); err != nil {
+			return actionErrMsg{err: err}
+		}
+		return fixesDoneMsg{what: fmt.Sprintf("%d fix(es) applied to every %s plugin", len(fixIDs), vendor)}
+	}
+}
+
 // installFixesCheckMsg carries the fixes catalog fetched right after a
 // successful plugin install, so the model can offer to apply the remaining
 // plugin-scope fixes for the freshly installed plugin.
 type installFixesCheckMsg struct {
 	plugin string
 	items  []FixItem
+	// vendor is the folder this plugin groups under, when known. Non-empty it
+	// means the question can be about the whole suite instead of this plugin.
+	vendor string
 	err    error
 }
 
 // checkInstallFixesCmd reuses list-plugin-fixes on the value the installer
 // reported (the "installed-plugin: vst:<type>:<path>" marker line).
-func checkInstallFixesCmd(plugin string) tea.Cmd {
+// pluginVendorCmd resolves which vendor folder a plugin groups under, so the
+// post-install question can offer the fixes for the WHOLE SUITE rather than for
+// the single plugin that happened to finish installing. Installing FabFilter
+// means nineteen plugins, and asking once per plugin is the same dialog
+// nineteen times.
+func pluginVendorCmd(plugin string) tea.Cmd {
 	return func() tea.Msg {
-		out, err := runQuick("list-plugin-fixes", plugin)
+		out, err := runQuick("plugin-vendor", plugin)
 		if err != nil {
 			return installFixesCheckMsg{plugin: plugin, err: err}
 		}
-		items, err := decodeJSONLines[FixItem](out)
-		return installFixesCheckMsg{plugin: plugin, items: items, err: err}
+		return installFixesCheckMsg{plugin: plugin, vendor: strings.TrimSpace(string(out))}
 	}
+}
+
+// checkInstallFixesCmd resolves the vendor first, then fetches the fixes.
+//
+// The order matters: the question it feeds is about the whole suite, so the
+// vendor has to be known before the catalog is asked, and the fix list shown is
+// the union of every plugin of that vendor — otherwise it would offer fixes
+// scoped to the one plugin that happened to finish installing and quietly
+// under-offer the other eighteen.
+func checkInstallFixesCmd(plugin string) tea.Cmd {
+	return func() tea.Msg {
+		vendor := strings.TrimSpace(mustRun("plugin-vendor", plugin))
+		out, err := runQuick("list-plugin-fixes", plugin)
+		if err != nil {
+			return installFixesCheckMsg{plugin: plugin, vendor: vendor, err: err}
+		}
+		items, err := decodeJSONLines[FixItem](out)
+		return installFixesCheckMsg{plugin: plugin, vendor: vendor, items: items, err: err}
+	}
+}
+
+// mustRun returns a command's trimmed output, or "" on any failure. Used only
+// where a missing answer degrades the wording of a question, never where it
+// decides whether something happens.
+func mustRun(args ...string) string {
+	out, err := runQuick(args...)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // installedPluginValueMarker is the prefix install_plugin prints after a

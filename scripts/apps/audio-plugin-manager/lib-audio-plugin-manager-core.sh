@@ -113,6 +113,22 @@ ok(){ printf " ${G}✓${N} %s\n" "$*"; }
 warn(){ printf " ${Y}!${N} %s\n" "$*" >&2; }
 err(){ printf " ${R}✗${N} %s\n" "$*" >&2; }
 
+# ── Shared wine-menu helpers ────────────────────────────────────────────────
+# Dropping the Start-Menu shortcuts Wine republishes under
+# ~/.local/share/applications/wine/Programs. Every plugin installer (smartEQ,
+# CrispyTuner, FabFilter…) writes "Uninstall"/"Manual" shortcuts there, and
+# they have no business in the launcher: this module installs AND uninstalls
+# the plugin itself, and writes its own vst-standalone-*.desktop entry.
+_mq_wm_lib="$SCRIPT_DIR/../../lib/wine-menu.bash"
+[[ -f $_mq_wm_lib ]] || _mq_wm_lib="$HOME/mosquitOmarchy/scripts/lib/wine-menu.bash"
+if [[ -f $_mq_wm_lib ]]; then
+  # shellcheck source=/dev/null
+  source "$_mq_wm_lib"
+else
+  warn "wine-menu.bash not found ($_mq_wm_lib) — Wine menu shortcuts will not be cleaned up."
+fi
+unset _mq_wm_lib
+
 # ── Native Omarchy UI (same helpers as the Move manager) ────────────────────
 is_tty() { [[ -t 0 ]] && [[ -n ${TERM:-} && ${TERM:-} != dumb ]]; }
 
@@ -1175,6 +1191,7 @@ install_plugin() {
   state_register_install "$(plugin_key "${newfiles[0]}")" "$wine_prefix" "${newfiles[@]}"
   register_standalones_from_prefix "$wine_prefix"
   post_install
+  hide_wine_menu_entries "$wine_prefix"
   # Known per-plugin fixes (e.g. CrispyTuner's editor input) are applied on
   # first install so the GUI works out of the box; state + Lua block are
   # idempotent, so re-installing never duplicates rules.
@@ -1491,6 +1508,21 @@ post_install() {
   if [[ -x $linker ]]; then AUDIOSTACK_VST_ROOT="$VST_ROOT" bash "$linker" >/dev/null 2>&1 && ok "VST prefixes linked"; fi
 }
 
+# A Windows plugin installer drops its Start-Menu shortcuts in the prefix, and
+# Wine republishes each of them as a launcher entry. Scoped to ONE prefix — the
+# one the installer just ran in — so a plugin install can never take down the
+# entries another module (Guitar Pro, Ableton) legitimately published.
+hide_wine_menu_entries() {
+  local pfx="${1:-}" line n=0
+  [[ -n $pfx ]] || return 0
+  declare -F mosquitomarchy_wine_menu_remove_for_prefix >/dev/null || return 0
+  while IFS= read -r line; do
+    n=$((n + 1)); ok "hid launcher entry: ${line#removed }"
+  done < <(mosquitomarchy_wine_menu_remove_for_prefix "$pfx")
+  mosquitomarchy_wine_menu_sweep
+  return 0
+}
+
 # The Program Files path matching a given plugin filename (any prefix), or empty.
 wine_source_of() {
   # Emits the first Program Files copy of a file across all known prefixes.
@@ -1505,14 +1537,50 @@ wine_source_of() {
   # linked folders (the normal path for an install) appeared UNOWNED and
   # would not group under its installer folder in the TUI's uninstall tree
   # (the user's "no way to open the crispy audio folder, plugins outside").
-  local f="$1" p src=""
-  for p in "${WINE_PREFIXES[@]}"; do
-    src="$(find -L "$p/drive_c/Program Files" "$p/drive_c/Program Files (x86)" \
-      -type f -name "$(basename "$f")" 2>/dev/null \
-      | grep -v '\.orig' | head -1)" || true
-    [[ -n $src ]] && { printf '%s\n' "$src"; return 0; }
-  done
+  local base="${1##*/}" lower="${1##*/}"
+  lower="${lower,,}"
+  # The walk behind this used to be a `find -L` over every prefix's Program
+  # Files, PER CALL. wine_program_parent_of() calls it for every row of the
+  # plugin list and each call is a sub-shell (`parent="$(...)"`), so the index
+  # below was rebuilt from scratch every time: 96 full walks of four prefixes
+  # to draw 53 rows. The plugin page took 20-37s and re-ran all of it every
+  # time the page was shown.
+  #
+  # Built once per shell, in memory, no sub-shell. Keys are lowercased because
+  # Windows filesystems are case-insensitive.
+  _wine_source_index
+  local hit="${_WINE_SOURCE_INDEX[$lower]:-}"
+  [[ -n $hit ]] && { printf '%s\n' "$hit"; return 0; }
   return 1
+}
+
+# declare -A, NOT a plain array. A plain array makes bash evaluate the subscript
+# as an arithmetic expression, so any filename with a "." in it died with
+#   arithmetic syntax error: invalid arithmetic operator (error token is ".dll")
+# on the FIRST plugin of the list — which is every one of them.
+declare -A _WINE_SOURCE_INDEX=()
+_WINE_SOURCE_INDEX_READY=""
+_wine_source_index(){
+  [[ -n $_WINE_SOURCE_INDEX_READY ]] && return 0
+  _WINE_SOURCE_INDEX_READY=1
+  local p f base lower
+  for p in "${WINE_PREFIXES[@]}"; do
+    [[ -d $p ]] || continue
+    while IFS= read -r f; do
+      [[ -n $f ]] || continue
+      base="${f##*/}"
+      [[ $base == *.orig ]] && continue
+      case "${base,,}" in
+        *.dll|*.vst3|*.clap|*.so) ;;
+        *) continue ;;
+      esac
+      lower="${base,,}"
+      [[ -n ${_WINE_SOURCE_INDEX[$lower]:-} ]] && continue
+      _WINE_SOURCE_INDEX[$lower]="$f"
+    done < <(find -L "$p/drive_c/Program Files" "$p/drive_c/Program Files (x86)" \
+      -type f 2>/dev/null)
+  done
+  return 0
 }
 
 # Walk up from a file until a folder containing an uninstaller is found.
@@ -1554,9 +1622,70 @@ wine_program_folders() {
 # match), or nothing for a standalone drop. Same heuristics list-uninstallable
 # always used, factored out so the setup list cannot drift from the uninstall
 # tree.
+# wine_parent_map — reads plugin values on stdin, writes "value<TAB>parent".
+#
+# This exists because wine_program_parent_of() is unusable in a loop that draws
+# the list: callers capture it as parent="$(wine_program_parent_of ...)", and a
+# command substitution is a sub-shell, so the memoised wine-source index dies
+# with it and the four-prefix / ~1450-file walk was rebuilt for every one of the
+# 53 rows. The page took 20-37 s and re-ran it all every time it was shown.
+#
+# Here the walk happens ONCE, in the caller's shell, and the answers are read
+# back from a file — so no per-row sub-shell rebuilds anything.
+wine_parent_map() {
+  _wine_source_index
+  local value src parent plug_stem plug_mtime fm diff plug_vendor plug_vendor_lc wf_base
+  local -a folders=()
+  local wf
+  while IFS= read -r wf; do [[ -n $wf ]] && folders+=("$wf"); done < <(wine_program_folders)
+  # Dat text and installer mtime, read ONCE per folder.
+  local -A dat_text=() folder_mtime=()
+  for wf in "${folders[@]}"; do
+    dat_text["$wf"]="$(tr -d '\0' < "$wf/unins000.dat" 2>/dev/null || true)"
+    folder_mtime["$wf"]="$(stat -c %Y "$wf/unins000.exe" 2>/dev/null || stat -c %Y "$wf" 2>/dev/null || echo 0)"
+  done
+
+  while IFS= read -r value; do
+    [[ -n $value ]] || continue
+    local key="${value##*/}"; key="${key,,}"
+    src="${_WINE_SOURCE_INDEX[$key]:-}"
+    parent=""
+    if [[ -n $src ]]; then
+      for wf in "${folders[@]}"; do
+        case "$src" in "$wf"/*) parent="win:$wf"; break ;; esac
+      done
+    fi
+    if [[ -z $parent && -n $src ]]; then
+      plug_stem="${src##*/}"; plug_stem="${plug_stem%%.*}"
+      plug_mtime="$(stat -c %Y "$src" 2>/dev/null || echo 0)"
+      for wf in "${folders[@]}"; do
+        [[ -n $plug_stem && ${dat_text[$wf]} == *"${plug_stem}"* ]] && { parent="win:$wf"; break; }
+        fm="${folder_mtime[$wf]}"
+        diff=$(( plug_mtime > fm ? plug_mtime - fm : fm - plug_mtime ))
+        (( plug_mtime > 0 && fm > 0 && diff < 3600 )) && { parent="win:$wf"; break; }
+      done
+    fi
+    if [[ -z $parent && -n $src ]]; then
+      plug_vendor="${src%/*}"; plug_vendor="${plug_vendor##*/}"; plug_vendor="${plug_vendor,,}"
+      for wf in "${folders[@]}"; do
+        wf_base="${wf##*/}"; wf_base="${wf_base,,}"
+        [[ -n $plug_vendor && $wf_base == "$plug_vendor"* ]] && { parent="win:$wf"; break; }
+      done
+    fi
+    printf '%s\t%s\n' "$value" "$parent"
+  done
+}
+
 wine_program_parent_of() {
-  local src wf dat plug_stem plug_mtime fm diff plug_vendor plug_vendor_lc wf_base
-  src="$(wine_source_of "$1" 2>/dev/null || true)"
+  local src wf dat plug_stem plug_mtime fm diff plug_vendor plug_vendor_lc wf_base key
+  # Read the memoised index DIRECTLY. This used to be src="$(wine_source_of ...)"
+  # — a sub-shell inside a sub-shell, because every caller captures this whole
+  # function as parent="$(wine_program_parent_of ...)", so the in-memory index
+  # was discarded and rebuilt for every row of the plugin list. That walk (four
+  # prefixes, ~1450 files) was the entire cost of the page.
+  _wine_source_index
+  key="${1##*/}"; key="${key,,}"
+  src="${_WINE_SOURCE_INDEX[$key]:-}"
   [[ -n $src ]] || return 0
   while IFS= read -r wf; do
     [[ -n $wf ]] || continue
@@ -1762,6 +1891,12 @@ uninstall_target() {
   done <<< "$(scan_plugins)"
 
   # 4. Remove the plugin's wine .desktop menu entries (quarantine them).
+  #    The name-based match below only fires when the entry happens to contain
+  #    the plugin file name; the shortcuts an installer publishes are named
+  #    after the Start-Menu FOLDER ("Sonible/smartEQ4/Uninstall.desktop" for a
+  #    "smartEQ 4.dll" plugin), so it used to miss most of them. The
+  #    prefix-scoped sweep is the reliable half: every entry whose Exec pins the
+  #    prefix this plugin lives in belongs to it.
   local de
   [[ -d "$HOME/.local/share/applications" ]] &&
   find "$HOME/.local/share/applications" -path '*wine*' -iname '*.desktop' 2>/dev/null |
@@ -1772,6 +1907,14 @@ uninstall_target() {
         ok "hidden menu entry: $(basename "$de")"
       fi
     done || true
+  if [[ -n ${winedir:-} ]]; then
+    local wprefix=""
+    for wprefix in "${WINE_PREFIXES[@]:-}"; do
+      [[ -n $winedir && $winedir == "$wprefix"/drive_c/* ]] && break
+      wprefix=""
+    done
+    [[ -n $wprefix ]] && hide_wine_menu_entries "$wprefix"
+  fi
 
   # 5. Update the state log (this plugin is no longer installed).
   local k
@@ -3937,3 +4080,104 @@ main() {
   esac
 }
 
+# plugin_group_rows — ONE line per logical plugin, with the formats it is
+# installed in.
+#
+# The list actions emit one row per FILE, so a plugin present as vst2 + vst3 +
+# clap appeared three times under the same name. The user asked for a single
+# line carrying the name and the formats instead, so the same plugin is one
+# choice instead of three, and the count of a folder reflects plugins rather
+# than files.
+#
+# Emitted fields (TAB):
+#   1 sortkey   2 label   3 group   4 formats (comma list)   5 enabled
+#   6 value     (one value; the FIRST installed format)
+#   7 variants  ("value<TAB>format" records, so the Go side can still act on
+#               every installed file of the plugin)
+#
+# Grouping is by plugin_key() ("Vendor/Plugin"), which is already
+# format-independent by construction: plugin_key() strips the leading
+# vst/ vst3/ clap/ folder, so vst3/FabFilter/Pro-Q.vst3 and
+# vst2/FabFilter/Pro-Q.dll both key as "FabFilter/Pro-Q".
+#
+# The first format wins as the row's own value so a row is always actionable;
+# Go multiplies it out to every variant when the user acts on it.
+plugin_group_rows() {
+  local f type key grp label sortkey enabled fmt
+  local -A g_label=() g_formats=() g_first=() g_enabled=() g_any=() g_variants=()
+  local -a order=()
+
+  while IFS=$'\t' read -r f type; do
+    [[ -n $f ]] || continue
+    [[ $type == vst2 && $HIDE_VST2 == true ]] && continue
+    if [[ $type == vst2 && $HIDE_32BIT == true ]]; then
+      file -b "${f%.hidden}" 2>/dev/null | grep -q '^PE32 executable' && continue
+    fi
+    key="$(plugin_key "$f")"
+    # A macOS-style .vst3/.clap is a BUNDLE: "Serum2.vst3/Contents/x86_64-win/
+    # Serum2.vst3". plugin_key() only strips the leading format folder, so the
+    # key kept the whole bundle path and the vendor came out as
+    # "Serum2.vst3/Contents/x86_64-win" — a folder row with a path in its name,
+    # and every file inside the bundle a separate plugin. Collapse the bundle
+    # back to the bundle directory, which is the unit a person recognises.
+    case "$key" in
+      *.vst3/*) key="${key%%.vst3/*}.vst3" ;;
+      *.clap/*)  key="${key%%.clap/*}.clap" ;;
+    esac
+    grp="${key%/*}"; [[ $key == "$grp" ]] && grp="native"
+    grp="${grp#VST2/}"; grp="${grp#VST3/}"; grp="${grp#CLAP/}"
+
+    if [[ -z ${g_any[$key]:-} ]]; then
+      g_any[$key]=1
+      order+=("$key")
+      g_label[$key]="${key##*/}"
+      g_formats[$key]="$type"
+      g_first[$key]="vst:$type:$f"
+      g_variants[$key]="vst:$type:$f"
+      g_enabled[$key]=true
+    else
+      # Append the format only if it is not already listed, so a plugin
+      # installed twice in the same format (a .dll and a .vst2 under vst/) is
+      # still one "vst2" in the format list.
+      case ",${g_formats[$key]}," in
+        *",$type,"*) ;;
+        *) g_formats[$key]="${g_formats[$key]},$type" ;;
+      esac
+    fi
+    if [[ -n ${g_any[$key]:-} && $f != "${g_first[$key]#vst:*:}" ]]; then
+      g_variants[$key]="${g_variants[$key]};vst:$type:$f"
+    fi
+    [[ $f == *.hidden ]] && g_enabled[$key]=false
+  done <<< "$(scan_plugins)"
+
+  # Native plugins: one group each, keyed on their own label so a native and a
+  # vst plugin of the same name are not merged by accident.
+  local entry fmt loc nenabled
+  while IFS=$'\t' read -r entry fmt loc nenabled; do
+    [[ -n $entry ]] || continue
+    label="$(native_plugin_label "$entry")"
+    key="native/$label"
+    if [[ -z ${g_any[$key]:-} ]]; then
+      g_any[$key]=1
+      order+=("$key")
+      g_label[$key]="$label"
+      g_formats[$key]="$fmt"
+      g_first[$key]="native:$entry"
+      g_variants[$key]="native:$entry"
+      g_enabled[$key]="$nenabled"
+    fi
+  done < <(scan_native_plugins)
+
+  local k
+  for k in "${order[@]}"; do
+    grp="${k%/*}"
+    case "$PLUGIN_SORT_MODE" in
+      format) sortkey="${g_formats[$k]}" ;;
+      name)   sortkey="${g_label[$k]}" ;;
+      *)      sortkey="$grp" ;;
+    esac
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$sortkey" "${g_label[$k]}" "$grp" "${g_formats[$k]}" "${g_enabled[$k]}" "${g_first[$k]}" "${g_variants[$k]}"
+  done
+  return 0
+}

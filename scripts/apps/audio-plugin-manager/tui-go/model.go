@@ -166,6 +166,10 @@ type model struct {
 	// same Tab-diff pattern as the Plugin list, so Enter only sends the
 	// apply/remove delta.
 	fixPlugin string
+	// fixVendor, when set, means the fixes on this screen apply to EVERY plugin
+	// of that vendor rather than to fixPlugin alone. Set from the post-install
+	// question, which asks about the suite the user actually installed.
+	fixVendor string
 	// fixPluginCache is the unified plugin list rendered (folders + sort)
 	// by the fixes plugin chooser, exactly like the Installed plugins
 	// screen; it is only ever read to build that picker.
@@ -195,6 +199,10 @@ type model struct {
 	// on screen; accepting it becomes the fixPlugin of the normal apply
 	// flow.
 	installFixPlugin string
+	// installFixVendor is the vendor folder of the plugin just installed,
+	// when known. Non-empty, the post-install fix question is about the whole
+	// suite rather than the single plugin.
+	installFixVendor string
 
 	// fixFolderExpanded tracks which fix-category header rows are open
 	// (Right arrow) vs collapsed (Left) on scrFixChoose. A category with no
@@ -758,9 +766,21 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err == nil && len(toApply) > 0 {
 			m.installFixPlugin = msg.plugin
-			m.confirm = tuikit.NewConfirm(
-				"Plugin installed. Apply fixes for "+baseName(pluginPathOf(msg.plugin))+" now?",
-				"No", "Yes")
+			m.installFixVendor = msg.vendor
+			// The question is about the SUITE, because that is what the user
+			// installed: FabFilter is nineteen plugins, and offering the fix for
+			// only the one that happened to finish first meant running the same
+			// dialog eighteen more times. When the vendor is unknown the
+			// question falls back to naming the single plugin.
+			if msg.vendor != "" {
+				m.confirm = tuikit.NewConfirm(
+					"Plugin installed. Apply fixes to every "+msg.vendor+" plugin now?",
+					"No", "Yes")
+			} else {
+				m.confirm = tuikit.NewConfirm(
+					"Plugin installed. Apply fixes for "+baseName(pluginPathOf(msg.plugin))+" now?",
+					"No", "Yes")
+			}
 			m.push(scrInstallFixesConfirm)
 			return m, nil
 		}

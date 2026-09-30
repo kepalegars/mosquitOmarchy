@@ -51,7 +51,7 @@ func (m *model) enterCmd() tea.Cmd {
 		m.loading = true
 		m.uninstallCache = nil
 		m.uninstallChecked = map[string]bool{}
-		return fetchItems("uninstall", "list-uninstallable")
+		return fetchPluginFolders("uninstall")
 	case scrInstallPrefixChoice:
 		// The standard ask: default prefix first. When the installer matches a
 		// plugin the tests know, ALWAYS name the recommended prefix — even when
@@ -144,6 +144,13 @@ func (m *model) enterCmd() tea.Cmd {
 		// expanded on entry (see rebuildFixPicker), so the folders are
 		// always visible when the screen opens.
 		m.fixFolderExpanded = nil
+		// A vendor run asks for the union over that folder's plugins; a
+		// single-plugin run asks about that plugin. The same handler takes
+		// both, so which one is in play is decided here rather than at every
+		// call site.
+		if m.fixVendor != "" {
+			return fetchFixesForVendorCmd(m.fixVendor)
+		}
 		return fetchPluginFixes(m.fixPlugin)
 	}
 	return nil
@@ -205,6 +212,9 @@ type uninstallTreeItem struct {
 	Value   string
 	Display string
 	Plugins []Item
+	// Formats is the format list of a STANDALONE row (a plugin with no folder
+	// above it). Folder children carry their own on the Item.
+	Formats string
 }
 
 // uninstallTree reorganises list-uninstallable's flat output into the
@@ -253,6 +263,7 @@ func uninstallTree(items []Item) []uninstallTreeItem {
 			Folder:  false,
 			Value:   it.Value,
 			Display: it.Display,
+			Formats: it.Formats,
 			Plugins: nil,
 		})
 	}
@@ -356,10 +367,18 @@ func treeItemsToPicker(items []uninstallTreeItem, checked map[string]bool, expan
 					if i == last {
 						branch = "└─ "
 					}
-					out = append(out, tuikit.PickerItem{
+					row := tuikit.PickerItem{
 						Display: "    " + branch + pmark + "  " + p.Display,
 						Value:   p.Value,
-					})
+					}
+					// The formats live in the Suffix, not in Display: the
+					// label column is shared with the folder rows above, and
+					// baking the formats into the text would make the labels
+					// ragged. The kit reserves one trailing width for the whole
+					// picker, so the rows stay aligned whether or not a plugin
+					// is in several formats.
+					row.Suffix = p.FormatSuffix()
+					out = append(out, row)
 				}
 			}
 		} else {
@@ -367,7 +386,9 @@ func treeItemsToPicker(items []uninstallTreeItem, checked map[string]bool, expan
 			if checked[n.Value] {
 				mark = "●"
 			}
-			out = append(out, tuikit.PickerItem{Display: mark + "  " + n.Display, Value: n.Value})
+			row := tuikit.PickerItem{Display: mark + "  " + n.Display, Value: n.Value}
+			row.Suffix = formatSuffix(n.Formats)
+			out = append(out, row)
 		}
 	}
 	return out
@@ -440,7 +461,10 @@ func (m *model) selectedFolderValue() string {
 func pluginItemsAsItems(items []PluginItem) []Item {
 	out := make([]Item, len(items))
 	for i, it := range items {
-		out[i] = Item{Display: it.Display, Value: it.Value, Kind: it.Kind, Parent: it.Parent}
+		// Formats has to travel: the fixes chooser renders the SAME rows as the
+		// plugin list, and a plugin shown without its formats is exactly the
+		// bare name the user asked to replace.
+		out[i] = Item{Display: it.Display, Value: it.Value, Kind: it.Kind, Parent: it.Parent, Formats: it.Formats}
 	}
 	return out
 }
@@ -816,29 +840,18 @@ func (m *model) rebuildFixPluginPicker() {
 		m.folderExpanded = map[string]bool{}
 	}
 	tree := uninstallTree(pluginItemsAsItems(m.fixPluginCache))
-	appliedFolders := map[string]bool{}
-	if len(m.fixAppliedPlugins) > 0 {
-		for _, n := range tree {
-			if !n.Folder {
-				continue
-			}
-			// A folder holding an already-applied fix opens itself, so the
-			// ■ marker is not hidden behind a closed folder. But only until
-			// the user says otherwise: re-forcing this on every rebuild made
-			// the folder impossible to fold (← closed it, the rebuild
-			// reopened it on the next line).
-			if m.folderFoldedByUser[n.Value] {
-				continue
-			}
-			for _, p := range n.Plugins {
-				if m.fixAppliedPlugins[pluginStemOf(p.Value)] {
-					appliedFolders[n.Value] = true
-					m.folderExpanded[n.Value] = true
-					break
-				}
-			}
-		}
-	}
+	// NOTHING is force-opened any more.
+	//
+	// A folder holding an already-applied fix used to open itself on sight, so
+	// its marker would not be hidden behind a closed folder. The user asked for
+	// every folder COLLAPSED when arriving at a page of folders, and an
+	// auto-opened folder defeats that: the page came in already unfolded and the
+	// reason was invisible. The marker is carried on the FOLDER ROW itself
+	// instead (below), so a closed folder still says it holds a fixed plugin
+	// and there is nothing to reveal.
+	//
+	// folderFoldedByUser is kept: a folder the user opened stays open across
+	// rebuilds, and one they closed stays closed.
 	items := treeItemsToPicker(tree, m.pluginChecked, m.folderExpanded)
 	// Accent ■ marker on every plugin row that already has at least one
 	// applied fix, plus its parent folder header. It is a TrailingBadge, so
@@ -857,7 +870,13 @@ func (m *model) rebuildFixPluginPicker() {
 		}
 		for i := range items {
 			if folders[items[i].Value] {
-				if appliedFolders[items[i].Value] {
+				// A CLOSED folder still has to say it holds a fixed plugin —
+				// that is the whole reason the auto-open existed. Computing it
+				// from the tree rather than from the old appliedFolders map
+				// keeps the badge while the folder stays shut, so the page can
+				// arrive fully collapsed without losing the information that
+				// used to require unfolding it.
+				if folderHoldsAppliedFix(tree, items[i].Value, m.fixAppliedPlugins) {
 					items[i].TrailingBadge = fixAppliedBadge
 				}
 				continue
@@ -867,8 +886,15 @@ func (m *model) rebuildFixPluginPicker() {
 			}
 		}
 	}
+	// The screen says what the fixes are ABOUT. When a vendor is in play the
+	// whole suite is being fixed, and a title naming a single plugin would
+	// understate what Enter is about to do.
+	title := "Plugin fixes — which plugin?"
+	if m.fixVendor != "" {
+		title = "Plugin fixes — every " + m.fixVendor + " plugin"
+	}
 	sidx := m.picker.Index()
-	m.picker = tuikit.NewPicker("Plugin fixes — which plugin?", items).
+	m.picker = tuikit.NewPicker(title, items).
 		SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
@@ -878,6 +904,50 @@ func (m *model) rebuildFixPluginPicker() {
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "choose")),
 		)
 	m.picker = m.picker.SelectIndex(sidx)
+}
+
+// vendorOfFolder maps a folder row's value ("vendor:<name>") back to the vendor
+// name, or "" when the row is not a vendor folder.
+func vendorOfFolder(items []PluginItem, folderValue string) string {
+	if v, ok := strings.CutPrefix(folderValue, "vendor:"); ok {
+		return v
+	}
+	// A wine install folder ("win:/path") has no vendor name; look its children
+	// up so a folder row still resolves to something the backend can act on.
+	for _, it := range items {
+		if it.Kind == "plugin" && it.Parent == folderValue && it.Vendor != "" {
+			return it.Vendor
+		}
+	}
+	return ""
+}
+
+// folderHoldsAppliedFix reports whether any plugin under this folder row
+// already carries an applied fix.
+//
+// Computed from the items the picker is actually showing, because that is what
+// the folder's children are: a folder is expanded or collapsed in this very
+// list, and a badge that had to consult a separately-built map was one more
+// thing that could disagree with what is on screen.
+func folderHoldsAppliedFix(tree []uninstallTreeItem, folderValue string, applied map[string]bool) bool {
+	if len(applied) == 0 {
+		return false
+	}
+	// Read from the TREE, not from the rendered items. The point of this badge
+	// is to say something about a folder whose children are NOT on screen — a
+	// collapsed folder is exactly the case it exists for, and looking in the
+	// rendered list can only ever find the children of an OPEN folder.
+	for _, n := range tree {
+		if !n.Folder || n.Value != folderValue {
+			continue
+		}
+		for _, p := range n.Plugins {
+			if applied[pluginStemOf(p.Value)] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // pluginListHelpKeys are the extra shortcut hints shown in the picker's own
@@ -1341,6 +1411,25 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Single-select: a folder row folds/unfolds instead of being
 			// chosen; only a plugin row moves on to the fixes list.
 			if isFolderRow(pluginItemsAsItems(m.fixPluginCache), res.Value) {
+				// ENTER ON A VENDOR = FIX THE WHOLE VENDOR.
+				//
+				// The folder row used to only fold/unfold, which made it
+				// impossible to reach a fix without picking a single plugin
+				// first. The user installs suites: FabFilter is nineteen
+				// plugins, and the useful action is "fix them all", not "fix
+				// whichever one I happen to have expanded".
+				//
+				// The catalog shown next is the union over the vendor, so what
+				// is offered is what will actually be applied.
+				if vendor := vendorOfFolder(m.fixPluginCache, res.Value); vendor != "" {
+					m.fixVendor = vendor
+					m.fixPlugin = ""
+					m.fixChecked = map[string]bool{}
+					m.fixOrig = map[string]bool{}
+					m.nav = []screen{scrFixPluginPick, scrFixChoose}
+					m.loading = true
+					return m, fetchFixesForVendorCmd(vendor)
+				}
 				if m.folderExpanded == nil {
 					m.folderExpanded = map[string]bool{}
 				}
@@ -1357,6 +1446,11 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.fixPlugin = res.Value
+			// Choosing a plugin by hand is a per-plugin request. Clearing the
+			// vendor matters: the post-install flow sets it, and without this
+			// the NEXT hand-picked plugin would silently keep fixing the whole
+			// suite that was installed a moment earlier.
+			m.fixVendor = ""
 			m.push(scrFixChoose)
 			return m, m.enterCmd()
 		}
@@ -1503,6 +1597,13 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.loading = true
+			// A vendor-wide run: the fixes go to every plugin of the folder,
+			// which is the whole point of asking about the suite. Removal stays
+			// per-plugin — there is no safe way to un-apply a fix from a vendor
+			// the user did not ask to touch.
+			if m.fixVendor != "" && len(toApply) > 0 {
+				return m, syncVendorFixesCmd(m.fixVendor, toApply)
+			}
 			return m, syncFixesCmd(m.fixPlugin, toApply, toRemove)
 		}
 		var cmd tea.Cmd
@@ -1524,11 +1625,26 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pop() // leave the plugin list
 				return m, m.enterCmd()
 			}
+			// One row is one PLUGIN, and the action is about the plugin: the
+			// rows are per-plugin with their formats listed, so ticking
+			// "FabFilter Pro-Q" has to act on its vst2, vst3 and clap copies.
+			// Expanding here is what stops the list from quietly hiding one
+			// format and leaving the other two in the DAW — the old behaviour
+			// was a row per file, so a "plugin" was a single file by accident.
+			byValue := map[string]PluginItem{}
+			for _, it := range m.pluginCache {
+				byValue[it.Value] = it
+			}
 			var toToggle []string
 			for k, v := range m.pluginChecked {
-				if m.pluginOrig[k] != v {
-					toToggle = append(toToggle, k)
+				if m.pluginOrig[k] == v {
+					continue
 				}
+				if it, ok := byValue[k]; ok {
+					toToggle = append(toToggle, it.AllValues()...)
+					continue
+				}
+				toToggle = append(toToggle, k)
 			}
 			m.pop() // leave the confirm -- plugin list is on top again
 			m.loading = true
@@ -1893,6 +2009,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// applied). Drop the finished runner screen so the fix
 				// flow, when it finishes, returns straight to the menu.
 				m.fixPlugin = m.installFixPlugin
+				m.fixVendor = m.installFixVendor
 				m.nav = []screen{scrMain, scrFixChoose}
 				return m, m.enterCmd()
 			}

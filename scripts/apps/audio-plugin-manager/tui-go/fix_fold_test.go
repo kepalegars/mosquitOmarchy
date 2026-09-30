@@ -6,12 +6,15 @@ import (
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
-// Plugin fixes auto-opens any folder that holds an already-applied fix, so the
-// ■ marker is not hidden behind a closed folder. It used to re-force that on
-// EVERY rebuild, which is what made the folder impossible to fold: ← closed it
-// and the rebuild reopened it on the next line, so the gesture appeared dead
-// there while working fine everywhere else.
-func TestFixPluginFolderCanBeFoldedDespiteAutoOpen(t *testing.T) {
+// The plugin fixes list arrives FULLY COLLAPSED — every folder shut, whatever
+// it holds. It used to auto-open any folder holding an already-applied fix so
+// its marker would not be hidden, which meant the page came in already
+// unfolded and the reason was invisible.
+//
+// The marker moved to the FOLDER ROW instead, so a closed folder still says it
+// holds a fixed plugin. That is the property worth pinning: collapsed by
+// default, and not at the cost of the information.
+func TestFixPluginFoldersArriveCollapsedAndKeepTheirMarker(t *testing.T) {
 	m := &model{
 		nav:                []screen{scrFixPluginPick},
 		w:                  100,
@@ -23,33 +26,56 @@ func TestFixPluginFolderCanBeFoldedDespiteAutoOpen(t *testing.T) {
 			{Kind: "plugin", Value: "vst:2:/x/CrispyTuner.vst3", Display: "CrispyTuner", Parent: "folder:vst"},
 			{Kind: "folder", Value: "folder:other", Display: "Other"},
 		},
-		// CrispyTuner already has a fix applied, so its folder auto-opens.
+		// CrispyTuner already has a fix applied.
 		fixAppliedPlugins: map[string]bool{"CrispyTuner": true},
 		pluginChecked:     map[string]bool{},
 	}
 	m.rebuildFixPluginPicker()
 
-	if !m.folderExpanded["folder:vst"] {
-		t.Fatal("a folder holding an applied fix should auto-open on first build")
+	if len(m.folderExpanded) != 0 {
+		t.Fatalf("a folder was force-opened on arrival: %v", m.folderExpanded)
 	}
-	// Put the cursor on the PLUGIN, not the folder, and press ←.
-	mm, _ := m.Update(tuikit.PickerSortMsg{Dir: -1})
-	got, _ := mm.(model)
-	if got.folderExpanded["folder:vst"] {
-		t.Error("← from a plugin row did not fold its folder: rebuild re-opened it")
-	}
-	// And it stays folded through any number of rebuilds.
-	for i := 0; i < 3; i++ {
-		got.rebuildFixPluginPicker()
-		if got.folderExpanded["folder:vst"] {
-			t.Fatalf("rebuild %d re-opened a folder the user had folded", i+1)
+	// ...and the child row is not on screen, which is what "collapsed" means.
+	for _, it := range m.picker.Items() {
+		if it.Value == "vst:2:/x/CrispyTuner.vst3" {
+			t.Fatal("a plugin is visible while its folder is collapsed")
 		}
 	}
-	// → re-opens it, and the auto-open no longer fights back.
-	mm2, _ := got.Update(tuikit.PickerSortMsg{Dir: 1})
+	// The folder still carries the applied-fix marker, so nothing is lost by
+	// arriving closed.
+	marked := false
+	for _, it := range m.picker.Items() {
+		if it.Value == "folder:vst" && it.TrailingBadge == fixAppliedBadge {
+			marked = true
+		}
+	}
+	if !marked {
+		t.Error("the closed folder lost its applied-fix marker")
+	}
+
+	// → opens it, and it stays open through rebuilds.
+	mm, _ := m.Update(tuikit.PickerSortMsg{Dir: 1})
+	got, _ := mm.(model)
+	if !got.folderExpanded["folder:vst"] {
+		t.Fatal("→ did not open the folder")
+	}
+	for i := 0; i < 3; i++ {
+		got.rebuildFixPluginPicker()
+		if !got.folderExpanded["folder:vst"] {
+			t.Fatalf("rebuild %d closed a folder the user had opened", i+1)
+		}
+	}
+	// ← closes it again, and no rebuild re-opens it.
+	mm2, _ := got.Update(tuikit.PickerSortMsg{Dir: -1})
 	got2, _ := mm2.(model)
-	if !got2.folderExpanded["folder:vst"] {
-		t.Error("→ did not re-open the folder")
+	if got2.folderExpanded["folder:vst"] {
+		t.Fatal("← did not fold the folder")
+	}
+	for i := 0; i < 3; i++ {
+		got2.rebuildFixPluginPicker()
+		if got2.folderExpanded["folder:vst"] {
+			t.Fatalf("rebuild %d re-opened a folder the user had folded", i+1)
+		}
 	}
 }
 

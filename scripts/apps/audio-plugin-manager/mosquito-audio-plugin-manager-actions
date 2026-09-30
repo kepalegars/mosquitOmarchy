@@ -30,6 +30,41 @@ prefs_existed=false
 [[ -f $PREFS_FILE ]] && prefs_existed=true
 load_prefs
 
+
+# ── Wine-program parents, computed ONCE per invocation ──────────────────────
+#
+# The list actions used to call wine_program_parent_of() once per row as
+# parent="$(wine_program_parent_of ...)" — a sub-shell per row, so the memoised
+# wine-source index died with it and a four-prefix / ~1450-file walk ran for
+# EVERY row. That is the whole cost of the plugin list: 20-37 s to draw 53
+# plugins, re-run in full every time the page was shown.
+#
+# wine_parent_map answers the same question for a whole list in ONE walk, and
+# the answers are cached on disk keyed by a hash of the value list, so a second
+# page of the same list costs nothing. Top-level function (the dispatcher is a
+# `case`, not a function), hence global names.
+_wpm_cache_file=""
+_wpm_cache_populate(){
+  local src="$1" key tmp
+  [[ -s $src ]] || return 0
+  key="$(md5sum < "$src" | cut -c1-16)"
+  _wpm_cache_file="${XDG_CACHE_HOME:-$HOME/.cache}/mosquito-audio-plugin-manager/parents-$key.tsv"
+  [[ -s "$_wpm_cache_file" ]] && return 0
+  mkdir -p "$(dirname "$_wpm_cache_file")" 2>/dev/null || return 0
+  tmp="$_wpm_cache_file.tmp"
+  wine_parent_map < "$src" > "$tmp" 2>/dev/null || { rm -f "$tmp"; return 0; }
+  mv -f "$tmp" "$_wpm_cache_file" 2>/dev/null || rm -f "$tmp"
+}
+
+_wpm_parent_of(){
+  local v="$1" k v2
+  [[ -n ${_wpm_cache_file:-} && -s $_wpm_cache_file ]] || return 0
+  while IFS=$'\t' read -r k v2; do
+    [[ $k == "$v" ]] && { printf '%s' "$v2"; return 0; }
+  done < "$_wpm_cache_file"
+  return 0
+}
+
 cmd="${1:-}"
 shift || true
 
@@ -197,14 +232,20 @@ PYWIZARD
     # separate set + separate re-fetch.
     PLUGIN_SORT_MODE="${1:?vendor, name, format or date required}"
     save_prefs
+    _apm_rows="${TMPDIR:-/tmp}/apm-rows.$$"
+    _apm_vals="${TMPDIR:-/tmp}/apm-vals.$$"
+    all_plugin_list_rows_sorted > "$_apm_rows"
+    cut -f6 < "$_apm_rows" > "$_apm_vals"
+    _wpm_cache_populate "$_apm_vals"
     while IFS=$'\t' read -r sortkey label origin fmt enabled value; do
       [[ -n $value ]] || continue
-      parent="$(wine_program_parent_of "$value")"
+      parent="$(_wpm_parent_of "$value")"
       jq -nc --arg display "[$origin/$fmt]  $label" --arg value "$value" \
         --arg origin "$origin" --arg format "$fmt" --argjson enabled "$enabled" \
         --arg kind "plugin" --arg parent "$parent" \
         '{display: ($display + (if $enabled then "" else "  (hidden)" end)), value:$value, origin:$origin, format:$format, enabled:$enabled, kind:$kind, parent:$parent}'
-    done <<< "$(all_plugin_list_rows_sorted)"
+    done < "$_apm_rows"
+    rm -f "$_apm_rows" "$_apm_vals"
     wine_program_rows_json
     ;;
 
@@ -224,14 +265,20 @@ PYWIZARD
     # self-describing ("vst:<type>:<path>" or "native:<path>") so
     # uninstall-batch/toggle-hidden never have to guess the origin back out
     # of a bare path.
+    _apm_rows="${TMPDIR:-/tmp}/apm-rows.$$"
+    _apm_vals="${TMPDIR:-/tmp}/apm-vals.$$"
+    all_plugin_list_rows_sorted > "$_apm_rows"
+    cut -f6 < "$_apm_rows" > "$_apm_vals"
+    _wpm_cache_populate "$_apm_vals"
     while IFS=$'\t' read -r sortkey label origin fmt enabled value; do
       [[ -n $value ]] || continue
-      parent="$(wine_program_parent_of "$value")"
+      parent="$(_wpm_parent_of "$value")"
       jq -nc --arg display "[$origin/$fmt]  $label" --arg value "$value" \
         --arg origin "$origin" --arg format "$fmt" --argjson enabled "$enabled" \
         --arg kind "plugin" --arg parent "$parent" \
         '{display: ($display + (if $enabled then "" else "  (hidden)" end)), value:$value, origin:$origin, format:$format, enabled:$enabled, kind:$kind, parent:$parent}'
-    done <<< "$(all_plugin_list_rows_sorted)"
+    done < "$_apm_rows"
+    rm -f "$_apm_rows" "$_apm_vals"
     wine_program_rows_json
     ;;
 
@@ -257,14 +304,72 @@ PYWIZARD
     #      unins000.exe mtime within ±1 hour of the plugin file's mtime;
     #   4. OR the plugin's vendor folder name matches the installer folder.
   list-uninstallable)
+    _apm_rows="${TMPDIR:-/tmp}/apm-rows.$$"
+    _apm_vals="${TMPDIR:-/tmp}/apm-vals.$$"
+    all_plugin_list_rows_sorted > "$_apm_rows"
+    cut -f6 < "$_apm_rows" > "$_apm_vals"
+    _wpm_cache_populate "$_apm_vals"
     while IFS=$'\t' read -r sortkey label origin fmt enabled value; do
       [[ -n $value ]] || continue
-      parent="$(wine_program_parent_of "$value")"
+      parent="$(_wpm_parent_of "$value")"
       jq -nc --arg display "[$origin/$fmt]  $label" --arg value "$value" \
               --arg kind "plugin" --arg parent "$parent" \
         '{display:$display,value:$value,kind:$kind,parent:$parent}'
-    done <<< "$(all_plugin_list_rows_sorted)"
+    done < "$_apm_rows"
+    rm -f "$_apm_rows" "$_apm_vals"
     wine_program_rows_json
+    ;;
+
+  list-plugin-folders)
+    # The list the plugin MANAGER draws: one row per logical plugin, carrying
+    # the formats it is installed in, grouped under a folder per vendor.
+    #
+    # The other list actions emit one row per FILE, so a plugin installed as
+    # vst2 + vst3 + clap appeared three times under the same name: the same
+    # plugin had to be picked three times to act on it, and a vendor's count
+    # read as a file count. One row per plugin is the unit a person thinks in.
+    #
+    # "variants" is every installed file of that plugin (semicolon-separated
+    # "vst:<type>:<path>"), so the Go side can hide, show or uninstall all of
+    # them from the single row.
+    _apm_g="${TMPDIR:-/tmp}/apm-groups.$$"
+    _apm_v="${TMPDIR:-/tmp}/apm-vals.$$"
+    plugin_group_rows > "$_apm_g"
+    cut -f6 < "$_apm_g" > "$_apm_v"
+    _wpm_cache_populate "$_apm_v"
+
+    while IFS=$'\t' read -r sortkey label grp formats enabled value variants; do
+      [[ -n $value ]] || continue
+      # Parent is the VENDOR row value, and it has to match the folder rows this
+      # same action emits further down ("vendor:<name>"). It used to be the wine
+      # program folder ("win:/…/FabFilter") which that set never contains, so
+      # every plugin came out parentless: the vendor row showed a 0/N count and
+      # expanding it revealed nothing.
+      parent="vendor:$grp"
+      # The wine install folder is still worth knowing — it is what makes a
+      # vendor row removable in one shot — so it travels in its own field.
+      wine_parent="$(_wpm_parent_of "$value")"
+      jq -nc \
+        --arg display "$label" \
+        --arg value "$value" \
+        --arg vendor "$grp" \
+        --arg formats "$formats" \
+        --argjson enabled "$enabled" \
+        --arg variants "$variants" \
+        --arg parent "$parent" \
+        --arg wineParent "$wine_parent" \
+        '{display:$display, value:$value, kind:"plugin", vendor:$vendor, formats:$formats, enabled:$enabled, variants:$variants, parent:$parent, wineParent:$wineParent}'
+    done < "$_apm_g"
+
+    # One folder row per vendor, the tree's top level.
+    awk -F'\t' '{print $3}' "$_apm_g" | sort -u | while IFS= read -r grp; do
+      [[ -n $grp ]] || continue
+      label="$grp"
+      [[ $grp == native ]] && label="Native"
+      jq -nc --arg display "$label" --arg value "vendor:$grp" \
+        '{display:$display, value:$value, kind:"folder", parent:""}'
+    done
+    rm -f "$_apm_g" "$_apm_v"
     ;;
 
   uninstall-batch)
@@ -522,10 +627,77 @@ PYWIZARD
     done < <(fixes_applied_plugins)
     ;;
 
+  list-vendor-plugins)
+    # Every plugin of one vendor, as list-plugin-folders rows. Used to build the
+    # vendor-wide fix catalog, which is the union over exactly this set.
+    vendor="${1:?vendor required}"
+    _apm_lv="${TMPDIR:-/tmp}/apm-lv.$$"
+    plugin_group_rows > "$_apm_lv"
+    awk -F'\t' -v v="$vendor" '$3==v' "$_apm_lv" | while IFS=$'\t' read -r sk label grp formats enabled value variants; do
+      [[ -n $value ]] || continue
+      jq -nc --arg display "$label" --arg value "$value" --arg vendor "$grp" \
+        --arg formats "$formats" --argjson enabled "$enabled" --arg variants "$variants" \
+        '{display:$display, value:$value, kind:"plugin", vendor:$vendor, formats:$formats, enabled:$enabled, variants:$variants}'
+    done
+    rm -f "$_apm_lv"
+    ;;
+
+  plugin-vendor)
+    # $1 = a plugin list value. Echoes the vendor folder it groups under.
+    #
+    # Needed because the post-install question must offer the fixes for the
+    # WHOLE VENDOR, not just the one plugin that was just installed: the user
+    # installed a suite, and asking per plugin means the same dialog for every
+    # member of it.
+    target="${1:?plugin value required}"
+    _apm_pv="${TMPDIR:-/tmp}/apm-pv.$$"
+    plugin_group_rows > "$_apm_pv"
+    awk -F'\t' -v val="$target" '$6==val{print $3; exit}' "$_apm_pv"
+    rm -f "$_apm_pv"
+    ;;
+
   apply-fixes)
     # $1 = plugin label, then one or more fix ids (idempotent).
     plugin="${1:?plugin required}"; shift
     fix_apply "$plugin" "$@"
+    ;;
+
+  apply-fixes-vendor)
+    # $1 = vendor, then one or more fix ids. Applies the fixes to EVERY plugin of
+    # that vendor, in one call.
+    #
+    # The user installed a whole suite (FabFilter) and wants the fix for the
+    # suite, not the same dialog per plugin. Applying a fix is per-plugin under
+    # the hood, so this is a loop over the vendor's plugins rather than a new
+    # kind of fix — the recorded state, the Hyprland rule and the "applied for:"
+    # comment are all exactly what a single-plugin apply produces.
+    vendor="${1:?vendor required}"; shift
+    (($#)) || { echo "apply-fixes-vendor needs at least one fix id." >&2; exit 2; }
+    _apm_rows="${TMPDIR:-/tmp}/apm-vendor-rows.$$"
+    _apm_plugs="${TMPDIR:-/tmp}/apm-vendor-plugs.$$"
+    plugin_group_rows > "$_apm_rows"
+    # Only the label is needed to apply: fix_apply() takes the plugin NAME. The
+    # value ("vst:vst2:/path") is only for hide/show/uninstall.
+    awk -F'\t' -v v="$vendor" '$3==v{print $2}' "$_apm_rows" > "$_apm_plugs"
+    if [[ ! -s $_apm_plugs ]]; then
+      warn "no plugin found for vendor '$vendor'."
+      rm -f "$_apm_rows" "$_apm_plugs"
+      exit 1
+    fi
+    rc=0
+    n=0
+    while IFS= read -r label; do
+      [[ -n $label ]] || continue
+      if fix_apply "$label" "$@"; then
+        n=$((n+1))
+      else
+        rc=1
+        warn "could not apply the fixes to $label"
+      fi
+    done < "$_apm_plugs"
+    rm -f "$_apm_rows" "$_apm_plugs"
+    [[ $rc -eq 0 ]] && ok "fixes applied to $n plugin(s) from $vendor."
+    exit $rc
     ;;
 
   remove-fixes)
