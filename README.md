@@ -149,7 +149,7 @@ Grouped by priority (creative apps first, then desktop/power tuning, then mainte
 | `handbrake` | HandBrake GUI + CLI, H.264/H.265 encoders, preset sync, Hyprland rules | `scripts/apps/handbrake/setup-handbrake.sh` | [README](scripts/apps/handbrake/README.md) |
 | `ollama` | Ollama + REAPER-oriented models (~14 GB) + OpenCode integration | `scripts/LLM/setup-ollama-audio-expert.sh` | [README](scripts/LLM/README.md) |
 | `reaper` | REAPER + Hyprland/Wayland integration | `scripts/apps/reaper/setup-reaper.sh` | [README](scripts/apps/reaper/README.md) |
-| `windows-vm` | "Windows" launcher (USB + DPI) + winvm (RAM/CPU/disk) + OEM debloat | `scripts/windows-vm/setup-windows-vm.sh` | [README](scripts/windows-vm/README.md) |
+| `windows-vm` | Windows 11 in Docker over RDP — installs the VM itself if absent, plus launcher (USB + DPI), winvm (RAM/CPU/disk), menu launch/setup/remove, OEM debloat | `scripts/windows-vm/setup-windows-vm.sh` | [README](scripts/windows-vm/README.md) |
 | `omarchy-vm` | Omarchy in QEMU/KVM from the official ISO — launcher + TUI manager + shared folder + USB/GPU passthrough | `scripts/omarchy-vm/setup-omarchy-vm.sh` | [README](scripts/omarchy-vm/README.md) |
 
 **Desktop & power**
@@ -353,9 +353,13 @@ git clone https://github.com/kepalegars/mosquitOmarchy ~/mosquitOmarchy && cd ~/
 ./bootstrap.sh --zips -y          # downloads large files + auto setup
 ```
 
+The Windows VM module installs the VM itself when there is none (it delegates to
+`omarchy-windows-vm install` and then continues). Only the in-guest step is
+manual: open `\\host.lan\Data` in the VM and run `install.bat` once.
+
 Then, manually (also shown in the final report):
 
-1. `omarchy-windows-vm install` if the VM did not exist, then inside the VM: `\\host.lan\Data\install.bat`
+1. **Windows VM only** — inside the VM, open `\\host.lan\Data` and run `install.bat` (debloat + RDP drive mapping). Everything else the module does for you.
 2. Install Windows plugins — either for Linux DAWs (Bitwig/REAPER via yabridge, the shared VST root — `~/Music/Audio Plugins`, legacy `~/VST`) or in wine prefixes. With Ableton Linux, plugins in the shared root are **shared**: one install = visible everywhere
 3. `./scripts/apps/audio-plugin-manager/setup-audio-stack.sh --tweaks` after each new plugin
 4. Reconnect if the `realtime` group was just joined; iLok licenses to activate per wine prefix
