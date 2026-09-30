@@ -633,11 +633,34 @@ plugin_key() {
   f="${f%.hidden}"
   # Prefer the top-level structure: vendor + filename without the extension.
   rel="${f#$VST_ROOT/}"
+  # A BUNDLE keys as the bundle directory, not by what is inside it.
+  #
+  # "…/vst3/Serum2.vst3/PlugIn.x86_64-win/Serum2.vst3" used to key as
+  # "Serum2.vst3/PlugIn.x86_64-win/Serum2", which names a path that is an
+  # implementation detail of the bundle: it changes with the yabridge layout,
+  # so the same plugin got a different key on a different machine and could
+  # never match its own log entry. Every open offered it as an orphan again.
+  case "$rel" in
+    *.vst3/*) rel="${rel%%.vst3/*}.vst3" ;;
+    *.clap/*)  rel="${rel%%.clap/*}.clap" ;;
+  esac
   # Drop the leading format folder (vst/ vst3/ clap/) so "vst3/Vendor/Plugin.vst3"
   # keys consistently as "Vendor/Plugin" whether it lives in vst3 or clap.
   base="$(basename "$rel")"; base="${base%.*}"
   case "$rel" in
     vst/*|vst3/*|clap/*) rel="${rel#*/}" ;;
+  esac
+  # NOT under the shared folder at all — a system-wide native plugin such as
+  # /usr/lib/lv2/lsp-plugins.lv2. The old rel was the whole ABSOLUTE path, so
+  # the key embedded "/usr/lib/lv2/…" and only matched on the machine the log
+  # was written on. Key it by its bundle name, which identifies the plugin.
+  #
+  # The test is the PREFIX STRIP above, not "is it an absolute path": a plugin
+  # in the shared folder has an absolute path too, and keying those as native
+  # moved every one of them out of its vendor folder.
+  case "$f" in
+    "$VST_ROOT"/*) ;;
+    *) printf 'native/%s\n' "$base"; return 0 ;;
   esac
   case "$rel" in
     */*) printf '%s\n' "${rel%/*}/$base" ;;

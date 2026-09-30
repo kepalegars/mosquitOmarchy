@@ -177,8 +177,8 @@ type Status struct {
 	// AutoFixOn / FixPromptOn mirror the backend's fix-prefs file. Both default
 	// to true when the read fails, because the backend's own default is "on" and
 	// a failed read must not quietly disable a feature.
-	AutoFixOn   bool `json:"auto_fix_on"`
-	FixPromptOn bool `json:"fix_prompt_on"`
+	AutoFixOn          bool   `json:"auto_fix_on"`
+	FixPromptOn        bool   `json:"fix_prompt_on"`
 	FilePicker         string `json:"file_picker"`
 	PluginWinHandler   string `json:"plugin_win_handler"`
 	SuperfileInstalled bool   `json:"superfile_installed"`
@@ -383,6 +383,38 @@ func fetchPath(kind string, args ...string) tea.Cmd {
 // to the bash action, which used to spawn a brand-new terminal window --
 // visually external to the running TUI and, while it was up, left the TUI's
 // own window sitting there doing nothing underneath it.
+// adoptPluginsCmd registers every plugin already on disk into the log, in ONE
+// pass, and says how many were added.
+//
+// This is the answer to a machine whose plugins predate the manager: the log is
+// empty, so every one of them counts as an "orphan", and the startup sweep
+// offers them again on EVERY launch. Tick-by-tick was never a workable shape
+// for that — the screen was one row per file, so a suite installed outside the
+// manager came back as dozens of near-identical rows, every time.
+func adoptPluginsCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("adopt-plugins")
+		if err != nil {
+			return adoptPluginsMsg{err: err}
+		}
+		var v struct {
+			Registered int `json:"registered"`
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(out), &v); err != nil {
+			return adoptPluginsMsg{err: err}
+		}
+		return adoptPluginsMsg{n: v.Registered}
+	}
+}
+
+// adoptPluginsMsg reports the outcome. The result is a TOAST, not a screen: the
+// user asked for the log to be brought up to date, not for a list to work
+// through, and once it has run there is nothing left to pick.
+type adoptPluginsMsg struct {
+	n   int
+	err error
+}
+
 func pickFileViaSuperfileEmbedded(startDir string) tea.Cmd {
 	tmp, err := os.CreateTemp("", "audio-plugin-manager-pick-*")
 	if err != nil {

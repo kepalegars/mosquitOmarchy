@@ -888,6 +888,57 @@ EOF
     echo "added to the manager: $(basename "$first")"
     ;;
 
+  adopt-plugins)
+    # Register every plugin found on disk into the log, in ONE pass, grouped per
+    # plugin, and report what happened.
+    #
+    # This is the "I already have a pile of plugins, stop asking me about them
+    # one at a time" answer. The orphan screen asked for a tick per FILE, so a
+    # suite installed outside the manager came back on EVERY launch: 50 rows for
+    # 23 plugins, and the user had to walk the list each time. A log that knows
+    # about the machine's plugins is the fix; the screen is only for a genuine
+    # reconciliation, not for adoption.
+    #
+    # Non-destructive and idempotent: running it twice registers nothing the
+    # second time.
+    _apm_ad="${TMPDIR:-/tmp}/apm-adopt.$$"
+    plugin_group_rows > "$_apm_ad"
+    n=0
+    while IFS=$'\t' read -r sortkey label grp formats enabled value variants key; do
+      [[ -n $key ]] || continue
+      state_has "$key" && continue
+      # A native plugin lives in the system tree, not in a wine prefix. Filing
+      # it under the default prefix would claim it was installed by an
+      # installer, and the uninstall tree would then offer to remove a wine
+      # program that never contained it.
+      # No `local`: the action dispatcher is a top-level `case`, not a function,
+      # and `local` there is an error that aborts the whole action.
+      pfx="$(default_prefix)"
+      case "$value" in
+        native:*) pfx="" ;;
+        *) pfx="$(default_prefix)" ;;
+      esac
+      first=""
+      while IFS= read -r f; do
+        [[ -n $f ]] || continue
+        bare="$f"
+        case "$f" in
+          vst:*:*) bare="${f#vst:*:}" ;;
+          native:*) bare="${f#native:}" ;;
+        esac
+        [[ -n $first ]] || first="$bare"
+        state_register_install "$(plugin_key "$bare")" "$pfx" "$bare"
+      done <<< "$(printf '%s' "$variants" | tr ';' '\n')"
+      # n=$((n+1)), NOT (( n++ )): under `set -e` the arithmetic command
+      # returns the value it was BEFORE the increment, so (( n++ )) on n=0
+      # returns 1 and KILLS the script. The first plugin registered and the
+      # action stopped there, reporting one of twenty-three.
+      n=$((n + 1))
+    done < "$_apm_ad"
+    rm -f "$_apm_ad"
+    jq -nc --argjson n "$n" '{registered:$n}'
+    ;;
+
   cleanup)
     # "cleanup!" -- fix every plugin/log inconsistency, non-destructively
     # (missing stay in the log, untracked files get registered, dangling

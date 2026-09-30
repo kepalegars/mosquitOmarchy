@@ -306,6 +306,7 @@ func settingsItems(s Status) []tuikit.PickerItem {
 		{Display: "Wine runtime: " + wineRuntimeLabel(), Value: "toggle_wine_runtime"},
 		{Display: "Re-apply already-installed fixes on install: " + autoFix, Value: "toggle_auto_fix"},
 		{Display: "Ask \"apply fixes now?\" after an install: " + fixPrompt, Value: "toggle_fix_prompt"},
+		{Display: "Track the plugins already installed", Value: "adopt_plugins"},
 		{Display: "Rescan for untracked plugins", Value: "rescan"},
 		{Display: "Cleanup inconsistencies", Value: "cleanup"},
 		quarantineItem,
@@ -735,6 +736,14 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if !m.reconcileChecked {
 			m.reconcileChecked = true
+			// The missing/orphan sweep runs on every launch, but it is a
+			// RECONCILIATION, not a nag: a plugin that is on disk and already
+			// in the log has nothing to reconcile and must not produce a row.
+			// It is also not a place to ADOPT a pile of plugins — one tick per
+			// file, repeated at every startup, is not something anyone can act
+			// on. Adopt-once lives in Settings ("Track the plugins already
+			// installed") and in `cleanup`, both of which do the whole set in a
+			// single pass.
 			return m, tea.Batch(reconcileMissingCmd(), reconcileOrphansCmd())
 		}
 		return m, nil
@@ -803,6 +812,19 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast, _ = m.toast.SetWarn("fix re-apply failed: " + msg.err.Error())
 		}
 		return m.afterInstallFixesPrompt(msg.carry)
+
+	case adoptPluginsMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("could not track the installed plugins: " + msg.err.Error())
+			return m, nil
+		}
+		if msg.n == 0 {
+			m.toast, _ = m.toast.SetOK("every installed plugin is already tracked")
+		} else {
+			m.toast, _ = m.toast.SetOK(fmt.Sprintf("%d plugin(s) now tracked — the startup sweep will stop asking", msg.n))
+		}
+		return m, fetchStatus()
 
 	case fixPrefsMsg:
 		// The two post-install switches changed. The Settings screen is built

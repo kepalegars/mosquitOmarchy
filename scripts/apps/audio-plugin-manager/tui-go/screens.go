@@ -2302,6 +2302,16 @@ func (m model) handleAudioSettingsChoice(v string) (tea.Model, tea.Cmd) {
 		return m, setFixPrefCmd("AUTO_FIX", !m.status.AutoFixOn)
 	case "toggle_fix_prompt":
 		return m, setFixPrefCmd("FIX_PROMPT", !m.status.FixPromptOn)
+	case "adopt_plugins":
+		// "Track the plugins already installed" — the one-shot answer to a
+		// machine that already had plugins before the manager did. It does the
+		// WHOLE set in a single pass, which is the only shape a person can act
+		// on: the orphan screen asked for a tick per FILE, so a suite installed
+		// outside the manager came back on EVERY launch, 50 rows for 23
+		// plugins. After this the log knows the machine and the sweep at
+		// startup has nothing left to reconcile.
+		m.loading = true
+		return m, adoptPluginsCmd()
 	case "rescan":
 		return m, rescanCmd()
 	case "pick_plugins_root":
