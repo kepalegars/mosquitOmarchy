@@ -41,16 +41,30 @@
 #   in git). The build refuses to produce an archive above the release limit
 #   instead of leaving an upload that GitHub will reject.
 #
+# THE INSTALL FILES ARE A CHOICE
+#   The repo alone is ~67 MB. The two install files add ~460 MB, and they are
+#   the reason a release exists — but they are also what makes the upload heavy
+#   and the download slow, and a release of a version that has nothing new to
+#   install does not need them. So it is asked, once, with the sizes in front
+#   of you, and the answer is recorded IN THE FILENAME:
+#
+#     mosquitomarchy-release-2026-09-30-installers.tar.gz   (with them)
+#     mosarchy-release-2026-09-30.tar.gz                    (code only)
+#
+#   The suffix is the only record of what a given archive holds, and it is
+#   there so nobody has to download 490 MB to find out.
+#
 # Usage:
-#   ./archive-mosquitomarchy.sh              # build the release archive
-#   ./archive-mosquitomarchy.sh --list       # what would go in (and its size)
+#   ./archive-mosquitomarchy.sh              # build (asks about the install files)
+#   ./archive-mosquitomarchy.sh --list       # what would go in (and both sizes)
 #   ./archive-mosquitomarchy.sh --out=DIR    # write DIR/ instead of the repo root
-#   ./archive-mosquitomarchy.sh -y           # accepted, nothing is interactive
+#   ./archive-mosquitomarchy.sh -y           # take the default (install files INCLUDED)
 #   ./archive-mosquitomarchy.sh -h
 #
 # Env:
 #   OMARCHY_ARCHIVE_OUT   default output directory (default: the repo root)
 #   OMARCHY_ARCHIVE_MAX   size ceiling in bytes (default: 2 GiB)
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager — the prompt needs one
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -73,14 +87,19 @@ warn(){ printf " ${Y}!${N} %s\n" "$*"; }
 err(){ printf " ${R}✗${N} %s\n" "$*" >&2; }
 hr(){ printf '%.0s─' {1..72}; echo; }
 
-LIST_ONLY=0
+LIST_ONLY=0 YES=0
+# "" = not asked yet. The prompt is the only interactive thing this script has.
+INSTALLERS=""
 for a in "$@"; do case "$a" in
-  -y|--yes) ;;                      # nothing is interactive: accepted for the
-                                    # callers that pass it unconditionally
+  -y|--yes) YES=1 ;;                # -y takes the default, which is to include
+                                    # them; the callers that pass it still get
+                                    # the full release
   --list|--dry-run) LIST_ONLY=1 ;;
   --out=*) OUT_DIR="${a#*=}" ;;
-  -h|--help) sed -n '2,52p' "$0"; exit 0 ;;
-  *) err "Unknown option: $a (see -h)"; exit 1 ;;
+  --installers) INSTALLERS=1 ;;
+  --no-installers) INSTALLERS=0 ;;
+  -h|--help) sed -n '2,70p' "$0"; exit 0 ;;
+  *) err "Unknown option: $a (supported: -y --list --out=DIR --installers --no-installers)"; exit 1 ;;
 esac; done
 
 # ───────────────────────── Installation files ─────────────────────────
@@ -142,6 +161,61 @@ install_files_present(){
   printf '%s\n' "${out[@]:-}"
 }
 
+# Sum of the install files that are actually on disk, in bytes.
+install_files_bytes(){
+  local total=0 f
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    total=$((total + $(stat -c%s "$ROOT/$f" 2>/dev/null || echo 0)))
+  done < <(install_files_present | sed '/^$/d')
+  printf '%s' "$total"
+}
+
+# The one question this script asks. Default is YES: the install files are the
+# reason a release archive exists at all (they are what GitHub cannot hold),
+# and a release without them is just a tarball of a git clone.
+#
+# It never blocks: -y and the two explicit flags decide it, and a run with no
+# terminal takes the default with a line saying so. A prompt nobody can answer
+# would hang the very caller (a cron job, a script) that passed no -y.
+ask_installers(){
+  [[ -n $INSTALLERS ]] && return 0            # --installers / --no-installers
+  local bytes; bytes="$(install_files_bytes)"
+  if (( bytes == 0 )); then
+    INSTALLERS=0
+    warn "No install file on disk (looked for ${INSTALL_FILES[*]}) — code-only release."
+    return 0
+  fi
+  if (( YES )); then
+    INSTALLERS=1; ok "(auto) install files included — $(human "$bytes")"
+    return 0
+  fi
+  if [[ ! -t 0 ]]; then
+    INSTALLERS=1
+    warn "No terminal to ask in — taking the default: install files INCLUDED ($(human "$bytes"))."
+    warn "  Use --no-installers (or --installers) to decide without a prompt."
+    return 0
+  fi
+  local f
+  printf '\n'
+  msg "The install files (GitHub cannot hold these; a release normally carries them):"
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    printf '     %-58s %s\n' "$f" "$(human "$(stat -c%s "$ROOT/$f" 2>/dev/null || echo 0)")"
+  done < <(install_files_present | sed '/^$/d')
+  printf '     %-58s %s\n' "→ total" "$(human "$bytes")"
+  printf '\n'
+  local r
+  # [o/n] and NOT [Y/n]: a bare "o" is what a French speaker types for NON, and
+  # matching ^[oOyY] meant "o" meant OUI. Showing exactly the two letters that
+  # are accepted is the only way that prompt cannot be misread.
+  read -rp "  Include them ? [o/n] " r
+  case "${r:-o}" in
+    [oO]) INSTALLERS=1 ;;
+    *)    INSTALLERS=0 ;;
+  esac
+}
+
 preflight(){
   cd "$ROOT" || { err "Not a directory: $ROOT"; exit 1; }
   git rev-parse --git-dir >/dev/null 2>&1 \
@@ -161,21 +235,21 @@ size_guard(){
 do_list(){
   preflight
   mapfile -t TRACKED < <(collect)
-  mapfile -t EXTRA < <(install_files_present | sed '/^$/d')
-  local total=0 f
+  local f s inst=0 code
   msg "Release archive contents ( $PROJECT_NAME/ )"
   printf '  %s tracked files from the repo\n' "${#TRACKED[@]}"
-  if ((${#EXTRA[@]})); then
-    for f in "${EXTRA[@]}"; do
-      local s; s="$(stat -c%s "$ROOT/$f" 2>/dev/null || echo 0)"
-      total=$((total + s))
-      printf '  + %s (%s)\n' "$f" "$(human "$s")"
-      size_guard "$s" "$f"
-    done
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    s="$(stat -c%s "$ROOT/$f" 2>/dev/null || echo 0)"
+    inst=$((inst + s))
+    printf '     %-58s %s\n' "$f" "$(human "$s")"
+  done < <(install_files_present | sed '/^$/d')
+  code="$(cd "$ROOT" && printf '%s\n' "${TRACKED[@]}" | xargs -d '\n' stat -c%s 2>/dev/null | awk '{s+=$1} END {print s+0}')"
+  printf '  code only          : ~%s\n' "$(human "$code")"
+  if (( inst )); then
+    printf '  + install files    : ~%s\n' "$(human "$inst")"
+    printf '  full release       : ~%s\n' "$(human "$((code + inst))")"
   fi
-  local code; code="$(cd "$ROOT" && printf '%s\n' "${TRACKED[@]}" | xargs -d '\n' stat -c%s 2>/dev/null | awk '{s+=$1} END {print s+0}')"
-  total=$((total + code))
-  printf '  = ~%s before compression\n' "$(human "$total")"
   printf '  PATCH/ folders, .local/, *.log, backups: excluded (not tracked / never listed)\n'
   if (( LIST_ONLY )); then return 0; fi
   hr
@@ -185,7 +259,9 @@ do_list(){
 build(){
   preflight
   mapfile -t TRACKED < <(collect)
+  ask_installers
   mapfile -t EXTRA < <(install_files_present | sed '/^$/d')
+  ((INSTALLERS)) || EXTRA=()
 
   msg "Release archive of ' $PROJECT_NAME '"
   msg "  Source : $ROOT @ $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
@@ -196,21 +272,49 @@ build(){
     warn "  Commit first if the release must match $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo 'the commit')."
   fi
   printf '  Content: %s tracked files' "${#TRACKED[@]}"
-  ((${#EXTRA[@]})) && printf ' + %s installation file(s)' "${#EXTRA[@]}"
+  if ((${#EXTRA[@]})); then
+    printf ' + %s installation file(s) (%s)' "${#EXTRA[@]}" "$(human "$(install_files_bytes)")"
+  else
+    printf ' — code only, no install file'
+  fi
   printf '\n'
   msg "  Excluded: PATCH/ · .local/ · *.log · backups · every non-tracked file"
 
   mkdir -p "$OUT_DIR"
   local -a tf=(--transform="s|^|${PROJECT_NAME}/|")
-  local stamp out tmp
+  local stamp out tmp suffix=""
   stamp="$(date +%Y-%m-%d)"
-  out="$OUT_DIR/mosquitomarchy-release-$stamp.tar.gz"
+  # The suffix is the only thing telling a reader which kind of release this is
+  # BEFORE spending the download on finding out.
+  ((INSTALLERS)) && suffix="-installers"
+  out="$OUT_DIR/mosquitomarchy-release-$stamp$suffix.tar.gz"
   tmp="$out.tmp.$$"
   trap 'rm -f "$tmp"' EXIT
 
   # RELEASE.md, written into the archive so whoever opens the tarball knows
-  # what it is and how to use it without mosquitomarchy.
-  local meta; meta="$(mktemp -d)"
+  # what it is and how to use it without mosquitomarchy. Its "what is inside"
+  # table is built from the actual choice: an archive that claims to carry the
+  # installers when it does not is worse than no README at all.
+  #
+  # The rows go to a file, not a string: the markdown is full of backticks and
+  # pipes, and building it by concatenation is a quoting minefield.
+  local meta rows f
+  meta="$(mktemp -d)"
+  rows="$meta/.rows"
+  if ((INSTALLERS)); then
+    {
+      printf '| Path | What |\n'
+      printf '|---|---:|\n'
+      while IFS= read -r f; do
+        [[ -n $f ]] || continue
+        printf '| `%s` | %s |\n' "$f" "$(human "$(stat -c%s "$ROOT/$f" 2>/dev/null || echo 0)")"
+      done < <(install_files_present | sed '/^$/d')
+    } > "$rows"
+  else
+    # Blank line either side, so the markdown table below still starts as a table.
+    printf '\n_(no install file - this is a code-only release)_\n\n' > "$rows"
+  fi
+
   cat > "$meta/RELEASE.md" <<'MDEOF'
 # mosquitOmarchy — release archive
 
@@ -234,10 +338,7 @@ A full setup is not required: every module also has its own `setup-*.sh` in
 
 ## What is inside
 
-| Path | What |
-|---|---|
-| `scripts/apps/ableton/install-ableton-latest.run` | the Ableton installer (113 MB) |
-| `scripts/apps/bitwig/bitwig-studio-*.deb` | the Bitwig build the module pins (348 MB) |
+@@INSTALL_ROWS@@
 | everything else | the repository, as committed |
 
 ## What is NOT inside, and where to get it
@@ -268,6 +369,18 @@ MDEOF
     msg "  Compression: gzip (install pigz to speed it up)"
   fi
 
+  # Substituting the placeholder: the heredoc stays quoted (its markdown has
+  # backticks, which bash would execute), so the rows go in afterwards.
+  if ! awk -v rows="$rows" '
+        BEGIN { while ((getline l < rows) > 0) buf = buf l "\n" }
+        /^@@INSTALL_ROWS@@$/ { printf "%s", buf; next }
+        { print }
+      ' "$meta/RELEASE.md" > "$meta/RELEASE.md.new"; then
+    err "Could not render RELEASE.md — nothing was written."
+    exit 1
+  fi
+  mv -f "$meta/RELEASE.md.new" "$meta/RELEASE.md"
+
   hr; msg "Creating the archive..."
   # ONE tar invocation for everything (tracked files + installation files +
   # RELEASE.md): appending to a finished .tar.gz would mean decompressing and
@@ -282,6 +395,7 @@ MDEOF
     err "tar failed — nothing was written."
     exit 1
   fi
+
   rm -rf "$meta"
   trap - EXIT
 

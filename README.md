@@ -291,12 +291,26 @@ release's rules apply. The finished archive is then **verified** — the script
 re-reads its own tarball and refuses to keep it if a `PATCH/`, a `*.log`, a
 `Passwords.kdbx`, a `pkglist.txt` or a backup shows up.
 
+**The install files are a question, and the filename is the answer.** The repo
+alone is ~68 MB; the two install files add ~462 MB. They are what GitHub cannot
+hold, so a release normally carries them — but a release with nothing new to
+install does not need 490 MB of download, and that call belongs to whoever
+publishes. So it is asked once, with the sizes in front, and the answer is
+recorded in the name:
+
+| File name | Contents | Size |
+|---|---|---|
+| `mosquitomarchy-release-<date>-installers.tar.gz` | code **+** the Ableton `.run` (114 MB) and the pinned Bitwig `.deb` (349 MB) | ~488 MB |
+| `mosquitomarchy-release-<date>.tar.gz` | code only | ~31 MB |
+
+`./scripts/archive-mosquitomarchy.sh -y` takes the default (installers in).
+`--installers` / `--no-installers` decide it without a prompt, and a run with no
+terminal takes the default rather than hanging on a question nobody can answer.
+
 **Size**: GitHub accepts a release asset up to 2 GiB, and the build refuses to
-produce anything above that. It lands at ~490 MB: the Ableton installer
-(113 MB) and the pinned Bitwig `.deb` (348 MB) — the same two files as the
-[Installation files](#installation-files) table — plus the ~67 MB of tracked
-code. The 10 GB DaVinci zip, the 3-4 GB Ableton zips and the 988 MB Guitar Pro
-installer stay out on purpose; the table links where to get them.
+produce anything above that. The 10 GB DaVinci zip, the 3-4 GB Ableton zips and
+the 988 MB Guitar Pro installer stay out on purpose; the
+[Installation files](#installation-files) table links where to get them.
 
 **It replaces the bootstrap.** The tarball is meant to be taken by hand — no
 mosquitomarchy code is involved in the extraction:
@@ -314,9 +328,10 @@ never overwritten). A `RELEASE.md` inside the archive repeats all of this for
 whoever opens the tarball.
 
 ```bash
-./scripts/archive-mosquitomarchy.sh            # build the release archive
-./scripts/archive-mosquitomarchy.sh --list     # what would go in, and its size
-./scripts/archive-mosquitomarchy.sh --out=DIR  # write DIR/ instead of the repo root
+./scripts/archive-mosquitomarchy.sh                    # build (asks about the install files)
+./scripts/archive-mosquitomarchy.sh --list             # both sizes, nothing written
+./scripts/archive-mosquitomarchy.sh --out=DIR          # write DIR/ instead of the repo root
+./scripts/archive-mosquitomarchy.sh --no-installers    # code only, no prompt
 ```
 
 ---
