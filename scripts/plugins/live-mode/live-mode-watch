@@ -66,6 +66,36 @@ thermal_control() {
   fi
 }
 
+# enforce_dnd — the DND guard, on its own FAST loop.
+#
+# It used to be one `if` inside reassert_state, which runs on the 5s thermal
+# cadence and also does profile, audio, USB and theme work. 5s is a long time to
+# keep shouting at you: the bar toggle is instant, and a notification that lands
+# in the gap gets through. The guard is cheap — one file read — so it gets its
+# own sub-second loop and the thermal cadence stops being its clock.
+#
+# The bar writes ~/.local/state/omarchy/notifications.json, which is exactly
+# what we read, so there is no way for the two views to disagree. The toggle
+# command is used first so Omarchy's own bookkeeping happens; the state file is
+# written directly only when that command declines, because it can while a DND
+# expiry timer is still pending.
+enforce_dnd() {
+  [[ $SILENCE_NOTIFICATIONS != no ]] || return 0
+  grep -q '"dnd": true' "$REAL_HOME/.local/state/omarchy/notifications.json" 2>/dev/null && return 0
+  omarchy-toggle-notification-silencing >/dev/null 2>&1 || true
+  grep -q '"dnd": true' "$REAL_HOME/.local/state/omarchy/notifications.json" 2>/dev/null && return 0
+  local nf="$REAL_HOME/.local/state/omarchy/notifications.json"
+  [[ -f $nf ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local tmp
+  tmp=$(mktemp "${nf}.XXXXXX" 2>/dev/null) || return 0
+  if jq '.dnd = true' "$nf" > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$nf"
+  else
+    rm -f "$tmp"
+  fi
+}
+
 reassert_state() {
   # Profile → performance
   local cur
@@ -211,9 +241,21 @@ patchbay_watch() {
 # Main loop
 # ---------------------------------------------------------------------------
 
+# The DND guard runs on its own loop so the thermal cadence (5s) is not the
+# clock it answers to. Sub-second, cheap, and it exits with the session.
+(
+  while is_active; do
+    enforce_dnd
+    sleep 0.4
+  done
+) &
+
 while is_active; do
   thermal_control
   reassert_state
   patchbay_watch
   sleep "$INTERVAL"
 done
+
+# The guard is a child of this process; do not outlive the session.
+pkill -P $$ -f "sleep 0.4" 2>/dev/null || true

@@ -254,6 +254,19 @@ ensure_confirm_plugin() {
 if [[ $REMOVE == false ]]; then
   ensure_power_plugin || true
   overlay_plugin_files "custom.power" "Panel.qml" "Model.js"
+
+  # Omarchy's OWN power panel, overlaid for the same reason. It is disabled in
+  # favour of custom.power on this desktop, but it is one `omarchy plugin
+  # enable omarchy.power` away from being live again, and its setProfile() calls
+  # omarchy-powerprofiles-set directly — so a machine that switched back would
+  # silently lose the Live Mode guard. The overlay is only applied when the
+  # plugin directory actually exists; an Omarchy update replaces the original
+  # file, and this setup run puts ours back.
+  if [[ -d "$PLUG_DIR/omarchy.power" ]]; then
+    cp "$PLUG_SRC/omarchy.power/Panel.qml" "$PLUG_DIR/omarchy.power/Panel.qml" 2>/dev/null \
+      && ok "Live Mode power guard applied to omarchy.power too" \
+      || warn "Could not overlay omarchy.power/Panel.qml"
+  fi
   ensure_indicators_plugin || true
   ensure_confirm_plugin || true
 fi

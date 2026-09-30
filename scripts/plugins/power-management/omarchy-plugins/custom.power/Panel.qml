@@ -234,19 +234,35 @@ Panel {
     }
   }
 
+  // ---- Live Mode: the power profile is the session's, not the panel's ----
+  //
+  // Live mode runs the machine in `performance` and the watchdog re-asserts it
+  // on every pass. So clicking another profile used to appear to work and then
+  // silently revert seconds later, which reads as a broken panel rather than a
+  // session holding the setting. power-helper now asks first and only applies
+  // on "Yes"; answering No leaves the profile exactly where it was.
+  //
+  // POWER_PROFILE_PROMPT="no" in ~/.config/live-mode/settings turns the
+  // question off (the Live Manager owns that toggle). Ultra-save is NOT part
+  // of this: power-helper refuses it outright, with no way to confirm it,
+  // because it caps the CPU and is the opposite of what the session is for.
+  //
+  // The decision lives in the helper rather than in this QML so it is plain
+  // bash, testable, and reachable from the terminal and from any other caller.
   function setProfile(profile) {
     if (!profile || actionProc.running) return
-    // A manually activated power plan wins over ultra-save: disable ultra-save
-    // first (it forces the power-saver profile and CPU caps), then apply the
-    // chosen plan. power-helper uses the NOPASSWD sudoers entry for ultra-save.
-    if (root.ultraSaveOn && profile !== "power-saver") {
-      actionProc.command = [
-        "bash", "-c",
-        "power-helper ultrasave off; omarchy-powerprofiles-set " + (root.discharging ? "battery" : "ac") + " " + profile
-      ]
-    } else {
-      actionProc.command = ["omarchy-powerprofiles-set", root.discharging ? "battery" : "ac", profile]
-    }
+    // Everything goes through power-helper profile-set, including the ultra-save
+    // cleanup. A manually activated plan still wins over ultra-save (it forces
+    // power-saver and CPU caps), so ultra-save is turned off first — and the
+    // helper is the one place that knows live mode is on and that power-saver
+    // itself must be refused, so asking there rather than here is what keeps
+    // the two rules from disagreeing.
+    actionProc.command = [
+      "power-helper", "profile-set",
+      root.discharging ? "battery" : "ac",
+      profile,
+      root.ultraSaveOn ? "drop-ultrasave" : "keep-ultrasave"
+    ]
     actionProc.running = true
   }
 

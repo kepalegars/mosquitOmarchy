@@ -23,6 +23,11 @@ type Settings struct {
 	NoGaps        bool     // disable window gaps during the session
 	SilenceNotifs bool     // DND during the session
 	SwitchTheme   bool     // switch to the Live theme on activation
+	// ProfilePrompt gates the power panel: with it on, choosing a power
+	// profile during a live session asks first, because the watchdog reverts it
+	// seconds later and silently. power-saver and ultra-save are refused either
+	// way, and that refusal is not a setting.
+	ProfilePrompt bool
 }
 
 func defaultSettings() Settings {
@@ -34,6 +39,7 @@ func defaultSettings() Settings {
 		NoGaps:        true,
 		SilenceNotifs: true,
 		SwitchTheme:   true,
+		ProfilePrompt: true,
 	}
 }
 
@@ -83,6 +89,9 @@ func loadSettings() Settings {
 	if v, ok := kv["SWITCH_THEME"]; ok {
 		s.SwitchTheme = v != "no"
 	}
+	if v, ok := kv["POWER_PROFILE_PROMPT"]; ok {
+		s.ProfilePrompt = v != "no"
+	}
 	return s
 }
 
@@ -97,7 +106,8 @@ func saveSettings(s Settings) error {
 		"ROUTING_TOOL=\"" + boolVal(s.RoutingTool) + "\"\n" +
 		"NO_GAPS=\"" + boolVal(s.NoGaps) + "\"\n" +
 		"SILENCE_NOTIFICATIONS=\"" + boolVal(s.SilenceNotifs) + "\"\n" +
-		"SWITCH_THEME=\"" + boolVal(s.SwitchTheme) + "\"\n"
+		"SWITCH_THEME=\"" + boolVal(s.SwitchTheme) + "\"\n" +
+		"POWER_PROFILE_PROMPT=\"" + boolVal(s.ProfilePrompt) + "\"\n"
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 

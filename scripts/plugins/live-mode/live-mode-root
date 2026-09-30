@@ -22,7 +22,7 @@ Usage: live-mode-root <command> [args...]
 Commands:
   status                                Print current root-level state (JSON)
   apply                                 Apply live mode (save state, set profile,
-                                        audio, usb, battery, fence)
+                                        audio, usb, battery)
   restore                               Restore pre-live state
   thermal-cap <kHz>                     Set scaling_max_freq on all policies
   thermal-restore                       Restore scaling_max_freq to hardware max
@@ -96,8 +96,22 @@ EOF
 
   # 5. Thermal: leave scaling_max_freq at current (max) — watchdog will cap
 
-  # 6. Fence pacman by creating /var/lib/pacman/db.lck
-  [ -f /var/lib/pacman/db.lck ] || touch /var/lib/pacman/db.lck 2>/dev/null || true
+  # 6. pacman is deliberately LEFT ALONE.
+  #
+  # This used to create /var/lib/pacman/db.lck for the whole session, described
+  # as a "fence". It protected nothing: live mode installs no packages, and
+  # nothing in it takes the lock. All it did was make every package operation on
+  # the machine fail with
+  #
+  #   error: failed to init transaction (unable to lock database)
+  #   error: could not lock database: File exists
+  #
+  # for as long as the session lasted — installing a plugin, a driver, a font,
+  # anything, at exactly the moment the user is most likely to want to. A
+  # leftover db.lck after an unclean exit then broke pacman with no session
+  # running at all. Not fencing is the safe behaviour: a real package manager
+  # holds this lock itself for the few seconds it needs it, and there is
+  # nothing here to conflict with.
 
   echo '{"status":"ok","applied":true}'
 }
@@ -141,8 +155,12 @@ cmd_restore() {
     [[ -f "$f" ]] && echo "$hw_max" > "$f" 2>/dev/null || true
   done
 
-  # Remove pacman fence
-  rm -f /var/lib/pacman/db.lck 2>/dev/null || true
+  # Clean up a db.lck left behind by a previous version that did fence, or by
+  # a package manager that died mid-transaction. Only when nothing holds it —
+  # deleting a lock a running pacman owns is how you corrupt a database.
+  if [[ -f /var/lib/pacman/db.lck ]] && ! fuser /var/lib/pacman/db.lck >/dev/null 2>&1; then
+    rm -f /var/lib/pacman/db.lck 2>/dev/null || true
+  fi
 
   rm -f "$PRE_STATE"
 
