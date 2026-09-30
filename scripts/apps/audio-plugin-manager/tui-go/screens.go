@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -454,130 +455,406 @@ func (m *model) rebuildUninstallPicker() {
 // kit now resolves "the folder the cursor is IN" (tuikit's foldKey), so the
 // lookup is gone rather than left behind as a trap for the next caller.
 
+// runFixPlan applies the confirmed plan, one fix at a time, to exactly the
+// plugins the dialog named.
+//
+// This is the fix for the vendor-wide override. The old rule was "a vendor-wide
+// run goes to every plugin of the folder", which is right for a fix that is on
+// nowhere in the suite — that is the "fix them all" gesture — and wrong for a
+// fix that is already on some of them: it rewrote the whole suite, turned a ◐
+// into a ●, and carried the group's other fixes along with it. Removal had no
+// target at all on a vendor visit, because the plugin name is empty there.
+//
+// A suite-wide apply still takes the one-call vendor path when the plan really
+// does cover the whole selection; that is a single round trip for what is a
+// twenty-one-plugin operation.
+func (m model) runFixPlan(toApply, toRemove []string) tea.Cmd {
+	plan := m.fixChangePlan(toApply, toRemove)
+	if len(plan) == 0 {
+		return func() tea.Msg { return actionErrMsg{err: errors.New("no plugin to change")} }
+	}
+	// Group the plan by fix so each fix is one call with the exact plugin list.
+	type fixRun struct {
+		id     string
+		title  string
+		remove bool
+		labels []string
+	}
+	var runs []*fixRun
+	byKey := map[string]*fixRun{}
+	for _, ch := range plan {
+		key := ch.Title + "\x00" + boolLabel(ch.Remove)
+		r, ok := byKey[key]
+		if !ok {
+			r = &fixRun{title: ch.Title, remove: ch.Remove}
+			for _, id := range append(append([]string{}, toApply...), toRemove...) {
+				if m.fixTitleOf(id) == ch.Title && m.fixSideOf(id) == ch.Remove {
+					r.id = id
+					break
+				}
+			}
+			byKey[key] = r
+			runs = append(runs, r)
+		}
+		r.labels = append(r.labels, ch.Label)
+	}
+
+	return func() tea.Msg {
+		var done []string
+		for _, r := range runs {
+			labels := compactLabels(r.labels)
+			if len(labels) == 0 {
+				continue
+			}
+			// One call for a whole-suite fix: it is the same work as the
+			// per-plugin loop, done server-side in one pass.
+			if !r.remove && m.fixVendor != "" && m.coversWholeSelection(labels) {
+				if _, err := runQuick(append([]string{"apply-fixes-vendor", m.fixVendor}, r.id)...); err != nil {
+					return actionErrMsg{err: err}
+				}
+				done = append(done, r.title)
+				continue
+			}
+			verb := "apply-fixes-plugins"
+			if r.remove {
+				verb = "remove-fixes-plugins"
+			}
+			if _, err := runQuickStdin(strings.Join(labels, "\n")+"\n", verb, r.id); err != nil {
+				return actionErrMsg{err: err}
+			}
+			done = append(done, r.title)
+		}
+		if len(done) == 0 {
+			return actionErrMsg{err: errors.New("no plugin to change")}
+		}
+		return fixesDoneMsg{what: fmt.Sprintf("%s to %s",
+			pluralFixes(len(done)),
+			pluralPlugins(len(m.fixChangeLabels(plan))))}
+	}
+}
+
+// fixSideOf reports whether a fix id is on the apply or the remove side of the
+// pending delta, so a plan row can be traced back to its fix id.
+func (m model) fixSideOf(id string) bool {
+	for _, r := range m.fixPendingRemove {
+		if r == id {
+			return true
+		}
+	}
+	return false
+}
+
+// fixChangeLabels is the distinct set of plugins a plan reaches.
+func (m model) fixChangeLabels(plan []fixChange) []string {
+	var out []string
+	for _, ch := range plan {
+		out = append(out, ch.Label)
+	}
+	return compactLabels(out)
+}
+
+// ── Planning a fix change ───────────────────────────────────────────────────
+//
+// A fix row on a VENDOR visit is not a single fact. The catalog is a merge over
+// the suite, so a fix can be recorded on some of its plugins and not the others,
+// and the two directions of "change this row" are both about a SET:
+//
+//	tick a half-applied fix  -> the plugins of the suite that do NOT have it
+//	untick it                 -> the plugins of the suite that DO
+//
+// The implementation this replaces offered only the whole suite, so touching a
+// half-applied row rewrote every plugin of the vendor: it went from ◐ to ● in
+// one step, and the other fixes in the group were dragged along by the same
+// call. Un-ticking had no target at all on a vendor visit — the plugin name is
+// empty there, so the action failed with "plugin required".
+//
+// fixChange is one plugin a pending change reaches, and which way.
+
+type fixChange struct {
+	Label  string
+	Title  string
+	Remove bool
+}
+
+// fixApplyLabels is the set of plugins a pending APPLY will write.
+//
+// A partial fix targets exactly the ones missing it — that is what "partial"
+// means, and completing it must not reach the ones already done. A fix that is
+// on nowhere in the selection, or a single-plugin visit, targets the whole
+// selection, which is the "fix the suite" gesture the user asked for.
+func (m model) fixApplyLabels(id string) []string {
+	have := map[string]bool{}
+	for _, n := range m.fixAppliedBy[id] {
+		have[n] = true
+	}
+	if m.fixVendor == "" {
+		return compactLabels([]string{pluginStemOf(m.fixPlugin)})
+	}
+	if m.fixIsPartial(id) {
+		var out []string
+		for _, n := range m.fixVendorPlugins {
+			if !have[n] {
+				out = append(out, n)
+			}
+		}
+		return compactLabels(out)
+	}
+	return compactLabels(m.fixVendorPlugins)
+}
+
+// fixRemoveLabels is the set of plugins a pending REMOVE will strip: the ones
+// carrying the fix. On a vendor visit that is known exactly, which is what makes
+// un-ticking a half-applied row mean "take it off the one that has it" instead
+// of "take it off everything".
+func (m model) fixRemoveLabels(id string) []string {
+	if have := compactLabels(m.fixAppliedBy[id]); len(have) > 0 {
+		return have
+	}
+	if m.fixVendor == "" {
+		return compactLabels([]string{pluginStemOf(m.fixPlugin)})
+	}
+	// Recorded nowhere in this selection: nothing to strip.
+	return nil
+}
+
+// fixChangePlan is every (plugin, fix) the pending delta will touch, in a stable
+// order: the selection's order for applies, the recorded order for removes.
+func (m model) fixChangePlan(toApply, toRemove []string) []fixChange {
+	var out []fixChange
+	seen := map[string]bool{}
+	add := func(labels []string, title string, remove bool) {
+		for _, l := range labels {
+			key := l + "\x00" + title
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, fixChange{Label: l, Title: title, Remove: remove})
+		}
+	}
+	for _, id := range sortedFixIDs(toApply) {
+		title := m.fixTitleOf(id)
+		add(m.fixApplyLabels(id), title, false)
+	}
+	for _, id := range sortedFixIDs(toRemove) {
+		title := m.fixTitleOf(id)
+		add(m.fixRemoveLabels(id), title, true)
+	}
+	return out
+}
+
+func (m model) fixTitleOf(id string) string {
+	if it, ok := m.fixItemByID(id); ok && it.Title != "" {
+		return it.Title
+	}
+	return id
+}
+
+func compactLabels(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, l := range in {
+		if l == "" || seen[l] {
+			continue
+		}
+		seen[l] = true
+		out = append(out, l)
+	}
+	return out
+}
+
+func sortedFixIDs(ids []string) []string {
+	out := append([]string{}, ids...)
+	sort.Strings(out)
+	return out
+}
+
+// fixChangeNames groups a plan's plugins by fix, which is how a person reads it:
+// "this fix, on these plugins", not "these twenty-one plugins, twenty-one
+// times".
+//
+// Every plugin is named, INCLUDING a suite-wide fix: the whole point of the
+// dialog is to say what is about to be rewritten, and "all of them" is exactly
+// the answer the user cannot check. A suite of twenty-one scrolls — that is what
+// the scrolling list is for — and the count is in the heading anyway.
+func (m model) fixChangeNames(plan []fixChange) []string {
+	byFix := map[string][]string{}
+	var order []string
+	for _, ch := range plan {
+		key := ch.Title + "\x00" + boolLabel(ch.Remove)
+		if _, seen := byFix[key]; !seen {
+			order = append(order, key)
+		}
+		byFix[key] = append(byFix[key], ch.Label)
+	}
+	var rows []string
+	for _, key := range order {
+		title, mode, _ := strings.Cut(key, "\x00")
+		labels := compactLabels(byFix[key])
+		verb := "write"
+		if mode == "remove" {
+			verb = "strip"
+		}
+		rows = append(rows, fmt.Sprintf("%s — %s (%d)", verb, title, len(labels)))
+		for _, l := range labels {
+			rows = append(rows, "  "+l)
+		}
+	}
+	return rows
+}
+
+// fixAlreadyHolding counts, for a set of pending applies, the plugins of the
+// selection that already carry the fix and are therefore left alone. Saying so
+// is what distinguishes "this completes a half-applied fix" from "this rewrites
+// everything", which is the question a ◐ row raises.
+func (m model) fixAlreadyHolding(toApply []string) int {
+	seen := map[string]bool{}
+	for _, id := range toApply {
+		if !m.fixIsPartial(id) {
+			continue
+		}
+		for _, n := range m.fixAppliedBy[id] {
+			seen[n] = true
+		}
+	}
+	return len(seen)
+}
+
+// coversWholeSelection reports whether a label set is the entire selection, in
+// which case listing it adds nothing the count does not already say.
+func (m model) coversWholeSelection(labels []string) bool {
+	all := m.fixVendorPlugins
+	if m.fixVendor == "" {
+		all = []string{pluginStemOf(m.fixPlugin)}
+	}
+	if len(all) == 0 || len(labels) != len(all) {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, l := range labels {
+		seen[l] = true
+	}
+	for _, l := range all {
+		if !seen[l] {
+			return false
+		}
+	}
+	return true
+}
+
+// fixKindsIn counts the DISTINCT fixes on one side of a plan, and fixPluginsIn
+// the distinct plugins, so the wording can talk about fixes and plugins without
+// conflating a fix applied to twenty plugins with twenty fixes.
+func fixKindsIn(plan []fixChange, remove bool) int {
+	seen := map[string]bool{}
+	for _, ch := range plan {
+		if ch.Remove == remove {
+			seen[ch.Title] = true
+		}
+	}
+	return len(seen)
+}
+
+func fixPluginsIn(plan []fixChange, remove bool) int {
+	seen := map[string]bool{}
+	for _, ch := range plan {
+		if ch.Remove == remove {
+			seen[ch.Label] = true
+		}
+	}
+	return len(seen)
+}
+
+func pluralFixes(n int) string {
+	if n == 1 {
+		return "1 fix"
+	}
+	return fmt.Sprintf("%d fixes", n)
+}
+
+func pluralPlugins(n int) string {
+	if n == 1 {
+		return "1 plugin"
+	}
+	return fmt.Sprintf("%d plugins", n)
+}
+
+func boolLabel(b bool) string {
+	if b {
+		return "remove"
+	}
+	return "write"
+}
+
 // fixApplyConfirm builds the confirmation shown before a fix is written.
 //
 // The wording is about FILES, not about checkboxes, because that is what the
-// action is: "apply to the FabFilter suite" rewrites a third-party binary once
-// per plugin, and the rows it came from are marked in the same ●/○ language as
-// a to-do list.
+// action is: rewriting a third-party binary in place, once per plugin.
 //
-// The list is the part that was missing. "to every FabFilter plugin" leaves the
-// size of the change unstated, and a vendor suite is nineteen or twenty-one
-// products; the dialog names each one and scrolls when they do not all fit.
+// The list is the part that matters. "to every FabFilter plugin" leaves the size
+// of the change unstated and says nothing about WHICH plugins a half-applied fix
+// will reach, which is the whole question a partial row raises. So the dialog
+// names the plugins each fix will be written to, and counts the ones covered by
+// a suite-wide fix instead of listing them.
 func (m model) fixApplyConfirm(toApply, toRemove []string) tuikit.Confirm {
+	plan := m.fixChangePlan(toApply, toRemove)
+	// Count DISTINCT FIXES and DISTINCT PLUGINS. Counting the plan's rows gave
+	// "apply 2 fix changes" for a single fix applied to two plugins, which is
+	// the kind of sentence that makes a person stop reading the rest.
+	writes, strips := fixKindsIn(plan, false), fixKindsIn(plan, true)
+	plugins := map[string]bool{}
+	for _, ch := range plan {
+		plugins[ch.Label] = true
+	}
+
 	var msg string
-	applyLabel, removeLabel := "apply", "remove"
-	if len(toApply) == 1 {
-		applyLabel = "apply 1 fix"
-	} else if len(toApply) > 1 {
-		applyLabel = fmt.Sprintf("apply %d fixes", len(toApply))
+	scope := m.fixScope
+	if m.fixVendor != "" {
+		scope = "the " + m.fixScope + " suite"
 	}
-	if len(toRemove) > 0 {
-		if len(toRemove) == 1 {
-			removeLabel = "remove 1 fix"
-		} else {
-			removeLabel = fmt.Sprintf("remove %d fixes", len(toRemove))
-		}
-	}
-
-	targets := m.fixApplyTargets(toApply)
 	switch {
-	case m.fixVendor != "" && len(toRemove) > 0:
-		msg = fmt.Sprintf("This will %s to the %s suite (%s) and %s from the plugin you picked.",
-			applyLabel, m.fixScope, m.countWord(len(targets)), removeLabel)
-	case m.fixVendor != "":
-		msg = fmt.Sprintf("This will %s to %s of the %s suite. The files are rewritten in place.",
-			applyLabel, m.countWord(len(targets)), m.fixScope)
+	case writes > 0 && strips > 0:
+		msg = fmt.Sprintf("This will apply %s to %s of %s,\nand remove %s from %s.",
+			pluralFixes(writes), pluralPlugins(fixPluginsIn(plan, false)), scope,
+			pluralFixes(strips), pluralPlugins(fixPluginsIn(plan, true)))
+	case writes > 0:
+		msg = fmt.Sprintf("This will apply %s to %s of %s.\nFiles are rewritten in place.",
+			pluralFixes(writes), pluralPlugins(fixPluginsIn(plan, false)), scope)
+	case strips > 0:
+		msg = fmt.Sprintf("This will remove %s from %s of %s.",
+			pluralFixes(strips), pluralPlugins(fixPluginsIn(plan, true)), scope)
 	default:
-		what := "1 plugin file"
-		if n := fixTargetCount(m, toApply); n > 1 {
-			what = fmt.Sprintf("%d plugin files", n)
+		msg = "No plugin of " + scope + " carries this fix."
+	}
+	// For a half-applied fix, the plugins that already have it are the reason
+	// the operation is narrow, and saying so is what keeps "these two" from
+	// reading as "the whole suite again".
+	if n := m.fixAlreadyHolding(toApply); n > 0 {
+		// The verb agrees with the count: "1 plugin already carries it".
+		verb := "carry"
+		if n == 1 {
+			verb = "carries"
 		}
-		msg = fmt.Sprintf("This will %s to %s. The file is rewritten in place.", applyLabel, what)
+		msg += fmt.Sprintf("\n\n%s already %s it and will NOT be touched.", pluralPlugins(n), verb)
 	}
 
-	yes := applyLabel
-	if len(toRemove) > 0 && len(toApply) == 0 {
-		yes = removeLabel
+	rows := m.fixChangeNames(plan)
+	if len(rows) == 0 {
+		rows = []string{"no plugin will be touched"}
 	}
 
-	rows := m.fixApplyTargetRows(toApply)
+	yes := "apply"
+	if writes == 0 && strips > 0 {
+		yes = "remove"
+	}
 	// Leave room for the question, the buttons, the frame and the scroll hint.
-	// The modal is unsized, so the budget comes from the same content box the
-	// lists use rather than from the raw terminal height.
 	_, ch := m.contentSize()
 	maxRows := ch - 14
 	if maxRows < 3 {
 		maxRows = 3
 	}
-	title := fmt.Sprintf("plugins concerned (%d)", len(rows))
+	title := fmt.Sprintf("what this touches (%d plugin(s))", len(plugins))
 	return tuikit.NewConfirm(msg, "back", yes).SetList(title, rows, maxRows)
-}
-
-// fixApplyTargets is the set of plugin names the pending fixes will reach, in
-// vendor order.
-//
-// It is the union over the checked fixes, and NOT simply the whole selection: a
-// product-specific fix (CrispyTuner's tooltip) reaches that product, and listing
-// the other twenty would overstate the change. A generic fix reaches the whole
-// selection, which is the case worth showing in full.
-func (m model) fixApplyTargets(toApply []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	add := func(n string) {
-		if n == "" || seen[n] {
-			return
-		}
-		seen[n] = true
-		out = append(out, n)
-	}
-	for _, id := range toApply {
-		it, ok := m.fixItemByID(id)
-		if !ok {
-			continue
-		}
-		if m.fixIsProductSpecific(it) {
-			add(it.Plugin)
-			continue
-		}
-		if m.fixVendor != "" {
-			for _, n := range m.fixVendorPlugins {
-				add(n)
-			}
-			continue
-		}
-		add(pluginStemOf(m.fixPlugin))
-	}
-	return out
-}
-
-// fixApplyTargetRows renders the confirmation list: one row per plugin the
-// change reaches, marking the ones a partial fix has not reached yet.
-//
-// A plain list of names would say the same thing for "these twenty-one already
-// carry the fix" and "one of them does, and the other twenty are about to", so
-// the ones being reached for the first time are called out. That difference is
-// the whole reason a partial fix has its own mark on the row above.
-func (m model) fixApplyTargetRows(toApply []string) []string {
-	targets := m.fixApplyTargets(toApply)
-	if len(targets) == 0 {
-		return nil
-	}
-	already := map[string]bool{}
-	for _, id := range toApply {
-		for _, n := range m.fixAppliedBy[id] {
-			already[n] = true
-		}
-	}
-	rows := make([]string, 0, len(targets))
-	for _, n := range targets {
-		if already[n] {
-			rows = append(rows, fmt.Sprintf("• %s  (already applied)", n))
-			continue
-		}
-		rows = append(rows, "• "+n)
-	}
-	return rows
 }
 
 // fixTargetCount is the number of FILES a single-plugin visit will rewrite: one
@@ -1792,15 +2069,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.loading = true
-			toApply, toRemove := m.fixPendingApply, m.fixPendingRemove
-			// A vendor-wide run: the fixes go to every plugin of the folder,
-			// which is the whole point of asking about the suite. Removal stays
-			// per-plugin — there is no safe way to un-apply a fix from a vendor
-			// the user did not ask to touch.
-			if m.fixVendor != "" && len(toApply) > 0 {
-				return m, syncVendorFixesCmd(m.fixVendor, toApply)
-			}
-			return m, syncFixesCmd(m.fixPlugin, toApply, toRemove)
+			return m, m.runFixPlan(m.fixPendingApply, m.fixPendingRemove)
 		}
 		var cmd tea.Cmd
 		m.confirm, cmd = m.confirm.Update(msg)

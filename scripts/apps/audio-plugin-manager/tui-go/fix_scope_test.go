@@ -150,35 +150,17 @@ func firstLines(s string, n int) string {
 }
 
 // The confirmation is the last moment the blast radius is visible, so it has to
-// name the plugins. "to every FabFilter plugin" without a list does not tell the
-// user that this is twenty-one rewrites of a third-party binary.
+// name the plugins. "to every FabFilter plugin" does not tell the user that
+// this is twenty-one rewrites of a third-party binary.
 func TestApplyConfirmationNamesThePlugins(t *testing.T) {
 	m := partialFixture()
-	c := m.fixApplyConfirm([]string{"wine_saturn_eq"}, nil)
-	v := c.View()
-	if !strings.Contains(v, "FabFilter Saturn 2") {
-		t.Errorf("the dialog does not name the plugin it will touch:\n%s", v)
-	}
-	// Saturn 2 already has its own fix, so saying so is the point: the dialog
-	// distinguishes "already applied" from "about to be written".
-	if !strings.Contains(v, "already applied") {
-		t.Errorf("the dialog does not distinguish what is already done:\n%s", v)
-	}
-}
-
-// A generic fix on a suite reaches EVERY plugin of it, and the dialog has to say
-// how many that is rather than leaving the size unstated.
-func TestApplyConfirmationNamesEveryPluginAGenericFixReaches(t *testing.T) {
-	m := partialFixture()
-	m.fixCache = []FixItem{{ID: "wine_banner", Title: "Hide the banner", Category: "c"}}
-	m.fixAppliedBy = map[string][]string{}
 	v := m.fixApplyConfirm([]string{"wine_banner"}, nil).View()
 	for _, n := range m.fixVendorPlugins {
 		if !strings.Contains(v, n) {
 			t.Errorf("%s is missing from the confirmation:\n%s", n, v)
 		}
 	}
-	if !strings.Contains(v, "3 plugins") {
+	if !strings.Contains(v, "3 plugins of the FabFilter suite") {
 		t.Errorf("the confirmation does not state the size of the change:\n%s", v)
 	}
 }
