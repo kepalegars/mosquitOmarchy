@@ -987,3 +987,150 @@ func TestRemoveAIRowHasNoSubLine(t *testing.T) {
 		}
 	}
 }
+
+// withMenuEntries seeds the Menu entries blocks so the tree has children under
+// that folder, the way a loaded backend result would.
+func (m model) withMenuEntries() model {
+	m.menuEntries = []MenuEntryRec{
+		{Name: "mega-caffeine", Label: "Mega caffeine", Present: true},
+		{Name: "live-mode", Label: "Live mode", Present: true},
+	}
+	m.menuEntryChecked = map[string]bool{"mega-caffeine": true, "live-mode": false}
+	m.menuEntryOrig = map[string]bool{"mega-caffeine": true, "live-mode": false}
+	m.menuEntriesLoaded = true
+	return m
+}
+
+func indexOfValue(p navPicker, v string) int {
+	for i, it := range p.items {
+		if it.Value == v {
+			return i
+		}
+	}
+	return -1
+}
+
+// The Menu entries children used to be built with the bare entry name, so the
+// row came out as "item:mega-caffeine" while every other child is
+// "item:<folder>:<key>". visibleSetupRows works out a leaf's owning folder from
+// its value, found a folder called "mega-caffeine" that is never open, and
+// dropped the row. The fold state was being set correctly the whole time, so
+// pressing → on "Menu entries" looked like it did nothing at all.
+func TestRightArrowExpandsMenuEntries(t *testing.T) {
+	m := flatSetup().withMenuEntries()
+	m.setupPicker = m.rebuildSetup()
+
+	row := tuikit.TreeValue(tuikit.TreeFolderPrefix, menuEntriesFolder)
+	idx := indexOfValue(m.setupPicker, row)
+	if idx < 0 {
+		t.Fatal("the Menu entries folder row is missing from Setup")
+	}
+	m.setupPicker = m.setupPicker.SelectIndex(idx)
+
+	// Folded by default: a corner of Setup rather than the page's subject.
+	if m.setupPicker.Items()[idx].Fold == tuikit.FoldExpanded {
+		t.Fatal("Menu entries should start folded")
+	}
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyRight})
+
+	if !m.folderOpen[menuEntriesFolder] {
+		t.Fatal("→ did not record the folder as open")
+	}
+	// The real assertion: the children have to REACH THE SCREEN, not just the
+	// fold map. This is what the broken shape failed at.
+	for _, name := range []string{"mega-caffeine", "live-mode"} {
+		want := tuikit.TreeValue(tuikit.TreeItemPrefix, menuEntriesFolder+":"+name)
+		if indexOfValue(m.setupPicker, want) < 0 {
+			t.Errorf("child %q missing after expanding: the leaf value is not folder-qualified", want)
+		}
+	}
+
+	// And → then ← puts it back.
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyLeft})
+	if m.folderOpen[menuEntriesFolder] {
+		t.Error("← did not fold Menu entries back")
+	}
+	if indexOfValue(m.setupPicker, tuikit.TreeValue(tuikit.TreeItemPrefix, menuEntriesFolder+":live-mode")) >= 0 {
+		t.Error("children still on screen after folding")
+	}
+}
+
+// Enter on the Menu entries row has to open the entries screen. The check
+// compared against a bare "menu-entries", but the row is a tree folder and
+// carries "cat:menu-entries", so the value could never match — and the generic
+// "Enter on a folder does nothing" guard above it swallowed the row first. The
+// row took focus and did nothing: the menu blocks could not be deployed from
+// Setup at all.
+func TestEnterOnMenuEntriesOpensTheScreen(t *testing.T) {
+	m := flatSetup().withMenuEntries()
+	m.setupPicker = m.rebuildSetup()
+	idx := indexOfValue(m.setupPicker, tuikit.TreeValue(tuikit.TreeFolderPrefix, menuEntriesFolder))
+	if idx < 0 {
+		t.Fatal("the Menu entries folder row is missing from Setup")
+	}
+	m.setupPicker = m.setupPicker.SelectIndex(idx)
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.top() != scrMenuEntries {
+		t.Fatalf("Enter on Menu entries went to screen %d, want scrMenuEntries(%d)", m.top(), scrMenuEntries)
+	}
+}
+
+// "i" is the same action as Enter, on every row. It used to be wired to the
+// info popup with branches for a category and for Menu entries, and a module
+// row fell straight through to the picker — so the one key that was supposed
+// to install something did nothing on the thing you install, while looking
+// like it worked on the rows it never mattered for.
+func TestInstallKeyActsOnAModuleRow(t *testing.T) {
+	m := flatSetup()
+	m.setupPicker = m.rebuildSetup()
+	idx := indexOfValue(m.setupPicker, setupValue("apps", "reaper"))
+	if idx < 0 {
+		t.Fatal("reaper row not found")
+	}
+	m.setupPicker = m.setupPicker.SelectIndex(idx)
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+
+	if m.top() != scrConfirm {
+		t.Fatalf("i on a module row did not ask for confirmation (top=%d)", m.top())
+	}
+	if m.pendingAction != "apply" {
+		t.Fatalf("pendingAction = %q, want apply", m.pendingAction)
+	}
+	if len(m.pendingArgs) != 1 || m.pendingArgs[0] != "apps\treaper" {
+		t.Fatalf("pendingArgs = %q, want [apps\\treaper]", m.pendingArgs)
+	}
+}
+
+// ...and in the Uninstall tree it removes that module, through the preinstalls
+// step like Enter does.
+func TestUninstallKeyActsOnAModuleRow(t *testing.T) {
+	m := flatSetup()
+	m.treeMode = "uninstall"
+	m.setupPicker = m.rebuildSetup()
+	idx := indexOfValue(m.setupPicker, setupValue("mosquito", "live-mode"))
+	if idx < 0 {
+		t.Fatal("live-mode row not found")
+	}
+	m.setupPicker = m.setupPicker.SelectIndex(idx)
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+
+	if m.top() != scrPreinstalls {
+		t.Fatalf("i in the uninstall tree went to screen %d, want the preinstalls step(%d)", m.top(), scrPreinstalls)
+	}
+	if len(m.uninstallWait) != 1 || m.uninstallWait[0] != "live-mode" {
+		t.Fatalf("uninstallWait = %q, want [live-mode]", m.uninstallWait)
+	}
+}
+
+// The shortcut has to be advertised: "i" was in no legend anywhere, which is
+// the other half of "I can't seem to deploy menu entries".
+func TestSetupLegendAdvertisesTheInstallKey(t *testing.T) {
+	m := flatSetup()
+	out := m.View()
+	for _, want := range []string{"install selection", "info"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Setup legend does not mention %q:\n%s", want, out)
+		}
+	}
+}

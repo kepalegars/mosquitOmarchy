@@ -1085,13 +1085,29 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				}
 			}
 		}
+		// "i" IS Enter. It used to be wired to the info popup here, and the
+		// popup was the ONLY thing it did: the handler below had a branch for a
+		// category row and one for "menu-entries", and a plain module row fell
+		// straight through to the picker — so `i` did nothing at all on the
+		// thing you actually install. The legend never mentioned it either.
+		//
+		// Rather than re-implement the action a second time (and have the two
+		// copies drift, which is how the module case went missing in the first
+		// place), `i` re-dispatches the very message Enter produces for the row
+		// under the cursor. It therefore behaves identically on every row this
+		// page has — module, category, Menu entries, Update, Back.
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
-			if v := m.setupPicker.SelectedValue(); strings.HasPrefix(v, "cat:") {
-				m.info = tuikit.NewInfo(m.categoryInfo(strings.TrimPrefix(v, "cat:"))).SetSize(m.contentSize())
-				m.push(scrInfo)
-				return m, nil
-			}
-			if m.setupPicker.SelectedValue() == "menu-entries" {
+			return m.update(tuikit.PickerResultMsg{Value: m.setupPicker.SelectedValue()})
+		}
+		// The info popup moved here to make room. "?" is free in this TUI and
+		// is what a key that opens a description is expected to be.
+		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "?" {
+			v := m.setupPicker.SelectedValue()
+			// Menu entries FIRST: it is a cat: row, but its description is not
+			// built from setupItems (it has none), so the generic branch below
+			// would answer "Nothing to do here right now" about a folder that
+			// plainly has something in it.
+			if v == tuikit.TreeValue(tuikit.TreeFolderPrefix, menuEntriesFolder) {
 				m.info = tuikit.NewInfo(
 					"Menu entries — every marked block mosquito installs into the\n" +
 						"Omarchy menu (mega caffeine, live mode, mosquito Move Manager,\n" +
@@ -1102,6 +1118,22 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 						"actually changed are applied.").SetSize(m.contentSize())
 				m.push(scrInfo)
 				return m, nil
+			}
+			if strings.HasPrefix(v, "cat:") {
+				m.info = tuikit.NewInfo(m.categoryInfo(strings.TrimPrefix(v, "cat:"))).SetSize(m.contentSize())
+				m.push(scrInfo)
+				return m, nil
+			}
+			if strings.HasPrefix(v, "item:") {
+				if it, ok := m.setupByValue[v]; ok {
+					txt := it.Label
+					if it.Info != "" {
+						txt += "\n\n" + it.Info
+					}
+					m.info = tuikit.NewInfo(txt).SetSize(m.contentSize())
+					m.push(scrInfo)
+					return m, nil
+				}
 			}
 		}
 		m.setupPicker, cmd = m.setupPicker.Update(msg)
@@ -1511,6 +1543,22 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		// meant the key meant two different things depending on what it landed
 		// on. Enter is reserved for the one thing only a user can ask for:
 		// install (or uninstall) the module under the cursor.
+		// "Menu entries" is a folder row too, but Enter on it opens the
+		// entries screen. It has to be recognised BEFORE the generic
+		// folder early-return below, which swallowed `cat:menu-entries`
+		// whole: the row took focus, the arrows set the fold state, and
+		// nothing ever happened on Enter — so the menu blocks could not be
+		// deployed from Setup at all. The value here is the TREE value
+		// ("cat:menu-entries"), not the bare folder id the old check
+		// compared against, which is why it never matched.
+		if res.Value == tuikit.TreeValue(tuikit.TreeFolderPrefix, menuEntriesFolder) {
+			m.push(scrMenuEntries)
+			m.menuEntryChecked = map[string]bool{}
+			m.menuEntryOrig = map[string]bool{}
+			m.menuEntries = nil
+			m.menuEntriesLoaded = false
+			return m, fetchMenuEntriesCmd()
+		}
 		if strings.HasPrefix(res.Value, tuikit.TreeFolderPrefix) {
 			return m, nil
 		}
@@ -1541,21 +1589,6 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 				m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
 				return m, nil
 			}
-		}
-		if res.Value == "menu-entries" {
-			// "Menu entries" is a level-1 Setup row but NOT a category
-			// folder, so it needs its own branch here. Without it the value
-			// fell through to the category path below, folderOfValue() returned
-			// "" and Setup opened an empty category screen instead: the screen
-			// looked broken because the menu-entries screen was never pushed.
-			// (The branch used to live in the ConfirmResultMsg switch, where
-			// nothing could ever reach it.)
-			m.push(scrMenuEntries)
-			m.menuEntryChecked = map[string]bool{}
-			m.menuEntryOrig = map[string]bool{}
-			m.menuEntries = nil
-			m.menuEntriesLoaded = false
-			return m, fetchMenuEntriesCmd()
 		}
 		m.filterText = ""
 		m.setupCat = folderOfValue(res.Value)
@@ -2201,6 +2234,8 @@ func (m model) rebuildSetup() navPicker {
 		SetContentWidth(pinned).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "select")),
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", enterHelp)),
+			key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "info")),
 			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "open")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "close")),
@@ -2398,7 +2433,15 @@ func (m model) buildSetupRows(uninstall bool, open map[string]bool, idx map[stri
 		meChildren := make([]tuikit.TreeItem, 0, len(m.menuEntries))
 		for _, e := range m.menuEntries {
 			meChildren = append(meChildren, tuikit.TreeItem{
-				ID:      e.Name,
+				// Folder-qualified, exactly like every module row
+				// ("item:apps:reaper"). It used to be the bare entry name, so
+				// the child came out as "item:mega": visibleSetupRows resolves
+				// a leaf's owner folder from the value, found a folder called
+				// "mega" that is never open, and threw the row away. The fold
+				// state was being set correctly the whole time — the children
+				// were simply filtered out on the way to the screen, so pressing
+				// → on "Menu entries" appeared to do nothing.
+				ID:      menuEntriesFolder + ":" + e.Name,
 				Label:   e.Label,
 				Checked: m.menuEntryChecked[e.Name],
 			})

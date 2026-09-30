@@ -370,9 +370,12 @@ func TestCategoryInfoKey(t *testing.T) {
 	m := build()
 	m.nav = []screen{scrMain, scrSetup}
 	m.setupPicker = m.rebuildSetup().SelectIndex(0)
-	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	// "i" is Enter now, so the info popup moved to "?". It used to be "i", and
+	// "i" on a category row is where the binding looked like it worked — which
+	// is exactly why nobody noticed it did nothing on a module row.
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
 	if m.top() != scrInfo {
-		t.Fatalf("i on a top-level category did not open info (top=%d)", m.top())
+		t.Fatalf("? on a top-level category did not open info (top=%d)", m.top())
 	}
 	txt := m.info.View()
 	for _, want := range []string{"Apps", "2 items", "REAPER + Wayland integration", "video transcoder"} {
@@ -476,7 +479,13 @@ func TestMenuEntriesReachableFromSetup(t *testing.T) {
 	m.nav = []screen{scrMain, scrSetup}
 	m.w, m.h = 120, 40
 
-	m, cmd := m.update(tuikit.PickerResultMsg{Value: "menu-entries"})
+	// The tree value, i.e. what the row under the cursor actually carries. The
+	// old "menu-entries" (no cat: prefix) never matched anything: the folder
+	// row is built as cat:<id>, so Enter on it fell into the generic
+	// "a folder row does nothing" guard and the screen was never pushed. That
+	// is the bug this test now guards — it passed for years against a value
+	// no row could produce.
+	m, cmd := m.update(tuikit.PickerResultMsg{Value: tuikit.TreeValue(tuikit.TreeFolderPrefix, menuEntriesFolder)})
 	if m.top() != scrMenuEntries {
 		t.Fatalf("top = %d, want scrMenuEntries(%d)", m.top(), scrMenuEntries)
 	}
@@ -684,7 +693,7 @@ func TestMenuEntriesRespondsToKeys(t *testing.T) {
 	m := initialModel()
 	m.nav = []screen{scrMain, scrSetup}
 	m.w, m.h = 120, 40
-	m, _ = m.update(tuikit.PickerResultMsg{Value: "menu-entries"})
+	m, _ = m.update(tuikit.PickerResultMsg{Value: tuikit.TreeValue(tuikit.TreeFolderPrefix, menuEntriesFolder)})
 	m, _ = m.update(menuEntriesMsg{rows: []MenuEntryRec{
 		{Name: "mosquitomarchy", Present: true, Label: "mosquitOmarchy"},
 		{Name: "live-mode", Present: true, Label: "Live Mode Manager"},
