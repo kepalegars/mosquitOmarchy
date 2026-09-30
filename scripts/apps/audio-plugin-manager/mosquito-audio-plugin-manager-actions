@@ -334,43 +334,65 @@ PYWIZARD
     # "variants" is every installed file of that plugin (semicolon-separated
     # "vst:<type>:<path>"), so the Go side can hide, show or uninstall all of
     # them from the single row.
+    #
+    # The whole list is printed by ONE jq.
+    #
+    # It used to be one jq PER ROW, so drawing the plugin list meant spawning a
+    # JSON printer once per plugin — 27 spawns for 27 rows, and start-up cost
+    # dwarfing the work. The rows are now tagged with their kind and handed to a
+    # single filter, which emits them in the same order: plugins first, then one
+    # folder per vendor.
     _apm_g="${TMPDIR:-/tmp}/apm-groups.$$"
     _apm_v="${TMPDIR:-/tmp}/apm-vals.$$"
     plugin_group_rows > "$_apm_g"
     cut -f6 < "$_apm_g" > "$_apm_v"
     _wpm_cache_populate "$_apm_v"
 
-    while IFS=$'\t' read -r sortkey label grp formats enabled value variants key; do
-      [[ -n $value ]] || continue
-      # Parent is the VENDOR row value, and it has to match the folder rows this
-      # same action emits further down ("vendor:<name>"). It used to be the wine
-      # program folder ("win:/…/FabFilter") which that set never contains, so
-      # every plugin came out parentless: the vendor row showed a 0/N count and
-      # expanding it revealed nothing.
-      parent="vendor:$grp"
-      # The wine install folder is still worth knowing — it is what makes a
-      # vendor row removable in one shot — so it travels in its own field.
-      wine_parent="$(_wpm_parent_of "$value")"
-      jq -nc \
-        --arg display "$label" \
-        --arg value "$value" \
-        --arg vendor "$grp" \
-        --arg formats "$formats" \
-        --argjson enabled "$enabled" \
-        --arg variants "$variants" \
-        --arg parent "$parent" \
-        --arg wineParent "$wine_parent" \
-        '{display:$display, value:$value, kind:"plugin", vendor:$vendor, formats:$formats, enabled:$enabled, variants:$variants, parent:$parent, wineParent:$wineParent}'
-    done < "$_apm_g"
-
-    # One folder row per vendor, the tree's top level.
-    awk -F'\t' '{print $3}' "$_apm_g" | sort -u | while IFS= read -r grp; do
-      [[ -n $grp ]] || continue
-      label="$grp"
-      [[ $grp == native ]] && label="Native"
-      jq -nc --arg display "$label" --arg value "vendor:$grp" \
-        '{display:$display, value:$value, kind:"folder", parent:""}'
-    done
+    # The wine-parent lookup is a per-row shell read over the already-built
+    # cache, so it spawns nothing. It is a plain linear walk, which is fine
+    # because a suite is tens of rows, not thousands.
+    _wpm_parents=()
+    if [[ -s ${_wpm_cache_file:-} ]]; then
+      while IFS=$'\t' read -r _wp_k _wp_v; do
+        [[ -n $_wp_k ]] && _wpm_parents+=("$_wp_k=$_wp_v")
+      done < "$_wpm_cache_file"
+    fi
+    _wpm_parent_lookup() {
+      local want="$1" pair
+      for pair in ${_wpm_parents+"${_wpm_parents[@]}"}; do
+        [[ ${pair%%=*} == "$want" ]] && { printf '%s' "${pair#*=}"; return 0; }
+      done
+      return 0
+    }
+    {
+      # p<tab>label<tab>value<tab>vendor<tab>formats<tab>enabled<tab>variants<tab>wineParent
+      # f<tab>display<tab>vendor:<name>
+      #
+      # Parent is the VENDOR row value and has to match the folder rows emitted
+      # below ("vendor:<name>"). It used to be the wine program folder
+      # ("win:/…/FabFilter"), which that set never contains, so every plugin came
+      # out parentless: the vendor row showed a 0/N count and expanding it
+      # revealed nothing.
+      while IFS=$'\t' read -r _sk _label grp formats enabled value _variants _key; do
+        [[ -n $value ]] || continue
+        printf 'p\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+          "$_label" "$value" "$grp" "$formats" "$enabled" "$_variants" "$(_wpm_parent_lookup "$value")"
+      done < "$_apm_g"
+      # One folder row per vendor, the tree's top level.
+      awk -F'\t' '{print $3}' "$_apm_g" | sort -u | while IFS= read -r grp; do
+        [[ -n $grp ]] || continue
+        printf 'f\t%s\tvendor:%s\n' "$([[ $grp == native ]] && printf Native || printf '%s' "$grp")" "$grp"
+      done
+    } | jq -R -s -c 'split("\n")
+        | map(select(length > 0) | split("\t"))
+        | map(
+            if .[0] == "f" then
+              {display: .[1], value: .[2], kind: "folder", parent: ""}
+            else
+              {display: .[1], value: .[2], kind: "plugin", vendor: .[3],
+               formats: .[4], enabled: (.[5] == "true"), variants: .[6],
+               parent: ("vendor:" + .[3]), wineParent: .[7]}
+            end)[]'
     rm -f "$_apm_g" "$_apm_v"
     ;;
 
@@ -635,10 +657,13 @@ PYWIZARD
     # One JSON line {"plugin": <stem>} per plugin that has at least one fix
     # recorded as applied. The fixes plugin chooser badges those rows in the
     # theme accent; a single cheap call avoids N list-plugin-fixes round trips.
-    while IFS= read -r stem; do
-      [[ -n $stem ]] || continue
-      jq -nc --arg plugin "$stem" '{plugin:$plugin}'
-    done < <(fixes_applied_plugins)
+    #
+    # One jq for the whole set, not one per plugin: a jq process costs about as
+    # much as the work it does, so the per-plugin form spent its budget on
+    # start-up — a suite of twenty-one paid twenty-one spawns, which is where
+    # most of the wait on the plugin list went.
+    fixes_applied_plugins |
+      jq -R -s -c 'split("\n") | map(select(length > 0) | {plugin: .})[]'
     ;;
 
   list-vendor-plugins)
@@ -794,15 +819,31 @@ EOF
     ;;
 
   reconcile-missing)
-    while IFS= read -r k; do
-      [[ -n $k ]] || continue
-      files=()
-      while IFS= read -r f; do [[ -n $f ]] && files+=("$f"); done <<< "$(state_plugin_files "$k")"
-      ((${#files[@]})) || continue
-      there=0
-      for f in "${files[@]}"; do [[ -e $f ]] && there=1 && break; done
-      ((there)) || jq -nc --arg key "$k" --arg label "$(plugin_prefix_label "$k")" '{key:$key,label:$label}'
-    done <<< "$(state_list_keys)"
+    # Same shape as reconcile-orphans: decide in the shell, print with ONE jq.
+    # This also runs on every launch.
+    #
+    # Read straight out of the snapshot arrays. The previous form asked the log
+    # per key through "$(state_bulk_files …)", and a command substitution is a
+    # fork: one per tracked plugin, before the menu appeared. No `local` here
+    # either — the dispatcher is a top-level `case`, not a function, and `local`
+    # there is an error that aborts the whole action.
+    state_bulk_load
+    _apm_rm_miss=()
+    for _apm_rm_k in ${_state_keys_all[@]+"${!_state_keys_all[@]}"}; do
+      _apm_rm_f=""
+      while IFS= read -r _apm_rm_f2; do
+        [[ -n $_apm_rm_f2 && -e $_apm_rm_f2 ]] && { _apm_rm_f=1; break; }
+      done <<< "${_state_files_all[$_apm_rm_k]}"
+      [[ -n $_apm_rm_f ]] || _apm_rm_miss+=("$_apm_rm_k")
+    done
+    for _apm_rm_k in ${_apm_rm_miss[@]+"${_apm_rm_miss[@]}"}; do
+      # The label is the last path segment, which is what plugin_prefix_label
+      # computed — inlined so it costs no fork.
+      printf '%s\t%s\n' "$_apm_rm_k" "${_apm_rm_k##*/}"
+    done |
+      jq -R -s -c 'split("\n")
+        | map(select(length > 0) | split("\t"))
+        | map({key: .[0], label: .[1]})[]'
     ;;
 
   add-missing)
@@ -836,13 +877,23 @@ EOF
     _apm_ro="${TMPDIR:-/tmp}/apm-orphans.$$"
     plugin_group_rows > "$_apm_ro"
     # Field 8 is the canonical plugin_key the state log indexes on.
+    #
+    # One jq for the whole sweep, not one per row — and this action runs on
+    # EVERY launch, so its per-row spawns were paid before the menu even
+    # appeared. The shell loop still decides what is an orphan (it has to ask
+    # the state log, which jq cannot see), it just hands the survivors to a
+    # single filter.
     while IFS=$'\t' read -r sortkey label grp formats enabled value variants key; do
       [[ -n $value ]] || continue
-      state_has "$key" && continue
-      jq -nc --arg display "$label" --arg value "$value" --arg vendor "$grp" \
-        --arg formats "$formats" --arg variants "$variants" \
-        '{display:$display, value:$value, kind:"plugin", vendor:$vendor, formats:$formats, variants:$variants}'
-    done < "$_apm_ro"
+      # state_bulk_has, not state_has: one jq for the whole log instead of one
+      # per plugin. Safe here because this sweep writes nothing.
+      state_bulk_has "$key" && continue
+      printf '%s\t%s\t%s\t%s\t%s\n' "$label" "$value" "$grp" "$formats" "$variants"
+    done < "$_apm_ro" |
+      jq -R -s -c 'split("\n")
+        | map(select(length > 0) | split("\t"))
+        | map({display: .[0], value: .[1], kind: "plugin", vendor: .[2],
+               formats: .[3], variants: .[4]})[]'
     rm -f "$_apm_ro"
     ;;
 

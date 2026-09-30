@@ -293,8 +293,53 @@ fi
 state_compatible() {
   # The log is only valid on the machine that created it.
   [[ -f $STATE_FILE ]] || return 1
-  [[ "$(jq -r .machine "$STATE_FILE" 2>/dev/null)" == "$MACHINE_ID" ]]
+  # One jq, not two: the machine id is read once and kept, because this is
+  # called by every log read and a second spawn per call doubled that cost.
+  _state_machine_id="${_state_machine_id:-$(jq -r .machine "$STATE_FILE" 2>/dev/null)}"
+  [[ $_state_machine_id == "$MACHINE_ID" ]]
 }
+
+# ── Bulk log reads ──────────────────────────────────────────────────────────
+#
+# state_has and state_plugin_files each spawn a jq, which is the right shape for
+# a one-off question and the wrong one for a sweep: reconcile-orphans asked
+# "is this plugin tracked?" once per plugin, so a machine with twenty-three
+# plugins paid twenty-three jq processes before the menu appeared. On a machine
+# with a few hundred it is the entire startup cost.
+#
+# These load the whole log ONCE into shell arrays. They are deliberately NOT
+# wired into state_has: a memo that can go stale is worse than a slow call, and
+# the write paths (state_register_install and friends) change the log
+# mid-sweep. Use them from read-only passes, where nothing can mutate and the
+# snapshot is true by construction.
+declare -gA _state_keys_all=()
+declare -gA _state_files_all=()
+_state_bulk_loaded=
+
+# state_bulk_load snapshots the log's keys and files with two jq calls.
+state_bulk_load() {
+  [[ -n $_state_bulk_loaded ]] && return 0
+  _state_bulk_loaded=1
+  state_compatible || return 0
+  local k f
+  while IFS=$'\t' read -r k f; do
+    [[ -n $k ]] || continue
+    _state_keys_all["$k"]=1
+    _state_files_all["$k"]+="${f}"$'\n'
+  done < <(jq -r '.plugins | to_entries[] | .key as $k | .value.files[]? | [$k, .] | @tsv' \
+             "$STATE_FILE" 2>/dev/null)
+  return 0
+}
+
+# state_bulk_has is the snapshot equivalent of state_has. It answers about the
+# log as it was when state_bulk_load ran, which is what a read-only sweep needs
+# and NOT what a write-then-check pass needs.
+#
+# The FILES are read straight out of _state_files_all by the caller rather than
+# through an accessor: a `files_for "$key"` helper would have to print its
+# result, and a command substitution is a fork — one per tracked plugin, which
+# is the cost this whole mechanism exists to remove.
+state_bulk_has() { state_bulk_load; [[ -n ${_state_keys_all["$1"]:-} ]]; }
 
 state_init() {
   # Ensures the state file exists for THIS machine. If a foreign log is found
@@ -522,7 +567,14 @@ is_native_win_app() {
 # registered, and never counted by the reconciler.
 is_runtime_dep_dll() {
   local low
-  low="$(basename -- "$1" | tr '[:upper:]' '[:lower:]')"
+  # Lowercase with the shell's own ${var,,}, not a `tr` pipe.
+  #
+  # This runs once per file on disk, and the pipe made it one `tr` PROCESS per
+  # plugin: 50 spawns to decide that 50 files are not runtime dependencies,
+  # which is most of the cost of scanning the tree. The expansion is the same
+  # operation with no process at all.
+  low="${1##*/}"
+  low="${low,,}"
   case "$low" in
     sonible_*.dll|*onnx*.dll|*openxr*.dll|*openal32.dll|*msvcp*.dll|*vcruntime*.dll|\
     *vc_redist*.dll|*api-ms-win-*.dll|*ucrtbase.dll|*crashpad*.dll|*libmmd.dll|\
@@ -2314,16 +2366,30 @@ NATIVE_VST3_DIRS_SYSTEM=("/usr/lib/vst3" "/usr/local/lib/vst3")
 # full Turtle parser, just the same substring check most lightweight LV2
 # scanners use.
 is_lv2_plugin_bundle() {
-  local manifest="$1/manifest.ttl"
+  local manifest="$1/manifest.ttl" body
   [[ -f $manifest ]] || return 1
-  grep -qE 'lv2:[A-Za-z]*Plugin' "$manifest" 2>/dev/null
+  # Read the manifest with a builtin redirect and match in the shell, instead of
+  # piping it through grep. This is asked once per .lv2 on the system, so the
+  # grep was one process per plugin before any of the list could be drawn.
+  body="$(<"$manifest")" 2>/dev/null || return 1
+  # Deliberately looser than the grep it replaces: whether a directory is a
+  # plugin must not hinge on catching one particular block spelling. A URI-keyed
+  # manifest always carries "lv2:" somewhere ahead of a "Plugin" class line.
+  [[ $body == *"lv2:"*"Plugin"* ]]
 }
 
 # Is $1 (an entry directly under a ~/.vst3 or /usr/lib/vst3 scan root) a
 # yabridge bridge stub rather than a genuine native plugin? See the
 # disambiguation note above.
 is_yabridge_stub() {
-  local target; target="$(readlink -f "$1" 2>/dev/null || echo "$1")"
+  # Only a SYMLINK can be a yabridge stub, and [[ -L ]] is a builtin test.
+  #
+  # readlink ran for every .vst3 on the system to answer a question that can
+  # only ever be yes for a symlink, so a machine with five hundred real bundles
+  # paid five hundred processes to rule each one out.
+  [[ -L $1 ]] || return 1
+  local target
+  target="$(readlink -f "$1" 2>/dev/null)" || return 1
   [[ $target == *"/.wine"* ]]
 }
 
@@ -3368,8 +3434,19 @@ fixes_state_path_of() {
 fix_plugin_canonical() {
   local p="$1" path stem
   [[ $p == __global__ ]] && { printf '%s\n' "$p"; return 0; }
-  path="$(fixes_state_path_of "$p")"
-  stem="$(basename "$path")"
+  # Inlined, and with ${path##*/} instead of basename.
+  #
+  # This runs once per plugin in the applied-fix list, and the nested "$(…)" plus
+  # the basename process was three forks per plugin — about 130 ms to answer
+  # "which plugins carry a fix" for a suite of twenty. The logic is a handful of
+  # prefix strips and a basename that the shell can do itself.
+  case "$p" in
+    vst:*)    p="${p#vst:}"; p="${p#*:}" ;;
+    native:*) p="${p#native:}" ;;
+    win:*)    p="${p#win:}" ;;
+  esac
+  path="${p%/}"
+  stem="${path##*/}"
   stem="${stem%%.*}"
   [[ -n $stem ]] || stem="$p"
   printf '%s\n' "$stem"
@@ -4214,7 +4291,115 @@ main() {
 #
 # The first format wins as the row's own value so a row is always actionable;
 # Go multiplies it out to every variant when the user acts on it.
+#
+# ── Caching ────────────────────────────────────────────────────────────────
+#
+# Grouping is a pure function of what is on disk, and the plugin list is
+# re-derived every time the page is opened, every reconcile, every adopt. Reading
+# the tree and grouping it again each time is what made the list feel slow on a
+# machine with a few dozen plugins.
+#
+# So the grouped rows are memoised, keyed on a fingerprint of the SCAN INPUTS:
+# every candidate file's path, size and mtime, plus the two hide flags. Any
+# install, removal, rename, hide or show changes one of those and the key
+# changes with it, which is what makes the cache self-invalidating — nothing has
+# to remember to clear it, and a stale entry cannot be read.
+#
+# The sort key is NOT cached: it is derived from PLUGIN_SORT_MODE at read time,
+# so switching the sort with `s` reorders instantly without touching the disk.
 plugin_group_rows() {
+  local f type key grp label sortkey enabled fmt
+  local -A g_label=() g_formats=() g_first=() g_enabled=() g_any=() g_variants=()
+  local -a order=()
+
+  local _apm_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/mosquito-audio-plugin-manager"
+  local _apm_fp _apm_rc _apm_rtmp _apm_rname
+  _apm_fp="$(plugin_scan_fingerprint)"
+  if [[ -n $_apm_fp ]]; then
+    _apm_rc="$_apm_cache_dir/groups-$_apm_fp.tsv"
+    if [[ -s $_apm_rc ]]; then
+      plugin_group_rows_emit "$_apm_rc"
+      return 0
+    fi
+  fi
+
+  local _apm_body="${TMPDIR:-/tmp}/apm-groups-body.$$"
+  plugin_group_rows_build > "$_apm_body"
+  if [[ -n $_apm_fp && -s $_apm_body ]]; then
+    mkdir -p "$_apm_cache_dir" 2>/dev/null || true
+    _apm_rtmp="$_apm_cache_dir/groups-$_apm_fp.tsv.$$"
+    if cp "$_apm_body" "$_apm_rtmp" 2>/dev/null; then
+      mv -f "$_apm_rtmp" "$_apm_rc" 2>/dev/null || rm -f "$_apm_rtmp"
+      # Keep the last few. A stale entry is never READ (the key has to match),
+      # but every install makes a new one, so without this the cache directory
+      # would accumulate one file per plugin change for as long as the machine
+      # lives.
+      #
+      # The current entry is excluded BY NAME, not by mtime: find's -newer is
+      # strict, so a file is never newer than itself, and a mtime-based filter
+      # deletes the very entry that was just written — which silently turns the
+      # cache back into a rescan on every call.
+      _apm_rname="groups-$_apm_fp.tsv"
+      find "$_apm_cache_dir" -maxdepth 1 -name 'groups-*.tsv' \
+        ! -name "$_apm_rname" ! -newer "$_apm_rc" \
+        -exec rm -f {} + 2>/dev/null || true
+    else
+      rm -f "$_apm_rtmp"
+    fi
+  fi
+  plugin_group_rows_emit "$_apm_body"
+  rm -f "$_apm_body"
+  return 0
+}
+
+# plugin_scan_fingerprint is a cheap digest of everything the grouping reads.
+#
+# One find over the same roots the scan uses, asking only for the fields that
+# matter (path, size, mtime), sorted so the order find happened to return does
+# not leak in. It is a fraction of the cost of the scan it stands in for, and
+# the hide flags are mixed in because they change which rows exist.
+#
+# The file EXTENSIONS are not in the key: every path is, and a rename changes
+# the path, so the extension is already covered.
+plugin_scan_fingerprint() {
+  # An ARRAY, not a space-joined string: the plugins root is
+  # "~/Music/Audio Plugins/…", so a single unquoted expansion word-splits it into
+  # "/home/me/Music/Audio" and "Plugins/vst3", find is handed two paths that
+  # exist in neither, and the fingerprint silently becomes a constant — a cache
+  # that never invalidates, which is the worst possible failure for a cache.
+  local -a roots=("$VST_VST2" "$VST_VST3" "$VST_CLAP")
+  local d
+  for d in "${NATIVE_LV2_DIRS_USER[@]}" "${NATIVE_LV2_DIRS_SYSTEM[@]}" \
+           "${NATIVE_CLAP_DIRS_USER[@]}" "${NATIVE_CLAP_DIRS_SYSTEM[@]}" \
+           "${NATIVE_VST3_DIRS_USER[@]}" "${NATIVE_VST3_DIRS_SYSTEM[@]}"; do
+    [[ -n $d ]] && roots+=("$d")
+  done
+  {
+    find "${roots[@]}" -maxdepth 6 \( -type f -o -type l \) -printf '%T@|%s|%p\n' 2>/dev/null
+    printf 'h2=%s h32=%s\n' "${HIDE_VST2:-false}" "${HIDE_32BIT:-false}"
+  } | sort | md5sum | cut -c1-16
+}
+
+# plugin_group_rows_emit turns cached/grouped rows into the public output,
+# prepending the sort key for the CURRENT sort mode. Cached rows hold no sort
+# key, which is what lets one cache serve all three orderings.
+plugin_group_rows_emit() {
+  local src="$1" k
+  while IFS=$'\t' read -r label grp formats enabled value variants key; do
+    [[ -n $key ]] || continue
+    case "$PLUGIN_SORT_MODE" in
+      format) sortkey="$formats" ;;
+      name)   sortkey="$label" ;;
+      *)      sortkey="$grp" ;;
+    esac
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$sortkey" "$label" "$grp" "$formats" "$enabled" "$value" "$variants" "$key"
+  done < "$src"
+}
+
+# plugin_group_rows_build does the actual scan and grouping, and emits the rows
+# WITHOUT a sort key (field 1), ready to be cached and sorted at read time.
+plugin_group_rows_build() {
   local f type key grp label sortkey enabled fmt
   local -A g_label=() g_formats=() g_first=() g_enabled=() g_any=() g_variants=()
   local -a order=()
@@ -4283,18 +4468,15 @@ plugin_group_rows() {
   local k
   for k in "${order[@]}"; do
     grp="${k%/*}"
-    case "$PLUGIN_SORT_MODE" in
-      format) sortkey="${g_formats[$k]}" ;;
-      name)   sortkey="${g_label[$k]}" ;;
-      *)      sortkey="$grp" ;;
-    esac
     # Field 8 is the canonical plugin_key, the same string the state log indexes
     # on. The reconcile screen has to ask "is this plugin tracked?" and it
     # cannot rebuild the key from the display label — "FabFilter Micro" and
     # "FabFilter Micro (Mono)" are different plugins, and the vendor folder is
     # already split out into field 3, so the key is not derivable from the row.
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$sortkey" "${g_label[$k]}" "$grp" "${g_formats[$k]}" "${g_enabled[$k]}" "${g_first[$k]}" "${g_variants[$k]}" "$k"
+    # No sort key here: the cache stores the grouping, and the sort is applied
+    # at read time so `s` reorders without a rescan.
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "${g_label[$k]}" "$grp" "${g_formats[$k]}" "${g_enabled[$k]}" "${g_first[$k]}" "${g_variants[$k]}" "$k"
   done
   return 0
 }
