@@ -38,6 +38,7 @@
 #   battery-status --shell      # key\tvalue per line (panel input format)
 #   battery-status --json       # single JSON object
 #   battery-status --external   # exit 0 when real external power is present
+#   battery-status --fingerprint # short digest of every sysfs input we read
 #
 # Environment:
 #   OMARCHY_POWER_SUPPLY_PATH   sysfs root (default /sys/class/power_supply);
@@ -386,10 +387,54 @@ emit_json() {
     '{percentage:$percentage,state:$state,rate:$rate,capacity:$capacity,time:$time,externalPower:($external=="true"),threshold:{start:$thresholdStart,end:$thresholdEnd}}'
 }
 
+# ---------------------------------------------------------------------------
+# Fingerprint — "has anything I care about changed since last time?"
+#
+# The bar widget used to learn that the charger was plugged or unplugged only
+# by re-running the FULL --shell probe, which the panel does on a timer while
+# it is open and never while it is closed. So with the panel shut the bar icon
+# sat on its last state: plug in a charger and the charging bolt only appeared
+# once you clicked the icon, which opened the panel and ran the probe.
+#
+# This mode is the cheap detector that makes the widget self-refreshing: it
+# digests every sysfs attribute the rest of this script reads, so an unchanged
+# digest PROVES no input changed and the expensive probe can be skipped, and a
+# changed digest means something worth re-reporting happened. It is deliberately
+# a digest of the raw inputs rather than a second copy of the detection logic —
+# two implementations of "is a charger present" would eventually disagree, and
+# the disagreement would show up as an icon that lies.
+#
+# Reads only, spawns nothing: cat + md5sum. Callers poll it often and act on
+# the value changing.
+# ---------------------------------------------------------------------------
+battery_fingerprint() {
+  local bat acc=""
+  bat=$(battery_supply) || { printf 'no-battery\n'; return 0; }
+
+  for f in status capacity power_now current_now voltage_now \
+           energy_full charge_full charge_control_start_threshold \
+           charge_control_end_threshold time_to_empty_now \
+           time_to_full_now; do
+    acc+="$f=$(_attr "$PS_ROOT/$bat/$f");"
+  done
+
+  # Every supply's type/online pair: a Mains or USB source appearing or
+  # flipping is the plug/unplug event this exists to catch.
+  local s
+  for s in "$PS_ROOT"/*; do
+    [[ -d $s ]] || continue
+    acc+="$(basename "$s")/type=$(_attr "$s/type");"
+    acc+="$(basename "$s")/online=$(_attr "$s/online");"
+  done
+
+  printf '%s' "$acc" | md5sum | cut -c1-16
+}
+
 case "${1:-}" in
-  "")        emit_human ;;
-  --shell)   emit_shell ;;
-  --json)    emit_json ;;
-  --external) [[ $(external_power) == true ]] ;;
-  *) echo "Usage: $0 [--shell|--json|--external]" >&2; exit 2 ;;
+  "")           emit_human ;;
+  --shell)      emit_shell ;;
+  --json)       emit_json ;;
+  --external)   [[ $(external_power) == true ]] ;;
+  --fingerprint) battery_fingerprint ;;
+  *) echo "Usage: $0 [--shell|--json|--external|--fingerprint]" >&2; exit 2 ;;
 esac

@@ -19,6 +19,10 @@ Panel {
   property string activeProfile: ""
   property int profileIndex: 0
   property bool cursorActive: false
+  // Last value of `battery-status --fingerprint`. Empty means "not seen yet", so
+  // the very first reading only establishes a baseline and does not count as a
+  // change (there is nothing stale to fix on the first paint).
+  property string lastFingerprint: ""
   readonly property bool showPercentage: setting("showPercentage", false) === true
   // With the percentage shown the button paints a text block wider than an
   // icon, so the open-panel mark takes the painted width instead of the
@@ -421,6 +425,57 @@ Panel {
     // repo and its battery-status-test fixtures.
     command: ["battery-status", "--shell"]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateKeyValue(text, "battery") }
+  }
+
+  // ---- self-refreshing on plug / unplug ---------------------------------
+  // The bar icon is drawn from batteryInfo.state, which only batteryProc
+  // updates — and batteryProc used to run on a timer that exists only while
+  // the panel is OPEN, plus after a profile change. With the panel shut, which
+  // is the normal state for a bar icon, nothing re-probed: plug a charger in
+  // and the charging bolt stayed away until you clicked the icon, because
+  // clicking opened the panel and that timer finally ran.
+  //
+  // battery-status --fingerprint digests every sysfs attribute the probe
+  // reads, so polling it is a cheap "did anything change?" check. Only when
+  // the digest MOVES do we pay for the full probe. Note this is a digest of
+  // the raw inputs, not a second copy of the charger-detection logic: two
+  // implementations of "is a charger present" would eventually disagree, and
+  // the disagreement would render as an icon that lies about charging.
+  Process {
+    id: fingerprintProc
+    command: ["battery-status", "--fingerprint"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.onFingerprint(text.trim())
+    }
+  }
+
+  function onFingerprint(next) {
+    if (!next || next === root.lastFingerprint) return
+    // First reading is just the baseline, not a change.
+    if (root.lastFingerprint === "") {
+      root.lastFingerprint = next
+      return
+    }
+    root.lastFingerprint = next
+    // A plug or an unplug: the icon and every label derived from `discharging`
+    // are stale right now, so re-probe immediately instead of waiting for a
+    // click or for the panel to be opened.
+    root.refresh()
+  }
+
+  Timer {
+    id: fingerprintTimer
+    // 1.2s: fast enough that plugging in a charger lights the bolt before you
+    // have time to look for it, and it is one cat+md5sum per tick (no awk, no
+    // fork of the full probe) so the cost is negligible.
+    interval: 1200
+    running: batteryPresent
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: {
+      if (!fingerprintProc.running) fingerprintProc.running = true
+    }
   }
 
   Process {

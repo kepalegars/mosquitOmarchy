@@ -133,6 +133,47 @@ fixture; add_mains 1
 expect_eq "json vide" "{}" "$(run --json)"
 expect_eq "texte = No battery" "No battery" "$(run)"
 
+# --- fingerprint ---------------------------------------------------------
+# The bar widget polls --fingerprint and only re-runs the full probe when the
+# value changes, which is what makes the charging bolt appear on its own when a
+# charger is plugged or unplugged. These cases prove the digest is stable when
+# nothing changed and moves when the inputs that decide the state move.
+
+echo "== cas 9: fingerprint =="
+fixture; add_battery 47 Discharging 13841000 42000000 0 100 5760; add_mains 0; add_usb 0
+fp_a=$(run --fingerprint)
+fp_b=$(run --fingerprint)
+expect_eq "stable sans changement" "$fp_a" "$fp_b"
+
+# Plugging a real charger: Mains online flips.
+add_mains 1
+fp_c=$(run --fingerprint)
+expect_eq "change quand le chargeur arrive" "differe" "$([[ $fp_a != "$fp_c" ]] && echo differe || echo identique)"
+
+# Unplugging it again must move it back too — the icon has to come off as
+# reliably as it goes on.
+add_mains 0
+fp_d=$(run --fingerprint)
+expect_eq "revient a l'identique apres debranchement" "$fp_a" "$fp_d"
+
+# A USB-C peripheral arriving is an online=1 flip too, and that is precisely
+# the case the fork exists to catch, so the digest MUST move (so the widget
+# re-probes) even though the reported state stays discharging.
+add_usb 1
+fp_e=$(run --fingerprint)
+expect_eq "bouge sur un peripherique USB-C" "differe" "$([[ $fp_a != "$fp_e" ]] && echo differe || echo identique)"
+expect_eq "mais l'etat reste discharging" "discharging" "$(run --json | jq -r .state)"
+
+# The charge itself moving (status + power_now) is a change worth noticing.
+add_battery 47 Charging 18000000 42000000 0 100; add_mains 1
+fp_f=$(run --fingerprint)
+expect_eq "bouge pendant la charge" "differe" "$([[ $fp_c != "$fp_f" ]] && echo differe || echo identique)"
+
+# No battery at all still yields a stable sentinel rather than failing.
+fixture; add_mains 1
+expect_eq "pas de batterie = sentinelle stable" "no-battery" "$(run --fingerprint)"
+
+exit $(( fail > 0 ))
 echo
 printf 'battery-status: %d ok, %d échec(s)\n' "$pass" "$fail"
 (( fail == 0 ))
