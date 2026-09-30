@@ -69,7 +69,7 @@ Every displayed version is the version of the **script** (the installer/module) 
 - in **Status**, next to each module;
 - in the **top-left corner of the first page** of every mosquito TUI (grey, same style as the shortcut hints), e.g. `v1.0.0`.
 
-All scripts are **v1.0.0**, except three still at **v0.1.0**: the DaVinci Resolve setup, HandBrake, and `bootstrap.sh`. The main script — the whole repository — is **v0.1.0** (see the root [`VERSION`](VERSION) file).
+All scripts are **v1.0.0**, except four still at **v0.1.0**: the DaVinci Resolve setup, HandBrake, Keybindings, and `bootstrap.sh` (the list lives in `module_version()` in [`mosquitomarchy-setup.sh`](mosquitomarchy-setup.sh), which is what actually gets displayed). The main script — the whole repository — is **v0.1.0** (see the root [`VERSION`](VERSION) file).
 
 ## Structure
 
