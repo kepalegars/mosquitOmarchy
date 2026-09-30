@@ -61,6 +61,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.toast.Gen() != before {
 		cmd = tea.Batch(cmd, m.toast.ExpireCmd())
 	}
+	// Flush whatever a branch could not return itself, so a deferCmd() call
+	// survives the early returns of the update() switch.
+	if m.deferred != nil {
+		cmd = tea.Batch(cmd, m.deferred.Cmd)
+		m.deferred = nil
+	}
 	return m, cmd
 }
 
@@ -176,6 +182,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			wasApplyOrUninstall := m.pendingAction == "apply" || m.pendingAction == "uninstall"
 			if wasApplyOrUninstall {
 				m.selected = map[string]bool{}
+				// An apply/uninstall is the one thing that can change the
+				// agentic-stuff answer, so ask again — in the background, as
+				// ever. aiRemovedMsg rebuilds the row when it lands.
+				m.deferCmd(fetchAIRemovedCmd())
 				if m.top() == scrSetupCat {
 					m.setupCatPicker = m.rebuildSetupCat()
 				} else if m.top() == scrSetup {
@@ -267,6 +277,20 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.pendingYes = "Add shortcut"
 			m.push(scrConfirm)
 			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+		}
+		return m, nil
+
+	case aiRemovedMsg:
+		// The answer only changes the greyed-out state of one row, so rebuild
+		// whichever Setup-shaped screen is on top and nothing else.
+		m.aiRemoved, m.aiRemovedKnown = msg.removed, msg.err == nil
+		switch m.top() {
+		case scrSetup:
+			m.setupPicker = m.rebuildSetup()
+		case scrSetupCat:
+			m.setupCatPicker = m.rebuildSetupCat()
+		case scrBackupOptions:
+			m.backupPicker = m.rebuildBackupOptions()
 		}
 		return m, nil
 
@@ -1212,7 +1236,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			if pm.done != "" {
 				m.pop()
 				m.toast, _ = m.toast.SetOK("preinstalls removed")
-				return m, tea.Batch(fetchTreeCmd("uninstall-tree"), blinkCmd())
+				return m, tea.Batch(fetchTreeCmd("uninstall-tree"), blinkCmd(), fetchAIRemovedCmd())
 			}
 			if len(pm.rows) > 0 {
 				m.preinstalls = pm.rows
@@ -1364,7 +1388,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			// Auto-check for updates (mosquitomarchy scripts/repo + changed
 			// apps/tuis/modules) when Setup opens, so its first screen can
 			// advertise them.
-			return m, tea.Batch(fetchTreeCmd("setup"), blinkCmd(), fetchUpdateCheckCmd(), fetchMenuEntriesCmd())
+			return m, tea.Batch(fetchTreeCmd("setup"), blinkCmd(), fetchUpdateCheckCmd(), fetchMenuEntriesCmd(), fetchAIRemovedCmd())
 		case "uninstall":
 			// Same category/folder tree as Setup, but only the INSTALLED
 			// entries, and Enter uninstalls instead of installing.
@@ -1374,7 +1398,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.filterText = ""
 			m.push(scrSetup)
 			m.setupPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).SetSize(m.contentSize())
-			return m, tea.Batch(fetchTreeCmd("uninstall-tree"), blinkCmd())
+			return m, tea.Batch(fetchTreeCmd("uninstall-tree"), blinkCmd(), fetchAIRemovedCmd())
 		case "keybindings":
 			// Its own row in the main menu, next to the other tools, rather
 			// than buried as one more folder inside Setup and Uninstall: the
@@ -2079,7 +2103,7 @@ func (m model) rebuildSetup() navPicker {
 	}
 	idx := m.setupPicker.Index()
 	uninstall := m.treeMode == "uninstall"
-	out := m.setupRows(uninstall, m.folderOpen)
+	out, full := m.setupRows(uninstall)
 
 	// Pin the row-block width to the FULL tree — every folder open — so the
 	// text column is a constant of the screen instead of a function of the
@@ -2087,7 +2111,10 @@ func (m model) rebuildSetup() navPicker {
 	// measuring only the visible rows made opening a folder with long children
 	// ("lame language models") re-center the whole page and shove every other
 	// line sideways. Now folding only ever adds lines; it moves nothing.
-	pinned := tuikit.RowsWidth(m.setupRows(uninstall, allFoldersOpen(m)))
+	//
+	// `full` is built alongside the visible rows rather than in a second pass:
+	// rebuilding the tree to measure it was half the cost of a keystroke.
+	pinned := tuikit.RowsWidth(full)
 
 	enterHelp := "install selection"
 	if uninstall {
@@ -2132,7 +2159,128 @@ func allFoldersOpen(m model) map[string]bool {
 // setupRows builds the Setup/Uninstall rows for an arbitrary fold state. It is
 // split out of rebuildSetup so the width can be measured over the expanded tree
 // (allFoldersOpen) while the visible rows use the real one.
-func (m model) setupRows(uninstall bool, open map[string]bool) []tuikit.PickerItem {
+// setupCategory is one folder's rows plus the two numbers its header needs.
+// Everything Setup asks about a category comes from here, gathered in a single
+// pass over setupItems: the rows to render, the count for the header, and the
+// count of ticked ones (which also decides the accent square).
+type setupCategory struct {
+	rows   []tuikit.TreeItem
+	total  int
+	marked int
+}
+
+// setupIndex groups the backend records by category in ONE pass.
+//
+// It exists because setupRows used to ask setupItemsOf() for the same data
+// three separate times per category — once for the header total, once inside
+// categorySelectedCount() for the ticked count, and once more for the accent
+// mark — and setupRows itself ran twice per rebuild, once to measure the full
+// tree for the pinned width. On the real 46-item tree that is ~50 pointer-full
+// slice allocations per keystroke, and the GC time in between is what the user
+// felt as a cursor that lagged and stuttered.
+func (m model) setupIndex(uninstall bool) map[string]*setupCategory {
+	idx := make(map[string]*setupCategory, len(m.setupFolders)+1)
+	for _, f := range m.setupFolders {
+		if f.Folder == "fixes" {
+			continue // fixes are their own category, not module rows
+		}
+		idx[f.Folder] = &setupCategory{}
+	}
+	for i := range m.setupItems {
+		it := &m.setupItems[i]
+		c := idx[it.Folder]
+		if c == nil {
+			continue
+		}
+		v := setupValue(it.Folder, it.Key)
+		// BuildFolderTree writes the "item:" prefix itself, so the id here
+		// is the value the host will look up — setupValue()'s suffix,
+		// "<folder>:<key>" — with the folder in it so Enter can route a
+		// single-module install back to the right category.
+		row := tuikit.TreeItem{
+			ID:       it.Folder + ":" + it.Key,
+			Label:    it.Label,
+			Checked:  m.selected[v],
+			Info:     it.Info,
+			Disabled: it.Disabled,
+		}
+		// "bring back omarchy's agentic stuff" only makes sense while
+		// something is still missing. This used to be decided in
+		// pickerTreeItems, which the flat Setup page no longer goes
+		// through, so the row stayed tappable and offered a restore that
+		// could change nothing.
+		if it.Key == "remove-ai" && !uninstall && !m.aiRemovalLogged() {
+			row.Disabled = true
+			if row.Info == "" {
+				row.Info = "already there — nothing to bring back"
+			}
+		}
+		if row.Disabled && row.Info == "" {
+			row.Info = "nothing left to do here"
+		}
+		c.rows = append(c.rows, row)
+		c.total++
+		if row.Checked {
+			c.marked++
+		}
+	}
+	return idx
+}
+
+// setupRows returns the Setup page twice: the FULL tree with every folder open,
+// and the visible list for the current fold state.
+//
+// Both used to be independent calls, each building the whole tree from scratch.
+// The full tree is what the pinned width is measured on, and the visible list
+// is what gets rendered — building the full one and filtering it down gives
+// both for the price of one.
+func (m model) setupRows(uninstall bool) (visible, full []tuikit.PickerItem) {
+	idx := m.setupIndex(uninstall)
+	full = m.buildSetupRows(uninstall, allFoldersOpen(m), idx)
+	visible = visibleSetupRows(full, m.folderOpen)
+	return visible, full
+}
+
+// visibleSetupRows folds a fully-open tree down to the current fold state.
+// Filtering is O(rows) and allocation-light, which is why the visible list is
+// derived instead of rebuilt.
+//
+// The folder rows keep their label, counts and accent mark but get their Fold
+// rewritten, because they were built with every folder open. Leaving that stale
+// drew an EXPANDED arrow on a folder whose children had just been filtered out
+// — a folder that looked open and showed nothing.
+func visibleSetupRows(full []tuikit.PickerItem, open map[string]bool) []tuikit.PickerItem {
+	out := make([]tuikit.PickerItem, 0, len(full))
+	for _, r := range full {
+		if r.Folder {
+			_, id, ok := tuikit.TreeSplit(r.Value)
+			if ok {
+				if open[id] {
+					r.Fold = tuikit.FoldExpanded
+				} else {
+					r.Fold = tuikit.FoldCollapsed
+				}
+			}
+			out = append(out, r)
+			continue
+		}
+		_, id, ok := tuikit.TreeSplit(r.Value)
+		if !ok {
+			out = append(out, r) // Update / Back and any other plain row
+			continue
+		}
+		folder := id
+		if i := strings.IndexByte(id, ':'); i >= 0 {
+			folder = id[:i]
+		}
+		if open[folder] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func (m model) buildSetupRows(uninstall bool, open map[string]bool, idx map[string]*setupCategory) []tuikit.PickerItem {
 	out := make([]tuikit.PickerItem, 0, len(m.setupFolders)+8)
 
 	if !uninstall && m.updatePending() {
@@ -2141,42 +2289,9 @@ func (m model) setupRows(uninstall bool, open map[string]bool) []tuikit.PickerIt
 		out = append(out, tuikit.PickerItem{Display: "Update", Value: "updates", TrailingBadge: "■"})
 	}
 
-	// Map the backend's records onto the kit's generic tree, skipping the
-	// quick-fixes folder: fixes are their own category, not module rows.
-	seen := map[string][]tuikit.TreeItem{}
-	for _, f := range m.setupFolders {
-		if f.Folder == "fixes" {
-			continue
-		}
-		for _, it := range m.setupItemsOf(f.Folder) {
-			v := setupValue(f.Folder, it.Key)
-			// BuildFolderTree writes the "item:" prefix itself, so the id here
-			// is the value the host will look up — setupValue()'s suffix,
-			// "<folder>:<key>" — with the folder in it so Enter can route a
-			// single-module install back to the right category.
-			row := tuikit.TreeItem{
-				ID:       f.Folder + ":" + it.Key,
-				Label:    it.Label,
-				Checked:  m.selected[v],
-				Info:     it.Info,
-				Disabled: it.Disabled,
-			}
-			// "bring back omarchy's agentic stuff" only makes sense while
-			// something is still missing. This used to be decided in
-			// pickerTreeItems, which the flat Setup page no longer goes
-			// through, so the row stayed tappable and offered a restore that
-			// could change nothing.
-			if it.Key == "remove-ai" && !uninstall && !aiRemovalLogged() {
-				row.Disabled = true
-				if row.Info == "" {
-					row.Info = "already there — nothing to bring back"
-				}
-			}
-			if row.Disabled && row.Info == "" {
-				row.Info = "nothing left to do here"
-			}
-			seen[f.Folder] = append(seen[f.Folder], row)
-		}
+	seen := make(map[string][]tuikit.TreeItem, len(idx))
+	for f, c := range idx {
+		seen[f] = c.rows
 	}
 
 	// The folders are emitted one at a time above (open state applied per
@@ -2187,11 +2302,12 @@ func (m model) setupRows(uninstall bool, open map[string]bool) []tuikit.PickerIt
 		if f.Folder == "fixes" {
 			continue
 		}
+		c := idx[f.Folder]
 		tf := tuikit.TreeFolder{
 			ID:     f.Folder,
 			Label:  f.Label,
-			Total:  len(m.setupItemsOf(f.Folder)),
-			Marked: m.categorySelectedCount(f.Folder),
+			Total:  c.total,
+			Marked: c.marked,
 			Accent: f.Accent,
 		}
 		if f.Folder == "keybindings" {
@@ -2237,11 +2353,14 @@ func (m model) setupRows(uninstall bool, open map[string]bool) []tuikit.PickerIt
 		}
 		if cat == menuEntriesFolder {
 			// Menu entries are not setup items — they live in their own cache
-			// and are ticked on their own page — so categorySelectedCount()
+			// and are ticked on their own page — so the per-category count
 			// would always report 0 here and the folder would never light up.
 			return m.menuEntriesCheckedCount()
 		}
-		return m.categorySelectedCount(cat)
+		if c := idx[cat]; c != nil {
+			return c.marked
+		}
+		return 0
 	})
 
 	out = append(out, tuikit.PickerItem{Display: "Back", Value: "back"})
@@ -2335,7 +2454,7 @@ func (m model) rebuildSetupCat() navPicker {
 	if m.treeMode == "uninstall" {
 		enterHelp = "uninstall selection"
 	}
-	p := newNavPicker("", pickerTreeItems(folders, items, m.selected, m.folderOpen, m.blinkOn, m.treeMode)).SetSize(m.contentSize()).
+	p := newNavPicker("", pickerTreeItems(folders, items, m.selected, m.folderOpen, m.blinkOn, m.treeMode, m.aiRemovalLogged())).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
@@ -2349,7 +2468,7 @@ func (m model) rebuildSetupCat() navPicker {
 
 // backupTreeItems is the same tree for the backup content selection.
 func (m model) backupTreeItems() []tuikit.PickerItem {
-	return pickerTreeItems(m.backupFolders, m.backupItems, m.backupChecked, m.backupOpen, false, "backup")
+	return pickerTreeItems(m.backupFolders, m.backupItems, m.backupChecked, m.backupOpen, false, "backup", m.aiRemovalLogged())
 }
 
 // pickerTreeItems builds the shared folder/item tree rows: a Fold glyph (drawn in
@@ -2360,21 +2479,46 @@ func (m model) backupTreeItems() []tuikit.PickerItem {
 // aiRemovalDone reports whether a prior remove-ai uninstall marked the state
 // file (a tiny internal log inside ~/.local/state/mosquitomarchy). Setup
 // shows the "bring back..." entry GREYED when nothing was ever removed.
-func aiRemovalLogged() bool {
+// deferredCmd is a one-shot command slot. See model.deferred.
+type deferredCmd struct{ tea.Cmd }
+
+// deferCmd schedules a command to run once the current Update is done, for the
+// branches of update() that already have to return a different command.
+func (m *model) deferCmd(c tea.Cmd) {
+	if c == nil {
+		return
+	}
+	m.deferred = &deferredCmd{Cmd: c}
+}
+
+// aiRemovalLogged is the cached read used while rows are being built. It never
+// forks anything: an answer that has not arrived yet counts as "nothing was
+// removed", which greys the "bring back" row rather than offering a restore
+// that could change nothing.
+func (m model) aiRemovalLogged() bool { return m.aiRemovedKnown && m.aiRemoved }
+
+// queryAIRemoved is the blocking backend call behind the cached answer. Only
+// fetchAIRemovedCmd may call it: see the aiRemoved field on the model for why
+// it must never run while rows are being built.
+// aiRemovedQuery is a seam for the tests: it lets them count the backend calls
+// without spawning a shell. Production code must not assign it.
+var aiRemovedQuery = queryAIRemoved
+
+func queryAIRemoved() (bool, error) {
 	out, err := runQuick("ai-removed")
 	if err != nil {
-		return false
+		return false, err
 	}
 	var v struct {
 		Removed bool `json:"removed"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(out), &v); err != nil {
-		return false
+		return false, err
 	}
-	return v.Removed
+	return v.Removed, nil
 }
 
-func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open map[string]bool, blinkOn bool, mode string) []tuikit.PickerItem {
+func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open map[string]bool, blinkOn bool, mode string, aiRemoved bool) []tuikit.PickerItem {
 	itemsOf := func(folder string) []SetupItemRec {
 		out := make([]SetupItemRec, 0, 8)
 		for _, it := range items {
@@ -2455,7 +2599,7 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 				// precisely when the agentic parts are still present, i.e. when
 				// NO removal was logged -- greying it there made the option
 				// permanently unselectable, which is what it was reported as.
-				if it.Key == "remove-ai" && mode != "uninstall" && !aiRemovalLogged() {
+				if it.Key == "remove-ai" && mode != "uninstall" && !aiRemoved {
 					entry.Disabled = true
 				}
 				out = append(out, entry)

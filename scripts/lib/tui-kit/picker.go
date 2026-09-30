@@ -332,45 +332,19 @@ func (d pickerDelegate) Render(w io.Writer, m list.Model, index int, item list.I
 		d.renderDisabled(w, m, pi)
 		return
 	}
-	d.renderRow(w, m, index, item)
+	d.renderCentered(w, m, index, item)
 }
 
-// fitBlock pads every line of a composed row to d.maxRowW and leaves the block
-// at the LEFT edge of the pane.
-//
-// It deliberately does not center the block. The block's width is the left
-// margin once you center it, which makes the text column a function of the
-// widest row on screen: a folder whose children are long sentences (or a long
-// "(already removed)" reason) pushed the whole page sideways. Centering is
-// also what made the list look "centered" rather than aligned, on every screen
-// at once, because every picker went through the same math.
-//
-// Left edge + a uniform block width is what the rest of the app assumes: every
-// row starts at the same column, and a row's leading indent is the only thing
-// that varies.
-func (d pickerDelegate) fitBlock(row string, width int) string {
-	if d.maxRowW > 0 {
-		style := lipgloss.NewStyle().Width(d.maxRowW).Align(lipgloss.Left)
-		lines := strings.Split(row, "\n")
-		for i, l := range lines {
-			lines[i] = style.Render(l)
-		}
-		row = strings.Join(lines, "\n")
-	}
-	if width > 0 {
-		row = lipgloss.NewStyle().Width(width).Align(lipgloss.Left).Render(row)
-	}
-	return row
-}
-
-// renderRow renders one picker row as one aligned block anchored at the LEFT
-// edge of the list: every row is padded to the same width, so the line's START
-// is the anchor and short and long options read as one column. The selection
-// indicator ("▶ ") sits immediately to the left of the text and moves with it
-// — the whole row (indicator + text) is composed as one line before padding.
-// The DefaultDelegate's left-border highlight is stripped (see titleStyle) so
-// the row doesn't get a stray "│" next to the cursor.
-func (d pickerDelegate) renderRow(w io.Writer, m list.Model, index int, item list.Item) {
+// renderCentered renders one picker row with the text perfectly centered
+// horizontally in the list's full width. The selection indicator ("▶ ")
+// sits immediately to the left of the text and moves with the text — the
+// whole row (indicator + text) is rendered as one line and then centered
+// in the row width, so short and long options read as one aligned column
+// that starts at the same column on every row — the line's START is the
+// anchor, never the center of the option text itself. The
+// DefaultDelegate's left-border highlight is stripped (see titleStyle) so
+// the centered text doesn't get a stray "│" next to the cursor.
+func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, item list.Item) {
 	if m.Width() <= 0 {
 		return
 	}
@@ -441,7 +415,10 @@ func (d pickerDelegate) renderRow(w io.Writer, m list.Model, index int, item lis
 		// keep the sub-line aligned with its title.
 		row += "\n" + "   " + strings.Repeat(" ", d.badgeSlot) + descStyled
 	}
-	fmt.Fprint(w, d.fitBlock(row, m.Width())) //nolint: errcheck
+	if d.maxRowW > 0 {
+		row = lipgloss.NewStyle().Width(d.maxRowW).Align(lipgloss.Left).Render(row)
+	}
+	fmt.Fprint(w, lipgloss.NewStyle().Width(m.Width()).Align(lipgloss.Center).Render(row)) //nolint: errcheck
 }
 
 // titleStyle builds the per-row title style AT RENDER TIME so the colors
@@ -475,7 +452,7 @@ func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem)
 	if textWidth <= 0 {
 		textWidth = 1
 	}
-	// Compose disabled rows EXACTLY like renderRow (same fixed 3-col
+	// Compose disabled rows EXACTLY like renderCentered (same fixed 3-col
 	// indicator slot, same badge slot, same maxRowW padding, same
 	// full-width centering) so a greyed row shares the same visual column
 	// as the enabled ones — the previous width-based centering put disabled
@@ -521,7 +498,10 @@ func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem)
 		desc := ansi.Truncate(pi.Sub, descAvail, "…")
 		row += "\n" + "   " + d.badgeCell(pi) + StyleDisabled.Render(desc)
 	}
-	fmt.Fprint(w, d.fitBlock(row, m.Width())) //nolint: errcheck
+	if d.maxRowW > 0 {
+		row = lipgloss.NewStyle().Width(d.maxRowW).Align(lipgloss.Left).Render(row)
+	}
+	fmt.Fprint(w, lipgloss.NewStyle().Width(m.Width()).Align(lipgloss.Center).Render(row)) //nolint: errcheck
 }
 
 // newPickerDelegate builds a fresh delegate at call time (inside NewPicker,
@@ -535,7 +515,7 @@ func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem)
 // recolors every open picker on the next frame. Both NormalTitle's
 // built-in `Padding(0,0,0,2)` and SelectedTitle's `Padding(0,0,0,1)` are
 // bypassed entirely: the delegate builds styles from scratch instead of
-// inheriting them, so the padding math in renderRow operates on the
+// inheriting them, so the centering math in renderCentered operates on the
 // actual title text only.
 // RowsWidth returns the row-block width a picker of these items would use.
 // A host measures its FULL row set with this — every folder open — and pins
@@ -545,9 +525,13 @@ func RowsWidth(items []PickerItem) int {
 	if len(items) == 0 {
 		return 0
 	}
-	// Exact by construction: this is the very measurement newPicker makes, not
-	// a second formula that could drift from it.
-	return newPicker("", items, Picker{}).rowW
+	// Exact by construction: it is the very same rowMetrics() the renderer
+	// uses, so the width a host pins and the width rows are drawn at cannot
+	// drift apart. It deliberately does NOT build a throwaway list.Model to
+	// read the number back off it — measuring used to cost a whole second
+	// picker construction on every rebuild of every screen.
+	rowW, _, _, _ := rowMetrics(items)
+	return rowW
 }
 
 // SetContentWidth pins the row-block width so folding a folder never reflows
@@ -598,13 +582,14 @@ func NewPicker(header string, items []PickerItem) Picker { return newPicker(head
 
 // newPicker is NewPicker with the pin a SetContentWidth call already recorded,
 // so a pin survives the host's rebuild-then-pin cycle.
-func newPicker(header string, items []PickerItem, p0 Picker) Picker {
-	litems := make([]list.Item, len(items))
-	hasSub := false
-	maxRowW := 0
+
+// rowMetrics is what the delegate needs to lay a picker's rows out on a
+// uniform grid: the block width, the leading badge column and the trailing
+// marker column. It is measured by ONE function so the width a host pins and
+// the width the renderer uses can never drift apart.
+func rowMetrics(items []PickerItem) (maxRowW, badgeSlot, trailSlot int, hasSub bool) {
 	// Reserve one fixed leading slot for badges when any row sets one, so a
 	// badged row and an unbadged row still share the same title column.
-	badgeSlot := 0
 	// The trailing column is reserved UNCONDITIONALLY, on every picker, whether
 	// or not any row currently carries a marker. Reserving it only when a badge
 	// appears is what made a row jump: the row block is centered, so widening
@@ -612,7 +597,7 @@ func newPicker(header string, items []PickerItem, p0 Picker) Picker {
 	// slid left to make room. With the column always present, a marker appears
 	// and disappears without moving a single label, and every screen in the app
 	// lines its markers up in the same place.
-	trailSlot := trailingBadgeGap + 1
+	trailSlot = trailingBadgeGap + 1
 	for _, it := range items {
 		// A folder reserves the leading slot on its own: without this a tree
 		// of pure folders (no ○/● badges anywhere) had badgeSlot == 0, so the
@@ -659,9 +644,17 @@ func newPicker(header string, items []PickerItem, p0 Picker) Picker {
 			}
 		}
 		if w > maxRowW {
-			maxRowW = w
+			if w > maxRowW {
+				maxRowW = w
+			}
 		}
 	}
+	return maxRowW, badgeSlot, trailSlot, hasSub
+}
+
+func newPicker(header string, items []PickerItem, p0 Picker) Picker {
+	litems := make([]list.Item, len(items))
+	maxRowW, badgeSlot, trailSlot, hasSub := rowMetrics(items)
 	delegate := newPickerDelegate(maxRowW, badgeSlot, trailSlot)
 	if !hasSub {
 		delegate.ShowDescription = false
@@ -994,7 +987,7 @@ func (p Picker) View() string {
 	// style is stored on the bubbles model itself and would otherwise
 	// keep the accent captured when NewPicker ran).
 	p.list.Styles.Title = StyleHeader
-	// Each row is left-anchored inside the picker's own width by renderRow
+	// Each row is centered inside the picker's own width by renderCentered
 	// (which pads every row to maxRowW first so widths match and every
 	// line starts at the same column — the anchor is the line's START,
 	// not the center of the option text). bubbles composes those rows

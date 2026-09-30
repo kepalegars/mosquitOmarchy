@@ -535,28 +535,118 @@ func TestCategoryRowsCarryTheAccentSquareWhenSomethingIsTicked(t *testing.T) {
 	}
 }
 
-// Rows must start at a FIXED column, not a column that slides to the middle of
-// the pane. The row block used to be centered, which made its width the left
-// margin, so a list of short names left ~28 blank columns before the first row.
-func TestRowsStartAtTheLeftEdgeNotCentred(t *testing.T) {
+// The visible rows are derived by filtering the fully-open tree, so every
+// folder row arrives already stamped FoldExpanded. It has to be restamped from
+// the real fold state: a closed folder that keeps the expanded marker draws an
+// open arrow over a folder showing no children at all.
+func TestClosedFolderKeepsTheCollapsedMarker(t *testing.T) {
 	m := flatSetup()
-	m.folderOpen = map[string]bool{"apps": true, "mosquito": true}
-	cw, _ := m.contentSize()
-	view := m.rebuildSetup().View()
-	widest := 0
-	for _, l := range strings.Split(view, "\n") {
-		if strings.TrimSpace(ansi.Strip(l)) == "" {
-			continue
+	m.folderOpen = map[string]bool{} // everything closed
+	m.setupPicker = m.rebuildSetup()
+	for _, it := range m.setupPicker.Items() {
+		if it.Folder && it.Fold != tuikit.FoldCollapsed {
+			t.Errorf("closed folder %q drawn as %v, want collapsed", it.Display, it.Fold)
 		}
-		// The cursor slot is 3 columns; anything beyond that on the FIRST row
-		// means the block itself was pushed right.
-		pad := len(ansi.Strip(l)) - len(strings.TrimLeft(ansi.Strip(l), " "))
-		if pad > widest {
-			widest = pad
+		// Only tree children matter here; "Update"/"Back" are plain rows.
+		if _, _, ok := tuikit.TreeSplit(it.Value); ok && !it.Folder {
+			t.Errorf("closed folder leaked the child row %q", it.Display)
 		}
 	}
-	// A centred block left roughly a third of the pane empty (28 of 92).
-	if widest > cw/3 {
-		t.Errorf("first column starts at %d of a %d-wide pane — the block is still centred", widest, cw)
+	// And the converse: opening it really does show the children.
+	m.folderOpen["apps"] = true
+	m.setupPicker = m.rebuildSetup()
+	kids := 0
+	for _, it := range m.setupPicker.Items() {
+		if it.Folder {
+			if it.Display == "Apps" && it.Fold != tuikit.FoldExpanded {
+				t.Errorf("open folder %q drawn as %v, want expanded", it.Display, it.Fold)
+			}
+			continue
+		}
+		if _, _, ok := tuikit.TreeSplit(it.Value); ok {
+			kids++
+		}
+	}
+	if kids == 0 {
+		t.Error("opening the folder showed no children")
+	}
+}
+
+// Building the Setup rows must NEVER talk to the backend. It used to: the
+// "remove-ai" row asked whether omarchy's agentic stuff was still there while
+// the rows were being assembled, and that answer costs ~900ms because the
+// backend shells out to `omarchy plugin list` and `crash-notify`. Since
+// rebuildSetup runs on every blink tick, every tick of a checkbox and every
+// fold, the screen forked a shell that took most of a second and froze solid.
+// The answer is fetched once, in the background, and read from the model.
+func TestSetupRowsNeverForkTheBackend(t *testing.T) {
+	calls := 0
+	orig := aiRemovedQuery
+	aiRemovedQuery = func() (bool, error) { calls++; return false, nil }
+	defer func() { aiRemovedQuery = orig }()
+
+	m := flatSetup()
+	m.setupItems = append(m.setupItems, SetupItemRec{
+		Folder: "apps", Key: "remove-ai", Label: "remove omarchy's agentic stuff",
+	})
+	m.setupByValue[setupValue("apps", "remove-ai")] = m.setupItems[len(m.setupItems)-1]
+	m.setupPicker = m.rebuildSetup()
+
+	if calls != 0 {
+		t.Fatalf("rebuildSetup asked the backend %d time(s) while building rows", calls)
+	}
+	// Neither may the blink, nor a fold, nor a tick of a checkbox.
+	for i := 0; i < 5; i++ {
+		m.blinkOn = !m.blinkOn
+		m.setupPicker = m.rebuildSetup()
+	}
+	m.folderOpen["apps"] = false
+	m.setupPicker = m.rebuildSetup()
+	m.selected[setupValue("apps", "remove-ai")] = true
+	m.setupPicker = m.rebuildSetup()
+	if calls != 0 {
+		t.Errorf("the render path forked the backend %d time(s) after rebuilds", calls)
+	}
+}
+
+// Until the background answer arrives, the "bring back" row stays greyed: there
+// is nothing to bring back until a removal has actually happened.
+func TestRemoveAIRowIsDisabledUntilTheAnswerArrives(t *testing.T) {
+	calls := 0
+	orig := aiRemovedQuery
+	aiRemovedQuery = func() (bool, error) { calls++; return true, nil }
+	defer func() { aiRemovedQuery = orig }()
+
+	m := flatSetup()
+	m.setupItems = append(m.setupItems, SetupItemRec{
+		Folder: "apps", Key: "remove-ai", Label: "bring back omarchy's agentic stuff",
+	})
+	m.setupByValue[setupValue("apps", "remove-ai")] = m.setupItems[len(m.setupItems)-1]
+	m.folderOpen["apps"] = true
+	m.setupPicker = m.rebuildSetup()
+
+	row := func(mod model) tuikit.PickerItem {
+		for _, it := range mod.setupPicker.Items() {
+			if strings.Contains(it.Display, "agentic stuff") {
+				return it
+			}
+		}
+		t.Fatal("the remove-ai row is missing from Setup")
+		return tuikit.PickerItem{}
+	}
+	if !row(m).Disabled {
+		t.Error("row is live before the backend has even been asked")
+	}
+	// The answer says a removal DID happen, so the restore is now selectable.
+	mm, _ := m.Update(fetchAIRemovedCmd()())
+	got := mm.(model)
+	if !got.aiRemovedKnown || !got.aiRemoved {
+		t.Fatalf("the async answer was not stored: known=%v removed=%v", got.aiRemovedKnown, got.aiRemoved)
+	}
+	if calls != 1 {
+		t.Errorf("the fetch ran %d time(s), want exactly 1", calls)
+	}
+	if row(got).Disabled {
+		t.Error("row stayed greyed even though a removal was recorded")
 	}
 }

@@ -306,6 +306,23 @@ type setupMsg struct {
 	err     error
 }
 
+// aiRemovedMsg carries the backend's answer about the agentic stuff, fetched
+// off the render path.
+type aiRemovedMsg struct {
+	removed bool
+	err     error
+}
+
+// fetchAIRemovedCmd asks the backend whether omarchy's agentic stuff is still
+// there. It runs as a tea.Cmd, never inline: the answer costs ~900ms and the
+// Setup rows need it to decide whether one row is greyed out.
+func fetchAIRemovedCmd() tea.Cmd {
+	return func() tea.Msg {
+		removed, err := aiRemovedQuery()
+		return aiRemovedMsg{removed: removed, err: err}
+	}
+}
+
 // fetchTreeCmd loads a Setup-style tree (folders + items) in one backend call.
 // `sub` is "setup" (installable tree) or "uninstall-tree" (installed only); the
 // two share the exact same format, so the same screens render both.

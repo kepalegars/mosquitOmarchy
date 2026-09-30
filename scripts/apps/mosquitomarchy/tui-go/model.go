@@ -104,6 +104,28 @@ type model struct {
 	healthItems []HealthRec
 	blinkOn     bool
 
+	// aiRemoved caches the backend's "is omarchy's agentic stuff gone?" answer
+	// and aiRemovedKnown says whether that answer has arrived yet.
+	//
+	// Answering it costs ~900ms (the backend shells out to `omarchy plugin
+	// list` and `crash-notify`), and the Setup rows used to ask for it while
+	// BUILDING them — so every blink tick, every tick of a checkbox and every
+	// fold forked a shell that took the best part of a second, which froze the
+	// screen solid. It is now fetched once, in the background, next to the rest
+	// of the Setup data, and read from here. Until it arrives, aiRemoval is
+	// false, which greys the "bring back omarchy's agentic stuff" row — the
+	// safe answer, since there is nothing to bring back until a removal has
+	// actually happened.
+	aiRemoved      bool
+	aiRemovedKnown bool
+
+	// deferred holds a command the current update() cannot return directly,
+	// because it sits on a branch that already returns a different one. It is
+	// flushed in Update, so a caller never has to thread the extra cmd through
+	// every early return. It is a pointer slot: update() has a value receiver,
+	// so a plain field would be written to a copy and lost.
+	deferred *deferredCmd
+
 	// Keybindings manager (the old setup-keybindings.sh, now a TUI screen,
 	// reached from the main menu). It is one screen with no flavor: adding and
 	// removing both live here. kbSel PERSISTS across navigation so a global
