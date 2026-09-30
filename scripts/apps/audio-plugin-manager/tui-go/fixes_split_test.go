@@ -27,7 +27,7 @@ func TestFixPickerSplitsPluginSpecificBelow(t *testing.T) {
 		"Cursor": true, "Plugin windows": true, "CrispyTuner": true, "Serum 2": true,
 	}
 
-	rows := fixItemsToPicker(items, checked, checked, expanded)
+	rows := fixItemsToPicker(items, checked, checked, nil, expanded)
 	var displays []string
 	for _, r := range rows {
 		displays = append(displays, r.Display)
@@ -131,7 +131,7 @@ func TestFixPickerNoSpecificNoSection(t *testing.T) {
 		{ID: "cursor_no_warp", Title: "Cursor", Scope: "global", Category: "Cursor"},
 		{ID: "wine_gui_input", Title: "Wine GUI input", Scope: "plugin", Category: "Plugin windows"},
 	}
-	rows := fixItemsToPicker(items, map[string]bool{}, map[string]bool{}, map[string]bool{"Cursor": true, "Plugin windows": true})
+	rows := fixItemsToPicker(items, map[string]bool{}, map[string]bool{}, nil, map[string]bool{"Cursor": true, "Plugin windows": true})
 	for _, r := range rows {
 		if r.Value == fixSeparatorValue || r.Value == fixSpecificTitleValue {
 			t.Errorf("no specific fixes → no separator/title, got %q", r.Display)

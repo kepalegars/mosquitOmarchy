@@ -61,7 +61,7 @@ func markOf(t *testing.T, rows []tuikit.PickerItem, title string) string {
 // one that is on all of them, ○ for one that is on none.
 func TestPartialFixShowsALeftHalfCircle(t *testing.T) {
 	m := partialFixture()
-	rows := fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, map[string]bool{"Plugin windows": true})
+	rows := fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true})
 	if got := markOf(t, rows, "Saturn 2 EQ page"); got != "◐" {
 		t.Errorf("a fix on 1 of 3 plugins shows %q, want ◐", got)
 	}
@@ -80,7 +80,7 @@ func TestTouchingAPartialRowShowsThePlainMark(t *testing.T) {
 	m := partialFixture()
 	// Unticked: the user is about to REMOVE it, which is all-or-nothing here.
 	m.fixChecked = map[string]bool{"wine_gui_input": true, "wine_saturn_eq": false}
-	rows := fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, map[string]bool{"Plugin windows": true})
+	rows := fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true})
 	if got := markOf(t, rows, "Saturn 2 EQ page"); got != "○" {
 		t.Errorf("an unticked partial row shows %q, want ○", got)
 	}
@@ -229,5 +229,73 @@ func TestAcceptingTheApplyRunsTheVendorSync(t *testing.T) {
 	}
 	if got.top() != scrFixChoose {
 		t.Errorf("the dialog is still up (top=%d)", got.top())
+	}
+}
+
+// The info for a fix said "already APPLIED for this plugin" and stopped there,
+// which is exactly wrong on a vendor visit: the fix is not applied "for this
+// plugin", it is applied to SOME of the suite's plugins and not the others.
+func TestFixInfoNamesTheScopeItIsAppliedIn(t *testing.T) {
+	one := model{fixScope: "CrispyTuner", fixAppliedBy: map[string][]string{"f": {"CrispyTuner"}}}
+	if got := one.fixAppliedNote(FixItem{ID: "f", Applied: true}); !strings.Contains(got, "already applied for CrispyTuner") {
+		t.Errorf("a single-plugin visit says %q", got)
+	}
+	if got := one.fixAppliedNote(FixItem{ID: "f"}); !strings.Contains(got, "not applied yet") {
+		t.Errorf("an unapplied single-plugin visit says %q", got)
+	}
+
+	all := []string{"FabFilter One", "FabFilter Pro-Q 4", "FabFilter Saturn 2", "CrispyTuner"}
+	folder := func(with ...string) model {
+		return model{fixVendor: "FabFilter", fixScope: "FabFilter", fixVendorPlugins: all,
+			fixAppliedBy: map[string][]string{"f": with}}
+	}
+	if got := folder().fixAppliedNote(FixItem{ID: "f"}); !strings.Contains(got, "not applied to any of the 4 FabFilter plugins") {
+		t.Errorf("nothing applied says %q", got)
+	}
+	if got := folder(all...).fixAppliedNote(FixItem{ID: "f", Applied: true}); !strings.Contains(got, "already applied to all 4 FabFilter plugins") {
+		t.Errorf("fully applied says %q", got)
+	}
+
+	// Partial: the sentence, plus the MINORITY side named — because the two
+	// lists are complements and the odd one out is the actionable name.
+	got := folder(all[:3]...).fixAppliedNote(FixItem{ID: "f", Applied: true})
+	if !strings.Contains(got, "partially applied — 3 of the 4 FabFilter plugins") {
+		t.Errorf("partial says %q", got)
+	}
+	if !strings.Contains(got, "1 without it") || !strings.Contains(got, "CrispyTuner") {
+		t.Errorf("partial should name the single plugin lacking it, got %q", got)
+	}
+	if strings.Contains(got, "FabFilter One") {
+		t.Errorf("partial should not list the eighteen it already has, got %q", got)
+	}
+
+	// And when it is the OTHER side that is the minority, that is what gets
+	// named — the choice is by length, not by a fixed preference.
+	got2 := folder(all[:1]...).fixAppliedNote(FixItem{ID: "f", Applied: true})
+	if !strings.Contains(got2, "1 with it") || !strings.Contains(got2, "FabFilter One") {
+		t.Errorf("one-of-four should name the one that has it, got %q", got2)
+	}
+}
+
+// A long minority is capped and says so. Nineteen identical-looking plugin
+// names is not an answer; a count plus the odd one out is.
+func TestFixInfoCapsALongList(t *testing.T) {
+	var many []string
+	var plugs []string
+	for i := 0; i < 12; i++ {
+		n := fmt.Sprintf("Suite Product %02d", i)
+		plugs = append(plugs, n)
+		if i < 10 {
+			many = append(many, n)
+		}
+	}
+	m := model{fixVendor: "Suite", fixScope: "Suite", fixVendorPlugins: plugs,
+		fixAppliedBy: map[string][]string{"f": many}}
+	got := m.fixAppliedNote(FixItem{ID: "f", Applied: true})
+	if !strings.Contains(got, "2 without it") {
+		t.Errorf("the minority is the two missing ones, got %q", got)
+	}
+	if strings.Count(got, "Suite Product") > 3 {
+		t.Errorf("the list was not capped: %q", got)
 	}
 }
