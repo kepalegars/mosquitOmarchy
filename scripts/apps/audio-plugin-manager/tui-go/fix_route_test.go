@@ -93,11 +93,11 @@ func TestOverridingAPartialFixAsksFirst(t *testing.T) {
 	if len(got.fixPendingApply) != 1 || got.fixPendingApply[0] != "wine_saturn_eq" {
 		t.Errorf("the pending apply is %v, want the partial fix", got.fixPendingApply)
 	}
-	// The dialog has to say WHICH plugins are about to be written, and that
-	// the other one is not being touched.
+	// The dialog has to say which plugins are about to be written, and that the
+	// one already carrying the fix is left alone.
 	v := got.confirm.View()
-	if !strings.Contains(v, "already applied") {
-		t.Errorf("the dialog does not separate the already-fixed plugin:\n%s", v)
+	if !strings.Contains(v, "will NOT be touched") {
+		t.Errorf("the dialog does not say the already-fixed plugin is left alone:\n%s", v)
 	}
 }
 
@@ -116,18 +116,87 @@ func TestUntouchedPartialRowsAreNotPending(t *testing.T) {
 	}
 }
 
-// Completing a partial fix names the plugins still missing it. Saturn 2 is the
-// only one carrying it, so the dialog has to say the suite is not left alone.
-func TestCompletingAPartialFixNamesTheWholeSuite(t *testing.T) {
+// Completing a partial fix must write ONLY to the plugins that do not have it.
+//
+// This is the whole point. Completing a half-applied fix used to go through the
+// vendor-wide "apply to every plugin of the folder" call, so the two plugins
+// that already carried it were rewritten as well and the row went from ◐ to ●
+// in one step. The user reported exactly that: changing the state of a fix
+// already present in the group overrode the whole group's settings.
+func TestCompletingAPartialFixWritesOnlyToTheMissingPlugins(t *testing.T) {
 	m := partialFixture()
 	c := m.fixApplyConfirm([]string{"wine_saturn_eq"}, nil)
 	v := c.View()
-	for _, n := range m.fixVendorPlugins {
+
+	// Saturn 2 is the one that HAS it, so it must not be in the list of what
+	// will be written.
+	if strings.Contains(v, "will be written") && strings.Contains(v, "FabFilter Saturn 2") {
+		// Only acceptable if the wording makes it an explicit exclusion, which
+		// it does not: the list is what will be touched.
+		t.Errorf("the dialog offers to rewrite the plugin that already has the fix:\n%s", v)
+	}
+	// The two that do NOT have it are the whole point of the operation.
+	for _, n := range []string{"FabFilter One", "FabFilter Pro-Q 4"} {
 		if !strings.Contains(v, n) {
 			t.Errorf("%s is missing from the dialog:\n%s", n, v)
 		}
 	}
-	if !strings.Contains(v, "FabFilter Saturn 2") || !strings.Contains(v, "already applied") {
-		t.Errorf("the dialog does not mark the plugin that already has it:\n%s", v)
+}
+
+// And the execution targets those two, not the suite.
+func TestCompletingAPartialFixAppliesToTheMissingPluginsOnly(t *testing.T) {
+	m := partialFixture()
+	got := m.fixApplyLabels("wine_saturn_eq")
+	want := []string{"FabFilter One", "FabFilter Pro-Q 4"}
+	if len(got) != len(want) {
+		t.Fatalf("apply targets = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("apply targets = %v, want %v", got, want)
+			break
+		}
+	}
+}
+
+// Un-ticking a partial fix strips it from the plugins that DO have it — the
+// other half of the same rule.
+func TestUntickingAPartialFixStripsOnlyTheOnesThatHaveIt(t *testing.T) {
+	m := partialFixture()
+	got := m.fixRemoveLabels("wine_saturn_eq")
+	if len(got) != 1 || got[0] != "FabFilter Saturn 2" {
+		t.Errorf("remove targets = %v, want [FabFilter Saturn 2]", got)
+	}
+}
+
+// A fix that is on NOWHERE in the selection still means "the whole suite", which
+// is the gesture the vendor visit exists for. The targeted path must not have
+// narrowed that.
+func TestAnUnappliedFixStillTargetsTheWholeSuite(t *testing.T) {
+	m := partialFixture()
+	got := m.fixApplyLabels("wine_banner")
+	if len(got) != len(m.fixVendorPlugins) {
+		t.Errorf("an unapplied fix targets %d plugin(s), want the whole suite (%d)", len(got), len(m.fixVendorPlugins))
+	}
+}
+
+// And un-ticking a full fix on a vendor visit has to work at all. It used to
+// fall through to a removal naming no plugin — m.fixPlugin is empty on a vendor
+// visit — and fail with "plugin required".
+func TestUntickingAFullFixOnAVendorVisitHasTargets(t *testing.T) {
+	m := partialFixture()
+	got := m.fixRemoveLabels("wine_gui_input")
+	if len(got) != 3 {
+		t.Errorf("removing a fully-applied fix targets %v, want every plugin that has it", got)
+	}
+}
+
+// The dialog must still name what it is about to touch.
+func TestPartialDialogNamesThePluginsItWillTouch(t *testing.T) {
+	m := partialFixture()
+	c := m.fixApplyConfirm([]string{"wine_saturn_eq"}, nil)
+	v := c.View()
+	if !strings.Contains(v, "plugin") {
+		t.Errorf("the dialog never says how many plugins are involved:\n%s", v)
 	}
 }

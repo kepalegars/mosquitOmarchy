@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,6 +25,27 @@ func actionsBin() string {
 		}
 	}
 	return "mosquito-audio-plugin-manager-actions"
+}
+
+// runQuickStdin is runQuick with something on the action's standard input.
+//
+// Needed for the per-plugin fix verbs: the set of plugins a partial fix reaches
+// is a LIST whose contents the fix's own recorded state decides, and inventing
+// an argument separator between "the fixes" and "the plugins" would be a format
+// to get wrong.
+func runQuickStdin(stdin string, args ...string) ([]byte, error) {
+	cmd := exec.Command(actionsBin(), args...)
+	cmd.Stdin = strings.NewReader(stdin)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		if errb.Len() > 0 {
+			return nil, errAction{msg: errb.String()}
+		}
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
 
 func runQuick(args ...string) ([]byte, error) {
@@ -1103,45 +1123,20 @@ func fetchFixesForVendorCmd(vendor string) tea.Cmd {
 	}
 }
 
-// syncFixesCmd commits only the Tab-marked delta: newly checked fixes are
-// applied, unchecked-and-previously-applied ones are removed. Both bash
-// verbs are idempotent, so a re-run never duplicates the Lua rule blocks.
-func syncFixesCmd(plugin string, toApply, toRemove []string) tea.Cmd {
-	return func() tea.Msg {
-		var parts []string
-		if len(toApply) > 0 {
-			if _, err := runQuick(append([]string{"apply-fixes", plugin}, toApply...)...); err != nil {
-				return actionErrMsg{err: err}
-			}
-			parts = append(parts, fmt.Sprintf("%d applied", len(toApply)))
-		}
-		if len(toRemove) > 0 {
-			if _, err := runQuick(append([]string{"remove-fixes", plugin}, toRemove...)...); err != nil {
-				return actionErrMsg{err: err}
-			}
-			parts = append(parts, fmt.Sprintf("%d removed", len(toRemove)))
-		}
-		return fixesDoneMsg{what: "fixes for " + plugin + ": " + strings.Join(parts, ", ")}
-	}
-}
-
-// syncVendorFixesCmd applies a set of fixes to EVERY plugin of one vendor.
+// The two single-target sync commands that used to live here are gone.
 //
-// The user installs a suite (FabFilter), not one plugin, and wants the fix for
-// the suite. fix_apply() is per-plugin underneath, so this is a loop — but the
-// user should not have to run the dialog nineteen times, and the recorded state
-// and the Hyprland rule are exactly what a single-plugin apply produces.
-func syncVendorFixesCmd(vendor string, fixIDs []string) tea.Cmd {
-	return func() tea.Msg {
-		if len(fixIDs) == 0 {
-			return actionErrMsg{err: errors.New("no fix selected")}
-		}
-		if _, err := runQuick(append([]string{"apply-fixes-vendor", vendor}, fixIDs...)...); err != nil {
-			return actionErrMsg{err: err}
-		}
-		return fixesDoneMsg{what: fmt.Sprintf("%d fix(es) applied to every %s plugin", len(fixIDs), vendor)}
-	}
-}
+// syncFixesCmd committed a delta to ONE plugin, and syncVendorFixesCmd applied
+// it to every plugin of a vendor. Between them they could not express "apply
+// this fix to the two plugins of the suite that do not have it": the only
+// choice on a vendor visit was the whole suite, which rewrote the plugins that
+// were already done and dragged the group's other fixes along with it, or a
+// single-plugin removal that named no plugin at all on a vendor visit and failed
+// with "plugin required".
+//
+// runFixPlan (screens.go) builds the target set from each fix's own recorded
+// state and runs apply-fixes-plugins / remove-fixes-plugins against exactly
+// that, keeping the one-call vendor path for a fix that really does cover the
+// whole selection.
 
 // installFixesCheckMsg carries the fixes catalog fetched right after a
 // successful plugin install, so the model can offer to apply the remaining
