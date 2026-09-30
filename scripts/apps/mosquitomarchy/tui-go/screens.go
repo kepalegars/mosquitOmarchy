@@ -401,6 +401,20 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				// and the first ←/→ then flipped the whole set at once.
 				m.statusPicker = m.rebuildStatus()
 			}
+		case "fixes":
+			// The fetch existed (fetchFixesCmd) and nothing ever handled its
+			// answer, so the catalog was fetched by nobody. The screen rebuilds
+			// only when the list lands, which is why it opens on "loading…".
+			if msg.err != nil {
+				m.toast, _ = m.toast.SetErr("could not read the quick fixes: " + msg.err.Error())
+				m.pop()
+				return m, nil
+			}
+			m.quickFixes = msg.fixes
+			m.quickFixLoaded = true
+			if m.top() == scrQuickFixes {
+				m.quickFixPicker = m.rebuildQuickFixes()
+			}
 		case "backups":
 			if msg.err != nil {
 				m.toast, _ = m.toast.SetErr(msg.err.Error())
@@ -516,6 +530,18 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				}
 				m.kbListPicker = m.rebuildKBList()
 			}
+		case scrQuickFixes:
+			// Same reasoning as scrMenuEntries below: this global switch runs
+			// first and returns unconditionally, so a Tab branch inside the
+			// screen's own case would be dead code and tab/x would do nothing.
+			if m.quickFixChecked == nil {
+				m.quickFixChecked = map[string]bool{}
+			}
+			if _, id, ok := tuikit.TreeSplit(msg.Value); ok {
+				m.quickFixChecked[id] = !m.quickFixChecked[id]
+				m.quickFixPicker = m.rebuildQuickFixes()
+			}
+			return m, nil
 		case scrMenuEntries:
 			// Handled HERE and not in the scrMenuEntries screen case below:
 			// this global switch runs first and returned unconditionally, so
@@ -612,6 +638,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.pop()
 		if msg.Canceled || !msg.Yes {
+			if m.pendingAction == "quick-fixes" {
+				// Declined: nothing runs, and the ticks stay as they were so
+				// the set can be adjusted and applied straight away.
+				return m, nil
+			}
 			if m.pendingAction == "kb-reload-ask" {
 				return m, fetchKbCmd() // declined reload: refresh the list anyway
 			}
@@ -660,6 +691,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, nil
 		}
 		switch m.pendingAction {
+		case "quick-fixes":
+			// One backend call runs the whole marked set through the same
+			// run_fixes() the shell launcher uses, so RESULTS accounting and the
+			// final report are identical whichever way a fix is started.
+			ids := m.pendingFixIDs
+			m.pendingFixIDs = nil
+			return m, quickFixesRunCmd(ids)
 		case "keepassxc-gnomerm":
 			if msg.Yes {
 				m.kpxGnomeRm = 1
@@ -1356,6 +1394,42 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, nil
 		}
 		m.menuEntriesPicker, cmd = m.menuEntriesPicker.Update(msg)
+	case scrQuickFixes:
+		// Enter and Esc arrive as PickerResultMsg and are handled by
+		// screenPicked; catching one here would swallow it, which is the very
+		// bug that made Enter do nothing on the menu entries screen.
+		if _, ok := msg.(tuikit.PickerResultMsg); ok {
+			return m, nil
+		}
+		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
+			// The fix's own long description, same key and same Info screen as
+			// everywhere else. The backend already sends it in the row's `info`.
+			if _, id, ok := tuikit.TreeSplit(m.quickFixPicker.SelectedValue()); ok {
+				txt := id
+				for _, f := range m.quickFixes {
+					if f.Key == id && f.Info != "" {
+						txt = f.Info
+						break
+					}
+				}
+				m.info = tuikit.NewInfo(txt).SetSize(m.contentSize())
+				m.push(scrInfo)
+			}
+			return m, nil
+		}
+		if qf, ok := msg.(quickFixesRunMsg); ok {
+			if qf.err != nil {
+				m.toast, _ = m.toast.SetErr("quick fix failed: " + qf.err.Error())
+				return m, nil
+			}
+			m.toast, _ = m.toast.SetOK(qf.what)
+			// Straight back to the Setup page the folder was opened from, so the
+			// result of the fix is visible on the row it fixed.
+			m.pop()
+			m.setupPicker = m.rebuildSetup()
+			return m, nil
+		}
+		m.quickFixPicker, cmd = m.quickFixPicker.Update(msg)
 	case scrBackupRestore:
 		m.backupPicker, cmd = m.backupPicker.Update(msg)
 	case scrBackupOptions:
@@ -1425,6 +1499,118 @@ func folderOfValue(v string) string {
 }
 
 // screenPicked routes a picker's Enter result.
+// quickFixesFolder is the Setup folder id the backend gives the quick fixes.
+const quickFixesFolder = "fixes"
+
+// isQuickFixKey reports whether a tree key is one of the quick fixes.
+//
+// The list is read from the backend's own catalog rather than hard-coded, so a
+// fix added to FIXES in the setup script is recognised here without touching
+// the TUI — the two lists cannot drift, which is the same reason module_version
+// stopped carrying its own.
+func (m model) isQuickFixKey(key string) bool {
+	for _, f := range m.quickFixes {
+		if f.Key == key {
+			return true
+		}
+	}
+	// Before the catalog lands, the rows on the Setup page are the only
+	// evidence there is; they are already in m.setupItems.
+	for _, it := range m.setupItems {
+		if it.Folder == quickFixesFolder && it.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// openQuickFixes pushes the Quick fixes screen.
+//
+// The folder row used to be the ONLY entry point the shell launcher had, and
+// the TUI dropped it on the floor, so this is the route that makes the ten
+// fixes reachable from Setup at all.
+func (m model) openQuickFixes() (tea.Model, tea.Cmd) {
+	m.push(scrQuickFixes)
+	m.quickFixChecked = map[string]bool{}
+	m.quickFixPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).SetSize(m.contentSize())
+	return m, fetchFixesCmd()
+}
+
+// quickFixesList renders the catalog, grouped by category, the way the shell
+// picker groups it. The rows are ticks, not choices: Tab marks, Enter applies
+// the marked set.
+func (m model) quickFixesList() []tuikit.PickerItem {
+	if len(m.quickFixes) == 0 {
+		return []tuikit.PickerItem{{Display: "no quick fix available", Value: "", Disabled: true}}
+	}
+	var order []string
+	byCat := map[string][]tuikit.TreeItem{}
+	for _, f := range m.quickFixes {
+		cat := f.Cat
+		if cat == "" {
+			cat = "Other"
+		}
+		if _, seen := byCat[cat]; !seen {
+			order = append(order, cat)
+		}
+		byCat[cat] = append(byCat[cat], tuikit.TreeItem{
+			ID:      f.Key,
+			Label:   f.Label,
+			Checked: m.quickFixChecked[f.Key],
+			Info:    f.Info,
+		})
+	}
+	var out []tuikit.PickerItem
+	for _, cat := range order {
+		items := byCat[cat]
+		open := map[string]bool{cat: true}
+		out = append(out, tuikit.BuildFolderTree(
+			[]tuikit.TreeFolder{{ID: cat, Label: cat, Total: len(items), Marked: m.markedFixes(items)}},
+			map[string][]tuikit.TreeItem{cat: items}, open, false)...)
+	}
+	return out
+}
+
+func (m model) markedFixes(items []tuikit.TreeItem) int {
+	n := 0
+	for _, it := range items {
+		if m.quickFixChecked[it.ID] {
+			n++
+		}
+	}
+	return n
+}
+
+// checkedQuickFixes is the marked set, in catalog order so the confirmation
+// reads the same way every time.
+func (m model) checkedQuickFixes() []string {
+	var out []string
+	for _, f := range m.quickFixes {
+		if m.quickFixChecked[f.Key] {
+			out = append(out, f.Key)
+		}
+	}
+	return out
+}
+
+// rebuildQuickFixes re-renders the Quick fixes list under the current ticks.
+func (m model) rebuildQuickFixes() navPicker {
+	idx := map[string]int{}
+	for i, it := range m.quickFixPicker.Items() {
+		if _, id, ok := tuikit.TreeSplit(it.Value); ok {
+			idx[id] = i
+		}
+	}
+	cur := m.quickFixPicker.SelectedValue()
+	return newNavPicker("", m.quickFixesList()).SetSize(m.contentSize()).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "select")),
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply selection")),
+		).
+		KeepCursor(cur)
+}
+
 func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 	if res.Canceled {
 		// Esc at the main menu asks for the same exit confirmation as Close;
@@ -1508,6 +1694,37 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			return m.closeConfirm()
 		}
 
+	case scrQuickFixes:
+		// A leaf row is a TICK, not a choice: pressing Enter on it applies the
+		// whole marked set, which is what the shell picker did and what a batch
+		// of repairs needs. A folder row does nothing (the arrows fold it).
+		if strings.HasPrefix(res.Value, tuikit.TreeFolderPrefix) {
+			return m, nil
+		}
+		if !strings.HasPrefix(res.Value, tuikit.TreeItemPrefix) {
+			return m, nil
+		}
+		ids := m.checkedQuickFixes()
+		if len(ids) == 0 {
+			// Nothing marked: the row under the cursor is the one being asked
+			// about, so Enter is never a dead key.
+			if _, id, ok := tuikit.TreeSplit(res.Value); ok {
+				ids = []string{id}
+			}
+		}
+		if len(ids) == 0 {
+			m.toast, _ = m.toast.SetWarn("no quick fix selected")
+			return m, nil
+		}
+		m.pendingAction = "quick-fixes"
+		m.pendingFixIDs = ids
+		m.pendingMsg = fmt.Sprintf("Apply %d quick fix(es)?\n\n%s", len(ids), strings.Join(ids, "\n"))
+		m.pendingNo = "Cancel"
+		m.pendingYes = "Apply"
+		m.push(scrConfirm)
+		m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+		return m, nil
+
 	case scrSetup:
 		// Level 1: the category options. Entering one opens its folder tree;
 		// the "Menu entry" option runs the menu registration directly.
@@ -1590,6 +1807,21 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.menuEntries = nil
 			m.menuEntriesLoaded = false
 			return m, fetchMenuEntriesCmd()
+		}
+		// "Quick fixes" is a folder row whose Enter opens its own screen, and it
+		// has to be recognised BEFORE the generic folder early-return below,
+		// exactly as "Menu entries" is above: that return swallows every
+		// `cat:` row, so a check placed after it can never match and Enter on
+		// the folder did nothing at all. A quick fix's own row is recognised
+		// for the same reason — it is a repair, not a module, and falling
+		// through would offer to "install" a module that does not exist.
+		if res.Value == tuikit.TreeValue(tuikit.TreeFolderPrefix, quickFixesFolder) {
+			mm, cmd := m.openQuickFixes()
+			return mm.(model), cmd
+		}
+		if _, key := splitSetupValue(res.Value); key != "" && m.isQuickFixKey(key) {
+			mm, cmd := m.openQuickFixes()
+			return mm.(model), cmd
 		}
 		if strings.HasPrefix(res.Value, tuikit.TreeFolderPrefix) {
 			return m, nil
@@ -2375,9 +2607,13 @@ type setupCategory struct {
 func (m model) setupIndex(uninstall bool) map[string]*setupCategory {
 	idx := make(map[string]*setupCategory, len(m.setupFolders)+1)
 	for _, f := range m.setupFolders {
-		if f.Folder == "fixes" {
-			continue // fixes are their own category, not module rows
-		}
+		// The quick fixes used to be skipped here and in buildSetupRows, on the
+		// grounds that they are "their own category, not module rows" — and
+		// nothing ever carried that category into the TUI. The backend has
+		// emitted the `fixes` folder and its ten rows the whole time, so the
+		// Setup page silently dropped them and no quick fix was reachable from
+		// the TUI at all. They are rows like any other; the category exists and
+		// is now shown.
 		idx[f.Folder] = &setupCategory{}
 	}
 	for i := range m.setupItems {
@@ -2495,9 +2731,6 @@ func (m model) buildSetupRows(uninstall bool, open map[string]bool, idx map[stri
 	// BuildFolderTree call: BuildFolderTree needs every folder's children up
 	// front, and open state is per folder.
 	for _, f := range m.setupFolders {
-		if f.Folder == "fixes" {
-			continue
-		}
 		c := idx[f.Folder]
 		tf := tuikit.TreeFolder{
 			ID:     f.Folder,

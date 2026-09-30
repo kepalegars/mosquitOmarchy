@@ -215,6 +215,16 @@ func (m model) View() string {
 		}
 		body = me.View()
 		bar = barLine(me.ShortcutsHint())
+	case scrQuickFixes:
+		title = screenTitle("Quick fixes", w)
+		// The stored picker, like Menu entries above: rebuilding for the draw
+		// would throw away the cursor and the tick marks the user just made.
+		qf := m.quickFixPicker
+		if qf.Len() == 0 {
+			qf = m.rebuildQuickFixes()
+		}
+		body = qf.View()
+		bar = barLine(qf.ShortcutsHint())
 	case scrBackupRestore:
 		title = screenTitle("Restore a backup", w)
 		body = m.backupPicker.View()

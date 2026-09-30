@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -164,6 +165,30 @@ func menuEntriesApplyCmd(name string, restore bool) tea.Cmd {
 	}
 }
 
+// quickFixesRunMsg reports the outcome of a batch of quick fixes.
+type quickFixesRunMsg struct {
+	what string
+	err  error
+}
+
+// quickFixesRunCmd applies the ticked quick fixes in ONE backend call.
+//
+// fixes-run takes the fix ids as arguments and runs them through the very same
+// run_fixes() the shell launcher uses, so a fix applied from the TUI is applied
+// identically to one applied from the CLI — same RESULTS accounting, same
+// failure counting, same final report.
+func quickFixesRunCmd(ids []string) tea.Cmd {
+	return func() tea.Msg {
+		if len(ids) == 0 {
+			return quickFixesRunMsg{err: errors.New("no quick fix selected")}
+		}
+		if _, err := runQuick(append([]string{"fixes-run"}, ids...)...); err != nil {
+			return quickFixesRunMsg{err: err}
+		}
+		return quickFixesRunMsg{what: fmt.Sprintf("%d quick fix(es) applied", len(ids))}
+	}
+}
+
 // PreinstallRec is one Omarchy stock app in the Uninstall ▸ Preinstalls list.
 // Installed&&!protected is what makes it selectable; the rest render greyed.
 type PreinstallRec struct {
@@ -227,6 +252,11 @@ type MenuEntryRec struct {
 type ItemRec struct {
 	Key   string `json:"key"`
 	Label string `json:"label"`
+	// Cat and Info come from the backend's `fixes` rows, which carry the fix's
+	// category and its long description. Every other ItemRec user leaves them
+	// empty, so this is additive.
+	Cat  string `json:"cat"`
+	Info string `json:"info"`
 }
 
 // BackupRec is one dated archive in the backup dir.
