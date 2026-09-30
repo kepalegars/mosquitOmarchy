@@ -140,6 +140,16 @@ func (m *model) enterCmd() tea.Cmd {
 		m.fixCache = nil
 		m.fixChecked = nil
 		m.fixOrig = nil
+		// Cleared with the rest: a stale scope would title the page with the
+		// previous plugin's name before the catalog even lands, and a stale
+		// target list would let the confirmation name plugins that are no
+		// longer in the selection.
+		m.fixScope = ""
+		m.fixVendorPlugins = nil
+		m.fixAppliedBy = nil
+		m.fixCandidate = nil
+		m.fixPendingApply = nil
+		m.fixPendingRemove = nil
 		// Drop any remembered collapse state: every category re-seeds
 		// expanded on entry (see rebuildFixPicker), so the folders are
 		// always visible when the screen opens.
@@ -443,6 +453,154 @@ func (m *model) rebuildUninstallPicker() {
 // kit now resolves "the folder the cursor is IN" (tuikit's foldKey), so the
 // lookup is gone rather than left behind as a trap for the next caller.
 
+// fixApplyConfirm builds the confirmation shown before a fix is written.
+//
+// The wording is about FILES, not about checkboxes, because that is what the
+// action is: "apply to the FabFilter suite" rewrites a third-party binary once
+// per plugin, and the rows it came from are marked in the same ●/○ language as
+// a to-do list.
+//
+// The list is the part that was missing. "to every FabFilter plugin" leaves the
+// size of the change unstated, and a vendor suite is nineteen or twenty-one
+// products; the dialog names each one and scrolls when they do not all fit.
+func (m model) fixApplyConfirm(toApply, toRemove []string) tuikit.Confirm {
+	var msg string
+	applyLabel, removeLabel := "apply", "remove"
+	if len(toApply) == 1 {
+		applyLabel = "apply 1 fix"
+	} else if len(toApply) > 1 {
+		applyLabel = fmt.Sprintf("apply %d fixes", len(toApply))
+	}
+	if len(toRemove) > 0 {
+		if len(toRemove) == 1 {
+			removeLabel = "remove 1 fix"
+		} else {
+			removeLabel = fmt.Sprintf("remove %d fixes", len(toRemove))
+		}
+	}
+
+	targets := m.fixApplyTargets(toApply)
+	switch {
+	case m.fixVendor != "" && len(toRemove) > 0:
+		msg = fmt.Sprintf("This will %s to the %s suite (%s) and %s from the plugin you picked.",
+			applyLabel, m.fixScope, m.countWord(len(targets)), removeLabel)
+	case m.fixVendor != "":
+		msg = fmt.Sprintf("This will %s to %s of the %s suite. The files are rewritten in place.",
+			applyLabel, m.countWord(len(targets)), m.fixScope)
+	default:
+		what := "1 plugin file"
+		if n := fixTargetCount(m, toApply); n > 1 {
+			what = fmt.Sprintf("%d plugin files", n)
+		}
+		msg = fmt.Sprintf("This will %s to %s. The file is rewritten in place.", applyLabel, what)
+	}
+
+	yes := applyLabel
+	if len(toRemove) > 0 && len(toApply) == 0 {
+		yes = removeLabel
+	}
+
+	rows := m.fixApplyTargetRows(toApply)
+	// Leave room for the question, the buttons, the frame and the scroll hint.
+	// The modal is unsized, so the budget comes from the same content box the
+	// lists use rather than from the raw terminal height.
+	_, ch := m.contentSize()
+	maxRows := ch - 14
+	if maxRows < 3 {
+		maxRows = 3
+	}
+	title := fmt.Sprintf("plugins concerned (%d)", len(rows))
+	return tuikit.NewConfirm(msg, "back", yes).SetList(title, rows, maxRows)
+}
+
+// fixApplyTargets is the set of plugin names the pending fixes will reach, in
+// vendor order.
+//
+// It is the union over the checked fixes, and NOT simply the whole selection: a
+// product-specific fix (CrispyTuner's tooltip) reaches that product, and listing
+// the other twenty would overstate the change. A generic fix reaches the whole
+// selection, which is the case worth showing in full.
+func (m model) fixApplyTargets(toApply []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(n string) {
+		if n == "" || seen[n] {
+			return
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	for _, id := range toApply {
+		it, ok := m.fixItemByID(id)
+		if !ok {
+			continue
+		}
+		if m.fixIsProductSpecific(it) {
+			add(it.Plugin)
+			continue
+		}
+		if m.fixVendor != "" {
+			for _, n := range m.fixVendorPlugins {
+				add(n)
+			}
+			continue
+		}
+		add(pluginStemOf(m.fixPlugin))
+	}
+	return out
+}
+
+// fixApplyTargetRows renders the confirmation list: one row per plugin the
+// change reaches, marking the ones a partial fix has not reached yet.
+//
+// A plain list of names would say the same thing for "these twenty-one already
+// carry the fix" and "one of them does, and the other twenty are about to", so
+// the ones being reached for the first time are called out. That difference is
+// the whole reason a partial fix has its own mark on the row above.
+func (m model) fixApplyTargetRows(toApply []string) []string {
+	targets := m.fixApplyTargets(toApply)
+	if len(targets) == 0 {
+		return nil
+	}
+	already := map[string]bool{}
+	for _, id := range toApply {
+		for _, n := range m.fixAppliedBy[id] {
+			already[n] = true
+		}
+	}
+	rows := make([]string, 0, len(targets))
+	for _, n := range targets {
+		if already[n] {
+			rows = append(rows, fmt.Sprintf("• %s  (already applied)", n))
+			continue
+		}
+		rows = append(rows, "• "+n)
+	}
+	return rows
+}
+
+// fixTargetCount is the number of FILES a single-plugin visit will rewrite: one
+// per fix, since each fix is a separate rewrite of the same plugin.
+func fixTargetCount(m model, toApply []string) int { return len(toApply) }
+
+func (m model) fixItemByID(id string) (FixItem, bool) {
+	for _, it := range m.fixCache {
+		if it.ID == id {
+			return it, true
+		}
+	}
+	return FixItem{}, false
+}
+
+func (m model) fixIsProductSpecific(it FixItem) bool { return it.Plugin != "" }
+
+func (m model) countWord(n int) string {
+	if n == 1 {
+		return "1 plugin"
+	}
+	return fmt.Sprintf("%d plugins", n)
+}
+
 // pluginItemsAsItems converts the unified Plugin list rows into the generic
 // Item shape the uninstall tree is built from, so the setup list can call
 // the exact same uninstallTree/treeItemsToPicker grouping the uninstall
@@ -480,6 +638,31 @@ func fixCategoryOf(it FixItem) string {
 // shared categories above.
 func fixIsPluginSpecific(it FixItem) bool { return it.Plugin != "" }
 
+// The three marks a fix row can carry.
+//
+// ○ off · ● on · ◐ on for SOME of the plugins in view and not the others.
+//
+// ◐ is the one that was missing. On a vendor-wide visit a fix is reported per
+// plugin and merged, and the merge used to keep only "was it on for any of
+// them", so a fix recorded on CrispyTuner and on nothing else in a suite of 21
+// drew a plain ●. The user read that as done for the whole suite, re-ran it,
+// saw nothing change, and had no way to tell that three quarters of the suite
+// was in fact untouched. The left half is filled because that is the literal
+// meaning: some of the circle, not all of it.
+//
+// A row the user has just changed shows the plain mark, because the pending
+// intent is what the ●/○ pair is about: ◐ describes the RECORDED state, and
+// once you have ticked or unticked a row you have an opinion about it.
+func fixMarkOf(it FixItem, checked, orig map[string]bool) string {
+	if !checked[it.ID] {
+		return "○"
+	}
+	if orig[it.ID] && it.IsPartial() {
+		return "◐"
+	}
+	return "●"
+}
+
 // fixItemsToPicker renders the "Plugin fixes" catalog as a single
 // multi-select list. Generic fixes (no specific plugin) come first, grouped by
 // their category as a folder: a "<mark>  <Category>" parent row (whose fold
@@ -498,7 +681,7 @@ func fixIsPluginSpecific(it FixItem) bool { return it.Plugin != "" }
 // and selectable for every plugin, since the same Wine issues can show up
 // elsewhere. The folder row's chevron/child-visibility follows expanded
 // exactly as treeItemsToPicker does for the other two screens.
-func fixItemsToPicker(items []FixItem, checked map[string]bool, expanded map[string]bool) []tuikit.PickerItem {
+func fixItemsToPicker(items []FixItem, checked, orig map[string]bool, expanded map[string]bool) []tuikit.PickerItem {
 	// Split once: generic = no specific plugin, specific = scoped to a product.
 	var generic, specific []FixItem
 	for _, it := range items {
@@ -518,7 +701,7 @@ func fixItemsToPicker(items []FixItem, checked map[string]bool, expanded map[str
 	if len(generic) > 0 {
 		out = append(out, tuikit.PickerItem{Display: fixGenericTitle(), Value: fixGenericTitleValue, Accent: true, Heading: true})
 	}
-	out = append(out, fixCategoryGroup(generic, checked, expanded, false)...)
+	out = append(out, fixCategoryGroup(generic, checked, orig, expanded, false)...)
 
 	// The product-specific section, if any.
 	if len(specific) > 0 {
@@ -530,7 +713,7 @@ func fixItemsToPicker(items []FixItem, checked map[string]bool, expanded map[str
 		out = append(out, tuikit.PickerItem{Display: fixSpecificTitle(), Value: fixSpecificTitleValue, Accent: true, Heading: true})
 		// Grouped by PLUGIN NAME (not the catalog category), so the header
 		// reads just "CrispyTuner" / "Serum 2" — the product it belongs to.
-		out = append(out, fixCategoryGroup(specific, checked, expanded, true)...)
+		out = append(out, fixCategoryGroup(specific, checked, orig, expanded, true)...)
 	}
 	return out
 }
@@ -585,7 +768,7 @@ func fixSpecificTitle() string { return "Plugin specific fixes" }
 // field) instead of its catalog category, so the product-specific section is
 // headed by the plugin name alone. It is the shared body used for both the
 // generic group and the product-specific group.
-func fixCategoryGroup(items []FixItem, checked map[string]bool, expanded map[string]bool, groupByPlugin bool) []tuikit.PickerItem {
+func fixCategoryGroup(items []FixItem, checked, orig map[string]bool, expanded map[string]bool, groupByPlugin bool) []tuikit.PickerItem {
 	// keyFor is the group a fix belongs to: the plugin name in the specific
 	// section, the catalog category otherwise.
 	keyFor := func(it FixItem) string { return fixCategoryOf(it) }
@@ -603,11 +786,7 @@ func fixCategoryGroup(items []FixItem, checked map[string]bool, expanded map[str
 	if !hasCategory {
 		// No categories in the catalog: a clean flat list, same as before.
 		for _, it := range items {
-			mark := "○"
-			if checked[it.ID] {
-				mark = "●"
-			}
-			out = append(out, tuikit.PickerItem{Display: mark + "  " + it.Title + fixRowTags(it), Value: it.ID})
+			out = append(out, tuikit.PickerItem{Display: fixMarkOf(it, checked, orig) + "  " + it.Title + fixRowTags(it), Value: it.ID})
 		}
 		return out
 	}
@@ -654,10 +833,7 @@ func fixCategoryGroup(items []FixItem, checked map[string]bool, expanded map[str
 		if !expanded[cat] {
 			continue
 		}
-		mark := "○"
-		if checked[it.ID] {
-			mark = "●"
-		}
+		mark := fixMarkOf(it, checked, orig)
 		// File-tree angle so the fix is visibly a child of its category. The
 		// mark goes in Badge, NOT in the label: the kit already owns a fixed
 		// badge column, so baking it in gave every child a different width and
@@ -781,15 +957,20 @@ func (m *model) rebuildFixPicker() {
 			}
 		}
 	}
-	// The header names the PLUGIN, not the folder it happens to live in: a
-	// picker value is "vst:<type>:<full/path>" and the title used to print all
-	// of it, which both overflowed the panel and repeated what the list below
-	// already says. pluginStemOf reduces it to the same canonical stem the
-	// applied-fix state is keyed by.
-	header := "Choose the fixes to apply or remove for " + pluginStemOf(m.fixPlugin)
+	// The header names what the fixes are ABOUT, not the picker value: a value
+	// is "vst:<type>:<full/path>" and the title used to print all of it, which
+	// both overflowed the panel and repeated what the list below already says.
+	//
+	// m.fixScope is that noun, resolved once when the catalog lands: the plugin
+	// stem for a single-plugin visit, the suite for a whole-vendor one. It used
+	// to be recomputed as pluginStemOf(m.fixPlugin) here, which is EMPTY on a
+	// vendor visit, so the title ended on a dangling "for ".
+	// The header is empty on purpose: the screen TITLE carries the question
+	// (see the view), and it used to be repeated here with the wrong noun.
+	header := ""
 	sidx := m.picker.Index()
 	m.picker = tuikit.NewPicker(header,
-		fixItemsToPicker(sortedFixItems(m.fixCache, m.fixSortDesc), m.fixChecked, m.fixFolderExpanded)).
+		fixItemsToPicker(sortedFixItems(m.fixCache, m.fixSortDesc), m.fixChecked, m.fixOrig, m.fixFolderExpanded)).
 		SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "toggle")),
@@ -1468,6 +1649,23 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.enterCmd()
 			}
 			m.fixCache = fm.items
+			m.fixVendorPlugins = fm.vendorPlugins
+			// The scope is the noun the page is about, and it is what the title
+			// names: a single-plugin visit says the plugin, a whole-suite one
+			// says the suite. It used to always print pluginStemOf(fixPlugin),
+			// which for a vendor visit is the empty string, so the title ended
+			// with a dangling "for ".
+			if fm.vendor != "" {
+				m.fixScope = fm.vendor
+			} else {
+				m.fixScope = pluginStemOf(m.fixPlugin)
+			}
+			m.fixAppliedBy = map[string][]string{}
+			m.fixCandidate = map[string]int{}
+			for _, it := range fm.items {
+				m.fixAppliedBy[it.ID] = it.AppliedTo
+				m.fixCandidate[it.ID] = it.Candidates
+			}
 			if m.fixChecked == nil {
 				// First load for this visit -- seed the marks from the
 				// server's applied state, same diff contract as the list.
@@ -1529,7 +1727,34 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.toast, _ = m.toast.SetWarn("no change")
 				return m, nil
 			}
+			// Confirm BEFORE anything is written.
+			//
+			// This is the last moment the user can see the blast radius. On a
+			// vendor visit "apply" rewrites a third-party binary once per plugin
+			// in the suite, and the fixes are marked in the same ●/○ language
+			// as a checkbox, which makes the action look like ticking a box
+			// rather than like editing twenty-one files. The dialog names the
+			// plugins, and it scrolls when there are more of them than fit.
+			m.fixPendingApply = toApply
+			m.fixPendingRemove = toRemove
+			m.confirm = m.fixApplyConfirm(toApply, toRemove)
+			m.push(scrFixApplyConfirm)
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.picker, cmd = m.picker.Update(msg)
+		return m, cmd
+
+	case scrFixApplyConfirm:
+		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
+			m.pop()
+			if res.Canceled || !res.Yes {
+				// Nothing was written. The marks stay as the user left them, so
+				// they can adjust and come straight back.
+				return m, nil
+			}
 			m.loading = true
+			toApply, toRemove := m.fixPendingApply, m.fixPendingRemove
 			// A vendor-wide run: the fixes go to every plugin of the folder,
 			// which is the whole point of asking about the suite. Removal stays
 			// per-plugin — there is no safe way to un-apply a fix from a vendor
@@ -1540,7 +1765,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, syncFixesCmd(m.fixPlugin, toApply, toRemove)
 		}
 		var cmd tea.Cmd
-		m.picker, cmd = m.picker.Update(msg)
+		m.confirm, cmd = m.confirm.Update(msg)
 		return m, cmd
 
 	case scrPluginListSaveConfirm:

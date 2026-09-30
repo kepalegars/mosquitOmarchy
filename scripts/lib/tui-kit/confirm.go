@@ -355,3 +355,8 @@ func (c Confirm) ShortcutsHint() string {
 	}
 	return StyleHelp.Render("←/→ choose · enter submit · esc back")
 }
+
+// ListBoundsForTest exposes the visible window. A test in another module has to
+// be able to assert that a long list really is capped, and that is a property
+// of the widget, not of the host that filled it.
+func (c Confirm) ListBoundsForTest() (from, to int) { return c.listBounds() }

@@ -161,9 +161,22 @@ func (m model) View() string {
 			bar = barLine(m.picker.ShortcutsHint())
 		}
 	case scrFixChoose:
-		// Sort only, for the same reason as scrFixPluginPick above: the key
-		// legend belongs to the bottom bar, not to the title.
-		title = screenTitleWithSub("Choose the fixes to apply or remove for "+m.fixPlugin,
+		// The title names what the fixes are ABOUT, in the wording the user
+		// asked for: the plugin stem for a single-plugin visit, the suite for a
+		// whole-vendor one.
+		//
+		// It used to print m.fixPlugin raw, which is a picker VALUE
+		// ("vst:<type>:<full/path>") — so the title carried the plugin's entire
+		// path across the panel, and on a vendor visit it was the empty string
+		// and the sentence ended on a dangling "for ". m.fixScope is that noun,
+		// resolved once when the catalog lands.
+		question := "Choose the fixes to apply or remove to " + m.fixScope
+		if m.fixVendor != "" {
+			question = "Choose the fixes to apply or remove to every " + m.fixScope + " plugin"
+		}
+		// The picker's own header is left empty: it carried the same sentence,
+		// so the page said it twice, once of them with the wrong name.
+		title = screenTitleWithSub(question,
 			"sort: "+fixSortLabel(m.fixSortDesc),
 			m.contentSizeW())
 		if m.loading {
@@ -234,7 +247,7 @@ func (m model) View() string {
 		scrUninstallConfirm, scrInstallPrefixChoice, scrPrefixMoveConfirm,
 		scrSuperfileInstallConfirm, scrPluginListSaveConfirm,
 		scrPluginsRootConfirm, scrRunnerSuccessConfirm, scrQuitConfirm,
-		scrWizardRoot, scrInstallFixesConfirm,
+		scrWizardRoot, scrInstallFixesConfirm, scrFixApplyConfirm,
 		scrCleanupConfirm, scrQuarantineClearConfirm,
 		scrQuarantineClearDone:
 		body = m.confirm.View()

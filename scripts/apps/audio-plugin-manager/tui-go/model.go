@@ -85,10 +85,15 @@ const (
 	scrPluginsRootConfirm     // "move every plugin to X?" before migrating
 	scrPluginsRootMigrating   // runner: migrate_plugins_root in progress
 	scrRunnerSuccessConfirm   // "See log / OK" result prompt after install/uninstall/move/migrate (success OR failure wording)
-	scrFixPluginPick          // "Plugin fixes": pick the plugin first
-	scrFixChoose              // then Tab-select the fixes to apply/remove
-	scrInstallFixesConfirm    // after a successful install: "Apply fixes for <plugin> now?"
-	scrPluginHandlerConfirm   // confirm a plugin-window-handler change (global Hyprland rules)
+	// scrFixApplyConfirm is the confirmation before a fix is written, naming the
+	// plugins the change will reach. It exists because "apply to the FabFilter
+	// suite" is twenty-one rewrites of a third-party binary, and the only moment
+	// the user can see WHICH twenty-one is before the first of them.
+	scrFixApplyConfirm
+	scrFixPluginPick        // "Plugin fixes": pick the plugin first
+	scrFixChoose            // then Tab-select the fixes to apply/remove
+	scrInstallFixesConfirm  // after a successful install: "Apply fixes for <plugin> now?"
+	scrPluginHandlerConfirm // confirm a plugin-window-handler change (global Hyprland rules)
 
 	scrWizardRoot // first-launch wizard: choose/confirm the plugins folder
 	scrWizardDaw  // then stream the "point every installed DAW at it" report
@@ -174,13 +179,34 @@ type model struct {
 	// by the fixes plugin chooser, exactly like the Installed plugins
 	// screen; it is only ever read to build that picker.
 	fixPluginCache []PluginItem
+	// fixVendorPlugins are the plugin names of the current vendor-wide
+	// selection, and fixTargets the plugins each fix id will reach. Both exist
+	// so the apply confirmation can name the plugins an answer is about, and
+	// fixTargets is what makes a partially applied fix show as such.
+	fixVendorPlugins []string
+	// fixScope is the noun the fixes page is about: the plugin stem for a
+	// single-plugin visit, the vendor for a whole-suite one. The title says
+	// "… to <fixScope>", because "for FabFilter" and "for FabFilter Pro-Q 4"
+	// are different statements about what Enter is about to do.
+	fixScope string
+	// fixAppliedBy is the fix id -> the plugins of this selection it is
+	// already recorded on.
+	fixAppliedBy map[string][]string
+	// fixCandidate is the fix id -> how many plugins of this selection it can
+	// reach.
+	fixCandidate map[string]int
 	// fixAppliedPlugins is the set of plugin stems (fix_plugin_canonical
 	// form) that already carry at least one applied fix — loaded once per
 	// visit to the fixes plugin chooser and rendered as an accent ● badge.
 	fixAppliedPlugins map[string]bool
-	fixCache          []FixItem
-	fixChecked        map[string]bool
-	fixOrig           map[string]bool
+	// fixPendingApply/fixPendingRemove are the delta the confirmation is about,
+	// held while the dialog is up so the answer carries the exact set that was
+	// shown rather than whatever the marks say by the time it is read.
+	fixPendingApply  []string
+	fixPendingRemove []string
+	fixCache         []FixItem
+	fixChecked       map[string]bool
+	fixOrig          map[string]bool
 
 	// settingsPending holds a Left/Right-adjusted but not-yet-applied value
 	// per settings row (the value is the target: "on"/"off", "default"/

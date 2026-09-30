@@ -974,6 +974,28 @@ type FixItem struct {
 	// which is the same window for both. Only a genuinely one-format fix says
 	// so, and its row is tagged so the restriction is visible.
 	Vst string `json:"vst"`
+
+	// AppliedTo names the plugins of a vendor-wide selection this fix is
+	// ALREADY recorded on, and Candidates is how many plugins of that
+	// selection it can reach.
+	//
+	// They are filled in by the vendor merge, not by the backend, because
+	// list-plugin-fixes only ever answers for one plugin at a time. Collapsing
+	// that to a single Applied bool is what made a fix that is on 1 of a
+	// vendor's 21 plugins report itself as simply "applied" — so the row said
+	// ●, the user read it as "all of them", and re-running it looked like a
+	// no-op while three quarters of the suite was in fact untouched.
+	AppliedTo  []string
+	Candidates int
+}
+
+// IsPartial reports whether a fix is recorded on SOME of the plugins it can
+// reach, which is the only state a filled-left-half circle can honestly mean.
+//
+// A fix with no candidate count comes from a single-plugin request, where
+// applied is applied and there is no "part" to speak of.
+func (it FixItem) IsPartial() bool {
+	return it.Candidates > 1 && len(it.AppliedTo) > 0 && len(it.AppliedTo) < it.Candidates
 }
 
 // fixesMsg carries the catalog fetched for a plugin, or for a whole vendor
@@ -984,7 +1006,11 @@ type fixesMsg struct {
 	plugin string
 	vendor string
 	items  []FixItem
-	err    error
+	// vendorPlugins are the plugin names of a vendor-wide selection, in the
+	// order the vendor lists them. The apply confirmation names them, so the
+	// user can see the blast radius before answering.
+	vendorPlugins []string
+	err           error
 }
 
 // fixesDoneMsg reports a successful apply/remove batch.
@@ -1020,9 +1046,22 @@ func fetchFixesForVendorCmd(vendor string) tea.Cmd {
 			return fixesMsg{vendor: vendor, err: err}
 		}
 		byID := map[string]FixItem{}
+		// appliedTo[id] and reach[id] count the plugins of the selection that
+		// already carry the fix and that it can reach at all. A fix only
+		// present on one product (a tooltip rewrite) is NOT partial, however
+		// many products the suite has, so reach is tracked separately from the
+		// suite size: partial means "some of what it can reach", not "some of
+		// the vendor".
+		appliedTo := map[string][]string{}
+		reach := map[string]int{}
 		var order []string
 		var anyErr error
+		var names []string
 		for _, p := range plugins {
+			name := pluginStemOf(p.Value)
+			if name != "" {
+				names = append(names, name)
+			}
 			raw, e := runQuick("list-plugin-fixes", p.Value)
 			if e != nil {
 				if anyErr == nil {
@@ -1035,6 +1074,10 @@ func fetchFixesForVendorCmd(vendor string) tea.Cmd {
 				continue
 			}
 			for _, it := range items {
+				reach[it.ID]++
+				if it.Applied {
+					appliedTo[it.ID] = append(appliedTo[it.ID], name)
+				}
 				prev, seen := byID[it.ID]
 				if !seen {
 					order = append(order, it.ID)
@@ -1051,9 +1094,12 @@ func fetchFixesForVendorCmd(vendor string) tea.Cmd {
 		}
 		out2 := make([]FixItem, 0, len(order))
 		for _, id := range order {
-			out2 = append(out2, byID[id])
+			it := byID[id]
+			it.AppliedTo = appliedTo[id]
+			it.Candidates = reach[id]
+			out2 = append(out2, it)
 		}
-		return fixesMsg{vendor: vendor, items: out2, err: anyErr}
+		return fixesMsg{vendor: vendor, items: out2, vendorPlugins: names, err: anyErr}
 	}
 }
 
