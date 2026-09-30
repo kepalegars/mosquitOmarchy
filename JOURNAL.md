@@ -2567,14 +2567,71 @@ Changes DEPLOYED to ~/.local/bin. Not committed/pushed yet (explicit request nee
 6. Redeployed all three TUIs (20:40); `hyprctl configerrors` clean.
 
 ## Open TODO (added)
-- Trackpad scroll stops working in the browser and some apps (works again under a default "emergency" Hyprland config) — investigate the user Hyprland/input config (likely a rule/option in `hyprland.lua` or the touchpad module), reproduce and fix.
+- ~~Trackpad scroll stops working in the browser and some apps~~ — **RESOLVED by the user (2026-09-30)**, not by this repo. Removed from the list; nothing was investigated.
 
 
 **Follow-up 27 (2026-09-18)**: Ableton→Bitwig post-save pipeline completed; `test-ableton.sh` removed.
 
 - Added `ableton_window_count` + `wait_ableton_windows_closed_stable` (stable close gate: window count must stay 0 for 3 consecutive checks) and `wait_for_als_stable` (size+mtime unchanged across polls). `wait_ableton_close_manual` (Off path) and `wait_ableton_close` (On path) now use the stable gate, so Wine/DXGI/JUCE teardown never races detection. `detect_new_als` emits the chosen path only after stabilization. Decision unchanged (in WORKDIR → open directly; else `<name> - backup/` folder + copy, open the copy), and the resolved path flows to `finish_bitwig_open` (Bitwig opens only after save + close). The existing Ctrl+Q/Enter/xdotool/window-detection code was NOT touched. Scratch `test-ableton.sh` deleted.
 
-## Open TODO — live mode (added 2026-09-30, NOT started)
+## DONE — live mode (opened 2026-09-30, closed 2026-09-30)
+
+**1. The package fence, as a setting, default OFF — LANDED.** `FENCE_PACKAGES=yes`
+in `~/.config/live-mode/settings`, a row on the Live manager's main page
+("Block package installation during the session"), read by
+`live-mode-root apply` (creates `/var/lib/pacman/db.lck`) and released by
+`restore`.
+
+The restore kept the `fuser` guard from `7728430` untouched: a lock a RUNNING
+pacman owns is never removed. Two things were fixed on the way:
+
+  the pre-state guard made the lock cleanup UNREACHABLE in the one case it
+  exists for — a session that died without writing its pre-state exited before
+  reaching the cleanup, leaving pacman permanently broken with no live session
+  to explain it. `clear_package_fence()` is now called on that path too;
+
+  `load_settings()` assigned each variable's default only AFTER referencing it,
+  so under `set -u` a settings file written by an older version — missing a key
+  — aborted the whole command with "VAR: unbound variable". Defaults are now
+  assigned first, the file second, normalisation last. A partial file is a
+  normal file.
+
+The fence is read with an explicit `== yes` and defaults to no, deliberately
+inverted from the other settings: this one breaks package management, so
+"unknown means on" is the mistake that made it a bug in the first place.
+
+**2. The activation prompt is now built from the effective settings — LANDED.**
+It was one hardcoded string that always announced the patchbay, the
+notification silencing and the gap removal whatever the manager was configured
+to do, and said nothing about the background apps it closes, the theme it
+switches, the thermal limit it will use, or the fence. So it was wrong in both
+directions: it claimed what would not happen and stayed silent about what
+would.
+
+Now every line is added only when the setting is on, and the thermal line
+carries the actual limit. Same rule as the power-profile question: say what
+will be done, or do not claim it.
+
+### Verified in a sandbox (never against the real lock)
+
+  fence off with no settings file      no lock created
+  fence on                             lock created, `fenced:true` in the JSON
+  restore after apply                  lock removed
+  restore with a lock HELD by a live process (a real open fd, not just a
+                                       `sleep`)   lock left strictly alone
+  restore with no pre-state, free lock            lock cleaned
+  prompt: everything on / everything off / fence
+  only / empty app list / a one-key settings file
+
+### NOT tested by the user yet
+
+  the manager row (←/→ and Tab on it) and the persisted `FENCE_PACKAGES`;
+  a real `live-mode on` with the fence ON, i.e. that pacman really is refused
+  and the lock really is released on `live-mode off`.
+
+---
+
+## Open TODO — live mode (opened 2026-09-30; the two points below are LANDED, see above)
 
 Deferred by the user on purpose: "oublie le truc sur le setup battery, j'ai réglé ça
 moi meme. occupe toi des 4 points plugin manager et note quelque part les points
