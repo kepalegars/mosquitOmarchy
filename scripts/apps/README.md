@@ -1,53 +1,58 @@
-# Apps / TUIs / Webapps — Omarchy module
+# `apps` — the app / TUI / webapp catalogs
 
-Modular installer: one folder, one catalog and one install/uninstall script **per type** under `apps/` (`gui/guis.catalog`, `tui-tools/tuis.catalog`, `webapps/webapps.catalog`, shared helpers in `../lib/common.bash`).
+One folder, one catalog and one install/uninstall script **per type**. `setup-apps.sh` is the
+dispatcher: it shows the combined selection, then calls each type script with its subset. Each
+type script also runs standalone.
 
-`setup-apps.sh` is the **dispatch entry** that keeps the historical backup flow: it presents the combined selection then calls each type script with its subset. Each type script also runs standalone — add a type by adding its catalog + its folder + its script.
-
-This folder also holds `download-assets.sh` (large installer files catalog).
-
-## Install / uninstall
+Adding a type means adding its catalog, its folder and its script.
 
 ```bash
-./apps/setup-apps.sh                  # interactive: choose backup then select
-./apps/setup-apps.sh -y               # most recent backup, everything installed
-./apps/setup-apps.sh --from-backup=F  # dated backup F (or an apps.selected file)
-./apps/setup-apps.sh --list-selection # show selection, no install
-./apps/setup-apps.sh --status         # state of apps/tuis/webapps, changes nothing
-./apps/uninstall-apps.sh --all -y       # remove all catalog entries
+scripts/apps/setup-apps.sh                     # interactive
+scripts/apps/setup-apps.sh -y                  # everything from the latest backup
+scripts/apps/setup-apps.sh --from-backup=FILE  # a dated backup, or an apps.selected
+scripts/apps/setup-apps.sh --list-selection    # show the selection, install nothing
+scripts/apps/setup-apps.sh --status            # state of each type, changes nothing
+scripts/apps/uninstall-apps.sh --all -y
 ```
 
-Installs the apps/tuis/webapps of a **backup selection** (`apps.selected`), everything checked by default.
+## Per type
 
-### Per-type standalone
-
-```bash
-./apps/gui/setup-guis.sh       --all -y             # GUI apps (guis.catalog)
-./apps/tui-tools/setup-tuis.sh       --from-backup=B -y   # TUIs (tuis.catalog)
-./apps/webapps/setup-webapps.sh --all -y            # webapps (webapps.catalog)
-./apps/gui/uninstall-guis.sh     --status             # state, nothing done
-./apps/webapps/uninstall-webapps.sh --all -y          # remove webapps
-```
+| Type | Catalog | Install | Uninstall |
+|---|---|---|---|
+| GUI apps | `gui/guis.catalog` | `gui/setup-guis.sh --all -y` | `gui/uninstall-guis.sh --all -y` |
+| TUIs | `tui-tools/tuis.catalog` | `tui-tools/setup-tuis.sh --all -y` | `tui-tools/uninstall-tuis.sh --all -y` |
+| Webapps | `webapps/webapps.catalog` | `webapps/setup-webapps.sh --all -y` | `webapps/uninstall-webapps.sh --all -y` |
 
 ## Catalog format
 
-One entry per line, type prefix kept — so `apps.selected` keeps the same lines whatever the catalog:
+One entry per line, the type prefix kept, so `apps.selected` holds the same lines whichever
+catalog it came from. `|`-separated, `#` starts a comment.
 
 ```
-APP betterbird-fr-bin|Betterbird (e-mail)      # AUR/official package
-TUI bat|bat                                    # terminal tool
-WEB WhatsApp|https://web.whatsapp.com/|whatsapp # Omarchy webapp
+APP betterbird-fr-bin|Betterbird (e-mail)
+TUI bat|bat
+WEB WhatsApp|https://web.whatsapp.com/|whatsapp
 ```
 
-## Large installer files — download-assets.sh
+## Large installers
 
-Checks each large file in the `assets.links` catalog (present/absent/corrupt via sha256), downloads what is missing using a `.part` file (resume with `-C -`), verifies the checksum, and finalizes atomically. URLs must be filled in `assets.links` by the person hosting the files.
+`download-assets.sh` reads the `assets.links` catalog at the repo root: it checks each file
+(present / absent / corrupt by sha256), downloads what is missing through a `.part` file so an
+interrupted run resumes, verifies the checksum, then renames into place. The URLs in
+`assets.links` are filled in by whoever hosts the files.
 
 ```bash
-./apps/download-assets.sh               # interactive (gum): select to download
-./apps/download-assets.sh -y            # download all missing/corrupt files
-./apps/download-assets.sh --status      # status of each file
-./apps/download-assets.sh --check       # verify sha256 integrity
+scripts/apps/download-assets.sh            # select interactively
+scripts/apps/download-assets.sh -y         # everything missing or corrupt
+scripts/apps/download-assets.sh --status
+scripts/apps/download-assets.sh --check    # sha256 only
 ```
 
-> **DaVinci Resolve is deliberately NOT in `assets.links`** — its zip (~7 GB) is dropped by hand in `scripts/apps/davinci/` (downloaded outside the script).
+DaVinci Resolve is deliberately **not** in `assets.links` — its zip is about 7 GB, so it is
+dropped by hand in `scripts/apps/davinci/`.
+
+## The other folders here
+
+`ableton/`, `bitwig/`, `reaper/`, `davinci/`, `zen/` and the rest are **not** catalog entries:
+each is its own module with its own `README.md`, installed directly rather than through a
+selection. See the module table in the [root README](../../README.md#modules).
