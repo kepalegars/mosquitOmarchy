@@ -50,7 +50,7 @@ Once installed, **everything in this repo can be driven from one TUI**: `mosquit
 - **Status** — every module and its state (installed / partial / missing / uninstalled by you).
 - **Update** — pull the scripts repo and re-apply the changed installed modules.
 - **Setup** — lists the categories as options (alphabetically, plus **Menu entry**, **Add shortcut for mosquitOmarchy** and **Install selection**); picking a category opens its item tree (also alphabetical): `tab` selects, `←/→` expand/collapse a folder, `i` shows the highlighted entry's description, `enter` installs the selection. **Menu entry** registers the launcher in the Omarchy menu; **Add shortcut for mosquitOmarchy** binds `SUPER + ALT + M` (press `i` on either for details).
-- **Backup / Restore** — dated archives, with the same content choices as before (apps / TUIs / webapps selection, VST plugins, KeePassXC passwords), plain **or** AES-256 encrypted with a passphrase asked twice.
+- **Backup / Restore** — a dated file in `~/omarchy-backups/`, plain **or** AES-256 encrypted with a passphrase asked twice. The content choices are yours to toggle: apps / TUIs / webapps selection, VST plugins, KeePassXC passwords, Zen browser settings.
 - **Close** — leave the TUI.
 
 Any failed run also writes **one dated crash log per session** into the repo-local `.local/` folder (never committed, never archived) and sends a **clickable Omarchy notification**: it opens the default AI on the `mosquitomarchy-crash` skill, pointed at that log, to **propose** a fix without applying it. See [`scripts/lib/crash.bash`](scripts/lib/crash.bash) and the [mosquitOmarchy README](scripts/apps/mosquitomarchy/README.md#crash-reporting--ai-diagnosis).
@@ -123,6 +123,7 @@ Single entry point, no standalone helper anymore: it integrates the **backup/res
 ./mosquitomarchy-setup.sh --status            # module status only, no modification
 ./mosquitomarchy-setup.sh --backup            # dated backup, then exit (passphrase prompt via gum TUI if available)
 ./mosquitomarchy-setup.sh --backup --vst-backup=full   # idem + plugin folders archived (no question)
+./mosquitomarchy-setup.sh --backup --zen=no           # idem, without the Zen browser settings
 ./mosquitomarchy-setup.sh --list              # chronological list of the backups ([encrypted] = .tar.gz.gpg)
 ./mosquitomarchy-setup.sh --restore[=FILE]    # restore a backup (chronological choice; encrypted → passphrase asked)
 ./mosquitomarchy-setup.sh --uninstall [-y] [--purge]  # per-module uninstall (interactive; -y = all)
@@ -180,7 +181,7 @@ A module marked `—` in `--status` is not applicable on this machine (e.g. VM w
 
 ### Backup / restore (integrated)
 
-Each backup is a dated file `~/omarchy-backups/omarchy-backup-<timestamp>.tar.gz`. Contents: config (`~/.config/hypr`, `REAPER`, `windows`, `opencode`, Omarchy bar/plugins, `yabridgectl`, Zen active-profile plugins/settings/chrome, omagrab binary+config, and — when KeePassXC is installed — its settings + the `Passwords.kdbx` database), package lists (`pkglist.txt`/`aurlist.txt`), `apps.selected` (reinstalled by `setup-apps.sh`), `RESTORE.md`, and — **offered, not automatic** — the plugin folders the audio plugin manager uses:
+Each backup is a dated file `~/omarchy-backups/omarchy-backup-<timestamp>.tar.gz`. Contents: config (`~/.config/hypr`, `REAPER`, `windows`, `opencode`, Omarchy bar/plugins, `yabridgectl`, the Zen active profile (its extensions, extension prefs, chrome theme **and the browser's own settings — `prefs.js`, `user.js`, `containers.json`**; browsing data — history, cookies, sessions, cache — is deliberately left out), omagrab binary+config, and — when KeePassXC is installed — its settings + the `Passwords.kdbx` database), package lists (`pkglist.txt`/`aurlist.txt`), `apps.selected` (reinstalled by `setup-apps.sh`), `RESTORE.md`, and — **offered, not automatic** — the plugin folders the audio plugin manager uses:
 
 On `--backup` the archive is then **encrypted in place** with an AES-256
 passphrase (gpg — same cipher as LUKS, file level, no sudo): the plain
