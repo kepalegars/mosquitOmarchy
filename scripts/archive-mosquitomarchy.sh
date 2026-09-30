@@ -1,344 +1,317 @@
 #!/usr/bin/env bash
-# archive-mosquitomarchy.sh — Archiving of the mosquitOmarchy repo as tar.gz.
+# archive-mosquitomarchy.sh — build the RELEASE archive of the mosquitOmarchy repo.
 #
-# On launch you choose among THREE archive types:
+# WHAT THIS PRODUCES
+#   One tar.gz, `mosquitomarchy-release-<YYYY-MM-DD>.tar.gz`, holding the repo
+#   under its own `mosquitomarchy/` folder plus the installation files that
+#   cannot live on GitHub. It is meant to be taken by hand:
 #
-#   print         → FULL archive, everything except logs (personal backup):
-#                   the whole repo + the dated config backups
-#                   (~/omarchy-backups/). The bulky app installers
-#                   (Ableton/DaVinci/Guitar Pro) are embedded automatically:
-#                   it IS the personal backup of them.
-#   release       → everything except logs, backup files and the personal
-#                   extras kept locally next to the scripts.
-#   release+patch → same as release, but including those personal extras
-#                   (still no logs and no backup files).
+#       tar xzf mosquitomarchy-release-<date>.tar.gz
+#       cd mosquitomarchy
+#       ./bootstrap.sh              # or ./mosquitomarchy-setup.sh
 #
-# Whatever the type, the following is ALWAYS excluded: logs (*.log,
-# last_crash.log), .venv/, any private files kept only on this machine,
-# and the previous archives (omarchy-scripts-*.tar.gz).
+#   No mosquitomarchy code is involved in the extraction, and nothing in the
+#   archive is a backup: a restore is done by the user, with tar.
 #
-# GitHub only contains the code — the files that live only on this machine
-# exist only in the personal archives. "Latest release" = the archive
-# produced by THIS script.
+# IT IS A RELEASE, NOT A BACKUP
+#   Everything personal is out, silently and by construction:
 #
-# The file name embeds the type and is dated:
-#   print          → omarchy-scripts-print-<YYYY-MM-DD>.tar.gz        (last backup date)
-#   release        → omarchy-scripts-release-<YYYY-MM-DD-HHMMSS>.tar.gz    (today)
-#   release+patch  → omarchy-scripts-release-patch-<YYYY-MM-DD-HHMMSS>.tar.gz (today)
+#     * the PATCH/ folders        — private extras (licence workarounds, the
+#                                   Guitar Pro patch, …), never published
+#     * ~/omarchy-backups/*       — the dated config backups, encrypted or not
+#     * *.log, last_crash.log, .local/  — run logs and machine state
+#     * any non-tracked file      — see "Built from git" below
 #
-# The bulky installers (Ableton zips + .run, Guitar Pro .exe, DaVinci zips) are
-# embedded automatically by the 'print' type (personal backup — that is the
-# point of a print archive). The release types ASK about them (never forced).
+#   There is no interactive question about any of this: the archive is the
+#   release, so the release's rules apply, without asking.
+#
+# BUILT FROM GIT, NOT FROM THE WORKING TREE
+#   The file list is `git ls-files`, not a `tar --exclude=` guess list. Two
+#   consequences, both wanted:
+#     * an ignored or leftover local file cannot leak in by being un-listed
+#       (this machine alone holds a 130 MB extracted Fusion bundle and the
+#       compiled TUI leftovers — none of it is tracked, none of it goes out);
+#     * the archive is reproducible: the same commit gives the same content.
+#   Only the installation files below are added on top, since they are the
+#   whole point of a release and are deliberately not on GitHub.
+#
+# SIZE
+#   GitHub accepts a release asset up to 2 GiB (and a file in the REPOSITORY
+#   only up to 100 MB — which is why the installers live in a release and not
+#   in git). The build refuses to produce an archive above the release limit
+#   instead of leaving an upload that GitHub will reject.
+#
 # Usage:
-#   ./archive-mosquitomarchy.sh                     # interactive: type? installers? -> tar.gz
-#   ./archive-mosquitomarchy.sh -y                  # defaults (type 'print', all installers embedded)
-#   ./archive-mosquitomarchy.sh --type=release      # non-interactive: clean release (no backups)
-#   ./archive-mosquitomarchy.sh --type=release+patch# release including the personal extras
-#   ./archive-mosquitomarchy.sh --with-ableton      # include all Ableton installers (release types)
-#   ./archive-mosquitomarchy.sh --with-davinci      # include all DaVinci installers (release types)
-#   ./archive-mosquitomarchy.sh --list-heavy        # list the detected bulky installers
-#   ./archive-mosquitomarchy.sh --no-backups        # does not embed the backups folder (print only)
-#   ./archive-mosquitomarchy.sh -h                  # help
+#   ./archive-mosquitomarchy.sh              # build the release archive
+#   ./archive-mosquitomarchy.sh --list       # what would go in (and its size)
+#   ./archive-mosquitomarchy.sh --out=DIR    # write DIR/ instead of the repo root
+#   ./archive-mosquitomarchy.sh -y           # accepted, nothing is interactive
+#   ./archive-mosquitomarchy.sh -h
+#
+# Env:
+#   OMARCHY_ARCHIVE_OUT   default output directory (default: the repo root)
+#   OMARCHY_ARCHIVE_MAX   size ceiling in bytes (default: 2 GiB)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The repo ROOT is the parent: this script lives in scripts/, next to the other
-# tooling, not at the top level. Resolved from the location rather than assumed,
-# so the archive covers the repo whether it is run from scripts/ or by absolute
-# path from anywhere.
+# tooling. Resolved from the location rather than assumed, so the archive
+# covers the repo whether it is run from scripts/ or by absolute path.
 ROOT="$(dirname "$SCRIPT_DIR")"
-PROJECT_NAME="$(basename "$ROOT")"
-BACKUP_DIR="${OMARCHY_BACKUP_DIR:-$HOME/omarchy-backups}"
+# The folder name inside the archive is the CANONICAL project name, not the
+# name of whoever's checkout produced it: the same commit must give the same
+# archive whatever the directory is called locally (here it is 'mosquitOmarchy').
+PROJECT_NAME="mosquitomarchy"
 OUT_DIR="${OMARCHY_ARCHIVE_OUT:-$ROOT}"
+# GitHub release asset limit: 2 GiB.
+MAX_BYTES="${OMARCHY_ARCHIVE_MAX:-2147483648}"
 
-G='\033[1;32m'; B='\033[1;34m'; Y='\033[1;33m'; R='\033[1;31m'; D='\033[2m'; N='\033[0m'
+G='\033[1;32m'; B='\033[1;34m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
 msg(){ printf "${B}==>${N} %s\n" "$*"; }
 ok(){ printf " ${G}✓${N} %s\n" "$*"; }
 warn(){ printf " ${Y}!${N} %s\n" "$*"; }
 err(){ printf " ${R}✗${N} %s\n" "$*" >&2; }
 hr(){ printf '%.0s─' {1..72}; echo; }
 
-YES=0 WITH_ABLETON=0 WITH_DAVINCI=0 NO_BACKUPS=0 LIST_ONLY=0 ARCHIVE_TYPE=""
-FORCE_PRINT_HEAVY=0
+LIST_ONLY=0
 for a in "$@"; do case "$a" in
-  -y|--yes) YES=1 ;;
-  --type=*) ARCHIVE_TYPE="${a#*=}" ;;
-  --with-ableton) WITH_ABLETON=1 ;;
-  --with-davinci) WITH_DAVINCI=1 ;;
-  --no-backups) NO_BACKUPS=1 ;;
-  --list-ableton|--list-heavy) LIST_ONLY=1 ;;
-  -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
+  -y|--yes) ;;                      # nothing is interactive: accepted for the
+                                    # callers that pass it unconditionally
+  --list|--dry-run) LIST_ONLY=1 ;;
+  --out=*) OUT_DIR="${a#*=}" ;;
+  -h|--help) sed -n '2,52p' "$0"; exit 0 ;;
   *) err "Unknown option: $a (see -h)"; exit 1 ;;
 esac; done
 
-ask(){
-  local q="$1" def="${2:-y}" r
-  ((YES)) && { ok "(auto) $q -> yes"; return 0; }
-  if command -v gum >/dev/null; then
-    gum confirm "$q" --default=$([[ $def == y ]] && echo true || echo false) && return 0 || return 1
-  fi
-  read -rp "$q [$([ $def = y ] && echo Y/n || echo y/N)] " r
-  r="${r:-$def}"; [[ $r =~ ^[oOyY] ]]
+# ───────────────────────── Installation files ─────────────────────────
+# The files the release carries on top of the repo. This list IS the spec: it
+# matches the "Installation files" table of the main README, and nothing is
+# added implicitly. Each is refused outright if it alone would blow the
+# ceiling, so a 10 GB DaVinci zip can never turn into a 10 GB upload attempt.
+#
+#   install-ableton-latest.run   113 MB  the ableton-linux installer, the only
+#                                       way to install Ableton from a release
+#   bitwig-studio-*.deb          348 MB  the exact build the module pins
+#
+# NOT carried, on purpose (the README links them instead): the Ableton Live
+# zips (account-gated, 3-4 GB each), the DaVinci Resolve zip (10 GB) and the
+# Guitar Pro installer (988 MB, freely downloadable).
+INSTALL_FILES=(
+  scripts/apps/ableton/install-ableton-latest.run
+  scripts/apps/bitwig/bitwig-studio-*.deb
+)
+
+human(){ numfmt --to=iec --suffix=B "${1:-0}" 2>/dev/null || printf '%sB' "${1:-0}"; }
+
+# Files that must never appear in a release, checked on the FINISHED archive
+# rather than trusted from the exclude list. A release is published, so this
+# is the last gate before the file leaves the machine.
+FORBIDDEN_PATTERNS=(
+  '*/PATCH/*'
+  '*/PATCH'
+  '*/.local/*'
+  '*.log'
+  'last_crash.log'
+  '*omarchy-backup-*.tar.gz'
+  '*Passwords.kdbx'
+  'pkglist.txt'
+  'aurlist.txt'
+  'apps.selected'
+  '*.tar.gz'
+)
+
+# ───────────────────────── Collecting the file list ─────────────────────────
+collect(){
+  # Prints, one per line, the repo-relative paths that go into the archive:
+  # every tracked file, minus the ones git tracks but a release must not ship.
+  git -C "$ROOT" ls-files -z \
+    | tr '\0' '\n' \
+    | grep -v -E '(^|/)PATCH/' \
+    | grep -v -E '(^|/)\.local/' \
+    | grep -v -E '(^|/)last_crash\.log$' \
+    | grep -v -E '\.log$'
 }
 
-# ───────────────────────── Archive type ─────────────────────────
-# Three types:
-#   print         full, everything except logs (personal backup: keeps the
-#                 personal extras AND the dated config backups).
-#   release       everything except logs, backup files and the personal extras.
-#   release+patch same as release but including the personal extras.
-pick_type(){
-  local t
-  msg "Choose the archive type:"
-  if command -v gum >/dev/null 2>&1; then
-    t="$(gum choose "print" "release" "release+patch" \
-        --header "Archive type?  print = full personal backup (incl. config backups) / release = clean / release+patch = release incl. personal extras")"
-  else
-    echo " [1] print          — full: everything except logs (embeds config backups)"
-    echo " [2] release        — everything except logs, backups and personal extras"
-    echo " [3] release+patch  — release including the personal extras (no logs/backups)"
-    local ch
-    read -rp "Choice [1-3, default 1] : " ch; ch="${ch:-1}"
-    case $ch in
-      2) t=release ;;
-      3) t=release+patch ;;
-      *) t=print ;;
-    esac
-  fi
-  printf '%s\n' "$t"
-}
-
-resolve_type(){
-  # Sets TYPE + flags (keep_patch / keep_backups).
-  if [[ -z $ARCHIVE_TYPE ]]; then
-    if ((YES)); then ARCHIVE_TYPE=print; else ARCHIVE_TYPE="$(pick_type)"; fi
-  fi
-  case "$ARCHIVE_TYPE" in
-    print)          TYPE=print;          keep_patch=1; keep_backups=1
-                    FORCE_PRINT_HEAVY=1 ;;
-    release)        TYPE=release;        keep_patch=0; keep_backups=0 ;;
-    release+patch)  TYPE=release+patch;  keep_patch=1; keep_backups=0 ;;
-    *) err "Unknown archive type: '$ARCHIVE_TYPE' (see -h)"; exit 1 ;;
-  esac
-  if ((NO_BACKUPS)) && [[ $TYPE != print ]]; then
-    warn "(auto) '--no-backups' is ignored for type '$TYPE' — release archives never embed backups."
-  fi
-}
-
-# ───────────────────────── Bulky installers ─────────────────────────
-# Multi-GB files: Ableton installers (zips + .run) in ableton/,
-# Guitar Pro installer (guitar-pro-8-setup.exe) in guitarpro/, and DaVinci Resolve
-# installers (zips) in davinci/. They are NEVER embedded without
-# validation (size).
-HARD=()                 # all the detected "heavy" files
-is_ableton(){ [[ "$1" == "$ROOT"/scripts/apps/ableton/* ]]; }
-is_davinci(){ [[ "$1" == "$ROOT"/scripts/apps/davinci/* ]]; }
-is_guitarpro(){ [[ "$1" == "$ROOT"/scripts/apps/guitarpro/* ]]; }
-
-detect_heavy(){
-  HARD=()
-  local f
-  for f in "$ROOT"/scripts/apps/ableton/*.zip "$ROOT"/scripts/apps/ableton/*.run \
-           "$ROOT"/scripts/apps/guitarpro/*.exe \
-           "$ROOT"/scripts/apps/davinci/DaVinci_Resolve_*_Linux.zip; do
-    if [[ -f $f ]]; then HARD+=("$f"); fi
+install_files_present(){
+  local p out=()
+  for p in "${INSTALL_FILES[@]}"; do
+    # shellcheck disable=SC2206
+    local m=($(cd "$ROOT" && ls -1 $p 2>/dev/null))
+    for f in "${m[@]}"; do out+=("$f"); done
   done
-}
-has_heavy(){ ((${#HARD[@]} > 0)); }
-
-select_heavy(){
-  # Fills HARD_SELECTED: the heavy files kept for the archive.
-  # 'print' (personal backup) auto-selects ALL of them.
-  local -a chosen=() picks=() q p
-  if (( FORCE_PRINT_HEAVY )); then
-    chosen=("${HARD[@]}")
-    warn "(print) bulky app installers auto-included (this is the personal backup)."
-    HARD_SELECTED=("${chosen[@]}")
-    return
-  fi
-  if (( WITH_ABLETON || WITH_DAVINCI )); then
-    for f in "${HARD[@]}"; do
-      { (( WITH_ABLETON )) && is_ableton "$f"; } || { (( WITH_DAVINCI )) && is_davinci "$f"; } \
-        && chosen+=("$f")
-    done
-  elif (( YES )); then
-    chosen=()
-  elif command -v gum >/dev/null 2>&1; then
-    local -a labels=()
-    for f in "${HARD[@]}"; do
-      is_ableton "$f" && labels+=("Ableton  →  $(basename "$f")")
-      is_davinci "$f" && labels+=("DaVinci  →  $(basename "$f")")
-      is_guitarpro "$f" && labels+=("Guitar Pro  →  $(basename "$f")")
-    done
-    mapfile -t picks < <(gum choose --no-limit \
-        --header "Bulky installers to embed? (none = skip)" \
-        --cursor-prefix "[ ] " --selected-prefix "[x] " "${labels[@]}")
-    for q in "${picks[@]}"; do
-      local shown="${q#*→  }"
-      for p in "${HARD[@]}"; do [[ "$(basename "$p")" == "$shown" ]] && chosen+=("$p") && break; done
-    done
-  else
-    local i=1 idx n
-    echo "Bulky installers present:"
-    for f in "${HARD[@]}"; do
-      if is_ableton "$f"; then local tag="Ableton"; elif is_davinci "$f"; then local tag="DaVinci"; else local tag="Guitar Pro"; fi
-      printf '  %2d) [%s] %s (%s)\n' "$i" "$tag" "$(basename "$f")" "$(du -h "$f" | cut -f1)"
-      i=$((i+1))
-    done
-    read -rp "  Numbers to embed (e.g.: 2 4) — empty entry = none: " n
-    for idx in $n; do
-      [[ "$idx" =~ ^[0-9]+$ ]] && ((idx >= 1 && idx <= ${#HARD[@]})) && chosen+=("${HARD[$((idx-1))]}")
-    done
-  fi
-  HARD_SELECTED=("${chosen[@]:-}")
+  printf '%s\n' "${out[@]:-}"
 }
 
-# ───────────────────────── Display (--list-heavy) ─────────────────────────
-if (( LIST_ONLY )); then
-  detect_heavy
-  if has_heavy; then
-    msg "Bulky installers detected:"
-    i=1
-    for f in "${HARD[@]}"; do
-      if is_ableton "$f"; then tag="Ableton"; elif is_davinci "$f"; then tag="DaVinci"; else tag="Guitar Pro"; fi
-      printf '  %2d) [%s] %s  (%s)\n' "$i" "$tag" "$(basename "$f")" "$(du -h "$f" | cut -f1)"
-      i=$((i+1))
-    done
-  else
-    warn "No bulky installer (ableton/*.zip|*.run or davinci/DaVinci_Resolve_*.zip)."
-  fi
-  exit 0
-fi
-
-# ───────────────────────── Date: last backup otherwise today ─────────────────────────
-last_backup_date(){
-  # Most recent omarchy-backup-<YYYYMMDD-HHMMSS>.tar.gz file, gives its timestamp.
-  local latest="" f
-  for f in "$BACKUP_DIR"/omarchy-backup-*.tar.gz; do
-    [[ -f $f ]] && [[ $f -nt $latest ]] && latest="$f"
-  done
-  [[ -z $latest ]] && { printf '%s' "$(date +%Y-%m-%d-%H%M%S)"; return; }
-  local name ts
-  name="$(basename "$latest")"
-  ts="${name#omarchy-backup-}"; ts="${ts%.tar.gz}"      # YYYYMMDD-HHMMSS
-  printf '%s-%s-%s' "${ts:0:4}" "${ts:4:2}" "${ts:6:2}"
+preflight(){
+  cd "$ROOT" || { err "Not a directory: $ROOT"; exit 1; }
+  git rev-parse --git-dir >/dev/null 2>&1 \
+    || { err "Not a git checkout: $ROOT — the release is built from the tracked files."; exit 1; }
 }
 
-# ───────────────────────── Building the archive ─────────────────────────
-main(){
-  detect_heavy
-  resolve_type
-
-  hr; msg "Archive of the ' $PROJECT_NAME ' repo — type: $TYPE"
-  msg "  Source   : $ROOT"
-  # Bulky installers selection: 'print' embeds them automatically (personal
-  # backup); the release types offer them (except --with-* flags, or -y skips).
-  HARD_SELECTED=()
-  if has_heavy && { ((FORCE_PRINT_HEAVY)) || ((!YES)) || ((WITH_ABLETON || WITH_DAVINCI)); }; then
-    select_heavy
-  elif (( ! FORCE_PRINT_HEAVY )); then
-    warn "(auto) bulky installers not embedded (size)."
+size_guard(){
+  # size_guard <bytes> <what> — refuse rather than produce an unusable upload.
+  if (( $1 > MAX_BYTES )); then
+    err "$2 is $(human "$1") — over the $(human "$MAX_BYTES") ceiling (a GitHub release asset)."
+    err "  Excluded from the release. Nothing was written."
+    exit 1
   fi
+}
 
-  # Backups: dedicated folder included ONLY for the 'print' type (and not
-  # with --no-backups). The release types never embed backup files.
-  local has_backup=0
-  if (( keep_backups )) && (( !NO_BACKUPS )) \
-     && compgen -G "$BACKUP_DIR/omarchy-backup-*.tar.gz" >/dev/null 2>&1; then
-    has_backup=1
+# ───────────────────────── Listing ─────────────────────────
+do_list(){
+  preflight
+  mapfile -t TRACKED < <(collect)
+  mapfile -t EXTRA < <(install_files_present | sed '/^$/d')
+  local total=0 f
+  msg "Release archive contents ( $PROJECT_NAME/ )"
+  printf '  %s tracked files from the repo\n' "${#TRACKED[@]}"
+  if ((${#EXTRA[@]})); then
+    for f in "${EXTRA[@]}"; do
+      local s; s="$(stat -c%s "$ROOT/$f" 2>/dev/null || echo 0)"
+      total=$((total + s))
+      printf '  + %s (%s)\n' "$f" "$(human "$s")"
+      size_guard "$s" "$f"
+    done
   fi
-
-  # Name: print → dated from the last backup; releases → today's timestamp.
-  local stamp fsize
-  if [[ $TYPE == print ]]; then
-    stamp="$(last_backup_date)"
-    OUT="$OUT_DIR/omarchy-scripts-print-$stamp.tar.gz"
-  else
-    stamp="$(date +%Y-%m-%d-%H%M%S)"
-    OUT="$OUT_DIR/omarchy-scripts-release-patch-$stamp.tar.gz"
-    [[ $TYPE == release ]] && OUT="$OUT_DIR/omarchy-scripts-release-$stamp.tar.gz"
-  fi
-
-  # Small list of what will be embedded, for the report
-  msg "Contents:"
-  echo "  • Full repo ($PROJECT_NAME/ + README/LICENSE/assets.links, without logs or .venv)"
-  ((keep_patch)) && echo "  • Personal extras embedded (release+patch)"
-  ((!keep_patch)) && echo "  • Personal extras EXCLUDED (release)"
-  ((has_backup)) && echo "  • Config backups: $BACKUP_DIR/"
-  ((!keep_backups)) && echo "  • Config backups EXCLUDED (release — rely on a 'print' archive)"
-  echo "  • Private local files (kept only on this machine) — never in the archive"
-  if ((${#HARD_SELECTED[@]})); then
-    local f
-    for f in "${HARD_SELECTED[@]}"; do echo "  • Installer  : $(basename "$f")"; done
-  fi
-
-  # Base exclusions: temp/logs/.venv + the Git history + private local files
-  # (except the personal-extras types, the only archives that carry them) +
-  # the previous archives (safety: an archive must never embed another one).
-  local -a excludes=(
-    --exclude='.git'
-    --exclude='.local'
-    --exclude='*.log'
-    --exclude='last_crash.log'
-    --exclude='*/PATCH/.venv'
-    --exclude='guitar-pro-8-licence.md'
-    --exclude='omarchy-scripts-*.tar.gz'
-  )
-  # 'release' (without patch) → the PATCH/ folders are never embedded.
-  if ((!keep_patch)); then
-    excludes+=(--exclude='*/PATCH' --exclude='PATCH')
-  fi
-  # Non-selected bulky installers → also excluded (size).
-  local abel sel2 q3
-  for abel in "${HARD[@]}"; do
-    sel2=0
-    for q3 in "${HARD_SELECTED[@]}"; do [[ $q3 == "$abel" ]] && sel2=1 && break; done
-    ((sel2)) || excludes+=(--exclude="$(basename "$abel")")
-  done
-
+  local code; code="$(cd "$ROOT" && printf '%s\n' "${TRACKED[@]}" | xargs -d '\n' stat -c%s 2>/dev/null | awk '{s+=$1} END {print s+0}')"
+  total=$((total + code))
+  printf '  = ~%s before compression\n' "$(human "$total")"
+  printf '  PATCH/ folders, .local/, *.log, backups: excluded (not tracked / never listed)\n'
+  if (( LIST_ONLY )); then return 0; fi
   hr
-  msg "Creating the archive (may take a while)..."
+}
 
-  local out_tmp="$OUT.tmp$$"
-  trap 'rm -f "$out_tmp"' EXIT
+# ───────────────────────── Building ─────────────────────────
+build(){
+  preflight
+  mapfile -t TRACKED < <(collect)
+  mapfile -t EXTRA < <(install_files_present | sed '/^$/d')
 
-  # The config lives in the dedicated backup (~/omarchy-backups/): it is embedded
-  # under the backups/ prefix in the archive (relative $HOME path → the backup
-  # stays in the same place on restore).
-  local -a btar=() transform=()
-  if (( has_backup )); then
-    transform=(--transform='s|^'"$(basename "$BACKUP_DIR")"'|backups|')
-    btar=(-C "$(dirname "$BACKUP_DIR")" "$(basename "$BACKUP_DIR")")
+  msg "Release archive of ' $PROJECT_NAME '"
+  msg "  Source : $ROOT @ $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
+  # The FILE LIST comes from git; the CONTENT comes from the working tree (tar
+  # reads the disk). So uncommitted work would silently ship. Say so.
+  if [[ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]]; then
+    warn "Working tree has uncommitted changes — the archive ships the files ON DISK, not the commit."
+    warn "  Commit first if the release must match $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo 'the commit')."
   fi
+  printf '  Content: %s tracked files' "${#TRACKED[@]}"
+  ((${#EXTRA[@]})) && printf ' + %s installation file(s)' "${#EXTRA[@]}"
+  printf '\n'
+  msg "  Excluded: PATCH/ · .local/ · *.log · backups · every non-tracked file"
+
+  mkdir -p "$OUT_DIR"
+  local -a tf=(--transform="s|^|${PROJECT_NAME}/|")
+  local stamp out tmp
+  stamp="$(date +%Y-%m-%d)"
+  out="$OUT_DIR/mosquitomarchy-release-$stamp.tar.gz"
+  tmp="$out.tmp.$$"
+  trap 'rm -f "$tmp"' EXIT
+
+  # RELEASE.md, written into the archive so whoever opens the tarball knows
+  # what it is and how to use it without mosquitomarchy.
+  local meta; meta="$(mktemp -d)"
+  cat > "$meta/RELEASE.md" <<'MDEOF'
+# mosquitOmarchy — release archive
+
+One tarball with the whole project and the installation files that are too big
+(or too private) for GitHub. **It is not a backup of anyone's machine**: it
+holds no personal data, no settings, no logs, no licence workarounds.
+
+## Use it
+
+```bash
+tar xzf mosquitomarchy-release-<date>.tar.gz
+cd mosquitomarchy
+
+./bootstrap.sh            # full guided setup
+./bootstrap.sh --status    # just show what is missing
+./mosquitomarchy-setup.sh # the orchestrator itself, if you prefer
+```
+
+A full setup is not required: every module also has its own `setup-*.sh` in
+`scripts/apps/<app>/`, each documented in its own README.
+
+## What is inside
+
+| Path | What |
+|---|---|
+| `scripts/apps/ableton/install-ableton-latest.run` | the Ableton installer (113 MB) |
+| `scripts/apps/bitwig/bitwig-studio-*.deb` | the Bitwig build the module pins (348 MB) |
+| everything else | the repository, as committed |
+
+## What is NOT inside, and where to get it
+
+| Missing | Why | Where |
+|---|---|---|
+| `scripts/apps/*/PATCH/` | private extras (licence workarounds, the Guitar Pro patch) | kept out of every release, on purpose |
+| Ableton Live `.zip` | needs an Ableton account, 3-4 GB | <https://www.ableton.com/en/download/> |
+| `DaVinci_Resolve_*_Linux.zip` | 10 GB | <https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion> |
+| `guitar-pro-8-setup.exe` | 988 MB, freely downloadable | <https://downloads.guitar-pro.com/gp8/stable/guitar-pro-8-setup.exe> |
+
+`bootstrap.sh --zips` downloads the missing installers for you, so a release
+archive is only needed to avoid the download step.
+
+## Restore your own settings
+
+This archive has nothing to restore. A machine backup is a different, dated
+file in `~/omarchy-backups/`, made by the mosquitomarchy TUI
+(**Backup**, optionally AES-256 encrypted) and restored with
+`./mosquitomarchy-setup.sh --restore`.
+MDEOF
 
   # pigz = parallel gzip (much faster, less memory pressure)
-  local -a compress_args=()
+  local -a compress=()
   if command -v pigz >/dev/null 2>&1; then
-    compress_args=("-I" "pigz")
-    msg "  Compression: pigz (parallel)"
+    compress=("-I" "pigz"); msg "  Compression: pigz (parallel)"
   else
     msg "  Compression: gzip (install pigz to speed it up)"
   fi
 
-  # We archive from the repo's parent so the folder appears under its
-  # own name (mosquitOmarchy/ in the tar), thus restoring everything in
-  # the same place. Files that live on disk outside GitHub (private local
-  # extras) are automatically embedded when the type keeps them.
-  local parent="$(dirname "$ROOT")"
-  if ! ( cd "$parent" && tar cz "${compress_args[@]}" -f "$out_tmp" \
-      --warning=no-file-changed "${excludes[@]}" "$PROJECT_NAME" \
-      "${transform[@]}" "${btar[@]}" ); then
-    err "Failed to create the archive — temporary file kept: $out_tmp"
-    trap - EXIT
-    return 1
+  hr; msg "Creating the archive..."
+  # ONE tar invocation for everything (tracked files + installation files +
+  # RELEASE.md): appending to a finished .tar.gz would mean decompressing and
+  # recompressing the whole 500 MB once per addition. -C switches the source
+  # directory mid-command, so RELEASE.md comes from the scratch dir while the
+  # rest comes from the repo, and --transform puts all of it under one
+  # <project>/ folder: extracting by hand then yields a single directory.
+  local -a all=("${TRACKED[@]}")
+  ((${#EXTRA[@]})) && all+=("${EXTRA[@]}")
+  if ! ( cd "$ROOT" && tar cz "${compress[@]}" -f "$tmp" \
+      "${tf[@]}" -C "$meta" RELEASE.md -C "$ROOT" -- "${all[@]}" ); then
+    err "tar failed — nothing was written."
+    exit 1
   fi
+  rm -rf "$meta"
   trap - EXIT
-  mv "$out_tmp" "$OUT"
 
-  fsize="$(du -h "$OUT" | cut -f1)"
-  ok "Archive created: $OUT ($fsize)"
-  echo "  Contains: $(tar tzf "$OUT" 2>/dev/null | wc -l) entries"
+  local bytes; bytes="$(stat -c%s "$tmp")"
+  size_guard "$bytes" "$out"
+  mv -f "$tmp" "$out"
+
+  # Final gate: verify what was actually written, not what we intended.
+  msg "Verifying the archive carries nothing personal..."
+  local bad f
+  bad=""
+  while IFS= read -r f; do
+    [[ -z $f ]] && continue
+    for pat in "${FORBIDDEN_PATTERNS[@]}"; do
+      if [[ $f == $pat ]] || [[ $f == *"$pat" ]]; then bad+="$f"$'\n'; break; fi
+    done
+  done < <(tar tzf "$out" 2>/dev/null)
+  if [[ -n $bad ]]; then
+    err "Personal content found in the archive — file removed, nothing published:"
+    printf '     %s' "$bad" >&2
+    rm -f "$out"
+    exit 1
+  fi
+  ok "verified: no PATCH, no logs, no backups, no passwords, no personal files"
+
+  ok "Release archive: $out ($(human "$bytes"), $(tar tzf "$out" 2>/dev/null | wc -l) entries)"
+  echo "  Extract by hand:  tar xzf $(basename "$out") && cd $PROJECT_NAME && ./bootstrap.sh"
   hr
 }
 
-main
+do_list
+(( LIST_ONLY )) && exit 0
+build

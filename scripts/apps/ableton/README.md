@@ -2,7 +2,10 @@
 
 Installs **Ableton Live 12 native Linux** via the [shibco/ableton-linux](https://github.com/shibco/ableton-linux) project: dedicated custom wine (`~/.local/opt/wine-d2d1-nspa`, prefix `~/.wine-ableton`), Max for Live and PipeASIO included. The `install-ableton-latest.run` installer downloads itself via `--check-update`.
 
-The `.run` installer is **not in the repo** — it is provided by the release archive (`scripts/archive-mosquitomarchy.sh`) or downloaded separately (https://github.com/shibco/ableton-linux/releases).
+The `.run` installer is **not in the repo** — it is one of the two files the release archive
+carries (`scripts/archive-mosquitomarchy.sh`), or downloaded separately
+(https://github.com/shibco/ableton-linux/releases). The `PATCH/` folder is **not** in any
+release: it is a private extra and stays on the machine that has it.
 
 **The Live edition zip must be downloaded manually** (from your ableton.com account) and dropped in `scripts/apps/ableton/`. At opening, the script verifies it is present and otherwise warns which file is missing (`Ableton_Live_<edition>_<version>_64.zip`) before offering rescan / a typed path.
 

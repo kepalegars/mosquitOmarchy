@@ -393,10 +393,13 @@ cmd_backup_options(){
   local had_prev=0
   load_previous_selection 2>/dev/null && had_prev=1
   local keepass=false zen=false
-  pkg_has keepassxc && keepass=true
-  # The Backup screen only offers the Zen row when there is a profile to back
-  # up: a machine without Zen has nothing to toggle.
-  [[ -f "$HOME/.config/zen/profiles.ini" ]] && zen=true
+  # The screen only shows a row for what the backup can actually take, and the
+  # backup's own conditions are the reference (see do_backup): KeePassXC needs
+  # the package AND its config folder, Zen needs the app AND a live profile.
+  # A machine without either shows neither row, instead of offering a toggle
+  # that silently does nothing.
+  if pkg_has keepassxc && [[ -d "$HOME/.config/keepassxc" ]]; then keepass=true; fi
+  if pkg_has zen-browser-bin && [[ -f "$HOME/.config/zen/profiles.ini" ]] && [[ -d "$HOME/.config/zen" ]]; then zen=true; fi
   printf '{"opts":true,"keepass":%s,"zen":%s}\n' "$keepass" "$zen"
 
   local e name label checked p
@@ -1094,9 +1097,12 @@ cmd_backup(){
   done
   YES=1
   VST_MODE="$vst"
-  [[ $keepass == no ]] && export BACKUP_SKIP_KEEPASS=1
-  [[ $zen == no ]] && export BACKUP_SKIP_ZEN=1
-  [[ -n $sel && -f $sel ]] && export BACKUP_APPS_SELECTION_FILE="$sel"
+  # Plain ifs, never `[[ … ]] && export`: under `set -e` a false condition
+  # makes the whole && list return 1, which is a landmine that moves as soon
+  # as the caller stops swallowing the status.
+  if [[ $keepass == no ]]; then export BACKUP_SKIP_KEEPASS=1; fi
+  if [[ $zen == no ]]; then export BACKUP_SKIP_ZEN=1; fi
+  if [[ -n $sel && -f $sel ]]; then export BACKUP_APPS_SELECTION_FILE="$sel"; fi
   do_backup || true
 }
 

@@ -12,7 +12,7 @@ This README is the **complete reference** for the orchestrator (`mosquitomarchy-
 
 ## Installation files
 
-The large installers are not in the repo; they are provided by the release archive (`archive-mosquitomarchy.sh`) or must be downloaded separately:
+The large installers are not in the repo; the two below ship **in the release archive** (`archive-mosquitomarchy.sh`), the others must be downloaded separately:
 
 | App | File | In repo? | In release archive? | Download |
 |---|---|---|---|---|
@@ -79,7 +79,7 @@ mosquitOmarchy/
 ├── bootstrap.sh                  # one-command start (clone + setup)
 ├── mosquitomarchy-setup.sh         # single orchestrator: backup/restore → modules → uninstall → repo update
 └── scripts/
-    ├── archive-mosquitomarchy.sh # "latest release" tar.gz of the repo
+    ├── archive-mosquitomarchy.sh # builds the release tarball (no personal data)
     ├── gui-run.bash             # file-manager launch support (reopens installers in a terminal)
     ├── deps                     # deps with no module folder of their own (currently: omagrab)
     ├── lib/                     # shared helpers: tui-kit/ (Go component library) + common.bash + crash.bash + keybindings.bash
@@ -108,7 +108,7 @@ Each module folder has a `README.md` with the module's own details — linked in
 | [bootstrap.sh](#one-command-start) | One-command start: clone (if needed) + setup + optional asset download |
 | [mosquitOmarchy](scripts/apps/mosquitomarchy/README.md) | The launcher TUI (Go/Bubble Tea): status / update / setup tree / backup-restore — the recommended interface |
 | [mosquitomarchy-setup.sh](#mosquitomarchy-setupsh) | Master: backup/restore → modules one by one → uninstall → repo update → report |
-| [archive-mosquitomarchy.sh](#archive-mosquitomarchysh) | Complete tar.gz archive of the repo (the "latest release") |
+| [archive-mosquitomarchy.sh](#archive-mosquitomarchysh) | The release tarball: the repo + the two install files GitHub cannot hold |
 
 ---
 
@@ -273,22 +273,50 @@ Each uninstalled module is **remembered** (`~/.local/state/omarchy-custom-script
 
 ## archive-mosquitomarchy.sh
 
-On launch you choose among two archive types (or `--type=`):
+One file: `mosquitomarchy-release-<YYYY-MM-DD>.tar.gz`, the repository under its own
+`mosquitomarchy/` folder plus the installation files that cannot live on GitHub.
 
-| Type | Content |
+**It is a release, not a backup, and it is not a second backup.** Everything
+personal is left out, silently and without asking:
+
+| Excluded | Why |
 |---|---|
-| `print` | **Full personal archive**: repo + the dated config backups (`~/omarchy-backups/`) |
-| `release` | Everything except logs and backup files — the "clean" archive |
+| `scripts/apps/*/PATCH/` | private extras — licence workarounds, the Guitar Pro patch |
+| `~/omarchy-backups/*` | the dated config backups, encrypted or not |
+| `*.log`, `last_crash.log`, `.local/` | run logs and machine state |
+| every **non-tracked** file | the file list comes from `git ls-files`, so an ignored or leftover local file cannot leak in |
 
-Always excluded (whatever the type): logs, `.venv`, Git history, previous archives. **Large installers** (Ableton zips/`.run`, Guitar Pro `.exe`, DaVinci zips) are embedded **automatically** in `print` archives (they are the personal backup of the installers), and **offered** (never forced) for the `release` archives. The file name embeds the type: `omarchy-scripts-print-<date>.tar.gz`, `omarchy-scripts-release-<date>.tar.gz`.
+Nothing personal is ever in a release, and there is no question about it: the
+release's rules apply. The finished archive is then **verified** — the script
+re-reads its own tarball and refuses to keep it if a `PATCH/`, a `*.log`, a
+`Passwords.kdbx`, a `pkglist.txt` or a backup shows up.
+
+**Size**: GitHub accepts a release asset up to 2 GiB, and the build refuses to
+produce anything above that. It lands at ~490 MB: the Ableton installer
+(113 MB) and the pinned Bitwig `.deb` (348 MB) — the same two files as the
+[Installation files](#installation-files) table — plus the ~67 MB of tracked
+code. The 10 GB DaVinci zip, the 3-4 GB Ableton zips and the 988 MB Guitar Pro
+installer stay out on purpose; the table links where to get them.
+
+**It replaces the bootstrap.** The tarball is meant to be taken by hand — no
+mosquitomarchy code is involved in the extraction:
 
 ```bash
-./scripts/archive-mosquitomarchy.sh                 # interactive: type → heavy installers → tar.gz
-./scripts/archive-mosquitomarchy.sh -y              # defaults: type 'print', all heavy installers embedded
-./scripts/archive-mosquitomarchy.sh --type=release  # non-interactive: "clean" release (no backups)
-./scripts/archive-mosquitomarchy.sh --with-ableton --with-davinci
-./scripts/archive-mosquitomarchy.sh --list-heavy    # list the detected heavy files
-./scripts/archive-mosquitomarchy.sh --no-backups    # print only: skip the config backups
+tar xzf mosquitomarchy-release-<date>.tar.gz
+cd mosquitomarchy
+./bootstrap.sh --init-git     # attaches origin/<branch>, so the self-update works
+./bootstrap.sh                # or just run it
+```
+
+`--init-git` turns the extracted folder into a real shallow checkout (it
+refuses if the tree differs from the branch, so a personalised extraction is
+never overwritten). A `RELEASE.md` inside the archive repeats all of this for
+whoever opens the tarball.
+
+```bash
+./scripts/archive-mosquitomarchy.sh            # build the release archive
+./scripts/archive-mosquitomarchy.sh --list     # what would go in, and its size
+./scripts/archive-mosquitomarchy.sh --out=DIR  # write DIR/ instead of the repo root
 ```
 
 ---

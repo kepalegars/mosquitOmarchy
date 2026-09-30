@@ -1594,13 +1594,22 @@ do_backup(){
   # password files must NEVER enter the repository. BACKUP_SKIP_KEEPASS=1
   # (the TUI's "KeePassXC: skip") leaves them out.
   if [[ -z ${BACKUP_SKIP_KEEPASS:-} ]] && pkg_has keepassxc; then
+    # Report what was ACTUALLY added: the old message claimed "passwords +
+    # settings included" even on a machine with neither the config folder nor
+    # the database, which is exactly the case where the user needs to be told
+    # the backup is empty rather than assume it holds their passwords.
+    local kp=0
     if [[ -d "$HOME/.config/keepassxc" ]]; then
-      paths+=(".config/keepassxc")
+      paths+=(".config/keepassxc"); kp=1
     fi
     if [[ -f "$HOME/Documents/Passwords.kdbx" ]]; then
-      paths+=("Documents/Passwords.kdbx")
+      paths+=("Documents/Passwords.kdbx"); kp=1
     fi
-    ok "keepassxc passwords + settings included (writes only to $BACKUP_DIR, never the repo)"
+    if (( kp )); then
+      ok "keepassxc passwords + settings included (writes only to $BACKUP_DIR, never the repo)"
+    else
+      warn "keepassxc installed but neither ~/.config/keepassxc nor ~/Documents/Passwords.kdbx found — nothing to back up."
+    fi
   fi
   if ((${#paths[@]})); then
     ( cd "$HOME" && tar czf "$tmp/config-backup.tar.gz" "${paths[@]}" )
