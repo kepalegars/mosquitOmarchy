@@ -18,7 +18,13 @@ scripts/apps/bitwig/*.deb
 .local/
 
 # ── Machine-scoped state (mosquito Audio Plugin Manager): per-machine, never committed ──
+# audio-plugin-manager-state.json is the installed-plugins truth log; the
+# yabridge-driver.* pair is the same thing for the yabridge build/install
+# bookkeeping the core writes next to itself (YABRIDGE_STATE / YABRIDGE_LOCK).
+# All three describe THIS machine, and differ on every other one.
 scripts/apps/audio-plugin-manager/audio-plugin-manager-state.json
+scripts/apps/audio-plugin-manager/yabridge-driver.json
+scripts/apps/audio-plugin-manager/yabridge-driver.lock
 
 # ── Patches (whole folders): provided separately, never on GitHub ──
 # All the files (including each app's patches) are recovered via the
