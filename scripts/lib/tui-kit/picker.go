@@ -679,11 +679,54 @@ type Picker struct {
 	// rebuilt delegate that forgets this is what put a blank line between
 	// every module and halved the visible list.
 	compact bool
+	// treeOpen is the host's SHARED open/closed state for a folder tree, handed
+	// over by WithTree. When it is set, ← and → stop being sort keys and become
+	// the fold gesture: they open or close the folder the CURSOR IS IN, which
+	// may be a child row rather than the folder's own title. When it is nil the
+	// arrows keep their original meaning, so a settings screen that cycles a
+	// value with ←/→ is unaffected.
+	treeOpen map[string]bool
 }
 
 // NewPicker builds a picker. It starts unpinned; call SetContentWidth on the
 // result to keep the text column still across folds.
 func NewPicker(header string, items []PickerItem) Picker { return newPicker(header, items, Picker{}) }
+
+// WithTree declares that this picker is a folder tree and hands the kit the
+// host's shared open/closed map. It is what makes the fold gesture UNIVERSAL:
+// every host that marks its containers with PickerItem.Folder and passes its map
+// here gets ←/→ on "the folder the cursor is in" without writing the gesture.
+//
+// The map is shared by reference, so the kit's flip is immediately what the
+// host's next rebuild reads. Re-declare it on every rebuild — a new Picker is a
+// new value, and a tree picker that forgot its map would fall back to sorting.
+//
+// A host rebuilds on TreeFoldMsg:
+//
+//	case tuikit.TreeFoldMsg:
+//	    m.rebuildTreePicker()
+//	    m.picker = m.picker.SelectValue(msg.Cursor)
+func (p Picker) WithTree(open map[string]bool) Picker {
+	p.treeOpen = open
+	return p
+}
+
+// SelectValue puts the cursor back on the row carrying value, and leaves the
+// picker untouched when no row has it. Rebuilding a tree changes the row count,
+// so the old INDEX is meaningless — a host that restored an index either landed
+// on a different plugin or past the end of a shorter list. Matching by value is
+// what keeps the cursor on the plugin the user was looking at.
+func (p Picker) SelectValue(value string) Picker {
+	if value == "" {
+		return p
+	}
+	for i, it := range p.Items() {
+		if it.Value == value {
+			return p.SelectIndex(i)
+		}
+	}
+	return p
+}
 
 // newPicker is NewPicker with the pin a SetContentWidth call already recorded,
 // so a pin survives the host's rebuild-then-pin cycle.
@@ -973,9 +1016,9 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 			}
 			return out, nil
 		case key.Matches(m, key.NewBinding(key.WithKeys("left"))):
-			return p, func() tea.Msg { return PickerSortMsg{Dir: -1} }
+			return p.foldKey(-1)
 		case key.Matches(m, key.NewBinding(key.WithKeys("right"))):
-			return p, func() tea.Msg { return PickerSortMsg{Dir: 1} }
+			return p.foldKey(1)
 		}
 	}
 	var cmd tea.Cmd
@@ -986,6 +1029,35 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 		}
 	}
 	return p, cmd
+}
+
+// foldKey is ←/→ on a picker declared with WithTree.
+//
+// It acts on THE FOLDER THE CURSOR IS IN, not on the row the cursor happens to
+// be on: a host that only ever looked at the selected row's own value got "no
+// folder here" while the cursor sat on a plugin, and closing the vendor then
+// meant walking the cursor back up to the vendor's title first. ← is for
+// "close the thing I am inside of", so it has to work from anywhere inside it.
+//
+// On a row that belongs to no folder it emits PickerSortMsg exactly as before,
+// which is what keeps a settings screen that cycles a value with ←/→ working.
+func (p Picker) foldKey(dir int) (Picker, tea.Cmd) {
+	if p.treeOpen != nil {
+		if folder, inFolder := ParentFolderFlag(p.Items(), p.SelectedValue()); inFolder {
+			open := dir > 0
+			p.treeOpen[folder] = open
+			cursor := p.SelectedValue()
+			if !open {
+				// The children are about to vanish, including the row the cursor
+				// is on. Land on the folder title rather than past the end.
+				cursor = folder
+			}
+			return p, func() tea.Msg {
+				return TreeFoldMsg{Folder: folder, Open: open, Cursor: cursor}
+			}
+		}
+	}
+	return p, func() tea.Msg { return PickerSortMsg{Dir: dir} }
 }
 
 // advanceDown moves the cursor to the next SELECTABLE row, crossing page

@@ -152,6 +152,32 @@ func ParentFolderOf(items []PickerItem, folderPrefix, value string) (folder stri
 	return owner, true
 }
 
+// TreeFoldMsg asks a host to rebuild a tree picker after the ←/→ gesture
+// changed a folder's open state.
+//
+// The kit can flip the shared open-state map but cannot rebuild the rows — only
+// the host knows what its rows mean — so it names the change and the row the
+// cursor should end up on, and the host repaints:
+//
+//	case tuikit.TreeFoldMsg:
+//	    m.rebuildPicker()
+//	    m.picker = m.picker.SelectValue(msg.Cursor)
+//
+// The kit emits this INSTEAD of PickerSortMsg for a picker declared with
+// WithTree, so a host no longer writes the fold logic (resolve the folder, flip
+// the map, remember where the cursor was, rebuild, reselect) once per screen.
+type TreeFoldMsg struct {
+	// Folder is the row value of the container that was opened or closed.
+	Folder string
+	// Open is its new state.
+	Open bool
+	// Cursor is the row the cursor should land on after the rebuild. It is the
+	// folder itself when closing, because the row the cursor was on was one of
+	// the children that just disappeared — without this the cursor would fall
+	// off the end of a shorter list.
+	Cursor string
+}
+
 // MarkBadge is the filled square a container row carries when something inside
 // it is selected. Same glyph, same accent colour and same trailing slot as the
 // plugin manager's "a fix is already applied here" marker, so "there is
