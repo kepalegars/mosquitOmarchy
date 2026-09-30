@@ -100,7 +100,11 @@ if ((INIT_GIT)) && [[ ! -d "$SRC/.git" ]]; then
   # `status` is useless here (everything is untracked): compare the FILES with
   # the branch instead. Empty diff = the extraction matches the repo, so
   # resetting is a no-op on content and only creates the checkout.
-  drift="$(git -C "$SRC" add -A && git -C "$SRC" diff --cached --stat "origin/$BRANCH" 2>/dev/null)"
+  # RELEASE.md is written BY the archive, so it has no counterpart in the repo:
+  # it is a build artefact, not a local edit. Excluded, or every release would
+  # look "modified" the moment it is extracted.
+  drift="$(git -C "$SRC" add -A && git -C "$SRC" -c core.excludesFile=/dev/null \
+            diff --cached --stat "origin/$BRANCH" -- . ':(exclude)RELEASE.md' 2>/dev/null)"
   if [[ -n $drift ]]; then
     git -C "$SRC" reset -q
     err "$SRC differs from origin/$BRANCH — refusing to overwrite it:"
