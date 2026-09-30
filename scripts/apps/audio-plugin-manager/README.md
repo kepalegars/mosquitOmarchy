@@ -25,6 +25,7 @@ Each step is detected and **idempotent**:
 2. **VST folders** — the shared root (default `~/Music/Audio Plugins`, legacy `~/VST` fallback), yabridgectl registration, `yabridge-autosync` systemd units, native plugin-search env vars (`VST_PATH`/`VST3_PATH`/`CLAP_PATH`/`LV2_PATH` via `~/.config/environment.d`), wine-prefix → shared-folder linking
 3. **Yabridge precautions by vendor** — applies only what concerns installed plugins
 4. **Audio Plugin Manager menu entry** — installs the manager itself
+5. **Wine menu cleanup** — drops the `Uninstall` / `Manual` shortcuts the Windows plugin installers publish (see below)
 
 ```bash
 ./apps/audio-plugin-manager/setup-audio-stack.sh             # interactive, each step asked
@@ -33,7 +34,37 @@ Each step is detected and **idempotent**:
 ./apps/audio-plugin-manager/setup-audio-stack.sh --dry-run   # simulation, nothing modified
 ./apps/audio-plugin-manager/setup-audio-stack.sh --vst-sync  # yabridgectl sync
 ./apps/audio-plugin-manager/setup-audio-stack.sh --vst-status
+./apps/audio-plugin-manager/setup-audio-stack.sh --wine-menu   # step 5 only
 ```
+
+### Wine menu cleanup — no `Uninstall` in the launcher
+
+Every Windows plugin installer (smartEQ, CrispyTuner, FabFilter…) writes
+`Uninstall` / `Manual` shortcuts into its prefix's Start Menu, and Wine
+republishes each of them as an entry of the Omarchy launcher, under
+`Wine / Programs / <vendor>`. That is exactly the wrong entry for an app this
+module installs *and* uninstalls, next to the `vst-standalone-*.desktop` the
+module publishes itself.
+
+The cleanup runs:
+
+* right after `install_plugin()` and `uninstall_target()`, scoped to the **one
+  prefix the installer just ran in** (matched on the `WINEPREFIX=` its `Exec=`
+  pins) — that is what catches entries whose shortcut is named after the Start
+  Menu *folder* (`Sonible/smartEQ4/Uninstall.desktop` for a `smartEQ 4.dll`
+  plugin), which the older name-based match missed;
+* at the end of `setup-audio-plugin-manager.sh` and of `setup-audio-stack.sh`
+  (step 5), scoped to the prefixes this stack owns (`~/.wine-vst*`).
+
+Shared with the other wine modules through `scripts/lib/wine-menu.bash`, which
+also prunes the `.directory` publishers left empty — that is what kept an
+`Arobas Music` folder visible after its entries were gone. `~/.wine` is never
+swept in bulk: it is where a user runs their own Windows apps, and those keep
+their launcher entries. The `NoDisplay=true` file associations
+(`wine-extension-*` / `wine-protocol-*`) are never touched.
+
+Manual: `bash scripts/fixes/fix-wine-menu.sh` (`--status` for a read-only
+report, `--all-prefixes` to include the prefixes this stack does not own).
 
 Plugins installed via a Windows installer end up in the shared VST root (monitored by autosync). After installing a new plugin, re-run `--tweaks` to apply its possible precautions.
 

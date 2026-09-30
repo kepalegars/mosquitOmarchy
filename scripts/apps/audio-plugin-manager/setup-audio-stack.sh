@@ -13,9 +13,11 @@
 # VST subcommands (Windows plugins via wine, purely local) :
 #   ./setup-audio-stack.sh --vst-sync        # yabridgectl sync
 #   ./setup-audio-stack.sh --vst-status      # state of the local folders + plugins
+#   ./setup-audio-stack.sh --wine-menu       # only drop the installer shortcuts from the VST prefixes
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/elevate.bash"  # mq_sudo: native pkexec prompt when not root
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/wine-menu.bash"  # wine-menu: drop the Start-Menu shortcuts Wine republishes
 set -euo pipefail
 
 # Wine's Mono/Gecko installers open a bare white window in the corner of
@@ -27,12 +29,13 @@ set -euo pipefail
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-mscoree,mshtml=}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-YES=0 DRY=0 TWEAKS_ONLY=0
+YES=0 DRY=0 TWEAKS_ONLY=0 WINE_MENU_ONLY=0
 VST_MODE=0 VST_SYNC=0 VST_STATUS=0
 while (( $# )); do a="$1"; case "$a" in
   -y|--yes) YES=1 ;;
   --dry-run) DRY=1 ;;
   --tweaks) TWEAKS_ONLY=1 ;;
+  --wine-menu) WINE_MENU_ONLY=1 ;;
   --vst-sync) VST_MODE=1; VST_SYNC=1 ;;
   --vst-status) VST_MODE=1; VST_STATUS=1 ;;
   -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
@@ -452,6 +455,32 @@ recap(){
   hr
 }
 
+# The Windows plugin installers write "Uninstall"/"Manual" shortcuts into their
+# prefix's Start Menu, and Wine republishes every one of them into the Omarchy
+# launcher. Nothing to do there: the plugin manager uninstalls the plugins
+# itself and publishes its own vst-standalone-*.desktop entry, so the launcher
+# just shows an "Uninstall" sitting next to a working app.
+#
+# Scoped to the prefixes this stack owns (~/.wine-vst*). ~/.wine is left alone —
+# a Windows app the user runs on their own there must keep its menu entry.
+step_wine_menu(){
+  msg "Step — Wine menu cleanup (VST prefixes)"
+  local pfx n=0 left
+  for pfx in "$HOME"/.wine-vst*; do
+    [[ -d $pfx/drive_c ]] || continue
+    mosquitomarchy_wine_menu_sweep "$pfx" >/dev/null
+    n=$((n + 1))
+  done
+  (( n )) && ok "$n VST prefix(es) cleaned" || ok "no dedicated VST prefix yet — nothing to clean"
+  left="$(mosquitomarchy_wine_menu_report | head -5)"
+  if [[ -n $left ]]; then
+    warn "left in place (published by a prefix this stack does not own):"
+    while IFS= read -r _l; do [[ -n $_l ]] && printf '     %s\n' "$_l" >&2; done <<< "$left"
+  else
+    ok "no Wine-published launcher entry left"
+  fi
+}
+
 # ═══════════════════════════════════════════════════════════════════════
 # Local VST module (Windows plugins via wine, without VM sharing)
 #
@@ -482,6 +511,7 @@ vst_status(){
 
 main(){
   msg "setup-audio-stack — Omarchy local wine/yabridge audio stack (+ the Audio Plugin Manager)"
+  if ((WINE_MENU_ONLY)); then step_wine_menu; exit 0; fi
   if ((VST_MODE)); then
     ((VST_SYNC)) && vst_sync
     ((VST_STATUS)) && vst_status
@@ -493,6 +523,7 @@ main(){
     step_vstdirs; hr
     step_tweaks;  hr
     step_vst_menu; hr
+    step_wine_menu; hr
     recap
   fi
 }

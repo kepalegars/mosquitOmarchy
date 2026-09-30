@@ -619,6 +619,7 @@ FIXES=(
   "1px-seam:Hair-thin transparent 1px line between the Omarchy bar and a window in borderless/no-gaps tiling — switch the blur to its legacy path (helps when blur is enabled; reversible)"
   "ableton-fullscreen:Ableton Live Full Screen is shifted/broken (content sits off where you click) — launches Live with WINE_WIN32_FULLSCREEN_CLASS=off (documented ableton-linux cure; drag-the-window alternative): (reversible)"
   "omarchy-bar:The Omarchy toolbar disappeared (toggled off / slid off-screen) — clear the bar-off toggle and re-sync the shell"
+  "wine-menu:'Uninstall'/'Manual' entries cluttering the launcher: a Windows installer (smartEQ, FabFilter, CrispyTuner, Guitar Pro…) published its Start-Menu shortcuts and Wine turned each one into an app-menu entry — drop the ones belonging to the prefixes mosquitOmarchy manages (idempotent; the file associations are kept)"
 )
 
 fix_desc(){ # id -> description
@@ -640,6 +641,7 @@ fix_category(){
     hyprland-crash)   echo "Recovery" ;;
     ableton-wine-scroll) echo "Windows & input" ;;
     ableton-fullscreen) echo "Windows & input" ;;
+    wine-menu)          echo "Windows & input" ;;
     *)                echo "Other" ;;
   esac
 }
@@ -738,6 +740,7 @@ run_fix(){ # single fix by id
     ableton-fullscreen) bash "$SCRIPT_DIR/scripts/fixes/fix-ableton-fullscreen.sh" ;;
     1px-seam) bash "$SCRIPT_DIR/scripts/fixes/fix-1px-seam.sh" ;;
     omarchy-bar) bash "$SCRIPT_DIR/scripts/fixes/fix-omarchy-bar.sh" ;;
+    wine-menu) bash "$SCRIPT_DIR/scripts/fixes/fix-wine-menu.sh" ;;
     *) err "Unknown fix: $id"; return 1 ;;
   esac
 }

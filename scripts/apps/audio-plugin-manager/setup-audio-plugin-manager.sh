@@ -34,6 +34,7 @@
 # =============================================================================
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/elevate.bash"  # mq_sudo: native pkexec prompt when not root
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/wine-menu.bash"  # wine-menu: drop the Start-Menu shortcuts Wine republishes
 
 info()  { echo -e "\033[1;34m==>\033[0m $*"; }
 ok()    { echo -e "\033[1;32m ✓\033[0m $*"; }
@@ -305,5 +306,41 @@ EOF
   ok "deployed README reflecting current settings ($dir/README.md)"
 }
 bootstrap_dir_readme
+
+# ── Wine menu cleanup ───────────────────────────────────────────────────────
+# Every Windows plugin installer (smartEQ, CrispyTuner, FabFilter…) writes
+# "Uninstall"/"Manual" shortcuts into its prefix's Start Menu, and Wine
+# republishes each of them as an entry in the Omarchy launcher. They are pure
+# clutter here: this module installs and uninstalls the plugins itself and
+# publishes its own vst-standalone-*.desktop entry, so the launcher ends up
+# showing an "Uninstall" next to a perfectly working app.
+#
+# Scoped to the prefixes this module OWNS (~/.wine-vst*), deliberately not to
+# ~/.wine: a user running their own Windows app in the generic prefix must keep
+# that app's menu entry. The generic prefix is still covered per-install, by the
+# sweep install_plugin()/uninstall_target() run right after the installer.
+clean_wine_menu(){
+  local pfx n=0
+  info "Wine menu — removing the installer shortcuts from the VST prefixes"
+  for pfx in "$HOME"/.wine-vst*; do
+    [[ -d $pfx/drive_c ]] || continue
+    mosquitomarchy_wine_menu_sweep "$pfx" >/dev/null
+    n=$((n + 1))
+  done
+  if (( n == 0 )); then
+    ok "no dedicated VST prefix yet — nothing to clean"
+  else
+    ok "VST prefix(es) cleaned: $n"
+  fi
+  local left
+  left="$(mosquitomarchy_wine_menu_report | head -5)"
+  if [[ -n $left ]]; then
+    warn "entries published by prefixes this module does not own (left alone on purpose):"
+    while IFS= read -r _l; do [[ -n $_l ]] && printf '     %s\n' "$_l" >&2; done <<< "$left"
+  else
+    ok "no Wine-published launcher entry left"
+  fi
+}
+clean_wine_menu
 
 info "mosquito Audio Plugin Manager ready (see the Omarchy launcher, Audio category — search 'mosquito')."
