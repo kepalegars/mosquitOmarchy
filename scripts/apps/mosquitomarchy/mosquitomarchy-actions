@@ -211,7 +211,10 @@ cmd_setup(){
           # the "remove" version, but it never shows in this tree).
           if [[ ${CAND_KEYS[$i]} == "remove-ai" ]]; then
             name="bring back omarchy's agentic stuff"
-            info="re-enables the omarchy.agents bar widget and the AI-diagnosis crash toasts — what Omarchy ships, nothing more"
+            # No description: the label already says what the row does, and a
+            # 100-column blurb under it was one of the two rows that made the
+            # Setup page overflow the pane.
+            info=""
           fi
           # Catalog shell-plugins used to be relabelled here from the raw
           # id|url|human-label field, which re-inlined the description the split
@@ -309,7 +312,7 @@ cmd_uninstall_tree(){
           if [[ $e == remove-ai ]]; then
             # Uninstall wording (Setup shows the "bring back…" version).
             name="remove omarchy's agentic stuff"
-            info="strips the omarchy.agents plugin, the AI-diagnosis crash toasts and the ollama loader helpers (reversible from Setup)"
+            info=""
           else
             name="$e - v$(module_version "$e")"
             info="$(module_desc "$e")"
@@ -346,21 +349,11 @@ cmd_uninstall_tree(){
       "$(json_str fixes)" "$(json_str "fix:$fid")" "$(json_str "$fid")" \
       "$(json_str "$(fix_desc "$fid")")")")
   done
-  # Preinstalls: the folder is ALWAYS listed, and greys out on its own once no
-  # stock app is removable any more. It used to be dropped from the tree
-  # entirely, so the option silently disappeared instead of turning into the
-  # "nothing left to do here" state the other options use.
-  local nrem=0 p
-  while read -r p; do [[ -n $p ]] || continue; preinstall_removable "$p" && ((nrem++)); done < <(stock_preinstalls)
-  folders+=("Preinstalls"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
-    "$(json_str preinstalls)" "$(json_str "Preinstalls")" false)")
-  items+=("preinstalls/choose"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s,"disabled":%s}' \
-    "$(json_str preinstalls)" "$(json_str "preinstalls:choose")" \
-    "$(json_str "Choose which Omarchy preinstalls to remove")" \
-    "$(json_str "$( ((nrem)) && printf '%d stock app(s) still removable; the list below only shows what is actually installed' "$nrem" \
-        || printf 'nothing left to remove: every Omarchy preinstall is either already removed or is one of your own apps (kept on purpose)')")" \
-    "$( ((nrem)) && printf false || printf true)")")
-  unset p
+  # Preinstalls is NOT a row of the tree. It used to be, and it was the one
+  # row whose own label plus description were long enough to widen the whole
+  # page past the pane. Choosing which stock apps to remove is now a step of
+  # the uninstall itself — see the TUI, which opens it right before the
+  # uninstallations start — so the tree has nothing left to show for it.
 
   local line
   while IFS= read -r line; do [[ -n $line ]] && printf '%s\n' "${line#*$'\t'}"; done \

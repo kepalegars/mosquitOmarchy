@@ -98,6 +98,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.quit = true
 				return m, tea.Quit
 			}
+			if m.top() == scrPreinstalls {
+				// ctrl+c leaves the preinstalls like "Back" does: it cancels the
+				// uninstall they were in front of rather than letting the user
+				// fall into a confirmation they never finished choosing.
+				m = m.cancelUninstall()
+			}
 			m.pop()
 			return m, nil
 		}
@@ -577,11 +583,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				return m, nil
 			}
 			if m.pendingAction == "preinstalls-remove" {
-				// "Keep them" (or Cancel): the ticked selection is left as it
-				// was and the picker is NOT left behind, since a cancel that
-				// stays on a half-done screen is easy to misread.
+				// "Keep them" (or Cancel): the stock apps stay. That was a
+				// decision about the PREINSTALLS, not about the uninstall that
+				// this page was in front of, so the uninstall carries on. (To
+				// cancel the uninstall itself, back out of the preinstalls page
+				// instead — that is the only exit that drops it.)
 				m.toast, _ = m.toast.SetWarn("preinstalls kept")
-				return m, nil
+				return m.resumeUninstall()
 			}
 			if m.pendingAction == "davinci-spektra" {
 				// Declined = install Resolve without the optional OFX. That is a
@@ -1231,11 +1239,24 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if pm, ok := msg.(preinstallsMsg); ok {
 			if pm.err != nil {
 				m.toast, _ = m.toast.SetErr(pm.err.Error())
+				if len(m.uninstallWait) > 0 {
+					// The preinstalls removal failed, but that is no reason to
+					// swallow the uninstall the user asked for: say what failed
+					// and let the uninstall proceed.
+					return m.resumeUninstall()
+				}
 				return m, nil
 			}
 			if pm.done != "" {
 				m.pop()
 				m.toast, _ = m.toast.SetOK("preinstalls removed")
+				// The preinstalls step was the FIRST step of an uninstall that
+				// was waiting, so the uninstall now gets its confirmation and
+				// only then runs. Before, removing preinstalls and uninstalling
+				// modules were two independent actions.
+				if len(m.uninstallWait) > 0 {
+					return m.resumeUninstall()
+				}
 				return m, tea.Batch(fetchTreeCmd("uninstall-tree"), blinkCmd(), fetchAIRemovedCmd())
 			}
 			if len(pm.rows) > 0 {
@@ -1444,12 +1465,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 				keys = []string{strings.TrimPrefix(res.Value, "item:")}
 			}
 			if m.treeMode == "uninstall" {
-				m.pendingAction = "uninstall"
-				m.pendingArgs = keys
 				m.kpxGnomeRm = 0
-				m.pendingMsg = fmt.Sprintf("Uninstall %d selected item(s)?\n\n%s", len(keys), strings.Join(keys, "\n"))
-				m.pendingNo = "Cancel"
-				m.pendingYes = "Uninstall"
+				return m.startUninstall(keys, fmt.Sprintf("Uninstall %d selected item(s)?\n\n%s", len(keys), strings.Join(keys, "\n")))
 			} else {
 				var groups []string
 				for _, f := range m.setupFolders {
@@ -1511,14 +1528,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 				// Uninstall mirrors install on the same page: Enter on a module
 				// removes exactly that one, in either mode.
 				if m.treeMode == "uninstall" {
-					m.pendingAction = "uninstall"
-					m.pendingArgs = []string{key}
-					m.pendingMsg = fmt.Sprintf("Uninstall %s?", it.Label)
-					m.pendingNo = "Cancel"
-					m.pendingYes = "Uninstall"
-					m.push(scrConfirm)
-					m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
-					return m, nil
+					return m.startUninstall([]string{key}, fmt.Sprintf("Uninstall %s?", it.Label))
 				}
 				plan := []string{strings.Join([]string{folder, key}, "\t")}
 				m.pendingAction = "apply"
@@ -1576,9 +1586,11 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		askRemove := func() (model, tea.Cmd) {
 			pkgs := preinstallsTargets()
 			if len(pkgs) == 0 {
-				m.toast, _ = m.toast.SetWarn("nothing ticked — no preinstall is removed")
-				m.pop()
-				return m, nil
+				// Nothing ticked: no removal to confirm, so the step is over and
+				// the uninstall it was in front of carries on. Backing out of
+				// the page is the way to cancel the whole thing.
+				m.toast, _ = m.toast.SetWarn("no preinstall removed")
+				return m.resumeUninstall()
 			}
 			names := strings.Join(pkgs, ", ")
 			m.pendingAction = "preinstalls-remove"
@@ -1591,13 +1603,15 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(0)
 			return m, nil
 		}
-		if res.Canceled {
-			return askRemove()
-		}
-		if res.Value == "back" || res.Value == "" {
-			// The user asked for "back" to apply the selection too. It now asks
-			// the same question Enter does instead of removing silently.
-			return askRemove()
+		if res.Canceled || res.Value == "back" || res.Value == "" {
+			// Backing out cancels the uninstall this page was in front of.
+			// It used to apply the selection instead, which meant there was no
+			// way to change your mind once you had opened the preinstalls: the
+			// only exit removed something. pop() reports the cancellation and
+			// leaves the module ticks exactly as they were.
+			m = m.cancelUninstall()
+			m.pop()
+			return m, nil
 		}
 		return askRemove()
 	case scrSetupCat:
@@ -1625,14 +1639,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		// Uninstall ▸ Preinstalls opens its own picker: the whole Omarchy stock
-		// list with the removed ones greyed, instead of being swept wholesale.
-		if len(eff) == 1 && eff[0] == "preinstalls:choose" {
-			m.push(scrPreinstalls)
-			m.preinstallChecked = map[string]bool{}
-			m.preinstallPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).SetSize(m.contentSize())
-			return m, fetchPreinstallsCmd()
-		}
+
 		if m.treeMode == "uninstall" {
 			keys := m.selectedKeysOfCat(m.setupCat)
 			if len(keys) == 0 {
@@ -1642,15 +1649,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 				m.toast, _ = m.toast.SetWarn("nothing to uninstall — press tab to select items")
 				return m, nil
 			}
-			m.pendingAction = "uninstall"
-			m.pendingArgs = keys
-			m.pendingMsg = fmt.Sprintf("Uninstall %d item(s) in %s?\n\n%s",
-				len(keys), m.setupCatLabel(), strings.Join(keys, "\n"))
-			m.pendingNo = "Cancel"
-			m.pendingYes = "Uninstall"
-			m.push(scrConfirm)
-			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
-			return m, nil
+			return m.startUninstall(keys, fmt.Sprintf("Uninstall %d item(s) in %s?\n\n%s",
+				len(keys), m.setupCatLabel(), strings.Join(keys, "\n")))
 		}
 		plan := m.applyPlanCat(m.setupCat)
 		if len(plan) == 0 {
@@ -1990,6 +1990,62 @@ func workingArgs(sub string, args []string) []string {
 	return out
 }
 
+// startUninstall routes an uninstall THROUGH the preinstalls page.
+//
+// Choosing which stock apps to remove used to be a row of its own in the tree.
+// It is now a step that comes before the uninstallations begin: the same page
+// opens, but it is opened by asking for an uninstall rather than by ticking a
+// row, and the uninstall it interrupted resumes once the preinstalls step is
+// done. The confirmation that was about to be shown is held in uninstallMsg
+// and shown only after, so a removal can never be confirmed before the list of
+// apps it is about to remove has been read.
+func (m model) startUninstall(keys []string, prompt string) (model, tea.Cmd) {
+	if len(keys) == 0 {
+		return m, nil
+	}
+	m.uninstallWait = append([]string(nil), keys...)
+	m.uninstallMsg = prompt
+	m.pendingAction = "uninstall"
+	m.pendingArgs = append([]string(nil), keys...)
+	m.pendingMsg = prompt
+	m.pendingNo = "Cancel"
+	m.pendingYes = "Uninstall"
+	m.push(scrPreinstalls)
+	m.preinstallChecked = map[string]bool{}
+	m.preinstallPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).
+		SetSize(m.contentSize())
+	return m, fetchPreinstallsCmd()
+}
+
+// resumeUninstall shows the uninstall confirmation that startUninstall held
+// back, and forgets the preinstalls step: from here the uninstall is a plain
+// uninstall again.
+func (m model) resumeUninstall() (model, tea.Cmd) {
+	keys, msg := m.uninstallWait, m.uninstallMsg
+	m.uninstallWait, m.uninstallMsg = nil, ""
+	if len(keys) == 0 {
+		return m, nil
+	}
+	m.pendingAction = "uninstall"
+	m.pendingArgs = keys
+	m.pendingMsg = msg
+	m.pendingNo = "Cancel"
+	m.pendingYes = "Uninstall"
+	m.push(scrConfirm)
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
+	return m, nil
+}
+
+// cancelUninstall backs out of the preinstalls step: the uninstall that was
+// waiting is dropped WITHOUT losing what the user had ticked on the page —
+// only the preinstalls ticks go, since they were never part of the module
+// selection in the first place.
+func (m model) cancelUninstall() model {
+	m.uninstallWait, m.uninstallMsg = nil, ""
+	m.preinstallChecked = nil
+	return m
+}
+
 // rebuildSetup rebuilds the LEVEL-1 Setup picker: the categories as plain
 // options. The folder tree lives one level down (rebuildSetupCat), so the
 // horizontal arrows are not used here.
@@ -2226,12 +2282,14 @@ func (m model) setupIndex(uninstall bool) map[string]*setupCategory {
 		// through, so the row stayed tappable and offered a restore that
 		// could change nothing.
 		if it.Key == "remove-ai" && !uninstall && !m.aiRemovalLogged() {
+			// The row is greyed because there is nothing to bring back, and it
+			// is NOT given a sub-line saying so. The backend no longer sends a
+			// description for it and neither does this: a second line under a
+			// single greyed row used to be enough to make the whole Setup page
+			// render two lines per option, blank band included.
 			row.Disabled = true
-			if row.Info == "" {
-				row.Info = "already there — nothing to bring back"
-			}
 		}
-		if row.Disabled && row.Info == "" {
+		if row.Disabled && row.Info == "" && it.Key != "remove-ai" {
 			row.Info = "nothing left to do here"
 		}
 		c.rows = append(c.rows, row)
@@ -2592,17 +2650,12 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 					Badge:   pmark,
 					Value:   setupValue(f.Folder, it.Key),
 				}
-				// The backend greys a row that has nothing left to do (Preinstalls
-				// once every stock app is gone or is your own). It stays listed so
-				// the option does not silently vanish.
+				// The backend greys a row that has nothing left to do, and it
+				// stays listed so the option does not silently vanish. When the
+				// backend explains itself in `info`, show that as the sub-line
+				// rather than leaving a dead-looking row with no reason.
 				if it.Disabled {
 					entry.Disabled = true
-					// A greyed row with no reason reads as a bug. The backend
-					// already explains itself in `info` ("nothing left to
-					// remove: every Omarchy preinstall is either already
-					// removed or is one of your own apps"), so show that
-					// instead of leaving "Choose which … to remove" sitting
-					// there looking like a dead button.
 					if it.Info != "" {
 						entry.Sub = it.Info
 					}
@@ -3158,7 +3211,12 @@ func backupItems(items []tuikit.PickerItem) []tuikit.PickerItem { return items }
 // longer installed (or is one of the user's own) is shown greyed and cannot be
 // ticked, so the list does not silently shrink between two visits.
 func (m model) rebuildPreinstallPicker() navPicker {
-	items := []tuikit.PickerItem{{Display: "Omarchy preinstalls (tab = keep; enter or back asks before removing the ticked ones):", Value: "", Disabled: true}}
+	// No header row. The instruction used to sit in the list as a greyed
+	// 76-column row ("Omarchy preinstalls (tab = keep; enter or back asks…"),
+	// which is one of the two rows that made this page wider than the pane.
+	// The screen title says what the page is, and the bar below it already
+	// spells out the keys.
+	var items []tuikit.PickerItem
 	checked := 0
 	for _, r := range m.preinstalls {
 		mark := "○"

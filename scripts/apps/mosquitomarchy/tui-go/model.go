@@ -138,11 +138,19 @@ type model struct {
 	// mosquito menu blocks (mega-caffeine, live-mode, move converter,
 	// mosquitomarchy) with a present mark; unchecking + Enter strips the
 	// block from omarchy-menu.jsonc (re-check restores).
-	// preinstalls drives Uninstall ▸ Preinstalls: the full Omarchy stock list,
-	// with the already-removed apps greyed out instead of hidden.
+	// preinstalls drives the preinstall step that PRECEDES every uninstall:
+	// the full Omarchy stock list, with the already-removed apps greyed out
+	// instead of hidden.
 	preinstalls       []PreinstallRec
 	preinstallChecked map[string]bool
 	preinstallPicker  navPicker
+	// uninstallWait holds an uninstall that the preinstalls page is currently
+	// in front of: the keys it would remove, and the confirmation text it will
+	// show once the preinstalls step is out of the way. Empty = no uninstall
+	// pending, which is also what puts the preinstalls page back to its old
+	// standalone behaviour for the paths that are not an uninstall.
+	uninstallWait     []string
+	uninstallMsg      string
 	menuEntries       []MenuEntryRec
 	menuEntriesLoaded bool
 	menuEntryChecked  map[string]bool

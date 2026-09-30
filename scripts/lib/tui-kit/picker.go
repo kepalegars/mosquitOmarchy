@@ -558,14 +558,18 @@ func newPickerDelegate(maxRowW, badgeSlot, trailSlot int, compact bool) pickerDe
 // then rendered TWO lines per row with a blank line between them (the blank
 // band down the middle of Setup) and paginated at half its real size.
 func tuneDelegate(d list.DefaultDelegate, compact bool) *list.DefaultDelegate {
+	// Spacing is the gap BETWEEN options, and no screen here ever wants one:
+	// every picker in this TUI is a dense menu where a blank line reads as a
+	// separator that does not exist. Crucially it is cleared whether or not
+	// the rows carry a sub-line — bubbles' DefaultDelegate writes
+	// Spacing()+1 newlines between items, so the default spacing=1 was adding
+	// a blank terminal row after EVERY option.
+	d.SetSpacing(0)
 	if compact {
+		// No row carries a sub-line, so a row is exactly one terminal line and
+		// the list can show one option per line of the pane.
 		d.ShowDescription = false
 		d.SetHeight(1)
-		// Without descriptions hidden the delegate renders one row per item;
-		// the built-in inter-item spacer reserves two terminal rows per item,
-		// so only half the options fit and the gaps show up as stray blank
-		// lines between modules.
-		d.SetSpacing(0)
 	}
 	return &d
 }
@@ -661,15 +665,16 @@ func rowMetrics(items []PickerItem) (maxRowW, badgeSlot, trailSlot int, hasSub b
 		if isTerminalValue(it.Value) {
 			w += terminalBoxPad
 		}
-		if it.Sub != "" {
-			if ws := lipgloss.Width("  "+" "+it.Sub) + 1 + badgeSlot + trailSlot; ws > w {
-				w = ws
-			}
-		}
+		// A description deliberately does NOT widen the block. It is drawn on
+		// its own line and already clipped to the pane width at render time
+		// (see renderCentered), so measuring its full length here only pushed
+		// the whole list sideways for nothing: one 118-column "bring back
+		// omarchy's agentic stuff" blurb turned a 57-column block into a
+		// 118-column one that no longer fitted the 92-column pane. The block
+		// is defined by the row's FIRST line — indicator, badge, title,
+		// suffix — and that is what has to line up.
 		if w > maxRowW {
-			if w > maxRowW {
-				maxRowW = w
-			}
+			maxRowW = w
 		}
 	}
 	return maxRowW, badgeSlot, trailSlot, hasSub

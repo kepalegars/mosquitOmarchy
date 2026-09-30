@@ -199,7 +199,7 @@ func (m model) View() string {
 		body = m.backupBody()
 		bar = barLine(m.backupPicker.ShortcutsHint())
 	case scrPreinstalls:
-		title = screenTitle("Omarchy preinstalls", w)
+		title = screenTitle("Choose which Omarchy preinstalls to remove", w)
 		body = m.preinstallPicker.View()
 		bar = barLine(m.preinstallPicker.ShortcutsHint())
 	case scrMenuEntries:

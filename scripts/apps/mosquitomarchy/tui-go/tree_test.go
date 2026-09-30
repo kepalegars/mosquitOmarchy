@@ -204,14 +204,20 @@ func TestSetupEnterOnModuleUninstalls(t *testing.T) {
 	m.setupPicker = m.setupPicker.SelectIndex(idx)
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	if m.top() != scrConfirm {
-		t.Fatalf("Enter in uninstall mode should confirm, top=%d", m.top())
+	// Enter in uninstall mode opens the PREINSTALLS page first: choosing which
+	// stock apps to remove is a step of the uninstall now, not a row of its
+	// own. The uninstall itself is only confirmed afterwards.
+	if m.top() != scrPreinstalls {
+		t.Fatalf("Enter in uninstall mode should open the preinstalls step, top=%d", m.top())
 	}
 	if m.pendingAction != "uninstall" {
 		t.Fatalf("pendingAction = %q want uninstall", m.pendingAction)
 	}
 	if len(m.pendingArgs) != 1 || m.pendingArgs[0] != "live-mode" {
 		t.Fatalf("pendingArgs = %q, want [live-mode]", m.pendingArgs)
+	}
+	if len(m.uninstallWait) != 1 || m.uninstallWait[0] != "live-mode" {
+		t.Fatalf("uninstallWait = %q, want [live-mode]", m.uninstallWait)
 	}
 }
 
@@ -782,5 +788,202 @@ func TestSwitchingTabKeepsTheSameColumn(t *testing.T) {
 	}
 	if a, b := columnOf("setup"), columnOf("uninstall"); a != b {
 		t.Errorf("colonne différente selon l'onglet: setup %d, uninstall %d", a, b)
+	}
+}
+
+// withPreinstalls seeds the preinstall list the page renders, the same way the
+// backend result does.
+func (m model) withPreinstalls(rows []PreinstallRec) model {
+	m.preinstalls = rows
+	if m.preinstallChecked == nil {
+		m.preinstallChecked = map[string]bool{}
+	}
+	for _, r := range rows {
+		if _, seen := m.preinstallChecked[r.Name]; !seen {
+			m.preinstallChecked[r.Name] = r.Removable
+		}
+	}
+	return m
+}
+
+// The whole uninstall goes THROUGH the preinstalls page: the list of stock apps
+// to remove is settled before the uninstall is even confirmed, so a removal can
+// never be confirmed before the apps it removes have been read. After the
+// preinstalls step the uninstall confirmation appears, with the uninstall
+// still holding exactly the keys it was asked for.
+func TestUninstallSelectionRunsAfterThePreinstallsStep(t *testing.T) {
+	m := flatSetup()
+	m.treeMode = "uninstall"
+	m.setupPicker = m.rebuildSetup()
+	idx := -1
+	for i, it := range m.setupPicker.items {
+		if it.Value == setupValue("apps", "reaper") {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatal("reaper row not found")
+	}
+	m.setupPicker = m.setupPicker.SelectIndex(idx)
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.top() != scrPreinstalls {
+		t.Fatalf("Enter did not open the preinstalls step (top=%d)", m.top())
+	}
+	// The uninstall is held, not run and not confirmed.
+	if len(m.uninstallWait) != 1 || m.uninstallWait[0] != "reaper" {
+		t.Fatalf("uninstallWait = %q, want [reaper]", m.uninstallWait)
+	}
+
+	m = m.withPreinstalls([]PreinstallRec{
+		{Name: "obsidian", Label: "Obsidian", Installed: true, Removable: true},
+		{Name: "pinta", Label: "Pinta", Installed: true, Removable: true},
+	})
+	// Nothing ticked -> no removal to confirm, and the uninstall resumes.
+	m.preinstallChecked = map[string]bool{"obsidian": false, "pinta": false}
+	m.preinstallPicker = m.rebuildPreinstallPicker()
+	m, _ = m.update(tuikit.PickerResultMsg{Value: "apply"})
+	if m.top() != scrConfirm {
+		t.Fatalf("the uninstall was not confirmed after the preinstalls step (top=%d)", m.top())
+	}
+	if m.pendingAction != "uninstall" || len(m.pendingArgs) != 1 || m.pendingArgs[0] != "reaper" {
+		t.Fatalf("pendingAction=%q pendingArgs=%q, want uninstall [reaper]", m.pendingAction, m.pendingArgs)
+	}
+	if len(m.uninstallWait) != 0 {
+		t.Fatalf("uninstallWait should be consumed, got %q", m.uninstallWait)
+	}
+}
+
+// Ticking preinstalls and confirming removes them FIRST, and only then asks
+// for the uninstall — the order the user asked for.
+func TestPreinstallsAreRemovedBeforeTheUninstallRuns(t *testing.T) {
+	m := flatSetup()
+	m.treeMode = "uninstall"
+	m.uninstallWait = []string{"reaper"}
+	m.uninstallMsg = "Uninstall reaper?"
+	m.nav = append(m.nav, scrPreinstalls)
+	m = m.withPreinstalls([]PreinstallRec{
+		{Name: "obsidian", Label: "Obsidian", Installed: true, Removable: true},
+	})
+	m.preinstallChecked = map[string]bool{"obsidian": true}
+	m.preinstallPicker = m.rebuildPreinstallPicker()
+
+	m, _ = m.update(tuikit.PickerResultMsg{Value: "apply"})
+	if m.top() != scrConfirm {
+		t.Fatalf("the preinstalls removal was not confirmed (top=%d)", m.top())
+	}
+	if m.pendingAction != "preinstalls-remove" || len(m.pendingArgs) != 1 || m.pendingArgs[0] != "obsidian" {
+		t.Fatalf("pendingAction=%q pendingArgs=%q, want preinstalls-remove [obsidian]", m.pendingAction, m.pendingArgs)
+	}
+	// The uninstall is STILL waiting behind it: no confirmation for the modules
+	// may exist while the apps being removed are still unconfirmed.
+	if len(m.uninstallWait) != 1 {
+		t.Fatalf("the uninstall resumed too early: %q", m.uninstallWait)
+	}
+	if m.top() == scrConfirm && m.pendingAction == "uninstall" {
+		t.Fatalf("the uninstall confirmation replaced the preinstalls one")
+	}
+
+	// Confirming the removal resumes the uninstall.
+	m, _ = m.update(tuikit.ConfirmResultMsg{Yes: true})
+	m, _ = m.update(preinstallsMsg{done: "obsidian removed"})
+	if m.top() != scrConfirm {
+		t.Fatalf("the uninstall was not confirmed after the removal (top=%d)", m.top())
+	}
+	if m.pendingAction != "uninstall" || m.pendingArgs[0] != "reaper" {
+		t.Fatalf("pendingAction=%q pendingArgs=%q, want uninstall [reaper]", m.pendingAction, m.pendingArgs)
+	}
+}
+
+// Backing out cancels the uninstall, but the ticks the user made on the page
+// before it are theirs and are kept.
+func TestBackingOutOfPreinstallsKeepsTheSelection(t *testing.T) {
+	m := flatSetup()
+	m.treeMode = "uninstall"
+	m.selected[setupValue("apps", "reaper")] = true
+	m.selected[setupValue("apps", "extracto")] = true
+	m.uninstallWait = []string{"reaper", "extracto"}
+	m.uninstallMsg = "Uninstall 2 selected item(s)?"
+	m.nav = append(m.nav, scrPreinstalls)
+	m = m.withPreinstalls([]PreinstallRec{
+		{Name: "obsidian", Label: "Obsidian", Installed: true, Removable: true},
+	})
+	m.preinstallChecked = map[string]bool{"obsidian": true}
+	m.preinstallPicker = m.rebuildPreinstallPicker()
+
+	m, _ = m.update(tuikit.PickerResultMsg{Value: "back"})
+	if m.top() == scrConfirm {
+		t.Fatalf("backing out asked for a confirmation")
+	}
+	if len(m.uninstallWait) != 0 || m.uninstallMsg != "" {
+		t.Fatalf("backing out left the uninstall waiting: %q / %q", m.uninstallWait, m.uninstallMsg)
+	}
+	// The module ticks survive; only the preinstall ticks are gone.
+	for _, v := range []string{setupValue("apps", "reaper"), setupValue("apps", "extracto")} {
+		if !m.selected[v] {
+			t.Errorf("tick %q was lost", v)
+		}
+	}
+	if m.preinstallChecked != nil {
+		t.Errorf("preinstall ticks survived the cancellation: %v", m.preinstallChecked)
+	}
+}
+
+// A row carrying a description must not change the height of the rows around
+// it. "lame language models" holds "bring back omarchy's agentic stuff", and
+// opening that folder used to leave a blank line between EVERY module: the
+// delegate reported two-line rows for the whole list because of that one row,
+// so the page halved and the extra vertical gaps appeared.
+func TestOneDescribedRowDoesNotDoubleThePage(t *testing.T) {
+	m := flatSetup()
+	m.setupFolders = append(m.setupFolders, FolderRec{Folder: "lame", Label: "lame language models"})
+	m.setupItems = append(m.setupItems, SetupItemRec{
+		Folder: "lame", Key: "remove-ai", Label: "bring back omarchy's agentic stuff",
+		Info: "re-enables the omarchy.agents bar widget and the AI-diagnosis crash toasts",
+	})
+	m.folderOpen["lame"] = true
+	m.setupPicker = m.rebuildSetup()
+
+	rows := strings.Split(m.View(), "\n")
+	mods := moduleLines(m.View(), categoryLabels(m.setupPicker)...)
+	if len(mods) < 3 {
+		t.Fatalf("only %d category rows", len(mods))
+	}
+	for k := 1; k < len(mods); k++ {
+		if blankBetween(strings.Join(rows, "\n"), mods[k-1], mods[k]) {
+			t.Errorf("a blank line appeared between the categories at rows %d and %d", mods[k-1], mods[k])
+		}
+	}
+}
+
+// "bring back omarchy's agentic stuff" carries no description at all, in
+// either tree. Even greyed out — where it used to gain an "already there —
+// nothing to bring back" sub-line — it stays a single line, so it cannot make
+// the page two lines tall.
+func TestRemoveAIRowHasNoSubLine(t *testing.T) {
+	rec := SetupItemRec{Folder: "lame", Key: "remove-ai", Label: "bring back omarchy's agentic stuff"}
+	for _, uninstall := range []bool{false, true} {
+		m := initialModel() // aiRemovedKnown=false, so aiRemovalLogged() is false:
+		// in Setup the row is greyed out, which is the case that used to gain
+		// a sub-line.
+		m.setupFolders = []FolderRec{{Folder: "lame", Label: "lame language models"}}
+		m.setupItems = []SetupItemRec{rec}
+		m.folderOpen = map[string]bool{"lame": true}
+		m.setupPicker = m.rebuildSetup()
+		m.w, m.h = 92, 34
+
+		found := false
+		for _, it := range m.setupPicker.items {
+			if it.Value != setupValue("lame", "remove-ai") {
+				continue
+			}
+			found = true
+			if it.Sub != "" {
+				t.Errorf("uninstall=%v: remove-ai has the sub-line %q", uninstall, it.Sub)
+			}
+		}
+		if !found {
+			t.Fatalf("uninstall=%v: remove-ai row missing", uninstall)
+		}
 	}
 }

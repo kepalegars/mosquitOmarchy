@@ -433,20 +433,35 @@ func TestPreinstallsNeedConfirm(t *testing.T) {
 		}
 	}
 
-	// Back: same question, not a silent removal.
+	// Back CANCELS. It used to ask the same question Enter does, which meant
+	// there was no way to open the preinstalls and change your mind: the only
+	// exit removed something. Backing out now drops the uninstall this page
+	// was in front of and asks nothing.
 	m = base()
-	m, _ = m.update(tuikit.PickerResultMsg{Value: "back"})
-	if m.top() != scrConfirm {
-		t.Fatalf("back did not ask for confirmation (top=%d)", m.top())
-	}
-
-	// Nothing ticked: leaving must not ask anything.
-	m = base()
-	m.preinstallChecked = map[string]bool{"obsidian": false, "pinta": false, "omacalc": true}
-	m.preinstallPicker = m.rebuildPreinstallPicker()
+	m.uninstallWait = []string{"live-mode"}
+	m.uninstallMsg = "Uninstall live-mode?"
 	m, _ = m.update(tuikit.PickerResultMsg{Value: "back"})
 	if m.top() == scrConfirm {
-		t.Fatalf("asked for confirmation with nothing ticked")
+		t.Fatalf("back asked for confirmation instead of cancelling")
+	}
+	if len(m.uninstallWait) != 0 {
+		t.Fatalf("back left the uninstall waiting: %q", m.uninstallWait)
+	}
+
+	// Nothing ticked: no confirmation, and the uninstall it was in front of
+	// carries on — declining the preinstalls is a decision about the
+	// preinstalls, not about the uninstall.
+	m = base()
+	m.uninstallWait = []string{"live-mode"}
+	m.uninstallMsg = "Uninstall live-mode?"
+	m.preinstallChecked = map[string]bool{"obsidian": false, "pinta": false, "omacalc": true}
+	m.preinstallPicker = m.rebuildPreinstallPicker()
+	m, _ = m.update(tuikit.PickerResultMsg{Value: "apply"})
+	if m.top() != scrConfirm {
+		t.Fatalf("nothing ticked: top=%d, want the uninstall confirmation", m.top())
+	}
+	if m.pendingAction != "uninstall" {
+		t.Fatalf("pendingAction = %q, want uninstall", m.pendingAction)
 	}
 }
 
