@@ -151,7 +151,7 @@ func (m *model) enterCmd() tea.Cmd {
 		m.fixCandidate = nil
 		m.fixPendingApply = nil
 		m.fixPendingRemove = nil
-		m.fixTouched = nil
+		m.fixOverride = nil
 		// Drop any remembered collapse state: every category re-seeds
 		// expanded on entry (see rebuildFixPicker), so the folders are
 		// always visible when the screen opens.
@@ -553,6 +553,83 @@ func (m model) fixChangeLabels(plan []fixChange) []string {
 	return compactLabels(out)
 }
 
+// fixAppliedNote describes where a fix currently stands.
+//
+// It used to be the two words "already APPLIED for this plugin", which is
+// exactly wrong on a vendor visit: the fix is not applied "for this plugin",
+// it is applied to SOME of the suite's plugins and not the others, and saying
+// otherwise is what made a ◐ row read as a ● one.
+//
+// Which half gets named is decided by LENGTH, because the two lists are
+// complements of each other: on a suite of nineteen, eighteen is the uninteresting
+// number and one is the actionable name. So the minority side is spelled out and
+// the majority is left as a count, and if even the minority is long the names are
+// capped and the count carries the rest — a wall of nineteen identical-looking
+// plugin names is not an answer, a count plus the odd one out is.
+func (m model) fixAppliedNote(it FixItem) string {
+	with := compactLabels(m.fixAppliedBy[it.ID])
+	if m.fixVendor == "" {
+		// A single-plugin visit: the plugin is the one being looked at.
+		if it.Applied {
+			name := m.fixScope
+			if name == "" {
+				name = "this plugin"
+			}
+			return "\n\nalready applied for " + name
+		}
+		return "\n\nnot applied yet"
+	}
+
+	total := len(m.fixVendorPlugins)
+	switch {
+	case len(with) == 0:
+		return fmt.Sprintf("\n\nnot applied to any of the %d %s plugins yet", total, m.fixScope)
+	case len(with) >= total:
+		if total == 1 {
+			return fmt.Sprintf("\n\nalready applied to %s", with[0])
+		}
+		return fmt.Sprintf("\n\nalready applied to all %d %s plugins", total, m.fixScope)
+	}
+
+	// Partial. Name the MINORITY side and report the majority as a count: the
+	// two lists are complements, so on a suite of nineteen the one odd plugin out
+	// is the actionable name and the eighteen are just a number.
+	without := make([]string, 0, total-len(with))
+	have := map[string]bool{}
+	for _, n := range with {
+		have[n] = true
+	}
+	for _, n := range m.fixVendorPlugins {
+		if !have[n] {
+			without = append(without, n)
+		}
+	}
+	minor, minorTitle, minorCount := with, "with it", len(with)
+	if len(without) < len(with) {
+		minor, minorTitle, minorCount = without, "without it", len(without)
+	}
+
+	var b strings.Builder
+	if len(with) == 1 && len(without) == 1 {
+		// One name on each side: the sentence IS the answer, no list needed.
+		fmt.Fprintf(&b, "\n\npartially applied — %s has it, %s does not.", with[0], without[0])
+		return b.String()
+	}
+	fmt.Fprintf(&b, "\n\npartially applied — %d of the %d %s plugins.", len(with), total, m.fixScope)
+	// Past a handful of names the count carries the information and the names are
+	// just scroll, so the list is capped and says how much it left out.
+	const maxNames = 6
+	fmt.Fprintf(&b, "\n\n%d %s:", minorCount, minorTitle)
+	for i, n := range minor {
+		if i >= maxNames {
+			fmt.Fprintf(&b, "\n  …and %d more", minorCount-maxNames)
+			break
+		}
+		fmt.Fprintf(&b, "\n  %s", n)
+	}
+	return b.String()
+}
+
 // ── Planning a fix change ───────────────────────────────────────────────────
 //
 // A fix row on a VENDOR visit is not a single fact. The catalog is a merge over
@@ -938,7 +1015,16 @@ func fixIsPluginSpecific(it FixItem) bool { return it.Plugin != "" }
 // A row the user has just changed shows the plain mark, because the pending
 // intent is what the ●/○ pair is about: ◐ describes the RECORDED state, and
 // once you have ticked or unticked a row you have an opinion about it.
-func fixMarkOf(it FixItem, checked, orig map[string]bool) string {
+func fixMarkOf(it FixItem, checked, orig map[string]bool, override map[string]int) string {
+	// The override is what the user asked for, so it is read FIRST: a row set to
+	// "complete" has to draw as a filled circle, not keep reporting ◐ while the
+	// plan underneath it says every plugin.
+	switch override[it.ID] {
+	case 1:
+		return "●"
+	case 2:
+		return "○"
+	}
 	if !checked[it.ID] {
 		return "○"
 	}
@@ -966,7 +1052,7 @@ func fixMarkOf(it FixItem, checked, orig map[string]bool) string {
 // and selectable for every plugin, since the same Wine issues can show up
 // elsewhere. The folder row's chevron/child-visibility follows expanded
 // exactly as treeItemsToPicker does for the other two screens.
-func fixItemsToPicker(items []FixItem, checked, orig map[string]bool, expanded map[string]bool) []tuikit.PickerItem {
+func fixItemsToPicker(items []FixItem, checked, orig map[string]bool, override map[string]int, expanded map[string]bool) []tuikit.PickerItem {
 	// Split once: generic = no specific plugin, specific = scoped to a product.
 	var generic, specific []FixItem
 	for _, it := range items {
@@ -986,7 +1072,7 @@ func fixItemsToPicker(items []FixItem, checked, orig map[string]bool, expanded m
 	if len(generic) > 0 {
 		out = append(out, tuikit.PickerItem{Display: fixGenericTitle(), Value: fixGenericTitleValue, Accent: true, Heading: true})
 	}
-	out = append(out, fixCategoryGroup(generic, checked, orig, expanded, false)...)
+	out = append(out, fixCategoryGroup(generic, checked, orig, override, expanded, false)...)
 
 	// The product-specific section, if any.
 	if len(specific) > 0 {
@@ -998,7 +1084,7 @@ func fixItemsToPicker(items []FixItem, checked, orig map[string]bool, expanded m
 		out = append(out, tuikit.PickerItem{Display: fixSpecificTitle(), Value: fixSpecificTitleValue, Accent: true, Heading: true})
 		// Grouped by PLUGIN NAME (not the catalog category), so the header
 		// reads just "CrispyTuner" / "Serum 2" — the product it belongs to.
-		out = append(out, fixCategoryGroup(specific, checked, orig, expanded, true)...)
+		out = append(out, fixCategoryGroup(specific, checked, orig, override, expanded, true)...)
 	}
 	return out
 }
@@ -1053,7 +1139,7 @@ func fixSpecificTitle() string { return "Plugin specific fixes" }
 // field) instead of its catalog category, so the product-specific section is
 // headed by the plugin name alone. It is the shared body used for both the
 // generic group and the product-specific group.
-func fixCategoryGroup(items []FixItem, checked, orig map[string]bool, expanded map[string]bool, groupByPlugin bool) []tuikit.PickerItem {
+func fixCategoryGroup(items []FixItem, checked, orig map[string]bool, override map[string]int, expanded map[string]bool, groupByPlugin bool) []tuikit.PickerItem {
 	// keyFor is the group a fix belongs to: the plugin name in the specific
 	// section, the catalog category otherwise.
 	keyFor := func(it FixItem) string { return fixCategoryOf(it) }
@@ -1071,7 +1157,7 @@ func fixCategoryGroup(items []FixItem, checked, orig map[string]bool, expanded m
 	if !hasCategory {
 		// No categories in the catalog: a clean flat list, same as before.
 		for _, it := range items {
-			out = append(out, tuikit.PickerItem{Display: fixMarkOf(it, checked, orig) + "  " + it.Title + fixRowTags(it), Value: it.ID})
+			out = append(out, tuikit.PickerItem{Display: fixMarkOf(it, checked, orig, override) + "  " + it.Title + fixRowTags(it), Value: it.ID})
 		}
 		return out
 	}
@@ -1118,7 +1204,7 @@ func fixCategoryGroup(items []FixItem, checked, orig map[string]bool, expanded m
 		if !expanded[cat] {
 			continue
 		}
-		mark := fixMarkOf(it, checked, orig)
+		mark := fixMarkOf(it, checked, orig, override)
 		// File-tree angle so the fix is visibly a child of its category. The
 		// mark goes in Badge, NOT in the label: the kit already owns a fixed
 		// badge column, so baking it in gave every child a different width and
@@ -1196,11 +1282,27 @@ func fixSortLabel(desc bool) string {
 // every fix in that category to the opposite extreme (like the uninstall
 // folder rows), a fix id flips only itself.
 func (m *model) toggleFixValue(value string) {
-	// Any deliberate change to a fix row marks it touched, so a partial fix the
-	// user re-ticks counts as "complete this one" rather than staying invisible
-	// to the delta.
-	if m.fixTouched == nil {
-		m.fixTouched = map[string]bool{}
+	if m.fixOverride == nil {
+		m.fixOverride = map[string]int{}
+	}
+	// A PARTIALLY applied fix cycles three ways, because two do not fit it:
+	// ◐ as found -> ● everywhere the selection reaches -> ○ nowhere -> ◐.
+	// The first toggle is therefore already the override — "make it complete" —
+	// instead of asking for an untick and a re-tick to say the same thing.
+	if m.fixIsPartial(value) {
+		next := (m.fixOverride[value] + 1) % 3
+		m.fixOverride[value] = next
+		// Keep fixChecked in step so the row's mark and the pending delta both
+		// read from one place.
+		switch next {
+		case 1:
+			m.fixChecked[value] = true
+		case 2:
+			m.fixChecked[value] = false
+		default:
+			m.fixChecked[value] = m.fixOrig[value]
+		}
+		return
 	}
 	if strings.HasPrefix(value, fixCategoryValuePrefix) {
 		cat := strings.TrimPrefix(value, fixCategoryValuePrefix)
@@ -1214,13 +1316,14 @@ func (m *model) toggleFixValue(value string) {
 		for _, it := range m.fixCache {
 			if fixCategoryOf(it) == cat {
 				m.fixChecked[it.ID] = anyUnchecked
-				m.fixTouched[it.ID] = true
+				// A category toggle is an on/off decision, so a partial row in
+				// it goes back to following the record.
+				m.fixOverride[it.ID] = 0
 			}
 		}
 		return
 	}
 	m.fixChecked[value] = !m.fixChecked[value]
-	m.fixTouched[value] = true
 }
 
 // rebuildFixPicker re-renders the fixes picker from fixCache + fixChecked,
@@ -1263,7 +1366,7 @@ func (m *model) rebuildFixPicker() {
 	header := ""
 	sidx := m.picker.Index()
 	m.picker = tuikit.NewPicker(header,
-		fixItemsToPicker(sortedFixItems(m.fixCache, m.fixSortDesc), m.fixChecked, m.fixOrig, m.fixFolderExpanded)).
+		fixItemsToPicker(sortedFixItems(m.fixCache, m.fixSortDesc), m.fixChecked, m.fixOrig, m.fixOverride, m.fixFolderExpanded)).
 		SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "toggle")),
@@ -1923,9 +2026,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 					default:
 						txt += "\n\napplies to: this product's VST2 and VST3 (one fix covers both)"
 					}
-					if it.Applied {
-						txt += "\n\nalready APPLIED for this plugin"
-					}
+					txt += m.fixAppliedNote(it)
 					m.info = tuikit.NewInfo(txt).SetSize(m.contentSize())
 					m.push(scrInfo)
 					return m, nil
@@ -2015,23 +2116,26 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var toApply, toRemove []string
 			for id, v := range m.fixChecked {
-				// A PARTIAL fix counts as pending even though its mark already
-				// read as "on".
+				// A partial fix is decided by its OVERRIDE, not by the boolean
+				// mark, because "on" and "off" are both wrong answers for a row
+				// that is half-applied and the user has to choose a direction.
 				//
-				// This is the row the half circle exists for: it is on some of
-				// the plugins in view and not the others, so leaving it ticked
-				// and confirming is a decision to COMPLETE it. The delta used
-				// to be `v && !orig`, which saw no change here — the fix was on,
-				// the mark was on, Enter answered "no change" and wrote nothing.
-				// So the one row whose whole reason for existing is that it is
-				// unfinished was the one row that could never be acted on, and
-				// no confirmation ever appeared for it.
-				//
-				// Untouched rows stay out of it, or every Enter would re-offer to
-				// complete every partial fix on the page. m.fixTouched records
-				// that the user actually made a decision about the row.
-				pending := v && (!m.fixOrig[id] || (m.fixTouched[id] && m.fixIsPartial(id)))
-				if pending {
+				// The delta used to be `v && !orig`, which saw no change on such
+				// a row: the fix was on, the mark was on, Enter answered "no
+				// change" and wrote nothing. The one row whose whole reason for
+				// existing is that it is unfinished was the one row that could
+				// never be acted on.
+				switch m.fixOverride[id] {
+				case 1:
+					// "Make it complete": apply to the plugins that lack it.
+					toApply = append(toApply, id)
+					continue
+				case 2:
+					// "Take it off": remove from the plugins that carry it.
+					toRemove = append(toRemove, id)
+					continue
+				}
+				if v && !m.fixOrig[id] {
 					toApply = append(toApply, id)
 				}
 				if !v && m.fixOrig[id] {

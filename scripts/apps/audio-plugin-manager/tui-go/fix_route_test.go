@@ -71,33 +71,90 @@ func TestEscLeavesTheSinglePluginFixRoute(t *testing.T) {
 	}
 }
 
-// The half circle exists to say "not all of them". Acting on that row has to do
-// something, and it has to ask first.
+// ONE toggle on a half-applied row is the override, and it asks first.
 //
-// The delta used to be `checked && !applied`, so a partial fix — on for some of
-// the plugins, marked on — produced no change at all. Enter answered "no change"
-// and wrote nothing, so the one row that existed to report an unfinished job
-// was the one row that could never be started.
-func TestOverridingAPartialFixAsksFirst(t *testing.T) {
+// Two states cannot describe a partial fix — it is on for some of the plugins,
+// so both "on" and "off" are wrong answers for it. The row therefore cycles
+// ◐ -> ● -> ○ -> ◐, which makes the FIRST Tab "make it complete". The user had
+// to untick and re-tick to express that before, and the row kept drawing ◐ while
+// the plan underneath it said every plugin.
+func TestOneToggleOnAPartialRowIsTheOverride(t *testing.T) {
 	m := partialFixture()
 	m.nav = []screen{scrFixChoose}
-	// The user unticks and re-ticks the half-circle row: a decision to complete
-	// it rather than leave it as it is.
-	m.fixTouched = map[string]bool{"wine_saturn_eq": true}
+	m.rebuildFixPicker()
 
+	// The row starts as the half circle.
+	rows := fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true})
+	if got := markOf(t, rows, "Saturn 2 EQ page"); got != "◐" {
+		t.Fatalf("the row starts as %q, want ◐", got)
+	}
+
+	// ONE Tab.
+	m.toggleFixValue("wine_saturn_eq")
+	rows = fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true})
+	if got := markOf(t, rows, "Saturn 2 EQ page"); got != "●" {
+		t.Errorf("after one toggle the row is %q, want ● — the circle should FILL", got)
+	}
+
+	// And it asks before doing anything.
 	mm, _ := m.Update(tuikit.PickerResultMsg{Value: "wine_saturn_eq"})
 	got, _ := mm.(model)
 	if got.top() != scrFixApplyConfirm {
-		t.Fatalf("overriding a partial fix did not ask: top=%d", got.top())
+		t.Fatalf("one toggle did not ask: top=%d", got.top())
 	}
 	if len(got.fixPendingApply) != 1 || got.fixPendingApply[0] != "wine_saturn_eq" {
 		t.Errorf("the pending apply is %v, want the partial fix", got.fixPendingApply)
 	}
-	// The dialog has to say which plugins are about to be written, and that the
-	// one already carrying the fix is left alone.
+	// The dialog says which plugins are about to be written, and that the one
+	// already carrying the fix is left alone.
 	v := got.confirm.View()
 	if !strings.Contains(v, "will NOT be touched") {
 		t.Errorf("the dialog does not say the already-fixed plugin is left alone:\n%s", v)
+	}
+}
+
+// The second toggle takes it the other way — off everywhere it is recorded — and
+// the third puts it back to following the record. A three-state row has to come
+// back around, or there is no way to change your mind.
+func TestAPartialRowCyclesBothWays(t *testing.T) {
+	m := partialFixture()
+	m.rebuildFixPicker()
+	rows := func() []tuikit.PickerItem {
+		return fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true})
+	}
+	m.toggleFixValue("wine_saturn_eq")
+	if got := markOf(t, rows(), "Saturn 2 EQ page"); got != "●" {
+		t.Fatalf("toggle 1 = %q, want ●", got)
+	}
+	m.toggleFixValue("wine_saturn_eq")
+	if got := markOf(t, rows(), "Saturn 2 EQ page"); got != "○" {
+		t.Errorf("toggle 2 = %q, want ○", got)
+	}
+	if m.fixOverride["wine_saturn_eq"] != 2 {
+		t.Errorf("toggle 2 should be the remove override, got %d", m.fixOverride["wine_saturn_eq"])
+	}
+	m.toggleFixValue("wine_saturn_eq")
+	if got := markOf(t, rows(), "Saturn 2 EQ page"); got != "◐" {
+		t.Errorf("toggle 3 = %q, want ◐ back to the recorded state", got)
+	}
+}
+
+// A row that is NOT partial keeps the plain two-state Tab it always had.
+func TestAFullRowKeepsItsPlainToggle(t *testing.T) {
+	m := partialFixture()
+	m.rebuildFixPicker()
+	rows := func() []tuikit.PickerItem {
+		return fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true})
+	}
+	if got := markOf(t, rows(), "Retitle the window"); got != "●" {
+		t.Fatalf("the full row starts as %q, want ●", got)
+	}
+	m.toggleFixValue("wine_gui_input")
+	if got := markOf(t, rows(), "Retitle the window"); got != "○" {
+		t.Errorf("a plain row toggled to %q, want ○", got)
+	}
+	if m.fixOverride["wine_gui_input"] != 0 {
+		t.Errorf("a non-partial row should not use the override, got %d", m.fixOverride["wine_gui_input"])
 	}
 }
 
