@@ -88,30 +88,75 @@ reassert_state() {
   [[ -f "$REAL_HOME/.local/state/omarchy/indicators/stay-awake" ]] || \
     { mkdir -p "$(dirname "$REAL_HOME/.local/state/omarchy/indicators/stay-awake")"; touch "$REAL_HOME/.local/state/omarchy/indicators/stay-awake"; }
 
-  # Gaps off
+  # Gaps off — and the same "we turned them off" record live-mode keeps, so the
+  # gap restore at deactivation stays correct even if the session was ended by
+  # the watchdog rather than by the user.
   if [[ ! -f "$REAL_HOME/.local/state/omarchy/toggles/hypr/window-no-gaps.lua" ]]; then
     omarchy-hyprland-window-gaps-toggle >/dev/null 2>&1 || true
+    [[ $NO_GAPS != no ]] && touch "$STATE_DIR/gaps_were_on"
   fi
 
-  # Live theme (re-assert if user switched away)
-  local theme
-  theme=$(cat "$REAL_HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || true)
-  if [[ "$theme" != "Live" && -L "$REAL_HOME/.config/omarchy/themes/live" ]]; then
-    omarchy theme set Live >/dev/null 2>&1 || true
+  # DND forced ON for the whole session. This is re-asserted every pass, so
+  # turning notifications back on during a live session does not work: the only
+  # way to get them back is to end live mode. It goes through the same two
+  # steps activation does (the toggle, then the state file) because either one
+  # alone can be declined.
+  if [[ $SILENCE_NOTIFICATIONS != no ]] && \
+     ! grep -q '"dnd": true' "$REAL_HOME/.local/state/omarchy/notifications.json" 2>/dev/null; then
+    omarchy-toggle-notification-silencing >/dev/null 2>&1 || true
+    grep -q '"dnd": true' "$REAL_HOME/.local/state/omarchy/notifications.json" 2>/dev/null || {
+      local nf="$REAL_HOME/.local/state/omarchy/notifications.json"
+      if [[ -f $nf ]] && command -v jq >/dev/null 2>&1; then
+        local tmp; tmp=$(mktemp "${nf}.XXXXXX" 2>/dev/null) && \
+          jq '.dnd = true' "$nf" > "$tmp" 2>/dev/null && mv -f "$tmp" "$nf" || rm -f "$tmp"
+      fi
+    }
+  fi
+
+  # Live theme (re-assert if user switched away). SWITCH_THEME=no is honoured
+  # here too: re-asserting the theme every pass would restart the user's
+  # terminals over and over, which is precisely what that setting turns off.
+  if [[ $SWITCH_THEME != no ]]; then
+    local theme
+    theme=$(cat "$REAL_HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || true)
+    if [[ "$theme" != "Live" && -L "$REAL_HOME/.config/omarchy/themes/live" ]]; then
+      omarchy theme set Live >/dev/null 2>&1 || true
+    fi
   fi
 }
 
-# patchbay_watch: while live mode is on, closing the mosquito routing tool
+# The same provider resolution live-mode uses: our own mosquito-patchbay when
+# it is installed, qpwgraph until then. Duplicated rather than sourced because
+# the watchdog is its own long-running process.
+patchbay_provider() {
+  local bin
+  for bin in "$REAL_HOME/.local/bin/mosquito-patchbay" "$REAL_HOME/.local/bin/mosquito-patchbay.sh"; do
+    [[ -x $bin ]] && { printf '%s|mosquito[_-]?patchbay\n' "$(basename "$bin")"; return 0; }
+  done
+  command -v mosquito-patchbay >/dev/null 2>&1 && { printf 'mosquito-patchbay|mosquito[_-]?patchbay\n'; return 0; }
+  command -v qpwgraph >/dev/null 2>&1 && { printf 'qpwgraph|qpwgraph|org\.rncbc\.qpwgraph|org\.pq_graph\.Qpwgraph\n'; return 0; }
+  return 1
+}
+
+patchbay_addr() {
+  local spec re
+  spec=$(patchbay_provider 2>/dev/null) || return 0
+  re="${spec#*|}"
+  hyprctl -j clients 2>/dev/null | jq -r --arg re "^($re)$" '
+    .[] | select((.class // "") | test($re)) | .address' 2>/dev/null | head -n1
+}
+
+# patchbay_watch: while live mode is on, closing the mosquito patchbay
 # prompts a confirmation — "yes" parks it for the rest of the session,
 patchbay_watch() {
   [[ -f "$REAL_HOME/.config/live-mode/settings" ]] && source "$REAL_HOME/.config/live-mode/settings" || true
   [[ $ROUTING_TOOL == no ]] && return 0
-  [[ -f "$STATE_DIR/patchbay_closed_this_session" ]] && return 0
+  # -s, not -f: an empty file means "flag reset", not "the user closed it".
+  [[ -s "$STATE_DIR/patchbay_closed_this_session" ]] && return 0
 
   local addr ours
   ours=$(cat "$STATE_DIR/patchbay_addr" 2>/dev/null || true)
-  addr=$(hyprctl -j clients 2>/dev/null | jq -r '
-    .[] | select((.class // "") == "qpwgraph" or (.class // "") == "org.rncbc.qpwgraph" or (.class // "") == "org.pq_graph.Qpwgraph") | .address' 2>/dev/null | head -n1)
+  addr=$(patchbay_addr)
 
   # Still (or again) running — nothing to do.
   [[ -n "$addr" ]] && { [[ "$addr" != "$ours" ]] && echo "$addr" > "$STATE_DIR/patchbay_addr"; return 0; }
@@ -119,7 +164,7 @@ patchbay_watch() {
   # It vanished: ask ONCE via the confirm overlay.
   local payload sel="$STATE_DIR/confirm_sel" donef="$STATE_DIR/confirm_done" ans
   rm -f "$sel" "$donef"
-  payload=$(jq -cn --arg message "Close the mosquito routing tool for this Live session?" \
+  payload=$(jq -cn --arg message "Close the mosquito patchbay for this Live session?" \
     --arg selectionFile "$sel" --arg doneFile "$donef" \
     '{message:$message, selectionFile:$selectionFile, doneFile:$doneFile}')
   omarchy-shell shell summon mosquito.confirm "$payload" >/dev/null 2>&1 || true
@@ -134,17 +179,17 @@ patchbay_watch() {
   if [[ "$ans" == "yes" ]]; then
     touch "$STATE_DIR/patchbay_closed_this_session"
     printf '' > "$STATE_DIR/patchbay_addr"
-    ok "mosquito routing tool closed for this session by the user."
+    ok "mosquito patchbay closed for this session by the user."
   else
     # Keep it running: relaunch + park (same path as activation).
-    command -v qpwgraph >/dev/null 2>&1 && {
-      setsid --fork uwsm-app -- qpwgraph >/dev/null 2>&1 || \
-      setsid --fork qpwgraph >/dev/null 2>&1 || true
+    local pspec
+    pspec=$(patchbay_provider) && {
+      setsid --fork uwsm-app -- "${pspec%%|*}" >/dev/null 2>&1 || \
+      setsid --fork "${pspec%%|*}" >/dev/null 2>&1 || true
       local i new
       for i in $(seq 1 20); do
         sleep 0.3
-        new=$(hyprctl -j clients 2>/dev/null | jq -r '
-          .[] | select((.class // "") == "qpwgraph" or (.class // "") == "org.rncbc.qpwgraph" or (.class // "") == "org.pq_graph.Qpwgraph") | .address' 2>/dev/null | head -n1)
+        new=$(patchbay_addr)
         [[ -n "$new" ]] && break
       done
       [[ -n "$new" ]] && {

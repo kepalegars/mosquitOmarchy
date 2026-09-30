@@ -59,6 +59,7 @@ CLOSE_APPS_LIST="kDrive qBittorrent Steam Discord Slack Spotify"
 ROUTING_TOOL=yes
 NO_GAPS=yes
 SILENCE_NOTIFICATIONS=yes
+SWITCH_THEME=yes
 
 load_settings() {
   [[ -f $CONFIG_FILE ]] && source "$CONFIG_FILE" || true
@@ -77,6 +78,9 @@ load_settings() {
   [[ $ROUTING_TOOL == no ]] || ROUTING_TOOL=yes
   [[ $NO_GAPS == no ]] || NO_GAPS=yes
   [[ $SILENCE_NOTIFICATIONS == no ]] || SILENCE_NOTIFICATIONS=yes
+  # Same "absent means yes" rule: only an explicit "no" turns it off, so a
+  # settings file written by an older version keeps the theme switch.
+  [[ $SWITCH_THEME == no ]] || SWITCH_THEME=yes
 }
 
 # ---------------------------------------------------------------------------
@@ -282,13 +286,32 @@ gaps_are_off() {
   [[ -f "$REAL_HOME/.local/state/omarchy/toggles/hypr/window-no-gaps.lua" ]]
 }
 
+# Gaps are restored by TOGGLING BACK, so the only thing that matters is
+# remembering whether WE turned them off. Without that record, deactivation
+# either leaves the desktop gapless forever or re-enables gaps the user had
+# already turned off themselves. The flag is per-session state, so it is
+# removed at the start of every activation (see snapshot_scratchpad's
+# neighbours) and written only when the toggle actually fires.
 toggle_gaps_off() {
   if ! gaps_are_off; then
     omarchy-hyprland-window-gaps-toggle >/dev/null 2>&1 || true
-    ok "Window gaps disabled."
+    # The flag means "gaps were ON before this session, so this session owes a
+    # toggle back". It is CREATED here and consumed by toggle_gaps_on.
+    touch "$GAPS_WERE_ON_FLAG"
+    ok "Window gaps disabled (restored on exit)."
   else
-    ok "Gaps already disabled."
+    ok "Gaps already disabled — left as they were."
   fi
+}
+
+toggle_gaps_on() {
+  # Only ever touches gaps this session removed. A user who already had no gaps
+  # keeps no gaps after live mode, which is their own setting and not ours to
+  # undo.
+  [[ -f "$GAPS_WERE_ON_FLAG" ]] || return 0
+  omarchy-hyprland-window-gaps-toggle >/dev/null 2>&1 || true
+  rm -f "$GAPS_WERE_ON_FLAG"
+  ok "Window gaps restored."
 }
 
 # ---------------------------------------------------------------------------
@@ -375,15 +398,18 @@ move_scratchpad_windows() {
 }
 
 # ---------------------------------------------------------------------------
-# mosquito routing tool + scratchpad lifecycle
+# mosquito patchbay + scratchpad lifecycle
 #
-# The routing tool (qpwgraph) is the manager of the PipeWire routing, started
-# by live mode and parked in Omarchy's scratchpad (SUPER + S to toggle).
+# The patchbay is the PipeWire routing surface, started by live mode and
+# parked in Omarchy's scratchpad (SUPER + S to toggle). It is our own
+# `mosquito-patchbay` when it is installed, qpwgraph until then.
 # The scratchpad's pre-session contents are snapshotted so deactivation
 # returns the workspace to exactly what it was before (a tool that was
 # running before keeps running; nothing is left behind if the scratchpad
 # was empty).
 # ---------------------------------------------------------------------------
+
+GAPS_WERE_ON_FLAG="$STATE_DIR/gaps_were_on"
 
 SCRATCHPAD_SNAPSHOT="$STATE_DIR/scratchpad_before.json"
 PATCHBAY_ADDR_FILE="$STATE_DIR/patchbay_addr"
@@ -397,17 +423,69 @@ special_clients() {
     | "\(.address)|\(.class)|\(.initialTitle // .title)|\(.pid)"' 2>/dev/null
 }
 
-qpwgraph_addr() {
-  # Address of a running qpwgraph window (any workspace), empty if none.
-  # Match both the bare "qpwgraph" class and Qpwgraph's Wayland app-id
-  # class, which is what Hyprland reports for the launched window.
-  hyprctl -j clients 2>/dev/null | jq -r '
-    .[] | select((.class // "") == "qpwgraph" or (.class // "") == "org.rncbc.qpwgraph" or (.class // "") == "org.pq_graph.Qpwgraph") | .address' 2>/dev/null | head -n1
+# mosquito patchbay — WHICH command provides it.
+#
+# `mosquito-patchbay` is the one we are writing: it will own the routing surface
+# and replace the borrowed qpwgraph entirely. It does not exist yet, so until
+# it does we fall back to qpwgraph rather than lose the feature. The first one
+# that is actually installed wins, and a machine with neither is told how to
+# get it.
+#
+# Echoes "<command>|<class-regex>": the launcher and the window-class matcher
+# differ per provider, and a provider whose window cannot be recognised is
+# worse than none at all (it would be launched and never parked).
+patchbay_provider() {
+  local bin
+  for bin in "$REAL_HOME/.local/bin/mosquito-patchbay" "$REAL_HOME/.local/bin/mosquito-patchbay.sh"; do
+    [[ -x $bin ]] && { printf '%s|mosquito[_-]?patchbay\n' "$(basename "$bin")"; return 0; }
+  done
+  command -v mosquito-patchbay >/dev/null 2>&1 && { printf 'mosquito-patchbay|mosquito[_-]?patchbay\n'; return 0; }
+  command -v qpwgraph >/dev/null 2>&1 && { printf 'qpwgraph|qpwgraph|org\.rncbc\.qpwgraph|org\.pq_graph\.Qpwgraph\n'; return 0; }
+  return 1
+}
+
+# patchbay_install_hint — what to run when neither provider is installed.
+patchbay_install_hint() {
+  printf 'pacman -S qpwgraph   # current fallback; run the mosquito setup to get the native one'
+}
+
+patchbay_addr() {
+  # Address of a running patchbay window (any workspace), empty if none.
+  # The class list is built from the provider, so a future mosquito-patchbay is
+  # matched by its own class rather than qpwgraph's.
+  local spec re
+  spec=$(patchbay_provider 2>/dev/null) || return 0
+  re="${spec#*|}"
+  hyprctl -j clients 2>/dev/null | jq -r --arg re "^($re)$" '
+    .[] | select((.class // "") | test($re)) | .address' 2>/dev/null | head -n1
+}
+
+# Backwards-compatible alias: qpwgraph was the only provider for a long time,
+# and live-mode-watch referenced the old name.
+qpwgraph_addr() { patchbay_addr; }
+
+# The command that launches the patchbay for the current provider.
+patchbay_launch() {
+  local spec bin
+  spec=$(patchbay_provider) || return 1
+  bin="${spec%%|*}"
+  setsid --fork uwsm-app -- "$bin" >/dev/null 2>&1 || setsid --fork "$bin" >/dev/null 2>&1 || true
 }
 
 snapshot_scratchpad() {
-  : > "$PATCHBAY_ADDR_FILE"; : > "$PATCHBAY_CLOSED_FLAG"
+  : > "$PATCHBAY_ADDR_FILE"
+  # rm, NOT `: >`. This flag means "the user closed the patchbay for THIS
+  # session" and the watchdog sets it only after asking. Truncating it CREATED
+  # an empty file, and every check for it is `[[ -f ... ]]` — so the flag read
+  # as "already closed" at the very start of every single activation.
+  # open_routing_tool() then returned 2 (skipped) before it ever looked for
+  # qpwgraph, the patchbay was never launched or parked, and nothing was
+  # printed: the feature was dead on every run and silent about it.
+  rm -f "$PATCHBAY_CLOSED_FLAG"
   rm -f "$PATCHBAY_PREEXISTED"
+  # Per-session state: a previous session that died without restoring must not
+  # make this one think it owes a gap toggle.
+  rm -f "$GAPS_WERE_ON_FLAG"
   special_clients > "$SCRATCHPAD_SNAPSHOT"
 }
 
@@ -427,10 +505,10 @@ scratchpad_occupied_by_others() {
   done < <(special_clients)
 }
 
-open_routing_tool() {
+open_patchbay() {
   # Returns 0 = patched (parked in scratchpad or opened in current
   # workspace after user consent), 1 = user refused (activation must abort),
-  # 2 = skipped (config disabled / qpwgraph missing / not needed).
+  # 2 = skipped (config disabled / no provider installed / not needed).
   [[ $ROUTING_TOOL == no ]] && return 2
 
   # Already parked in the scratchpad under this session → nothing to do.
@@ -440,20 +518,27 @@ open_routing_tool() {
     if grep -qF "$existing" "$SCRATCHPAD_SNAPSHOT" 2>/dev/null; then
       echo "$existing" > "$PATCHBAY_ADDR_FILE"
       touch "$PATCHBAY_PREEXISTED"
-      ok "mosquito routing tool already parked in the scratchpad."
+      ok "mosquito patchbay already parked in the scratchpad."
       return 0
     fi
     park_in_scratchpad "$existing" >/dev/null 2>&1 || true
     echo "$existing" > "$PATCHBAY_ADDR_FILE"
-    ok "mosquito routing tool parked in the scratchpad (SUPER + S)."
+    ok "mosquito patchbay parked in the scratchpad (SUPER + S)."
     return 0
   fi
 
-  if [[ -f "$PATCHBAY_CLOSED_FLAG" ]]; then
+  # The user closed the patchbay during a PREVIOUS session and asked not to be
+  # bothered again: honour that, but only if the flag actually carries content.
+  # Existence alone used to mean "closed", which is the bug above.
+  if [[ -s "$PATCHBAY_CLOSED_FLAG" ]]; then
     return 2
   fi
-  if ! command -v qpwgraph >/dev/null 2>&1; then
-    warn "qpwgraph is not installed — the mosquito routing tool is skipped."
+  if ! patchbay_provider >/dev/null 2>&1; then
+    # Neither the native one nor the fallback is installed. Say so and say how
+    # to fix it: a silently missing patchbay reads as "live mode just does not
+    # do that any more".
+    warn "No mosquito patchbay available — the patchbay step is skipped."
+    warn "  Install one with: $(patchbay_install_hint)"
     return 2
   fi
 
@@ -464,20 +549,27 @@ open_routing_tool() {
   local occupants=""
   occupants=$(scratchpad_occupied_by_others | sort -u | tr '\n' ' ')
   if [[ -n "$occupants" ]]; then
-    if ! confirm $"The scratchpad is already occupied (the mosquitomarchy routing tool can't be parked there). Patchbay will open in the CURRENT workspace. Continue?"; then
+    if ! confirm $"The scratchpad is already occupied (the mosquito patchbay can't be parked there). Patchbay will open in the CURRENT workspace. Continue?"; then
       warn "Live Mode activation cancelled (scratchpad occupied)."
       return 1
     fi
     ok "Opening patchbay in the current workspace (scratchpad kept as-is)."
   fi
 
-  setsid --fork uwsm-app -- qpwgraph >/dev/null 2>&1 || \
-    setsid --fork qpwgraph >/dev/null 2>&1 || true
+  local spec
+  spec=$(patchbay_provider) || return 2
+  ok "mosquito patchbay: launching ${spec%%|*}."
+  patchbay_launch
 
+  # qpwgraph is a Qt app: it maps its window AFTER the process is up, and on a
+  # loaded machine that took longer than 6 s here, so the loop gave up and
+  # reported "could not be detected" for a patchbay that was about to appear.
+  # 20 x 0.3s was simply too short. It is now 15 s, and the address is recorded
+  # as soon as it shows up so the rest of the session has it.
   local addr i
-  for i in $(seq 1 20); do
+  for i in $(seq 1 50); do
     sleep 0.3
-    existing=$(qpwgraph_addr)
+    existing=$(patchbay_addr)
     [[ -n "$existing" ]] && break
   done
 
@@ -486,9 +578,9 @@ open_routing_tool() {
     # Park it only if the scratchpad is free (no occupants).
     if [[ -z $(scratchpad_occupied_by_others) ]]; then
       park_in_scratchpad "$existing" >/dev/null 2>&1 || true
-      ok "mosquito routing tool parked in the scratchpad (SUPER + S)."
+      ok "mosquito patchbay parked in the scratchpad (SUPER + S)."
     else
-      ok "mosquito routing tool launched in the current workspace."
+      ok "mosquito patchbay opened in the current workspace (scratchpad left as it was)."
     fi
   else
     warn "qpwgraph launched, but its window could not be detected."
@@ -497,7 +589,7 @@ open_routing_tool() {
 }
 
 # restore_scratchpad: at deactivation, remove what live mode added and put
-# back what was there before. A pre-existing routing tool is left alone; one
+# back what was there before. A patchbay already there is left alone; one
 # the session spawned is closed so an empty scratchpad returns empty.
 restore_scratchpad() {
   local ours
@@ -506,7 +598,7 @@ restore_scratchpad() {
     hyprctl -j clients 2>/dev/null | jq -e --arg a "$ours" \
       'map(select(.address == $a)) | length > 0' >/dev/null 2>&1 && {
       close_window "$ours" >/dev/null 2>&1 || true
-      ok "Session's mosquito routing tool closed (scratchpad back to its pre-live state)."
+      ok "Session's mosquito patchbay closed (scratchpad back to its pre-live state)."
     }
   fi
   : > "$PATCHBAY_ADDR_FILE"; : > "$SCRATCHPAD_SNAPSHOT"; rm -f "$PATCHBAY_CLOSED_FLAG"
@@ -521,10 +613,38 @@ silence_is_on() {
   grep -q '"dnd": true' "$REAL_HOME/.local/state/omarchy/notifications.json" 2>/dev/null
 }
 
-silence_notifications_on() {
+# FORCE DND ON. Not "toggle it if it happens to be off": a toggle is a
+# question, and during a live session the question has to have one answer. If
+# anything turns notifications back on mid-session — a stray key, another
+# toggle, a plugin that resets it — the watchdog re-asserts this on its next
+# pass, so the only way out of DND is to end live mode, which is the point.
+# It also bypasses Omarchy's own per-app "allow" list and any DND expiry, so
+# nothing can quietly turn it back on by itself.
+force_dnd_on() {
   [[ $SILENCE_NOTIFICATIONS == no ]] && return 0
-  silence_is_on || omarchy-toggle-notification-silencing >/dev/null 2>&1 || true
-  ok "Notifications silenced."
+  if silence_is_on; then return 0; fi
+  omarchy-toggle-notification-silencing >/dev/null 2>&1 || true
+  # Some builds refuse while a timer/expiry is pending; force the state file
+  # too so a later watchdog pass sees the truth either way.
+  if ! silence_is_on; then
+    force_dnd_file_on
+  fi
+  ok "Notifications silenced (forced for the whole session)."
+}
+
+# The notifications state file is the source of truth for what the shell shows.
+# Writing it directly is what makes the forcing stick when the toggle command
+# declines (an expiry timer still running, say).
+force_dnd_file_on() {
+  local f="$REAL_HOME/.local/state/omarchy/notifications.json"
+  [[ -f $f ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local tmp
+  tmp=$(mktemp "${f}.XXXXXX" 2>/dev/null) || return 0
+  if jq '.dnd = true' "$f" > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$f" && return 0
+  fi
+  rm -f "$tmp"
 }
 
 silence_notifications_restore() {
@@ -788,7 +908,7 @@ cmd_on() {
   # enough to fit the confirm dialog's card width on a single line
   # (the screen is narrow — a wrapped bullet breaks the prompt).
   if [[ "$force" != "yes" ]]; then
-    if ! confirm $'Activate Live Mode?\n• Max performance (audio optimized)\n• Thermal guard\n• Always awake (lid closed without sleeping)\n• mosquito routing tool in scratchpad (SUPER + S)\n• Notifications silenced\n• Gaps disabled'; then
+    if ! confirm $'Activate Live Mode?\n• Max performance (audio optimized)\n• Thermal guard\n• Always awake (lid closed without sleeping)\n• mosquito patchbay in scratchpad (SUPER + S)\n• Notifications silenced\n• Gaps disabled'; then
       ok "Aborted."
       return 0
     fi
@@ -826,15 +946,15 @@ cmd_on() {
 
   # 5. Independent cosmetic/setup steps concurrently.
   [[ $NO_GAPS == yes ]] && { toggle_gaps_off & }
-  { [[ $SILENCE_NOTIFICATIONS == yes ]] && silence_notifications_on & } >/dev/null 2>&1
+  { [[ $SILENCE_NOTIFICATIONS == yes ]] && force_dnd_on & } >/dev/null 2>&1
   frame_show &
 
   # 6. Scratchpad windows out of the way.
   move_scratchpad_windows
 
-  # 7. Audio routing tool into the scratchpad (idempotent). If the user
+  # 7. mosquito patchbay into the scratchpad (idempotent). If the user
   #    refuses the scratchpad-occupied prompt, abort the whole activation.
-  if ! open_routing_tool; then
+  if ! open_patchbay; then
     if [[ $? -eq 1 ]]; then
       trap - EXIT
       rm -f "$ACTIVE_FLAG"
@@ -845,7 +965,19 @@ cmd_on() {
   # 8. Live theme switched from a DETACHED process: omarchy-theme-set's
   #    post-hooks restart terminals, and if this script runs inside one the
   #    restart would kill the orchestrator mid-flight.
-  switch_to_live_theme
+  #
+  #    SWITCH_THEME=no skips the whole thing. It exists because a theme set
+  #    restarts every terminal on the desktop — including the one running an
+  #    activation, including a live remote/agent session. That is exactly what
+  #    happens with the rest of the activation still in flight, so there needs
+  #    to be a way to run everything EXCEPT the disruptive part. The previous
+  #    theme is still recorded and still restored, so deactivation stays
+  #    symmetric.
+  if [[ $SWITCH_THEME == yes ]]; then
+    switch_to_live_theme
+  else
+    ok "Theme switch skipped (SWITCH_THEME=no)."
+  fi
 
   # 9. Thermal watchdog (last: it reasserts everything above).
   start_watchdog
@@ -889,8 +1021,23 @@ cmd_off() {
   # 3. Restore the theme that was in use before activation
   restore_previous_theme
 
-  # 4. Restore notifications
+  # 4. Notifications. Live mode turned DND ON, so it takes it back OFF on the
+  #    way out and re-asserts it until the session really ends — see
+  #    force_dnd_on for why leaving it to a toggle is not enough.
   silence_notifications_restore
+
+  # 4b. Gaps, only if this session is the reason they are off.
+  toggle_gaps_on
+
+  # 4c. The scratchpad back to its pre-live contents.
+  #
+  # This step was DEFINED and never CALLED. The patchbay the session launched
+  # therefore stayed parked in the scratchpad after deactivation, holding a
+  # window the user had not asked to keep, and the recorded address survived
+  # into the next session — which is what makes "an empty scratchpad returns
+  # empty" untrue. A patchbay that was ALREADY there before the session is left
+  # alone, because the user put it there.
+  restore_scratchpad
 
   # 5. Sleep management off (also ends any mega-caffeine session)
   stop_sleep_management

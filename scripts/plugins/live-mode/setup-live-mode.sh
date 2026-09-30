@@ -83,22 +83,37 @@ install_binaries() {
 }
 
 # ---------------------------------------------------------------------------
-# 1b. Audio routing tool (qpwgraph — parked in the scratchpad by live mode).
+# 1b. mosquito patchbay (parked in the scratchpad by live mode).
+#
+# Our own `mosquito-patchbay` is what live mode will drive once it exists. Until
+# then qpwgraph stands in for it, so a machine never loses the feature just
+# because our binary is not written yet. The native one wins whenever it is
+# installed; qpwgraph is only a fallback, and if NEITHER is there we say how to
+# get one rather than leaving live mode to skip the step silently.
 # ---------------------------------------------------------------------------
 
+PATCHBAY_BIN_NAME="mosquito-patchbay"
+
 install_routing_tool() {
-  if command -v qpwgraph >/dev/null 2>&1; then
-    ok "Audio routing tool present: qpwgraph"
+  if [[ -x "$REAL_HOME/.local/bin/$PATCHBAY_BIN_NAME" ]] || command -v "$PATCHBAY_BIN_NAME" >/dev/null 2>&1; then
+    ok "mosquito patchbay present: $PATCHBAY_BIN_NAME"
     return 0
   fi
+  if command -v qpwgraph >/dev/null 2>&1; then
+    ok "mosquito patchbay: using qpwgraph as the stand-in until $PATCHBAY_BIN_NAME exists."
+    return 0
+  fi
+  # Neither. Offer qpwgraph now (it is the only thing that can be installed
+  # today); the native patchbay comes from the mosquitomarchy setup itself.
   if [[ $EUID -eq 0 ]] && command -v pacman >/dev/null 2>&1; then
     if pacman -S --needed --noconfirm qpwgraph >/dev/null 2>&1; then
-      ok "Audio routing tool installed: qpwgraph"
+      ok "mosquito patchbay installed (qpwgraph stand-in): qpwgraph"
     else
       warn "Could not install qpwgraph (pacman failed) — install it manually."
     fi
   else
-    warn "qpwgraph missing — live mode will skip the routing tool. Install it (root): pacman -S qpwgraph"
+    warn "No mosquito patchbay available. Run the mosquitomarchy setup for the native one,"
+    warn "or install the stand-in (root): pacman -S qpwgraph"
   fi
 }
 

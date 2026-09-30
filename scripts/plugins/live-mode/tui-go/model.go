@@ -89,7 +89,8 @@ func (m model) mainItems() []tuikit.PickerItem {
 		{Display: fmt.Sprintf("Thermal limit: %d°C", s.ThermalLimitC), Value: "thermal"},
 		{Display: "Ask to close background apps at start: " + boolLabel(s.CloseApps), Value: "close_apps"},
 		{Display: "Choose background apps to close at start", Value: "choose_apps"},
-		{Display: "Audio routing tool in the scratchpad: " + boolLabel(s.RoutingTool), Value: "routing"},
+		{Display: "mosquito patchbay in the scratchpad: " + boolLabel(s.RoutingTool), Value: "routing"},
+		{Display: "Switch to the Live theme on activation: " + boolLabel(s.SwitchTheme), Value: "theme"},
 		{Display: "Window gaps disabled during the session: " + boolLabel(s.NoGaps), Value: "gaps"},
 		{Display: "Silence notifications: " + boolLabel(s.SilenceNotifs), Value: "notifs"},
 		{Display: "Reset defaults", Value: "reset"},
@@ -169,6 +170,8 @@ func setPending(s Settings, row, target string) Settings {
 		s.CloseApps = target == "on"
 	case "routing":
 		s.RoutingTool = target == "on"
+	case "theme":
+		s.SwitchTheme = target == "on"
 	case "gaps":
 		s.NoGaps = target == "on"
 	case "notifs":
@@ -288,6 +291,12 @@ func (m model) cycleSetting(dir int) (tea.Model, tea.Cmd) {
 			cur = p == "on"
 		}
 		m.pending[row] = liveToggleTarget(!cur)
+	case "theme":
+		cur := m.settings.SwitchTheme
+		if p, ok := m.pending[row]; ok {
+			cur = p == "on"
+		}
+		m.pending[row] = liveToggleTarget(!cur)
 	default:
 		return m, nil
 	}
@@ -337,6 +346,8 @@ func (m *model) apply(choice string) {
 		s.CloseApps = !s.CloseApps
 	case "routing":
 		s.RoutingTool = !s.RoutingTool
+	case "theme":
+		s.SwitchTheme = !s.SwitchTheme
 	case "gaps":
 		s.NoGaps = !s.NoGaps
 	case "notifs":

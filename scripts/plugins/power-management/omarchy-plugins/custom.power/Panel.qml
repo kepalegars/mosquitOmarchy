@@ -179,12 +179,36 @@ Panel {
     return modeLabel()
   }
 
+  // A refresh REQUESTED while a probe is already running used to be dropped on
+  // the floor: `if (!proc.running) proc.running = true` is a no-op when the
+  // process is mid-flight, so the result of that probe answered a question
+  // asked BEFORE whatever changed, and the new state was never read. With the
+  // fingerprint watcher firing every 1.2s that window is easy to land in — the
+  // icon would then look like it needed a click, because clicking re-requests
+  // a probe at a moment when none happens to be running.
+  //
+  // So a request during a run is remembered and replayed the moment the
+  // process finishes, instead of being lost.
+  property bool batteryRefreshPending: false
+  property bool profilesRefreshPending: false
+  property bool systemRefreshPending: false
+
+  function requestProcess(proc, propName) {
+    if (proc.running) {
+      // Already running: remember that we still owe a fresh read afterwards.
+      root[propName] = true
+      return
+    }
+    root[propName] = false
+    proc.running = true
+  }
+
   function refresh() {
     if (!batteryPresent) return
 
-    if (!batteryProc.running) batteryProc.running = true
-    if (!profilesProc.running) profilesProc.running = true
-    if (!systemProc.running) systemProc.running = true
+    requestProcess(batteryProc, "batteryRefreshPending")
+    requestProcess(profilesProc, "profilesRefreshPending")
+    requestProcess(systemProc, "systemRefreshPending")
   }
 
   function updateKeyValue(raw, targetName) {
@@ -425,6 +449,8 @@ Panel {
     // repo and its battery-status-test fixtures.
     command: ["battery-status", "--shell"]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateKeyValue(text, "battery") }
+    // A refresh asked for DURING this run is replayed now rather than lost.
+    onExited: if (root.batteryRefreshPending) root.refresh()
   }
 
   // ---- self-refreshing on plug / unplug ---------------------------------
@@ -482,11 +508,13 @@ Panel {
     id: profilesProc
     command: ["omarchy-powerprofiles-list", "--active-state"]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateProfiles(text) }
+    onExited: if (root.profilesRefreshPending) root.refresh()
   }
 
   Process {
     id: systemProc
     command: ["omarchy-system-stats"]
+    onExited: if (root.systemRefreshPending) root.refresh()
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateKeyValue(text, "system") }
   }
 

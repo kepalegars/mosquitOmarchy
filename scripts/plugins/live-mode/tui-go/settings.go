@@ -22,6 +22,7 @@ type Settings struct {
 	RoutingTool   bool     // park qpwgraph in the scratchpad on activation
 	NoGaps        bool     // disable window gaps during the session
 	SilenceNotifs bool     // DND during the session
+	SwitchTheme   bool     // switch to the Live theme on activation
 }
 
 func defaultSettings() Settings {
@@ -32,6 +33,7 @@ func defaultSettings() Settings {
 		RoutingTool:   true,
 		NoGaps:        true,
 		SilenceNotifs: true,
+		SwitchTheme:   true,
 	}
 }
 
@@ -78,6 +80,9 @@ func loadSettings() Settings {
 	if v, ok := kv["SILENCE_NOTIFICATIONS"]; ok {
 		s.SilenceNotifs = v != "no"
 	}
+	if v, ok := kv["SWITCH_THEME"]; ok {
+		s.SwitchTheme = v != "no"
+	}
 	return s
 }
 
@@ -91,7 +96,8 @@ func saveSettings(s Settings) error {
 		"CLOSE_APPS_LIST=\"" + joinFields(s.CloseAppsList) + "\"\n" +
 		"ROUTING_TOOL=\"" + boolVal(s.RoutingTool) + "\"\n" +
 		"NO_GAPS=\"" + boolVal(s.NoGaps) + "\"\n" +
-		"SILENCE_NOTIFICATIONS=\"" + boolVal(s.SilenceNotifs) + "\"\n"
+		"SILENCE_NOTIFICATIONS=\"" + boolVal(s.SilenceNotifs) + "\"\n" +
+		"SWITCH_THEME=\"" + boolVal(s.SwitchTheme) + "\"\n"
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
