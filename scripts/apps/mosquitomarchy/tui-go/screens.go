@@ -2115,6 +2115,22 @@ func (m model) rebuildSetup() navPicker {
 	// `full` is built alongside the visible rows rather than in a second pass:
 	// rebuilding the tree to measure it was half the cost of a keystroke.
 	pinned := tuikit.RowsWidth(full)
+	if uninstall {
+		// The install tree is the superset: a child action that still exists
+		// on the install side is already gone on the uninstall side, so
+		// "lame language models" contributes a long row here and no row at
+		// all there. Pinning each tab to its OWN width made the row block —
+		// which, once it is wider than the pane, is the left margin — differ
+		// between the two tabs: the same modules sat on different columns
+		// depending on which tab was open. Taking the wider of the two keeps
+		// the block a constant of the screen, so switching tab moves
+		// nothing. The row block is capped to the pane width at render time
+		// (blockFor), so a tree wider than the terminal lays out flush left
+		// on both tabs instead of overflowing.
+		if _, installFull := m.setupRows(false); tuikit.RowsWidth(installFull) > pinned {
+			pinned = tuikit.RowsWidth(installFull)
+		}
+	}
 
 	enterHelp := "install selection"
 	if uninstall {

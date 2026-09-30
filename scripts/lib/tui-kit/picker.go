@@ -415,10 +415,7 @@ func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, ite
 		// keep the sub-line aligned with its title.
 		row += "\n" + "   " + strings.Repeat(" ", d.badgeSlot) + descStyled
 	}
-	if d.maxRowW > 0 {
-		row = lipgloss.NewStyle().Width(d.maxRowW).Align(lipgloss.Left).Render(row)
-	}
-	fmt.Fprint(w, lipgloss.NewStyle().Width(m.Width()).Align(lipgloss.Center).Render(row)) //nolint: errcheck
+	fmt.Fprint(w, fitBlock(row, d.maxRowW, m.Width())) //nolint: errcheck
 }
 
 // titleStyle builds the per-row title style AT RENDER TIME so the colors
@@ -498,10 +495,7 @@ func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem)
 		desc := ansi.Truncate(pi.Sub, descAvail, "…")
 		row += "\n" + "   " + d.badgeCell(pi) + StyleDisabled.Render(desc)
 	}
-	if d.maxRowW > 0 {
-		row = lipgloss.NewStyle().Width(d.maxRowW).Align(lipgloss.Left).Render(row)
-	}
-	fmt.Fprint(w, lipgloss.NewStyle().Width(m.Width()).Align(lipgloss.Center).Render(row)) //nolint: errcheck
+	fmt.Fprint(w, fitBlock(row, d.maxRowW, m.Width())) //nolint: errcheck
 }
 
 // newPickerDelegate builds a fresh delegate at call time (inside NewPicker,
@@ -547,9 +541,33 @@ func (p Picker) SetContentWidth(w int) Picker {
 	return p
 }
 
-func newPickerDelegate(maxRowW, badgeSlot, trailSlot int) pickerDelegate {
+func newPickerDelegate(maxRowW, badgeSlot, trailSlot int, compact bool) pickerDelegate {
 	d := list.NewDefaultDelegate()
+	d = *tuneDelegate(d, compact)
 	return pickerDelegate{DefaultDelegate: d, maxRowW: maxRowW, badgeSlot: badgeSlot, trailSlot: trailSlot}
+}
+
+// tuneDelegate applies the layout that belongs to the ROWS, not to the
+// delegate's width. compact means no row carries a sub-line, so the list must
+// use one terminal line per row and no spacer between rows.
+//
+// It has to be a separate step, re-applied every time the delegate is rebuilt,
+// because bubbles keeps the delegate behind an interface and the only way to
+// re-derive it for a pinned width is to build a fresh one — which silently
+// reset ShowDescription/Height/Spacing to their defaults. Every pinned picker
+// then rendered TWO lines per row with a blank line between them (the blank
+// band down the middle of Setup) and paginated at half its real size.
+func tuneDelegate(d list.DefaultDelegate, compact bool) *list.DefaultDelegate {
+	if compact {
+		d.ShowDescription = false
+		d.SetHeight(1)
+		// Without descriptions hidden the delegate renders one row per item;
+		// the built-in inter-item spacer reserves two terminal rows per item,
+		// so only half the options fit and the gaps show up as stray blank
+		// lines between modules.
+		d.SetSpacing(0)
+	}
+	return &d
 }
 
 // Picker wraps bubbles/list as a full-screen option picker.
@@ -574,6 +592,11 @@ type Picker struct {
 	// The measurements behind the current delegate, kept so a pinned width
 	// can rebuild it (bubbles' list.Model keeps its delegate unexported).
 	rowW, badgeSlot, trailSlot int
+	// compact records that no row carries a sub-line, i.e. the delegate must
+	// stay one terminal line per row. applyPin rebuilds the delegate, and a
+	// rebuilt delegate that forgets this is what put a blank line between
+	// every module and halved the visible list.
+	compact bool
 }
 
 // NewPicker builds a picker. It starts unpinned; call SetContentWidth on the
@@ -655,17 +678,7 @@ func rowMetrics(items []PickerItem) (maxRowW, badgeSlot, trailSlot int, hasSub b
 func newPicker(header string, items []PickerItem, p0 Picker) Picker {
 	litems := make([]list.Item, len(items))
 	maxRowW, badgeSlot, trailSlot, hasSub := rowMetrics(items)
-	delegate := newPickerDelegate(maxRowW, badgeSlot, trailSlot)
-	if !hasSub {
-		delegate.ShowDescription = false
-		delegate.SetHeight(1)
-		// With descriptions hidden the delegate renders one row per item;
-		// kill the built-in inter-item spacer so a compact picker shows all
-		// its options contiguously (spacing=1 otherwise reserves two rows per
-		// item → only half the list fits → bogus pagination dots + blank
-		// rows between options).
-		delegate.SetSpacing(0)
-	}
+	delegate := newPickerDelegate(maxRowW, badgeSlot, trailSlot, !hasSub)
 	for i, it := range items {
 		litems[i] = it
 	}
@@ -684,7 +697,7 @@ func newPicker(header string, items []PickerItem, p0 Picker) Picker {
 	// separately (the universal layout pins it to the bottom of the screen,
 	// not in the centred body).
 	l.SetShowHelp(false)
-	p := Picker{list: l, ready: true, contentW: p0.contentW, rowW: maxRowW, badgeSlot: badgeSlot, trailSlot: trailSlot}
+	p := Picker{list: l, ready: true, contentW: p0.contentW, rowW: maxRowW, badgeSlot: badgeSlot, trailSlot: trailSlot, compact: !hasSub}
 	p = p.clampDisabled(1)
 	p = p.applyPin()
 	return p
@@ -706,7 +719,7 @@ func (p Picker) applyPin() Picker {
 		return p
 	}
 	p.rowW = w
-	p.list.SetDelegate(newPickerDelegate(w, p.badgeSlot, p.trailSlot))
+	p.list.SetDelegate(newPickerDelegate(w, p.badgeSlot, p.trailSlot, p.compact))
 	return p
 }
 
@@ -1094,4 +1107,51 @@ func (p Picker) SelectedValue() string {
 		return it.Value
 	}
 	return ""
+}
+
+// blockFor is the uniform row-block width a picker can genuinely center.
+//
+// The pinned width is measured over the FULL tree — every folder open — so one
+// long branch can push it past the pane: "lame language models (ai..)" and its
+// children measure 118 columns inside a 92-column list. A block wider than the
+// list cannot be centered, because lipgloss first *wraps* the over-long row at
+// listW — inventing a second line that then throws the list's pagination off —
+// and afterwards has no slack left to center. Each row also kept its own
+// start, so a Setup page's modules began on a different column each.
+//
+// Clamping the block to the list width turns that into the degenerate case of
+// centering — a block as wide as the list is already in place — and gives every
+// row on every page the same left edge, which is what made Setup and Uninstall
+// read as two different layouts.
+func blockFor(maxRowW, listW int) int {
+	if maxRowW <= 0 || maxRowW > listW {
+		return listW
+	}
+	return maxRowW
+}
+
+// fitBlock pads row out to the uniform block width, then centers that block in
+// the list. Every line is cut to the block first, so lipgloss has nothing left
+// to wrap — see truncateToLines.
+func fitBlock(row string, maxRowW, listW int) string {
+	block := blockFor(maxRowW, listW)
+	row = lipgloss.NewStyle().Width(block).Align(lipgloss.Left).Render(truncateToLines(row, block))
+	return lipgloss.NewStyle().Width(listW).MaxWidth(listW).Align(lipgloss.Center).Render(row)
+}
+
+// truncateToLines cuts every line down to w columns, ANSI-aware, before the row
+// is handed to lipgloss.
+//
+// lipgloss WRAPS a string wider than Width — MaxWidth does not stop it, it only
+// clips the result afterwards — so an over-long row grew a second line out of
+// nowhere. Inside a list that phantom line is the blank line that appeared
+// between modules, and it desynchronised the list's pagination as well. Lines
+// are cut per line because a row may legitimately be two lines tall when it
+// carries a description.
+func truncateToLines(s string, w int) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = ansi.Truncate(l, w, "")
+	}
+	return strings.Join(lines, "\n")
 }

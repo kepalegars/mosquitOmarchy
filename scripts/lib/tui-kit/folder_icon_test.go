@@ -37,7 +37,7 @@ func TestFolderIconTracksFold(t *testing.T) {
 	mk := func(fold string) PickerItem {
 		return PickerItem{Display: "Apps", Value: "cat:apps", Folder: true, Fold: fold}
 	}
-	d := newPickerDelegate(2, 2, 0)
+	d := newPickerDelegate(2, 2, 0, true)
 	closed := d.leadCell(mk(FoldCollapsed), false)
 	open := d.leadCell(mk(FoldExpanded), false)
 	if !strings.Contains(closed, FolderClosed) {
@@ -67,7 +67,7 @@ func TestFolderIconDistinguishesSelection(t *testing.T) {
 	lipgloss.SetColorProfile(2) // TrueColor
 	t.Cleanup(func() { lipgloss.SetColorProfile(old) })
 
-	d := newPickerDelegate(2, 2, 0)
+	d := newPickerDelegate(2, 2, 0, true)
 	pi := PickerItem{Display: "Apps", Value: "cat:apps", Folder: true, Fold: FoldExpanded}
 	idle := d.leadCell(pi, false)
 	sel := d.leadCell(pi, true)

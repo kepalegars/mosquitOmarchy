@@ -650,3 +650,137 @@ func TestRemoveAIRowIsDisabledUntilTheAnswerArrives(t *testing.T) {
 		t.Error("row stayed greyed even though a removal was recorded")
 	}
 }
+
+// moduleLines returns the indices of the rendered lines showing one of the
+// given category labels, in order. Matching on the label rather than on the
+// category marker glyph keeps the test indifferent to which marker a tab draws,
+// and matching labels rather than "any row" keeps it off the indented child
+// rows, whose offset under their folder is the tree, not a layout defect.
+func moduleLines(view string, labels ...string) []int {
+	var out []int
+	for i, l := range strings.Split(view, "\n") {
+		p := ansi.Strip(l)
+		for _, want := range labels {
+			if strings.Contains(p, want) {
+				out = append(out, i)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// categoryLabels is the list of category row labels a rebuilt picker shows.
+func categoryLabels(p navPicker) []string {
+	var out []string
+	for _, it := range p.Items() {
+		if it.Folder && it.Display != "Back" {
+			out = append(out, it.Display)
+		}
+	}
+	return out
+}
+
+// blankBetween reports whether the rendered view has an empty line strictly
+// between two line indices. A delegate that spends two terminal lines per
+// option leaves one, which is what put a blank band down the middle of Setup.
+func blankBetween(view string, from, to int) bool {
+	for _, l := range strings.Split(view, "\n")[from+1 : to] {
+		if strings.TrimSpace(ansi.Strip(l)) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// The row block is the left margin: once it is wider than the pane it is laid
+// out flush left and every row must start on the SAME column. Two bugs showed
+// up here at once. The block was pinned to the FULL tree — every folder open —
+// and "lame language models" carries a long child ("bring back omarchy's
+// agentic stuff"), so on a 100-column pane the block measured 118 columns:
+// wider than the pane, lipgloss wrapped the rows instead of centering them and
+// each row kept its own start, so the modules stepped down the screen. And the
+// delegate was rebuilt when the block was pinned, losing the compact layout —
+// one terminal line per option — which put a blank line between every module
+// and halved the list.
+func TestSetupAndUninstallShareOneLeftColumn(t *testing.T) {
+	m := flatSetup()
+	m.setupFolders = append(m.setupFolders, FolderRec{Folder: "lame", Label: "lame language models"})
+	m.setupItems = append(m.setupItems,
+		// Long enough that the FULL tree — every folder open — measures wider
+		// than the 100-column pane, which is the real situation: the row block
+		// then lays out flush left instead of being centered.
+		SetupItemRec{Folder: "lame", Key: "remove-ai", Label: "bring back omarchy's agentic stuff " + strings.Repeat("and more ", 12)},
+	)
+	// Only the install tab grows a "Menu entries" folder, so it is the row
+	// that makes the two trees differ in width — exactly the situation that
+	// used to leave the two tabs on different columns.
+	m.menuEntries = []MenuEntryRec{{Name: "power", Label: "Power"}}
+
+	for _, mode := range []string{"setup", "uninstall"} {
+		m.treeMode = mode
+		m.setupPicker = m.rebuildSetup()
+		view := m.View()
+		rows := strings.Split(view, "\n")
+		mods := moduleLines(view, categoryLabels(m.setupPicker)...)
+		if len(mods) < 2 {
+			t.Fatalf("%s: %d lignes de categorie, attendu au moins 2", mode, len(mods))
+		}
+		// Every category row starts on one and the same column. The cursor row
+		// is allowed 2 columns of slack: "▶"/"▼" are East-Asian Ambiguous and
+		// render one cell wider than the three spaces that replace them, which
+		// has always shifted the cursor row by that much and is not what this
+		// test is about. Before the fix the rows scattered over six columns.
+		cols := map[int]int{}
+		for _, i := range mods {
+			p := ansi.Strip(rows[i])
+			cols[len(p)-len(strings.TrimLeft(p, " "))]++
+		}
+		want, best := 0, 0
+		for c, n := range cols {
+			if n > best {
+				want, best = c, n
+			}
+		}
+		if want == 0 {
+			t.Fatalf("%s: aucune colonne de reference", mode)
+		}
+		if cols[want] != len(mods)-1 {
+			t.Errorf("%s: %d/%d lignes de categorie a la colonne %d, les autres a %v",
+				mode, cols[want], len(mods), want, cols)
+		}
+		for c := range cols {
+			if c != want && c < want-2 {
+				t.Errorf("%s: ligne de categorie a la colonne %d, attendu %d", mode, c, want)
+			}
+		}
+		// And the page is contiguous: no empty line anywhere between the first
+		// and the last category row, child rows included.
+		if blankBetween(view, mods[0], mods[len(mods)-1]) {
+			t.Errorf("%s: ligne vide entre les categories", mode)
+		}
+	}
+}
+
+// Switching tab must not move the layout. The install tree is the superset —
+// it carries rows the uninstall tree does not — so pinning each tab to its own
+// width gave the two tabs two different left margins for the same modules.
+func TestSwitchingTabKeepsTheSameColumn(t *testing.T) {
+	m := flatSetup()
+	m.setupFolders = append(m.setupFolders, FolderRec{Folder: "lame", Label: "lame language models"})
+	m.setupItems = append(m.setupItems,
+		SetupItemRec{Folder: "lame", Key: "remove-ai", Label: "bring back omarchy's agentic stuff " + strings.Repeat("and more ", 12)},
+	)
+
+	columnOf := func(mode string) int {
+		m.treeMode = mode
+		m.setupPicker = m.rebuildSetup()
+		view := m.View()
+		i := moduleLines(view, categoryLabels(m.setupPicker)...)[0]
+		p := ansi.Strip(strings.Split(view, "\n")[i])
+		return len(p) - len(strings.TrimLeft(p, " "))
+	}
+	if a, b := columnOf("setup"), columnOf("uninstall"); a != b {
+		t.Errorf("colonne différente selon l'onglet: setup %d, uninstall %d", a, b)
+	}
+}
