@@ -745,6 +745,58 @@ PYWIZARD
     fix_remove "$plugin" "$@"
     ;;
 
+  apply-fixes-plugins)
+    # $@ = fix ids. Plugin LABELS on stdin, one per line. The plugins the fix
+    # does not already cover.
+    #
+    # This exists for the PARTIAL fix. A vendor-wide visit merges one report per
+    # plugin, so a fix can be recorded on some of a suite and not the others —
+    # and the only two ways to change that were "apply to every plugin of the
+    # vendor", which flipped a half-applied fix to fully applied across the
+    # whole suite, or "remove from the one plugin you picked by hand", which on
+    # a vendor visit named NO plugin at all and failed with "plugin required".
+    # Neither is what a partial row means.
+    #
+    # Taking the labels on stdin keeps an arbitrary set expressible without
+    # inventing a separator between "the fixes" and "the plugins".
+    (($#)) || { echo "apply-fixes-plugins needs at least one fix id." >&2; exit 2; }
+    _apm_fpl_fix=("$@")
+    _apm_fpl_n=0
+    _apm_fpl_rc=0
+    while IFS= read -r _apm_fpl_label; do
+      [[ -n $_apm_fpl_label ]] || continue
+      if fix_apply "$_apm_fpl_label" "${_apm_fpl_fix[@]}"; then
+        _apm_fpl_n=$((_apm_fpl_n + 1))
+      else
+        _apm_fpl_rc=1
+        warn "could not apply the fixes to $_apm_fpl_label"
+      fi
+    done
+    ok "fixes applied to $_apm_fpl_n plugin(s)."
+    exit $_apm_fpl_rc
+    ;;
+
+  remove-fixes-plugins)
+    # $@ = fix ids. Plugin LABELS on stdin, one per line. The plugins the fix
+    # IS already on — the other half of apply-fixes-plugins, and the operation
+    # a vendor visit could not express at all before.
+    (($#)) || { echo "remove-fixes-plugins needs at least one fix id." >&2; exit 2; }
+    _apm_rpl_fix=("$@")
+    _apm_rpl_n=0
+    _apm_rpl_rc=0
+    while IFS= read -r _apm_rpl_label; do
+      [[ -n $_apm_rpl_label ]] || continue
+      if fix_remove "$_apm_rpl_label" "${_apm_rpl_fix[@]}"; then
+        _apm_rpl_n=$((_apm_rpl_n + 1))
+      else
+        _apm_rpl_rc=1
+        warn "could not remove the fixes from $_apm_rpl_label"
+      fi
+    done
+    ok "fixes removed from $_apm_rpl_n plugin(s)."
+    exit $_apm_rpl_rc
+    ;;
+
   pick-any-plugin-file)
     # One unified picker for BOTH plugin universes -- the Go TUI decides
     # what to do with the result by extension (exe/msi -> wine install;
