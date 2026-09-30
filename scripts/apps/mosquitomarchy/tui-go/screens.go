@@ -72,6 +72,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	switch msg := msg.(type) {
+	// THE SETTINGS RULE (see PickerItem.Toggle). A toggle repaints FIRST and
+	// applies SECOND, so the row answers the instant it is chosen and the menu
+	// never blocks on a subprocess. The write is a command, and its result is
+	// reconciled against the setting that is REALLY in place, so a refused
+	// write puts the row back instead of leaving the menu lying.
+	case tuikit.PickerToggleOptionMsg:
+		if msg.Value != crashNotifyValue {
+			return m, nil
+		}
+		m.crashNotify = msg.Next
+		m.pickPicker = newNavPicker("Extras:", m.settingsItems2()).SetSize(m.contentSize()).
+			KeepCursor(m.pickPicker.SelectedValue())
+		return m, crashNotifyApplyCmd(msg.Next)
+
+	case tuikit.ToggleOptionResultMsg:
+		if msg.Value != crashNotifyValue {
+			return m, nil
+		}
+		if m.crashNotify != msg.On {
+			m.crashNotify = msg.On
+			m.pickPicker = newNavPicker("Extras:", m.settingsItems2()).SetSize(m.contentSize()).
+				KeepCursor(m.pickPicker.SelectedValue())
+		}
+		if msg.Failed {
+			m.toast, _ = m.toast.SetWarn("could not change the setting — put back")
+		}
+		return m, nil
+
+	case crashNotifyMsg:
+		m.crashNotify = msg.on
+		m.crashNotifyLoaded = true
+		if m.top() == scrSettings {
+			m.pickPicker = newNavPicker("Extras:", m.settingsItems2()).SetSize(m.contentSize())
+		}
+		return m, nil
+
 	case menuEntriesMsg:
 		// Handled GLOBALLY, not under scrMenuEntries: the menu blocks are now
 		// listed under their own folder on the Setup page, so the fetch that
@@ -717,18 +753,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m.startWorking("Backing up (encrypted)", workingArgs("backup", m.pendingArgs)...)
 		case "restore":
 			return m.startWorking("Restoring", workingArgs("restore", []string{m.pendingFile})...)
-		case "toggle-crash-notify":
-			if crashNotify() {
-				_, _ = runQuick("crash-notify", "off")
-			} else {
-				_, _ = runQuick("crash-notify", "on")
-			}
-			if m.top() == scrSettings {
-				m.pickPicker = newNavPicker("Extras:", settingsItems2()).SetSize(m.contentSize())
-			} else if m.top() == scrSetup {
-				m.setupPicker = m.rebuildSetup()
-			}
-			return m, nil
 		case "apply-patches":
 			args := append([]string{"apps"}, m.pendingPatchKeys...)
 			return m.startWorking("Applying the patch", workingArgs("run-patch", args)...)
@@ -1470,7 +1494,13 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			// Plugin-level toggles from the main menu (the "Extras" row
 			// right before Close).
 			m.push(scrSettings)
-			m.pickPicker = newNavPicker("Extras:", settingsItems2()).SetSize(m.contentSize())
+			// Show the cached value straight away, then correct it if the
+			// backend says otherwise. The list is a pure function of the cache
+			// now, so opening Extras costs no subprocess to draw.
+			m.pickPicker = newNavPicker("Extras:", m.settingsItems2()).SetSize(m.contentSize())
+			if !m.crashNotifyLoaded {
+				return m, fetchCrashNotifyCmd()
+			}
 			return m, nil
 		case "close":
 			return m.closeConfirm()
@@ -1895,15 +1925,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		return m, nil
 
 	case scrSettings:
-		if res.Value == "toggle-crash-notify" {
-			if crashNotify() {
-				_, _ = runQuick("crash-notify", "off")
-			} else {
-				_, _ = runQuick("crash-notify", "on")
-			}
-			m.pickPicker = newNavPicker("Extras:", settingsItems2()).SetSize(m.contentSize())
-			return m, nil
-		}
+		// A ToggleSpec row never arrives here: the kit emits
+		// PickerToggleOptionMsg for it, handled below. Only Back does.
 		if res.Value == "back" {
 			m.pop()
 			return m, nil
@@ -3233,17 +3256,36 @@ func crashNotify() bool {
 	return v.CrashNotify
 }
 
-func crashNotifyLabel() string {
-	if crashNotify() {
+// crashNotifyValue is the option's stable identity, separate from its label so
+// the label can change with the state without the handler losing the row.
+const crashNotifyValue = "toggle-crash-notify"
+
+func crashNotifyLabel(on bool) string {
+	if on {
 		return "Crash notifications (AI diagnosis): on"
 	}
 	return "Crash notifications (AI diagnosis): off"
 }
 
-// settingsItems2 backs the new TOP-LEVEL Settings screen (before Close).
-func settingsItems2() []tuikit.PickerItem {
+// settingsItems2 backs the TOP-LEVEL Settings screen (before Close).
+//
+// The setting is a tuikit ToggleSpec, so the row follows the kit's rule for
+// settings: it shows the state it is moving to the instant it is chosen, and
+// the write happens after. It used to be a plain row whose label was rebuilt
+// by shelling out to the backend — the write ran first, synchronously, and the
+// new label only appeared once the subprocess was done, so flipping it froze
+// the whole TUI for the duration and looked like nothing had happened.
+func (m model) settingsItems2() []tuikit.PickerItem {
 	return []tuikit.PickerItem{
-		{Display: crashNotifyLabel(), Value: "toggle-crash-notify"},
+		{
+			Value:   crashNotifyValue,
+			Display: crashNotifyLabel(m.crashNotify),
+			Toggle: &tuikit.ToggleSpec{
+				On:    crashNotifyLabel(true),
+				Off:   crashNotifyLabel(false),
+				Value: m.crashNotify,
+			},
+		},
 		{Display: "Back", Value: "back"},
 	}
 }

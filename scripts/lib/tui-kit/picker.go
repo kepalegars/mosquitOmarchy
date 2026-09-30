@@ -105,6 +105,84 @@ type PickerItem struct {
 	// in StyleDisabled, so a section title came out looking like an unavailable
 	// option instead of a header.
 	Heading bool
+	// Toggle marks this row as a two-state SETTING rather than an action. Its
+	// Display is then expected to be Toggle.Display(true) or
+	// Toggle.Display(false) for the CURRENT value, and the kit flips it the
+	// moment the row is chosen instead of waiting for the write to land.
+	//
+	// THE RULE. A toggle must show its new state FIRST and apply it SECOND.
+	// Doing it the other way round — write, then re-read to build the label —
+	// is what every settings row used to do, and it is wrong in two ways at
+	// once: the row cannot update until a subprocess has finished, and because
+	// the write is synchronous it freezes the whole TUI meanwhile, so the
+	// screen looks dead for as long as the command takes. A setting the user
+	// just flipped has to answer instantly, and only then go and do the work.
+	//
+	// So: on Enter the kit emits PickerToggleOptionMsg carrying the state the
+	// row is moving TO, the host repaints with it immediately, and the actual
+	// write runs as a command. If the write fails, ToggleOptionCmd hands back
+	// the failure with the previous state so the host can put the row back
+	// where it was. A toggle never silently disagrees with the real setting.
+	Toggle *ToggleSpec
+}
+
+// ToggleSpec is the kit-level description of a two-state setting row. The kit
+// owns the DISPLAY and the ordering rule; the host owns what the state means
+// and how to persist it.
+type ToggleSpec struct {
+	// On and Off are the two labels. The kit picks by the current value, so a
+	// host cannot accidentally show a stale label by rebuilding the row late.
+	On  string
+	Off string
+	// Value is the state the row is showing RIGHT NOW. Hosts flip this
+	// optimistically on Enter, before the write completes.
+	Value bool
+}
+
+// Display returns the label for a state.
+func (t ToggleSpec) Display(on bool) string {
+	if on {
+		return t.On
+	}
+	return t.Off
+}
+
+// PickerToggleOptionMsg is emitted when a Toggle row is chosen. Next is the
+// state the row has ALREADY been asked to move to, so the host repaints with
+// it before the write finishes. Previous is what it was, which is what the
+// host restores if the write fails.
+type PickerToggleOptionMsg struct {
+	Value    string
+	Next     bool
+	Previous bool
+}
+
+// ToggleOptionResultMsg reports how a toggle write ended, and carries the
+// value the setting really has now. On failure the host uses Value to put the
+// row back, so a failed toggle never leaves the menu claiming a change that
+// did not happen.
+type ToggleOptionResultMsg struct {
+	Value  string
+	On     bool
+	Failed bool
+	Err    error
+}
+
+// ToggleOptionCmd runs a toggle write ASYNCHRONOUSLY and reports the result.
+//
+// This is the whole point of ToggleSpec: the apply must not run on the UI
+// goroutine. apply returns a command so the menu stays responsive, and the
+// returned message carries the real resulting state for the host to reconcile
+// against — a toggle that only ever moves forward would be a lie the first
+// time a write is refused.
+func ToggleOptionCmd(value string, on bool, apply func(on bool) (bool, error)) tea.Cmd {
+	return func() tea.Msg {
+		got, err := apply(on)
+		if err != nil {
+			return ToggleOptionResultMsg{Value: value, On: !on, Failed: true, Err: err}
+		}
+		return ToggleOptionResultMsg{Value: value, On: got}
+	}
 }
 
 // Fold glyphs for PickerItem.Fold. A folder row shows one of these in the
@@ -835,6 +913,16 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 			if it, ok := p.list.SelectedItem().(PickerItem); ok {
 				if inert(it) {
 					return p, nil // inert: never choose a heading or an unavailable option
+				}
+				// A toggle row is not an action, it is a setting: choosing it
+				// asks for the OTHER state. The message carries that state so
+				// the host can repaint the row immediately and write
+				// afterwards (see PickerItem.Toggle for why the order is not
+				// negotiable).
+				if it.Toggle != nil {
+					return p, func() tea.Msg {
+						return PickerToggleOptionMsg{Value: it.Value, Next: !it.Toggle.Value, Previous: it.Toggle.Value}
+					}
 				}
 				return p, func() tea.Msg { return PickerResultMsg{Value: it.Value} }
 			}

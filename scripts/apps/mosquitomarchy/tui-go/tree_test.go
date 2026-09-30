@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -1132,5 +1133,75 @@ func TestSetupLegendAdvertisesTheInstallKey(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("Setup legend does not mention %q:\n%s", want, out)
 		}
+	}
+}
+
+// The Extras setting follows the kit's rule: the row shows the state it is
+// moving to the instant it is chosen, and the write goes on to run afterwards.
+// It used to write FIRST, synchronously, and rebuild the label from a fresh
+// read afterwards — so the row could not change until the subprocess finished
+// and the whole TUI was frozen for the duration.
+func TestExtrasSettingFlipsBeforeItIsApplied(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrSettings}
+	m.w, m.h = 100, 34
+	m.crashNotify = false
+	m.crashNotifyLoaded = true
+	m.pickPicker = newNavPicker("Extras:", m.settingsItems2()).SetSize(m.contentSize())
+
+	if !strings.Contains(m.View(), crashNotifyLabel(false)) {
+		t.Fatalf("row does not show the off state:\n%s", m.View())
+	}
+
+	// Enter on the row: the kit asks for the OTHER state.
+	idx := indexOfValue(m.pickPicker, crashNotifyValue)
+	if idx < 0 {
+		t.Fatal("the crash-notify row is missing from Extras")
+	}
+	m.pickPicker = m.pickPicker.SelectIndex(idx)
+	_, cmd := m.pickPicker.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Enter produced no command")
+	}
+
+	// The row is repainted with the new state, and the write is a command
+	// returned alongside — the display does not wait for it.
+	m, apply := m.update(cmd())
+	if !m.crashNotify {
+		t.Fatal("the cached state did not move to the new value before the write")
+	}
+	if !strings.Contains(m.View(), crashNotifyLabel(true)) {
+		t.Fatalf("the row still shows the old state after the flip:\n%s", m.View())
+	}
+	if apply == nil {
+		t.Fatal("no command to apply the setting: the flip would never reach disk")
+	}
+	// The cursor must survive the rebuild the flip causes.
+	if got := m.pickPicker.SelectedValue(); got != crashNotifyValue {
+		t.Fatalf("the flip moved the cursor to %q", got)
+	}
+}
+
+// A write that fails puts the row back: the menu must never end up claiming a
+// change that did not happen.
+func TestExtrasSettingPutsTheRowBackWhenTheWriteFails(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrSettings}
+	m.w, m.h = 100, 34
+	m.crashNotify = false
+	m.crashNotifyLoaded = true
+	m.pickPicker = newNavPicker("Extras:", m.settingsItems2()).SetSize(m.contentSize())
+
+	m, _ = m.update(tuikit.PickerToggleOptionMsg{Value: crashNotifyValue, Next: true, Previous: false})
+	if !m.crashNotify {
+		t.Fatal("precondition: the flip did not happen")
+	}
+	// The backend refused, and the setting really is still off.
+	m, _ = m.update(tuikit.ToggleOptionResultMsg{Value: crashNotifyValue, On: false, Failed: true, Err: errors.New("refused")})
+	if m.crashNotify {
+		t.Fatal("a failed write left the row claiming the change happened")
+	}
+	if !strings.Contains(m.View(), crashNotifyLabel(false)) {
+		t.Fatalf("the row was not put back:\n%s", m.View())
 	}
 }

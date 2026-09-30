@@ -12,6 +12,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	tuikit "mosquitomarchy.local/tui-kit"
 )
 
 // actionsBin resolves mosquitomarchy-actions next to this binary (both
@@ -117,6 +119,35 @@ func fetchMenuEntriesCmd() tea.Cmd {
 type menuEntriesMsg struct {
 	rows []MenuEntryRec
 	err  error
+}
+
+// fetchCrashNotifyCmd reads the crash-notification setting once. The Extras
+// list is built from the CACHED value, so opening the screen costs one
+// subprocess instead of one per row per rebuild.
+func fetchCrashNotifyCmd() tea.Cmd {
+	return func() tea.Msg {
+		return crashNotifyMsg{on: crashNotify()}
+	}
+}
+
+type crashNotifyMsg struct{ on bool }
+
+// crashNotifyApplyCmd writes the setting. It is only ever reached AFTER the row
+// has already been repainted with the new state, so the menu never waits on it.
+func crashNotifyApplyCmd(on bool) tea.Cmd {
+	return func() tea.Msg {
+		if _, err := runQuick("crash-notify", boolWord(on)); err != nil {
+			return tuikit.ToggleOptionResultMsg{Value: crashNotifyValue, On: !on, Failed: true, Err: err}
+		}
+		return tuikit.ToggleOptionResultMsg{Value: crashNotifyValue, On: on}
+	}
+}
+
+func boolWord(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
 }
 
 // menuEntriesApplyCmd strips or restores one menu entry by name.

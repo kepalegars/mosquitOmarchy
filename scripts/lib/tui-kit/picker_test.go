@@ -1,12 +1,21 @@
 package tuikit
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
+
+// newTestPicker builds a ready single-row picker, which is what a host screen
+// holds: NewPicker alone has not run bubbles' init, so it would answer nothing.
+func newTestPicker(t *testing.T, it PickerItem) Picker {
+	t.Helper()
+	return NewPicker("", []PickerItem{it}).SetSize(60, 20)
+}
 
 // A row block measured over the FULL tree can be wider than the pane it is
 // drawn in — "lame language models" and its children measure 118 columns in a
@@ -81,5 +90,83 @@ func TestPinnedPickerKeepsOneLinePerOption(t *testing.T) {
 				t.Errorf("pinned=%d: ligne vide entre les options %d et %d", pinned, idx[k-1], idx[k])
 			}
 		}
+	}
+}
+
+// THE SETTINGS RULE. A toggle row must ask for the OTHER state on Enter, and
+// the kit must say which state it is moving to — the host repaints with that
+// and applies afterwards, so the row never waits on a write. Getting this
+// wrong is what made every settings row in this TUI feel dead: the write ran
+// first, synchronously, and the label only changed once the subprocess was
+// done.
+func TestToggleRowAsksForTheOtherState(t *testing.T) {
+	p := newTestPicker(t, PickerItem{
+		Value:   "opt",
+		Display: "off label",
+		Toggle:  &ToggleSpec{On: "on label", Off: "off label", Value: false},
+	})
+	p, cmd := p.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Enter on a toggle row produced no command")
+	}
+	got, ok := cmd().(PickerToggleOptionMsg)
+	if !ok {
+		t.Fatalf("Enter on a toggle row emitted %T, want PickerToggleOptionMsg", cmd())
+	}
+	if got.Value != "opt" || !got.Next || got.Previous {
+		t.Fatalf("got %+v, want Value=opt Next=true Previous=false", got)
+	}
+
+	// A toggle that is already on asks for off, and says what it was.
+	p = newTestPicker(t, PickerItem{
+		Value:   "opt",
+		Display: "on label",
+		Toggle:  &ToggleSpec{On: "on label", Off: "off label", Value: true},
+	})
+	_, cmd = p.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = cmd().(PickerToggleOptionMsg)
+	if got.Next || !got.Previous {
+		t.Fatalf("got %+v, want Next=false Previous=true", got)
+	}
+}
+
+// A plain row is still an action: Enter must keep emitting PickerResultMsg, or
+// giving one row a Toggle would silently change every other screen.
+func TestPlainRowStillEmitsAResult(t *testing.T) {
+	p := newTestPicker(t, PickerItem{Value: "opt", Display: "do the thing"})
+	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if _, ok := cmd().(PickerResultMsg); !ok {
+		t.Fatalf("Enter on a plain row emitted %T, want PickerResultMsg", cmd())
+	}
+}
+
+// A failed write has to report the state the setting really has, so the host
+// can put the row back. A toggle that only ever moved forward would leave the
+// menu claiming a change that did not happen.
+func TestToggleOptionCmdReportsFailureWithTheRealState(t *testing.T) {
+	boom := errors.New("refused")
+	cmd := ToggleOptionCmd("opt", true, func(on bool) (bool, error) { return !on, boom })
+	res := cmd().(ToggleOptionResultMsg)
+	if !res.Failed || res.Err != boom {
+		t.Fatalf("failure not reported: %+v", res)
+	}
+	if res.On {
+		t.Fatal("On must be the state the setting REALLY has, not the one we asked for")
+	}
+
+	// A successful write reports what it actually set, not what we hoped.
+	cmd = ToggleOptionCmd("opt", true, func(on bool) (bool, error) { return on, nil })
+	res = cmd().(ToggleOptionResultMsg)
+	if res.Failed || !res.On {
+		t.Fatalf("success not reported: %+v", res)
+	}
+}
+
+// ToggleSpec.Display is the only thing that builds a toggle label, so a host
+// cannot pair the wrong string with the wrong state.
+func TestToggleSpecDisplay(t *testing.T) {
+	s := ToggleSpec{On: "ON", Off: "OFF"}
+	if s.Display(true) != "ON" || s.Display(false) != "OFF" {
+		t.Fatalf("Display returned %q / %q", s.Display(true), s.Display(false))
 	}
 }

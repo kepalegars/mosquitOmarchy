@@ -84,7 +84,36 @@ warn(){ printf " ${Y}!${N} %s\n" "$*"; }
 err(){ printf " ${R}✗${N} %s\n" "$*" >&2; }
 info(){ msg "$*"; }
 hr(){ printf '%.0s─' {1..72}; echo; }
-pkg_has(){ pacman -Q "$1" &>/dev/null; }
+
+# Installed-package lookup, WITHOUT a process per question.
+#
+# pkg_has used to answer every question with its own `pacman -Q <pkg>`. A single
+# `pacman -Q` is ~20 ms, so a tree of 50 modules paid about a second of
+# subprocess launches before the first row could be drawn — which is exactly
+# why Setup and Uninstall opened slowly. `pacman -Q` with no argument lists
+# EVERY installed package in one go, so the whole answer set is read once and
+# the per-package questions become a lookup in it.
+#
+# One `pacman -Q` costs the same ~20 ms as the old single `pacman -Q <pkg>`, so
+# this is not a trade: the same latency answers every question instead of one.
+# The list is memoised per shell, so a script that asks about 50 packages spawns
+# ONE pacman rather than 50. A package installed DURING the run will not be
+# seen, which is correct anyway (the run is a snapshot of the machine).
+_MQ_INSTALLED_CACHE=""
+_mq_installed(){
+  [[ -n $_MQ_INSTALLED_CACHE ]] && return 0
+  # Wrapped in newlines, NOT spaces: `pacman -Q` prints one package per line, so
+  # the sentinel-delimited match below has to be newline-delimited too. Padding
+  # with spaces would search a 17 KB string for " bash " and never find it —
+  # every package would read as absent.
+  _MQ_INSTALLED_CACHE="$(pacman -Q 2>/dev/null | awk '{print $1}')" || _MQ_INSTALLED_CACHE=""
+}
+pkg_has(){
+  _mq_installed
+  [[ $'
+'$_MQ_INSTALLED_CACHE$'
+' == *$'\n'"$1"$'\n'* ]]
+}
 
 # Omarchy themes export a GREY GUM_CHOOSE_SELECTED_BACKGROUND (#918f93): the
 # selected multi-select rows then show as a big grey box. Clearing it leaves
@@ -895,27 +924,58 @@ apm_installed_plugin_count(){
 # Root resolution for the BACKUP: the manager first, then the historical
 # auto-detection (explicit override, $HOME/Music/Audio Plugins, legacy
 # $HOME/VST) so a machine without the manager still backs up its plugins.
-VST_SRC_BASE="${AUDIOSTACK_VST_ROOT:-}"
-if [[ -z "$VST_SRC_BASE" ]]; then
-  VST_SRC_BASE="$(apm_plugins_root || true)"
-fi
-VST_ROOT_FROM_APM=""
-[[ -n "$VST_SRC_BASE" ]] && apm_installed && VST_ROOT_FROM_APM=1
-if [[ -z "$VST_SRC_BASE" ]]; then
-  if find "$HOME/Music/Audio Plugins" -mindepth 2 \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) 2>/dev/null | grep -q .; then
-    VST_SRC_BASE="$HOME/Music/Audio Plugins"
-  else
-    VST_SRC_BASE="$HOME/VST"
+# This used to be resolved at SOURCE time, which meant every single invocation
+# of this file paid for it — including the read-only queries the TUI runs to
+# draw Setup and Uninstall. That was two full `status-json` calls (each of which
+# spawns its own jq) plus a `find` over the plugin tree, on EVERY command, to
+# answer a question only the BACKUP path ever asks.
+#
+# It is now resolved on first use and memoised. A query like `setup` or
+# `uninstall-tree` never touches it and no longer pays for it; the backup still
+# gets exactly the same answer, computed the first time it is actually needed.
+_MQ_VST_RESOLVED=""
+mq_vst_src_base(){
+  [[ -n $_MQ_VST_RESOLVED ]] && { printf '%s\n' "$_MQ_VST_RESOLVED"; return 0; }
+  local root="${AUDIOSTACK_VST_ROOT:-}"
+  [[ -n $root ]] || root="$(apm_plugins_root || true)"
+  if [[ -z $root ]]; then
+    if find "$HOME/Music/Audio Plugins" -mindepth 2 \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) 2>/dev/null | grep -q .; then
+      root="$HOME/Music/Audio Plugins"
+    else
+      root="$HOME/VST"
+    fi
   fi
-fi
-# The per-format subfolders actually in use, with the manager's own lowercase
-# names (vst/vst3/clap/clap-native/vst3-native/lv2) alongside the legacy
-# uppercase ones an older archive used.
+  _MQ_VST_RESOLVED="$root"
+  printf '%s\n' "$root"
+}
+mq_vst_root_from_apm(){
+  local root; root="$(mq_vst_src_base)"
+  [[ -n $root ]] && apm_installed && { printf '1\n'; return 0; }
+  printf '\n'
+}
+
+# Keep the two names working for the ~19 call sites that read them, by
+# resolving them through the cache. VST_DIRS / has_vst_sources are likewise
+# filled on first use via mq_vst_dirs_ready.
+VST_SRC_BASE="${AUDIOSTACK_VST_ROOT:-}"
+VST_ROOT_FROM_APM=""
 VST_DIRS=()
-for sub in vst vst3 clap clap-native vst3-native lv2 VST2 VST3 CLAP; do
-  [[ -d "$VST_SRC_BASE/$sub" ]] && VST_DIRS+=("$VST_SRC_BASE/$sub")
-done
-has_vst_sources=$(( ${#VST_DIRS[@]} > 0 && 1 ))
+has_vst_sources=0
+mq_vst_init(){
+  [[ -n $_MQ_VST_RESOLVED ]] && return 0
+  local root; root="$(mq_vst_src_base)"
+  VST_SRC_BASE="$root"
+  VST_ROOT_FROM_APM="$(mq_vst_root_from_apm)"
+  # The per-format subfolders actually in use, with the manager's own lowercase
+  # names (vst/vst3/clap/clap-native/vst3-native/lv2) alongside the legacy
+  # uppercase ones an older archive used.
+  VST_DIRS=()
+  local sub
+  for sub in vst vst3 clap clap-native vst3-native lv2 VST2 VST3 CLAP; do
+    [[ -d "$root/$sub" ]] && VST_DIRS+=("$root/$sub")
+  done
+  has_vst_sources=$(( ${#VST_DIRS[@]} > 0 && 1 ))
+}
 
 # ───- Apps / tuis / webapps ("apps" module) ───
 # Modular catalogs: one per type under apps/gui, apps/tui-tools, apps/webapps.
@@ -1211,6 +1271,7 @@ backup_encrypt(){
 # the per-format subfolders only, not the whole root, so an unrelated README or
 # a manager state file in the root cannot inflate the figure.
 plugins_tree_file_count(){
+  mq_vst_init
   local sub n=0
   for sub in "${VST_DIRS[@]}"; do
     n=$(( n + $(find "$sub" -type f 2>/dev/null | wc -l) ))
@@ -1233,6 +1294,7 @@ plugins_tree_bytes_mb(){
 # lets a restore notice a mismatch instead of silently extracting somewhere
 # the manager does not look.
 backup_plugins_inventory(){
+  mq_vst_init
   local tmp="$1" sub
   : > "$tmp/plugins/manifest.txt"
   for sub in "${VST_DIRS[@]}"; do
@@ -1261,6 +1323,7 @@ backup_plugins_inventory(){
 # consulting the manifest) and lets a restore that extracts into a DIFFERENT
 # parent still land the folder under its original name.
 backup_plugins_archive(){
+  mq_vst_init
   local tmp="$1" sub
   local parent relbase
   parent="$(dirname "$VST_SRC_BASE")"
@@ -1560,7 +1623,9 @@ do_backup(){
     backup_plugins_inventory "$tmp"
   else
     # Interactive: the actual question, with the folder and the size the user
-    # is about to commit to.
+    # is about to commit to. This is the first place that reads the resolved
+    # VST root, so it is what forces the (now lazy) resolution.
+    mq_vst_init
     if (( has_vst_sources == 1 )); then
       local _files _bytes
       _files="$(plugins_tree_file_count)"
@@ -1573,6 +1638,7 @@ do_backup(){
     fi
   fi
 
+  mq_vst_init
   if (( want_plugins == 1 )) && [[ $has_vst_sources == 1 ]]; then
     mkdir -p "$tmp/plugins"
     backup_plugins_inventory "$tmp"
@@ -1644,6 +1710,7 @@ the folder's parent restores the whole layout.
 > config-backup.tar.gz. Open the DAW and rerun the plugin scan.
 EOF
   elif [[ -f "$tmp/plugins/manifest.txt" ]]; then
+    mq_vst_init
     cat >> "$tmp/RESTORE.md" <<EOF
 
 ## 4. Plugin folders (inventory only)
@@ -1833,6 +1900,7 @@ restore_backup(){
   if [[ -f "$tmp/plugins/plugins.tar.gz" || -f "$tmp/plugins/plugins-vst.tar.gz" ]]; then
     restore_plugins "$tmp"
   elif [[ -f "$tmp/plugins/manifest.txt" ]]; then
+    mq_vst_init
     warn "Plugin inventory kept in the archive (plugins/manifest.txt) —"
     warn "reinstall the plugins from their sources ($VST_SRC_BASE)."
   fi

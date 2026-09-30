@@ -155,6 +155,14 @@ type model struct {
 	menuEntriesLoaded bool
 	menuEntryChecked  map[string]bool
 	menuEntryOrig     map[string]bool
+	// crashNotify is the CACHED state of the crash-notification setting. The
+	// label used to be built by shelling out to the backend every time the
+	// Extras list was rebuilt, so simply opening the screen — and rebuilding
+	// after every flip — spawned a subprocess per row. The value is fetched
+	// once and then flipped in place (see PickerItem.Toggle for the ordering
+	// rule that makes a flip show up before the write finishes).
+	crashNotify       bool
+	crashNotifyLoaded bool
 	// menuEntriesPicker is the STORED picker for that screen. It used to be
 	// rebuilt from scratch inside View() on every frame and its result thrown
 	// away, so no key ever reached it: arrows were handled by the backup
