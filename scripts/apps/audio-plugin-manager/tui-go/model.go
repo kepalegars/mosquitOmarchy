@@ -202,6 +202,10 @@ type model struct {
 	// fixPendingApply/fixPendingRemove are the delta the confirmation is about,
 	// held while the dialog is up so the answer carries the exact set that was
 	// shown rather than whatever the marks say by the time it is read.
+	// fixTouched records the fix ids the user actually changed on this visit.
+	// It is what lets a partial fix be an action: an untouched one stays out of
+	// the delta, or every Enter would re-offer to complete every partial row.
+	fixTouched       map[string]bool
 	fixPendingApply  []string
 	fixPendingRemove []string
 	fixCache         []FixItem

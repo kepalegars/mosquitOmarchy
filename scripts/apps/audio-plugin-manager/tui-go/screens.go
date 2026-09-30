@@ -150,6 +150,7 @@ func (m *model) enterCmd() tea.Cmd {
 		m.fixCandidate = nil
 		m.fixPendingApply = nil
 		m.fixPendingRemove = nil
+		m.fixTouched = nil
 		// Drop any remembered collapse state: every category re-seeds
 		// expanded on entry (see rebuildFixPicker), so the folders are
 		// always visible when the screen opens.
@@ -594,6 +595,13 @@ func (m model) fixItemByID(id string) (FixItem, bool) {
 
 func (m model) fixIsProductSpecific(it FixItem) bool { return it.Plugin != "" }
 
+// fixIsPartial reports whether a fix is on some of the plugins in view and not
+// the others, from the counts the vendor merge recorded.
+func (m model) fixIsPartial(id string) bool {
+	n, ok := m.fixCandidate[id]
+	return ok && n > 1 && len(m.fixAppliedBy[id]) > 0 && len(m.fixAppliedBy[id]) < n
+}
+
 func (m model) countWord(n int) string {
 	if n == 1 {
 		return "1 plugin"
@@ -911,6 +919,12 @@ func fixSortLabel(desc bool) string {
 // every fix in that category to the opposite extreme (like the uninstall
 // folder rows), a fix id flips only itself.
 func (m *model) toggleFixValue(value string) {
+	// Any deliberate change to a fix row marks it touched, so a partial fix the
+	// user re-ticks counts as "complete this one" rather than staying invisible
+	// to the delta.
+	if m.fixTouched == nil {
+		m.fixTouched = map[string]bool{}
+	}
 	if strings.HasPrefix(value, fixCategoryValuePrefix) {
 		cat := strings.TrimPrefix(value, fixCategoryValuePrefix)
 		anyUnchecked := false
@@ -923,11 +937,13 @@ func (m *model) toggleFixValue(value string) {
 		for _, it := range m.fixCache {
 			if fixCategoryOf(it) == cat {
 				m.fixChecked[it.ID] = anyUnchecked
+				m.fixTouched[it.ID] = true
 			}
 		}
 		return
 	}
 	m.fixChecked[value] = !m.fixChecked[value]
+	m.fixTouched[value] = true
 }
 
 // rebuildFixPicker re-renders the fixes picker from fixCache + fixChecked,
@@ -1563,7 +1579,13 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.fixPlugin = ""
 					m.fixChecked = map[string]bool{}
 					m.fixOrig = map[string]bool{}
-					m.nav = []screen{scrFixPluginPick, scrFixChoose}
+					// push, not a whole new stack: replacing nav put
+					// scrFixPluginPick at the bottom, and pop() is a no-op at
+					// depth 1, so Esc on this screen could never leave the
+					// plugin-fixes page. It looked stuck. The single-plugin path
+					// has always pushed, which is why only the vendor route
+					// trapped you.
+					m.push(scrFixChoose)
 					m.loading = true
 					return m, fetchFixesForVendorCmd(vendor)
 				}
@@ -1716,7 +1738,23 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var toApply, toRemove []string
 			for id, v := range m.fixChecked {
-				if v && !m.fixOrig[id] {
+				// A PARTIAL fix counts as pending even though its mark already
+				// read as "on".
+				//
+				// This is the row the half circle exists for: it is on some of
+				// the plugins in view and not the others, so leaving it ticked
+				// and confirming is a decision to COMPLETE it. The delta used
+				// to be `v && !orig`, which saw no change here — the fix was on,
+				// the mark was on, Enter answered "no change" and wrote nothing.
+				// So the one row whose whole reason for existing is that it is
+				// unfinished was the one row that could never be acted on, and
+				// no confirmation ever appeared for it.
+				//
+				// Untouched rows stay out of it, or every Enter would re-offer to
+				// complete every partial fix on the page. m.fixTouched records
+				// that the user actually made a decision about the row.
+				pending := v && (!m.fixOrig[id] || (m.fixTouched[id] && m.fixIsPartial(id)))
+				if pending {
 					toApply = append(toApply, id)
 				}
 				if !v && m.fixOrig[id] {
