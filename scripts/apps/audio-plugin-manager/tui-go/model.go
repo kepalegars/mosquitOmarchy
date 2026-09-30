@@ -202,10 +202,22 @@ type model struct {
 	// fixPendingApply/fixPendingRemove are the delta the confirmation is about,
 	// held while the dialog is up so the answer carries the exact set that was
 	// shown rather than whatever the marks say by the time it is read.
-	// fixTouched records the fix ids the user actually changed on this visit.
-	// It is what lets a partial fix be an action: an untouched one stays out of
-	// the delta, or every Enter would re-offer to complete every partial row.
-	fixTouched       map[string]bool
+	// fixOverride is a per-fix THREE-state intent, used for a fix that is
+	// already partially applied inside the current selection:
+	//
+	//	0  follow what is recorded (◐ as found)
+	//	1  force it on everywhere the selection reaches  (●)
+	//	2  force it off everywhere it is recorded      (○)
+	//
+	// A partial fix cannot be described by a boolean, because "on" and "off" are
+	// both wrong answers for it: it is on for some of the plugins and the user
+	// has to say which way to take it. Two states cannot carry three choices, so
+	// the cycle is ◐ -> ● -> ○ -> ◐: ONE toggle is the override, rather than
+	// making the user untick and re-tick to express "make it complete".
+	//
+	// Only partial rows use it. Every other row is a plain on/off and keeps the
+	// Tab behaviour it always had.
+	fixOverride      map[string]int
 	fixPendingApply  []string
 	fixPendingRemove []string
 	fixCache         []FixItem
