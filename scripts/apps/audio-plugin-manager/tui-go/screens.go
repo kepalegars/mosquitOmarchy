@@ -421,6 +421,8 @@ func (m *model) rebuildUninstallPicker() {
 		m.folderExpanded = map[string]bool{}
 	}
 	sidx := m.picker.Index()
+	// WithTree: same fold gesture as the Installed-plugins list, and the shared
+	// m.folderExpanded, so a folder folded on one screen is folded on the other.
 	m.picker = tuikit.NewPicker("Uninstall which plugin(s)?",
 		treeItemsToPicker(uninstallTree(m.uninstallCache), m.uninstallChecked, m.folderExpanded)).SetSize(m.contentSize()).
 		SetHelpKeys(
@@ -430,29 +432,16 @@ func (m *model) rebuildUninstallPicker() {
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "uninstall")),
-		)
+		).WithTree(m.folderExpanded)
 	m.picker = m.picker.SelectIndex(sidx)
 }
 
-// selectedFolderValueIn reports whether value names a folder row in the
-// given flat item set, returning it when so and "" otherwise. Both the
-// uninstall screen and the Installed-plugins setup list key their
-// Left/Right folder gesture off the row under the cursor.
-func selectedFolderValueIn(items []Item, value string) string {
-	for _, it := range items {
-		if it.Kind == "folder" && it.Value == value {
-			return it.Value
-		}
-	}
-	return ""
-}
-
-// selectedFolderValue returns the Value of a folder row under the
-// uninstall picker's cursor, or "" when the cursor is on a standalone
-// plugin row (or the screen is empty).
-func (m *model) selectedFolderValue() string {
-	return selectedFolderValueIn(m.uninstallCache, m.picker.SelectedValue())
-}
+// selectedFolderValueIn and selectedFolderValue used to answer "is the cursor on
+// a folder row?" and the uninstall screen keyed its Left/Right gesture off that.
+// It was the wrong question: on a sub-plugin row it said no, so ← did nothing
+// and closing a folder meant walking the cursor back up to its title first. The
+// kit now resolves "the folder the cursor is IN" (tuikit's foldKey), so the
+// lookup is gone rather than left behind as a trap for the next caller.
 
 // pluginItemsAsItems converts the unified Plugin list rows into the generic
 // Item shape the uninstall tree is built from, so the setup list can call
@@ -809,7 +798,7 @@ func (m *model) rebuildFixPicker() {
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
-		)
+		).WithTree(m.fixFolderExpanded)
 	m.picker = m.picker.SelectIndex(sidx)
 }
 
@@ -902,7 +891,7 @@ func (m *model) rebuildFixPluginPicker() {
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "choose")),
-		)
+		).WithTree(m.folderExpanded)
 	m.picker = m.picker.SelectIndex(sidx)
 }
 
@@ -981,7 +970,10 @@ func (m *model) rebuildPluginPicker() {
 	items := treeItemsToPicker(uninstallTree(pluginItemsAsItems(m.pluginCache)), m.pluginChecked, m.folderExpanded)
 	items = append(items, tuikit.PickerItem{Display: "📖  Readme", Value: readmeSentinel})
 	sidx := m.picker.Index()
-	m.picker = tuikit.NewPicker(header, items).SetSize(m.contentSize()).SetHelpKeys(pluginListHelpKeys()...)
+	// WithTree: ←/→ are the fold gesture here (they are not sort keys on this
+	// screen any more — the sort cycle moved to `s`), resolved by the kit from
+	// the folder the CURSOR IS IN.
+	m.picker = tuikit.NewPicker(header, items).SetSize(m.contentSize()).SetHelpKeys(pluginListHelpKeys()...).WithTree(m.folderExpanded)
 	m.picker = m.picker.SelectIndex(sidx)
 }
 
@@ -1237,31 +1229,12 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// (x is deliberately kept for this; Tab is the hide/show key.)
 			return m, m.requestPluginHandlerChange(togglePluginHandlerTarget(m.status.PluginWinHandler))
 		}
-		if sm, ok := msg.(tuikit.PickerSortMsg); ok {
-			// LEFT/RIGHT now open/close the folder row under the cursor,
-			// exactly like the uninstall screen (Right = reveal
-			// sub-plugins, Left = hide them again); the sort cycle moved
-			// to `s`. Both screens share m.folderExpanded and the same
-			// treeItemsToPicker, so the gesture and the rendering stay in
-			// lockstep.
-			if fv, inFolder := tuikit.ParentFolderFlag(m.picker.Items(), m.picker.SelectedValue()); inFolder {
-				if m.folderExpanded == nil {
-					m.folderExpanded = map[string]bool{}
-				}
-				m.folderExpanded[fv] = sm.Dir > 0
-				keep := m.picker.SelectedValue()
-				if sm.Dir < 0 {
-					// The row under the cursor went away with its children.
-					keep = fv
-				}
-				m.rebuildPluginPicker()
-				for i, it := range m.picker.Items() {
-					if it.Value == keep {
-						m.picker = m.picker.SelectIndex(i)
-						break
-					}
-				}
-			}
+		if fm, ok := msg.(tuikit.TreeFoldMsg); ok {
+			// The kit owns the gesture now: it resolved "the folder the cursor
+			// is in", flipped the shared map and named the row to land on. All
+			// this screen owes it is a repaint.
+			m.rebuildPluginPicker()
+			m.picker = m.picker.SelectValue(fm.Cursor)
 			return m, nil
 		}
 		if sd, ok := msg.(pluginSaveDoneMsg); ok {
@@ -1372,35 +1345,18 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rebuildFixPluginPicker()
 			return m, nil
 		}
-		if sm, ok := msg.(tuikit.PickerSortMsg); ok {
-			// Left/Right fold the folder the cursor is IN, not only the one it
-			// is on — the same rule as every other folder list, so walking down
-			// into a folder and pressing ← closes it from any of its rows.
-			if fv, inFolder := tuikit.ParentFolderFlag(m.picker.Items(), m.picker.SelectedValue()); inFolder {
-				if m.folderExpanded == nil {
-					m.folderExpanded = map[string]bool{}
-				}
-				if m.folderFoldedByUser == nil {
-					m.folderFoldedByUser = map[string]bool{}
-				}
-				// Record the user's choice so the auto-open of folders with
-				// applied fixes stops overriding it.
-				m.folderFoldedByUser[fv] = true
-				m.folderExpanded[fv] = sm.Dir > 0
-				keep := m.picker.SelectedValue()
-				if sm.Dir < 0 {
-					// The row under the cursor went away with its children, so
-					// land on the folder we just closed.
-					keep = fv
-				}
-				m.rebuildFixPluginPicker()
-				for i, it := range m.picker.Items() {
-					if it.Value == keep {
-						m.picker = m.picker.SelectIndex(i)
-						break
-					}
-				}
+		if fm, ok := msg.(tuikit.TreeFoldMsg); ok {
+			// Same gesture as every other folder list, from the kit.
+			//
+			// The one thing that stays here is folderFoldedByUser: a folder the
+			// user has folded by hand must not be auto-reopened by the "reveal
+			// the applied fixes" rule on the next rebuild.
+			if m.folderFoldedByUser == nil {
+				m.folderFoldedByUser = map[string]bool{}
 			}
+			m.folderFoldedByUser[fm.Folder] = true
+			m.rebuildFixPluginPicker()
+			m.picker = m.picker.SelectValue(fm.Cursor)
 			return m, nil
 		}
 		if res, ok := msg.(tuikit.PickerResultMsg); ok {
@@ -1539,37 +1495,14 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rebuildFixPicker()
 			return m, nil
 		}
-		if sm, ok := msg.(tuikit.PickerSortMsg); ok {
-			// LEFT/RIGHT collapse/expand the category header under the
-			// cursor (Right = expand, Left = collapse), same gesture and
-			// chevron as the other two folder lists. Toggling the header
-			// still checks/unchecks the whole category regardless of the
-			// expanded state.
-			// The category the cursor is IN, not only the one it is on: walk
-			// down into a category and ← closes it from any of its rows.
-			v := m.picker.SelectedValue()
-			if cat, ok := tuikit.ParentFolderOf(m.picker.Items(), fixCategoryValuePrefix, v); ok {
-				if m.fixFolderExpanded == nil {
-					m.fixFolderExpanded = map[string]bool{}
-				}
-				if sm.Dir > 0 {
-					m.fixFolderExpanded[cat] = true
-				} else {
-					m.fixFolderExpanded[cat] = false
-				}
-				keep := v
-				if sm.Dir < 0 {
-					// The row under the cursor disappeared with the category.
-					keep = fixCategoryValuePrefix + cat
-				}
-				m.rebuildFixPicker()
-				for i, it := range m.picker.Items() {
-					if it.Value == keep {
-						m.picker = m.picker.SelectIndex(i)
-						break
-					}
-				}
-			}
+		if fm, ok := msg.(tuikit.TreeFoldMsg); ok {
+			// LEFT/RIGHT collapse/expand the category (Right = expand,
+			// Left = collapse), same gesture and chevron as the other folder
+			// lists, and now resolved by the kit from the row the cursor is in
+			// rather than from a value prefix. Toggling the header still
+			// checks/unchecks the whole category whatever its expanded state.
+			m.rebuildFixPicker()
+			m.picker = m.picker.SelectValue(fm.Cursor)
 			return m, nil
 		}
 		if df, ok := msg.(fixesDoneMsg); ok {
@@ -1848,22 +1781,17 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Tab stays the multi-select key here.
 			return m, openFolderCmd(m.picker.SelectedValue())
 		}
-		if sm, ok := msg.(tuikit.PickerSortMsg); ok {
-			// LEFT/RIGHT open/close the folder row under the cursor
-			// (Right = reveal sub-plugins, Left = hide them again). The
-			// sort cycle moved to `s`, so these keys are free for folder
-			// navigation — same gesture as the Installed-plugins list.
-			if fv := m.selectedFolderValue(); fv != "" {
-				if m.folderExpanded == nil {
-					m.folderExpanded = map[string]bool{}
-				}
-				if sm.Dir > 0 {
-					m.folderExpanded[fv] = true
-				} else {
-					delete(m.folderExpanded, fv)
-				}
-				m.rebuildUninstallPicker()
-			}
+		if fm, ok := msg.(tuikit.TreeFoldMsg); ok {
+			// LEFT/RIGHT open/close the folder the cursor is in (Right = reveal
+			// sub-plugins, Left = hide them again), the same gesture as the
+			// Installed-plugins list.
+			//
+			// This screen used to look the folder up with selectedFolderValue(),
+			// which matched ONLY a row that was itself a folder row. ← on a
+			// sub-plugin therefore found nothing and did nothing at all, so
+			// closing a folder meant putting the cursor back on its title first.
+			m.rebuildUninstallPicker()
+			m.picker = m.picker.SelectValue(fm.Cursor)
 			return m, nil
 		}
 		if res, ok := msg.(tuikit.PickerResultMsg); ok {

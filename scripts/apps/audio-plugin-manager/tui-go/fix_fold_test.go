@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	tuikit "mosquitomarchy.local/tui-kit"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // The plugin fixes list arrives FULLY COLLAPSED — every folder shut, whatever
@@ -54,8 +54,7 @@ func TestFixPluginFoldersArriveCollapsedAndKeepTheirMarker(t *testing.T) {
 	}
 
 	// → opens it, and it stays open through rebuilds.
-	mm, _ := m.Update(tuikit.PickerSortMsg{Dir: 1})
-	got, _ := mm.(model)
+	got := pressArrow(t, *m, tea.KeyRight)
 	if !got.folderExpanded["folder:vst"] {
 		t.Fatal("→ did not open the folder")
 	}
@@ -66,8 +65,7 @@ func TestFixPluginFoldersArriveCollapsedAndKeepTheirMarker(t *testing.T) {
 		}
 	}
 	// ← closes it again, and no rebuild re-opens it.
-	mm2, _ := got.Update(tuikit.PickerSortMsg{Dir: -1})
-	got2, _ := mm2.(model)
+	got2 := pressArrow(t, got, tea.KeyLeft)
 	if got2.folderExpanded["folder:vst"] {
 		t.Fatal("← did not fold the folder")
 	}
@@ -102,8 +100,7 @@ func TestFixPluginFoldFromInsideTheFolder(t *testing.T) {
 	if got := m.picker.SelectedValue(); got != "vst:2:/x/CrispyTuner.vst3" {
 		t.Fatalf("cursor is on %q, want the plugin row", got)
 	}
-	mm, _ := m.Update(tuikit.PickerSortMsg{Dir: -1})
-	got, _ := mm.(model)
+	got := pressArrow(t, *m, tea.KeyLeft)
 	if got.folderExpanded["folder:vst"] {
 		t.Error("← from inside the folder did nothing")
 	}

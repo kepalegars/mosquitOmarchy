@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
@@ -110,8 +111,7 @@ func TestPluginListArrivesWithEveryFolderCollapsed(t *testing.T) {
 		}
 	}
 	// → opens it.
-	mm, _ := m.Update(tuikit.PickerSortMsg{Dir: 1})
-	got, _ := mm.(model)
+	got := pressArrow(t, *m, tea.KeyRight)
 	if !got.folderExpanded["vendor:FabFilter"] {
 		t.Error("→ did not open the folder")
 	}
