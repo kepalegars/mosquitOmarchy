@@ -238,7 +238,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// to the previous screen, with no way to read what happened and no
 			// mention of the log. The failure path has always asked; success now
 			// asks the same question.
-			reportCrash(m.workingLabel, out)
+			// writeRunLog, NOT reportCrash: reportCrash also raises the critical
+			// "<tool> failed" notification, and calling it here fired that on every
+			// successful run — a crash log full of green ticks plus an AI diagnosis
+			// offer for a backup that had just worked.
+			writeRunLog(m.workingLabel, out)
 			m.pendingAction = "run-done-log"
 			m.pendingMsg = "The action finished successfully.\n\nView the full log, or go back?"
 			m.pendingNo = "Back"
@@ -374,6 +378,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 		}
 		m.backupOpts.HasKeep = msg.keepass
+		m.backupOpts.HasZen = msg.zen
 		if m.top() == scrBackupOptions {
 			m.backupOptPicker = m.rebuildBackupOptions()
 		}
@@ -576,6 +581,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.backupOpts.VST = order[idx]
 			case "keepass":
 				m.backupOpts.Keepass = !m.backupOpts.Keepass
+			case "zen":
+				m.backupOpts.Zen = !m.backupOpts.Zen
 			case "encrypt":
 				m.backupOpts.Encrypt = !m.backupOpts.Encrypt
 			}
@@ -2981,6 +2988,9 @@ func (m model) rebuildBackupOptions() navPicker {
 	if m.backupOpts.HasKeep {
 		items = append(items, tuikit.PickerItem{Display: "KeePassXC passwords: " + yesno(m.backupOpts.Keepass), Value: "keepass"})
 	}
+	if m.backupOpts.HasZen {
+		items = append(items, tuikit.PickerItem{Display: "Zen browser settings: " + yesno(m.backupOpts.Zen), Value: "zen"})
+	}
 	enc := "no"
 	if m.backupOpts.Encrypt {
 		enc = "yes — passphrase (AES-256)"
@@ -3034,6 +3044,7 @@ func (m model) beginBackup() (model, tea.Cmd) {
 	m.pendingArgs = []string{
 		"--vst=" + m.backupOpts.VST,
 		"--keepass=" + yesno(m.backupOpts.Keepass),
+		"--zen=" + yesno(m.backupOpts.Zen),
 		"--selection=" + m.backupSelFile,
 	}
 	if m.backupOpts.Encrypt {
@@ -3043,8 +3054,8 @@ func (m model) beginBackup() (model, tea.Cmd) {
 		return m, m.passInput.Init()
 	}
 	m.pendingAction = "backup"
-	m.pendingMsg = fmt.Sprintf("Create a dated backup now?\n\nApps/TUIs/webapps: %d selected · VST: %s · KeePassXC: %s",
-		len(m.backupChecked), m.backupOpts.VST, yesno(m.backupOpts.Keepass))
+	m.pendingMsg = fmt.Sprintf("Create a dated backup now?\n\nApps/TUIs/webapps: %d selected · VST: %s · KeePassXC: %s · Zen: %s",
+		len(m.backupChecked), m.backupOpts.VST, yesno(m.backupOpts.Keepass), yesno(m.backupOpts.Zen))
 	m.pendingNo = "Cancel"
 	m.pendingYes = "Backup"
 	m.push(scrConfirm)

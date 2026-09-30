@@ -16,6 +16,7 @@
 #   ./mosquitomarchy-setup.sh --backup   # dated backup now, then exit
 #   ./mosquitomarchy-setup.sh --backup   # dated backup; OFFERS the plugin folders
 #   ./mosquitomarchy-setup.sh --backup --vst-backup=full   # idem + plugin folders archived (non-interactive)
+#   ./mosquitomarchy-setup.sh --backup --zen=no           # idem, without the Zen browser settings
 #   ./mosquitomarchy-setup.sh --list     # chronological list of the backups
 #   ./mosquitomarchy-setup.sh --restore[=FILE]  # restore a backup (chronological choice)
 #   ./mosquitomarchy-setup.sh --update-repo     # git pull the scripts from GitHub (see "Updating")
@@ -66,12 +67,19 @@ if (( ! LIB_ONLY )); then
         *) echo "--vst-backup expects ask|list|full|none, got '$VST_MODE'" >&2; exit 1 ;;
       esac
       ;;
+    --zen=*)
+      case "${a#*=}" in
+        yes|no) ;;
+        *) echo "--zen expects yes|no, got '${a#*=}'" >&2; exit 1 ;;
+      esac
+      [[ "${a#*=}" == no ]] && export BACKUP_SKIP_ZEN=1
+      ;;
     --list) MODE=list ;;
     --restore) MODE=restore ;;
     --restore=*) MODE=restore; RESTORE_FILE="${a#*=}" ;;
     --update-repo) MODE=update-repo ;;
     -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
-    *) echo "Unknown option: $a (supported: -y --status --update --uninstall --include=<mod> --backup [--vst-backup=ask|list|full|none] --list --restore[=FILE] --update-repo)" >&2; exit 1 ;;
+    *) echo "Unknown option: $a (supported: -y --status --update --uninstall --include=<mod> --backup [--vst-backup=ask|list|full|none] [--zen=yes|no] --list --restore[=FILE] --update-repo)" >&2; exit 1 ;;
   esac; done
 fi
 
@@ -1541,17 +1549,40 @@ do_backup(){
             .local/share/applications/omagrab.desktop; do
     [[ -e "$HOME/$p" ]] && paths+=("$p")
   done
-  # Zen browser config (the ACTIVE profile's plugins + settings + chrome;
-  # the profile is machine-scoped — the seed stays in the repo as the
-  # canonical copy, this mirrors the live state).
-  local zen_prof
-  if zen_prof="$(zen_active_profile 2>/dev/null || true)"; then
-    paths+=(".config/zen/profiles.ini")
-    [[ -e "$HOME/.config/zen/installs.ini" ]] && paths+=(".config/zen/installs.ini")
-    paths+=(".config/zen/$zen_prof/extensions")
-    paths+=(".config/zen/$zen_prof/extension-preferences.json")
-    paths+=(".config/zen/$zen_prof/extension-settings.json")
-    [[ -e "$HOME/.config/zen/$zen_prof/chrome" ]] && paths+=(".config/zen/$zen_prof/chrome")
+  # Zen browser — the ACTIVE profile's settings + what the zen module deploys.
+  # Skippable: BACKUP_SKIP_ZEN=1 (the Backup screen's "Zen settings" toggle,
+  # passed down as --zen=no).
+  if [[ -z ${BACKUP_SKIP_ZEN:-} ]]; then
+    local zen_prof zen_pref
+    if zen_prof="$(zen_active_profile 2>/dev/null || true)"; then
+      # The profile's own identity + the deployed module state, so a restore
+      # lands on the same profile with the same extensions and theme.
+      paths+=(".config/zen/profiles.ini")
+      [[ -e "$HOME/.config/zen/installs.ini" ]] && paths+=(".config/zen/installs.ini")
+      paths+=(".config/zen/$zen_prof/extensions")
+      paths+=(".config/zen/$zen_prof/extension-preferences.json")
+      paths+=(".config/zen/$zen_prof/extension-settings.json")
+      [[ -e "$HOME/.config/zen/$zen_prof/chrome" ]] && paths+=(".config/zen/$zen_prof/chrome")
+      # The SETTINGS — what the user actually configured. These are NOT
+      # covered by the zen module's seed: it deploys the extensions and the
+      # chrome theme, while prefs.js is written by the browser itself.
+      #   prefs.js        every preference (Zen's own + about:config)
+      #   user.js         hand-written overrides, re-applied at every start
+      #   containers.json tab containers
+      #
+      # Deliberately NOT taken: history, cookies, sessions, the cache. This is
+      # a backup of the CONFIGURATION; sweeping the browsing data in would put
+      # a month of private history inside the archive and add hundreds of MB.
+      # Anything private that must survive lives in the encrypted part already
+      # (KeePassXC), and the archive itself is offered AES-256.
+      for zen_pref in prefs.js user.js containers.json; do
+        [[ -e "$HOME/.config/zen/$zen_prof/$zen_pref" ]] && paths+=(".config/zen/$zen_prof/$zen_pref")
+      done
+    else
+      warn "No usable Zen profile (profiles.ini) — browser settings not backed up."
+    fi
+  else
+    info "Zen browser: skipped (--zen=no)."
   fi
   # reaper-vstplugins*.ini may contain custom blacklist/paths
   local ini rel
@@ -1573,7 +1604,7 @@ do_backup(){
   fi
   if ((${#paths[@]})); then
     ( cd "$HOME" && tar czf "$tmp/config-backup.tar.gz" "${paths[@]}" )
-    ok "config-backup.tar.gz (${#paths[@]} items: config + bar + menus + yabridgectl + REAPER + Zen config + omagrab + keepassxc)"
+    ok "config-backup.tar.gz (${#paths[@]} items: config + bar + menus + yabridgectl + REAPER + Zen settings + omagrab + keepassxc)"
   fi
 
   pacman -Qqe > "$tmp/pkglist.txt" 2>/dev/null && ok "pkglist.txt ($(wc -l < "$tmp/pkglist.txt") packages)"

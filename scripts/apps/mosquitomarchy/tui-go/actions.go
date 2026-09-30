@@ -271,6 +271,7 @@ type backupOptionsMsg struct {
 	folders []FolderRec
 	items   []SetupItemRec
 	keepass bool
+	zen     bool
 	err     error
 }
 
@@ -285,7 +286,7 @@ func fetchBackupOptionsCmd() tea.Cmd {
 		}
 		var folders []FolderRec
 		var items []SetupItemRec
-		keepass := false
+		keepass, zen := false, false
 		sc := bufio.NewScanner(bytes.NewReader(out))
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for sc.Scan() {
@@ -304,11 +305,12 @@ func fetchBackupOptionsCmd() tea.Cmd {
 			case probe.Opts:
 				var o struct {
 					Keepass bool `json:"keepass"`
+					Zen     bool `json:"zen"`
 				}
 				if err := json.Unmarshal(line, &o); err != nil {
 					return backupOptionsMsg{err: err}
 				}
-				keepass = o.Keepass
+				keepass, zen = o.Keepass, o.Zen
 			case probe.Key != "":
 				var it SetupItemRec
 				if err := json.Unmarshal(line, &it); err != nil {
@@ -326,7 +328,7 @@ func fetchBackupOptionsCmd() tea.Cmd {
 		if err := sc.Err(); err != nil {
 			return backupOptionsMsg{err: err}
 		}
-		return backupOptionsMsg{folders: folders, items: items, keepass: keepass}
+		return backupOptionsMsg{folders: folders, items: items, keepass: keepass, zen: zen}
 	}
 }
 
@@ -624,29 +626,47 @@ func crashLogDir() string {
 	return filepath.Join(r, ".local", "crash-logs")
 }
 
-// reportCrash stores ONE dated log for the failed run and raises the clickable
-// Omarchy notification that opens the default AI on the mosquitomarchy-crash
-// skill. Best-effort: reporting must never break the TUI.
-func reportCrash(tool, output string) {
+// writeRunLog stores ONE dated log for a run and returns its path. Used for
+// BOTH outcomes: a successful run still offers "See log", so that log has to be
+// on disk. Raising the notification is the failure path's job alone — see
+// reportCrash.
+func writeRunLog(tool, output string) string {
 	if strings.TrimSpace(output) == "" {
-		return
+		return ""
 	}
 	dir := crashLogDir()
 	if dir == "" {
-		return
+		return ""
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
+		return ""
 	}
 	if tool == "" {
 		tool = "mosquitomarchy"
 	}
 	slug := strings.NewReplacer(" ", "-", "/", "-", "\t", "-").Replace(strings.ToLower(tool))
 	path := filepath.Join(dir, time.Now().Format("2006-01-02-150405")+"-"+slug+".log")
-	body := "# mosquitOmarchy crash log\n# tool: " + tool +
+	body := "# mosquitOmarchy run log\n# tool: " + tool +
 		"\n# date: " + time.Now().Format(time.RFC3339) +
 		"\n# cmd:  mosquitomarchy-actions " + tool + "\n\n" + output + "\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		return ""
+	}
+	return path
+}
+
+// reportCrash logs a FAILED run and raises the clickable Omarchy notification
+// that opens the default AI on the mosquitomarchy-crash skill. Best-effort:
+// reporting must never break the TUI.
+//
+// It must only ever be called on the failure path. It used to be called on
+// success too, to persist the "See log" transcript — which meant every
+// successful action raised a critical "<tool> failed" notification, a crash log
+// full of green ticks, and an AI diagnosis offer for a run that worked. The
+// success path now calls writeRunLog directly.
+func reportCrash(tool, output string) {
+	path := writeRunLog(tool, output)
+	if path == "" {
 		return
 	}
 	if _, err := exec.LookPath("omarchy-notification-send"); err != nil {
@@ -656,7 +676,7 @@ func reportCrash(tool, output string) {
 	_ = exec.Command("omarchy-notification-send",
 		"--urgency", "critical",
 		"--glyph", "\U000f16a1",
-		"mosquitOmarchy: "+tool+" failed",
+		"mosquitomarchy: "+tool+" failed",
 		"Click to diagnose with AI",
 		"--exec", agent, path, tool,
 	).Run()

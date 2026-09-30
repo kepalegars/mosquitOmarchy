@@ -392,9 +392,12 @@ cmd_backup_options(){
   detect_installed_apps
   local had_prev=0
   load_previous_selection 2>/dev/null && had_prev=1
-  local keepass=false
+  local keepass=false zen=false
   pkg_has keepassxc && keepass=true
-  printf '{"opts":true,"keepass":%s}\n' "$keepass"
+  # The Backup screen only offers the Zen row when there is a profile to back
+  # up: a machine without Zen has nothing to toggle.
+  [[ -f "$HOME/.config/zen/profiles.ini" ]] && zen=true
+  printf '{"opts":true,"keepass":%s,"zen":%s}\n' "$keepass" "$zen"
 
   local e name label checked p
   if ((${#INSTALLED_APP[@]})); then
@@ -1077,19 +1080,22 @@ cmd_menu_entry(){
 # Dated backup now. Options (all optional):
 #   --vst=list|full|none   VST plugin handling (default: list)
 #   --keepass=yes|no       include KeePassXC passwords when installed
+#   --zen=yes|no           include the Zen browser settings (default: yes)
 #   --selection=FILE       apps.selected content (the TUI's checkbox tree)
 cmd_backup(){
-  local vst="list" keepass="yes" sel="" a
+  local vst="list" keepass="yes" zen="yes" sel="" a
   for a in "$@"; do
     case $a in
       --vst=*) vst="${a#*=}" ;;
       --keepass=*) keepass="${a#*=}" ;;
+      --zen=*) zen="${a#*=}" ;;
       --selection=*) sel="${a#*=}" ;;
     esac
   done
   YES=1
   VST_MODE="$vst"
   [[ $keepass == no ]] && export BACKUP_SKIP_KEEPASS=1
+  [[ $zen == no ]] && export BACKUP_SKIP_ZEN=1
   [[ -n $sel && -f $sel ]] && export BACKUP_APPS_SELECTION_FILE="$sel"
   do_backup || true
 }
@@ -1460,7 +1466,11 @@ case "$sub" in
   uninstall)                cmd_uninstall "$@" ;;
   menu-entry)               cmd_menu_entry ;;
   add-shortcut)             cmd_add_shortcut ;;
-  backup)                   cmd_backup ;;
+  # "$@" or the backup silently ignores EVERY option it is given: --vst=,
+  # --keepass=, --zen= and --selection= were all dropped on the floor, so the
+  # TUI's toggles (and the apps.selected tree it writes) never reached
+  # do_backup, which fell back to its own defaults.
+  backup)                   cmd_backup "$@" ;;
   # No argument means "tell me", not "turn it on". The default was ${1:-on},
   # so `crash-notify` READ as if the toasts were on even when the flag file
   # said off -- which is how the agentic row kept claiming there was something

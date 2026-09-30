@@ -39,8 +39,10 @@ const (
 type BackupOpts struct {
 	VST     string // "list" | "full" | "none"
 	Keepass bool   // include KeePassXC passwords (only when installed)
+	Zen     bool   // include the Zen browser settings (prefs.js/user.js/containers.json + extensions)
 	Encrypt bool   // AES-256 with a passphrase
 	HasKeep bool   // the machine has keepassxc + its config/db
+	HasZen  bool   // the machine has a Zen profile
 }
 
 // model is the single Bubble Tea model for the whole session: every screen
@@ -253,7 +255,7 @@ func initialModel() model {
 		setupByValue:   map[string]SetupItemRec{},
 		backupChecked:  map[string]bool{},
 		backupOpen:     map[string]bool{},
-		backupOpts:     BackupOpts{VST: "list", Keepass: true},
+		backupOpts:     BackupOpts{VST: "list", Keepass: true, Zen: true},
 		treeMode:       "install",
 	}
 	m.mainPicker = newNavPicker("", m.mainMenuItems())
