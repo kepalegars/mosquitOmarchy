@@ -645,12 +645,19 @@ func fixCategoryGroup(items []FixItem, checked map[string]bool, expanded map[str
 		if checked[it.ID] {
 			mark = "●"
 		}
-		// File-tree angle so the fix is visibly a child of its category.
+		// File-tree angle so the fix is visibly a child of its category. The
+		// mark goes in Badge, NOT in the label: the kit already owns a fixed
+		// badge column, so baking it in gave every child a different width and
+		// therefore a different starting column from its category.
 		branch := "├─ "
 		if lastOf[cat] == i {
 			branch = "└─ "
 		}
-		out = append(out, tuikit.PickerItem{Display: "    " + branch + mark + "  " + it.Title + fixRowTags(it), Value: it.ID})
+		out = append(out, tuikit.PickerItem{
+			Display: "    " + branch + it.Title + fixRowTags(it),
+			Badge:   mark,
+			Value:   it.ID,
+		})
 	}
 	return out
 }
@@ -1410,8 +1417,10 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// chevron as the other two folder lists. Toggling the header
 			// still checks/unchecks the whole category regardless of the
 			// expanded state.
-			if v := m.picker.SelectedValue(); strings.HasPrefix(v, fixCategoryValuePrefix) {
-				cat := strings.TrimPrefix(v, fixCategoryValuePrefix)
+			// The category the cursor is IN, not only the one it is on: walk
+			// down into a category and ← closes it from any of its rows.
+			v := m.picker.SelectedValue()
+			if cat, ok := tuikit.ParentFolderOf(m.picker.Items(), fixCategoryValuePrefix, v); ok {
 				if m.fixFolderExpanded == nil {
 					m.fixFolderExpanded = map[string]bool{}
 				}
@@ -1420,7 +1429,18 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.fixFolderExpanded[cat] = false
 				}
+				keep := v
+				if sm.Dir < 0 {
+					// The row under the cursor disappeared with the category.
+					keep = fixCategoryValuePrefix + cat
+				}
 				m.rebuildFixPicker()
+				for i, it := range m.picker.Items() {
+					if it.Value == keep {
+						m.picker = m.picker.SelectIndex(i)
+						break
+					}
+				}
 			}
 			return m, nil
 		}

@@ -472,13 +472,21 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// there is no second level to go into any more, so the arrows that
 			// used to sort here have nothing else to do. "Menu entries" folds
 			// like a category; its blocks open their own page on Enter.
-			if prefix, id, ok := tuikit.TreeSplit(m.setupPicker.SelectedValue()); ok && prefix == tuikit.TreeFolderPrefix {
+			// ←/→ act on the folder the cursor is IN, not only on its title:
+			// walking down into a category and pressing ← closes that category.
+			if id, inTree := tuikit.TreeParentOf(m.setupPicker.items, m.setupPicker.SelectedValue()); inTree {
 				if msg.Dir > 0 {
 					m.folderOpen[id] = true
 				} else {
 					delete(m.folderOpen, id)
 				}
 				keep := m.setupPicker.SelectedValue()
+				// Folding from inside a category removes the very row the
+				// cursor is on, so there is nothing to keep — land on the
+				// category we just closed, which is where the user came from.
+				if msg.Dir < 0 {
+					keep = tuikit.TreeValue(tuikit.TreeFolderPrefix, id)
+				}
 				m.setupPicker = m.rebuildSetup()
 				m.setupPicker = m.setupPicker.KeepCursor(keep)
 			}
@@ -963,13 +971,20 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				// be inert headings, so a category could not be reached at all
 				// and the list could not be narrowed.
 				v := m.statusPicker.SelectedValue()
-				if cat, ok := statusCatOf(v); ok {
+				// The category the cursor is IN, not only the one it is on:
+				// sitting on a module and pressing ← closes its category.
+				if cat, ok := tuikit.ParentFolderOf(m.statusPicker.items, "status-cat:", v); ok {
 					if km.String() == "left" {
 						m.statusOpen[cat] = false
 					} else {
 						m.statusOpen[cat] = true
 					}
-					keep := m.statusPicker.SelectedValue()
+					keep := v
+					if km.String() == "left" {
+						// The row we were on is gone with the category; land on
+						// the category we just closed.
+						keep = "status-cat:" + cat
+					}
 					m.statusPicker = m.rebuildStatus()
 					m.statusPicker = m.statusPicker.KeepCursor(keep)
 					return m, nil

@@ -335,3 +335,83 @@ func TestSetupBlinkSkipsWorkWhenTheAccentRowIsOffscreen(t *testing.T) {
 		t.Fatalf("the blink moved the cursor: %d -> %d", before.Index(), m.setupPicker.Index())
 	}
 }
+
+// TestSetupLeftArrowFoldsFromInsideTheCategory is the "← closes the folder I am
+// in" rule. It used to look only at the selected row's own value, so a leaf
+// row resolved to "not a folder" and the arrows did nothing until the cursor
+// had been walked back up to the title.
+func TestSetupLeftArrowFoldsFromInsideTheCategory(t *testing.T) {
+	m := flatSetup()
+	m.folderOpen["apps"] = true
+	m.folderOpen["mosquito"] = true
+	m.setupPicker = m.rebuildSetup()
+
+	// Park the cursor on a MODULE inside "apps".
+	leaf := setupValue("apps", "reaper")
+	idx := -1
+	for i, it := range m.setupPicker.items {
+		if it.Value == leaf {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("module %q not on the page", leaf)
+	}
+	m.setupPicker = m.setupPicker.SelectIndex(idx)
+
+	// ← from inside the category.
+	m2, _ := m.update(tuikit.PickerSortMsg{Dir: -1})
+	if m2.folderOpen["apps"] {
+		t.Fatal("← from a module did not fold its category")
+	}
+	// The other category is untouched.
+	if !m2.folderOpen["mosquito"] {
+		t.Fatal("← folded an unrelated category too")
+	}
+	// The row we were on no longer exists, so the cursor has to land somewhere
+	// real — the category we just closed.
+	if got := m2.setupPicker.SelectedValue(); got != folderValue("apps") {
+		t.Fatalf("cursor is on %q after folding, want the category we closed (%q)", got, folderValue("apps"))
+	}
+	// And → re-opens it from there.
+	m3, _ := m2.update(tuikit.PickerSortMsg{Dir: 1})
+	if !m3.folderOpen["apps"] {
+		t.Fatal("→ from the category title did not re-open it")
+	}
+}
+
+// The same rule on the Status tree, which uses its own row prefixes.
+func TestStatusLeftArrowFoldsFromInsideTheCategory(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrStatus}
+	m.w, m.h = 100, 34
+	m.statusRecs = []StatusRec{
+		{Id: "reaper", Category: "apps", State: "ok"},
+		{Id: "bat", Category: "tuis", State: "ok"},
+	}
+	m.setupFolders = []FolderRec{{Folder: "apps", Label: "Apps"}, {Folder: "tuis", Label: "TUIs"}}
+	m.statusOpen = map[string]bool{}
+	m.statusPicker = m.rebuildStatus()
+
+	idx := -1
+	for i, it := range m.statusPicker.items {
+		if it.Value == "status:reaper" {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatal("status module row not found")
+	}
+	m.statusPicker = m.statusPicker.SelectIndex(idx)
+
+	m2, _ := m.update(tea.KeyMsg{Type: tea.KeyLeft})
+	if m2.statusOpen["apps"] {
+		t.Fatal("← from a status module did not fold its category")
+	}
+	if !m2.statusOpen["tuis"] {
+		t.Fatal("← folded an unrelated status category too")
+	}
+	if got := m2.statusPicker.SelectedValue(); got != "status-cat:apps" {
+		t.Fatalf("cursor is on %q after folding, want status-cat:apps", got)
+	}
+}

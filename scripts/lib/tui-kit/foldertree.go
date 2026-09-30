@@ -69,6 +69,89 @@ func TreeSplit(v string) (prefix, id string, ok bool) {
 	return "", "", false
 }
 
+// TreeParentOf walks a rendered tree and reports the folder a row belongs to:
+// its own id for a folder row, and the id of the folder whose children it sits
+// under for a leaf row. ok is false for a row that is not part of a tree (a
+// "Back" row, a header) — those have no parent to fold.
+//
+// This is what makes ← work from inside a folder, not only on its title. The
+// arrows act on "the folder the cursor is in", so holding ↓ to walk into a
+// category and then pressing ← closes it instead of doing nothing. A host that
+// only ever looked at the selected row's own value got "no folder here" and
+// had to send the cursor back up to the title first.
+func TreeParentOf(items []PickerItem, value string) (folder string, ok bool) {
+	prefix, id, isTree := TreeSplit(value)
+	if !isTree {
+		return "", false
+	}
+	if prefix == TreeFolderPrefix {
+		return id, true
+	}
+	// A leaf: the nearest folder row ABOVE it is its owner. Walk FORWARD and
+	// keep the last folder seen, stopping at the row itself — walking backward
+	// finds the LAST folder in the list instead, which is why every leaf used
+	// to resolve to the final category.
+	target := -1
+	for i, it := range items {
+		if it.Value == value {
+			target = i
+			break
+		}
+	}
+	if target < 0 {
+		return "", false
+	}
+	owner := ""
+	for _, it := range items[:target] {
+		if p, pid, ok2 := TreeSplit(it.Value); ok2 && p == TreeFolderPrefix {
+			owner = pid
+		}
+	}
+	if owner == "" {
+		return "", false
+	}
+	return owner, true
+}
+
+// ParentFolderOf is the same question as TreeParentOf for hosts whose rows do
+// NOT use the cat:/item: prefixes — the Status tree uses its own
+// ("status-cat:" / "status:"). Pass those and it walks the list the same way:
+// the nearest folder row above the cursor is the folder the cursor is in.
+//
+// The point is the same in both: ← must close the category the cursor is
+// sitting inside, not only when it happens to be on the category's title.
+func ParentFolderOf(items []PickerItem, folderPrefix, value string) (folder string, ok bool) {
+	byValue := func(v string) (string, bool) {
+		if strings.HasPrefix(v, folderPrefix) {
+			return strings.TrimPrefix(v, folderPrefix), true
+		}
+		return "", false
+	}
+	if id, isFolder := byValue(value); isFolder {
+		return id, true
+	}
+	target := -1
+	for i, it := range items {
+		if it.Value == value {
+			target = i
+			break
+		}
+	}
+	if target < 0 {
+		return "", false
+	}
+	owner := ""
+	for _, it := range items[:target] {
+		if id, isFolder := byValue(it.Value); isFolder {
+			owner = id
+		}
+	}
+	if owner == "" {
+		return "", false
+	}
+	return owner, true
+}
+
 // BuildFolderTree renders the folders and their items as PickerItems.
 //
 // open is the host's fold state: a folder whose id is absent or false is
@@ -103,31 +186,18 @@ func BuildFolderTree(folders []TreeFolder, items map[string][]TreeItem, open map
 		}
 		last := len(children) - 1
 		for i, it := range children {
+			mark := "○"
+			if it.Checked {
+				mark = "●"
+			}
 			branch := "├─ "
 			if i == last {
 				branch = "└─ "
 			}
-			// The tree lines are the ONLY thing this composes into Display.
-			// The mark goes in Badge and the cursor in the fixed indicator
-			// slot, both of which the kit lays out in a column of their own.
-			// Baking the mark into the label as well is what made children
-			// start a different column from their folder: the label carried
-			// four extra spaces plus a box-drawing mark plus the badge, while
-			// the folder row had none of that.
-			// Checked lives in Badge so the kit owns the marker column. An
-			// explicit Badge on the TreeItem still wins: a host that puts a
-			// state glyph there knows better than the generic ○/●.
-			badge := it.Badge
-			if badge == "" {
-				badge = "○"
-				if it.Checked {
-					badge = "●"
-				}
-			}
 			row := PickerItem{
-				Display: "    " + branch + it.Label,
+				Display: "    " + branch + mark + "  " + it.Label,
 				Value:   TreeValue(TreeItemPrefix, it.ID),
-				Badge:   badge,
+				Badge:   it.Badge,
 			}
 			if it.Disabled {
 				row.Disabled = true
