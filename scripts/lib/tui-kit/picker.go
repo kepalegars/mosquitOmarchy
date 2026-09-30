@@ -206,13 +206,19 @@ func (i PickerItem) FilterValue() string { return i.Display }
 // when Disabled is set, and otherwise exactly like list.DefaultDelegate.
 type pickerDelegate struct {
 	list.DefaultDelegate
-	// maxRowW is the widest visible row across every item in the picker
-	// that owns this delegate (indicator + space + max(title,sub)). Set
-	// once in NewPicker so renderCentered can pad every shorter row to
-	// this width before centering — keeps every item's visual centre on
-	// the same column instead of stair-stepping left/right with each
-	// item's natural width.
-	maxRowW int
+	// maxRowW is the width every row is padded to before the block is
+	// centered. Because the block is CENTERED, this number decides where the
+	// text column sits: left margin = (pane - maxRowW) / 2. So it must not
+	// depend on which rows happen to be on screen.
+	//
+	// contentWidth, when > 0, pins it. Without a pin the widest VISIBLE row
+	// wins, and folding a folder therefore reflowed the whole page: opening
+	// "lame language models" made its long child rows the new widest, the
+	// block grew, and every other line slid left by the difference. A host
+	// that knows its full row set pins the width once and folding then only
+	// ever adds lines — it never moves one.
+	maxRowW      int
+	contentWidth int
 	// badgeSlot is the fixed leading column width reserved for an item's
 	// Badge (0 when no item in the picker sets one). It is part of every
 	// row's composed width so badged and unbadged rows keep the same text
@@ -302,7 +308,7 @@ func (d pickerDelegate) titleStyleFor(pi PickerItem, index, selected int) lipglo
 		// even when the cursor sits on it.
 		return lipgloss.NewStyle().Padding(0).
 			Background(ColorAccent).
-			Foreground(accentForeground()).
+			Foreground(BestContrastOn(ColorAccent)).
 			Bold(true)
 	}
 	return d.titleStyle(index, selected)
@@ -511,6 +517,32 @@ func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem)
 // bypassed entirely: the delegate builds styles from scratch instead of
 // inheriting them, so the centering math in renderCentered operates on the
 // actual title text only.
+// RowsWidth returns the row-block width a picker of these items would use.
+// A host measures its FULL row set with this — every folder open — and pins
+// the result with SetContentWidth, so the centered text column is a constant
+// of the screen instead of a function of the fold state.
+func RowsWidth(items []PickerItem) int {
+	if len(items) == 0 {
+		return 0
+	}
+	// Exact by construction: this is the very measurement newPicker makes, not
+	// a second formula that could drift from it.
+	return newPicker("", items, Picker{}).rowW
+}
+
+// SetContentWidth pins the row-block width so folding a folder never reflows
+// the page. Pass the width measured over the FULL row set — every folder open —
+// which is what RowsWidth returns for the same items built expanded. Pin it to
+// the same number on every rebuild and the text column stops moving no matter
+// what the user opens or closes.
+func (p Picker) SetContentWidth(w int) Picker {
+	p.contentW = w
+	if p.ready {
+		return p.applyPin()
+	}
+	return p
+}
+
 func newPickerDelegate(maxRowW, badgeSlot, trailSlot int) pickerDelegate {
 	d := list.NewDefaultDelegate()
 	return pickerDelegate{DefaultDelegate: d, maxRowW: maxRowW, badgeSlot: badgeSlot, trailSlot: trailSlot}
@@ -531,9 +563,22 @@ type Picker struct {
 	// under the shortcuts — a path, a caveat, anything that isn't a key
 	// binding (SetHelpNote). Empty = no note.
 	helpNote string
+	// contentW pins the row-block width across rebuilds. 0 = derive it from
+	// whatever rows are currently visible, which makes the centered block
+	// jump every time a folder opens or closes. See SetContentWidth.
+	contentW int
+	// The measurements behind the current delegate, kept so a pinned width
+	// can rebuild it (bubbles' list.Model keeps its delegate unexported).
+	rowW, badgeSlot, trailSlot int
 }
 
-func NewPicker(header string, items []PickerItem) Picker {
+// NewPicker builds a picker. It starts unpinned; call SetContentWidth on the
+// result to keep the text column still across folds.
+func NewPicker(header string, items []PickerItem) Picker { return newPicker(header, items, Picker{}) }
+
+// newPicker is NewPicker with the pin a SetContentWidth call already recorded,
+// so a pin survives the host's rebuild-then-pin cycle.
+func newPicker(header string, items []PickerItem, p0 Picker) Picker {
 	litems := make([]list.Item, len(items))
 	hasSub := false
 	maxRowW := 0
@@ -626,8 +671,29 @@ func NewPicker(header string, items []PickerItem) Picker {
 	// separately (the universal layout pins it to the bottom of the screen,
 	// not in the centred body).
 	l.SetShowHelp(false)
-	p := Picker{list: l, ready: true}
+	p := Picker{list: l, ready: true, contentW: p0.contentW, rowW: maxRowW, badgeSlot: badgeSlot, trailSlot: trailSlot}
 	p = p.clampDisabled(1)
+	p = p.applyPin()
+	return p
+}
+
+// applyPin re-derives the delegate with the pinned block width when a host set
+// one, taking the LARGER of the pin and the rows actually present: a pin
+// measured over the full set can never clip a row, and a pin that turns out
+// too small still grows to fit what is on screen.
+func (p Picker) applyPin() Picker {
+	if !p.ready {
+		return p
+	}
+	w := p.contentW
+	if w < p.rowW {
+		w = p.rowW
+	}
+	if w == p.rowW {
+		return p
+	}
+	p.rowW = w
+	p.list.SetDelegate(newPickerDelegate(w, p.badgeSlot, p.trailSlot))
 	return p
 }
 

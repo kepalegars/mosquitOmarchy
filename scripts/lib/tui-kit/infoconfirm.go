@@ -94,7 +94,7 @@ func (c InfoConfirm) View() string {
 			// to be the light neutral: ColorSubtle on the accent fill is
 			// unreadable, so the two states differ in weight and background,
 			// not in hue.
-			s = s.Background(ColorAccent).Foreground(ColorOnSurface).Bold(true)
+			s = s.Background(ColorAccent).Foreground(BestContrastOn(ColorAccent)).Bold(true)
 		} else {
 			// Same tone as the shortcut legends under the dialog — see
 			// confirm.go: an unfocused answer is still a real option.

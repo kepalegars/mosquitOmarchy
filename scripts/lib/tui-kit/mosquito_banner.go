@@ -1,7 +1,6 @@
 package tuikit
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -115,45 +114,16 @@ var subtitleArtTiny = map[string]string{
 // "black" when it is light, so the boxed "mosquito" label always has the
 // strongest possible contrast. ColorAccent is a lipgloss.Color parsed from
 // the active Omarchy theme (init() in theme.go).
-func accentForeground() lipgloss.Color {
-	c := string(ColorAccent)
-	r, g, b, ok := parseHexColor(c)
-	if !ok {
-		return lipgloss.Color("#ffffff")
-	}
-	// Relative luminance (BT.601 weights — good enough for picking
-	// black/white text against a solid background).
-	lum := 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)
-	if lum < 128 {
-		return lipgloss.Color("#ffffff")
-	}
-	return lipgloss.Color("#000000")
-}
-
-// parseHexColor accepts #RGB, #RRGGBB, or 0xRRGGBB and returns (r,g,b,ok).
-func parseHexColor(s string) (int, int, int, bool) {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "#") {
-		s = s[1:]
-	} else if strings.HasPrefix(strings.ToLower(s), "0x") {
-		s = s[2:]
-	}
-	switch len(s) {
-	case 3:
-		v, err1 := strconv.ParseUint(s, 16, 64)
-		if err1 != nil {
-			return 0, 0, 0, false
-		}
-		return int((v>>8)&0xF) * 17, int((v>>4)&0xF) * 17, int(v&0xF) * 17, true
-	case 6:
-		v, err1 := strconv.ParseUint(s, 16, 64)
-		if err1 != nil {
-			return 0, 0, 0, false
-		}
-		return int((v >> 16) & 0xFF), int((v >> 8) & 0xFF), int(v & 0xFF), true
-	}
-	return 0, 0, 0, false
-}
+// accentForeground is the text colour to put on top of the theme's accent fill.
+//
+// This used to compute it here with BT.601 weights and a threshold at 128, and
+// it FAILED for any accent that is not hex: an Omarchy theme whose accent is a
+// bare ANSI index ("212") did not parse, so the code fell through to white
+// every single time — which is why the highlighted row looked wrong on some
+// themes and right on others. The decision now lives in BestContrastOn, which
+// understands both forms and ranks black against white by WCAG contrast ratio
+// instead of guessing from a luma threshold.
+func accentForeground() lipgloss.Color { return BestContrastOn(ColorAccent) }
 
 // BoxedMosquito renders the "mosquito" label in the active theme's accent
 // color. The label text is black or white depending on what gives the

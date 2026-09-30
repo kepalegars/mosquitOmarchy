@@ -133,11 +133,16 @@ func (c Confirm) View() string {
 		if focused {
 			// The focused answer is carried by the FILLED BACKGROUND; the
 			// label itself stays a neutral instead of the lime accent, which
-			// read as a status ("go!") rather than as one of the answers. It has
-			// to be the light neutral: ColorSubtle on the accent fill is
-			// unreadable, so the two states differ in weight and background,
-			// not in hue.
-			s = s.Background(ColorAccent).Foreground(ColorOnSurface).Bold(true)
+			// read as a status ("go!") rather than as one of the answers.
+			//
+			// Which neutral depends on the fill, and the fill is the ACTIVE
+			// THEME's accent: ColorOnSurface (a light grey) is unreadable on a
+			// pale yellow theme, and hardcoding either answer is wrong for half
+			// the users. So black or white is computed from the accent's own
+			// luminance by WCAG contrast ratio, and whichever scores higher
+			// wins. "Close mosquitomarchy" / "See log" are unreadable with the
+			// wrong one.
+			s = s.Background(ColorAccent).Foreground(BestContrastOn(ColorAccent)).Bold(true)
 		} else {
 			// Same tone as the shortcut legends under the dialog, not the
 			// dimmer ColorMuted: an answer you are NOT currently on is still a

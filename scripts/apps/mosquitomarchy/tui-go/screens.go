@@ -2079,6 +2079,60 @@ func (m model) rebuildSetup() navPicker {
 	}
 	idx := m.setupPicker.Index()
 	uninstall := m.treeMode == "uninstall"
+	out := m.setupRows(uninstall, m.folderOpen)
+
+	// Pin the row-block width to the FULL tree — every folder open — so the
+	// text column is a constant of the screen instead of a function of the
+	// fold state. The row block is centered, so its width IS the left margin:
+	// measuring only the visible rows made opening a folder with long children
+	// ("lame language models") re-center the whole page and shove every other
+	// line sideways. Now folding only ever adds lines; it moves nothing.
+	pinned := tuikit.RowsWidth(m.setupRows(uninstall, allFoldersOpen(m)))
+
+	enterHelp := "install selection"
+	if uninstall {
+		enterHelp = "uninstall selection"
+	}
+	// KeepCursor is not optional here. rebuildSetup builds a FRESH picker, so
+	// without it the cursor jumped back to the top — and rebuildSetup runs on
+	// every blink tick, so holding "down" fought the blink and the cursor
+	// crawled. It also matters for the fold, which rebuilds the list under a
+	// cursor that is sitting on the very row that caused it.
+	return newNavPicker("", out).SetSize(m.contentSize()).
+		SetContentWidth(pinned).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "select")),
+			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
+			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "open")),
+			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "close")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
+		).
+		KeepCursor(m.setupPicker.SelectedValue()).
+		// Fallback for when the row the cursor was on is genuinely gone (the
+		// typing filter just hid it): land on the same index, not on row 0.
+		SelectIndex(min(idx, len(out)-1))
+}
+
+// allFoldersOpen returns a copy of the fold state with every folder expanded.
+// It exists only to be measured: RowsWidth needs the widest row the page can
+// ever show, and a collapsed folder hides exactly the rows that would be
+// widest.
+func allFoldersOpen(m model) map[string]bool {
+	all := make(map[string]bool, len(m.folderOpen)+len(m.setupFolders)+1)
+	for k, v := range m.folderOpen {
+		all[k] = v
+	}
+	for _, f := range m.setupFolders {
+		all[f.Folder] = true
+	}
+	all[menuEntriesFolder] = true
+	return all
+}
+
+// setupRows builds the Setup/Uninstall rows for an arbitrary fold state. It is
+// split out of rebuildSetup so the width can be measured over the expanded tree
+// (allFoldersOpen) while the visible rows use the real one.
+func (m model) setupRows(uninstall bool, open map[string]bool) []tuikit.PickerItem {
 	out := make([]tuikit.PickerItem, 0, len(m.setupFolders)+8)
 
 	if !uninstall && m.updatePending() {
@@ -2143,7 +2197,7 @@ func (m model) rebuildSetup() navPicker {
 		if f.Folder == "keybindings" {
 			tf.Total, tf.Marked = 0, 0
 		}
-		out = append(out, tuikit.BuildFolderTree([]tuikit.TreeFolder{tf}, seen, m.folderOpen, m.blinkOn)...)
+		out = append(out, tuikit.BuildFolderTree([]tuikit.TreeFolder{tf}, seen, open, m.blinkOn)...)
 	}
 
 	if !uninstall {
@@ -2161,37 +2215,16 @@ func (m model) rebuildSetup() navPicker {
 		}
 		// Fold by default: the list is long, and this row is a corner of Setup
 		// rather than the page's subject.
-		if _, seen := m.folderOpen[menuEntriesFolder]; !seen {
-			m.folderOpen[menuEntriesFolder] = false
+		if _, seen := open[menuEntriesFolder]; !seen {
+			open[menuEntriesFolder] = false
 		}
 		out = append(out, tuikit.BuildFolderTree(
 			[]tuikit.TreeFolder{{ID: menuEntriesFolder, Label: "Menu entries", Total: len(meChildren)}},
 			map[string][]tuikit.TreeItem{menuEntriesFolder: meChildren},
-			m.folderOpen, m.blinkOn)...)
+			open, m.blinkOn)...)
 	}
 	out = append(out, tuikit.PickerItem{Display: "Back", Value: "back"})
-
-	enterHelp := "install selection"
-	if uninstall {
-		enterHelp = "uninstall selection"
-	}
-	// KeepCursor is not optional here. rebuildSetup builds a FRESH picker, so
-	// without it the cursor jumped back to the top — and rebuildSetup runs on
-	// every blink tick, so holding "down" fought the blink and the cursor
-	// crawled. It also matters for the fold, which rebuilds the list under a
-	// cursor that is sitting on the very row that caused it.
-	return newNavPicker("", out).SetSize(m.contentSize()).
-		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "select")),
-			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
-			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "open")),
-			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "close")),
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
-		).
-		KeepCursor(m.setupPicker.SelectedValue()).
-		// Fallback for when the row the cursor was on is genuinely gone (the
-		// typing filter just hid it): land on the same index, not on row 0.
-		SelectIndex(min(idx, len(out)-1))
+	return out
 }
 
 // categorySelectedCount counts the checked items of one category.

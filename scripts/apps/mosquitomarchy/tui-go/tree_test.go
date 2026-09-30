@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	tuikit "mosquitomarchy.local/tui-kit"
 )
@@ -413,5 +414,90 @@ func TestStatusLeftArrowFoldsFromInsideTheCategory(t *testing.T) {
 	}
 	if got := m2.statusPicker.SelectedValue(); got != "status-cat:apps" {
 		t.Fatalf("cursor is on %q after folding, want status-cat:apps", got)
+	}
+}
+
+// rowPads is the left margin of every non-blank rendered line: where each row
+// actually starts on screen.
+func rowPads(view string) []int {
+	var out []int
+	for _, l := range strings.Split(view, "\n") {
+		p := ansi.Strip(l)
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		out = append(out, len(p)-len(strings.TrimLeft(p, " ")))
+	}
+	return out
+}
+
+// isSubsequence reports whether want appears in got in order. Folding only ever
+// ADDS rows, so the rows that were already there must keep their exact
+// position — same values, same order.
+func isSubsequence(want, got []int) bool {
+	i := 0
+	for _, g := range got {
+		if i < len(want) && g == want[i] {
+			i++
+		}
+	}
+	return i == len(want)
+}
+
+// The picker CENTERS its row block, so the block's width IS the left margin. It
+// used to measure only the rows currently on screen, so opening a folder with
+// long children ("lame language models", "Omarchy preinstalls") made the block
+// grow and re-centered the whole page: every other line slid sideways. Folding
+// must only add rows, never move one.
+func TestSetupFoldingDoesNotReflowThePage(t *testing.T) {
+	m := flatSetup()
+	m.setupFolders = append(m.setupFolders, FolderRec{Folder: "lame", Label: "lame language models"})
+	m.setupItems = append(m.setupItems,
+		SetupItemRec{Folder: "lame", Key: "ollama", Label: "Ollama — local models, no cloud"},
+		SetupItemRec{Folder: "lame", Key: "cpp", Label: "llama.cpp"})
+	for _, it := range m.setupItems {
+		m.setupByValue[setupValue(it.Folder, it.Key)] = it
+	}
+	m.folderOpen = map[string]bool{"apps": true, "mosquito": true}
+
+	closed := rowPads(m.rebuildSetup().View())
+	m.folderOpen["lame"] = true
+	open := rowPads(m.rebuildSetup().View())
+
+	if len(open) <= len(closed) {
+		t.Fatalf("opening lame added no rows: %v -> %v", closed, open)
+	}
+	if !isSubsequence(closed, open) {
+		t.Errorf("expanding lame MOVED existing rows.\n collapsed: %v\n expanded:  %v", closed, open)
+	}
+}
+
+// Same rule on the Uninstall tree, where "preinstalls" is a folder whose child
+// row is a very long sentence.
+func TestUninstallFoldingDoesNotReflowThePage(t *testing.T) {
+	m := flatSetup()
+	m.treeMode = "uninstall"
+	m.setupFolders = []FolderRec{
+		{Folder: "apps", Label: "Apps"},
+		{Folder: "preinstalls", Label: "Omarchy preinstalls"},
+	}
+	m.setupItems = []SetupItemRec{
+		{Folder: "apps", Key: "reaper", Label: "reaper"},
+		{Folder: "preinstalls", Key: "choose", Label: "Choose which stock preinstalls to remove (tab = keep, enter to confirm)"},
+	}
+	for _, it := range m.setupItems {
+		m.setupByValue[setupValue(it.Folder, it.Key)] = it
+	}
+	m.folderOpen = map[string]bool{"apps": true}
+
+	closed := rowPads(m.rebuildSetup().View())
+	m.folderOpen["preinstalls"] = true
+	open := rowPads(m.rebuildSetup().View())
+
+	if len(open) <= len(closed) {
+		t.Fatalf("opening preinstalls added no rows: %v -> %v", closed, open)
+	}
+	if !isSubsequence(closed, open) {
+		t.Errorf("expanding preinstalls MOVED existing rows.\n collapsed: %v\n expanded:  %v", closed, open)
 	}
 }

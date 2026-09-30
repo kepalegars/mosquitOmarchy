@@ -26,6 +26,13 @@ func (p navPicker) SetSize(w, h int) navPicker {
 	return p
 }
 
+// SetContentWidth pins the row-block width across rebuilds, so folding a
+// folder cannot re-center the page. See tuikit.Picker.SetContentWidth.
+func (p navPicker) SetContentWidth(w int) navPicker {
+	p.Picker = p.Picker.SetContentWidth(w)
+	return p
+}
+
 func (p navPicker) SetHelpKeys(keys ...key.Binding) navPicker {
 	p.Picker = p.Picker.SetHelpKeys(keys...)
 	return p
