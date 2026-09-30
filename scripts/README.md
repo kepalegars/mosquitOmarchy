@@ -1,51 +1,54 @@
-# `scripts/` — mosquitOmarchy modules and helpers
+# `scripts/`
 
-This folder holds everything except the two root entry points (`mosquitomarchy-setup.sh` — the orchestrator — and `bootstrap.sh` — the one-command start) and the repo meta files. The release archiver, `archive-mosquitomarchy.sh`, lives HERE, next to the other tooling.
+Everything except the two root entry points — `bootstrap.sh` (clone + setup) and
+`mosquitomarchy-setup.sh` (the orchestrator) — and the repo metadata.
 
-Unlike the other modules, the apps are grouped under `apps/` (one folder per app + shared helpers), with one `apps/README.md` for the whole group; the modules each bring their own `README.md`.
+Run modules through the orchestrator or the [TUI](../README.md#the-tui), not by hand. Each
+module's own `README.md` is the reference for its commands, options and caveats; nothing is
+duplicated here.
 
-## Folder layout
+## Folders
 
 | Entry | What it is |
 |---|---|
-| `apps/` | "apps" module : `setup-apps.sh` dispatcher, the per-type installers (`gui/`, `tui-tools/`, `webapps/`) and one folder per bundled app (`ableton`, `bitwig`, `reaper`, `audio-plugin-manager`, `guitarpro`, `davinci`, `handbrake`, `zen`) + `download-assets.sh` |
-| `apps/mosquitomarchy/` | the **mosquitOmarchy launcher TUI** (Go/Bubble Tea) : `mosquitomarchy` dispatcher + `tui-go/` + `mosquitomarchy-actions` backend — the recommended interface, see its [README](apps/mosquitomarchy/README.md) |
-| `plugins/` | Omarchy shell plugins : `power-management/` (`battery` module), `jamjamjam/` (JamJamJam bar plugin), `live-mode/` |
-| `lib/` | shared helpers : `tui-kit/` (Go/Bubble Tea component library) + `common.bash` + `crash.bash` (crash log + clickable AI diagnosis) + `elevate.bash` (`mq_sudo`: pkexec-first elevation, with a `/etc/shells`-safe `$SHELL`) |
-| `LLM/` | `ollama` module — local AI (models, REAPER helpers, OpenCode commands) |
-| `windows-vm/` | `windows-vm` module — VM launcher + winvm + OEM debloat |
-| `omarchy-vm/` | `omarchy-vm` module — Omarchy ISO VM in QEMU/KVM + TUI + passthrough |
-| `theme/` | `achraff` theme / `create-theme.sh` |
-| `mosquitomarchy-update/` | update watchdog : scripts repo check first, then pending Omarchy updates |
-| `fixes/` | idempotent fixes — Papers/Evince, brightness, keyboard backlight, touchpad, MX Master, menu, theme (`fix-*.sh`); proposed at `mosquitomarchy-setup.sh` startup |
-| `bootstrap.sh` | one-command start (clone + setup + optional assets) — see the [root README](../README.md#one-command-start) |
-| `lib/keybindings.bash` | `keybindings` module primitives — managed SUPER bindings (used by the mosquitOmarchy TUI + `mosquitomarchy-actions`) |
-| `gui-run.bash` | shared helper : reopens a `setup-*.sh` launched from a file manager inside a terminal |
+| `apps/` | one folder per app, plus the app / TUI / webapp catalogs — [README](apps/README.md) |
+| `apps/mosquitomarchy/` | the launcher TUI, its backend and the `SUPER` keybinding primitives — [README](apps/mosquitomarchy/README.md) |
+| `plugins/` | Omarchy shell plugins: `live-mode/`, `jamjamjam/`, `power-management/` |
+| `fixes/` | small idempotent fixes, proposed at startup — [README](fixes/README.md) |
+| `lib/` | shared helpers — `tui-kit/` (the Go component library), `common.bash`, `crash.bash`, `elevate.bash`, `keybindings.bash` |
+| `theme/` `LLM/` `deps/` | theme creation, Ollama, and package lists for things with no module folder |
+| `windows-vm/` `macos-vm/` `omarchy-vm/` | the three VM modules |
+| `mosquitomarchy-update/` | the update watchdog: scripts repo first, then Omarchy |
+| `archive-mosquitomarchy.sh` | builds the release tarball — [root README](../README.md#scriptsarchivemosquitomarchy-sh) |
 
-## Usage
+Every script resolves its resources from its own directory, so a whole folder can be moved
+without breaking its paths. Right-click a `setup-*.sh` → **Run as a Program** to open it in a
+terminal; `gui-run.bash` handles that.
 
-Do **not** run these scripts individually for a fresh machine : use the orchestrator, which offers each module one by one and handles backup/restore + uninstall + repo update :
+## Elevation — one prompt per run
 
-```bash
-./mosquitomarchy-setup.sh                # at the repo root
-```
+`lib/elevate.bash` provides `mq_sudo`, and a run asks for the password **once**, not once per
+step:
 
-The recommended interface is the **mosquitOmarchy TUI** (`scripts/apps/mosquitomarchy/`), which drives all of the above — status, update, setup, backup/restore — from one menu. Use `Setup → Menu entry` once to register it in the Omarchy launcher.
+1. `mq_sudo_prime` runs at the start of a module batch, a fix batch and each uninstall. If
+   `sudo -n -v` already succeeds it does nothing. Otherwise it starts a persistent root
+   helper behind a **single `pkexec`** — the native Omarchy polkit prompt — and every later
+   root command of the run goes through that helper.
+2. Without polkit, it primes sudo's timestamp once through a GUI askpass (`zenity`, else
+   `systemd-ask-password`), which works with no tty; a background keep-alive holds the cache.
+3. Last resort, per-call `pkexec` through a `sudo`→`pkexec` shim.
 
-When a module is invoked directly (e.g. its tinker command), use its own `scripts/<module>/README.md`. Each script resolves its resources via its own directory, so the paths shown in the module READMEs work from inside the folder.
+Installing a selection primes once for the whole selection. Read-only queries (`--status`,
+and the TUI's read-only screens) never elevate.
 
-The module READMEs (in `mosquitomarchy-update/`, `plugins/power-management/`, `plugins/jamjamjam/`, `plugins/live-mode/`, `fixes/`, `windows-vm/`, `macos-vm/`, `omarchy-vm/`, `theme/`, `LLM/`, `apps/` and each `apps/<app>/`) are the reference for install commands, options and caveats — they are not duplicated here.
+## Crash reporting
 
-## Elevation (sudo) — one prompt per run
+Scripts source `lib/crash.bash` and call `mq_crash_guard "<tool>"`. On failure they write one
+dated log to the repo-local `.local/crash-logs/` — never committed, never archived — and raise
+a critical, clickable notification. Clicking it runs `mosquitomarchy-agent-crash`, which opens
+the default coding agent on the `mosquitomarchy-crash` skill with that exact log; the agent
+diagnoses and **proposes** a fix, applying nothing until confirmed. The skill is symlinked
+into `~/.agents/skills/` so any agent that reads skills finds it.
 
-`lib/elevate.bash` is the single elevation helper (`mq_sudo`). mosquitOmarchy asks for the password **once per install/run**, never once per step:
-
-1. `mq_sudo_prime` runs at the start of a module batch (`exec_modules`), a fix batch (`run_fixes`) and each uninstall. If `sudo -n -v` already works (NOPASSWD or a valid timestamp) it does nothing. Otherwise it starts a **persistent root helper** with a **single `pkexec`** — the native Omarchy polkit prompt (the nice one). `lib/mq-root-helper.sh` then executes every later root command of the run through a small FIFO protocol (the exact same commands `mq_sudo` would have run), so the whole run keeps **one** clean prompt.
-2. Fallback when pkexec/polkit is unavailable: prime sudo's timestamp once through a GUI askpass (`zenity --password`, else `systemd-ask-password`), which works **without a tty**; the cache then serves the run and a background keep-alive refreshes it.
-3. Last resort (no askpass, no agent): the historical **per-call `pkexec`** via a `sudo`→`pkexec` shim (with a `/etc/shells`-safe `$SHELL`).
-
-**Install selection** primes once for the whole selection. Read-only queries (`status`, `setup`, `patches`, `missing-assets`, …) never elevate.
-
-## Crash reporting (Omarchy-compatible)
-
-Non-install scripts source `lib/crash.bash` and call `mq_crash_guard "<tool>"`. On failure they write **one dated log** into the repo-local `.local/crash-logs/` (never committed, never archived) and raise a **critical, clickable Omarchy notification** (`omarchy-notification-send --exec …`). Clicking it runs `scripts/apps/mosquitomarchy/mosquitomarchy-agent-crash`, which opens the default coding agent on the `mosquitomarchy-crash` skill with that exact log — the agent diagnoses and **proposes** fixes, applying nothing until confirmed. Install scripts (`setup-*.sh`) are exempt. The skill is symlinked into `~/.agents/skills/`, so any AI that reads skills discovers it.
+`setup-*.sh` installers are exempt — their failures are reported by the orchestrator's own
+summary instead.

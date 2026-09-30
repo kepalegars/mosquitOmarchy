@@ -1,66 +1,59 @@
-# scripts/fixes — Omarchy fix scripts
+# `scripts/fixes`
 
-Every fix shipped in this folder, what it does, and how to run it. All of them
-are **idempotent** (safe to re-run).
+Small, idempotent machine-level repairs. Re-running one re-applies it, which is the point:
+an Omarchy update that overwrites `hyprland.lua` or `bindings.lua` is repaired by running the
+fix again, not by diffing by hand.
 
-They come in three groups:
+## Quick fixes
 
-1. **Quick fixes** — wired into `mosquitomarchy-setup.sh` (the "quick fixes"
-   question, and the launcher's **setup → Quick fixes** category): small,
-   one-shot, machine-level repairs.
-2. **Display / input / hardware modules** — real modules with their own
-   `st_*`/`run_*`/`un_*` in the orchestrator, each documented in its own file.
-3. **Optional helper** — a deliberate system change that stays OUT of the
-   catalogs and the quick-fix list.
-
----
-
-## 1. Quick fixes (the `FIXES` array of `mosquitomarchy-setup.sh`)
+These are the entries of the orchestrator's `FIXES` array — offered at setup and under
+**Setup → Quick fixes** in the TUI, and runnable directly with `bash scripts/fixes/<script>.sh`.
 
 | id | Script | What it fixes |
 |---|---|---|
-| `keepassxc-window` | `fix-keepassxc-window.sh` | KeePassXC window floats + centers in Hyprland instead of behaving badly when tiled (idempotent marked block in `hyprland.lua`; matches the native Wayland app-id and the XWayland class). |
-| `tui-theme` | `fix-tui-theme.sh` | Regenerates the current Omarchy palette (`omarchy theme refresh`) and rebuilds + redeploys both Go TUIs so their colors match the ACTIVE theme. The dynamic theme (palette re-read at each start) already ships in `scripts/lib/tui-kit`. |
-| `omarchy-menu` | `fix-omarchy-menu.sh` | Recovers a broken Omarchy menu (blank rows / empty Apps list) caused by a user-space clone of `omarchy.menu`: removes the clones, re-enables the stock menu, restarts the shell. |
-| `hyprland-crash` | `fix-hyprland-crash.sh` | Self-heals the usual "desktop came up broken" after a Hyprland crash: restores a truncated/fragmented `hyprland.lua` from the newest valid backup, normalizes fatal Lua escapes, re-arms the keyboard layout / Omarchy shell. Also installs a post-boot hook (`~/.config/omarchy/hooks/post-boot.d/zzz-fix-hyprland-crash`). |
-| `ableton-wine-scroll` | `fix-wine-scroll.sh` | While Ableton (Wine/XWayland) is open, the patched Wine's optional pointer features (precise scrolling, inertia, pinch zoom, middle-drag, warp emulation) create an XInput2 implicit device grab that freezes trackpad scrolling **in the other apps**. Sets those seven features to `disabled` in the `~/.wine-ableton` registry — the persistent form of upstream's `WINE_X11_POINTER_FEATURES=disabled` master switch (issue-122 clipping repair stays active). Reversible via `--remove`. |
-| `1px-seam` | `fix-1px-seam.sh` | Hair-thin transparent 1px line ("seam") flashing between the opaque Omarchy bar and a window touching it in borderless / no-gaps tiling: switches the blur to its legacy (non-optimized) path (`new_optimizations = false`, marked line in `looknfeel.lua`). Only useful when blur is enabled; reversible via `--remove`. |
-| `wine-menu` | `fix-wine-menu.sh` | The launcher is cluttered with `Uninstall` / `Manual` entries: a Windows installer (smartEQ, FabFilter, CrispyTuner, Guitar Pro…) wrote shortcuts into its prefix's Start Menu and Wine republished every one of them under `~/.local/share/applications/wine/Programs/`. For an app mosquitOmarchy installs AND uninstalls, those entries are noise — the module publishes its own `vst-standalone-*.desktop` / `guitarpro.desktop`. Removes them plus the empty `Wine / Programs / …` publisher folders, and refreshes the desktop database. Scoped to the prefixes mosquitOmarchy owns (`~/.wine-vst*`, `~/.wine-guitarpro8`): a Windows app the user runs on their own in `~/.wine` keeps its entry unless you pass `--all-prefixes`. The `NoDisplay=true` file associations (`wine-extension-*` / `wine-protocol-*`) are never touched. `--status` for a read-only report. Also applied automatically at the end of the audio plugin manager, the audio stack and the Guitar Pro setup. |
+| `keepassxc-window` | `fix-keepassxc-window.sh` | The KeePassXC window floats and centers in Hyprland instead of misbehaving when tiled. Idempotent marked block in `hyprland.lua`, matching both the native app-id and the XWayland class. |
+| `tui-theme` | `fix-tui-theme.sh` | Regenerates the Omarchy palette and rebuilds every Go TUI so their colours follow the **active** theme. The dynamic palette re-read already ships in `tui-kit`; this forces it. |
+| `omarchy-menu` | `fix-omarchy-menu.sh` | A broken menu — blank rows, empty Apps list — caused by a user-space clone of `omarchy.menu`. Removes the clones, re-enables the stock menu, restarts the shell. |
+| `hyprland-crash` | `fix-hyprland-crash.sh` | The "desktop came up broken" case: a truncated or fragmented `hyprland.lua` is restored from the newest valid backup, fatal Lua escapes are normalized, the keyboard layout and shell are re-armed. Installs a post-boot hook so it also self-heals at every boot. |
+| `ableton-wine-scroll` | `fix-wine-scroll.sh` | While Ableton is open under Wine, the patched build's optional pointer features create an XInput2 implicit grab that **freezes the trackpad in other apps**. Disables those features in the prefix's registry — the persistent form of upstream's `WINE_X11_POINTER_FEATURES=disabled`. `--remove` reverts. |
+| `1px-seam` | `fix-1px-seam.sh` | A hair-thin transparent line flashing between the bar and a window in borderless or no-gaps tiling: the blur is switched to its legacy path. Only useful with blur on. `--remove` reverts. |
+| `ableton-fullscreen` | `fix-ableton-fullscreen.sh` | Ableton's Full Screen mode is shifted, so the content sits off where you click. Launches Live with `WINE_WIN32_FULLSCREEN_CLASS=off`. `--remove` reverts. |
+| `omarchy-bar` | `fix-omarchy-bar.sh` | The Omarchy toolbar disappeared — toggled off or slid off-screen. Clears the bar-off toggle and re-syncs the shell. |
+| `wine-menu` | `fix-wine-menu.sh` | `Uninstall` / `Manual` entries cluttering the launcher: a Windows installer wrote Start-Menu shortcuts into its prefix and Wine republished each as an app entry. Removes the ones belonging to prefixes mosquitOmarchy manages, plus the empty publisher folders, and refreshes the desktop database. `--all-prefixes` widens it; the `NoDisplay` file associations are never touched. Also applied at the end of the audio plugin manager, the audio stack and the Guitar Pro setup. |
+| `terminal-padding` | `fix-terminal-padding.sh` | Omarchy pads every terminal by 14px and paints that padding with the theme background, so on a dark theme the text block reads as a dark slab inside a light window. Keeps the padding but makes it take the terminal's own background. `--remove` reverts. |
 
-Run them all: `./mosquitomarchy-setup.sh` → **setup → Quick fixes** (or pick them
-in the wizard's quick-fixes question).
-Run one directly: `bash scripts/fixes/<script>.sh`.
+## Modules
 
-## 2. Display / input / hardware modules
+These are real orchestrator modules, not quick fixes: they have their own `run_*` and appear
+in `--status` and under **Setup → Plugins**.
 
 | Module | Script | Doc |
 |---|---|---|
-| `brightness` | `fix-optimized-brightness.sh` | Perceptual (gamma) brightness — 0% = screen really off (DPMS). Deploys the `backlight` helper to `~/.local/bin/`. |
-| `keyboard-backlight` | `fix-keyboard-backlight-menu.sh` | Adds the Trigger > Hardware > Keyboard Backlight toggle + `kbd-toggle`. |
-| `mx-master` | `fix-mx-master.sh` | Logitech MX Master thumb gesture button → SUPER (logiops daemon) + a mouse-only pointer block (`mx-master.lua`: flat profile, no acceleration) that composes with the touchpad module in any order. |
-| `touchpad` | `fix-touchpad.sh` | Touchpad-only `hl.device` tuning (adaptive, sensitivity, scroll factor) — the mouse/trackpoint are untouched. |
+| `brightness` | `fix-optimized-brightness.sh` | Perceptual brightness, where 0% really means off via DPMS. Deploys a `backlight` helper. [notes](display-fixes.md) |
+| `keyboard-backlight` | `fix-keyboard-backlight-menu.sh` | A Trigger toggle plus `kbd-toggle`. [notes](display-fixes.md) |
+| `mx-master` | `fix-mx-master.sh` | Thumb button → `SUPER` via logiops, plus a mouse-only pointer block. [notes](fix-mx-master.md) |
+| `touchpad` | `fix-touchpad.sh` | Touchpad-only `hl.device` tuning. [notes](fix-touchpad.md) |
 
-Details and usage: see `display-fixes.md` (brightness + keyboard backlight),
-`fix-mx-master.md`, `fix-touchpad.md`. These are full orchestrator modules, so
-they also run through `mosquitomarchy-setup.sh` (setup → Plugins) and report their
-state in `--status`.
+`touchpad` and `mx-master` compose: each ships its own `hl.device` block in its own file, each
+handles only its own device, and they can be applied in either order or alone. Every value the
+MX Master fix writes can be overridden with `MX_MASTER_SENSITIVITY`, `MX_MASTER_DPI` and
+`MX_MASTER_SCROLL_FACTOR` before running it.
 
-## 3. Optional helper (not in the quick-fix list)
+## Invoked by a module, not offered on its own
 
-| Script | What it does |
-|---|---|
-| `fix-replace-evince-with-papers.sh` | Swaps the system document viewer for **Papers** (GNOME). Deliberately NOT auto-run: replacing the default PDF/DJVU/TIFF… handler is a system-wide change. `--status` / `--uninstall` supported; Evince stays installed as an invisible backend so Nautilus previews keep working. |
+`fix-daw-wine-runtime.sh` installs the `wine-d2d1-nspa` runtime wrappers that let REAPER and
+Bitwig share Ableton's Wine build. It is pointed at by the audio and REAPER setups when the
+runtime is missing, rather than being listed here to pick from.
 
----
+## Opt-in only
+
+`fix-replace-evince-with-papers.sh` swaps the system document viewer for Papers. It is
+deliberately **not** a quick fix and never offered automatically: changing the default PDF
+handler is a system-wide decision. `--status` and `--uninstall` are supported, and Evince
+stays installed as an invisible backend so previews keep working.
 
 ## Notes
 
-- The two display fixes are independent: brightness ≠ keyboard backlight, and
-  either can be applied alone. Re-running a script re-applies the change after
-  an Omarchy update overwrote `bindings.lua` / `hyprland.lua` — that is the
-  intended repair path (no manual diffing).
-- `scripts/fixes/backlight` is the deployed `~/.local/bin/backlight` helper
-  source, not a directory.
-- Quick-fix ids map 1:1 to the orchestrator's `FIXES` array; a fix not listed
-  there (e.g. the Papers swap) is deliberately opt-in and never offered
-  automatically.
+- `backlight` in this folder is the **source** of the deployed `~/.local/bin/backlight`
+  helper, not a directory.
+- A fix absent from the `FIXES` array is opt-in by design, and stays out of the automatic pass.
