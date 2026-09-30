@@ -94,6 +94,7 @@ func (m model) mainItems() []tuikit.PickerItem {
 		{Display: "Confirm before changing power profile: " + boolLabel(s.ProfilePrompt), Value: "profile_prompt"},
 		{Display: "Window gaps disabled during the session: " + boolLabel(s.NoGaps), Value: "gaps"},
 		{Display: "Silence notifications: " + boolLabel(s.SilenceNotifs), Value: "notifs"},
+		{Display: "Block package installation during the session: " + boolLabel(s.FencePackages), Value: "fence"},
 		{Display: "Reset defaults", Value: "reset"},
 		{Display: "Close", Value: "quit"},
 	}
@@ -148,6 +149,8 @@ func (m model) mainItemsWithPending() []tuikit.PickerItem {
 			items[i].Display = "Window gaps disabled during the session: " + boolLabel(target == "on")
 		case "notifs":
 			items[i].Display = "Silence notifications: " + boolLabel(target == "on")
+		case "fence":
+			items[i].Display = "Block package installation during the session: " + boolLabel(target == "on")
 		}
 	}
 	return items
@@ -179,6 +182,8 @@ func setPending(s Settings, row, target string) Settings {
 		s.NoGaps = target == "on"
 	case "notifs":
 		s.SilenceNotifs = target == "on"
+	case "fence":
+		s.FencePackages = target == "on"
 	}
 	return s
 }
@@ -363,6 +368,8 @@ func (m *model) apply(choice string) {
 		s.NoGaps = !s.NoGaps
 	case "notifs":
 		s.SilenceNotifs = !s.SilenceNotifs
+	case "fence":
+		s.FencePackages = !s.FencePackages
 	default:
 		return
 	}

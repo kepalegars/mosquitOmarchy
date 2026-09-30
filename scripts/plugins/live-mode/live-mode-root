@@ -12,6 +12,28 @@ PRE_STATE="$STATE_DIR/pre_state.json"
 
 BIN_DIR="$HOME/.local/bin"
 POWER_HELPER="/usr/local/bin/power-helper"
+SETTINGS_FILE="$REAL_HOME/.config/live-mode/settings"
+
+# fence_setting is the package fence, OFF unless the file says otherwise.
+#
+# The fence used to be unconditional and it was a mistake: it created
+# /var/lib/pacman/db.lck for the whole session, so EVERY package operation
+# failed with "unable to lock database" — installing a plugin, a driver, a font,
+# anything, at exactly the moment the user is most likely to want to. Live mode
+# installs nothing, so the lock protected nothing either.
+#
+# It is back because the idea is sound — pin the machine while a live session
+# runs — but only when asked for, and never in a way that can outlive the
+# session or trample a package manager that is mid-transaction.
+fence_setting(){
+  local v=""
+  [[ -f $SETTINGS_FILE ]] || { printf 'no\n'; return 0; }
+  # The file is shell-sourceable KEY="value", but it is USER-writable and this
+  # runs as root: read the one key with grep/sed rather than sourcing it, so a
+  # typo in the file cannot execute anything as root.
+  v="$(sed -n 's/^[[:space:]]*FENCE_PACKAGES[[:space:]]*=[[:space:]]*"\{0,1\}\([a-z]*\)"\{0,1\}[[:space:]]*$/\1/p' "$SETTINGS_FILE" 2>/dev/null | head -1)"
+  [[ $v == yes ]] && printf 'yes\n' || printf 'no\n'
+}
 
 mkdir -p "$STATE_DIR"
 
@@ -96,32 +118,59 @@ EOF
 
   # 5. Thermal: leave scaling_max_freq at current (max) — watchdog will cap
 
-  # 6. pacman is deliberately LEFT ALONE.
+  # 6. The package fence — ONLY when the setting asks for it.
   #
-  # This used to create /var/lib/pacman/db.lck for the whole session, described
-  # as a "fence". It protected nothing: live mode installs no packages, and
-  # nothing in it takes the lock. All it did was make every package operation on
-  # the machine fail with
+  # It used to be unconditional, and that was the bug: it created
+  # /var/lib/pacman/db.lck for the whole session, so every package operation on
+  # the machine failed with
   #
   #   error: failed to init transaction (unable to lock database)
-  #   error: could not lock database: File exists
   #
-  # for as long as the session lasted — installing a plugin, a driver, a font,
-  # anything, at exactly the moment the user is most likely to want to. A
-  # leftover db.lck after an unclean exit then broke pacman with no session
-  # running at all. Not fencing is the safe behaviour: a real package manager
-  # holds this lock itself for the few seconds it needs it, and there is
-  # nothing here to conflict with.
+  # for as long as the session lasted. Live mode installs nothing, so the lock
+  # protected nothing — it only got in the way, at exactly the moment the user
+  # is most likely to want to install a plugin, a driver or a font.
+  #
+  # Default is OFF and the restore removes it again. It is opt-in because the
+  # failure mode is total and silent: pacman says "unable to lock database" and
+  # nothing else ever tells you a live session is the reason.
+  local fenced=false
+  if [[ $(fence_setting) == yes ]]; then
+    if touch /var/lib/pacman/db.lck 2>/dev/null; then
+      fenced=true
+    else
+      echo "could not create the package fence; continuing without it" >&2
+    fi
+  fi
 
-  echo '{"status":"ok","applied":true}'
+  printf '{"status":"ok","applied":true,"fenced":%s}\n' "$fenced"
 }
 
 # ---------------------------------------------------------------------------
 # restore
 # ---------------------------------------------------------------------------
 
+# clear_package_fence removes a db.lck nobody holds.
+#
+# Split out of cmd_restore because the pre-state guard used to make it
+# UNREACHABLE in exactly the case it exists for: a session that ended uncleanly
+# has no pre_state, so restore exited before reaching the cleanup and the lock
+# it had created stayed forever, with pacman refusing to run and no live session
+# to explain it.
+#
+# The fuser guard is the one added when the fence was dropped in 7728430, kept
+# exactly: never remove a lock a RUNNING pacman owns, since removing one
+# mid-transaction is how a package database gets corrupted.
+clear_package_fence(){
+  if [[ -f /var/lib/pacman/db.lck ]] && ! fuser /var/lib/pacman/db.lck >/dev/null 2>&1; then
+    rm -f /var/lib/pacman/db.lck 2>/dev/null || true
+  fi
+}
+
 cmd_restore() {
   if [[ ! -f "$PRE_STATE" ]]; then
+    # Still clear a lock nobody holds: a session that died without writing its
+    # pre-state would otherwise leave pacman permanently broken.
+    clear_package_fence
     echo '{"error":"no pre-state found"}' >&2
     exit 1
   fi
@@ -155,16 +204,13 @@ cmd_restore() {
     [[ -f "$f" ]] && echo "$hw_max" > "$f" 2>/dev/null || true
   done
 
-  # Clean up a db.lck left behind by a previous version that did fence, or by
-  # a package manager that died mid-transaction. Only when nothing holds it —
-  # deleting a lock a running pacman owns is how you corrupt a database.
-  if [[ -f /var/lib/pacman/db.lck ]] && ! fuser /var/lib/pacman/db.lck >/dev/null 2>&1; then
-    rm -f /var/lib/pacman/db.lck 2>/dev/null || true
-  fi
+  # The lock this session created (or an older version's), released only when
+  # nothing holds it.
+  clear_package_fence
 
   rm -f "$PRE_STATE"
 
-  echo '{"status":"ok","restored":true}'
+  echo '{"status":"ok","restored":true,"fenced":false}'
 }
 
 # ---------------------------------------------------------------------------

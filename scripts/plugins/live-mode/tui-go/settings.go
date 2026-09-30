@@ -28,6 +28,13 @@ type Settings struct {
 	// seconds later and silently. power-saver and ultra-save are refused either
 	// way, and that refusal is not a setting.
 	ProfilePrompt bool
+	// FencePackages pins the machine by holding pacman's database lock for the
+	// session. It is OFF by default, and that default is the point: the fence
+	// used to be unconditional, and every package operation on the machine then
+	// failed with "unable to lock database" for as long as the session lasted.
+	// Live mode installs nothing, so the lock protected nothing. It is here for
+	// the times you WANT the machine pinned, never imposed.
+	FencePackages bool
 }
 
 func defaultSettings() Settings {
@@ -40,6 +47,7 @@ func defaultSettings() Settings {
 		SilenceNotifs: true,
 		SwitchTheme:   true,
 		ProfilePrompt: true,
+		FencePackages: false,
 	}
 }
 
@@ -92,6 +100,12 @@ func loadSettings() Settings {
 	if v, ok := kv["POWER_PROFILE_PROMPT"]; ok {
 		s.ProfilePrompt = v != "no"
 	}
+	// Matched on "yes" rather than "!= no": an unknown or empty value must
+	// leave the fence OFF. Defaulting this setting to ON because the file says
+	// nothing is the exact mistake the fence already made once.
+	if v, ok := kv["FENCE_PACKAGES"]; ok && v == "yes" {
+		s.FencePackages = true
+	}
 	return s
 }
 
@@ -107,7 +121,8 @@ func saveSettings(s Settings) error {
 		"NO_GAPS=\"" + boolVal(s.NoGaps) + "\"\n" +
 		"SILENCE_NOTIFICATIONS=\"" + boolVal(s.SilenceNotifs) + "\"\n" +
 		"SWITCH_THEME=\"" + boolVal(s.SwitchTheme) + "\"\n" +
-		"POWER_PROFILE_PROMPT=\"" + boolVal(s.ProfilePrompt) + "\"\n"
+		"POWER_PROFILE_PROMPT=\"" + boolVal(s.ProfilePrompt) + "\"\n" +
+		"FENCE_PACKAGES=\"" + boolVal(s.FencePackages) + "\"\n"
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 

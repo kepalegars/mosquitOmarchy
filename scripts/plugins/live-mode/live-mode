@@ -62,12 +62,34 @@ SILENCE_NOTIFICATIONS=yes
 SWITCH_THEME=yes
 
 load_settings() {
+  # Defaults FIRST, then the file, then normalisation.
+  #
+  # The order matters under `set -u`: the normalisation lines used to reference
+  # each variable before anything had assigned it, so a settings file written by
+  # an older version — one missing a key — aborted the whole command with
+  # "VAR: unbound variable". Reading a variable is what trips it, not the
+  # assignment that would have supplied the default. Assigning first means a
+  # partial file is a normal file.
+  #
+  # The fence default is "no" and, unlike the others, only an explicit "yes"
+  # turns it on: this one blocks pacman, and defaulting a setting that breaks
+  # package management because a file says nothing is exactly the mistake the
+  # unconditional fence already made once.
+  THERMAL_LIMIT_C=85
+  CLOSE_APPS=yes
+  CLOSE_APPS_LIST=""
+  ROUTING_TOOL=yes
+  NO_GAPS=yes
+  SILENCE_NOTIFICATIONS=yes
+  SWITCH_THEME=yes
+  FENCE_PACKAGES=no
   [[ -f $CONFIG_FILE ]] && source "$CONFIG_FILE" || true
+
   case $THERMAL_LIMIT_C in 95|90|85|80|75) ;; *) THERMAL_LIMIT_C=85 ;; esac
   [[ $CLOSE_APPS == no ]] || CLOSE_APPS=yes
   # Normalize the configured app list: keep only known app names, in fixed
   # order, as a space-separated string.
-  local known name
+  local known
   local filtered=""
   for known in kDrive qBittorrent Steam Discord Slack Spotify; do
     case " $CLOSE_APPS_LIST " in
@@ -75,12 +97,14 @@ load_settings() {
     esac
   done
   CLOSE_APPS_LIST="${filtered% }"
+  # The remaining four: only an explicit "no" turns them off, so a settings file
+  # written by an older version keeps the behaviour it had.
   [[ $ROUTING_TOOL == no ]] || ROUTING_TOOL=yes
   [[ $NO_GAPS == no ]] || NO_GAPS=yes
   [[ $SILENCE_NOTIFICATIONS == no ]] || SILENCE_NOTIFICATIONS=yes
-  # Same "absent means yes" rule: only an explicit "no" turns it off, so a
-  # settings file written by an older version keeps the theme switch.
   [[ $SWITCH_THEME == no ]] || SWITCH_THEME=yes
+  # The fence inverts that rule on purpose — see above.
+  [[ $FENCE_PACKAGES == yes ]] || FENCE_PACKAGES=no
 }
 
 # ---------------------------------------------------------------------------
@@ -904,11 +928,38 @@ cmd_on() {
 
   load_settings
 
-  # Step 1 — confirm activation (unless forced). Each line is kept short
-  # enough to fit the confirm dialog's card width on a single line
+  # Step 1 — confirm activation (unless forced).
+  #
+  # The bullet list is BUILT from the effective settings, not written out. It
+  # used to be one hardcoded string that always announced the patchbay, the
+  # notification silencing and the gap removal — whatever the manager was
+  # actually configured to do — and said nothing at all about the background
+  # apps it closes, the theme it switches, or the package fence. So the prompt
+  # was wrong in both directions at once: it claimed things that would not
+  # happen, and stayed silent about things that would.
+  #
+  # Same rule as the power-profile question: say what will be done, or do not
+  # claim it. Each line is kept short enough to fit the card width on one line
   # (the screen is narrow — a wrapped bullet breaks the prompt).
   if [[ "$force" != "yes" ]]; then
-    if ! confirm $'Activate Live Mode?\n• Max performance (audio optimized)\n• Thermal guard\n• Always awake (lid closed without sleeping)\n• mosquito patchbay in scratchpad (SUPER + S)\n• Notifications silenced\n• Gaps disabled'; then
+    _lm_bullets=(
+      "Max performance (audio optimized)"
+      "Thermal guard at ${THERMAL_LIMIT_C}°C"
+      "Always awake (lid closed without sleeping)"
+    )
+    [[ $CLOSE_APPS == yes ]] && _lm_bullets+=("Close ${CLOSE_APPS_LIST:-(no app selected)}")
+    [[ $ROUTING_TOOL == yes ]] && _lm_bullets+=("mosquito patchbay in scratchpad (SUPER + S)")
+    [[ $NO_GAPS == yes ]] && _lm_bullets+=("Gaps disabled during the session")
+    [[ $SILENCE_NOTIFICATIONS == yes ]] && _lm_bullets+=("Notifications silenced")
+    [[ $SWITCH_THEME == yes ]] && _lm_bullets+=("Switch to the Live theme")
+    # The fence is the one line that must be visible when it is on, because it
+    # is the one that makes the machine refuse to install anything.
+    [[ $FENCE_PACKAGES == yes ]] && _lm_bullets+=("Package installation BLOCKED for the session")
+    _lm_card="Activate Live Mode?"
+    for _lm_b in "${_lm_bullets[@]}"; do
+      _lm_card+=$'\n'"• ${_lm_b}"
+    done
+    if ! confirm "$_lm_card"; then
       ok "Aborted."
       return 0
     fi
