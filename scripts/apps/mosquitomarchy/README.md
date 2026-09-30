@@ -1,55 +1,49 @@
-# mosquitOmarchy (the launcher TUI)
+# mosquitomarchy — the launcher TUI
 
-The Go/Bubble Tea interface for the mosquitOmarchy setup launcher. It replaced
-the old `gum`-based `launcher_menu` of `mosquitomarchy-setup.sh`: every decision
-(which module, which items, confirm/cancel) is made here, and every action
-shells out to the engine — no business logic is reimplemented in Go.
+The Go/Bubble Tea interface to the setup launcher. Every decision is made here and every
+action shells out to the engine, so no business logic is reimplemented in Go.
 
-```
-mosquitomarchy              # dispatcher: opens the TUI (in a terminal, or in foot if detached)
-mosquitomarchy-tui          # the compiled Bubble Tea program (built by the installer)
-mosquitomarchy-actions      # non-interactive backend, sources mosquitomarchy-setup.sh in LIB_ONLY mode
+```bash
+mosquitomarchy          # dispatcher: execs the TUI (foot -e if not on a tty)
+mosquitomarchy-tui      # the compiled program, built by the installer
+mosquitomarchy-actions  # non-interactive backend
 ```
 
-`mosquitomarchy-setup.sh` is still the engine and remains usable by hand; the TUI
-is the recommended interface.
+`mosquitomarchy-setup.sh` stays the engine and still works by hand; this is the recommended
+interface.
 
 ## Screens
 
 | Screen | What it does |
 |---|---|
-| **Status** | Every module with a state dot (● ok, ◐ partial, ○ missing, · n/a) and an "(uninstalled by you)" tag. Scrollable. |
-| **Update** | Checks the scripts repo for a newer version and the changed installed modules; offers `Update the repo` and re-applying the selected modules. |
-| **Setup** | One expandable tree of every category (folders) and its installable items — see below. |
-| **Uninstall** | The SAME category/folder tree as Setup, but only the **installed** entries; `enter` uninstalls the checked items (or the highlighted row). |
-| **Health check** | Lists what drifted from your chosen install — partially-installed modules (files went missing) and missing mosquitOmarchy pieces (TUI, float rule, menu entry, shortcut, update hook, crash skill) — then offers to **re-apply** them cleanly. |
-| **Backup / Restore** | Create a dated archive (plain `.tar.gz` or encrypted AES-256 `.gpg`), or restore one. |
-| **Close** | Asks for confirmation, then leaves. |
+| **Status** | Every module with a state dot — ● ok, ◐ partial, ○ missing, · n/a — and an "(uninstalled by you)" tag. Scrollable. |
+| **Update** | Whether the scripts repo moved, and which installed modules changed; offers the pull then re-applying the selection. |
+| **Setup** | The category tree, then each category's items. |
+| **Uninstall** | The same tree, showing only what is actually installed. |
+| **Health check** | What drifted from your install: modules that went partially missing, and missing mosquitOmarchy pieces (TUI, float rule, menu entry, shortcut, update hook, crash skill). Offers to re-apply. |
+| **Backup / Restore** | A dated archive, plain or encrypted, or restoring one. |
+| **Close** | Confirm, then leave. |
 
 ## Setup
 
-Setup is two levels. The first screen lists the **categories** as plain
-options, plus **Menu entry**, **Add shortcut for mosquitOmarchy** and
-**Install selection**; entering a category opens its **folder tree** — the same
-folder lists the Audio Plugin Manager uses. Categories and the scripts inside
-them are always listed in **alphabetical order**:
+Two levels. The first lists the categories as plain options plus **Menu entry**, **Add
+shortcut for mosquitOmarchy** and **Install selection**; entering a category opens its
+**folder tree**. Categories and the items inside them are always **alphabetical** — the counts
+come from the backend, so the shape is:
 
 ```
-Apps  (9)
-mosquito  (5)  ■
-Quick fixes  (2/6)  ■
+Apps  (n)
+mosquito  (n)  ■
+Quick fixes  (checked/total)  ■
 Menu entry
 Add shortcut for mosquitOmarchy
 Install selection
 Back
 ```
 
-A category that has checked items shows a **■** and the **selected count**
-(`(2/6)`), and **Install selection** (greyed out and skipped when nothing is
-checked) installs every selection from all submenus at once, after a
-confirmation that lists them. `Menu entry` registers the launcher in the
-Omarchy menu; `Add shortcut for mosquitOmarchy` binds **SUPER + ALT + M** to
-open the TUI (offered once on the very first launch, then available here).
+A category with checked items shows **■** and the count. **Install selection** — greyed out
+and skipped when nothing is checked — installs everything ticked across all submenus at once,
+after a confirmation that lists them.
 
 ```
 ▾ ●  mosquito
@@ -57,123 +51,108 @@ open the TUI (offered once on the very first launch, then available here).
     └─ ●  mosquito-jamjamjam
 ```
 
-- `tab` toggles the highlighted row. On a **folder** head it selects/deselects
-  every child at once (one keystroke always flips to an extreme).
-- `←` / `→` collapse / expand the folder under the cursor.
-- `i` opens an **info** popup with the highlighted entry's full description —
-  row descriptions are never shown inline (this includes the Setup **Menu
-  entry** option).
-- `enter` **installs only what is checked in the current category**, after a
-  confirmation listing those items; the shortcut bar always reads
-  `enter install selection`. `Back` returns one level up (level 1 then shows
-  the per-category selected counts).
-- The **mosquito** title is highlighted in the theme accent and blinks (the
-  count next to it stays static).
+| Key | Effect |
+|---|---|
+| `tab` | toggles the highlighted row; on a **folder** head it selects or deselects every child at once, so one keystroke always lands on an extreme |
+| `←` `→` | collapse / expand the folder under the cursor, or change a row that cycles a short list |
+| `i` | info popup with the entry's full description — never shown inline |
+| `enter` | install the current category's selection, after a confirmation listing it |
+| `?` | every shortcut |
+| `esc` | back |
 
-**Missing installer prompt** — some apps (Ableton, Bitwig, Guitar Pro, DaVinci)
-need a file you download by hand. Before running a selection, the TUI asks the
-backend which of the selected apps is missing its installer and, if any, shows
-a dialog naming the exact file and download link **instead of running** — so the
-failure is never buried in the run log. The same check aborts (with the file
-name) when a `setup-*.sh` is run non-interactively.
+`Back` returns one level up, and level 1 then shows the per-category counts. The **mosquito**
+title is highlighted in the theme accent.
 
-**Menu entry** (a first-level Setup option) adds/refreshes the mosquitOmarchy
-entry in **Omarchy menu → Install → mosquitOmarchy**
-(`~/.config/omarchy/extensions/omarchy-menu.jsonc`); it is idempotent.
+**Missing installers.** Ableton, Bitwig, Guitar Pro and DaVinci need a file downloaded by
+hand. Before running a selection the TUI asks the backend which of them is missing, and shows
+a dialog naming the file and its download link **instead of running** — so the failure is never
+buried in the run log. The same check aborts, naming the file, when a `setup-*.sh` is run
+non-interactively.
 
-Option rows that cycle a short list (VST mode, KeePass include/skip, encrypt
-yes/no) are changed with **←/→**.
+**Menu entry** adds or refreshes the launcher in `~/.config/omarchy/extensions/omarchy-menu.jsonc`
+(**Omarchy menu → Install → mosquitOmarchy**). It is idempotent.
 
 ## Uninstall
 
-**Uninstall** is the mirror of Setup: the same categories, in the same
-alphabetical order, but each folder lists only the entries that are actually
-**installed** (and not already marked uninstalled by you). `tab` selects,
-`enter` uninstalls the checked items — or the highlighted row when nothing is
-checked — after a confirmation. Like Setup, level 1 also offers **Uninstall
-selection** (greyed out when nothing is checked), which removes everything
-ticked across all folders at once. Module entries call the module's own
-uninstall; catalog entries (TUIs/webapps) are routed to the apps module's
-uninstaller. The list refreshes after each removal, so entries disappear as they
-go.
+The mirror of Setup: same categories, same order, but each folder lists only what is
+**installed** and not already marked removed by you. `enter` removes the checked items, or the
+highlighted row when nothing is checked, after a confirmation. **Uninstall selection** at level
+1 removes everything ticked across all folders at once, and a global run removes the ticked
+bindings too. The list refreshes after each removal, so entries disappear as they go.
 
-Three extra folders only exist here:
+Three folders exist only here: **Patches** (shown only when an installed app has an applied
+patch — removing one runs its `--revert`), **Quick fixes** (run with their `--remove`), and
+**Menu & shortcuts** (the menu entry and/or `SUPER + ALT + M`).
 
-- **Patches** — shown only when an installed app has an **applied** patch
-  (DaVinci, Ableton, Bitwig, Guitar Pro); uninstalling one runs the patch's
-  `--revert` (e.g. restores the stock `resolve` binary).
-- **Quick fixes** — the quick fixes that can be removed, run with their
-  `--remove`/`--uninstall` mode.
-- **Menu & shortcuts** — removes the mosquitOmarchy Omarchy-menu entry and/or
-  the `SUPER + ALT + M` shortcut.
+## Keybindings
+
+There is no external keybindings script: this TUI owns the `SUPER` bindings of the package
+(Setup ▸ keybindings). It edits `~/.config/hypr/bindings.lua` directly, inside one reversible
+marked block, so removing the block restores Omarchy's defaults.
+
+Rows are the managed bindings, plus categories to add one — package app, quick function,
+Ableton Move, custom command. `enter` binds and proposes a Hyprland reload to validate the
+config. Choosing a key that is an Omarchy **default** unbinds it first, with a comment saying
+what it replaced. The Uninstall flavor adds a **Reset** row that wipes every binding this
+package manages, behind a precise confirmation.
+
+The primitives are `kb-list`, `kb-add`, `kb-remove`, `kb-reset`, `kb-reload` and `kb-free`
+subcommands of `mosquitomarchy-actions`, in `scripts/lib/keybindings.bash`.
 
 ## Backup encryption
 
-Backups are dated archives of `~/.config` (hypr, terminal, Omarchy extensions
-and plugins, keymaps, app preferences…) written to `~/omarchy-backups`.
-**Backup options** asks the same content questions as the old flow before
-building the archive:
+The backup writes dated archives of `~/.config` — hypr, terminal, Omarchy extensions and
+plugins, app preferences — to `~/omarchy-backups`, and asks the content questions before
+building: a checkbox tree of installed catalog entries (pre-checked from the last backup, saved
+as `apps.selected`), VST plugins as *list only* / *full files* / *skip*, KeePassXC passwords
+include/skip, and encryption. The passphrase is asked twice, passed through
+`OMARCHY_BACKUP_PASSPHRASE` rather than argv, and asked again on restore. See the
+[root README](../../../README.md#mosquitomarchy-setupsh) for what the plugin-folder option
+does and why it is never automatic.
 
-- **Apps / TUIs / webapps** — a checkbox tree of the installed catalog entries
-  (pre-checked from the previous backup), written to `apps.selected`.
-- **VST plugins** — `list only` / `full files` / `skip`.
-- **KeePassXC passwords** — include / skip (only offered when installed).
-- **Encrypt** — `no`, or `yes` (AES-256 `.gpg`), with the passphrase asked
-  twice; it is passed through `OMARCHY_BACKUP_PASSPHRASE` (never argv) and
-  asked again on restore.
+## Crash reporting
 
-## Crash reporting & AI diagnosis
-
-When a mosquitOmarchy run fails, the TUI stores **one dated log per session**
-in `.local/crash-logs/` (repo-local: **never committed, never archived**) and
-raises a **critical, clickable Omarchy notification**. Clicking it opens the
-default coding agent on the **mosquitomarchy-crash** skill, pointed at that
-exact log: the agent diagnoses the failure and **proposes** fixes (a diff or
-exact commands) without applying anything, then waits for confirmation.
+A failed run stores **one dated log per session** in `.local/crash-logs/` (repo-local: never
+committed, never archived) and raises a critical, clickable notification. Clicking it opens the
+default coding agent on the **mosquitomarchy-crash** skill, pointed at that log; the agent
+diagnoses and **proposes** a fix without applying anything.
 
 ```bash
-mosquitomarchy-crash <logfile> [tool]     # what the notification clicks
-scripts/lib/crash.bash                    # mq_crash_guard / mq_crash helpers
-scripts/apps/mosquitomarchy/skills/mosquitomarchy-crash/SKILL.md
+mosquitomarchy-crash <logfile> [tool]   # what the notification clicks
 ```
 
-Every **non-install** script sources `scripts/lib/crash.bash` and calls
-`mq_crash_guard "<tool>"`, so a failure anywhere routes to the same flow
-(install scripts `setup-*.sh` are deliberately exempt). The skill is symlinked
-into `~/.agents/skills/mosquitomarchy-crash`, so any AI harness that reads
-skills (OpenCode first) discovers it automatically.
+Every non-install script sources `scripts/lib/crash.bash` and calls `mq_crash_guard "<tool>"`;
+`setup-*.sh` installers are exempt because the orchestrator reports their failures itself. The
+skill is symlinked into `~/.agents/skills/`, so any agent that reads skills finds it.
 
-## Backend (`mosquitomarchy-actions`)
+## Backend
 
-Read-only queries print JSON-Lines to stdout; actions print prose that the TUI
-streams live. It sources `mosquitomarchy-setup.sh` with
-`MOSQUITOMARCHY_LIB_ONLY=1` and `GUI_RUN_EXEC=1` (so `gui-run.bash` never
-re-opens a terminal under the Runner).
+`mosquitomarchy-actions` prints JSON-Lines for queries and prose for actions, which the TUI
+streams live. It sources the orchestrator with `MOSQUITOMARCHY_LIB_ONLY=1` and `GUI_RUN_EXEC=1`
+so `gui-run.bash` never re-opens a terminal underneath it.
 
 ```
-status | setup | backup-options | backups | update-check | categories | candidates <c> | fixes   # queries
-install <cat> <keys…> | apply <group>… | fixes-run <ids…> | update <ids…> | update-repo
-uninstall <ids…> | menu-entry | backup [--vst=… --keepass=… --selection=FILE] | restore <file>
+queries   status · setup · health · fixes · categories · candidates <c>
+          backup-options · backups · update-check · shortcut
+actions   install <cat> <keys…> · apply <group>… · fixes-run <ids…> · update <ids…>
+          update-repo · uninstall <ids…> · menu-entry · backup · restore <file>
 ```
 
-`apply` takes one argument per folder, TAB-separated: `folder<TAB>key<TAB>key…`.
+`apply` takes one TAB-separated argument per folder: `folder<TAB>key<TAB>key…`. Root operations
+go through the native pkexec prompt (`mq_sudo`), with a `sudo`→`pkexec` shim for the per-module
+scripts since the runner has no tty.
 
-Root operations run through the native **pkexec** prompt (`mq_sudo`, plus a
-`sudo`→`pkexec` shim for the per-module scripts, since the Runner has no tty).
+## Build and files
 
-## Build / deploy
+`ensure_mosquitomarchy_tui` in `mosquitomarchy-setup.sh` builds `tui-go/` with `go build` into
+`~/.local/bin/mosquitomarchy-tui`, symlinks the backend beside it (a symlink, not a copy, so it
+keeps finding the repo), copies the dispatcher, and adds a Hyprland rule so the TUI opens
+floating and centered. It runs from the menu category and from every normal install.
 
-`ensure_mosquitomarchy_tui` in `mosquitomarchy-setup.sh` builds `tui-go/` with
-`go build` into `~/.local/bin/mosquitomarchy-tui`, symlinks
-`mosquitomarchy-actions` beside it (a symlink, not a copy, so the backend keeps
-finding the repo), copies the `mosquitomarchy` dispatcher, and adds a Hyprland
-window rule so the TUI opens floating + centered instead of tiled. It runs from
-the `menu` category and from every normal install.
-
-## Files
-
-- `tui-go/` — the Bubble Tea program (model/screens/view, `actions.go` backend glue).
-- `mosquitomarchy` — dispatcher (tty → exec the TUI; else `foot -e`, falling back to `xterm`).
-- `mosquitomarchy-actions` — the non-interactive backend.
-- `mosquitomarchy-agent-crash` — opens the default agent on one crash log (clicked from the notification).
-- `skills/mosquitomarchy-crash/SKILL.md` — the diagnosis skill (any AI; symlinked into `~/.agents/skills`).
+| File | Role |
+|---|---|
+| `tui-go/` | the program: `model.go`, the screens, `view.go`, `actions.go` |
+| `mosquitomarchy` | dispatcher: a tty execs the TUI, otherwise `foot -e`, falling back to `xterm` |
+| `mosquitomarchy-actions` | the non-interactive backend |
+| `mosquitomarchy-agent-crash` | opens the agent on one crash log |
+| `skills/mosquitomarchy-crash/SKILL.md` | the diagnosis skill |
