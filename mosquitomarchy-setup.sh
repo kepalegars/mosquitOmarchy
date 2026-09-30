@@ -627,7 +627,8 @@ FIXES=(
   "1px-seam:Hair-thin transparent 1px line between the Omarchy bar and a window in borderless/no-gaps tiling — switch the blur to its legacy path (helps when blur is enabled; reversible)"
   "ableton-fullscreen:Ableton Live Full Screen is shifted/broken (content sits off where you click) — launches Live with WINE_WIN32_FULLSCREEN_CLASS=off (documented ableton-linux cure; drag-the-window alternative): (reversible)"
   "omarchy-bar:The Omarchy toolbar disappeared (toggled off / slid off-screen) — clear the bar-off toggle and re-sync the shell"
-  "wine-menu:'Uninstall'/'Manual' entries cluttering the launcher: a Windows installer (smartEQ, FabFilter, CrispyTuner, Guitar Pro…) published its Start-Menu shortcuts and Wine turned each one into an app-menu entry — drop the ones belonging to the prefixes mosquitOmarchy manages (idempotent; the file associations are kept)"
+  "wine-menu:'Uninstall'/'Manual' entries cluttering the launcher: a Windows installer (smartEQ, FabFilter, CrispyTuner, Guitar Pro…) published its Start-Menu shortcuts and Wine turned each one into an app-menu entry — drop the ones belonging to the prefixes mosquitomarchy manages (idempotent; the file associations are kept)"
+  "terminal-padding:Omarchy pads every terminal by 14px and paints that padding with the theme background (near-black on the dark themes), so the text block reads as a dark slab floating inside a light window with a heavy frame between the two — keep the padding, make it take the terminal's own background (reversible)"
 )
 
 fix_desc(){ # id -> description
@@ -644,6 +645,7 @@ fix_category(){
   case $1 in
     keepassxc-window) echo "Windows & input" ;;
     tui-theme)        echo "Appearance" ;;
+    terminal-padding) echo "Appearance" ;;
     omarchy-menu)     echo "Omarchy" ;;
     omarchy-bar)      echo "Omarchy" ;;
     hyprland-crash)   echo "Recovery" ;;
@@ -749,6 +751,7 @@ run_fix(){ # single fix by id
     1px-seam) bash "$SCRIPT_DIR/scripts/fixes/fix-1px-seam.sh" ;;
     omarchy-bar) bash "$SCRIPT_DIR/scripts/fixes/fix-omarchy-bar.sh" ;;
     wine-menu) bash "$SCRIPT_DIR/scripts/fixes/fix-wine-menu.sh" ;;
+    terminal-padding) bash "$SCRIPT_DIR/scripts/fixes/fix-terminal-padding.sh" ;;
     *) err "Unknown fix: $id"; return 1 ;;
   esac
 }
