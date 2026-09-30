@@ -1,234 +1,141 @@
 # jamjamjam
 
-> **STATUS: ULTRA-ALPHA / very unstable.** Expect several features to be
-> missing or not working correctly yet (metronome sounds, AEC, chord box,
-> progressions, settings UX…) — this is NOT an end-usable plugin at this
-> stage; it is in active development on this machine only.
+An Omarchy bar widget that listens to what you are playing and reports the **key**, the
+**BPM** and the **chord**, with a guitar-neck view, an input tuner and optional MIDI output.
 
-Omarchy bar-widget plugin that analyzes audio in real time: detects the musical
-key, the BPM and the chord being played right now. Includes a guitar-neck scale
-visualizer, an input tuner, an optional Shazam song hook, and a full
-guitar-neck TUI with a hold-to-detect analysis button.
+> **Alpha.** Developed on one machine only. Expect missing or rough edges.
 
+## Privacy
 
-## CPU / memory cost (bench)
+Two guarantees, and they are the reason the capture is gated rather than always-on:
 
-`bench_cpu_analysis.py` (next to the backend, in this folder) runs 10 s of the
-REAL pipeline against a synthesized guitar-like stream and prints a README
-line; runs in ~0.2 s by itself.
+- **The microphone is never used while the plugin is closed.** The tuner's mic capture is
+  hard-gated in the backend: it runs only while the panel is open, an analysis hold is
+  active, or the neck TUI session is open. Nothing is captured in the background.
+- **No audio is ever written to disk.** What is captured lives in small in-memory ring
+  buffers. What survives a session is analysis metadata only — key, BPM, chord, tuner
+  results, config, MIDI choice — under `~/.local/state/jamjamjam/` and
+  `~/.config/jamjamjam/`.
 
-Bench on this machine (2026-09-24):
+## Detection
 
-* analysis pass latency: mean 12.2 ms (p95 12.1 ms, max ~88 ms)
-* CADENCE: one analysis pass is scheduled ONCE PER SECOND (run_analysis_pass
-  loop at 1 Hz) — so the pass costs ~1.2 % of one CPU core.
-* memory: peak 21.8 MiB during the analysis (numpy buffers); the process size
-  stays well under 40 MiB.
-* tuner single pass over 4 s of mic audio: ~91 ms (runs only as long as the
-  panel is open — see the privacy section).
+- **Source.** By default it analyses the PipeWire **monitor of the default sink**, so it
+  hears what the system plays rather than what the room hears. A header button switches the
+  analysis source between that monitor and the default microphone; it does not affect the
+  tuner, which always listens to the default mic so it works whatever you are analysing.
+- **Key** — Krumhansl-Schmuckler profile over harmonic chroma, with a confidence percentage.
+  Adopted only after holding across two analyses, and the confidence gates the fretboard.
+- **BPM** — onset-envelope autocorrelation over the same window, so tempo locks within a
+  couple of seconds, plus an estimated 4/4 vs 3/4.
+- **Chord** — an extended dictionary (maj, m, 7, maj7, m7, m7♭5, dim, dim7, 6, m6, sus2, sus4,
+  add9) with a separate bass chroma for slash chords and inversions, preferring the smallest
+  chord that explains the notes so a triad is not read as a maj7.
+- **It does not guess.** Chunks below the silence floor are skipped, a chord must be tonally
+  peaked and must beat the runner-up, and the key needs a tonal peak too. One note or a noisy
+  spectrum reports *no chord* rather than a wrong answer, and a sustained shift announces
+  *"new song detected — press r to reset"* instead of silently changing the key.
 
-README line: "analysis ≈ 12 ms once per second (1.2 % of one core); peak
-memory 21.8 MiB"
+Chord-progression and loop detection are **disabled for now** (`PROGRESSION_ENABLED = False`
+in the backend; the code is kept to re-enable). The panel and the TUI show a live estimate of
+the chord currently playing instead. This is deliberately not presented as a feature — the
+detection was not reliable enough.
 
-## Features
+## The panel
 
-* **Icon-only bar button** (♪) — a pulsing red dot appears while recording, and
-  a pulsing ring frames the icon while an **analysis hold** is active (the
-  TUI's key or the global RIGHT CTRL), so the hold is visible from the bar even
-  when the neck TUI is not focused.
-  Left-click opens the panel; right-click toggles recording.
-* **Capture lifecycle** — the panel's real-time analysis runs while the *panel is
-  open*, unless a TUI owns the session (then only the TUI's hold captures) or
-  the analysis is paused. Capture auto-stops (and analysis is reset) once
-  nothing needs it.
-* **PRIVACY — the microphone is NEVER used while the plugin is closed.** The
-  tuner's mic capture is hard-gated in the backend: the microphone only runs
-  while the panel is open, an analysis hold is active, or the guitar-neck TUI
-  session is open. Nothing is captured in the background "just in case".
-* **PRIVACY — no audio is ever written to disk.** The captured audio lives only
-  in small in-memory ring buffers; what survives across sessions is analysis
-  metadata only (key/BPM/chord/tuner results, config, MIDI port choice) stored
-  under `~/.local/state/jamjamjam/` and `~/.config/jamjamjam/`.
-* **System-audio analysis** — captures the PipeWire monitor of the default sink
-  automatically, so it hears exactly what the system plays (not the mic).
-* **INPUT PC/MIC** — the header button (a squared icon button: computer-screen =
-  PC audio, microphone = mic) switches the *analysis* source between the speaker
-  monitor (PC) and the default microphone. It does **not** affect the tuner.
-* **Input tuner** — always listens to the **default microphone**, independent of
-  the INPUT setting, so it works whatever you are analyzing. YIN pitch detection
-  (vectorised FFT autocorrelation) with note + octave and a sharp/flat cent
-  indicator in both the panel and the TUI. The **whole tuner is shown all the
-  time**: with no note it reads a full **"no note"** (panel: a full-size dash)
-  plus the needle gauge drawn empty, rather than a tiny dash, and the TUI header
-  always draws the gauge `♭·····│·····♯` (with the needle only when a note is
-  detected). When the default source is muted or unavailable both tuners clearly
-  say **"mic muted"** instead of staying silent.
-* **Reinforced detection** — the analyzer never invents a key/chord/BPM out of
-  silence or broadband noise: chunks below the silence floor are skipped
-  entirely (RMS gate), a chord must be **tonally peaked** (a few pitch classes,
-  not a flat noisy chroma) and must clearly beat the runner-up template, and the
-  key needs a tonal peak too. A single note or a noisy spectrum reports **no
-  chord** instead of a wrong guess.
-* **Pause** — the play/pause icon button next to the reset icon (Material
-  Design glyphs shared with the rest of the shell) freezes the analysis (and
-  stops capture) without losing the current results. `p` in the panel.
-* **Reset** — the reset icon really empties the display: key, BPM, current
-  chord, its notes, the progression and the guitar neck all clear at once. It
-  also drops the analyzer's audio window so the cleared state is actually
-  visible instead of the next analysis pass re-detecting the still-playing
-  audio within a fraction of a second.
-* **Plugin keys** — `g` opens the TUI, `r` resets the analysis, `space`
-  resumes/restarts the (auto-stopped) analysis, `p` pauses, `m` toggles MIDI,
-  `n` toggles flats/sharps, `s` opens settings.
-* **Metronome from the BPM card** — click the **BPM card** to toggle the
-  metronome at the detected BPM (120 while no BPM is known). While it runs, the
-  card flashes **white once per beat** at that tempo, and the TUI's `m` key
-  drives the same metronome.
-* **Robust capture** — PC audio is captured from the **sink monitor via
-  `parec`**, which samples the mix **before the output volume and mute**, so
-  detection keeps working even when the speakers are muted or at 0. The backend
-  re-resolves the default sink every 3 s and follows output-device changes
-  (internal / HDMI / Bluetooth / jack) so it never keeps listening to a stale,
-  now-silent device. (`pw-record --target <sink>.monitor` was measured to record
-  *silence* on PipeWire 1.6 — monitors are ports, not nodes — which was the old
-  detection bug.) The analysis window bug is fixed too: `take()` used to return
-  the *oldest* 2 s and advance one hop, so the analyzer re-heard ~2 s-stale
-  audio; it now analyses the most recent window.
-* **Key detection** (Krumhansl-Schmuckler profile on harmonic chroma), shown
-  with a confidence percentage; the key is adopted only after holding for two
-  analyses, and `keyStable` gates the fretboard.
-* **BPM detection** (onset-envelope autocorrelation over the *same* 2 s window
-  as the key, so tempo locks in within a couple of seconds) and an estimated
-  **time signature** (4/4 vs 3/4) shown in the BPM card and the TUI header.
-* **Chord detection with quality** — an extended dictionary (maj, m, 7, maj7,
-  m7, m7♭5, dim, dim7, 6, m6, sus2, sus4, add9) matched against a harmonic,
-  pitch-class chroma with a separate **bass chroma** for **slash chords /
-  inversions** (e.g. `Fmaj7/A`). Prefers the smallest chord that explains the
-  notes, so a triad is not read as a maj7. The panel's chord card shows **only
-  the chord name** (centred, elided); the line below shows the notes.
-* **Silence detection** — when the capture hears no music (RMS silent for a few
-  seconds) the backend flags `noSignal` and the panel/TUI say
-  *"could not find the chord"* instead of a stale chord.
-* **Independent TUI and plugin** — the backend keeps capturing while the panel
-  is open **or the neck TUI is open**, so the TUI gets the same live key / BPM /
-  chord detection as the panel (previously it only heard audio during a hold).
-* **Pin the panel** — clicking the red **♪** icon in the header (hover shows the
-  hint) **pins** the panel: it stays open and its popup input region shrinks to
-  the card, so clicks fall through and you can keep using other apps while the
-  detection keeps running. Click ♪ again (or close the panel) to unpin.
-* **Analysis lock** — once the key is confidently in mind the analysis
-  **stops on its own** (capture pauses). Press **space** in the panel (or use a
-  global RIGHT CTRL hold) to resume/restart it at any time.
-* **Song-change detection** — a sustained key + chroma shift means the source
-  moved to another song; the panel and TUI then show
-  *"new song detected — press r to reset"*.
-* **TUI-owned analysis** — the analysis hold is the global **RIGHT CTRL**
-  (press-and-hold; release to freeze). Only the detection progress is shown
-  while holding — results appear on release.
-* **Live chord estimate (progression set aside)** — chord-progression detection
-  and loop detection were not reliable enough, so they are **disabled for now**
-  (`PROGRESSION_ENABLED = False`; the `ChordSeq` code is kept intact to
-  re-enable later). In their place the UIs show a **real-time estimate of the
-  chord being played right now** — the chord name plus its notes, refreshed each
-  analysis pass (the panel's CHORD card, and the TUI line below the neck).
-* **Guitar neck TUI** — the **Open TUI** toolbar button (flush with the right
-  edge, aligned with the chord card; MIDI sits on the left) opens a
-  **floating-centered prompt**
-  (`jamjamjam-tui`, single instance — a second launch refocuses the running
-  window). It opens on the same `mosquito jamjamjam` splash as the other
-  mosquito TUIs for 1.5 s. Layout: the key/BPM header is **pinned at the very
-  top** with the tuner (note + cents + needle gauge — no input-source label);
-  the `jamjamjam` wordmark floats **below the header, vertically centred in the
-  page and horizontally centred**, framed by a red rounded box while an
-  analysis is being held; the scale/chord line, the large fretboard (**high
-  strings on top, low at the bottom**, white string lines, grey fret lines) and
-  the live chord line are all **horizontally centred**. The fret numbers
-  are printed **only below the neck** and the vertical fret lines **stop at the
-  strings** (they never run into the numbers). Shortcuts:
-  `hold Right Ctrl · m metronome · r reset · s settings · ? help · q quit`.
-  `s` opens the settings (note naming); `?` opens the help
-  (which explains R = root, the digits, and the orientation).
-* **Global analyze shortcut** — the **RIGHT CTRL** key (hold) runs the analysis
-  even when the neck TUI is **not focused**, and only while the TUI is open.
-  Right Ctrl stops acting as Ctrl and becomes the dedicated analyze hold. The setup
-  script installs it into `~/.config/hypr/bindings.lua` as two halves (a
-  modifier keysym gives no usable keydown for a bind): press on the physical
-  keycode `code:105` (`evdev KEY_RIGHTCTRL 97 + 8`) and release on
-  `CTRL + Control_R` — the form Hyprland actually matches on keyup — plus the
-  push-to-talk helper behind it.
-* **Theme-aware** — the panel, fretboard and tuner read the active Omarchy
-  theme (accent, foreground, background, muted, urgent) at runtime, so colors
-  keep following the current theme without hard-coded values. The **GUITAR**
-  toolbar button is filled with the theme **accent**, and its label switches
-  black/white to whichever contrasts most with that fill (BT.601 luminance).
-* **MIDI mode** — detects connected MIDI devices (aseqdump), displays the chord
-  currently played in real time, and drives a simple 5-waveform synthesizer
-  (sine, triangle, sawtooth, square, organ) streamed to PipeWire. The enable
-  control is a **compact switch** on the MIDI MODE header row (a full labelled
-  toggle row used to overflow the header), SOUND/MUTED sits on its own row next
-  to RESCAN, and the detected chord is a single compact line instead of a box.
-* **Optional song identification** — the setup script installs `shazamio` when
-  it can (`pip install --user shazamio`, retrying with
-  `--break-system-packages` on Arch's PEP 668; never fatal). When importable,
-  the last seconds of the monitor capture are matched and the title/artist
-  shown. Note: on Python 3.14 the pydub→audioop chain isn't usable yet, so
-  matching stays cleanly off there (`song.available:false`).
+A ♪ icon in the bar: a pulsing red dot while recording, a pulsing ring while an analysis hold
+is active, so the hold is visible from the bar even when the TUI is not focused. Left-click
+opens the panel, right-click toggles recording. Clicking the icon pins the panel — it stays
+open with its input region shrunk to the cards, so clicks fall through and you can keep working.
+
+`g` opens the TUI · `r` resets · `space` resumes the auto-stopped analysis · `p` pauses without
+losing results · `m` toggles MIDI · `n` toggles flats/sharps · `s` opens settings. Clicking the
+**BPM card** toggles the metronome at the detected tempo, and the card flashes white per beat.
+
+Analysis stops on its own once the key is confidently in mind; `space` restarts it at any time.
+
+## The neck TUI
+
+`jamjamjam-tui` (also the **GUITAR** button) opens a single floating, centered window — a
+second launch refocuses the running one. The key/BPM header and the tuner are pinned at the
+top, the `jamjamjam` wordmark floats centred below it in a red box while a hold is active, and
+the scale line, the fretboard and the live chord line are centred under it. High strings on
+top; fret numbers below the neck only.
+
+`hold Right Ctrl` analyses · `m` metronome · `r` reset · `s` settings · `?` help · `q` quit.
+
+**Right Ctrl** is the global analysis hold, and it only acts while the TUI is open. A modifier
+key gives no usable keydown for a Hyprland bind, so the setup installs it as two halves: press
+on the physical keycode, release on `CTRL + Control_R` — the form Hyprland actually matches on
+keyup — plus the push-to-talk helper behind it.
+
+## MIDI
+
+Detects connected devices with `aseqdump`, shows the chord in real time, and drives a
+five-waveform synth (sine, triangle, sawtooth, square, organ) streamed to PipeWire. The enable
+control is a compact switch on the MIDI MODE row, with SOUND/MUTED beside RESCAN.
 
 ## How it works
 
 ```
-  QuickShell QML (Service.qml / Panel.qml / BarWidget.qml)
-                 │  JSON over stdin/stdout
-                 ▼
-  Python backend (backend/jamjamjam_backend.py)
-     ├─ pw-record (default-sink monitor) → s16 mono → FFT key/BPM/chords
-     ├─ pw-record (default source)       → tuner pitch
-     ├─ aseqdump   → MIDI note on/off → chord id + synth note_on/off
-     └─ pw-cat     ← rendered synth samples (S16 → PipeWire), incl. metronome
+QuickShell QML (Service / Panel / BarWidget / GuitarFretboard)
+              │  JSON over stdin/stdout
+              ▼
+Python backend (backend/jamjamjam_backend.py)
+   ├─ pw-record (sink monitor)  → s16 mono → FFT key / BPM / chords
+   ├─ pw-record (default source) → tuner pitch
+   ├─ aseqdump  → MIDI note on/off → chord + synth note_on/off
+   └─ pw-cat    ← rendered synth and metronome samples
 
-  Backend → snapshot JSON every ~250 ms
-            ~/.local/state/jamjamjam/state.json   (atomic, for the TUI)
-            ~/.local/state/jamjamjam/commands.json (TUI → backend commands)
-            ~/.local/state/jamjamjam/tui.pid       (set while the TUI is open)
-            ~/.config/jamjamjam/config.json         (note naming)
+Backend → snapshot JSON every ~250 ms      TUI → commands
+   ~/.local/state/jamjamjam/state.json       commands.json
+   ~/.config/jamjamjam/config.json           tui.pid (while the TUI is open)
 ```
 
-The backend runs while the plugin service is loaded, emits a snapshot JSON line
-every ~250 ms, and answers commands on stdin (`setVisible`, `setHold`,
-`setSource pc|mic`, `setMetronome`, `setPaused`, `setConfig`, `resetAnalysis`,
-`openTui`, …). The TUI is a pure viewer of `state.json` and writes its own
-commands (hold/reset/metronome/config) to `commands.json`, which the running
-backend polls — the `jamjamjam-tui` dispatcher only starts the backend
-standalone when the snapshot is stale, so the neck works even with the panel
-closed. While `tui.pid` points at a live process the backend treats the TUI as
-the session owner.
+The backend runs while the plugin service is loaded and answers commands on stdin
+(`setVisible`, `setHold`, `setSource`, `setMetronome`, `setPaused`, `setConfig`,
+`resetAnalysis`, `openTui`). The TUI is a pure viewer of `state.json` and writes its own
+commands; the dispatcher only starts a standalone backend when the snapshot is stale, so the
+neck works even with the panel closed. While `tui.pid` names a live process, the backend
+treats the TUI as the session owner.
 
-The **hold command** is the global RIGHT CTRL and gates the analysis stream:
-while a hold (or the open panel) is active the backend reports the real-time key,
-BPM and current chord. Chord-progression accumulation is currently disabled
-(`PROGRESSION_ENABLED = False`) so the UIs show only that live chord estimate.
+The system-audio capture uses the sink monitor via `parec` rather than `pw-record
+--target <sink>.monitor`, which records silence on PipeWire 1.6 — monitors are ports, not
+nodes. It samples before the output volume and mute, so detection survives a muted or
+zero-volume output, and the default sink is re-resolved every 3 s so a device change is
+followed instead of leaving a stale silent capture.
 
 ## Requirements
 
-* python3 + numpy
-* pipewire-utils (`pw-cat`, `pw-record`)
-* alsa-utils (`aseqdump`)
-* go (only to build the neck TUI during setup)
+`python3` + `numpy`, `pipewire-utils` (`pw-cat`, `pw-record`), `alsa-utils` (`aseqdump`), and
+`go` to build the TUI during setup.
 
 ## Install
 
 ```bash
-./setup-jamjamjam-plugin.sh            # copy plugin + bar entry + build/install TUI + floating prompt rule
-./setup-jamjamjam-plugin.sh --remove   # uninstall
-```
-
-The setup script also adds the optional Shazam hook when possible
-(`pip install --user shazamio`); the plugin works fine without it.
-
-Then restart the shell:
-
-```bash
+scripts/plugins/jamjamjam/setup-jamjamjam-plugin.sh            # plugin + bar entry + TUI + float rule
+scripts/plugins/jamjamjam/setup-jamjamjam-plugin.sh --remove
 omarchy restart shell
 ```
 
-Open the neck TUI from the panel (GUITAR button), or: `jamjamjam-tui`.
+Then open the neck from the **GUITAR** button, or run `jamjamjam-tui`.
+
+Song identification is optional: the setup installs `shazamio` when it can, never fatally, and
+the plugin works without it. On Python 3.14 the `pydub`→`audioop` chain is not usable yet, so
+matching stays off and reports `song.available: false`.
+
+## Cost
+
+`backend/bench_cpu_analysis.py` runs 10 s of the real pipeline against a synthesized stream
+and prints a README line; it completes in about 0.2 s. One analysis pass is scheduled **once
+per second**, so the pass costs on the order of 1% of a core, with peak memory in the tens of
+MiB during analysis. Re-run the bench on your own machine rather than trusting a number
+measured elsewhere.
+
+The tuner's single pass over 4 s of mic audio is about 91 ms, and only runs while the panel or
+a hold is active.
+
+## Status
+
+Feature-by-feature history, the bugs behind the current behaviour and what is queued live in
+[`JOURNAL.md`](../../../JOURNAL.md). Bench numbers and a few behaviours noted here were
+measured on the author's machine only.
