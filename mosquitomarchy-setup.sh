@@ -213,16 +213,15 @@ REPO_BRANCH="master"
 
 # ── Displayed script versions ──────────────────────────────────────────────
 # The version shown next to a module is the version of its SCRIPT (the
-# installer), NOT of the application it installs. Everything is v1.0.0 except
-# the four v0.1.0 scripts (DaVinci Resolve setup, bootstrap, handbrake, keybindings).
-# The main script — the whole repo — is v0.1.0 (the root VERSION file).
-REPO_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo 0.1.0)"
-module_version(){
-  case "$1" in
-    davinci|davinci-resolve|handbrake|keybindings|bootstrap) echo "0.1.0" ;;
-    *) echo "1.0.0" ;;
-  esac
-}
+# installer), NOT of the application it installs. Every module is on the same
+# version as the repo (the root VERSION file), so there is no per-module list to
+# forget to update: one place decides, and the modules read it.
+#
+# The per-module case statement it used to carry listed four scripts still on
+# 0.1.0, and it was already out of step with the README. Keeping a second list
+# next to VERSION is how the two drift, so it is gone rather than corrected.
+REPO_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo 1.0.0)"
+module_version(){ printf '%s\n' "$REPO_VERSION"; }
 
 repo_update_avail(){ # 0 if a GitHub version is newer than the local one
   command -v git >/dev/null 2>&1 || return 1
