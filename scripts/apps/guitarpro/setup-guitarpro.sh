@@ -13,6 +13,7 @@
 #                                    #   auto (follows the Hyprland scale)
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/wine-menu.bash"  # wine-menu: drop the shortcuts Wine republishes for this prefix
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -58,14 +59,67 @@ warn(){ printf " ${Y}!${N} %s\n" "$*"; }
 err(){ printf " ${R}✗${N} %s\n" "$*" >&2; }
 hr(){ printf '%.0s─' {1..70}; echo; }
 
+# -y means "take the DEFAULT answer", not "answer yes to everything": the
+# previous hardcoded `return 0` silently turned every default-n question into
+# a yes, which is how a re-run ended up asking (and auto-answering) "Recreate
+# the prefix (overwrites the existing one) ?" with a yes — wiping a working
+# prefix and re-doing the whole font setup from scratch.
 ask(){
   local q="$1" def="${2:-y}" r
-  ((YES)) && { ok "(auto) $q -> yes"; return 0; }
+  if ((YES)); then
+    [[ $def = y ]] && { ok "(auto) $q -> yes (default)"; return 0; }
+    warn "(auto) $q -> no (default)"
+    return 1
+  fi
   read -rp "$q [$([ $def = y ] && echo Y/n || echo y/N)] " r
   r="${r:-$def}"; [[ $r =~ ^[oOyY] ]]
 }
 
 pkg_has(){ pacman -Q "$1" &>/dev/null; }
+
+# ───────────────────── Quiet winetricks / installer ─────────────────────
+# winetricks is pathologically verbose: for every font it unpacks a cab and
+# spawns wine regedit.exe TWICE (wow64 + native), each printing its own
+# "Executing …" block. `allfonts` is ~17 packages, i.e. several thousand lines
+# of identical output, all of it dumped straight onto the terminal — the log
+# became effectively infinite and writing it was itself a big part of the wait.
+# Everything now goes to a log file; the screen only gets a one-line result and,
+# on failure, the tail that matters. WINETRICKS_VERBOSE=1 restores the full
+# stream when someone actually needs to watch it.
+LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitOmarchy/guitarpro"
+LOG_TIMEOUT_WINE=1800
+LOG_TIMEOUT_INSTALL=3600
+
+run_quiet(){
+  # run_quiet <log-name> <timeout> <label> <cmd...>
+  local name="$1" tmo="$2" label="$3"; shift 3
+  local log="$LOG_DIR/$name.log" t0=$SECONDS rc=0
+  mkdir -p "$LOG_DIR"
+  if [[ -n ${WINETRICKS_VERBOSE:-} ]]; then
+    "$@"; return $?
+  fi
+  printf '  %s… ' "$label"
+  if timeout "$tmo" "$@" >"$log" 2>&1; then rc=0; else rc=$?; fi
+  local secs=$(( SECONDS - t0 ))
+  if (( rc == 0 )); then
+    printf '\r\033[K  %s✓ %s — %ss\033[0m\n' "$G" "$label" "$secs"
+  elif (( rc == 124 )); then
+    printf '\r\033[K  %s✗ %s — timed out after %ss\033[0m\n' "$R" "$label" "$tmo"
+    warn "Last lines of $log:"; tail -n 5 "$log" | sed 's/^/    /' >&2
+  else
+    printf '\r\033[K  %s✗ %s — failed (rc=%s, %ss)\033[0m\n' "$R" "$label" "$rc" "$secs"
+    warn "Last lines of $log:"; tail -n 5 "$log" | sed 's/^/    /' >&2
+  fi
+  return $rc
+}
+
+# Is a winetricks verb already registered in THIS prefix? Re-running a verb that
+# is installed re-registers every font (minutes of regedit spawns) for nothing.
+verb_installed(){
+  local verb="$1"
+  WINEPREFIX="$PFX" WINEDEBUG=-all timeout 120 winetricks list-installed 2>/dev/null \
+    | tr ' ' '\n' | grep -qx "$verb"
+}
 
 # ───────────────────── Installer missing ? rescan / path / cancel ─────────────────────
 # The installer (guitar-pro-8-setup.exe) must be in the script folder. If it is
@@ -130,6 +184,21 @@ do_status(){
   if [[ -d "$PATCH_DIR" ]] && [[ -n "$(find "$PATCH_DIR" -maxdepth 1 -type f ! -name '.*' 2>/dev/null | head -1)" ]]
   then ok "Patch : present (split files)"
   else warn "Patch : not provided (skip)"; fi
+  # Wine republishes the Windows shortcuts after every install; a leftover
+  # "Uninstall" entry in the launcher is the classic symptom.
+  local leftover="" f
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    if rg -qi 'guitar|arobas' "$f" 2>/dev/null; then leftover+="$f"$'\n'; fi
+  done < <(find "$HOME/.local/share/applications/wine/Programs" -type f -name '*.desktop' 2>/dev/null || true)
+  if [[ -n $leftover ]]; then
+    warn "Wine duplicate(s) still in the menu:"
+    printf '    %s' "$leftover" >&2
+    warn "  → they are removed at the end of the install; to clean now:"
+    warn "    rm -rf \"$HOME/.local/share/applications/wine/Programs/Arobas Music\""
+  else
+    ok "Menu duplicates : none"
+  fi
   hr
 }
 
@@ -204,11 +273,15 @@ except Exception:
   fi
 
   # Extra Windows fonts (Tahoma...): opt-in, slow, non-fatal.
-  if ((YES)) || ask "Install the extra Windows fonts (winetricks allfonts, fixes missing glyphs)?" n; then
-    warn "Downloading/installing the ~17 Windows fonts (winetricks allfonts) —"
-    warn "can take a few minutes. Progress is shown below; if the network is slow the"
-    warn "terminal may look idle between downloads, please let it finish (hard limit: 15 min)."
-    if timeout 900 env WINEARCH=win64 WINEPREFIX="$PFX" winetricks allfonts; then
+  # The `((YES)) ||` short-circuit used to sit in front of ask(): under -y (which
+  # is how the mosquitOmarchy TUI runs the script) it forced allfonts ON, i.e.
+  # ~17 extra font packages, thousands of log lines and several minutes — for
+  # something documented as opt-in. ask() now handles -y itself, by default.
+  if ask "Install the extra Windows fonts (winetricks allfonts, fixes missing glyphs)?" n; then
+    if verb_installed allfonts; then
+      ok "allfonts already installed in this prefix — skipped"
+    elif run_quiet allfonts 1800 "allfonts (~17 font packages)" \
+         env WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all winetricks allfonts; then
       ok "allfonts installed"
     else
       warn "winetricks allfonts failed or timed out — continue anyway"
@@ -219,27 +292,31 @@ except Exception:
 # ───────────────────── Menu cleanup (Wine duplicates) ─────────────────────
 # The Windows installer creates shortcuts in the Wine start menu ("Programs").
 # Wine then publishes them in the user menu (wine/Programs/…) where they show
-# up next to our own launcher. We delete those so ONLY the Omarchy entry
-# (guitarpro.desktop) plus the REAL Windows "Uninstall" entry remain. The
-# wine-extension-* / wine-protocol-* files (file associations) are
-# NoDisplay=true and are kept. The .directory files (start-menu folders) are
-# kept so the Uninstall entry stays reachable.
+# up next to our own launcher, so the whole Arobas Music tree goes away and
+# ONLY the Omarchy entry (guitarpro.desktop) remains.
+#
+# It used to spare Uninstall.desktop (and keep the enclosing .directory files
+# "so the Uninstall entry stays reachable"): an Uninstall shortcut pointing at
+# unins000.exe has no business in an app launcher — it is a maintenance action,
+# it is already covered by ./uninstall-guitarpro.sh, and it is the entry people
+# keep clicking by mistake. The file-associations (wine-extension-* /
+# wine-protocol-*) are NoDisplay=true and are left alone.
+#
+# The mechanics now live in scripts/lib/wine-menu.bash, shared with the other
+# wine modules: it also prunes the .directory publishers, which this script used
+# to leave behind (an empty "Arobas Music" folder kept showing in the menu).
 dedupe_menu_entries(){
-  msg "Menu cleanup — removing the Wine shortcut duplicates (Uninstall entry kept)"
-  local apps="$HOME/.local/share/applications" n=0 f
-  while IFS= read -r -d '' f; do
-    [[ "$(basename "$f")" == Uninstall* ]] && continue
-    if rg -qi 'guitar|arobas' "$f" 2>/dev/null; then
-      rm -f "$f" && { ok "Removed: ${f#$apps/}"; n=$((n+1)); }
-    fi
-  done < <(find "$apps/wine/Programs" -maxdepth 5 -type f -name '*.desktop' -print0 2>/dev/null)
-  # Empty folders left in the Wine start menu (non-empty ones keep the
-  # Uninstall entry reachable in the menu).
-  find "$apps/wine/Programs" -type d -empty -delete 2>/dev/null || true
-  if (( n == 0 )); then warn "No Wine-generated shortcut to remove (all clean)." ; fi
-  command -v update-desktop-database >/dev/null && update-desktop-database "$apps" >/dev/null 2>&1 || true
-  if [[ -f "$apps/wine/Programs/Arobas Music/Guitar Pro 8/Uninstall.desktop" ]]; then
-    ok "Windows Uninstall entry kept (wine/Programs/…/Guitar Pro 8/Uninstall.desktop)"
+  msg "Menu cleanup — removing the Wine-generated entries for Guitar Pro"
+  local line n=0
+  while IFS= read -r line; do
+    n=$((n + 1)); ok "Removed: ${line#removed }"
+  done < <(mosquitomarchy_wine_menu_remove 'guitar|arobas')
+  mosquitomarchy_wine_menu_sweep
+  (( n == 0 )) && ok "No Wine-generated shortcut left (all clean)."
+  if [[ -e "$HOME/.local/share/applications/wine/Programs/Arobas Music" ]]; then
+    warn "Arobas Music tree still present under applications/wine/Programs"
+  else
+    ok "Menu is clean: only the 'Guitar Pro 8' entry remains."
   fi
 }
 
@@ -287,12 +364,16 @@ do_install(){
   fi
 
   # 4) Install corefonts (required by Guitar Pro 8)
-  msg "Installing the Windows fonts (corefonts)..."
-  warn "(progress is shown below — waits for winetricks to fetch the fonts)"
-  if timeout 600 env WINEARCH=win64 WINEPREFIX="$PFX" winetricks corefonts; then
-    ok "corefonts installed"
+  msg "Windows fonts (winetricks corefonts)"
+  if verb_installed corefonts; then
+    ok "corefonts already installed in this prefix — skipped (log: $LOG_DIR/corefonts.log)"
   else
-    warn "winetricks corefonts returned an error or timed out — Guitar Pro may still work"
+    if run_quiet corefonts 1800 "corefonts" \
+         env WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all winetricks corefonts; then
+      ok "corefonts installed"
+    else
+      warn "winetricks corefonts failed or timed out — Guitar Pro may still work"
+    fi
   fi
 
   # 4bis) Font & DPI hardening — fixes too small / blurry / broken text in
@@ -301,26 +382,47 @@ do_install(){
 
   # 5) Launch the installer
   hr
-  msg "Launching the Guitar Pro 8 installer"
-  echo "  → A Wine window will open. Follow the installation steps."
-  echo "  → Install to the default path (change nothing)."
-  echo "  → You can close this window once the installer is finished."
-  echo
-  WINEARCH=win64 WINEPREFIX="$PFX" wine "$exe_path" &
-  local wine_pid=$!
-
-  # Wait for the installer to close
-  echo "  Waiting for the installer to finish..."
-  wait "$wine_pid" 2>/dev/null || true
-  echo
-
-  if [[ ! -f "$GP_EXE" ]]; then
-    err "GuitarPro.exe not found after the installation."
-    err "Check that the installer finished correctly."
-    err "Expected path: $GP_EXE"
-    exit 1
+  mkdir -p "$LOG_DIR"
+  # Already there? Re-running the 1 GB Windows installer to repair a menu entry
+  # is a waste of ten minutes, so make it an explicit opt-in (default no, and
+  # therefore also no under -y).
+  local skip_installer=0
+  if [[ -f "$GP_EXE" ]]; then
+    if ask "Guitar Pro 8 is already installed ($GP_EXE) — run the Windows installer again ?" n; then
+      :
+    else
+      skip_installer=1
+    fi
   fi
-  ok "GuitarPro.exe found"
+  if (( skip_installer )); then
+    ok "Keeping the existing installation — installer step skipped."
+  else
+    msg "Launching the Guitar Pro 8 installer"
+    echo "  → A Wine window will open. Follow the installation steps."
+    echo "  → Install to the default path (change nothing)."
+    echo "  → You can close this window once the installer is finished."
+    echo "  → Installer output is written to $LOG_DIR/installer.log"
+    echo
+    # WINEDEBUG=-all: the installer otherwise sprays several hundred
+    # "fixme:…" lines (every unimplemented Windows API it touches) over the
+    # terminal, burying the progress messages.
+    ( WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all wine "$exe_path" \
+        >"$LOG_DIR/installer.log" 2>&1 || true ) &
+    local wine_pid=$!
+
+    # Wait for the installer to close
+    echo "  Waiting for the installer to finish…"
+    wait "$wine_pid" 2>/dev/null || true
+    echo
+
+    if [[ ! -f "$GP_EXE" ]]; then
+      err "GuitarPro.exe not found after the installation."
+      err "Check that the installer finished correctly."
+      err "Expected path: $GP_EXE"
+      exit 1
+    fi
+    ok "GuitarPro.exe found"
+  fi
 
   # 5bis) Optional patch: runs patch-guitarpro (PATCH/ → installation folder,
   # where GuitarPro.exe lives).
@@ -401,6 +503,9 @@ LAUNCHEOF
   else
     warn "Icon source missing ($ICON_SRC_SVG) — the menu entry will show a generic icon"
   fi
+  # One MAIN category only (AudioVideo): "AudioVideo;Audio;Music;Utility;" gave
+  # the entry three main categories, and a menu is then free to list the same
+  # application three times. "Music" is a sub-category, so it is free.
   cat > "$DESKTOP_DST" <<DESKEOF
 [Desktop Entry]
 Type=Application
@@ -409,7 +514,7 @@ Comment=Score and tablature editor
 Exec=$LAUNCHER
 Icon=$ICON_NAME
 Terminal=false
-Categories=AudioVideo;Audio;Music;Utility;
+Categories=AudioVideo;Music;
 MimeType=application/x-guitarpro;audio/x-gp3;audio/x-gp4;audio/x-gp5;audio/x-gp;
 Keywords=guitar;tab;tablature;partition;music;
 DESKEOF
