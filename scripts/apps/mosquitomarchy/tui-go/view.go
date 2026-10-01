@@ -295,7 +295,7 @@ func (m model) View() string {
 // rung homeBannerReserve() budgeted for, so the reserved rows and the drawn
 // rows are the same number by construction.
 func (m *model) homeTitle() string {
-	w := m.contentWidth()
+	w := m.titleWidth()
 	title := m.homeLayout().RenderLadder(w, titleLadder(w))
 	return lipgloss.NewStyle().Width(m.w).Align(lipgloss.Center).Render(title)
 }

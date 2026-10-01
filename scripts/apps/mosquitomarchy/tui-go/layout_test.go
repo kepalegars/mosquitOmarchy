@@ -147,3 +147,45 @@ func TestContentSizeFitsTheGap(t *testing.T) {
 		}
 	}
 }
+
+// The panel is capped at ManagerContent.MaxW so a list stays readable on a wide
+// terminal, but the wordmark ladder must NOT be measured against that same cap:
+// the full "mosquitomarchy" art is 121 columns, so feeding it 92 demoted a wide
+// terminal to the 3-row compact box no matter how much room it actually had.
+func TestHomeTitleUsesTheWindowNotThePanelCap(t *testing.T) {
+	const bannerRows = 9 // the boxed wordmark rung
+
+	m := initialModel()
+	m.w, m.h = 200, 44
+	if got := m.contentWidth(); got != 92 {
+		t.Fatalf("precondition: panel width = %d, want the 92 cap", got)
+	}
+	if got := m.homeLayout().TitleRows; got != bannerRows {
+		t.Errorf("on a 200-column terminal the title took %d rows, want %d (the full wordmark)", got, bannerRows)
+	}
+
+	// A terminal that cannot hold the art must still degrade rather than wrap.
+	m.w = 80
+	if got := m.homeLayout().TitleRows; got >= bannerRows {
+		t.Errorf("on an 80-column terminal the title took %d rows, expected it to degrade", got)
+	}
+}
+
+// Whatever the terminal, no title line may be wider than the window, and the
+// title must never exceed the rows it budgeted for.
+func TestHomeTitleNeverOverflows(t *testing.T) {
+	for w := 20; w <= 240; w += 7 {
+		m := initialModel()
+		m.w, m.h = w, 40
+		layout := m.homeLayout()
+		lines := strings.Split(strings.TrimRight(m.homeTitle(), "\n"), "\n")
+		if len(lines) > layout.TitleRows {
+			t.Fatalf("w=%d: title drew %d lines but budgeted %d", w, len(lines), layout.TitleRows)
+		}
+		for _, l := range lines {
+			if lw := lipgloss.Width(l); lw > w {
+				t.Fatalf("w=%d: a title line is %d columns: %q", w, lw, l)
+			}
+		}
+	}
+}
