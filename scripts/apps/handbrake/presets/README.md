@@ -4,7 +4,7 @@ Drop your HandBrake preset **exports** here (GUI → **Presets** panel →
 right-click → **Export…** → `*.json`), then run:
 
 ```bash
-./apps/handbrake/setup-handbrake.sh
+scripts/apps/handbrake/setup-handbrake.sh
 ```
 
 The install merges the files into `~/.config/ghb/presets.json` under an

@@ -6,8 +6,8 @@ packages via `yay`). This is the per-type installer behind `apps/setup-apps.sh`
 format and the standalone usage:
 
 ```bash
-./apps/gui/setup-guis.sh --all -y              # install every GUI app
-./apps/gui/setup-guis.sh --status              # state, nothing done
+scripts/apps/gui/setup-guis.sh --all -y              # install every GUI app
+scripts/apps/gui/setup-guis.sh --status              # state, nothing done
 ```
 
 ## KeePassXC — password manager
