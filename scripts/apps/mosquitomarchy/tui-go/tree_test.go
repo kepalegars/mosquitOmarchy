@@ -1294,3 +1294,63 @@ func TestEnterOnPreinstallsRowOpensTheList(t *testing.T) {
 		t.Fatalf("a standalone visit left an uninstall waiting: %q", m.uninstallWait)
 	}
 }
+
+// The "mosquito" folder repeats its own name on every row it contains. The
+// prefix is display-only and must disappear there, and ONLY there.
+func TestTrimOwnPrefix(t *testing.T) {
+	cases := []struct {
+		folder, label, want string
+	}{
+		// In the folder that is itself called mosquito: the prefix is noise.
+		{"mosquito", "mosquito-audio-plugin-manager - v1.0.0", "audio-plugin-manager - v1.0.0"},
+		{"mosquito", "mosquito-jamjamjam - v1.0.0", "jamjamjam - v1.0.0"},
+		{"mosquito", "mosquito-live-mode - v1.0.0", "live-mode - v1.0.0"},
+		// A label that is nothing but the prefix must not vanish to "".
+		{"mosquito", "mosquito", "mosquito"},
+		// Rows without the prefix are untouched.
+		{"mosquito", "Move Manager - v1.0.0", "Move Manager - v1.0.0"},
+		// Other folders keep it: there the prefix carries real information.
+		{"plugins", "mosquitomarchy - v1.0.0", "mosquitomarchy - v1.0.0"},
+		{"apps", "mosquito-extractor - v1.0.0", "mosquito-extractor - v1.0.0"},
+		// Mid-string "mosquito" is never stripped.
+		{"mosquito", "the-mosquito-plugin - v1.0.0", "the-mosquito-plugin - v1.0.0"},
+	}
+	for _, c := range cases {
+		if got := trimOwnPrefix(c.folder, c.label); got != c.want {
+			t.Errorf("trimOwnPrefix(%q, %q) = %q, want %q", c.folder, c.label, got, c.want)
+		}
+	}
+}
+
+// End to end on the rendered rows: the backend still says
+// "mosquito-audio-plugin-manager", and the row must come out without the prefix
+// while its value keeps the key, since that is what Enter routes on.
+func TestSetupRowLabelHidesTheFolderPrefix(t *testing.T) {
+	m := flatSetup()
+	m.setupFolders = []FolderRec{{Folder: "mosquito", Label: "mosquito", Accent: true}}
+	m.setupItems = []SetupItemRec{
+		{Folder: "mosquito", Key: "live-mode", Label: "mosquito-live-mode - v1.0.0"},
+	}
+	rows, _ := m.setupRows(false)
+
+	var found bool
+	for _, r := range rows {
+		if strings.Contains(r.Display, "live-mode") && !r.Folder {
+			found = true
+			// Display carries the tree glyphs and the tick box ahead of the
+			// label, so assert on the text rather than the whole string.
+			if strings.Contains(r.Display, "mosquito") {
+				t.Errorf("row label still says mosquito: %q", r.Display)
+			}
+			if !strings.Contains(r.Display, "live-mode - v1.0.0") {
+				t.Errorf("row label = %q, want the rest of the name kept", r.Display)
+			}
+			if !strings.Contains(r.Value, "live-mode") {
+				t.Errorf("row value = %q, must keep the routing key", r.Value)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the live-mode row vanished from the Setup tree")
+	}
+}
