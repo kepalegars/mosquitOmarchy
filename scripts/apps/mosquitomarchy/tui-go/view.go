@@ -12,25 +12,29 @@ import (
 // top-left on the first page. It is not the version of anything it installs.
 const appVersion = "1.0.0"
 
-// header renders the full mosquitOmarchy banner: the boxed "mosquito"
-// label plus the "-marchy" subtitle, side by side on wide-enough panels and
-// stacked otherwise (tuikit.MosquitOmarchyTitle). maxW is the content
-// width the banner may use.
+// contentPolicy is the shared sizing policy (tuikit.ManagerContent). Declared
+// here once so the setup TUI and the four managers agree on how wide and how
+// tall a panel is allowed to be.
+var contentPolicy = tuikit.ManagerContent
+
+// header renders the mosquitomarchy banner at a rung that FITS maxW.
+//
+// It used to be tuikit.MosquitOmarchyTitle(maxW), which rendered the
+// 121-column wordmark and let lipgloss wrap it — in every tile narrower than
+// 121 columns, which is most tiles, the wordmark was shredded into glyph
+// fragments. Now the ladder picks the biggest form that fits and the title
+// degrades: full wordmark, then a compact box, then plain text. Never wrapped.
 func header(maxW int) string {
-	return tuikit.MosquitOmarchyTitle(maxW)
+	return titleLadder(maxW).Render(maxW, 9)
 }
 
-// homeBannerReserve is how many top rows the home screen keeps for the
-// banner (14 = 8 boxed rows + 5 subtitle rows + 1 blank) so it is never
-// clipped; on short/narrow terminals it collapses to the subtitle only.
-const homeBannerReserve = 14
-const narrowReserve = 4
-
+// homeBannerReserve is how many rows the home title actually occupies RIGHT
+// NOW. It used to be a hardcoded 14 (8 banner + 5 subtitle + 1 blank) chosen
+// by a magic w<74 || h<24 threshold, which meant the reserve and the drawn
+// title could disagree — and when they did, the title was what got clipped.
+// It is now measured off the rung the ladder chose.
 func (m *model) homeBannerReserve() int {
-	if m.w < 74 || m.h < 24 {
-		return narrowReserve
-	}
-	return homeBannerReserve
+	return m.homeLayout().TitleRows
 }
 
 // filterBarLine composes the filter zone for the Setup/Uninstall screens:
@@ -287,20 +291,13 @@ func (m model) View() string {
 	return tuikit.FrameScreenVersion(m.w, m.h, title, body, bar, version)
 }
 
-// homeTitle renders the pinned-top banner on the main menu: the full boxed
-// "mosquitomarchy" wordmark + "setup" subtitle when the window allows it,
-// otherwise just the subtitle. The boxed wordmark is ~121 columns wide, so
-// the banner uses the full window width rather than the 92-column content cap.
-func (m model) homeTitle() string {
-	w := m.w - 2
-	if w < 40 {
-		w = m.w
-	}
-	if m.homeBannerReserve() == homeBannerReserve {
-		return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(header(w))
-	}
-	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).
-		Render(tuikit.MosquitoSubtitle("setup", w))
+// homeTitle renders the pinned-top banner on the main menu. It draws the SAME
+// rung homeBannerReserve() budgeted for, so the reserved rows and the drawn
+// rows are the same number by construction.
+func (m *model) homeTitle() string {
+	w := m.contentWidth()
+	title := m.homeLayout().RenderLadder(w, titleLadder(w))
+	return lipgloss.NewStyle().Width(m.w).Align(lipgloss.Center).Render(title)
 }
 
 // updateBody shows the update zone's findings above the picker.

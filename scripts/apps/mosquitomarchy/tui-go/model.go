@@ -365,65 +365,61 @@ func (m model) rebuildMainMenu() navPicker {
 }
 
 func (m *model) contentSize() (int, int) {
-	w := m.w - 8
-	if w > 92 {
-		w = 92
-	}
-	if w < 20 {
-		w = m.w
-	}
-	h := m.h - 8
-	if h > 26 {
-		h = 26
-	}
-	if h < 8 {
-		h = m.h - 4
-	}
-	if m.top() == scrMain {
-		h = m.mainBudget(h)
-	}
-	return w, h
+	return m.contentSizeFor(m.top() == scrMain)
 }
 
-// mainContentSize is contentSize() as it would be on the home screen no
-// matter which screen is on top; the main picker is always laid out with it
-// so a background rebuild that lands while a sub-screen is up keeps the
-// picker at the home budget (no one-frame overflow when popping back).
+// contentSizeFor sizes the central panel. isMain asks for the home budget no
+// matter which screen is on top: the main picker is rebuilt by background
+// refreshes that can land while a sub-screen is up, and sizing it at the
+// sub-screen's (taller) budget left it one frame out of step when the user
+// popped back — the boxed exit row appeared then vanished on the next rebuild.
+//
+// The home title height comes from a LADDER rung chosen to fit the window
+// (tuikit.LadderLayout), not from measuring a header that was rendered first.
+// That distinction was the bug: the 121-column wordmark was rendered
+// unconditionally and lipgloss wrapped it, so the height measured here was the
+// height of the DAMAGE, and every downstream subtraction inherited it.
+func (m *model) contentSizeFor(isMain bool) (int, int) {
+	if !isMain {
+		return contentPolicy.Size(m.w, m.h, subScreenTitleRows)
+	}
+	l := m.homeLayout()
+	return contentPolicy.Size(m.w, m.h, l.TitleRows)
+}
+
+// contentWidth is the single width number every part of this TUI measures
+// against, so the ladder and the panel can never be sized against different
+// widths.
+func (m *model) contentWidth() int {
+	return contentPolicy.ContentWidth(m.w)
+}
+
+// subScreenTitleRows is the title height for every screen except the home
+// menu: they all use a single accent line, so it is one row everywhere. The
+// constant exists so the number lives in one place if a sub-screen ever grows
+// a real title block.
+const subScreenTitleRows = 1
+
+// mainContentSize is contentSize() as it would be on the home screen no matter
+// which screen is on top. See contentSizeFor for why.
 func (m *model) mainContentSize() (int, int) {
-	w := m.w - 8
-	if w > 92 {
-		w = 92
-	}
-	if w < 20 {
-		w = m.w
-	}
-	h := m.h - 8
-	if h > 26 {
-		h = 26
-	}
-	if h < 8 {
-		h = m.h - 4
-	}
-	h = m.mainBudget(h)
-	return w, h
+	return contentPolicy.Size(m.w, m.h, m.homeLayout().TitleRows)
 }
 
-// mainBudget applies the home-screen reserve to a height extent.
-func (m *model) mainBudget(h int) int {
-	th := m.homeBannerReserve()
-	reserved := m.h - th - 2 /*bar: notify+hint*/ - 2 /*frame pad*/ - 2 /*spare*/
-	if reserved > 26 {
-		reserved = 26
-	}
-	if reserved >= 8 {
-		return reserved
-	}
-	return h
+// homeLayout picks the title rung that fits and returns the matching budget.
+func (m *model) homeLayout() tuikit.Layout {
+	w := m.contentWidth()
+	return tuikit.LayoutForLadder(w, m.h, titleLadder(w))
 }
 
 func (m *model) contentSizeW() int {
-	w, _ := m.contentSize()
-	return w
+	return m.contentWidth()
+}
+
+// titleLadder is the mosquitomarchy wordmark, measured against the content
+// width so the widest rung is never wider than the panel.
+func titleLadder(width int) tuikit.TitleLadder {
+	return tuikit.MosquitOmarchyTitleLadder()
 }
 
 // setupValue is the stable picker/selection key for a Setup item.
