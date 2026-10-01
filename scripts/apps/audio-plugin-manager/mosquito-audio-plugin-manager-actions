@@ -91,7 +91,9 @@ case "$cmd" in
       --argjson quarantine_entries "$quarantine_entries" \
       --argjson auto_fix_on "$([[ $(apm_fix_pref_get AUTO_FIX) == yes ]] && echo true || echo false)" \
       --argjson fix_prompt_on "$([[ $(apm_fix_pref_get FIX_PROMPT) == yes ]] && echo true || echo false)" \
-      '{file_picker:$file_picker,superfile_installed:$superfile_installed,hide_vst2:$hide_vst2,hide_32bit:$hide_32bit,sort_mode:$sort_mode,plugins_root:$plugins_root,downloads_dir:$downloads_dir,plugin_win_handler:$plugin_win_handler,wizard_done:$wizard_done,quarantine_entries:$quarantine_entries,auto_fix_on:$auto_fix_on,fix_prompt_on:$fix_prompt_on}'
+      --arg default_prefix "$(default_prefix)" \
+      --arg default_prefix_set "${DEFAULT_PREFIX:-}" \
+      '{file_picker:$file_picker,superfile_installed:$superfile_installed,hide_vst2:$hide_vst2,hide_32bit:$hide_32bit,sort_mode:$sort_mode,plugins_root:$plugins_root,downloads_dir:$downloads_dir,plugin_win_handler:$plugin_win_handler,wizard_done:$wizard_done,quarantine_entries:$quarantine_entries,auto_fix_on:$auto_fix_on,fix_prompt_on:$fix_prompt_on,default_prefix:$default_prefix,default_prefix_set:$default_prefix_set}'
     ;;
 
   set-plugins-root)
@@ -201,6 +203,90 @@ PYWIZARD
   set-downloads-dir)
     DOWNLOADS_DIR="${1:?folder required}"
     save_prefs
+    ;;
+
+  set-default-prefix)
+    # $1 = path, or the single word "auto" to go back to the automatic rule.
+    #
+    # Refuses a path that is not a wine prefix we can see. Writing a DEFAULT_PREFIX
+    # that no longer exists is worse than writing none: default_prefix() hands it
+    # straight to wine, which creates an empty prefix on the next install instead
+    # of failing, and the user gets a manager that quietly stopped isolating
+    # plugin installs from their other wine apps.
+    case "${1:-auto}" in
+      auto|"") DEFAULT_PREFIX="" ;;
+      *)
+        p="$1"
+        [[ -d $p ]] || { warn "not a directory: $p"; exit 1; }
+        # A wine prefix has a drive_c. ~/.wine-vst and friends do; a stray folder
+        # does not, and installing into it produces a broken prefix.
+        if [[ ! -d "$p/drive_c" ]]; then
+          warn "$p does not look like a wine prefix (no drive_c)."
+          exit 1
+        fi
+        DEFAULT_PREFIX="$p"
+        ;;
+    esac
+    save_prefs
+    dp="$(default_prefix)"
+    jq -nc --arg path "$dp" --arg set "${DEFAULT_PREFIX:-}" '{path:$path,configured:$set}'
+    ;;
+
+  list-execs-in-prefix)
+    # Every .exe under <prefix>/drive_c, as JSON, for "launch an executable".
+    #
+    # drive_c/windows is EXCLUDED: it is the emulated C:\Windows, and on a real
+    # prefix it holds ~200 system exes (notepad.exe, wbem\mofcomp.exe, …) that
+    # nobody wants in a menu whose purpose is launching a plugin's own GUI.
+    # Measured 224 exes with that folder included, of which 4 were real.
+    #
+    # Depth-limited as well, for the same reason: an installer's bundled helpers
+    # can sit several folders down. $1 = prefix, empty meaning the default one.
+    pfx="${1:-}"; [[ -n $pfx ]] || pfx="$(default_prefix)"
+    dc="$pfx/drive_c"
+    if [[ ! -d $dc ]]; then
+      jq -nc --arg prefix "$pfx" --arg err "no drive_c in this prefix" \
+        '{prefix:$prefix, error:$err, execs:[]}'
+      exit 0
+    fi
+    # print0/read -d '' so a filename with a space (the normal case:
+    # "iZotope Neutron v5.0.0 CE.exe") survives. The sort key is a lowercased
+    # basename, so the listing groups by program rather than by folder depth.
+    while IFS= read -r -d '' f; do
+      [[ -n $f ]] || continue
+      rel="${f#"$dc"/}"
+      case "${rel,,}" in
+        windows/*|windows) continue ;;
+      esac
+      jq -nc --arg path "$f" \
+                --arg display "$(basename "$rel")" \
+                --arg rel "$rel" \
+                --arg key "$(printf '%s' "$(basename "$rel")" | tr '[:upper:]' '[:lower:]')" \
+        '{path:$path, display:$display, rel:$rel, sortKey:$key}'
+    done < <(find "$dc" -path "$dc/windows" -prune -o \
+                   -maxdepth 5 -type f -iname '*.exe' -print0 2>/dev/null) |
+      sort -t'	' -k1
+    ;;
+
+  launch-exe)
+    # $1 = prefix (empty = default), $2 = exe path INSIDE drive_c.
+    #
+    # Launches detached on purpose: this is a plugin's own GUI, which stays open
+    # for as long as the user needs it. Waiting on it would keep the manager
+    # blocked on a Runner that never returns.
+    pfx="${1:-}"; [[ -n $pfx ]] || pfx="$(default_prefix)"
+    exe="${2:?exe path required}"
+    case "$exe" in
+      "$pfx/drive_c"/*) ;;
+      *) echo "refusing to launch a path outside the prefix: $exe" >&2; exit 1 ;;
+    esac
+    [[ -f $exe ]] || { echo "no such executable: $exe" >&2; exit 1; }
+    # WINEPREFIX selects the prefix; the CWD is the exe's own folder, because a
+    # plugin GUI that resolves data files relative to itself stops finding them
+    # when launched from the manager's folder.
+    msg "launching: $(basename "$exe") (in $(basename "$pfx"))"
+    WINEPREFIX="$pfx" setsid -f bash -c 'cd "$(dirname "$1")" && exec wine "$1"' _ "$exe" \
+      >/dev/null 2>&1 </dev/null
     ;;
 
   pick-folder)
@@ -480,6 +566,47 @@ PYWIZARD
     jq -nc --arg path "$(default_prefix)" '{path:$path}'
     ;;
 
+  pick-exe-in-prefix)
+    # $1 = prefix (empty = default). A file picker limited to .exe, starting in
+    # the prefix's drive_c so the user browses the prefix's own filesystem.
+    #
+    # Same chain as the other pickers (portal → omarchy → zenity), because the
+    # point of this option is that nautilus/superfile ONLY designate the file:
+    # the manager stays on top and does the wine launch itself. So this returns
+    # the path and the TUI runs launch-exe with it — it does not ask the file
+    # manager to run anything.
+    pfx="${1:-}"; [[ -n $pfx ]] || pfx="$(default_prefix)"
+    start="$pfx/drive_c"
+    [[ -d $start ]] || start="$pfx"
+    file=""
+    title="Pick an executable to run in $(basename "$pfx")"
+    if command -v omarchy-file-select >/dev/null 2>&1 && { [[ -n ${DISPLAY:-} || -n ${WAYLAND_DISPLAY:-} || -n ${OMARCHY_WL:-} ]]; }; then
+      file=$(omarchy-file-select --title "$title" --extensions "exe" 2>/dev/null | head -1)
+    elif command -v omarchy-menu-file >/dev/null 2>&1; then
+      file=$(omarchy-menu-file "$title" "$start" "exe" 2>/dev/null | head -1)
+    elif command -v zenity >/dev/null 2>&1; then
+      file=$(zenity --file-selection --title="$title" --filename="$start/" --file-filter '*.exe' 2>/dev/null) || true
+    fi
+    jq -nc --arg path "${file:-}" --arg prefix "$pfx" '{path:$path, prefix:$prefix}'
+    ;;
+
+  install-into-prefix)
+    # $1 = installer file, $2 = the prefix the user picked from the list.
+    #
+    # Validates the pick is a real wine prefix before the Go side commits to it,
+    # so a stale list entry cannot point the install at a directory that does not
+    # exist. The install itself is the SAME `install` verb as every other path —
+    # this only echoes the validated path back so the TUI has one code path for
+    # "I know which prefix now, start the install".
+    file="${1:?installer required}"
+    pfx="${2:?prefix required}"
+    if [[ ! -d "$pfx/drive_c" ]]; then
+      echo "not a wine prefix (no drive_c): $pfx" >&2
+      exit 1
+    fi
+    jq -nc --arg path "$pfx" '{path:$path}'
+    ;;
+
   # ── known-plugin detection (the install wizard's RECOMMENDED prefix) ──────
   # The TUI asks these two before showing the prefix choice. They MUST exit 0
   # and answer in JSON, otherwise the wizard silently degrades to "no
@@ -664,6 +791,24 @@ PYWIZARD
     # most of the wait on the plugin list went.
     fixes_applied_plugins |
       jq -R -s -c 'split("\n") | map(select(length > 0) | {plugin: .})[]'
+    ;;
+
+  list-applied-global-fixes)
+    # One JSON line per GLOBAL fix, {"id":..,"applied":bool}.
+    #
+    # Separate from list-applied-fix-plugins by design rather than by accident.
+    # That verb SKIPS "__global__" — correctly, since a global cursor option
+    # must not badge every plugin row — but it left the fixes screen with no
+    # source at all for "is the global one on": the per-plugin list was empty,
+    # and an empty list is indistinguishable from never-applied. This answers the
+    # question where the marker actually lives.
+    fixes_state_init
+    while IFS='|' read -r id _t scope _d _c _p _r _v; do
+      [[ -n $id ]] || continue
+      [[ $scope == global ]] || continue
+      if fix_is_global_applied "$id"; then a=true; else a=false; fi
+      jq -nc --arg id "$id" --argjson applied "$a" '{id:$id, applied:$applied}'
+    done < <(fixes_catalog)
     ;;
 
   list-vendor-plugins)

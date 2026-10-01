@@ -61,7 +61,7 @@ func markOf(t *testing.T, rows []tuikit.PickerItem, title string) string {
 // one that is on all of them, ○ for one that is on none.
 func TestPartialFixShowsALeftHalfCircle(t *testing.T) {
 	m := partialFixture()
-	rows := fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true})
+	rows := fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true}, nil)
 	if got := markOf(t, rows, "Saturn 2 EQ page"); got != "◐" {
 		t.Errorf("a fix on 1 of 3 plugins shows %q, want ◐", got)
 	}
@@ -80,7 +80,7 @@ func TestTouchingAPartialRowShowsThePlainMark(t *testing.T) {
 	m := partialFixture()
 	// Unticked: the user is about to REMOVE it, which is all-or-nothing here.
 	m.fixChecked = map[string]bool{"wine_gui_input": true, "wine_saturn_eq": false}
-	rows := fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true})
+	rows := fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true}, nil)
 	if got := markOf(t, rows, "Saturn 2 EQ page"); got != "○" {
 		t.Errorf("an unticked partial row shows %q, want ○", got)
 	}

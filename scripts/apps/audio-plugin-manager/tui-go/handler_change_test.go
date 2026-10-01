@@ -15,7 +15,10 @@ func handlerTestModel(t *testing.T) model {
 	m.status = Status{FilePicker: "default", PluginWinHandler: "hyprland", SortMode: "vendor"}
 	m.push(scrSettings)
 	_ = m.enterCmd()
-	m.picker = m.picker.SelectIndex(3) // "Plugin window handler: Hyprland-managed"
+	// By VALUE, not by index: a hard-coded index tests whichever row sits there,
+	// so adding the default-prefix row above this one made it assert against
+	// that instead and fail on the wrong row.
+	m.picker = m.picker.SelectValue("toggle_plugin_handler")
 	if got := m.picker.SelectedValue(); got != "toggle_plugin_handler" {
 		t.Fatalf("selected value = %q, want toggle_plugin_handler", got)
 	}

@@ -522,11 +522,21 @@ while IFS= read -r p; do
 done < <(scan_prefixes | sort -u)
 
 default_prefix() {
-  # The prefix used when the user keeps the "same prefix" at install.
-  # Prefer a prefix that already owns installed plugins (state truth). When
-  # nothing is installed yet, always propose the dedicated ~/.wine-vst — never
-  # reuse an existing generic prefix (~/.wine etc.), so plugin installs never
-  # pollute the prefixes used by regular wine applications.
+  # The prefix used when the user keeps the "same prefix" at install, and the
+  # prefix the "launch an executable" action runs in.
+  #
+  # An explicit DEFAULT_PREFIX preference wins over everything. It is a real
+  # risk knob, which is why Settings warns before setting it: the manager's
+  # default is chosen so plugin installs stay out of the prefixes regular wine
+  # applications use, and pointing it at ~/.wine puts plugin .exe installs in
+  # the same prefix as everything else. The user's call, but not one to make
+  # by accident — so the setting is confirm-gated in the TUI.
+  #
+  # Then: a prefix that already owns installed plugins (state truth).
+  # Finally the dedicated ~/.wine-vst, never an existing generic prefix.
+  if [[ -n ${DEFAULT_PREFIX:-} && -d ${DEFAULT_PREFIX:-} ]]; then
+    printf '%s\n' "$DEFAULT_PREFIX"; return 0
+  fi
   local k p
   while IFS= read -r k; do
     [[ -n $k ]] || continue
@@ -2870,10 +2880,21 @@ load_prefs() {
   PLUGIN_WIN_HANDLER="hyprland"  # hyprland | classic
   PLUGINS_ROOT=""
   DOWNLOADS_DIR="$HOME/Downloads"   # default plugin installation file directory
+  # Explicit "use this prefix for installs / for launching" choice, empty when
+  # the automatic rule (a prefix that owns plugins, else ~/.wine-vst) decides.
+  # See default_prefix().
+  DEFAULT_PREFIX=""
   WIZARD_DONE=0   # 1 once the first-launch wizard has run (actions wizard-set-root)
   [[ -f $PREFS_FILE ]] && source "$PREFS_FILE" || true
   [[ ${WIZARD_DONE:-0} == 1 ]] && WIZARD_DONE=1 || WIZARD_DONE=0
   case "${PLUGIN_WIN_HANDLER:-}" in hyprland|classic) ;; *) PLUGIN_WIN_HANDLER="hyprland" ;; esac
+  # A DEFAULT_PREFIX pointing at a directory that no longer exists is dropped
+  # rather than honoured: default_prefix() would otherwise keep handing a dead
+  # path to the installer, and wine would create it silently.
+  if [[ -n ${DEFAULT_PREFIX:-} && ! -d ${DEFAULT_PREFIX:-} ]]; then
+    DEFAULT_PREFIX=""
+    save_prefs
+  fi
   if [[ -z $PLUGINS_ROOT ]]; then
     # First run under this version: an existing install already has real
     # plugin files under the legacy default ($HOME/VST) -- keep using it
@@ -2942,6 +2963,7 @@ PLUGIN_SORT_MODE="$PLUGIN_SORT_MODE"
 PLUGINS_ROOT="$PLUGINS_ROOT"
 DOWNLOADS_DIR="$DOWNLOADS_DIR"
 PLUGIN_WIN_HANDLER="$PLUGIN_WIN_HANDLER"
+DEFAULT_PREFIX="$DEFAULT_PREFIX"
 WIZARD_DONE="$WIZARD_DONE"
 EOF
   write_dir_readme
@@ -3395,6 +3417,27 @@ fixes_list_json() {
 fix_applied_plugins() {
   fixes_state_init
   jq -r --arg id "$1" '.applied[$id] // [] | .[]' "$FIXES_STATE" 2>/dev/null
+}
+
+# fix_is_global_applied — is this GLOBAL fix on, regardless of plugin?
+#
+# Its own predicate rather than a special case of fix_applied_plugins. The
+# marker "__global__" is filtered out of every per-plugin list on purpose (a
+# global cursor option must not light up every plugin row), which had the side
+# effect that the ONLY record of a global fix being on was that same filtered
+# list — so it was empty, and "applied" and "never applied" were the same thing
+# to the TUI. cursor_no_warp ended up with an EMPTY list, which is a state the
+# apply path can no longer even produce: fix_apply writes "__global__".
+#
+# So the answer is read where it is written, not inferred from a list that was
+# deliberately emptied.
+fix_is_global_applied() {
+  fixes_state_init
+  local r
+  while IFS= read -r r; do
+    [[ $r == __global__ ]] && return 0
+  done < <(fix_applied_plugins "$1")
+  return 1
 }
 
 # fixes_applied_plugins — every plugin stem (fix_plugin_canonical form) that

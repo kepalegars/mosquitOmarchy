@@ -84,14 +84,14 @@ func TestOneToggleOnAPartialRowIsTheOverride(t *testing.T) {
 	m.rebuildFixPicker()
 
 	// The row starts as the half circle.
-	rows := fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true})
+	rows := fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true}, nil)
 	if got := markOf(t, rows, "Saturn 2 EQ page"); got != "◐" {
 		t.Fatalf("the row starts as %q, want ◐", got)
 	}
 
 	// ONE Tab.
 	m.toggleFixValue("wine_saturn_eq")
-	rows = fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true})
+	rows = fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true}, nil)
 	if got := markOf(t, rows, "Saturn 2 EQ page"); got != "●" {
 		t.Errorf("after one toggle the row is %q, want ● — the circle should FILL", got)
 	}
@@ -120,7 +120,7 @@ func TestAPartialRowCyclesBothWays(t *testing.T) {
 	m := partialFixture()
 	m.rebuildFixPicker()
 	rows := func() []tuikit.PickerItem {
-		return fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true})
+		return fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true}, nil)
 	}
 	m.toggleFixValue("wine_saturn_eq")
 	if got := markOf(t, rows(), "Saturn 2 EQ page"); got != "●" {
@@ -144,7 +144,7 @@ func TestAFullRowKeepsItsPlainToggle(t *testing.T) {
 	m := partialFixture()
 	m.rebuildFixPicker()
 	rows := func() []tuikit.PickerItem {
-		return fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true})
+		return fixItemsToPicker(sortedFixItems(m.fixCache, false), m.fixChecked, m.fixOrig, m.fixOverride, map[string]bool{"Plugin windows": true}, nil)
 	}
 	if got := markOf(t, rows(), "Retitle the window"); got != "●" {
 		t.Fatalf("the full row starts as %q, want ●", got)

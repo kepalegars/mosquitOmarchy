@@ -209,6 +209,13 @@ type Status struct {
 	DownloadsDir       string `json:"downloads_dir"`
 	WizardDone         bool   `json:"wizard_done"`
 	QuarantineEntries  int    `json:"quarantine_entries"`
+	// DefaultPrefix is the prefix installs target and "launch an executable"
+	// runs in. Empty-configured means the automatic rule decides (a prefix that
+	// already owns plugins, else ~/.wine-vst) — see default_prefix() in the
+	// backend. Shown as the Settings row so the choice is visible rather than
+	// only felt.
+	DefaultPrefix      string `json:"default_prefix"`
+	DefaultPrefixSet   string `json:"default_prefix_set"`
 }
 
 type statusMsg struct {
@@ -944,6 +951,49 @@ func runFireAndForget(what string, args ...string) tea.Cmd {
 	}
 }
 
+// PrefixExe is one .exe found inside the default prefix's drive_c.
+type PrefixExe struct {
+	Path    string `json:"path"`
+	Display string `json:"display"`
+	Rel     string `json:"rel"`
+}
+
+type prefixExesMsg struct {
+	prefix string
+	items  []PrefixExe
+	err    error
+}
+
+// fetchPrefixExes lists the .exes inside the default prefix, for the "list
+// them" half of the launch action. drive_c/windows is already excluded on the
+// backend side (it holds ~200 system exes that are not plugin GUIs).
+func fetchPrefixExes(prefix string) tea.Cmd {
+	return func() tea.Msg {
+		var args []string
+		if prefix != "" {
+			args = append(args, prefix)
+		}
+		out, err := runQuick(append([]string{"list-execs-in-prefix"}, args...)...)
+		if err != nil {
+			return prefixExesMsg{err: err}
+		}
+		items, err := decodeJSONLines[PrefixExe](out)
+		return prefixExesMsg{prefix: prefix, items: items, err: err}
+	}
+}
+
+// launchExeCmd runs a .exe inside the given prefix, detached. Returns a
+// confirmation, not a wait: the plugin GUI stays open for as long as the user
+// wants it, so blocking the manager on it would be wrong.
+func launchExeCmd(prefix, exe string) tea.Cmd {
+	return func() tea.Msg {
+		if _, err := runQuick("launch-exe", prefix, exe); err != nil {
+			return actionErrMsg{err: err}
+		}
+		return actionOKMsg{what: "launched " + exe}
+	}
+}
+
 // setPluginHandlerCmd applies an already-decided plugin-window handler mode
 // (classic/hyprland) through the bash side, which also rewrites the global
 // Hyprland rule block, and refetches the status so the Settings row and the
@@ -1015,7 +1065,28 @@ type FixItem struct {
 // A fix with no candidate count comes from a single-plugin request, where
 // applied is applied and there is no "part" to speak of.
 func (it FixItem) IsPartial() bool {
+	// A GLOBAL fix can never be partial. "Applied to 12 of a suite's 21" is not
+	// a state a global rule has: it is either on for the whole desktop or off.
+	// Counting it as partial is what made an applied global fix draw ◐, or —
+	// with an empty AppliedTo — draw ○, and both read as "not applied".
+	if it.Scope == "global" {
+		return false
+	}
 	return it.Candidates > 1 && len(it.AppliedTo) > 0 && len(it.AppliedTo) < it.Candidates
+}
+
+// IsGlobalApplied reports whether a GLOBAL fix is on, from the separate
+// list-applied-global-fixes state.
+//
+// FixItem.Applied cannot answer this on its own for a global fix: the backend's
+// per-plugin match returns true for any plugin once the "__global__" marker is
+// recorded, but the marker is filtered out of every per-plugin LIST, which is
+// where AppliedTo comes from. The two disagree on exactly the case that matters.
+func (it FixItem) IsGlobalApplied(globalApplied map[string]bool) bool {
+	if it.Scope != "global" {
+		return false
+	}
+	return globalApplied[it.ID]
 }
 
 // fixesMsg carries the catalog fetched for a plugin, or for a whole vendor
@@ -1035,6 +1106,42 @@ type fixesMsg struct {
 
 // fixesDoneMsg reports a successful apply/remove batch.
 type fixesDoneMsg struct{ what string }
+
+// appliedGlobalFixesMsg carries the on/off state of every GLOBAL fix.
+//
+// It exists because the per-plugin fix list cannot carry it. A global fix is
+// recorded under the marker "__global__", which list-applied-fix-plugins
+// filters out on purpose so that a global cursor option does not badge every
+// plugin row — and that filter left the fixes screen with nothing to read:
+// AppliedTo was empty, and an empty list is what "never applied" looks like too.
+type appliedGlobalFixesMsg struct {
+	applied map[string]bool
+	err     error
+}
+
+// fetchAppliedGlobalFixes asks which global fixes are on, in one call.
+func fetchAppliedGlobalFixes() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("list-applied-global-fixes")
+		if err != nil {
+			return appliedGlobalFixesMsg{err: err}
+		}
+		rows, err := decodeJSONLines[struct {
+			ID      string `json:"id"`
+			Applied bool   `json:"applied"`
+		}](out)
+		if err != nil {
+			return appliedGlobalFixesMsg{err: err}
+		}
+		set := map[string]bool{}
+		for _, r := range rows {
+			if r.ID != "" {
+				set[r.ID] = r.Applied
+			}
+		}
+		return appliedGlobalFixesMsg{applied: set}
+	}
+}
 
 // fetchPluginFixes loads every fix with its applied flag for one plugin.
 func fetchPluginFixes(plugin string) tea.Cmd {
@@ -1371,14 +1478,21 @@ func (m model) afterInstallFixesPrompt(msg installFixesCheckMsg) (model, tea.Cmd
 	// The question is about the SUITE: FabFilter is nineteen plugins and the
 	// useful action is "fix them all". Without a known vendor it names the one
 	// plugin that finished installing.
+	//
+	// Both button labels are deliberate. "No" must read as "do not open the
+	// fixes page", NOT "apply nothing": any fix already applied by AUTO_FIX has
+	// in fact been written, and a button labelled "No" on a question about
+	// applying reads as a veto on the whole thing. So it says what it does —
+	// skip the page — and the "Yes" side names the scope, which is what the user
+	// actually decides on.
 	if msg.vendor != "" {
 		m.confirm = tuikit.NewConfirm(
-			"Plugin installed. Apply fixes to every "+msg.vendor+" plugin now?",
-			"No", "Yes")
+			"Plugin installed. Open the fixes page for the whole "+msg.vendor+" category?",
+			"No (skip the fixes page)", "Yes, open it for "+msg.vendor)
 	} else {
 		m.confirm = tuikit.NewConfirm(
-			"Plugin installed. Apply fixes for "+baseName(pluginPathOf(msg.plugin))+" now?",
-			"No", "Yes")
+			"Plugin installed. Open the fixes page for "+baseName(pluginPathOf(msg.plugin))+"?",
+			"No (skip the fixes page)", "Yes, open it")
 	}
 	m.replace(scrInstallFixesConfirm)
 	return m, nil

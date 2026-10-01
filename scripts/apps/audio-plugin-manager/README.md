@@ -187,6 +187,23 @@ or `Enter` on a single row with nothing checked. Native bundles go to
 (`PE32` = 32-bit, `PE32+` = 64-bit), so it is only meaningful for VST2 — a real VST3 bundle is a
 directory.
 
+## Launch an executable in the default prefix
+
+*Windows VST Plugins → Launch an executable in the default prefix* runs a Windows program
+inside the default wine prefix without going through a DAW. Two ways to pick the file:
+
+- **Browse to a file…** — opens the file manager (nautilus/superfile/zenity, whichever the
+  picker preference resolves to) so you can navigate the prefix's own filesystem. The file
+  manager only *designates the file*: the manager stays on top and does the wine launch
+  itself, so the program runs in the right prefix rather than whichever prefix the file
+  manager happens to associate with `.exe`.
+- **List the executables already in the prefix** — every `.exe` under the prefix's `drive_c`,
+  excluding the emulated `windows/` system folder (on a real prefix that folder alone holds
+  ~200 system exes), sorted by name with the folder path as the sub-line.
+
+The default prefix is the same one installs target (see *Default wine prefix* in Settings).
+The launched program's window is floated by the same Hyprland rule as a plugin editor.
+
 ## Plugin fixes
 
 Some Wine plugins misbehave under Hyprland in ways that are not the plugin's fault: the editor
@@ -234,8 +251,11 @@ fixes are written for it.
 |---|---|
 | **Plugins folder** | `PLUGINS_ROOT`, default `~/Music/Audio Plugins`, with `vst`/`vst3`/`clap` subfolders for the Windows bundles and `lv2`/`vst3-native`/`clap-native` staging roots. Changing it **moves every real plugin file** and re-links wine/yabridge, behind a confirmation. An existing install keeps using wherever its plugins already are — no silent migration. |
 | **Default install file directory** | where the install picker starts. A preference only. |
+| **Default wine prefix** | the prefix installs target and *Launch an executable* runs in. **Automatic** by default: a prefix that already owns plugins, else `~/.wine-vst`. Choosing a specific one is **confirmation-gated** with a warning — the manager's defaults keep plugin installs out of the prefix your regular Windows apps use, so pointing it at a shared prefix (`~/.wine`) makes plugin installers write there too. Existing plugins are never moved; only new installs follow. Can be set back to *Automatic*. |
 | **File picker** | superfile, or the native/zenity chain. Shared by both install flows. |
 | **Plugin window handler** | `Classic (float + decorations)` or `Hyprland-managed`. Rewrites the **global** wine-editor window rules, so it is confirmation-gated; affects only windows opened from now on, and a per-plugin fix still overrides it. Also on `x` in the plugin list. |
+| **Rewrite applied fixes when installing** | when *On*, a fix **already applied** to that plugin is rewritten silently on each install (so a rule you hand-edited is restored). When *Off*, nothing is applied without being asked. Independent of the row below. |
+| **Ask "apply fixes now?" after an install** | the *discovery* step for a newly-installed plugin: shows the fixes page for the freshly installed plugin — or the whole vendor category when the whole suite was installed. *No* only **skips opening the page**; it never undoes a fix that was already written by the row above. |
 | **Rescan for untracked plugins** | re-runs the reconcile check that also runs once at startup. Native plugins need no equivalent — a directory scan is always current. |
 
 A deployed `~/.config/audio-plugin-manager/README.md` mirrors the current settings and is
