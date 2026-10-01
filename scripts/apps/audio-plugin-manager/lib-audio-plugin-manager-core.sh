@@ -2565,6 +2565,19 @@ install_native_plugin_from_file() {
   cp -a "$found" "$dest" || { err "copy failed: $found -> $dest"; [[ -n $cleanup_work ]] && rm -rf "$cleanup_work"; return 1; }
   [[ -n $cleanup_work ]] && rm -rf "$cleanup_work"
   ok "$kind plugin installed: $(basename "$dest") -> $dest_dir"
+  # Register it in the log. This used to be MISSING, and it is not a cosmetic
+  # omission: every other install path calls state_register_install, so a plugin
+  # installed this way landed on disk and nowhere else. The next launch then
+  # reconciled the log against the filesystem, found the file had no log entry,
+  # and offered the plugin the user had JUST installed as "found on disk but not
+  # tracked" — asking them to adopt what they had only just installed.
+  #
+  # The prefix is empty on purpose: a native bundle is a directory that belongs
+  # to no wine prefix. state_register_install takes the prefix as the owning
+  # container, and putting "" in it keeps "which prefix owns this" honest
+  # instead of attributing a native plugin to whichever prefix happened to be
+  # default at the time.
+  state_register_install "$(plugin_key "$dest")" "" "$dest"
   printf '%s\n' "$dest"
 }
 
