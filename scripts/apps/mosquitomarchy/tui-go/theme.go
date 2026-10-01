@@ -1,4 +1,4 @@
-// theme.go — "Create a theme from an image" on the main menu.
+// theme.go — the "Theming" row on the main menu.
 //
 // This used to be a single row inside the Setup TUI's Themes category, which
 // ran the interactive create-theme.sh in a child process. Two problems with
