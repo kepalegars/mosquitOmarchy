@@ -29,16 +29,18 @@ archive actions, exactly as they were before Nautilus dropped built-in support.
   lha, lrzip) that libarchive alone refuses.
 - **unrar** backs RAR. With both installed, file-roller's own **Extract Here**
   prompts for the password itself and hands it to the right backend.
-- **Makes sure file-roller is *not* the default application** for archive types.
-  Earlier revisions ran `xdg-mime default org.gnome.FileRoller.desktop` per
-  MIME type, which was self-defeating: `xdg-mime default` writes a *single* app,
-  not a list, so it **replaced** the candidate list instead of adding to it. The
-  system list in `mimeinfo.cache` is
-  `application/zip=org.gnome.FileRoller.desktop;org.gnome.Nautilus.desktop;` —
-  Nautilus was a co-candidate and the override dropped it. Extraction in
-  Nautilus does not need a MIME default anyway; it goes through file-roller's
-  `libnautilus-extension`. This step now only **removes** those old bindings, so
-  a machine that ran a previous version is repaired rather than left pinned.
+- **Hands the archive MIME types back to Nautilus**, so a double-click behaves
+  the way the desktop did before this module existed. Older revisions pinned them
+  to file-roller; this module exists so *Nautilus* handles archives, not so
+  file-roller is the handler.
+  Worth being precise: Nautilus 50 has no extraction of its own. Its "Extract
+  Here" / "Extract To" come from the file-roller extension's right-click menu,
+  and `Exec=nautilus --new-window %U` is what a double-click resolves to — so
+  this restores Nautilus' own handling rather than promising extraction on a
+  double-click. Extraction is the right-click action.
+  Both halves matter: the file-roller entries are cleared first, so the hand-back
+  is not fighting a stale pin.
+
 - **Hides file-roller's own package .desktop** so the apps menu is not
   cluttered with a second archive entry — and creates no entry of our own.
   The override is a **full copy of the package file plus `NoDisplay=true`**,
@@ -59,7 +61,8 @@ is created: packages plus a few config edits, that is the whole module.
 - **Right-click the archive → Extract Here** and enter the password when
   file-roller asks. RAR goes through unrar, zip-AES / 7z / ISO through 7z.
 - Extract Here goes through the Nautilus extension, so no MIME association is
-  involved and file-roller is never forced as the system handler.
+  involved. Double-clicking is handled by Nautilus; the archive is opened with
+  the right-click **Extract Here**.
 
 ## Usage
 
