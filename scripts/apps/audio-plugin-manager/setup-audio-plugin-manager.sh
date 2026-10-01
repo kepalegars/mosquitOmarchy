@@ -264,12 +264,12 @@ ok "Hyprland float rule for the TUI window installed/updated ($HYPR_CONF)"
 # 2. Menu entry
 # -----------------------------------------------------------------------------
 # NO .desktop in ~/.local/share/applications: that makes the manager an
-# "app" in the Apps menu — the user wants it ONLY in Setup ▸ mosquito (the
+# "app" in the Apps menu — the user wants it ONLY in Setup ▸ managers (the
 # menu extension block). Clean earlier copies to avoid duplicates.
 rm -f "$APPS_DIR/mosquito-audio-plugin-manager.desktop" \
       "$APPS_DIR/vst-install.desktop" "$APPS_DIR/vst-manager.desktop"
 command -v update-desktop-database >/dev/null && update-desktop-database "$APPS_DIR" 2>/dev/null || true
-ok "menu: manager lives in Setup ▸ mosquito (no apps .desktop)"
+ok "menu: manager lives in Setup ▸ managers (no apps .desktop)"
 
 # -----------------------------------------------------------------------------
 # 2b. Deployed README (regenerated live by the core on every Settings change;

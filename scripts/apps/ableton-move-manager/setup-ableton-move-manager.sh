@@ -617,7 +617,7 @@ def is_ours(key, value):
         return True
     k = key.lower()
     # Never delete a Setup-screen entry. Those belong to the mosquitomarchy TUI
-    # setup ("Setup > mosquito > Move manager"), not to this purge.
+    # setup ("Setup > managers > Move manager"), not to this purge.
     if k.startswith(PROTECTED_PREFIXES):
         return False
     if not isinstance(value, dict):
@@ -750,7 +750,7 @@ purge_legacy_entries() {
 
 menu_block() {
   # The Move Manager deliberately publishes NOTHING in the omarchy menu. Its
-  # launcher lives under Setup > mosquito > Move manager (declared by
+  # launcher lives under Setup > managers > Move manager (declared by
   # mosquitomarchy-setup.sh), the single place these tools are listed; the
   # Trigger > Music copy — and the "trigger.music" parent it needed, since that
   # submenu would otherwise be left empty — were removed at the user's request.
@@ -826,7 +826,7 @@ install_menu() {
     mv "$tmp" "$MENU"
   fi
   if write_menu; then
-    ok "Menu bar entry ensured: Setup > mosquito > Move manager"
+    ok "Menu bar entry ensured: Setup > managers > Move manager"
   else
     warn "Menu JSONC invalid after adding the entry — fix $MENU manually."
   fi
@@ -1108,7 +1108,7 @@ else
   echo "  • Disconnect warn  -> udev rule (notifies only while the Move Manager webapp is actively in use)"
   echo "  • Folders          -> $MOVE_DIR/{ablbundle,als,bwproject,bwproject/midi}"
   echo "  • Omarchy overlay  -> mosquito.confirm plugin (native Yes/No prompts)"
-  echo "  • Omarchy menu     -> Setup > mosquito > Move manager (TUI: address / Move Manager / convert)"
+  echo "  • Omarchy menu     -> Setup > managers > Move manager (TUI: address / Move Manager / convert)"
   echo
   echo "  Run the menu from the Omarchy launcher or with: mosquito-move-manager"
   echo "  (if not run as root, run once: sudo bash $0 for the udev rule + chromium policy + ydotool NOPASSWD)"

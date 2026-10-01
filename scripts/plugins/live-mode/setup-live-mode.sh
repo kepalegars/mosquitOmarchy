@@ -366,7 +366,7 @@ PY
 
 menu_block() {
   # One entry: a TOGGLE, not a launcher. The manager TUI stays under
-  # Setup > mosquito (mosquitomarchy-setup.sh owns that), and the old
+  # Setup > managers (mosquitomarchy-setup.sh owns that), and the old
   # Trigger > Music duplicates are gone; what was missing was the one row that
   # actually turns live mode on, which is the thing you reach for mid-set.
   #
@@ -534,7 +534,7 @@ status() {
   fi
   echo "── Menu entries ──────────────────────────────────────────"
   # Two different rows: the TOGGLE under Trigger > Toggle, and the manager TUI
-  # under Setup > mosquito (that one is declared by mosquitomarchy-setup.sh, so
+  # under Setup > managers (that one is declared by mosquitomarchy-setup.sh, so
   # it is not this script's business). The old Trigger > Music pair must stay
   # gone.
   if [[ -f $MENU ]] && grep -qF '"trigger.toggle.live-mode"' "$MENU"; then
@@ -586,7 +586,7 @@ if [[ $YES -eq 1 ]]; then
   install_menu
   install_hypr_rule
   refresh_hypr
-  ok "Live mode installed. Use it via:  live-mode toggle   (or Setup ▸ mosquito ▸ Live Mode Manager)."
+  ok "Live mode installed. Use it via:  live-mode toggle   (or Setup ▸ managers ▸ Live Mode Manager)."
   exit 0
 fi
 
