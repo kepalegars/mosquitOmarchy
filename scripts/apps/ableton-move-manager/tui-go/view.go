@@ -18,33 +18,48 @@ import (
 // (no extra blank line between the box and the subtitle — tighter, more
 // compact title block per the user's layout reinforcement request).
 func header(maxW int) string {
-	return tuikit.MosquitoStackedHeader(tuikit.BoxedMosquito(), "move manager", maxW)
+	return titleLadder(maxW).Render(maxW, headerRows)
 }
 
-// headerRows is the vertical space the header reserves on the home screen
-// (8 framed-mosquito rows + 1 blank + 4 subtitle rows + 1 status row +
-// 1 slack). The home screen subtracts it from the picker budget so the
-// ASCII art is never clipped, even on short terminals (on terminals too
-// narrow to fit the full boxed label the header collapses to the
-// subtitle only).
+// contentPolicy is the shared panel-sizing policy (tuikit.ManagerContent), so
+// this TUI and the other four cannot drift apart on the arithmetic again.
+var contentPolicy = tuikit.ManagerContent
+
+// titleLadder is the home banner: the full stacked boxed mosquito plus the
+// "move manager" subtitle when the tile allows, then the subtitle alone in a
+// compact box, then plain text. Rungs are measured once here and chosen by fit,
+// so the banner is never rendered too wide and wrapped.
+func titleLadder(width int) tuikit.TitleLadder {
+	return tuikit.StackedLadder(tuikit.BoxedMosquito(), "move manager", width)
+}
+
+// headerRows is the tallest the home banner may be: the full stacked title
+// block. It is a CAP now, not an estimate — the actual reserve is whatever rung
+// the ladder picked, measured at homeBannerReserve. That was the bug: a fixed
+// 15 reserved against a header that rendered 13 rows on one terminal and 4 on
+// another, so the two disagreed and the title was what got clipped.
 const headerRows = 15
 
-// narrowHeaderRows is the budget when the terminal is shorter than the
-// full boxed art: we drop the boxed label and keep only the subtitle line
-// (rounded to a 2-row block so the picker always has room to breathe).
-const narrowHeaderRows = 4
+// statusRows is the extra row the home screen needs under the list for the
+// connection line ("move.local ●"), which is drawn as part of the body.
+const statusRows = 1
 
-// homeBannerReserve is the row budget the home screen keeps for the boxed
-// "mosquito" title (or just the subtitle on short terminals) so bubbletea
-// never clips its top rows. Width-aware: too narrow → skip the box.
+// homeLayout picks the banner rung that fits and returns the matching budget.
+func (m *model) homeLayout() tuikit.Layout {
+	w := m.contentWidth()
+	return tuikit.LayoutForLadder(w, m.h, titleLadder(w))
+}
+
+// contentWidth is the one width number every part of this TUI measures
+// against, so the ladder and the panel are never sized against different widths.
+func (m *model) contentWidth() int {
+	return contentPolicy.ContentWidth(m.w)
+}
+
+// homeBannerReserve is how many rows the home banner actually occupies right
+// now — the rung the ladder chose, not a guess about what would fit.
 func (m *model) homeBannerReserve() int {
-	if m.w < 74 {
-		return narrowHeaderRows
-	}
-	if m.h < 22 {
-		return narrowHeaderRows
-	}
-	return headerRows
+	return m.homeLayout().TitleRows
 }
 
 // contentSize caps how wide/tall a screen's own component (picker, runner)
@@ -76,32 +91,17 @@ func (m *model) mainContentSize() (int, int) {
 }
 
 func (m *model) contentSizeFor(isMain bool) (int, int) {
-	w := m.w - 8
-	if w > 92 {
-		w = 92
-	}
-	if w < 20 {
-		w = m.w
-	}
-	h := m.h - 8
-	if h > 26 {
-		h = 26
-	}
-	if h < 8 {
-		h = m.h - 4
-	}
 	if isMain {
-		th := lipgloss.Height(header(w))
-		reserved := m.h - th - 1 /*status*/ - 2 /*bar: notify+hint*/ - 2 /*frame pad*/ - 2 /*spare*/
-		if reserved > 26 {
-			reserved = 26
-		}
-		if reserved >= 8 {
-			h = reserved
-		}
+		p := contentPolicy
+		p.ExtraRows = statusRows
+		return p.Size(m.w, m.h, m.homeLayout().TitleRows)
 	}
-	return w, h
+	return contentPolicy.Size(m.w, m.h, subScreenTitleRows)
 }
+
+// subScreenTitleRows: every screen except the home menu uses a single accent
+// line as its title.
+const subScreenTitleRows = 1
 
 // appVersion is the version of this SCRIPT (the ableton-move-manager module),
 // shown top-left on the first page — not the version of Move/Bitwig/Ableton.
@@ -293,21 +293,16 @@ func (m *model) contentSizeW() int {
 // "mosquito" + subtitle banner when the window allows it (real height,
 // not a hardcoded reserve — see contentSize), otherwise just the
 // subtitle so nothing is clipped on narrow/short terminals.
-func (m model) homeTitle() string {
-	// Center the banner across the FULL window width (m.w - 2), the same
-	// rule as the mosquitomarchy home screen — the content width (92-col
-	// cap) would center it inside the content lane only, and because the
-	// version row makes the title block exactly window-wide, FrameScreen
-	// skips its own re-centering pass, so the banner would stick left.
-	w := m.w - 2
-	if w < 40 {
-		w = m.w
-	}
-	if m.homeBannerReserve() == headerRows {
-		return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(header(w))
-	}
-	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).
-		Render(tuikit.MosquitoSubtitle("move manager", w))
+func (m *model) homeTitle() string {
+	// Centered across the full window, not the content lane: the version row
+	// makes the title block exactly window-wide, so FrameScreen skips its own
+	// re-centering pass and a narrower block would stick left.
+	//
+	// It renders the SAME rung homeBannerReserve budgeted for, so the reserved
+	// rows and the drawn rows are the same number by construction.
+	w := m.contentWidth()
+	title := m.homeLayout().RenderLadder(w, titleLadder(w))
+	return lipgloss.NewStyle().Width(m.w).Align(lipgloss.Center).Render(title)
 }
 
 // screenTitle renders a centered accent-colored bold title for the

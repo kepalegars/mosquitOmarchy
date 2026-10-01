@@ -13,7 +13,19 @@ import (
 // the picker's content width: the "live mode manager" Small art is
 // 71 columns, so anything narrower falls back to the one-line label.
 func header(maxW int) string {
-	return tuikit.MosquitoStackedHeader(tuikit.BoxedMosquito(), "live mode manager", maxW)
+	return titleLadder(maxW).Render(maxW, headerRowsCap)
+}
+
+// contentPolicy is the shared panel-sizing policy (tuikit.ManagerContent), so
+// this TUI and the other four cannot drift apart on the arithmetic again.
+var contentPolicy = tuikit.ManagerContent
+
+// titleLadder is the home banner: the full stacked boxed mosquito plus the
+// "live mode manager" subtitle when the tile allows, then the subtitle alone in
+// a compact box, then plain text. Rungs are measured once and chosen by fit, so
+// the banner is never rendered too wide and wrapped.
+func titleLadder(width int) tuikit.TitleLadder {
+	return tuikit.StackedLadder(tuikit.BoxedMosquito(), "live mode manager", width)
 }
 
 const (
@@ -21,9 +33,15 @@ const (
 	// line, the shortcut bar, and the picker's own frame. The last two come
 	// from the kit, so they cannot drift from the styles that produce them.
 	chromeRows = 1 + tuikit.BarRows + tuikit.FrameRows
-	// The fewest body rows worth showing; below this the banner gives way to
-	// the subtitle, and below THAT the list takes what is left.
-	minBodyRows = 4
+	// headerRowsCap is the tallest the banner may be: the full stacked title
+	// block. A CAP, not an estimate — the real reserve is whichever rung the
+	// ladder picked, measured at homeBannerReserve.
+	//
+	// The old minBodyRows floor ("always show at least 4 list rows") is gone:
+	// a floor cannot promise space the window does not have, and honouring it
+	// is what pushed the panel 3 rows past a 16-row window. Deciding whether to
+	// show the banner from the available height is LayoutForLadder's job now.
+	headerRowsCap = 15
 )
 
 // homeHeaderRows is what the home screen actually spends on its banner, in the
@@ -42,11 +60,27 @@ const (
 // Deciding it from the arithmetic cannot disagree with itself: the banner is
 // drawn if — and only if — what it costs still leaves a usable list.
 func (m model) homeHeaderRows(w int) int {
-	full := lipgloss.Height(header(w))
-	if m.h-full-chromeRows < minBodyRows {
-		return lipgloss.Height(tuikit.MosquitoSubtitle("live mode manager", w))
-	}
-	return full
+	return m.homeLayout().TitleRows
+}
+
+// homeLayout picks the banner rung that fits the window and returns the
+// matching budget.
+//
+// The previous version asked "would the full banner leave a usable list?" and
+// answered with a hand-computed subtraction. That is the same question, asked
+// in the one place that also has to draw the answer: LayoutForLadder walks the
+// ladder top-down by available height, so the banner is the first thing to give
+// way as the window shrinks, and the rows it reports are the rows the title
+// occupies. A LayoutForLadder budget cannot disagree with a LayoutForLadder
+// draw, because they are the same choice.
+func (m model) homeLayout() tuikit.Layout {
+	w := m.bannerWidth()
+	return tuikit.LayoutForLadder(w, m.h, titleLadder(w))
+}
+
+// contentWidth is the one width number the panel is sized against.
+func (m model) contentWidth() int {
+	return contentPolicy.ContentWidth(m.w)
 }
 
 // bannerWidth is the width the home banner is DRAWN at.
@@ -67,6 +101,21 @@ func (m model) bannerWidth() int {
 // homeBannerReserve is what the banner costs, at the width it is drawn at.
 func (m model) homeBannerReserve() int {
 	return m.homeHeaderRows(m.bannerWidth())
+}
+
+// subScreenTitleRows: every screen except the home menu uses a single accent
+// line as its title.
+const subScreenTitleRows = 1
+
+// homeTitle renders the pinned-top banner. Centered across the full window,
+// not the content lane: the version row makes the title block exactly
+// window-wide, so FrameScreen skips its own re-centering pass and a narrower
+// block would stick left. It draws the same rung homeBannerReserve budgeted
+// for, so the reserved rows and the drawn rows agree by construction.
+func (m model) homeTitle() string {
+	w := m.bannerWidth()
+	title := m.homeLayout().RenderLadder(w, titleLadder(w))
+	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(title)
 }
 
 // appVersion is the version of this SCRIPT (the live-mode module).
@@ -90,23 +139,10 @@ func (m model) View() string {
 	barLine := func(hint string) string {
 		return tuikit.BottomBar(m.toast.View(), hint, m.contentSizeW())
 	}
-	homeTitle := func() string {
-		// Center the banner across the FULL window width (m.w - 2), the same
-		// rule as the mosquitomarchy home screen — the content width (92-col
-		// cap) would center it inside the content lane only, and because the
-		// version row makes the title block exactly window-wide, FrameScreen
-		// skips its own re-centering pass, so the banner would stick left.
-		w := m.bannerWidth()
-		if m.homeBannerReserve() > lipgloss.Height(tuikit.MosquitoSubtitle("live mode manager", w)) {
-			return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(header(w))
-		}
-		return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).
-			Render(tuikit.MosquitoSubtitle("live mode manager", w))
-	}
 	switch m.top() {
 	case scrMain:
 		version = "v" + appVersion
-		title = homeTitle()
+		title = m.homeTitle()
 		if m.w == 0 || m.h == 0 {
 			body = "loading…"
 		} else {
@@ -141,46 +177,18 @@ func (m model) contentSizeW() int {
 // box so the manager reads as a centered panel. Home budget computed from
 // the real title height (see the move manager's contentSize rationale).
 func (m model) contentSize() (int, int) {
-	w := m.w - 8
-	if w > 92 {
-		w = 92
+	if m.top() != scrMain {
+		return contentPolicy.Size(m.w, m.h, subScreenTitleRows)
 	}
-	if w < 20 {
-		w = m.w
-	}
-	h := m.h - 8
-	if h > 26 {
-		h = 26
-	}
-	if h < 8 {
-		h = m.h - 4
-	}
-	if m.top() == scrMain {
-		// The home budget, counted from every row the screen spends on
-		// something other than the list:
-		//
-		//   the banner          homeHeaderRows, the SAME answer the draw uses
-		//   the version line    FrameScreenVersion prepends it to the title
-		//   the shortcut bar    one row (a toast replaces it, same height)
-		//   the shortcut bar    BarRows, the notification line plus the hint
-		//   the picker's frame  FrameRows, which Picker.View adds to whatever
-		//                      height it was given
-		//
-		// Missing the frame rows is what made the home screen taller than the
-		// window: the kit centres the body in the gap but lets it overflow the
-		// BOTTOM, so a body that is two rows too tall pushes the whole screen
-		// past the last terminal row — and a terminal that receives more lines
-		// than it has SCROLLS, taking the title out of view. That is the report:
-		// no boxed mosquito, no "live mode manager" subtitle.
-		banner := m.homeHeaderRows(m.bannerWidth())
-		avail := m.h - banner - 1 /*version*/ - tuikit.BarRows - tuikit.FrameRows
-		if avail > 26 {
-			avail = 26
-		}
-		if avail < 4 {
-			avail = 4
-		}
-		h = avail
-	}
-	return w, h
+	// The home budget, from the shared policy. Counted from every row the
+	// screen spends on something other than the list — banner, version line,
+	// shortcut bar, picker frame — which the kit now measures in one place.
+	//
+	// This used to end with "if avail < 4 { avail = 4 }": a floor that showed
+	// four list rows whether or not four rows were free. At h=16 the panel was
+	// four rows tall with one row of gap, so it overflowed the window by three
+	// and the terminal scrolled the title away. A floor cannot promise space
+	// that is not there, so it is gone; FrameScreen clipping the body is what
+	// protects the interface now.
+	return contentPolicy.Size(m.w, m.h, m.homeLayout().TitleRows)
 }

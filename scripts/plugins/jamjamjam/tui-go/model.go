@@ -206,10 +206,15 @@ func (m model) View() string {
 		return "loading…"
 	}
 	if time.Now().Before(m.splashUntil) {
-		// Splash: the same boxed "mosquito jamjamjam" title block every
-		// mosquito TUI shows, for a beat or two before the panel appears.
-		return tuikit.FrameScreen(m.w, m.h, "",
-			tuikit.BoxedMosquito()+"\n"+tuikit.MosquitoSubtitle("jamjamjam", m.w), "")
+		// The boxed "mosquito jamjamjam" title block every mosquito TUI shows,
+		// for a beat or two before the panel appears.
+		//
+		// Through the ladder, like every other title in the kit. It used to be
+		// BoxedMosquito() + MosquitoSubtitle() concatenated unconditionally —
+		// 13 rows at any size — so in a short tile the splash overflowed the
+		// window and the terminal scrolled it away, on the one screen the user
+		// is guaranteed to be looking at.
+		return tuikit.FrameScreen(m.w, m.h, "", m.splashTitle(), "")
 	}
 	if m.settings {
 		return m.settingsView()
@@ -334,4 +339,20 @@ func (m model) settingsView() string {
 	body := strings.Join(rows, "\n")
 	return tuikit.FrameScreen(m.w, m.h, tuikit.StyleAccent.Render("jamjamjam · settings"), body,
 		tuikit.BottomBar(m.status, tuikit.StyleHelp.Render("n naming · esc back"), m.w))
+}
+
+// splashTitle is the splash's title block, at whichever rung fits the window.
+//
+// Through the ladder, like every other title in the kit. It used to be
+// BoxedMosquito() + MosquitoSubtitle() concatenated unconditionally — 13 rows
+// at any size — so in a short tile the splash overflowed the window and the
+// terminal scrolled it away, on the one screen the user is guaranteed to be
+// looking at.
+func (m model) splashTitle() string {
+	ladder := tuikit.NewTitleLadder(
+		tuikit.MosquitoStackedHeader(tuikit.BoxedMosquito(), "jamjamjam", m.w),
+		tuikit.MosquitoSubtitle("jamjamjam", m.w),
+		tuikit.StyleAccent.Bold(true).Render("jamjamjam"),
+	)
+	return tuikit.LayoutForLadder(m.w, m.h, ladder).RenderLadder(m.w, ladder)
 }
