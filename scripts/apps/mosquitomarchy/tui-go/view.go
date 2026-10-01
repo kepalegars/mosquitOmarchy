@@ -126,6 +126,12 @@ func (m model) View() string {
 		m.preinstallPicker = m.preinstallPicker.SetSize(m.contentSize())
 	case scrMenuEntries:
 		m.menuEntriesPicker = m.menuEntriesPicker.SetSize(m.contentSize())
+	case scrThemeFolder:
+		m.themeFolderPicker = m.themeFolderPicker.SetSize(m.contentSize())
+	case scrThemeImage:
+		m.themeImagePicker = m.themeImagePicker.SetSize(m.contentSize())
+	case scrThemeDone:
+		m.themeDonePicker = m.themeDonePicker.SetSize(m.contentSize())
 	}
 	// The info overlay and the runner are drawn on top of whatever screen is
 	// current, so they always need the current budget.
@@ -194,6 +200,26 @@ func (m model) View() string {
 		title = screenTitle("Extras", w)
 		body = m.pickPicker.View()
 		bar = barLine(m.pickPicker.ShortcutsHint())
+	case scrThemeFolder:
+		title = screenTitle("Create a theme from an image", w)
+		body = m.themeFolderPicker.View()
+		bar = barLine(m.themeFolderPicker.ShortcutsHint())
+	case scrThemeImage:
+		title = screenTitle("Create a theme from an image", w)
+		body = m.themeImagePicker.View()
+		bar = barLine(m.themeImagePicker.ShortcutsHint())
+	case scrThemeInput:
+		title = screenTitle("Create a theme — image folder", w)
+		body = m.themeInput.View()
+		bar = barLine(m.themeInput.ShortcutsHint())
+	case scrThemeName:
+		title = screenTitle("Create a theme — name", w)
+		body = m.themeInput.View()
+		bar = barLine(m.themeInput.ShortcutsHint())
+	case scrThemeDone:
+		title = screenTitle("Create a theme from an image", w)
+		body = m.themeDonePicker.View()
+		bar = barLine(m.themeDonePicker.ShortcutsHint())
 	case scrBackup:
 		title = screenTitle("Backup / Restore", w)
 		body = m.backupBody()

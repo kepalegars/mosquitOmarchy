@@ -38,6 +38,14 @@ const (
 	// and the TUI replaced that launcher without ever carrying the category
 	// across, so Setup had no way to reach a single quick fix.
 	scrQuickFixes
+	// Creating a theme from an image: a 4-step flow on the main menu. Each
+	// step is its own screen so Esc backs out one decision at a time instead of
+	// dumping you at the main menu with three choices made.
+	scrThemeFolder
+	scrThemeImage
+	scrThemeInput
+	scrThemeName
+	scrThemeDone
 )
 
 // BackupOpts are the Backup screen's content choices.
@@ -201,16 +209,31 @@ type model struct {
 	// spektrFilm OFX too?". 0 = not asked yet. Kept separate from kpxGnomeRm
 	// because the two questions belong to different modules, and a plan can
 	// contain both.
-	dvcSpektra    int
-	kbCatPicker   navPicker
-	kbItemPicker  navPicker
-	kbCatItems    []KbCatItem
-	kbKeyPicker   navPicker
-	kbFree        []string
-	kbPending     KbCatItem
-	kbInput       tuikit.TextInput
-	kbInputStep   int    // 0 = label, 1 = command
-	kbCustomLabel string // custom-command label while the command is typed
+	dvcSpektra   int
+	kbCatPicker  navPicker
+	kbItemPicker navPicker
+	kbCatItems   []KbCatItem
+	kbKeyPicker  navPicker
+	kbFree       []string
+	kbPending    KbCatItem
+	kbInput      tuikit.TextInput
+	kbInputStep  int // 0 = label, 1 = command
+
+	// "Create a theme from an image" (theme.go). folder -> image -> name ->
+	// create, each kept until the flow finishes so Esc can step back.
+	themeDir           string
+	themeImages        []ThemeImageRec
+	themeImagesFetched bool
+	themeImage         string
+	themeInput         tuikit.TextInput
+	themeInputStep     int // 0 = folder path, 1 = theme name
+	themeCreated       string
+	themePendingName   string // the name carried out of the text screen
+	themeLog           string
+	themeFolderPicker  navPicker
+	themeImagePicker   navPicker
+	themeDonePicker    navPicker
+	kbCustomLabel      string // custom-command label while the command is typed
 
 	// Backup content selection (apps/tuis/webapps), reusing the setup tree
 	// display; plus the "what to include" options.
@@ -327,6 +350,7 @@ func (m model) mainMenuItems() []tuikit.PickerItem {
 		{Display: "Setup", Value: "setup"},
 		{Display: "Uninstall", Value: "uninstall"},
 		{Display: "Keybindings", Value: "keybindings"},
+		{Display: "Create a theme from an image", Value: "theme"},
 		{Display: "Health check", Value: "health"},
 		{Display: "Backup / Restore", Value: "backup"},
 		{Display: "Extras", Value: "settings"},

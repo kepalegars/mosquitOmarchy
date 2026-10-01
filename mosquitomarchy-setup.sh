@@ -3409,7 +3409,7 @@ run_ollama(){
 
 run_battery(){ bash "$BATTERY_DIR/setup-battery-management.sh"; }
 run_brightness(){ bash "$DISPLAY_DIR/fix-optimized-brightness.sh"; }
-run_achraff(){ bash "$THEME_DIR/create-theme.sh" "$THEME_DIR/Wallpapers/achraf67.png"; }
+run_achraff(){ bash "$THEME_DIR/create-theme.sh" --apply "$THEME_DIR/Wallpapers/achraf67.png"; }
 run_keyboard_backlight(){ bash "$DISPLAY_DIR/fix-keyboard-backlight-menu.sh"; }
 run_touchpad(){ bash "$TOUCHPAD_DIR/fix-touchpad.sh" $([[ $YES == 1 ]] && echo -y); }
 run_superfile(){ bash "$SUPERFILE_DIR/setup-superfile.sh" $([[ $YES == 1 ]] && echo -y); }
@@ -3867,11 +3867,12 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
       fi
       ;;
     mosquito)
-      # The mosquito tools — every user-visible tool, displayed as
-      # "mosquito-<tool>" rows; each maps to its module / pseudo-module key
+      # The mosquito tools — each user-visible tool gets its own row, labelled
+      # with the tool's name rather than the module key it routes to
       # (battery = mega-caffeine, ableton-move-manager = Move Manager, etc).
+      # The keys are what exec_modules routes on; the labels are what you read.
       CAND_KEYS+=("ableton-move-manager")
-      CAND_LABELS+=("mosquito-move-manager  —  $(module_desc ableton-move-manager)")
+      CAND_LABELS+=("Move Manager  —  $(module_desc ableton-move-manager)")
       CAND_KEYS+=("audio-plugin-manager")
       CAND_LABELS+=("mosquito-audio-plugin-manager  —  $(module_desc audio-plugin-manager)")
       CAND_KEYS+=("jamjamjam-plugin")
@@ -3894,12 +3895,10 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
           CAND_LABELS+=("$id  —  $(module_desc "$id")")
         fi
       done
-      # The themes category also offers building a theme from a wallpaper.
-      if [[ $cat == themes && -d "$THEME_DIR/Wallpapers" ]] \
-         && compgen -G "$THEME_DIR/Wallpapers/*" >/dev/null 2>&1; then
-        CAND_KEYS+=("theme")
-        CAND_LABELS+=("theme  —  $(module_desc theme)")
-      fi
+      # NOTE: building a theme from an image is NOT a Setup row. It lives on the
+      # mosquitomarchy TUI's main menu, right after Keybindings, because it is a
+      # create-this-thing action with its own 4-step flow (folder -> image ->
+      # name -> create) rather than an install/uninstall of a module.
       ;;
   esac
 }
@@ -3985,10 +3984,6 @@ category_run(){ # catid -> run only the CATEGORY_SELECTED items
       SELECTED=()
       skipped=0
       for k in "${CATEGORY_SELECTED[@]}"; do
-        if [[ $k == theme ]]; then
-          run_module theme bash "$THEME_DIR/create-theme.sh"
-          continue
-        fi
         if is_excluded "$k"; then
           warn "Module '$k' was uninstalled by you — skipped (re-offer with --include=$k)."
           skipped=$((skipped + 1))
@@ -4260,7 +4255,7 @@ main(){
      && compgen -G "$THEME_DIR/Wallpapers/*" >/dev/null 2>&1; then
     hr
     if ask "Create an Omarchy theme from an image in theme/Wallpapers/?" n; then
-      run_module theme bash "$THEME_DIR/create-theme.sh"
+      run_module theme bash "$THEME_DIR/create-theme.sh" --apply
     fi
   fi
 
