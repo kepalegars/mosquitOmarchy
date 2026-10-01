@@ -56,10 +56,10 @@ is created: packages plus a few config edits, that is the whole module.
 ## Usage
 
 ```bash
-./setup-extracto.sh            # interactive
-./setup-extracto.sh -y         # non-interactive
-./setup-extracto.sh --status   # current state, changes nothing
-./setup-extracto.sh --remove   # remove our glue (keeps packages)
+scripts/apps/extracto/setup-extracto.sh            # interactive
+scripts/apps/extracto/setup-extracto.sh -y         # non-interactive
+scripts/apps/extracto/setup-extracto.sh --status   # current state, changes nothing
+scripts/apps/extracto/setup-extracto.sh --remove   # remove our glue (keeps packages)
 ```
 
 Idempotent: may be re-run without risk.

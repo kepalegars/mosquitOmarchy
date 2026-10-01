@@ -22,15 +22,15 @@ Steps: dependencies + OpenCL runtime depending on GPU → copy to `/opt/resolve`
 ## Usage
 
 ```bash
-./setup-davinci.sh                     # interactive
-./setup-davinci.sh -y                  # default choices
-./setup-davinci.sh --studio|--free     # force the edition if ambiguous
-./setup-davinci.sh --with-spektrafilm  # also installs SpectraFilm OFX
-./setup-davinci.sh --scale 1.5         # UI zoom (default 1.0)
-./setup-davinci.sh --no-codecs         # leave H.264/H.265 codecs alone
-./setup-davinci.sh --keep-mesa         # do not remove opencl-mesa (AMD)
-./setup-davinci.sh --status            # current state, changes nothing
-./uninstall-davinci.sh                   # uninstalls (data preserved)
+scripts/apps/davinci/setup-davinci.sh                     # interactive
+scripts/apps/davinci/setup-davinci.sh -y                  # default choices
+scripts/apps/davinci/setup-davinci.sh --studio|--free     # force the edition if ambiguous
+scripts/apps/davinci/setup-davinci.sh --with-spektrafilm  # also installs SpectraFilm OFX
+scripts/apps/davinci/setup-davinci.sh --scale 1.5         # UI zoom (default 1.0)
+scripts/apps/davinci/setup-davinci.sh --no-codecs         # leave H.264/H.265 codecs alone
+scripts/apps/davinci/setup-davinci.sh --keep-mesa         # do not remove opencl-mesa (AMD)
+scripts/apps/davinci/setup-davinci.sh --status            # current state, changes nothing
+scripts/apps/davinci/uninstall-davinci.sh                  # uninstalls (data preserved)
 ```
 
 Adjust the zoom at launch: `DAVINCI_SCALE=1.5 davinci-resolve`.

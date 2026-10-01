@@ -7,9 +7,9 @@ Uninstalls any existing version (AUR, flatpak, deb, orphans) then installs **Bit
 ## Usage
 
 ```bash
-./setup-bitwig.sh            # interactive
-./setup-bitwig.sh -y         # default choices
-./setup-bitwig.sh --dry-run  # simulation, nothing modified
+scripts/apps/bitwig/setup-bitwig.sh            # interactive
+scripts/apps/bitwig/setup-bitwig.sh -y         # default choices
+scripts/apps/bitwig/setup-bitwig.sh --dry-run  # simulation, nothing modified
 ```
 
 > The flatpak is not used (its sandbox cannot see yabridge chainloaders). Disable auto-update in Bitwig (Dashboard > Settings > Misc).
