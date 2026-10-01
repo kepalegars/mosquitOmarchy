@@ -11,9 +11,9 @@ presets (no duplicates) and is safe.
 ## Install
 
 ```bash
-./apps/handbrake/setup-handbrake.sh          # interactive
-./apps/handbrake/setup-handbrake.sh -y       # defaults
-./apps/handbrake/setup-handbrake.sh --status # current state
+scripts/apps/handbrake/setup-handbrake.sh          # interactive
+scripts/apps/handbrake/setup-handbrake.sh -y       # defaults
+scripts/apps/handbrake/setup-handbrake.sh --status # current state
 ```
 
 ## Presets
