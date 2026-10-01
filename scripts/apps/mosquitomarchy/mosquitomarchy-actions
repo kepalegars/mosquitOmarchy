@@ -286,8 +286,107 @@ cmd_theme_apply(){
 # The label/info split mirrors the bash launcher's "name  —  description"
 # convention (CAND_LABELS) so the TUI shows only the name inline and keeps the
 # longer description behind the "i" key instead of crowding the row.
+# ─── Setup tree cache ───────────────────────────────────────────────────────
+#
+# The tree is the same data every time: which catalogs exist, which fixes are
+# declared, and one repo version. None of that changes while the user is just
+# looking at the screen, and the TUI asks for it again on every visit to Setup
+# and every visit to Uninstall.
+#
+# So it is cached on disk, and invalidated by an FINGERPRINT rather than by a
+# clock alone: the catalogs, the fixes block and VERSION are what the tree is
+# derived from, so a change to any of them must show up on the next read even
+# if the cache is seconds old. The TTL is only a backstop for the case where
+# something outside those files changes a module's presence.
+#
+# "ajouts" is handled by that fingerprint, which is the honest signal: adding a
+# line to guis.catalog, tuis.catalog or webapps.catalog changes the checksum
+# immediately, with no refresh to wait for and no stale-list window.
+# tree_fingerprint is the key for the cached tree: everything the tree is derived
+# from. Pure bash — no md5sum, no stat. This runs on every Setup and Uninstall
+# visit, so it has to be cheaper than what it guards; `stat -c` + `md5sum`
+# measured 3.7s here, two external forks to build a value bash assembles inline.
+#
+# Keying on each catalog's CONTENT LENGTH is what makes it free: ${#var} is a
+# builtin, and adding or removing a catalog line changes the length, so a new app
+# shows up on the very next read with nothing to refresh. An edit that only
+# rewrites a line in place keeps the length, so the declared FIXES and CATEGORIES
+# counts and the repo version are mixed in, and the reaper in cache_store covers
+# a same-length edit that then goes unnoticed for longer than that.
+tree_fingerprint(){
+  local f out='k1' body
+  for f in "$CAT_FILE_GUI" "$CAT_FILE_TUI" "$CAT_FILE_WEB"; do
+    if [[ -f $f && -r $f ]]; then
+      body="$(<"$f")"          # a redirect, no fork
+      out+="|${f##*/}:${#body}"
+    else
+      out+="|${f##*/}:x"
+    fi
+  done
+  out+="|v${REPO_VERSION:-}|f${#FIXES[@]}|c${#CATEGORIES[@]}"
+  # Slashes and spaces would break the filename; this set is enough for a name.
+  printf '%s' "${out//[^A-Za-z0-9._|-]/_}"
+}
+
+TREE_CACHE_DIR="$HOME/.cache/mosquitomarchy"
+TREE_CACHE_TTL_MIN=30 # minutes before a stale fingerprint's file is reaped
+
+# cache_file kind fingerprint -> path. The kind is part of the NAME, not part of
+# the key: setup and uninstall produced the same fingerprint for a machine with
+# nothing extra installed, and sharing one file meant whichever ran last
+# overwrote the other and the TUI decoded the wrong tree.
+cache_file(){ printf '%s/tree-%s.%s' "$TREE_CACHE_DIR" "$1" "$2"; }
+
+# cache_key_digest shortens an arbitrary string to a usable filename fragment.
+# cksum is one cheap fork and gives 32 bits, which is plenty for "same input as
+# last time" in a per-user cache directory.
+cache_key_digest(){ printf '%s' "$1" | cksum | tr -d ' -'; }
+
+# cache_read kind fingerprint: prints the cached tree, or returns 1.
+cache_read(){
+  local f; f="$(cache_file "$1" "$2")"
+  [[ -r $f ]] || return 1
+  cat "$f"
+}
+
+# cache_store kind fingerprint payload: writes it, best effort. Never fails the
+# caller — a cache that cannot be written is not an error, it is just slower.
+cache_store(){
+  local f dir="$TREE_CACHE_DIR" tmp
+  [[ -n ${3:-} ]] || return 0
+  f="$(cache_file "$1" "$2")"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  tmp="$dir/.tree.$$.$RANDOM"
+  printf '%s\n' "$3" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 0; }
+  mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  # Reap fingerprints that are no longer current. Swallowed on purpose: this is
+  # housekeeping and must never be the status a caller sees.
+  { find "$dir" -maxdepth 1 -name 'tree-*' -type f ! -name "$(basename "$f")" \
+      -mmin "+$TREE_CACHE_TTL_MIN" -delete; } 2>/dev/null || true
+  return 0
+}
+
 cmd_setup(){
   TREE_MODE=setup
+  local fp
+  fp="$(tree_fingerprint)"
+  if cache_read setup "$fp"; then return 0; fi
+  # Build once, write once. `tee` looked right — stdout and the cache both get
+  # the tree — but with a consumer on each end the run that POPSULATED the cache
+  # still printed an empty screen, so a caching layer that blanks the screen on
+  # a cache miss is worse than no cache at all.
+  #
+  # So the tree is captured into a variable first and then both emitted and
+  # stored from it. $() is a fork, but it is ONE fork per visit rather than one
+  # per row, which is the whole difference from before.
+  local tree
+  tree="$(_setup_tree)"
+  [[ -n $tree ]] || return 1
+  cache_store setup "$fp" "$tree"
+  printf '%s\n' "$tree"
+}
+
+_setup_tree(){
   local c id label accent i e name info
   local sep='  —  '
   # Categories and their scripts are ALWAYS shown in alphabetical order, so a
@@ -384,11 +483,38 @@ _installed_state(){ # module id -> 0 when installed (ok/partial) and not exclude
 }
 cmd_uninstall_tree(){
   TREE_MODE=uninstall
-  local c id label accent e name info spec mid
-  local -a folders=() items=()
+  local fp
+  # Installed-state detection is the expensive part here (it stats binaries and
+  # prefixes), so it runs BEFORE the fingerprint is taken — otherwise the
+  # fingerprint would have to call it, and the cache would save nothing. What
+  # is detected is also what the tree depends on, so it belongs in the key.
   load_excluded
   load_catalog 2>/dev/null || true
   detect_installed_apps 2>/dev/null || true
+  # The installed-set goes through tree_fingerprint too, and the result is
+  # SUMMARISED rather than concatenated. The raw value lists every installed
+  # TUI and webapp with its full catalog field — 607 characters here, and a
+  # filename is capped at 255 bytes, so the mv failed silently and the cache
+  # never once hit. It had been "working" the whole time as a no-op.
+  #
+  # Summarising is also the right shape: what matters is WHICH are installed,
+  # not their descriptions, and a changing description should not invalidate.
+  local inst=""
+  for e in "${INSTALLED_TUI[@]:-}" "${INSTALLED_WEB[@]:-}"; do
+    [[ -n $e ]] && inst+="${e%%|*}|"
+  done
+  fp="$(tree_fingerprint)$(cache_key_digest "$inst")"
+  if cache_read uninstall "$fp"; then return 0; fi
+  local tree
+  tree="$(_uninstall_tree)"
+  [[ -n $tree ]] || return 1
+  cache_store uninstall "$fp" "$tree"
+  printf '%s\n' "$tree"
+}
+
+_uninstall_tree(){
+  local c id label accent e name info spec mid
+  local -a folders=() items=()
   for c in "${CATEGORIES[@]}"; do
     id="${c%%|*}"; label="${c#*|}"; label="${label%%|*}"
     # `menu` and `fixes` are not modules: nothing to uninstall there.
