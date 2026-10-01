@@ -15,8 +15,12 @@
 #     lha, lrzip) that libarchive alone refuses, unrar backs RAR. With both
 #     present, file-roller's own "Extract Here" prompts for the password
 #     itself — no helper script of ours is involved.
-#   - sets the common formats to open WITH file-roller (mimeapps.default), so
-#     double-clicking an archive really opens it.
+#   - makes sure file-roller is NOT the default application for archive types.
+#     The desktop ships file-roller's Nautilus C extension, so Nautilus offers
+#     "Extract Here" / "Create Archive" on its own; binding archive MIME types to
+#     file-roller would OVERRIDE Nautilus rather than enable it, because
+#     `xdg-mime default` replaces the candidate list with a single app. This step
+#     only removes what older revisions of this script wrote.
 #   - hides file-roller's own package .desktop from the apps menu with a user
 #     NoDisplay=true override (a FULL copy of the package file — see step 4 for
 #     why a bare Hidden stub breaks "Open With"), so the menu is not cluttered
@@ -24,8 +28,9 @@
 #   - adds a per-class Hyprland rule: file-roller is a floating GTK4 dialog, so
 #     it is floated + centered and exempted from the default window opacity.
 #
-# That is the whole module: packages + defaults + two config edits. It installs
-# NOTHING into ~/.local/share/nautilus/scripts and no desktop entry of its own.
+# That is the whole module: packages + one association cleanup + two config
+# edits. It installs NOTHING into ~/.local/share/nautilus/scripts and no desktop
+# entry of its own.
 #
 # Idempotent: may be re-run without risk.
 #
@@ -47,9 +52,11 @@ FR_PKG_DESKTOP="$APPS_DIR/org.gnome.FileRoller.desktop"
 START="-- >>> extracto-setup >>>"
 END="-- <<< extracto-setup <<<"
 
-# Archive MIME types we want double-click to open in file-roller. RAR and ISO
-# cannot be CREATED by file-roller but opening/extracting them is exactly the
-# case that had no working GUI before.
+# The archive MIME types the old revisions of this script used to bind to
+# file-roller. Kept ONLY to undo those bindings: unbind_file_roller_defaults
+# removes exactly these types, so it can never take an association this module
+# did not write. Nothing here is registered any more. RAR and ISO are in the
+# list because opening/extracting them was the case with no working GUI.
 MIME_TYPES=(
   application/zip
   application/x-7z-compressed
@@ -89,6 +96,89 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # grep/sed need a guard: the Hyprland markers start with "-", read as an option.
 has_block() { grep -qF -- "$1" "$2" 2>/dev/null; }
 
+# Remove the single-app archive associations this module used to write.
+#
+# Only lines that assign EXACTLY org.gnome.FileRoller.desktop are touched, and
+# only inside [Default Applications] / [Added Associations]. A line listing file-
+# roller alongside another app (`zip=org.gnome.FileRoller.desktop;org.gnome.
+# Nautilus.desktop;`) is a candidate LIST the user or the distro wrote; dropping
+# file-roller from it would be us silently re-deciding for them, which is the
+# exact behaviour this function exists to undo. Left alone.
+#
+# Groups left empty by the removal are dropped too: a bare "[Added Associations]"
+# with no entries is noise, and some MIME parsers treat an empty group as
+# "nothing allowed" rather than "nothing specified".
+unbind_file_roller_defaults() {
+  python3 - "${MIME_TYPES[@]}" <<'PY'
+import pathlib, sys
+
+WANTED = set(sys.argv[1:])
+APPS = ("org.gnome.FileRoller.desktop", "org.gnome.file-roller.desktop")
+GROUPS = ("[Default Applications]", "[Added Associations]")
+
+# xdg-mime picks one of these depending on its version and XDG_DATA_HOME.
+candidates = [
+    pathlib.Path.home()/".config/mimeapps.list",
+    pathlib.Path.home()/".local/share/applications/mimeapps.list",
+]
+changed = []
+for path in candidates:
+    if not path.is_file():
+        continue
+    lines = path.read_text(encoding="utf-8").splitlines()
+    group, dropped = None, 0
+    kept, ours, kept_count = [], {}, {}
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            group = stripped
+            kept.append(line)
+            continue
+        is_ours = False
+        if group in GROUPS and "=" in stripped:
+            mime, apps = stripped.split("=", 1)
+            names = [a for a in apps.split(";") if a]
+            # Ours only if: an archive type this script registered, AND
+            # file-roller standing alone. Either check failing -> hands off.
+            is_ours = (
+                mime in WANTED
+                and bool(names)
+                and all(a in APPS for a in names)
+            )
+        if is_ours:
+            dropped += 1
+            ours[group] = ours.get(group, 0) + 1
+        else:
+            kept.append(line)
+            if group is not None and stripped and not is_ours:
+                kept_count[group] = kept_count.get(group, 0) + 1
+    if not dropped:
+        continue
+    # Drop a group header ONLY if every one of its entries was ours. If we
+    # removed some and kept others, the header must stay or the survivors end
+    # up outside any section, which is not a valid mimeapps.list.
+    dead = {g for g, n in ours.items() if kept_count.get(g, 0) == 0}
+    final, i = [], 0
+    while i < len(kept):
+        if kept[i].strip() in dead:
+            i += 1
+            while i < len(kept) and not kept[i].strip():
+                i += 1
+            continue
+        final.append(kept[i])
+        i += 1
+    path.write_text("\n".join(final).rstrip("\n") + "\n", encoding="utf-8")
+    changed.append(f"{path} — {dropped} archive association(s) removed")
+
+# Emitted with the module's own two-space "  ok " prefix so this line lines up
+# with every other status line instead of printing a bare "ok " at column 0.
+for c in changed:
+    print(f"  ok {c}")
+if not changed:
+    print("  ok no file-roller default to remove (already clean)")
+PY
+}
+
 # ---------------------------------------------------------------------------
 # Status
 # ---------------------------------------------------------------------------
@@ -116,10 +206,14 @@ show_status() {
   else
     warn "file-roller package entry not hidden (menu shows a second archive entry)"
   fi
-  if have xdg-mime; then
-    for t in application/zip application/x-7z-compressed application/x-iso9660-image; do
-      printf '    %-34s -> %s\n' "$t" "$(xdg-mime query default "$t" 2>/dev/null || echo -)"
-    done
+  # Report OUR config, which is the only thing this module can be responsible
+  # for. The resolved default is the distro's ordering in mimeinfo.cache and
+  # says nothing about what we wrote.
+  if grep -q 'File[Rr]oller' "$REAL_HOME/.config/mimeapps.list" \
+                   "$REAL_HOME/.local/share/applications/mimeapps.list" 2>/dev/null; then
+    warn "file-roller is pinned as default in the user config — re-run to clear"
+  else
+    ok "file-roller is not the default archive app (Nautilus handles extraction)"
   fi
 }
 
@@ -152,6 +246,10 @@ if [[ $REMOVE == 1 ]]; then
     command -v update-desktop-database >/dev/null && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
     ok "file-roller package entry un-hidden"
   fi
+  # Any file-roller default that an older revision pinned must go too — it is
+  # our glue, and leaving it would keep exactly the behaviour --remove promises
+  # to undo.
+  unbind_file_roller_defaults
   msg "extracto glue removed."
   exit 0
 fi
@@ -189,22 +287,51 @@ fi
 ok "file-roller: $(command -v file-roller)"
 
 # ---------------------------------------------------------------------------
-# 2. Defaults: open these archive types in file-roller (double-click works).
+# 2. NOT a default app. Undo the one we used to set.
 # ---------------------------------------------------------------------------
-msg "== 2/4 Default app for archive types =="
-if have xdg-mime; then
-  for t in "${MIME_TYPES[@]}"; do
-    xdg-mime default org.gnome.FileRoller.desktop "$t" 2>/dev/null || true
-  done
-  now=$(xdg-mime query default application/zip 2>/dev/null || echo -)
-  if [[ $now == *FileRoller* || $now == *file-roller* ]]; then
-    ok "double-clicking a .zip opens file-roller"
-  else
-    warn ".zip still defaults to '$now' (expected org.gnome.FileRoller.desktop)"
-  fi
+# Earlier revisions ran `xdg-mime default org.gnome.FileRoller.desktop <type>`
+# for every archive MIME type, so that double-clicking an archive would open
+# file-roller. That was the wrong thing to do, and it is worth being precise
+# about why, because the fix is not "stop setting it" but "remove it".
+#
+# `xdg-mime default` writes `application/zip=org.gnome.FileRoller.desktop` into
+# ~/.config/mimeapps.list — a single app, no list. That does not ADD file-roller
+# to the candidates, it REPLACES the candidate list with one entry. The system
+# default in /usr/share/applications/mimeinfo.cache is a list:
+#
+#   application/gzip=org.gnome.FileRoller.desktop;org.gnome.Nautilus.desktop;
+#
+# so Nautilus was a co-candidate and our override deleted it from the running.
+# The user's stated preference is that extraction belongs to Nautilus: file-roller
+# stays installed (that is the whole point of this module — it is the GUI and the
+# Nautilus C extension) but it must not be the application a double-click routes
+# to.
+#
+# So this step is a repair, not a setting. Dropping the calls would leave every
+# machine that already ran the old installer pinned to file-roller forever,
+# because ~/.config/mimeapps.list outlives the script that wrote it.
+msg "== 2/4 Not the default archive app (Nautilus handles extraction) =="
+unbind_file_roller_defaults
+
+# What this module is responsible for is the USER config, so that is what gets
+# reported. `xdg-mime query default` answers a different question: it resolves
+# the whole chain and returns whichever app comes first in
+# /usr/share/applications/mimeinfo.cache, which on this distro is file-roller
+# for zip and 7z — a root-owned file the distro ships, listing file-roller
+# before Nautilus. Checking it here would warn on every single run over
+# something this module never wrote, and a warning that always fires teaches
+# the reader to ignore warnings.
+#
+# Extraction in Nautilus does not go through the MIME default anyway: it goes
+# through file-roller's libnautilus-extension, which is why installing
+# file-roller is enough and no association is needed.
+if pin=$(grep -l 'File[Rr]oller' "$REAL_HOME/.config/mimeapps.list" \
+                    "$REAL_HOME/.local/share/applications/mimeapps.list" 2>/dev/null); then
+  warn "still pinned in: $(tr '\n' ' ' <<<"$pin")"
 else
-  warn "xdg-mime not found — cannot set default archive app."
+  ok "no file-roller default in the user config (Nautilus owns extraction)"
 fi
+ok "file-roller stays installed as the archive GUI + Nautilus extension"
 
 # ---------------------------------------------------------------------------
 # 3. Hyprland rule: file-roller is a floating dialog, not a tiled app.
@@ -270,7 +397,7 @@ fi
 msg "== Done =="
 ok "file-roller + 7zip + unrar present"
 ok "Nautilus: right-click an archive → Extract Here (and Create Archive)"
-ok "double-clicking an archive opens file-roller"
+ok "extraction runs through Nautilus; file-roller is not forced as the handler"
 echo
 msg "Password-protected archives:"
 echo "  • right-click the archive → Extract Here; file-roller asks for the password."
