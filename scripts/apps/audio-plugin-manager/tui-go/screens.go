@@ -64,11 +64,19 @@ func (m *model) enterCmd() tea.Cmd {
 		// legend line: it was noise, and the two implementations (this dialog
 		// and the bash prompt) drifted apart until it lied about what Enter did.
 		// tuikit.NewConfirm keeps [No, Yes] in that order and focuses index 0,
-		// so Enter would answer "No, new prefix" — the opposite of what the
+		// so Enter would answer "No, choose another" — the opposite of what the
 		// question asks. SetFocus(1) moves the focus to "Yes" so Enter agrees
 		// with the question instead of contradicting it.
+		//
+		// The "No" button now means "pick an existing prefix, or create one",
+		// not "immediately type a new name". It used to read "No, new prefix"
+		// and jumped straight to the name prompt, which forced the answer to a
+		// binary when the actual question is "which prefix?": the manager has
+		// other prefixes already, and re-typing a name to reach one of them was
+		// both longer and the reason a re-install into a second prefix felt
+		// impossible.
 		const (
-			noPrefixLabel = "No, new prefix"
+			noPrefixLabel = "No, choose another prefix"
 			yesUseLabel   = "Yes, use it"
 		)
 		switch {
@@ -121,6 +129,48 @@ func (m *model) enterCmd() tea.Cmd {
 	case scrStandalonePick:
 		m.loading = true
 		return fetchItems("standalone", "list-standalones")
+	case scrPrefixPrefPick:
+		// EXISTING prefixes only. Creating one is not offered here on purpose:
+		// the install flow already creates prefixes, and this setting is about
+		// choosing which existing one is the default, so a "new prefix" row
+		// would let a preference be set on something that does not exist yet.
+		m.loading = true
+		return fetchPrefixes()
+	case scrPrefixPrefRisk:
+		p := m.prefixPrefChoice
+		m.confirm = tuikit.NewConfirm(
+			"Use '"+baseName(p)+"' as the default wine prefix?\n\n"+
+				"The manager's defaults are built around ~/.wine-vst so that plugin\n"+
+				"installs stay out of the prefix your regular Windows applications use.\n"+
+				"Pointing it at a shared prefix ("+baseName(p)+") means plugin installers\n"+
+				"write into the same place as everything else, which can pull a plugin's\n"+
+				"own DLLs over an app's.\n\n"+
+				"Existing plugins are NOT moved — only NEW installs go here.\n"+
+				"You can set this back to \"automatic\" at any time.",
+			"Cancel", "I understand, use it")
+		return nil
+	case scrLaunchExePick:
+		// Two ways in, because the user asked for both: browse to the file, or
+		// pick from what the prefix already contains. Browse is first since it is
+		// the general case (any exe anywhere on the prefix); list is the shortcut
+		// when you already know it is in there.
+		m.picker = tuikit.NewPicker(
+			"Launch an executable in the default prefix — how do you want to pick it?",
+			[]tuikit.PickerItem{
+				{Display: "Browse to a file…", Value: "browse"},
+				{Display: "List the executables already in the prefix", Value: "list"},
+				{Display: "Back", Value: "back"},
+			}).SetSize(m.contentSize())
+		return nil
+	case scrLaunchExeBrowse:
+		// The explorer only designates the FILE. The manager stays on top and
+		// runs launch-exe itself with the path that comes back.
+		m.launchExePrefix = currentDefaultPrefix()
+		return fetchPath("pick-exe-in-prefix", "pick-exe-in-prefix", m.launchExePrefix)
+	case scrLaunchExeList:
+		m.launchExePrefix = currentDefaultPrefix()
+		m.loading = true
+		return fetchPrefixExes(m.launchExePrefix)
 	case scrExecsToggle:
 		m.loading = true
 		return fetchExecToggle()
@@ -149,6 +199,11 @@ func (m *model) enterCmd() tea.Cmd {
 		m.fixVendorPlugins = nil
 		m.fixAppliedBy = nil
 		m.fixCandidate = nil
+		// A global fix's state is read here, not from fixAppliedBy: its record
+		// is the "__global__" marker, which the per-plugin list filters out on
+		// purpose. Cleared with the rest so a previous scope's global state
+		// cannot title this one.
+		m.fixGlobalApplied = nil
 		m.fixPendingApply = nil
 		m.fixPendingRemove = nil
 		m.fixOverride = nil
@@ -160,10 +215,14 @@ func (m *model) enterCmd() tea.Cmd {
 		// single-plugin run asks about that plugin. The same handler takes
 		// both, so which one is in play is decided here rather than at every
 		// call site.
+		//
+		// The global-fix state rides in the same Batch: it is one cheap extra
+		// call, and the fixes screen cannot render a global row correctly
+		// without it.
 		if m.fixVendor != "" {
-			return fetchFixesForVendorCmd(m.fixVendor)
+			return tea.Batch(fetchFixesForVendorCmd(m.fixVendor), fetchAppliedGlobalFixes())
 		}
-		return fetchPluginFixes(m.fixPlugin)
+		return tea.Batch(fetchPluginFixes(m.fixPlugin), fetchAppliedGlobalFixes())
 	}
 	return nil
 }
@@ -192,6 +251,23 @@ func baseName(p string) string {
 		}
 	}
 	return p
+}
+
+// currentDefaultPrefix asks the backend which prefix is the default right now.
+// Resolved once when the launch entry is taken, so the file the user picks and
+// the prefix it runs in cannot drift apart if the preference changes mid-flow.
+func currentDefaultPrefix() string {
+	out, err := runQuick("default-prefix")
+	if err != nil {
+		return ""
+	}
+	var v struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(out), &v); err != nil {
+		return ""
+	}
+	return v.Path
 }
 
 func splitPair(s string) (string, string) {
@@ -568,6 +644,20 @@ func (m model) fixChangeLabels(plan []fixChange) []string {
 // plugin names is not an answer, a count plus the odd one out is.
 func (m model) fixAppliedNote(it FixItem) string {
 	with := compactLabels(m.fixAppliedBy[it.ID])
+	// A global fix is on or off for the whole desktop, so "applied for
+	// CrispyTuner" and "applied to 12 of a suite's 21" are both wrong
+	// sentences for it. It gets its own line, saying what it actually does.
+	//
+	// This branch has to come first: `with` is empty for a global fix even when
+	// it is applied, because its record is the "__global__" marker and that is
+	// filtered out of every per-plugin list. Without this, an applied global fix
+	// fell through to "not applied to any of the 21 … plugins yet".
+	if it.Scope == "global" {
+		if m.fixGlobalApplied[it.ID] {
+			return "\n\nalready applied — this is a global rule, so it applies to the whole desktop, not to plugins"
+		}
+		return "\n\nnot applied yet — this is a global rule, so it applies to the whole desktop, not to plugins"
+	}
 	if m.fixVendor == "" {
 		// A single-plugin visit: the plugin is the one being looked at.
 		if it.Applied {
@@ -1015,7 +1105,7 @@ func fixIsPluginSpecific(it FixItem) bool { return it.Plugin != "" }
 // A row the user has just changed shows the plain mark, because the pending
 // intent is what the ●/○ pair is about: ◐ describes the RECORDED state, and
 // once you have ticked or unticked a row you have an opinion about it.
-func fixMarkOf(it FixItem, checked, orig map[string]bool, override map[string]int) string {
+func fixMarkOf(it FixItem, checked, orig map[string]bool, override map[string]int, globalApplied map[string]bool) string {
 	// The override is what the user asked for, so it is read FIRST: a row set to
 	// "complete" has to draw as a filled circle, not keep reporting ◐ while the
 	// plan underneath it says every plugin.
@@ -1052,7 +1142,7 @@ func fixMarkOf(it FixItem, checked, orig map[string]bool, override map[string]in
 // and selectable for every plugin, since the same Wine issues can show up
 // elsewhere. The folder row's chevron/child-visibility follows expanded
 // exactly as treeItemsToPicker does for the other two screens.
-func fixItemsToPicker(items []FixItem, checked, orig map[string]bool, override map[string]int, expanded map[string]bool) []tuikit.PickerItem {
+func fixItemsToPicker(items []FixItem, checked, orig map[string]bool, override map[string]int, expanded map[string]bool, globalApplied map[string]bool) []tuikit.PickerItem {
 	// Split once: generic = no specific plugin, specific = scoped to a product.
 	var generic, specific []FixItem
 	for _, it := range items {
@@ -1072,7 +1162,7 @@ func fixItemsToPicker(items []FixItem, checked, orig map[string]bool, override m
 	if len(generic) > 0 {
 		out = append(out, tuikit.PickerItem{Display: fixGenericTitle(), Value: fixGenericTitleValue, Accent: true, Heading: true})
 	}
-	out = append(out, fixCategoryGroup(generic, checked, orig, override, expanded, false)...)
+	out = append(out, fixCategoryGroup(generic, checked, orig, override, expanded, false, globalApplied)...)
 
 	// The product-specific section, if any.
 	if len(specific) > 0 {
@@ -1084,7 +1174,7 @@ func fixItemsToPicker(items []FixItem, checked, orig map[string]bool, override m
 		out = append(out, tuikit.PickerItem{Display: fixSpecificTitle(), Value: fixSpecificTitleValue, Accent: true, Heading: true})
 		// Grouped by PLUGIN NAME (not the catalog category), so the header
 		// reads just "CrispyTuner" / "Serum 2" — the product it belongs to.
-		out = append(out, fixCategoryGroup(specific, checked, orig, override, expanded, true)...)
+		out = append(out, fixCategoryGroup(specific, checked, orig, override, expanded, true, globalApplied)...)
 	}
 	return out
 }
@@ -1139,7 +1229,7 @@ func fixSpecificTitle() string { return "Plugin specific fixes" }
 // field) instead of its catalog category, so the product-specific section is
 // headed by the plugin name alone. It is the shared body used for both the
 // generic group and the product-specific group.
-func fixCategoryGroup(items []FixItem, checked, orig map[string]bool, override map[string]int, expanded map[string]bool, groupByPlugin bool) []tuikit.PickerItem {
+func fixCategoryGroup(items []FixItem, checked, orig map[string]bool, override map[string]int, expanded map[string]bool, groupByPlugin bool, globalApplied map[string]bool) []tuikit.PickerItem {
 	// keyFor is the group a fix belongs to: the plugin name in the specific
 	// section, the catalog category otherwise.
 	keyFor := func(it FixItem) string { return fixCategoryOf(it) }
@@ -1157,7 +1247,7 @@ func fixCategoryGroup(items []FixItem, checked, orig map[string]bool, override m
 	if !hasCategory {
 		// No categories in the catalog: a clean flat list, same as before.
 		for _, it := range items {
-			out = append(out, tuikit.PickerItem{Display: fixMarkOf(it, checked, orig, override) + "  " + it.Title + fixRowTags(it), Value: it.ID})
+			out = append(out, tuikit.PickerItem{Display: fixMarkOf(it, checked, orig, override, globalApplied) + "  " + it.Title + fixRowTags(it), Value: it.ID})
 		}
 		return out
 	}
@@ -1204,7 +1294,7 @@ func fixCategoryGroup(items []FixItem, checked, orig map[string]bool, override m
 		if !expanded[cat] {
 			continue
 		}
-		mark := fixMarkOf(it, checked, orig, override)
+		mark := fixMarkOf(it, checked, orig, override, globalApplied)
 		// File-tree angle so the fix is visibly a child of its category. The
 		// mark goes in Badge, NOT in the label: the kit already owns a fixed
 		// badge column, so baking it in gave every child a different width and
@@ -1366,7 +1456,7 @@ func (m *model) rebuildFixPicker() {
 	header := ""
 	sidx := m.picker.Index()
 	m.picker = tuikit.NewPicker(header,
-		fixItemsToPicker(sortedFixItems(m.fixCache, m.fixSortDesc), m.fixChecked, m.fixOrig, m.fixOverride, m.fixFolderExpanded)).
+		fixItemsToPicker(sortedFixItems(m.fixCache, m.fixSortDesc), m.fixChecked, m.fixOrig, m.fixOverride, m.fixFolderExpanded, m.fixGlobalApplied)).
 		SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "toggle")),
@@ -1922,6 +2012,15 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rebuildFixPluginPicker()
 			return m, nil
 		}
+		if ag, ok := msg.(appliedGlobalFixesMsg); ok {
+			if ag.err != nil {
+				m.toast, _ = m.toast.SetWarn("could not read global fixes")
+				return m, nil
+			}
+			m.fixGlobalApplied = ag.applied
+			m.rebuildFixPicker()
+			return m, nil
+		}
 		if fm, ok := msg.(tuikit.TreeFoldMsg); ok {
 			// Same gesture as every other folder list, from the kit.
 			//
@@ -2074,8 +2173,24 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			for _, it := range fm.items {
 				if _, ok := m.fixChecked[it.ID]; !ok {
-					m.fixChecked[it.ID] = it.Applied
-					m.fixOrig[it.ID] = it.Applied
+					// A global fix's mark comes from the SEPARATE
+					// global-state call, not from it.Applied. The two
+					// disagree exactly here: the per-plugin matcher returns
+					// true once "__global__" is recorded (which is correct
+					// for a plugin visit), but the per-plugin LIST that
+					// feeds AppliedTo filters that marker out on purpose, so
+					// an applied global fix arrived looking off — and every
+					// screen that only asked the list reported "not applied".
+					//
+					// The two fetches race, so this runs on a plain
+					// reconcile: whichever lands last wins, and both compute
+					// the same value.
+					applied := it.Applied
+					if it.Scope == "global" && m.fixGlobalApplied != nil {
+						applied = m.fixGlobalApplied[it.ID]
+					}
+					m.fixChecked[it.ID] = applied
+					m.fixOrig[it.ID] = applied
 				}
 			}
 			m.rebuildFixPicker()
@@ -2489,8 +2604,11 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.installNew = false
 				return m, tea.Batch(fetchPath("default-prefix", "default-prefix"))
 			}
-			m.installNew = true
-			m.push(scrInstallPrefixName)
+			// "No, choose another prefix" goes to the LIST, not straight to the
+			// name prompt. The list is where an existing prefix can be picked
+			// and where "create a new one" is an explicit choice, so neither is
+			// forced.
+			m.push(scrInstallPrefixPick)
 			return m, m.enterCmd()
 		}
 		var cmd tea.Cmd
@@ -2510,6 +2628,44 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input, cmd = m.input.Update(msg)
 		return m, cmd
 
+	case scrInstallPrefixPick:
+		// The prefix list for an INSTALL: existing prefixes to install into,
+		// plus "create a new one" as an explicit last choice (so a new prefix is
+		// never forced when others exist). Built like the move-target list but
+		// without excluding one — at install there is no "source" to exclude,
+		// only a default.
+		if pf, ok := msg.(prefixesMsg); ok {
+			m.loading = false
+			var items []tuikit.PickerItem
+			for _, p := range pf.items {
+				items = append(items, tuikit.PickerItem{Display: p.Label, Value: p.Path})
+			}
+			items = append(items, tuikit.PickerItem{Display: "Create a new prefix", Value: "__new__"})
+			header := "Install into which prefix?"
+			if def := m.installDefaultPrefix; def != "" {
+				header += " (default: " + baseName(def) + ")"
+			}
+			m.picker = tuikit.NewPicker(header, items).SetSize(m.contentSize())
+			return m, nil
+		}
+		if res, ok := msg.(tuikit.PickerResultMsg); ok {
+			if res.Canceled {
+				m.pop() // back to the default-vs-other question
+				return m, m.enterCmd()
+			}
+			if res.Value == "__new__" {
+				m.installNew = true
+				m.push(scrInstallPrefixName)
+				return m, m.enterCmd()
+			}
+			// An existing prefix: not a new one, and not the default lookup.
+			m.installNew = false
+			return m, tea.Batch(fetchPath("install-into-prefix", "install-into-prefix", m.installFile, res.Value))
+		}
+		var cmd tea.Cmd
+		m.picker, cmd = m.picker.Update(msg)
+		return m, cmd
+
 	case scrStandalonePick:
 		if it, ok := msg.(itemsMsg); ok && it.kind == "standalone" {
 			m.loading = false
@@ -2527,6 +2683,136 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.enterCmd()
 			}
 			return m, tea.Batch(m.enterCmd(), runFireAndForget("launched", "launch-standalone", res.Value))
+		}
+		var cmd tea.Cmd
+		m.picker, cmd = m.picker.Update(msg)
+		return m, cmd
+
+	case scrPrefixPrefPick:
+		if pf, ok := msg.(prefixesMsg); ok {
+			m.loading = false
+			items := []tuikit.PickerItem{
+				{Display: "Automatic (the manager decides)", Value: "__auto__"},
+			}
+			for _, p := range pf.items {
+				d := p.Label
+				// Mark the one in force, so "what happens if I pick nothing"
+				// is answerable by reading the list.
+				if p.Path == m.status.DefaultPrefix {
+					d += "   ← in use"
+				}
+				items = append(items, tuikit.PickerItem{Display: d, Value: p.Path})
+			}
+			m.picker = tuikit.NewPicker(
+				"Default wine prefix — installs go here, and \"launch an executable\" runs there:",
+				items).SetSize(m.contentSize())
+			return m, nil
+		}
+		if res, ok := msg.(tuikit.PickerResultMsg); ok {
+			m.pop()
+			if res.Canceled {
+				return m, m.enterCmd()
+			}
+			if res.Value == "__auto__" {
+				// Back to the automatic rule: no risk, no prompt.
+				return m, tea.Batch(
+					runFireAndForget("default prefix: automatic", "set-default-prefix", "auto"),
+					fetchStatus())
+			}
+			// A real prefix always goes through the warning first.
+			m.prefixPrefChoice = res.Value
+			m.push(scrPrefixPrefRisk)
+			return m, m.enterCmd()
+		}
+		var cmd tea.Cmd
+		m.picker, cmd = m.picker.Update(msg)
+		return m, cmd
+
+	case scrPrefixPrefRisk:
+		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
+			m.pop()
+			if !res.Yes {
+				return m, m.enterCmd()
+			}
+			return m, tea.Batch(
+				runFireAndForget("default prefix: "+baseName(m.prefixPrefChoice),
+					"set-default-prefix", m.prefixPrefChoice),
+				fetchStatus())
+		}
+		var cmd tea.Cmd
+		m.confirm, cmd = m.confirm.Update(msg)
+		return m, cmd
+
+	case scrLaunchExePick:
+		if res, ok := msg.(tuikit.PickerResultMsg); ok {
+			if res.Canceled || res.Value == "back" {
+				m.pop()
+				return m, m.enterCmd()
+			}
+			switch res.Value {
+			case "browse":
+				m.push(scrLaunchExeBrowse)
+			case "list":
+				m.push(scrLaunchExeList)
+			}
+			return m, m.enterCmd()
+		}
+		var cmd tea.Cmd
+		m.picker, cmd = m.picker.Update(msg)
+		return m, cmd
+
+	case scrLaunchExeBrowse:
+		// The file manager came back with a path (or nothing). It never ran
+		// anything: the launch is the manager's own, in launchExeCmd.
+		if pm, ok := msg.(pathMsg); ok && pm.kind == "pick-exe-in-prefix" {
+			m.pop() // leave the browse screen; we launch from here
+			if pm.err != nil {
+				m.toast, _ = m.toast.SetErr(pm.err.Error())
+				return m, m.enterCmd()
+			}
+			if pm.path == "" {
+				// Cancelled in the file dialog: nothing to report.
+				return m, m.enterCmd()
+			}
+			m.launchExeFile = pm.path
+			return m, launchExeCmd(m.launchExePrefix, pm.path)
+		}
+		return m, nil
+
+	case scrLaunchExeList:
+		if pe, ok := msg.(prefixExesMsg); ok {
+			m.loading = false
+			if len(pe.items) == 0 {
+				m.info = tuikit.NewInfo(
+					"No .exe found in "+baseName(m.launchExePrefix)+
+						" (outside the windows/ system folder).\n\nUse \"Browse to a file…\" to point at one anywhere in the prefix.").
+					SetSize(m.contentSize())
+				m.replace(scrInfo)
+				return m, nil
+			}
+			items := make([]tuikit.PickerItem, 0, len(pe.items))
+			for _, e := range pe.items {
+				// The rel path is the sub-line: several .exe share a basename
+				// (a plugin's own plus its bundled helpers), and the basename
+				// alone would be ambiguous.
+				items = append(items, tuikit.PickerItem{
+					Display: e.Display,
+					Value:   e.Path,
+					Sub:     e.Rel,
+				})
+			}
+			m.picker = tuikit.NewPicker(
+				"Launch which executable? (in "+baseName(m.launchExePrefix)+")", items).
+				SetSize(m.contentSize())
+			return m, nil
+		}
+		if res, ok := msg.(tuikit.PickerResultMsg); ok {
+			m.pop() // leave the list; launch from here
+			if res.Canceled {
+				return m, m.enterCmd()
+			}
+			m.launchExeFile = res.Value
+			return m, launchExeCmd(m.launchExePrefix, res.Value)
 		}
 		var cmd tea.Cmd
 		m.picker, cmd = m.picker.Update(msg)
@@ -2578,7 +2864,11 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.enterCmd()
 			}
 			// Declined: show the ordinary install-success prompt in place
-			// of the question.
+			// of the question. The wording stays the same as every other
+			// success — declining the PAGE is not a failure and must not read
+			// like one. Nothing is undone here: any fix AUTO_FIX already
+			// rewrote stays written, which is the point of answering "No" as
+			// "skip the page" rather than "apply nothing".
 			m.confirm = tuikit.NewConfirm("Success! The step completed without errors.", "See log", "OK")
 			m.replace(scrRunnerSuccessConfirm)
 			return m, nil
@@ -2884,6 +3174,13 @@ func (m model) handleAudioSettingsChoice(v string) (tea.Model, tea.Cmd) {
 	case "pick_downloads_dir":
 		m.loading = true
 		return m, pickFolderCmd("pick-downloads-dir", "Default plugin installation file directory", m.status.DownloadsDir)
+	case "pick_default_prefix":
+		// Always a LIST of existing prefixes, never a folder browser: a folder
+		// picker invites pointing this at any directory on disk, and a plain
+		// directory is not a wine prefix. Creation is deliberately absent — the
+		// install flow creates prefixes, this only selects one.
+		m.push(scrPrefixPrefPick)
+		return m, m.enterCmd()
 	case "toggle_wine_runtime":
 		rt := ""
 		if o, err := runQuick("get-wine-runtime"); err == nil {
@@ -2985,6 +3282,9 @@ func (m model) handleVstMenuChoice(v string) (tea.Model, tea.Cmd) {
 	switch v {
 	case "prefixes":
 		m.push(scrPrefixMovePluginPick)
+		return m, m.enterCmd()
+	case "launch_exe":
+		m.push(scrLaunchExePick)
 		return m, m.enterCmd()
 	case "execs":
 		m.push(scrExecsToggle)

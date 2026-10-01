@@ -219,6 +219,37 @@ func (m model) View() string {
 			body = m.picker.View()
 			bar = barLine(m.picker.ShortcutsHint())
 		}
+	case scrLaunchExePick:
+		title = screenTitle("Launch an executable in the default prefix", m.contentSizeW())
+		body = m.picker.View()
+		bar = barLine(m.picker.ShortcutsHint())
+	case scrLaunchExeBrowse:
+		// There is no body of our own while the file manager is up: the screen
+		// is a hand-off, and saying "loading…" over it would claim the manager
+		// is fetching something. The picker is stale from the previous screen.
+		title = screenTitle("Pick an executable — "+baseName(m.launchExePrefix), m.contentSizeW())
+		body = "  Waiting for the file manager…\n\n  It only chooses the file. This manager launches it\n  through wine in "+baseName(m.launchExePrefix)+"."
+		bar = barLine("")
+	case scrLaunchExeList:
+		title = screenTitle("Launch which executable?", m.contentSizeW())
+		if m.loading {
+			body = "loading…"
+		} else {
+			body = m.picker.View()
+			bar = barLine(m.picker.ShortcutsHint())
+		}
+	case scrPrefixPrefPick:
+		title = screenTitle("Default wine prefix", m.contentSizeW())
+		if m.loading {
+			body = "loading…"
+		} else {
+			body = m.picker.View()
+			bar = barLine(m.picker.ShortcutsHint())
+		}
+	case scrPrefixPrefRisk:
+		title = screenTitle("Change the default wine prefix?", m.contentSizeW())
+		body = m.confirm.View()
+		bar = barLine(m.confirm.ShortcutsHint())
 	case scrReconcileOrphansTick:
 		title = screenTitle("Found on disk but not tracked", m.contentSizeW())
 		if m.loading {

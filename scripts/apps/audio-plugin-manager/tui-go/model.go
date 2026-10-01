@@ -97,6 +97,12 @@ const (
 
 	scrWizardRoot // first-launch wizard: choose/confirm the plugins folder
 	scrWizardDaw  // then stream the "point every installed DAW at it" report
+
+	scrLaunchExePick   // "launch an executable": browse to the .exe, or list the ones in the prefix
+	scrLaunchExeBrowse // (browse) explorer open, waiting for a .exe to be picked back
+	scrLaunchExeList   // (list) the .exes found inside the default prefix
+	scrPrefixPrefPick  // Settings -> Default wine prefix: which of the EXISTING prefixes
+	scrPrefixPrefRisk  // the warning that stands between a click and a changed default
 )
 
 type model struct {
@@ -123,9 +129,16 @@ type model struct {
 	installDefaultPrefix     string
 	installPrefix            string
 	installNew               bool
-	moveKey                  string
-	moveFrom                 string
-	moveTo                   string
+	// launchExeFile is the .exe the user picked (browse or list), and
+	// launchExePrefix the prefix it will run in — the DEFAULT prefix at the
+	// moment the entry was taken, not re-resolved later.
+	launchExeFile   string
+	launchExePrefix string
+	// prefixPrefChoice is the prefix picked in Settings before the risk prompt.
+	prefixPrefChoice string
+	moveKey         string
+	moveFrom        string
+	moveTo          string
 	moveNew                  bool
 
 	// unified Plugin list (scrPluginList): pluginCache is the last fetched
@@ -199,6 +212,16 @@ type model struct {
 	// form) that already carry at least one applied fix — loaded once per
 	// visit to the fixes plugin chooser and rendered as an accent ● badge.
 	fixAppliedPlugins map[string]bool
+	// fixGlobalApplied is the fix id -> is this GLOBAL fix on.
+	//
+	// Separate from fixAppliedBy because it IS separate in the state: a global
+	// fix is recorded under the marker "__global__", which
+	// list-applied-fix-plugins deliberately filters out so that a global cursor
+	// option does not badge every plugin row. That filter was correct for the
+	// badge and wrong for the fixes screen, where it made an applied global fix
+	// read as never applied — an empty AppliedTo list is exactly what "off"
+	// looks like.
+	fixGlobalApplied map[string]bool
 	// fixPendingApply/fixPendingRemove are the delta the confirmation is about,
 	// held while the dialog is up so the answer carries the exact set that was
 	// shown rather than whatever the marks say by the time it is read.
@@ -340,13 +363,23 @@ func settingsItems(s Status) []tuikit.PickerItem {
 	if s.FixPromptOn {
 		fixPrompt = "On"
 	}
+	// The prefix row shows the PREF that is set, not the one in force: when no
+	// preference exists the automatic rule decides, and saying "auto" is honest
+	// where printing the fallback path would imply the user had chosen it.
+	prefixLabel := "automatic"
+	if s.DefaultPrefixSet != "" {
+		prefixLabel = baseName(s.DefaultPrefixSet)
+	} else if s.DefaultPrefix != "" {
+		prefixLabel = baseName(s.DefaultPrefix) + " (automatic)"
+	}
 	return []tuikit.PickerItem{
 		{Display: "File picker: " + fp, Value: "switch_file_picker"},
 		{Display: "Plugins folder: " + s.PluginsRoot, Value: "pick_plugins_root"},
 		{Display: "Default plugin installation file directory: " + s.DownloadsDir, Value: "pick_downloads_dir"},
+		{Display: "Default wine prefix: " + prefixLabel, Value: "pick_default_prefix"},
 		{Display: "Plugin window handler: " + handler, Value: "toggle_plugin_handler"},
 		{Display: "Wine runtime: " + wineRuntimeLabel(), Value: "toggle_wine_runtime"},
-		{Display: "Re-apply already-installed fixes on install: " + autoFix, Value: "toggle_auto_fix"},
+		{Display: "Rewrite applied fixes when installing: " + autoFix, Value: "toggle_auto_fix"},
 		{Display: "Ask \"apply fixes now?\" after an install: " + fixPrompt, Value: "toggle_fix_prompt"},
 		{Display: "Track the plugins already installed", Value: "adopt_plugins"},
 		{Display: "Rescan for untracked plugins", Value: "rescan"},
@@ -371,6 +404,7 @@ func vstMenuItems(s Status) []tuikit.PickerItem {
 	}
 	return []tuikit.PickerItem{
 		{Display: "Manage prefixes", Value: "prefixes"},
+		{Display: "Launch an executable in the default prefix", Value: "launch_exe"},
 		{Display: "Hide VST2: " + hv, Value: "toggle_hide_vst2"},
 		{Display: "Hide 32-bit: " + h32, Value: "toggle_hide_32bit"},
 		{Display: "Manage visible executables in Omarchy Menu", Value: "execs"},
@@ -1066,6 +1100,19 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.runner = tuikit.NewRunner().SetSize(m.contentSize())
 			var cmd tea.Cmd
 			m.runner, cmd = m.runner.Start("Installing", actionsBin(), "install", m.installFile, m.installPrefix, "new")
+			return m, cmd
+		case "install-into-prefix":
+			// An EXISTING prefix the user picked from the list. Same install as
+			// any other, minus the "new" tag: the prefix already exists, so the
+			// tag would only tell the backend to skip wineboot on a prefix that
+			// is already there.
+			m.installPrefix = msg.path
+			m.pop() // leave scrInstallPrefixPick
+			m.pop() // leave scrInstallPrefixChoice
+			m.replace(scrInstalling)
+			m.runner = tuikit.NewRunner().SetSize(m.contentSize())
+			var cmd tea.Cmd
+			m.runner, cmd = m.runner.Start("Installing", actionsBin(), "install", m.installFile, m.installPrefix)
 			return m, cmd
 		case "move-create-prefix":
 			m.moveTo = msg.path

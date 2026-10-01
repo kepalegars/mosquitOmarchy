@@ -83,8 +83,11 @@ func TestSettingsDwellAppliesWithoutPanic(t *testing.T) {
 		m.push(scrVstMenu)
 		_ = m.enterCmd()
 
-		// Select the Hide VST2 row (index 1) before the arrow.
-		m.picker = m.picker.SelectIndex(1)
+		// Select the Hide VST2 row BY VALUE, not by index: a hard-coded index
+		// silently tests whichever row happens to sit at that position, so
+		// adding a row above it (the launch-an-executable entry) made this
+		// assert against "Manage prefixes" and fail with an empty pending key.
+		m.picker = m.picker.SelectValue("toggle_hide_vst2")
 		next, _ := m.Update(tuikit.PickerSortMsg{Dir: 1})
 		mm, ok := next.(model)
 		if !ok {
