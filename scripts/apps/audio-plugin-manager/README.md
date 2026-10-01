@@ -1,385 +1,281 @@
-# Audio Plugin Manager + wine/yabridge stack — Omarchy module
+# Audio Plugin Manager + wine/yabridge stack
 
-> **Scope / disclaimer**: this module is designed for and tested **only on
-> [Omarchy](https://omarchy.org)** (Arch Linux + Hyprland + the Omarchy shell).
-> It assumes Omarchy's tools and paths and is **not tested on any other
-> distribution, desktop or window manager** — adapt it before reusing it
-> elsewhere.
+> **Omarchy only.** Built for and tested on Omarchy (Arch + Hyprland). It uses `hyprctl`,
+> Omarchy menu widgets and the Omarchy launcher; not portable as-is.
 
-This folder (renamed from `audio-stack`) holds two things:
+Two things live here:
 
-1. the **mosquito Audio Plugin Manager** — the main tool for Windows **and**
-   native Linux plugins (install / uninstall / fixes / standalone),
-2. the **wine/yabridge audio stack** it sits on — packages, shared VST
-   folders, per-vendor yabridge precautions.
+1. the **mosquito Audio Plugin Manager** — Windows VSTs *and* native Linux plugins, install /
+   uninstall / fixes / standalone launch;
+2. the **wine/yabridge stack** it sits on — packages, shared plugin folders, per-vendor
+   precautions.
 
-**Bitwig and REAPER are NOT installed here anymore** — they each have their
-own folder and installer (`../bitwig/setup-bitwig.sh`, `../reaper/setup-reaper.sh`)
-and are driven from the `audio` orchestrator module.
+**Bitwig and REAPER are not installed here.** They have their own folders and installers
+(`../bitwig/`, `../reaper/`) and are driven from the `audio` orchestrator module.
 
-## The wine/yabridge stack — setup-audio-stack.sh
+## Before reporting a failed install
 
-Each step is detected and **idempotent**:
+Read [`PLUGIN-TESTS.md`](PLUGIN-TESTS.md) — a ProtonDB-style registry, one block per plugin:
+version, ✅/⚠️/❌, and any special treatment it needs. Several plugins are known to need
+something before they will work, and that is recorded there.
 
-1. **Packages** — `[multilib]`, wine-staging, yabridge, yabridgectl, realtime-privileges, winetricks, `realtime` group
-2. **VST folders** — the shared root (default `~/Music/Audio Plugins`, legacy `~/VST` fallback), yabridgectl registration, `yabridge-autosync` systemd units, native plugin-search env vars (`VST_PATH`/`VST3_PATH`/`CLAP_PATH`/`LV2_PATH` via `~/.config/environment.d`), wine-prefix → shared-folder linking
-3. **Yabridge precautions by vendor** — applies only what concerns installed plugins
-4. **Audio Plugin Manager menu entry** — installs the manager itself
-5. **Wine menu cleanup** — drops the `Uninstall` / `Manual` shortcuts the Windows plugin installers publish (see below)
+## The stack — `setup-audio-stack.sh`
+
+Every step is detected and idempotent.
+
+1. **Packages** — `[multilib]`, wine-staging, yabridge, yabridgectl, realtime-privileges,
+   winetricks, the `realtime` group
+2. **Plugin folders** — the shared root (default `~/Music/Audio Plugins`, legacy `~/VST`
+   reused if it holds real plugins), yabridgectl registration, `yabridge-autosync` units, the
+   native search paths (`VST_PATH`, `VST3_PATH`, `CLAP_PATH`, `LV2_PATH` in
+   `~/.config/environment.d`), and wine-prefix → shared-folder linking
+3. **Per-vendor precautions** — applies only what concerns installed plugins
+4. **Audio Plugin Manager** — installs the manager itself
+5. **Wine menu cleanup** — drops the `Uninstall` / `Manual` launcher entries Windows plugin
+   installers publish
 
 ```bash
-./apps/audio-plugin-manager/setup-audio-stack.sh             # interactive, each step asked
-./apps/audio-plugin-manager/setup-audio-stack.sh -y          # all defaults
-./apps/audio-plugin-manager/setup-audio-stack.sh --tweaks    # step 3 only, after each new plugin
-./apps/audio-plugin-manager/setup-audio-stack.sh --dry-run   # simulation, nothing modified
-./apps/audio-plugin-manager/setup-audio-stack.sh --vst-sync  # yabridgectl sync
-./apps/audio-plugin-manager/setup-audio-stack.sh --vst-status
-./apps/audio-plugin-manager/setup-audio-stack.sh --wine-menu   # step 5 only
+scripts/apps/audio-plugin-manager/setup-audio-stack.sh              # interactive
+scripts/apps/audio-plugin-manager/setup-audio-stack.sh -y           # defaults
+scripts/apps/audio-plugin-manager/setup-audio-stack.sh --tweaks     # step 3 only — after each new plugin
+scripts/apps/audio-plugin-manager/setup-audio-stack.sh --dry-run
+scripts/apps/audio-plugin-manager/setup-audio-stack.sh --vst-sync
+scripts/apps/audio-plugin-manager/setup-audio-stack.sh --vst-status
+scripts/apps/audio-plugin-manager/setup-audio-stack.sh --wine-menu   # step 5 only
 ```
 
-### Wine menu cleanup — no `Uninstall` in the launcher
-
-Every Windows plugin installer (smartEQ, CrispyTuner, FabFilter…) writes
-`Uninstall` / `Manual` shortcuts into its prefix's Start Menu, and Wine
-republishes each of them as an entry of the Omarchy launcher, under
-`Wine / Programs / <vendor>`. That is exactly the wrong entry for an app this
-module installs *and* uninstalls, next to the `vst-standalone-*.desktop` the
-module publishes itself.
-
-The cleanup runs:
-
-* right after `install_plugin()` and `uninstall_target()`, scoped to the **one
-  prefix the installer just ran in** (matched on the `WINEPREFIX=` its `Exec=`
-  pins) — that is what catches entries whose shortcut is named after the Start
-  Menu *folder* (`Sonible/smartEQ4/Uninstall.desktop` for a `smartEQ 4.dll`
-  plugin), which the older name-based match missed;
-* at the end of `setup-audio-plugin-manager.sh` and of `setup-audio-stack.sh`
-  (step 5), scoped to the prefixes this stack owns (`~/.wine-vst*`).
-
-Shared with the other wine modules through `scripts/lib/wine-menu.bash`, which
-also prunes the `.directory` publishers left empty — that is what kept an
-`Arobas Music` folder visible after its entries were gone. `~/.wine` is never
-swept in bulk: it is where a user runs their own Windows apps, and those keep
-their launcher entries. The `NoDisplay=true` file associations
-(`wine-extension-*` / `wine-protocol-*`) are never touched.
-
-Manual: `bash scripts/fixes/fix-wine-menu.sh` (`--status` for a read-only
-report, `--all-prefixes` to include the prefixes this stack does not own).
-
-Plugins installed via a Windows installer end up in the shared VST root (monitored by autosync). After installing a new plugin, re-run `--tweaks` to apply its possible precautions.
-
-### VST knowledge base (`kb_*` tables, step 3)
+### Per-vendor precautions (step 3)
 
 | Vendor | Precaution |
 |---|---|
-| Xfer Serum | winetricks `gdiplus` + override `d2d1` + tooltips off |
-| FabFilter | group `"fabfilter"` (inter-plugin communication, VST2) |
-| Arturia / Kick 2 / The Drop | `HideWineExports` ; Bitwig sandbox recommended |
+| Xfer Serum | winetricks `gdiplus`, override `d2d1`, tooltips off |
+| FabFilter | group `"fabfilter"` — inter-plugin communication, VST2 |
+| Arturia / Kick 2 / The Drop | `HideWineExports`; Bitwig sandbox recommended |
 | MeldaProduction | disable GPU rendering in each plugin |
 | ujam / Gorilla Engine / Loopcloud | `disable_pipes = true` |
 | KiloHearts | fd leak esync → `WINEESYNC=0` or fsync |
 | Spitfire Audio | reinstall in a clean prefix on sample errors |
-| iZotope / D16 | activation impossible under wine (licenses) |
-| Waves | stay on V12 (V13+ unstable under bridge) |
+| iZotope / D16 | activation is impossible under wine |
+| Waves | stay on V12; V13+ is unstable under the bridge |
 | sforzando | known graphical refresh problem |
 | Tokyo Dawn / Voxengo | linear / radial knobs mode |
-| Applied Acoustics | `hide_daw = true` (crashes Bitwig otherwise) |
-| Sonible (JUCE8) | black GUI ; winetricks `vcrun6sp6 w_workaround_wine_bug-50894` |
-| Scaler | use software rendering if the GUI stays black |
-| Softube / Plugin Alliance | black GUI standard wine / `wine msiexec /i` |
+| Applied Acoustics | `hide_daw = true` — crashes Bitwig otherwise |
+| Sonible (JUCE8) | black GUI; winetricks `vcrun6sp6 w_workaround_wine_bug-50894` |
+| Scaler | software rendering if the GUI stays black |
+| Softube / Plugin Alliance | black GUI is standard; install via `wine msiexec /i` |
 
-## Share VST folders between prefixes — link-vst-shared.sh
+Re-run `--tweaks` after every new plugin.
 
-Links wine prefixes (`~/.wine` for yabridge, `~/.wine-ableton` for Ableton) to shared directories (real files stay in the shared root, the Windows folders become symlinks). One plugin install = visible in all DAWs. Called by `setup-audio-stack.sh`, `setup-ableton.sh` and the Audio Plugin Manager's install/uninstall.
+## Shared folders — `link-vst-shared.sh`
 
-```bash
-./apps/audio-plugin-manager/link-vst-shared.sh                   # links all detected prefixes
-./apps/audio-plugin-manager/link-vst-shared.sh --prefix ~/.wine  # one specific prefix only
-./apps/audio-plugin-manager/link-vst-shared.sh -y                # non-interactive
-```
-
-## mosquito Audio Plugin Manager — mosquito-audio-plugin-manager
-
-**Tested-plugins registry (ProtonDB-style, updated often):** [`PLUGIN-TESTS.md`](PLUGIN-TESTS.md) — one block per install: version, ✅/⚠️/❌ status, special treatment (pre-install patches, recovered files…). Read it BEFORE reporting a failed install.
-
-Renamed from "VST Manager" — the tool now handles *both* plugin universes: Windows VST
-plugins run through Wine/yabridge, and genuinely native Linux plugins (LV2/CLAP/
-native-Linux-VST3, no Wine at all). **Installed plugins** (the unified plugin
-list), **Install a plugin from file**,
-**Uninstall a plugin**, **Plugin fixes**, **Cleanup inconsistencies** and
-**Launch a standalone plugin**
-are common to both and sit directly on the first menu. **Windows VST Plugins (Wine)** is a
-submenu holding only the Wine-specific leftovers — prefix management, executable
-visibility in the Omarchy menu, and the Hide VST2/Hide 32-bit filters — nothing that
-makes sense for native plugins lives there. **Settings** is likewise unified at the top
-level (file picker, plugins folder, manual rescan).
-
-Manages Windows VST plugins: install via wine (same prefix by default — the dedicated
-`~/.wine-vst` is created automatically when nothing is installed yet — or a new
-`~/.wine-<name>`), uninstall, standalone launch, prefix moves with a management history,
-and which standalone executables appear in the menu. Native Windows apps (iexplore,
-wmplayer, wordpad, witch*/edge/webview2/copilot, …) and uninstallers are never offered.
-Uninstalls **quarantine** files into `~/.cache/vst-quarantine/` (native plugins:
-`~/.cache/audio-plugin-manager-quarantine/`) rather than destroying them.
-
-**One interface, one core** — same architecture as the sibling mosquito Move Manager
-module, kept deliberately consistent: all the actual logic lives in
-`lib-audio-plugin-manager-core.sh`, shared by `mosquito-audio-plugin-manager-tui` (a real
-terminal UI, a compiled Go/Bubble Tea program — see `tui-go/`; it is **the only
-interface**, opening its own terminal window when needed) and the thin non-interactive
-`mosquito-audio-plugin-manager-actions` backend the TUI calls once every decision is made
-in Go. `mosquito-audio-plugin-manager` itself is a small, stable dispatcher — no
-arguments = the TUI (exec'd straight, opening a foot/xterm window if needed); flag
-actions (`launch`, `install`, `status`) run the relevant core function directly with the
-core's own real prompts (native Omarchy overlay / zenity / tty chain). Nothing heavier
-runs on every launch.
-
-A **machine-scoped state log** (`audio-plugin-manager-state.json`) records what was
-installed, its wine prefix and move history. It is tied to the machine id: if the repo is
-copied to another machine the log is ignored and reinitialised (and it is git-ignored).
+Links wine prefixes (`~/.wine` for yabridge, `~/.wine-ableton` for Ableton) to shared
+directories: the real files stay in the shared root and the Windows folders become symlinks,
+so **one install is visible in every DAW**. Called by the stack, the Ableton setup and the
+manager's install/uninstall.
 
 ```bash
-~/.local/bin/mosquito-audio-plugin-manager                # interactive menu (the TUI)
-~/.local/bin/mosquito-audio-plugin-manager status         # one-shot report, no UI
-~/.local/bin/mosquito-audio-plugin-manager install foo.exe
-~/.local/bin/mosquito-audio-plugin-manager launch foo.exe
+scripts/apps/audio-plugin-manager/link-vst-shared.sh                    # all detected prefixes
+scripts/apps/audio-plugin-manager/link-vst-shared.sh --prefix ~/.wine   # one prefix
+scripts/apps/audio-plugin-manager/link-vst-shared.sh -y
 ```
 
-### First launch — the setup wizard
+## The manager
 
-On a machine with no preferences yet, the first launch runs a short wizard before the
-menu appears:
+Renamed from "VST Manager" when it started handling both plugin universes. `Installed
+plugins`, `Install a plugin from file`, `Uninstall a plugin`, `Plugin fixes`, `Cleanup
+inconsistencies` and `Launch a standalone plugin` are common to both and sit on the first
+menu. `Windows VST Plugins (Wine)` is a submenu for the Wine-only leftovers — prefix
+management, executable visibility, the Hide VST2 / Hide 32-bit filters.
 
-1. **Plugins folder** — the default shared root is used right away (just press Enter);
-   choosing *No* opens the default file manager (superfile when installed) so you can
-   pick an existing folder — the final choice is stored in Settings (it can be changed
-   later; changing it moves every real plugin file).
-2. **DAW plugin paths** — the manager then updates the config of every **already
-   installed** DAW (Bitwig, REAPER, Ableton Live for Linux — each version) so it scans
-   the right folders. What can be done externally is done automatically:
-- **REAPER** — `vstpath`/`vst3path`/`clappath` in `~/.config/REAPER/reaper.ini` gain
-      the yabridge chainloaders `~/.vst`, `~/.vst3`, `~/.clap`;
-   - **Ableton Linux** — the shared folders are wired through the wine-prefix
-     `Common Files` symlinks by `link-vst-shared.sh`;
-   - **Bitwig** — no command-line/INI way to add plugin folders: the wizard names it as
-     needing one manual step (Preferences → Plug-ins → "Folders for VST Plug-ins").
-   Programs that can't be set up externally are named on screen, and this README's
-   **Installed plugins** section tells you exactly what to point where.
-
-### Installed plugins
-
-The **Installed plugins** entry is the unified plugin list (`[origin/format]  name`,
-e.g. `[vst/vst2]` or `[native/lv2]`). Plugins installed by a Windows installer are grouped
-under their wine-program folder (the same folder rows and nesting as the Uninstall screen).
-**Tab** hides/shows the highlighted plugin (or an entire folder row) so DAWs no longer see
-it; **Left/Right** cycles the sort. For DAWs to find what it manages, point each DAW at
-the folders below (the first-launch wizard does this automatically where possible):
-
-- **Windows VST plugins (via Wine/yabridge)** — the **yabridge chainloaders**
-  `~/.vst` (VST2), `~/.vst3` (VST3), `~/.clap` (CLAP): these are the `.so` stubs
-  `yabridgectl` drops, which is what native Linux hosts must scan — not the raw `.dll`
-  bundles in the shared root.
-- **Native plugins (LV2/CLAP/native VST3)** — the standard user paths `~/.lv2`,
-  `~/.clap`, `~/.vst3` (this tool installs into those, never into `/usr`).
-
-Per DAW:
-- **REAPER** — `~/.config/REAPER/reaper.ini` must have `vstpath=~/.vst`,
-  `vst3path=` covering `~/.vst3`, and `clappath=~/.clap` (the yabridge chainloader
-  stubs). The first-launch wizard adds these automatically.
-- **Ableton Live for Linux** — reads its plugin folders through the shared wine
-  `Common Files` symlinks provided by `link-vst-shared.sh` (no per-DAW path config).
-- **Bitwig Studio** — Preferences → Plug-ins → **"Folders for VST Plug-ins"**: add
-  `~/.vst`, `~/.vst3`, `~/.clap` (and the CLAP folder list for `~/.clap`). This one
-  cannot be automated; do it once after install.
-
-### Native plugins (LV2/CLAP/native-Linux-VST3)
-
-Merged into the same **Plugin list**/**Install**/**Uninstall** as the Wine/VST side, but a
-genuinely separate underlying mechanism: installed without Wine at all, no wine prefix, no
-yabridge. Any host just scans a fixed set of folders at startup, so install/uninstall/
-enable-disable only ever means putting a bundle where hosts look, or renaming it out of
-the way — never a package manager operation.
-
-Scan/install roots are the standard **user** paths: `~/.lv2`, `~/.clap`, `~/.vst3` — no
-sudo anywhere in this flow. The system paths (`/usr/lib/{lv2,clap,vst3}`,
-`/usr/local/lib/{lv2,clap,vst3}`, where a pacman/AUR-installed plugin lands) are shown in
-the **Plugin list** too, read-only — this tool never uninstalls or disables a system
-package, only points you at `pacman` for those.
-
-`~/.vst3` is *also* yabridge's own target for bridged Windows VST3 plugins (see above) —
-every entry found there is `readlink`'d first, and anything resolving into a `.wine*`
-prefix is a bridge stub, not a native plugin, and is excluded (it already shows up in the
-VST plugin list instead).
-
-- **Plugin list** — one unified list, `[origin/format]  name` (e.g. `[vst/vst2]` or
-  `[native/lv2]`), sortable live with the ←/→ arrow keys (vendor/name/format/install date
-  — vendor falls back to name for native rows, which have no wine prefix to group by) and
-  Tab-toggleable per row: unchecking a plugin marks it for hiding, checking it back shows
-  it again, and leaving the list (Esc) with any changes prompts a Save/Discard confirm —
-  a hidden plugin stays in the manager but is excluded from DAW scans (VST: a `.hidden`
-  filename suffix + a yabridge resync; native: the same `.disabled` suffix trick
-  described below). Enter on a row shows its detail.
-- **Install a plugin from file** — one picker (superfile or the native/zenity chain, per
-  Settings) for both universes: it auto-detects what was picked — a Windows installer
-  (`.exe`/`.msi`) goes through the existing wine-prefix wizard; a raw `.lv2` folder /
-  `.clap` file / `.vst3` bundle, or a `.zip`/`.tar`/`.tar.gz`/`.tgz` archive containing one
-  (searched up to 2 levels deep, e.g. a vendor's zip that wraps the bundle in one extra
-  folder), installs natively — no need to say which kind it is up front.
-- **Enable/disable without uninstalling** (the native mechanism the Plugin list's Tab-hide
-  uses under the hood) — every host recognizes the exact `.lv2`/`.clap`/`.vst3` suffix
-  when scanning, so appending `.disabled` makes a bundle invisible to every host without
-  touching its contents; removing the suffix re-enables it.
-- **Uninstall** — one multi-select picker (Tab to check several plugins of either origin,
-  Enter to remove them together in one batch — or just Enter on a single highlighted row
-  with nothing checked, for a quick one-off removal), non-destructive: VST files go to
-  `~/.cache/vst-quarantine/`, native bundles to
-  `~/.cache/audio-plugin-manager-quarantine/<timestamp>-uninstall/`, neither deleted.
-- An LV2 folder only counts as a plugin — not one of the spec/extension bundles that ship
-  with the `lv2` package itself (`atom.lv2`, `core.lv2`, …, which also end in `.lv2`) — if
-  its `manifest.ttl` actually declares an `lv2:Plugin` (or a subclass, e.g.
-  `lv2:InstrumentPlugin`): the same lightweight substring check most simple LV2 scanners
-  use, not a full Turtle parser.
-
-### Plugin fixes
-
-Some Wine plugins misbehave under Hyprland/Wayland in ways that are not the plugin's
-fault: their editor window can come up unclickable, or their hover tooltips can steal
-input from the editor. **Plugin fixes** (a top-level menu item) asks which plugin to fix,
-then shows the catalog in two sections. **Tab** or **x** toggles the highlighted fix, and
-toggling a folder row selects/deselects every fix in it; **Enter** applies the newly
-checked fixes and **removes** the unchecked ones that were applied, in one go.
-
-- **Generic fixes** — no single product, grouped in their own category folders
-  (▾ Cursor).
-- **Plugin specific fixes** — below a separator and an accent heading, one group per
-  product labelled by the **product name alone** (▾ CrispyTuner, ▾ Serum 2). The
-  catalog's own "<Product> specific" category is never used as a label. These fixes stay
-  visible and selectable for every plugin: the same Wine issues show up elsewhere.
-
-Both sections are expanded when the screen opens, and a folder row's fold glyph (▸/▾)
-replaces the selection cursor while the row is focused, so exactly one marker is visible
-per row.
-
-**A fix is recorded per product, not per plugin file**, and the rules match the editor
-window's *title* — which is the same window for a product's VST2 and VST3 copies. So one
-tick covers **both formats at once**; you never apply a fix twice. Only a fix that is
-genuinely one-format (a patch rewriting a `.vst2` binary) declares it in the catalog's
-last column, and its row is then tagged `[VST2 only]` / `[VST3 only]` so the restriction
-is visible rather than implied. `i` spells the same thing out on the info popup.
-
-Fixes already applied for the plugin are shown checked on entry (the state is matched no
-matter which shape it was recorded in), and the plugin chooser marks plugins that already
-carry at least one applied fix with an accent ● next to the name.
-Each fix is written as its own marked, idempotent block in
-`~/.config/hypr/hyprland.lua` (`-- >>> mosquito_fix_<id>` … `-- <<< mosquito_fix_<id>`),
-and `hyprctl reload` is run afterwards. The applied state lives in
-`~/.config/audio-plugin-manager/fixes.json`; the Lua block is always regenerated from it,
-so re-applying never stacks duplicate rules and removing the last plugin for a fix removes
-its block. The product list is deduplicated case-insensitively — a state that had drifted
-to both `CrispyTuner` and `crispytuner` collapses to one entry and one rule on the next
-apply, and re-applying a fix for a product restores that product's own capitalisation.
-
-- **Wine plugin GUI input (Hyprland/XWayland)** — forces the selected plugin's editor
-  window to float, stay unblurred, and receive XWayland input even when the plugin asks
-  not to. Matched on the window *title* (these editors usually report an empty class — the
-  class rule is generic and hitless). This is the fix for CrispyTuner's inert GUI; it
-  lives in the **Plugin specific fixes** section, under the **CrispyTuner** group.
-- **Ableton/Wine hover tooltips** — keeps the tooltip windows Ableton plugs (e.g.
-  CrispyTuner) create floating, unblurred, animation-free and never focused, so hovering
-  them stops stealing input from the editor. Applied once, independently of the plugin;
-  same **CrispyTuner** group.
-- **Stop the cursor recentering (global)** — Hyprland 0.56.2 has **no per-window warp
-  rule**, so this is a *global* desktop option (`cursor:no_warps` +
-  `cursor:persistent_warps`). It affects every app, not just Wine; enable it only after
-  confirming the recentering is Hyprland focus-warp and not Wine's own pointer handling.
-  It is **not** applied automatically. It sits in the generic **Cursor** group, tagged
-  `[global]`.
-
-Known plugins get their required fixes **applied automatically on first install** (the
-dependency map is `known_plugin_fixes()` in the core lib; currently CrispyTuner →
-GUI-input + tooltip), so a fresh install works out of the box. After any successful
-install the TUI also asks **"Plugin installed. Apply fixes for … now?"** and, if accepted,
-opens this screen with the remaining plugin-scope fixes offered.
-
-The Uninstall screen's **x** key opens the highlighted row's containing folder in the
-system file manager (the wine-program folder for a folder row, the plugin file's folder
-for a plugin row). The interactive launcher warns once when it is not running in a
-Hyprland session, because the window rules and GUI fixes are written for Hyprland and
-nothing was tested elsewhere.
-
-### Settings
-
-The single top-level **Settings** screen holds everything not specific to the Wine/VST
-side:
-
-- **File picker** — superfile vs. the native/zenity chain, shared by both install flows.
-- **Plugins folder** — where every plugin is stored (`PLUGINS_ROOT`, default
-  `~/Music/Audio Plugins`, containing `vst` (VST2), `vst3`, `clap` subfolders for the
-  Windows plugin bundles yabridgectl watches, plus `lv2`, `vst3-native`, `clap-native`
-  staging roots for the native-plugin installer; a legacy `~/VST` folder with real
-  plugins is reused as-is). A fresh `PLUGINS_ROOT` gets a custom folder icon (this
-  app's own icon, via
-  `gio set metadata::custom-icon` — a no-op, harmlessly, wherever `gio` or the icon file
-  isn't available). Changing this **moves every real plugin file** to the new location and
-  re-links wine/yabridge (confirm-gated, via `migrate_plugins_root()`). An existing
-  install keeps using wherever its plugins already are (no silent migration) — only a
-  genuinely fresh install starts at the new default.
-- **Default plugin installation file directory** — where the Install-a-plugin file picker
-  starts (`DOWNLOADS_DIR`, default `~/Downloads`). Just a preference, not destructive.
-- **Plugin window handler** — `Classic (float + decorations)` vs `Hyprland-managed`.
-  Changing it rewrites the **global** Hyprland window rules for wine plugin editors, so it
-  is wrapped in a confirmation dialog: it only affects plugin windows opened from now on,
-  and a per-plugin fix still overrides it. The same toggle is reachable with **x** on the
-  Installed-plugins list, behind the same confirmation.
-- **Rescan for untracked plugins** — manually re-runs the same reconcile-missing/
-  reconcile-orphans check that also runs once automatically at startup (native plugins
-  need no equivalent: a directory scan is always current, there's no separate tracking
-  state to fall out of sync).
-
-A deployed `README.md` (`~/.config/audio-plugin-manager/README.md`) reflects the current
-settings (default install file directory, plugins folder, file picker) and is regenerated
-automatically on every Settings change.
-
-### Cleanup inconsistencies
-
-One-shot, fully **non-destructive** "cleanup!" pass (a confirm-gated top-level menu item,
-or `mosquito-audio-plugin-manager-actions cleanup`) that fixes every plugin/log
-inconsistency in one go, with the log and the files on disk both treated as ground truth —
-never removing a real file or a log entry:
-
-- **Missing plugins** (tracked but the file is gone) are *kept* in the log, with their
-  file list emptied — the "file missing" nag stops until the plugin is reinstalled or
-  explicitly removed, nothing is uninstalled.
-- **Untracked files** found on disk are *registered* into the log (so they show up as
-  installed and stop being offered as orphans).
-- A file tracked under **several keys** is reduced to its single best owner in the log
-  (disk untouched).
-- **Dangling menu entries** — a generated `.desktop` whose standalone `.exe` no longer
-  exists on disk — are removed (pure debris; the launcher could only fail).
-
-**Windows VST Plugins (Wine)**, the submenu, holds the rest — genuinely Wine/yabridge-specific,
-as flat items with no further settings sub-page:
-
-- **Manage prefixes** and **Manage visible executables in Omarchy Menu**.
-- **Hide VST2** and **Hide 32-bit** toggles filter the Plugin list (bitness is checked via
-  `file -b` on the `.dll` — `PE32 executable` = 32-bit, `PE32+ executable` = 64-bit —
-  meaningful only for the vst2/`.dll` case, since a real Windows VST3 bundle is a
-  directory `scan_plugins()` never matches as a bitness-checkable file).
-
-Sort mode itself is no longer a settings screen — it's cycled live from inside the Plugin
-list with the ←/→ arrow keys, btop-style.
-
-## Installing the module — setup-audio-plugin-manager.sh
-
-Menu entry "**mosquito Audio Plugin Manager**" (Audio category) installed/updated by
-`setup-audio-plugin-manager.sh` (search "mosquito" in the launcher to find it), which
-deploys the dispatcher + core + the compiled TUI to `~/.local/bin`, installs the icon,
-the Hyprland float rule for the TUI window and the `mosquito.confirm` Omarchy overlay, and
-migrates the file-picker preference and state log forward while removing every pre-rename
-artifact (the "VST Manager"-era binaries/desktop/icon/Hyprland block, the even older
-superseded `vst-install` wrapper and its "Install a VST plugin" entry).
+| Binary | Role |
+|---|---|
+| `mosquito-audio-plugin-manager` | dispatcher. No arguments = the TUI; `status`, `install`, `launch` run one step |
+| `mosquito-audio-plugin-manager-tui` | the compiled Go/Bubble Tea interface — the only interface |
+| `mosquito-audio-plugin-manager-actions` | the non-interactive backend the TUI calls |
 
 ```bash
-./apps/audio-plugin-manager/setup-audio-plugin-manager.sh           # install the manager (+ menu)
-./apps/audio-plugin-manager/setup-audio-plugin-manager.sh -y        # non-interactive
+mosquito-audio-plugin-manager                  # interactive
+mosquito-audio-plugin-manager status           # one-shot report, no UI
+mosquito-audio-plugin-manager install foo.exe
+mosquito-audio-plugin-manager launch foo.exe
 ```
+
+All the logic lives in `lib-audio-plugin-manager-core.sh`, shared by the TUI and the backend so
+they cannot disagree. The TUI execs in place from a terminal, or opens its own window
+(foot, else xterm) when launched from a menu.
+
+A **machine-scoped state log**, `audio-plugin-manager-state.json`, records what was installed,
+its prefix and its move history. Copied to another machine it is ignored and reinitialised; it
+is git-ignored.
+
+Native Windows apps (`iexplore`, `wmplayer`, `wordpad`, `edge`, `webview2`…) and uninstallers are
+never offered as plugins.
+
+## The two universes
+
+**Windows VST, via Wine/yabridge** — installed by running its installer in a prefix. The
+dedicated `~/.wine-vst` is created automatically when nothing is installed yet, or you can
+choose a new `~/.wine-<name>`. Uninstalls **quarantine** rather than delete, into
+`~/.cache/vst-quarantine/`.
+
+**Native Linux (LV2 / CLAP / native VST3)** — no Wine, no prefix, no bridge. Any host scans a
+fixed set of folders at startup, so install/uninstall/enable-disable only ever means putting a
+bundle where hosts look, or renaming it out of the way. Never a package operation, and no sudo
+anywhere in the flow.
+
+Scan and install roots are the standard **user** paths `~/.lv2`, `~/.clap`, `~/.vst3` — this
+tool never installs into `/usr`. System paths are shown read-only in the list, pointing you at
+`pacman` rather than acting on them.
+
+`~/.vst3` is *also* yabridge's own target for bridged Windows VST3s, so every entry there is
+`readlink`'d first: anything resolving into a `.wine*` prefix is a bridge stub and is excluded —
+it already appears in the Windows list.
+
+An LV2 folder only counts as a plugin if its `manifest.ttl` actually declares an `lv2:Plugin`
+or a subclass, which is what excludes the spec bundles that ship with the `lv2` package itself
+(`atom.lv2`, `core.lv2`…) and also end in `.lv2`.
+
+## Where DAWs must look
+
+The first-launch wizard configures what it can; this is the complete picture.
+
+| DAW | What to add |
+|---|---|
+| **REAPER** | `vstpath=~/.vst`, a `vst3path` covering `~/.vst3`, `clappath=~/.clap` in `~/.config/REAPER/reaper.ini`. The wizard adds these. |
+| **Ableton Live (Linux)** | nothing per-DAW — it reads the shared wine `Common Files` symlinks that `link-vst-shared.sh` provides |
+| **Bitwig Studio** | Preferences ▸ Plug-ins ▸ *Folders for VST Plug-ins*: `~/.vst`, `~/.vst3`, `~/.clap`, plus the CLAP folder for `~/.clap`. **Cannot be automated** — do this once. |
+
+The `~/.vst`, `~/.vst3` and `~/.clap` paths are the **yabridge chainloader stubs** that
+`yabridgectl` writes, not the raw `.dll` bundles in the shared root. A native Linux host must
+scan the stubs.
+
+## First launch
+
+On a machine with no preferences yet, a short wizard runs first:
+
+1. **Plugins folder** — the default shared root is used right away; choosing *No* opens the file
+   manager so you can pick an existing one. Stored in Settings, changeable later.
+2. **DAW paths** — updates the config of every already-installed DAW, per the table above.
+   Whatever cannot be done externally is named on screen rather than failing quietly.
+
+## The plugin list
+
+One unified list, `[origin/format]  name` — `[vst/vst2]`, `[native/lv2]`. Plugins installed by a
+Windows installer are grouped under their wine-program folder, with the same nesting as the
+Uninstall screen.
+
+- `←` `→` cycles the sort (vendor / name / format / install date) live, btop-style
+- `Tab` hides or shows the highlighted plugin, or a whole folder row
+- `Enter` shows a row's detail
+- leaving with changes prompts Save / Discard
+
+A hidden plugin stays managed but is excluded from DAW scans: a `.hidden` filename suffix plus a
+yabridge resync for VST, the `.disabled` suffix for native. Every host recognises the exact
+`.lv2` / `.clap` / `.vst3` suffix when scanning, so the rename hides a bundle without touching
+its contents, and dropping the suffix brings it back.
+
+**Install a plugin from file** takes one picker and auto-detects: a `.exe`/`.msi` goes through
+the wine-prefix wizard, while a raw bundle or a `.zip`/`.tar`/`.tar.gz`/`.tgz` containing one
+(searched two levels deep, for a vendor zip that wraps the bundle) installs natively. You do not
+say which kind it is up front.
+
+**Uninstall** is a multi-select — `Tab` to check several, `Enter` to remove them in one batch,
+or `Enter` on a single row with nothing checked. Native bundles go to
+`~/.cache/audio-plugin-manager-quarantine/<timestamp>-uninstall/`. Nothing is deleted.
+
+**Hide VST2** / **Hide 32-bit** filter the list. Bitness is read with `file -b` on the `.dll`
+(`PE32` = 32-bit, `PE32+` = 64-bit), so it is only meaningful for VST2 — a real VST3 bundle is a
+directory.
+
+## Plugin fixes
+
+Some Wine plugins misbehave under Hyprland in ways that are not the plugin's fault: the editor
+window comes up unclickable, or its hover tooltips steal input. **Plugin fixes** asks which
+plugin, then shows the catalog in two sections — generic fixes in their own folders, and
+plugin-specific ones below a separator, grouped by **product name alone**. Those stay visible
+for every plugin, since the same Wine issue shows up elsewhere.
+
+`Tab` or `x` toggles, `Enter` applies the newly checked and removes the unchecked-but-applied
+in one pass. Already-applied fixes are pre-checked, and the plugin chooser marks plugins that
+carry at least one with an accent `●`.
+
+A fix is recorded **per product, not per plugin file**, and the rules match the editor window's
+*title* — the same window for a product's VST2 and VST3 copies — so one tick covers both formats
+and you never apply it twice. Only a genuinely single-format fix (a patch rewriting a `.vst2`
+binary) declares it, and its row is tagged `[VST2 only]` / `[VST3 only]` so the restriction is
+visible rather than implied. `i` spells it out on the info popup.
+
+Each fix is a marked, idempotent block in `~/.config/hypr/hyprland.lua`
+(`-- >>> mosquito_fix_<id>` … `-- <<< mosquito_fix_<id>`), followed by `hyprctl reload`. The
+applied state lives in `~/.config/audio-plugin-manager/fixes.json` and the Lua is always
+regenerated from it, so re-applying never stacks duplicate rules and removing the last plugin
+for a fix removes its block. The product list is deduplicated case-insensitively: a state that
+drifted to both `CrispyTuner` and `crispytuner` collapses to one entry and one rule on the next
+apply, and re-applying restores the product's own capitalisation.
+
+| Fix | What it does |
+|---|---|
+| Wine plugin GUI input | Forces the editor window to float, stay unblurred and take XWayland input even when the plugin asks not to. Matched on the window **title** — these editors report an empty class, so a class rule is generic and hitless. |
+| Ableton/Wine hover tooltips | Keeps the tooltip windows floating, unblurred, animation-free and unfocused, so hovering stops stealing input. Applied once, independent of the plugin. |
+| Stop the cursor recentering | Hyprland 0.56.2 has **no per-window warp rule**, so this is a `cursor:no_warps` + `cursor:persistent_warps` **global** option. It affects every app, so it is never applied automatically — enable it only after confirming the recentering is Hyprland focus-warp and not Wine's own pointer handling. Tagged `[global]`. |
+
+Known plugins get their required fixes applied automatically on first install (the dependency
+map is `known_plugin_fixes()` in the core lib), so a fresh install works out of the box. After a
+successful install the TUI also asks *"Plugin installed. Apply fixes for … now?"* and opens the
+screen with what remains.
+
+`x` on the Uninstall screen opens the highlighted row's containing folder in the file manager.
+The launcher warns once when it is not running under Hyprland, since the window rules and GUI
+fixes are written for it.
+
+## Settings
+
+| Setting | Notes |
+|---|---|
+| **Plugins folder** | `PLUGINS_ROOT`, default `~/Music/Audio Plugins`, with `vst`/`vst3`/`clap` subfolders for the Windows bundles and `lv2`/`vst3-native`/`clap-native` staging roots. Changing it **moves every real plugin file** and re-links wine/yabridge, behind a confirmation. An existing install keeps using wherever its plugins already are — no silent migration. |
+| **Default install file directory** | where the install picker starts. A preference only. |
+| **File picker** | superfile, or the native/zenity chain. Shared by both install flows. |
+| **Plugin window handler** | `Classic (float + decorations)` or `Hyprland-managed`. Rewrites the **global** wine-editor window rules, so it is confirmation-gated; affects only windows opened from now on, and a per-plugin fix still overrides it. Also on `x` in the plugin list. |
+| **Rescan for untracked plugins** | re-runs the reconcile check that also runs once at startup. Native plugins need no equivalent — a directory scan is always current. |
+
+A deployed `~/.config/audio-plugin-manager/README.md` mirrors the current settings and is
+regenerated on every change.
+
+## Cleanup inconsistencies
+
+A confirm-gated, fully non-destructive pass that treats the log and the files as ground truth
+without ever removing a real file or a log entry:
+
+- **missing** plugins (tracked, file gone) are kept with an emptied file list, so the nag stops
+  until you reinstall or remove them explicitly
+- **untracked** files on disk are registered, so they show as installed and stop being offered
+  as orphans
+- a file tracked under several keys is reduced to its single best owner
+- **dangling menu entries** — a generated `.desktop` whose `.exe` is gone — are removed, since
+  the launcher could only fail
+
+## Wine menu cleanup
+
+Windows plugin installers write `Uninstall` / `Manual` shortcuts into their prefix's Start Menu,
+and Wine republishes each as a launcher entry under `Wine / Programs / <vendor>` — the wrong
+entry for something this module installs *and* uninstalls, sitting next to the
+`vst-standalone-*.desktop` it publishes itself.
+
+The cleanup runs after each install and uninstall, scoped to the one prefix that just ran, and
+at the end of both setup scripts scoped to the prefixes this stack owns (`~/.wine-vst*`). It also
+prunes the empty `.directory` publishers. `~/.wine` is never swept in bulk — that is where you run
+your own Windows apps — and the `NoDisplay=true` file associations are never touched.
+
+Full detail, and the standalone version: [`scripts/fixes/fix-wine-menu.sh`](../../fixes/README.md).
+
+## Install the manager
+
+```bash
+scripts/apps/audio-plugin-manager/setup-audio-plugin-manager.sh           # interactive
+scripts/apps/audio-plugin-manager/setup-audio-plugin-manager.sh -y        # unattended
+```
+
+Deploys the dispatcher, the core and the compiled TUI to `~/.local/bin`, installs the icon, the
+Hyprland float rule and the `mosquito.confirm` overlay, and removes every pre-rename artifact
+(the "VST Manager" binaries, desktop entry, icon and Hyprland block, and the older superseded
+`vst-install` wrapper).
