@@ -152,9 +152,10 @@ On-device detection needs ssh to `move.local`. When ssh is unreachable the statu
 **unknown**, not "not installed", and both install and uninstall stay offered, so a broken ssh
 can never make the module look absent.
 
-The controller itself is documented separately — see
-[`move-bitwig/README.md`](move-bitwig/README.md) for using it, `SPEC.md` for how it works and
-`TODO.md` for what is still open.
+The controller itself is a **separate upstream project**, vendored here in `move-bitwig/`
+(v0.6.0, from [pi43r/move-bitwig](https://github.com/pi43r/move-bitwig)). Its own
+`README.md` is the control reference, `SPEC.md` how it works and `TODO.md` what is still open.
+This module only installs and removes it.
 
 ## Settings
 

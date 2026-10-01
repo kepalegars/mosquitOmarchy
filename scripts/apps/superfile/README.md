@@ -28,11 +28,11 @@ There is a single script — `setup-superfile.sh`. The theme generator used to l
 ## Usage
 
 ```bash
-./setup-superfile.sh                # install
-./setup-superfile.sh -y             # non-interactive install
-./setup-superfile.sh --apply-theme  # regenerate the theme only (used by the hook)
-./setup-superfile.sh --status
-./setup-superfile.sh --remove
+scripts/apps/superfile/setup-superfile.sh                # install
+scripts/apps/superfile/setup-superfile.sh -y             # non-interactive install
+scripts/apps/superfile/setup-superfile.sh --apply-theme  # regenerate the theme only (used by the hook)
+scripts/apps/superfile/setup-superfile.sh --status
+scripts/apps/superfile/setup-superfile.sh --remove
 ```
 
 `--remove` reverses only what this module installs: the menu entry, icon, wrapper, the

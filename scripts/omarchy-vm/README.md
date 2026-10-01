@@ -30,11 +30,11 @@ scripts/omarchy-vm/setup-omarchy-vm.sh   # idempotent; see --help
 omarchy-vm                 # start the default VM (QEMU GTK window)
 omarchy-vm my-vm           # start a named VM
 omarchy-vm-tui             # the "Omarchy VM" app entry / Setup > Omarchy VM
-./setup-omarchy-vm.sh --status            # what is installed, no changes
-./setup-omarchy-vm.sh --setup-only        # deploy tools/menu/app only (no ISO, no VM)
-./setup-omarchy-vm.sh --vm NAME --create-vm
-./setup-omarchy-vm.sh --iso /path/omarchy-4.0.4.iso   # skip the download
-./setup-omarchy-vm.sh --remove [--purge]  # remove helpers (--purge: VMs + ISO cache)
+scripts/omarchy-vm/setup-omarchy-vm.sh --status            # what is installed, no changes
+scripts/omarchy-vm/setup-omarchy-vm.sh --setup-only        # deploy tools/menu/app only (no ISO, no VM)
+scripts/omarchy-vm/setup-omarchy-vm.sh --vm NAME --create-vm
+scripts/omarchy-vm/setup-omarchy-vm.sh --iso /path/omarchy-4.0.4.iso   # skip the download
+scripts/omarchy-vm/setup-omarchy-vm.sh --remove [--purge]  # remove helpers (--purge: VMs + ISO cache)
 ```
 
 The **orchestrator/mosquitOmarchy install is setup-only**: it deploys the

@@ -18,12 +18,12 @@ Steps: checks prerequisites (kernel 6.14+ NTSync, PipeWire 1.4.2+, glibc 2.35+) 
 ## Usage
 
 ```bash
-./setup-ableton.sh                 # menu: Install / Uninstall / VST links / Status
-./setup-ableton.sh -y              # everything automatic (default choices)
-./setup-ableton.sh --links         # only (re)link shared plugins
-./setup-ableton.sh --status        # current state, changes nothing
-./setup-ableton.sh -u|--uninstall  # uninstalls one or several editions
-./setup-ableton.sh --check-update  # downloads the latest .run from GitHub
+scripts/apps/ableton/setup-ableton.sh                 # menu: Install / Uninstall / VST links / Status
+scripts/apps/ableton/setup-ableton.sh -y              # everything automatic (default choices)
+scripts/apps/ableton/setup-ableton.sh --links         # only (re)link shared plugins
+scripts/apps/ableton/setup-ableton.sh --status        # current state, changes nothing
+scripts/apps/ableton/setup-ableton.sh -u|--uninstall  # uninstalls one or several editions
+scripts/apps/ableton/setup-ableton.sh --check-update  # downloads the latest .run from GitHub
 ```
 
 > If the installer shows graphic corruption under Hyprland, run it from a GNOME/KDE session.
@@ -41,6 +41,6 @@ Same plugins → visible in Bitwig/REAPER too (yabridge). iLok activation must b
 ## Uninstall
 
 ```bash
-./setup-ableton.sh -u   # interactive
-./setup-ableton.sh -y -u  # automatic, uninstall everything
+scripts/apps/ableton/setup-ableton.sh -u   # interactive
+scripts/apps/ableton/setup-ableton.sh -y -u  # automatic, uninstall everything
 ```

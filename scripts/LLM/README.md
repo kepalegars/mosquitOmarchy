@@ -5,7 +5,7 @@ Installs Ollama (systemd service), creates the `reaper-audio-expert` model (base
 ## Usage
 
 ```bash
-sudo bash setup-ollama-audio-expert.sh
+sudo bash scripts/LLM/setup-ollama-audio-expert.sh
 opencode                        # then /load-big
 ollama-unload                   # free RAM
 ```

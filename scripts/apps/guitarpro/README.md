@@ -5,9 +5,9 @@ Installs **Guitar Pro 8** via a dedicated wine prefix (`~/.wine-guitarpro8`), co
 ## Usage
 
 ```bash
-./setup-guitarpro.sh        # interactive (-y: defaults, --status: state)
-./setup-guitarpro.sh --dpi 120   # force the Wine DPI (96..192) instead of auto
-./uninstall-guitarpro.sh      # uninstalls (prefix preserved by default)
+scripts/apps/guitarpro/setup-guitarpro.sh        # interactive (-y: defaults, --status: state)
+scripts/apps/guitarpro/setup-guitarpro.sh --dpi 120   # force the Wine DPI (96..192) instead of auto
+scripts/apps/guitarpro/uninstall-guitarpro.sh      # uninstalls (prefix preserved by default)
 ```
 
 `-y` means "take the default answer of each question", **not** "yes to
@@ -47,7 +47,7 @@ The Windows installer checks *"create the shortcut"* by default: Wine then
 publishes its own entries under `~/.local/share/applications/wine/Programs/…`,
 next to ours. At the end of the setup the **whole `wine/Programs/Arobas Music`
 tree is removed** — including the Windows *"Uninstall"* shortcut, which has no
-business in a launcher and is already covered by `./uninstall-guitarpro.sh`. The
+business in a launcher and is already covered by `scripts/apps/guitarpro/uninstall-guitarpro.sh``. The
 Omarchy menu keeps **one** Guitar Pro 8 entry, declared with a single main
 category (`AudioVideo`) so a menu cannot list it twice. The `wine-extension-*` /
 `wine-protocol-*` file associations are `NoDisplay=true` and are kept.

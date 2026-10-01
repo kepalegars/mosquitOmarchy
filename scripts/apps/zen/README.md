@@ -28,10 +28,10 @@ The active profile is detected from `~/.config/zen/profiles.ini`:
 ## Usage
 
 ```bash
-./setup-zen.sh          # deploy the seed config into the active profile
-./setup-zen.sh -y       # non-interactive (overwrites differing files)
-./setup-zen.sh --status # report the active profile + applied state
-./setup-zen.sh --remove # remove what this module deployed (extensions + settings + chrome)
+scripts/apps/zen/setup-zen.sh          # deploy the seed config into the active profile
+scripts/apps/zen/setup-zen.sh -y       # non-interactive (overwrites differing files)
+scripts/apps/zen/setup-zen.sh --status # report the active profile + applied state
+scripts/apps/zen/setup-zen.sh --remove # remove what this module deployed (extensions + settings + chrome)
 ```
 
 Only files exactly matching the seed are overwritten silently; hand-tweaked

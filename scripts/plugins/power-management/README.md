@@ -11,8 +11,8 @@ It also provisions the **custom Omarchy plugins** (clone `omarchy.power` → `cu
 ## Usage
 
 ```bash
-./setup-battery-management.sh            # applies everything (sudo once for udev/sudoers)
-./setup-battery-management.sh --remove   # removes udev+sudoers+menu, stops caffeine
+scripts/plugins/power-management/setup-battery-management.sh            # applies everything (sudo once for udev/sudoers)
+scripts/plugins/power-management/setup-battery-management.sh --remove   # removes udev+sudoers+menu, stops caffeine
 ```
 
 `--remove` stops an active coffee mode and clears its state (`~/.local/state/caffeine`); the binaries stay in `~/.local/bin` (remove them via the `battery` module of `mosquitomarchy-setup.sh --uninstall`).

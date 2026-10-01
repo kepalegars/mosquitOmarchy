@@ -33,7 +33,7 @@ terminal running `opencode` with a pre-written review prompt:
 ## Install / remove
 
 ```bash
-./setup-mosquitomarchy-update.sh -y       # install the hook
+scripts/mosquitomarchy-update/setup-mosquitomarchy-update.sh -y       # install the hook
 ./mosquitomarchy-setup.sh                # offered as module "mosquitomarchy-update"
 ./mosquitomarchy-setup.sh --uninstall    # per-module uninstall (or --uninstall mosquitomarchy-update)
 ```
