@@ -425,7 +425,7 @@ step_tweaks(){
 }
 
 step_vst_menu(){
-  msg "Step 4/4 — 'Audio Plugin Manager' (install / uninstall / status / standalone) in the menu"
+  msg "Step 4/4 — 'mosquito Audio Plugin Manager' (install / uninstall / status / standalone) in the menu"
   local s="$SCRIPT_DIR/setup-audio-plugin-manager.sh"
   [[ -f $s ]] || { warn "setup-audio-plugin-manager.sh missing from the folder: step skipped."; return 0; }
   # Only the CURRENT descriptor counts as "already present": a leftover
@@ -433,7 +433,7 @@ step_vst_menu(){
   # vst-install.desktop) means the install is out of date — fall through so
   # setup-audio-plugin-manager.sh runs and migrates/cleans the old artifacts.
   if [[ -f "$HOME/.local/share/applications/mosquito-audio-plugin-manager.desktop" ]]; then
-    ok "Audio Plugin Manager already present"
+    ok "mosquito Audio Plugin Manager already present"
     return 0
   fi
   ask "Add the 'mosquito Audio Plugin Manager' shortcut to the Omarchy menu ?" y \

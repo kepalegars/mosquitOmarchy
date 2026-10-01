@@ -611,7 +611,7 @@ MODULES=(
   "extracto:Simple custom install script for file-roller — restores Nautilus' Extract Here / Create Archive (file-roller + 7zip + unrar, file-roller prompts for the password itself); no desktop entry, no Nautilus script"
   "zen:Zen Browser config — plugins + settings + chrome theme (deployed into the active profile)"
   "jamjamjam-plugin:JamJamJam bar plugin — key/BPM/chord detection, chord progression grid, guitar fretboard scale, MIDI chord mode + synth"
-  "live-mode:Live mode — performance session mode (stay-awake + thermal guard + routing tool in scratchpad: live-mode / live-mode-watch / live-mode-root + its row in Setup > managers + QML overlay)"
+  "live-mode:Live mode — performance session mode (stay-awake + thermal guard + routing tool in scratchpad: live-mode / live-mode-watch / live-mode-root + its row in Setup > mosquito + QML overlay)"
 )
 
 # ───────────────────────── Quick system fixes ─────────────────────────
@@ -2110,9 +2110,9 @@ $MENU_MOSQUITO_START
   // Keep them lowercase; the search lowercases both sides anyway.
   "setup.mosquito": {
     "icon": "\uf07b",
-    "label": "managers",
-    "description": "Every manager TUI (setup/plugins/audio/move/live/jam)",
-    "aliases": ["mosquito", "mosquitomarchy", "managers", "manager"]
+    "label": "mosquito",
+    "description": "All the mosquito manager TUIs (setup/plugins/audio/move/live/jam)",
+    "aliases": ["mosquito", "mosquitomarchy"]
   },
   "setup.mosquito.manager": {
     "icon": "\uf188",

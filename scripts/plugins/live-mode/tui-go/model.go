@@ -89,7 +89,7 @@ func (m model) mainItems() []tuikit.PickerItem {
 		{Display: fmt.Sprintf("Thermal limit: %d°C", s.ThermalLimitC), Value: "thermal"},
 		{Display: "Ask to close background apps at start: " + boolLabel(s.CloseApps), Value: "close_apps"},
 		{Display: "Choose background apps to close at start", Value: "choose_apps"},
-		{Display: "patchbay in the scratchpad: " + boolLabel(s.RoutingTool), Value: "routing"},
+		{Display: "mosquito patchbay in the scratchpad: " + boolLabel(s.RoutingTool), Value: "routing"},
 		{Display: "Switch to the Live theme on activation: " + boolLabel(s.SwitchTheme), Value: "theme"},
 		{Display: "Confirm before changing power profile: " + boolLabel(s.ProfilePrompt), Value: "profile_prompt"},
 		{Display: "Window gaps disabled during the session: " + boolLabel(s.NoGaps), Value: "gaps"},
