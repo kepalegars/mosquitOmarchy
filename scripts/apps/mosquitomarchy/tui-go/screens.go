@@ -2694,6 +2694,43 @@ type setupCategory struct {
 	marked int
 }
 
+// trimOwnPrefix drops a leading "mosquito" (or "mosquito-") from a row label,
+// but only inside the "mosquito" folder, which is the only one whose name the
+// rows would otherwise just repeat:
+//
+//   mosquito
+//     mosquito-audio-plugin-manager - v1.0.0
+//     mosquito-jamjamjam - v1.0.0
+//     mosquito-live-mode - v1.0.0
+//
+// The folder header is already on screen directly above, so the prefix carries
+// no information and costs four characters on every row. This is DISPLAY ONLY:
+// it.Run() and the backend both dispatch on the key, never on the label, so
+// "audio-plugin-manager" installs exactly the same module as
+// "mosquito-audio-plugin-manager" did.
+//
+// Scoped to the folder on purpose. The same "mosquito-" prefix in "plugins"
+// (mosquitomarchy - v1.0.0) or a "mosquito" in the middle of a name is carrying
+// real information there, and stripping it globally would rename things the user
+// did not ask about. The version suffix is left alone: "- v1.0.0" is what tells
+// you a module can be updated.
+func trimOwnPrefix(folder, label string) string {
+	if folder != "mosquito" {
+		return label
+	}
+	for _, p := range []string{"mosquito-", "mosquito"} {
+		if strings.HasPrefix(label, p) {
+			rest := strings.TrimLeft(label[len(p):], " -")
+			// Only strip when something is left: a label that IS "mosquito"
+			// must not become empty.
+			if rest != "" {
+				return rest
+			}
+		}
+	}
+	return label
+}
+
 // setupIndex groups the backend records by category in ONE pass.
 //
 // It exists because setupRows used to ask setupItemsOf() for the same data
@@ -2733,6 +2770,7 @@ func (m model) setupIndex(uninstall bool) map[string]*setupCategory {
 			Info:     it.Info,
 			Disabled: it.Disabled,
 		}
+		row.Label = trimOwnPrefix(it.Folder, it.Label)
 		// "bring back omarchy's agentic stuff" only makes sense while
 		// something is still missing. This used to be decided in
 		// pickerTreeItems, which the flat Setup page no longer goes
