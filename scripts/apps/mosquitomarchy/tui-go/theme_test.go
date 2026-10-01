@@ -212,3 +212,21 @@ func TestThemeDoneOKReturnsToMainMenu(t *testing.T) {
 		t.Fatalf("OK must land on the main menu, top=%d", m.top())
 	}
 }
+
+// Theming is for wallpapers, so ~/Pictures/Wallpapers leads the folder list and
+// is re-created rather than dropped if it goes missing — otherwise deleting it
+// once would silently move the default somewhere else.
+func TestThemeFolderDefaultIsWallpapers(t *testing.T) {
+	got := themeFolderCandidates()
+	if len(got) == 0 {
+		t.Fatal("no theme folder candidates at all")
+	}
+	home, _ := os.UserHomeDir()
+	want := filepath.Join(home, "Pictures/Wallpapers")
+	if got[0].Path != want {
+		t.Errorf("first candidate = %q, want %q", got[0].Path, want)
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("the default folder was not created: %v", err)
+	}
+}
