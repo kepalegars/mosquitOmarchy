@@ -233,7 +233,13 @@ type model struct {
 	themeFolderPicker  navPicker
 	themeImagePicker   navPicker
 	themeDonePicker    navPicker
-	kbCustomLabel      string // custom-command label while the command is typed
+	// themeUnlockStyle is the "also build the lock/boot screen" toggle. It rides
+	// in front of the name screen so it is decided BEFORE the theme is built,
+	// rather than discovered afterwards — the boot screen needs a password, and
+	// discovering that after a five-step flow is a bad way to find out.
+	themeUnlockStyle bool
+	themeApply       bool // apply immediately instead of building only
+	kbCustomLabel    string
 
 	// Backup content selection (apps/tuis/webapps), reusing the setup tree
 	// display; plus the "what to include" options.
@@ -282,18 +288,22 @@ type model struct {
 
 func initialModel() model {
 	m := model{
-		nav:            []screen{scrMain},
-		selected:       map[string]bool{},
-		updateSelected: map[string]bool{},
-		healthChecked:  map[string]bool{},
-		kbSel:          map[string]bool{},
-		folderOpen:     map[string]bool{},
-		statusOpen:     map[string]bool{},
-		setupByValue:   map[string]SetupItemRec{},
-		backupChecked:  map[string]bool{},
-		backupOpen:     map[string]bool{},
-		backupOpts:     BackupOpts{VST: "list", Keepass: true, Zen: true},
-		treeMode:       "install",
+		nav: []screen{scrMain},
+		// A new theme builds the lock/boot screen too: that is what makes it a
+		// complete Omarchy theme rather than a wallpaper. The toggle in the flow
+		// turns it off for the ones who do not want it.
+		themeUnlockStyle: true,
+		selected:         map[string]bool{},
+		updateSelected:   map[string]bool{},
+		healthChecked:    map[string]bool{},
+		kbSel:            map[string]bool{},
+		folderOpen:       map[string]bool{},
+		statusOpen:       map[string]bool{},
+		setupByValue:     map[string]SetupItemRec{},
+		backupChecked:    map[string]bool{},
+		backupOpen:       map[string]bool{},
+		backupOpts:       BackupOpts{VST: "list", Keepass: true, Zen: true},
+		treeMode:         "install",
 	}
 	m.mainPicker = newNavPicker("", m.mainMenuItems())
 	m.setupPicker = newNavPicker("", nil)

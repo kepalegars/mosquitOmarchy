@@ -240,7 +240,70 @@ cmd_theme_images(){
              -o -iname '*.jpeg' -o -iname '*.webp' \) 2>/dev/null | sort)
 }
 
-# cmd_theme_create <dir> <image> <name> [apply]
+# The folder Theming opens on, when the user has picked one. Empty means "the
+# automatic default" (see themeFolderCandidates in the TUI).
+#
+# A preference, stored next to the other mosquitomarchy state rather than in the
+# repo: it describes this machine, and nothing else reads it.
+THEME_DEFAULT_DIR_FILE=""
+
+theme_default_dir_file(){
+  printf '%s\n' "${THEME_DEFAULT_DIR_FILE:-$HOME/.config/mosquitomarchy/theme-default-dir}"
+}
+
+cmd_theme_default_dir(){
+  local f mode="${1:-get}" arg="${2:-}"
+  f="$(theme_default_dir_file)"
+  case "$mode" in
+    get)
+      # Empty output is a valid answer here (no preference set), so it exits 0
+      # with nothing rather than being read as a failure by the TUI.
+      if [[ -r $f ]]; then cat "$f"; fi
+      ;;
+    set)
+      [[ -n $arg ]] || { err "theme-default-dir set needs a folder"; exit 2; }
+      mkdir -p "$(dirname "$f")" 2>/dev/null || true
+      printf '%s\n' "$arg" > "$f"
+      ;;
+    auto|"")
+      rm -f "$f"
+      ;;
+  esac
+}
+
+# A file chooser for the theme flow: one image, or one folder. Nautilus and
+# superfile are NOT used here — they cannot return a choice to a TUI, and the
+# manager has to keep running to build the theme afterwards. The portal chooser
+# and zenity can, so those are what the chain is.
+#
+# "$1" = file|folder, "$2" = start directory.
+cmd_theme_pick(){
+  local kind="${1:-file}" start="${2:-$HOME}" out=""
+  local -a exts=()
+  if [[ $kind == folder ]]; then
+    exts=(--directory)
+    title="Theming — choose the folder holding your images"
+  else
+    exts=(--extensions "png jpg jpeg webp")
+    title="Theming — choose an image"
+  fi
+  if command -v omarchy-file-select >/dev/null 2>&1 \
+     && { [[ -n ${DISPLAY:-} || -n ${WAYLAND_DISPLAY:-} || -n ${OMARCHY_WL:-} ]]; }; then
+    out="$(omarchy-file-select --title "$title" "${exts[@]}" 2>/dev/null | head -1)"
+  elif command -v zenity >/dev/null 2>&1; then
+    if [[ $kind == folder ]]; then
+      out="$(zenity --file-selection --directory --title="$title" 2>/dev/null)" || true
+    else
+      out="$(zenity --file-selection --title="$title" \
+        --file-filter 'Images | *.png *.jpg *.jpeg *.webp' 2>/dev/null)" || true
+    fi
+  fi
+  # Empty output means "cancelled", which is NOT an error: the TUI treats an
+  # empty path as "go back where you were" rather than as a failure to report.
+  printf '%s\n' "${out:-}"
+}
+
+# cmd_theme_create <dir> <image> <name> [apply] [unlock on|off]
 #
 # Runs the generator with --log so the TUI's "See log" row has a real file to
 # show. Without the apply flag create-theme.sh only BUILDS the theme: applying
@@ -255,8 +318,12 @@ cmd_theme_create(){
   local log="$HOME/.local/state/mosquitomarchy/theme-create.log"
   : > "$log"
 
+  # $5 = unlock (on|off). Defaults to on so an older caller keeps the complete
+  # theme; the TUI passes the toggle's own value.
+  local unlock="${5:-on}"
   local args=(--dir "$dir" --image "$image" --name "$name" --log "$log" --no-apply)
   [[ $apply == apply ]] && args+=(--apply)
+  if [[ $unlock == off ]]; then args+=(--no-unlock-style); else args+=(--unlock-style); fi
 
   YES=1 RESULTS=() MODULE_FAILURES=0
   # Not run_module: this is not a module of the plan, it is a one-off action
@@ -1724,6 +1791,8 @@ case "$sub" in
   remove-patch)             cmd_remove_patch "$@" ;;
   fixes-run)                cmd_fixes_run "$@" ;;
   theme-images)              cmd_theme_images "${1:-}" ;;
+  theme-default-dir)         cmd_theme_default_dir "${1:-get}" "${2:-}" ;;
+  theme-pick)                cmd_theme_pick "${1:-file}" "${2:-}" ;;
   theme-create)              cmd_theme_create "$@" ;;
   theme-apply)               cmd_theme_apply "${1:-}" ;;
   update)                   cmd_update "$@" ;;

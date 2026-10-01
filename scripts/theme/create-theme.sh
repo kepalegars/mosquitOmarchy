@@ -32,12 +32,18 @@
 #   create-theme.sh --dir DIR             # browse another folder instead
 #   create-theme.sh --dir DIR --image IMG --name NAME   # fully non-interactive
 #   create-theme.sh --no-apply            # build it but leave the desktop alone
+#   create-theme.sh --no-unlock-style     # build it WITHOUT the lock/boot screen
 #   create-theme.sh --log FILE            # tee the whole run to FILE
 #
 # Given --image and --name it never prompts, so the TUI can drive it. --apply is
 # explicit; without it the theme is built and NOT applied, because applying a
 # theme restarts every theme hook and would yank the desktop out from under
 # someone who only wanted to create one.
+#
+# The lock/boot screen (Plymouth) is built by DEFAULT, because a new theme is
+# meant to be a complete Omarchy theme and the boot screen is part of that. It
+# is also the one step that needs a password, so --no-unlock-style skips it
+# entirely rather than asking for one.
 #
 # NOTE: the 'achraff' module of mosquitomarchy-setup.sh delegates here (the
 # achraf67.png image is forced), but this script remains usable standalone to
@@ -69,6 +75,11 @@ FORCED=""
 THEME_NAME_ARG=""
 LOG_FILE=""
 APPLY=0
+# Whether to also build the lock/unlock style (Plymouth) from this theme.
+# On by default: the theme is meant to be complete, and the boot screen is part
+# of what an Omarchy theme sets. Off for a wallpaper-only look, or for a machine
+# where Plymouth is managed elsewhere.
+PLYMOUTH=1
 while (($#)); do
   case "$1" in
     --dir)   SEARCH_DIR="${2:?--dir needs a folder}"; shift 2 ;;
@@ -77,6 +88,8 @@ while (($#)); do
     --log)   LOG_FILE="${2:?--log needs a file}"; shift 2 ;;
     --apply) APPLY=1; shift ;;
     --no-apply) APPLY=0; shift ;;
+    --unlock-style) PLYMOUTH=1; shift ;;
+    --no-unlock-style) PLYMOUTH=0; shift ;;
     -h|--help) sed -n '/^# Usage:/,/^# ====/p' "$0" | sed 's/^# \?//'; exit 0 ;;
     -*) err "Unknown option: $1"; exit 2 ;;
     *)  FORCED="$1"; shift ;;
@@ -538,21 +551,36 @@ fi
 # 6. Boot Plymouth (sudo required) — offered at the end
 # -----------------------------------------------------------------------------
 setup_plymouth(){
+  if [[ $PLYMOUTH -eq 0 ]]; then
+    ok "Unlock/boot style: skipped (asked for)"
+    return 0
+  fi
   if [[ "$(omarchy-plymouth-current 2>/dev/null || true)" == "$THEME_SLUG" ]]; then
     ok "Plymouth already on ' $THEME_SLUG '"
     return 0
   fi
   # Never fatal. Plymouth is the BOOT screen: the theme itself is already built
-  # and the user can decide to apply it. It also needs sudo, which the TUI has
-  # no way to prompt for (the TUI's runner is not a tty), so from there this
-  # always falls through to the manual command. Returning 0 here is what keeps
-  # "the theme was created" from being reported as "finished with errors".
-  warn "BOOT Plymouth screen: requires sudo (password)."
-  if mq_sudo -n true 2>/dev/null && omarchy-plymouth-set-by-theme "$THEME_SLUG" 2>/dev/null; then
-    ok "Plymouth applied (unlock logo + theme colors)"
+  # and the user can decide to apply it afterwards.
+  #
+  # It used to give up here and print a manual command, because the probe was
+  # `mq_sudo -n true` — `-n` means "never prompt", so the one path that CAN ask
+  # was excluded by construction and the user got a dead end with no way forward
+  # from the TUI. That comment ("the TUI has no way to prompt for it") was wrong:
+  # mosquitomarchy already elevates dynamically through mq_sudo_prime, the same
+  # themed graphical askpass setup and uninstall use. This is that call, so the
+  # boot screen is now one dialog away instead of a command to copy.
+  #
+  # -y is deliberate on the SET step (it writes files) but the prime is what asks.
+  if mq_sudo_prime >/dev/null 2>&1; then
+    if mq_sudo -n omarchy-plymouth-set-by-theme "$THEME_SLUG" >/dev/null 2>&1; then
+      ok "Plymouth applied (unlock logo + theme colors)"
+    else
+      warn "Plymouth could not be applied — the theme itself is built and fine."
+    fi
   else
-    err "Plymouth left as is — the theme itself is fine."
-    err "To set the boot screen too (password):  omarchy-plymouth-set-by-theme \"$THEME_SLUG\""
+    warn "BOOT Plymouth screen: the password dialog was declined or cancelled."
+    warn "The theme is built. To set the boot screen later (password):"
+    warn "  omarchy-plymouth-set-by-theme \"$THEME_SLUG\""
   fi
   return 0
 }

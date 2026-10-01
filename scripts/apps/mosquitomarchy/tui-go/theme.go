@@ -114,13 +114,33 @@ func defaultThemeLog() string {
 	return filepath.Join(os.Getenv("HOME"), ".local/state/mosquitomarchy/theme-create.log")
 }
 
-// defaultThemeDir is where Theming looks first: ~/Pictures/Wallpapers, the
-// user's own wallpaper folder. It leads the list because it is the answer for
-// the actual task — a theme is built from a wallpaper — and the bundled Omarchy
-// images are a fallback for a machine that has none of its own yet.
+// defaultThemeDir is where Theming looks first: whatever the user last chose
+// with "Make this the default folder", and ~/Pictures/Wallpapers until they do.
+//
+// It leads the list because it is the answer for the actual task — a theme is
+// built from a wallpaper — and the bundled Omarchy images are a fallback for a
+// machine that has none of its own yet.
+//
+// The stored preference wins, so the row survives a restart instead of asking
+// again every time. A preference pointing at a folder that is gone falls back to
+// the wallpaper folder rather than being offered as a dead row.
 func defaultThemeDir() string {
+	if p := storedThemeDefaultDir(); p != "" {
+		if st, err := os.Stat(p); err == nil && st.IsDir() {
+			return p
+		}
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, "Pictures/Wallpapers")
+}
+
+// storedThemeDefaultDir reads the saved preference, or "" when there is none.
+func storedThemeDefaultDir() string {
+	out, err := runQuick("theme-default-dir", "get")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // themeFolderCandidates are the folders offered without typing anything. The
@@ -248,7 +268,22 @@ func (m model) rebuildThemeFolderPicker() navPicker {
 		})
 	}
 	items = append(items,
+		// The whole flow in one row. Everything the folder + image + name
+		// screens do, compressed: open the default file manager, pick an image,
+		// name the theme, build it. It exists because those three screens are a
+		// lot of keystrokes for the common case, where the only real decision
+		// is WHICH image.
+		tuikit.PickerItem{Display: "Select Image…", Value: "__pick__"},
 		tuikit.PickerItem{Display: "Type a folder path…", Value: "__type__"},
+		// Remember this folder as the default, so the next Theming visit opens
+		// here instead of re-asking. A preference the user sets once and never
+		// has to think about again.
+		tuikit.PickerItem{Display: "Make this the default folder", Value: "__setdefault__"},
+		// The lock/boot screen. It is ON by default because a new theme is
+		// meant to be a complete Omarchy theme, and it needs a password — which
+		// is exactly why the choice belongs here, in front of the flow, and not
+		// on a screen the user only reaches after everything is already built.
+		tuikit.PickerItem{Display: "Also create the unlock / boot screen: " + boolWord(m.themeUnlockStyle), Value: "__unlock__"},
 		tuikit.PickerItem{Display: "Back", Value: "back"},
 	)
 	h := "Create a theme — where are the images?"
@@ -292,6 +327,27 @@ func (m model) rebuildThemeDone() navPicker {
 		}).SetSize(m.contentSize())
 }
 
+// themeAskName opens the name step, pre-filled with the image's own name so
+// Enter twice is a complete theme for anyone who does not care what it is
+// called. Shared by the folder→image→name path and the one-row "Select Image…"
+// path, so both ask the same question in the same words.
+//
+// Pointer receiver on purpose: it pushes a screen and writes two fields. With a
+// value receiver that all happened on a copy, the caller kept its own model and
+// the name screen never opened — which is the whole step.
+func (m *model) themeAskName(proposed, fallback string) tea.Cmd {
+	if proposed == "" {
+		proposed = fallback
+	}
+	if proposed == "" {
+		proposed = "my-theme"
+	}
+	m.themeInput = tuikit.NewTextInput("Theme name:", proposed)
+	m.themeInputStep = 1
+	m.push(scrThemeName)
+	return m.themeInput.Init()
+}
+
 // themePicked routes every Enter on the theme flow's pickers. from is the
 // screen the Enter happened on, because "Rarity.jpg" means "use this image" on
 // the image list and nothing at all on the other two.
@@ -310,6 +366,26 @@ func (m model) themePicked(from screen, res tuikit.PickerResultMsg) (model, tea.
 		m.themeDir = ""
 		m.themeImages = nil
 		m.themeImagesFetched = false
+		m.themeFolderPicker = m.rebuildThemeFolderPicker()
+		return m, nil
+	case "__pick__":
+		// The one-row version of the whole flow: choose an image in the file
+		// chooser, and go straight to naming it. The folder list is bypassed,
+		// which is the point — picking an image already answers where it is.
+		return m, pickThemeImageCmd()
+	case "__setdefault__":
+		// Remember this folder so the next visit opens here. Refuses a row that
+		// is not a real folder (Back, Type a folder path…, Select Image…), since
+		// those are values, not paths.
+		if m.themeDir != "" {
+			if st, err := os.Stat(m.themeDir); err == nil && st.IsDir() {
+				return m, setThemeDefaultDirCmd(m.themeDir)
+			}
+		}
+		m.toast, _ = m.toast.SetWarn("choose a folder first, then set it as the default")
+		return m, nil
+	case "__unlock__":
+		m.themeUnlockStyle = !m.themeUnlockStyle
 		m.themeFolderPicker = m.rebuildThemeFolderPicker()
 		return m, nil
 	case "log":
@@ -342,17 +418,8 @@ func (m model) themePicked(from screen, res tuikit.PickerResultMsg) (model, tea.
 		for _, r := range m.themeImages {
 			if r.File == res.Value {
 				m.themeImage = r.File
-				// Step 3: the name field starts on the image's own name, so
-				// Enter twice is a complete theme for anyone who does not care
-				// what it is called.
-				proposed := r.Proposed
-				if proposed == "" {
-					proposed = r.Name
-				}
-				m.themeInput = tuikit.NewTextInput("Theme name:", proposed)
-				m.themeInputStep = 1
-				m.push(scrThemeName)
-				return m, m.themeInput.Init()
+				cmd := m.themeAskName(r.Proposed, r.Name)
+				return m, cmd
 			}
 		}
 	}
@@ -405,3 +472,84 @@ func (m *model) resetThemeFlow() {
 }
 
 var errNoImage = errors.New("no image selected")
+
+// pickThemeImageCmd opens the image chooser and, on a real choice, fills in the
+// folder and the image so the flow continues at the NAME step — which is where
+// the user actually has something to decide.
+//
+// An empty answer is a cancel, not a failure: it must leave the screen exactly
+// as it was, because the chooser is a separate window and closing it without
+// choosing is a normal thing to do.
+func pickThemeImageCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("theme-pick", "file")
+		if err != nil {
+			return themePickErrMsg{err: err}
+		}
+		p := strings.TrimSpace(string(out))
+		if p == "" {
+			return themeImagePickedMsg{} // cancelled
+		}
+		abs, aerr := filepath.Abs(p)
+		if aerr != nil {
+			abs = p
+		}
+		return themeImagePickedMsg{path: abs, dir: filepath.Dir(abs)}
+	}
+}
+
+// pickThemeFolderCmd is the folder half of the same chooser, for "set a new
+// default folder" from the Theming menu itself.
+func pickThemeFolderCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("theme-pick", "folder")
+		if err != nil {
+			return themePickErrMsg{err: err}
+		}
+		p := strings.TrimSpace(string(out))
+		if p == "" {
+			return themeFolderPickedMsg{}
+		}
+		abs, aerr := filepath.Abs(p)
+		if aerr != nil {
+			abs = p
+		}
+		return themeFolderPickedMsg{path: abs}
+	}
+}
+
+// themeImagePickedMsg carries an image chosen outside the TUI.
+type themeImagePickedMsg struct {
+	path string
+	dir  string
+}
+
+// themeFolderPickedMsg carries a folder chosen outside the TUI.
+type themeFolderPickedMsg struct{ path string }
+
+// setThemeDefaultDirCmd persists the folder preference and reports it.
+func setThemeDefaultDirCmd(dir string) tea.Cmd {
+	return func() tea.Msg {
+		if _, err := runQuick("theme-default-dir", "set", dir); err != nil {
+			return themePickErrMsg{err: err}
+		}
+		return toastThemeMsg{text: "default folder set: " + dir}
+	}
+}
+
+// themePickErrMsg is a failed chooser, kept separate from the generic error so
+// the flow stays where it is instead of dropping to the main menu.
+type themePickErrMsg struct{ err error }
+
+// toastThemeMsg reports a theme-flow side effect (the default folder being set)
+// as a toast, so it does not need its own screen.
+type toastThemeMsg struct{ text string }
+
+// stripImageExt drops the extension so a picked "nebula-4k.png" proposes the
+// theme name "nebula-4k" rather than "nebula-4k.png".
+func stripImageExt(s string) string {
+	if i := strings.LastIndexByte(s, '.'); i > 0 {
+		return s[:i]
+	}
+	return s
+}
