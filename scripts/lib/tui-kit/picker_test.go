@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -168,5 +169,49 @@ func TestToggleSpecDisplay(t *testing.T) {
 	s := ToggleSpec{On: "ON", Off: "OFF"}
 	if s.Display(true) != "ON" || s.Display(false) != "OFF" {
 		t.Fatalf("Display returned %q / %q", s.Display(true), s.Display(false))
+	}
+}
+
+// TestShortcutsHintFitsAndKeepsThePrimaryAction is the regression for a
+// shortcut bar that did not fit.
+//
+// Measured on the Setup tree at 100 columns: a 123-column hint. The overflow was
+// invisible — the bar is the bottom-most block, so the excess simply ran off the
+// bottom edge — which is how "enter install selection", the one hint telling
+// the user what Enter does on that screen, ended up off-screen. Wrapping it
+// instead is not a fix: BottomBar is contractually BarRows tall and every budget
+// subtracts exactly that, so a wrapped hint turned a two-row bar into a five-row
+// one and the terminal scrolled the title away.
+func TestShortcutsHintFitsAndKeepsThePrimaryAction(t *testing.T) {
+	kb := func(k, d string) key.Binding {
+		return key.NewBinding(key.WithKeys(k), key.WithHelp(k, d))
+	}
+	p := NewPicker("", []PickerItem{
+		{Display: "one", Value: "1"},
+		{Display: "two", Value: "2"},
+	}).SetSize(92, 20).SetHelpKeys(
+		kb("tab/x", "select"),
+		kb("i", "info"),
+		kb("shift+f", "search"),
+		kb("right", "open"),
+		kb("left", "close"),
+		kb("enter", "install selection"),
+	)
+
+	hint := p.ShortcutsHint()
+	plain := ansi.Strip(hint)
+	if w := lipgloss.Width(plain); w > 92 {
+		t.Errorf("hint is %d columns in a 92-column panel:\n%s", w, plain)
+	}
+	for _, want := range []string{"i info", "enter install selection"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("hint dropped %q — it must survive the fit:\n%s", want, plain)
+		}
+	}
+	// And at a width where even the primary action cannot fit, it degrades to
+	// something rather than wrapping.
+	tiny := p.SetSize(24, 20).ShortcutsHint()
+	if lipgloss.Height(tiny) != 1 {
+		t.Errorf("hint wrapped at 24 columns:\n%s", ansi.Strip(tiny))
 	}
 }

@@ -145,9 +145,14 @@ func LayoutForLadder(w, h int, ladder TitleLadder) Layout {
 	}
 	cw := NewLayout(w, h, 0).ContentWidth()
 	best := -1
+	// Walk top-down and STOP at the first rung that fits: the ladder is ordered
+	// most-decorative-first, so the first fit is the biggest one. Falling
+	// through the whole loop instead would take the LAST fit — the plain-text
+	// rung — and quietly drop the banner at sizes that had room for it.
 	for i, f := range ladder {
 		if f.Width <= cw && f.Rows <= avail {
 			best = i
+			break
 		}
 	}
 	if best < 0 {
@@ -442,7 +447,10 @@ func (p ContentPolicy) Size(w, h, titleRows int) (int, int) {
 func StackedLadder(art, subtitle string, width int) TitleLadder {
 	return NewTitleLadder(
 		MosquitoStackedHeader(art, subtitle, width),
-		CompactTitle(subtitle),
+		// The ASCII wordmark on its own keeps the screen recognizable when
+		// the 69-column box will not fit. Plain text is the last resort — it
+		// is readable but it is no longer the thing the user recognises.
+		MosquitoSubtitle(subtitle, width),
 		StyleAccent.Bold(true).Render(subtitle),
 	)
 }

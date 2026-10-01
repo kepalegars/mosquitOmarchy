@@ -667,6 +667,11 @@ type Picker struct {
 	// under the shortcuts — a path, a caveat, anything that isn't a key
 	// binding (SetHelpNote). Empty = no note.
 	helpNote string
+	// panelW is the panel width last passed to SetSize, i.e. how wide the
+	// shortcut bar may be. Set by SetSize; SetContentWidth does not touch it,
+	// because the row block and the bar are sized independently.
+	panelW int
+
 	// contentW pins the row-block width across rebuilds. 0 = derive it from
 	// whatever rows are currently visible, which makes the centered block
 	// jump every time a folder opens or closes. See SetContentWidth.
@@ -823,7 +828,7 @@ func newPicker(header string, items []PickerItem, p0 Picker) Picker {
 	// separately (the universal layout pins it to the bottom of the screen,
 	// not in the centred body).
 	l.SetShowHelp(false)
-	p := Picker{list: l, ready: true, contentW: p0.contentW, rowW: maxRowW, badgeSlot: badgeSlot, trailSlot: trailSlot, compact: !hasSub}
+	p := Picker{list: l, ready: true, contentW: p0.contentW, panelW: p0.panelW, rowW: maxRowW, badgeSlot: badgeSlot, trailSlot: trailSlot, compact: !hasSub}
 	p = p.clampDisabled(1)
 	p = p.applyPin()
 	return p
@@ -868,6 +873,12 @@ func (p Picker) SetSize(w, h int) Picker {
 	// TotalPages=1 so the first pass measures with no pagination row, then
 	// iterate until PerPage/TotalPages stabilize: the result depends only
 	// on (w,h) and the item count, never on the previous size.
+	// panelW is how wide the SHORTCUT BAR may be, as opposed to contentW which
+	// is the width of the row block. They are different numbers and the bar
+	// needs the wider one: contentW gets pinned to the widest row (a tree
+	// column can be 40 columns while the window is 92), so budgeting the bar
+	// against it sheds every hint on a screen whose rows happen to be narrow.
+	p.panelW = w
 	p.list.Paginator.TotalPages = 1
 	for i := 0; i < 4; i++ {
 		perPage, total := p.list.Paginator.PerPage, p.list.Paginator.TotalPages
@@ -913,10 +924,25 @@ func (p Picker) SetHelpNote(note string) Picker {
 }
 
 // ShortcutsHint returns the canonical single-line shortcut bar for this
-// picker: the four built-in keys ("↑/k up · ↓/j down · enter select · esc
-// back · ? more") plus, on the right, any custom hints registered through
-// SetHelpKeys ("tab select", "←/→ sort", …). Style with StyleHelp.Render
-// to render it. Empty for a zero Picker.
+// picker: the built-in navigation keys ("↑/k up · ↓/j down · enter select · esc
+// back · ? help") plus any custom hints registered through SetHelpKeys
+// ("tab select", "←/→ sort", …). Empty for a zero Picker.
+//
+// The bar is a FIXED number of rows (BarRows) — every layout budget subtracts
+// exactly that — so the hint has to fit the window on ONE line. It did not, and
+// the overflow was invisible: the bar is the bottom-most block, so a hint wider
+// than the window simply ran off the bottom edge. Measured on the Setup tree at
+// 100 columns: a 123-column hint, with "enter install selection" — the one hint
+// that tells the user what Enter does on that screen — silently off-screen.
+//
+// So the hint is built to fit: the navigation keys come first (they apply
+// everywhere), then the screen's own hints in registration order, and the tail
+// is dropped while it does not fit. Which hints get sacrificed is a deliberate
+// answer to "what is this screen for" — SetHelpKeys is called most-important
+// first — and the ones that fall off are all still on the help screen.
+//
+// BottomBar truncates whatever is left as a final net, so the row contract
+// holds even if a host sizes the picker to something unexpected.
 func (p Picker) ShortcutsHint() string {
 	if !p.ready {
 		return ""
@@ -930,15 +956,72 @@ func (p Picker) ShortcutsHint() string {
 			break
 		}
 	}
-	base := "↑/k up · ↓/j down · esc back · ? help"
+	nav := []string{"↑/k up", "↓/j down"}
 	if !hasEnterHint {
-		base = "↑/k up · ↓/j down · enter select · esc back · ? help"
+		nav = append(nav, "enter select")
 	}
-	if len(p.extraHints) == 0 {
-		return StyleHelp.Render(base)
+	// Least important first: these three are identical on every screen and are
+	// all listed on the help screen, so they are the first things to go when
+	// the bar has to shrink. The screen's OWN hints go only after these, and
+	// then from the tail — they are the only description of what this
+	// particular screen's keys do.
+	tail := []string{"esc back", "? help"}
+
+	extras := append([]string{}, p.extraHints...)
+
+	// The Enter hint is the screen's PRIMARY action — "enter install
+	// selection", "enter to run" — so it is pinned directly after the
+	// navigation keys and is never the thing that gets shed. Measured on the
+	// Setup tree at 100 columns: it is registered LAST, so a tail-first trim
+	// dropped exactly the one hint that tells the user what Enter does on that
+	// screen, which is the whole point of the screen.
+	var primary, rest []string
+	for _, h := range extras {
+		if strings.HasPrefix(h, "enter ") {
+			primary = append(primary, h)
+		} else {
+			rest = append(rest, h)
+		}
 	}
-	parts := append([]string{base}, p.extraHints...)
-	return StyleHelp.Render(strings.Join(parts, " · "))
+	extras = rest
+	mid := append(append([]string{}, nav...), primary...)
+
+	fit := func() string {
+		return strings.Join(append(append([]string{}, mid...), append(extras, tail...)...), " · ")
+	}
+
+	plain := fit()
+	w := p.panelW
+	if w <= 0 || lipgloss.Width(plain) <= w {
+		return StyleHelp.Render(plain)
+	}
+
+	// 1. Shed the redundant navigation keys, least useful first.
+	for _, k := range []string{"? help", "esc back", "enter select"} {
+		if idx := indexOf(nav, k); idx >= 0 {
+			nav = append(nav[:idx], nav[idx+1:]...)
+			if lipgloss.Width(fit()) <= w {
+				return StyleHelp.Render(fit())
+			}
+		}
+	}
+	// 2. Still too wide: drop the screen's own hints from the tail.
+	for len(extras) > 0 {
+		extras = extras[:len(extras)-1]
+		if lipgloss.Width(fit()) <= w {
+			break
+		}
+	}
+	return StyleHelp.Render(TruncateLine(fit(), w))
+}
+
+func indexOf(hay []string, needle string) int {
+	for i, h := range hay {
+		if h == needle {
+			return i
+		}
+	}
+	return -1
 }
 
 func (p Picker) Init() tea.Cmd { return nil }

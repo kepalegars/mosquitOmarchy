@@ -34,7 +34,19 @@ func BottomBar(notify, hint string, w int) string {
 	if w <= 0 {
 		return notify + "\n" + hint
 	}
-	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(notify) + "\n" + hint
+	// The hint is TRUNCATED to the window width, never wrapped. BottomBar is
+	// contractually BarRows tall and every layout budget subtracts exactly that
+	// many, so a hint long enough to wrap turned a two-row bar into a three- or
+	// five-row one and pushed the screen past the window, where the terminal
+	// scrolls the title away.
+	//
+	// Measured: at 20 columns the shortcut list
+	// "↑/k up · ↓/j down · enter select · esc back · ? help" wrapped onto three
+	// lines and an 8-row window rendered 13. Truncating a hint loses the tail
+	// of a line the user can always read on the help screen; wrapping it loses
+	// the title. That is not a close call.
+	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(notify) +
+		"\n" + TruncateLine(hint, w)
 }
 
 // FrameScreenVersion is FrameScreen with a small version label pinned to the
