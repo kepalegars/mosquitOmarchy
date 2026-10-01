@@ -2124,7 +2124,7 @@ $MENU_MOSQUITO_START
   },
   "setup.mosquito.audio-plugins": {
     "icon": "\uf15b",
-    "label": "Audio plugin manager (wine VST)",
+    "label": "Audio plugin manager",
     "description": "Install/uninstall Windows wine plugins, per-plugin fixes, prefixes",
     "aliases": ["plugins", "vst", "wine", "apm", "mapm"],
     "when": "test -x $BIN_DIR/mosquito-audio-plugin-manager-tui",
@@ -3869,10 +3869,12 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
     mosquito)
       # The mosquito tools — each user-visible tool gets its own row, labelled
       # with the tool's name rather than the module key it routes to
-      # (battery = mega-caffeine, ableton-move-manager = Move Manager, etc).
+      # (battery = mega-caffeine, ableton-move-manager = move-manager, etc).
       # The keys are what exec_modules routes on; the labels are what you read.
+      # Labels match the row names in the Setup tree, so a module is called the
+      # same thing in both menus.
       CAND_KEYS+=("ableton-move-manager")
-      CAND_LABELS+=("Move Manager  —  $(module_desc ableton-move-manager)")
+      CAND_LABELS+=("move-manager  —  $(module_desc ableton-move-manager)")
       CAND_KEYS+=("audio-plugin-manager")
       CAND_LABELS+=("mosquito-audio-plugin-manager  —  $(module_desc audio-plugin-manager)")
       CAND_KEYS+=("jamjamjam-plugin")

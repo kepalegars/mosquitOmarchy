@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	tuikit "mosquitomarchy.local/tui-kit"
 )
@@ -169,11 +170,82 @@ func themeFolderCandidates() []struct{ Label, Path string } {
 	return kept
 }
 
+// ellipsizeMiddle fits s into w columns, cutting the MIDDLE and not the end, so
+// both ends of a path stay readable: "/home/mos…" says the start, "…/Wallpapers"
+// says where it ends. A tail-only cut gives "…/mosquitomarchy/scripts/theme/Wal…",
+// which is the one part nobody needs — the leaf is already in the row label.
+//
+// Returns s untouched when it already fits, so short paths are never touched up.
+func ellipsizeMiddle(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= w {
+		return s
+	}
+	keep := w - 1 // the ellipsis itself
+	// Below 4 columns there is no room for a head AND a tail: the ellipsis plus
+	// one column on each side is the smallest cut that still says "middle". A
+	// narrower budget gets the bare marker rather than a string that is longer
+	// than the line it is meant to fit on.
+	if keep < 3 {
+		return "…"
+	}
+	head := keep/2 + keep%2 // one extra column on the head: paths are read left-to-right
+	tail := keep - head
+	r := []rune(s)
+	var headPart, tailPart strings.Builder
+	used := 0
+	for _, c := range r {
+		cw := lipgloss.Width(string(c))
+		if used+cw > head {
+			break
+		}
+		headPart.WriteRune(c)
+		used += cw
+	}
+	used = 0
+	for i := len(r) - 1; i >= 0; i-- {
+		cw := lipgloss.Width(string(r[i]))
+		if used+cw > tail {
+			break
+		}
+		tailPart.WriteRune(r[i])
+		used += cw
+	}
+	// tailPart was filled right-to-left, so reverse it; the head is already in
+	// order. Only paths too long to show whole reach this.
+	tailRunes := []rune(tailPart.String())
+	for i, j := 0, len(tailRunes)-1; i < j; i, j = i+1, j-1 {
+		tailRunes[i], tailRunes[j] = tailRunes[j], tailRunes[i]
+	}
+	return headPart.String() + "…" + string(tailRunes)
+}
+
 // rebuildThemeFolderPicker is the first step: which folder to look in.
 func (m model) rebuildThemeFolderPicker() navPicker {
 	items := []tuikit.PickerItem{}
+	// The sub-line is the full path, which is the one thing that does not fit on
+	// a real machine: /home/<user>/... is already ~20 columns before the leaf.
+	// The picker truncates the RIGHT-hand end, which throws away exactly the
+	// informative part: "…/mosquitOmarchy/scripts/theme/Wal…", where the leaf
+	// is already spelled out in the row label above it. Ellipsize here instead,
+	// in the middle, so the row arrives pre-fitted and the picker's own cut
+	// becomes a no-op.
+	//
+	// The width comes from the same contentWidth every other part of this TUI
+	// measures against, minus the picker frame, its indent, and the accent box
+	// the row reserves. The sub-line renders at the same indent as the title.
+	avail := m.contentWidth() - 10
+	if avail < 12 {
+		avail = 12
+	}
 	for _, c := range themeFolderCandidates() {
-		items = append(items, tuikit.PickerItem{Display: c.Label, Value: c.Path, Sub: c.Path})
+		items = append(items, tuikit.PickerItem{
+			Display: c.Label,
+			Value:   c.Path,
+			Sub:     ellipsizeMiddle(c.Path, avail),
+		})
 	}
 	items = append(items,
 		tuikit.PickerItem{Display: "Type a folder path…", Value: "__type__"},

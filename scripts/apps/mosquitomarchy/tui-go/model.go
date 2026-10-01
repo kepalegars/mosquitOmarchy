@@ -408,7 +408,7 @@ func (m *model) mainContentSize() (int, int) {
 
 // homeLayout picks the title rung that fits and returns the matching budget.
 func (m *model) homeLayout() tuikit.Layout {
-	w := m.contentWidth()
+	w := m.titleWidth()
 	return tuikit.LayoutForLadder(w, m.h, titleLadder(w))
 }
 
@@ -420,6 +420,27 @@ func (m *model) contentSizeW() int {
 // width so the widest rung is never wider than the panel.
 func titleLadder(width int) tuikit.TitleLadder {
 	return tuikit.MosquitOmarchyTitleLadder()
+}
+
+// titleWidth is the width the wordmark ladder is measured against, and it is
+// NOT contentWidth().
+//
+// contentWidth() caps the PANEL at ManagerContent.MaxW (92) so a list stays
+// readable instead of stretching to a 4K terminal. Feeding that same number to
+// the ladder meant the 121-column wordmark could never fit, so a wide terminal
+// got the 3-row compact box instead of the boxed wordmark — the cap meant for
+// the list was silently demoting the title, and no amount of extra width fixed
+// it.
+//
+// The title is a single centred line with nothing to read beside it, so it is
+// bounded by the window itself, not by the panel's comfortable width. The
+// ladder still refuses any rung wider than this, so nothing ever wraps.
+func (m *model) titleWidth() int {
+	w := m.w - 2 // one column of breathing room each side, so the frame is not flush
+	if w < 1 {
+		return 1
+	}
+	return w
 }
 
 // setupValue is the stable picker/selection key for a Setup item.

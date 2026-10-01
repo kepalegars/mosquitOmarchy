@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
@@ -228,5 +230,58 @@ func TestThemeFolderDefaultIsWallpapers(t *testing.T) {
 	}
 	if _, err := os.Stat(want); err != nil {
 		t.Errorf("the default folder was not created: %v", err)
+	}
+}
+
+// The folder rows carry the full path, and a path is the one string in this
+// screen that does not fit. Cutting the tail throws away the leaf, which the
+// row label already says; cutting the middle keeps both ends readable.
+func TestEllipsizeMiddleKeepsBothEnds(t *testing.T) {
+	long := "/home/mosquito/mosquitOmarchy/scripts/theme/Wallpapers"
+
+	// Short enough: returned untouched, not even an ellipsis.
+	if got := ellipsizeMiddle("/home/mosquito/Pictures/Wallpapers", 60); got != "/home/mosquito/Pictures/Wallpapers" {
+		t.Errorf("a path that fits was modified: %q", got)
+	}
+	// Way too long: never wider than asked, and cut in the middle.
+	got := ellipsizeMiddle(long, 30)
+	if w := lipgloss.Width(got); w > 30 {
+		t.Errorf("width = %d, want <= 30 (%q)", w, got)
+	}
+	if !strings.HasPrefix(got, "/home") {
+		t.Errorf("head lost, want it to start /home: %q", got)
+	}
+	if !strings.HasSuffix(got, "Wallpapers") {
+		t.Errorf("tail lost, want it to end Wallpapers: %q", got)
+	}
+	if !strings.Contains(got, "…") {
+		t.Errorf("no ellipsis in %q", got)
+	}
+	// Every width must hold, including the degenerate ones.
+	for w := 0; w <= 60; w++ {
+		if got := lipgloss.Width(ellipsizeMiddle(long, w)); got > w {
+			t.Errorf("width %d produced %d columns", w, got)
+		}
+	}
+	// A path shorter than the budget but wider than a tiny budget still keeps
+	// both of its ends rather than degenerating to a bare ellipsis.
+	if got := ellipsizeMiddle("/a/bb", 4); got != "/a…b" {
+		t.Errorf("tiny path = %q, want %q", got, "/a…b")
+	}
+}
+
+// The rows must arrive already fitted, otherwise the picker's own right-hand
+// cut takes over again and the ellipsis lands in the wrong place.
+func TestThemeFolderRowsArePreFitted(t *testing.T) {
+	m := flatSetup()
+	m.w, m.h = 80, 24
+	p := m.rebuildThemeFolderPicker()
+	for _, it := range p.items {
+		if it.Sub == "" || !strings.Contains(it.Sub, "/") {
+			continue
+		}
+		if w := lipgloss.Width(it.Sub); w > m.contentWidth()-10 {
+			t.Errorf("sub-line %q is %d columns, wider than the budget", it.Sub, w)
+		}
 	}
 }
