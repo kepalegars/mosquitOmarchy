@@ -387,13 +387,6 @@ st_achraff(){
   [[ "$(omarchy theme current 2>/dev/null || true)" == "Achraff 67" ]] \
     && echo ok || echo partial
 }
-st_keyboard_backlight(){
-  # Keyboard backlight: kbd-toggle helper + Trigger > Hardware menu entry
-  [[ -x "$HOME/.local/bin/kbd-toggle" ]] || { echo missing; return; }
-  [[ -f "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc" ]] \
-    && grep -qF -- "kbd-toggle" "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc" \
-    && echo ok || echo partial
-}
 st_touchpad(){
   # Touchpad: generated per-device file + require registered in hyprland.lua
   [[ -f "$HOME/.config/hypr/touchpad.lua" && -f "$HOME/.config/hypr/hyprland.lua" ]] \
@@ -602,7 +595,6 @@ MODULES=(
   "battery:Battery backend (ultra-save + Lenovo charge-control + custom.power plugin) + coffee mode (mega-caffeine)"
   "brightness:Display brightness — Omarchy default, plus 0% = screen off"
   "achraff:'Achraff 67' visual theme + unlock/Plymouth logo (lock screen left stock)"
-  "keyboard-backlight:Keyboard backlight toggle + Trigger > Hardware entry"
   "touchpad:Touchpad (pointer acceleration + sensitivity — external mouse is not affected)"
   "mx-master:MX Master (any model) — thumb gesture button → SUPER (logiops daemon, system service)"
   "keepassxc:KeePassXC secret service (apps module) — REPLACES gnome-keyring completely (existing keyring secrets must be migrated manually; package removal optional & asked). On FIRST KeePassXC launch choose YOUR .kdbx: the install pins it into keepassxc.ini (Remember*/LastOpened*) so EVERY web app's browser extension and secret service uses it — no more 'create a new database?' prompts. 'i' info below; pin a DIFFERENT file manually with scripts/apps/keepassxc/keepassxc-default-database.sh FILE.kdbx (README in that folder lists a manual select)"
@@ -778,7 +770,6 @@ module_state(){
     handbrake) st_handbrake ;;
     apps) s="$(st_apps)"; s="${s%%:*}"; echo "$s" ;;
     ollama) st_ollama ;; battery) st_battery ;; brightness) st_brightness ;;
-    achraff) st_achraff ;; keyboard-backlight) st_keyboard_backlight ;;
     touchpad) st_touchpad ;;
     mx-master) st_mx_master ;;
     keybindings) st_keybindings ;;
@@ -816,7 +807,6 @@ module_of_path(){
     scripts/plugins/power-management/*)                      echo battery ;;
     scripts/fixes/fix-optimized-brightness.sh)               echo brightness ;;
     scripts/theme/*)                                         echo achraff ;;
-    scripts/fixes/backlight/*|scripts/fixes/fix-keyboard-backlight-menu.sh) echo keyboard-backlight ;;
     scripts/fixes/fix-touchpad.sh)                           echo touchpad ;;
     scripts/fixes/fix-mx-master.sh)                          echo mx-master ;;
     scripts/fixes/fix-ableton-fullscreen.sh)                 echo ableton-fullscreen ;;
@@ -2841,12 +2831,6 @@ un_brightness(){
   [[ -f "$BINDINGS" ]] && hyprctl reload >/dev/null 2>&1 || true
 }
 
-un_keyboard_backlight(){
-  info "Uninstalling keyboard backlight (kbd-toggle) "
-  rm -f "$BIN_DIR/kbd-toggle"
-  rm -f "${XDG_RUNTIME_DIR:-/tmp}/mosquito-kbd-toggle.level" "${XDG_RUNTIME_DIR:-/tmp}/kbd-toggle.level"
-  ok "kbd-toggle helper removed"
-}
 
 un_touchpad(){
   info "Uninstalling touchpad config (per-device)"
@@ -3065,7 +3049,6 @@ uninstall_module(){
     remove-ai) un_remove_ai ;;
     battery) un_battery ;;
     brightness) un_brightness ;;
-    keyboard-backlight) un_keyboard_backlight ;;
     achraff) un_achraff ;;
     touchpad) un_touchpad ;;
     mx-master) un_mx_master ;;
@@ -3410,7 +3393,6 @@ run_ollama(){
 run_battery(){ bash "$BATTERY_DIR/setup-battery-management.sh"; }
 run_brightness(){ bash "$DISPLAY_DIR/fix-optimized-brightness.sh"; }
 run_achraff(){ bash "$THEME_DIR/create-theme.sh" --apply "$THEME_DIR/Wallpapers/achraf67.png"; }
-run_keyboard_backlight(){ bash "$DISPLAY_DIR/fix-keyboard-backlight-menu.sh"; }
 run_touchpad(){ bash "$TOUCHPAD_DIR/fix-touchpad.sh" $([[ $YES == 1 ]] && echo -y); }
 run_superfile(){ bash "$SUPERFILE_DIR/setup-superfile.sh" $([[ $YES == 1 ]] && echo -y); }
 run_zen(){ bash "$ZEN_DIR/setup-zen.sh" $([[ $YES == 1 ]] && echo -y); }
@@ -3569,7 +3551,6 @@ exec_modules(){
       battery) run_module battery run_battery ;;
       brightness) run_module brightness run_brightness ;;
       achraff) run_module achraff run_achraff ;;
-      keyboard-backlight) run_module keyboard-backlight run_keyboard_backlight ;;
       touchpad) run_module touchpad run_touchpad ;;
       mx-master) run_module mx-master run_mx_master ;;
       keepassxc) run_module keepassxc run_keepassxc ;;
@@ -3601,7 +3582,6 @@ CATEGORIES=(
   "apps|Apps|reaper audio ableton guitarpro davinci-resolve extracto handbrake superfile zen keepassxc"
   "tuis|TUIs|"
   "webapps|Webapps|"
-  "plugins|Plugins|mosquitomarchy battery brightness keyboard-backlight touchpad mx-master"
   "fixes|Quick fixes|"
   "mosquito|mosquito|"
   "lame|lame language models (ai..)|ollama remove-ai"

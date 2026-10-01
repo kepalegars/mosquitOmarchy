@@ -30,7 +30,6 @@ in `--status` and under **Setup → Plugins**.
 | Module | Script | Doc |
 |---|---|---|
 | `brightness` | `fix-optimized-brightness.sh` | Perceptual brightness, where 0% really means off via DPMS. Deploys a `backlight` helper. [notes](display-fixes.md) |
-| `keyboard-backlight` | `fix-keyboard-backlight-menu.sh` | A Trigger toggle plus `kbd-toggle`. [notes](display-fixes.md) |
 | `mx-master` | `fix-mx-master.sh` | Thumb button → `SUPER` via logiops, plus a mouse-only pointer block. [notes](fix-mx-master.md) |
 | `touchpad` | `fix-touchpad.sh` | Touchpad-only `hl.device` tuning. [notes](fix-touchpad.md) |
 

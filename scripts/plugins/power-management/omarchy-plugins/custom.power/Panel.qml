@@ -884,19 +884,18 @@ Panel {
         }
 
         // ---------- Battery conservation + Ultra-save toggles ----------
-        PanelSeparator {
-          foreground: root.bar.foreground
-        }
+        //
+        // No separator and no "BATTERY & POWER" header here on purpose.
+        //
+        // Both were added to break the panel into "battery stuff" and "power
+        // stuff", which was the right instinct and the wrong cut: these two
+        // toggles are the last section, the header named nothing they do not
+        // already say, and it duplicated the panel's own name above them. It
+        // read as an empty shelf between two groups that are one group.
 
         Column {
           width: parent.width
           spacing: Style.space(10)
-
-          PanelSectionHeader {
-            text: "BATTERY & POWER"
-            foreground: root.bar.foreground
-            fontFamily: root.bar.fontFamily
-          }
 
           Toggle {
             width: parent.width

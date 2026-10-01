@@ -93,7 +93,6 @@ Details, options and caveats live in each module's own `README.md`. This table i
 |---|---|---|
 | `battery` | Ultra-save, a custom battery plugin, mega caffeine | [README](scripts/plugins/power-management/README.md) |
 | `brightness` | Perceptual brightness | [notes](scripts/fixes/display-fixes.md) |
-| `keyboard-backlight` | Backlight toggle + a Trigger entry | [notes](scripts/fixes/display-fixes.md) |
 | `touchpad` | Touchpad acceleration and sensitivity | [notes](scripts/fixes/fix-touchpad.md) |
 | `mx-master` | MX Master thumb button → `SUPER`, smartshift off, scroll direction | [notes](scripts/fixes/fix-mx-master.md) |
 | `achraff` | An Omarchy theme built from an image in `theme/Wallpapers/` | [README](scripts/theme/README.md) |
