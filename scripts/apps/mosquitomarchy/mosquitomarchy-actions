@@ -163,6 +163,71 @@ cmd_fixes(){
   done
 }
 
+# -----------------------------------------------------------------------------
+# Create a theme from an image — the 4-step flow on the TUI's main menu
+# -----------------------------------------------------------------------------
+# The TUI owns every decision (which folder, which image, which name) so this
+# only ever runs create-theme.sh with all three already chosen. It is
+# deliberately NOT the old interactive create-theme.sh: a child of the TUI has
+# no tty for gum, and gum picking a wallpaper from a hidden popup inside a TUI
+# is exactly the kind of thing that silently picks the wrong file.
+cmd_theme_images(){
+  local dir="${1:-}"
+  [[ -n $dir ]] || return 0
+  [[ -d $dir ]] || return 0          # a folder that vanished lists as empty
+  local f base
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    base="$(basename "${f%.*}")"
+    # The proposed theme name: what the TUI pre-fills the name field with.
+    local proposed
+    proposed="$(printf '%s\n' "$base" | tr '[:upper:]' '[:lower:]' \
+      | sed -E 's/[^a-z0-9]+/ /g; s/^ +| +$//g; s/ (.)/\U\1/g; s/^(.)/\U\1/')"
+    printf '{"file":%s,"name":%s,"proposed":%s}\n' \
+      "$(json_str "$(basename "$f")")" "$(json_str "$base")" "$(json_str "${proposed:-$base}")"
+  done < <(find "$dir" -maxdepth 1 -type f \( -iname '*.png' -o -iname '*.jpg' \
+             -o -iname '*.jpeg' -o -iname '*.webp' \) 2>/dev/null | sort)
+}
+
+# cmd_theme_create <dir> <image> <name> [apply]
+#
+# Runs the generator with --log so the TUI's "See log" row has a real file to
+# show. Without the apply flag create-theme.sh only BUILDS the theme: applying
+# runs every Omarchy theme hook, so it stays the user's explicit choice.
+cmd_theme_create(){
+  local dir="${1:-}" image="${2:-}" name="${3:-}" apply="${4:-}"
+  [[ -n $dir && -n $image && -n $name ]] || { err "theme-create: dir, image and name are all required"; return 2; }
+  local script="$THEME_DIR/create-theme.sh"
+  [[ -f $script ]] || { err "theme-create: $script not found"; return 2; }
+
+  mkdir -p "$HOME/.local/state/mosquitomarchy"
+  local log="$HOME/.local/state/mosquitomarchy/theme-create.log"
+  : > "$log"
+
+  local args=(--dir "$dir" --image "$image" --name "$name" --log "$log" --no-apply)
+  [[ $apply == apply ]] && args+=(--apply)
+
+  YES=1 RESULTS=() MODULE_FAILURES=0
+  # Not run_module: this is not a module of the plan, it is a one-off action
+  # that happens to live in the theme folder. Keep it out of RESULTS so it does
+  # not show up as "theme" in the final report.
+  if bash "$script" "${args[@]}"; then
+    echo "THEME_SLUG=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g')"
+    echo "THEME_LOG=$log"
+    return 0
+  fi
+  MODULE_FAILURES=1
+  echo "THEME_LOG=$log"
+  return 1
+}
+
+# cmd_theme_apply <name> — the "Apply theme" row of the success prompt.
+cmd_theme_apply(){
+  local name="${1:-}"
+  [[ -n $name ]] || { err "theme-apply: name required"; return 2; }
+  omarchy theme set "$name"
+}
+
 # ─── Full setup tree (folders = categories, children = installable items) ──
 # One JSON record per line:
 #   folder: {"folder":id,"label":label,"accent":bool}
@@ -1466,6 +1531,9 @@ case "$sub" in
   run-patch)                cmd_run_patch "$@" ;;
   remove-patch)             cmd_remove_patch "$@" ;;
   fixes-run)                cmd_fixes_run "$@" ;;
+  theme-images)              cmd_theme_images "${1:-}" ;;
+  theme-create)              cmd_theme_create "$@" ;;
+  theme-apply)               cmd_theme_apply "${1:-}" ;;
   update)                   cmd_update "$@" ;;
   update-modules)           cmd_update_modules ;;
   update-repo)              cmd_update_repo ;;

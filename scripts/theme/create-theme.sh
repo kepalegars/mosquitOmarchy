@@ -27,12 +27,21 @@
 #      (achraf67.png: locked name ' Achraff 67 ', unlock logo ' achraff_67 '.)
 #
 # Usage:
-#   ./theme/create-theme.sh            # interactive: image -> name -> theme
-#   ./theme/create-theme.sh IMAGE      # force an image from Wallpapers/
+#   create-theme.sh                       # interactive: image -> name -> theme
+#   create-theme.sh IMAGE                 # force an image from Wallpapers/
+#   create-theme.sh --dir DIR             # browse another folder instead
+#   create-theme.sh --dir DIR --image IMG --name NAME   # fully non-interactive
+#   create-theme.sh --no-apply            # build it but leave the desktop alone
+#   create-theme.sh --log FILE            # tee the whole run to FILE
 #
-# NOTE: the ' achraff ' module of mosquitomarchy-setup.sh delegates here (the
+# Given --image and --name it never prompts, so the TUI can drive it. --apply is
+# explicit; without it the theme is built and NOT applied, because applying a
+# theme restarts every theme hook and would yank the desktop out from under
+# someone who only wanted to create one.
+#
+# NOTE: the 'achraff' module of mosquitomarchy-setup.sh delegates here (the
 # achraf67.png image is forced), but this script remains usable standalone to
-# create any theme from an image in Wallpapers/.
+# create any theme from an image in any folder.
 # =============================================================================
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/elevate.bash"  # mq_sudo: native pkexec prompt when not root
@@ -53,11 +62,42 @@ if [[ ! -d /usr/share/omarchy ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 0. Source image (browses the Wallpapers/ folder)
+# 0a. Arguments
 # -----------------------------------------------------------------------------
+SEARCH_DIR="$WALLPAPERS_DIR"
+FORCED=""
+THEME_NAME_ARG=""
+LOG_FILE=""
+APPLY=0
+while (($#)); do
+  case "$1" in
+    --dir)   SEARCH_DIR="${2:?--dir needs a folder}"; shift 2 ;;
+    --image) FORCED="${2:?--image needs a file name}"; shift 2 ;;
+    --name)  THEME_NAME_ARG="${2:?--name needs a value}"; shift 2 ;;
+    --log)   LOG_FILE="${2:?--log needs a file}"; shift 2 ;;
+    --apply) APPLY=1; shift ;;
+    --no-apply) APPLY=0; shift ;;
+    -h|--help) sed -n '/^# Usage:/,/^# ====/p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    -*) err "Unknown option: $1"; exit 2 ;;
+    *)  FORCED="$1"; shift ;;
+  esac
+done
+
+# --log: tee the entire run, including the pkexec prompt at the end, into the
+# file. Re-exec rather than redirecting so the TUI can also watch it live and so
+# the exit status stays create-theme.sh's own.
+if [[ -n "$LOG_FILE" ]]; then
+  mkdir -p "$(dirname "$LOG_FILE")"
+  exec > >(tee -a "$LOG_FILE") 2>&1
+fi
+
+# -----------------------------------------------------------------------------
+# 0. Source image (browses $SEARCH_DIR)
+# -----------------------------------------------------------------------------
+WALLPAPERS_DIR="$SEARCH_DIR"
 if [[ ! -d "$WALLPAPERS_DIR" ]]; then
   err "Images folder not found: $WALLPAPERS_DIR"
-  err "Drop some .png/.jpg/.jpeg/.webp into theme/Wallpapers/ then rerun."
+  err "Drop some .png/.jpg/.jpeg/.webp there, or pass --dir."
   exit 1
 fi
 
@@ -67,7 +107,6 @@ while IFS= read -r f; do
 done < <(find "$WALLPAPERS_DIR" -maxdepth 1 -type f \( -iname '*.png' -o -iname '*.jpg' \
         -o -iname '*.jpeg' -o -iname '*.webp' \) 2>/dev/null | sort)
 
-FORCED="${1:-}"
 if [[ -n $FORCED ]]; then
   FORCED_ABS="$WALLPAPERS_DIR/$(basename "$FORCED")"
   [[ -f "$FORCED_ABS" ]] || { err "Image not found: $FORCED_ABS"; exit 1; }
@@ -79,11 +118,11 @@ elif ((${#IMAGES[@]} == 0)); then
 elif ((${#IMAGES[@]} == 1)); then
   SRC_IMG="${IMAGES[0]}"
 else
-  msg "Available images in Wallpapers/:"
+  msg "Available images in $WALLPAPERS_DIR:"
   if command -v gum >/dev/null; then
     SRC_IMG="$(gum choose "${IMAGES[@]}" --header "Which image for the theme?")"
   else
-    local i=0
+    i=0
     for f in "${IMAGES[@]}"; do i=$((i+1)); printf "  %d) %s\n" "$i" "$(basename "$f")"; done
     read -rp "Image number [default 1]: " n
     n="${n:-1}"
@@ -109,6 +148,9 @@ msg "Image: $(basename "$SRC_IMG")"
 if [[ $ACHRAFF == true ]]; then
   THEME_NAME="Achraff 67"
   ok "Reference image (achraf67.png) — name locked ' $THEME_NAME '"
+elif [[ -n $THEME_NAME_ARG ]]; then
+  THEME_NAME="$THEME_NAME_ARG"
+  ok "Theme name from --name: ' $THEME_NAME '"
 else
   THEME_NAME=""
   if command -v gum >/dev/null; then
@@ -472,14 +514,24 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 4. Applying the theme
+# 4. Applying the theme — only when asked
 # -----------------------------------------------------------------------------
-if [[ "$(omarchy theme current 2>/dev/null || true)" != "$THEME_NAME" ]]; then
-  msg "Applying the theme ' $THEME_NAME '"
-  omarchy theme set "$THEME_NAME"
-  ok "Theme applied (omarchy theme set)"
+# Default is NOT to apply. Applying runs every theme hook in Omarchy (wallpaper,
+# bar, icons, terminal, GTK…), so building a theme must not silently repaint a
+# desktop the user is working on. Standalone runs keep the old behaviour by
+# passing --apply; the TUI applies only from the success prompt's explicit
+# "Apply theme" row.
+if ((APPLY)); then
+  if [[ "$(omarchy theme current 2>/dev/null || true)" != "$THEME_NAME" ]]; then
+    msg "Applying the theme ' $THEME_NAME '"
+    omarchy theme set "$THEME_NAME"
+    ok "Theme applied (omarchy theme set)"
+  else
+    ok "Theme ' $THEME_NAME ' already active"
+  fi
 else
-  ok "Theme ' $THEME_NAME ' already active"
+  ok "Theme ' $THEME_NAME ' created — NOT applied"
+  ok "Apply it when you are ready:  omarchy theme set '$THEME_NAME'"
 fi
 
 # -----------------------------------------------------------------------------
@@ -490,14 +542,19 @@ setup_plymouth(){
     ok "Plymouth already on ' $THEME_SLUG '"
     return 0
   fi
+  # Never fatal. Plymouth is the BOOT screen: the theme itself is already built
+  # and the user can decide to apply it. It also needs sudo, which the TUI has
+  # no way to prompt for (the TUI's runner is not a tty), so from there this
+  # always falls through to the manual command. Returning 0 here is what keeps
+  # "the theme was created" from being reported as "finished with errors".
   warn "BOOT Plymouth screen: requires sudo (password)."
-  if mq_sudo -n true 2>/dev/null; then
-    omarchy-plymouth-set-by-theme "$THEME_SLUG"
+  if mq_sudo -n true 2>/dev/null && omarchy-plymouth-set-by-theme "$THEME_SLUG" 2>/dev/null; then
     ok "Plymouth applied (unlock logo + theme colors)"
   else
-    err "sudo not available non-interactively."
-    err "To run yourself (password):  omarchy-plymouth-set-by-theme \"$THEME_SLUG\""
+    err "Plymouth left as is — the theme itself is fine."
+    err "To set the boot screen too (password):  omarchy-plymouth-set-by-theme \"$THEME_SLUG\""
   fi
+  return 0
 }
 setup_plymouth
 

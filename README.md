@@ -122,9 +122,13 @@ own device, and never touches the other.
 `scripts/apps/*/` is its own selectable item rather than a single module. See
 [scripts/apps/README.md](scripts/apps/README.md) and [scripts/fixes/README.md](scripts/fixes/README.md).
 
-Two rows in the TUI are not in the tables above, because they are not orchestrator modules: the
-**mosquito Audio Plugin Manager** is selected as its own row but is installed by `audio`, and
-**building a theme from a wallpaper** is selected under *Themes* but is done by `achraff`.
+One TUI row is not in the tables above, because it is not an orchestrator module: the **mosquito
+Audio Plugin Manager** is selected as its own row under *Plugins* but is installed by `audio`.
+
+**Creating a theme from an image** is not in the tables either, and not in Setup either: it is a
+row on the [TUI's main menu](scripts/apps/mosquitomarchy/README.md), right after Keybindings,
+because it creates a theme rather than installing a module. See
+[scripts/theme/README.md](scripts/theme/README.md).
 
 ## Commands
 

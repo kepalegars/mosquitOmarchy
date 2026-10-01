@@ -288,6 +288,17 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				return m, nil
 			case "kb-reload":
 				return m, fetchKbCmd()
+			case "theme-create":
+				// The generator finished. Deliberately no toast and no
+				// auto-apply: the whole point is that the user sees the three
+				// options (log / back / apply) and applies on purpose. The
+				// name screen's value is still in m.themeInput.
+				m.themeCreated = m.themePendingName
+				m.themeLog = defaultThemeLog()
+				m.pendingAction = ""
+				m.themeDonePicker = m.rebuildThemeDone()
+				m.push(scrThemeDone)
+				return m, nil
 			}
 			// A global uninstall also removes the keybindings the user ticked
 			// in the Keybindings manager (the selection persists while walking
@@ -314,8 +325,25 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		return m, cmd
 
+	case themeImagesMsg:
+		// Guard on the screen: a slow answer for a folder the user already
+		// backed out of must not rebuild a picker that is no longer on screen.
+		if m.top() != scrThemeImage {
+			return m, nil
+		}
+		m = m.themeImagesArrived(msg)
+		return m, nil
+
+	case themeCreateMsg:
+		// Only reachable from the Apply row, which runs outside the runner.
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("could not apply: " + msg.err.Error())
+			return m, nil
+		}
+		m.toast, _ = m.toast.SetOK(fmt.Sprintf("'%s' applied", msg.name))
+		return m, nil
+
 	case firstRunMsg:
-		// First ever launch: offer to add the global shortcut, once.
 		if m.top() == scrMain {
 			m.pendingAction = "add-shortcut"
 			m.pendingMsg = "Add a keyboard shortcut (SUPER + ALT + M) to open mosquitOmarchy at any time?"
@@ -691,6 +719,17 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, nil
 		}
 		switch m.pendingAction {
+		case "theme-create":
+			// Streamed through the runner like every other long action, so a
+			// slow palette extraction is visible instead of freezing the
+			// screen. The name comes from themePendingName, set when the name
+			// field was submitted: TextInput has no getter, so it cannot be
+			// read back here.
+			name := m.themePendingName
+			m.pop() // the name text screen
+			m.themeDonePicker = m.rebuildThemeDone()
+			return m.startWorking("Creating the theme",
+				workingArgs("theme-create", []string{m.themeDir, m.themeImage, name})...)
 		case "quick-fixes":
 			// One backend call runs the whole marked set through the same
 			// run_fixes() the shell launcher uses, so RESULTS accounting and the
@@ -823,6 +862,40 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		return m, nil
 
 	case tuikit.InputResultMsg:
+		// The theme flow's two text screens. Handled here, before the
+		// passphrase/keybinding cases, because Enter on a TextInput arrives as
+		// InputResultMsg and never as a picker result.
+		if m.top() == scrThemeInput {
+			if msg.Canceled {
+				m.pop()
+				return m, nil
+			}
+			return m.themeInputDone(msg.Value)
+		}
+		if m.top() == scrThemeName {
+			if msg.Canceled {
+				m.pop() // back to the image list
+				return m, nil
+			}
+			name := strings.TrimSpace(msg.Value)
+			if name == "" {
+				m.toast, _ = m.toast.SetWarn("a theme needs a name")
+				return m, nil
+			}
+			m.themePendingName = name
+			// Confirm before spending the time: the generator derives a palette,
+			// an unlock logo and two previews from this image, and a typo in the
+			// name is much cheaper to catch here than after the fact.
+			m.pendingAction = "theme-create"
+			m.pendingMsg = fmt.Sprintf(
+				"Create the theme '%s' from %s?\n\nFolder: %s\n\nThe palette, unlock logo and previews are all derived from that image. The theme is NOT applied — you get that choice afterwards.",
+				name, m.themeImage, m.themeDir)
+			m.pendingNo = "Cancel"
+			m.pendingYes = "Create"
+			m.push(scrConfirm)
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+			return m, nil
+		}
 		if m.top() != scrPassphrase && m.top() != scrKBInput {
 			return m, nil
 		}
@@ -1440,6 +1513,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.confirm, cmd = m.confirm.Update(msg)
 	case scrPassphrase:
 		m.passInput, cmd = m.passInput.Update(msg)
+	case scrThemeInput, scrThemeName:
+		// Both text screens share one field; themeInputStep says which question
+		// it is answering, and scrThemeInput's Enter is handled in the
+		// InputResultMsg case rather than here.
+		m.themeInput, cmd = m.themeInput.Update(msg)
 	case scrInfo:
 		m.info, cmd = m.info.Update(msg)
 	case scrWorking:
@@ -1670,6 +1748,12 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			// two trees only ever added a hop before reaching the same screen.
 			m.push(scrKB)
 			m.kbPicker = m.rebuildKB()
+			return m, nil
+		case "theme":
+			// Right after Keybindings: both are "configure the desktop", not
+			// "install something", which is why neither lives under Setup.
+			m.themeFolderPicker = m.rebuildThemeFolderPicker()
+			m.push(scrThemeFolder)
 			return m, nil
 		case "health":
 			// Re-apply any mosquitOmarchy piece / module whose files went missing.
@@ -2253,6 +2337,12 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		m.push(scrConfirm)
 		m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 		return m, nil
+
+	case scrThemeFolder, scrThemeImage, scrThemeDone:
+		// One router for the three picker screens of the theme flow; the
+		// two text screens (scrThemeInput, scrThemeName) are handled in the
+		// key switch because Enter on a TextInput never arrives as a pick.
+		return m.themePicked(m.top(), res)
 	}
 	return m, nil
 }
