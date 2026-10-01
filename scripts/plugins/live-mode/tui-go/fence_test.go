@@ -100,3 +100,33 @@ func TestTheFenceSurvivesAWriteAndARead(t *testing.T) {
 		t.Error("turning the fence back off did not persist")
 	}
 }
+
+// → must RAISE the thermal limit and ← must LOWER it. The table used to be in
+// descending order, which made the arithmetic (idx+dir, correct) walk the wrong
+// way: the arrows were right in code and inverted in meaning.
+func TestThermalArrowsMatchTheirDirection(t *testing.T) {
+	step := func(dir int) string {
+		m := initialModel()
+		m.w, m.h = 120, 40
+		m.settings.ThermalLimitC = 85
+		m.pending = map[string]string{}
+		mm, _ := m.cycleSetting(dir)
+		return mm.(model).pending["thermal"]
+	}
+	if got := step(1); got != "90" {
+		t.Errorf("right arrow gave %q, want 90 (a hotter limit)", got)
+	}
+	if got := step(-1); got != "80" {
+		t.Errorf("left arrow gave %q, want 80 (a cooler limit)", got)
+	}
+}
+
+// The table must stay ascending, and must not gain or lose a step: the order is
+// what makes the arrow direction correct.
+func TestThermalStepsAreAscending(t *testing.T) {
+	for i := 1; i < len(thermalSteps); i++ {
+		if thermalSteps[i] <= thermalSteps[i-1] {
+			t.Fatalf("thermalSteps is not ascending at %d: %v", i, thermalSteps)
+		}
+	}
+}

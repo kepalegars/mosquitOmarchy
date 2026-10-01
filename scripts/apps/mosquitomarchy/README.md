@@ -30,6 +30,21 @@ burying either under Setup would only add a hop. **Theming** leads to a four-ste
 image, name, create — and never applies the theme on its own; see
 [scripts/theme/README.md](../../theme/README.md).
 
+The folder screen carries three shortcuts around that flow, because the only real decision in a
+theme is which image it comes from:
+
+- **Select Image…** runs the whole flow in one row: an image chooser opens, and the flow continues
+  straight at the name step, since the folder is already settled by having picked a file in it.
+- **Make this the default folder** remembers that folder, so the next Theming visit opens there
+  instead of asking again. A stored preference, so it survives a restart. The default is
+  `~/Pictures/Wallpapers`, created if missing.
+- **Also create the unlock / boot screen** is **on** by default, since a new theme is meant to be a
+  complete Omarchy theme. It is named before the build starts because it is the one step that asks
+  for a password; turning it off skips that entirely.
+
+The lock/boot screen asks for that password through the same themed graphical dialog Setup and
+Uninstall use, rather than printing a command to copy.
+
 ## Setup
 
 Two levels. The first lists the categories as plain options plus **Menu entry**, **Add

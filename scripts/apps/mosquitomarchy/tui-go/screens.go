@@ -488,6 +488,33 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		return m, nil
 
+	case themeImagePickedMsg:
+		// An image chosen in the external chooser (Theming → Select Image…).
+		// Empty means the window was closed without choosing, which is a cancel
+		// and must leave the screen exactly as it was — not an error to report.
+		if msg.path == "" {
+			return m, nil
+		}
+		m.themeDir = msg.dir
+		m.themeImage = filepath.Base(msg.path)
+		// Straight to the name: the folder is settled by having picked a file
+		// inside it, so the folder and image screens have nothing left to ask.
+		return m, m.themeAskName(stripImageExt(m.themeImage), "")
+
+	case themeFolderPickedMsg:
+		if msg.path == "" {
+			return m, nil
+		}
+		return m, setThemeDefaultDirCmd(msg.path)
+
+	case toastThemeMsg:
+		m.toast, _ = m.toast.SetOK(msg.text)
+		return m, nil
+
+	case themePickErrMsg:
+		m.toast, _ = m.toast.SetWarn(msg.err.Error())
+		return m, nil
+
 	case tuikit.PickerResultMsg:
 		return m.screenPicked(msg)
 
@@ -726,10 +753,14 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// field was submitted: TextInput has no getter, so it cannot be
 			// read back here.
 			name := m.themePendingName
+			unlock := "off"
+			if m.themeUnlockStyle {
+				unlock = "on"
+			}
 			m.pop() // the name text screen
 			m.themeDonePicker = m.rebuildThemeDone()
 			return m.startWorking("Creating the theme",
-				workingArgs("theme-create", []string{m.themeDir, m.themeImage, name})...)
+				workingArgs("theme-create", []string{m.themeDir, m.themeImage, name, "no", unlock})...)
 		case "quick-fixes":
 			// One backend call runs the whole marked set through the same
 			// run_fixes() the shell launcher uses, so RESULTS accounting and the
@@ -886,10 +917,19 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// Confirm before spending the time: the generator derives a palette,
 			// an unlock logo and two previews from this image, and a typo in the
 			// name is much cheaper to catch here than after the fact.
+			//
+			// The lock/boot screen is named here too, because it is the one part
+			// of the build that will ask for a password. Seeing it before the
+			// build starts is the difference between a prompt you expect and one
+			// that interrupts you.
 			m.pendingAction = "theme-create"
+			unlockLine := "Unlock / boot screen: not created (asked for)"
+			if m.themeUnlockStyle {
+				unlockLine = "Unlock / boot screen: created too — this will ask for your password."
+			}
 			m.pendingMsg = fmt.Sprintf(
-				"Create the theme '%s' from %s?\n\nFolder: %s\n\nThe palette, unlock logo and previews are all derived from that image. The theme is NOT applied — you get that choice afterwards.",
-				name, m.themeImage, m.themeDir)
+				"Create the theme '%s' from %s?\n\nFolder: %s\n\n%s\n\nThe theme is NOT applied — you get that choice afterwards.",
+				name, m.themeImage, m.themeDir, unlockLine)
 			m.pendingNo = "Cancel"
 			m.pendingYes = "Create"
 			m.push(scrConfirm)
@@ -2352,6 +2392,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		// two text screens (scrThemeInput, scrThemeName) are handled in the
 		// key switch because Enter on a TextInput never arrives as a pick.
 		return m.themePicked(m.top(), res)
+
 	}
 	return m, nil
 }
@@ -2698,10 +2739,10 @@ type setupCategory struct {
 // but only inside the "mosquito" folder, which is the only one whose name the
 // rows would otherwise just repeat:
 //
-//   mosquito
-//     mosquito-audio-plugin-manager - v1.0.0
-//     mosquito-jamjamjam - v1.0.0
-//     mosquito-live-mode - v1.0.0
+//	mosquito
+//	  mosquito-audio-plugin-manager - v1.0.0
+//	  mosquito-jamjamjam - v1.0.0
+//	  mosquito-live-mode - v1.0.0
 //
 // The folder header is already on screen directly above, so the prefix carries
 // no information and costs four characters on every row. This is DISPLAY ONLY:

@@ -37,8 +37,17 @@ const (
 	scrQuit
 )
 
-// thermalOrder is what Left/Right cycle through on the thermal-limit row.
-var thermalSteps = []int{95, 90, 85, 80, 75}
+// thermalSteps is what Left/Right cycle through on the thermal-limit row, in
+// ASCENDING order.
+//
+// The order is the arrow direction. Right must RAISE the limit and Left must
+// LOWER it, so a control that is higher on screen is a hotter setting and →
+// goes up — the same relationship every physical knob and every Omarchy setting
+// has. The list used to run 95→75, which made → step DOWN the numbers: the
+// arrows were correct in code (idx+dir) and inverted in meaning, because the
+// table it walked was descending. Sorted ascending, the existing arithmetic is
+// right by construction.
+var thermalSteps = []int{75, 80, 85, 90, 95}
 
 type model struct {
 	w, h       int
