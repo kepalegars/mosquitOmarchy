@@ -377,7 +377,17 @@ case "${1:-}" in
     esac
     ;;
   *)
-    echo "Usage: power-helper {charging|ultrasave}" >&2
+    # The full list matters here: a caller using the wrong subcommand gets this
+    # line on stderr and nothing else, and the panel that ran it does not show
+    # stderr — so the failure looked like the click did nothing. The custom.power
+    # panel called `profile-set` (hyphen) for a while because this message only
+    # ever said {charging|ultrasave} and gave no hint that `profile` existed.
+    cat >&2 <<'EOF'
+Usage: power-helper charging {probe|list|set|preset|conservation|status}
+       power-helper profile  set <ac|battery> <profile> [drop-ultrasave|keep-ultrasave]
+       power-helper profile  state
+       power-helper ultrasave {status|on|off|toggle}
+EOF
     exit 1
     ;;
 esac

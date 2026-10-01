@@ -251,14 +251,20 @@ Panel {
   // bash, testable, and reachable from the terminal and from any other caller.
   function setProfile(profile) {
     if (!profile || actionProc.running) return
-    // Everything goes through power-helper profile-set, including the ultra-save
+    // Everything goes through power-helper profile set, including the ultra-save
     // cleanup. A manually activated plan still wins over ultra-save (it forces
     // power-saver and CPU caps), so ultra-save is turned off first — and the
     // helper is the one place that knows live mode is on and that power-saver
     // itself must be refused, so asking there rather than here is what keeps
     // the two rules from disagreeing.
+    //
+    // The subcommand is `profile set`, with a SPACE. This used to say
+    // `profile-set` with a hyphen, which the helper does not implement: it fell
+    // through to the default case, printed a usage line to stderr and exited 1.
+    // Nothing in the panel surfaced that, so clicking a profile appeared to do
+    // nothing at all — the machine stayed on power-saver with no error anywhere.
     actionProc.command = [
-      "power-helper", "profile-set",
+      "power-helper", "profile", "set",
       root.discharging ? "battery" : "ac",
       profile,
       root.ultraSaveOn ? "drop-ultrasave" : "keep-ultrasave"
