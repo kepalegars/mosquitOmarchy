@@ -62,8 +62,59 @@ fi
 source "$SETUP"
 
 # ── JSON helpers (single-line, no trailing comma, escaped) ────────────────
-json_esc(){ printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+#
+# Pure bash, no fork. This used to be `printf '%s' "$1" | sed -e …`, and cmd_setup
+# calls json_str four times per row across ~46 rows — roughly 250 forks, each
+# paying bash's fork/exec cost. Measured on this machine that was ~43s of a ~50s
+# `mosquitomarchy-actions setup`: the Setup screen sat blank for the better part
+# of a minute, and the cost was spread thin enough across the trace that it read
+# as "every operation is slow" rather than "one thing forks too often".
+#
+# Bash parameter expansion does the same two substitutions without a subprocess.
+# Backslash first, because escaping the quote afterwards must not double-escape
+# the backslashes this one introduces — same reason sed listed them in that order.
+json_esc(){ local s=${1//\\/\\\\}; printf '%s' "${s//\"/\\\"}"; }
 json_str(){ printf '"%s"' "$(json_esc "$1")"; }
+
+# json_str_into writes the same thing as json_str, into the global JS, without a
+# command substitution.
+#
+# This exists because on this machine a `$( )` costs ~60ms: the shell forks, and
+# with a subshell plus an external pipeline underneath it the Setup tree's ~206
+# json_str call sites turned into ~24 seconds of nothing but fork overhead — the
+# screen sat blank for half a minute for a tree of 46 strings.
+#
+# printf with a trailing newline, then strip the last byte with ${JS%?}. Bash can
+# do that inline, where it cannot do command capture cheaply.
+json_str_into(){ local s=${1//\\/\\\\}; JS="\"${s//\"/\\\"}\""; }
+
+# json_obj N field... prints one JSON object, fields already quoted.
+#
+# The KEYS are quoted here rather than passed in already quoted, so a call site
+# reads `json_obj folder "$jf" label "$jl"` and there is no way to forget the
+# quotes on a key. Values must already be json_str_into output, quotes included.
+json_obj(){
+  local out='{'
+  while (( $# >= 2 )); do
+    [[ $out == '{' ]] || out+=','
+    out+="\"$1\":$2"
+    shift 2
+  done
+  printf '%s}' "$out"
+}
+
+# json_obj_into is json_obj writing into the global JO. Same reason as
+# json_str_into: a `$( )` is ~60ms here, and the Setup tree alone did ~60 of
+# them just to assemble field strings.
+json_obj_into(){
+  local out='{'
+  while (( $# >= 2 )); do
+    [[ $out == '{' ]] || out+=','
+    out+="\"$1\":$2"
+    shift 2
+  done
+  JO="$out}"
+}
 
 # A JSON BOOLEAN, unquoted. json_str() always wraps its argument in quotes,
 # which is right for a string and wrong for a bool: passing `excluded` through
@@ -244,6 +295,13 @@ cmd_setup(){
   # folder id for a child), never the JSON payload; the payload rides after a
   # TAB and is stripped before printing.
   local -a folders=() items=()
+
+  # REPO_VERSION is sourced once from VERSION at the top of
+  # mosquitomarchy-setup.sh, so it is read here for free. module_version()
+  # re-read the file per row instead, and with ~46 rows that was ~46 forks
+  # before a single character of the tree had been printed.
+  local ver="${REPO_VERSION:-1.0.0}"
+
   for c in "${CATEGORIES[@]}"; do
     id="${c%%|*}"; label="${c#*|}"; label="${label%%|*}"
     # The Omarchy menu registration is shown INSIDE the mosquito folder (see
@@ -251,21 +309,26 @@ cmd_setup(){
     [[ $id == menu ]] && continue
     accent=false
     [[ $id == mosquito ]] && accent=true
-    folders+=("$label"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
-      "$(json_str "$id")" "$(json_str "$label")" "$accent")")
+    json_str_into "$id";    local j_folder=$JS
+    json_str_into "$label"; local j_label=$JS
+    json_obj_into folder "$j_folder" label "$j_label" accent "$accent"
+    folders+=("$label"$'\t'"$JO")
     case $id in
       fixes)
         local fe fid
+        json_str_into "$id"; j_folder=$JS
         for fe in "${FIXES[@]:-}"; do
           fid="${fe%%:*}"
-          items+=("fixes/$fid"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
-            "$(json_str "$id")" "$(json_str "$fid")" "$(json_str "$fid")" \
-            "$(json_str "${fe#*:}")")")
+          json_str_into "$fid"; local j_fid=$JS
+          json_str_into "${fe#*:}"; local j_info=$JS
+          json_obj_into folder "$j_folder" key "$j_fid" label "$j_fid" info "$j_info"
+          items+=("fixes/$fid"$'\t'"$JO")
         done
         ;;
       *)
         category_candidates "$id"
-        for ((i=0; i<${#CAND_KEYS[@]}; i++)); do
+        local nk=${#CAND_KEYS[@]}
+        for ((i=0; i<nk; i++)); do
           name="${CAND_LABELS[$i]}"; info=""
           if [[ $name == *"$sep"* ]]; then
             info="${name#*"$sep"}"
@@ -286,13 +349,16 @@ cmd_setup(){
           # above had just removed (the row read "Monitor Settings — Hyprland
           # display/monitor panel"). category_candidates now returns the human
           # name for PLUG rows, so this override only had to be dropped.
-          local label="$name - v$(module_version "${CAND_KEYS[$i]}")"
+          local vlabel="$name - v$ver"
           # remove-ai's Setup row reads EXACTLY "bring back omarchy's agentic
           # stuff" (no version suffix; it is an action, not a versioned module).
-          [[ ${CAND_KEYS[$i]} == remove-ai ]] && label="$name"
-          items+=("$id/$name"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
-            "$(json_str "$id")" "$(json_str "${CAND_KEYS[$i]}")" \
-            "$(json_str "$label")" "$(json_str "$info")")")
+          [[ ${CAND_KEYS[$i]} == remove-ai ]] && vlabel="$name"
+          json_str_into "$id";           j_folder=$JS
+          json_str_into "${CAND_KEYS[$i]}"; local j_key=$JS
+          json_str_into "$vlabel";       local j_vlabel=$JS
+          json_str_into "$info";         local j_info=$JS
+          json_obj_into folder "$j_folder" key "$j_key" label "$j_vlabel" info "$j_info"
+          items+=("$id/$name"$'\t'"$JO")
         done
         ;;
     esac

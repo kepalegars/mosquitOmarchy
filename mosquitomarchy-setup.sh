@@ -3776,6 +3776,25 @@ module_category(){ # module id -> category id
   done
 }
 
+# module_desc_into is module_desc writing into the global MODULE_DESC, so
+# callers in a loop do not pay a fork per call for a `$( )`.
+module_desc_into(){
+  local row
+  if [[ "$1" == remove-ai ]]; then
+    if [[ ${TREE_MODE:-setup} == uninstall ]]; then MODULE_DESC="remove omarchy's agentic stuff (agents, AI-diag toasts, ollama loaders; Setup restores)"; else MODULE_DESC="bring back omarchy's agentic stuff (re-enable the Agents plugin, the AI-diagnosis toasts, ollama loaders)"; fi
+    return 0
+  fi
+  MODULE_DESC=""
+  for row in "${MODULES[@]}"; do
+    [[ "${row%%:*}" == "$1" ]] && { MODULE_DESC="${row#*:}"; return 0; }
+  done
+  case $1 in
+    audio-plugin-manager) MODULE_DESC="mosquito Audio Plugin Manager (TUI + actions) + shared audio core" ;;
+    theme)                MODULE_DESC="Create an Omarchy theme from an image in theme/Wallpapers/" ;;
+  esac
+  return 0
+}
+
 module_desc(){ # module / pseudo id -> short description
   local row
   # remove-ai gets a MODE-AWARE label: Setup says "bring back…", Uninstall
@@ -3894,7 +3913,13 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
         if [[ $id == remove-ai ]]; then
           CAND_LABELS+=("$id  —  bring back omarchy's agentic stuff (re-enables omarchy.agents, AI-diag toasts, ollama loaders)")
         else
-          CAND_LABELS+=("$id  —  $(module_desc "$id")")
+          # module_desc_into instead of `$(module_desc "$id")`: this loop runs
+          # for every module in apps/plugins/vms/lame, and a command
+          # substitution costs a fork each time (~60ms here). cmd_setup calls
+          # this once per category, so the Setup tree was paying ~22 forks to
+          # concatenate two strings it already had in memory.
+          module_desc_into "$id"
+          CAND_LABELS+=("$id  —  $MODULE_DESC")
         fi
       done
       # NOTE: building a theme from an image is NOT a Setup row. It lives on the
