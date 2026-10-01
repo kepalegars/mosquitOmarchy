@@ -72,11 +72,16 @@ func FrameScreenVersion(w, h int, title, body, bar, version string) string {
 // Title, body and shortcut are each re-padded to the window's full width
 // with Align+Width so mixed-width content inside them (the boxed mosquito
 // art, the picker rows, the modal border) always reads as one centered
-// block. The function never widens or narrows any line — it only adds
-// horizontal/vertical padding, so nothing is ever clipped even when the
-// body is slightly taller than the gap (the overflow clips at the bottom
-// rather than shifting the title; the hosts size their pickers to the
-// FrameScreen budget so this never triggers in practice).
+// block.
+//
+// The body is CLIPPED to the gap it was given. That is a safety net, not the
+// mechanism: a host sizes its picker from a Layout (see responsive.go) so the
+// body fits by construction. When one does not — a long list, a smaller tile
+// than anything was tested at — the body's last rows are dropped and the title
+// and the shortcut bar survive. Losing the bottom of a list is recoverable;
+// losing the bar means the user cannot see or use the shortcuts, and the
+// screen scrolls the title off the top. An interface is never sacrificed to
+// the content inside it.
 func FrameScreen(w, h int, title, body, bar string) string {
 	if w <= 0 || h <= 0 {
 		return title + "\n" + body + "\n" + bar
@@ -106,6 +111,12 @@ func FrameScreen(w, h int, title, body, bar string) string {
 	gap := h - titleH - barH
 	if gap < 0 {
 		gap = 0
+	}
+	// Clip an over-tall body to the gap. Keeping title+bar on screen is worth
+	// more than keeping the body's tail; see the note above.
+	if bodyH > gap && gap > 0 {
+		body = clipToRows(body, gap)
+		bodyH = gap
 	}
 	topPad := (gap - bodyH) / 2
 	botPad := gap - bodyH - topPad
