@@ -113,9 +113,18 @@ func defaultThemeLog() string {
 	return filepath.Join(os.Getenv("HOME"), ".local/state/mosquitomarchy/theme-create.log")
 }
 
+// defaultThemeDir is where Theming looks first: ~/Pictures/Wallpapers, the
+// user's own wallpaper folder. It leads the list because it is the answer for
+// the actual task — a theme is built from a wallpaper — and the bundled Omarchy
+// images are a fallback for a machine that has none of its own yet.
+func defaultThemeDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "Pictures/Wallpapers")
+}
+
 // themeFolderCandidates are the folders offered without typing anything. The
-// first one is where the bundled reference images live, so a fresh machine has
-// something to pick from; the rest are where people's pictures actually are.
+// first one is the user's wallpaper folder; the rest are where people's pictures
+// actually are, plus the bundled set so a fresh machine has something to pick.
 func themeFolderCandidates() []struct{ Label, Path string } {
 	home, _ := os.UserHomeDir()
 	repo := ""
@@ -123,7 +132,9 @@ func themeFolderCandidates() []struct{ Label, Path string } {
 		// deployed binary: ~/.local/bin/mosquitomarchy-tui -> repo is ../../mosquitOmarchy
 		repo = filepath.Join(filepath.Dir(exe), "../../mosquitOmarchy/scripts/theme/Wallpapers")
 	}
+	def := defaultThemeDir()
 	out := []struct{ Label, Path string }{
+		{"Wallpapers", def},
 		{"Omarchy wallpapers (bundled)", repo},
 		{"Pictures", filepath.Join(home, "Pictures")},
 		{"Downloads", filepath.Join(home, "Downloads")},
@@ -133,14 +144,27 @@ func themeFolderCandidates() []struct{ Label, Path string } {
 	// Drop the ones that do not exist, and the bundled row when it cannot be
 	// located — offering a folder that is not there is worse than not offering
 	// it, because it looks like the list is broken.
+	//
+	// The default is the exception: it is the row the user expects to find
+	// first, and it is the folder Theming is for. Deleting ~/Pictures/Wallpapers
+	// should not quietly move the default elsewhere, so the row is created
+	// instead of dropped. Every other row stays read-only.
 	kept := out[:0]
 	for _, c := range out {
 		if c.Path == "" {
 			continue
 		}
-		if _, err := os.Stat(c.Path); err == nil {
-			kept = append(kept, c)
+		if _, err := os.Stat(c.Path); err != nil {
+			if c.Path != def {
+				continue
+			}
+			if mkErr := os.MkdirAll(c.Path, 0o755); mkErr != nil {
+				// Cannot create it (read-only home, a file in the way). Fall
+				// through and drop the row rather than offer a dead path.
+				continue
+			}
 		}
+		kept = append(kept, c)
 	}
 	return kept
 }

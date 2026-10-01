@@ -28,8 +28,10 @@ The generator is reached from the mosquitomarchy TUI's **main menu**, on the row
 right after **Keybindings** — it is a create-this-thing action, not a module to
 install, so it does not live under Setup. Four steps, all decided in the TUI:
 
-1. **Folder** — the usual suspects (Omarchy wallpapers, `~/Pictures`,
-   `~/Downloads`, `~/Images`, `~/Pictures/Screenshots`) plus *Type a folder path…*.
+1. **Folder** — `~/Pictures/Wallpapers` first, then the usual suspects
+   (Omarchy wallpapers, `~/Pictures`, `~/Downloads`, `~/Images`,
+   `~/Pictures/Screenshots`) plus *Type a folder path…*. The default is created
+   if it does not exist.
 2. **Image** — every `.png/.jpg/.jpeg/.webp` in that folder.
 3. **Name** — pre-filled with the image's own name; Enter twice is a complete
    theme. The name becomes the slug, the unlock logo text and both previews.
