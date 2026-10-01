@@ -29,16 +29,23 @@ archive actions, exactly as they were before Nautilus dropped built-in support.
   lha, lrzip) that libarchive alone refuses.
 - **unrar** backs RAR. With both installed, file-roller's own **Extract Here**
   prompts for the password itself and hands it to the right backend.
-- Sets the common formats to open **with file-roller** (mimeapps.default), so
-  double-clicking an archive really opens it.
+- **Makes sure file-roller is *not* the default application** for archive types.
+  Earlier revisions ran `xdg-mime default org.gnome.FileRoller.desktop` per
+  MIME type, which was self-defeating: `xdg-mime default` writes a *single* app,
+  not a list, so it **replaced** the candidate list instead of adding to it. The
+  system list in `mimeinfo.cache` is
+  `application/zip=org.gnome.FileRoller.desktop;org.gnome.Nautilus.desktop;` —
+  Nautilus was a co-candidate and the override dropped it. Extraction in
+  Nautilus does not need a MIME default anyway; it goes through file-roller's
+  `libnautilus-extension`. This step now only **removes** those old bindings, so
+  a machine that ran a previous version is repaired rather than left pinned.
 - **Hides file-roller's own package .desktop** so the apps menu is not
   cluttered with a second archive entry — and creates no entry of our own.
   The override is a **full copy of the package file plus `NoDisplay=true`**,
   not a bare `Hidden` stub: a user `.desktop` of the same name *replaces* the
   package one (it does not merge), so a stub would drop its `Exec`/`MimeType`
-  and then Nautilus' "Open With → File Roller" — and a double-click on any
-  archive, since `mimeapps.list` still points at that id — would resolve to a
-  file with no `Exec` and do nothing. `NoDisplay` still hides it from the
+  and then Nautilus' "Open With → File Roller" would resolve to a file with no
+  `Exec` and do nothing. `NoDisplay` still hides it from the
   Omarchy menu (which skips both `Hidden` and `NoDisplay`) while keeping the
   entry launchable.
 - Adds a per-class Hyprland rule: file-roller is a floating GTK4 dialog, so it
@@ -51,7 +58,8 @@ is created: packages plus a few config edits, that is the whole module.
 
 - **Right-click the archive → Extract Here** and enter the password when
   file-roller asks. RAR goes through unrar, zip-AES / 7z / ISO through 7z.
-- Double-clicking an archive opens file-roller, which prompts the same way.
+- Extract Here goes through the Nautilus extension, so no MIME association is
+  involved and file-roller is never forced as the system handler.
 
 ## Usage
 
