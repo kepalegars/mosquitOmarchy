@@ -147,7 +147,7 @@ install_shell_state() {
 install_menu_entry() {
   # No more ~/.local/share/applications .desktop: a .desktop is an APP in the
   # Omarchy menu "Apps" provider — the user wants the manager ONLY in the
-  # Setup ▸ managers category (the marked menu block in omarchy-menu.jsonc).
+  # Setup ▸ mosquito category (the marked menu block in omarchy-menu.jsonc).
   # Old copies (from earlier versions) are removed to avoid duplicate entries.
   rm -f "$APPS_DIR/install.mosquitomarchy.desktop"
   update-desktop-database "$APPS_DIR" 2>/dev/null || true
@@ -161,7 +161,7 @@ install_menu_entry() {
   strip_shell_entry
 
   if menu_entry_present; then
-    ok "Menu entry present (Setup ▸ managers ▸ mosquitOmarchy)"
+    ok "Menu entry present (Setup ▸ mosquito ▸ mosquitOmarchy)"
   else
     warn "Not in the Omarchy menu yet — run the 'mosquitomarchy' module of mosquitomarchy-setup.sh."
   fi
@@ -231,7 +231,7 @@ do_status() {
   # DEAD bar entry as a success: the .desktop it named was removed on purpose,
   # so the check passed on a thing that could not launch anything. The real
   # launcher is the "setup.mosquito" key in omarchy-menu.jsonc.
-  echo "menu entry       : $(menu_entry_present && echo "registered (Setup ▸ managers)" || echo "ABSENT — run the 'mosquitomarchy' module")"
+  echo "menu entry       : $(menu_entry_present && echo "registered (Setup ▸ mosquito)" || echo "ABSENT — run the 'mosquitomarchy' module")"
   # A leftover of the same dangling reference, called out separately so it is
   # not mistaken for a working bar button.
   if [[ -f $SHELL_JSON ]] && grep -qF 'install.mosquitomarchy' "$SHELL_JSON"; then

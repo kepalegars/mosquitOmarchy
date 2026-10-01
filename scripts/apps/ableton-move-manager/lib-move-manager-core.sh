@@ -2487,7 +2487,7 @@ wait_bitwig_saved() {
 print_status() {
   local addr="move.local"
   [[ -n ${MOVE_ADDRESS:-} ]] && addr="move${MOVE_ADDRESS}.local"
-  msg "move-manager"
+  msg "mosquito-move-manager"
   msg "  address:      $addr"
   msg "  folders:      $MOVE_DIR → {ablbundle, als, bwproject, bwproject/midi}"
   msg "  ableton exe:  ${LEARNED_ABLETON_EXE:-auto}"
@@ -2652,7 +2652,7 @@ select_ableton_version() {
 
 # ───────────────────────────── Session flow ──────────────────────────────────
 phase_detect() {
-  msg "move-manager — detecting the Move"
+  msg "mosquito-move-manager — detecting the Move"
   if ! $DEMO && ! detect_move; then
     err "No Ableton Move detected."
     warn "Plug the Move in via USB-C or connect it to Wi-Fi."
