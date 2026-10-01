@@ -1509,6 +1509,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.backupOptPicker, cmd = m.backupOptPicker.Update(msg)
 	case scrBackupApps:
 		m.backupAppsPicker, cmd = m.backupAppsPicker.Update(msg)
+	case scrThemeFolder:
+		// Needed: without a case here the picker never receives the KeyMsg, so
+		// the screen draws its rows but arrows and Enter go nowhere — which
+		// reads as a freeze, not as a missing handler.
+		m.themeFolderPicker, cmd = m.themeFolderPicker.Update(msg)
+	case scrThemeImage:
+		m.themeImagePicker, cmd = m.themeImagePicker.Update(msg)
+	case scrThemeDone:
+		m.themeDonePicker, cmd = m.themeDonePicker.Update(msg)
 	case scrConfirm:
 		m.confirm, cmd = m.confirm.Update(msg)
 	case scrPassphrase:
