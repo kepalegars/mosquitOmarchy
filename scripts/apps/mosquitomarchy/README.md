@@ -24,9 +24,9 @@ interface.
 | **Backup / Restore** | A dated archive, plain or encrypted, or restoring one. |
 | **Close** | Confirm, then leave. |
 
-The **Keybindings** row and, right after it, **Create a theme from an image** are both main-menu
+The **Keybindings** row and, right after it, **Theming** are both main-menu
 rows rather than Setup categories: they configure the desktop instead of installing a module, so
-burying either under Setup would only add a hop. The theme creator is a four-step flow — folder,
+burying either under Setup would only add a hop. **Theming** leads to a four-step flow — folder,
 image, name, create — and never applies the theme on its own; see
 [scripts/theme/README.md](../../theme/README.md).
 

@@ -219,7 +219,7 @@ type model struct {
 	kbInput      tuikit.TextInput
 	kbInputStep  int // 0 = label, 1 = command
 
-	// "Create a theme from an image" (theme.go). folder -> image -> name ->
+	// "Theming" (theme.go). folder -> image -> name ->
 	// create, each kept until the flow finishes so Esc can step back.
 	themeDir           string
 	themeImages        []ThemeImageRec
@@ -350,7 +350,7 @@ func (m model) mainMenuItems() []tuikit.PickerItem {
 		{Display: "Setup", Value: "setup"},
 		{Display: "Uninstall", Value: "uninstall"},
 		{Display: "Keybindings", Value: "keybindings"},
-		{Display: "Create a theme from an image", Value: "theme"},
+		{Display: "Theming", Value: "theme"},
 		{Display: "Health check", Value: "health"},
 		{Display: "Backup / Restore", Value: "backup"},
 		{Display: "Extras", Value: "settings"},
