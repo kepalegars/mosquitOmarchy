@@ -335,7 +335,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		return m, nil
 
 	case themeCreateMsg:
-		// Only reachable from the Apply row, which runs outside the runner.
+		// Only reachable from the Apply row, which runs through the runner
+		// now, so the working screen is a normal one and Esc leaves it.
 		if msg.err != nil {
 			m.toast, _ = m.toast.SetErr("could not apply: " + msg.err.Error())
 			return m, nil
