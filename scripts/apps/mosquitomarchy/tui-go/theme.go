@@ -238,7 +238,6 @@ func (m model) rebuildThemeFolderPicker() navPicker {
 		// continues at the name step — the folder is settled by having picked a
 		// file inside it.
 		{Display: "Select image", Value: "__pick__"},
-		{Display: "Type a folder path", Value: "__type__"},
 		{Display: "Remove Themes (any)", Value: "__uninstall__"},
 	}
 	if m.themeDir != "" {
@@ -587,7 +586,7 @@ func (m model) rebuildThemeUnlock() navPicker {
 	// into the name meant the same instruction appeared twice, once where it
 	// belongs and once where the reader has to parse it out of a sentence.
 	items := []tuikit.PickerItem{
-		{Display: "Also create the unlock / boot screen: " + on, Value: "__unlock__"},
+		{Display: "Create an unlock style too? " + on, Value: "__unlock__"},
 		{Display: "Create the theme", Value: "create"},
 		{Display: "Back", Value: "back"},
 	}

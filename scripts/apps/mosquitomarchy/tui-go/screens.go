@@ -1631,14 +1631,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		return m, cmd
 
 	case scrThemeUnlock:
-		// ←/→ toggles the lock/boot screen, which is what the row advertises.
-		// Same gesture as everywhere else, so it is intercepted before the
-		// picker sees the key (the picker would fold or sort instead).
-		if sort, ok := msg.(tuikit.PickerSortMsg); ok {
-			_ = sort
-			m.themeUnlockStyle = !m.themeUnlockStyle
-			m.themeUnlockPicker = m.rebuildThemeUnlock()
-			return m, nil
+		if km, ok := msg.(tea.KeyMsg); ok {
+			switch km.String() {
+			case "left", "right", "l", "r":
+				m.themeUnlockStyle = !m.themeUnlockStyle
+				m.themeUnlockPicker = m.rebuildThemeUnlock()
+				return m, nil
+			}
 		}
 		m.themeUnlockPicker, cmd = m.themeUnlockPicker.Update(msg)
 	case scrThemeImage:
