@@ -237,8 +237,8 @@ func (m model) rebuildThemeFolderPicker() navPicker {
 		// The whole flow in one row: an image chooser opens, and the flow
 		// continues at the name step — the folder is settled by having picked a
 		// file inside it.
-		{Display: "Select Image…", Value: "__pick__"},
-		{Display: "Type a folder path…", Value: "__type__"},
+		{Display: "Select image", Value: "__pick__"},
+		{Display: "Type a folder path", Value: "__type__"},
 		{Display: "Remove Themes (any)", Value: "__uninstall__"},
 	}
 	if m.themeDir != "" {
@@ -314,7 +314,7 @@ func (m model) rebuildThemeDone() navPicker {
 
 // themeAskName opens the name step, pre-filled with the image's own name so
 // Enter twice is a complete theme for anyone who does not care what it is
-// called. Shared by the folder→image→name path and the one-row "Select Image…"
+// called. Shared by the folder→image→name path and the one-row "Select image"
 // path, so both ask the same question in the same words.
 //
 // Pointer receiver on purpose: it pushes a screen and writes two fields. With a

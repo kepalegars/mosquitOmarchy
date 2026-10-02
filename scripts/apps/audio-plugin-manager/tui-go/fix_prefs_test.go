@@ -94,8 +94,12 @@ func TestFixPromptOnAsksAboutTheVendor(t *testing.T) {
 	if m.top() != scrInstallFixesConfirm {
 		t.Fatalf("landed on screen %d, want the fix question(%d)", m.top(), scrInstallFixesConfirm)
 	}
-	if !strings.Contains(m.confirm.View(), "FabFilter") {
-		t.Errorf("the question does not name the vendor: %q", m.confirm.View())
+	// New behaviour: generic prompt, no vendor name in the question
+	if !strings.Contains(m.confirm.View(), "Plugin installed. Open the fixes page?") {
+		t.Errorf("unexpected question: %q", m.confirm.View())
+	}
+	if !strings.Contains(m.confirm.View(), "Back") || !strings.Contains(m.confirm.View(), "Open the fixes page") {
+		t.Errorf("missing expected buttons: %q", m.confirm.View())
 	}
 }
 

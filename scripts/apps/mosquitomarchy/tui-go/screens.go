@@ -1711,6 +1711,15 @@ func folderOfValue(v string) string {
 	}
 	return ""
 }
+func folderLabel(m model, fid string) string {
+	for _, f := range m.setupFolders {
+		if f.Folder == fid {
+			return f.Label
+		}
+	}
+	return fid
+}
+
 
 // screenPicked routes a picker's Enter result.
 // quickFixesFolder is the Setup folder id the backend gives the quick fixes.
@@ -2647,7 +2656,9 @@ func (m model) rebuildFilteredSetup() navPicker {
 			if m.selected[v] {
 				mark = "●"
 			}
-			items = append(items, tuikit.PickerItem{Display: it.Label, Value: v, Badge: mark})
+			fid := folderOfValue(v)
+			fl := folderLabel(m, fid)
+			items = append(items, tuikit.PickerItem{Display: fl + " › " + it.Label, Value: v, Badge: mark})
 		}
 	}
 	// Box-drawn filter input zone (small framed area) + the header already

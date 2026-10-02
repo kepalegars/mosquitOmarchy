@@ -810,7 +810,7 @@ module_of_path(){
     scripts/fixes/fix-touchpad.sh)                           echo touchpad ;;
     scripts/fixes/fix-mx-master.sh)                          echo mx-master ;;
     scripts/fixes/fix-ableton-fullscreen.sh)                 echo ableton-fullscreen ;;
-    scripts/apps/keepassxc/*)                                echo keepassxc ;;
+    scripts/apps/keepassxc/*)                                echo mosquitomarchy ;;
     scripts/mosquitomarchy-update/*)                            echo mosquitomarchy-update ;;
     scripts/apps/superfile/*)                                echo superfile ;;
     scripts/apps/zen/*)                                      echo zen ;;
