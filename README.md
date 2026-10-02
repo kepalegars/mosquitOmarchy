@@ -45,7 +45,7 @@ Once installed, `mosquitOmarchy` is the interface for everything here — run it
   highlighted entry, `enter` installs the selection.
 - **Backup / Restore** — a dated archive in `~/omarchy-backups/`, optionally
   AES-256 encrypted.
-- **Quick fixes** — the small idempotent fixes in `scripts/fixes/`, as a multi-select.
+- **Fixes** — the small idempotent fixes in `scripts/fixes/`, as a multi-select.
 - **Close** — leave.
 
 `mosquitomarchy-setup.sh` is the engine underneath: every TUI action shells out to it, so

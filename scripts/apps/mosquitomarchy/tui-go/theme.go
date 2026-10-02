@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,6 +29,12 @@ import (
 )
 
 // ThemeImageRec is one image the backend found in the chosen folder.
+// ThemeRec is one installed theme, for the uninstall screen.
+type ThemeRec struct {
+	Name    string `json:"name"`
+	Current bool   `json:"current"`
+}
+
 type ThemeImageRec struct {
 	File     string `json:"file"`     // "Rarity.jpg"
 	Name     string `json:"name"`     // "Rarity"  (file name, no extension)
@@ -143,51 +150,20 @@ func storedThemeDefaultDir() string {
 	return strings.TrimSpace(string(out))
 }
 
-// themeFolderCandidates are the folders offered without typing anything. The
-// first one is the user's wallpaper folder; the rest are where people's pictures
-// actually are, plus the bundled set so a fresh machine has something to pick.
-func themeFolderCandidates() []struct{ Label, Path string } {
-	home, _ := os.UserHomeDir()
-	repo := ""
-	if exe, err := os.Executable(); err == nil {
-		// deployed binary: ~/.local/bin/mosquitomarchy-tui -> repo is ../../mosquitOmarchy
-		repo = filepath.Join(filepath.Dir(exe), "../../mosquitOmarchy/scripts/theme/Wallpapers")
-	}
+// ensureDefaultThemeDir creates the default folder if it is missing.
+//
+// The list of candidate folders is gone (the screen is actions only now), but
+// creating the default still matters: a wallpaper folder that does not exist is
+// the one thing the chooser would open on and find empty. ~/Pictures/Wallpapers
+// is the default, and it is created rather than complained about.
+//
+// Returns the default path either way, so the caller has something to show.
+func ensureDefaultThemeDir() string {
 	def := defaultThemeDir()
-	out := []struct{ Label, Path string }{
-		{"Wallpapers", def},
-		{"Omarchy wallpapers (bundled)", repo},
-		{"Pictures", filepath.Join(home, "Pictures")},
-		{"Downloads", filepath.Join(home, "Downloads")},
-		{"Images", filepath.Join(home, "Images")},
-		{"Screenshots", filepath.Join(home, "Pictures/Screenshots")},
+	if _, err := os.Stat(def); err != nil {
+		_ = os.MkdirAll(def, 0o755)
 	}
-	// Drop the ones that do not exist, and the bundled row when it cannot be
-	// located — offering a folder that is not there is worse than not offering
-	// it, because it looks like the list is broken.
-	//
-	// The default is the exception: it is the row the user expects to find
-	// first, and it is the folder Theming is for. Deleting ~/Pictures/Wallpapers
-	// should not quietly move the default elsewhere, so the row is created
-	// instead of dropped. Every other row stays read-only.
-	kept := out[:0]
-	for _, c := range out {
-		if c.Path == "" {
-			continue
-		}
-		if _, err := os.Stat(c.Path); err != nil {
-			if c.Path != def {
-				continue
-			}
-			if mkErr := os.MkdirAll(c.Path, 0o755); mkErr != nil {
-				// Cannot create it (read-only home, a file in the way). Fall
-				// through and drop the row rather than offer a dead path.
-				continue
-			}
-		}
-		kept = append(kept, c)
-	}
-	return kept
+	return def
 }
 
 // ellipsizeMiddle fits s into w columns, cutting the MIDDLE and not the end, so
@@ -242,55 +218,58 @@ func ellipsizeMiddle(s string, w int) string {
 	return headPart.String() + "…" + string(tailRunes)
 }
 
-// rebuildThemeFolderPicker is the first step: which folder to look in.
+// rebuildThemeFolderPicker is the first screen of Theming.
+//
+// It used to list candidate folders — Wallpapers, Omarchy wallpapers,
+// Pictures, Downloads, Images, Screenshots — above the actions. That list was
+// gone the moment the folder row is chosen: every entry is a directory, and
+// the row above it already says which one it is. Five rows of paths to reach
+// an action, when the action opens a picker anyway.
+//
+// So the screen is actions only, and the folder is whatever the image chooser
+// comes back with. "Make this the default folder" appears ONLY once a folder
+// has actually been chosen in this visit: it sets a preference about a folder,
+// and offering it before one exists would be offering to save nothing.
 func (m model) rebuildThemeFolderPicker() navPicker {
-	items := []tuikit.PickerItem{}
-	// The sub-line is the full path, which is the one thing that does not fit on
-	// a real machine: /home/<user>/... is already ~20 columns before the leaf.
-	// The picker truncates the RIGHT-hand end, which throws away exactly the
-	// informative part: "…/mosquitOmarchy/scripts/theme/Wal…", where the leaf
-	// is already spelled out in the row label above it. Ellipsize here instead,
-	// in the middle, so the row arrives pre-fitted and the picker's own cut
-	// becomes a no-op.
-	//
-	// The width comes from the same contentWidth every other part of this TUI
-	// measures against, minus the picker frame, its indent, and the accent box
-	// the row reserves. The sub-line renders at the same indent as the title.
-	avail := m.contentWidth() - 10
-	if avail < 12 {
-		avail = 12
+	def := defaultThemeDir()
+	items := []tuikit.PickerItem{
+		// The whole flow in one row: an image chooser opens, and the flow
+		// continues at the name step — the folder is settled by having picked a
+		// file inside it.
+		{Display: "Select Image…", Value: "__pick__"},
+		{Display: "Type a folder path…", Value: "__type__"},
+		{Display: "Uninstall Omarchy themes…", Value: "__uninstall__"},
 	}
-	for _, c := range themeFolderCandidates() {
-		items = append(items, tuikit.PickerItem{
-			Display: c.Label,
-			Value:   c.Path,
-			Sub:     ellipsizeMiddle(c.Path, avail),
-		})
+	if m.themeDir != "" {
+		if st, err := os.Stat(m.themeDir); err == nil && st.IsDir() {
+			items = append(items, tuikit.PickerItem{
+				Display: "Make this the default folder: " + baseName2(m.themeDir),
+				Value:   "__setdefault__",
+				Sub:     "this session looks in " + ellipsizeMiddle(m.themeDir, m.contentWidth()-10),
+			})
+		}
 	}
+	// Restoring the deleted stock themes lives at the END of the menu, on its
+	// own, for the same reason it is not the first row: it is a repair for a
+	// situation you have to be in before it means anything.
 	items = append(items,
-		// The whole flow in one row. Everything the folder + image + name
-		// screens do, compressed: open the default file manager, pick an image,
-		// name the theme, build it. It exists because those three screens are a
-		// lot of keystrokes for the common case, where the only real decision
-		// is WHICH image.
-		tuikit.PickerItem{Display: "Select Image…", Value: "__pick__"},
-		tuikit.PickerItem{Display: "Type a folder path…", Value: "__type__"},
-		// Remember this folder as the default, so the next Theming visit opens
-		// here instead of re-asking. A preference the user sets once and never
-		// has to think about again.
-		tuikit.PickerItem{Display: "Make this the default folder", Value: "__setdefault__"},
-		// The lock/boot screen. It is ON by default because a new theme is
-		// meant to be a complete Omarchy theme, and it needs a password — which
-		// is exactly why the choice belongs here, in front of the flow, and not
-		// on a screen the user only reaches after everything is already built.
-		tuikit.PickerItem{Display: "Also create the unlock / boot screen: " + boolWord(m.themeUnlockStyle), Value: "__unlock__"},
+		tuikit.PickerItem{Display: "Restore the deleted stock Omarchy themes…", Value: "__restorestock__"},
 		tuikit.PickerItem{Display: "Back", Value: "back"},
 	)
-	h := "Create a theme — where are the images?"
-	if m.themeDir != "" {
-		h = fmt.Sprintf("Create a theme — where are the images? (now: %s)", m.themeDir)
+	h := "Create a theme from an image"
+	if def != "" {
+		h += " (looks in " + baseName2(def) + ")"
 	}
 	return newNavPicker(h, items).SetSize(m.contentSize())
+}
+
+// baseName2 is the leaf of a path, for showing "Wallpapers" rather than
+// "/home/someone/Pictures/Wallpapers" in a place with no room for the rest.
+func baseName2(p string) string {
+	if i := strings.LastIndexByte(p, '/'); i >= 0 && i+1 < len(p) {
+		return p[i+1:]
+	}
+	return p
 }
 
 // rebuildThemeImagePicker is the second step: which image in that folder.
@@ -313,16 +292,21 @@ func (m model) rebuildThemeImagePicker() navPicker {
 		items).SetSize(m.contentSize())
 }
 
-// rebuildThemeDone is the success prompt. Three ways out, and the wording
-// matters: "Apply theme" is the only one that touches the desktop, and it says
-// so, because the whole point of not applying automatically is that the user
-// gets to see what they made first.
+// rebuildThemeDone is the success prompt. It matches the shape every other
+// finished action uses in this TUI — "Back" / "See log", same words, same
+// order — because a screen that reads "OK — back to the menu" instead is the
+// same idea wearing different clothes, and the reader has to learn it twice.
+//
+// "Apply theme" is the third row rather than the second: it is the only choice
+// that touches the desktop, and it is deliberately not the one Enter lands on
+// by default. The whole point of not applying automatically is that the user
+// sees what they made first.
 func (m model) rebuildThemeDone() navPicker {
 	return newNavPicker(
 		fmt.Sprintf("Theme '%s' created — not applied", m.themeCreated),
 		[]tuikit.PickerItem{
 			{Display: "See log", Value: "log", Sub: "what the generator did"},
-			{Display: "OK — back to the menu", Value: "ok"},
+			{Display: "Back", Value: "ok", Sub: "back to the menu"},
 			{Display: "Apply theme", Value: "apply", Sub: "repaints the desktop: wallpaper, bar, icons, terminal, GTK…"},
 		}).SetSize(m.contentSize())
 }
@@ -385,9 +369,28 @@ func (m model) themePicked(from screen, res tuikit.PickerResultMsg) (model, tea.
 		m.toast, _ = m.toast.SetWarn("choose a folder first, then set it as the default")
 		return m, nil
 	case "__unlock__":
+		// Toggle and re-render the SAME screen — no navigation, because there is
+		// nowhere to go until the choice is made.
 		m.themeUnlockStyle = !m.themeUnlockStyle
-		m.themeFolderPicker = m.rebuildThemeFolderPicker()
+		m.themeUnlockPicker = m.rebuildThemeUnlock()
 		return m, nil
+	case "create":
+		m.pendingAction = "theme-create"
+		m.pendingMsg = fmt.Sprintf(
+			"Create the theme '%s' from %s?\n\nFolder: %s\n\n%s\n\nThe theme is NOT applied — you get that choice afterwards.",
+			m.themePendingName, m.themeImage, m.themeDir, unlockLineFor(m.themeUnlockStyle))
+		m.pendingNo = "Cancel"
+		m.pendingYes = "Create"
+		m.push(scrConfirm)
+		m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+		return m, nil
+	case "__uninstall__":
+		m.themeList = nil
+		m.themeChecked = map[string]bool{}
+		return m, fetchThemeList()
+	case "__restorestock__":
+		m.themeStock = nil
+		return m.startWorking("Restoring the stock themes", "theme-restore-stock")
 	case "log":
 		body, err := os.ReadFile(m.themeLog)
 		if err != nil {
@@ -552,4 +555,155 @@ func stripImageExt(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// rebuildThemeUnlock is the last step before the build: whether to also create
+// the lock/boot screen from this theme.
+//
+// It is its own screen, and it comes AFTER the name, because that is what the
+// decision is about. Before the name there is no theme yet, so the row would
+// read as a setting; after it, the row can say which theme's boot screen is
+// being talked about — and it is the moment the user has the most context for
+// the one part of the build that will ask for a password.
+//
+// Left/Right toggles it, Enter continues. Same pending-then-dwell shape as the
+// Live Mode settings so the arrows work the way they do everywhere else.
+func (m model) rebuildThemeUnlock() navPicker {
+	on := "off"
+	if m.themeUnlockStyle {
+		on = "on"
+	}
+	name := m.themePendingName
+	if name == "" {
+		name = "this theme"
+	}
+	items := []tuikit.PickerItem{
+		{
+			Display: fmt.Sprintf("Also create the unlock / boot screen: %s  (←/→)", on),
+			Value:   "__unlock__",
+			Sub:     "off: the theme is applied to the desktop; the boot screen keeps whatever it has now",
+		},
+		{
+			Display: "Create the theme",
+			Value:   "create",
+			Sub:     "build it, do not apply it — you choose that on the next screen",
+		},
+		{Display: "Back", Value: "back"},
+	}
+	h := fmt.Sprintf("Create the theme '%s'", name)
+	if m.themeUnlockStyle {
+		h += " — the boot screen will ask for your password"
+	}
+	return newNavPicker(h, items).SetSize(m.contentSize())
+}
+
+// unlockLineFor names the lock/boot-screen choice in the confirmation text, so
+// the user reads what the build will do before it does it — the boot screen is
+// the step that asks for a password, and a prompt that arrives unannounced is
+// the thing worth avoiding.
+func unlockLineFor(on bool) string {
+	if on {
+		return "Unlock / boot screen: created too — this will ask for your password."
+	}
+	return "Unlock / boot screen: skipped (you turned it off)."
+}
+
+// themeListMsg carries the installed themes back from the backend.
+type themeListMsg struct {
+	themes []ThemeRec
+	err    error
+}
+
+// themeStockMsg carries the stock-theme availability map from the restore verb.
+type themeStockMsg struct {
+	present map[string]bool
+	err     error
+}
+
+// fetchThemeList loads the user's installed themes.
+func fetchThemeList() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("theme-list")
+		if err != nil {
+			return themeListMsg{err: err}
+		}
+		rows, err := decodeJSONLines[ThemeRec](out)
+		return themeListMsg{themes: rows, err: err}
+	}
+}
+
+// rebuildThemeUninstall lists the user's themes with a circle per row, Tab to
+// tick several and Enter to remove them all at once — the same multi-select
+// shape the plugin and fix screens use, because removing five themes one at a
+// time through five confirmations is the thing multi-select exists to avoid.
+func (m model) rebuildThemeUninstall() navPicker {
+	items := make([]tuikit.PickerItem, 0, len(m.themeList)+1)
+	for _, t := range m.themeList {
+		mark := "○"
+		if m.themeChecked[t.Name] {
+			mark = "●"
+		}
+		sub := "delete this theme from your machine"
+		if t.Current {
+			// Removing the applied theme would leave the desktop pointing at a
+			// theme that is no longer there. Say so on the row rather than
+			// letting the removal fail halfway.
+			sub = "currently applied — switch to another theme first"
+		}
+		items = append(items, tuikit.PickerItem{Display: mark + " " + t.Name, Value: t.Name, Sub: sub})
+	}
+	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
+	h := "Uninstall which themes? (Tab ticks, Enter removes the ticked ones)"
+	if len(m.themeList) == 0 {
+		h = "No theme of yours to uninstall — the stock ones belong to Omarchy"
+	}
+	return newNavPicker(h, items).SetSize(m.contentSize())
+}
+
+// rebuildThemeRestore lists the stock themes with a circle on the ones already
+// present, so the row answers "what would this give me back" instead of "press
+// a button and hope".
+func (m model) rebuildThemeRestore() navPicker {
+	names := make([]string, 0, len(m.themeStock))
+	for n := range m.themeStock {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	items := make([]tuikit.PickerItem, 0, len(names)+1)
+	missing := 0
+	for _, n := range names {
+		mark := "✓"
+		if !m.themeStock[n] {
+			mark = "○"
+			missing++
+		}
+		items = append(items, tuikit.PickerItem{Display: mark + " " + n, Value: n})
+	}
+	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
+	h := fmt.Sprintf("Stock Omarchy themes — ✓ means already on this machine (%d missing)", missing)
+	return newNavPicker(h, items).SetSize(m.contentSize())
+}
+
+// themeRemoveDoneMsg reports the outcome of a removal batch, so the screen can
+// say how many went rather than just "finished".
+type themeRemoveDoneMsg struct{ n int }
+
+// toggleThemeTick flips one theme's selection, refusing the theme that is
+// currently applied: removing it would leave the desktop pointing at a theme
+// that is no longer there.
+func (m *model) toggleThemeTick(name string) {
+	if m.themeChecked == nil {
+		m.themeChecked = map[string]bool{}
+	}
+	for _, t := range m.themeList {
+		if t.Name == name && t.Current {
+			m.toast, _ = m.toast.SetWarn("'" + name + "' is the applied theme — switch to another one first")
+			return
+		}
+	}
+	if m.themeChecked[name] {
+		delete(m.themeChecked, name)
+	} else {
+		m.themeChecked[name] = true
+	}
 }

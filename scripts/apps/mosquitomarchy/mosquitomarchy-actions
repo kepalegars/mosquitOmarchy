@@ -339,6 +339,82 @@ cmd_theme_create(){
   return 1
 }
 
+# The user's own themes, for the Theming → Uninstall screen.
+#
+# Stock Omarchy themes are NOT removable and are not offered here: they live in
+# /usr/share/omarchy/themes, belong to the package, and come back on update.
+# Only ~/.config/omarchy/themes is the user's, and only that is listed.
+cmd_theme_list(){
+  local dir="$HOME/.config/omarchy/themes" n
+  [[ -d $dir ]] || exit 0
+  # omarchy-theme-current answers the DISPLAY name ("Achraff 67"), not the
+  # directory slug ("achraff-67"), so comparing the two directly marks nothing
+  # as current. Normalise both to a comparable form: lower case, no spaces,
+  # underscores and dashes equivalent.
+  local cur norm n
+  cur="$(omarchy-theme-current 2>/dev/null || echo -)"
+  norm(){ printf '%s' "${1,,}" | tr -d ' _-'; }
+  local want; want="$(norm "$cur")"
+  while IFS= read -r n; do
+    [[ -n $n ]] || continue
+    # A symlink is a clone pointing into the stock tree: removing it would
+    # delete nothing and break the link, and it is not really "the user's".
+    [[ -L "$dir/$n" ]] && continue
+    jq -nc --arg name "$n" --argjson current "$([[ "$(norm "$n")" == "$want" ]] && echo true || echo false)" \
+      '{name:$name, current:$current}'
+  done < <(find "$dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -f)
+}
+
+# cmd_theme_remove <name...> — remove the user's themes, via Omarchy's own
+# remover rather than an rm, so the guards it has (a name that cannot climb out
+# of the themes dir, a currently-applied theme) still apply.
+cmd_theme_remove(){
+  local n rc=0
+  (($#)) || { err "theme-remove: at least one theme required"; return 2; }
+  for n in "$@"; do
+    if omarchy-theme-remove "$n" >/dev/null 2>&1; then
+      echo "removed: $n"
+    else
+      rc=1
+      echo "could not remove: $n" >&2
+    fi
+  done
+  return $rc
+}
+
+# cmd_theme_restore_stock — copy the stock themes back into the user's tree.
+#
+# This is the repair half of "uninstall": omarchy-theme-remove takes a theme out
+# of ~/.config/omarchy/themes, and the way to get the stock ones back is to copy
+# them in from /usr/share. Restoring is per-theme and skips any already present,
+# so it is safe to run more than once and never overwrites something the user
+# edited.
+cmd_theme_restore_stock(){
+  local src="$HOME/.local/share/omarchy/themes"
+  local dest="$HOME/.config/omarchy/themes"
+  local base
+  [[ -d /usr/share/omarchy/themes ]] || { err "no stock themes directory"; return 1; }
+  [[ -d $src ]] || { mkdir -p "$src" || return 1; }
+  local n=0
+  while IFS= read -r base; do
+    [[ -n $base ]] || continue
+    if [[ -e "$dest/$base" ]]; then continue; fi
+    cp -r "/usr/share/omarchy/themes/$base" "$dest/$base" && n=$((n+1))
+  done < <(find /usr/share/omarchy/themes -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -f)
+  # Record which stock themes are available, so the TUI can offer the restore
+  # row even when nothing needs restoring yet.
+  printf '{\n'
+  local first=1
+  while IFS= read -r base; do
+    [[ -n $base ]] || continue
+    [[ $first == 1 ]] || printf ',\n'
+    first=0
+    printf '  "%s": %s' "$base" "$([[ -e "$dest/$base" ]] && echo true || echo false)"
+  done < <(find /usr/share/omarchy/themes -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -f)
+  printf '\n}\n'
+  ok "restored $n stock theme(s)"
+}
+
 # cmd_theme_apply <name> — the "Apply theme" row of the success prompt.
 cmd_theme_apply(){
   local name="${1:-}"
@@ -1794,6 +1870,9 @@ case "$sub" in
   theme-default-dir)         cmd_theme_default_dir "${1:-get}" "${2:-}" ;;
   theme-pick)                cmd_theme_pick "${1:-file}" "${2:-}" ;;
   theme-create)              cmd_theme_create "$@" ;;
+  theme-list)                cmd_theme_list ;;
+  theme-remove)              cmd_theme_remove "$@" ;;
+  theme-restore-stock)       cmd_theme_restore_stock ;;
   theme-apply)               cmd_theme_apply "${1:-}" ;;
   update)                   cmd_update "$@" ;;
   update-modules)           cmd_update_modules ;;

@@ -4,10 +4,10 @@ Small, idempotent machine-level repairs. Re-running one re-applies it, which is 
 an Omarchy update that overwrites `hyprland.lua` or `bindings.lua` is repaired by running the
 fix again, not by diffing by hand.
 
-## Quick fixes
+## Fixes
 
 These are the entries of the orchestrator's `FIXES` array — offered at setup and under
-**Setup → Quick fixes** in the TUI, and runnable directly with `bash scripts/fixes/<script>.sh`.
+**Setup → Fixes** in the TUI, and runnable directly with `bash scripts/fixes/<script>.sh`.
 
 | id | Script | What it fixes |
 |---|---|---|

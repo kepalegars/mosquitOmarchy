@@ -9,7 +9,7 @@ import (
 
 func qfSetup() model {
 	m := flatSetup()
-	m.setupFolders = append(m.setupFolders, FolderRec{Folder: "fixes", Label: "Quick fixes"})
+	m.setupFolders = append(m.setupFolders, FolderRec{Folder: "fixes", Label: "Fixes"})
 	m.setupItems = append(m.setupItems,
 		SetupItemRec{Folder: "fixes", Key: "wine-menu", Label: "wine-menu", Info: "drop the clutter"},
 		SetupItemRec{Folder: "fixes", Key: "tui-theme", Label: "tui-theme", Info: "force-adapt"},
@@ -40,17 +40,39 @@ func TestTheQuickFixesFolderIsOnTheSetupPage(t *testing.T) {
 	}
 }
 
-// Enter on the folder opens the fixes list. The check has to sit BEFORE the
-// generic `cat:` early-return in screenPicked: that return swallows every
-// folder row, so a check placed after it can never match — which is exactly how
-// Enter on Menu entries used to do nothing, and how this would have too.
-func TestEnterOnTheFolderOpensTheFixesList(t *testing.T) {
+// Enter on the folder must NOT open a second list.
+//
+// The fixes are already child rows of the folder in the same tree as every
+// other category, so the folder expands in place and Enter keeps you on the
+// page. It used to push scrQuickFixes, which showed the same rows again behind
+// an extra keystroke — a sub-screen for a category the tree already renders.
+func TestEnterOnTheFolderStaysOnTheSameScreen(t *testing.T) {
 	m := qfSetup()
 	m.setupPicker = m.setupPicker.KeepCursor(tuikit.TreeValue(tuikit.TreeFolderPrefix, "fixes"))
 	next, _ := m.update(tuikit.PickerResultMsg{Value: m.setupPicker.SelectedValue()})
-	if next.top() != scrQuickFixes {
-		t.Fatalf("Enter on the folder went to screen %d, want the fixes list (%d)", next.top(), scrQuickFixes)
+	if next.top() == scrQuickFixes {
+		t.Fatalf("Enter on the folder pushed the fixes list (%d); it must stay on the tree", scrQuickFixes)
 	}
+	if next.top() != scrSetup {
+		t.Fatalf("Enter on the folder went to screen %d, want the Setup tree (%d)", next.top(), scrSetup)
+	}
+}
+
+// And the fixes must actually be IN that tree, or removing the sub-screen
+// would leave no way to reach them at all.
+func TestTheFixesAreRowsInTheTreeNotASubScreen(t *testing.T) {
+	m := qfSetup()
+	// The folder ships collapsed, like every category: open it the way the
+	// user does, with the arrow.
+	m.folderOpen = map[string]bool{"fixes": true}
+	m.setupPicker = m.rebuildSetup()
+	want := tuikit.TreeValue(tuikit.TreeItemPrefix, "fixes:wine-menu")
+	for _, it := range m.setupPicker.Items() {
+		if it.Value == want {
+			return
+		}
+	}
+	t.Fatalf("no %q row on the Setup page: removing the sub-screen would strand the fixes", want)
 }
 
 // Enter on a fix's own row opens the same screen rather than offering to
