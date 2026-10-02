@@ -1175,7 +1175,28 @@ list_prefix_plugin_files() {
     -printf '%p\n' 2>/dev/null | sort
 }
 
-# Strong Sonible / "smart chain" / SmartEQ detection on the installer path.
+# is_manager_installer <path> — an installer whose payload is a MANAGER app, not
+# a plugin.
+#
+# Kilohearts ships one installer that installs a desktop manager, and the
+# plugins come later, from inside that manager, into the same shared folder.
+# Running the normal install path on it is wrong twice over: the installer
+# copies no plugin, so the "did it install anything" check fails, and the
+# plugins it does eventually produce would arrive with nobody watching to
+# register them.
+#
+# So it is recognised, installed as an app, registered in the menu, and left
+# with the adoption sweep running while it is open.
+is_manager_installer() {
+  local f="${1,,}"
+  case "$f" in
+    *kilohearts*|*kilo*hearts*|*collectivemusic*)
+      return 0 ;;
+  esac
+  return 1
+}
+
+# is_sonible_installer() — strong Sonible / "smart chain" / SmartEQ detection.
 is_sonible_installer() {
   local f="$1" low
   low="$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')"
@@ -1363,8 +1384,125 @@ apm_wine() {
   printf '%s\n' "wine"
 }
 
+# install_manager_app <installer> <prefix> — install a manager, register it in
+# the menu, and report what the caller should do next.
+#
+# The plugins do not arrive from the installer; they arrive from INSIDE the
+# manager while it is open. So this installs the app, puts a menu entry on it,
+# and returns the manager's own executable so the caller can offer to open it
+# with the adoption sweep watching the folder.
+# watch_for_plugins <manager-exe> <prefix> — run the manager and adopt whatever
+# it drops into the shared folder while it is open.
+#
+# This is what makes the two-step install work end to end: the installer only
+# brings the manager, and the plugins appear one at a time from inside it, each
+# written straight into the shared folder. Without a sweep running they are all
+# untracked on the next launch, which is the complaint that started this.
+#
+# The sweep is a plain loop on the same principle as adopt-plugins: it is
+# non-destructive, idempotent, and a plugin already registered is skipped.
+watch_for_plugins(){
+  local exe="$1" prefix="$2" -p_secs=2 pid alive
+  msg "Watching the plugins folder while the manager is open — close it to stop."
+  WINEPREFIX="$prefix" "$(apm_wine)" "$exe" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep "$_p_secs"
+    adopt_plugins_silent || true
+  done
+  wait "$pid" 2>/dev/null || true
+  ok "manager closed — adopting anything left behind"
+  adopt_plugins_silent || true
+}
+
+# adopt_plugins_silent is adopt-plugins' body with no output, for the watcher.
+adopt_plugins_silent(){
+  local -a out=()
+  mapfile -t out < <(adopt_plugin_rows)
+  ((${#out[@]})) || return 0
+  printf '%s\n' "${out[@]}"
+  return 0
+}
+
+# adopt_plugin_rows emits one line per plugin newly registered.
+adopt_plugin_rows(){
+  local _f key pfx first variants n=0
+  local _tmp="${TMPDIR:-/tmp}/apm-adopt.$$"
+  plugin_group_rows > "$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }
+  while IFS=$'\t' read -r _sk _gk _label grp _formats _enabled value variants key; do
+    [[ -n $key ]] || continue
+    state_has "$key" && continue
+    pfx="$(default_prefix)"
+    case "$value" in native:*) pfx="" ;; esac
+    first=""
+    while IFS= read -r _f; do
+      [[ -n $_f ]] || continue
+      bare="$_f"
+      case "$_f" in vst:*:*) bare="${_f#vst:*:}" ;; native:*) bare="${_f#native:}" ;; esac
+      [[ -n $first ]] || first="$bare"
+      state_register_install "$(plugin_key "$bare")" "$pfx" "$bare"
+    done <<< "$(printf '%s' "$variants" | tr ';' '\n')"
+    ok "registered from the manager: ${first##*/}"
+    n=$((n + 1))
+  done < "$_tmp"
+  rm -f "$_tmp"
+  return 0
+}
+
+install_manager_app(){
+  local file="$1" prefix="$2" exe name stem slug cand icon
+  msg "This installer ships a manager, not a plugin — installing the manager."
+  WINEPREFIX="$prefix" "$(apm_wine)" "$file" || {
+    warn "the manager installer exited non-zero — nothing was installed."
+    return 1
+  }
+  # The manager's own exe is whatever the installer just wrote that is not a
+  # plugin and not an uninstaller.
+  exe=""
+  while IFS= read -r cand; do
+    [[ -n $cand ]] || continue
+    is_uninstaller "$(basename "$cand")" && continue
+    is_native_win_app "$(basename "$cand")" && continue
+    exe="$cand"; break
+  done < <(find "$prefix/drive_c" -maxdepth 6 -type f -iname '*.exe' -newermt '-10 minutes' 2>/dev/null | sort)
+  if [[ -z $exe ]]; then
+    warn "The manager installed but its executable was not found — open it from the prefix."
+    return 1
+  fi
+  name="$(basename "$exe")"; stem="${name%.exe}"
+  state_register_standalone "$stem" "$exe"
+  mkdir -p "$APPS_DIR"
+  slug="$APPS_DIR/$DESKTOP_SLUG-$(printf '%s' "$stem" | tr ' ' '-' | tr -cd '[:alnum:]-').desktop"
+  icon="$(standalone_icon_for "$exe")"
+  cat > "$slug" <<EOF
+[Desktop Entry]
+Name=$stem
+Comment=Plugin manager (installed by mosquito Audio Plugin Manager)
+Exec=uwsm app -- mosquito-audio-plugin-manager launch "$exe"
+Icon=$icon
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;
+StartupNotify=false
+EOF
+  ok "manager registered: $stem"
+  printf 'manager-exe: %s\n' "$exe"
+  return 0
+}
+
+
 install_plugin() {
   local file="$1" wine_prefix="${2:-$(default_prefix)}" f dst base
+
+  # A manager installer takes its own path: it copies no plugin, so the
+  # new-file check below would report it as a failure, and the plugins arrive
+  # later from inside the app with nobody watching the folder for them.
+  if is_manager_installer "$file"; then
+    link_prefix_to_vst "$wine_prefix"
+    install_manager_app "$file" "$wine_prefix"
+    return $?
+  fi
+
   # The prefix must point at the shared folders BEFORE the installer runs,
   # otherwise the new files land inside the prefix and detection misses them.
   link_prefix_to_vst "$wine_prefix"
@@ -1390,7 +1528,28 @@ install_plugin() {
   fi
 
   msg "Running $file through wine ($(apm_wine_runtime) runtime; prefix: $wine_prefix — the installer shows its own window)…"
-  WINEPREFIX="$wine_prefix" "$(apm_wine)" "$file" || warn "(wine exited with a non-zero code — continuing)"
+  local wine_rc=0
+  WINEPREFIX="$wine_prefix" "$(apm_wine)" "$file" || wine_rc=$?
+  # A wine that exits non-zero is the FAILURE, and it must be reported as such.
+  #
+  # It used to be a warning that continued, and then the "no new file" check
+  # reported the ALREADY-PRESENT plugins as the problem — which sent the user
+  # looking at smartcomp3 when smart chain never ran at all. When wine refuses
+  # to start (a stale wineserver from another build gives "version mismatch
+  # 962/957"), nothing was written because nothing ran, and that is the whole
+  # story.
+  if ((wine_rc != 0)); then
+    warn "wine exited with code $wine_rc — the installer did not run, so nothing was installed."
+    local wb
+    wb="$(basename "$(apm_wine)")"
+    warn "That usually means the wine build that owns this prefix does not match $wb."
+    warn "  this runtime : $wb ($("$wb" --version 2>/dev/null | head -1))"
+    warn "  system wine  : $(command -v wine) ($(wine --version 2>/dev/null | head -1))"
+    warn "A wineserver left running by the other build is the usual cause; it is per-prefix,"
+    warn "so anything already open from this prefix must be closed, then install again."
+    rm -f "$before" "$after" "$before_pfx" "$after_pfx"
+    return 1
+  fi
 
   list_shared_plugin_files > "$after" 2>/dev/null || true
   list_prefix_plugin_files "$wine_prefix" > "$after_pfx" 2>/dev/null || true
@@ -4850,7 +5009,19 @@ plugin_group_rows_build() {
       *.vst3/*) key="${key%%.vst3/*}.vst3" ;;
       *.clap/*)  key="${key%%.clap/*}.clap" ;;
     esac
-    grp_full="${key%/*}"; [[ $key == "$grp_full" ]] && grp_full="native"
+    # A plugin with no vendor FOLDER is not a native plugin.
+    #
+    # "native" was being used as the fallback for a key with no "/" in it, which
+    # put Serum2.vst3 and SubLabXL.dll — both sitting at the root of the shared
+    # folder, because no vendor folder exists for them — in the native category
+    # next to the genuine Linux plugins. Native means "a .clap/.lv2/.so loaded
+    # by the host directly, installed without wine"; a root-level VST is a
+    # Windows plugin that simply has no folder above it, and it groups under its
+    # own name.
+    grp_full="${key%/*}"
+    if [[ $key == "$grp_full" ]]; then
+      grp_full="${key%.*}"
+    fi
     grp_full="${grp_full#VST2/}"; grp_full="${grp_full#VST3/}"; grp_full="${grp_full#CLAP/}"
     # Vendor/subgrouping: for vendors with multiple product lines (Izotope, etc.)
     # the vendor becomes the top-level group, subfolder becomes the subgroup.

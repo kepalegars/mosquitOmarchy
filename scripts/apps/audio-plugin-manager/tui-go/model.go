@@ -63,6 +63,12 @@ const (
 	scrUninstallPick // unified, Tab multi-select
 	scrUninstallConfirm
 	scrUninstalling
+	// scrInstallPick is the transient "choosing a file" screen. It exists so the
+	// main menu is not what renders while the picker runs: setting m.loading
+	// from the main menu drew ONE frame of the home screen with its options
+	// replaced by "loading…", a visible flash between picking "Install a
+	// plugin" and the prefix question.
+	scrInstallPick
 	scrInstallPrefixChoice
 	scrInstallPrefixPick
 	scrInstallPrefixName
@@ -1217,7 +1223,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.installRecommendedPrefix = v.Prefix
 					m.installDefaultPrefix = v.Default
 				}
-				m.push(scrInstallPrefixChoice)
+				// REPLACE the transient pick screen: the file is chosen and the
+				// question that follows belongs where the picker was.
+				m.replace(scrInstallPrefixChoice)
 				return m, m.enterCmd()
 			}
 			m.loading = true

@@ -1265,6 +1265,18 @@ PYWIZARD
     echo "added to the manager: $(basename "$first")"
     ;;
 
+  watch-manager)
+    # Launch a manager app with the plugins folder watched, so whatever it
+    # installs while it is open is registered instead of coming back as
+    # untracked next time.
+    exe="${1:?manager exe required}"
+    pfx="${2:-$(default_prefix)}"
+    source "$(dirname "${BASH_SOURCE[0]}")/lib-audio-plugin-manager-core.sh"
+    load_prefs
+    watch_for_plugins "$exe" "$pfx"
+    jq -nc --arg exe "$exe" '{watched:$exe}'
+    ;;
+
   adopt-plugins)
     # Register every plugin found on disk into the log, in ONE pass, grouped per
     # plugin, and report what happened.

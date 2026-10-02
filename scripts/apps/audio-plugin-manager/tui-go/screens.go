@@ -53,6 +53,10 @@ func (m *model) enterCmd() tea.Cmd {
 		m.uninstallCache = nil
 		m.uninstallChecked = map[string]bool{}
 		return fetchPluginFolders("uninstall")
+	case scrInstallPick:
+		m.loading = true
+		return fetchPath("pick-file", "pick-any-plugin-file")
+
 	case scrInstallPrefixChoice:
 		// The standard ask: default prefix first. When the installer matches a
 		// plugin the tests know, ALWAYS name the recommended prefix — even when
@@ -3490,6 +3494,10 @@ func (m model) handleMainChoice(v string) (tea.Model, tea.Cmd) {
 		if m.status.FilePicker == "superfile" && m.status.SuperfileInstalled {
 			return m, pickFileViaSuperfileEmbedded(m.status.DownloadsDir)
 		}
+		// A screen of its own while the picker runs, so the main menu is never
+		// the thing that renders with a loading body — that one frame is the
+		// flash between "Install a plugin" and the prefix question.
+		m.push(scrInstallPick)
 		m.loading = true
 		return m, fetchPath("pick-file", "pick-any-plugin-file")
 	case "uninstall":
