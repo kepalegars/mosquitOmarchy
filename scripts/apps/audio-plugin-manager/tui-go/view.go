@@ -123,6 +123,9 @@ func (m model) View() string {
 		title = screenTitle("Settings", m.contentSizeW())
 		body = m.picker.View()
 		bar = barLine(m.picker.ShortcutsHint())
+	case scrInstallPick:
+		title = screenTitle("Install a plugin", m.contentSizeW())
+		body = "waiting for the file picker…\n\nesc goes back"
 	case scrVstMenu:
 		title = screenTitle("Windows VST Plugins", m.contentSizeW())
 		body = m.picker.View()
