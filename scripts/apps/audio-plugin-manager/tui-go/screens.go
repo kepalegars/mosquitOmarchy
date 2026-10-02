@@ -2793,6 +2793,26 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case scrInstallPrefixChoice:
+		// A manager that is ALREADY installed should be opened from where it
+		// belongs, not re-run as a fresh installer.
+		//
+		// The two paths are not equivalent: "Launch a standalone plugin" goes
+		// through the watcher that registers what the app installs, while
+		// "Install a plugin from file" just runs it and leaves everything it
+		// writes untracked — which is exactly how forty plugins came back as
+		// untracked. Say so before the prefix question, and offer the clean
+		// route.
+		if m.installIsKnownManager() {
+			m.confirm = tuikit.NewConfirm(
+				"This is a plugin manager that is already installed here.\n\n"+
+					"Re-running it as an installer installs nothing and leaves every plugin\n"+
+					"it writes untracked. The clean route is \"Launch a standalone plugin\" in\n"+
+					"Settings, which watches the plugins folder while it is open.\n\n"+
+					"Open it from there instead?",
+				"Run it anyway", "Open it from Settings")
+			m.replace(scrKnownManagerReopen)
+			return m, nil
+		}
 		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
 			if res.Canceled {
 				// Esc here must abort the install, not be read as the "No,
@@ -3070,6 +3090,23 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.picker, cmd = m.picker.Update(msg)
+		return m, cmd
+
+	case scrKnownManagerReopen:
+		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
+			if res.Canceled || !res.Yes {
+				// Sent to Settings, where the row is.
+				m.nav = []screen{scrMain, scrSettings}
+				m.picker = tuikit.NewPicker("Settings", m.settingsItemsWithPending()).
+					SetSize(m.contentSize()).
+					SetHelpNote(settingsHelpNote())
+				return m, m.enterCmd()
+			}
+			m.pop()
+			return m, m.enterCmd()
+		}
+		var cmd tea.Cmd
+		m.confirm, cmd = m.confirm.Update(msg)
 		return m, cmd
 
 	case scrExecsToggle:
@@ -3605,9 +3642,14 @@ func (m model) handleVstMenuChoice(v string) (tea.Model, tea.Cmd) {
 	case "execs":
 		m.push(scrExecsToggle)
 		return m, m.enterCmd()
-	case "manage_standalones":
-		m.push(scrStandaloneManage)
-		return m, m.enterCmd()
+	case "open_prefix":
+		p := defaultPrefixFor(m.status)
+		if out, err := runQuick("open-folder", p); err == nil && len(bytes.TrimSpace(out)) > 0 {
+			m.toast, _ = m.toast.SetOK("opened " + baseName(p))
+		} else {
+			m.toast, _ = m.toast.SetErr("could not open " + p)
+		}
+		return m, nil
 	case "toggle_hide_vst2":
 		return m, toggleHideVst2AndRefetch()
 	case "toggle_hide_32bit":

@@ -1077,6 +1077,20 @@ PYWIZARD
     done <<< "$(executable_list)"
     ;;
 
+  manager-installed)
+    # Is this vendor's manager already in the prefix?
+    #
+    # Re-running an installed manager as a fresh installer installs nothing and
+    # leaves every plugin it writes untracked, so the warning is worth raising
+    # before the prefix question rather than after a wasted run.
+    v="${1:?vendor required}"
+    if [[ -n $(find "$(default_prefix)/drive_c/ProgramData" -maxdepth 2 -iname "*${v}*" 2>/dev/null | head -1) ]]; then
+      echo yes
+    else
+      echo no
+    fi
+    ;;
+
   forget-standalone)
     # Untrack one executable. The file stays where it is: this clears a row,
     # it does not uninstall anything.

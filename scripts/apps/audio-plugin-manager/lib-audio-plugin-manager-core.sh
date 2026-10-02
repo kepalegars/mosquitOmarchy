@@ -1710,7 +1710,7 @@ install_plugin() {
   # whole prefix) before the installer runs, then diff the sets after. Using
   # `find -newer <stamp>` missed installers that write files with an OLD mtime
   # (archive timestamps) — exactly the Serum 2 "No new VST file detected" case.
-  local before after before_pfx after_pfx
+  local before after before_pfx after_pfx before_state=""
   before="$(mktemp)"; after="$(mktemp)"
   before_pfx="$(mktemp)"; after_pfx="$(mktemp)"
   list_shared_plugin_files > "$before" 2>/dev/null || true
@@ -1757,11 +1757,13 @@ install_plugin() {
         wine_rc=0
       else
         warn "it also failed with $(basename "$other") — this prefix is held by a third build."
-        rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$before_state"
+        [[ -n $before_state && $before_state != /dev/null ]] && rm -f "$before_state"
+  rm -f "$before" "$after" "$before_pfx" "$after_pfx"
         return 1
       fi
     else
-      rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$before_state"
+      [[ -n $before_state && $before_state != /dev/null ]] && rm -f "$before_state"
+  rm -f "$before" "$after" "$before_pfx" "$after_pfx"
       return 1
     fi
   fi
@@ -1875,7 +1877,8 @@ install_plugin() {
     fi
   fi
 
-  rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$before_state"
+  [[ -n $before_state && $before_state != /dev/null ]] && rm -f "$before_state"
+  rm -f "$before" "$after" "$before_pfx" "$after_pfx"
 
 
   # What the installer rewrote, as opposed to created.
