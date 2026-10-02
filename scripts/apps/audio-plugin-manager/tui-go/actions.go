@@ -467,6 +467,24 @@ func pickFileViaSuperfileEmbedded(startDir string) tea.Cmd {
 	})
 }
 
+// pickFileViaSuperfileEmbeddedInPrefix is pickFileViaSuperfileEmbedded with the
+// picker restricted to the prefix being browsed: superfile starts INSIDE
+// <prefix>/drive_c, which is the filesystem the user is choosing from here.
+func pickFileViaSuperfileEmbeddedInPrefix(prefix string) tea.Cmd {
+	start := ""
+	if prefix != "" {
+		start = filepath.Join(prefix, "drive_c")
+		if st, err := os.Stat(start); err != nil || !st.IsDir() {
+			start = prefix
+		}
+	}
+	if start == "" {
+		home, _ := os.UserHomeDir()
+		start = home
+	}
+	return pickFileViaSuperfileEmbedded(start)
+}
+
 type reconcileMissingMsg struct {
 	labels []string
 	keys   []string

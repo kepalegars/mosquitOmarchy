@@ -166,6 +166,15 @@ func (m *model) enterCmd() tea.Cmd {
 		// The explorer only designates the FILE. The manager stays on top and
 		// runs launch-exe itself with the path that comes back.
 		m.launchExePrefix = currentDefaultPrefix()
+		// Honour the file-picker preference here too. It was honoured for the
+		// install flow and NOT here, so a machine set to Superfile got Nautilus
+		// (the portal chooser) every time this option was used -- and the
+		// cancel path then left the manager stuck, because the embedded picker
+		// and the bash one return different messages.
+		if m.status.FilePicker == "superfile" && m.status.SuperfileInstalled {
+			return pickFileViaSuperfileEmbeddedInPrefix(m.launchExePrefix)
+		}
+		m.loading = true
 		return fetchPath("pick-exe-in-prefix", "pick-exe-in-prefix", m.launchExePrefix)
 	case scrLaunchExeList:
 		m.launchExePrefix = currentDefaultPrefix()
@@ -2764,7 +2773,12 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case scrLaunchExeBrowse:
 		// The file manager came back with a path (or nothing). It never ran
 		// anything: the launch is the manager's own, in launchExeCmd.
-		if pm, ok := msg.(pathMsg); ok && pm.kind == "pick-exe-in-prefix" {
+		//
+		// "pick-file" is the embedded-superfile kind: the embedded picker
+		// reports the generic kind, so listening only for the bash verb's kind
+		// meant the superfile choice came back and the screen just sat there,
+		// still "waiting for the file manager".
+		if pm, ok := msg.(pathMsg); ok && (pm.kind == "pick-exe-in-prefix" || pm.kind == "pick-file") {
 			m.pop() // leave the browse screen; we launch from here
 			if pm.err != nil {
 				m.toast, _ = m.toast.SetErr(pm.err.Error())

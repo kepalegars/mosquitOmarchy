@@ -237,6 +237,7 @@ type model struct {
 	themeImage         string
 	themeInput         tuikit.TextInput
 	themeInputStep     int // 0 = folder path, 1 = theme name
+	themeApplyName string
 	themeCreated       string
 	themePendingName   string // the name carried out of the text screen
 	themeLog           string

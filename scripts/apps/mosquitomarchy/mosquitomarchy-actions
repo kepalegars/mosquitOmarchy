@@ -672,7 +672,7 @@ _uninstall_tree(){
         ;;
       mosquito)
         local pk
-        for pk in ableton-move-manager audio-plugin-manager jamjamjam-plugin battery live-mode; do
+        for pk in ableton-move-manager audio-plugin-manager jamjamjam-plugin battery live-mode keepassxc; do
           case $pk in
             audio-plugin-manager) _installed_state audio && keys+=("$pk") ;;
             *) _installed_state "$pk" && keys+=("$pk") ;;
@@ -714,7 +714,7 @@ _uninstall_tree(){
             name="remove omarchy's agentic stuff"
             info=""
           else
-            name="$e - v$(module_version "$e")"
+            name="$(module_display_name "$e") - v$(module_version "$e")"
             info="$(module_desc "$e")"
           fi ;;
       esac

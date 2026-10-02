@@ -4457,7 +4457,7 @@ plugin_group_rows_emit() {
 # WITHOUT a sort key (field 1), ready to be cached and sorted at read time.
 plugin_group_rows_build() {
   local f type key grp label sortkey enabled fmt
-  local -A g_label=() g_formats=() g_first=() g_enabled=() g_any=() g_variants=()
+  local -A g_label=() g_formats=() g_first=() g_enabled=() g_any=() g_variants=() g_grp=()
   local -a order=()
 
   while IFS=$'\t' read -r f type; do
@@ -4481,18 +4481,37 @@ plugin_group_rows_build() {
     grp_full="${grp_full#VST2/}"; grp_full="${grp_full#VST3/}"; grp_full="${grp_full#CLAP/}"
     # Vendor/subgrouping: for vendors with multiple product lines (Izotope, etc.)
     # the vendor becomes the top-level group, subfolder becomes the subgroup.
-    if [[ $grp_full == */* ]] && [[ $grp_full != native ]]; then
-      vendor="${grp_full%%/*}"
-      sub="${grp_full#*/}"
-      # Capitalize first letter nicely for common cases? Keep as-is mostly
-      grp="$vendor/$sub"
-    else
-      grp="$grp_full"
+    grp="$grp_full"
+    # A suite like iZotope installs FLAT into vst3/iZotope/, with the product
+    # line only in the file name ("Neutron 5 Sculptor.vst3", "RX 11 Connect.
+    # vst3"). So there is no sub-folder to read the line from -- it has to come
+    # out of the NAME. Splitting on folders alone therefore produced one
+    # enormous "iZotope" folder holding every module of every product, which is
+    # exactly the pile this grouping exists to avoid.
+    #
+    # The pattern is "<words> <number>" at the head of the name, which is how
+    # every audio suite versions its lines ("Neutron 5", "RX 11", "Ozone 12",
+    # "Nectar 4", "Pro-Q 3"). It is anchored at the START of the name and
+    # requires the version number, so a plain name ("Console", "De-clip")
+    # never matches and stays directly under the vendor.
+    if [[ $grp_full != */* && $grp_full != native ]]; then
+      base="${key##*/}"
+      if [[ $base =~ ^([A-Za-z]+[[:space:]]+[0-9]+) ]]; then
+        grp="$grp_full/${BASH_REMATCH[1]}"
+      # Same suite, different spelling: some installers drop the space
+      # ("iZNeutron5VisualMixer.dll"). Requiring the space meant that one file
+      # sat alone under the bare vendor folder while the other twenty-nine were
+      # correctly grouped, which is what a stray row in an otherwise tidy tree
+      # always turns out to be.
+      elif [[ $base =~ ^iZ?([A-Za-z]+)([0-9]+) ]]; then
+        grp="$grp_full/${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+      fi
     fi
 
     if [[ -z ${g_any[$key]:-} ]]; then
       g_any[$key]=1
       order+=("$key")
+      g_grp[$key]="$grp"
       g_label[$key]="${key##*/}"
       g_formats[$key]="$type"
       g_first[$key]="vst:$type:$f"
@@ -4523,6 +4542,7 @@ plugin_group_rows_build() {
     if [[ -z ${g_any[$key]:-} ]]; then
       g_any[$key]=1
       order+=("$key")
+      g_grp[$key]="native"
       g_label[$key]="$label"
       g_formats[$key]="$fmt"
       g_first[$key]="native:$entry"
@@ -4533,7 +4553,11 @@ plugin_group_rows_build() {
 
   local k
   for k in "${order[@]}"; do
-    grp="${k%/*}"
+    # The group computed while scanning, NOT "${k%/*}" again: the suite
+    # subgrouping lives in that value, and recomputing it here threw the
+    # grouping away — every row came back under its bare vendor folder, which
+    # is exactly what this was meant to stop.
+    grp="${g_grp[$k]}"
     # Field 8 is the canonical plugin_key, the same string the state log indexes
     # on. The reconcile screen has to ask "is this plugin tracked?" and it
     # cannot rebuild the key from the display label — "FabFilter Micro" and

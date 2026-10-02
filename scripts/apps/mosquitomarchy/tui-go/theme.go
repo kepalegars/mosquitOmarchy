@@ -412,12 +412,19 @@ func (m model) themePicked(from screen, res tuikit.PickerResultMsg) (model, tea.
 		m.pop()
 		return m, nil
 	case "apply":
+		// Through startWorking, NOT a bare push(scrWorking). The bare push put
+		// the working screen up with no runner behind it, so its Esc handler --
+		// which only pops once m.runner.Done() -- could never fire: the screen
+		// rendered the raw log with no frame and there was no way off it. That
+		// is the "stuck in the log" this row used to lead to. startWorking
+		// attaches a real runner, so the screen is a runner screen like every
+		// other one and Esc behaves the same way everywhere.
 		name := m.themeCreated
 		m.resetThemeFlow()
 		m.pop()
-		m.push(scrWorking)
-		m.workingLabel = fmt.Sprintf("Applying the theme '%s'", name)
-		return m, themeApplyCmd(name)
+		m.themeApplyName = name
+		return m.startWorking("Applying the theme",
+			workingArgs("theme-apply", []string{name})...)
 	}
 
 	// Not one of the control rows: on the image list this is a real file name.
