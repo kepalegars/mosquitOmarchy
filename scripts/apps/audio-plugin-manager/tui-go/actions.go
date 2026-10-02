@@ -320,8 +320,12 @@ func fetchStatus() tea.Cmd {
 // list a plugin once per installed format, so removing "FabFilter Pro-Q" meant
 // picking the same name three times.
 func fetchPluginFolders(kind string) tea.Cmd {
+	page := "plugins"
+	if kind == "uninstall" {
+		page = "uninstall"
+	}
 	return func() tea.Msg {
-		out, err := runQuick("list-plugin-folders")
+		out, err := runQuick("page", page, "list-plugin-folders")
 		if err != nil {
 			return itemsMsg{kind: kind, err: err}
 		}
@@ -837,13 +841,42 @@ func nativeInstallCmd(path string) tea.Cmd {
 // list-all-plugins emitted one row per FILE, so a plugin present as
 // vst2 + vst3 + clap appeared three times under the same name.
 func fetchAllPlugins() tea.Cmd {
+	return fetchAllPluginsFor("plugins")
+}
+
+// fetchAllPluginsFor is fetchAllPlugins with the page's own stored sort
+// applied, so each list opens in the order it was left in.
+func fetchAllPluginsFor(page string) tea.Cmd {
 	return func() tea.Msg {
-		out, err := runQuick("list-plugin-folders")
+		out, err := runQuick("page", page, "list-plugin-folders")
 		if err != nil {
 			return pluginListMsg{err: err}
 		}
 		items, err := decodeJSONLines[PluginItem](out)
 		return pluginListMsg{items: items, err: err}
+	}
+}
+
+// cycleSortForPage advances ONE page's sort and re-lists.
+//
+// The per-page value lives in the prefs file, so each list keeps its own choice
+// across visits instead of every page overwriting one shared value — which is
+// what made `s` feel broken: it changed a global setting, the list came back in
+// the same order, and the page you had sorted earlier lost it.
+func cycleSortForPage(page string) tea.Cmd {
+	return func() tea.Msg {
+		cur := ""
+		if out, err := runQuick("get-sort", page); err == nil {
+			cur = strings.TrimSpace(string(out))
+		}
+		next := stepSortModeFor(page, cur, 1)
+		_, _ = runQuick("set-sort-for-page", page, next)
+		out, err := runQuick("page", page, "list-plugin-folders")
+		if err != nil {
+			return pluginListMsg{err: err, mode: next}
+		}
+		items, err := decodeJSONLines[PluginItem](out)
+		return pluginListMsg{items: items, mode: next, err: err}
 	}
 }
 

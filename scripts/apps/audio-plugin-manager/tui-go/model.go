@@ -461,13 +461,40 @@ func sortModeLabel(mode string) string {
 	}
 }
 
-// stepSortMode cycles vendor -> name -> format -> date, either direction —
-// the btop-style live sort-cycle (the `s` key) inside the unified Plugin
-// list and the Uninstall screen (see cycleSortCmd in actions.go). Vendor
-// still applies (native rows fall back to name-sort on the bash side, same
-// as before).
-func stepSortMode(current string, dir int) string {
-	order := []string{"vendor", "name", "format", "date"}
+// sortPage identifies which list a sort choice belongs to.
+//
+// One global sort was shared by every plugin list, so sorting "Installed
+// plugins" by date silently changed the order of "Uninstall a plugin" and of
+// the fixes chooser too — and each page's choice was forgotten on the next
+// visit because it overwrote the single stored value. The pages are listed
+// side by side and read differently, so they sort differently.
+func sortPage(screen screen) string {
+	switch screen {
+	case scrPluginList:
+		return "plugins"
+	case scrUninstallPick:
+		return "uninstall"
+	case scrFixPluginPick, scrFixChoose:
+		return "fixes"
+	}
+	return "plugins"
+}
+
+// sortModesFor lists the orders a page offers, in cycle order.
+func sortModesFor(page string) []string {
+	switch page {
+	case "uninstall", "fixes":
+		// Name and vendor only: "format" and "install date" describe an
+		// installation, and on a page about REMOVING or FIXING a plugin they
+		// answer a question nobody is asking.
+		return []string{"vendor", "name"}
+	}
+	return []string{"vendor", "name", "format", "date"}
+}
+
+// stepSortMode cycles within ONE page's modes.
+func stepSortModeFor(page, current string, dir int) string {
+	order := sortModesFor(page)
 	idx := 0
 	for i, m := range order {
 		if m == current {

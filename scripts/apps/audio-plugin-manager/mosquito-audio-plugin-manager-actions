@@ -330,6 +330,27 @@ PYWIZARD
     save_prefs
     ;;
 
+  page)
+    # "page <which> <verb> ..." — run a list verb with that page's stored sort
+    # applied first. One place, so every page can't forget to set it.
+    which="${1:?page required}"; shift
+    apply_page_sort "$which"
+    _apm_page="$which" "$0" "$@"
+    ;;
+
+  get-sort)
+    # The sort a given PAGE last chose (plugins / uninstall / fixes).
+    page="${1:?page required}"
+    v="$(sort_mode_for_page "$page")"
+    printf '%s\n' "$v"
+    ;;
+
+  set-sort-for-page)
+    # Remember one page's choice without touching the others.
+    page="${1:?page required}"; mode="${2:?mode required}"
+    save_sort_for_page "$page" "$mode"
+    ;;
+
   set-sort-and-list)
     # Sets PLUGIN_SORT_MODE then immediately re-lists -- one round trip for
     # the btop-style "arrow key cycles sort live" interaction, instead of a
@@ -341,7 +362,7 @@ PYWIZARD
     all_plugin_list_rows_sorted > "$_apm_rows"
     cut -f6 < "$_apm_rows" > "$_apm_vals"
     _wpm_cache_populate "$_apm_vals"
-    while IFS=$'\t' read -r sortkey label origin fmt enabled value; do
+    while IFS=$'\t' read -r sortkey gkey label origin fmt enabled value _v _k; do
       [[ -n $value ]] || continue
       parent="$(_wpm_parent_of "$value")"
       jq -nc --arg display "[$origin/$fmt]  $label" --arg value "$value" \
@@ -374,7 +395,7 @@ PYWIZARD
     all_plugin_list_rows_sorted > "$_apm_rows"
     cut -f6 < "$_apm_rows" > "$_apm_vals"
     _wpm_cache_populate "$_apm_vals"
-    while IFS=$'\t' read -r sortkey label origin fmt enabled value; do
+    while IFS=$'\t' read -r sortkey gkey label origin fmt enabled value _v _k; do
       [[ -n $value ]] || continue
       parent="$(_wpm_parent_of "$value")"
       jq -nc --arg display "[$origin/$fmt]  $label" --arg value "$value" \
@@ -408,12 +429,13 @@ PYWIZARD
     #      unins000.exe mtime within ±1 hour of the plugin file's mtime;
     #   4. OR the plugin's vendor folder name matches the installer folder.
   list-uninstallable)
+    apply_page_sort "${_apm_page:-uninstall}"
     _apm_rows="${TMPDIR:-/tmp}/apm-rows.$$"
     _apm_vals="${TMPDIR:-/tmp}/apm-vals.$$"
     all_plugin_list_rows_sorted > "$_apm_rows"
     cut -f6 < "$_apm_rows" > "$_apm_vals"
     _wpm_cache_populate "$_apm_vals"
-    while IFS=$'\t' read -r sortkey label origin fmt enabled value; do
+    while IFS=$'\t' read -r sortkey gkey label origin fmt enabled value _v _k; do
       [[ -n $value ]] || continue
       parent="$(_wpm_parent_of "$value")"
       jq -nc --arg display "[$origin/$fmt]  $label" --arg value "$value" \
@@ -425,6 +447,7 @@ PYWIZARD
     ;;
 
   list-plugin-folders)
+    apply_page_sort "${_apm_page:-plugins}"
     # The list the plugin MANAGER draws: one row per logical plugin, carrying
     # the formats it is installed in, grouped under a folder per vendor.
     #
@@ -480,7 +503,7 @@ PYWIZARD
       # level; the subgroup is a folder INSIDE it. Emitting "iZotope/Neutron 5"
       # as the folder itself produced two sibling iZotope rows instead of one
       # you can open, which is not what "sorted inside the vendor" means.
-      while IFS=$'\t' read -r _sk _label grp formats enabled value _variants _key; do
+      while IFS=$'\t' read -r _sk _gk _label grp formats enabled value _variants _key; do
         [[ -n $value ]] || continue
         vendor="${grp%%/*}"
         subgroup=""
@@ -489,7 +512,7 @@ PYWIZARD
           "$_label" "$value" "$vendor" "$formats" "$enabled" "$_variants" "$(_wpm_parent_lookup "$value")" "$subgroup"
       done < "$_apm_g"
       # One folder row per VENDOR (never per subgroup), the tree's top level.
-      awk -F'\t' '{sub(/\/.*$/, "", $3); print $3}' "$_apm_g" | sort -u | while IFS= read -r grp; do
+      awk -F'\t' '{sub(/\/.*$/, "", $4); print $4}' "$_apm_g" | sort -u | while IFS= read -r grp; do
         [[ -n $grp ]] || continue
         printf 'f\t%s\tvendor:%s\n' "$([[ $grp == native ]] && printf Native || printf '%s' "$grp")" "$grp"
       done
@@ -1197,7 +1220,7 @@ EOF
     # appeared. The shell loop still decides what is an orphan (it has to ask
     # the state log, which jq cannot see), it just hands the survivors to a
     # single filter.
-    while IFS=$'\t' read -r sortkey label grp formats enabled value variants key; do
+    while IFS=$'\t' read -r sortkey gkey label grp formats enabled value variants key; do
       [[ -n $value ]] || continue
       # state_bulk_has, not state_has: one jq for the whole log instead of one
       # per plugin. Safe here because this sweep writes nothing.
@@ -1269,7 +1292,7 @@ EOF
     _apm_ad="${TMPDIR:-/tmp}/apm-adopt.$$"
     plugin_group_rows > "$_apm_ad"
     n=0
-    while IFS=$'\t' read -r sortkey label grp formats enabled value variants key; do
+    while IFS=$'\t' read -r sortkey gkey label grp formats enabled value variants key; do
       [[ -n $key ]] || continue
       state_has "$key" && continue
       # A native plugin lives in the system tree, not in a wine prefix. Filing
