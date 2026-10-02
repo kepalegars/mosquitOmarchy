@@ -104,6 +104,7 @@ else
   STATE_DIR="$HOME/mosquitOmarchy/scripts/apps/audio-plugin-manager"
 fi
 STATE_FILE="$STATE_DIR/audio-plugin-manager-state.json"
+APM_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/mosquito-audio-plugin-manager"
 MACHINE_ID="$(cat /etc/machine-id 2>/dev/null || hostname)"
 
 # ── Colors / messages ───────────────────────────────────────────────────────
@@ -461,6 +462,26 @@ state_register_standalone() {
     '.plugins[$k].standalones = $list' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
 }
 
+# state_forget_standalone <exe-basename> — drop a registration that is no longer
+# a program worth offering.
+#
+# The skip list grew (crash reporters, plugin scanners, uninstallers), but the
+# entries those files had already registered stayed in the log: the filter only
+# runs at registration time, so a helper registered before the list knew about it
+# kept its row in the toggle list and its menu entry forever.
+state_forget_standalone(){
+  local base="${1##*/}" stem="${1##*/}" tmp
+  stem="${stem%.exe}"
+  state_init
+  [[ -f $STATE_FILE ]] || return 0
+  # The key the registration used is the basename minus .exe.
+  tmp=$(mktemp)
+  jq -S --arg k "$stem" 'if .plugins[$k] then (.plugins[$k].standalones // []) as $all
+      | (.plugins[$k].standalones) = [$all[] | select((split("/") | last | sub("\\.exe$"; "")) != $k)]
+      | (if ((.plugins[$k].standalones // []) | length) == 0 then .plugins[$k] |= del(.standalones) else . end)
+    else . end' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
 state_remove() {
   # $1 = plugin key. Removes the plugin from the state (current truth).
   local key="$1" tmp
@@ -557,12 +578,112 @@ is_uninstaller() {
 # WebView2 flavors), Copilot, anything "witch", and Guitar Pro (guitarpro.exe /
 # gp7/8 etc.) are never VST standalones and are hidden automatically from every
 # prefix (scan + standalone log), including future ones.
+# is_native_win_app — a Windows program that is not a plugin editor.
+#
+# It also covers the helpers that ship INSIDE a plugin's own folder: a crash
+# reporter, a plugin scanner, an uninstaller. None of them is an editor the
+# user would ever launch, and each one registered itself as a standalone
+# plugin, so the list offered them as programs to run.
+# standalone_icon_for <exe-path> — an icon path for a standalone editor.
+#
+# Vendors ship a PlugIn.ico next to the plugin, in the shared folder and inside
+# the prefix. ImageMagick converts it to a PNG the desktop can use, cached under
+# the manager's own directory, and the two most common sizes are written so
+# whichever the shell asks for exists. Falls back to the generic audio icon when
+# the vendor ships nothing, rather than leaving Icon= pointing at a missing file
+# (which renders as a broken-image glyph in the menu).
+standalone_icon_for() {
+  local exe="$1" name stem out cache src
+  name="$(basename "$exe")"; stem="${name%.exe}"
+  cache="$APM_CACHE_DIR/icons"
+  mkdir -p "$cache" 2>/dev/null || true
+  out="$cache/${stem// /-}.png"
+  if [[ -s $out ]]; then printf '%s' "$out"; return 0; fi
+
+  # Vendors put the icon in different places, and which one applies is not
+  # knowable in advance: iZotope ships PlugIn.ico in the shared plugin folder,
+  # RXDoc_Win.ico beside the executable in the prefix, and nothing at all for
+  # a plugin whose folder has no icon. Look everywhere plausible, nearest first.
+  src=""
+  local cand exe_dir vendor
+  exe_dir="$(dirname "$exe")"
+  vendor="$(basename "$(dirname "$exe_dir")")"
+  for cand in \
+      "$exe_dir/PlugIn.ico" "$exe_dir/Plugin.ico" "$exe_dir"/*.ico \
+      "$(dirname "$exe_dir")/PlugIn.ico" "$(dirname "$exe_dir")"/*.ico \
+      "$VST_ROOT/vst3/$vendor/PlugIn.ico" "$VST_ROOT/vst3/$vendor/Plugin.ico" \
+      "$VST_ROOT/vst2/$vendor/PlugIn.ico" "$VST_ROOT/vst/$vendor/PlugIn.ico" \
+      "$VST_ROOT/clap/$vendor/PlugIn.ico" "$VST_ROOT/vst3/$vendor"/*.ico; do
+    [[ -f $cand ]] || continue
+    src="$cand"; break
+  done
+  if [[ -n $src && -f $src ]] && command -v convert >/dev/null 2>&1; then
+    if convert "$src[0]" -resize 128x128 "$out" 2>/dev/null && [[ -s $out ]]; then
+      cp -f "$out" "$cache/${stem// /-}-64.png" 2>/dev/null || true
+      printf '%s' "$out"
+      return 0
+    fi
+  fi
+  printf '%s' "audio-headphones"
+}
+
+# sort_mode_for_page <page> / save_sort_for_page <page> <mode>
+#
+# One sort per LIST, not one for the whole manager. The pages sit side by side
+# and answer different questions — which plugins are installed, which to
+# remove, which carry a fix — so the order that suits one is not the order that
+# suits another, and a shared value meant sorting one page quietly reordered the
+# others and lost its own choice on the next visit.
+#
+# The default is "vendor", which is what every page showed before.
+sort_mode_for_page(){
+  local page="${1:-plugins}" f line
+  f="$PREFS_FILE.sort"
+  [[ -r $f ]] || { printf '%s\n' "vendor"; return 0; }
+  while IFS= read -r line; do
+    [[ $line == "$page|"* ]] || continue
+    printf '%s\n' "${line#*|}"
+    return 0
+  done < "$f"
+  printf '%s\n' "vendor"
+}
+
+save_sort_for_page(){
+  local page="${1:-plugins}" mode="${2:-vendor}" f line
+  f="$PREFS_FILE.sort"
+  mkdir -p "$(dirname "$f")" 2>/dev/null || true
+  local tmp="$f.tmp.$$"
+  : > "$tmp"
+  if [[ -r $f ]]; then
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      [[ $line == "$page|"* ]] && continue
+      printf '%s\n' "$line" >> "$tmp"
+    done < "$f"
+  fi
+  printf '%s|%s\n' "$page" "$mode" >> "$tmp"
+  mv -f "$tmp" "$f"
+  PLUGIN_SORT_MODE="$mode"
+}
+
+# apply_page_sort <page> — make the page's stored sort the ACTIVE one.
+#
+# Called by every list verb that renders a page, so the order a page remembers
+# is the order it draws in. Without it the stored value was written but never
+# read back, and the page opened in whatever PLUGIN_SORT_MODE the shared prefs
+# happened to hold.
+apply_page_sort(){
+  PLUGIN_SORT_MODE="$(sort_mode_for_page "${1:-plugins}")"
+}
+
 is_native_win_app() {
   local b="${1,,}" stem
   b="$(basename "$b")"
   stem="${b%.exe}"
   case "$stem" in
-    iexplore|iexplorer|wmplayer|wordpad|write|notepad|mspaint|calc|magnify|osk|cmd|powershell|pwsh|regedit|explorer|rundll32|taskmgr|control|cmd.exe|*witch*|*edge*|*webview2*|*copilot*|*guitarpro*|guitar*pro*|gp[0-9]*)
+    iexplore|iexplorer|wmplayer|wordpad|write|notepad|mspaint|calc|magnify|osk|cmd|powershell|pwsh|regedit|explorer|rundll32|taskmgr|control|cmd.exe|\
+    *witch*|*edge*|*webview2*|*copilot*|*guitarpro*|guitar*pro*|gp[0-9]*|crashpad*|unins[0-9]*|\
+    *" plugin scanner"*|*"plugin scanner"*|*pluginscanner*|*plugin_scanner*|*_helper.exe|*" helper.exe")
       return 0 ;;
   esac
   return 1
@@ -2341,6 +2462,39 @@ manage_executables() {
       [[ -f $slug ]] && shown=show
       entries+=("$([ $shown = show ] && echo '✓' || echo '○')  $base"$'\t'"$f")
     done <<< "$(executable_list)"
+    # Repair the entries already written, on every visit.
+    #
+    # The name and the icon were both wrong in what is on disk ("SubLabXL.exe",
+    # no Icon= at all) and the toggle only ever wrote a NEW entry, so an entry
+    # created before those fixes kept the old shape forever — the fix was correct
+    # in the code and invisible in the menu.
+    local -a regen=()
+    while IFS=$'\t' read -r f junk; do
+      [[ -n $f ]] || continue
+      local rbase="${f##*/}" rstem
+      rstem="$(printf '%s' "$rbase" | sed 's/\.[eE][xX][eE]$//')"
+      local rslug="$APPS_DIR/$DESKTOP_SLUG-$(printf '%s' "$rstem" | tr ' ' '-' | tr -cd '[:alnum:]-').desktop"
+      [[ -f $rslug ]] || continue
+      # Only rewrite what is actually wrong, so nothing else is disturbed.
+      if grep -qE '^Name=.*\.[eE][xX][eE]$' "$rslug" || ! grep -q '^Icon=' "$rslug"; then
+        regen+=("$f")
+      fi
+    done <<< "$(executable_list)"
+    local f
+    for f in ${regen[@]+"${regen[@]}"}; do
+      local rbase="${f##*/}" rstem
+      rstem="$(printf '%s' "$rbase" | sed 's/\.[eE][xX][eE]$//')"
+      local rslug="$APPS_DIR/$DESKTOP_SLUG-$(printf '%s' "$rstem" | tr ' ' '-' | tr -cd '[:alnum:]-').desktop"
+      [[ -f $rslug ]] || continue
+      local ricon
+      ricon="$(standalone_icon_for "$f")"
+      sed -i "s@^Name=.*@Name=$rstem@" "$rslug"
+      if ! grep -q '^Icon=' "$rslug"; then
+        sed -i "s@^StartupNotify=@Icon=$ricon\nStartupNotify=@" "$rslug"
+      fi
+      ok "repaired the menu entry: $rstem"
+    done
+
     if ((${#entries[@]} == 0)); then ui_info "No standalone executable registered yet — install a plugin via the manager first."; return 0; fi
     pick=$(ui_select --plain "Toggle which executables appear in the menu — keep picking to toggle several, Escape to finish:" "${entries[@]}") || return 0
 
@@ -2353,17 +2507,19 @@ manage_executables() {
       # The menu entry is a PROGRAM, not a file. "SubLabXL.exe" is the name of a
     # file on a disk the user never sees; the program is "SubLabXL". Exec keeps
     # the full path with the extension, which is what Wine actually runs.
-    cat > "$slug" <<EOF
+      icon="$(standalone_icon_for "$pick")"
+      cat > "$slug" <<EOF
 [Desktop Entry]
 Name=$(basename "${pick%.exe}")
 Comment=VST standalone (managed by mosquito Audio Plugin Manager)
 Exec=uwsm app -- mosquito-audio-plugin-manager launch "$pick"
+Icon=$icon
 Terminal=false
 Type=Application
 Categories=AudioVideo;Audio;
 StartupNotify=false
 EOF
-      ok "shown in menu: $(basename "$pick")"
+      ok "shown in menu: $(basename "${pick%.exe}")"
     fi
     # Loop: stay here so multiple executables can be toggled (Escape returns).
   done
@@ -4483,7 +4639,7 @@ plugin_group_rows() {
   local -A g_label=() g_formats=() g_first=() g_enabled=() g_any=() g_variants=()
   local -a order=()
 
-  local _apm_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/mosquito-audio-plugin-manager"
+_apm_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/mosquito-audio-plugin-manager"
   local _apm_fp _apm_rc _apm_rtmp _apm_rname
   _apm_fp="$(plugin_scan_fingerprint)"
   if [[ -n $_apm_fp ]]; then
@@ -4561,16 +4717,29 @@ plugin_scan_fingerprint() {
 # prepending the sort key for the CURRENT sort mode. Cached rows hold no sort
 # key, which is what lets one cache serve all three orderings.
 plugin_group_rows_emit() {
-  local src="$1" k
+  local src="$1" k label grp formats enabled value variants key
   while IFS=$'\t' read -r label grp formats enabled value variants key; do
     [[ -n $key ]] || continue
+    # Newest first for `date`: stat is only reached in that mode, so the other
+    # three cost nothing extra.
+    date=""
+    [[ $PLUGIN_SORT_MODE == date ]] && date="$(stat -c '%Y' "${value#vst:*:}" 2>/dev/null || echo 0)"
+    # Two keys, not one. The first orders the FOLDERS, the second orders the
+    # plugins inside each of them. One key could not do both: sorting by vendor
+    # ordered the folders and left every folder's contents in scan order, which
+    # is why only the groupings ever appeared to change when `s` was pressed.
     case "$PLUGIN_SORT_MODE" in
-      format) sortkey="$formats" ;;
-      name)   sortkey="$label" ;;
-      *)      sortkey="$grp" ;;
+      format) gkey="$grp|$formats"; skey="$formats" ;;
+      name)   gkey="$grp|$label";   skey="$label" ;;
+      date)   gkey="$grp|$date";    skey="$date" ;;
+      *)      gkey="$grp|$label";   skey="$label" ;;
     esac
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$sortkey" "$label" "$grp" "$formats" "$enabled" "$value" "$variants" "$key"
+    # NINE fields: skey, gkey, label, grp, formats, enabled, value, variants, key.
+    # The format string listed eight %s for nine arguments, so the LAST field —
+    # the canonical plugin_key every state lookup indexes on — was never printed,
+    # and every consumer read one field to the left of where it meant to.
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$skey" "$gkey" "$label" "$grp" "$formats" "$enabled" "$value" "$variants" "$key"
   done < "$src"
 }
 

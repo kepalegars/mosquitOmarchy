@@ -47,7 +47,7 @@ func (m *model) enterCmd() tea.Cmd {
 		m.pluginCache = nil
 		m.pluginChecked = nil
 		m.pluginOrig = nil
-		return fetchAllPlugins()
+		return fetchAllPluginsFor("plugins")
 	case scrUninstallPick:
 		m.loading = true
 		m.uninstallCache = nil
@@ -194,7 +194,7 @@ func (m *model) enterCmd() tea.Cmd {
 		m.loading = true
 		m.fixPluginCache = nil
 		m.fixAppliedPlugins = nil
-		return tea.Batch(fetchAllPlugins(), fetchAppliedFixPlugins())
+		return tea.Batch(fetchAllPluginsFor("fixes"), fetchAppliedFixPlugins())
 	case scrFixChoose:
 		m.loading = true
 		m.fixCache = nil
@@ -2000,7 +2000,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// `s` cycles the sort now that Left/Right fold folder rows
 			// (the old arrow-key sort binding). Intercepted here, before
 			// the picker ever sees the key.
-			return m, cycleSortCmd(stepSortMode(m.status.SortMode, 1))
+			return m, cycleSortForPage(sortPage(m.top()))
 		}
 		if pl, ok := msg.(pluginListMsg); ok {
 			m.loading = false
@@ -2130,7 +2130,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// `s` cycles the same vendor→name→format→date sort the
 			// Installed-plugins list uses; set-sort-and-list persists it
 			// and returns the freshly ordered rows.
-			return m, cycleSortCmd(stepSortMode(m.status.SortMode, 1))
+			return m, cycleSortForPage(sortPage(m.top()))
 		}
 		if pl, ok := msg.(pluginListMsg); ok {
 			m.loading = false
@@ -2647,7 +2647,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// open/collapse gesture on this screen). cycleSortCmd persists
 			// the mode and re-lists; the resulting pluginListMsg is
 			// converted back into the uninstall cache below.
-			return m, cycleSortCmd(stepSortMode(m.status.SortMode, 1))
+			return m, cycleSortForPage(sortPage(m.top()))
 		}
 		if it, ok := msg.(itemsMsg); ok && it.kind == "uninstall" {
 			m.loading = false
