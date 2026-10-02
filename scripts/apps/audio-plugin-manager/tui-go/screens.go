@@ -53,10 +53,6 @@ func (m *model) enterCmd() tea.Cmd {
 		m.uninstallCache = nil
 		m.uninstallChecked = map[string]bool{}
 		return fetchPluginFolders("uninstall")
-	case scrInstallPick:
-		m.loading = true
-		return fetchPath("pick-file", "pick-any-plugin-file")
-
 	case scrInstallPrefixChoice:
 		// The standard ask: default prefix first. When the installer matches a
 		// plugin the tests know, ALWAYS name the recommended prefix — even when
@@ -3506,14 +3502,15 @@ func (m model) handleMainChoice(v string) (tea.Model, tea.Cmd) {
 			// on top while the embedded file manager ran — and the frame it drew
 			// coming back was the home screen, which is the flash that survived
 			// the first fix.
-			m.push(scrInstallPick)
 			return m, pickFileViaSuperfileEmbedded(m.status.DownloadsDir)
 		}
-		// A screen of its own while the picker runs, so the main menu is never
-		// the thing that renders with a loading body — that one frame is the
-		// flash between "Install a plugin" and the prefix question.
-		m.push(scrInstallPick)
-		m.loading = true
+		// NOTHING is pushed and nothing is marked loading.
+		//
+		// Both were tried and both flash. Marking the main menu as loading drew
+		// one frame of the home screen with its options replaced by "loading…";
+		// pushing a transient screen drew one frame of THAT instead. The main
+		// menu left exactly as it was renders no flash at all, and the embedded
+		// file manager suspends the renderer for its whole duration anyway.
 		return m, fetchPath("pick-file", "pick-any-plugin-file")
 	case "uninstall":
 		m.push(scrUninstallPick)

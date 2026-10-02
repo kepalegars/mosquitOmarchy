@@ -1511,13 +1511,46 @@ other_wine_runtime(){
   printf '%s\n' "$here"
 }
 
+# fingerprint_of <file> — "mtime:size:md5": the cheap "did this change?" triple.
+#
+# md5 is enough here and not a security claim: the only question is whether the
+# bytes an installer left differ from the bytes it found.
+fingerprint_of(){
+  local f="$1"
+  printf '%s:%s:%s' "$(stat -c '%Y:%s' -- "$f" 2>/dev/null || echo 0)" \
+    "$(md5sum -- "$f" 2>/dev/null | cut -d' ' -f1)"
+}
+
+
 install_manager_app(){
   local file="$1" prefix="$2" exe name stem slug cand icon
   msg "This installer ships a manager, not a plugin — installing the manager."
-  WINEPREFIX="$prefix" "$(apm_wine)" "$file" || {
-    warn "the manager installer exited non-zero — nothing was installed."
-    return 1
-  }
+  msg "Wait for the Kilohearts installer to FINISH, then close it. Nothing is touched before that."
+  # Wait for the WINDOW, not for the exit code.
+  #
+  # A GUI installer exits non-zero as a matter of course — it returns whatever
+  # its own framework hands back — so reading the status reported Kilohearts as
+  # a failed install while it had in fact run. The process is followed and
+  # waited on, and its exit code is not consulted: what the user closing the
+  # window means is that it is DONE.
+  local -a _pids=()
+  WINEPREFIX="$prefix" "$(apm_wine)" "$file" &
+  local _pid=$!
+  _pids+=("$_pid")
+  local _tail
+  _tail="$(pgrep -P "$_pid" 2>/dev/null || true)"
+  [[ -n $_tail ]] && _pids+=($_tail)
+  local _p
+  for _p in "${_pids[@]}"; do
+    wait "$_p" 2>/dev/null || true
+  done
+  local _still
+  _still="$(pgrep -f "$(basename "${file%.exe}")" 2>/dev/null | head -1 || true)"
+  if [[ -n $_still ]]; then
+    msg "The installer window is still open — waiting for it to close."
+    while kill -0 "$_still" 2>/dev/null; do sleep 1; done
+  fi
+  msg "the installer closed — looking at what it brought."
   # The manager's own exe is whatever the installer just wrote that is not a
   # plugin and not an uninstaller.
   exe=""
@@ -1600,7 +1633,6 @@ install_plugin() {
   # story.
   if ((wine_rc != 0)); then
     warn "wine exited with code $wine_rc — the installer did not run, so nothing was installed."
-    rm -f "$before" "$after" "$before_pfx" "$after_pfx"
     if is_wine_version_mismatch "$wine_out"; then
       # Offer the other build rather than only explaining the problem.
       #
@@ -1618,9 +1650,11 @@ install_plugin() {
         wine_rc=0
       else
         warn "it also failed with $(basename "$other") — this prefix is held by a third build."
+        rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$before_state"
         return 1
       fi
     else
+      rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$before_state"
       return 1
     fi
   fi
@@ -1734,8 +1768,34 @@ install_plugin() {
     fi
   fi
 
-  rm -f "$before" "$after" "$before_pfx" "$after_pfx"
+  rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$before_state"
 
+
+  # What the installer rewrote, as opposed to created.
+  #
+  # "No new path appeared" is the wrong test on its own. An upgrade, a re-run
+  # after a failure and a repair all rewrite files that were already there:
+  # Smart Chain was attempted twice, the first dying on a wine mismatch after
+  # laying the bundle down and the second rewriting it, and the check called
+  # the second a failure while the plugin sat there unregistered. A plugin the
+  # installer actually rewrote HAS been installed.
+  local -a rewritten=()
+  while IFS= read -r _af; do
+    [[ -n $_af ]] || continue
+    local _old
+    _old="$(awk -F'\t' -v k="$_af" '$1==k {print $2"\t"$3; exit}' "$before_state" 2>/dev/null)"
+    [[ -n $_old ]] || continue
+    [[ "$_old" == "$(fingerprint_of "$_af")" ]] && continue
+    rewritten+=("$_af")
+  done < <(cat "$after" "$after_pfx" 2>/dev/null | sort -u)
+  if ((${#newfiles[@]} == 0)) && ((${#rewritten[@]})); then
+    msg "The installer rewrote ${#rewritten[@]} existing plugin file(s) — treating this as an upgrade:"
+    local _rw
+    for _rw in "${rewritten[@]}"; do
+      ok "updated: ${_rw##*/}"
+      newfiles+=("$_rw")
+    done
+  fi
 
   if ((${#newfiles[@]} == 0)); then
     # Reinstall/update: the plugin is already there and the installer rewrote
@@ -2123,7 +2183,22 @@ yabridge_state_json() {
 }
 
 post_install() {
-  yabridge_ensure force || true
+  # $1 = "defer-sync" when this is one plugin inside a batch.
+  #
+  # The batch runs uninstall_plugin once per selected plugin and each one used
+  # to call the FULL post-install: yabridge rebuild, the Sonible runtime fix on
+  # every prefix, the distro chainloader re-copy, and a complete
+  # `yabridgectl sync`. Removing twenty plugins therefore synced twenty times,
+  # which is most of why an uninstall felt so long — and each sync re-reads
+  # every prefix, so the cost grows with the batch.
+  #
+  # Nothing between two removals needs a sync: the folder state is already
+  # correct, and only the final state has to reach yabridge. The batch does it
+  # once, at the end.
+  local defer_sync="${1:-}"
+  if [[ $defer_sync == defer-sync ]]; then
+    yabridge_ensure force || true
+  fi
 
   local pf
   for pf in "${WINE_PREFIXES[@]:-}"; do
@@ -2567,7 +2642,7 @@ uninstall_target() {
 
   # 6. Clean up leftovers.
   remove_vst_dir "$target"
-  post_install
+  post_install "${APM_DEFER_SYNC:-}"
   ok "Done — see $qdir"
 
   # 7. An uninstall that empties its windows folder now drops the folder
@@ -5112,7 +5187,11 @@ plugin_group_rows_build() {
     # "Nectar 4", "Pro-Q 3"). It is anchored at the START of the name and
     # requires the version number, so a plain name ("Console", "De-clip")
     # never matches and stays directly under the vendor.
-    if [[ $grp_full != */* && $grp_full != native ]]; then
+    # Kilohearts ships one flat folder of products whose names are not product
+    # lines. Splitting "Analog Obsession" out of "Kilohearts" invents a
+    # structure the vendor does not have, so its products stay directly under
+    # the vendor.
+    if [[ $grp_full != */* && $grp_full != native && ${grp_full,,} != kilohearts ]]; then
       base="${key##*/}"
       if [[ $base =~ ^([A-Za-z]+[[:space:]]+[0-9]+) ]]; then
         grp="$grp_full/${BASH_REMATCH[1]}"

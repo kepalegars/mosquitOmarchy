@@ -537,14 +537,32 @@ PYWIZARD
     # the Go TUI) can remove several plugins of mixed origin in one go.
     (($#)) || { echo "at least one plugin required" >&2; exit 2; }
     rc=0
+    # ONE sync for the whole batch.
+    #
+    # Every plugin used to run the full post-install, and that ends in a
+    # complete `yabridgectl sync` which re-reads every prefix. Removing a suite
+    # therefore synced once per plugin — the bulk of the time an uninstall took.
+    # The removals are all that matters between the steps; only the final state
+    # has to reach yabridge, so it is synced once here.
+    # No `local` here: this dispatcher is a top-level `case`, not a function,
+    # and `local` outside a function is a hard bash error.
+    APM_DEFER_SYNC=1
+    export APM_DEFER_SYNC
+    _apm_ub_deferred=0
     for tgt in "$@"; do
       case "$tgt" in
-        vst:*)    uninstall_target "${tgt#vst:}" || rc=1 ;;
+        vst:*)    _apm_ub_deferred=1; uninstall_target "${tgt#vst:}" || rc=1 ;;
         win:*)    uninstall_target "win:${tgt#win:}" || rc=1 ;;
         native:*) uninstall_native_plugin "${tgt#native:}" || rc=1 ;;
         *)        echo "unrecognized target: $tgt" >&2; rc=1 ;;
       esac
     done
+    if ((_apm_ub_deferred)); then
+      msg "syncing once for the whole batch…"
+      unset APM_DEFER_SYNC
+      post_install
+    fi
+    unset _apm_ub_deferred
     exit $rc
     ;;
 
