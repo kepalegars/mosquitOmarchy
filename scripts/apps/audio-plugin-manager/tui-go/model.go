@@ -79,6 +79,7 @@ const (
 	scrPrefixMoveConfirm
 	scrMoving
 	scrStandalonePick
+	scrStandaloneManage // list the registered standalones, with a way to unregister one
 	scrExecsToggle
 	scrSuperfileInstallConfirm
 	scrSuperfileInstalling
@@ -525,6 +526,12 @@ func vstMenuItems(s Status) []tuikit.PickerItem {
 		{Display: "Hide VST2: " + hv, Value: "toggle_hide_vst2"},
 		{Display: "Hide 32-bit: " + h32, Value: "toggle_hide_32bit"},
 		{Display: "Manage visible executables in Omarchy Menu", Value: "execs"},
+		// Managing and REMOVING the registered standalones. The existing
+		// "Launch a standalone plugin" row can only run one; nothing could get
+		// rid of an entry whose plugin was uninstalled by hand, so they piled up
+		// as dead rows. This lists them with what each one is, and can remove
+		// the registration — the file on disk is never touched.
+		{Display: "Manage the standalone plugins", Value: "manage_standalones"},
 		{Display: "Back", Value: "back"},
 	}
 }

@@ -180,6 +180,9 @@ func (m *model) enterCmd() tea.Cmd {
 		m.launchExePrefix = currentDefaultPrefix()
 		m.loading = true
 		return fetchPrefixExes(m.launchExePrefix)
+	case scrStandaloneManage:
+		m.loading = true
+		return fetchManageStandalones()
 	case scrExecsToggle:
 		m.loading = true
 		return fetchExecToggle()
@@ -3021,6 +3024,54 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.picker, cmd = m.picker.Update(msg)
 		return m, cmd
 
+	case scrStandaloneManage:
+		if ms, ok := msg.(manageStandalonesMsg); ok {
+			m.loading = false
+			if ms.err != nil {
+				m.toast, _ = m.toast.SetErr(ms.err.Error())
+				return m, nil
+			}
+			if ms.items == nil {
+				// A removal came back with no list: ask again.
+				m.loading = true
+				return m, fetchManageStandalones()
+			}
+			if len(ms.items) == 0 {
+				m.info = tuikit.NewInfo("No standalone executable is registered any more.").SetSize(m.contentSize())
+				m.replace(scrInfo)
+				return m, nil
+			}
+			items := make([]tuikit.PickerItem, 0, len(ms.items))
+			for _, it := range ms.items {
+				label := it.Display
+				switch {
+				case it.Missing:
+					label += "  (file is gone)"
+				case it.Manager:
+					label += "  (plugin manager — open it from here)"
+				}
+				items = append(items, tuikit.PickerItem{Display: label, Value: it.Value})
+			}
+			m.rememberCursorHere()
+			m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
+				return tuikit.NewPicker("Registered standalones — enter removes the entry, the file is left alone:", items).
+					SetSize(m.contentSize()).
+					SetHelpKeys(key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "untrack")))
+			})
+			return m, nil
+		}
+		if res, ok := msg.(tuikit.PickerResultMsg); ok {
+			if res.Canceled {
+				m.pop()
+				return m, m.enterCmd()
+			}
+			m.rememberCursorHere()
+			return m, forgetStandaloneCmd(res.Value)
+		}
+		var cmd tea.Cmd
+		m.picker, cmd = m.picker.Update(msg)
+		return m, cmd
+
 	case scrExecsToggle:
 		if et, ok := msg.(execToggleMsg); ok {
 			m.loading = false
@@ -3553,6 +3604,9 @@ func (m model) handleVstMenuChoice(v string) (tea.Model, tea.Cmd) {
 		return m, m.enterCmd()
 	case "execs":
 		m.push(scrExecsToggle)
+		return m, m.enterCmd()
+	case "manage_standalones":
+		m.push(scrStandaloneManage)
 		return m, m.enterCmd()
 	case "toggle_hide_vst2":
 		return m, toggleHideVst2AndRefetch()

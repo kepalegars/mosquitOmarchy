@@ -123,6 +123,14 @@ func (m model) View() string {
 		title = screenTitle("Settings", m.contentSizeW())
 		body = m.picker.View()
 		bar = barLine(m.picker.ShortcutsHint())
+	case scrStandaloneManage:
+		title = screenTitle("Registered standalones", m.contentSizeW())
+		if m.loading {
+			body = "loading…"
+		} else {
+			body = m.picker.View()
+			bar = barLine(m.picker.ShortcutsHint())
+		}
 	case scrInstallPick:
 		title = screenTitle("Install a plugin", m.contentSizeW())
 		body = "waiting for the file picker…\n\nesc goes back"
