@@ -1041,6 +1041,18 @@ PYWIZARD
     echo "launched (standalone window may open)"
     ;;
 
+  list-managers)
+    # Managers are listed apart from the toggleable executables: they belong in
+    # "Launch a standalone plugin" and NOT in the Omarchy menu, because opening
+    # one from the menu drops the watcher that registers what it installs.
+    while IFS=$'\t' read -r base f; do
+      [[ -n $f ]] || continue
+      [[ -e $f ]] || continue
+      is_manager_exe "$f" || continue
+      jq -nc --arg display "$base" --arg value "$f" '{display:$display, value:$value, manager:true}'
+    done <<< "$(executable_list)"
+    ;;
+
   list-executables-toggle)
     while IFS=$'\t' read -r base f; do
       [[ -n $f ]] || continue

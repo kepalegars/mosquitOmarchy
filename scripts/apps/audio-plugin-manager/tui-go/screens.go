@@ -3044,9 +3044,11 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if tg, ok := msg.(tuikit.PickerToggleMsg); ok {
+			m.rememberCursorHere()
 			return m, toggleExecAndRefetch(tg.Value)
 		}
 		if am, ok := msg.(tuikit.PickerActionMsg); ok && am.Key == "x" {
+			m.rememberCursorHere()
 			return m, toggleExecAndRefetch(m.picker.SelectedValue())
 		}
 		if res, ok := msg.(tuikit.PickerResultMsg); ok {
@@ -3054,6 +3056,13 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pop()
 				return m, m.enterCmd()
 			}
+			// Remembered at the KEYSTROKE, not at the rebuild.
+			//
+			// The rebuild happens after an async round trip, by which time the
+			// cursor has had every chance to be somewhere else; capturing there
+			// made the restored row depend on state nothing controlled. The row
+			// you acted on is the row you are on, at the moment you act on it.
+			m.rememberCursorHere()
 			return m, toggleExecAndRefetch(res.Value)
 		}
 		var cmd tea.Cmd
@@ -3492,6 +3501,12 @@ func (m model) handleMainChoice(v string) (tea.Model, tea.Cmd) {
 		return m, m.enterCmd()
 	case "install":
 		if m.status.FilePicker == "superfile" && m.status.SuperfileInstalled {
+			// The transient screen here too. It was pushed only on the bash
+			// picker path, so with Superfile the main menu was still the screen
+			// on top while the embedded file manager ran — and the frame it drew
+			// coming back was the home screen, which is the flash that survived
+			// the first fix.
+			m.push(scrInstallPick)
 			return m, pickFileViaSuperfileEmbedded(m.status.DownloadsDir)
 		}
 		// A screen of its own while the picker runs, so the main menu is never

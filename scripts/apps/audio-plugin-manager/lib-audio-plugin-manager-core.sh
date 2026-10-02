@@ -1197,6 +1197,33 @@ is_manager_installer() {
 }
 
 # is_sonible_installer() — strong Sonible / "smart chain" / SmartEQ detection.
+# is_manager_exe <path> — a registered executable that is a plugin MANAGER.
+#
+# Managers are excluded from the Omarchy menu toggle for a reason that is not
+# cosmetic: launching one from there drops the watcher that registers the
+# plugins it installs. It is remembered in the log rather than worked out from
+# the file, because the manager was recognised at INSTALL time by the installer
+# that brought it, and that is not something the executable's name can say.
+# state_mark_manager <stem> — remember that a registered executable is a
+# manager, so it can be listed apart from the toggleable ones. Kept in the log
+# because the manager was recognised at INSTALL time by the installer that
+# brought it, and nothing about the file says so afterwards.
+state_mark_manager(){
+  local stem="$1" tmp
+  state_init
+  tmp=$(mktemp)
+  jq -S --arg s "$stem" '.managers = ((.managers // {}) | .[$s] = true)' "$STATE_FILE" > "$tmp" \
+    && mv "$tmp" "$STATE_FILE"
+}
+
+is_manager_exe(){
+  local f="${1:-}" base stem
+  [[ -n $f ]] || return 1
+  state_compatible || return 1
+  base="${f##*/}"; stem="${base%.*}"
+  jq -e --arg s "$stem" '.managers[$s] // empty' "$STATE_FILE" >/dev/null 2>&1
+}
+
 is_sonible_installer() {
   local f="$1" low
   low="$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')"
@@ -1402,17 +1429,26 @@ apm_wine() {
 # The sweep is a plain loop on the same principle as adopt-plugins: it is
 # non-destructive, idempotent, and a plugin already registered is skipped.
 watch_for_plugins(){
-  local exe="$1" prefix="$2" -p_secs=2 pid alive
-  msg "Watching the plugins folder while the manager is open — close it to stop."
+  local exe="$1" prefix="$2" _p_secs=2 pid before after
+  # Snapshot what is already tracked, so what the manager ADDS can be named.
+  before="$(plugin_group_rows 2>/dev/null | cut -f9 | sort -u)"
+  msg "Open the manager and install what you want; nothing is touched until you close it."
   WINEPREFIX="$prefix" "$(apm_wine)" "$exe" &
   pid=$!
-  while kill -0 "$pid" 2>/dev/null; do
-    sleep "$_p_secs"
-    adopt_plugins_silent || true
-  done
   wait "$pid" 2>/dev/null || true
-  ok "manager closed — adopting anything left behind"
+  # ONE sweep, at the end.
+  #
+  # Not a loop while it is open: an install from a GUI manager writes files
+  # across seconds, and reading the folder mid-write can register a half-written
+  # bundle. Waiting until the app is closed means every file it produced is
+  # complete, and the folder is not being touched by anything.
+  after="$(plugin_group_rows 2>/dev/null | cut -f9 | sort -u)"
+  local added
+  added="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | grep -c . || true)"
+  msg "manager closed — registering what it installed"
   adopt_plugins_silent || true
+  ok "registered $added plugin(s) from the manager"
+  return 0
 }
 
 # adopt_plugins_silent is adopt-plugins' body with no output, for the watcher.
@@ -1449,6 +1485,32 @@ adopt_plugin_rows(){
   return 0
 }
 
+# is_wine_version_mismatch <wine output> — the client/server build disagreement.
+#
+# Recognised by its own text so it can be told apart from an installer that ran
+# and failed on its own terms, which is a different problem with a different
+# answer.
+is_wine_version_mismatch(){
+  [[ "$1" == *"version mismatch"* ]] && return 0
+  return 1
+}
+
+# other_wine_runtime — the wine build this one is not.
+#
+# The default runtime is whatever Settings says; the other is the one available
+# beside it. It is a PATH lookup rather than a fixed path so it follows the
+# machine instead of a layout.
+other_wine_runtime(){
+  local here other
+  here="$(apm_wine)"
+  other="$(command -v wine 2>/dev/null || true)"
+  [[ -n $other && $other != "$here" ]] && { printf '%s\n' "$other"; return 0; }
+  # Nothing else on PATH: try the ableton runtime by hand.
+  local alt="$HOME/.local/opt/wine-d2d1-nspa-11.13/bin/wine"
+  [[ -x $alt && $alt != "$here" ]] && { printf '%s\n' "$alt"; return 0; }
+  printf '%s\n' "$here"
+}
+
 install_manager_app(){
   local file="$1" prefix="$2" exe name stem slug cand icon
   msg "This installer ships a manager, not a plugin — installing the manager."
@@ -1470,23 +1532,20 @@ install_manager_app(){
     return 1
   fi
   name="$(basename "$exe")"; stem="${name%.exe}"
+  # NO menu entry. The manager is only ever opened THROUGH the plugin manager —
+  # that is what keeps the adoption sweep attached to it — so a standalone
+  # Omarchy entry would be a way to launch it that silently skips that. It is
+  # listed under "Launch a standalone plugin" instead.
   state_register_standalone "$stem" "$exe"
-  mkdir -p "$APPS_DIR"
-  slug="$APPS_DIR/$DESKTOP_SLUG-$(printf '%s' "$stem" | tr ' ' '-' | tr -cd '[:alnum:]-').desktop"
-  icon="$(standalone_icon_for "$exe")"
-  cat > "$slug" <<EOF
-[Desktop Entry]
-Name=$stem
-Comment=Plugin manager (installed by mosquito Audio Plugin Manager)
-Exec=uwsm app -- mosquito-audio-plugin-manager launch "$exe"
-Icon=$icon
-Terminal=false
-Type=Application
-Categories=AudioVideo;Audio;
-StartupNotify=false
-EOF
-  ok "manager registered: $stem"
+  state_mark_manager "$stem"
+  ok "manager installed into the prefix and tracked: $stem"
   printf 'manager-exe: %s\n' "$exe"
+  printf 'manager-note: %s is a plugin MANAGER, not a plugin.\n' "$stem"
+  printf 'manager-note: It is listed under "Launch a standalone plugin" and is opened from there.\n'
+  printf 'manager-note: Opening it from here keeps the plugins folder watched, so every\n'
+  printf 'manager-note: vst2/vst3 it installs is registered as it appears.\n'
+  printf 'manager-note: There is deliberately no Omarchy menu entry for it: launching it\n'
+  printf 'manager-note: from the menu would drop the watcher.\n'
   return 0
 }
 
@@ -1528,8 +1587,9 @@ install_plugin() {
   fi
 
   msg "Running $file through wine ($(apm_wine_runtime) runtime; prefix: $wine_prefix — the installer shows its own window)…"
-  local wine_rc=0
-  WINEPREFIX="$wine_prefix" "$(apm_wine)" "$file" || wine_rc=$?
+  local wine_rc=0 wine_out=""
+  wine_out="$(WINEPREFIX="$wine_prefix" "$(apm_wine)" "$file" 2>&1)" || wine_rc=$?
+  [[ -n $wine_out ]] && printf '%s\n' "$wine_out" >&2
   # A wine that exits non-zero is the FAILURE, and it must be reported as such.
   #
   # It used to be a warning that continued, and then the "no new file" check
@@ -1540,15 +1600,29 @@ install_plugin() {
   # story.
   if ((wine_rc != 0)); then
     warn "wine exited with code $wine_rc — the installer did not run, so nothing was installed."
-    local wb
-    wb="$(basename "$(apm_wine)")"
-    warn "That usually means the wine build that owns this prefix does not match $wb."
-    warn "  this runtime : $wb ($("$wb" --version 2>/dev/null | head -1))"
-    warn "  system wine  : $(command -v wine) ($(wine --version 2>/dev/null | head -1))"
-    warn "A wineserver left running by the other build is the usual cause; it is per-prefix,"
-    warn "so anything already open from this prefix must be closed, then install again."
     rm -f "$before" "$after" "$before_pfx" "$after_pfx"
-    return 1
+    if is_wine_version_mismatch "$wine_out"; then
+      # Offer the other build rather than only explaining the problem.
+      #
+      # The mismatch is a wine client/server disagreement, and the other build
+      # is very often the one that works: a prefix written by the system wine
+      # then installed to with a different runtime is exactly this. Proposing it
+      # costs nothing and is the thing that actually unblocks the install — for
+      # this installer AND for every other that trips the same wire.
+      local other other_ver
+      other="$(other_wine_runtime)"
+      other_ver="$("$other" --version 2>/dev/null | head -1)"
+      msg "wine version mismatch — the other build is $(basename "$other") ($other_ver)."
+      msg "Retrying the same installer with it, just for this run (your setting is unchanged)."
+      if WINEPREFIX="$wine_prefix" "$other" "$file"; then
+        wine_rc=0
+      else
+        warn "it also failed with $(basename "$other") — this prefix is held by a third build."
+        return 1
+      fi
+    else
+      return 1
+    fi
   fi
 
   list_shared_plugin_files > "$after" 2>/dev/null || true

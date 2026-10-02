@@ -381,9 +381,16 @@ func (m *model) rebuildPicker(build func(tuikit.Picker) tuikit.Picker) {
 	// test that distinguishes an in-place rebuild (capture) from an entry
 	// rebuild (do not).
 	if m.pickerHasRowIn(next) {
-		m.cursor.RememberIfAbsent(key, m.picker)
+		m.cursor.Remember(key, m.picker)
 	}
 	m.picker = m.cursor.Restore(key, next)
+}
+
+// rememberCursorHere files where the cursor is RIGHT NOW for the screen on top,
+// unconditionally — this is the "you acted on this row, stay here" half of the
+// cursor memory, taken at the keystroke rather than at the rebuild.
+func (m *model) rememberCursorHere() {
+	m.cursor.Remember(screenKey(m.top()), m.picker)
 }
 
 // pickerHasRowIn reports whether the outgoing picker shares a row with the
