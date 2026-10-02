@@ -4481,16 +4481,14 @@ plugin_group_rows_build() {
     grp_full="${grp_full#VST2/}"; grp_full="${grp_full#VST3/}"; grp_full="${grp_full#CLAP/}"
     # Vendor/subgrouping: for vendors with multiple product lines (Izotope, etc.)
     # the vendor becomes the top-level group, subfolder becomes the subgroup.
-    case "$grp_full" in
-      Izotope/*|iZotope/*)
-        vendor="Izotope"
-        sub="${grp_full#*/}"
-        grp="$vendor/$sub"
-        ;;
-      *)
-        grp="$grp_full"
-        ;;
-    esac
+    if [[ $grp_full == */* ]] && [[ $grp_full != native ]]; then
+      vendor="${grp_full%%/*}"
+      sub="${grp_full#*/}"
+      # Capitalize first letter nicely for common cases? Keep as-is mostly
+      grp="$vendor/$sub"
+    else
+      grp="$grp_full"
+    fi
 
     if [[ -z ${g_any[$key]:-} ]]; then
       g_any[$key]=1
