@@ -1551,9 +1551,15 @@ install_manager_app(){
   # being the same thing. A copy taken first is stable for the whole session and
   # is what the manager is tracked as afterwards, so reopening it later works
   # even if the original is gone.
-  local src="$file" base="${file##*/}" dst_dir dst
-  dst_dir="$prefix/drive_c/ProgramData/$(dirname "$base")"
-  dst_dir="$prefix/drive_c/ProgramData/$(basename "$base" .exe)"
+  local src="$file" base="${file##*/}" stem dst_dir dst vendor
+  stem="$(basename "$base" .exe)"
+  # The vendor is the name without its role suffix — "Kilohearts Installer"
+  # belongs under ProgramData/Kilohearts, not a folder of its own called
+  # "Kilohearts Installer". When the prefix already has that folder, that is
+  # where the app keeps itself and the copy belongs there too.
+  vendor="${stem% Installer}"
+  [[ $vendor == "$stem" ]] && vendor="$stem"
+  dst_dir="$prefix/drive_c/ProgramData/$vendor"
   mkdir -p "$dst_dir" 2>/dev/null || true
   dst="$dst_dir/$base"
   if cp -a "$src" "$dst" 2>/dev/null; then
@@ -2679,8 +2685,20 @@ uninstall_target() {
   sleep 1
 
   # 2. Quarantine the wine folder (leave the original untouched).
+  #
+  # ONCE per folder, not once per plugin. A suite is forty plugins in ONE wine
+  # program folder, and copying that folder — hundreds of megabytes — happened
+  # for each of them: forty identical copies into forty separate quarantine
+  # directories. The first copy of a folder is the one that matters, since the
+  # source is not touched until the batch ends.
   if [[ -n $winedir && -d $winedir ]]; then
-    cp -a "$winedir" "$qdir/" 2>/dev/null && ok "windows folder → quarantine"
+    if [[ -n ${APM_SEEN_FOLDERS:-} && $APM_SEEN_FOLDERS == *"|$winedir|"* ]]; then
+      msg "windows folder already quarantined this run: ${winedir##*/}"
+    elif cp -a "$winedir" "$qdir/" 2>/dev/null; then
+      ok "windows folder → quarantine"
+      APM_SEEN_FOLDERS="${APM_SEEN_FOLDERS:-}|$winedir|"
+      export APM_SEEN_FOLDERS
+    fi
   fi
 
   # 3. Quarantine + remove the plugin files from ~/VST whose folder matches
@@ -2765,7 +2783,11 @@ uninstall_target() {
   # 6. Clean up leftovers.
   remove_vst_dir "$target"
   post_install "${APM_DEFER_SYNC:-}"
-  ok "Done — see $qdir"
+  if [[ -n ${APM_SEEN_FOLDERS:-} && $APM_SEEN_FOLDERS == *"|$winedir|"* ]]; then
+    ok "Done"
+  else
+    ok "Done — see $qdir"
+  fi
 
   # 7. An uninstall that empties its windows folder now drops the folder
   #    itself: it was already copied WHOLE into the quarantine (step 2), so

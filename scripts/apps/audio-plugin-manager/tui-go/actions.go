@@ -149,6 +149,13 @@ type ExecToggleItem struct {
 	Display string `json:"display"`
 	Value   string `json:"value"`
 	Shown   bool   `json:"shown"`
+	// Manager marks a plugin MANAGER rather than a plugin editor. It is opened
+	// through the plugin manager on purpose: that is what keeps the plugins
+	// folder watched while it runs.
+	Manager bool `json:"manager"`
+	// Missing is true when the registered file is no longer on disk — the
+	// stale row that could neither be run nor removed.
+	Missing bool `json:"missing"`
 }
 
 // PluginItem is one row of the unified Plugin list -- list-all-plugins /
@@ -854,6 +861,44 @@ func fetchAllPluginsFor(page string) tea.Cmd {
 		}
 		items, err := decodeJSONLines[PluginItem](out)
 		return pluginListMsg{items: items, err: err}
+	}
+}
+
+// manageStandalonesMsg is the list of registered standalones.
+type manageStandalonesMsg struct {
+	items []ExecToggleItem
+	err   error
+}
+
+// fetchManageStandalones lists what is registered, flagging the ones whose file
+// is gone — those are the rows nobody could get rid of, because launching them
+// does nothing and nothing ever offered to forget them.
+func fetchManageStandalones() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("list-managers")
+		if err != nil {
+			return manageStandalonesMsg{err: err}
+		}
+		managers, _ := decodeJSONLines[ExecToggleItem](out)
+		out2, err2 := runQuick("list-standalones-detailed")
+		if err2 != nil {
+			return manageStandalonesMsg{err: err2}
+		}
+		items, _ := decodeJSONLines[ExecToggleItem](out2)
+		for _, m := range managers {
+			items = append(items, m)
+		}
+		return manageStandalonesMsg{items: items}
+	}
+}
+
+// forgetStandaloneCmd drops one registration. The FILE is never touched: this
+// is untracking, not uninstalling, which is the difference between clearing a
+// stale row and deleting a plugin.
+func forgetStandaloneCmd(exe string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := runQuick("forget-standalone", exe)
+		return manageStandalonesMsg{items: nil, err: err}
 	}
 }
 

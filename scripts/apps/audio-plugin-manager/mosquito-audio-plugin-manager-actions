@@ -548,6 +548,9 @@ PYWIZARD
     # and `local` outside a function is a hard bash error.
     APM_DEFER_SYNC=1
     export APM_DEFER_SYNC
+    # A fresh run has not quarantined anything yet.
+    APM_SEEN_FOLDERS=
+    export APM_SEEN_FOLDERS
     _apm_ub_deferred=0
     for tgt in "$@"; do
       case "$tgt" in
@@ -1057,6 +1060,30 @@ PYWIZARD
     setsid wine start /unix "$exe" >/dev/null 2>&1 &
     disown
     echo "launched (standalone window may open)"
+    ;;
+
+  list-standalones-detailed)
+    # Every registered standalone, saying whether its file is still there and
+    # whether it is a manager, so a stale row can be told from a live one.
+    while IFS=$'\t' read -r base f; do
+      [[ -n $f ]] || continue
+      miss=false
+      [[ -e $f ]] || miss=true
+      mgr=false
+      is_manager_exe "$f" && mgr=true
+      jq -nc --arg display "$base" --arg value "$f" \
+             --argjson missing "$miss" --argjson manager "$mgr" \
+        '{display:$display, value:$value, missing:$missing, manager:$manager}'
+    done <<< "$(executable_list)"
+    ;;
+
+  forget-standalone)
+    # Untrack one executable. The file stays where it is: this clears a row,
+    # it does not uninstall anything.
+    exe="${1:?exe path required}"
+    base="${exe##*/}"
+    state_forget_standalone "$base" || true
+    jq -nc --arg v "$exe" '{forgotten:$v}'
     ;;
 
   list-managers)
