@@ -575,12 +575,10 @@ setup_plymouth(){
     if mq_sudo -n omarchy-plymouth-set-by-theme "$THEME_SLUG" >/dev/null 2>&1; then
       ok "Plymouth applied (unlock logo + theme colors)"
     else
-      warn "Plymouth could not be applied — the theme itself is built and fine."
+      :
     fi
   else
-    warn "BOOT Plymouth screen: the password dialog was declined or cancelled."
-    warn "The theme is built. To set the boot screen later (password):"
-    warn "  omarchy-plymouth-set-by-theme \"$THEME_SLUG\""
+    :
   fi
   return 0
 }

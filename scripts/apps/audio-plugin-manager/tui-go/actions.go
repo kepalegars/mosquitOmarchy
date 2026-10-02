@@ -1485,14 +1485,14 @@ func (m model) afterInstallFixesPrompt(msg installFixesCheckMsg) (model, tea.Cmd
 	// applying reads as a veto on the whole thing. So it says what it does —
 	// skip the page — and the "Yes" side names the scope, which is what the user
 	// actually decides on.
-	if msg.vendor != "" {
+	if true {
 		m.confirm = tuikit.NewConfirm(
-			"Plugin installed. Open the fixes page for the whole "+msg.vendor+" category?",
-			"No (skip the fixes page)", "Yes, open it for "+msg.vendor)
+			"Plugin installed. Open the fixes page?",
+			"Back", "Open the fixes page")
 	} else {
 		m.confirm = tuikit.NewConfirm(
-			"Plugin installed. Open the fixes page for "+baseName(pluginPathOf(msg.plugin))+"?",
-			"No (skip the fixes page)", "Yes, open it")
+			"Plugin installed. Open the fixes page?",
+			"Back", "Open the fixes page")
 	}
 	m.replace(scrInstallFixesConfirm)
 	return m, nil

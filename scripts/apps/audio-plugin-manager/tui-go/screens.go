@@ -82,7 +82,7 @@ func (m *model) enterCmd() tea.Cmd {
 		switch {
 		case knownPluginInstaller(m.installFile) && rec != "":
 			def := m.installDefaultPrefix
-			extra := "\n\nKnown plugin — RECOMMENDED prefix: " + rec
+			extra := "\n\n" + rec
 			if rec == def {
 				extra += "\n(this is the default prefix)"
 			} else {
@@ -94,7 +94,7 @@ func (m *model) enterCmd() tea.Cmd {
 		case knownPluginInstaller(m.installFile):
 			m.confirm = tuikit.NewConfirm(
 				"Install into the DEFAULT wine prefix?"+
-					"\n\nKnown plugin, but no recorded recommendation for this file.",
+					"\n\n",
 				noPrefixLabel, yesUseLabel).SetFocus(1)
 		default:
 			m.confirm = tuikit.NewConfirm(

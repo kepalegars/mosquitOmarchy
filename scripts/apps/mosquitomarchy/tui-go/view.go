@@ -10,7 +10,7 @@ import (
 
 // appVersion is the version of this SCRIPT (the mosquitOmarchy module), shown
 // top-left on the first page. It is not the version of anything it installs.
-const appVersion = "1.0.0"
+const appVersion = "0.1.0"
 
 // contentPolicy is the shared sizing policy (tuikit.ManagerContent). Declared
 // here once so the setup TUI and the four managers agree on how wide and how
