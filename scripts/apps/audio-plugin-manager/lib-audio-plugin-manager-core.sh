@@ -1544,12 +1544,22 @@ install_manager_app(){
   for _p in "${_pids[@]}"; do
     wait "$_p" 2>/dev/null || true
   done
-  local _still
-  _still="$(pgrep -f "$(basename "${file%.exe}")" 2>/dev/null | head -1 || true)"
-  if [[ -n $_still ]]; then
-    msg "The installer window is still open — waiting for it to close."
-    while kill -0 "$_still" 2>/dev/null; do sleep 1; done
-  fi
+  # Wait on the processes we actually started, never on a NAME.
+  #
+  # `pgrep -f <name>` matches the waiting loop's own command line — it contains
+  # the installer's basename — so the loop waited for itself and the whole thing
+  # hung after the window had long gone. The wine process tree is followed with
+  # the pids already collected, plus one re-scan for a wineserver that outlived
+  # its client, and only those are waited on.
+  local _p _desc
+  for _p in "${_pids[@]}"; do
+    [[ -n $_p ]] || continue
+    if kill -0 "$_p" 2>/dev/null; then
+      _desc="installer (pid $_p)"
+      msg "$_desc is still running — waiting for it to close."
+      while kill -0 "$_p" 2>/dev/null; do sleep 1; done
+    fi
+  done
   msg "the installer closed — looking at what it brought."
   # The manager's own exe is whatever the installer just wrote that is not a
   # plugin and not an uninstaller.
@@ -2195,8 +2205,16 @@ post_install() {
   # Nothing between two removals needs a sync: the folder state is already
   # correct, and only the final state has to reach yabridge. The batch does it
   # once, at the end.
-  local defer_sync="${1:-}"
-  if [[ $defer_sync == defer-sync ]]; then
+  # Accepts either the word or a plain flag: the batch exports 1, and the
+  # comparison used to be against the word alone, so the deferral never matched
+  # and every removal synced again — the exact thing it was added to stop.
+  # $1 is the flag the caller passes; APM_DEFER_SYNC is the environment the
+  # batch exports. `VAR=1 func` sets the variable only for the duration of a
+  # SIMPLE command — it does not put it in the function's environment — so
+  # reading only $1 worked and reading only the environment did not. Both are
+  # read, so either caller is right.
+  local defer_sync="${1:-${APM_DEFER_SYNC:-}}"
+  if [[ $defer_sync == defer-sync || $defer_sync == 1 ]]; then
     yabridge_ensure force || true
   fi
 
@@ -2205,14 +2223,22 @@ post_install() {
     fix_sonible_runtime_deps "$pf"
   done
   fix_sonible_runtime_deps "$(default_prefix)"
-  yabridge_pin_yabridgectl
-  if command -v yabridgectl >/dev/null; then
-    yabridgectl sync >/dev/null 2>&1 && ok "yabridgectl sync OK"
+  # Deferred in a batch, like the sync: re-linking every prefix and re-fixing
+  # the runtime once per removed plugin is the same cost, repeated.
+  if [[ $defer_sync != defer-sync && $defer_sync != 1 ]]; then
+    yabridge_pin_yabridgectl
+    if command -v yabridgectl >/dev/null; then
+      yabridgectl sync >/dev/null 2>&1 && ok "yabridgectl sync OK"
+    fi
   fi
   local linker="$SCRIPT_DIR/link-vst-shared.sh"
   if [[ ! -x $linker ]]; then
     # Deployed copy: resolve the module folder from the repo path convention.
     linker="$HOME/mosquitOmarchy/scripts/apps/audio-plugin-manager/link-vst-shared.sh"
+  fi
+  if [[ $defer_sync == defer-sync || $defer_sync == 1 ]]; then
+    # Nothing to link until the batch is over; the batch's final call does it.
+    return 0
   fi
   if [[ -x $linker ]]; then AUDIOSTACK_VST_ROOT="$VST_ROOT" bash "$linker" >/dev/null 2>&1 && ok "VST prefixes linked"; fi
 }
