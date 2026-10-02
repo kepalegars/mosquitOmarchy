@@ -475,13 +475,21 @@ PYWIZARD
       # ("win:/…/FabFilter"), which that set never contains, so every plugin came
       # out parentless: the vendor row showed a 0/N count and expanding it
       # revealed nothing.
+      # The group column is "vendor" or "vendor/subgroup" (a suite that keeps
+      # several product lines in one folder). The vendor is the TREE's top
+      # level; the subgroup is a folder INSIDE it. Emitting "iZotope/Neutron 5"
+      # as the folder itself produced two sibling iZotope rows instead of one
+      # you can open, which is not what "sorted inside the vendor" means.
       while IFS=$'\t' read -r _sk _label grp formats enabled value _variants _key; do
         [[ -n $value ]] || continue
-        printf 'p\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-          "$_label" "$value" "$grp" "$formats" "$enabled" "$_variants" "$(_wpm_parent_lookup "$value")"
+        vendor="${grp%%/*}"
+        subgroup=""
+        [[ $grp == */* ]] && subgroup="${grp#*/}"
+        printf 'p\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+          "$_label" "$value" "$vendor" "$formats" "$enabled" "$_variants" "$(_wpm_parent_lookup "$value")" "$subgroup"
       done < "$_apm_g"
-      # One folder row per vendor, the tree's top level.
-      awk -F'\t' '{print $3}' "$_apm_g" | sort -u | while IFS= read -r grp; do
+      # One folder row per VENDOR (never per subgroup), the tree's top level.
+      awk -F'\t' '{sub(/\/.*$/, "", $3); print $3}' "$_apm_g" | sort -u | while IFS= read -r grp; do
         [[ -n $grp ]] || continue
         printf 'f\t%s\tvendor:%s\n' "$([[ $grp == native ]] && printf Native || printf '%s' "$grp")" "$grp"
       done
@@ -493,7 +501,8 @@ PYWIZARD
             else
               {display: .[1], value: .[2], kind: "plugin", vendor: .[3],
                formats: .[4], enabled: (.[5] == "true"), variants: .[6],
-               parent: ("vendor:" + .[3]), wineParent: .[7]}
+               parent: ("vendor:" + .[3]), wineParent: .[7],
+               group: (if (.[8] // "") == "" then null else .[8] end)}
             end)[]'
     rm -f "$_apm_g" "$_apm_v"
     ;;

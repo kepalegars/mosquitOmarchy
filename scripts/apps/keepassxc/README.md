@@ -1,4 +1,4 @@
-# KeePassXC v1.0.0 — system Secret Service (replaces gnome-keyring)
+# keepassxc — system Secret Service (replaces gnome-keyring)
 
 `setup-keepassxc-integration.sh` makes **KeePassXC** the desktop's system-wide
 Secret Service provider (the D-Bus `org.freedesktop.secrets` name) in place of

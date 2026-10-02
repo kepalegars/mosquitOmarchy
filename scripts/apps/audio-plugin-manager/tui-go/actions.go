@@ -87,6 +87,19 @@ type Item struct {
 	// emit for a plugin present in three formats: the user asked for the name
 	// and the formats, not the same name three times.
 	Formats string `json:"formats"`
+	// Group is the product line inside the vendor ("Neutron 5", "RX 11") for a
+	// suite that keeps several products in one folder. It is a level INSIDE the
+	// vendor folder, not a folder of its own: the tree shows
+	//
+	//	iZotope
+	//	├─ Neutron 5
+	//	│  ├─ Neutron 5 Sculptor
+	//	└─ RX 11
+	//	   └─ RX 11 Connect
+	//
+	// Emitting "iZotope/Neutron 5" as the folder value instead produced two
+	// sibling rows both labelled iZotope, so there was no iZotope to open.
+	Group string `json:"group"`
 }
 
 // FormatSuffix renders the format list for a plugin row, or "" when there is

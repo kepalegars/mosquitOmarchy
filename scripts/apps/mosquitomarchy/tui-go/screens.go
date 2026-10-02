@@ -297,7 +297,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.themeLog = defaultThemeLog()
 				m.pendingAction = ""
 				m.themeDonePicker = m.rebuildThemeDone()
-				m.push(scrThemeDone)
+				// REPLACE, not push. The runner screen is still underneath:
+				// startWorking replaced the stack with [working], and pushing
+				// here made it [working, done]. "Back" then popped the done
+				// screen and landed the user back on the runner -- the raw log,
+				// no frame, nothing to press. It read as "Back takes me to the
+				// log and traps me there", which is exactly what it did. The
+				// runner's work is finished, so its screen is what the success
+				// screen should take over from: [done] over [main].
+				m.replace(scrThemeDone)
 				return m, nil
 			}
 			// A global uninstall also removes the keybindings the user ticked
@@ -335,8 +343,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		return m, nil
 
 	case themeCreateMsg:
-		// Only reachable from the Apply row, which runs through the runner
-		// now, so the working screen is a normal one and Esc leaves it.
+		// The apply finished. The runner screen replaced the main menu, so
+		// drop it: the user is back at the menu they started from, with the
+		// confirmation as a toast. Leaving the runner on the stack made Esc
+		// pop an empty stack instead of the menu.
+		m.nav = []screen{scrMain}
+		m.themeApplyName = ""
 		if msg.err != nil {
 			m.toast, _ = m.toast.SetErr("could not apply: " + msg.err.Error())
 			return m, nil
