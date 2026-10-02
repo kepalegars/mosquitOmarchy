@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -137,10 +138,10 @@ type model struct {
 	launchExePrefix string
 	// prefixPrefChoice is the prefix picked in Settings before the risk prompt.
 	prefixPrefChoice string
-	moveKey         string
-	moveFrom        string
-	moveTo          string
-	moveNew                  bool
+	moveKey          string
+	moveFrom         string
+	moveTo           string
+	moveNew          bool
 
 	// unified Plugin list (scrPluginList): pluginCache is the last fetched
 	// row set, pluginChecked is the in-progress hide/show mark per row
@@ -177,13 +178,16 @@ type model struct {
 	// this set is never force-opened again.
 	folderFoldedByUser map[string]bool
 
-
 	// Global search (shift+F) state, shared where applicable
-	fixPromptPlugin  string
-	fixPromptName    string
-	installFixItems  []FixItem
+	fixPromptPlugin       string
+	fixPromptName         string
+	installFixItems       []FixItem
 	pendingInstallSuccess bool
-	installLog           string
+	installLog            string
+
+	// cursor remembers where the cursor was on each list, so leaving and
+	// coming back does not send the user to the top of the column again.
+	cursor *tuikit.CursorMemory
 
 	filterOpen bool
 	filterText string
@@ -308,23 +312,56 @@ func initialModel() model {
 	m := model{nav: []screen{scrMain}}
 	m.picker = tuikit.NewPicker("", nil)
 	m.runner = tuikit.NewRunner()
+	m.cursor = tuikit.NewCursorMemory()
 	return m
 }
 
-func (m model) Init() tea.Cmd { return tea.Batch(fetchStatus(), tuikit.ThemeWatchCmd()) }
+// screenKey is the name the cursor memory files a screen's position under. It
+// is the screen itself, so two pickers on one screen never share a row and a
+// rebuilt list finds its own position without the call site naming anything.
+//
+// push/pop remember where the cursor was BEFORE the screen changed, which is
+// what makes "leave and come back" work for every list at once rather than only
+// for the ones somebody remembered to restore.
+// screenKey names a screen for the cursor memory. screen is an int, so
+// string(...) would hand the kit one rune; the decimal name is stable and
+// readable in a dump.
+func screenKey(s screen) string { return strconv.Itoa(int(s)) }
 
-func (m model) top() screen       { return m.nav[len(m.nav)-1] }
-func (m *model) push(s screen) { m.nav = append(m.nav, s) }
-func (m *model) replace(s screen) {
-	m.nav[len(m.nav)-1] = s
-	m.syncPickerToTop()
+func (m *model) push(s screen) {
+	m.cursor.Remember(screenKey(m.top()), m.picker)
+	m.nav = append(m.nav, s)
 }
+
 func (m *model) pop() {
+	m.cursor.Remember(screenKey(m.top()), m.picker)
 	if len(m.nav) > 1 {
 		m.nav = m.nav[:len(m.nav)-1]
 	}
 	m.toast = m.toast.ClearNonCritical()
 	m.syncPickerToTop()
+	m.picker = m.cursor.Restore(screenKey(m.top()), m.picker)
+}
+
+func (m model) Init() tea.Cmd { return tea.Batch(fetchStatus(), tuikit.ThemeWatchCmd()) }
+
+func (m model) top() screen { return m.nav[len(m.nav)-1] }
+func (m *model) replace(s screen) {
+	m.nav[len(m.nav)-1] = s
+	m.syncPickerToTop()
+}
+
+// rebuildPicker swaps in a picker built from fresh data while keeping the
+// cursor where it was.
+//
+// The memory has to be captured BEFORE the old picker is overwritten — a fresh
+// Picker carries no position, so restoring afterwards without saving first
+// restores nothing. Every rebuild site goes through here, which is what makes
+// the behaviour uniform instead of a thing each list has to remember.
+func (m *model) rebuildPicker(build func(tuikit.Picker) tuikit.Picker) {
+	key := screenKey(m.top())
+	m.cursor.RememberIfAbsent(key, m.picker)
+	m.picker = m.cursor.Restore(key, build(m.picker))
 }
 
 // syncPickerToTop rebuilds the SHARED picker for whichever screen is now on

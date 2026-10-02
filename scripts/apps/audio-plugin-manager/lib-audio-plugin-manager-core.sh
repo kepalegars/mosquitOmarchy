@@ -671,6 +671,42 @@ standalone_icon_for() {
       return 0
     fi
   fi
+  # No vendor art: a music note, in the accent colour, written ONCE. Not a
+  # generic theme icon, which reads as "this entry has no icon" — and not a
+  # broken path either, which renders as a tofu box in the menu.
+  fallback_music_note
+}
+
+# fallback_music_note draws the placeholder icon: a beamed eighth note in the
+# accent colour, cached like a real one so Icon= always points at a file.
+fallback_music_note() {
+  local cache="$HOME/.local/share/icons/audio-plugin-manager"
+  local out="$cache/audio-plugin-manager-placeholder.png"
+  if [[ -s $out ]]; then printf '%s' "$out"; return 0; fi
+  mkdir -p "$cache" 2>/dev/null || true
+  if command -v convert >/dev/null 2>&1; then
+    # U+266B BEAMED EIGHTH NOTES, filled, in the mosquito accent.
+    #
+    # The font is ASKED FOR rather than named: hardcoding DejaVu-Sans-Mono fails
+    # on a machine whose fontconfig does not answer to that exact family name,
+    # and ImageMagick then renders nothing at all — which is what produced a
+    # 323-byte empty PNG. Whatever monospace font the system has will do.
+    local font=""
+    font="$(convert -list font 2>/dev/null | sed -n 's/^  Font: //p' | head -1)"
+    if [[ -z $font ]]; then
+      font="$(fc-match monospace --format '%{family[0]}' 2>/dev/null || true)"
+    fi
+    if [[ -n $font ]]; then
+      convert -size 128x128 xc:none \
+        -fill '#c678dd' -font "$font" -pointsize 104 \
+        -gravity center -annotate +0-6 $'\u266b' "$out" 2>/dev/null || true
+      if [[ -s $out ]]; then
+        cp -f "$out" "$cache/audio-plugin-manager-placeholder-64.png" 2>/dev/null || true
+        printf '%s' "$out"
+        return 0
+      fi
+    fi
+  fi
   printf '%s' "audio-headphones"
 }
 

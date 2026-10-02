@@ -50,9 +50,11 @@ const (
 var thermalSteps = []int{75, 80, 85, 90, 95}
 
 type model struct {
-	w, h       int
-	settings   Settings
-	nav        []screen
+	w, h     int
+	settings Settings
+	nav      []screen
+	cursor   *tuikit.CursorMemory
+
 	picker     tuikit.Picker
 	appsPicker tuikit.Picker
 	confirm    tuikit.Confirm
@@ -69,7 +71,7 @@ type model struct {
 }
 
 func initialModel() model {
-	m := model{nav: []screen{scrMain}, settings: loadSettings()}
+	m := model{nav: []screen{scrMain}, settings: loadSettings(), cursor: tuikit.NewCursorMemory()}
 	m.picker = tuikit.NewPicker("", m.mainItems()).SetSize(m.contentSize())
 	// Build the apps picker up front: Update() calls SetSize on both pickers
 	// for every WindowSizeMsg, and a zero Picker has no delegate — SetSize on
@@ -86,11 +88,17 @@ func (m model) Init() tea.Cmd { return tuikit.ThemeWatchCmd() }
 func (m model) top() screen { return m.nav[len(m.nav)-1] }
 
 func (m *model) pop() {
+	m.cursor.Remember(screenKey(m.top()), m.picker)
 	if len(m.nav) > 1 {
 		m.nav = m.nav[:len(m.nav)-1]
 	}
 	m.toast = m.toast.ClearNonCritical()
+	m.picker = m.cursor.Restore(screenKey(m.top()), m.picker)
 }
+
+// screenKey names a screen for the cursor memory. screen is an int, so
+// string(...) would hand the kit one rune.
+func screenKey(s screen) string { return strconv.Itoa(int(s)) }
 
 func (m model) mainItems() []tuikit.PickerItem {
 	s := m.settings
