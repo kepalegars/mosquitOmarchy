@@ -292,3 +292,85 @@ func TestThemeFolderRowsArePreFitted(t *testing.T) {
 		}
 	}
 }
+
+// The theming stack must END on the success screen, not on top of the screens
+// that led to it.
+//
+// Adding the unlock step made the flow five deep (main → folder → name →
+// unlock → confirm), and the create path popped ONCE. The runner then replaced
+// the confirm on a stack that still had folder and unlock underneath it, so the
+// success screen was pushed on top of a wizard the user believed they had left:
+// "Back" walked up through screens already dismissed, and the prompt to apply
+// the theme read as one more step of a flow nobody could get out of.
+func TestThemingEndsOnTheSuccessScreen(t *testing.T) {
+	m := initialModel()
+	m.w, m.h = 120, 40
+	m.nav = []screen{scrMain, scrThemeFolder, scrThemeName, scrThemeUnlock, scrConfirm}
+	m.themePendingName = "Nebula"
+	m.themeDir = "/tmp"
+	m.themeImage = "nebula.png"
+
+	// What the confirm's "Create" arm does.
+	m.nav = []screen{scrMain}
+	m.themeDonePicker = m.rebuildThemeDone()
+
+	if m.top() != scrMain {
+		t.Fatalf("after creating, the stack top is %d, want the main menu", m.top())
+	}
+	if len(m.nav) != 1 {
+		t.Fatalf("the stack is %d deep after creating, want 1: %v", len(m.nav), m.nav)
+	}
+	// And the success screen is what gets pushed on completion.
+	m.push(scrThemeDone)
+	if m.top() != scrThemeDone {
+		t.Fatalf("the success screen is not on top")
+	}
+	m.pop()
+	if m.top() != scrMain {
+		t.Errorf("Back from the success prompt landed on %d, want the main menu", m.top())
+	}
+}
+
+// The unlock row carries its keys in the shortcut bar, not in its own name, and
+// neither it nor "Create the theme" carries a sub-line.
+func TestUnlockScreenHasNoInlineLegendOrSubTitles(t *testing.T) {
+	m := initialModel()
+	m.w, m.h = 120, 40
+	m.themePendingName = "Nebula"
+	m.themeUnlockPicker = m.rebuildThemeUnlock()
+
+	var sawUnlock, sawCreate bool
+	for _, it := range m.themeUnlockPicker.Items() {
+		switch it.Value {
+		case "__unlock__":
+			sawUnlock = true
+			if strings.Contains(it.Display, "←") || strings.Contains(it.Display, "→") {
+				t.Errorf("the unlock row spells the arrows into its name: %q", it.Display)
+			}
+			if it.Sub != "" {
+				t.Errorf("the unlock row has a sub-line: %q", it.Sub)
+			}
+		case "create":
+			sawCreate = true
+			if it.Sub != "" {
+				t.Errorf("\"Create the theme\" has a sub-line: %q", it.Sub)
+			}
+		}
+	}
+	if !sawUnlock || !sawCreate {
+		t.Fatalf("the unlock screen is missing its rows (unlock=%v create=%v)", sawUnlock, sawCreate)
+	}
+	// The theme-management rows must not end in an ellipsis. "Select Image…" and
+	// "Type a folder path…" DO, and should: they open an external dialog, so
+	// the ellipsis promises the reader what is about to happen. The theme rows
+	// open a screen of this TUI, and an ellipsis there reads as "there is more
+	// after this" when what they actually mean is "this continues".
+	for _, it := range m.rebuildThemeFolderPicker().Items() {
+		switch it.Value {
+		case "__uninstall__", "__restorestock__":
+			if strings.HasSuffix(it.Display, "…") {
+				t.Errorf("theme-management row ends in an ellipsis: %q", it.Display)
+			}
+		}
+	}
+}

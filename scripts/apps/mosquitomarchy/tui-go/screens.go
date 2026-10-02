@@ -786,7 +786,18 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			if m.themeUnlockStyle {
 				unlock = "on"
 			}
-			m.pop() // the name text screen
+			// Drop the WHOLE theming stack, not one screen. The flow grew a
+			// step — main -> folder -> name -> unlock -> this confirm — and
+			// popping once left folder and unlock underneath, so the runner
+			// replaced the confirm on a five-deep stack. The success screen then
+			// pushed on top of that: it WAS shown, but "Back" walked up through
+			// screens the user thought they had already left, and the prompt to
+			// apply read as one step of a wizard nobody could get out of.
+			//
+			// Rewinding to main and pushing the runner is what the other
+			// actions do, and it makes the success screen the only thing between
+			// the user and the menu.
+			m.nav = []screen{scrMain}
 			m.themeDonePicker = m.rebuildThemeDone()
 			return m.startWorking("Creating the theme",
 				workingArgs("theme-create", []string{m.themeDir, m.themeImage, name, "no", unlock})...)
