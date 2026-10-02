@@ -507,6 +507,27 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		return m, setThemeDefaultDirCmd(msg.path)
 
+	case themeListMsg:
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetWarn("could not list the themes: " + msg.err.Error())
+			return m, nil
+		}
+		m.themeList = msg.themes
+		m.themeChecked = map[string]bool{}
+		m.push(scrThemeUninstall)
+		m.themeUninstallPicker = m.rebuildThemeUninstall()
+		return m, nil
+
+	case themeStockMsg:
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetWarn("could not read the stock themes: " + msg.err.Error())
+			return m, nil
+		}
+		m.themeStock = msg.present
+		m.push(scrThemeRestore)
+		m.themeRestorePicker = m.rebuildThemeRestore()
+		return m, nil
+
 	case toastThemeMsg:
 		m.toast, _ = m.toast.SetOK(msg.text)
 		return m, nil
@@ -746,6 +767,14 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, nil
 		}
 		switch m.pendingAction {
+		case "theme-remove":
+			names := append([]string{}, m.pendingArgs...)
+			m.pendingArgs = nil
+			mm, cmd := m.startWorking(
+				fmt.Sprintf("Removing %d theme(s)", len(names)),
+				workingArgs("theme-remove", names)...)
+			mm.themeRemoveCount = len(names)
+			return mm, cmd
 		case "theme-create":
 			// Streamed through the runner like every other long action, so a
 			// slow palette extraction is visible instead of freezing the
@@ -914,26 +943,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				return m, nil
 			}
 			m.themePendingName = name
-			// Confirm before spending the time: the generator derives a palette,
-			// an unlock logo and two previews from this image, and a typo in the
-			// name is much cheaper to catch here than after the fact.
-			//
-			// The lock/boot screen is named here too, because it is the one part
-			// of the build that will ask for a password. Seeing it before the
-			// build starts is the difference between a prompt you expect and one
-			// that interrupts you.
-			m.pendingAction = "theme-create"
-			unlockLine := "Unlock / boot screen: not created (asked for)"
-			if m.themeUnlockStyle {
-				unlockLine = "Unlock / boot screen: created too — this will ask for your password."
-			}
-			m.pendingMsg = fmt.Sprintf(
-				"Create the theme '%s' from %s?\n\nFolder: %s\n\n%s\n\nThe theme is NOT applied — you get that choice afterwards.",
-				name, m.themeImage, m.themeDir, unlockLine)
-			m.pendingNo = "Cancel"
-			m.pendingYes = "Create"
-			m.push(scrConfirm)
-			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+			// Then the lock/boot-screen toggle: it comes AFTER the name on
+			// purpose. Before the name there is no theme to talk about, and the
+			// row would read as a generic setting; after it, the question is
+			// about THIS theme, and it is the moment where knowing the name
+			// makes the choice obvious.
+			m.push(scrThemeUnlock)
+			m.themeUnlockPicker = m.rebuildThemeUnlock()
 			return m, nil
 		}
 		if m.top() != scrPassphrase && m.top() != scrKBInput {
@@ -1554,6 +1570,66 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// the screen draws its rows but arrows and Enter go nowhere — which
 		// reads as a freeze, not as a missing handler.
 		m.themeFolderPicker, cmd = m.themeFolderPicker.Update(msg)
+	case scrThemeUninstall:
+		if tl, ok := msg.(tuikit.PickerToggleMsg); ok {
+			m.toggleThemeTick(tl.Value)
+			m.themeUninstallPicker = m.rebuildThemeUninstall()
+			return m, nil
+		}
+		if res, ok := msg.(tuikit.PickerResultMsg); ok {
+			if res.Canceled || res.Value == "back" {
+				m.pop()
+				return m, nil
+			}
+			// Tab ticks, so Enter on an unticked row still removes that one
+			// theme: the multi-select is the convenience, not a gate.
+			targets := []string{res.Value}
+			if m.themeChecked[res.Value] {
+				targets = targets[:0]
+				for _, t := range m.themeList {
+					if m.themeChecked[t.Name] {
+						targets = append(targets, t.Name)
+					}
+				}
+			}
+			n := len(targets)
+			m.pendingArgs = targets
+			m.pendingAction = "theme-remove"
+			m.pendingMsg = fmt.Sprintf("Delete %d theme(s)?\n\n%s\n\nNothing is kept: the theme folder is removed, not moved to a trash.",
+				n, strings.Join(targets, ", "))
+			m.pendingNo = "Cancel"
+			m.pendingYes = "Delete"
+			m.push(scrConfirm)
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.themeUninstallPicker, cmd = m.themeUninstallPicker.Update(msg)
+		return m, cmd
+
+	case scrThemeRestore:
+		if res, ok := msg.(tuikit.PickerResultMsg); ok {
+			if res.Canceled || res.Value == "back" {
+				m.pop()
+				return m, nil
+			}
+			return m.startWorking("Restoring the stock themes", "theme-restore-stock")
+		}
+		var cmd tea.Cmd
+		m.themeRestorePicker, cmd = m.themeRestorePicker.Update(msg)
+		return m, cmd
+
+	case scrThemeUnlock:
+		// ←/→ toggles the lock/boot screen, which is what the row advertises.
+		// Same gesture as everywhere else, so it is intercepted before the
+		// picker sees the key (the picker would fold or sort instead).
+		if sort, ok := msg.(tuikit.PickerSortMsg); ok {
+			_ = sort
+			m.themeUnlockStyle = !m.themeUnlockStyle
+			m.themeUnlockPicker = m.rebuildThemeUnlock()
+			return m, nil
+		}
+		m.themeUnlockPicker, cmd = m.themeUnlockPicker.Update(msg)
 	case scrThemeImage:
 		m.themeImagePicker, cmd = m.themeImagePicker.Update(msg)
 	case scrThemeDone:
@@ -1941,17 +2017,17 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.menuEntriesLoaded = false
 			return m, fetchMenuEntriesCmd()
 		}
-		// "Quick fixes" is a folder row whose Enter opens its own screen, and it
-		// has to be recognised BEFORE the generic folder early-return below,
-		// exactly as "Menu entries" is above: that return swallows every
-		// `cat:` row, so a check placed after it can never match and Enter on
-		// the folder did nothing at all. A quick fix's own row is recognised
-		// for the same reason — it is a repair, not a module, and falling
-		// through would offer to "install" a module that does not exist.
-		if res.Value == tuikit.TreeValue(tuikit.TreeFolderPrefix, quickFixesFolder) {
-			mm, cmd := m.openQuickFixes()
-			return mm.(model), cmd
-		}
+		// Fixes are NOT a sub-screen. The backend already returns every fix as a
+		// child row of the "fixes" folder, in the same tree as every other
+		// category, so the folder expands where it stands and Enter on it does
+		// what Enter on every other folder does: nothing but keep you on the
+		// page. It used to push its own list, which was the same rows a second
+		// time behind an extra keystroke — the whole point of the tree is that
+		// a category opens in place.
+		//
+		// A fix's own row still routes here, because it is a repair and not a
+		// module: falling through to the module path would offer to "install"
+		// something that does not exist.
 		if _, key := splitSetupValue(res.Value); key != "" && m.isQuickFixKey(key) {
 			mm, cmd := m.openQuickFixes()
 			return mm.(model), cmd
@@ -2387,7 +2463,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 		return m, nil
 
-	case scrThemeFolder, scrThemeImage, scrThemeDone:
+	case scrThemeFolder, scrThemeImage, scrThemeDone, scrThemeUnlock:
 		// One router for the three picker screens of the theme flow; the
 		// two text screens (scrThemeInput, scrThemeName) are handled in the
 		// key switch because Enter on a TextInput never arrives as a pick.

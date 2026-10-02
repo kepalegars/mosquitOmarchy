@@ -314,6 +314,16 @@ func (m model) cycleSetting(dir int) (tea.Model, tea.Cmd) {
 			cur = p == "on"
 		}
 		m.pending[row] = liveToggleTarget(!cur)
+	case "fence":
+		// The fence is a setting like the rest, so ← / → must reach it. It was
+		// added to the saved-settings switch, to Enter, and to the menu row,
+		// but never to this one — which is why it was the only toggle in the
+		// list that the arrows silently did nothing to.
+		cur := m.settings.FencePackages
+		if p, ok := m.pending[row]; ok {
+			cur = p == "on"
+		}
+		m.pending[row] = liveToggleTarget(!cur)
 	case "theme":
 		cur := m.settings.SwitchTheme
 		if p, ok := m.pending[row]; ok {

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // HOME is redirected in every test that touches the settings file, so a failing
@@ -128,5 +130,42 @@ func TestThermalStepsAreAscending(t *testing.T) {
 		if thermalSteps[i] <= thermalSteps[i-1] {
 			t.Fatalf("thermalSteps is not ascending at %d: %v", i, thermalSteps)
 		}
+	}
+}
+
+// EVERY setting row must answer ← / →. The fence was added to the menu, to
+// Enter, and to the saved-settings switch, but not to cycleSetting — so it was
+// the one toggle in the list whose arrows did nothing at all, silently.
+//
+// The action rows (choose apps, reset, close) are excluded on purpose: they are
+// not values, there is nothing to step through.
+func TestEverySettingRowCyclesWithTheArrows(t *testing.T) {
+	settings := []string{
+		"thermal", "close_apps", "routing", "theme",
+		"profile_prompt", "gaps", "notifs", "fence",
+	}
+	for _, row := range settings {
+		t.Run(row, func(t *testing.T) {
+			m := initialModel()
+			res, _ := m.update(tea.WindowSizeMsg{Width: 120, Height: 40})
+			m = res.(model)
+			m.pending = map[string]string{}
+			m.picker = m.picker.SelectValue(row)
+			if got := m.picker.SelectedValue(); got != row {
+				t.Fatalf("row %q is not on the menu (selected %q)", row, got)
+			}
+			out, _ := m.cycleSetting(1)
+			if pending := out.(model).pending[row]; pending == "" {
+				t.Errorf("right arrow on %q produced no pending value", row)
+			}
+			// And the other way, since a one-sided toggle is still a dead row.
+			m2 := m
+			m2.pending = map[string]string{}
+			m2.picker = m2.picker.SelectValue(row)
+			out2, _ := m2.cycleSetting(-1)
+			if pending := out2.(model).pending[row]; pending == "" {
+				t.Errorf("left arrow on %q produced no pending value", row)
+			}
+		})
 	}
 }

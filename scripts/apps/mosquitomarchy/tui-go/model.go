@@ -45,7 +45,17 @@ const (
 	scrThemeImage
 	scrThemeInput
 	scrThemeName
+	// scrThemeUnlock is the last step before the build: the lock/boot screen
+	// toggle. It sits AFTER the name on purpose — that is the point of the
+	// request, and it is also where the information is best: once the theme has
+	// a name, "create its boot screen too?" is a question about THAT theme.
+	scrThemeUnlock
 	scrThemeDone
+	// scrThemeUninstall and scrThemeRestore are the two theme-management
+	// screens reachable from Theming: remove the user's themes (multi-select),
+	// and put the deleted stock ones back.
+	scrThemeUninstall
+	scrThemeRestore
 )
 
 // BackupOpts are the Backup screen's content choices.
@@ -237,9 +247,16 @@ type model struct {
 	// in front of the name screen so it is decided BEFORE the theme is built,
 	// rather than discovered afterwards — the boot screen needs a password, and
 	// discovering that after a five-step flow is a bad way to find out.
-	themeUnlockStyle bool
-	themeApply       bool // apply immediately instead of building only
-	kbCustomLabel    string
+	themeUnlockStyle     bool
+	themeUnlockPicker    navPicker
+	themeList            []ThemeRec
+	themeChecked         map[string]bool
+	themeStock           map[string]bool
+	themeUninstallPicker navPicker
+	themeRestorePicker   navPicker
+	themeRemoveCount     int
+	themeApply           bool // apply immediately instead of building only
+	kbCustomLabel        string
 
 	// Backup content selection (apps/tuis/webapps), reusing the setup tree
 	// display; plus the "what to include" options.

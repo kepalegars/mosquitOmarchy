@@ -215,18 +215,25 @@ func TestThemeDoneOKReturnsToMainMenu(t *testing.T) {
 	}
 }
 
-// Theming is for wallpapers, so ~/Pictures/Wallpapers leads the folder list and
-// is re-created rather than dropped if it goes missing — otherwise deleting it
-// once would silently move the default somewhere else.
-func TestThemeFolderDefaultIsWallpapers(t *testing.T) {
-	got := themeFolderCandidates()
-	if len(got) == 0 {
-		t.Fatal("no theme folder candidates at all")
-	}
+// Theming is for wallpapers, so ~/Pictures/Wallpapers is the default folder and
+// is re-created rather than complained about if it goes missing — a wallpaper
+// folder that does not exist is the one thing the chooser would open on and
+// find empty.
+//
+// The candidate LIST it used to lead is gone: the first screen is actions only
+// now, so there is nothing to be "first" in. What has to survive is the default
+// itself and its creation.
+func TestThemeDefaultIsWallpapersAndGetsCreated(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	want := filepath.Join(home, "Pictures/Wallpapers")
-	if got[0].Path != want {
-		t.Errorf("first candidate = %q, want %q", got[0].Path, want)
+	if got := defaultThemeDir(); got != want {
+		t.Errorf("default folder = %q, want %q", got, want)
+	}
+	if err := os.RemoveAll(want); err != nil {
+		t.Fatalf("could not remove %q to test the re-create: %v", want, err)
+	}
+	if got := ensureDefaultThemeDir(); got != want {
+		t.Errorf("ensureDefaultThemeDir = %q, want %q", got, want)
 	}
 	if _, err := os.Stat(want); err != nil {
 		t.Errorf("the default folder was not created: %v", err)

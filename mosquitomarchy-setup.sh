@@ -683,7 +683,7 @@ fixes_pick(){ # fill FIXES_SELECTED with the chosen ids (global)
   [[ -z $cols ]] && cols="$(tput cols 2>/dev/null || echo 100)"
   (( cols < 40 )) && cols=100
   echo
-  msg "Quick fixes (full descriptions):"
+  msg "Fixes (full descriptions):"
   for e in "${FIXES[@]:-}"; do
     printf '  %s — %s\n' "${e%%:*}" "${e#*:}" | fold -s -w "$cols" | sed 's/^/    /'
   done
@@ -693,7 +693,7 @@ fixes_pick(){ # fill FIXES_SELECTED with the chosen ids (global)
   if command -v gum >/dev/null 2>&1; then
     local -a picks=()
     mapfile -t picks < <(gum choose --no-limit "${labels[@]}" \
-      --header "Quick fixes to apply (Tab/x = toggle a group or a fix, Enter = confirm):" \
+      --header "Fixes to apply (Tab/x = toggle a group or a fix, Enter = confirm):" \
       --cursor-prefix "[ ] " --selected-prefix "[x] " --unselected-prefix "[ ] ")
     for p in "${picks[@]}"; do
       for ((i=0; i<${#labels[@]}; i++)); do
@@ -702,7 +702,7 @@ fixes_pick(){ # fill FIXES_SELECTED with the chosen ids (global)
       done
     done
   else
-    echo "Quick fixes available (pick a whole group or individual fixes):"
+    echo "Fixes available (pick a whole group or individual fixes):"
     for ((i=0; i<${#labels[@]}; i++)); do printf '  %2d) [ ] %s\n' "$((i+1))" "${labels[$i]}"; done
     local n idx
     read -rp "  Numbers to apply (empty = none) : " n
@@ -3582,7 +3582,7 @@ CATEGORIES=(
   "apps|Apps|reaper audio ableton guitarpro davinci-resolve extracto handbrake superfile zen keepassxc"
   "tuis|TUIs|"
   "webapps|Webapps|"
-  "fixes|Quick fixes|"
+  "fixes|Fixes|"
   "mosquito|mosquito|"
   "lame|lame language models (ai..)|ollama remove-ai"
   "themes|Themes|achraff"

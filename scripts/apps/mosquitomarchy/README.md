@@ -55,7 +55,7 @@ come from the backend, so the shape is:
 ```
 Apps  (n)
 mosquito  (n)  ■
-Quick fixes  (checked/total)  ■
+Fixes  (checked/total)  ■
 Menu entry
 Add shortcut for mosquitOmarchy
 Install selection
@@ -102,7 +102,7 @@ highlighted row when nothing is checked, after a confirmation. **Uninstall selec
 bindings too. The list refreshes after each removal, so entries disappear as they go.
 
 Three folders exist only here: **Patches** (shown only when an installed app has an applied
-patch — removing one runs its `--revert`), **Quick fixes** (run with their `--remove`), and
+patch — removing one runs its `--revert`), **Fixes** (run with their `--remove`), and
 **Menu & shortcuts** (the menu entry and/or `SUPER + ALT + M`).
 
 ## Keybindings

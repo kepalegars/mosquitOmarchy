@@ -224,6 +224,18 @@ func (m model) View() string {
 		title = screenTitle("Create a theme from an image", w)
 		body = m.themeDonePicker.View()
 		bar = barLine(m.themeDonePicker.ShortcutsHint())
+	case scrThemeUnlock:
+		title = screenTitle("Theming", w)
+		body = m.themeUnlockPicker.View()
+		bar = barLine(m.themeUnlockPicker.ShortcutsHint())
+	case scrThemeUninstall:
+		title = screenTitle("Uninstall themes", w)
+		body = m.themeUninstallPicker.View()
+		bar = barLine(m.themeUninstallPicker.ShortcutsHint())
+	case scrThemeRestore:
+		title = screenTitle("Restore the stock Omarchy themes", w)
+		body = m.themeRestorePicker.View()
+		bar = barLine(m.themeRestorePicker.ShortcutsHint())
 	case scrBackup:
 		title = screenTitle("Backup / Restore", w)
 		body = m.backupBody()
@@ -246,7 +258,7 @@ func (m model) View() string {
 		body = me.View()
 		bar = barLine(me.ShortcutsHint())
 	case scrQuickFixes:
-		title = screenTitle("Quick fixes", w)
+		title = screenTitle("Fixes", w)
 		// The stored picker, like Menu entries above: rebuilding for the draw
 		// would throw away the cursor and the tick marks the user just made.
 		qf := m.quickFixPicker
