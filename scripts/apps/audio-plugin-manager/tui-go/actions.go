@@ -902,6 +902,41 @@ func forgetStandaloneCmd(exe string) tea.Cmd {
 	}
 }
 
+// installIsKnownManager reports whether the picked installer is a manager this
+// prefix already carries.
+//
+// Matched by the vendor's own name rather than by the full path: the installer
+// is copied into ProgramData and re-run from anywhere, and the question is
+// whether the manager is ALREADY THERE, not whether this exact file is.
+func (m model) installIsKnownManager() bool {
+	if !isManagerInstallerPath(m.installFile) {
+		return false
+	}
+	vendor := managerVendorOf(m.installFile)
+	if vendor == "" {
+		return false
+	}
+	out, err := runQuick("manager-installed", vendor)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "yes"
+}
+
+// isManagerInstallerPath mirrors the backend's manager detection on the Go
+// side, so the warning can be raised BEFORE the prefix question is asked.
+func isManagerInstallerPath(path string) bool {
+	p := strings.ToLower(baseName(path))
+	return strings.Contains(p, "kilohearts") || strings.Contains(p, "collective")
+}
+
+// managerVendorOf <installer path> — "Kilohearts Installer.exe" -> "Kilohearts".
+func managerVendorOf(path string) string {
+	stem := strings.TrimSuffix(baseName(path), ".exe")
+	stem = strings.TrimSuffix(stem, " Installer")
+	return strings.ToLower(stem)
+}
+
 // cycleSortForPage advances ONE page's sort and re-lists.
 //
 // The per-page value lives in the prefs file, so each list keeps its own choice

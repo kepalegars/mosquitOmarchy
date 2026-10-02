@@ -79,6 +79,7 @@ const (
 	scrPrefixMoveConfirm
 	scrMoving
 	scrStandalonePick
+	scrKnownManagerReopen // "this manager is installed: open it from Settings instead"
 	scrStandaloneManage // list the registered standalones, with a way to unregister one
 	scrExecsToggle
 	scrSuperfileInstallConfirm
@@ -526,12 +527,10 @@ func vstMenuItems(s Status) []tuikit.PickerItem {
 		{Display: "Hide VST2: " + hv, Value: "toggle_hide_vst2"},
 		{Display: "Hide 32-bit: " + h32, Value: "toggle_hide_32bit"},
 		{Display: "Manage visible executables in Omarchy Menu", Value: "execs"},
-		// Managing and REMOVING the registered standalones. The existing
-		// "Launch a standalone plugin" row can only run one; nothing could get
-		// rid of an entry whose plugin was uninstalled by hand, so they piled up
-		// as dead rows. This lists them with what each one is, and can remove
-		// the registration — the file on disk is never touched.
-		{Display: "Manage the standalone plugins", Value: "manage_standalones"},
+		// Opens the FOLDER of whichever prefix is currently chosen, so the row
+		// follows the setting instead of naming a path that goes stale the
+		// moment the default prefix is changed.
+		{Display: "Open prefix folder: " + baseName(defaultPrefixFor(s)), Value: "open_prefix"},
 		{Display: "Back", Value: "back"},
 	}
 }
@@ -612,6 +611,16 @@ func settingsHelpNote() string {
 // settingsItemsWithPending overlays the not-yet-applied Left/Right value on
 // the Settings rows so the label moves the instant the user presses an
 // arrow, before anything is written (see applySettingPending).
+// defaultPrefixFor <status> is the prefix in force right now: the one Settings
+// has chosen, or the automatic one. The "Open prefix folder" row names it, so
+// the row and the action can never disagree.
+func defaultPrefixFor(s Status) string {
+	if p := strings.TrimSpace(s.DefaultPrefix); p != "" {
+		return p
+	}
+	return currentDefaultPrefix()
+}
+
 func (m model) settingsItemsWithPending() []tuikit.PickerItem {
 	items := settingsItems(m.status)
 	for i := range items {
