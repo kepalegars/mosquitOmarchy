@@ -360,8 +360,39 @@ func (m *model) replace(s screen) {
 // the behaviour uniform instead of a thing each list has to remember.
 func (m *model) rebuildPicker(build func(tuikit.Picker) tuikit.Picker) {
 	key := screenKey(m.top())
-	m.cursor.RememberIfAbsent(key, m.picker)
-	m.picker = m.cursor.Restore(key, build(m.picker))
+	next := build(m.picker)
+
+	// Only capture the outgoing cursor if that picker belongs to THIS screen.
+	//
+	// The first rebuild after ENTERING a screen is handed the picker the user
+	// was just on — the main menu, say. Saving its row under this screen's key
+	// meant the restore looked for a main-menu row in the executable list, did
+	// not find it, and fell back to that index: enter the screen from main-menu
+	// row 2 and your first toggle jumped to row 1. That is the "toggling the
+	// first one sends me to the one below" symptom.
+	//
+	// A row of THIS screen is one the new list also has, which is exactly the
+	// test that distinguishes an in-place rebuild (capture) from an entry
+	// rebuild (do not).
+	if m.pickerHasRowIn(next) {
+		m.cursor.RememberIfAbsent(key, m.picker)
+	}
+	m.picker = m.cursor.Restore(key, next)
+}
+
+// pickerHasRowIn reports whether the outgoing picker shares a row with the
+// incoming one — i.e. whether they are the same list, refreshed.
+func (m *model) pickerHasRowIn(next tuikit.Picker) bool {
+	cur := m.picker.SelectedValue()
+	if cur == "" {
+		return false
+	}
+	for _, it := range next.Items() {
+		if it.Value == cur {
+			return true
+		}
+	}
+	return false
 }
 
 // syncPickerToTop rebuilds the SHARED picker for whichever screen is now on
