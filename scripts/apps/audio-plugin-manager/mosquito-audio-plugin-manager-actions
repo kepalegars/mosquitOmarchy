@@ -742,6 +742,21 @@ PYWIZARD
     fi
     ;;
 
+  known-plugin-name)
+    # The PRODUCT name to use in the post-install question.
+    #
+    # The file the installer happened to write first is not the name the user
+    # recognises, and for a suite it is whichever module sorted first. The
+    # record's first column is the token the library is written against, which
+    # is the product ("crisptuner"), so that is what the question says.
+    file="${1:?installer or plugin path required}"
+    rec="$(known_plugin_record "$file" 2>/dev/null || true)"
+    if [[ -n $rec ]]; then
+      IFS='|' read -r token _pr _rt _n32 _fx _rec2 _note <<<"$rec"
+      printf '%s\n' "${token:-}"
+    fi
+    ;;
+
   known-plugins)
     # Every token the detection knows about (for the TUI hint / docs).
     recommended_prefix_for_plugins
