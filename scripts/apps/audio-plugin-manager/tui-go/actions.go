@@ -1296,7 +1296,13 @@ type installFixesCheckMsg struct {
 	// values the Settings screen shows.
 	autoFix   bool
 	fixPrompt bool
-	err       error
+	// known is whether this plugin has a record in the knowledge base. Only a
+	// known plugin is asked about its fixes at all.
+	known bool
+	// pluginName is the name to use in the question, taken from the installer
+	// rather than from whichever file it happened to write first.
+	pluginName string
+	err        error
 }
 
 // fixPrefsCmd reads the two post-install fix switches.
@@ -1481,6 +1487,29 @@ func reapplyAppliedFixesCmd(vendor, plugin string, fixIDs []string) tea.Cmd {
 	}
 }
 
+// recommendedFixesConfirm is the second question, after the user has said yes to
+// fixing a known plugin: which way do they want it done.
+//
+// "Auto apply" is focused first, so Enter takes the quiet path. It is the
+// reason to answer yes at all — the fixes are recorded as recommended, they
+// are the ones the knowledge base flags, and most of the time applying them
+// without walking a list is what the user wants. "See fixes page" is the other
+// door, for when they want to look before anything is rewritten.
+func (m model) recommendedFixesConfirm() tuikit.Confirm {
+	var b strings.Builder
+	b.WriteString("Recommended fixes for " + m.fixPromptName + ":\n\n")
+	for _, it := range m.installFixItems {
+		if it.Scope == "plugin" && !it.Applied {
+			b.WriteString("  • " + it.Title + "\n")
+		}
+	}
+	if b.Len() == 0 {
+		b.WriteString("  (none pending)")
+	}
+	b.WriteString("\n\nApply them now, or open the fixes page and decide there?")
+	return tuikit.NewConfirm(b.String(), "See fixes page", "Auto apply").SetFocus(1)
+}
+
 // afterInstallFixesPrompt decides what the end of an install looks like: the
 // question, or the plain success dialog.
 //
@@ -1521,15 +1550,25 @@ func (m model) afterInstallFixesPrompt(msg installFixesCheckMsg) (model, tea.Cmd
 	// applying reads as a veto on the whole thing. So it says what it does —
 	// skip the page — and the "Yes" side names the scope, which is what the user
 	// actually decides on.
-	if true {
-		m.confirm = tuikit.NewConfirm(
-			"Plugin installed. Open the fixes page?",
-			"Back", "Open the fixes page")
-	} else {
-		m.confirm = tuikit.NewConfirm(
-			"Plugin installed. Open the fixes page?",
-			"Back", "Open the fixes page")
+	// Only a plugin in the knowledge base is asked about at all. Offering the
+	// fixes page for a plugin nothing is recorded about is a question with one
+	// possible answer, and it reads as "the manager knows something about this
+	// plugin" when it does not.
+	name := msg.pluginName
+	if name == "" {
+		name = baseName(pluginPathOf(msg.plugin))
 	}
+	if !msg.known {
+		m.confirm = tuikit.NewConfirm("Success! The step completed without errors.", "See log", "OK")
+		m.replace(scrRunnerSuccessConfirm)
+		return m, nil
+	}
+	m.fixPromptPlugin = msg.plugin
+	m.fixPromptName = name
+	m.installFixItems = msg.items
+	m.confirm = tuikit.NewConfirm(
+		name+" is part of the apm's plugin knowledge database, and has been noted as needing some fixes. Do you want to open the fixes page and apply them?",
+		"Back", "Yes")
 	m.replace(scrInstallFixesConfirm)
 	return m, nil
 }

@@ -92,7 +92,8 @@ const (
 	scrFixApplyConfirm
 	scrFixPluginPick        // "Plugin fixes": pick the plugin first
 	scrFixChoose            // then Tab-select the fixes to apply/remove
-	scrInstallFixesConfirm  // after a successful install: "Apply fixes for <plugin> now?"
+	scrInstallFixesConfirm  // after a successful install: known plugin, apply its fixes?
+	scrInstallFixesHow      // ... and then: apply them silently, or open the page
 	scrPluginHandlerConfirm // confirm a plugin-window-handler change (global Hyprland rules)
 
 	scrWizardRoot // first-launch wizard: choose/confirm the plugins folder
@@ -178,6 +179,10 @@ type model struct {
 
 
 	// Global search (shift+F) state, shared where applicable
+	fixPromptPlugin  string
+	fixPromptName    string
+	installFixItems  []FixItem
+
 	filterOpen bool
 	filterText string
 

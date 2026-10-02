@@ -84,22 +84,42 @@ func TestFixPromptOnAsksAboutTheVendor(t *testing.T) {
 	m.status.FixPromptOn = true
 	m.nav = []screen{scrMain, scrInstalling}
 	mm, _ := m.update(installFixesCheckMsg{
-		plugin:    "vst:vst3:/x/FabFilter/One.vst3",
-		vendor:    "FabFilter",
-		fixPrompt: true,
-		autoFix:   true,
-		items:     []FixItem{{ID: "wine_gui_input", Scope: "plugin", Applied: false}},
+		plugin:     "vst:vst3:/x/FabFilter/One.vst3",
+		vendor:     "FabFilter",
+		fixPrompt:  true,
+		autoFix:    true,
+		known:      true,
+		pluginName: "fabfilter one",
+		items:      []FixItem{{ID: "wine_gui_input", Scope: "plugin", Applied: false}},
 	})
 	m = mm.(model)
 	if m.top() != scrInstallFixesConfirm {
 		t.Fatalf("landed on screen %d, want the fix question(%d)", m.top(), scrInstallFixesConfirm)
 	}
-	// New behaviour: generic prompt, no vendor name in the question
-	if !strings.Contains(m.confirm.View(), "Plugin installed. Open the fixes page?") {
-		t.Errorf("unexpected question: %q", m.confirm.View())
+	// Only a plugin the knowledge base knows about gets asked, and the question
+	// names it and says where the record comes from.
+	mm2, _ := m.update(installFixesCheckMsg{
+		plugin: "vst:vst3:/x/FabFilter/One.vst3", vendor: "FabFilter",
+		fixPrompt: true, autoFix: true, known: true, pluginName: "fabfilter one",
+		items: []FixItem{{ID: "wine_gui_input", Scope: "plugin", Applied: false, Title: "Editor input"}},
+	})
+	view := mm2.(model).confirm.View()
+	if !strings.Contains(view, "fabfilter one is part of the apm's plugin knowledge database") {
+		t.Errorf("the question does not name the plugin as known: %q", view)
 	}
-	if !strings.Contains(m.confirm.View(), "Back") || !strings.Contains(m.confirm.View(), "Open the fixes page") {
-		t.Errorf("missing expected buttons: %q", m.confirm.View())
+	if !strings.Contains(view, "Back") || !strings.Contains(view, "Yes") {
+		t.Errorf("the buttons are not Back / Yes: %q", view)
+	}
+
+	// And an unknown plugin is NOT asked at all: it gets the plain success
+	// dialog, because there is nothing recorded to fix.
+	mm3, _ := m.update(installFixesCheckMsg{
+		plugin: "vst:vst3:/x/Odd/Thing.vst3", fixPrompt: true, autoFix: true,
+		known: false, pluginName: "odd thing",
+		items: []FixItem{{ID: "wine_gui_input", Scope: "plugin", Applied: false, Title: "Editor input"}},
+	})
+	if m3 := mm3.(model); strings.Contains(m3.confirm.View(), "knowledge database") {
+		t.Errorf("an unknown plugin was offered the fixes page: %q", m3.confirm.View())
 	}
 }
 
@@ -112,10 +132,12 @@ func TestAutoFixOffDoesNotWriteTheAlreadyAppliedFix(t *testing.T) {
 	m.status.FixPromptOn = true
 	m.nav = []screen{scrMain, scrInstalling}
 	mm, cmd := m.update(installFixesCheckMsg{
-		plugin:    "vst:vst3:/x/FabFilter/One.vst3",
-		vendor:    "FabFilter",
-		fixPrompt: true,
-		autoFix:   false,
+		plugin:     "vst:vst3:/x/FabFilter/One.vst3",
+		vendor:     "FabFilter",
+		fixPrompt:  true,
+		autoFix:    false,
+		known:      true,
+		pluginName: "fabfilter one",
 		items: []FixItem{
 			{ID: "wine_gui_input", Scope: "plugin", Applied: true}, // already on
 			{ID: "wine_tooltip", Scope: "plugin", Applied: false},  // new

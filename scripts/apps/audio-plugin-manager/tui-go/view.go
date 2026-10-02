@@ -270,7 +270,7 @@ func (m model) View() string {
 		scrUninstallConfirm, scrInstallPrefixChoice, scrPrefixMoveConfirm,
 		scrSuperfileInstallConfirm, scrPluginListSaveConfirm,
 		scrPluginsRootConfirm, scrRunnerSuccessConfirm, scrQuitConfirm,
-		scrWizardRoot, scrInstallFixesConfirm, scrFixApplyConfirm,
+		scrWizardRoot, scrInstallFixesConfirm, scrInstallFixesHow, scrFixApplyConfirm,
 		scrCleanupConfirm, scrQuarantineClearConfirm,
 		scrQuarantineClearDone:
 		body = m.confirm.View()
