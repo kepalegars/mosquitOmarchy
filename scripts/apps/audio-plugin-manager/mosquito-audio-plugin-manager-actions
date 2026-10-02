@@ -269,23 +269,39 @@ PYWIZARD
     ;;
 
   launch-exe)
-    # $1 = prefix (empty = default), $2 = exe path INSIDE drive_c.
+    # $1 = prefix (empty = default), $2 = path to the .exe, wherever it is.
     #
-    # Launches detached on purpose: this is a plugin's own GUI, which stays open
+    # Launched detached on purpose: this is a plugin's own GUI, which stays open
     # for as long as the user needs it. Waiting on it would keep the manager
     # blocked on a Runner that never returns.
     pfx="${1:-}"; [[ -n $pfx ]] || pfx="$(default_prefix)"
     exe="${2:?exe path required}"
-    case "$exe" in
-      "$pfx/drive_c"/*) ;;
-      *) echo "refusing to launch a path outside the prefix: $exe" >&2; exit 1 ;;
-    esac
     [[ -f $exe ]] || { echo "no such executable: $exe" >&2; exit 1; }
-    # WINEPREFIX selects the prefix; the CWD is the exe's own folder, because a
-    # plugin GUI that resolves data files relative to itself stops finding them
-    # when launched from the manager's folder.
+
+    # An exe OUTSIDE the prefix is accepted, and that is the whole point: an
+    # installer or a tool the user just downloaded lives in ~/Downloads, not in
+    # drive_c, and refusing it made the row useless for the most obvious file to
+    # point it at.
+    #
+    # wine takes a Z: path, and the Z: drive IS the prefix's own drive_c. So an
+    # exe outside it is reached by giving wine its REAL path and letting the
+    # loader resolve it: the file is not moved, copied or linked into the prefix,
+    # and nothing is written anywhere. It simply RUNS as if it were in there —
+    # which is what "run this exe with the dedicated wine" means.
+    #
+    # What it still refuses: a path that is not a file. No such thing as a
+    # directory or a missing path, whatever it looks like.
+    case "$exe" in
+      "$pfx/drive_c"/*) target="$exe" ;;
+      /*)                target="$exe" ;;
+      *)                 target="$PWD/$exe" ;;
+    esac
+
+    # WINEPREFIX selects the prefix. The CWD is the exe's own folder, because a
+    # program that resolves data files relative to itself stops finding them when
+    # launched from the manager's folder.
     msg "launching: $(basename "$exe") (in $(basename "$pfx"))"
-    WINEPREFIX="$pfx" setsid -f bash -c 'cd "$(dirname "$1")" && exec wine "$1"' _ "$exe" \
+    WINEPREFIX="$pfx" setsid -f bash -c 'cd "$(dirname "$1")" && exec wine "$1"' _ "$target" \
       >/dev/null 2>&1 </dev/null
     ;;
 

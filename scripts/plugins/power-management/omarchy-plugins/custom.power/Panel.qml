@@ -899,19 +899,6 @@ Panel {
 
           Toggle {
             width: parent.width
-            label: "Battery conservation"
-            description: root.conservationOn
-              ? "Hold at " + root.chargeLimitEnd + "% to protect battery health"
-              : "Limit charging to 80% to protect battery health"
-            checked: root.conservationOn
-            foreground: root.bar.foreground
-            accent: Color.accent
-            fontFamily: root.bar.fontFamily
-            onClicked: root.toggleConservation()
-          }
-
-          Toggle {
-            width: parent.width
             label: "Ultra-save"
             description: root.ultraSaveOn
               ? "Low-power mode active (~6-8W)"
@@ -921,6 +908,19 @@ Panel {
             accent: Color.accent
             fontFamily: root.bar.fontFamily
             onClicked: root.toggleUltraSave()
+          }
+
+          Toggle {
+            width: parent.width
+            label: "Battery conservation"
+            description: root.conservationOn
+              ? "Hold at " + root.chargeLimitEnd + "% to protect battery health"
+              : "Limit charging to 80% to protect battery health"
+            checked: root.conservationOn
+            foreground: root.bar.foreground
+            accent: Color.accent
+            fontFamily: root.bar.fontFamily
+            onClicked: root.toggleConservation()
           }
         }
       }

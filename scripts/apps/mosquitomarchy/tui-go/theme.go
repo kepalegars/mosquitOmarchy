@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 
+	key "github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -238,7 +239,7 @@ func (m model) rebuildThemeFolderPicker() navPicker {
 		// file inside it.
 		{Display: "Select Image…", Value: "__pick__"},
 		{Display: "Type a folder path…", Value: "__type__"},
-		{Display: "Uninstall Omarchy themes…", Value: "__uninstall__"},
+		{Display: "Remove Themes (any)", Value: "__uninstall__"},
 	}
 	if m.themeDir != "" {
 		if st, err := os.Stat(m.themeDir); err == nil && st.IsDir() {
@@ -253,7 +254,7 @@ func (m model) rebuildThemeFolderPicker() navPicker {
 	// own, for the same reason it is not the first row: it is a repair for a
 	// situation you have to be in before it means anything.
 	items = append(items,
-		tuikit.PickerItem{Display: "Restore the deleted stock Omarchy themes…", Value: "__restorestock__"},
+		tuikit.PickerItem{Display: "Restore the deleted stock Omarchy themes", Value: "__restorestock__"},
 		tuikit.PickerItem{Display: "Back", Value: "back"},
 	)
 	h := "Create a theme from an image"
@@ -376,8 +377,12 @@ func (m model) themePicked(from screen, res tuikit.PickerResultMsg) (model, tea.
 		return m, nil
 	case "create":
 		m.pendingAction = "theme-create"
+		// No "the theme is NOT applied — you get that choice afterwards". It
+		// was on this page AND on the success page, saying the same thing
+		// twice, and on this page it reads as a caveat about a state the user
+		// cannot see yet. The success screen's own rows say what they do.
 		m.pendingMsg = fmt.Sprintf(
-			"Create the theme '%s' from %s?\n\nFolder: %s\n\n%s\n\nThe theme is NOT applied — you get that choice afterwards.",
+			"Create the theme '%s' from %s?\n\nFolder: %s\n\n%s",
 			m.themePendingName, m.themeImage, m.themeDir, unlockLineFor(m.themeUnlockStyle))
 		m.pendingNo = "Cancel"
 		m.pendingYes = "Create"
@@ -577,24 +582,25 @@ func (m model) rebuildThemeUnlock() navPicker {
 	if name == "" {
 		name = "this theme"
 	}
+	// No sub-lines here, and no "(←/→)" in the label. Both were redundant with
+	// the shortcut bar: the arrows are what the row is FOR, and spelling them
+	// into the name meant the same instruction appeared twice, once where it
+	// belongs and once where the reader has to parse it out of a sentence.
 	items := []tuikit.PickerItem{
-		{
-			Display: fmt.Sprintf("Also create the unlock / boot screen: %s  (←/→)", on),
-			Value:   "__unlock__",
-			Sub:     "off: the theme is applied to the desktop; the boot screen keeps whatever it has now",
-		},
-		{
-			Display: "Create the theme",
-			Value:   "create",
-			Sub:     "build it, do not apply it — you choose that on the next screen",
-		},
+		{Display: "Also create the unlock / boot screen: " + on, Value: "__unlock__"},
+		{Display: "Create the theme", Value: "create"},
 		{Display: "Back", Value: "back"},
 	}
 	h := fmt.Sprintf("Create the theme '%s'", name)
 	if m.themeUnlockStyle {
 		h += " — the boot screen will ask for your password"
 	}
-	return newNavPicker(h, items).SetSize(m.contentSize())
+	return newNavPicker(h, items).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "toggle unlock screen")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "continue")),
+		).
+		SetSize(m.contentSize())
 }
 
 // unlockLineFor names the lock/boot-screen choice in the confirmation text, so
@@ -643,14 +649,11 @@ func (m model) rebuildThemeUninstall() navPicker {
 		if m.themeChecked[t.Name] {
 			mark = "●"
 		}
-		sub := "delete this theme from your machine"
-		if t.Current {
-			// Removing the applied theme would leave the desktop pointing at a
-			// theme that is no longer there. Say so on the row rather than
-			// letting the removal fail halfway.
-			sub = "currently applied — switch to another theme first"
-		}
-		items = append(items, tuikit.PickerItem{Display: mark + " " + t.Name, Value: t.Name, Sub: sub})
+		// No sub-line. The rows are a list of names to tick; the sentence under
+		// each said the same thing the row already said, and the applied-theme
+		// caveat is enforced on the tick itself (it refuses, with a toast), so
+		// spelling it out per row was noise.
+		items = append(items, tuikit.PickerItem{Display: mark + " " + t.Name, Value: t.Name})
 	}
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
 	h := "Uninstall which themes? (Tab ticks, Enter removes the ticked ones)"
