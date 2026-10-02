@@ -1432,10 +1432,27 @@ watch_for_plugins(){
   local exe="$1" prefix="$2" _p_secs=2 pid before after
   # Snapshot what is already tracked, so what the manager ADDS can be named.
   before="$(plugin_group_rows 2>/dev/null | cut -f9 | sort -u)"
-  msg "Open the manager and install what you want; nothing is touched until you close it."
+  msg "Open it, install what you want, then close it. Nothing is touched before you close it."
   WINEPREFIX="$prefix" "$(apm_wine)" "$exe" &
   pid=$!
-  wait "$pid" 2>/dev/null || true
+  # Follow the whole process tree, and wait on THAT — not on a name, which
+  # matched the waiting loop's own command line and hung after the window had
+  # gone.
+  local -a _tree=("$pid")
+  local _t
+  for _t in "${_tree[@]}"; do
+    local _kids
+    _kids="$(pgrep -P "$_t" 2>/dev/null || true)"
+    [[ -n $_kids ]] && _tree+=($_kids)
+  done
+  local _w
+  for _w in "${_tree[@]}"; do
+    [[ -n $_w ]] || continue
+    if kill -0 "$_w" 2>/dev/null; then
+      msg "still running (pid $_w) — waiting for it to close"
+      while kill -0 "$_w" 2>/dev/null; do sleep 1; done
+    fi
+  done
   # ONE sweep, at the end.
   #
   # Not a loop while it is open: an install from a GUI manager writes files
@@ -1544,6 +1561,9 @@ install_manager_app(){
   for _p in "${_pids[@]}"; do
     wait "$_p" 2>/dev/null || true
   done
+  # For Kilohearts the installer IS the manager, so the thing being watched is
+  # the very file that was launched — not anything discovered afterwards.
+  msg "Open it, install what you want, then close it. Nothing is touched before you close it."
   # Wait on the processes we actually started, never on a NAME.
   #
   # `pgrep -f <name>` matches the waiting loop's own command line — it contains
@@ -1582,6 +1602,19 @@ install_manager_app(){
   if [[ -f "${_prefix_before_exes:-}" ]]; then
     _cand_all="$(comm -13 "$_prefix_before_exes" "$_after_exes")"
   fi
+  # Kilohearts' installer IS the manager.
+  #
+  # There is nothing else to find: it installs plugins from its own window and
+  # leaves itself in ProgramData, so a before/after diff is empty by design —
+  # which is why it kept being reported as "installed but its executable was
+  # not found". The file to watch is the one the user launched, and it is
+  # tracked under its ProgramData copy so it can be reopened later.
+  local _mgr_in_prefix
+  _mgr_in_prefix="$(find "$prefix/drive_c/ProgramData" -maxdepth 3 -type f -iname '*.exe' 2>/dev/null \
+    | grep -iE 'kilohearts|collective' | head -1)"
+  if [[ -n $_mgr_in_prefix ]]; then
+    exe="$_mgr_in_prefix"
+  fi
   while IFS= read -r cand; do
     [[ -n $cand ]] || continue
     is_uninstaller "$(basename "$cand")" && continue
@@ -1593,8 +1626,9 @@ install_manager_app(){
   done < <(printf '%s\n' "$_cand_all")
   rm -f "$_before_exes" "$_after_exes"
   if [[ -z $exe ]]; then
-    warn "The manager installed but its executable was not found — open it from the prefix."
-    return 1
+    warn "No manager executable could be identified in the prefix — open it from there by hand."
+    printf 'manager-note: nothing was registered, so nothing is listed under "Launch a standalone plugin".\n'
+    return 0
   fi
   name="$(basename "$exe")"; stem="${name%.exe}"
   # NO menu entry. The manager is only ever opened THROUGH the plugin manager —
