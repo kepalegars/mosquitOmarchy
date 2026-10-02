@@ -1564,12 +1564,34 @@ install_manager_app(){
   # The manager's own exe is whatever the installer just wrote that is not a
   # plugin and not an uninstaller.
   exe=""
+  # NEW files, not RECENT ones.
+  #
+  # `-newermt '-10 minutes'` is the wrong filter and it is the reason Kilohearts
+  # was reported as "installed but its executable was not found": an installer
+  # that lays down files with the archive's own timestamps writes nothing recent,
+  # which is the same trap that made Serum 2 look like it had installed nothing.
+  # Diffing the file list before and after asks the question that is actually
+  # being asked.
+  local _before_exes _after_exes
+  _before_exes="$(mktemp)"; _after_exes="$(mktemp)"
+  find "$prefix/drive_c" -maxdepth 8 -type f -iname '*.exe' 2>/dev/null | sort > "$_before_exes"
+  # (the snapshot is taken in install_manager_app's caller; if it is absent,
+  # fall back to a full listing so the app is still found)
+  find "$prefix/drive_c" -maxdepth 8 -type f -iname '*.exe' 2>/dev/null | sort > "$_after_exes"
+  local _cand_all="$_after_exes"
+  if [[ -f "${_prefix_before_exes:-}" ]]; then
+    _cand_all="$(comm -13 "$_prefix_before_exes" "$_after_exes")"
+  fi
   while IFS= read -r cand; do
     [[ -n $cand ]] || continue
     is_uninstaller "$(basename "$cand")" && continue
     is_native_win_app "$(basename "$cand")" && continue
-    exe="$cand"; break
-  done < <(find "$prefix/drive_c" -maxdepth 6 -type f -iname '*.exe' -newermt '-10 minutes' 2>/dev/null | sort)
+    # A manager's own name beats anything else: a manager writes helpers of its
+    # own, and the first alphabetically is not always the one to launch.
+    if [[ ${cand,,} == *kilohearts* || ${cand,,} == *collective* ]]; then exe="$cand"; break; fi
+    [[ -n $exe ]] || exe="$cand"
+  done < <(printf '%s\n' "$_cand_all")
+  rm -f "$_before_exes" "$_after_exes"
   if [[ -z $exe ]]; then
     warn "The manager installed but its executable was not found — open it from the prefix."
     return 1
@@ -1601,8 +1623,16 @@ install_plugin() {
   # later from inside the app with nobody watching the folder for them.
   if is_manager_installer "$file"; then
     link_prefix_to_vst "$wine_prefix"
+    # What the prefix holds BEFORE the installer runs, so what it brings can be
+    # told from what was already there. Recorded here because this is the only
+    # point where "before" is still true.
+    _prefix_before_exes="$(mktemp)"
+    find "$wine_prefix/drive_c" -maxdepth 8 -type f -iname '*.exe' 2>/dev/null | sort > "$_prefix_before_exes"
     install_manager_app "$file" "$wine_prefix"
-    return $?
+    local _mrc=$?
+    rm -f "${_prefix_before_exes:-}"
+    unset _prefix_before_exes
+    return $_mrc
   fi
 
   # The prefix must point at the shared folders BEFORE the installer runs,
@@ -2193,7 +2223,12 @@ yabridge_state_json() {
 }
 
 post_install() {
-  # $1 = "defer-sync" when this is one plugin inside a batch.
+  # In a batch, everything machine-wide is skipped and the batch's final call
+  # does it once. NOTE the sense of the test: the yabridge remote check runs
+  # when NOT deferred. It was written the other way round, so each of forty
+  # removals asked GitHub whether master had moved — "yabridge: master is
+  # current" forty times — and the single call that should have done it was the
+  # one skipping it.
   #
   # The batch runs uninstall_plugin once per selected plugin and each one used
   # to call the FULL post-install: yabridge rebuild, the Sonible runtime fix on
@@ -2214,7 +2249,7 @@ post_install() {
   # reading only $1 worked and reading only the environment did not. Both are
   # read, so either caller is right.
   local defer_sync="${1:-${APM_DEFER_SYNC:-}}"
-  if [[ $defer_sync == defer-sync || $defer_sync == 1 ]]; then
+  if [[ $defer_sync != defer-sync && $defer_sync != 1 ]]; then
     yabridge_ensure force || true
   fi
 
