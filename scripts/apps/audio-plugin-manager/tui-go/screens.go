@@ -1948,13 +1948,19 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.info = tuikit.NewInfo(log).
 					SetSize(m.contentSize())
-				m.pop() // dismiss the confirm
-				m.pop() // drop the runner screen
-				m.push(scrInfo)
+				// SET the stack; do not pop twice.
+				//
+				// pop() is a no-op on a one-deep stack, and the auto-apply path
+				// leaves exactly that: it rewinds to the menu and then REPLACES
+				// it with the runner, so the stack is the runner alone. Two pops
+				// therefore removed nothing, the success prompt stayed
+				// underneath, and "See log" then Esc landed straight back on it —
+				// the loop that was reported. It only worked on whichever path
+				// happened to leave two screens behind.
+				m.nav = []screen{scrMain, scrInfo}
 				return m, nil
 			}
-			// "OK" -- return to the main menu.
-			m.pop()
+			// "Back" -- return to the main menu.
 			m.nav = []screen{scrMain}
 			return m, m.enterCmd()
 		}

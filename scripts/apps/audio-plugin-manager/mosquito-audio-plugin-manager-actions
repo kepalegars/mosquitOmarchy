@@ -1052,26 +1052,15 @@ PYWIZARD
     ;;
 
   toggle-executable)
+    # Delegates to the core, which owns the .desktop shape.
+    #
+    # This verb had its own copy of the writer and the Go TUI calls THIS one,
+    # so the fixes made in the core — the name without the extension, the
+    # generated icon — were never applied to anything: this copy still wrote
+    # "Name=$base" and no Icon= at all, and it kept overwriting entries the
+    # core had repaired.
     exe="${1:?exe path required}"
-    base="$(basename "$exe")"
-    mkdir -p "$APPS_DIR"
-    slug="$APPS_DIR/$DESKTOP_SLUG-$(basename "${base%.exe}" | tr ' ' '-' | tr -cd '[:alnum:]-').desktop"
-    if [[ -f $slug ]]; then
-      rm -f "$slug"
-      echo "hidden: $base"
-    else
-      cat > "$slug" <<EOF
-[Desktop Entry]
-Name=$base
-Comment=VST standalone (managed by mosquito Audio Plugin Manager)
-Exec=uwsm app -- mosquito-audio-plugin-manager launch "$exe"
-Terminal=false
-Type=Application
-Categories=AudioVideo;Audio;
-StartupNotify=false
-EOF
-      echo "shown in menu: $base"
-    fi
+    toggle_executable_menu "$exe"
     ;;
 
   move-plugin)

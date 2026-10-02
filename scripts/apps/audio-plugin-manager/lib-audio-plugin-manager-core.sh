@@ -104,7 +104,6 @@ else
   STATE_DIR="$HOME/mosquitOmarchy/scripts/apps/audio-plugin-manager"
 fi
 STATE_FILE="$STATE_DIR/audio-plugin-manager-state.json"
-APM_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/mosquito-audio-plugin-manager"
 MACHINE_ID="$(cat /etc/machine-id 2>/dev/null || hostname)"
 
 # ── Colors / messages ───────────────────────────────────────────────────────
@@ -592,10 +591,58 @@ is_uninstaller() {
 # whichever the shell asks for exists. Falls back to the generic audio icon when
 # the vendor ships nothing, rather than leaving Icon= pointing at a missing file
 # (which renders as a broken-image glyph in the menu).
+# standalone_slug <exe> -> the .desktop path for an executable.
+standalone_slug(){
+  local base="${1##*/}" stem
+  stem="$(printf '%s' "$base" | sed 's/\.[eE][xX][eE]$//')"
+  printf '%s/%s-%s.desktop' "$APPS_DIR" "$DESKTOP_SLUG" \
+    "$(printf '%s' "$stem" | tr ' ' '-' | tr -cd '[:alnum:]-')"
+}
+
+# standalone_icon_warm <exe> — make sure an icon exists for an executable that is
+# already in the menu, so toggling one on never writes an entry without one.
+standalone_icon_warm(){ standalone_icon_for "$1" >/dev/null; }
+
+# toggle_executable_menu <exe> — show or hide one executable in the menu.
+#
+# The SINGLE writer of these entries. It used to exist twice: once here and
+# once inline in the actions dispatcher, and the Go TUI called the copy in the
+# dispatcher — so this one was never called, its repairs never ran, and the copy
+# kept writing the old shape ("SubLabXL.exe", no Icon=) over the top.
+toggle_executable_menu(){
+  local exe="$1" base stem slug icon
+  base="${exe##*/}"
+  stem="$(printf '%s' "$base" | sed 's/\.[eE][xX][eE]$//')"
+  mkdir -p "$APPS_DIR"
+  slug="$(standalone_slug "$exe")"
+  if [[ -f $slug ]]; then
+    rm -f "$slug"
+    printf 'hidden: %s\n' "$stem"
+    return 0
+  fi
+  icon="$(standalone_icon_for "$exe")"
+  cat > "$slug" <<EOF
+[Desktop Entry]
+Name=$stem
+Comment=VST standalone (managed by mosquito Audio Plugin Manager)
+Exec=uwsm app -- mosquito-audio-plugin-manager launch "$exe"
+Icon=$icon
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;
+StartupNotify=false
+EOF
+  printf 'shown in menu: %s\n' "$stem"
+}
+
 standalone_icon_for() {
   local exe="$1" name stem out cache src
   name="$(basename "$exe")"; stem="${name%.exe}"
-  cache="$APM_CACHE_DIR/icons"
+  # Under ~/.local/share/icons, NOT the cache. A cache directory is a thing
+  # users and cleaners delete without being asked, and a menu entry pointing
+  # into one loses its icon the day it is cleared — which is the same "the fix
+  # is in the code and there is still no icon" symptom, one reboot away.
+  cache="$HOME/.local/share/icons/audio-plugin-manager"
   mkdir -p "$cache" 2>/dev/null || true
   out="$cache/${stem// /-}.png"
   if [[ -s $out ]]; then printf '%s' "$out"; return 0; fi
