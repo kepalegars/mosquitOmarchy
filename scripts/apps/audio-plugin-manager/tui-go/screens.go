@@ -309,9 +309,49 @@ type uninstallTreeItem struct {
 	Value   string
 	Display string
 	Plugins []Item
+	// Subgroups are the product-line folders INSIDE a vendor folder (iZotope →
+	// Neutron 5 / RX 11). A vendor with no product lines keeps its plugins in
+	// Plugins and has none of these.
+	Subgroups []uninstallTreeItem
 	// Formats is the format list of a STANDALONE row (a plugin with no folder
 	// above it). Folder children carry their own on the Item.
 	Formats string
+}
+
+// vendorNode builds one vendor row: the plugins that carry no product line
+// stay directly under it, and the ones that do are gathered into a subgroup
+// folder each, in the order the lines first appear.
+//
+// The subgroup ORDER is first-seen rather than alphabetical on purpose: it
+// follows the order the products appear in the vendor's own folder, which is
+// the order the vendor lists them in.
+func vendorNode(folder Item, children []Item) uninstallTreeItem {
+	node := uninstallTreeItem{
+		Folder:  true,
+		Value:   folder.Value,
+		Display: folder.Display,
+	}
+	byGroup := map[string][]Item{}
+	var groupOrder []string
+	for _, c := range children {
+		if c.Group == "" {
+			node.Plugins = append(node.Plugins, c)
+			continue
+		}
+		if _, seen := byGroup[c.Group]; !seen {
+			groupOrder = append(groupOrder, c.Group)
+		}
+		byGroup[c.Group] = append(byGroup[c.Group], c)
+	}
+	for _, g := range groupOrder {
+		node.Subgroups = append(node.Subgroups, uninstallTreeItem{
+			Folder:  true,
+			Value:   folder.Value + "\x00" + g,
+			Display: g,
+			Plugins: byGroup[g],
+		})
+	}
+	return node
 }
 
 // uninstallTree reorganises list-uninstallable's flat output into the
@@ -346,12 +386,7 @@ func uninstallTree(items []Item) []uninstallTreeItem {
 		if it.Kind != "folder" {
 			continue
 		}
-		out = append(out, uninstallTreeItem{
-			Folder:  true,
-			Value:   it.Value,
-			Display: it.Display,
-			Plugins: pluginsByParent[it.Value],
-		})
+		out = append(out, vendorNode(it, pluginsByParent[it.Value]))
 	}
 	// Standalone plugins last.
 	for _, it := range standalone {
@@ -388,6 +423,17 @@ func isFolderRow(items []Item, value string) bool {
 // never to "partial", so a single keystroke means "I want the whole
 // installer" or "I want none of it").
 func toggleFolderPlugins(items []Item, folderValue string, checked map[string]bool) {
+	// A subgroup folder's value is "<vendor value>\x00<line>", which no plugin's
+	// Parent can equal — the plugins' parent is still the vendor. Matching on
+	// Parent alone therefore made Tab on "Neutron 5" select nothing at all,
+	// silently, while the row's ●/○ count said it should work.
+	vendorValue, line, isSub := strings.Cut(folderValue, "\x00")
+	inFolder := func(it Item) bool {
+		if !isSub {
+			return it.Parent == folderValue
+		}
+		return it.Parent == vendorValue && it.Group == line
+	}
 	// Decide the new state: if at least one child is unchecked → mark
 	// all checked (the user is "selecting everything in this folder").
 	// If every child is already checked → uncheck all (the user is
@@ -396,14 +442,14 @@ func toggleFolderPlugins(items []Item, folderValue string, checked map[string]bo
 	// row-by-row by tabbing individual children.
 	anyUnchecked := false
 	for _, it := range items {
-		if it.Parent == folderValue && !checked[it.Value] {
+		if inFolder(it) && !checked[it.Value] {
 			anyUnchecked = true
 			break
 		}
 	}
 	target := anyUnchecked
 	for _, it := range items {
-		if it.Parent == folderValue {
+		if inFolder(it) {
 			checked[it.Value] = target
 		}
 	}
@@ -424,79 +470,93 @@ func toggleFolderPlugins(items []Item, folderValue string, checked map[string]bo
 //
 // Every row uses the app-wide ○ (off) / ● (on) circle convention.
 func treeItemsToPicker(items []uninstallTreeItem, checked map[string]bool, expanded map[string]bool) []tuikit.PickerItem {
+	return treeRows(items, checked, expanded, 0)
+}
+
+// treeRows renders the tree at one nesting level and recurses into the
+// subgroups, so a suite folder can be opened to reveal the product lines inside
+// it and each of those opened in turn.
+//
+// The indent grows with the depth and every level keeps the ├─/└─ branch, so
+// the depth is readable from the shape of the tree and not only from the
+// horizontal offset — at depth two the offset alone is easy to miscount.
+func treeRows(items []uninstallTreeItem, checked map[string]bool, expanded map[string]bool, depth int) []tuikit.PickerItem {
 	out := []tuikit.PickerItem{}
+	pad := strings.Repeat("  ", depth+1)
 	for _, n := range items {
 		if n.Folder {
 			marked := 0
+			total := 0
 			for _, p := range n.Plugins {
+				total++
 				if checked[p.Value] {
 					marked++
+				}
+			}
+			for _, g := range n.Subgroups {
+				for _, p := range g.Plugins {
+					total++
+					if checked[p.Value] {
+						marked++
+					}
 				}
 			}
 			fold := tuikit.FoldCollapsed
 			if expanded[n.Value] {
 				fold = tuikit.FoldExpanded
 			}
-			// Folder: the kit draws a folder glyph in the leading slot and
-			// bolds the label; the all-or-none checkbox mark becomes a
-			// "done/total" count in the trailing slot, so the leading column
-			// only ever says what KIND of row this is.
 			folder := tuikit.PickerItem{
-				Display: n.Display,
+				Display: pad + n.Display,
 				Value:   n.Value,
 				Fold:    fold,
 				Folder:  true,
 			}
-			if total := len(n.Plugins); total > 0 {
+			if total > 0 {
 				folder.Suffix = fmt.Sprintf("  %d/%d", marked, total)
 			}
 			out = append(out, folder)
-			// Sub-plugins render ONLY inside the expanded folder, and
-			// always indented under it — never as siblings anywhere.
 			if expanded[n.Value] {
-				last := len(n.Plugins) - 1
-				for i, p := range n.Plugins {
-					pmark := "○"
-					if checked[p.Value] {
-						pmark = "●"
+				if len(n.Plugins) > 0 {
+					last := len(n.Plugins) - 1
+					for i, p := range n.Plugins {
+						out = append(out, pluginRow(p, checked, pad, i == last, depth+1))
 					}
-					branch := "├─ "
-					if i == last {
-						branch = "└─ "
-					}
-					row := tuikit.PickerItem{
-						Display: "    " + branch + pmark + "  " + p.Display,
-						Value:   p.Value,
-					}
-					// The formats live in the Suffix, not in Display: the
-					// label column is shared with the folder rows above, and
-					// baking the formats into the text would make the labels
-					// ragged. The kit reserves one trailing width for the whole
-					// picker, so the rows stay aligned whether or not a plugin
-					// is in several formats.
-					row.Suffix = p.FormatSuffix()
-					out = append(out, row)
+				}
+				if len(n.Subgroups) > 0 {
+					out = append(out, treeRows(n.Subgroups, checked, expanded, depth+1)...)
 				}
 			}
-		} else {
-			mark := "○"
-			if checked[n.Value] {
-				mark = "●"
-			}
-			row := tuikit.PickerItem{Display: mark + "  " + n.Display, Value: n.Value}
-			row.Suffix = formatSuffix(n.Formats)
-			out = append(out, row)
+			continue
 		}
+		mark := "○"
+		if checked[n.Value] {
+			mark = "●"
+		}
+		row := tuikit.PickerItem{Display: mark + "  " + n.Display, Value: n.Value}
+		row.Suffix = formatSuffix(n.Formats)
+		out = append(out, row)
 	}
 	return out
 }
 
-// checkboxItemsToPicker renders the Uninstall screen's Tab multi-select
-// state -- same ●/○ convention as execItemsToPicker, for the generic Item
-// shape list-uninstallable returns. (Kept for any code path that still
-// feeds a flat list — the uninstall flow now goes through uninstallTree
-// + treeItemsToPicker instead, so the user gets the folder/sub-plugin
-// grouping the user asked for.)
+// pluginRow renders one plugin under a folder, at the given depth.
+func pluginRow(p Item, checked map[string]bool, pad string, last bool, depth int) tuikit.PickerItem {
+	pmark := "○"
+	if checked[p.Value] {
+		pmark = "●"
+	}
+	branch := "├─ "
+	if last {
+		branch = "└─ "
+	}
+	row := tuikit.PickerItem{
+		Display: pad + branch + pmark + "  " + p.Display,
+		Value:   p.Value,
+	}
+	row.Suffix = p.FormatSuffix()
+	return row
+}
+
 func checkboxItemsToPicker(items []Item, checked map[string]bool) []tuikit.PickerItem {
 	out := make([]tuikit.PickerItem, len(items))
 	for i, it := range items {

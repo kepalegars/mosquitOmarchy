@@ -597,7 +597,7 @@ MODULES=(
   "achraff:'Achraff 67' visual theme + unlock/Plymouth logo (lock screen left stock)"
   "touchpad:Touchpad (pointer acceleration + sensitivity — external mouse is not affected)"
   "mx-master:MX Master (any model) — thumb gesture button → SUPER (logiops daemon, system service)"
-  "keepassxc:KeePassXC  —  secret service (part of the mosquitomarchy module, v1.0.0) — REPLACES gnome-keyring completely (existing keyring secrets must be migrated manually; package removal optional & asked). On FIRST KeePassXC launch choose YOUR .kdbx: the install pins it into keepassxc.ini (Remember*/LastOpened*) so EVERY web app's browser extension and secret service uses it — no more 'create a new database?' prompts. 'i' info below; pin a DIFFERENT file manually with scripts/apps/keepassxc/keepassxc-default-database.sh FILE.kdbx (README in that folder lists a manual select)"
+  "keepassxc:keepassxc  —  secret service (REPLACES gnome-keyring completely (existing keyring secrets must be migrated manually; package removal optional & asked). On FIRST KeePassXC launch choose YOUR .kdbx: the install pins it into keepassxc.ini (Remember*/LastOpened*) so EVERY web app's browser extension and secret service uses it — no more 'create a new database?' prompts. 'i' info below; pin a DIFFERENT file manually with scripts/apps/keepassxc/keepassxc-default-database.sh FILE.kdbx (README in that folder lists a manual select)"
   "mosquitomarchy-update:Update watchdog (scripts update first, then Omarchy updates — notification + opencode conflict review)"
   "superfile:SuperFile — terminal file manager (menu entry + keybind + Omarchy theme)"
   "extracto:Simple custom install script for file-roller — restores Nautilus' Extract Here / Create Archive (file-roller + 7zip + unrar, file-roller prompts for the password itself); no desktop entry, no Nautilus script"
@@ -810,7 +810,7 @@ module_of_path(){
     scripts/fixes/fix-touchpad.sh)                           echo touchpad ;;
     scripts/fixes/fix-mx-master.sh)                          echo mx-master ;;
     scripts/fixes/fix-ableton-fullscreen.sh)                 echo ableton-fullscreen ;;
-    scripts/apps/keepassxc/*)                                echo mosquito ;;
+    scripts/apps/keepassxc/*)                                echo keepassxc ;;
     scripts/mosquitomarchy-update/*)                            echo mosquitomarchy-update ;;
     scripts/apps/superfile/*)                                echo superfile ;;
     scripts/apps/zen/*)                                      echo zen ;;
@@ -3579,7 +3579,7 @@ exec_modules(){
 
 # Categories of the "setup" action. id|label|modules (space-separated module ids).
 CATEGORIES=(
-  "apps|Apps|reaper audio ableton guitarpro davinci-resolve extracto handbrake superfile zen"
+  "apps|Apps|reaper audio ableton guitarpro davinci-resolve extracto handbrake superfile zen keepassxc"
   "tuis|TUIs|"
   "webapps|Webapps|"
   "fixes|Fixes|"
@@ -3745,7 +3745,7 @@ category_items(){ # catid -> echo the space-separated module ids of that categor
 # so they are matched explicitly.
 module_category(){ # module id -> category id
   case "$1" in
-    ableton-move-manager|audio-plugin-manager|jamjamjam-plugin|battery|live-mode|keepassxc) echo mosquito; return 0 ;;
+    ableton-move-manager|audio-plugin-manager|jamjamjam-plugin|battery|live-mode) echo mosquito; return 0 ;;
   esac
   local c
   for c in "${CATEGORIES[@]}"; do
@@ -3754,19 +3754,6 @@ module_category(){ # module id -> category id
       *" $1 "*) printf '%s' "${c%%|*}"; return 0 ;;
     esac
   done
-}
-
-# module_display_name <id> -- the name a PERSON reads on a Setup/Uninstall row.
-#
-# The rows used to print the module key, so the tree said "keepassxc" where the
-# menu it came from said "KeePassXC": the same module called two different things
-# depending on which page you were on. Keeping the map here means both trees
-# name a module the same way.
-module_display_name(){
-  case "$1" in
-    keepassxc) echo "KeePassXC" ;;
-    *) echo "$1" ;;
-  esac
 }
 
 # module_desc_into is module_desc writing into the global MODULE_DESC, so
@@ -3895,8 +3882,6 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
       CAND_LABELS+=("mosquito-mega-caffeine  —  $(module_desc battery)")
       CAND_KEYS+=("live-mode")
       CAND_LABELS+=("mosquito-live-mode  —  $(module_desc live-mode)")
-      CAND_KEYS+=("keepassxc")
-      CAND_LABELS+=("KeePassXC  —  $(module_desc keepassxc)")
       ;;
     *)
       items="$(category_items "$cat")"

@@ -421,7 +421,12 @@ func (m model) themePicked(from screen, res tuikit.PickerResultMsg) (model, tea.
 		// other one and Esc behaves the same way everywhere.
 		name := m.themeCreated
 		m.resetThemeFlow()
-		m.pop()
+		// Straight back to the menu, then run the apply on its own screen: the
+		// success screen was [done] over [main], so the pop here lands on the
+		// main menu and the runner replaces THAT. Leaving the done screen under
+		// the runner meant the run finished on top of it again — the same trap,
+		// one row later.
+		m.nav = []screen{scrMain}
 		m.themeApplyName = name
 		return m.startWorking("Applying the theme",
 			workingArgs("theme-apply", []string{name})...)
