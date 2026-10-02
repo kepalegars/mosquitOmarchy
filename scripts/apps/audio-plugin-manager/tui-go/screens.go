@@ -575,11 +575,17 @@ func treeRows(items []uninstallTreeItem, checked map[string]bool, expanded map[s
 			}
 			if depth > 0 {
 				folder.Folder = false
-				glyph := tuikit.FoldCollapsed
+				// The kit's OWN folder glyphs (▢ closed / ▣ open), not the
+				// fold arrows: a root folder draws ▢/▣ in its badge slot, and a
+				// suite line drawn with ▼/▶ read as a different kind of row
+				// entirely — a triangle where everything else in the tree is a
+				// box. Same icon as root, same open/closed behaviour, only the
+				// position differs.
+				icon := tuikit.FolderClosed
 				if expanded[n.Value] {
-					glyph = tuikit.FoldExpanded
+					icon = tuikit.FolderOpen
 				}
-				folder.Display = strings.Repeat("  ", depth) + glyph + " " + n.Display
+				folder.Display = strings.Repeat("  ", depth) + icon + " " + n.Display
 			}
 			if total > 0 {
 				folder.Suffix = fmt.Sprintf("  %d/%d", marked, total)

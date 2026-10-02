@@ -1400,8 +1400,20 @@ func checkInstallFixesCmd(plugin string) tea.Cmd {
 				fixPrompt = v.FixPrompt != "no"
 			}
 		}
+		// known: is this plugin in the knowledge base? Only a plugin with a
+		// record is asked about its fixes at all. It was read nowhere and set
+		// nowhere, so every known plugin — Crispy Tuner included — got the
+		// plain success dialog and was never offered its fixes.
+		known := strings.TrimSpace(mustRun("is-known-plugin", plugin)) != ""
+		name := baseName(pluginPathOf(plugin))
+		if out, e := runQuick("known-plugin-name", plugin); e == nil {
+			if n := strings.TrimSpace(string(out)); n != "" {
+				name = n
+			}
+		}
 		return installFixesCheckMsg{plugin: plugin, vendor: vendor, items: items,
-			autoFix: autoFix, fixPrompt: fixPrompt, err: err}
+			autoFix: autoFix, fixPrompt: fixPrompt, known: known,
+			pluginName: name, err: err}
 	}
 }
 

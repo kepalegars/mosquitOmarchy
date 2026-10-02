@@ -830,6 +830,40 @@ recommended_prefix_for_plugins() {
 # itself; copying one into a plugin folder changes nothing and clutters the
 # list. A suite's own companion module (Meter Tap, a vendor's shared engine) is
 # NOT one of these: the plugin looks for it next to itself.
+# link_suite_support <prefix> <plugin-file> <vendor-dir>
+#
+# Mirror a suite's support directories into the shared folder as SYMLINKS.
+#
+# A suite's modules load their engine by relative path: every Neutron and RX
+# module carries "iZNeutron5Core.dll" and reads the path from a PE resource, so
+# nothing about the expected layout is readable from the binary. Left in the
+# prefix it resolved; copied FLAT into the shared folder it did not, and every
+# module failed to load with "one of the files this plugin needs cannot be
+# found" — while the one self-contained module (Visual Mixer, which needs no
+# core) loaded fine, which is exactly what was seen.
+#
+# Copying the Cores instead of linking them costs 650 MB of a disk that has
+# under 2 GB free, and the manager already links the other way round (the
+# prefix points INTO the shared folder), so linking is both cheaper and
+# reversible.
+link_suite_support(){
+  local pfx="$1" plugin="$2" vendor_dir="$3"
+  local -a dirs=()
+  mapfile -t dirs < <(find "$pfx" -maxdepth 4 -type d \( -iname 'Cores' -o -iname 'Presets' \) 2>/dev/null)
+  ((${#dirs[@]})) || return 0
+  local d rel target
+  for d in "${dirs[@]}"; do
+    # Only the suites that have modules in this vendor folder are relevant.
+    grep -qF "$plugin" "$pfx/registered-plugins.list" 2>/dev/null || true
+    rel="${d#"$pfx"/}"
+    target="$vendor_dir/$rel"
+    mkdir -p "$(dirname "$target")"
+    [[ -e $target ]] && continue
+    ln -sfn "$d" "$target" 2>/dev/null || true
+    ok "$(basename "$rel") linked beside the plugins that need it"
+  done
+}
+
 is_redistributable_runtime(){
   case "${1,,}" in
     mfc*|msvcr*.dll|msvcp*.dll|vcruntime*.dll|ucrtbase.dll|msvcp*.dll|api-ms-win-*|    concrt*.dll|d3dcompiler_*.dll|dxil.dll|directx*.dll|*.ocx|comdlg32.dll|    gdi*.dll|ole*.dll|comctl*.dll|msvcp*.dll) return 0 ;;
@@ -1340,6 +1374,7 @@ install_plugin() {
     state_register_install "$(plugin_key "$_f")" "$wine_prefix" "$_f"
   done
   unset _f
+  link_suite_support "$wine_prefix" "${newfiles[0]}" "$(dirname "${newfiles[0]}")"
   register_standalones_from_prefix "$wine_prefix"
   post_install
   hide_wine_menu_entries "$wine_prefix"
