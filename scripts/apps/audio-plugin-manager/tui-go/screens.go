@@ -1132,7 +1132,8 @@ func pluginItemsAsItems(items []PluginItem) []Item {
 		// Formats has to travel: the fixes chooser renders the SAME rows as the
 		// plugin list, and a plugin shown without its formats is exactly the
 		// bare name the user asked to replace.
-		out[i] = Item{Display: it.Display, Value: it.Value, Kind: it.Kind, Parent: it.Parent, Formats: it.Formats}
+		out[i] = Item{Display: it.Display, Value: it.Value, Kind: it.Kind, Parent: it.Parent,
+			Formats: it.Formats, Group: it.Group}
 	}
 	return out
 }

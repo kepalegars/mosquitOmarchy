@@ -166,6 +166,11 @@ type PluginItem struct {
 	Enabled bool   `json:"enabled"`
 	Kind    string `json:"kind"`
 	Parent  string `json:"parent"`
+	// Group is the product line inside the vendor ("Neutron 5", "RX 11"). It
+	// must exist here as well as on Item: the Installed-plugins and Fixes
+	// screens read PluginItem and convert to Item, so without it the line was
+	// dropped on the way and the suite nesting showed up in ONE screen only.
+	Group string `json:"group"`
 	// Vendor is the folder this plugin groups under, and Formats the
 	// comma-separated list it is installed in ("vst2,vst3,clap").
 	//
