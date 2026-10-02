@@ -4477,8 +4477,20 @@ plugin_group_rows_build() {
       *.vst3/*) key="${key%%.vst3/*}.vst3" ;;
       *.clap/*)  key="${key%%.clap/*}.clap" ;;
     esac
-    grp="${key%/*}"; [[ $key == "$grp" ]] && grp="native"
-    grp="${grp#VST2/}"; grp="${grp#VST3/}"; grp="${grp#CLAP/}"
+    grp_full="${key%/*}"; [[ $key == "$grp_full" ]] && grp_full="native"
+    grp_full="${grp_full#VST2/}"; grp_full="${grp_full#VST3/}"; grp_full="${grp_full#CLAP/}"
+    # Vendor/subgrouping: for vendors with multiple product lines (Izotope, etc.)
+    # the vendor becomes the top-level group, subfolder becomes the subgroup.
+    case "$grp_full" in
+      Izotope/*|iZotope/*)
+        vendor="Izotope"
+        sub="${grp_full#*/}"
+        grp="$vendor/$sub"
+        ;;
+      *)
+        grp="$grp_full"
+        ;;
+    esac
 
     if [[ -z ${g_any[$key]:-} ]]; then
       g_any[$key]=1
