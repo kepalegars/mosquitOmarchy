@@ -2470,8 +2470,13 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 
 	case scrBackupRestore:
 		if res.Value == "back" {
+			// Keep the row you came back to. Returning from the restore list
+			// rebuilt the picker from scratch, so the cursor went to the top and
+			// walking down to the next backup meant starting over every time.
+			was := m.backupPicker.SelectedValue()
 			m.pop()
 			m.backupPicker = newNavPicker("", backupActions()).SetSize(m.contentSize())
+			m.backupPicker = m.backupPicker.KeepCursor(was)
 			return m, nil
 		}
 		m.pendingFile = res.Value

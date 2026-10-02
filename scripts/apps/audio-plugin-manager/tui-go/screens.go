@@ -661,20 +661,20 @@ func (m *model) rebuildUninstallPicker() {
 	if m.folderExpanded == nil {
 		m.folderExpanded = map[string]bool{}
 	}
-	sidx := m.picker.Index()
 	// WithTree: same fold gesture as the Installed-plugins list, and the shared
 	// m.folderExpanded, so a folder folded on one screen is folded on the other.
-	m.picker = tuikit.NewPicker("Uninstall which plugin(s)?",
-		treeItemsToPicker(uninstallTree(m.uninstallCache), m.uninstallChecked, m.folderExpanded)).SetSize(m.contentSize()).
-		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
-			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
-			key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "open folder")),
-			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
-			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "uninstall")),
-		).WithTree(m.folderExpanded)
-	m.picker = m.picker.SelectIndex(sidx)
+	m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
+		return tuikit.NewPicker("Uninstall which plugin(s)?",
+			treeItemsToPicker(uninstallTree(m.uninstallCache), m.uninstallChecked, m.folderExpanded)).SetSize(m.contentSize()).
+			SetHelpKeys(
+				key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+				key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
+				key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "open folder")),
+				key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
+				key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
+				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "uninstall")),
+			).WithTree(m.folderExpanded)
+	})
 }
 
 // selectedFolderValueIn and selectedFolderValue used to answer "is the cursor on
@@ -1790,12 +1790,13 @@ func (m *model) rebuildPluginPicker() {
 	}
 	items := treeItemsToPicker(uninstallTree(pluginItemsAsItems(m.pluginCache)), m.pluginChecked, m.folderExpanded)
 	items = append(items, tuikit.PickerItem{Display: "📖  Readme", Value: readmeSentinel})
-	sidx := m.picker.Index()
 	// WithTree: ←/→ are the fold gesture here (they are not sort keys on this
 	// screen any more — the sort cycle moved to `s`), resolved by the kit from
 	// the folder the CURSOR IS IN.
-	m.picker = tuikit.NewPicker(header, items).SetSize(m.contentSize()).SetHelpKeys(pluginListHelpKeys()...).WithTree(m.folderExpanded)
-	m.picker = m.picker.SelectIndex(sidx)
+	m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
+		return tuikit.NewPicker(header, items).SetSize(m.contentSize()).
+			SetHelpKeys(pluginListHelpKeys()...).WithTree(m.folderExpanded)
+	})
 }
 
 // pluginDirty reports whether any Tab-marked checked-state differs from the
@@ -3028,12 +3029,14 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.replace(scrInfo)
 				return m, nil
 			}
-			m.picker = tuikit.NewPicker("Toggle which executables appear in the menu — keep picking, esc to finish:", execItemsToPicker(et.items)).
-				SetSize(m.contentSize()).
-				SetHelpKeys(
-					key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "toggle")),
-					key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "toggle")),
-				)
+			m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
+				return tuikit.NewPicker("Toggle which executables appear in the menu — keep picking, esc to finish:", execItemsToPicker(et.items)).
+					SetSize(m.contentSize()).
+					SetHelpKeys(
+						key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "toggle")),
+						key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "toggle")),
+					)
+			})
 			return m, nil
 		}
 		if tg, ok := msg.(tuikit.PickerToggleMsg); ok {
@@ -3147,10 +3150,10 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pop()
 				return m, m.enterCmd()
 			}
-			sidx := m.picker.Index()
-			m.picker = tuikit.NewPicker("Found on disk but not tracked — pick to add (esc to finish):",
-				itemsToPicker(rr.items)).SetSize(m.contentSize())
-			m.picker = m.picker.SelectIndex(sidx)
+			m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
+				return tuikit.NewPicker("Found on disk but not tracked — pick to add (esc to finish):",
+					itemsToPicker(rr.items)).SetSize(m.contentSize())
+			})
 			return m, nil
 		}
 		var cmd tea.Cmd
