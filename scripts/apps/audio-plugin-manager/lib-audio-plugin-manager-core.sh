@@ -824,6 +824,19 @@ recommended_prefix_for_plugins() {
 # appeared.  Reading the PE export table is decisive instead of a guess.  If
 # objdump is unavailable we answer "assume plugin" so a missing tool can never
 # hide a real plugin; it just reverts to the old behaviour.
+# is_redistributable_runtime <basename> — true for a C/C++ runtime DLL.
+#
+# These are shared by everything on the machine and are resolved by Windows
+# itself; copying one into a plugin folder changes nothing and clutters the
+# list. A suite's own companion module (Meter Tap, a vendor's shared engine) is
+# NOT one of these: the plugin looks for it next to itself.
+is_redistributable_runtime(){
+  case "${1,,}" in
+    mfc*|msvcr*.dll|msvcp*.dll|vcruntime*.dll|ucrtbase.dll|msvcp*.dll|api-ms-win-*|    concrt*.dll|d3dcompiler_*.dll|dxil.dll|directx*.dll|*.ocx|comdlg32.dll|    gdi*.dll|ole*.dll|comctl*.dll|msvcp*.dll) return 0 ;;
+  esac
+  return 1
+}
+
 dll_exports_plugin_entry() {
   local f="$1"
   [[ -f $f ]] || return 1
@@ -1210,7 +1223,30 @@ install_plugin() {
             if dll_exports_plugin_entry "$f_pkg"; then
               dst="$VST_VST2"
             else
-              deps+=("$base")
+              # A dependency is not a plugin, so it must NOT be filed as one —
+              # but it does have to REACH the shared folder, beside the plugin
+              # that needs it.
+              #
+              # They used to be left in the prefix "on purpose", which is right
+              # for a redistributable runtime (msvcrt, a VC++ redistributable)
+              # and wrong for a companion module shipped WITH a suite. iZotope's
+              # Neutron and RX load "Meter Tap 3.dll" by relative path from the
+              # folder they were copied to; left behind in Program Files, every
+              # single module of both suites failed to load in Ableton with
+              # "one of the files this plugin needs cannot be found" — while
+              # loading fine when launched from the prefix itself, which is why
+              # it looked like the install was fine.
+              #
+              # So a non-plugin DLL is copied beside the plugin when it comes
+              # from a suite's own folder, and only redistributable runtimes
+              # stay behind.
+              if is_redistributable_runtime "$base"; then
+                deps+=("$base")
+              else
+                mkdir -p "$VST_VST3"
+                cp -a "$f_pkg" "$VST_VST3/" 2>/dev/null || true
+                ok "$base (suite companion, needed beside the plugin) → $VST_VST3/"
+              fi
               continue
             fi ;;
           *) dst="$VST_VST2";;
@@ -1231,17 +1267,31 @@ install_plugin() {
 
 
   if ((${#newfiles[@]} == 0)); then
-    # Reinstall/update: the plugin is already there and the installer
-    # rewrote it in place (possibly with an old archive mtime), so no NEW
-    # path appeared. Match the installer to the existing plugin(s).
+    # Reinstall/update: the plugin is already there and the installer rewrote
+    # it IN PLACE, so no NEW path appeared.
+    #
+    # That is NOT a successful install, and treating it as one is how installing
+    # Smart Chain "succeeded" while doing nothing at all: the installer put
+    # nothing new on disk, the manager matched the name against smartcomp3,
+    # which had been installed earlier, adopted it as the result, and reported
+    # a clean install of a plugin the user never ran. Nothing new, no install —
+    # whatever the installer did, the user asked for this plugin to appear and
+    # it did not.
+    #
+    # The one thing a rewrite of existing files proves is that wine DID write;
+    # it is reported as a failed install with that reason attached, not quietly
+    # turned into a success against a plugin that was already there.
     local -a matched=()
     while IFS= read -r f; do [[ -n $f ]] && matched+=("$f"); done < <(match_installed_plugin "$file")
     if ((${#matched[@]})); then
-      msg "Installer produced no NEW file — matching already-installed plugin(s) found:"
+      warn "The installer wrote into files that were ALREADY there — nothing new was installed."
       for f in "${matched[@]}"; do
-        ok "$(basename "$f") (already installed — matched to $(basename "$file"))"
-        newfiles+=("$f")
+        warn "  already present: $(basename "$f")"
       done
+      warn "If you are RE-INSTALLING an existing version, that is expected — but it is reported as"
+      warn "a failure on purpose: an install that adds no file has not installed this plugin."
+      register_standalones_from_prefix "$wine_prefix"
+      return 1
     fi
   fi
 
@@ -1300,14 +1350,20 @@ install_plugin() {
   # record.  newfiles[0] is the wrong key: on a partial install it is whatever
   # the installer wrote first, which for smartEQ4 was its onnxruntime runtime
   # library rather than the plugin.
-  local fix_token fix_rec
+  # No per-product fix is applied here any more.
+  #
+  # Applying a fix silently, before anyone is asked, means the plugin the user
+  # installed is not the plugin on disk — and for the fixes that rewrite a
+  # third-party binary that is not something to do behind their back. The
+  # knowledge base is still consulted: it decides whether the fixes page is
+  # OFFERED, and the user then applies from there, one fix at a time, having
+  # been told what each one does.
+  local fix_rec
   fix_rec="$(known_plugin_record "$file" 2>/dev/null || true)"
-  fix_token=""
-  [[ -n $fix_rec ]] && fix_token="$(known_plugin_field "$fix_rec" 1)"
-  if [[ -n $fix_token ]]; then
-    apply_known_fixes_for "$fix_token"
+  if [[ -z $fix_rec ]]; then
+    msg "$(basename "$file") is not in the plugin knowledge base -- no fix offered"
   else
-    msg "no known-plugin record for $(basename "$file") -- no per-product fix applied"
+    msg "no fix applied automatically: the fixes page is offered instead"
   fi
   # The editor's wine runtime, if this product needs a specific one. Applied
   # AFTER announcing it, right here, because the crash it prevents is the one

@@ -416,6 +416,60 @@ func isFolderRow(items []Item, value string) bool {
 	return false
 }
 
+// toggleNestedFolder folds/unfolds a suite line with the arrow keys.
+//
+// A nested folder is not marked Folder any more — the kit paints the glyph in
+// one shared badge column, which is what made a suite line's ▣ sit level with
+// its vendor's — so the kit no longer resolves ←/→ for it and the host has to.
+func (m *model) toggleNestedFolder() bool {
+	v := m.picker.SelectedValue()
+	if !strings.Contains(v, "\x00") {
+		return false
+	}
+	if m.folderExpanded == nil {
+		m.folderExpanded = map[string]bool{}
+	}
+	m.folderExpanded[v] = !m.folderExpanded[v]
+	switch m.top() {
+	case scrPluginList:
+		m.rebuildPluginPicker()
+	case scrUninstallPick:
+		m.rebuildUninstallPicker()
+	case scrFixPluginPick:
+		m.rebuildFixPluginPicker()
+	default:
+		return false
+	}
+	m.picker = m.picker.SelectValue(v)
+	return true
+}
+
+// expandFolderTarget resolves a folder row's value to the plugins it holds, so
+// Enter on a folder uninstalls its contents instead of handing the backend a
+// "vendor:<name>" token it does not understand.
+//
+// A suite line's value is "<vendor value>\x00<line>" and its plugins carry the
+// vendor as their Parent and the line as their Group.
+func expandFolderTarget(items []Item, folderValue string) []string {
+	vendorValue, line, isSub := strings.Cut(folderValue, "\x00")
+	var out []string
+	for _, it := range items {
+		if it.Kind == "folder" {
+			continue
+		}
+		if isSub {
+			if it.Parent == vendorValue && it.Group == line {
+				out = append(out, it.Value)
+			}
+			continue
+		}
+		if it.Parent == folderValue {
+			out = append(out, it.Value)
+		}
+	}
+	return out
+}
+
 // toggleFolderPlugins flips the checked state of every sub-plugin that
 // belongs under the given folder row's Value. The semantics match what
 // the user sees in the folder row's checkbox (○ all-off, ● all-on,
@@ -505,11 +559,27 @@ func treeRows(items []uninstallTreeItem, checked map[string]bool, expanded map[s
 			if expanded[n.Value] {
 				fold = tuikit.FoldExpanded
 			}
+			// A NESTED folder draws its own fold glyph inside the text, one
+			// indent further in, because the kit paints the glyph in a single
+			// badge column shared by every row: a suite line's ▣ then sat level
+			// with its vendor's while its name was two columns in, so the row
+			// read as belonging to the vendor rather than inside it. Top-level
+			// folders keep the kit's glyph — there is nothing above them to be
+			// out of line with.
+			display := pad + n.Display
 			folder := tuikit.PickerItem{
-				Display: pad + n.Display,
+				Display: display,
 				Value:   n.Value,
 				Fold:    fold,
 				Folder:  true,
+			}
+			if depth > 0 {
+				folder.Folder = false
+				glyph := tuikit.FoldCollapsed
+				if expanded[n.Value] {
+					glyph = tuikit.FoldExpanded
+				}
+				folder.Display = strings.Repeat("  ", depth) + glyph + " " + n.Display
 			}
 			if total > 0 {
 				folder.Suffix = fmt.Sprintf("  %d/%d", marked, total)
@@ -523,6 +593,10 @@ func treeRows(items []uninstallTreeItem, checked map[string]bool, expanded map[s
 					}
 				}
 				if len(n.Subgroups) > 0 {
+					// The lines sit at depth+1, so their own children are one
+					// step further in: pad grows with the depth rather than
+					// being the same string reused, which left the checkbox on
+					// "Neutron 5"'s plugins out of line with the line's text.
 					out = append(out, treeRows(n.Subgroups, checked, expanded, depth+1)...)
 				}
 			}
@@ -2014,6 +2088,13 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.push(scrInfo)
 			return m, nil
 		}
+		if km, ok := msg.(tea.KeyMsg); ok {
+			if km.String() == "left" || km.String() == "right" {
+				if m.toggleNestedFolder() {
+					return m, nil
+				}
+			}
+		}
 		var cmd tea.Cmd
 		m.picker, cmd = m.picker.Update(msg)
 		return m, cmd
@@ -2161,6 +2242,13 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fixVendor = ""
 			m.push(scrFixChoose)
 			return m, m.enterCmd()
+		}
+		if km, ok := msg.(tea.KeyMsg); ok {
+			if km.String() == "left" || km.String() == "right" {
+				if m.toggleNestedFolder() {
+					return m, nil
+				}
+			}
 		}
 		var cmd tea.Cmd
 		m.picker, cmd = m.picker.Update(msg)
@@ -2629,7 +2717,19 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(targets) == 0 {
 				// Nothing Tab-checked -- fall back to the single highlighted
 				// row, preserving the old one-shot-pick convenience.
-				targets = []string{res.Value}
+				//
+				// A FOLDER row is not a plugin: its value is "vendor:<name>" or
+				// "<vendor>\x00<line>" for a suite line, and uninstall-batch
+				// rejects anything it does not recognise -- so Enter on iZotope,
+				// or on "Neutron 5" inside it, came back "unrecognized target:
+				// vendor:iZotope" and the step failed. A folder means "everything
+				// it contains", which is exactly what Tab on it already checks,
+				// so the fallback expands it.
+				targets = expandFolderTarget(m.uninstallCache, res.Value)
+				if len(targets) == 0 {
+					m.toast, _ = m.toast.SetWarn("nothing to remove in that folder")
+					return m, nil
+				}
 			}
 			m.uninstallTargets = targets
 			m.push(scrUninstallConfirm)
@@ -2639,6 +2739,13 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.confirm = tuikit.NewConfirm(fmt.Sprintf("Remove %d plugins? (files are quarantined, nothing is destroyed)", len(targets)), "No", "Yes")
 			}
 			return m, nil
+		}
+		if km, ok := msg.(tea.KeyMsg); ok {
+			if km.String() == "left" || km.String() == "right" {
+				if m.toggleNestedFolder() {
+					return m, nil
+				}
+			}
 		}
 		var cmd tea.Cmd
 		m.picker, cmd = m.picker.Update(msg)
@@ -2928,25 +3035,60 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case scrInstallFixesConfirm:
 		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
-			if res.Yes && !res.Canceled {
-				// Drive the normal apply-fixes screen for the freshly
-				// installed plugin (which pre-checks whatever is already
-				// applied). Drop the finished runner screen so the fix
-				// flow, when it finishes, returns straight to the menu.
-				m.fixPlugin = m.installFixPlugin
+			// "Back" leaves the whole flow and lands on the menu. It used to
+			// fall through to the install-success prompt, whose FIRST button is
+			// "See log" — so backing out of the fix question appeared to throw
+			// you into the log, and from there there was no way back to the menu
+			// in one press.
+			if !res.Yes || res.Canceled {
+				m.nav = []screen{scrMain}
+				m.fixPromptPlugin, m.fixPromptName = "", ""
+				return m, nil
+			}
+			// Yes is not the apply. It asks HOW: apply the recommended fixes
+			// without showing them, or show them and decide there. Two choices,
+			// because "yes, apply" and "yes, but let me look" are both reasonable
+			// and collapsing them into one is what made the question feel like it
+			// had already decided.
+			m.confirm = m.recommendedFixesConfirm()
+			m.replace(scrInstallFixesHow)
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.confirm, cmd = m.confirm.Update(msg)
+		return m, cmd
+
+	case scrInstallFixesHow:
+		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
+			if !res.Yes || res.Canceled {
+				// "See fixes page" is the NO button: it is the way into the page,
+				// so answering it drives the ordinary fix flow for this plugin,
+				// over the finished runner, so the flow returns to the menu.
+				m.fixPlugin = m.fixPromptPlugin
 				m.fixVendor = m.installFixVendor
 				m.nav = []screen{scrMain, scrFixChoose}
 				return m, m.enterCmd()
 			}
-			// Declined: show the ordinary install-success prompt in place
-			// of the question. The wording stays the same as every other
-			// success — declining the PAGE is not a failure and must not read
-			// like one. Nothing is undone here: any fix AUTO_FIX already
-			// rewrote stays written, which is the point of answering "No" as
-			// "skip the page" rather than "apply nothing".
-			m.confirm = tuikit.NewConfirm("Success! The step completed without errors.", "See log", "OK")
-			m.replace(scrRunnerSuccessConfirm)
-			return m, nil
+			// Auto apply: apply the recommended fixes without showing the page,
+			// then say so.
+			var ids []string
+			for _, it := range m.installFixItems {
+				if it.Scope == "plugin" && !it.Applied {
+					ids = append(ids, it.ID)
+				}
+			}
+			m.nav = []screen{scrMain}
+			if len(ids) == 0 {
+				m.toast, _ = m.toast.SetOK("no fixes were pending for " + m.fixPromptName)
+				return m, nil
+			}
+			args := append([]string{"apply-fixes", m.fixPromptPlugin}, ids...)
+			m.replace(scrInstalling)
+			m.runner = tuikit.NewRunner().SetSize(m.contentSize())
+			var cmd tea.Cmd
+			m.runner, cmd = m.runner.Start(
+				fmt.Sprintf("Applying %d fix(es)", len(ids)), actionsBin(), args...)
+			return m, cmd
 		}
 		var cmd tea.Cmd
 		m.confirm, cmd = m.confirm.Update(msg)

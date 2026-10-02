@@ -75,7 +75,7 @@ func TestSuiteLinesOnlyShowWhenTheVendorIsOpen(t *testing.T) {
 	rows = treeItemsToPicker(tree, checked, open)
 	var sawNeutron, sawNeutronPlugin bool
 	for _, r := range rows {
-		if strings.TrimSpace(r.Display) == "Neutron 5" {
+		if strings.HasSuffix(strings.TrimSpace(r.Display), "Neutron 5") {
 			sawNeutron = true
 		}
 		if strings.Contains(r.Display, "Neutron 5 Sculptor") {
