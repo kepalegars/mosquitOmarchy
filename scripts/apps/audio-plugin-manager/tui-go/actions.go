@@ -1485,7 +1485,20 @@ type afterInstallFixesMsg struct {
 // needs a switch: a write nobody sees is a write nobody can object to.
 func reapplyAppliedFixesCmd(vendor, plugin string, fixIDs []string) tea.Cmd {
 	return func() tea.Msg {
-		carry := installFixesCheckMsg{plugin: plugin, vendor: vendor, autoFix: true, fixPrompt: true}
+		// known / pluginName must ride along: AUTO_FIX is on by default, so this
+		// path is the one a known plugin normally takes, and building the carry
+		// without them made every known plugin come back "not in the knowledge
+		// database" and get the plain success dialog instead of the question.
+		// Crispy Tuner installed twice with no prompt for exactly that reason.
+		known := strings.TrimSpace(mustRun("is-known-plugin", plugin)) != ""
+		name := baseName(pluginPathOf(plugin))
+		if out, e := runQuick("known-plugin-name", plugin); e == nil {
+			if n := strings.TrimSpace(string(out)); n != "" {
+				name = n
+			}
+		}
+		carry := installFixesCheckMsg{plugin: plugin, vendor: vendor, autoFix: true,
+			fixPrompt: true, known: known, pluginName: name}
 		if len(fixIDs) == 0 {
 			return afterInstallFixesMsg{carry: carry}
 		}
@@ -1497,6 +1510,14 @@ func reapplyAppliedFixesCmd(vendor, plugin string, fixIDs []string) tea.Cmd {
 		}
 		return afterInstallFixesMsg{carry: carry, err: err}
 	}
+}
+
+// installSuccessConfirm is the prompt every successful ending lands on: See log
+// for the whole install log, or Back to the menu. "See log"/"OK" was used
+// before; "OK" said nothing about what the other button did, and one path
+// (auto-apply with nothing pending) did not show this prompt at all.
+func (m model) installSuccessConfirm() tuikit.Confirm {
+	return tuikit.NewConfirm("Success! The step completed without errors.", "See log", "Back")
 }
 
 // recommendedFixesConfirm is the second question, after the user has said yes to
@@ -1530,14 +1551,14 @@ func (m model) recommendedFixesConfirm() tuikit.Confirm {
 // way.
 func (m model) afterInstallFixesPrompt(msg installFixesCheckMsg) (model, tea.Cmd) {
 	if msg.err != nil {
-		m.confirm = tuikit.NewConfirm("Success! The step completed without errors.", "See log", "OK")
+		m.confirm = m.installSuccessConfirm()
 		m.replace(scrRunnerSuccessConfirm)
 		return m, nil
 	}
 	if !msg.fixPrompt {
 		// The question is off. Say the install worked and stop there; the
 		// fixes remain one row away under "Plugin fixes".
-		m.confirm = tuikit.NewConfirm("Success! The step completed without errors.", "See log", "OK")
+		m.confirm = m.installSuccessConfirm()
 		m.replace(scrRunnerSuccessConfirm)
 		return m, nil
 	}
@@ -1547,11 +1568,14 @@ func (m model) afterInstallFixesPrompt(msg installFixesCheckMsg) (model, tea.Cmd
 			toApply = append(toApply, it.ID)
 		}
 	}
-	if len(toApply) == 0 {
-		m.confirm = tuikit.NewConfirm("Success! The step completed without errors.", "See log", "OK")
-		m.replace(scrRunnerSuccessConfirm)
-		return m, nil
-	}
+	// NOTE: an empty `toApply` is NOT a reason to skip the question. Whether
+	// there is anything to apply is the SECOND question's business; the first
+	// one is "this plugin is in the knowledge base, do you want its fixes?".
+	// Gating on toApply here meant a plugin whose fixes are already applied
+	// never got asked at all — and after the silent re-apply (which applies
+	// exactly those), the list is ALWAYS empty, so the known-plugin question
+	// could never appear on the default settings.
+	//
 	// The question is about the SUITE: FabFilter is nineteen plugins and the
 	// useful action is "fix them all". Without a known vendor it names the one
 	// plugin that finished installing.
@@ -1571,13 +1595,17 @@ func (m model) afterInstallFixesPrompt(msg installFixesCheckMsg) (model, tea.Cmd
 		name = baseName(pluginPathOf(msg.plugin))
 	}
 	if !msg.known {
-		m.confirm = tuikit.NewConfirm("Success! The step completed without errors.", "See log", "OK")
+		m.confirm = m.installSuccessConfirm()
 		m.replace(scrRunnerSuccessConfirm)
 		return m, nil
 	}
 	m.fixPromptPlugin = msg.plugin
 	m.fixPromptName = name
 	m.installFixItems = msg.items
+	// Snapshot the install's own output NOW: after an auto-apply the runner on
+	// the stack runs apply-fixes instead, so "See log" would show the two-line
+	// fix report rather than the install the user is asking about.
+	m.installLog = m.runner.Output()
 	m.confirm = tuikit.NewConfirm(
 		name+" is part of the apm's plugin knowledge database, and has been noted as needing some fixes. Do you want to open the fixes page and apply them?",
 		"Back", "Yes")

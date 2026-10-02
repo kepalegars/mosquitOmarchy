@@ -85,3 +85,41 @@ func leading(s string) int {
 	}
 	return n
 }
+
+// A suite's product lines come FIRST, then the plugins that belong to no line.
+//
+// The lines rendered below the loose plugins, so the parts of the suite appeared
+// after things that are not part of it — bottom-up.
+func TestSuiteLinesComeBeforeUngroupedPlugins(t *testing.T) {
+	items := []Item{
+		{Display: "Loose Tool", Value: "vst:vst3:/x/Loose Tool", Kind: "plugin",
+			Parent: "vendor:iZotope", Formats: "vst3"},
+		{Display: "Neutron 5 Gate", Value: "vst:vst3:/x/Neutron 5 Gate", Kind: "plugin",
+			Parent: "vendor:iZotope", Group: "Neutron 5", Formats: "vst3"},
+		{Display: "RX 11 Connect", Value: "vst:vst3:/x/RX 11 Connect", Kind: "plugin",
+			Parent: "vendor:iZotope", Group: "RX 11", Formats: "vst3"},
+		{Display: "iZotope", Value: "vendor:iZotope", Kind: "folder"},
+	}
+	tree := uninstallTree(items)
+	rows := treeItemsToPicker(tree, map[string]bool{}, map[string]bool{
+		"vendor:iZotope":            true,
+		"vendor:iZotope\x00Neutron 5": true,
+		"vendor:iZotope\x00RX 11":     true,
+	})
+	loose, firstLine := -1, -1
+	for i, r := range rows {
+		if strings.Contains(r.Display, "Loose Tool") {
+			loose = i
+		}
+		if firstLine < 0 && (strings.HasSuffix(strings.TrimSpace(r.Display), "Neutron 5") ||
+			strings.HasSuffix(strings.TrimSpace(r.Display), "RX 11")) {
+			firstLine = i
+		}
+	}
+	if loose < 0 || firstLine < 0 {
+		t.Fatalf("missing rows (loose=%d firstLine=%d)\n%v", loose, firstLine, rows)
+	}
+	if firstLine > loose {
+		t.Errorf("a product line is at row %d and the ungrouped plugin at %d: the lines must come first", firstLine, loose)
+	}
+}

@@ -182,6 +182,8 @@ type model struct {
 	fixPromptPlugin  string
 	fixPromptName    string
 	installFixItems  []FixItem
+	pendingInstallSuccess bool
+	installLog           string
 
 	filterOpen bool
 	filterText string
