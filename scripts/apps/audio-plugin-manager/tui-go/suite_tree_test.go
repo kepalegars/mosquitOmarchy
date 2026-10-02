@@ -141,3 +141,28 @@ func TestSuiteFolderCountIncludesItsLines(t *testing.T) {
 	}
 	t.Fatal("the iZotope row is missing")
 }
+
+// The suite grouping has to be the SAME on all three plugin screens.
+//
+// They read one list and all three build the tree from it, but PluginItem did
+// not carry the product line, so the conversion to Item dropped it: the nesting
+// appeared on the screen that decodes Item directly (Uninstall) and not on the
+// two that decode PluginItem first (Installed plugins, Plugin fixes).
+func TestSuiteGroupingSurvivesThePluginItemConversion(t *testing.T) {
+	src := []PluginItem{
+		{Display: "Neutron 5 Sculptor", Value: "vst:vst3:/x/Neutron 5 Sculptor",
+			Kind: "plugin", Parent: "vendor:iZotope", Group: "Neutron 5", Formats: "vst3"},
+		{Display: "RX 11 Connect", Value: "vst:vst3:/x/RX 11 Connect",
+			Kind: "plugin", Parent: "vendor:iZotope", Group: "RX 11", Formats: "vst3"},
+		{Display: "iZotope", Value: "vendor:iZotope", Kind: "folder"},
+	}
+
+	converted := pluginItemsAsItems(src)
+	tree := uninstallTree(converted)
+	if len(tree) != 1 {
+		t.Fatalf("tree has %d nodes, want 1", len(tree))
+	}
+	if got := len(tree[0].Subgroups); got != 2 {
+		t.Fatalf("iZotope has %d subgroups through PluginItem, want 2: %+v", got, tree[0].Subgroups)
+	}
+}

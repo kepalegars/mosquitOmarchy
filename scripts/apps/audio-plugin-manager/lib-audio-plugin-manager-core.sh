@@ -1273,7 +1273,23 @@ install_plugin() {
       ok "$base → $dst/$rel (already in the shared folder)"
     fi
   done
-  state_register_install "$(plugin_key "${newfiles[0]}")" "$wine_prefix" "${newfiles[@]}"
+  # One entry PER FILE, each under its own key.
+  #
+  # This registered every file the installer dropped under the key of whichever
+  # one it wrote FIRST, and registered it once. A suite that ships seventeen
+  # modules therefore became a single log entry holding seventeen paths, while
+  # the scan groups per FILE and produces seventeen keys. Sixteen of them were
+  # untracked on the very next launch — and stayed untracked forever, because
+  # installing again re-ran the same single-entry write. iZotope RX 11 on this
+  # machine is exactly that: "iZotope/RX 11 Breath Control" holding seventeen
+  # files, and sixteen modules the manager claimed to have never seen.
+  #
+  # The other two write paths (add-to-manager, adopt-plugins) already loop per
+  # file; this is the same loop, so all three agree on what a plugin is.
+  for _f in "${newfiles[@]}"; do
+    state_register_install "$(plugin_key "$_f")" "$wine_prefix" "$_f"
+  done
+  unset _f
   register_standalones_from_prefix "$wine_prefix"
   post_install
   hide_wine_menu_entries "$wine_prefix"

@@ -405,7 +405,14 @@ func (m model) themePicked(from screen, res tuikit.PickerResultMsg) (model, tea.
 			body = []byte("(the log is empty)")
 		}
 		m.info = tuikit.NewInfo(string(body)).SetSize(m.contentSize())
-		m.push(scrInfo)
+		// Esc off the log has to land on the main menu, and so does "Back" off
+		// the success screen. The log was pushed over the success screen, so Esc
+		// from it returned to the success screen and Esc again to the menu: two
+		// presses to leave a page you only opened to read something. The log is
+		// the last thing in this flow — nothing is decided on it — so it is
+		// opened as a page of its own with the menu underneath it, and one Esc
+		// leaves.
+		m.nav = []screen{scrMain, scrInfo}
 		return m, nil
 	case "ok":
 		m.resetThemeFlow()

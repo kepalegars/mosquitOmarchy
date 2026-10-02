@@ -1068,6 +1068,83 @@ EOF
         | map({key: .[0], label: .[1]})[]'
     ;;
 
+  rekey-files)
+    # One log entry per FILE, each under its own plugin_key.
+    #
+    # Installs used to write every file an installer dropped under the key of
+    # whichever file it wrote first, so a suite became ONE entry holding every
+    # path while the scan produces one key per file. Everything but the first
+    # was then permanently untracked: it came back on every launch, and
+    # installing again wrote the same single entry.
+    #
+    # A collapsed entry is dropped ONLY when every file it holds now has an
+    # entry of its own. Matching on "this file's key exists in the log" is not
+    # enough: a single-file entry matches ITSELF, so every healthy entry looked
+    # safe to drop and the log was emptied — 41 entries to 1, twice, before the
+    # rule was fixed.
+    state_init
+    _apm_rk=0
+    while IFS= read -r _apm_rk_key; do
+      [[ -n $_apm_rk_key ]] || continue
+      while IFS= read -r _apm_rk_f; do
+        [[ -n $_apm_rk_f ]] || continue
+        _apm_rk_new="$(plugin_key "$_apm_rk_f")"
+        [[ -n $_apm_rk_new && $_apm_rk_new != "$_apm_rk_key" ]] || continue
+        state_register_install "$_apm_rk_new" \
+          "$(jq -r --arg k "$_apm_rk_key" '.plugins[$k].prefix // ""' "$STATE_FILE")" "$_apm_rk_f"
+        _apm_rk=$((_apm_rk + 1))
+      done < <(jq -r --arg k "$_apm_rk_key" '.plugins[$k].files[]?' "$STATE_FILE")
+    done < <(jq -r '.plugins | keys[]' "$STATE_FILE")
+    # Second pass over a SNAPSHOT of the keys: the deletion below edits the
+    # file this loop reads.
+    jq -r '.plugins | keys[]' "$STATE_FILE" > "${TMPDIR:-/tmp}/apm-rekey-keys.$$"
+    while IFS= read -r _apm_rk_key; do
+      [[ -n $_apm_rk_key ]] || continue
+      _apm_rk_drop=1
+      # Counted up front: the loop below breaks early on the first
+      # disqualifying file, so counting inside it only ever reached 1 and the
+      # "still collapsed" branch never ran.
+      _apm_rk_n=$(jq -r --arg k "$_apm_rk_key" '.plugins[$k].files | length' "$STATE_FILE")
+      while IFS= read -r _apm_rk_f; do
+        [[ -n $_apm_rk_f ]] || continue
+        _apm_rk_want="$(plugin_key "$_apm_rk_f")"
+        # This file's own entry must exist AND be a DIFFERENT one: otherwise
+        # dropping this row would take the only record of that file with it.
+        if [[ -z $_apm_rk_want || $_apm_rk_want == "$_apm_rk_key" ]]; then
+          _apm_rk_drop=0
+          break
+        fi
+        jq -e --arg k "$_apm_rk_want" '.plugins[$k]' "$STATE_FILE" >/dev/null 2>&1 || _apm_rk_drop=0
+        [[ $_apm_rk_drop == 1 ]] || break
+      done < <(jq -r --arg k "$_apm_rk_key" '.plugins[$k].files[]?' "$STATE_FILE")
+      if [[ $_apm_rk_drop == 1 && $_apm_rk_n -gt 1 ]]; then
+        jq -S --arg k "$_apm_rk_key" 'del(.plugins[$k])' "$STATE_FILE" > "$STATE_FILE.tmp.$$" \
+          && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+      elif [[ $_apm_rk_n -gt 1 ]]; then
+        # Still holds its own file, so it cannot go — but it also still lists
+        # every file it used to absorb, which are now other entries' business.
+        # Keep only the paths this key actually owns.
+        _apm_rk_mine="${TMPDIR:-/tmp}/apm-rekey-mine.$$"
+        : > "$_apm_rk_mine"
+        while IFS= read -r _apm_rk_f; do
+          [[ -n $_apm_rk_f ]] || continue
+          [[ "$(plugin_key "$_apm_rk_f")" == "$_apm_rk_key" ]] && printf '%s\n' "$_apm_rk_f" >> "$_apm_rk_mine"
+        done < <(jq -r --arg k "$_apm_rk_key" '.plugins[$k].files[]?' "$STATE_FILE")
+        if [[ -s $_apm_rk_mine ]]; then
+          # --rawfile, not --slurpfile: the file holds one PATH PER LINE, and
+          # slurpfile parses it as JSON ("Bad JSON in --slurpfile"). jq turns the
+          # text into the array itself, splitting on newlines.
+          jq -S --arg k "$_apm_rk_key" --rawfile f "$_apm_rk_mine" \
+            '.plugins[$k].files = ($f | split("\n") | map(select(length > 0)))' "$STATE_FILE" > "$STATE_FILE.tmp.$$" \
+            && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+        fi
+        rm -f "$_apm_rk_mine"
+      fi
+    done < "${TMPDIR:-/tmp}/apm-rekey-keys.$$"
+    rm -f "${TMPDIR:-/tmp}/apm-rekey-keys.$$"
+    jq -nc --argjson n "$_apm_rk" '{rekeyed:$n}'
+    ;;
+
   add-missing)
     # Keep a missing plugin in the shared log (it belongs to another machine
     # or will be synced/mounted back later), but stop flagging it on this one:

@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"testing"
+
+	"mosquitomarchy.local/tui-kit"
+)
 
 // "Back" on the theme success screen must land on the main menu.
 //
@@ -25,15 +30,21 @@ func TestThemeDoneBackReachesTheMenu(t *testing.T) {
 		t.Fatalf("stack is %v, want the success screen alone over the menu", mm.nav)
 	}
 
-	// The log opens OVER the success screen, and Back off it returns to the
-	// success screen rather than past it to the log-less stack.
-	mm.push(scrInfo)
+	// The log is the end of the flow: Esc off it must reach the MENU, in one
+	// press, not go back to the success screen and need a second one.
+	logFile := t.TempDir() + "/create.log"
+	if err := os.WriteFile(logFile, []byte("out\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mm.nav = []screen{scrMain, scrThemeDone}
+	mm.themeLog = logFile
+	mm, _ = mm.themePicked(scrThemeDone, tuikit.PickerResultMsg{Value: "log"})
 	if mm.top() != scrInfo {
-		t.Fatal("the log did not open")
+		t.Fatalf("the log did not open: %v", mm.nav)
 	}
 	mm.pop()
-	if mm.top() != scrThemeDone {
-		t.Fatalf("Back off the log landed on %d, want the success screen", mm.top())
+	if mm.top() != scrMain {
+		t.Fatalf("Esc off the log landed on %d, want the main menu", mm.top())
 	}
 
 	mm.resetThemeFlow()

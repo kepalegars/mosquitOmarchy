@@ -307,13 +307,37 @@ func initialModel() model {
 func (m model) Init() tea.Cmd { return tea.Batch(fetchStatus(), tuikit.ThemeWatchCmd()) }
 
 func (m model) top() screen       { return m.nav[len(m.nav)-1] }
-func (m *model) push(s screen)    { m.nav = append(m.nav, s) }
-func (m *model) replace(s screen) { m.nav[len(m.nav)-1] = s }
+func (m *model) push(s screen) { m.nav = append(m.nav, s) }
+func (m *model) replace(s screen) {
+	m.nav[len(m.nav)-1] = s
+	m.syncPickerToTop()
+}
 func (m *model) pop() {
 	if len(m.nav) > 1 {
 		m.nav = m.nav[:len(m.nav)-1]
 	}
 	m.toast = m.toast.ClearNonCritical()
+	m.syncPickerToTop()
+}
+
+// syncPickerToTop rebuilds the SHARED picker for whichever screen is now on
+// top.
+//
+// m.picker is one field every screen writes to, so a screen that filled it with
+// its own rows leaves them behind for whoever comes next. Leaving the
+// untracked page with Esc therefore put its plugin NAMES where the main menu's
+// options belonged: the menu rendered fine, with the wrong rows, and the way
+// out was to press Esc twice more.
+//
+// Every navigation that changes the top screen now resyncs, so no screen can
+// inherit another's rows.
+func (m *model) syncPickerToTop() {
+	switch m.top() {
+	case scrMain:
+		// The ASCII banner is the title; the header stays empty so it does
+		// not render a second white title under it.
+		m.picker = tuikit.NewPicker("", mainItems()).SetSize(m.contentSize())
+	}
 }
 
 // mainItems is the first menu -- Plugin list/Install/Uninstall/Launch are
