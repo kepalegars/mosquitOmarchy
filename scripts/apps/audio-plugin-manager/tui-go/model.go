@@ -176,6 +176,11 @@ type model struct {
 	// this set is never force-opened again.
 	folderFoldedByUser map[string]bool
 
+
+	// Global search (shift+F) state, shared where applicable
+	filterOpen bool
+	filterText string
+
 	pendingPluginsRoot string // picked in scrSettings, confirmed in scrPluginsRootConfirm
 
 	// "Plugin fixes" flow: fixPlugin is the plugin chosen on
@@ -1059,8 +1064,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.kind {
 		case "pick-file":
 			if msg.path == "" {
-				m.toast, _ = m.toast.SetWarn("no file selected")
-				return m, nil
+				// Cancelled in the file dialog: pop back silently, no error/toast
+				m.pop()
+				return m, m.enterCmd()
 			}
 			// Auto-detect: a Windows installer (exe/msi) goes through the
 			// existing wine-prefix wizard; everything else (lv2/clap/vst3,
