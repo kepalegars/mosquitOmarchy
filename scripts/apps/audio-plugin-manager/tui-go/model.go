@@ -1061,6 +1061,10 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast, _ = m.toast.SetErr(msg.err.Error())
 			return m, nil
 		}
+		if msg.path == "" {
+			m.pop()
+			return m, m.enterCmd()
+		}
 		switch msg.kind {
 		case "pick-file":
 			if msg.path == "" {
