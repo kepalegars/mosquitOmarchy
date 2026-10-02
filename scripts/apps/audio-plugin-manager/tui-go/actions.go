@@ -1477,6 +1477,23 @@ func installedPluginValue(output string) string {
 	return ""
 }
 
+// installedManagerValue reads the "installed-manager:" marker, which a MANAGER
+// installer prints instead of a plugin's list value.
+//
+// A manager install produces no plugin, so there is no value to offer fixes for
+// — but the run is a success, and the runner must not read its absence as a
+// failure. Recognising the marker is what keeps a completed Kilohearts install
+// off the "the step failed" dialog.
+func installedManagerValue(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "installed-manager:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "installed-manager:"))
+		}
+	}
+	return ""
+}
+
 // folderOpenedMsg reports the "open-folder" action's outcome. Unlike
 // actionOKMsg it never pops the active screen: opening a folder from the
 // uninstall list must leave the user right where they were.

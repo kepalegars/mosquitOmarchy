@@ -1542,7 +1542,29 @@ fingerprint_of(){
 install_manager_app(){
   local file="$1" prefix="$2" exe name stem slug cand icon
   msg "This installer ships a manager, not a plugin — installing the manager."
-  msg "Wait for the Kilohearts installer to FINISH, then close it. Nothing is touched before that."
+
+  # Copy it into the prefix BEFORE launching it.
+  #
+  # The picked file lives in ~/Downloads, which the user is free to move, rename
+  # or empty while the manager is open — and a self-updating manager rewrites
+  # itself in place, so the file that was launched and the file on disk stop
+  # being the same thing. A copy taken first is stable for the whole session and
+  # is what the manager is tracked as afterwards, so reopening it later works
+  # even if the original is gone.
+  local src="$file" base="${file##*/}" dst_dir dst
+  dst_dir="$prefix/drive_c/ProgramData/$(dirname "$base")"
+  dst_dir="$prefix/drive_c/ProgramData/$(basename "$base" .exe)"
+  mkdir -p "$dst_dir" 2>/dev/null || true
+  dst="$dst_dir/$base"
+  if cp -a "$src" "$dst" 2>/dev/null; then
+    ok "installer copied into the prefix: ${dst#"$prefix"/}"
+  else
+    warn "could not copy the installer into the prefix — using it where it is."
+    dst="$src"
+  fi
+  file="$dst"
+
+  msg "Wait for it to open, install what you want, then close it. Nothing is touched before that."
   # Wait for the WINDOW, not for the exit code.
   #
   # A GUI installer exits non-zero as a matter of course — it returns whatever
@@ -1638,6 +1660,7 @@ install_manager_app(){
   state_register_standalone "$stem" "$exe"
   state_mark_manager "$stem"
   ok "manager installed into the prefix and tracked: $stem"
+  printf 'installed-manager: %s\n' "$exe"
   printf 'manager-exe: %s\n' "$exe"
   printf 'manager-note: %s is a plugin MANAGER, not a plugin.\n' "$stem"
   printf 'manager-note: It is listed under "Launch a standalone plugin" and is opened from there.\n'
@@ -1660,13 +1683,17 @@ install_plugin() {
     # What the prefix holds BEFORE the installer runs, so what it brings can be
     # told from what was already there. Recorded here because this is the only
     # point where "before" is still true.
-    _prefix_before_exes="$(mktemp)"
-    find "$wine_prefix/drive_c" -maxdepth 8 -type f -iname '*.exe' 2>/dev/null | sort > "$_prefix_before_exes"
-    install_manager_app "$file" "$wine_prefix"
-    local _mrc=$?
-    rm -f "${_prefix_before_exes:-}"
-    unset _prefix_before_exes
-    return $_mrc
+    local _mrc=0
+    _prefix_before_exes="$(mktemp)" || _prefix_before_exes=/dev/null
+    find "$wine_prefix/drive_c" -maxdepth 8 -type f -iname '*.exe' 2>/dev/null | sort > "$_prefix_before_exes" || true
+    if install_manager_app "$file" "$wine_prefix"; then
+      _mrc=0
+    else
+      _mrc=1
+    fi
+    rm -f "${_prefix_before_exes:-}" || true
+    unset _prefix_before_exes || true
+    return "$_mrc"
   fi
 
   # The prefix must point at the shared folders BEFORE the installer runs,

@@ -1309,6 +1309,18 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done, ok := msg.(tuikit.RunnerDoneMsg); ok {
 			switch m.top() {
 			case scrInstalling:
+				// A MANAGER install ends here: it installed no plugin, so there
+				// is no list value and nothing to offer fixes for, and the run
+				// must still read as a success. The backend prints a marker for
+				// it; without recognising that marker the whole flow fell
+				// through to "the step failed" after a Kilohearts install that
+				// had in fact worked.
+				if mgr := installedManagerValue(m.runner.Output()); mgr != "" {
+					m.toast, _ = m.toast.SetOK("plugin manager installed — its plugins are registered when you close it")
+					m.confirm = m.installSuccessConfirm()
+					m.push(scrRunnerSuccessConfirm)
+					return m, nil
+				}
 				// A successful wine install prints the freshly installed
 				// plugin's list value; look for it and, when found, fetch
 				// its fixes to offer the apply-those-fixes prompt instead
