@@ -259,12 +259,12 @@ PYWIZARD
         windows/*|windows) continue ;;
       esac
       jq -nc --arg path "$f" \
-                --arg display "$(basename "$rel")" \
+                --arg display "$(bn=$(basename "$rel"); bn=${bn%.exe}; bn=${bn%.EXE}; bn=${bn%.Exe}; printf %s "$bn")" \
                 --arg rel "$rel" \
                 --arg key "$(printf '%s' "$(basename "$rel")" | tr '[:upper:]' '[:lower:]')" \
         '{path:$path, display:$display, rel:$rel, sortKey:$key}'
     done < <(find "$dc" -path "$dc/windows" -prune -o \
-                   -maxdepth 5 -type f -iname '*.exe' -print0 2>/dev/null) |
+                   -maxdepth 8 -type f -iname '*.exe' -print0 2>/dev/null) |
       sort -t'	' -k1
     ;;
 
