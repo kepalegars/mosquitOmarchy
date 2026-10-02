@@ -592,18 +592,22 @@ func treeRows(items []uninstallTreeItem, checked map[string]bool, expanded map[s
 			}
 			out = append(out, folder)
 			if expanded[n.Value] {
-				if len(n.Plugins) > 0 {
-					last := len(n.Plugins) - 1
-					for i, p := range n.Plugins {
-						out = append(out, pluginRow(p, checked, pad, i == last, depth+1))
-					}
-				}
+				// The PRODUCT LINES first, then the plugins that belong to no
+				// line. The suite folders came out with the lines below the loose
+				// plugins, which reads bottom-up: the parts of a suite appeared
+				// after the things that are not part of it.
 				if len(n.Subgroups) > 0 {
 					// The lines sit at depth+1, so their own children are one
 					// step further in: pad grows with the depth rather than
 					// being the same string reused, which left the checkbox on
 					// "Neutron 5"'s plugins out of line with the line's text.
 					out = append(out, treeRows(n.Subgroups, checked, expanded, depth+1)...)
+				}
+				if len(n.Plugins) > 0 {
+					last := len(n.Plugins) - 1
+					for i, p := range n.Plugins {
+						out = append(out, pluginRow(p, checked, pad, i == last, depth+1))
+					}
 				}
 			}
 			continue
@@ -1938,7 +1942,11 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// mosquitomarchy uses). The runner is dropped from the stack
 				// too, so a single ESC returns DIRECTLY to the main menu
 				// (no "old log" frame lingering on top).
-				m.info = tuikit.NewInfo(m.runner.Output()).
+				log := m.installLog
+				if log == "" {
+					log = m.runner.Output()
+				}
+				m.info = tuikit.NewInfo(log).
 					SetSize(m.contentSize())
 				m.pop() // dismiss the confirm
 				m.pop() // drop the runner screen
@@ -3076,7 +3084,10 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.enterCmd()
 			}
 			// Auto apply: apply the recommended fixes without showing the page,
-			// then say so.
+			// then land on the SAME success prompt every other ending does, so
+			// the last thing on screen is the install log either way. It used to
+			// fall back to a toast, which meant "See log" was reachable on one
+			// path and not on the others.
 			var ids []string
 			for _, it := range m.installFixItems {
 				if it.Scope == "plugin" && !it.Applied {
@@ -3085,7 +3096,8 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.nav = []screen{scrMain}
 			if len(ids) == 0 {
-				m.toast, _ = m.toast.SetOK("no fixes were pending for " + m.fixPromptName)
+				m.confirm = m.installSuccessConfirm()
+				m.replace(scrRunnerSuccessConfirm)
 				return m, nil
 			}
 			args := append([]string{"apply-fixes", m.fixPromptPlugin}, ids...)
@@ -3094,6 +3106,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.runner, cmd = m.runner.Start(
 				fmt.Sprintf("Applying %d fix(es)", len(ids)), actionsBin(), args...)
+			m.pendingInstallSuccess = true
 			return m, cmd
 		}
 		var cmd tea.Cmd

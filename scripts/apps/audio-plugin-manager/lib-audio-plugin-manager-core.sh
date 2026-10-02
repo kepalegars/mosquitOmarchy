@@ -1461,6 +1461,11 @@ ensure_daw_runtime_for_known_plugin() {
 register_standalones_from_prefix() {
   # After an install, register the standalone executables of the prefix that
   # are not native Windows apps, so the "standalone" category stays accurate.
+  #
+  # Depth 6, not 3: vendors bury their editor several folders down
+  # ("Program Files/iZotope/RX 11 Audio Editor/win64/<editor>.exe" is level 4),
+  # so at depth 3 the whole iZotope suite registered nothing and "Launch a
+  # standalone plugin" showed only whatever sat directly under Program Files.
   local prefix="$1"
   [[ -d "$prefix/drive_c" ]] || return 0
   local f e key
@@ -1472,7 +1477,7 @@ register_standalones_from_prefix() {
       is_native_win_app "$(basename "$e")" && continue
       key="$(basename "$e")"; key="${key%.exe}"
       state_register_standalone "$key" "$e"
-    done < <(find "$f" -maxdepth 3 -type f -iname '*.exe' 2>/dev/null)
+    done < <(find "$f" -maxdepth 6 -type f -iname '*.exe' 2>/dev/null)
   done
 }
 
@@ -2345,9 +2350,12 @@ manage_executables() {
       rm -f "$slug"
       ok "hidden: $(basename "$pick")"
     else
-      cat > "$slug" <<EOF
+      # The menu entry is a PROGRAM, not a file. "SubLabXL.exe" is the name of a
+    # file on a disk the user never sees; the program is "SubLabXL". Exec keeps
+    # the full path with the extension, which is what Wine actually runs.
+    cat > "$slug" <<EOF
 [Desktop Entry]
-Name=$(basename "$pick")
+Name=$(basename "${pick%.exe}")
 Comment=VST standalone (managed by mosquito Audio Plugin Manager)
 Exec=uwsm app -- mosquito-audio-plugin-manager launch "$pick"
 Terminal=false
@@ -4481,7 +4489,13 @@ plugin_group_rows() {
   if [[ -n $_apm_fp ]]; then
     _apm_rc="$_apm_cache_dir/groups-$_apm_fp.tsv"
     if [[ -s $_apm_rc ]]; then
-      plugin_group_rows_emit "$_apm_rc"
+      # SORT here, not only on the fresh path. plugin_group_rows_emit prepends
+      # the sort key for the CURRENT mode but never ordered by it, and the only
+      # place that sorted was the uncached caller's pipe — so the FIRST render
+      # after a cache write came out ordered and every later one, cache hit,
+      # came out in scan order. Pressing `s` then set the mode, saved it, and
+      # changed nothing on screen: the list came back in the same order.
+      plugin_group_rows_emit "$_apm_rc" | sort -t"$(printf '\t')" -k1,1
       return 0
     fi
   fi
@@ -4510,7 +4524,7 @@ plugin_group_rows() {
       rm -f "$_apm_rtmp"
     fi
   fi
-  plugin_group_rows_emit "$_apm_body"
+  plugin_group_rows_emit "$_apm_body" | sort -t"$(printf '\t')" -k1,1
   rm -f "$_apm_body"
   return 0
 }
