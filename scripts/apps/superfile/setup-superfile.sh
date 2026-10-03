@@ -228,6 +228,56 @@ remove_legacy_keybindings() {
 # superfile/xdg-open already does for it.
 EXEC_OPEN_EXTS=(sh bash zsh)  # plus the bare "" (no extension) key, always added separately below
 
+# superfile's multi-select is the reason the audio plugin manager can take
+# several installers at once, and it is very close to undiscoverable.
+#
+# The keys that "confirm" something -- Enter, Right, `l` -- are the SAME keys
+# that toggle the selection while selection mode is active. So the natural
+# attempt, "select a few files and press Enter", appears to do nothing except
+# flip checkboxes, and the key you would press to get out is the one you just
+# pressed. There is no hint that selection mode exists at all.
+#
+# The way out is to leave selection mode first: `v` toggles it, so the flow is
+#   v, a (or A), v again, Enter
+# Two changes make that survivable:
+#
+#   * `a` joins the capital `A` on "select all", so either works.
+#
+# What this cannot fix is discoverability from inside superfile, so the audio
+# plugin manager's own screen has to name the keys. An invented key name would
+# be worse than nothing: superfile validates its hotkey file and would warn on a
+# field it does not know.
+#
+# superfile MERGES a partial hotkeys file into its defaults, so only the keys
+# being changed are written and everything else keeps working as shipped.
+write_select_hotkeys() {
+  local hf
+  hf="$(spf path-list 2>/dev/null | sed -n 's/.*Hotkeys file path[^/]*//p' | tr -d ' ' | tail -1)"
+  [[ -f $hf ]] || { warn "could not locate superfile's hotkeys file"; return 0; }
+
+  local k v cur
+  set_key() { # set_key <key> <toml-list-body>
+    k="$1"; v="$2"
+    if grep -q "^$k *=" "$hf"; then
+      cur="$(sed -n "s/^$k *= *\[\(.*\)\].*/\1/p" "$hf" | head -1)"
+      [[ $cur == "$v" ]] && return 0
+      sed -i "s|^$k *=.*|$k = [$v]|" "$hf"
+    else
+      printf '%s = [%s]\n' "$k" "$v" >> "$hf"
+    fi
+    ok "superfile hotkey: $k = [$v]"
+  }
+
+  # `a` joins the capital `A`. These are the ONLY two keys worth touching:
+  # there is no per-item "select" key in superfile at all -- toggling an item is
+  # done by `confirm`, the same Enter/Right/`l` that opens a file. That is the
+  # whole reason the flow feels broken: inside selection mode the key you would
+  # press to confirm is the key that flips a checkbox, and binding around it is
+  # not possible because there is nothing else to bind.
+  set_key file_panel_select_all_items "'a', 'A', ''"
+  set_key change_panel_mode           "'v', ''"
+}
+
 write_exec_open_wrapper() {
   mkdir -p "$(dirname "$EXEC_WRAPPER")"
   cat > "$EXEC_WRAPPER" <<'EOF'
@@ -530,6 +580,7 @@ hide_pkg_spf_desktop
 remove_legacy_editor_preference
 write_exec_open_wrapper
 write_open_with_exec_mappings
+write_select_hotkeys
 apply_omarchy_theme || warn "Omarchy theme sync failed — superfile keeps its previous theme."
 write_theme_hook
 remove_legacy_keybindings
@@ -542,6 +593,7 @@ echo "  • Icon                  -> $SUPERFILE_ICON_DST"
 echo "  • Theme                 -> follows Omarchy's active theme automatically (on switch too)"
 echo "  • Enter/Right on .sh/.bash/.zsh (or a bare executable) -> runs it in a new terminal"
 echo "  • Editing files         -> superfile's own editor hotkey (e/E), using \${EDITOR:-nano} (Omarchy/system default)"
+echo "  • Several files at once -> v, a (or A), v again, Enter. space toggles one file."
 echo "  • Shortcut              -> add one from the mosquitOmarchy TUI (Keybindings screen, \"SuperFile\")"
 echo "  • Default file manager  -> unchanged (this module never touches it)"
 echo "  • Status                -> $0 --status"
