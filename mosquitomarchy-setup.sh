@@ -607,7 +607,7 @@ st_apps(){
 
 MODULES=(
   "mosquitomarchy:mosquitomarchy-deployer — the manager interface itself (dispatcher + menu entry + float rule + post-boot update hook) — installed first"
-  "reaper:REAPER + Hyprland/Wayland integration"
+  "reaper:REAPER + Hyprland/Wayland integration, and its UI scale is set to the current monitor's DPI on every launch — REAPER cannot do this itself, so the launcher does it before the process starts. No action needed, nothing to remember: launch it from the Omarchy menu, the desktop entry or a shell and the size is right"
   "audio:yabridge stack + Bitwig 6.0 Beta 6 (local .deb) + local VST folders + cautions"
   "windows-vm:VM launcher + winvm (RAM/CPU/disk) + OEM debloat (auto-detected)"
   "macos-vm:macOS VMs in QEMU/KVM (OSX-For-Omarchy) — installer + TUI manager + shared folders + USB passthrough"
