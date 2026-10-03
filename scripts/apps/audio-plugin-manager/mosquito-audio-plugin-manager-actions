@@ -830,6 +830,100 @@ PYWIZARD
     install_plugin "$file" "$prefix" "$tag"
     ;;
 
+  install-many)
+    # install-many <prefix> <resultfile> <file>...
+    #
+    # Every installer at once, then one yabridge sync, then one recap.
+    #
+    # What is parallel and what is NOT is the whole point. The installers are
+    # the slow part -- a GUI setup waits on the user -- so those run
+    # concurrently, each in its own process group so one dying cannot take the
+    # others with it. Everything that touches machine-wide state is serialised
+    # and happens exactly once:
+    #
+    #   * link_prefix_to_vst BEFORE any installer starts. It writes the same
+    #     links in the same prefix; two of them racing would interleave.
+    #   * post_install ONCE at the end, via APM_DEFER_SYNC on each child.
+    #     This is the proven batch pattern already used for uninstalls: the
+    #     sync re-reads every prefix, so doing it per installer made a batch
+    #     cost more the bigger it got.
+    #
+    # One installer failing does not stop the batch. Its exit code is recorded
+    # and the rest carry on, because a Windows setup that crashes or is
+    # cancelled by the user is an ordinary outcome, not a reason to abandon the
+    # other twelve.
+    prefix="${1:?prefix required}"
+    result="${2:?result file required}"
+    shift 2
+    (($#)) || { echo "install-many: no files given" >&2; exit 2; }
+
+    if [[ ! -d "$prefix/drive_c" ]]; then
+      echo "Creating wine prefix: $prefix"
+      WINEPREFIX="$prefix" wineboot -u >/dev/null 2>&1 || echo "(wineboot returned a non-zero code — continuing)"
+    fi
+    link_prefix_to_vst "$prefix"
+
+    logdir="$(mktemp -d)"
+    pids=()
+    for f in "$@"; do
+      # The index doubles as the child's log slot; the pid is kept separately
+      # so `wait` reaps the right process.
+      n="${#pids[@]}"
+      (
+        set +e
+        APM_DEFER_SYNC=1 install_plugin "$f" "$prefix" > "$logdir/$n.log" 2>&1
+        echo $? > "$logdir/$n.rc"
+      ) &
+      pids+=("$!")
+      printf 'started: %s\n' "${f##*/}"
+    done
+
+    # Wait for every child. `wait` without arguments covers exactly the ones
+    # started above, and a child killed by a signal still reaps here.
+    for pid in "${pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+
+    sync_ok=true
+    if post_install; then sync_ok=true; else sync_ok=false; fi
+
+    {
+      printf '{\n'
+      printf '  "sync_ok": %s,\n' "$sync_ok"
+      printf '  "results": [\n'
+      first=true
+      i=0
+      for f in "$@"; do
+        rc=1
+        [[ -f "$logdir/$i.rc" ]] && rc="$(cat "$logdir/$i.rc")"
+        status=ok
+        case "$rc" in
+          0) status=ok ;;
+          *) status=failed ;;
+        esac
+        [[ $first == true ]] || printf ',\n'
+        first=false
+        jq -nc --arg file "$f" --arg name "${f##*/}" --arg status "$status" \
+              --argjson code "$rc" --arg log "$(tail -c 4000 "$logdir/$i.log" 2>/dev/null)" \
+              '{file:$file, name:$name, status:$status, code:$code, log:$log}'
+        i=$((i+1))
+      done
+      printf '\n  ]\n}\n'
+    } > "$result"
+
+    # The logs are the useful part when something failed, and the runner shows
+    # them. Printed after the recap lines so the last thing on screen is the
+    # per-installer outcome rather than a wall of installer output.
+    i=0
+    for f in "$@"; do
+      rc="$(cat "$logdir/$i.rc" 2>/dev/null || echo 1)"
+      if [[ $rc != 0 ]]; then
+        printf '\n===== %s exited %s =====\n' "${f##*/}" "$rc"
+        cat "$logdir/$i.log" 2>/dev/null
+      fi
+      i=$((i+1))
+    done
+    rm -rf "$logdir"
+    ;;
+
   get-fix-prefs)
     jq -nc --arg auto "$(apm_fix_pref_get AUTO_FIX)" --arg prompt "$(apm_fix_pref_get FIX_PROMPT)" \
       --arg gui "$(apm_fix_pref_get AUTO_GUI_INPUT yes)" \
