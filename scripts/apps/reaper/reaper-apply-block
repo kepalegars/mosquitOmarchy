@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# reaper-apply-block — inject the Hyprland block from setup-reaper.sh into the
+# live config, SAFELY.
+#
+# This exists because the naive way is wrong and was wrong here before.
+#
+# setup-reaper.sh builds its block inside a heredoc:
+#
+#     cat >> "$CONF" <<'EOF'
+#     -- >>> reaper-setup >>> ...
+#     -- <<< reaper-setup <<<
+#     EOF
+#
+# so the block is the heredoc's BODY, and the file also contains the heredoc
+# scaffolding itself. Extracting with a range whose end pattern is
+# `-- <<< reaper-setup` matches the END MARKER inside the setup script's own
+# `sed -i '/-- >>> reaper-setup >>>/,/-- <<< reaper-setup <<</d'` line as well
+# — that line contains the same text, and `p` prints whatever it matches. The
+# result was a hyprland.lua containing `cat >> "$CONF" <<'EOF'`, which is a
+# Lua syntax error near '>>' and which stops every later rule from loading.
+#
+# So: take the body between the heredoc opener and its terminator, never a
+# pattern match. And verify the result parses before letting it near a live
+# session.
+#
+#   reaper-apply-block                 inject (and roll back if it does not parse)
+#   reaper-apply-block --print         print the block, change nothing
+
+set -uo pipefail
+
+CONF="${HYPR_CONF:-$HOME/.config/hypr/hyprland.lua}"
+
+print_block() {
+  local src="$HOME/mosquitomarchy/scripts/apps/reaper/reaper-hyprland-block.lua"
+  [[ -f $src ]] || src="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reaper-hyprland-block.lua"
+  [[ -f $src ]] || return 1
+  cat "$src"
+}
+
+if [[ ${1:-} == --print ]]; then
+  print_block
+  exit 0
+fi
+
+[[ -f $CONF ]] || { echo "reaper-apply-block: no hyprland config at $CONF" >&2; exit 1; }
+
+block="$(print_block)"
+if [[ -z $block ]]; then
+  echo "reaper-apply-block: the block file is empty or unreadable -- refusing to touch the config" >&2
+  exit 1
+fi
+# A block that still contains shell scaffolding means the extraction is wrong.
+if grep -qE '^(cat >>|EOF$|sed -i)' <<< "$block"; then
+  echo "reaper-apply-block: the extracted block still contains shell code -- refusing" >&2
+  exit 1
+fi
+if ! grep -q -- '-- >>> reaper-setup' <<< "$block" || ! grep -q -- '-- <<< reaper-setup' <<< "$block"; then
+  echo "reaper-apply-block: the block is missing its markers -- refusing" >&2
+  exit 1
+fi
+
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+sed '/-- >>> reaper-setup >>>/,/-- <<< reaper-setup <<</d' "$CONF" > "$tmp"
+printf '%s\n' "$block" >> "$tmp"
+
+# Parse before installing. luajit is what Hyprland loads the file with.
+if command -v luajit >/dev/null 2>&1; then
+  if ! luajit -e 'local f,err = loadfile("'"$tmp"'"); if not f then io.stderr:write(tostring(err).."\n"); os.exit(1) end' 2>/dev/null; then
+    echo "reaper-apply-block: the result does not parse as Lua -- $CONF left untouched" >&2
+    luajit -e 'local f,err = loadfile("'"$tmp"'"); if not f then print(tostring(err)) end' 2>&1 | head -2 >&2
+    exit 1
+  fi
+fi
+
+cp "$tmp" "$CONF"
+echo "reaper-apply-block: injected $(grep -c '' <<< "$block") lines into $CONF"
+hyprctl reload >/dev/null 2>&1 || true
+exit 0
