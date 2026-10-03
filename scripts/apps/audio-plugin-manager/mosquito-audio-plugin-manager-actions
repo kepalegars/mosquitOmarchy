@@ -90,10 +90,11 @@ case "$cmd" in
       --argjson wizard_done "$([[ ${WIZARD_DONE:-0} == 1 ]] || $prefs_existed && echo true || echo false)" \
       --argjson quarantine_entries "$quarantine_entries" \
       --argjson auto_fix_on "$([[ $(apm_fix_pref_get AUTO_FIX) == yes ]] && echo true || echo false)" \
+      --argjson auto_gui_input "$([[ $(apm_fix_pref_get AUTO_GUI_INPUT yes) == yes ]] && echo true || echo false)" \
       --argjson fix_prompt_on "$([[ $(apm_fix_pref_get FIX_PROMPT) == yes ]] && echo true || echo false)" \
       --arg default_prefix "$(default_prefix)" \
       --arg default_prefix_set "${DEFAULT_PREFIX:-}" \
-      '{file_picker:$file_picker,superfile_installed:$superfile_installed,hide_vst2:$hide_vst2,hide_32bit:$hide_32bit,sort_mode:$sort_mode,plugins_root:$plugins_root,downloads_dir:$downloads_dir,plugin_win_handler:$plugin_win_handler,wizard_done:$wizard_done,quarantine_entries:$quarantine_entries,auto_fix_on:$auto_fix_on,fix_prompt_on:$fix_prompt_on,default_prefix:$default_prefix,default_prefix_set:$default_prefix_set}'
+      '{file_picker:$file_picker,superfile_installed:$superfile_installed,hide_vst2:$hide_vst2,hide_32bit:$hide_32bit,sort_mode:$sort_mode,plugins_root:$plugins_root,downloads_dir:$downloads_dir,plugin_win_handler:$plugin_win_handler,wizard_done:$wizard_done,quarantine_entries:$quarantine_entries,auto_fix_on:$auto_fix_on,fix_prompt_on:$fix_prompt_on,auto_gui_input:$auto_gui_input,default_prefix:$default_prefix,default_prefix_set:$default_prefix_set}'
     ;;
 
   set-plugins-root)
@@ -831,14 +832,16 @@ PYWIZARD
 
   get-fix-prefs)
     jq -nc --arg auto "$(apm_fix_pref_get AUTO_FIX)" --arg prompt "$(apm_fix_pref_get FIX_PROMPT)" \
-      '{auto_fix:$auto, fix_prompt:$prompt}'
+      --arg gui "$(apm_fix_pref_get AUTO_GUI_INPUT yes)" \
+      '{auto_fix:$auto, fix_prompt:$prompt, auto_gui_input:$gui}'
     ;;
   set-fix-prefs)
     # $1 = AUTO_FIX|FIX_PROMPT, $2 = yes|no
     apm_fix_pref_set "${1:?key required}" "${2:?value yes|no required}" >/dev/null 2>&1 \
       || { echo "could not save the fix preference" >&2; exit 1; }
     jq -nc --arg auto "$(apm_fix_pref_get AUTO_FIX)" --arg prompt "$(apm_fix_pref_get FIX_PROMPT)" \
-      '{auto_fix:$auto, fix_prompt:$prompt}'
+      --arg gui "$(apm_fix_pref_get AUTO_GUI_INPUT yes)" \
+      '{auto_fix:$auto, fix_prompt:$prompt, auto_gui_input:$gui}'
     ;;
 
   get-wine-runtime)
