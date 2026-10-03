@@ -331,6 +331,124 @@ link_plugin_deps() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# Vendor REGISTRY state, shared across prefixes the same way the files are.
+#
+# Linking the files was not enough for iZotope, and the reason is that its
+# plugins do not look for their data on the filesystem at all. They ask the
+# registry:
+#
+#   HKLM\Software\iZotope\<PRODUCT>\CorePath
+#     = "C:\\Program Files\\iZotope\\RX 11 Audio Editor\\Cores\\iZRX11Core.dll"
+#
+# With that key absent the plugin reads an empty core path and says, in its own
+# words, "One of the files this plug-in needs cannot be found, please reinstall
+# or contact technical support". The files are all present and all reachable;
+# the plugin simply never asks the filesystem, so a symlink into Program Files
+# cannot help it. Only the registry entry carries the answer.
+#
+# ~/.wine-vst holds 34 such entries because that is where the iZotope installer
+# ran. ~/.wine-ableton held none, which is why those plugins failed there and
+# worked under REAPER, and why reinstalling them changes nothing: the installer
+# writes the key into the prefix it is pointed at, and nobody points it at the
+# other ones.
+# ---------------------------------------------------------------------------
+
+# The wine a prefix must be serviced with. Same rule as the DAW wrappers: hand a
+# prefix to a different wine build and the builtin DLLs get rewritten underneath
+# it, which is the churn this whole exercise exists to avoid.
+prefix_wine_root() {
+  case "$1" in
+    "$HOME/.wine-vst")
+      local d
+      for d in "$HOME"/.local/opt/wine-d2d1-nspa-*/bin; do
+        [[ -x $d/wine ]] || continue
+        printf '%s' "$(dirname "$d")"; return
+      done ;;
+  esac
+  printf '%s' /usr
+}
+
+# Is a wineserver holding this prefix?
+#
+# NOT `wineserver -p`: that STARTS a server as a side effect of asking. A check
+# for "is it busy?" that boots a wineserver is not a check, and it was worse
+# than useless here -- it started stock wine-staging servers on prefixes that
+# belong to the patched runtime, and from then on every client against them
+# failed with "wine client error: version mismatch 962/957", because the server
+# on the socket was a different build from the client.
+#
+# Read /proc instead: a wineserver's own environment says which prefix it serves.
+prefix_busy() {
+  local pf="$1" pid env_want
+  env_want="$(readlink -f "$pf")"
+  for pid in $(pgrep -x wineserver 2>/dev/null); do
+    [[ -r /proc/$pid/environ ]] || continue
+    if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null \
+         | grep -qx "WINEPREFIX=$pf" || tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null \
+         | grep -qx "WINEPREFIX=$env_want"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Vendor registry subtrees worth sharing: <label>|<reg key>
+VENDOR_REGISTRY=(
+  "iZotope|HKLM\Software\iZotope"
+)
+
+registry_has_state() { # <prefix> <regkey> -> 0 when the prefix already has it
+  local pf="$1" key="$2" sys="$1/system.reg"
+  [[ -f $sys ]] || return 1
+  # "CorePath" is iZotope's marker; a prefix that has any of it is not a
+  # candidate for overwriting, whatever else it happens to hold.
+  case "$key" in
+    *iZotope) grep -qa '"CorePath"' "$sys" && return 0 ;;
+  esac
+  return 1
+}
+
+link_vendor_registry() {
+  local owner="${1:-$OWNER_PREFIX}" label key root reg rc=0
+  [[ -n $owner && -d $owner/drive_c ]] || return 0
+  command -v wine >/dev/null 2>&1 || return 0
+
+  local export; export="$(mktemp -t apm-registry-XXXXXX.reg)" || return 0
+  for entry in "${VENDOR_REGISTRY[@]}"; do
+    label="${entry%%|*}"; key="${entry#*|}"
+    registry_has_state "$owner" "$key" || continue
+
+    root="$(prefix_wine_root "$owner")"
+    if ! WINEPREFIX="$owner" "$root/bin/wine" reg export "$key" "$export" /y >/dev/null 2>&1; then
+      warn "could not read the $label registry state from $(basename "$owner")"
+      rc=1; continue
+    fi
+    [[ -s $export ]] || continue
+
+    local pf
+    for pf in "$HOME"/.wine "$HOME"/.wine-ableton "$HOME"/.wine-vst; do
+      [[ -d $pf/drive_c && $pf != "$owner" ]] || continue
+      registry_has_state "$pf" "$key" && continue
+      if prefix_busy "$pf"; then
+        warn "$(basename "$pf") is running: the $label registry state was NOT shared into it."
+        warn "  a registry import into a live prefix is overwritten when wineserver exits."
+        warn "  close it and re-run to finish the job."
+        rc=1; continue
+      fi
+      root="$(prefix_wine_root "$pf")"
+      if WINEPREFIX="$pf" "$root/bin/wine" reg import "$export" >/dev/null 2>&1; then
+        ok "   $label registry state shared into $(basename "$pf")"
+      else
+        warn "could not share the $label registry state into $(basename "$pf")"
+        rc=1
+      fi
+    done
+  done
+  rm -f "$export"
+  return $rc
+}
+
 changed=0
 for pf in "${PREFIXES[@]}"; do
   [[ -d "$pf/drive_c" ]] || { warn "$(local_prefix_name "$pf") : drive_c missing, ignored"; continue; }
@@ -359,6 +477,7 @@ for pf in "${PREFIXES[@]}"; do
   link_vendor_data "$pf"
 done
 link_plugin_deps
+link_vendor_registry
 
 if ((changed)); then
   echo
