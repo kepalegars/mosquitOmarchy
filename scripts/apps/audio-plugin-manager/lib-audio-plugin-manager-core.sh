@@ -328,7 +328,50 @@ state_bulk_load() {
     _state_files_all["$k"]+="${f}"$'\n'
   done < <(jq -r '.plugins | to_entries[] | .key as $k | .value.files[]? | [$k, .] | @tsv' \
              "$STATE_FILE" 2>/dev/null)
+
+  # An entry with an EMPTY file list is invisible to every scan built on this
+  # cache, so the plugin reads as untracked forever even though it is listed.
+  # That is exactly what happened to the Kilohearts suite: the log had every
+  # key and half of them carried no path at all, so state_bulk_has said no and
+  # the reconcile screen offered twenty-three plugins that were registered all
+  # along. Such an entry is repaired from the disk, which is the truth.
+  local _rk
+  while IFS= read -r _rk; do
+    [[ -n $_rk ]] || continue
+    local _rf
+    _rf="$(plugin_path_for_key "$_rk" 2>/dev/null || true)"
+    [[ -n $_rf ]] || continue
+    jq -S --arg k "$_rk" --arg f "$_rf" '.plugins[$k].files = [$f]' "$STATE_FILE" > "$STATE_FILE.tmp.$$" \
+      && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+    _state_keys_all["$_rk"]=1
+    _state_files_all["$_rk"]+="${_rf}"$'\n'
+  done < <(jq -r '.plugins | to_entries[] | select((.value.files // []) | length == 0) | .key' \
+             "$STATE_FILE" 2>/dev/null)
   return 0
+}
+
+# plugin_path_for_key <plugin_key> — the file that key names, from the disk.
+#
+# Purely a lookup: it re-derives the scan's own grouping so a log entry with no
+# path can be given the one it should have had. Nothing is created here.
+plugin_path_for_key(){
+  local want="$1" f
+  while IFS=$'\t' read -r f _t; do
+    [[ -n $f ]] || continue
+    [[ "$(plugin_key "$f")" == "$want" ]] || continue
+    [[ -e $f ]] || continue
+    printf '%s\n' "$f"
+    return 0
+  done < <(scan_plugins)
+  local e
+  while IFS=$'\t' read -r e _fmt _loc _en; do
+    [[ -n $e ]] || continue
+    if [[ "$want" == "native/$(native_plugin_label "$e")" ]]; then
+      printf 'native:%s\n' "$e"
+      return 0
+    fi
+  done < <(scan_native_plugins)
+  return 1
 }
 
 # state_bulk_has is the snapshot equivalent of state_has. It answers about the
@@ -1908,6 +1951,27 @@ install_plugin() {
   fi
 
   if ((${#newfiles[@]} == 0)); then
+    # The installer RAN, to completion, and left nothing new — because it
+    # reinstalled the very same build, so the bytes it wrote are the bytes that
+    # were already there.
+    #
+    # That is a successful reinstall, not a conflict and not a failure. It was
+    # reported as a failure, which made an ordinary "install it twice" look like
+    # something went wrong. Nothing is duplicated and nothing needs merging: the
+    # plugin is one row either way, and its files were replaced in place.
+    if ((wine_rc == 0)); then
+      local -a _same=()
+      while IFS= read -r f; do [[ -n $f ]] && _same+=("$f"); done < <(match_installed_plugin "$file")
+      if ((${#_same[@]})); then
+        msg "The installer replaced the existing files in place — same build, nothing to merge."
+        for f in "${_same[@]}"; do
+          ok "reinstalled: ${f##*/}"
+          newfiles+=("$f")
+        done
+      fi
+    fi
+  fi
+  if ((${#newfiles[@]} == 0)); then
     # Reinstall/update: the plugin is already there and the installer rewrote
     # it IN PLACE, so no NEW path appeared.
     #
@@ -2585,12 +2649,26 @@ open_folder_path() {
     dir="$(dirname "$dir")"
   fi
   [[ -n $dir ]] || return 1
+  # The FILE EXPLORER SETTING decides, and xdg-open is only the last resort.
+  #
+  # xdg-open went first, which means it always won: it resolves the same
+  # desktop default the setting is trying to change, so choosing Nautilus in
+  # Settings did nothing at all.
   local opener=""
-  if command -v xdg-open >/dev/null 2>&1; then opener="xdg-open"
-  elif command -v nautilus >/dev/null 2>&1; then opener="nautilus --new-window"
-  elif command -v dolphin >/dev/null 2>&1; then opener="dolphin"
-  elif command -v thunar >/dev/null 2>&1; then opener="thunar"
-  fi
+  case "$(current_file_picker)" in
+    superfile)
+      # Superfile opens a directory by being pointed AT it, same as its chooser.
+      if command -v spf >/dev/null 2>&1; then opener="spf" else opener="xdg-open"; fi
+      ;;
+    default)
+      if command -v nautilus >/dev/null 2>&1; then opener="nautilus --new-window"
+      elif command -v dolphin >/dev/null 2>&1; then opener="dolphin"
+      elif command -v thunar >/dev/null 2>&1; then opener="thunar"
+      else opener="xdg-open"
+      fi
+      ;;
+    *) opener="xdg-open" ;;
+  esac
   [[ -n $opener ]] || return 1
   setsid nohup $opener "$dir" >/dev/null 2>&1 < /dev/null &
   disown 2>/dev/null || true
