@@ -223,10 +223,19 @@ not break its paths.
 
 ## Versions
 
-Every displayed version is the version of the **script**, never of the application it
-installs. There is one source: the root [`VERSION`](VERSION) file, currently **1.0.0**, which
+Every version shown in a TUI is the version of the **script**, never of the application it
+installs. So `hyprmod - v1.0.0` does not mean hyprmod 1.0.0 — hyprmod ships its own versioning
+and this says nothing about it. It means *the mosquitOmarchy script that sets hyprmod up* is
+at 1.0.0, which is what "check for updates" acts on. Nothing in the list is the application's
+own version, so there is nothing there to compare against a vendor release.
+
+There is one source: the root [`VERSION`](VERSION) file, currently **1.0.0**, which
 `module_version()` reads and the Go TUIs mirror in `appVersion`. There is deliberately no
 second list — a list next to `VERSION` is how the two drift.
+
+The rule is what makes the update zone meaningful. A row saying 1.0.0 next to a row saying
+0.9.0 would look like one module was newer than another; in fact both would be describing
+their installers, and the only real comparison is against the version on GitHub.
 
 ## After the install
 
