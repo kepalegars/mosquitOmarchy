@@ -1695,6 +1695,26 @@ func (m model) recommendedFixesConfirm() tuikit.Confirm {
 // anyone who wants nothing applied automatically.
 const guiInputFixID = "wine_gui_input"
 
+// pendingBeyondDefault <items> — the plugin-scope fixes that are not applied yet
+// and are not the fix that is applied to every plugin anyway.
+//
+// This is what decides whether there is anything to OFFER. Counting the default
+// fix here made every known plugin worth a question, because that fix is always
+// either applied or about to be.
+func pendingBeyondDefault(items []FixItem) []string {
+	var out []string
+	for _, it := range items {
+		if it.Scope != "plugin" || it.Applied {
+			continue
+		}
+		if it.ID == guiInputFixID {
+			continue
+		}
+		out = append(out, it.ID)
+	}
+	return out
+}
+
 // afterInstallFixesPrompt decides what the end of an install looks like: the
 // question, or the plain success dialog.
 //
@@ -1738,6 +1758,20 @@ func (m model) afterInstallFixesPrompt(msg installFixesCheckMsg) (model, tea.Cmd
 	// applying reads as a veto on the whole thing. So it says what it does —
 	// skip the page — and the "Yes" side names the scope, which is what the user
 	// actually decides on.
+	// Nothing to offer when the ONLY fix is the one applied to everything anyway.
+	//
+	// A plugin whose entire catalog is wine_gui_input has, by the time this
+	// question would be asked, already had that fix applied — there is no second
+	// fix, nothing pending, and the page would open to a single row that is
+	// already ticked. The question then reads as "this plugin needs fixes?" for
+	// a plugin that has nothing left to need, and "Yes" leads to a page with
+	// nothing to do on it. So the offer is only made when a real fix is pending.
+	if len(pendingBeyondDefault(msg.items)) == 0 {
+		m.confirm = m.installSuccessConfirm()
+		m.replace(scrRunnerSuccessConfirm)
+		return m, nil
+	}
+
 	// Only a plugin in the knowledge base is asked about at all. Offering the
 	// fixes page for a plugin nothing is recorded about is a question with one
 	// possible answer, and it reads as "the manager knows something about this
