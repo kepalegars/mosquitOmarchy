@@ -13,6 +13,26 @@ Two things live here:
 **Bitwig and REAPER are not installed here.** They have their own folders and installers
 (`../bitwig/`, `../reaper/`) and are driven from the `audio` orchestrator module.
 
+## Contents
+
+- [Before reporting a failed install](#before-reporting-a-failed-install)
+- [The stack — setup-audio-stack.sh](#the-stack--setup-audio-stacksh)
+- [Shared folders, vendor data, and the registry](#shared-folders-vendor-data-and-the-registry--link-vst-sharedsh)
+- [The manager](#the-manager)
+- [Prefixes, and which one a DAW must use](#prefixes-and-which-one-a-daw-must-use)
+- [The two universes](#the-two-universes)
+- [Where DAWs must look](#where-daws-must-look)
+- [First launch](#first-launch)
+- [The plugin list](#the-plugin-list)
+- [Launch an executable in the default prefix](#launch-an-executable-in-the-default-prefix)
+- [Plugin fixes](#plugin-fixes)
+- [Known traps](#known-traps)
+- [Settings](#settings)
+- [Parked work](#parked-work)
+- [Cleanup inconsistencies](#cleanup-inconsistencies)
+- [Wine menu cleanup](#wine-menu-cleanup)
+- [Install the manager](#install-the-manager)
+
 ## Before reporting a failed install
 
 Read [`PLUGIN-TESTS.md`](PLUGIN-TESTS.md) — a ProtonDB-style registry, one block per plugin:
@@ -66,18 +86,110 @@ scripts/apps/audio-plugin-manager/setup-audio-stack.sh --wine-menu   # step 5 on
 
 Re-run `--tweaks` after every new plugin.
 
-## Shared folders — `link-vst-shared.sh`
+## Shared folders, vendor data, and the registry — `link-vst-shared.sh`
 
-Links wine prefixes (`~/.wine` for yabridge, `~/.wine-ableton` for Ableton) to shared
-directories: the real files stay in the shared root and the Windows folders become symlinks,
-so **one install is visible in every DAW**. Called by the stack, the Ableton setup and the
-manager's install/uninstall.
+A Windows plugin is **not self-contained**, and linking its files is only the first of three
+things that have to cross a prefix boundary. This is why "install once, use in every DAW" needs
+more than symlinks, and why most of the problems reported against this stack were not really
+about wine.
+
+### 1. Plugin entry points
+
+The real files stay in the shared root (`~/Music/Audio Plugins/{vst,vst3,clap}`) and each
+prefix's Windows plugin folders become symlinks into it:
+
+| In the prefix | Points at |
+|---|---|
+| `Program Files/Common Files/VST3`, `Program Files (x86)/Common Files/VST3` | the shared `vst3/` |
+| `Program Files/Common Files/CLAP`, `Program Files (x86)/Common Files/CLAP` | the shared `clap/` |
+| `Program Files/Steinberg/VSTPlugins`, `Program Files (x86)/Steinberg/VSTPlugins` | the shared `vst/` |
+
+### 2. Vendor **data**, which lives inside the prefix
+
+Several vendors ship a thin loader next to the real code, and the real code lives at a path
+compiled into the binary. A plugin loaded in a prefix that lacks it fails in a way that reads
+like a broken install:
+
+- **Kilohearts** — every `kHs*.vst3` is a ~240 KB stub that imports only four Windows DLLs and
+  calls `LoadLibrary` for `HeartCore`, a single 74 MB DLL the installer drops under
+  `ProgramData/Kilohearts`.
+- **iZotope** — the bundles in the shared store symlink their `Cores/` and `Presets/` back to
+  `Program Files/iZotope`. Pro-R and RX read impulse responses from there and report them
+  missing when the path is absent or empty.
+- **Sonible** — smartEQ, smart:comp and smart:chain run their analysis against per-product
+  neural models under `Common Files/sonible`: ~400 MB of `.nn` files. Without them the plugin
+  loads and then analyses nothing.
+
+These are linked into every prefix that runs a DAW.
+
+### 3. A plugin's own **dependency DLL**
+
+A plugin folder may hold more than plugins. Sonible ships `sonible_onnxruntime_v1-15-1.dll`
+beside its VST3s, and `smartEQ4.vst3` / `smartgate.vst3` carry it in their **PE import table** —
+a load-time dependency, not an optional one.
+
+This matters because of *where the plugin ends up*. In the shared store the DLL is a sibling of
+the plugin, which is where a Windows loader looks first. yabridge does not run the plugin from
+there: it puts the Windows file inside the bundle at `Contents/x86_64-win/` and loads **that**.
+The sibling is now two levels up and out of reach, so the dependency stops resolving and the
+plugin never initialises. The vendor's own layout shows the answer — the Sonible plugins that
+work are proper bundles and carry the DLL in `Contents/x86_64-win/`, next to the plugin.
+
+So every `.dll` in a plugin's install folder that is not itself a plugin is linked next to the
+file yabridge actually loads. Plugins with no such dependency are untouched: iZotope and
+FabFilter import only Wine builtins, which is exactly why they never showed the symptom.
+
+### 4. Vendor **registry** state
+
+iZotope does not look for its data on the filesystem at all. Its plugins read:
+
+```
+HKLM\Software\iZotope\<PRODUCT>\CorePath = "C:\Program Files\iZotope\<product>\Cores\iZ<product>Core.dll"
+```
+
+With that value absent the plugin reports an empty core path and says *"One of the files this
+plug-in needs cannot be found, please reinstall or contact technical support"* — about a file
+it never tried to open. **A symlink cannot fix this**; only the registry entry carries the
+answer. The installer writes the key into whichever prefix it is pointed at, which is why these
+plugins can work under one DAW and fail under another, and why reinstalling changes nothing.
+
+So vendor registry state is shared too, from the prefix that has it to the prefixes that do
+not, and a prefix that already has it keeps its own.
+
+### Deciding whose copy wins
+
+"Has files in it" is the wrong test, and it is wrong in the direction that *keeps* the broken
+copy. A partial install leaves a populated folder behind:
+
+- `~/.wine` carried a 33 MB `ProgramData/Kilohearts` with the installer, the cache and the log —
+  and no `HeartCore`, because that run was interrupted or aimed at the wrong prefix.
+- `~/.wine-ableton` carried `Program Files/iZotope` holding only `VocalSynth 2`, none of the
+  `Cores` the bundles point at.
+
+So the requirement is derived from what the plugins actually dereference — the required iZotope
+product names are read back out of the shared store's own symlinks — and a copy that does not
+satisfy it is set aside rather than kept. **A prefix with a genuinely complete copy keeps it**:
+this links the support tree, it does not decide which install of a DAW is authoritative.
+
+Each prefix is serviced with the wine build its DAW already runs under. Handing a prefix to a
+different build makes wine rewrite every builtin DLL, which is the churn all of this exists to
+avoid.
 
 ```bash
 scripts/apps/audio-plugin-manager/link-vst-shared.sh                    # all detected prefixes
 scripts/apps/audio-plugin-manager/link-vst-shared.sh --prefix ~/.wine   # one prefix
 scripts/apps/audio-plugin-manager/link-vst-shared.sh -y
 ```
+
+Idempotent: a second run performs zero writes. It refuses to touch a prefix whose wineserver is
+running, because a registry import into a live prefix is overwritten when wineserver exits.
+
+> **A check that starts what it is checking.** "Is this prefix busy?" must not be
+> `wineserver -p` — that flag *starts* a server. Asking it of three prefixes started stock
+> wine-staging servers on prefixes belonging to the patched runtime, after which every client
+> against them failed with `wine client error: version mismatch`: the server on the socket was a
+> different build from the client. The check reads `/proc` and looks at each wineserver's own
+> `WINEPREFIX`.
 
 ## The manager
 
@@ -110,6 +222,56 @@ is git-ignored.
 
 Native Windows apps (`iexplore`, `wmplayer`, `wordpad`, `edge`, `webview2`…) and uninstallers are
 never offered as plugins.
+
+## Prefixes, and which one a DAW must use
+
+There are three prefixes on a typical machine, and they are **not** interchangeable:
+
+| Prefix | Belongs to | Wine build |
+|---|---|---|
+| `~/.wine-vst` | the plugin manager — where Windows plugins are installed | patched `wine-d2d1-nspa` (DComp) |
+| `~/.wine-ableton` | Ableton Live | stock `wine-staging` |
+| `~/.wine` | **games** — DXVK, winetricks | stock `wine-staging` |
+
+### A plugin is not prefix-independent
+
+This is the single most important thing to know about this stack, and it is not a Wine
+limitation. A Windows plugin bundle is not self-contained: its loader hands its vendor's shared
+DLL to `LoadLibrary` by name, at a path compiled into the binary. Run the host under a prefix
+that lacks those and the plugin reports its own data missing — *"Could not load HeartCore"*,
+*"missing impulse response files"* — while the plugin files themselves are perfectly fine in the
+shared store. Only the registry entry or the prefix-internal path carries the answer.
+
+### A DAW that runs under the wrong prefix will abort
+
+yabridge's Wine host process can die during start-up, and when it does yabridge does what its
+own source says it does: the blocking `accept()` has no cancellation, so it calls
+`std::terminate()` and takes the whole DAW with it. A REAPER project can die that way.
+
+The trigger seen in practice: the patched wine first on `PATH` while `WINEPREFIX` was unset, so
+REAPER fell through to `~/.wine` — the **gaming** prefix, last initialised by stock
+wine-staging. Wine answers a version switch by rewriting every builtin DLL (`wineboot -u`), and
+yabridge's host died inside that. 61 of the 63 aborts in that window were REAPER's plugin
+scanner, one process per wrapped plugin, every one identical.
+
+So `~/.local/bin/reaper-launch` and `~/.local/bin/bitwig-studio` **pin `WINEPREFIX`** rather than
+leaving it to the environment, and both wrappers are generated from
+`scripts/lib/wine-runtime-daw.bash`. If you hand-edit one and drop the export, the crash comes
+back. `~/.wine` stays the gaming prefix, which is what it was created for.
+
+> **Do not merge the prefixes into one.** Serum 2's DirectComposition editor needs the patched
+> build; DXVK and winetricks need stock. One prefix means one Wine build, so you would trade a
+> REAPER abort for either a Serum 2 crash or broken games. Sharing the *data* across prefixes
+> gives you install-once-use-everywhere without that trade.
+
+### Which runtime a DAW needs
+
+A wine VST3 editor that builds a DirectComposition surface — Serum 2 — **cannot be created under
+stock wine-staging**; it dies during editor creation. Only the patched fork has working DComp, so
+a DAW launched with the system wine cannot open that editor even though the plugin is installed
+and yabridged correctly. This was hand-fixed once in `~/.local/bin/reaper`, a wrapper nothing
+launched, while the desktop entry pointed somewhere else — so the fix looked applied and was
+not. Both launchers are generated now.
 
 ## The two universes
 
@@ -230,20 +392,82 @@ for a fix removes its block. The product list is deduplicated case-insensitively
 drifted to both `CrispyTuner` and `crispytuner` collapses to one entry and one rule on the next
 apply, and re-applying restores the product's own capitalisation.
 
-| Fix | What it does |
-|---|---|
-| Wine plugin GUI input | Forces the editor window to float, stay unblurred and take XWayland input even when the plugin asks not to. Matched on the window **title** — these editors report an empty class, so a class rule is generic and hitless. |
-| Ableton/Wine hover tooltips | Keeps the tooltip windows floating, unblurred, animation-free and unfocused, so hovering stops stealing input. Applied once, independent of the plugin. |
-| Stop the cursor recentering | Hyprland 0.56.2 has **no per-window warp rule**, so this is a `cursor:no_warps` + `cursor:persistent_warps` **global** option. It affects every app, so it is never applied automatically — enable it only after confirming the recentering is Hyprland focus-warp and not Wine's own pointer handling. Tagged `[global]`. |
+| Fix | Default | Scope | What it does |
+|---|---|---|---|
+| Wine plugin GUI input | **on** | per plugin | Forces the editor window to float, stay unblurred and take XWayland input even when the plugin asks not to. Matched on the window **title** — these editors report an empty class, so a class rule is generic and hitless. |
+| Link the plugin data into every wine prefix | **on** | per plugin | Runs the linker above: entry points, vendor data, dependency DLLs and vendor registry state, from the prefix that owns each into the prefixes that lack it. Recorded per plugin like the GUI-input fix — the effect is machine-wide, the record says which plugin was verified. |
+| Install the Microsoft C++ runtime in the DAW prefixes | **on** | per plugin | Some plugins need a Microsoft DLL that Wine only stubs — smart:gate's only import that smartEQ4 does not have is `MSVCP140_ATOMIC_WAIT.dll`. Prefixes are detected, never assumed. |
+| Ableton/Wine hover tooltips | on | once | Keeps the tooltip windows floating, unblurred, animation-free and unfocused, so hovering stops stealing input. Applied once, independent of the plugin. |
+| Stop the cursor recentering | off | **global** | Hyprland 0.56.2 has **no per-window warp rule**, so this is a `cursor:no_warps` + `cursor:persistent_warps` **global** option. It affects every app, so it is never applied automatically — enable it only after confirming the recentering is Hyprland focus-warp and not Wine's own pointer handling. Tagged `[global]`. |
+
+**The wine GUI-input fix is applied by default**, which it originally was not. It was only ever
+applied to a fix that was *already* marked applied — so on a first install, nothing — and a
+plugin that needs it, which is every wine editor opened under a window manager, never got it.
+That is why the fixes page showed it unapplied and why *"does this plugin need fixes?"* kept
+answering no for a plugin that did. A Settings row turns it off, and with it off nothing is
+written without being asked.
+
+The two filesystem/runtime fixes render **no window rule**, so `hyprland.lua` is left alone
+instead of gaining an empty block. They act inside `fix_apply`.
+
+### The offer at the end of an install is only made when there is something to offer
+
+After a successful install the TUI may ask *"Plugin installed. Apply fixes for … now?"* — but
+only when a real fix is **pending**. A plugin whose entire catalog is the input fix that applies
+to every plugin anyway has, by then, already had it; the page would open to a single row that is
+already ticked, and the question would read as *"this plugin needs fixes?"* for a plugin that
+has nothing left to need. Already-applied fixes are not pending, and the always-applied input
+fix does not count towards it.
 
 Known plugins get their required fixes applied automatically on first install (the dependency
-map is `known_plugin_fixes()` in the core lib), so a fresh install works out of the box. After a
-successful install the TUI also asks *"Plugin installed. Apply fixes for … now?"* and opens the
-screen with what remains.
+map is `known_plugin_fixes()` in the core lib), so a fresh install works out of the box.
 
 `x` on the Uninstall screen opens the highlighted row's containing folder in the file manager.
 The launcher warns once when it is not running under Hyprland, since the window rules and GUI
 fixes are written for it.
+
+## Known traps
+
+Each of these was diagnosed on a real machine and cost real time. They are listed because the
+symptom never points at the cause.
+
+**"Could not load HeartCore"** — Kilohearts. Not a broken install, not a reinstall problem. The
+`kHs*.vst3` are stubs that load a 74 MB DLL from `ProgramData/Kilohearts`, inside the prefix.
+Running the DAW under a prefix that lacks it produces this. See *Prefixes*.
+
+**"missing impulse response files"** — iZotope, in Ableton while fine in REAPER. Same class:
+`Program Files/iZotope` is empty or absent in that prefix. Note that an **empty directory is not
+a missing one** — an install that created the path and never filled it looks the same from the
+outside.
+
+**"One of the files this plug-in needs cannot be found, please reinstall"** — iZotope, and the
+message is a lie about the cause. It is the plugin's own wording when its **registry**
+`CorePath` is empty. Reinstalling cannot help, because the installer writes that key into the
+prefix it is pointed at.
+
+**A plugin that no DAW lists, but `regsvr32` loads fine** — a `LoadLibrary` test is not a
+plugin test. It proves the image maps; it never instantiates the component class and never reads
+a data file. The message only appears once the plugin is actually used.
+
+**A repackaged plugin that will not load, in either VST2 or VST3** — check for mangled imports.
+Some repacks rename Windows system DLLs and ship their own copies; if those copies are not
+installed, the plugin cannot load. Look for imports that are not real DLL names.
+
+**A scan that finds nothing and writes nothing** — check the date on Ableton's
+`PluginScanDb.txt`. If it predates recent scans while `Preferences.cfg` is current, the
+directory is writable and Ableton is finding nothing new. Empty a plugin's own data requirements
+first: the failing vendor usually resolves its data through the registry, not the filesystem.
+
+**`wine client error: version mismatch`** — a wineserver of a different build than your client
+holds the prefix. Check what each running wineserver serves before killing anything; a stray
+one on the wrong prefix is also the condition behind the REAPER abort above.
+
+**A Hyprland rule that silently stopped applying** — check `hyprctl configerrors`. A Lua syntax
+error anywhere in the config kills **every rule after it**, and the file looks fine everywhere
+else. When injecting a block into a config from a shell script, never extract it by
+pattern-matching comment markers: those same markers appear in the injecting script's own
+`sed`/`grep` command, and the range ends there. Keep the block in its own file with no shell in
+it, and verify the result parses before writing it.
 
 ## Settings
 
@@ -260,6 +484,26 @@ fixes are written for it.
 
 A deployed `~/.config/audio-plugin-manager/README.md` mirrors the current settings and is
 regenerated on every change.
+
+## Parked work
+
+`future/install-many.action` holds an `install-many` backend that is **not wired in** —
+`install-many` is not a valid action. It ran every installer concurrently, each in its own
+process group, with `link_prefix_to_vst` once before any of them, `post_install` once at the end
+(`APM_DEFER_SYNC` on each child, the pattern already proven for uninstall batches), and a JSON
+summary of status, exit code and log tail per file. A failing installer did not stop the rest.
+
+It is parked because the half the user meets was never written: superfile still returns a single
+path, so there is no queue screen, no scroll, no selection limit, no end-of-install recap, and
+`Esc` during an install still means *quit* rather than *interrupt*. Wiring the action in as it
+stands would add a second way to install one file at a time with none of the affordances that
+make several files bearable.
+
+Worth knowing before reviving it: **superfile has no per-item select key**. Toggling an item is
+`confirm` — the same `Enter` / `Right` / `l` that opens a file — so inside selection mode the key
+you would press to confirm is the key that flips a checkbox. The flow is `v`, `a` (or `A`),
+`v` again, `Enter`. An invented binding is not an option: superfile validates its hotkey file
+and warns on unknown fields.
 
 ## Cleanup inconsistencies
 
