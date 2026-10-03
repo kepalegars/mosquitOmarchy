@@ -475,6 +475,10 @@ func settingsItems(s Status) []tuikit.PickerItem {
 		quarantineLabel = fmt.Sprintf("Empty the quarantine (%d parked)", s.QuarantineEntries)
 		quarantineItem.Display = quarantineLabel
 	}
+	autoGUI := "Off"
+	if s.AutoGuiInput {
+		autoGUI = "On"
+	}
 	autoFix, fixPrompt := "Off", "Off"
 	if s.AutoFixOn {
 		autoFix = "On"
@@ -498,6 +502,7 @@ func settingsItems(s Status) []tuikit.PickerItem {
 		{Display: "Default wine prefix: " + prefixLabel, Value: "pick_default_prefix"},
 		{Display: "Plugin window handler: " + handler, Value: "toggle_plugin_handler"},
 		{Display: "Wine runtime: " + wineRuntimeLabel(), Value: "toggle_wine_runtime"},
+		{Display: "Apply the wine editor input fix automatically: " + autoGUI, Value: "toggle_auto_gui_input"},
 		{Display: "Rewrite applied fixes when installing: " + autoFix, Value: "toggle_auto_fix"},
 		{Display: "Ask \"apply fixes now?\" after an install: " + fixPrompt, Value: "toggle_fix_prompt"},
 		{Display: "Track the plugins already installed", Value: "adopt_plugins"},
@@ -1027,14 +1032,26 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Already-applied fixes, re-applied only when AUTO_FIX allows it.
 		// A fix the user has NOT applied is never touched here — that is what
 		// the question below is for.
+		//
+		// wine_gui_input is in this list whether or not it was applied before.
+		//
+		// It was only ever applied to a fix that was ALREADY marked applied,
+		// which on a first install is nothing: so a plugin that needs it — every
+		// wine editor under a window manager — never got it, the fixes page then
+		// showed it unapplied, and the answer to "does this plugin need fixes?"
+		// kept being no. The editor needs it, so it is applied by default and the
+		// setting below turns that off.
 		var already []string
 		for _, it := range msg.items {
-			if it.Scope == "plugin" && it.Applied {
+			if it.Scope != "plugin" {
+				continue
+			}
+			if it.Applied || (m.status.AutoGuiInput && it.ID == guiInputFixID) {
 				already = append(already, it.ID)
 			}
 		}
 		m.loading = true
-		if msg.autoFix && len(already) > 0 {
+		if len(already) > 0 {
 			// The re-apply runs FIRST and on its own, so the prompt below is not
 			// racing it: the user answers against a settled state.
 			return m, reapplyAppliedFixesCmd(msg.vendor, msg.plugin, already)

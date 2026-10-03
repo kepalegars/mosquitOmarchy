@@ -241,6 +241,11 @@ type Status struct {
 	// only felt.
 	DefaultPrefix      string `json:"default_prefix"`
 	DefaultPrefixSet   string `json:"default_prefix_set"`
+	// AutoGuiInput applies wine_gui_input without asking. On by default: it is
+	// what makes a wine editor's window accept clicks properly, which is not a
+	// preference. The setting turns it off for anyone who wants nothing applied
+	// automatically.
+	AutoGuiInput bool `json:"auto_gui_input"`
 }
 
 type statusMsg struct {
@@ -1441,7 +1446,11 @@ func fixPrefsCmd() tea.Cmd {
 // fixPrefsMsg carries the two switches. Both default to true when the read
 // fails: the backend's own default is "on", so a failed read must not silently
 // turn a feature off.
-type fixPrefsMsg struct{ autoFix, fixPrompt bool }
+// fixPrefsMsg carries all three switches back, so writing one does not leave
+// the other two showing a stale value.
+type fixPrefsMsg struct {
+	autoFix, fixPrompt, autoGuiInput bool
+}
 
 // setFixPrefCmd writes one switch and returns the fresh pair, so the caller
 // does not have to guess what the other one is.
@@ -1452,18 +1461,23 @@ func setFixPrefCmd(key string, on bool) tea.Cmd {
 			v = "yes"
 		}
 		if _, err := runQuick("set-fix-prefs", key, v); err != nil {
-			return fixPrefsMsg{autoFix: true, fixPrompt: true}
+			return fixPrefsMsg{autoFix: true, fixPrompt: true, autoGuiInput: true}
 		}
 		out, err := runQuick("get-fix-prefs")
 		if err != nil {
-			return fixPrefsMsg{autoFix: on, fixPrompt: true}
+			return fixPrefsMsg{autoFix: on, fixPrompt: true, autoGuiInput: on}
 		}
 		var p struct {
-			AutoFix   string `json:"auto_fix"`
-			FixPrompt string `json:"fix_prompt"`
+			AutoFix     string `json:"auto_fix"`
+			FixPrompt   string `json:"fix_prompt"`
+			AutoGuiInput string `json:"auto_gui_input"`
 		}
 		_ = json.Unmarshal(bytes.TrimSpace(out), &p)
-		return fixPrefsMsg{autoFix: p.AutoFix != "no", fixPrompt: p.FixPrompt != "no"}
+		return fixPrefsMsg{
+			autoFix:      p.AutoFix != "no",
+			fixPrompt:    p.FixPrompt != "no",
+			autoGuiInput: p.AutoGuiInput != "no",
+		}
 	}
 }
 
@@ -1672,6 +1686,14 @@ func (m model) recommendedFixesConfirm() tuikit.Confirm {
 	b.WriteString("\n\nApply them now, or open the fixes page and decide there?")
 	return tuikit.NewConfirm(b.String(), "See fixes page", "Auto apply").SetFocus(1)
 }
+
+// guiInputFixID is the one fix applied by DEFAULT rather than by question.
+//
+// Every wine plugin editor opened under a window manager needs its input
+// handled correctly, or the window does not take clicks properly. That is not a
+// preference, so it does not get asked about; the setting turns it off for
+// anyone who wants nothing applied automatically.
+const guiInputFixID = "wine_gui_input"
 
 // afterInstallFixesPrompt decides what the end of an install looks like: the
 // question, or the plain success dialog.

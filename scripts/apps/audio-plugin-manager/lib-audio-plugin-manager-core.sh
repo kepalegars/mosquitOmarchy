@@ -2649,26 +2649,19 @@ open_folder_path() {
     dir="$(dirname "$dir")"
   fi
   [[ -n $dir ]] || return 1
-  # The FILE EXPLORER SETTING decides, and xdg-open is only the last resort.
+  # Nautilus, always.
   #
-  # xdg-open went first, which means it always won: it resolves the same
-  # desktop default the setting is trying to change, so choosing Nautilus in
-  # Settings did nothing at all.
+  # This is a BROWSE action, not a choice: it opens a window you look at and
+  # navigate. Superfile is the setting for CHOOSING a file to hand back to the
+  # manager, and it is a terminal file manager that cannot present a folder the
+  # way this row means. xdg-open went first once and silently overrode the
+  # setting; the setting should not be in this path at all.
   local opener=""
-  case "$(current_file_picker)" in
-    superfile)
-      # Superfile opens a directory by being pointed AT it, same as its chooser.
-      if command -v spf >/dev/null 2>&1; then opener="spf" else opener="xdg-open"; fi
-      ;;
-    default)
-      if command -v nautilus >/dev/null 2>&1; then opener="nautilus --new-window"
-      elif command -v dolphin >/dev/null 2>&1; then opener="dolphin"
-      elif command -v thunar >/dev/null 2>&1; then opener="thunar"
-      else opener="xdg-open"
-      fi
-      ;;
-    *) opener="xdg-open" ;;
-  esac
+  if command -v nautilus >/dev/null 2>&1; then opener="nautilus --new-window"
+  elif command -v dolphin >/dev/null 2>&1; then opener="dolphin"
+  elif command -v thunar >/dev/null 2>&1; then opener="thunar"
+  else opener="xdg-open"
+  fi
   [[ -n $opener ]] || return 1
   setsid nohup $opener "$dir" >/dev/null 2>&1 < /dev/null &
   disown 2>/dev/null || true
@@ -5361,6 +5354,101 @@ plugin_group_rows_emit() {
 
 # plugin_group_rows_build does the actual scan and grouping, and emits the rows
 # WITHOUT a sort key (field 1), ready to be cached and sorted at read time.
+# vendor_folder_for_plugin <plugin-file> — the vendor folder the file was
+# installed from, if any.
+#
+# Only answers for a plugin sitting at the ROOT of the shared folder, where
+# there is no folder above it to read. The prefix the file was installed from
+# is searched for a program directory containing it; a plugin inside a vendor
+# folder has one already and never comes here.
+# vendor_for_known_plugin <basename> — the vendor column of the knowledge base.
+#
+# Only used for a plugin with no vendor folder of its own, where the prefix
+# cannot answer. An empty result is normal and means "not recorded": the row
+# then groups under its own name, which is honest.
+vendor_for_known_plugin(){
+  local name="${1%.*}"
+  local base="${1##*/}"
+  # Separate declarations: bash evaluates a single `local` left to right, so
+  # `stem="$name"` on the same line sees name UNSET — and under `set -u` that
+  # aborts the whole scan rather than just reading empty.
+  local stem="$name"
+  # The table's first column is the PRODUCT TOKEN ("serum"), while the file is
+  # named after it ("Serum2.vst3"). Matching the token against the file name
+  # never fired, so the vendor was never found and the plugin kept its own name
+  # as a vendor. Try the record first, then the file's own stem with its digits
+  # and version suffix removed.
+  # The stem is derived FIRST, unconditionally: known_plugin_record matches on a
+  # SUBSTRING of the path, so it succeeds on "Serum2.vst3" and the branch that
+  # would have computed the stem never ran — leaving "Serum2" to be looked up in
+  # a table that spells it "serum".
+  stem="$(printf '%s' "$name" | sed -E 's/[0-9].*$//; s/[[:space:]]+$//')"
+  local rec
+  rec="$(known_plugin_record "$1" 2>/dev/null || true)"
+  if [[ -z $rec && -n $stem && $stem != "$name" ]]; then
+    rec="$(known_plugin_record "$stem" 2>/dev/null || true)"
+  fi
+  [[ -n $rec ]] || return 1
+  # The note column carries the vendor for a plugin that has no folder of its
+  # own, written as "vendor=Xfer Records" at the end. Anything else is ignored,
+  # so an existing row keeps working and a note never becomes a vendor by
+  # accident.
+  local vendor=""
+  # PIPE-separated, like every other reader of this table — a tab-separated awk
+  # never matches a single row, which is why the vendor came back empty.
+  vendor="$(awk -F'|' -v n="$stem" 'tolower($1)==tolower(n) {
+      # The value ends at the first space or em dash: the note continues with
+      # prose, and taking the whole field made the vendor a sentence.
+      # Its own pipe-separated field, so the value is exactly what was written
+      # and never runs into the note beside it.
+      for (i = 1; i <= NF; i++) if ($i ~ /^vendor=/) {
+        sub(/^vendor=/, "", $i); print $i; exit
+      }
+    }' "$KNOWN_PLUGINS_FILE" 2>/dev/null)"
+  [[ -n $vendor ]] || return 1
+  printf '%s\n' "$vendor"
+  return 0
+}
+
+vendor_folder_for_plugin(){
+  local f="$1" src dir base
+  src="$(wine_source_of "$f" 2>/dev/null || true)"
+  [[ -n $src ]] || return 1
+  dir="$(dirname "$src")"
+  # Walk up out of any bundle structure to the vendor's PROGRAM directory.
+  #
+  # "Program Files (x86)/Common Files/VST3" is where an installer drops a plugin
+  # that belongs to no vendor folder of its own, and a vendor directory is its
+  # SIBLING of "Common Files", not its parent. So the walk stops as soon as it
+  # reaches a "Common Files" — going one further lands on "Program Files", which
+  # names every vendor at once and is why the answer came back as "VST3".
+  local i
+  for ((i = 0; i < 6; i++)); do
+    base="$(basename "$dir")"
+    case "$base" in
+      vst3|vst2|VST3|VST2|clap|CLAP|Contents|"x86_64-win"|"x86-win"|win64|win32)
+        dir="$(dirname "$dir")"
+        continue
+        ;;
+      *.vst3|*.clap|*.lv2)
+        # The plugin's OWN bundle. Stepping over it is what reaches the vendor
+        # directory above; stopping on it returned the bundle's name, which is
+        # the product's and not the vendor's.
+        dir="$(dirname "$dir")"
+        continue
+        ;;
+      "Common Files"|"common files")
+        return 1   # no vendor of its own; it belongs to whoever installed it
+        ;;
+    esac
+    break
+  done
+  # The program folder's parent is the vendor.
+  [[ $(basename "$(dirname "$dir")") == "drive_c" ]] && return 1
+  printf '%s\n' "$(basename "$dir")"
+  return 0
+}
+
 plugin_group_rows_build() {
   local f type key grp label sortkey enabled fmt
   local -A g_label=() g_formats=() g_first=() g_enabled=() g_any=() g_variants=() g_grp=()
@@ -5394,7 +5482,29 @@ plugin_group_rows_build() {
     # own name.
     grp_full="${key%/*}"
     if [[ $key == "$grp_full" ]]; then
-      grp_full="${key%.*}"
+      # A plugin at the ROOT of the shared folder has no vendor folder above it.
+      # Its vendor is the PROGRAM FOLDER it was installed from, which is where
+      # the answer actually is: Serum 2 sits at the root because Xfer Records
+      # installs it straight into Common Files/VST3, with nothing named Xfer
+      # beside it — so it filed itself under its own product name and looked
+      # like a vendor of one. The prefix it came from knows.
+      # `|| true` on both: a helper that cannot answer RETURNS NON-ZERO, and
+      # under `set -e` an assignment whose command substitution fails kills the
+      # whole scan — which is why plugin_group_rows_build went silent and every
+      # plugin vanished from the list at once.
+      local _owner
+      _owner="$(vendor_folder_for_plugin "$f" || true)"
+      if [[ -z $_owner ]]; then
+        # The prefix cannot answer: Xfer Records installs Serum straight into
+        # Common Files/VST3 and leaves nothing but an uninstaller behind, so
+        # there is no folder to read the vendor from. The knowledge base can.
+        _owner="$(vendor_for_known_plugin "$(basename "$f")" || true)"
+      fi
+      if [[ -n $_owner ]]; then
+        grp_full="$_owner"
+      else
+        grp_full="${key%.*}"
+      fi
     fi
     grp_full="${grp_full#VST2/}"; grp_full="${grp_full#VST3/}"; grp_full="${grp_full#CLAP/}"
     # Vendor/subgrouping: for vendors with multiple product lines (Izotope, etc.)
@@ -5517,13 +5627,17 @@ apm_fix_pref_file() {
 }
 
 apm_fix_pref_get() {
-  # $1 = AUTO_FIX | FIX_PROMPT
-  local v
+  # $1 = AUTO_FIX | FIX_PROMPT | AUTO_GUI_INPUT
+  # $2 = the default when the key is not written yet (default: yes)
+  local v want="${2:-yes}"
   # The file is KEY="value" (the same shell-sourceable shape as the Live Mode
   # settings), so the quotes have to come off. They were left on here and every
   # lookup fell through to the default — the switch appeared to do nothing.
   v="$(grep -E "^$1=" "$(apm_fix_pref_file)" 2>/dev/null | tail -1 | cut -d= -f2-)"
   v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+  # An unset key is the DEFAULT, and the default here is on: the switch exists
+  # to turn it OFF, so an absent key must not read as "no".
+  [[ -z $v ]] && v="$want"
   case "$v" in no) printf 'no\n' ;; *) printf 'yes\n' ;; esac
 }
 

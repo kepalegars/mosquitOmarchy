@@ -44,7 +44,7 @@
 # recommendation it cannot back.
 #
 # ── products ────────────────────────────────────────────────────────────────
-serum|.wine-vst|ableton|no|||Serum 2's editor is a DirectComposition surface; it crashes under stock wine-staging, and the d2d1-nspa runtime is the only local build with DComp + NSPA
+serum|.wine-vst|ableton|no|||vendor=Xfer Records|Serum 2's editor is a DirectComposition surface; it crashes under stock wine-staging, and the d2d1-nspa runtime is the only local build with DComp + NSPA
 install xfer|.wine-vst|ableton|unknown|||Xfer (Serum, Pigments, Massive)
 xfer|.wine-vst|ableton|unknown|||
 sonible|.wine-vst|ableton|unknown|||smartEQ / smart:chain vendor

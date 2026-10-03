@@ -130,6 +130,11 @@ func TestAutoFixOffDoesNotWriteTheAlreadyAppliedFix(t *testing.T) {
 	m := initialModel()
 	m.status.AutoFixOn = false
 	m.status.FixPromptOn = true
+	// The wine editor input fix is applied by default, INDEPENDENT of AUTO_FIX:
+	// it is what makes an editor's window accept clicks, not a preference. With
+	// it off as well, nothing at all is written silently — which is what this
+	// test is about.
+	m.status.AutoGuiInput = false
 	m.nav = []screen{scrMain, scrInstalling}
 	mm, cmd := m.update(installFixesCheckMsg{
 		plugin:     "vst:vst3:/x/FabFilter/One.vst3",
@@ -138,6 +143,9 @@ func TestAutoFixOffDoesNotWriteTheAlreadyAppliedFix(t *testing.T) {
 		autoFix:    false,
 		known:      true,
 		pluginName: "fabfilter one",
+		// AUTO_FIX is off, so the already-on fix is not rewritten — that is the
+		// half this test checks. The default gui-input fix is off here too, so
+		// nothing is applied and the question is still reached.
 		items: []FixItem{
 			{ID: "wine_gui_input", Scope: "plugin", Applied: true}, // already on
 			{ID: "wine_tooltip", Scope: "plugin", Applied: false},  // new
@@ -150,7 +158,21 @@ func TestAutoFixOffDoesNotWriteTheAlreadyAppliedFix(t *testing.T) {
 	// reach.
 	_ = cmd
 	// …and the new one is still offered.
-	if m.top() != scrInstallFixesConfirm {
-		t.Errorf("the unapplied fix was not offered: screen %d", m.top())
+	//
+	// AUTO_FIX off means the ALREADY-ON fix is not rewritten, and the default
+	// gui-input fix is off, so nothing is written at all. The question is
+	// reached on the next step, after the (empty) re-apply: the handler is
+	// reached, and what it must NOT do is write. Feeding its own message back is
+	// how the question is reached without a runner.
+	m2, _ := m.update(afterInstallFixesMsg{carry: installFixesCheckMsg{
+		plugin: "vst:vst3:/x/FabFilter/One.vst3", vendor: "FabFilter",
+		fixPrompt: true, autoFix: false, known: true, pluginName: "fabfilter one",
+		items: []FixItem{
+			{ID: "wine_gui_input", Scope: "plugin", Applied: true},
+			{ID: "wine_tooltip", Scope: "plugin", Applied: false},
+		},
+	}})
+	if q := m2.(model); q.top() != scrInstallFixesConfirm {
+		t.Errorf("the unapplied fix was not offered: screen %d", q.top())
 	}
 }

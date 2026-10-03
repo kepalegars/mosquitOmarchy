@@ -3496,6 +3496,10 @@ func (m model) handleAudioSettingsChoice(v string) (tea.Model, tea.Cmd) {
 		// row shows what the file now says rather than what we asked for — the
 		// two are independent settings and must not drift together.
 		return m, setFixPrefCmd("AUTO_FIX", !m.status.AutoFixOn)
+	case "toggle_auto_gui_input":
+		// Off means NOTHING is applied automatically — including this one, which
+		// is the whole point of having the switch.
+		return m, setFixPrefCmd("AUTO_GUI_INPUT", !m.status.AutoGuiInput)
 	case "toggle_fix_prompt":
 		return m, setFixPrefCmd("FIX_PROMPT", !m.status.FixPromptOn)
 	case "adopt_plugins":
