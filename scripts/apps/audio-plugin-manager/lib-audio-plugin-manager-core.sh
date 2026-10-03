@@ -4016,6 +4016,7 @@ fixes_catalog() {
   cat <<'FIXCAT'
 wine_gui_input|Wine plugin GUI input (Hyprland/XWayland)|plugin|Plugin editor windows float, unblurred and receive XWayland input even when the plugin asks not to (fixes inert / non-clickable GUIs such as CrispyTuner in Bitwig or REAPER). Applied per plugin, matched on the window title because these editors usually have an empty class. The rule is written per plugin you tick it on, so it belongs to ANY plugin — CrispyTuner is the case it was found on, not the only one it helps.|Plugin windows||yes|any
 wine_tooltip|Ableton/Wine hover tooltips|plugin|Keeps the hover tooltips Wine plugins (e.g. CrispyTuner) create inside Ableton floating, unblurred, animation-free and never focused, so hovering them stops stealing input from the plugin. Applied once, independently of the chosen plugin.|CrispyTuner specific|CrispyTuner|yes|any
+msvc_runtime|Install the Microsoft C++ runtime in the DAW prefixes|plugin|Some plugins need a Microsoft DLL that Wine only stubs. smart:gate is the case: its only import that smartEQ4 does not have is MSVCP140_ATOMIC_WAIT.dll, and Wine ships a stub for that name in every runtime, so the plugin fails to map its image and the host reports error 299 (STATUS_PARTIAL_COPY) for both its VST2 and its VST3, which is how a scan crash with a perfectly intact plugin looks. The prefixes are detected rather than assumed: the one Ableton is installed in, and the one the plugins were installed in. Recorded per plugin; the effect is per prefix.|Plugin data||yes|any
 prefix_data|Link the plugin data into every wine prefix|plugin|A Windows plugin is not prefix-independent. The Kilohearts kHs*.vst3 are 240 KB stubs that call LoadLibrary for HeartCore, a single 74 MB DLL the installer drops under ProgramData/Kilohearts, and the iZotope bundles point their Cores and Presets back at Program Files/iZotope. Those paths live INSIDE the prefix, so a DAW running under a prefix that lacks them reports Could not load HeartCore or missing impulse response files while the plugin files themselves are perfectly fine in the shared store. This links the vendor data from the prefix that owns it into the others, and sets an incomplete copy aside instead of keeping it, because a partial install leaves a populated folder missing exactly the load-bearing file. Recorded per plugin like the GUI-input fix: the effect is machine-wide, the record says which plugin was verified.|Plugin data||yes|any
 cursor_no_warp|Stop the cursor recentering|global|Hyprland 0.56.2 has no per-window warp rule: this is a GLOBAL cursor option (cursor:no_warps + cursor:persistent_warps). Affects the whole desktop, not just Wine — only enable after confirming the recentering is Hyprland focus-warp and not Wine's own pointer handling.|Cursor||no|any
 FIXCAT
@@ -4623,6 +4624,9 @@ fix_render_rules() {
       # Not a window rule: this one acts on the filesystem, inside fix_apply.
       # Rendering nothing is what keeps hyprland.lua free of an empty block.
       ;;
+    msvc_runtime)
+      # Likewise: a prefix-side install, no window rule.
+      ;;
   esac
 }
 
@@ -4631,6 +4635,140 @@ fix_render_rules() {
 #
 # Runs the shared linker, which is the same code the audio-stack setup uses, so
 # an install-time repair and a setup-time repair cannot drift apart.
+# apm_daw_prefixes -- the wine prefixes that actually run a DAW, one per line.
+#
+# Detected by content, not by name. Hardcoding ~/.wine-ableton and ~/.wine-vst
+# would be the same class of assumption that produced the original bugs: a user
+# with Ableton somewhere else, or a second VST prefix, would get the runtime
+# installed into prefixes nobody runs while the one that matters stayed broken.
+#
+#   * The plugin prefix is the one that holds the vendor support data, i.e. the
+#     one an installer actually wrote into (HeartCore, the iZotope Cores).
+#   * The Ableton prefix is the one carrying Ableton's own per-user state, which
+#     is what makes it recognisable without trusting its directory name.
+apm_daw_prefixes() {
+  local pf
+  # The load-bearing file, not "the folder has files in it": a partial install
+  # leaves a populated ProgramData/Kilohearts with no HeartCore in it, and
+  # picking that prefix would target the broken one.
+  # NOT a symlink: once the data linker has done its job, every prefix resolves
+  # HeartCore, and the one that merely POINTS at it would win a naive test. The
+  # owner is the prefix holding the bytes.
+  for pf in "$HOME"/.wine*; do
+    local hc="$pf/drive_c/ProgramData/Kilohearts/HeartCore.core_64"
+    [[ -f $hc && ! -L $hc ]] || continue
+    [[ -d $pf/drive_c/ProgramData/Kilohearts && ! -L $pf/drive_c/ProgramData/Kilohearts ]] || continue
+    printf '%s\n' "$pf"; break
+  done
+  for pf in "$HOME"/.wine*; do
+    local iz="$pf/drive_c/Program Files/iZotope"
+    [[ -d $iz && ! -L $iz ]] || continue
+    compgen -G "$iz/*/Cores" >/dev/null 2>&1 || continue
+    printf '%s\n' "$pf"; break
+  done
+  # The installed Live EXECUTABLE, not Ableton's ProgramData folder: a prefix
+  # that once ran an installer keeps ProgramData/Ableton behind, and keying off
+  # that would pick the prefix Live was merely touched in.
+  # No break here: Live really is installed in more than one prefix on some
+  # machines, and every one of them runs plugins. Stopping at the first would
+  # leave the others with a Wine-stubbed runtime and the same crash.
+  for pf in "$HOME"/.wine*; do
+    [[ -d $pf/drive_c ]] || continue
+    compgen -G "$pf/drive_c/ProgramData/Ableton/Live */Program/Ableton Live*.exe" \
+      >/dev/null 2>&1 || continue
+    printf '%s\n' "$pf"
+  done
+  return 0
+}
+
+# de-duplicate while keeping order
+apm_daw_prefixes_unique() {
+  local pf seen=" "
+  while IFS= read -r pf; do
+    [[ -n $pf ]] || continue
+    [[ $seen == *" $pf "* ]] && continue
+    seen="$seen$pf "
+    printf '%s\n' "$pf"
+  done < <(apm_daw_prefixes)
+}
+
+# The wine runtime a prefix must be serviced with. Serving it with a different
+# build is what triggers the builtin-DLL rewrite, so this follows the same rule
+# as the DAW wrappers: the plugin prefix uses the patched runtime, and anything
+# else uses the system one its DAW already runs under.
+apm_prefix_wine_root() {
+  local pf="$1" helper d
+  if [[ $pf == "$HOME/.wine-vst" || $pf == "$HOME"/.wine-vst* ]]; then
+    helper="$HOME/mosquitomarchy/scripts/lib/wine-runtime-daw.bash"
+    [[ -f $helper ]] || helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/lib/wine-runtime-daw.bash"
+    if [[ -f $helper ]] && source "$helper" 2>/dev/null; then
+      d="$(mosquitomarchy_nspa_wine_dir)"
+      [[ -n $d ]] && { printf '%s' "$(dirname "$d")"; return; }
+    fi
+  fi
+  printf '%s' /usr
+}
+
+# Is a real (Microsoft) MSVCP140_ATOMIC_WAIT.dll installed in this prefix?
+#
+# Only the prefix counts. Wine's builtin lives in the runtime's PE directory and
+# is always present, so looking there would always answer yes and the fix would
+# never fire.
+apm_has_real_msvc_atomic_wait() {
+  local pf="$1" f="$1/drive_c/windows/system32/msvcp140_atomic_wait.dll" sym
+  [[ -f $f && ! -L $f ]] || return 1
+  # The symbols, not the file size. A size threshold is a guess about a file
+  # whose real size is not what anyone would predict -- Microsoft's
+  # msvcp140_atomic_wait.dll is ~50 KB and Wine's stub for the same name is
+  # ~37 KB, close enough that any cutoff either rejects the genuine file or
+  # accepts the stub. What actually matters is whether the five
+  # __std_atomic_* entry points a plugin imports are exported.
+  command -v objdump >/dev/null 2>&1 || return 0
+  # Read objdump's output ONCE. Piping it into `grep -q` under `set -o pipefail`
+  # reports failure every time: grep exits at the first match, objdump dies of
+  # SIGPIPE, and the pipeline's status becomes objdump's. That made a correctly
+  # installed runtime look absent in two prefixes.
+  local exports sym
+  exports="$(objdump -p "$f" 2>/dev/null)" || return 1
+  for sym in __std_atomic_notify_all_direct __std_atomic_notify_one_direct \
+             __std_atomic_wait_direct __std_atomic_wait_get_deadline \
+             __std_atomic_wait_get_remaining_timeout; do
+    [[ $exports == *"$sym"* ]] || return 1
+  done
+  return 0
+}
+
+fix_install_msvc_runtime() {
+  local pf root missing=() installed=()
+  command -v winetricks >/dev/null 2>&1 || {
+    warn "winetricks is not installed -- the Microsoft C++ runtime cannot be added"
+    return 0
+  }
+  while IFS= read -r pf; do
+    [[ -n $pf && -d $pf/drive_c ]] || continue
+    apm_has_real_msvc_atomic_wait "$pf" && continue
+    missing+=("$pf")
+  done < <(apm_daw_prefixes_unique)
+  if ((${#missing[@]} == 0)); then
+    ok "the Microsoft C++ runtime is already present in every DAW prefix"
+    return 0
+  fi
+  for pf in "${missing[@]}"; do
+    root="$(apm_prefix_wine_root "$pf")"
+    if PATH="$root/bin:$PATH" WINEPREFIX="$pf" winetricks -q vcrun2022 >/dev/null 2>&1 \
+       && apm_has_real_msvc_atomic_wait "$pf"; then
+      installed+=("$pf")
+    else
+      warn "the Microsoft C++ runtime could not be installed in $pf"
+    fi
+  done
+  ((${#installed[@]})) && ok "Microsoft C++ runtime installed in: ${installed[*]}"
+  # Whatever landed is now a real DLL, so the dependency linker owns it from
+  # here and does not need to be told about it again.
+  command -v true >/dev/null 2>&1
+  return 0
+}
+
 fix_link_prefix_data() {
   local script
   script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/link-vst-shared.sh"
@@ -4652,7 +4790,7 @@ fix_write_block() {
   local -a plugins=("$@")
   # A filesystem fix has no window rule to write, and an empty block in
   # hyprland.lua would be noise the next reader has to explain.
-  [[ $fix == prefix_data ]] && return 0
+  [[ $fix == prefix_data || $fix == msvc_runtime ]] && return 0
   local lua="$HOME/.config/hypr/hyprland.lua"
   [[ -f $lua ]] || { warn "hyprland.lua not found — fix rules not written"; return 0; }
   local _before; _before="$(mktemp)"
@@ -4743,6 +4881,7 @@ fix_apply() {
     fi
     case "$fix" in
       prefix_data) fix_link_prefix_data ;;
+      msvc_runtime) fix_install_msvc_runtime ;;
     esac
     fix_set_applied_list "$fix" "${list[@]}"
     local -a plugins=()
