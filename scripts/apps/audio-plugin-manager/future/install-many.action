@@ -1,0 +1,140 @@
+# FUTURE WORK — parked, not wired in
+# ===================================
+#
+# This is the `install-many` action, verbatim, removed from
+# mosquito-audio-plugin-manager-actions and parked here. Nothing calls it, and
+# the TUI has no screen that reaches it. It is kept because the design is sound
+# and the remaining half is not written yet.
+#
+# WHY IT IS PARKED RATHER THAN FINISHED
+#
+# The backend half works: installers run concurrently, each in its own process
+# group; link_prefix_to_vst runs once BEFORE any of them (it writes the same
+# links into the same prefix, so two interleaving would corrupt it); post_install
+# runs once at the end with APM_DEFER_SYNC set on every child, which is the
+# pattern already proven for uninstall batches; a failing installer does not stop
+# the rest; and the result file is a JSON summary of status, exit code and log
+# tail per file.
+#
+# What does NOT exist yet is the half the user actually sees:
+#
+#   * reading SEVERAL paths back from superfile instead of one;
+#   * the queue screen with Add files / Install, scrolling, Esc;
+#   * the silent selection limit and its "N files were excluded" notice;
+#   * the end-of-install recap prompt;
+#   * Esc during install meaning "interrupt", and Esc on a fix screen meaning
+#     "skip to the next plugin" instead of "quit".
+#
+# So wiring the action in now would expose a second way to install one file at a
+# time, with none of the affordances that make several files bearable. Parked
+# until the screen exists.
+#
+# Verified when it was live: both installers ran, both outcomes were recorded,
+# post_install ran once, and only the failing logs were printed. NOT verified:
+# the success path, because the two test installers died at wine's loader — what
+# was proven was the orchestration and the reporting, not that a good installer
+# is reported good.
+#
+# Also worth knowing before reviving it: superfile has NO per-item select key.
+# Toggling an item is `confirm` — the same Enter / Right / `l` that opens a file
+# — so inside selection mode the key you press to confirm is the key that flips
+# a checkbox. The flow is `v`, `a` or `A`, `v` again, Enter. An invented binding
+# is not an option: superfile validates its hotkey file and warns on unknown
+# fields.
+#
+# To revive: paste the `install-many)` case back into the action dispatcher just
+# before `get-fix-prefs)`, and build the screen around it.
+
+  install-many)
+    # install-many <prefix> <resultfile> <file>...
+    #
+    # Every installer at once, then one yabridge sync, then one recap.
+    #
+    # What is parallel and what is NOT is the whole point. The installers are
+    # the slow part -- a GUI setup waits on the user -- so those run
+    # concurrently, each in its own process group so one dying cannot take the
+    # others with it. Everything that touches machine-wide state is serialised
+    # and happens exactly once:
+    #
+    #   * link_prefix_to_vst BEFORE any installer starts. It writes the same
+    #     links in the same prefix; two of them racing would interleave.
+    #   * post_install ONCE at the end, via APM_DEFER_SYNC on each child.
+    #     This is the proven batch pattern already used for uninstalls: the
+    #     sync re-reads every prefix, so doing it per installer made a batch
+    #     cost more the bigger it got.
+    #
+    # One installer failing does not stop the batch. Its exit code is recorded
+    # and the rest carry on, because a Windows setup that crashes or is
+    # cancelled by the user is an ordinary outcome, not a reason to abandon the
+    # other twelve.
+    prefix="${1:?prefix required}"
+    result="${2:?result file required}"
+    shift 2
+    (($#)) || { echo "install-many: no files given" >&2; exit 2; }
+
+    if [[ ! -d "$prefix/drive_c" ]]; then
+      echo "Creating wine prefix: $prefix"
+      WINEPREFIX="$prefix" wineboot -u >/dev/null 2>&1 || echo "(wineboot returned a non-zero code — continuing)"
+    fi
+    link_prefix_to_vst "$prefix"
+
+    logdir="$(mktemp -d)"
+    pids=()
+    for f in "$@"; do
+      # The index doubles as the child's log slot; the pid is kept separately
+      # so `wait` reaps the right process.
+      n="${#pids[@]}"
+      (
+        set +e
+        APM_DEFER_SYNC=1 install_plugin "$f" "$prefix" > "$logdir/$n.log" 2>&1
+        echo $? > "$logdir/$n.rc"
+      ) &
+      pids+=("$!")
+      printf 'started: %s\n' "${f##*/}"
+    done
+
+    # Wait for every child. `wait` without arguments covers exactly the ones
+    # started above, and a child killed by a signal still reaps here.
+    for pid in "${pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+
+    sync_ok=true
+    if post_install; then sync_ok=true; else sync_ok=false; fi
+
+    {
+      printf '{\n'
+      printf '  "sync_ok": %s,\n' "$sync_ok"
+      printf '  "results": [\n'
+      first=true
+      i=0
+      for f in "$@"; do
+        rc=1
+        [[ -f "$logdir/$i.rc" ]] && rc="$(cat "$logdir/$i.rc")"
+        status=ok
+        case "$rc" in
+          0) status=ok ;;
+          *) status=failed ;;
+        esac
+        [[ $first == true ]] || printf ',\n'
+        first=false
+        jq -nc --arg file "$f" --arg name "${f##*/}" --arg status "$status" \
+              --argjson code "$rc" --arg log "$(tail -c 4000 "$logdir/$i.log" 2>/dev/null)" \
+              '{file:$file, name:$name, status:$status, code:$code, log:$log}'
+        i=$((i+1))
+      done
+      printf '\n  ]\n}\n'
+    } > "$result"
+
+    # The logs are the useful part when something failed, and the runner shows
+    # them. Printed after the recap lines so the last thing on screen is the
+    # per-installer outcome rather than a wall of installer output.
+    i=0
+    for f in "$@"; do
+      rc="$(cat "$logdir/$i.rc" 2>/dev/null || echo 1)"
+      if [[ $rc != 0 ]]; then
+        printf '\n===== %s exited %s =====\n' "${f##*/}" "$rc"
+        cat "$logdir/$i.log" 2>/dev/null
+      fi
+      i=$((i+1))
+    done
+    rm -rf "$logdir"
+    ;;
