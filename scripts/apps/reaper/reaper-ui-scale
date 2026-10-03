@@ -104,7 +104,12 @@ if [[ $cur == "$want" ]]; then
   exit 0
 fi
 
-reaper_running() { pgrep -f 'REAPER/reaper' >/dev/null 2>&1; }
+# Match the executable NAME, not a command-line substring. `pgrep -f REAPER/reaper`
+# also matches any shell whose own command line happens to contain that text --
+# including the one invoking this script, and including a `pgrep` or `grep` run
+# to test it. The result was a script that refused to act whenever it was being
+# tested, and would have refused inside any wrapper that mentions the path.
+reaper_running() { pgrep -x reaper >/dev/null 2>&1; }
 
 if reaper_running; then
   # Writing now would be pointless and harmful: REAPER holds its own value in
