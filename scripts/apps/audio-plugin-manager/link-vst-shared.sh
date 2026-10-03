@@ -147,6 +147,11 @@ data_requirement() {
     ProgramData/Kilohearts)
       # The one file every kHs loader hands to LoadLibrary.
       printf 'HeartCore.core_64\n' ;;
+    *sonible)
+      # The neural models every Sonible product runs its analysis on. They are
+      # what makes smart:chain work at all, and they are ~400 MB -- so a prefix
+      # without them does not fail loudly, it just analyses nothing.
+      printf '*/*.nn\n' ;;
     *iZotope)
       local link target rel="${1##*/}" seen="" p
       while IFS= read -r -d '' link; do
@@ -167,7 +172,14 @@ data_copy_usable() {
   [[ -d "$root" ]] || return 1
   while IFS= read -r req; do
     [[ -n $req ]] || continue
-    [[ -e "$root/$req" ]] || return 1
+    # A requirement may be a glob: some vendor data has no single load-bearing
+    # file, only a set of them (Sonible's .nn models), and "at least one" is the
+    # honest test for those.
+    if [[ $req == *'*'* ]]; then
+      compgen -G "$root/$req" >/dev/null || return 1
+    else
+      [[ -e "$root/$req" ]] || return 1
+    fi
   done < <(data_requirement "$2")
   # A rel with no derivable requirement is only trusted when it is not empty.
   if ! data_requirement "$2" | grep -q .; then
@@ -180,7 +192,8 @@ data_copy_usable() {
 # meaning the only prefix whose copy satisfies the vendor's own requirement.
 data_owner_prefix() {
   local pf rel
-  for rel in "ProgramData/Kilohearts" "Program Files/iZotope" "Program Files (x86)/iZotope"; do
+  for rel in "ProgramData/Kilohearts" "Program Files/iZotope" \
+             "Program Files/Common Files/sonible"; do
     for pf in "$HOME/.wine-vst" "$HOME/.wine" "$HOME/.wine-ableton"; do
       [[ -d "$pf/drive_c" ]] || continue
       if data_copy_usable "$pf/drive_c/$rel" "$rel"; then
@@ -197,6 +210,7 @@ DATA_RELS=(
   "ProgramData/Kilohearts"
   "Program Files/iZotope"
   "Program Files (x86)/iZotope"
+  "Program Files/Common Files/sonible"
 )
 
 link_vendor_data() {
