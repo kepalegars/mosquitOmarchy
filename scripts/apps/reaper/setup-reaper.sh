@@ -115,7 +115,7 @@ o.window({ class = "^REAPER$", title = "^REAPER (Query|Error|Warning|Info|Messag
 -- and a keypress that changes nothing and says nothing is indistinguishable
 -- from a broken binding. The script refuses while REAPER runs, so binding it to
 -- a plain exec would look dead most of the time.
-o.bind("SUPER SHIFT ALT + Y", "REAPER: match the monitor UI scale", { exec = "footclient reaper-ui-scale" })
+o.bind("SUPER + SHIFT + ALT + Y", "REAPER: match the monitor UI scale", "footclient reaper-ui-scale")
 -- <<< reaper-setup <<<
 EOF
 hyprctl reload >/dev/null 2>&1 || true
