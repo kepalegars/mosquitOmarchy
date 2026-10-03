@@ -96,6 +96,145 @@ local_prefix_name(){
   else echo "$1"; fi
 }
 
+# ---------------------------------------------------------------------------
+# Vendor support DATA, as opposed to plugin entry points.
+#
+# The links above answer "where does a host look for plugins". They do not
+# answer "where does a plugin look for its own files", and that is a different
+# question with a different answer.
+#
+# A Windows plugin bundle is not self-contained. Several vendors ship a thin
+# loader next to the real code:
+#
+#   * Kilohearts: every kHs*.vst3 is a ~240 KB stub that imports only
+#     KERNEL32/USER32/SHELL32/ole32 and calls LoadLibrary for "HeartCore" --
+#     a single 74 MB DLL the installer drops at C:\ProgramData\Kilohearts.
+#   * iZotope: the bundles in the shared store symlink their Cores/ and
+#     Presets/ back to C:\Program Files\iZotope\... . Pro-R and RX read
+#     impulse responses from there and report them missing when the path is
+#     absent or empty.
+#
+# Both live INSIDE the prefix, at a path compiled into the binary, so a host
+# running under a prefix that lacks them fails in a way that looks like a
+# broken install: "Could not load HeartCore", "missing impulse response
+# files". Nothing about the plugin files is wrong -- they are in the shared
+# folder and correctly linked. The prefix they run in is simply not the prefix
+# they were installed into.
+#
+# So the support data is linked across prefixes too, from the one prefix where
+# the vendor actually installed it. A prefix that already holds real content of
+# its own is never replaced -- only an absent, empty, or already-linked path is.
+# ---------------------------------------------------------------------------
+
+# What a prefix must actually HOLD for a copy of <rel> to be usable in its own
+# right. Prints one required path per line, relative to the rel root.
+#
+# "Has some files" is the wrong test, and it is wrong in the direction that
+# keeps the broken copy: a partial vendor install leaves a populated folder
+# behind. ~/.wine carried a 33 MB ProgramData/Kilohearts with the installer,
+# the cache and the log -- and no HeartCore.core_64, because the run that
+# produced it was interrupted or written to the wrong prefix. ~/.wine-ableton
+# carried Program Files/iZotope holding only VocalSynth 2, with none of the
+# Cores the shared bundles point at. Both look populated and both are exactly
+# what makes a plugin report its own data missing.
+#
+# So the requirement is derived from what the plugins actually dereference: the
+# iZotope bundles in the shared store are symlinks into
+# "<prefix>/drive_c/Program Files/iZotope/<product>/Cores", so the required
+# product names are read back out of those symlinks instead of being guessed.
+data_requirement() {
+  case "$1" in
+    ProgramData/Kilohearts)
+      # The one file every kHs loader hands to LoadLibrary.
+      printf 'HeartCore.core_64\n' ;;
+    *iZotope)
+      local link target rel="${1##*/}" seen="" p
+      while IFS= read -r -d '' link; do
+        target="$(readlink "$link" 2>/dev/null)" || continue
+        [[ $target == *"/Program Files/$rel/"* || $target == *"/Program Files (x86)/$rel/"* ]] || continue
+        p="${target#*"/Program Files/$rel/"}"; p="${p%%/*}"
+        [[ -n $p && $p != */* ]] || continue
+        [[ $seen == *"|$p|"* ]] && continue
+        seen="$seen|$p|"
+        printf '%s\n' "$p"
+      done < <(find "$VST_SRC_VST3" -type l -print0 2>/dev/null) ;;
+  esac
+}
+
+# Is this prefix's own copy of <rel> complete enough to stand on its own?
+data_copy_usable() {
+  local root="$1" req
+  [[ -d "$root" ]] || return 1
+  while IFS= read -r req; do
+    [[ -n $req ]] || continue
+    [[ -e "$root/$req" ]] || return 1
+  done < <(data_requirement "$2")
+  # A rel with no derivable requirement is only trusted when it is not empty.
+  if ! data_requirement "$2" | grep -q .; then
+    [[ -n $(ls -A "$root" 2>/dev/null | head -1) ]] || return 1
+  fi
+  return 0
+}
+
+# The prefix that OWNS the vendor data: the one where the vendor installer ran,
+# meaning the only prefix whose copy satisfies the vendor's own requirement.
+data_owner_prefix() {
+  local pf rel
+  for rel in "ProgramData/Kilohearts" "Program Files/iZotope" "Program Files (x86)/iZotope"; do
+    for pf in "$HOME/.wine-vst" "$HOME/.wine" "$HOME/.wine-ableton"; do
+      [[ -d "$pf/drive_c" ]] || continue
+      if data_copy_usable "$pf/drive_c/$rel" "$rel"; then
+        printf '%s\n' "$pf"; return
+      fi
+    done
+  done
+  printf '%s\n' "$HOME/.wine-vst"
+}
+
+OWNER_PREFIX="$(data_owner_prefix)"
+
+DATA_RELS=(
+  "ProgramData/Kilohearts"
+  "Program Files/iZotope"
+  "Program Files (x86)/iZotope"
+)
+
+link_vendor_data() {
+  local pf="$1" rel src dst bak
+  [[ -d "$OWNER_PREFIX/drive_c" ]] || return 0
+  [[ "$pf" == "$OWNER_PREFIX" ]] && return 0
+  for rel in "${DATA_RELS[@]}"; do
+    src="$OWNER_PREFIX/drive_c/$rel"
+    dst="$pf/drive_c/$rel"
+    [[ -d "$src" ]] || continue
+    # Already the right link?
+    if [[ -L "$dst" && "$(readlink -f "$dst")" == "$(readlink -f "$src")" ]]; then
+      ok "   support data already linked: $rel"
+      continue
+    fi
+    # A prefix whose own copy satisfies the vendor's requirement keeps it: this
+    # links the plugin support tree, it does not decide which install of a DAW
+    # is authoritative. A copy that does NOT satisfy it -- empty, or left behind
+    # by an interrupted install -- is set aside rather than kept, because
+    # keeping it is what produces "Could not load HeartCore".
+    if [[ -d "$dst" && ! -L "$dst" ]]; then
+      if data_copy_usable "$dst" "$rel"; then
+        ok "   $rel kept: this prefix has a complete copy of its own"
+        continue
+      fi
+      bak="$dst.orig-$(date +%s)"
+      warn "   $rel is incomplete here -> moved to $(basename "$bak")"
+      mv "$dst" "$bak" || { err "   unable to set aside $dst"; continue; }
+    fi
+    mkdir -p "$(dirname "$dst")"
+    rm -f "$dst"
+    ln -s "$src" "$dst"
+    ok "   support data linked: $rel -> ${src#"$HOME/"}"
+    changed=1
+  done
+  return 0
+}
+
 mkdir -p "$VST_SRC_VST2" "$VST_SRC_VST3" "$VST_SRC_CLAP"
 
 changed=0
@@ -123,6 +262,7 @@ for pf in "${PREFIXES[@]}"; do
     ok "   $rel -> ${target#"$HOME/"}"
     changed=1
   done
+  link_vendor_data "$pf"
 done
 
 if ((changed)); then

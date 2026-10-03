@@ -4016,6 +4016,7 @@ fixes_catalog() {
   cat <<'FIXCAT'
 wine_gui_input|Wine plugin GUI input (Hyprland/XWayland)|plugin|Plugin editor windows float, unblurred and receive XWayland input even when the plugin asks not to (fixes inert / non-clickable GUIs such as CrispyTuner in Bitwig or REAPER). Applied per plugin, matched on the window title because these editors usually have an empty class. The rule is written per plugin you tick it on, so it belongs to ANY plugin — CrispyTuner is the case it was found on, not the only one it helps.|Plugin windows||yes|any
 wine_tooltip|Ableton/Wine hover tooltips|plugin|Keeps the hover tooltips Wine plugins (e.g. CrispyTuner) create inside Ableton floating, unblurred, animation-free and never focused, so hovering them stops stealing input from the plugin. Applied once, independently of the chosen plugin.|CrispyTuner specific|CrispyTuner|yes|any
+prefix_data|Link the plugin data into every wine prefix|plugin|A Windows plugin is not prefix-independent. The Kilohearts kHs*.vst3 are 240 KB stubs that call LoadLibrary for HeartCore, a single 74 MB DLL the installer drops under ProgramData/Kilohearts, and the iZotope bundles point their Cores and Presets back at Program Files/iZotope. Those paths live INSIDE the prefix, so a DAW running under a prefix that lacks them reports Could not load HeartCore or missing impulse response files while the plugin files themselves are perfectly fine in the shared store. This links the vendor data from the prefix that owns it into the others, and sets an incomplete copy aside instead of keeping it, because a partial install leaves a populated folder missing exactly the load-bearing file. Recorded per plugin like the GUI-input fix: the effect is machine-wide, the record says which plugin was verified.|Plugin data||yes|any
 cursor_no_warp|Stop the cursor recentering|global|Hyprland 0.56.2 has no per-window warp rule: this is a GLOBAL cursor option (cursor:no_warps + cursor:persistent_warps). Affects the whole desktop, not just Wine — only enable after confirming the recentering is Hyprland focus-warp and not Wine's own pointer handling.|Cursor||no|any
 FIXCAT
 }
@@ -4618,7 +4619,30 @@ fix_render_rules() {
       printf '%s\n' '-- GLOBAL: stop Hyprland warping/recentering the cursor on focus changes.'
       printf '%s\n' 'hl.config({ cursor = { no_warps = true, persistent_warps = true } })'
       ;;
+    prefix_data)
+      # Not a window rule: this one acts on the filesystem, inside fix_apply.
+      # Rendering nothing is what keeps hyprland.lua free of an empty block.
+      ;;
   esac
+}
+
+# fix_link_prefix_data -- link the vendor support data into every wine prefix
+# that runs a DAW, from the prefix that owns it.
+#
+# Runs the shared linker, which is the same code the audio-stack setup uses, so
+# an install-time repair and a setup-time repair cannot drift apart.
+fix_link_prefix_data() {
+  local script
+  script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/link-vst-shared.sh"
+  if [[ ! -x $script ]]; then
+    warn "plugin data linker missing: $script"
+    return 0
+  fi
+  if ! "$script" -y >/dev/null 2>&1; then
+    warn "plugin data could not be linked into every prefix"
+    return 0
+  fi
+  ok "plugin data linked into every wine prefix"
 }
 
 # Strips this fix's block from hyprland.lua, then rewrites it from the current
@@ -4626,6 +4650,9 @@ fix_render_rules() {
 fix_write_block() {
   local fix="$1"; shift
   local -a plugins=("$@")
+  # A filesystem fix has no window rule to write, and an empty block in
+  # hyprland.lua would be noise the next reader has to explain.
+  [[ $fix == prefix_data ]] && return 0
   local lua="$HOME/.config/hypr/hyprland.lua"
   [[ -f $lua ]] || { warn "hyprland.lua not found — fix rules not written"; return 0; }
   local _before; _before="$(mktemp)"
@@ -4714,6 +4741,9 @@ fix_apply() {
         list+=("$p")
       done < <(fix_applied_plugins "$fix")
     fi
+    case "$fix" in
+      prefix_data) fix_link_prefix_data ;;
+    esac
     fix_set_applied_list "$fix" "${list[@]}"
     local -a plugins=()
     while IFS= read -r p; do [[ -n $p ]] && plugins+=("$p"); done < <(fix_applied_plugins "$fix")
