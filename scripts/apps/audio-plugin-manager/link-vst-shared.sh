@@ -237,6 +237,86 @@ link_vendor_data() {
 
 mkdir -p "$VST_SRC_VST2" "$VST_SRC_VST3" "$VST_SRC_CLAP"
 
+# ---------------------------------------------------------------------------
+# Vendor dependency DLLs, made reachable from where the plugin actually loads.
+#
+# A plugin folder may hold more than plugins. Sonible ships five VST3s plus
+# sonible_onnxruntime_v1-15-1.dll, and smartEQ4.vst3 / smartgate.vst3 carry that
+# DLL in their PE IMPORT TABLE -- a load-time dependency, not an optional one.
+#
+# This matters because of where the plugin ends up. In the store the DLL is a
+# sibling of the plugin, which is exactly where a Windows loader looks first.
+# yabridge does not run the plugin from there: it puts the Windows file inside
+# the bundle at Contents/x86_64-win/ and loads THAT. The sibling is now two
+# levels up and out of reach, so the dependency stops resolving and the plugin
+# never initialises. Two levels of indirection that no amount of reinstalling
+# touches, which is why "reinstall it a few times" never changed anything.
+#
+# It is visible inside the vendor's own layout: the Sonible plugins that DO
+# work here (smartchain, smartcomp3) are proper bundles, and they carry the DLL
+# in Contents/x86_64-win/ next to the plugin. The flat ones have nowhere to put
+# it.
+#
+# So: every .dll sitting in a plugin's install folder, that is not itself a
+# plugin, is linked next to the file yabridge actually loads. Plugins with no
+# such dependency -- iZotope and FabFilter import only Wine builtins -- are
+# untouched, which is why they never showed the symptom.
+# ---------------------------------------------------------------------------
+
+link_plugin_deps() {
+  local link dir target dep name
+  local -a deps
+
+  # VST3: the Windows file lives in Contents/x86_64-win/ inside the bundle, so
+  # the dependency goes into that same directory -- which is dirname of the
+  # link, not the link plus a suffix.
+  local wdir
+  while IFS= read -r -d '' link; do
+    [[ -L $link ]] || continue
+    target="$(readlink -f "$link" 2>/dev/null)" || continue
+    dir="$(dirname "$target")"
+    wdir="$(dirname "$link")"
+    deps=()
+    for dep in "$dir"/*.dll; do
+      [[ -f $dep ]] || continue
+      deps+=("$dep")
+    done
+    ((${#deps[@]})) || continue
+    for dep in "${deps[@]}"; do
+      local dl="$wdir/$(basename "$dep")"
+      if [[ -L $dl && "$(readlink -f "$dl")" == "$(readlink -f "$dep")" ]]; then
+        continue
+      fi
+      mkdir -p "$wdir"
+      rm -f "$dl"
+      ln -s "$dep" "$dl"
+      ok "   dependency next to $(basename "$link"): $(basename "$dep")"
+      changed=1
+    done
+  done < <(find "$HOME/.vst3/yabridge" -type l -path '*/Contents/x86_64-win/*' -print0 2>/dev/null)
+
+  # VST2: the wrapper is already flat, so the dependency is a sibling of the
+  # .so -- but of the LINK, not of its target, so the link is what we write to.
+  while IFS= read -r -d '' link; do
+    [[ -L $link ]] || continue
+    target="$(readlink -f "$link" 2>/dev/null)" || continue
+    dir="$(dirname "$target")"
+    for dep in "$dir"/*.dll; do
+      [[ -f $dep ]] || continue
+      [[ "$(basename "$dep")" == "$(basename "$link")" ]] && continue
+      local dl="$(dirname "$link")/$(basename "$dep")"
+      if [[ -L $dl && "$(readlink -f "$dl")" == "$(readlink -f "$dep")" ]]; then
+        continue
+      fi
+      rm -f "$dl"
+      ln -s "$dep" "$dl"
+      ok "   dependency next to $(basename "$link"): $(basename "$dep")"
+      changed=1
+    done
+  done < <(find "$HOME/.vst/yabridge" -maxdepth 2 -type l -name '*.dll' -print0 2>/dev/null)
+  return 0
+}
+
 changed=0
 for pf in "${PREFIXES[@]}"; do
   [[ -d "$pf/drive_c" ]] || { warn "$(local_prefix_name "$pf") : drive_c missing, ignored"; continue; }
@@ -264,6 +344,7 @@ for pf in "${PREFIXES[@]}"; do
   done
   link_vendor_data "$pf"
 done
+link_plugin_deps
 
 if ((changed)); then
   echo
