@@ -29,7 +29,7 @@ func TestToggleDoesNotMoveTheCursor(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("tab produced no command")
 	}
-_, ok := cmd().(tuikit.PickerToggleMsg)
+	_, ok := cmd().(tuikit.PickerToggleMsg)
 	if !ok {
 		t.Fatalf("tab produced %T, want PickerToggleMsg", cmd())
 	}

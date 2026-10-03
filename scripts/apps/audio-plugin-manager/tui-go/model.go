@@ -80,7 +80,7 @@ const (
 	scrMoving
 	scrStandalonePick
 	scrKnownManagerReopen // "this manager is installed: open it from Settings instead"
-	scrStandaloneManage // list the registered standalones, with a way to unregister one
+	scrStandaloneManage   // list the registered standalones, with a way to unregister one
 	scrExecsToggle
 	scrSuperfileInstallConfirm
 	scrSuperfileInstalling

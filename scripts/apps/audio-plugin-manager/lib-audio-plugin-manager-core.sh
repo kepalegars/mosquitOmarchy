@@ -900,19 +900,6 @@ wine_program_folder_dead() {
 }
 
 # yabridge chainloader present next to a plugin file?
-has_bridge() {
-  # $1 = plugin file. A sibling .so with the same stem means it is bridged.
-  local stem
-  stem="${1%.*}"
-  [[ -e "$stem.so" || -e "$1.so" ]]
-}
-
-# Is the current plugin detection exposing broken files (empty / bogus install)?
-plugin_healthy() {
-  local f="$1"
-  [[ -s "$f" ]]
-}
-
 # The vendor/product label for a plugin file (relative to the VST root).
 plugin_label() {
   local f="$1" rel
@@ -1428,19 +1415,6 @@ apm_set_wine_runtime() {
   mkdir -p "$(dirname "$(apm_wine_runtime_file)")"
   printf '%s\n' "$v" > "$(apm_wine_runtime_file)"
   ok "Wine runtime for wine plugins: $v"
-}
-
-# Resolves the ACTIVE runtime's env: WINE var (path to wine) + PATH prefix.
-apm_wine_env_for_runtime() {
-  local rt bin
-  rt="$(apm_wine_runtime)"
-  if [[ $rt == ableton ]]; then
-    bin="$HOME/.local/opt/wine-d2d1-nspa-11.13/bin"
-    if [[ -x $bin/wine ]]; then
-      printf 'PATH=%s\n' "$bin:$PATH"
-    fi
-  fi
-  printf '\n'
 }
 
 # The wine command for THIS runtime (used by install_plugin and friends).
@@ -2485,19 +2459,6 @@ _wine_source_index(){
       -type f 2>/dev/null)
   done
   return 0
-}
-
-# Walk up from a file until a folder containing an uninstaller is found.
-wine_uninstaller_for() {
-  # $1 = a full path under Program Files. Echoes the uninstaller path or nothing.
-  local d src
-  d="$(dirname "$1")"
-  while [[ $d == *'/Program Files'* || $d == *'/Program Files (x86)'* && $d != '/' ]]; do
-    src="$(find "$d" -maxdepth 1 -type f \( -iname 'unins*.exe' -o -iname 'uninstall*.exe' \) 2>/dev/null | head -1)"
-    [[ -n $src ]] && { printf '%s\n' "$src"; return 0; }
-    d="$(dirname "$d")"
-  done
-  return 1
 }
 
 # ── Wine-program folder grouping (shared by uninstall + plugin list) ────────
@@ -4025,10 +3986,6 @@ FIXCAT
 fix_id_valid() { fixes_catalog | cut -d'|' -f1 | grep -qx -- "$1"; }
 fix_scope_of() { fixes_catalog | awk -F'|' -v id="$1" '$1==id{print $3}'; }
 fix_title_for() { fixes_catalog | awk -F'|' -v id="$1" '$1==id{print $2}'; }
-# Which plugin format a fix targets: "any" (VST2 AND VST3), "vst2" or "vst3".
-# An empty last column means "any" — a fix only narrows the format on purpose.
-fix_vst_of() { fixes_catalog | awk -F'|' -v id="$1" '$1==id{v=$8; print (v==""?"any":v)}'; }
-
 # yabridge_check_json
 # A precise answer to "is 32-bit bridging set up, and if not why not".
 #
