@@ -239,8 +239,8 @@ type Status struct {
 	// already owns plugins, else ~/.wine-vst) — see default_prefix() in the
 	// backend. Shown as the Settings row so the choice is visible rather than
 	// only felt.
-	DefaultPrefix      string `json:"default_prefix"`
-	DefaultPrefixSet   string `json:"default_prefix_set"`
+	DefaultPrefix    string `json:"default_prefix"`
+	DefaultPrefixSet string `json:"default_prefix_set"`
 	// AutoGuiInput applies wine_gui_input without asking. On by default: it is
 	// what makes a wine editor's window accept clicks properly, which is not a
 	// preference. The setting turns it off for anyone who wants nothing applied
@@ -1468,8 +1468,8 @@ func setFixPrefCmd(key string, on bool) tea.Cmd {
 			return fixPrefsMsg{autoFix: on, fixPrompt: true, autoGuiInput: on}
 		}
 		var p struct {
-			AutoFix     string `json:"auto_fix"`
-			FixPrompt   string `json:"fix_prompt"`
+			AutoFix      string `json:"auto_fix"`
+			FixPrompt    string `json:"fix_prompt"`
 			AutoGuiInput string `json:"auto_gui_input"`
 		}
 		_ = json.Unmarshal(bytes.TrimSpace(out), &p)

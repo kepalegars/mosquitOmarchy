@@ -17,7 +17,7 @@ var markRe = regexp.MustCompile(`[○●]`)
 func TestSuiteLinePluginsAlignUnderTheLine(t *testing.T) {
 	tree := uninstallTree(suiteItems())
 	rows := treeItemsToPicker(tree, map[string]bool{}, map[string]bool{
-		"vendor:iZotope":            true,
+		"vendor:iZotope":              true,
 		"vendor:iZotope\x00Neutron 5": true,
 	})
 
@@ -102,7 +102,7 @@ func TestSuiteLinesComeBeforeUngroupedPlugins(t *testing.T) {
 	}
 	tree := uninstallTree(items)
 	rows := treeItemsToPicker(tree, map[string]bool{}, map[string]bool{
-		"vendor:iZotope":            true,
+		"vendor:iZotope":              true,
 		"vendor:iZotope\x00Neutron 5": true,
 		"vendor:iZotope\x00RX 11":     true,
 	})

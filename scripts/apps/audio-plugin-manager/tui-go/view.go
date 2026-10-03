@@ -239,7 +239,7 @@ func (m model) View() string {
 		// is a hand-off, and saying "loading…" over it would claim the manager
 		// is fetching something. The picker is stale from the previous screen.
 		title = screenTitle("Pick an executable — "+baseName(m.launchExePrefix), m.contentSizeW())
-		body = "  Waiting for the file manager…\n\n  It only chooses the file. This manager launches it\n  through wine in "+baseName(m.launchExePrefix)+"."
+		body = "  Waiting for the file manager…\n\n  It only chooses the file. This manager launches it\n  through wine in " + baseName(m.launchExePrefix) + "."
 		bar = barLine("")
 	case scrLaunchExeList:
 		title = screenTitle("Launch which executable?", m.contentSizeW())

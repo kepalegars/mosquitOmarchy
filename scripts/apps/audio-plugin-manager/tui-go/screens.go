@@ -644,18 +644,6 @@ func pluginRow(p Item, checked map[string]bool, pad string, last bool, depth int
 	return row
 }
 
-func checkboxItemsToPicker(items []Item, checked map[string]bool) []tuikit.PickerItem {
-	out := make([]tuikit.PickerItem, len(items))
-	for i, it := range items {
-		mark := "○"
-		if checked[it.Value] {
-			mark = "●"
-		}
-		out[i] = tuikit.PickerItem{Display: mark + "  " + it.Display, Value: it.Value}
-	}
-	return out
-}
-
 // rebuildUninstallPicker re-renders the Uninstall picker from uninstallCache
 // + uninstallChecked, same shape as rebuildPluginPicker. The cursor is
 // preserved across the rebuild (Tab on a row used to jump back to the
@@ -1193,20 +1181,11 @@ func (m model) fixItemByID(id string) (FixItem, bool) {
 	return FixItem{}, false
 }
 
-func (m model) fixIsProductSpecific(it FixItem) bool { return it.Plugin != "" }
-
 // fixIsPartial reports whether a fix is on some of the plugins in view and not
 // the others, from the counts the vendor merge recorded.
 func (m model) fixIsPartial(id string) bool {
 	n, ok := m.fixCandidate[id]
 	return ok && n > 1 && len(m.fixAppliedBy[id]) > 0 && len(m.fixAppliedBy[id]) < n
-}
-
-func (m model) countWord(n int) string {
-	if n == 1 {
-		return "1 plugin"
-	}
-	return fmt.Sprintf("%d plugins", n)
 }
 
 // pluginItemsAsItems converts the unified Plugin list rows into the generic
@@ -3010,7 +2989,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = false
 			if len(pe.items) == 0 {
 				m.info = tuikit.NewInfo(
-					"No .exe found in "+baseName(m.launchExePrefix)+
+					"No .exe found in " + baseName(m.launchExePrefix) +
 						" (outside the windows/ system folder).\n\nUse \"Browse to a file…\" to point at one anywhere in the prefix.").
 					SetSize(m.contentSize())
 				m.replace(scrInfo)
@@ -3690,22 +3669,6 @@ func wineRuntimeLabel() string {
 func knownPluginInstaller(path string) bool {
 	out, err := runQuick("is-known-plugin", path)
 	return err == nil && len(bytes.TrimSpace(out)) > 0
-}
-
-func recommendedPrefixCmd(path string) tea.Cmd {
-	return func() tea.Msg {
-		out, err := runQuick("recommended-prefix", path)
-		if err != nil {
-			return recommendedPrefixMsg{err: err}
-		}
-		var v struct {
-			Prefix string `json:"prefix"`
-		}
-		if e := json.Unmarshal(bytes.TrimSpace(out), &v); e != nil {
-			return recommendedPrefixMsg{err: e}
-		}
-		return recommendedPrefixMsg{prefix: v.Prefix}
-	}
 }
 
 type recommendedPrefixMsg struct {

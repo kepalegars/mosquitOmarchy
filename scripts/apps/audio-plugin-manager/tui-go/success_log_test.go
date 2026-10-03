@@ -17,7 +17,7 @@ func TestSeeLogThenEscReachesTheMenu(t *testing.T) {
 	// The stack shape each ending leaves behind.
 	stacks := map[string][]screen{
 		"plain install":      {scrMain, scrInstalling},
-		"auto apply":         {scrInstalling},   // replaced onto a 1-deep stack
+		"auto apply":         {scrInstalling}, // replaced onto a 1-deep stack
 		"auto apply, none":   {scrInstalling},
 		"manual apply, back": {scrMain, scrFixChoose},
 	}
