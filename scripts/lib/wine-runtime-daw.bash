@@ -31,6 +31,34 @@ mosquitomarchy_nspa_wine_dir() {
   printf '%s' "${mosquitomarchy_nspa_wine_dir:-}"
 }
 
+# The prefix a Windows DAW's plugins live in.
+#
+# This is not cosmetic. A wine VST3 is not prefix-independent: its loader hands
+# its vendor's shared DLL to LoadLibrary by name, at a path compiled into the
+# binary (Kilohearts -> C:\ProgramData\Kilohearts\HeartCore.core_64, 74 MB;
+# iZotope bundles -> C:\Program Files\iZotope\<product>\Cores). Run the host
+# under a prefix that lacks those and the plugin reports its own data missing --
+# "Could not load HeartCore", "missing impulse response files" -- while the
+# plugin files themselves are perfectly fine in the shared store.
+#
+# It also aborts the whole DAW. REAPER here was launched with the patched wine
+# on PATH but WINEPREFIX unset, so it fell back to ~/.wine -- the GAMING prefix,
+# last initialised by stock wine-staging 11.17 while the patched 11.13 ran on
+# top of it. Wine answers a version switch by rewriting every builtin DLL
+# (wineboot -u), and yabridge's Wine host process died inside that. yabridge
+# then does what its own source says it does: the blocking accept() has no
+# cancellation, so it calls std::terminate() and takes REAPER with it. 61 of
+# the 63 aborts in that window were REAPER's plugin scanner, one process per
+# wrapped plugin, all identical.
+#
+# So the prefix is pinned here rather than left to the environment. ~/.wine
+# goes back to being the gaming prefix, which is what it was created for.
+mosquitomarchy_vst_prefix() {
+  local p="${MOSQUITOMARCHY_VST_PREFIX:-$HOME/.wine-vst}"
+  [[ -d $p/drive_c ]] || return 1
+  printf '%s' "$p"
+}
+
 # Which runtime does a DAW wrapper currently launch under?
 #   prints "nspa" | "system" | "absent"
 mosquitomarchy_daw_wrapper_runtime() {
@@ -55,11 +83,12 @@ mosquitomarchy_daw_wrapper_points_at() {
 # writing a wrapper that falls back to the system wine is what made the original
 # bug invisible.
 mosquitomarchy_write_daw_wrapper() {
-  local w="$1" bin="$2" mode="${3:-}" dir exec_line
+  local w="$1" bin="$2" mode="${3:-}" dir exec_line prefix
   dir="$(mosquitomarchy_nspa_wine_dir)"
   if [[ -z $dir ]]; then
     return 1
   fi
+  prefix="$(mosquitomarchy_vst_prefix)" || prefix=""
   if [[ $mode == noscale ]]; then
     exec_line="exec $bin \"\$@\""
   else
@@ -75,9 +104,26 @@ AWINE_DIR="$dir"
 if [ -x "\$AWINE_DIR/wine" ]; then
   export PATH="\$AWINE_DIR:\$PATH"
 fi
+# And the prefix those plugins were installed into, pinned. Without it the DAW
+# falls back to ~/.wine, which is the gaming prefix: no HeartCore, no iZotope
+# Cores, and a patched-runtime re-init that kills yabridge's host and aborts
+# the whole DAW. ~/.wine stays the gaming prefix because that is what it is for.
+VST_PREFIX="$prefix"
+if [ -d "\$VST_PREFIX/drive_c" ]; then
+  export WINEPREFIX="\$VST_PREFIX"
+fi
 $exec_line
 EOF
   chmod +x "$w"
+}
+
+# Does the wrapper pin a wine prefix? A wrapper that does not is treated as
+# needing a rewrite even when its runtime is already right: the two are separate
+# failure modes and fixing only one leaves the other in place.
+wrapper_pins_prefix() {
+  local w="$1"
+  [[ -f $w ]] || return 1
+  grep -q 'WINEPREFIX=' "$w" 2>/dev/null
 }
 
 # Apply the runtime to every DAW wrapper we own. Idempotent: it rewrites only
@@ -99,7 +145,7 @@ mosquitomarchy_apply_daw_wine_runtime() {
   if [[ -x /usr/lib/REAPER/reaper || -x /opt/REAPER/reaper ]]; then
     local rbin="" w="$HOME/.local/bin/reaper-launch"
     [[ -x /usr/lib/REAPER/reaper ]] && rbin=/usr/lib/REAPER/reaper || rbin=/opt/REAPER/reaper
-    if ! mosquitomarchy_daw_wrapper_points_at "$w" "$dir"; then
+    if ! mosquitomarchy_daw_wrapper_points_at "$w" "$dir" || ! wrapper_pins_prefix "$w"; then
       mkdir -p "$HOME/.local/bin"
       if mosquitomarchy_write_daw_wrapper "$w" "$rbin"; then
         changed=1
@@ -113,7 +159,7 @@ mosquitomarchy_apply_daw_wine_runtime() {
   # runtime path hardcoded, so it silently broke on the next version bump.
   if [[ -x /usr/bin/bitwig-studio ]]; then
     local w="$HOME/.local/bin/bitwig-studio"
-    if ! mosquitomarchy_daw_wrapper_points_at "$w" "$dir"; then
+    if ! mosquitomarchy_daw_wrapper_points_at "$w" "$dir" || ! wrapper_pins_prefix "$w"; then
       if mosquitomarchy_write_daw_wrapper "$w" /usr/bin/bitwig-studio noscale; then
         changed=1
       else
