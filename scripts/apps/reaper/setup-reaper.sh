@@ -58,7 +58,7 @@ done
 sed -i -E "s|^Exec=.*|Exec=$HOME/.local/bin/reaper-launch %F|" "$DESK"
 update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
 
-echo "== 4/5 Hyprland rules (main window tiled, dialogs centered+opaque+no blur) =="
+echo "== 4/6 Hyprland rules (main window tiled, dialogs centered+opaque+no blur) =="
 CONF="$HOME/.config/hypr/hyprland.lua"
 mkdir -p "$HOME/.config/hypr"
 touch "$CONF"
@@ -104,18 +104,46 @@ o.window({ class = "^REAPER$", title = ".*REAPER v[0-9].*" }, { float = false, t
 -- cannot match "^REAPER " followed by a dialog word. So this rule cannot move
 -- an editor and cannot reintroduce the yabridge#409 click-offset bug.
 o.window({ class = "^REAPER$", title = "^REAPER (Query|Error|Warning|Info|Message|MsgBox|Confirm)$" }, { float = true, center = true, size = { 440, 200 } })
+--
+-- REAPER has no per-monitor UI scale and cannot grow one: it derives a single
+-- system DPI, and X11 has exactly one screen, so the value cannot change when
+-- the window moves. This puts the focused monitor's Hyprland scale into
+-- reaper.ini instead. Run it BEFORE launching REAPER -- it reads ui_scale at
+-- startup and writes its own value back on exit, so a change made while it is
+-- running would be undone seconds later.
+-- The terminal is deliberately NOT opened: `exec` swallows the script's output,
+-- and a keypress that changes nothing and says nothing is indistinguishable
+-- from a broken binding. The script refuses while REAPER runs, so binding it to
+-- a plain exec would look dead most of the time.
+o.bind("SUPER SHIFT ALT + Y", "REAPER: match the monitor UI scale", { exec = "footclient reaper-ui-scale" })
 -- <<< reaper-setup <<<
 EOF
 hyprctl reload >/dev/null 2>&1 || true
 
-echo "== 5/5 REAPER settings (auto DPI off, initial size) =="
+echo "== 5/6 reaper-ui-scale (per-monitor UI scale) =="
+UI_SCALE_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reaper-ui-scale"
+mkdir -p "$HOME/.local/bin"
+if [[ -f $UI_SCALE_SRC ]]; then
+  cp "$UI_SCALE_SRC" "$HOME/.local/bin/reaper-ui-scale"
+  chmod +x "$HOME/.local/bin/reaper-ui-scale"
+  echo "installed: ~/.local/bin/reaper-ui-scale  (SUPER SHIFT ALT + Y)"
+else
+  echo "WARNING: reaper-ui-scale not found next to this script; the bind will do nothing."
+fi
+
+echo "== 6/6 REAPER settings (initial window size) =="
 INI="$HOME/.config/REAPER/reaper.ini"
 mkdir -p "$HOME/.config/REAPER"
 touch "$INI"
 set_key() { # set_key <key> <value>
   grep -q "^$1=" "$INI" && sed -i "s|^$1=.*|$1=$2|" "$INI" || echo "$1=$2" >> "$INI"
 }
-set_key ui_scale_auto 0   # disables the system DPI detection (source of the giant zoom)
+# ui_scale is deliberately NOT pinned here. It used to be pinned to 1.0 with
+# ui_scale_auto 0, on the theory that REAPER's own DPI detection was producing
+# "the giant zoom". That detection cannot do per-monitor anything -- it reads one
+# system-wide DPI, which X11 only has one of -- so pinning it just meant every
+# monitor got the same wrong size. `reaper-ui-scale` now writes this key from the
+# focused monitor's Hyprland scale, and says so instead of silently overriding.
 set_key wnd_width 1600    # initial main window size ; afterwards REAPER
 set_key wnd_height 900    # remembers the last used size itself
 
