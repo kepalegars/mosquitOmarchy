@@ -403,6 +403,34 @@ st_mx_master(){
   systemctl is-enabled logid >/dev/null 2>&1 || { echo partial; return; }
   echo ok
 }
+st_hyprmod(){
+  # Hyprmod manages Hyprland profiles; the binary is the whole thing, so this
+  # is "is it there and does it answer".
+  command -v hyprmod >/dev/null 2>&1 || { echo missing; return; }
+  hyprmod profile list >/dev/null 2>&1 || { echo partial; return; }
+  echo ok
+}
+
+run_hyprmod(){
+  # Nothing to configure: the module IS the installed tool. What Setup can add
+  # is a menu entry, so the profile switcher is one key away instead of a
+  # remembered command.
+  local d="$HOME/.config/hypr/hyprmod.d"
+  mkdir -p "$d" 2>/dev/null || true
+  # A default set of profiles is what makes `next`/`previous` useful on day
+  # one; the user edits them from here afterwards.
+  if [[ ! -f $d/profiles.conf ]]; then
+    cat > "$d/profiles.conf" <<'EOF'
+# One profile per line: <name> = <comment>
+# Switching applies it with: hyprmod profile apply <name>
+# These are placeholders — rename or replace them freely.
+default = the profile as shipped
+EOF
+    ok "hyprmod profiles: $d/profiles.conf (edit to add your own)"
+  fi
+  ok "hyprmod ready — 'hyprmod profile list' to see them"
+}
+
 st_keepassxc(){
   # KeePassXC secret service: dbus override + autostart shadow + user mask
   # + keepassxc.ini [FdoSecrets] Enabled=true
@@ -597,6 +625,7 @@ MODULES=(
   "achraff:'Achraff 67' visual theme + unlock/Plymouth logo (lock screen left stock)"
   "touchpad:Touchpad (pointer acceleration + sensitivity — external mouse is not affected)"
   "mx-master:MX Master (any model) — thumb gesture button → SUPER (logiops daemon, system service)"
+  "hyprmod:Hyprmod — save/switch Hyprland profiles from one menu (list · apply · next · previous), so a config change is one step away from a working desktop"
   "keepassxc:keepassxc  —  secret service (REPLACES gnome-keyring completely (existing keyring secrets must be migrated manually; package removal optional & asked). On FIRST KeePassXC launch choose YOUR .kdbx: the install pins it into keepassxc.ini (Remember*/LastOpened*) so EVERY web app's browser extension and secret service uses it — no more 'create a new database?' prompts. 'i' info below; pin a DIFFERENT file manually with scripts/apps/keepassxc/keepassxc-default-database.sh FILE.kdbx (README in that folder lists a manual select)"
   "mosquitomarchy-update:Update watchdog (scripts update first, then Omarchy updates — notification + opencode conflict review)"
   "superfile:SuperFile — terminal file manager (menu entry + keybind + Omarchy theme)"
@@ -774,6 +803,7 @@ module_state(){
     mx-master) st_mx_master ;;
     keybindings) st_keybindings ;;
     keepassxc) st_keepassxc ;; mosquitomarchy-update) st_mosquitomarchy_update ;;
+    hyprmod) st_hyprmod ;;
     superfile) st_superfile ;;
     extracto) st_extracto ;;
     zen) st_zen ;;
@@ -809,6 +839,7 @@ module_of_path(){
     scripts/theme/*)                                         echo achraff ;;
     scripts/fixes/fix-touchpad.sh)                           echo touchpad ;;
     scripts/fixes/fix-mx-master.sh)                          echo mx-master ;;
+    scripts/apps/hyprmod/*)                                 echo apps ;;
     scripts/fixes/fix-ableton-fullscreen.sh)                 echo ableton-fullscreen ;;
     scripts/apps/keepassxc/*)                                echo keepassxc ;;
     scripts/mosquitomarchy-update/*)                            echo mosquitomarchy-update ;;
@@ -3053,6 +3084,12 @@ uninstall_module(){
     touchpad) un_touchpad ;;
     mx-master) un_mx_master ;;
     keepassxc) un_keepassxc ;;
+    hyprmod)
+      # Only the profiles WE wrote. hyprmod is not ours to remove — the user may
+      # have it on PATH for their own reasons, and it is one `hyprmod profile
+      # list` away from being set up again.
+      rm -rf "$HOME/.config/hypr/hyprmod.d" 2>/dev/null || true
+      echo ok ;;
     keybindings) un_keybindings ;;
     mosquitomarchy-update) un_mosquitomarchy_update ;;
     superfile) un_superfile ;;
@@ -3554,6 +3591,7 @@ exec_modules(){
       touchpad) run_module touchpad run_touchpad ;;
       mx-master) run_module mx-master run_mx_master ;;
       keepassxc) run_module keepassxc run_keepassxc ;;
+      hyprmod) run_module hyprmod run_hyprmod ;;
       keybindings) run_module keybindings run_keybindings ;;
       mosquitomarchy-update) run_module mosquitomarchy-update run_mosquitomarchy_update ;;
       superfile) run_module superfile run_superfile ;;
@@ -3579,7 +3617,7 @@ exec_modules(){
 
 # Categories of the "setup" action. id|label|modules (space-separated module ids).
 CATEGORIES=(
-  "apps|Apps|reaper audio ableton guitarpro davinci-resolve extracto handbrake superfile zen keepassxc"
+  "apps|Apps|reaper audio ableton guitarpro davinci-resolve extracto handbrake superfile zen keepassxc hyprmod"
   "tuis|TUIs|"
   "webapps|Webapps|"
   "fixes|Fixes|"

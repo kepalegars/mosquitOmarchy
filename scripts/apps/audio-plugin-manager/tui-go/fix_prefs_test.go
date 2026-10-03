@@ -90,7 +90,12 @@ func TestFixPromptOnAsksAboutTheVendor(t *testing.T) {
 		autoFix:    true,
 		known:      true,
 		pluginName: "fabfilter one",
-		items:      []FixItem{{ID: "wine_gui_input", Scope: "plugin", Applied: false}},
+		// A real second fix, so there is something to OFFER: a plugin whose only
+		// fix is the one applied to everything anyway gets no question at all.
+		items: []FixItem{
+			{ID: "wine_gui_input", Scope: "plugin", Applied: false},
+			{ID: "wine_tooltip", Scope: "plugin", Applied: false},
+		},
 	})
 	m = mm.(model)
 	if m.top() != scrInstallFixesConfirm {
@@ -101,7 +106,10 @@ func TestFixPromptOnAsksAboutTheVendor(t *testing.T) {
 	mm2, _ := m.update(installFixesCheckMsg{
 		plugin: "vst:vst3:/x/FabFilter/One.vst3", vendor: "FabFilter",
 		fixPrompt: true, autoFix: true, known: true, pluginName: "fabfilter one",
-		items: []FixItem{{ID: "wine_gui_input", Scope: "plugin", Applied: false, Title: "Editor input"}},
+		items: []FixItem{
+			{ID: "wine_gui_input", Scope: "plugin", Applied: false, Title: "Editor input"},
+			{ID: "wine_tooltip", Scope: "plugin", Applied: false, Title: "Tooltips"},
+		},
 	})
 	view := mm2.(model).confirm.View()
 	if !strings.Contains(view, "fabfilter one is part of the apm's plugin knowledge database") {
