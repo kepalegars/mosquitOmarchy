@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# reaper-ui-scale — point REAPER's ui_scale at the Hyprland scale of the monitor
+# you are actually looking at.
+#
+# Why this has to exist as a command rather than a setting:
+#
+# libSwell, REAPER's Linux GUI layer, documents its own behaviour in its
+# strings: "1 // set to 0 to disable system DPI detection (only used when
+# ui_scale=1)". So REAPER has exactly two modes -- either you state the scale
+# yourself, or it derives one from a single system-wide DPI.
+#
+# The derived mode cannot work here. X11 has no per-monitor DPI: a rootless
+# XWayland presents one screen, so there is one DPI for the whole session and
+# nothing changes when a window moves to another monitor. On this machine that
+# one value comes out around 139 dpi (~1.45) because it is derived from the
+# monitor's declared physical size (700mm x 400mm), which knows nothing about
+# Hyprland's `scale:`. That is why `ui_scale_auto` looks like it does nothing:
+# it is not broken, it is answering a question that has one answer no matter
+# where you look.
+#
+# REAPER reads ui_scale at startup and writes its in-memory value back to
+# reaper.ini when it exits. So this command is meaningful while REAPER is
+# closed -- or right before you launch it, which is when the bind is most
+# useful. If REAPER is running we say so instead of writing a value that would
+# be overwritten seconds later.
+#
+#   reaper-ui-scale            report what it would do, and do it if REAPER is closed
+#   reaper-ui-scale --quiet    apply silently (no output), never fails the caller
+#   reaper-ui-scale --status   print the current and wanted value, change nothing
+
+set -u
+
+INI="$HOME/.config/REAPER/reaper.ini"
+quiet=0
+status=0
+for arg in "$@"; do
+  case "$arg" in
+    --quiet)  quiet=1 ;;
+    --status) status=1 ;;
+    -h|--help)
+      sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *) ;;
+  esac
+done
+
+say() { (( quiet )) || printf '%s\n' "$*"; }
+die() { (( quiet )) || printf 'reaper-ui-scale: %s\n' "$*" >&2; exit 0; }
+
+# ── the wanted scale ────────────────────────────────────────────────────────
+# The focused monitor, not the first one: on a multi-monitor setup the point is
+# to follow where the window actually is.
+want=""
+if command -v hyprctl >/dev/null 2>&1; then
+  focused="$(hyprctl -j monitors 2>/dev/null | python3 -c '
+import json, sys
+try:
+    ms = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+m = next((x for x in ms if x.get("focused")), None)
+if m and m.get("scale"):
+    print(m["scale"])
+' 2>/dev/null)"
+  [[ -n $focused ]] && want="$focused"
+  # No monitor is focused (nothing focused yet): fall back to the one REAPER is
+  # on, then to the first.
+  if [[ -z $want ]]; then
+    want="$(hyprctl -j monitors 2>/dev/null | python3 -c '
+import json, sys
+try:
+    ms = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+print(ms[0]["scale"] if ms and ms[0].get("scale") else "")
+' 2>/dev/null)"
+  fi
+fi
+
+if [[ -z $want ]]; then
+  die "no Hyprland monitor scale found — leaving REAPER's ui_scale alone"
+fi
+
+# Normalise to at most 2 decimals so 1.60 and 1.6 do not read as a change.
+want="$(python3 -c "print(f'{$want:.2f}'.rstrip('0').rstrip('.'))" 2>/dev/null)" || die "bad scale: $want"
+[[ -n $want ]] || die "bad scale: $focused"
+
+# ── the current value ───────────────────────────────────────────────────────
+cur=""
+[[ -f $INI ]] && cur="$(sed -n 's/^ui_scale=\([^[:space:]]*\).*/\1/p' "$INI" | head -1)"
+
+if (( status )); then
+  say "reaper-ui-scale: ui_scale=$cur  monitor scale=$want  ($(hyprctl -j monitors 2>/dev/null | python3 -c '
+import json,sys
+try: ms=json.load(sys.stdin)
+except Exception: raise SystemExit(0)
+m=next((x for x in ms if x.get("focused")), ms[0] if ms else {})
+print(m.get("name","?"))'))"
+  exit 0
+fi
+
+if [[ $cur == "$want" ]]; then
+  say "reaper-ui-scale: ui_scale already $want (monitor scale $want)"
+  exit 0
+fi
+
+reaper_running() { pgrep -f 'REAPER/reaper' >/dev/null 2>&1; }
+
+if reaper_running; then
+  # Writing now would be pointless and harmful: REAPER holds its own value in
+  # memory and writes it back to reaper.ini on exit, so the new value would be
+  # gone before the next launch and the keybind would look like it does nothing.
+  say "reaper-ui-scale: REAPER is running, so it would overwrite reaper.ini on exit."
+  say "reaper-ui-scale: close REAPER (or run this before launching it), then it becomes ui_scale=$want."
+  exit 0
+fi
+
+[[ -d $INI ]] || mkdir -p "$(dirname "$INI")" 2>/dev/null
+touch "$INI" 2>/dev/null || die "cannot write $INI"
+
+if grep -q '^ui_scale=' "$INI"; then
+  sed -i "s|^ui_scale=.*|ui_scale=$want|" "$INI"
+else
+  printf 'ui_scale=%s\n' "$want" >> "$INI"
+fi
+
+say "reaper-ui-scale: ui_scale $cur -> $want (monitor scale)"
