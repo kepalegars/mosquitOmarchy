@@ -20,6 +20,11 @@ At each desktop start it checks, **in priority order**:
    repeated at every boot until the update is actually installed with
    `omarchy update`.
 
+> **Where the coding happened.** mosquitOmarchy's own source is written with
+> [opencode](https://opencode.ai) driving **BigPickle DeepSeek 4.1 Flash** and **Space Bunny
+> Free**. This module is about the opencode *you* run on your machine for your own work —
+> a different thing.
+
 The Omarchy-update notification action **"Review with opencode"** opens a
 terminal running `opencode` with a pre-written review prompt:
 

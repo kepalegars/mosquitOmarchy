@@ -14,6 +14,11 @@ Re-running any script on a configured machine is safe.
 > **Picking this project back up?** Read [`JOURNAL.md`](JOURNAL.md) — it holds the
 > current status, the active roadmap, and why things are the way they are.
 
+> **Written with AI.** This repository was coded with [OpenCode](https://opencode.ai)
+> driving **BigPickle DeepSeek 4.1 Flash** and **Space Bunny Free**. Everything was
+> then read, run and corrected on the author's machine — the AI wrote the code, it
+> did not decide what the code should be.
+
 ## Install
 
 ```bash

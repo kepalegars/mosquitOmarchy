@@ -1,5 +1,31 @@
 # Project Journal — mosquitOmarchy
 
+## Log
+
+### 2026-10-04 — Claude removed from the repository's history
+
+The project is coded with **opencode** driving **BigPickle DeepSeek 4.1 Flash** and **Space Bunny
+Free**, and that is now what `README.md` states. What it did not state was the rest of the
+picture: 18 commits on `master` still carried a `Co-authored-by: Claude …` trailer, which is
+what kept Claude in the repository's contributor graph, and `move-bitwig/README.md` still
+credited "Claude mainly" for its code.
+
+`git filter-repo --message-callback` stripped the trailers and master was force-pushed
+(`2ce73e5 → fc821dd`). The rewrite touched **only** those trailers: `git diff` between the
+pre-rewrite tag and the new master is empty, and the commit count is unchanged at 99. Every
+SHA from 2026-10-01 onward changed, so any other clone must `git fetch && git reset --hard
+origin/master`.
+
+This supersedes the two earlier entries below, which describe the same intent done partially —
+one had rewritten two commits and reported the job finished. A trailer strip has to cover
+every commit in the default branch, not the ones that happened to be at hand; had the count
+been verified first (18 of 99, not 2), it would have been obvious.
+
+Note for the next reader: the local tag made as a safety net before the rewrite
+(`backup-before-claude-strip-…`) is useless — filter-repo rewrote it along with everything
+else, so it points at the NEW head. Recovery is via the remote or GitHub's own reflog.
+
+
 ## ⚠️ Maintenance contract — read this before doing anything else
 
 This file is a **living resume-point**, not a changelog nobody reads. Its only purpose is
@@ -31,8 +57,8 @@ Rules for whoever (human or AI) touches this project from now on:
 6. **Language**: the project (code, comments, commit messages, docs, this file) is in
    **English**. Conversation with the project's owner happens in whatever language they use
    (currently French) — that doesn't change what goes in the repo.
-7. **This file IS the compaction target.** Whatever tool you are (Claude Code, opencode, or
-   anything else), when your own context window fills up and you're about to compact or
+7. **This file IS the compaction target.** Whatever tool you are (opencode, or anything else),
+   when your own context window fills up and you're about to compact or
    summarize — or when you're picking this repo back up in a fresh session — **this file is
    the summary**. Don't re-derive it from scratch, don't re-read the whole git history, don't
    re-read every module's code to rebuild a mental model: read *Current state at a glance* +

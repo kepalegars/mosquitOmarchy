@@ -259,7 +259,7 @@ described below.
 ## Disclaimer
 
 Move Bitwig is not associated with either the Ableton AG or Bitwig GmbH. I made it in my free time and you can use and modify it however you wish.
-Most of the code was generated using AI coding agents (Claude mainly), I tested manually and looked through some of the code.
+Most of the code was written with the help of AI coding agents, I tested manually and looked through some of the code.
 
 Thanks to DrivenByMoss for tutorials and code on scripting Bitwig.
 
