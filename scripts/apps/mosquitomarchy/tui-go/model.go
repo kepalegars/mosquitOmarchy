@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
+
+	"github.com/charmbracelet/bubbles/key"
 
 	tea "github.com/charmbracelet/bubbletea"
 	tuikit "mosquitomarchy.local/tui-kit"
@@ -41,6 +44,7 @@ const (
 	// Creating a theme from an image: a 4-step flow on the main menu. Each
 	// step is its own screen so Esc backs out one decision at a time instead of
 	// dumping you at the main menu with three choices made.
+	scrBackupName
 	scrThemeFolder
 	scrThemeImage
 	scrThemeInput
@@ -59,13 +63,87 @@ const (
 )
 
 // BackupOpts are the Backup screen's content choices.
+//
+// Name is the user's label for the archive. It goes into the filename AFTER
+// the timestamp, never before it: five places glob omarchy-backup-*.tar.gz* and
+// backup_desc() reads the date from fixed offsets in what follows the prefix, so
+// a name inserted ahead of the timestamp would make every listed backup show a
+// broken date. The backend sanitises it into a slug.
+//
+// Persisted, because an option the user has to re-choose after every restart is
+// not an option. HasKeep/HasZen are NOT persisted: they describe the machine,
+// they are re-detected on every visit, and a stale "true" for a program that has
+// since been uninstalled would put a row on screen that cannot work.
 type BackupOpts struct {
 	VST     string // "list" | "full" | "none"
 	Keepass bool   // include KeePassXC passwords (only when installed)
 	Zen     bool   // include the Zen browser settings (prefs.js/user.js/containers.json + extensions)
 	Encrypt bool   // AES-256 with a passphrase
+	Name    string // optional label for the archive, "" = the dated default
 	HasKeep bool   // the machine has keepassxc + its config/db
 	HasZen  bool   // the machine has a Zen profile
+}
+
+// storedBackupOpts is the on-disk shape. Deliberately NOT the BackupOpts
+// struct: persisting a struct means adding a field silently starts persisting
+// it, and the two detection flags must never be written.
+type storedBackupOpts struct {
+	VST     string `json:"vst"`
+	Keepass bool   `json:"keepass"`
+	Zen     bool   `json:"zen"`
+	Encrypt bool   `json:"encrypt"`
+	Name    string `json:"name"`
+}
+
+// loadBackupOpts reads the saved choices. A missing file, unreadable file or
+// malformed JSON all mean the same thing — no preference yet — so they return
+// the defaults instead of an error: a corrupt preference file must never be
+// able to stop the Backup screen from opening.
+func loadBackupOpts() BackupOpts {
+	def := BackupOpts{VST: "list", Keepass: true, Zen: true}
+	out, err := runQuick("backup-opts", "get")
+	if err != nil {
+		return def
+	}
+	var st storedBackupOpts
+	if err := json.Unmarshal(out, &st); err != nil {
+		return def
+	}
+	switch st.VST {
+	case "full", "none", "list":
+		def.VST = st.VST
+	}
+	// Only take a preference that is actually a preference. A stored false for
+	// keepass/zen is legitimate (the user turned them off), so they are applied
+	// as-is; but an absent field decodes to false too, which would silently
+	// switch OFF options the user never touched. The file is only written by
+	// saveBackupOpts, which always writes all five, so a decode that produced a
+	// zero value anywhere means the file was not written by us.
+	if st.VST == "" {
+		return BackupOpts{VST: "list", Keepass: true, Zen: true}
+	}
+	def.Keepass = st.Keepass
+	def.Zen = st.Zen
+	def.Encrypt = st.Encrypt
+	def.Name = st.Name
+	return def
+}
+
+// saveBackupOpts persists the choices. Best-effort: a backup that cannot record
+// its own settings is still a valid backup, so a write failure is not surfaced
+// as an error on the run that triggered it.
+func saveBackupOpts(o BackupOpts) {
+	payload, err := json.Marshal(storedBackupOpts{
+		VST:     o.VST,
+		Keepass: o.Keepass,
+		Zen:     o.Zen,
+		Encrypt: o.Encrypt,
+		Name:    o.Name,
+	})
+	if err != nil {
+		return
+	}
+	_, _ = runQuick("backup-opts", "set", string(payload))
 }
 
 // model is the single Bubble Tea model for the whole session: every screen
@@ -99,6 +177,11 @@ type model struct {
 	toast     tuikit.Toast
 	info      tuikit.Info
 	passInput tuikit.TextInput
+	// backupNameInput is its own field rather than a reuse of passInput: both
+	// are on screen at different times but they are not the same widget, and
+	// sharing one field is how a masked input ends up holding a plain label (or
+	// the reverse) because the two screens forgot to re-create it.
+	backupNameInput tuikit.TextInput
 
 	statusRecs []StatusRec
 	// Status screen: the same folder tree as Setup/Uninstall (a module's
@@ -237,7 +320,7 @@ type model struct {
 	themeImage         string
 	themeInput         tuikit.TextInput
 	themeInputStep     int // 0 = folder path, 1 = theme name
-	themeApplyName string
+	themeApplyName     string
 	themeCreated       string
 	themePendingName   string // the name carried out of the text screen
 	themeLog           string
@@ -320,10 +403,11 @@ func initialModel() model {
 		setupByValue:     map[string]SetupItemRec{},
 		backupChecked:    map[string]bool{},
 		backupOpen:       map[string]bool{},
-		backupOpts:       BackupOpts{VST: "list", Keepass: true, Zen: true},
+		backupOpts:       loadBackupOpts(),
 		treeMode:         "install",
 	}
-	m.mainPicker = newNavPicker("", m.mainMenuItems())
+	m.mainPicker = newNavPicker("", m.mainMenuItems()).
+		SetHelpKeys(key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "what each page does")))
 	m.setupPicker = newNavPicker("", nil)
 	m.setupCatPicker = newNavPicker("", nil)
 	m.updatePicker = newNavPicker("", nil)
@@ -389,7 +473,8 @@ func (m model) mainMenuItems() []tuikit.PickerItem {
 // rebuildMainMenu refreshes the root list, keeping the cursor on the same row.
 func (m model) rebuildMainMenu() navPicker {
 	return newNavPicker("", m.mainMenuItems()).SetSize(m.contentSize()).
-		KeepCursor(m.mainPicker.SelectedValue())
+		KeepCursor(m.mainPicker.SelectedValue()).
+		SetHelpKeys(key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "what each page does")))
 }
 
 func (m *model) contentSize() (int, int) {

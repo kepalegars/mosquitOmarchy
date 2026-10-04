@@ -29,7 +29,15 @@ func TestBackupOptionsArrows(t *testing.T) {
 	m.nav = []screen{scrMain, scrBackup, scrBackupOptions}
 	m.w, m.h = 120, 40
 	m.backupOpts = BackupOpts{VST: "list", Keepass: true, HasKeep: true}
-	m.backupOptPicker = m.rebuildBackupOptions().SelectIndex(1) // the VST row
+	m.backupOptPicker = m.rebuildBackupOptions()
+	// Select the VST row BY VALUE, not by index. The rows have been reordered
+	// before (the archive-name row was added above it) and the index form broke
+	// silently: the test still ran, it just drove a different row, so a change
+	// to this list could break what the test was checking without failing it.
+	m.backupOptPicker = m.backupOptPicker.SelectValue("vst")
+	if got := m.backupOptPicker.SelectedValue(); got != "vst" {
+		t.Fatalf("could not select the VST row, cursor is on %q", got)
+	}
 	m, _ = m.update(tuikit.PickerSortMsg{Dir: 1})
 	if m.backupOpts.VST != "full" {
 		t.Fatalf("right should cycle VST list->full, got %q", m.backupOpts.VST)
@@ -971,5 +979,106 @@ func TestMenuEntriesRestoresAfterARealStrip(t *testing.T) {
 		t.Fatal(rerr)
 	} else if !strings.Contains(string(raw), "setup.mosquito.live") {
 		t.Fatalf("apply did not restore the entry to the menu file:\n%s", raw)
+	}
+}
+
+// TestBackupOptionsPersistAcrossSessions is the test for "the options are
+// remembered".
+//
+// The bug it pins: the choices lived in the model, so they survived leaving the
+// page but died with the process. loadBackupOpts() must read them back, and a
+// missing or corrupt file must fall back to the DEFAULTS rather than to a
+// half-read struct — a stored false for keepass/zen is a legitimate choice,
+// while an absent field decoding to false is not, so the loader treats "no file"
+// and "file we did not write" as the same thing.
+func TestBackupOptionsPersistAcrossSessions(t *testing.T) {
+	// The real backend, not a stub: persistence here is the backend writing
+	// a file, and a save that fails silently (which it does, by design — a
+	// backup must still be a valid backup if it cannot record its settings)
+	// would make this test pass for the wrong reason on a bare PATH.
+	setUpBackend(t)
+
+	// No file at all -> defaults, and NOT an error.
+	def := loadBackupOpts()
+	if def.VST != "list" || !def.Keepass || !def.Zen {
+		t.Fatalf("no stored file should give the defaults, got %+v", def)
+	}
+
+	// What the user chose must come back.
+	saved := BackupOpts{VST: "none", Keepass: false, Zen: true, Encrypt: true, Name: "avant upgrade"}
+	saveBackupOpts(saved)
+	back := loadBackupOpts()
+	if back != saved {
+		t.Fatalf("round trip changed the options:\n saved %+v\n got   %+v", saved, back)
+	}
+
+	// The detection flags are never persisted, so a stale "installed" cannot
+	// resurrect a row for a program that is no longer there.
+	if back.HasKeep || back.HasZen {
+		t.Fatalf("detection flags must not be persisted, got %+v", back)
+	}
+}
+
+// TestBackupNameReachesTheBackendArgs checks the name survives the whole trip
+// to the command line, including the encrypted detour where pendingArgs is
+// reused. A name that only works on the unencrypted path would be a name that
+// silently disappears exactly when the archive matters most.
+func TestBackupNameReachesTheBackendArgs(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrBackup, scrBackupOptions}
+	m.w, m.h = 120, 40
+	m.backupOpts = BackupOpts{VST: "list", Name: "Avant upgrade REAPER", Encrypt: true}
+	m.backupOpts.HasKeep, m.backupOpts.HasZen = false, false
+
+	m, _ = m.beginBackup()
+	// Encrypting detours through the passphrase screen and comes back to the
+	// same pendingArgs, so assert on the state the run will actually use.
+	found := false
+	for _, a := range m.pendingArgs {
+		if a == "--name=Avant upgrade REAPER" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("--name missing from %v", m.pendingArgs)
+	}
+	if m.pendingAction != "backup-encrypted" {
+		t.Fatalf("expected the encrypted path, got %q", m.pendingAction)
+	}
+}
+
+// TestHomeInfoKeyOpensThePageGuide pins `i` on the home screen.
+//
+// Two things it would catch: the key colliding with something the home screen
+// already used, and it being wired as an ACTION rather than a description — the
+// `i` key used to re-dispatch Enter, so describing a page would have installed
+// it. That is the same mistake TestInfoKeyDescribesAModuleRow guards on Setup.
+func TestHomeInfoKeyOpensThePageGuide(t *testing.T) {
+	m := initialModel()
+	m.w, m.h = 120, 40
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	if m.top() != scrInfo {
+		t.Fatalf("i on the home screen should open the page guide, top is %v", m.top())
+	}
+	// Asserted on the guide's own text, not on what the popup happens to show:
+	// Info renders a viewport, so in a short terminal the later pages are
+	// scrolled out of view and a viewport assertion would only ever check the
+	// first screenful.
+	body := m.homePageInfo()
+	// The pages someone has to understand before acting.
+	for _, want := range []string{"Backup", "Restore", "Setup", "Uninstall", "Keybindings"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page guide does not mention %q", want)
+		}
+	}
+	// Restoring is the irreversible one; the guide has to say so.
+	if !strings.Contains(body, "OVERWRITES") {
+		t.Error("the guide does not warn that a restore overwrites files")
+	}
+	if m.info.View() == "" {
+		t.Error("the popup rendered nothing")
+	}
+	if m.pendingAction != "" {
+		t.Errorf("describing the pages must not queue an action, got %q", m.pendingAction)
 	}
 }

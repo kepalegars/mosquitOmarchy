@@ -1424,12 +1424,34 @@ restore_plugins(){
   fi
 }
 
+# Sanitise a user-supplied backup name into a filename fragment.
+# Anything that is not a letter, a digit, a dot, an underscore or a dash becomes
+# a dash, runs of dashes collapse, and the result is capped. Empty input is not
+# an error: it means "no name", and the caller falls back to the dated name.
+backup_name_slug(){
+  local raw="$1" slug
+  slug="$(printf '%s' "$raw" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9._-]+/-/g; s/-+/-/g; s/^[-.]+//; s/[-.]+$//' \
+    | cut -c1-48)"
+  printf '%s' "$slug"
+}
+
 do_backup(){
   msg "Backup mosquitOmarchy (dated file in $BACKUP_DIR)"
   mkdir -p "$BACKUP_DIR"
-  local ts dest tmp
+  local ts dest tmp slug
   ts="$(date +%Y%m%d-%H%M%S)"
-  dest="$BACKUP_DIR/omarchy-backup-$ts.tar.gz"
+  # The name goes AFTER the timestamp, never before it and never inside it.
+  # Five places glob omarchy-backup-*.tar.gz* and backup_desc() reads the date
+  # from fixed offsets 0-13 of what follows the prefix, so anything inserted
+  # ahead of the timestamp would make every listed backup show a broken date.
+  slug="$(backup_name_slug "${BACKUP_NAME:-}")"
+  if [[ -n $slug ]]; then
+    dest="$BACKUP_DIR/omarchy-backup-$ts-$slug.tar.gz"
+  else
+    dest="$BACKUP_DIR/omarchy-backup-$ts.tar.gz"
+  fi
   tmp="$(mktemp -d)"
 
   # Encryption decision FIRST — before asking what to back up — so the

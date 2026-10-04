@@ -701,6 +701,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			case "encrypt":
 				m.backupOpts.Encrypt = !m.backupOpts.Encrypt
 			}
+			// Saved on every change, not on the way out: "retained when leaving
+			// the page" also has to cover closing the TUI by any route, and a
+			// save-on-leave only fires for the leave that happens to be coded.
+			saveBackupOpts(m.backupOpts)
 			m.backupOptPicker = m.rebuildBackupOptions()
 			return m, nil
 		case scrBackupApps:
@@ -976,6 +980,20 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.themeUnlockPicker = m.rebuildThemeUnlock()
 			return m, nil
 		}
+		if m.top() == scrBackupName {
+			if msg.Canceled {
+				m.pop()
+				return m, nil
+			}
+			// Trimmed, and an empty answer is a VALID answer: it means "name it
+			// by its date", which is what the row said before anything was typed.
+			// Refusing empty here would make the name un-clearable.
+			m.backupOpts.Name = strings.TrimSpace(msg.Value)
+			saveBackupOpts(m.backupOpts)
+			m.backupOptPicker = m.rebuildBackupOptions()
+			m.pop()
+			return m, nil
+		}
 		if m.top() != scrPassphrase && m.top() != scrKBInput {
 			return m, nil
 		}
@@ -1208,6 +1226,14 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch m.top() {
 	case scrMain:
+		// `i` was free here: navpicker and the kit's own key set do not claim
+		// it, and it is already the "explain this" key on six other screens, so
+		// using it again is the consistent choice rather than a new one.
+		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
+			m.info = tuikit.NewInfo(m.homePageInfo()).SetSize(m.contentSize())
+			m.push(scrInfo)
+			return m, nil
+		}
 		m.mainPicker, cmd = m.mainPicker.Update(msg)
 	case scrStatus:
 		// `i` and Enter both read the module under the cursor (the detail
@@ -1661,6 +1687,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.confirm, cmd = m.confirm.Update(msg)
 	case scrPassphrase:
 		m.passInput, cmd = m.passInput.Update(msg)
+	case scrBackupName:
+		m.backupNameInput, cmd = m.backupNameInput.Update(msg)
 	case scrThemeInput, scrThemeName:
 		// Both text screens share one field; themeInputStep says which question
 		// it is answering, and scrThemeInput's Enter is handled in the
@@ -1731,7 +1759,6 @@ func folderLabel(m model, fid string) string {
 	}
 	return fid
 }
-
 
 // screenPicked routes a picker's Enter result.
 // quickFixesFolder is the Setup folder id the backend gives the quick fixes.
@@ -2432,6 +2459,13 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 
 	case scrBackupOptions:
 		switch res.Value {
+		case "name":
+			// Pre-filled with the current name, so editing one is an edit rather
+			// than a retype, and clearing it is possible without a second key.
+			m.push(scrBackupName)
+			m.backupNameInput = tuikit.NewTextInput(
+				"Name for this backup (empty = its date):", m.backupOpts.Name)
+			return m, m.backupNameInput.Init()
 		case "apps":
 			m.push(scrBackupApps)
 			m.backupAppsPicker = m.rebuildBackupApps()
@@ -2445,14 +2479,25 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			default:
 				m.backupOpts.VST = "list"
 			}
+			saveBackupOpts(m.backupOpts)
 			m.backupOptPicker = m.rebuildBackupOptions()
 			return m, nil
 		case "keepass":
 			m.backupOpts.Keepass = !m.backupOpts.Keepass
+			saveBackupOpts(m.backupOpts)
+			m.backupOptPicker = m.rebuildBackupOptions()
+			return m, nil
+		case "zen":
+			// Enter toggles it too. It used to be ←/→ only, so a row that
+			// answered every other key silently did nothing on the most natural
+			// one — the bug that made the option look broken.
+			m.backupOpts.Zen = !m.backupOpts.Zen
+			saveBackupOpts(m.backupOpts)
 			m.backupOptPicker = m.rebuildBackupOptions()
 			return m, nil
 		case "encrypt":
 			m.backupOpts.Encrypt = !m.backupOpts.Encrypt
+			saveBackupOpts(m.backupOpts)
 			m.backupOptPicker = m.rebuildBackupOptions()
 			return m, nil
 		case "start":
@@ -2719,6 +2764,64 @@ func (m model) rebuildFilteredSetup() navPicker {
 // the category is for, then every row in it with its own description. The leaf
 // rows already had an "i" (label + Info), but the category rows answered
 // nothing, so the only way to read what a category covers was to open it.
+// homePageInfo is the `i` popup on the main menu: what every page in this app
+// is for, and what it will and will not do.
+//
+// A PAGE-level explanation, not a row-level one. `i` on any other screen
+// describes the row under the cursor; on the home screen the rows ARE the pages,
+// so the same key naturally answers "what does this page do" — and the home
+// screen is where someone decides which page they want, so it is where that
+// question is actually being asked.
+//
+// Backup and restore get the most room because they are the pages whose
+// consequences are least reversible: a restore overwrites the files an archive
+// contains.
+func (m model) homePageInfo() string {
+	return "What each page does\n" +
+		"\n" +
+		"Status — every module, what it installed and what is missing.\n" +
+		"Press i on a row for the detail behind its state.\n" +
+		"\n" +
+		"Update — fetch the scripts repo when a newer version exists.\n" +
+		"Owner mode updates as fast as possible; anyone else can re-apply\n" +
+		"per module. Installs nothing new and never overwrites your files.\n" +
+		"\n" +
+		"Setup — install, update or re-run modules, grouped in folders.\n" +
+		"Tab ticks, Left/Right folds a folder, i explains a row, Enter applies\n" +
+		"the whole ticked selection. Every script is idempotent, so re-running\n" +
+		"one on a configured machine is safe.\n" +
+		"\n" +
+		"Uninstall — the same tree, filtered to what is installed, in reverse.\n" +
+		"\n" +
+		"Keybindings — add, remove and reset the managed SUPER shortcuts.\n" +
+		"Every change asks whether to reload Hyprland afterwards.\n" +
+		"\n" +
+		"Theming — build an Omarchy theme from an image in the Wallpapers\n" +
+		"folder, or switch between the themes already installed.\n" +
+		"\n" +
+		"Health check — the checks worth running before blaming something.\n" +
+		"\n" +
+		"Backup / Restore — DATED ARCHIVES of your configuration, written to\n" +
+		"~/omarchy-backups as omarchy-backup-<date>.tar.gz.\n" +
+		"  Back up now  — walks three pages: what to include (apps/TUIs/\n" +
+		"                 webapps, VST plugins, KeePassXC passwords, Zen\n" +
+		"                 settings), an optional name for the archive, and\n" +
+		"                 encryption. It ASKS for a passphrase rather than\n" +
+		"                 storing one. The options are remembered, including\n" +
+		"                 when you leave the page without making a backup.\n" +
+		"  Restore      — RESTORING OVERWRITES the files an archive contains.\n" +
+		"                 It restores FILES, not packages: the pkglist.txt and\n" +
+		"                 aurlist.txt inside the archive list what to reinstall\n" +
+		"                 with pacman afterwards. RESTORE.md inside the\n" +
+		"                 archive is the step-by-step version.\n" +
+		"\n" +
+		"Extras — the smaller switches: crash notifications, live mode, and\n" +
+		"the other tools that do not need a page of their own.\n" +
+		"\n" +
+		"Close — leave. Nothing is applied on the way out; everything in this\n" +
+		"app is applied by the Enter you press on the row that does it."
+}
+
 func (m model) categoryInfo(folder string) string {
 	label := folder
 	for _, f := range m.setupFolders {
@@ -3504,7 +3607,12 @@ func (m model) rebuildBackupOptions() navPicker {
 	case "none":
 		vst = "skip"
 	}
+	nameRow := "(none — the date names it)"
+	if m.backupOpts.Name != "" {
+		nameRow = m.backupOpts.Name
+	}
 	items := []tuikit.PickerItem{
+		{Display: "Archive name: " + nameRow, Value: "name"},
 		{Display: fmt.Sprintf("Apps / TUIs / webapps: %d selected", len(m.backupChecked)), Value: "apps"},
 		{Display: "VST plugins: " + vst, Value: "vst"},
 	}
@@ -3569,6 +3677,10 @@ func (m model) beginBackup() (model, tea.Cmd) {
 		"--keepass=" + yesno(m.backupOpts.Keepass),
 		"--zen=" + yesno(m.backupOpts.Zen),
 		"--selection=" + m.backupSelFile,
+		// Always sent, empty or not: the backend treats an empty name as "use
+		// the dated name", and omitting the flag entirely would make an edit
+		// that cleared the name impossible to express.
+		"--name=" + m.backupOpts.Name,
 	}
 	if m.backupOpts.Encrypt {
 		m.pendingAction = "backup-encrypted"
@@ -3577,8 +3689,12 @@ func (m model) beginBackup() (model, tea.Cmd) {
 		return m, m.passInput.Init()
 	}
 	m.pendingAction = "backup"
-	m.pendingMsg = fmt.Sprintf("Create a dated backup now?\n\nApps/TUIs/webapps: %d selected · VST: %s · KeePassXC: %s · Zen: %s",
-		len(m.backupChecked), m.backupOpts.VST, yesno(m.backupOpts.Keepass), yesno(m.backupOpts.Zen))
+	label := "named by its date"
+	if m.backupOpts.Name != "" {
+		label = "named \"" + m.backupOpts.Name + "\""
+	}
+	m.pendingMsg = fmt.Sprintf("Create a backup now?\n\nApps/TUIs/webapps: %d selected · VST: %s · KeePassXC: %s · Zen: %s\nArchive: %s",
+		len(m.backupChecked), m.backupOpts.VST, yesno(m.backupOpts.Keepass), yesno(m.backupOpts.Zen), label)
 	m.pendingNo = "Cancel"
 	m.pendingYes = "Backup"
 	m.push(scrConfirm)

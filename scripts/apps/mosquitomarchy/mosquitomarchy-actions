@@ -251,6 +251,52 @@ theme_default_dir_file(){
   printf '%s\n' "${THEME_DEFAULT_DIR_FILE:-$HOME/.config/mosquitomarchy/theme-default-dir}"
 }
 
+# ─── Backup options (persisted) ─────────────────────────────────────────────
+# The TUI's "Backup options" screen used to keep its choices in the model, so
+# they survived leaving the page but died with the process: the next run started
+# from the defaults again, whatever the user had just told it. Storing them is
+# the difference between an option and a preference.
+#
+# A JSON file under ~/.config/mosquitomarchy, next to theme-default-dir and
+# for the same reason: these describe THIS machine, and nothing else reads them.
+# ~/.local/state is for flags and markers, not choices.
+BACKUP_OPTS_FILE=""
+
+backup_opts_file(){
+  printf '%s\n' "${BACKUP_OPTS_FILE:-$HOME/.config/mosquitomarchy/backup-options.json}"
+}
+
+# get -> the stored JSON, or nothing at all when there is none. Silence is a
+# valid answer (no preference saved yet) so it must NOT exit non-zero: the TUI
+# reads the empty output as "use the defaults".
+cmd_backup_opts(){
+  local f mode="${1:-get}" arg="${2:-}"
+  f="$(backup_opts_file)"
+  case "$mode" in
+    get)
+      # `if`, not `[[ -r $f ]] && cat …`: with no file yet the && chain returns
+      # 1, and the TUI reads that as a failed query rather than as "no
+      # preference saved yet", which is the normal state on a first run.
+      if [[ -r $f ]]; then cat "$f"; fi
+      ;;
+    set)
+      # The TUI builds the JSON and hands it over as one argv element, so there
+      # is no quoting to get wrong here — but an empty payload is refused,
+      # because writing it would leave a file that reads as "no options" while
+      # looking like a stored preference.
+      [[ -n $arg ]] || { err "backup-opts set needs a JSON payload"; return 1; }
+      mkdir -p "$(dirname "$f")" 2>/dev/null || true
+      if ! printf '%s\n' "$arg" > "$f"; then
+        err "cannot write $f"
+        return 1
+      fi
+      ;;
+    clear|"")
+      rm -f "$f"
+      ;;
+  esac
+}
+
 cmd_theme_default_dir(){
   local f mode="${1:-get}" arg="${2:-}"
   f="$(theme_default_dir_file)"
@@ -1485,14 +1531,16 @@ cmd_menu_entry(){
 #   --keepass=yes|no       include KeePassXC passwords when installed
 #   --zen=yes|no           include the Zen browser settings (default: yes)
 #   --selection=FILE       apps.selected content (the TUI's checkbox tree)
+#   --name=TEXT            label for the archive; sanitised into the filename
 cmd_backup(){
-  local vst="list" keepass="yes" zen="yes" sel="" a
+  local vst="list" keepass="yes" zen="yes" sel="" name="" a
   for a in "$@"; do
     case $a in
       --vst=*) vst="${a#*=}" ;;
       --keepass=*) keepass="${a#*=}" ;;
       --zen=*) zen="${a#*=}" ;;
       --selection=*) sel="${a#*=}" ;;
+      --name=*) name="${a#*=}" ;;
     esac
   done
   YES=1
@@ -1503,6 +1551,9 @@ cmd_backup(){
   if [[ $keepass == no ]]; then export BACKUP_SKIP_KEEPASS=1; fi
   if [[ $zen == no ]]; then export BACKUP_SKIP_ZEN=1; fi
   if [[ -n $sel && -f $sel ]]; then export BACKUP_APPS_SELECTION_FILE="$sel"; fi
+  # Empty is meaningful here (an unnamed backup falls back to the dated name),
+  # so it is exported unconditionally rather than only when set.
+  export BACKUP_NAME="$name"
   do_backup || true
 }
 
@@ -1859,6 +1910,7 @@ case "$sub" in
   preinstalls)              cmd_preinstalls ;;
   preinstalls-remove)       cmd_preinstalls_remove "$@" ;;
   backup-options)           cmd_backup_options ;;
+  backup-opts)              cmd_backup_opts "${1:-get}" "${2:-}" ;;
   backups)                  cmd_backups ;;
   update-check)             cmd_update_check ;;
   install)                  cmd_install "${1:-}" "${@:2}" ;;

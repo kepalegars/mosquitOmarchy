@@ -21,8 +21,15 @@ interface.
 | **Setup** | The category tree, then each category's items. |
 | **Uninstall** | The same tree, showing only what is actually installed. |
 | **Health check** | What drifted from your install: modules that went partially missing, and missing mosquitOmarchy pieces (TUI, float rule, menu entry, shortcut, update hook, crash skill). Offers to re-apply. |
-| **Backup / Restore** | A dated archive, plain or encrypted, or restoring one. |
+| **Backup / Restore** | An archive, plain or encrypted, optionally named; or restoring one. |
 | **Close** | Confirm, then leave. |
+
+`i` works on every screen and explains the thing under the cursor. On the **home**
+screen, where the rows ARE the pages, it opens a guide to all of them — including
+the two whose consequences are least reversible: a backup asks what to include,
+and a **restore overwrites the files an archive contains** (it restores files, not
+packages — `pkglist.txt` and `aurlist.txt` inside the archive list what to
+reinstall with pacman afterwards).
 
 The **Keybindings** row and, right after it, **Theming** are both main-menu
 rows rather than Setup categories: they configure the desktop instead of installing a module, so
@@ -130,6 +137,30 @@ include/skip, and encryption. The passphrase is asked twice, passed through
 `OMARCHY_BACKUP_PASSPHRASE` rather than argv, and asked again on restore. See the
 [root README](../../../README.md#mosquitomarchy-setupsh) for what the plugin-folder option
 does and why it is never automatic.
+
+### Naming a backup, and remembering the options
+
+**Archive name.** The first row of *Backup options* takes an optional name. It is
+sanitised into a filename slug (`Avant upgrade REAPER` → `avant-upgrade-reaper`,
+`../../etc/passwd` → `etc-passwd`) and inserted **after** the timestamp:
+`omarchy-backup-20261004-152233-avant-upgrade-reaper.tar.gz`. Never before it —
+five places glob `omarchy-backup-*.tar.gz*` and `backup_desc()` reads the date from
+fixed offsets right after the prefix, so a name in front would make every listed
+backup show a broken date. Empty is a valid answer: the archive is then named by
+its date, as before.
+
+**Persisted options.** VST mode, KeePassXC, Zen, encryption and the name are
+written to `~/.config/mosquitomarchy/backup-options.json` (the same place, and for
+the same reason, as `theme-default-dir`: these describe this machine and nothing
+else reads them). They are saved **on every change**, not when leaving the page —
+a save-on-leave only covers the exit that happened to be coded, and the request
+was that the choices survive closing the app without ever starting a backup.
+
+The two *detection* flags (does this machine have KeePassXC / a Zen profile) are
+deliberately **not** persisted: they are re-derived on every visit, and a stored
+`true` for a program since uninstalled would put a row on screen that cannot work.
+A missing, unreadable or malformed file all read as "no preference yet" and fall
+back to the defaults, so a corrupt file can never stop the screen from opening.
 
 ## Crash reporting
 

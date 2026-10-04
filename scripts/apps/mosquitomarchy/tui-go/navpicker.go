@@ -38,6 +38,15 @@ func (p navPicker) SetHelpKeys(keys ...key.Binding) navPicker {
 	return p
 }
 
+// SelectValue moves the cursor to a row by its value. Used instead of
+// SelectIndex wherever the row is identified by what it DOES: an index breaks
+// the moment a row is inserted above it, and it breaks silently — the test still
+// runs, it just drives a different row.
+func (p navPicker) SelectValue(value string) navPicker {
+	p.Picker = p.Picker.SelectValue(value)
+	return p
+}
+
 func (p navPicker) SelectIndex(i int) navPicker {
 	p.Picker = p.Picker.SelectIndex(i)
 	return p

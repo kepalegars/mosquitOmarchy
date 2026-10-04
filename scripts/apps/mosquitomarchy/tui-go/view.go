@@ -212,6 +212,10 @@ func (m model) View() string {
 		title = screenTitle("Create a theme from an image", w)
 		body = m.themeImagePicker.View()
 		bar = barLine(m.themeImagePicker.ShortcutsHint())
+	case scrBackupName:
+		title = screenTitle("Backup — archive name", w)
+		body = m.backupNameInput.View()
+		bar = barLine(m.backupNameInput.ShortcutsHint())
 	case scrThemeInput:
 		title = screenTitle("Create a theme — image folder", w)
 		body = m.themeInput.View()
@@ -238,7 +242,12 @@ func (m model) View() string {
 		bar = barLine(m.themeRestorePicker.ShortcutsHint())
 	case scrBackup:
 		title = screenTitle("Backup / Restore", w)
-		body = m.backupBody()
+		// No greyed explainer above the rows. It said what the `i` popup now
+		// says, one screen earlier than the key that explains the rest of the
+		// app: this one page had instructions while every other page had none,
+		// which made it read as a notice rather than as a menu. Press `i` here,
+		// or from the home screen for every page at once.
+		body = m.backupPicker.View()
 		bar = barLine(m.backupPicker.ShortcutsHint())
 	case scrPreinstalls:
 		title = screenTitle("Choose which Omarchy preinstalls to remove", w)
@@ -333,25 +342,6 @@ func (m model) updateBody() string {
 		"",
 		m.updatePicker.View(),
 	)
-}
-
-// backupBody explains how backups work, above the options.
-func (m model) backupBody() string {
-	// Kept deliberately short. The body is vertically centred in the gap
-	// between the title and the shortcut bar, so a tall paragraph overflows
-	// that gap on a normal terminal: the centring collapses and the help
-	// text glues straight to the title, which is the one thing the layout
-	// rule forbids — and it made this screen read as a wall of text with
-	// no title rather than as a titled page like every other screen.
-	explain := []string{
-		"Dated archives of your configuration, written to",
-		"~/omarchy-backups as omarchy-backup-<date>.tar.gz — plain, or",
-		"ENCRYPTED (AES-256 .gpg, asks for a passphrase).",
-		"Restoring overwrites the files an archive contains.",
-	}
-	head := lipgloss.NewStyle().Width(m.contentSizeW()).Align(lipgloss.Center).
-		Render(tuikit.StyleHelp.Render(strings.Join(explain, "\n")))
-	return lipgloss.JoinVertical(lipgloss.Center, head, "", m.backupPicker.View())
 }
 
 // screenTitle renders a centered accent-colored bold title for the current
