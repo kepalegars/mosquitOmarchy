@@ -210,6 +210,32 @@ DEFAULT_NODE_RE = re.compile(r"^\s*│?\s*\*\s*(\d+)\.\s+(\S+)")
 ANY_NODE_RE = re.compile(r"^\s*│?\s*(\d+)\.\s+(\S+)")
 
 
+
+def friendly_node_name(name: str) -> str:
+    """Turn a PipeWire node name into something a person recognises.
+
+    `alsa_input.pci-0000_64_00.6.HiFi__Mic1__source` is what the backend has to
+    match against, and no human would call it that. The PCI part and the trailing
+    `_source` are dropped and the ALSA `HiFi__` prefix becomes a space. The
+    UNCHANGED name is still what gets stored and sent -- this only affects the
+    label, because matching on a prettified string would break the moment a
+    device renames itself.
+    """
+    label = str(name or "")
+    if label.endswith("_source"):
+        label = label[: -len("_source")]
+    label = re.sub(r"^alsa_(input|output)\.", "", label)
+    # Only a LEADING `pci-<addr>.` is an address. Matching it anywhere would eat
+    # the device's own "pci-0000_64_00.4-usb-..." style token mid-name and leave
+    # the label saying "6. Mic1_".
+    label = re.sub(r"^(alsa|v4l2)_(input|output)\.", "", label)
+    label = re.sub(r"^pci-[0-9a-f]{4}_[0-9a-f]{2}_[0-9a-f]{2}\.\d+[.-]", "", label)
+    label = label.replace("__", " ").replace("HiFi", "")
+    label = re.sub(r"\.(analog|capture|output)-surround-\d+", "", label)
+    label = re.sub(r"-usb-0_\d+_\d+\.\d+", "", label)
+    return " ".join(label.split()).strip("_ -") or str(name or "")
+
+
 def default_audio_nodes() -> tuple[str, str]:
     """Return (monitor_target, input_target) node names for the system defaults.
 
@@ -510,7 +536,13 @@ class Tuner:
         x = np.asarray(frames, dtype=np.float64)
         n = x.size
         min_lag = max(2, int(rate / 1000.0))
-        max_lag = int(rate / 55.0)
+        # 24 Hz, not 55. The old floor was a guitar's low E (82 Hz) with a wide
+        # margin, which left a 5- or 6-string bass — B0 at 24.5 Hz, and 24.5 is
+        # where a dropped bass actually sits — entirely out of range: the search
+        # window never contained the period, so no dip could be found and the
+        # tuner simply reported nothing. 24 Hz is the same floor Pitchfork uses,
+        # chosen to leave a whole tone of tuning room under that B0.
+        max_lag = int(rate / 24.0)
         if max_lag <= min_lag or n <= max_lag + 1:
             return 0.0
         size = 1 << (2 * n - 1).bit_length()
@@ -532,6 +564,16 @@ class Tuner:
         while idx + 1 < window.size and window[idx + 1] < window[idx]:
             idx += 1
         tau = float(min_lag + idx)
+        # Reject a frame that is not ONE steady pitch, using the aperiodicity at
+        # the chosen dip. The dip itself is already below 0.2, so this can only
+        # fire on a window that straddles two different notes -- what one hop of
+        # audio sees just after a new string is plucked, and what used to make the
+        # needle jump to the in-between pitch and then settle. Thresholds are
+        # Pitchfork's, measured on the same signal: a tone buried in wideband
+        # noise still scores under 0.08, a two-note window lands between 0.23 and
+        # 0.33.
+        if float(dprime[int(tau)]) > 0.20:
+            return 0.0
         # Parabolic interpolation around the dip for sub-cent accuracy.
         if min_lag <= tau - 1 and tau + 1 <= max_lag:
             y0 = float(dprime[int(tau) - 2])
@@ -1793,6 +1835,10 @@ class AudioAnalyzerBackend:
         # metronome click). Applied onto the synth / published in snapshot.
         self.show_chord_box = bool(self.config.get("showChordBox", True))
         self.aec_enabled = bool(self.config.get("aecEnabled", False))
+        # An empty value means "follow the system default", which is also what a
+        # config without the key means -- so a machine whose default source moves
+        # keeps working, and an unplugged interface can be escaped from.
+        self.tuner_input = str(self.config.get("tunerInput", ""))
         self._apply_click_config()
         self.input_source = "pc"
         self.metronome_enabled = False
@@ -1875,6 +1921,11 @@ class AudioAnalyzerBackend:
             return False
         return True
 
+    # A source the user picked explicitly, overriding the default source. Empty
+    # means "follow the system default", which is what makes the plugin behave
+    # the same on a machine where PipeWire moves the default around.
+    tuner_input: str = ""
+
     def _apply_target(self) -> None:
         if self.input_source == "pc":
             # Pre-volume monitor of the DEFAULT sink: follows whatever output
@@ -1884,9 +1935,14 @@ class AudioAnalyzerBackend:
             self.recorder.kind = "monitor"
             self.capture_target = self.monitor_target or "@DEFAULT_SOURCE@"
         else:
-            self.recorder.target = self.input_target or ""
+            # An explicitly chosen input wins over the system default. This is
+            # the same selection model Pitchfork uses: the default entry is
+            # always present and always first, so there is a way back from a
+            # device that has since been unplugged.
+            target = self.tuner_input or self.input_target or ""
+            self.recorder.target = target
             self.recorder.kind = "source"
-            self.capture_target = self.input_target or "@DEFAULT_SOURCE@"
+            self.capture_target = target or "@DEFAULT_SOURCE@"
 
     def _refresh_audio_nodes(self) -> None:
         """Re-resolve the default sink/source and follow output-device changes.
@@ -2111,6 +2167,52 @@ class AudioAnalyzerBackend:
             self.hold = active
             self._sync_capture()
             self.dirty = True
+            return {}
+        if op == "listInputs":
+            # Capture sources, NOT the sinks. A `.monitor` source records what a
+            # sink is playing rather than what an instrument sends, so listing
+            # everything would offer "System default (whatever the speakers are
+            # playing)" as a microphone.
+            entries = []
+            for node in pw_dump_nodes():
+                # pw_dump_nodes yields the raw node PROPS, so the keys are
+                # node.name / media.class -- not name / type. Filtering on the
+                # wrong keys silently returns nothing, which looks exactly like
+                # "no inputs available".
+                name = str(node.get("node.name") or "")
+                media = str(node.get("media.class") or "")
+                if not name or name == "quickshell":
+                    continue
+                if "Stream" in media or "Sink" in media:
+                    continue
+                if "Source" not in media:
+                    continue
+                if name.endswith(".monitor"):
+                    continue
+                entries.append({"name": name})
+            _monitor, _default_input = default_audio_nodes()
+            options = [{"name": "", "label": "System default" if not _default_input
+                        else "System default (%s)" % friendly_node_name(_default_input)}]
+            for e in entries:
+                options.append({"name": e["name"], "label": friendly_node_name(e["name"])})
+            return {"inputs": options, "current": self.tuner_input}
+        if op == "setTunerInput":
+            chosen = str(request.get("name", ""))
+            if chosen != self.tuner_input:
+                self.tuner_input = chosen
+                # Persisted, so the choice survives a restart. The STORED value
+                # is the raw node name; the label shown in the panel is only ever
+                # a prettified view of it.
+                self.config["tunerInput"] = chosen
+                save_config(self.config)
+                self._restart_tuner()
+                was_running = self.recorder.running
+                if was_running:
+                    self.recorder.stop()
+                self._apply_target()
+                if was_running:
+                    self.recorder.start()
+                self.dirty = True
             return {}
         if op == "setSource":
             source = str(request.get("source", "pc"))

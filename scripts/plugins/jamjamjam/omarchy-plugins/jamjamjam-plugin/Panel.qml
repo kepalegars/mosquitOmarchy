@@ -78,6 +78,11 @@ Panel {
   // follow whatever the main page was rendering at open time.
   function toggleSettings() {
     root.settingsVisible = !root.settingsVisible
+    // Ask for the capture sources as the settings OPEN, not at start-up: the
+    // list is only useful here, and reading PipeWire while the panel is doing
+    // anything else is what the audio panel warns about.
+    if (root.settingsVisible)
+      root.refreshTunerInputs();
   }
 
   // One white flash per beat while the metronome runs, at the analysed BPM.
@@ -163,6 +168,48 @@ Panel {
   // Every settings row's label uses this fixed width so all the buttons /
   // interactive zones start on the SAME vertical line.
   readonly property int settingsLabelWidth: Style.space(120)
+  // Tuner input picker. The list comes from the backend rather than from
+  // Pipewire.nodes directly: this plugin creates a capture stream every time the
+  // panel opens, and the audio panel documents that reading node.properties
+  // while capture streams appear can destabilise Quickshell's Pipewire service.
+  property var tunerInputs: []
+  property string tunerInput: ""
+  property bool tunerInputsLoading: false
+  function refreshTunerInputs() {
+    if (!root.service || root.tunerInputsLoading)
+      return;
+    root.tunerInputsLoading = true;
+    root.service.ask("listInputs", {}, function(ok, data) {
+      root.tunerInputsLoading = false;
+      if (!ok)
+        return;
+      var rows = (data && data.inputs) || [];
+      root.tunerInputs = rows;
+      root.tunerInput = String((data && data.current) || "");
+    });
+  }
+  function cycleTunerInput(delta) {
+    if (!root.service || root.tunerInputs.length === 0)
+      return;
+    var index = 0;
+    for (var i = 0; i < root.tunerInputs.length; i++) {
+      if (String(root.tunerInputs[i].name) === root.tunerInput) {
+        index = i;
+        break;
+      }
+    }
+    index = (index + delta + root.tunerInputs.length) % root.tunerInputs.length;
+    var chosen = String(root.tunerInputs[index].name || "");
+    root.tunerInput = chosen;
+    root.service.setTunerInput(chosen);
+  }
+  readonly property string tunerInputLabel: {
+    for (var i = 0; i < root.tunerInputs.length; i++) {
+      if (String(root.tunerInputs[i].name) === root.tunerInput)
+        return String(root.tunerInputs[i].label || root.tunerInputs[i].name);
+    }
+    return root.tunerInput.length > 0 ? root.tunerInput : "System default";
+  }
   readonly property int cardMetaHeight: Style.space(13)
 
   // ── Manual entry (right-click on the KEY / BPM cards) ─────────────
@@ -1432,6 +1479,82 @@ Panel {
                   horizontalPadding: Style.spacing.xs
                   verticalPadding: Style.spacing.xs
                   onClicked: if (root.service) root.service.setConfigBool("showChordBox", false)
+                }
+              }
+
+              // Tuner input. Which device the tuner listens to. "System default"
+              // is first and always present, so an unplugged interface can
+              // always be escaped from rather than leaving the tuner mute.
+              Row {
+                width: parent.width
+                spacing: Style.spacing.sm
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: root.settingsLabelWidth
+                  text: "TUNER INPUT"
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+                Button {
+                  id: tunerInputPrev
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "‹"
+                  bordered: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.xs
+                  verticalPadding: Style.spacing.xs
+                  enabled: root.tunerInputs.length > 1
+                  onClicked: root.cycleTunerInput(-1)
+                }
+                Rectangle {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Math.max(Style.space(120), tunerInputLabelMetrics.width + Style.space(16))
+                  height: Style.space(26)
+                  radius: Style.cornerRadius
+                  color: Util.alpha(Color.foreground, 0.1)
+                  border.color: Util.alpha(Color.foreground, 0.18)
+                  border.width: 1
+                  Text {
+                    id: tunerInputLabelMetrics
+                    anchors.centerIn: parent
+                    width: Math.min(implicitWidth, Style.space(420))
+                    elide: Text.ElideRight
+                    horizontalAlignment: Text.AlignHCenter
+                    text: root.tunerInputLabel
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+                Button {
+                  id: tunerInputNext
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "›"
+                  bordered: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.xs
+                  verticalPadding: Style.spacing.xs
+                  enabled: root.tunerInputs.length > 1
+                  onClicked: root.cycleTunerInput(1)
+                }
+                Button {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: " REFRESH "
+                  bordered: true
+                  foreground: root.accent
+                  accent: root.accent
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.spacing.xs
+                  verticalPadding: Style.spacing.xs
+                  tooltipText: "Re-read the capture sources from PipeWire"
+                  onClicked: root.refreshTunerInputs()
                 }
               }
 

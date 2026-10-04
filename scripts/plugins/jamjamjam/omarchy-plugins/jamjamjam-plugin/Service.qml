@@ -93,6 +93,12 @@ Item {
   function setVisible(value) { send("setVisible", { visible: !!value }) }
   function setHold(value) { send("setHold", { active: !!value }) }
   function setSource(value) { send("setSource", { source: value === "mic" ? "mic" : "pc" }) }
+  // Tuner input, by PipeWire node name. Empty means the system default, and it
+  // is the default: a device that is unplugged must not leave the tuner mute.
+  function setTunerInput(nodeName) { send("setTunerInput", { name: String(nodeName || "") }) }
+  // The generic `send` is what the Panel already uses for the port list, so the
+  // tuner input goes through the same path rather than growing a second one.
+  function ask(op, fields, callback) { return send(op, fields || {}, callback) }
   function setMetronome(value) { send("setMetronome", { enabled: !!value }) }
   function setManualKey(key) { send("setManualKey", { key: String(key || "") }) }
   function setManualBpm(bpm) { send("setManualBpm", { bpm: Number(bpm) || 0 }) }
