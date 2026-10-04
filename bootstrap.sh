@@ -132,7 +132,12 @@ fi
 
 if ((ZIPS)); then
   msg "Downloading assets (assets.links catalog)"
-  bash ./scripts/apps/download-assets.sh $([[ $YES == 1 ]] && echo -y)
+  # download-assets.sh refuses the catalog while it still carries the
+  # TON_HEBERGEUR placeholder and says exactly what to set. Its non-zero exit is
+  # the answer here, not a crash: the bootstrap carries on to deploy the manager
+  # either way, since only the big installers are blocked.
+  bash ./scripts/apps/download-assets.sh $([[ $YES == 1 ]] && echo -y) \
+    || warn "Assets were not downloaded — see the message above."
 else
   warn "Assets (zips/exe/deb) NOT downloaded — run ./scripts/apps/download-assets.sh later if needed."
 fi

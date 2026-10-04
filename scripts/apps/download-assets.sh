@@ -43,6 +43,44 @@ warn(){ printf " ${Y}!${N} %s\n" "$*"; }
 err(){ printf " ${R}✗${N} %s\n" "$*" >&2; }
 hr(){ printf '%.0s─' {1..72}; echo; }
 
+# Global : LINKS_ARR (array of "dest|url|sha"), PLACEHOLDER_URLS (dest entries
+# whose URL still carries the TON_HEBERGEUR placeholder).
+PLACEHOLDER_URLS=()
+
+# Where the big installers actually live. Override with OMARCHY_ASSETS_BASE_URL
+# (or a base-url file) instead of editing assets.links, so the catalog keeps its
+# checksums and stays identical across machines.
+ASSETS_BASE_URL="${OMARCHY_ASSETS_BASE_URL:-}"
+if [[ -z $ASSETS_BASE_URL && -r "$HOME/.config/mosquitomarchy/assets-base-url" ]]; then
+  ASSETS_BASE_URL="$(tr -d '[:space:]' < "$HOME/.config/mosquitomarchy/assets-base-url")"
+fi
+
+# 1 when any catalog entry is still a placeholder and no base URL was given.
+is_placeholder(){
+  ((${#PLACEHOLDER_URLS[@]})) && [[ -z $ASSETS_BASE_URL ]]
+}
+
+# Report the placeholders once, by name, instead of letting curl retry DNS on
+# each of them.
+explain_placeholders(){
+  err "assets.links still points at the placeholder host TON_HEBERGEUR for:"
+  local d
+  for d in "${PLACEHOLDER_URLS[@]}"; do err "  $d"; done
+  err ""
+  err "These are your own installers, so the repository cannot know where they"
+  err "are. Do ONE of these:"
+  err ""
+  err "  a) set the base URL once, no file edited:"
+  err "       export OMARCHY_ASSETS_BASE_URL=https://my-host/path"
+  err "     or, to make it permanent:"
+  err "       mkdir -p ~/.config/mosquitomarchy"
+  err "       printf '%s' 'https://my-host/path' > ~/.config/mosquitomarchy/assets-base-url"
+  err ""
+  err "  b) edit $LINKS and replace TON_HEBERGEUR with your host."
+  err ""
+  err "The other modules install without this — it only affects these large files."
+}
+
 parse_links(){
   # Global : LINKS_ARR (array of "dest|url|sha")
   LINKS_ARR=()
@@ -58,6 +96,11 @@ parse_links(){
     url="${url#"${url%%[![:space:]]*}"}";    url="${url%"${url##*[![:space:]]}"}"
     sha="${sha#"${sha%%[![:space:]]*}"}";    sha="${sha%"${sha##*[![:space:]]}"}"
     [[ -z $dest || -z $url ]] && continue
+    # The catalog ships with TON_HEBERGEUR as the host: the big installers are
+    # the user's own files, not the project's, so the URLs cannot be filled in
+    # here. Recorded so `is_placeholder` can stop the run before curl spends four
+    # DNS timeouts per file on a name that cannot resolve.
+    [[ $url == TON_HEBERGEUR/* ]] && PLACEHOLDER_URLS+=("$dest")
     LINKS_ARR+=("$dest|$url|$sha")
   done < "$LINKS"
   ((${#LINKS_ARR[@]})) || { err "No valid entry in $LINKS."; return 1; }
@@ -78,6 +121,11 @@ file_state(){
 
 download_one(){
   local dest="$1" url="$2" sha="$3"
+  # A placeholder URL becomes <base>/<filename> once a base URL is known. The
+  # basename is used, so the catalog's directory layout stays irrelevant.
+  if [[ $url == TON_HEBERGEUR/* && -n $ASSETS_BASE_URL ]]; then
+    url="${ASSETS_BASE_URL%/}/${url##*/}"
+  fi
   local fn="$ROOT/$dest"
   local part="$fn.part"
   mkdir -p "$(dirname "$fn")"
@@ -126,6 +174,20 @@ do_status(){
 
 main(){
   parse_links || exit 1
+
+  # Stop here, before anything is downloaded. Without this the run walked the
+  # whole catalog and let curl retry DNS three times per file on a hostname that
+  # cannot exist — which is how a fresh `bootstrap.sh --zips` filled the screen
+  # with "Could not resolve host: TON_HEBERGEUR" instead of one sentence saying
+  # what to do about it.
+  if is_placeholder; then
+    hr
+    msg "Asset catalog"
+    explain_placeholders
+    hr
+    ((STATUS_ONLY)) && exit 0
+    return 1
+  fi
 
   if ((STATUS_ONLY)); then do_status; exit 0; fi
 
