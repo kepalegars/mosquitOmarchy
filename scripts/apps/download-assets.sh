@@ -19,7 +19,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(dirname "$SCRIPT_DIR")"            # repo root (apps/ → repo root)
+# scripts/apps/ → scripts/ → repo root. TWO dirnames, not one: this file lives
+# in scripts/apps, so a single dirname lands on scripts/ and then looks for
+# scripts/assets.links, which does not exist. Every path below is documented as
+# "relative to the repo root" (assets.links says so itself, and its entries are
+# apps/ableton/…, apps/bitwig/…), so ROOT has to BE the repo root.
+ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 LINKS="$ROOT/assets.links"
 
 YES=0 STATUS_ONLY=0 CHECK_ONLY=0

@@ -676,89 +676,6 @@ fix_category(){
   esac
 }
 
-fixes_pick(){ # fill FIXES_SELECTED with the chosen ids (global)
-  FIXES_SELECTED=()
-  local -a labels=() values=() cats=() e id c x
-  local seen
-  for e in "${FIXES[@]:-}"; do
-    id="${e%%:*}"; c="$(fix_category "$id")"; seen=0
-    for x in "${cats[@]:-}"; do [[ $x == "$c" ]] && seen=1; done
-    ((seen)) || cats+=("$c")
-  done
-  # Fixes under their category, indented with a file-tree angle so the
-  # grouping is visually obvious (pick a whole ▾ category or one fix).
-  local -a catfx=() j
-  for c in "${cats[@]}"; do
-    labels+=("▾ $c"); values+=("CAT:$c")
-    catfx=()
-    for e in "${FIXES[@]:-}"; do
-      id="${e%%:*}"
-      [[ "$(fix_category "$id")" == "$c" ]] && catfx+=("$e")
-    done
-    for j in "${!catfx[@]}"; do
-      e="${catfx[$j]}"; id="${e%%:*}"
-      if (( j == ${#catfx[@]} - 1 )); then
-        labels+=("    └─ $id  —  ${e#*:}")
-      else
-        labels+=("    ├─ $id  —  ${e#*:}")
-      fi
-      values+=("FIX:$id")
-    done
-  done
-  # Print every description FULL and wrapped, so a narrow default window
-  # never hides the end of a fix's explanation (gum rows are single-line
-  # and get truncated to the window width).
-  local cols="${COLUMNS:-}"
-  [[ -z $cols ]] && cols="$(tput cols 2>/dev/null || echo 100)"
-  (( cols < 40 )) && cols=100
-  echo
-  msg "Fixes (full descriptions):"
-  for e in "${FIXES[@]:-}"; do
-    printf '  %s — %s\n' "${e%%:*}" "${e#*:}" | fold -s -w "$cols" | sed 's/^/    /'
-  done
-  echo
-  local -a chosen=()
-  local p i
-  if command -v gum >/dev/null 2>&1; then
-    local -a picks=()
-    mapfile -t picks < <(gum choose --no-limit "${labels[@]}" \
-      --header "Fixes to apply (Tab/x = toggle a group or a fix, Enter = confirm):" \
-      --cursor-prefix "[ ] " --selected-prefix "[x] " --unselected-prefix "[ ] ")
-    for p in "${picks[@]}"; do
-      for ((i=0; i<${#labels[@]}; i++)); do
-        [[ "${labels[$i]}" == "$p" ]] || continue
-        chosen+=("${values[$i]}"); break
-      done
-    done
-  else
-    echo "Fixes available (pick a whole group or individual fixes):"
-    for ((i=0; i<${#labels[@]}; i++)); do printf '  %2d) [ ] %s\n' "$((i+1))" "${labels[$i]}"; done
-    local n idx
-    read -rp "  Numbers to apply (empty = none) : " n
-    for idx in $n; do
-      [[ "$idx" =~ ^[0-9]+$ ]] && ((idx >= 1 && idx <= ${#labels[@]})) || continue
-      chosen+=("${values[$((idx-1))]}")
-    done
-  fi
-  # Expand picked folder rows to every fix in that category, then dedup.
-  local v c2 e2 id2 k have
-  for v in "${chosen[@]:-}"; do
-    if [[ $v == CAT:* ]]; then
-      c2="${v#CAT:}"
-      for e2 in "${FIXES[@]:-}"; do
-        id2="${e2%%:*}"
-        [[ "$(fix_category "$id2")" == "$c2" ]] || continue
-        have=0; for k in "${FIXES_SELECTED[@]:-}"; do [[ $k == "$id2" ]] && have=1; done
-        ((have)) || FIXES_SELECTED+=("$id2")
-      done
-    else
-      id2="${v#FIX:}"
-      have=0; for k in "${FIXES_SELECTED[@]:-}"; do [[ $k == "$id2" ]] && have=1; done
-      ((have)) || FIXES_SELECTED+=("$id2")
-    fi
-  done
-}
-
 run_fix(){ # single fix by id
   local id="$1"
   case $id in
@@ -890,13 +807,6 @@ status_report(){
 BACKUP_DIR="${OMARCHY_BACKUP_DIR:-$HOME/omarchy-backups}"
 BACKUP_GLOB="$BACKUP_DIR/omarchy-backup-*.tar.gz*"
 BACKUP_DECRYPTED_RE='.*\.tar\.gz(\.gpg)?$'
-has_backups(){ compgen -G "$BACKUP_GLOB" >/dev/null 2>&1; }
-
-existing_config(){
-  [[ -d "$HOME/.config/REAPER" || -d "$HOME/.config/windows" \
-  || -f "$HOME/.local/bin/winvm" || -f "$HOME/.local/bin/reaper-launch" ]]
-}
-
 # Most recent available backup (path based on $BACKUP_DIR, so testable).
 latest_backup_file(){
   ls -t "$BACKUP_DIR"/omarchy-backup-*.tar.gz* 2>/dev/null | head -1
@@ -3479,51 +3389,6 @@ un_mosquitomarchy(){
 }
 
 # ───────────────────────── Interactive selection ─────────────────────────
-select_modules(){
-  # One by one: install what is missing/partial, offer to update what is there,
-  # always respect the modules you voluntarily uninstalled (unless re-offered).
-  local row id state label default
-  SELECTED=()
-  load_excluded
-  apply_includes
-
-  local -a updated=()
-  msg "Modules — completed ones are offered for UPDATE below, uninstalled ones are excluded:"
-  for row in "${MODULES[@]}"; do
-    id="${row%%:*}"; label="${row#*:}"
-    state="$(module_state "$id")"
-    if is_excluded "$id"; then
-      [[ $state == ok ]] && continue
-      warn "Module '$id' was uninstalled by you — skipped."
-      if ask "Re-install it anyway?" n; then
-        SELECTED+=("$id")
-        unexclude "$id"
-        ok "Module re-selected: $id"
-      fi
-      continue
-    fi
-    if [[ $state == ok ]]; then
-      updated+=("$id")
-      continue
-    fi
-    [[ $state == na ]] && continue
-    default=y
-    ask "Install module '$id' ($label)?" "$default" && { SELECTED+=("$id"); ok "Module selected: $id"; }
-  done
-  if ((${#updated[@]})); then
-    echo
-    if ((UPDATE_OK)); then
-      SELECTED+=("${updated[@]}")
-      ok "(auto) update of the present modules: ${updated[*]}"
-    elif ask "Update the already-installed modules (re-run, idempotent)?" n; then
-      SELECTED+=("${updated[@]}")
-      ok "Update selected: ${updated[*]}"
-    else
-      ok "Present modules kept as-is."
-    fi
-  fi
-}
-
 # ───────────────────────── Final report ─────────────────────────
 final_report(){
   # When driven by the mosquitOmarchy TUI, the per-module output + the error
@@ -3620,32 +3485,20 @@ CATEGORIES=(
   "apps|Apps|reaper audio ableton guitarpro davinci-resolve extracto handbrake superfile zen keepassxc hyprmod"
   "tuis|TUIs|"
   "webapps|Webapps|"
+  # "Plugins" is the project's own layer: the manager itself (the deployer),
+  # its update module, and the desktop-hardware modules. It was dropped by
+  # mistake in b097c2f (that commit removed the keyboard-backlight MODULE and
+  # this whole row in one go), which left six modules with no category at all —
+  # including the deployer, i.e. installed and updatable but reachable from
+  # neither Setup nor Uninstall. `battery` is deliberately absent: it is a
+  # mosquito-* module now (mega-caffeine), so it lives in the mosquito row.
+  "plugins|Plugins|mosquitomarchy mosquitomarchy-update brightness touchpad mx-master"
   "fixes|Fixes|"
   "mosquito|mosquito|"
   "lame|lame language models (ai..)|ollama remove-ai"
   "themes|Themes|achraff"
   "vms|VMs|windows-vm macos-vm omarchy-vm"
 )
-
-launcher_pick(){ # $1 = header, rest = one label per line → echoes the picked label
-  local header="$1"; shift
-  local -a labels=("$@")
-  if [[ -z ${LAUNCHER_NUMERIC:-} ]] && command -v gum >/dev/null 2>&1; then
-    gum choose "${labels[@]}" --header "$header" --height "${#labels[@]}" || true
-  else
-    # Called from $(...): the menu MUST go to stderr (else it is swallowed into
-    # the captured result); only the selected label reaches stdout.
-    echo >&2
-    echo "$header" >&2
-    local i=1 l
-    for l in "${labels[@]}"; do printf '  %2d) %s\n' "$i" "$l" >&2; i=$((i+1)); done
-    local n
-    read -rp "Choice [1-${#labels[@]}, Enter = quit]: " n >&2 || n=""
-    if [[ "$n" =~ ^[0-9]+$ ]] && ((n >= 1 && n <= ${#labels[@]})); then
-      echo "${labels[$((n-1))]}"
-    fi
-  fi
-}
 
 # Multi-select variant of launcher_pick: $1 = header, $2 = pre-selected value
 # ("*" = everything). Echoes one selected label per line (nothing = cancelled /
@@ -3673,32 +3526,6 @@ launcher_multiselect(){
 }
 
 # Main menu (6 actions). Returns only when the user quits (=> exit 0).
-launcher_menu(){
-  local choice
-  while :; do
-    hr
-    msg "mosquitOmarchy — what do you want to do?"
-    choice="$(launcher_pick "Main menu" \
-      "status          — state of every module" \
-      "update          — check for and apply module updates" \
-      "setup           — install/configure by category" \
-      "remove          — uninstall modules" \
-      "backup/restore  — save or restore a dated archive" \
-      "quit")"
-    case $choice in
-      status*)  status_report; echo; read -rp "Press Enter to return to the menu" _ || true ;;
-      update*)  launcher_update ;;
-      setup*)   launcher_setup ;;
-      remove*)  hr; uninstall_chooser || true ;;
-      backup*)  launcher_backup ;;
-      quit)     break ;;
-      *)        continue ;;   # Esc / cancel → redisplay the main menu
-    esac
-  done
-  hr; ok "Bye."
-  exit 0
-}
-
 # Update: check for a newer repo AND for local changes, then offer — via a
 # multi-select — to re-apply ONLY the installed modules whose scripts changed.
 # Nothing new is installed and nothing is destroyed (idempotent re-run).
@@ -3762,7 +3589,7 @@ launcher_update(){
 
 # ─────────────────── Generic per-category chooser (launcher) ───────────────────
 # EVERY setup category first presents a multi-select of its candidate items
-# (like fixes_pick) — nothing pre-checked, Tab/x toggles, Enter confirms,
+# Nothing pre-checked, Tab/x toggles, Enter confirms,
 # nothing selected = nothing run. launcher_multiselect supplies the gum /
 # numeric fallback. Only the ticked items are then installed.
 
@@ -3948,33 +3775,6 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
   esac
 }
 
-category_pick(){ # catid -> fills CATEGORY_SELECTED with the ticked keys
-  CATEGORY_SELECTED=()
-  local cat="$1" p i
-  category_candidates "$cat"
-  ((${#CAND_KEYS[@]})) || { warn "No installable item in category '$cat'."; return 0; }
-  # Full descriptions first, wrapped to the terminal width: gum rows are
-  # single-line and get truncated (same readability guard as fixes_pick).
-  local cols="${COLUMNS:-}"
-  [[ -z $cols ]] && cols="$(tput cols 2>/dev/null || echo 100)"
-  (( cols < 40 )) && cols=100
-  echo; msg "Category '$cat' — what can be installed:"
-  for ((i=0; i<${#CAND_KEYS[@]}; i++)); do
-    printf '  %s\n' "${CAND_LABELS[$i]}" | fold -s -w "$cols" | sed 's/^/    /'
-  done
-  echo
-  local -a picked=()
-  mapfile -t picked < <(launcher_multiselect \
-    "Category '$cat' (Tab/x = toggle, Enter = confirm, none = nothing):" "" \
-    "${CAND_LABELS[@]}")
-  for p in "${picked[@]}"; do
-    [[ -n $p ]] || continue
-    for ((i=0; i<${#CAND_LABELS[@]}; i++)); do
-      [[ "${CAND_LABELS[$i]}" == "$p" ]] && { CATEGORY_SELECTED+=("${CAND_KEYS[$i]}"); break; }
-    done
-  done
-}
-
 category_run(){ # catid -> run only the CATEGORY_SELECTED items
   local cat="$1" k
   case $cat in
@@ -4046,114 +3846,47 @@ category_run(){ # catid -> run only the CATEGORY_SELECTED items
   esac
 }
 
-# Setup by category: the launcher_pick over CATEGORIES, then run that category.
-launcher_setup(){
-  local -a labels=() c label
-  for c in "${CATEGORIES[@]}"; do label="${c#*|}"; label="${label%%|*}"; labels+=("$label"); done
-  labels+=("quit")
-  local picked entry id
-  hr; msg "Setup by category"
-  picked="$(launcher_pick "Which setup category?" "${labels[@]}")"
-  [[ -n "$picked" ]] || return 0
-  [[ "$picked" == quit ]] && return 0
-  for c in "${CATEGORIES[@]}"; do
-    label="${c#*|}"; label="${label%%|*}"
-    if [[ "$label" == "$picked" ]]; then entry="$c"; break; fi
-  done
-  [[ -n $entry ]] || return 0
-  id="${entry%%|*}"
-  launcher_run_category "$id"
-}
-
-# Executes the chosen category. Every install category first shows its
-# multi-select chooser (category_pick) and runs only the ticked items
-# (category_run) — quick fixes keep their grouped fixes_pick; "menu" is a
-# yes/no registration, not an install.
-launcher_run_category(){
-  local id="$1"
-  case $id in
-    fixes)
-      # Propose the quick fixes (multi-select, grouped) — NEVER apply them
-      # without an explicit choice.
-      fixes_pick
-      if ((${#FIXES_SELECTED[@]})); then
-        RESULTS=()
-        run_fixes || true
-        final_report
-      else
-        ok "No quick fix selected."
-      fi
-      ;;
-    # NOTE: there is no "menu" category any more. It used to be a yes/no
-    # "Menu entry" row, but install_menu_entry already registers (and refreshes)
-    # the entry on every Setup run, so the row duplicated it and forced a
-    # singular/plural choice with "Menu entries", which is the screen that
-    # actually lists and manages the four entries.
-    *)
-      category_pick "$id"
-      if ((${#CATEGORY_SELECTED[@]})); then
-        category_run "$id"
-      else
-        ok "Nothing selected — nothing installed."
-      fi
-      ;;
-  esac
-}
-
-# Backup / restore: states its function FIRST (like the update zone), then asks
-# what to do. Never touches the repo; restore puts files back where they were.
-launcher_backup(){
-  hr; msg "Backup / Restore — what this does"
-  echo "  BACKUP  saves a DATED archive in $BACKUP_DIR :"
-  echo "    - config-backup.tar.gz : config + Omarchy bar/menus + launchers +"
-  echo "      yabridgectl + REAPER + the active Zen profile + omagrab +"
-  echo "      KeePassXC passwords & settings (NEVER written to the repo)."
-  echo "    - pkglist.txt / aurlist.txt : the exact packages to reinstall."
-  echo "    - apps.selected : your apps / TUIs / webapps selection."
-  echo "    - optionally the plugin folders the audio plugin manager uses."
-  echo "    - optional in-place GPG AES-256 encryption → .gpg suffix."
-  echo "  RESTORE lists the backups (chronological) and puts the files back"
-  echo "    EXACTLY where they were (decrypts the .gpg archives first). It"
-  echo "    restores FILES, not packages: use pkglist.txt / aurlist.txt"
-  echo "    (pacman) afterwards to reinstall the same packages."
-  echo
-  local choice
-  # Loop so every action returns to THIS menu (the user can chain a backup
-  # then a list, etc.); "Back to the main menu" is the only exit.
-  while :; do
-    echo
-    choice="$(launcher_pick "Backup / Restore — what do you want to do?" \
-      "Backup now (dated archive in $BACKUP_DIR)" \
-      "Restore a backup (chronological choice)" \
-      "List the existing backups" \
-      "Back to the main menu")"
-    case $choice in
-      Backup*)  do_backup || true ;;
-      Restore*) restore_flow || true ;;
-      List*)    list_backups ;;
-      *)        return 0 ;;
-    esac
-    hr
-  done
-}
-
 # ───────────────────────── Main ─────────────────────────
 main(){
-  # Launcher menu: shown when you sit in a terminal without any flag (-y counts
-  # as "do everything with defaults", a MODE/--status/--uninstall has its own
-  # path). The step-by-step wizard remains reachable from the menu's setup /
-  # update entries (and via the -y / --update flags).
-  # Interactive run with no flags → hand over to the NEW Go/Bubble Tea TUI
-  # (it replaced the old in-script gum launcher_picker; this script remains
-  # the engine behind the TUI's Setup/Uninstall/Backup flows and the flag
-  # driven paths). This makes `./mosquitomarchy-setup.sh` behave exactly like
-  # the mosquitomarchy menu entry / shortcut.
-  if [[ -t 0 && -t 1 && -z $MODE && $STATUS_ONLY == 0 && $UNINSTALL_DELEGATE == 0 && $YES == 0 ]]; then
-    TUI="$HOME/.local/bin/mosquitomarchy-tui"
-    if [[ -x $TUI ]]; then
-      exec "$TUI"
+  # An interactive run with no flag belongs to the TUI (see below). What is
+  # left here is the ENGINE: the -y unattended install, the MODE delegations
+  # (backup/list/restore/update-repo), --status, and the per-module uninstall
+  # the TUI drives through UNINSTALL_DELEGATE.
+  #
+  # Interactive run with no flags → hand over to the Go/Bubble Tea TUI, which
+  # IS the interface: this script remains the engine behind the TUI's
+  # Setup/Uninstall/Backup flows and the flag-driven paths.
+  #
+  # There is no fallback wizard. The old in-script gum launcher was the
+  # pre-TUI interface and is gone; silently dropping into a second, outdated
+  # interface is worse than refusing to start.
+  #
+  # "No TUI binary yet" is a NORMAL first-run state, not a failure: the binary
+  # is built from the Go source shipped in this repo, so it cannot exist before
+  # something has built it. ensure_mosquitomarchy_tui() does exactly that, and
+  # also links mosquitomarchy-actions next to the binary — which the TUI needs,
+  # because it resolves its backend from its own directory (actions.go
+  # actionsBin). Building the binary alone would produce a TUI that starts and
+  # then cannot query anything.
+  if [[ -z $MODE && $STATUS_ONLY == 0 && $UNINSTALL_DELEGATE == 0 && $YES == 0 ]]; then
+    if [[ ! -t 0 || ! -t 1 ]]; then
+      err "Not attached to a terminal — the interactive TUI needs one."
+      err "For the unattended path use:  $0 -y"
+      exit 1
     fi
-    warn "TUI not built yet — falling back to the old wizard."
+    TUI="$BIN_DIR/mosquitomarchy-tui"
+    if [[ ! -x $TUI ]]; then
+      msg "First run here — building the mosquitOmarchy TUI from the sources in this repo."
+      ensure_mosquitomarchy_tui || true
+    fi
+    if [[ ! -x $TUI ]]; then
+      err "The mosquitOmarchy TUI could not be built, and it is the only interface."
+      err "It needs the Go toolchain:  sudo pacman -S go   (or: mise use go@latest)"
+      err "Then re-run, or build it on its own with:"
+      err "  $MOSQUITOMARCHY_APP_DIR/install-tui.sh -y"
+      exit 1
+    fi
+    exec "$TUI"
   fi
   # Early modes: pure delegation, no report needed.
   case $MODE in
@@ -4196,144 +3929,70 @@ main(){
   # Available option: skip the required system libs (gstreamer + base/good).
   ((${SKIP_LIBS:-0})) || run_required_libs
 
-  # Question 0: quick system fixes (small idempotent one-shot fixes)
-  if ((YES)); then
-    if ((${#FIXES[@]})); then
-      ok "(auto) all quick fixes"
-      FIXES_SELECTED=()
-      local fx
-      for fx in "${FIXES[@]}"; do FIXES_SELECTED+=("${fx%%:*}"); done
-      run_fixes || true
-      echo ""
-    fi
-  elif ask "Apply quick system fixes (multi-choice, Tab to navigate)?" n; then
-    fixes_pick
-    if ((${#FIXES_SELECTED[@]})); then
-      run_fixes || true
-      echo ""
-    fi
+  # Quick fixes. The interactive multi-select lived in the old wizard; here
+  # this runs unattended (-y), which is the only way to reach it now.
+  if ((${#FIXES[@]})); then
+    ok "(auto) all quick fixes"
+    FIXES_SELECTED=()
+    local fx
+    for fx in "${FIXES[@]}"; do FIXES_SELECTED+=("${fx%%:*}"); done
+    run_fixes || true
+    echo ""
   fi
 
-  # Question 1: backup / restore (integrated here)
-  if ((YES)); then
-    if existing_config; then
-      ok "(auto) backup of the existing config"
-      do_backup
-    else
-      ok "Fresh installation — nothing to back up."
-    fi
+  # Backup of an existing config. Restoring is a TUI action (Backup/Restore),
+  # not something the unattended install does: picking an old archive to roll
+  # the machine back is a decision, not a default.
+  if existing_config; then
+    ok "(auto) backup of the existing config"
+    do_backup
   else
-    if existing_config; then
-      if has_backups; then
-        pick_backup_action
-      elif ask "A custom Omarchy config already exists. Make a backup first?" y; then
-        do_backup
-      fi
-    else
-      if has_backups; then
-        warn "Fresh installation detected, but previous backups exist in $BACKUP_DIR."
-        if ask "Restore an old backup (chronological choice) before installing?" n; then
-          restore_flow
-        fi
-      else
-        ok "Fresh installation: no config or backup to save."
-      fi
-    fi
+    ok "Fresh installation — nothing to back up."
   fi
   echo ""
 
-  # Question 2: removal of the Omarchy preinstalls (stock) — preserves personal apps
-  if ((YES)); then
-    if preinstalls_removable; then
-      warn "(auto) Omarchy preinstalls NOT removed (safe behavior) — use --status or manual interactive mode."
-    fi
-  else
-    if preinstalls_removable; then
-      hr
-      if ask "Remove the Omarchy PREINSTALLS (stock apps) while keeping your personal apps/tuis?" n; then
-        run_module preinstalls run_remove_preinstalls || true
-      fi
-      echo ""
-    fi
+  # The stock Omarchy preinstalls are deliberately NOT removed here: that is a
+  # destructive choice, and -y must not make it on the user's behalf.
+  if preinstalls_removable; then
+    warn "(auto) Omarchy preinstalls NOT removed (safe behavior) — use the TUI's Uninstall screen."
   fi
 
-  # Question 3: which modules
-  if ((YES)); then
-    SELECTED=()
-    load_excluded
-    apply_includes
-    local row id state
-    for row in "${MODULES[@]}"; do
-      id="${row%%:*}"; state="$(module_state "$id")"
-      [[ $state == na ]] && continue
-      if is_excluded "$id"; then
-        warn "(auto) module '$id' excluded (you uninstalled it) — skipped."
-        continue
-      fi
-      if [[ $state == ok ]]; then
-        ((UPDATE_OK)) && SELECTED+=("$id")
-        continue
-      fi
-      SELECTED+=("$id")
-    done
-    if ((${#SELECTED[@]})); then ok "(auto) modules: ${SELECTED[*]}"
-    else warn "Nothing selected — everything is up to date."; fi
-  else
-    select_modules
-  fi
+  # Module selection: -y takes everything that is not already done and not
+  # excluded. The interactive chooser is gone with the wizard.
+  SELECTED=()
+  load_excluded
+  apply_includes
+  local row id state
+  for row in "${MODULES[@]}"; do
+    id="${row%%:*}"; state="$(module_state "$id")"
+    [[ $state == na ]] && continue
+    if is_excluded "$id"; then
+      warn "(auto) module '$id' excluded (you uninstalled it) — skipped."
+      continue
+    fi
+    if [[ $state == ok ]]; then
+      ((UPDATE_OK)) && SELECTED+=("$id")
+      continue
+    fi
+    SELECTED+=("$id")
+  done
+  if ((${#SELECTED[@]})); then ok "(auto) modules: ${SELECTED[*]}"
+  else warn "Nothing selected — everything is up to date."; fi
   ((${#SELECTED[@]})) || { warn "Nothing selected."; exit 0; }
   echo ""
 
   # Sequential execution
   exec_modules
 
-  # Optional per-module uninstall (integrated).
-  if ((YES == 0)) && ask "Uninstall some modules (per-module choice)?" n; then
-    hr
-    uninstall_chooser || true
-  fi
-
-  # Theme creation at the END (after the whole installation): offers a theme
-  # from any image in theme/Wallpapers/. With -y, the achraff module
-  # (forced achraf67.png image) covers it — no input here.
-  if ((YES == 0)) && [[ -d "$THEME_DIR/Wallpapers" ]] \
-     && compgen -G "$THEME_DIR/Wallpapers/*" >/dev/null 2>&1; then
-    hr
-    if ask "Create an Omarchy theme from an image in theme/Wallpapers/?" n; then
-      run_module theme bash "$THEME_DIR/create-theme.sh" --apply
-    fi
-  fi
+  # Theme creation at the END. Interactive offers are gone with the wizard;
+  # the achraff module (forced achraf67.png image) is what installs a theme
+  # unattended.
 
   final_report
   status_report
 }
 
 # Menu for "config exists AND backups exist" (question 1, interactive).
-pick_backup_action(){
-  # Custom config AND existing backups -> 3 choices
-  if command -v gum >/dev/null; then
-    local a
-    a="$(gum choose \
-        "Backup now (before installing)" \
-        "Restore a backup (chronological choice)" \
-        "Continue without backup or restore" \
-        --header "Existing config + backups detected — what to do?" --height 5)"
-    case $a in
-      Backup*)    do_backup ;;
-      Restore*)   restore_flow ;;
-      *)          warn "Continuing without backup or restore." ;;
-    esac
-  else
-    echo " [1] Backup now   [2] Restore a backup   [3] Continue without backup"
-    read -rp "Choice [1-3, default 1] : " ch; ch="${ch:-1}"
-    case $ch in
-      2) restore_flow ;;
-      3) warn "Continuing without backup or restore." ;;
-      *) do_backup ;;
-    esac
-  fi
-}
-
 if (( ! LIB_ONLY )) ; then
   main "$@" || exit $?
 fi

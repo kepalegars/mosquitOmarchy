@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 # bootstrap.sh — One-command bootstrap of mosquitOmarchy.
 #
-# Downloads (clones) the repo, then runs the mosquitomarchy-setup.sh entry point
-# with the requested options. The large installation files (Ableton zips,
-# Guitar Pro installer, Bitwig .deb/.jar) are NOT part of the repo: they are
-# downloaded on demand via scripts/apps/download-assets.sh (assets.links
-# catalog), optionally, to keep the clone lightweight.
+# Downloads (clones) the repo, DEPLOYS the manager (builds the TUI, adds the
+# menu entry, the float rule, the post-boot hook) and starts the TUI. The TUI
+# is the interface: its Setup screen installs whatever else you want, driving
+# the same engine. There is no second, older wizard.
+#
+# The large installation files (Ableton zips, Guitar Pro installer, Bitwig
+# .deb/.jar) are NOT part of the repo: they are downloaded on demand via
+# scripts/apps/download-assets.sh (assets.links catalog), optionally, to keep
+# the clone lightweight.
 #
 # Usage:
 #   # Repo already cloned → direct execution:
-#   ./bootstrap.sh        # interactive: setup then, if requested, assets
-#   ./bootstrap.sh -y             # everything default (auto setup)
-#   ./bootstrap.sh --zips -y      # auto setup + downloads the assets (zips/exe/deb)
+#   ./bootstrap.sh        # interactive: assets, then offer to deploy, then TUI
+#   ./bootstrap.sh -y             # no questions: deploy + start the TUI
+#   ./bootstrap.sh --zips -y      # same + downloads the assets (zips/exe/deb)
 #   ./bootstrap.sh --status       # module status without modifying anything
 #   ./bootstrap.sh --init-git     # in an EXTRACTED release archive: attach it to
 #                                 #   origin/<branch> so the self-update works
@@ -39,7 +43,7 @@ for a in "$@"; do case "$a" in
   --init-git) INIT_GIT=1 ;;
   --repo=*) REPO_URL="${a#*=}" ;;
   --dir=*)  INSTALL_DIR="${a#*=}" ;;
-  -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,28 p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) echo "Unknown option: $a (supported: -y, --zips, --status, --init-git, --repo=URL, --dir=PATH)" >&2; exit 1 ;;
 esac; done
 
@@ -133,5 +137,62 @@ else
   warn "Assets (zips/exe/deb) NOT downloaded — run ./scripts/apps/download-assets.sh later if needed."
 fi
 
-msg "Running the mosquitomarchy-setup.sh entry point"
-bash ./mosquitomarchy-setup.sh $([[ $YES == 1 ]] && echo -y)
+# ───────────────────────── Deploy ─────────────────────────
+# Bootstrap's job is to get to a WORKING mosquitOmarchy, not to install every
+# app on the machine: deploying the manager builds the TUI and drops the
+# dispatcher, the menu entry, the float rule and the post-boot hook, after
+# which the TUI's Setup screen drives the very same engine to install whatever
+# else is wanted. Handing the machine to a bare terminal wizard instead was
+# the thing this replaces.
+#
+# The deployer is scripts/apps/mosquitomarchy/install-tui.sh — the same script
+# the `mosquitomarchy` module runs ("mosquitomarchy-deployer" in the module
+# list). It is idempotent, so re-running is free.
+TUI="$HOME/.local/bin/mosquitomarchy-tui"
+DEPLOYER="scripts/apps/mosquitomarchy/install-tui.sh"
+
+deploy(){
+  msg "Deploying mosquitOmarchy — builds the TUI, adds the menu entry, the float rule and the post-boot hook"
+  # Checked up front so the failure names the real cause. install-tui.sh would
+  # otherwise report "Go is not installed" from inside its own ensure_go, which
+  # reads like a broken script rather than a missing dependency.
+  if ! command -v go >/dev/null 2>&1; then
+    err "Go is required to build the TUI, and it is not installed."
+    err "  Arch:   sudo pacman -S go"
+    err "  mise:   mise use go@latest"
+    return 1
+  fi
+  bash "./$DEPLOYER" -y
+}
+
+if [[ -x $TUI ]]; then
+  ok "mosquitOmarchy is already deployed ($TUI) — nothing to deploy."
+elif ((YES)) || [[ ! -t 0 ]]; then
+  deploy || true
+else
+  hr
+  printf 'Deploy mosquitOmarchy now? (builds the TUI, adds the menu entry,\n'
+  printf 'the float rule and the post-boot hook) [Y/n] '
+  read -r reply || reply=y
+  if [[ ${reply:-y} != [nN]* ]]; then
+    deploy || true
+  else
+    warn "Skipped — run ./$DEPLOYER -y whenever you want it."
+  fi
+fi
+
+# ───────────────────────── Hand over to the TUI ─────────────────────────
+# The TUI is the interface; there is no second wizard to fall back to. If it
+# cannot be started the bootstrap says so plainly instead of dropping the user
+# into an obsolete prompt sequence.
+if [[ ! -x $TUI ]]; then
+  err "The mosquitOmarchy TUI is not available, so there is nothing to start."
+  err "Build it with:  ./$DEPLOYER -y"
+  exit 1
+fi
+
+msg "Starting the mosquitOmarchy TUI"
+if [[ -t 0 && -t 1 ]]; then
+  exec "$TUI"
+fi
+ok "Deployed. Start the TUI with:  $TUI    (or: omarchy-launch-tui mosquito)"

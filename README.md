@@ -76,25 +76,34 @@ Details, options and caveats live in each module's own `README.md`. This table i
 | `keepassxc` | KeePassXC as the system Secret Service | [README](scripts/apps/keepassxc/README.md) |
 | `apps` | The app / TUI / webapp catalogs, reinstallable from a backup selection | [README](scripts/apps/README.md) |
 
+The tables below follow the TUI's Setup folders: each heading is one of them.
+
 ### mosquito
 
 | Module | Installs | Doc |
 |---|---|---|
-| `mosquitomarchy` | This TUI, its menu entry and the `SUPER+ALT+M` shortcut | [README](scripts/apps/mosquitomarchy/README.md) |
 | `ableton-move-manager` | Ableton Move → Live → Bitwig conversion (MIDI export, native Omarchy prompts) | [README](scripts/apps/ableton-move-manager/README.md) |
 | `jamjamjam-plugin` | Real-time key/BPM/chord detection with a fretboard and MIDI output | [README](scripts/plugins/jamjamjam/README.md) |
-| `live-mode` | A thermal/perf session profile: app closing, gaps, routing, package fence | [README](scripts/plugins/live-mode/README.md) |
+| `live-mode` | A thermal/perf session mode: app closing, gaps, routing, package fence | [README](scripts/plugins/live-mode/README.md) |
+| `battery` | Ultra-save, a custom battery plugin, mega caffeine | [README](scripts/plugins/power-management/README.md) |
 | `keybindings` | The `SUPER` bindings of this package, inside one reversible block in `bindings.lua` | [README](scripts/apps/mosquitomarchy/README.md#keybindings) |
-| `mosquitomarchy-update` | The update watchdog (scripts repo first, then Omarchy) | [README](scripts/mosquitomarchy-update/README.md) |
 
-### Plugins and fixes
+### Plugins
+
+The project's own layer: the manager itself, and the desktop-hardware modules.
 
 | Module | Installs | Doc |
 |---|---|---|
-| `battery` | Ultra-save, a custom battery plugin, mega caffeine | [README](scripts/plugins/power-management/README.md) |
+| `mosquitomarchy` | This TUI (built from the Go sources in the repo), its dispatcher, menu entry, float rule, post-boot hook and the `SUPER+ALT+M` shortcut | [README](scripts/apps/mosquitomarchy/README.md) |
+| `mosquitomarchy-update` | The update watchdog (scripts repo first, then Omarchy) | [README](scripts/mosquitomarchy-update/README.md) |
 | `brightness` | Perceptual brightness | [notes](scripts/fixes/display-fixes.md) |
 | `touchpad` | Touchpad acceleration and sensitivity | [notes](scripts/fixes/fix-touchpad.md) |
 | `mx-master` | MX Master thumb button → `SUPER`, smartshift off, scroll direction | [notes](scripts/fixes/fix-mx-master.md) |
+
+### Themes
+
+| Module | Installs | Doc |
+|---|---|---|
 | `achraff` | An Omarchy theme built from an image in `theme/Wallpapers/` | [README](scripts/theme/README.md) |
 
 `touchpad` and `mx-master` compose: each ships its own `hl.device` block, handles only its
@@ -122,7 +131,7 @@ own device, and never touches the other.
 [scripts/apps/README.md](scripts/apps/README.md) and [scripts/fixes/README.md](scripts/fixes/README.md).
 
 One TUI row is not in the tables above, because it is not an orchestrator module: the **mosquito
-Audio Plugin Manager** is selected as its own row under *Plugins* but is installed by `audio`.
+Audio Plugin Manager** is selected as its own row under *mosquito* but is installed by `audio`.
 
 **Creating a theme from an image** is not in the tables either, and not in Setup either: it is a
 row on the [TUI's main menu](scripts/apps/mosquitomarchy/README.md), right after Keybindings,
