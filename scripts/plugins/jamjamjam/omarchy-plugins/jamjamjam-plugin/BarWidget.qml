@@ -85,64 +85,87 @@ BarWidget {
       width: Style.space(20)
       height: Style.space(20)
 
-      // A quaver, DRAWN rather than borrowed from a font.
+      // A note, DRAWN — one filled silhouette rather than a pile of strokes.
       //
-      // It was the ♪ glyph in Color.urgent, which ties the icon to a font
-      // revision carrying that codepoint at a readable weight and to the theme
-      // being red. Every dimension here is a fraction of the icon slot, so it
-      // stays proportional at any bar size.
-      //
-      // The head is an ellipse and the stem and flag are rounded bars, so the
-      // whole mark reads as one shape rather than three strokes. The theme
-      // colour is inherited rather than hard-coded: the icon says "music", not
-      // "an error", and the pulsing ring beside it is what signals analysis.
-      Item {
-        id: quaver
+      // The previous attempt was three separate rounded rectangles (stem, flag,
+      // head) and it read as a lollipop: the head was a visible circle stuck to
+      // a bar, and the flag stuck out at an angle like an antenna. One Shape
+      // with a filled outline gives a continuous outline — no seams where two
+      // shapes meet, one silhouette to read, and the notehead stays solid
+      // because it is part of the path rather than a disc laid on top.
+      Canvas {
+        id: noteGlyph
         anchors.fill: parent
 
-        readonly property real unit: Math.min(width, height)
-        readonly property real stemW: Math.max(1, unit * 0.085)
-        readonly property real headW: unit * 0.34
-        readonly property real headH: unit * 0.255
-        readonly property real stemX: quaver.width / 2 + quaver.unit * 0.085
-        // The flag sweeps from the top of the stem and stops a third of the way
-        // down, which is what makes it read as a flag rather than a second stem.
-        readonly property real flagW: unit * 0.3
-        readonly property real flagH: Math.max(1, unit * 0.075)
+        // Redrawn on size change: the path is built from fractions of the slot,
+        // so it has to be rebuilt when the slot is not the one it was drawn at.
+        onPaint: {
+          var ctx = getContext("2d");
+          ctx.reset();
+          const unit = Math.min(width, height);
+          if (unit <= 0)
+            return ;
 
-        // Stem. Drawn first so the head overlaps it cleanly at the join.
-        Rectangle {
-          x: quaver.stemX - quaver.stemW / 2
-          y: quaver.unit * 0.12
-          width: quaver.stemW
-          height: quaver.unit * 0.6
-          radius: quaver.stemW / 2
-          color: root.iconColor
+          // A quaver, drawn as three filled shapes rather than strokes.
+          //
+          // Strokes were the earlier attempt and they were the reason it looked
+          // wrong: a stroked outline of this size is one or two pixels wide, so
+          // the joins either vanished (leaving three disconnected marks) or
+          // bloomed (leaving a lumpy blob), and at 20px there is no third
+          // outcome. Fills have no width to lose — the shape is either there or
+          // it is not, which is the only thing that survives being scaled down.
+          //
+          // Coordinates are fractions of the slot, so the glyph is the same
+          // drawing at every bar size, and the notehead sits at the origin so
+          // the stem grows upwards out of it rather than being positioned by
+          // hand against it.
+          ctx.fillStyle = root.iconColor;
+
+          // Centre the drawing on its own extent rather than trusting the
+          // numbers below to be symmetric: `unit` is the smaller of the two
+          // dimensions, and the glyph is not centred on the origin, so a fixed
+          // offset would drift as the slot changes shape.
+          const boxMinX = -0.153, boxMaxX = 0.38;
+          const boxMinY = -0.68, boxMaxY = 0.135;
+          ctx.translate(unit * (0.5 - (boxMinX + boxMaxX) / 2),
+                         unit * (0.5 - (boxMinY + boxMaxY) / 2));
+          ctx.scale(unit, unit);
+
+          // Head: an ellipse, laid over on its side and tilted, which is what
+          // makes a notehead read as a notehead instead of a bead.
+          ctx.save();
+          ctx.rotate(-0.20);
+          ctx.scale(0.155, 0.105);
+          ctx.arc(0, 0, 1, 0, Math.PI * 2);
+          ctx.restore();
+          ctx.fill();
+
+          // Stem: up the right side of the head. Kept thin — a stem as wide as
+          // a third of the head is what made the earlier one look like a bead
+          // on a stick.
+          ctx.fillRect(0.095, -0.66, 0.06, 0.68);
+
+          // Flag: one closed hook off the top of the stem, outer edge out to
+          // the right and down, then back along the inner edge to the stem, so
+          // it is a single silhouette with no seam at the join.
+          ctx.beginPath();
+          ctx.moveTo(0.095, -0.66);
+          ctx.bezierCurveTo(0.34, -0.61, 0.37, -0.45, 0.29, -0.33);
+          ctx.lineTo(0.145, -0.43);
+          ctx.bezierCurveTo(0.27, -0.55, 0.135, -0.59, 0.095, -0.605);
+          ctx.closePath();
+          ctx.fill();
         }
 
-        // Flag: a bar off the top of the stem, leaning down and to the right.
-        Rectangle {
-          x: quaver.stemX - quaver.stemW / 2
-          y: quaver.unit * 0.12
-          width: quaver.flagW
-          height: quaver.flagH
-          radius: quaver.flagH / 2
-          color: root.iconColor
-          rotation: 28
-        }
+        onWidthChanged: requestPaint()
+        onHeightChanged: requestPaint()
+        Component.onCompleted: requestPaint()
 
-        // Head: an ellipse at the foot of the stem, the way a notehead sits —
-        // tilted, not upright.
-        Rectangle {
-          x: quaver.stemX - quaver.headW - quaver.unit * 0.02
-          y: quaver.unit * 0.72 - quaver.headH / 2
-          width: quaver.headW
-          height: quaver.headH
-          radius: quaver.headH / 2
-          color: root.iconColor
-          rotation: -20
-        }
-      }
+        // Canvas has no `color` property: it is an Item, and the stroke/fill
+        // colours live on the context. So the paint function takes it from
+        // root directly rather than binding a property that does not exist.
+        renderTarget: Canvas.Image
+    }
 
 // Analysis indicator: a pulsing ring while the analyze hold is active (the
 // global Right Ctrl hold), so the hold is visible from the bar even when the

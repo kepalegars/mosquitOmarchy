@@ -475,11 +475,135 @@ class AecSource:
         return mic - y
 
 
+# ── Pitch detection ──────────────────────────────────────────────────────────
+#
+# These constants and this detector are Pitchfork's, taken verbatim from
+# plugins/io.github.kemezz.pitchfork/scripts/pitch-detect.py
+#   MIT License, Copyright (c) 2026 Hyeongjin
+#
+# Not "based on" — the same two-stage YIN, the same thresholds, the same window.
+# It is copied rather than rewritten because a tuner is judged on what it hears,
+# and two implementations of YIN are two different tuners: the previous numpy
+# version measured 6 ms per frame against this one's 7 ms, but the difference
+# that mattered was never the speed, it was that the two disagreed on real
+# material.
+#
+# RATE is the native one. At 48 kHz this feed decimates by 3 to reach 16 kHz,
+# which is why the capture stays at 48 kHz: the recorder, the AEC reference and
+# the chord analysis all need it, and resampling the tuner separately would add
+# a stage for no gain.
+TUNER_RATE = 16000
+TUNER_WINDOW = 2048
+TUNER_DECIM = 3
+TUNER_FMIN = 24.0
+TUNER_FMAX = 500.0
+TUNER_YIN_THRESHOLD = 0.12
+TUNER_REJECT_ABOVE = 0.20
+TUNER_GATE = 0.004
+
+
+class PitchDetector:
+    """Pitchfork's detector: coarse YIN on a decimated window, refined at the
+    full rate."""
+
+    def __init__(self, rate: int = TUNER_RATE, window: int = TUNER_WINDOW,
+                 decim: int = TUNER_DECIM, gate: float = TUNER_GATE) -> None:
+        self.rate = rate
+        self.window = window
+        self.decim = decim
+        self.gate = gate
+        self.coarse_len = window // decim
+        coarse_rate = rate / decim
+        self.coarse_min = max(2, int(coarse_rate / TUNER_FMAX))
+        self.coarse_max = min(self.coarse_len - 2, int(math.ceil(coarse_rate / TUNER_FMIN)))
+
+    @staticmethod
+    def _prefix_energy(x: array.array) -> list:
+        prefix = [0.0] * (len(x) + 1)
+        total = 0.0
+        for i, value in enumerate(x):
+            total += value * value
+            prefix[i + 1] = total
+        return prefix
+
+    @staticmethod
+    def _difference(x: array.array, prefix: list, lag: int) -> float:
+        n = len(x)
+        head = memoryview(x)[0:n - lag]
+        tail = memoryview(x)[lag:n]
+        return prefix[n - lag] + (prefix[n] - prefix[lag]) - 2.0 * math.sumprod(head, tail)
+
+    def _coarse_lag(self, x: array.array):
+        step = self.decim
+        decimated = array.array("d", [
+            math.fsum(memoryview(x)[i * step:(i + 1) * step]) for i in range(self.coarse_len)
+        ])
+        prefix = self._prefix_energy(decimated)
+        normalized = [math.inf] * (self.coarse_max + 2)
+        running = 0.0
+        for lag in range(1, self.coarse_max + 1):
+            value = self._difference(decimated, prefix, lag)
+            running += value
+            normalized[lag] = value * lag / running if running > 0 else 1.0
+        best = self.coarse_min
+        for lag in range(self.coarse_min, self.coarse_max + 1):
+            if normalized[lag] < TUNER_YIN_THRESHOLD:
+                while lag + 1 <= self.coarse_max and normalized[lag + 1] < normalized[lag]:
+                    lag += 1
+                return lag, normalized[lag]
+            if normalized[lag] < normalized[best]:
+                best = lag
+        return best, normalized[best]
+
+    def _refine_lag(self, x: array.array, coarse_lag: int) -> float:
+        prefix = self._prefix_energy(x)
+        centre = coarse_lag * self.decim
+        low = max(1, centre - self.decim)
+        high = min(len(x) - 2, centre + self.decim)
+        if low >= high:
+            return float(centre)
+        values = {lag: self._difference(x, prefix, lag) for lag in range(low, high + 1)}
+        best = min(values, key=values.get)
+        if best <= low or best >= high:
+            return float(best)
+        before, here, after = values[best - 1], values[best], values[best + 1]
+        denominator = before - 2.0 * here + after
+        if denominator <= 0:
+            return float(best)
+        shift = 0.5 * (before - after) / denominator
+        return float(best) + max(-1.0, min(1.0, shift))
+
+    def analyze(self, frame: array.array) -> dict:
+        n = len(frame)
+        if n < self.window:
+            return {"hz": 0.0, "aperiodicity": 0.0}
+        frame = frame[: self.window]
+        mean = math.fsum(frame) / n
+        centred = array.array("d", [value - mean for value in frame])
+        level = math.sqrt(math.sumprod(centred, centred) / n) / 32768.0
+        if level < self.gate:
+            return {"hz": 0.0, "aperiodicity": 0.0}
+        coarse_lag, aperiodicity = self._coarse_lag(centred)
+        if aperiodicity > TUNER_REJECT_ABOVE:
+            return {"hz": 0.0, "aperiodicity": aperiodicity}
+        lag = self._refine_lag(centred, coarse_lag)
+        if lag <= 0:
+            return {"hz": 0.0, "aperiodicity": aperiodicity}
+        return {"hz": self.rate / lag, "aperiodicity": aperiodicity}
+
+
 class Tuner:
     """Pitch detector on the system input, refreshed from a rolling ring."""
 
-    def __init__(self, ring_seconds: float = 0.5):
+    def __init__(self, ring_seconds: float = 0.5, naming: str = "flats"):
         self.ring_seconds = ring_seconds
+        # The note NAME follows the same flats/sharps setting as chord naming.
+        # It did not: the note was read out of NOTE_NAMES_FLAT directly, so
+        # choosing SHARPS in the settings changed every chord and the fretboard
+        # and left the tuner still reading D-flat for what the rest of the
+        # plugin was calling D-sharp.
+        self.naming = naming
+        self._detector = PitchDetector()
         self._frames: list[float] = []
         self.current: dict = {"active": False, "freq": 0.0, "note": "", "octave": 0, "cents": 0.0}
 
@@ -503,12 +627,18 @@ class Tuner:
         if len(frames) < SAMPLE_RATE // 20:
             self.current = {"active": False, "freq": 0.0, "note": "", "octave": 0, "cents": 0.0}
             return self.current
-        rms = math.sqrt(sum(sample * sample for sample in frames) / len(frames))
-        if rms < 0.004:
+        # Pitchfork's own window, at its own rate. The capture stays at
+        # SAMPLE_RATE; the newest TUNER_WINDOW * step samples of it are what the
+        # detector sees, taken every `step`th sample. The two rates differ by
+        # exactly TUNER_DECIM, so every third sample IS the 16 kHz signal and no
+        # resampler is needed to obtain it.
+        step = SAMPLE_RATE // TUNER_RATE
+        frame = frames[-(TUNER_WINDOW * step):]
+        if len(frame) < TUNER_WINDOW * step:
             self.current = {"active": False, "freq": 0.0, "note": "", "octave": 0, "cents": 0.0}
             return self.current
-        frames = frames[-int(SAMPLE_RATE * 0.4):]
-        freq = self._autocorrelation_freq(frames, SAMPLE_RATE)
+        pcm = array.array("h", (int(value * 32767.0) for value in frame[::step]))
+        freq = self._detector.analyze(pcm)["hz"]
         if freq <= 0:
             self.current = {"active": False, "freq": 0.0, "note": "", "octave": 0, "cents": 0.0}
             return self.current
@@ -519,74 +649,11 @@ class Tuner:
         self.current = {
             "active": True,
             "freq": round(freq, 2),
-            "note": NOTE_NAMES_FLAT[pc],
+            "note": note_name(pc, self.naming),
             "octave": midi // 12 - 1,
             "cents": cents,
         }
         return self.current
-
-    @staticmethod
-    def _autocorrelation_freq(frames: list[float], rate: int) -> float:
-        # Vectorised YIN pitch detection (FFT autocorrelation + cumulative
-        # mean normalised difference). The old pure-Python O(N·lags) loop was
-        # far too slow to run continuously, and its global-minimum search
-        # picked subharmonics (329 Hz -> 66 Hz); the first-dip rule fixes that.
-        if not HAVE_NUMPY or len(frames) < rate // 20:
-            return 0.0
-        x = np.asarray(frames, dtype=np.float64)
-        n = x.size
-        min_lag = max(2, int(rate / 1000.0))
-        # 24 Hz, not 55. The old floor was a guitar's low E (82 Hz) with a wide
-        # margin, which left a 5- or 6-string bass — B0 at 24.5 Hz, and 24.5 is
-        # where a dropped bass actually sits — entirely out of range: the search
-        # window never contained the period, so no dip could be found and the
-        # tuner simply reported nothing. 24 Hz is the same floor Pitchfork uses,
-        # chosen to leave a whole tone of tuning room under that B0.
-        max_lag = int(rate / 24.0)
-        if max_lag <= min_lag or n <= max_lag + 1:
-            return 0.0
-        size = 1 << (2 * n - 1).bit_length()
-        spectrum = np.fft.rfft(x, size)
-        ac = np.fft.irfft(spectrum * np.conj(spectrum), size)[:n]
-        cumsq = np.cumsum(x * x)
-        total = float(cumsq[-1])
-        lags = np.arange(1, max_lag + 1)
-        head = cumsq[n - lags - 1]
-        tail = total - cumsq[lags - 1]
-        diff = (head + tail - 2.0 * ac[lags]) / (n - lags)
-        cumulative = np.cumsum(diff)
-        dprime = diff * lags / np.maximum(cumulative, 1e-12)
-        window = dprime[min_lag - 1:max_lag]
-        below = np.nonzero(window < 0.2)[0]
-        if below.size == 0:
-            return 0.0
-        idx = int(below[0])
-        while idx + 1 < window.size and window[idx + 1] < window[idx]:
-            idx += 1
-        tau = float(min_lag + idx)
-        # Reject a frame that is not ONE steady pitch, using the aperiodicity at
-        # the chosen dip. The dip itself is already below 0.2, so this can only
-        # fire on a window that straddles two different notes -- what one hop of
-        # audio sees just after a new string is plucked, and what used to make the
-        # needle jump to the in-between pitch and then settle. Thresholds are
-        # Pitchfork's, measured on the same signal: a tone buried in wideband
-        # noise still scores under 0.08, a two-note window lands between 0.23 and
-        # 0.33.
-        if float(dprime[int(tau)]) > 0.20:
-            return 0.0
-        # Parabolic interpolation around the dip for sub-cent accuracy.
-        if min_lag <= tau - 1 and tau + 1 <= max_lag:
-            y0 = float(dprime[int(tau) - 2])
-            y1 = float(dprime[int(tau) - 1])
-            y2 = float(dprime[int(tau)])
-            denom = y0 - 2.0 * y1 + y2
-            if abs(denom) > 1e-12:
-                shift = 0.5 * (y0 - y2) / denom
-                if -1.0 < shift < 1.0:
-                    tau += shift
-        if tau <= 0:
-            return 0.0
-        return rate / tau
 
 
 class ShazamDetector:
@@ -1788,7 +1855,10 @@ class AudioAnalyzerBackend:
         self.analyzer = AudioAnalyzer(self.naming)
         self.recorder = AudioRecorder(self.analyzer)
         self.synth = MidiSynth(enabled=True, volume=0.4)
-        self.tuner = Tuner() if tuner else None
+        # self.naming, not a `naming` parameter: this is read straight from the
+        # saved config so the tuner starts on the naming the user chose, rather
+        # than the flats default and silently disagreeing with every chord.
+        self.tuner = Tuner(naming=self.naming) if tuner else None
         self.tuner_recorder: AudioRecorder | None = None
         # AEC (mic↔PC-audio echo subtraction for the tuner): created only
         # when the settings toggle is ON (aecEnabled), and REBUILT when the
@@ -1927,7 +1997,19 @@ class AudioAnalyzerBackend:
     tuner_input: str = ""
 
     def _apply_target(self) -> None:
-        if self.input_source == "pc":
+        # An explicitly chosen tuner input outranks the source mode.
+        #
+        # TUNER INPUT is a direct statement of what the tuner should hear, so it
+        # cannot be overruled by whether the analyzer happens to be on PC audio
+        # or on the mic: picking an interface in the dropdown and still getting
+        # the speakers is the setting looking broken. "" (System default) hands
+        # the decision back to the source mode below, which is also what makes
+        # the default entry a way out rather than a dead end.
+        if self.tuner_input:
+            self.recorder.target = self.tuner_input
+            self.recorder.kind = "source"
+            self.capture_target = self.tuner_input
+        elif self.input_source == "pc":
             # Pre-volume monitor of the DEFAULT sink: follows whatever output
             # device is active (internal/HDMI/Bluetooth/jack) and stays audible
             # to the analyzer even when the output is muted or at 0 volume.
@@ -1935,11 +2017,11 @@ class AudioAnalyzerBackend:
             self.recorder.kind = "monitor"
             self.capture_target = self.monitor_target or "@DEFAULT_SOURCE@"
         else:
-            # An explicitly chosen input wins over the system default. This is
-            # the same selection model Pitchfork uses: the default entry is
-            # always present and always first, so there is a way back from a
-            # device that has since been unplugged.
-            target = self.tuner_input or self.input_target or ""
+            # Mic mode, no explicit tuner input: the system default source.
+            # Same selection model Pitchfork uses — the default entry is always
+            # present and always first, so there is a way back from a device
+            # that has since been unplugged.
+            target = self.input_target or ""
             self.recorder.target = target
             self.recorder.kind = "source"
             self.capture_target = target or "@DEFAULT_SOURCE@"
@@ -2244,6 +2326,11 @@ class AudioAnalyzerBackend:
                 self.config["noteNaming"] = naming
                 self.naming = naming
                 self.analyzer.naming = naming
+                # The tuner carries its own copy of the setting. It was not
+                # updated here, so switching to sharps renamed the chords and
+                # the fretboard and left the tuner alone.
+                if self.tuner is not None:
+                    self.tuner.naming = naming
                 changed = True
             if "showChordBox" in request:
                 self.config["showChordBox"] = bool(request.get("showChordBox", True))

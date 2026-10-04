@@ -22,7 +22,13 @@ Two guarantees, and they are the reason the capture is gated rather than always-
 - **Source.** By default it analyses the PipeWire **monitor of the default sink**, so it
   hears what the system plays rather than what the room hears. A header button switches the
   analysis source between that monitor and the default microphone; it does not affect the
-  tuner, which always listens to the default mic so it works whatever you are analysing.
+  tuner, whose own input is picked in the panel settings.
+- **Tuner input.** The panel settings carry a dropdown of every capture source on the machine,
+  and the choice outranks the analysis source: picking an interface there is a direct statement
+  of what the tuner should hear, so the tuner plays it even while the analyzer is on PC audio.
+  `System default` hands the decision back to the source toggle. This is the same selection
+  model Pitchfork uses — the default entry is always present and always first, so there is a
+  way back from a device that has since been unplugged.
 - **Key** — Krumhansl-Schmuckler profile over harmonic chroma, with a confidence percentage.
   Adopted only after holding across two analyses, and the confidence gates the fretboard.
 - **BPM** — onset-envelope autocorrelation over the same window, so tempo locks within a
@@ -82,7 +88,7 @@ QuickShell QML (Service / Panel / BarWidget / GuitarFretboard)
               ▼
 Python backend (backend/jamjamjam_backend.py)
    ├─ pw-record (sink monitor)  → s16 mono → FFT key / BPM / chords
-   ├─ pw-record (default source) → tuner pitch
+   ├─ pw-record (tuner input)   → tuner pitch (YIN, 16 kHz window)
    ├─ aseqdump  → MIDI note on/off → chord + synth note_on/off
    └─ pw-cat    ← rendered synth and metronome samples
 
@@ -131,8 +137,29 @@ per second**, so the pass costs on the order of 1% of a core, with peak memory i
 MiB during analysis. Re-run the bench on your own machine rather than trusting a number
 measured elsewhere.
 
-The tuner's single pass over 4 s of mic audio is about 91 ms, and only runs while the panel or
-a hold is active.
+The tuner's single pass over 4 s of mic audio is about 127 ms, and only runs while the panel
+or a hold is active. Each pass is ~7 ms per frame, which is what the numpy implementation it
+replaced cost too — the reason for the swap was agreement, not speed: see below.
+
+### Tuner pitch detection
+
+The tuner runs **Pitchfork's detector, copied verbatim** (`PitchDetector` in the backend, from
+`plugins/io.github.kemezz.pitchfork/scripts/pitch-detect.py`, MIT). A tuner is judged on what
+it hears, and two implementations of YIN are two different tuners, so this is a copy rather than
+a reimplementation.
+
+It is two-stage: a coarse YIN on a decimated window, then a re-search at the full rate around
+that estimate, refined by parabolic interpolation. The window is 2048 samples at 16 kHz, and
+the range is 24 Hz–500 Hz — the 24 Hz floor is a 5-string bass's B0 (24.5 Hz), which the old
+55 Hz floor could not see at all: the search window did not contain the period, so the tuner
+simply reported nothing. The capture stays at 48 kHz for the recorder, the AEC reference and the
+chord analysis, and the tuner takes every third sample of it, which *is* the 16 kHz signal.
+
+Measured against Pitchfork's own detector on synthesised harmonics (24.50, 41.20, 82.41, 146.83
+and 329.63 Hz), the two agree to within 0.01 Hz at every frequency, including on a window that
+straddles two notes — both report the same subharmonic and both accept it, which is a property
+of the algorithm rather than a defect of the port. Wideband noise is rejected (aperiodicity
+above 0.20), as is anything below the 0.004 gate.
 
 ## Status
 

@@ -190,21 +190,6 @@ Panel {
       root.tunerInput = String((data && data.current) || "");
     });
   }
-  function cycleTunerInput(delta) {
-    if (!root.service || root.tunerInputs.length === 0)
-      return;
-    var index = 0;
-    for (var i = 0; i < root.tunerInputs.length; i++) {
-      if (String(root.tunerInputs[i].name) === root.tunerInput) {
-        index = i;
-        break;
-      }
-    }
-    index = (index + delta + root.tunerInputs.length) % root.tunerInputs.length;
-    var chosen = String(root.tunerInputs[index].name || "");
-    root.tunerInput = chosen;
-    root.service.setTunerInput(chosen);
-  }
   readonly property string tunerInputLabel: {
     for (var i = 0; i < root.tunerInputs.length; i++) {
       if (String(root.tunerInputs[i].name) === root.tunerInput)
@@ -1479,79 +1464,46 @@ Panel {
                 }
               }
 
-              // Tuner input. Which device the tuner listens to. "System default"
-              // is first and always present, so an unplugged interface can
-              // always be escaped from rather than leaving the tuner mute.
-              Row {
+              // Tuner input. Which device the tuner listens to.
+              //
+              // A dropdown, not a pair of arrows. The list is every capture
+              // source on the machine — a desktop with an interface, a laptop
+              // mic and a webcam has several, and stepping through them one at a
+              // time to find the right one is a worse way to pick than looking
+              // at the list.
+              Column {
                 width: parent.width
-                spacing: Style.spacing.sm
+                spacing: Style.spacing.xs
 
                 Text {
-                  anchors.verticalCenter: parent.verticalCenter
-                  width: root.settingsLabelWidth
                   text: "TUNER INPUT"
                   color: root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
                 }
-                Button {
-                  id: tunerInputPrev
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: "‹"
-                  bordered: true
-                  foreground: root.foreground
-                  accent: root.accent
-                  fontSize: Style.font.caption
-                  horizontalPadding: Style.spacing.xs
-                  verticalPadding: Style.spacing.xs
-                  enabled: root.tunerInputs.length > 1
-                  onClicked: root.cycleTunerInput(-1)
-                }
-                Rectangle {
-                  anchors.verticalCenter: parent.verticalCenter
-                  width: Math.max(Style.space(120), tunerInputLabelMetrics.width + Style.space(16))
-                  height: Style.space(26)
-                  radius: Style.cornerRadius
-                  color: Util.alpha(Color.foreground, 0.1)
-                  border.color: Util.alpha(Color.foreground, 0.18)
-                  border.width: 1
-                  Text {
-                    id: tunerInputLabelMetrics
-                    anchors.centerIn: parent
-                    width: Math.min(implicitWidth, Style.space(420))
-                    elide: Text.ElideRight
-                    horizontalAlignment: Text.AlignHCenter
-                    text: root.tunerInputLabel
-                    color: root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
+
+                PitchDropdown {
+                  id: tunerInputDropdown
+                  width: parent.width
+                  label: root.tunerInputLabel
+                  fontFamily: root.fontFamily
+                  // Pitchfork's options are {value, label}; the backend returns
+                  // {name, label}, so the value key is mapped across here rather
+                  // than duplicated in the backend.
+                  options: {
+                    var rows = [{ value: "", label: "System default" }];
+                    for (var i = 0; i < root.tunerInputs.length; i++)
+                      rows.push({ value: String(root.tunerInputs[i].name), label: String(root.tunerInputs[i].label) });
+                    return rows;
                   }
-                }
-                Button {
-                  id: tunerInputNext
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: "›"
-                  bordered: true
-                  foreground: root.foreground
+                  value: root.tunerInput
                   accent: root.accent
-                  fontSize: Style.font.caption
-                  horizontalPadding: Style.spacing.xs
-                  verticalPadding: Style.spacing.xs
-                  enabled: root.tunerInputs.length > 1
-                  onClicked: root.cycleTunerInput(1)
-                }
-                Button {
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: " REFRESH "
-                  bordered: true
-                  foreground: root.accent
-                  accent: root.accent
-                  fontSize: Style.font.caption
-                  horizontalPadding: Style.spacing.xs
-                  verticalPadding: Style.spacing.xs
-                  tooltipText: "Re-read the capture sources from PipeWire"
-                  onClicked: root.refreshTunerInputs()
+                  onChanged: function(selected) {
+                    if (root.service)
+                      root.service.setTunerInput(String(selected || ""));
+                    root.tunerInput = String(selected || "");
+                  }
                 }
               }
 
