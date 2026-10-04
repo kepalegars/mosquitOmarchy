@@ -204,7 +204,30 @@ self-update work, then `./bootstrap.sh`.
 
 ## Large installers
 
-Not in the repo; the `windows-vm` and `audio` modules expect the first two.
+**You bring these yourself.** None of them can be fetched automatically: Bitwig
+and Ableton are behind account logins, and a ~4 GB zip has no business in a git
+clone. Each module looks for its installer **where its own script lives** —
+`scripts/apps/ableton/`, `scripts/apps/guitarpro/`, `scripts/apps/bitwig/` — and
+says which file it expects when it is missing. `scripts/apps/bitwig/setup-bitwig.sh`
+and `scripts/apps/ableton/setup-ableton.sh` both check up front and abort rather
+than half-install.
+
+`assets.links` is the **inventory** of those files: where each one belongs, and
+its sha256. `./scripts/apps/download-assets.sh --check` verifies what you already
+have, and `--status` shows it. The catalog's URLs carry a `TON_HEBERGEUR`
+placeholder on purpose — the repository cannot know where your copies live — and
+it only ever matters if a file is **missing**: with everything present, the run
+reports "All assets are already present and intact" and downloads nothing. If you
+do want the script to fetch a missing one, point it somewhere without editing the
+file (its checksums stay put):
+
+```sh
+export OMARCHY_ASSETS_BASE_URL=https://my-host/path     # or
+mkdir -p ~/.config/mosquitomarchy
+printf '%s' 'https://my-host/path' > ~/.config/mosquitomarchy/assets-base-url
+```
+
+Also not in the repo, and not covered by `assets.links`:
 
 | App | File | Get it |
 |---|---|---|

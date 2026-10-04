@@ -55,9 +55,22 @@ if [[ -z $ASSETS_BASE_URL && -r "$HOME/.config/mosquitomarchy/assets-base-url" ]
   ASSETS_BASE_URL="$(tr -d '[:space:]' < "$HOME/.config/mosquitomarchy/assets-base-url")"
 fi
 
-# 1 when any catalog entry is still a placeholder and no base URL was given.
-is_placeholder(){
-  ((${#PLACEHOLDER_URLS[@]})) && [[ -z $ASSETS_BASE_URL ]]
+# 1 when a file is BOTH still a placeholder AND not already on disk, with no
+# base URL to resolve it.
+#
+# Both halves matter. A placeholder URL is only a problem if something actually
+# has to be fetched: once the installers are in the repo — which is the normal
+# case, they are the user's own files — there is nothing to resolve and stopping
+# the run would be a false alarm that hid a perfectly good state.
+missing_placeholder(){
+  [[ -n $ASSETS_BASE_URL ]] && return 1
+  local entry st
+  for entry in "${LINKS_ARR[@]}"; do
+    [[ " ${PLACEHOLDER_URLS[*]} " == *" ${entry%%|*} "* ]] || continue
+    st="$(file_state "${entry%%|*}" "${entry##*|}")"
+    [[ $st == present ]] || return 0
+  done
+  return 1
 }
 
 # Report the placeholders once, by name, instead of letting curl retry DNS on
@@ -180,7 +193,7 @@ main(){
   # cannot exist — which is how a fresh `bootstrap.sh --zips` filled the screen
   # with "Could not resolve host: TON_HEBERGEUR" instead of one sentence saying
   # what to do about it.
-  if is_placeholder; then
+  if missing_placeholder; then
     hr
     msg "Asset catalog"
     explain_placeholders
