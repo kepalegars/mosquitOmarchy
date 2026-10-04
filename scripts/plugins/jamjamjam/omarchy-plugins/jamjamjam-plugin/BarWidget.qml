@@ -5,6 +5,11 @@ import qs.Ui
 
 BarWidget {
   id: root
+
+  // The icon takes the theme's foreground rather than a fixed colour, so it is
+  // legible on any theme and does not read as an error state. Pitchfork does
+  // the same and only switches to the accent when its reading is in tune.
+  readonly property color iconColor: Color.foreground
   moduleName: "jamjamjam-plugin"
 
   readonly property var service: bar && bar.shell ? bar.shell.serviceFor(moduleName) : null
@@ -80,16 +85,63 @@ BarWidget {
       width: Style.space(20)
       height: Style.space(20)
 
-      // Red music note glyph
-      Text {
+      // A quaver, DRAWN rather than borrowed from a font.
+      //
+      // It was the ♪ glyph in Color.urgent, which ties the icon to a font
+      // revision carrying that codepoint at a readable weight and to the theme
+      // being red. Every dimension here is a fraction of the icon slot, so it
+      // stays proportional at any bar size.
+      //
+      // The head is an ellipse and the stem and flag are rounded bars, so the
+      // whole mark reads as one shape rather than three strokes. The theme
+      // colour is inherited rather than hard-coded: the icon says "music", not
+      // "an error", and the pulsing ring beside it is what signals analysis.
+      Item {
+        id: quaver
         anchors.fill: parent
-        text: "♪"
-        color: Color.urgent
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-        font.pixelSize: Style.space(18)
-        font.bold: true
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
+
+        readonly property real unit: Math.min(width, height)
+        readonly property real stemW: Math.max(1, unit * 0.085)
+        readonly property real headW: unit * 0.34
+        readonly property real headH: unit * 0.255
+        readonly property real stemX: quaver.width / 2 + quaver.unit * 0.085
+        // The flag sweeps from the top of the stem and stops a third of the way
+        // down, which is what makes it read as a flag rather than a second stem.
+        readonly property real flagW: unit * 0.3
+        readonly property real flagH: Math.max(1, unit * 0.075)
+
+        // Stem. Drawn first so the head overlaps it cleanly at the join.
+        Rectangle {
+          x: quaver.stemX - quaver.stemW / 2
+          y: quaver.unit * 0.12
+          width: quaver.stemW
+          height: quaver.unit * 0.6
+          radius: quaver.stemW / 2
+          color: root.iconColor
+        }
+
+        // Flag: a bar off the top of the stem, leaning down and to the right.
+        Rectangle {
+          x: quaver.stemX - quaver.stemW / 2
+          y: quaver.unit * 0.12
+          width: quaver.flagW
+          height: quaver.flagH
+          radius: quaver.flagH / 2
+          color: root.iconColor
+          rotation: 28
+        }
+
+        // Head: an ellipse at the foot of the stem, the way a notehead sits —
+        // tilted, not upright.
+        Rectangle {
+          x: quaver.stemX - quaver.headW - quaver.unit * 0.02
+          y: quaver.unit * 0.72 - quaver.headH / 2
+          width: quaver.headW
+          height: quaver.headH
+          radius: quaver.headH / 2
+          color: root.iconColor
+          rotation: -20
+        }
       }
 
 // Analysis indicator: a pulsing ring while the analyze hold is active (the

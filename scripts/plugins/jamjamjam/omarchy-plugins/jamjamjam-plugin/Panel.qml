@@ -157,7 +157,9 @@ Panel {
   readonly property bool showChordBox: configState.showChordBox !== false
   readonly property int chordBoxHeight: showChordBox ? Style.space(56) : 0
   readonly property bool aecEnabled: configState.aecEnabled === true
-  readonly property int tunerHeight: Style.space(190)
+  // Note at caption*4 (40px) + the 22px track + one body line, with the 14px
+  // card padding top and bottom, plus room for the mic-muted line.
+  readonly property int tunerHeight: Style.space(132)
 
   function open() { controller.show() }
   function close() { controller.hide() }
@@ -811,7 +813,16 @@ Panel {
         }
 
 
-        // ─── Tuner (input pitch detection) ────────────────────────
+        // ─── Tuner ───────────────────────────────────────────────────────
+        // The reading, laid out the way Pitchfork lays it out: one surface
+        // that the in-tune state tints as a whole, a note at display size, and
+        // a cents track whose centre band IS the tolerance rather than a mark
+        // that has to be interpreted.
+        //
+        // Colours are jamjamjam's (root.accent / root.muted / root.foreground);
+        // only the shape and the proportions are forked. Notably NOT taken: the
+        // instrument switcher and its dropdowns. jamjamjam has its own, and they
+        // have nothing to do with hearing a pitch.
         Item {
           visible: !root.settingsVisible
           width: parent.width
@@ -819,174 +830,160 @@ Panel {
           implicitHeight: root.tunerHeight
 
           Rectangle {
+            id: tunerCard
             anchors.fill: parent
-            radius: Style.cornerRadius
-            color: root.tunerActive ? Util.alpha(root.accent, 0.14) : "transparent"
-            border.color: root.inTune ? Util.alpha(root.accent, 0.85)
-              : (root.tunerActive ? root.accent : "transparent")
-            border.width: 1
+            radius: Style.cornerRadius * 2
+            // The whole surface tints, not just the note text. A colour change
+            // buried inside a wall of text is something the player has to look
+            // for, which is the opposite of what a tuner is for while both
+            // hands are on the instrument.
+            color: root.micCut
+              ? "transparent"
+              : (root.tunerActive
+                ? (root.inTune ? Util.alpha(root.accent, 0.16) : Util.alpha(root.foreground, 0.06))
+                : Util.alpha(root.foreground, 0.04))
+            border.width: root.inTune ? 1 : 0
+            border.color: Util.alpha(root.accent, 0.55)
 
             Column {
-              anchors.centerIn: parent
-              // A Column is as wide as its widest VISIBLE child, and the
-              // children shown here change with the state: the "TUNER
-              // ● default mic" row and both hint lines are hidden while the
-              // mic is cut, and the big centre label also drops from
-              // Style.space(40) to Style.space(26). Every change resized the
-              // Column, and the cents track below is derived from it — so the
-              // gauge and its needle jumped on each state change. Pinning the
-              // Column to a fraction of the tuner box makes the layout
-              // identical in every state; every child already centres itself
-              // on parent.
-              width: parent.width - Style.space(96)
-              spacing: Style.spacing.sm
+              id: tunerBody
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.leftMargin: Style.space(14)
+              anchors.rightMargin: Style.space(14)
+              spacing: Style.space(8)
 
-              Row {
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: Style.spacing.sm
-                // The "TUNER" caption stays, but the input label beside it is
-                // HIDDEN while the mic is cut: it used to read "✕ mic" here
-                // while the big "mic muted" text sat right underneath, so the
-                // same condition was announced twice in the same box. One
-                // message, one place.
-                visible: !root.micCut
-
-                Text {
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: "TUNER"
-                  color: root.tunerActive ? root.contrastOn(root.accent, 0.14) : root.muted
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  font.letterSpacing: Style.space(1)
-                }
-
-                Text {
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: "● default mic"
-                  color: root.muted
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                }
-              }
-
+              // ── the note ──
               Text {
-                anchors.horizontalCenter: parent.horizontalCenter
+                textFormat: Text.PlainText
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
                 text: root.micCut
-                  ? "mic muted"
+                  ? "—"
                   : (root.tunerActive
                     ? (root.tunerNote + (root.tunerOctave > 0 ? String(root.tunerOctave) : ""))
                     : "—")
-                color: root.micCut ? root.micAlert
-                  : (root.tunerActive ? root.contrastOn(root.accent, 0.14) : root.muted)
+                color: root.tunerActive && !root.micCut
+                  ? (root.inTune ? root.accent : root.foreground)
+                  : root.muted
                 font.family: root.fontFamily
-                font.pixelSize: root.micCut ? Style.space(26) : Style.space(40)
+                // Pitchfork scales subtitle by 2.2 against a larger base
+                // token; on jamjamjam's scale that lands around 29px, smaller
+                // than the 40px the old tuner used. Pinning the note to the
+                // height it had before keeps the reading the most prominent
+                // thing in the box, which is the whole point of a tuner.
+                font.pixelSize: Math.round(Style.font.caption * 4)
                 font.bold: true
               }
 
+              // ── cents track ──
+              // The needle spans -50..+50 cents, the full distance to the
+              // neighbouring semitone either way, so a reading can never leave
+              // the track. The centre band is the +/-5 cents that counts as in
+              // tune, drawn to scale, so the tolerance is visible rather than
+              // implied.
+              Rectangle {
+                id: tunerTrack
+                width: parent.width
+                height: Style.space(22)
+                radius: Style.cornerRadius
+                color: Util.alpha(root.foreground, 0.1)
+
+                Rectangle {
+                  width: Math.max(2, tunerTrack.width * 0.1)
+                  height: parent.height
+                  radius: parent.radius
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  color: root.inTune ? Util.alpha(root.accent, 0.3) : Util.alpha(root.foreground, 0.12)
+                }
+
+                Rectangle {
+                  width: 1
+                  height: parent.height
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  color: Util.alpha(root.foreground, 0.45)
+                }
+
+                // Which way the peg turns. The sign in the line below states it
+                // but cannot show it.
+                Text {
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.leftMargin: Style.space(6)
+                  text: "♭"
+                  color: root.muted
+                  opacity: 0.6
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Text {
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.rightMargin: Style.space(6)
+                  text: "♯"
+                  color: root.muted
+                  opacity: 0.6
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Rectangle {
+                  width: Style.space(3)
+                  height: parent.height
+                  radius: width / 2
+                  // Always drawn, like the track and the ticks around it, so
+                  // the gauge is never half-drawn when the tuner goes idle.
+                  color: root.micCut
+                    ? Util.alpha(root.foreground, 0.25)
+                    : (root.tunerActive ? (root.inTune ? root.accent : Color.urgent) : Util.alpha(root.foreground, 0.4))
+                  x: Math.max(0, Math.min(tunerTrack.width - width,
+                      (tunerTrack.width - width) * (Math.max(-50, Math.min(50, root.cents)) + 50) / 100))
+
+                  Behavior on x {
+                    NumberAnimation { duration: 90 }
+                  }
+                }
+              }
+
+              // ── the reading, in words ──
+              // Cents AND frequency on one line. The sign says which way the peg
+              // turns, and the hertz is the number a player can check against a
+              // tuner app while tuning by feel.
               Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                // No idle hint: while the tuner is off this line shows
-                // nothing at all rather than an invitation to play. It only
-                // appears once there is a reading, and it stays hidden while
-                // the mic is cut so the "mic muted" line is the whole message.
-                visible: root.tunerActive && !root.micCut
-                text: root.tunerFreq > 0
-                  ? "≈ " + root.tunerFreq.toFixed(1) + " Hz"
-                  : (root.inTune ? "in tune" : "·")
+                textFormat: Text.PlainText
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                visible: !root.micCut
+                text: root.tunerActive && root.tunerFreq > 0
+                  ? (root.cents > 0 ? "+" : "") + Math.round(root.cents) + " cents  ·  " + root.tunerFreq.toFixed(2) + " Hz"
+                  : (root.micCut ? "mic muted" : "")
                 color: root.muted
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
+                font.pixelSize: Style.font.body
+                wrapMode: Text.WordWrap
               }
+            }
 
-              // Cents deviation meter (needle over a ±50¢ track)
-              Item {
-                width: parent.width * 0.82
-                height: Style.space(30)
-                anchors.horizontalCenter: parent.horizontalCenter
+            // "mic muted" sits OUTSIDE the card so the card never pretends to
+            // hold a reading it does not have.
+            Text {
+              anchors.centerIn: parent
+              visible: root.micCut && !root.tunerActive
+              text: "mic muted"
+              color: root.micAlert
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
 
-                Rectangle {
-                  anchors.centerIn: parent
-                  width: parent.width
-                  height: 4
-                  radius: 2
-                  color: Util.alpha(Color.foreground, 0.12)
-                }
-
-                Repeater {
-                  model: [-50, -25, 0, 25, 50]
-
-                  Rectangle {
-                    required property int modelData
-                    width: 2
-                    height: modelData === 0 ? 14 : 8
-                    radius: 1
-                    color: modelData === 0 ? Util.alpha(Color.foreground, 0.55) : Util.alpha(Color.foreground, 0.28)
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: 2
-                    x: (modelData + 50) / 100 * (parent.width - 2)
-                  }
-                }
-
-                Column {
-                  anchors.top: parent.top
-                  anchors.left: parent.left
-                  Text {
-                    text: "♭"
-                    color: root.muted
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-                }
-                Column {
-                  anchors.top: parent.top
-                  anchors.right: parent.right
-                  Text {
-                    text: "♯"
-                    color: root.muted
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-                }
-
-                Rectangle {
-                  id: tunerNeedle
-                  // Always drawn, like the track and the ticks around it.
-                  // It used to vanish whenever the tuner went idle or the mic
-                  // was cut, which left a half-drawn gauge and made the box
-                  // look like it had lost a part. With no signal root.cents
-                  // is 0, so the needle simply parks at centre.
-                  width: 3
-                  height: parent.height
-                  radius: 1.5
-                  color: !root.tunerActive
-                    ? Util.alpha(Color.foreground, 0.4)
-                    : (root.inTune ? root.accent : Color.urgent)
-                  x: {
-                    var t = Math.max(-1, Math.min(1, root.cents / 50))
-                    return (parent.width - width) / 2 + (parent.width - width) / 2 * t
-                  }
-                }
-              }
-
-              Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                // No idle hint here either: with the tuner off this line is
-                // simply absent instead of inviting the user to play, and it
-                // also stays hidden while the mic is cut so "mic muted" is
-                // the only thing in the box.
-                visible: root.tunerActive && !root.micCut
-                text: root.inTune
-                  ? "IN TUNE"
-                  : ((root.cents < 0 ? "♭" : "♯") + " " + Math.round(Math.abs(root.cents)) + "¢")
-                color: root.inTune ? root.accent : root.muted
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: root.inTune
-              }
+            Behavior on color {
+              ColorAnimation { duration: 140 }
             }
           }
         }
+
 
         // ─── Detected-chord naming zone (the RED one) ─────────────
         // Toggleable from settings and ALWAYS at its fixed max size when
