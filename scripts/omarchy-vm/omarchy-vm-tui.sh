@@ -210,9 +210,17 @@ edit_ram() {
 edit_cpu() {
     local name; name=$(select_vm "Edit CPU for which VM?") || return
     local cfg="$VMS_DIR/$name/.vm-config"
-    local max; max=$(nproc)
+    # PHYSICAL cores, not nproc. nproc counts hyperthreads, and a guest vCPU
+    # pinned to a sibling hyperthread shares execution units with the host's
+    # other vCPU on that same core — so offering 1..16 here invited a value that
+    # looks like a whole machine and is not. The cap shown is also physical.
+    local max; max=$(awk '/^physical id/{p=$4} /^core id/{print p":"$4}' /proc/cpuinfo 2>/dev/null | sort -u | grep -c .)
+    if [[ -z $max || $max == 0 ]]; then
+        max=$(lscpu 2>/dev/null | awk -F: '/^Core\(s\) per socket/{gsub(/ /,"",$2); c=$2} /^Socket\(s\)/{gsub(/ /,"",$2); s=$2} END{print c*s}')
+    fi
+    [[ -z $max || $max == 0 ]] && max=$(nproc)
     local opts=(); local c; for (( c=1; c<=max; c++ )); do opts+=("$c core(s)"); done
-    local sel; sel=$(printf '%s\n' "${opts[@]}" | gum choose --header "vCPU for '$name' (host: $max)") || return
+    local sel; sel=$(printf '%s\n' "${opts[@]}" | gum choose --header "vCPU for '$name' (host: $max physical cores)") || return
     cfg_set "$cfg" CPU_CORES "${sel%% *}"
     gum style --foreground "$SUCCESS_COLOR" "CPU set to ${sel%% *} core(s)." | center_output 60; sleep 1
 }

@@ -189,14 +189,59 @@ detect_ovmf() {
 }
 
 total_ram_mb() { awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo; }
+# Default VM sizing.
+#
+# Both figures were raised because they were sized for a machine nobody runs a
+# DAW class guest on. The CPU cap of 4 and the RAM cap of 16 GB are what a
+# lightly-used guest needs; a guest running Ableton or REAPER next to the host
+# needs more, and a guest that gets too little does not fail — it thrashes, or
+# the host audio thread gets preempted by the guest, which is far harder to
+# diagnose than "out of memory".
+#
+# RAM: half of what the machine has, rounded down to whole GiB, floor 4 GiB,
+# ceiling 32 GiB. Half leaves the host room to keep its own audio path and a
+# DAW; giving the guest everything would starve it.
+#
+# CORES: the PHYSICAL core count, not the thread count. `nproc` reports
+# hyperthreads, and a VCPU pinned to a sibling hyperthread does not get a full
+# core of throughput — it shares execution units with the host's other vCPU on
+# that core. So the guest is sized on physical cores, and half of them is the
+# default: an audio guest does not scale linearly past that, and leaving half
+# for the host is what keeps the host responsive while the guest is running.
 default_ram_mb() {
   local half=$(( $(total_ram_mb) / 2 / 1024 * 1024 ))
-  (( half < 2048 )) && half=2048
-  (( half > 16384 )) && half=16384
+  (( half < 4096 )) && half=4096
+  (( half > 32768 )) && half=32768
   echo "$half"
 }
+
+# Physical cores, derived from the CPU topology rather than trusting nproc.
+# Falls back to nproc when the topology is unreadable, and to 2 when even that
+# comes back empty.
+physical_cores() {
+  local n=""
+  if [[ -r /proc/cpuinfo ]]; then
+    # "cpu cores" is absent on some kernels/architectures; count unique
+    # (physical id, core id) pairs instead, which is what it means anyway.
+    n=$(awk '/^physical id/{p=$4} /^core id/{print p":"$4}' /proc/cpuinfo 2>/dev/null | sort -u | grep -c .)
+  fi
+  if [[ -z $n || $n == 0 ]]; then
+    n=$(lscpu 2>/dev/null | awk -F: '/^Core\(s\) per socket/{gsub(/ /,"",$2); c=$2} /^Socket\(s\)/{gsub(/ /,"",$2); s=$2} END{print c*s}')
+  fi
+  [[ -z $n || $n == 0 ]] && n=$(nproc 2>/dev/null || echo 2)
+  echo "$n"
+}
+
 default_cores() {
-  local c; c=$(nproc); (( c > 4 )) && c=4; (( c < 1 )) && c=1; echo "$c"
+  local physical c
+  physical="$(physical_cores)"
+  # Half the physical cores, floor 2, ceiling 8. Capped at 8 deliberately: past
+  # that an x86-64 guest spends its time in the emulator's own overhead rather
+  # than doing work, and the host keeps more of the machine.
+  c=$(( physical / 2 ))
+  (( c < 2 )) && c=2
+  (( c > 8 )) && c=8
+  echo "$c"
 }
 next_ssh_port() {
   local p=2222 c
