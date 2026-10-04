@@ -20,11 +20,30 @@ notify(){ hyprctl notify -1 2500 "rgb(33ccff)" "$1" >/dev/null 2>&1 || true; }
 # every SUPER+… shortcut belongs to Omarchy natively — silently refuse so
 # the native set is never shadowed for nothing.
 vm_visible() {
+  # The window class is whatever QEMU sets, which is plain "qemu" — NOT
+  # anything namespaced. The previous filter looked for org.omarchy.* and
+  # winvm only, so a real, open VM window never matched: the script answered
+  # "no VM window open" while one was plainly on screen, and the focus toggle
+  # refused to do anything.
+  #
+  # Title matching is deliberately not used. It looks like a good fallback, but
+  # the pattern has to survive two levels of shell quoting before jq sees it, and
+  # the double escaping that requires is exactly what breaks it: "\\(" inside
+  # a single-quoted heredoc reaches jq as two characters, so it matches a
+  # literal backslash followed by a group instead of an open parenthesis. The
+  # class is unambiguous, so the title is not needed.
+  # `any`, not `map(...) | length > 0`. The latter maps each window to a BOOLEAN
+  # and then counts the windows, so it is > 0 whenever any window exists at all —
+  # it reported a VM open with six unrelated windows on screen and none of them
+  # was a VM. `any` asks the question that was meant.
   hyprctl -j clients 2>/dev/null | jq -e '
-    map(select(.class == "org.omarchy.omarchy-vm-tui"
-           or .class == "org.omarchy.winvm"
-           or .class == "winvm"
-           or (.class // "") | test("org\.omarchy\.|^winvm$"))) | length > 0' >/dev/null 2>&1
+    any(.[];
+        (.class // "") as $c
+        | $c == "qemu"
+          or $c == "qemu-system-x86_64"
+          or $c == "winvm"
+          or ($c | startswith("org.omarchy.vm"))
+    )' >/dev/null 2>&1
 }
 if ! vm_visible; then
   notify "Focus: HOST — no VM window open (native Omarchy shortcuts)"
