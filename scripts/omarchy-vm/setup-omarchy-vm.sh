@@ -478,7 +478,16 @@ deploy_file() {
   [[ -f $src ]] || die "Missing file: $src"
   [[ "$(readlink -f "$src")" == "$(readlink -f "$dst" 2>/dev/null || echo __none__)" ]] && return 0
   install -m 0755 "$src" "$dst"
-  bash -n "$dst" || die "Syntax error in $dst"
+  # Syntax-check with the file's OWN interpreter. The clipboard bridge is Python,
+  # and `bash -n` on it reports a syntax error at the first parenthesis, which
+  # killed the whole setup mid-run — so the bridge was never deployed, the
+  # launcher was never regenerated, and the bridge silently did nothing.
+  # ast.parse rather than py_compile: no __pycache__ dropped in ~/.local/bin.
+  case "$(head -c 64 "$dst")" in
+    *python*) python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$dst" \
+                || die "Syntax error in $dst" ;;
+    *)        bash -n "$dst" || die "Syntax error in $dst" ;;
+  esac
 }
 
 info "Deploying the Omarchy VM helpers to $BIN_DIR"
