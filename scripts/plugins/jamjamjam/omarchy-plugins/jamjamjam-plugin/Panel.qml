@@ -114,6 +114,53 @@ Panel {
   readonly property real tunerFreq: Number(tuner.freq || 0)
   readonly property real cents: tunerActive ? Number(tuner.cents || 0) : 0
   readonly property bool inTune: tunerActive && Math.abs(cents) <= 4
+
+  // ── the reading outlives the detection ──
+  //
+  // A pitch detector drops out constantly: between two plucks, while the peg
+  // is still moving, on any frame that straddles two strings. Blanking the
+  // display on the first such frame means the note you were reading vanishes
+  // before you have read it — which is worse than useless on a tuner, because
+  // it is the one thing the display exists to tell you.
+  //
+  // So the last reading is kept and shown until it is genuinely stale. The clock
+  // is a timer rather than Date.now() read in a binding because a binding only
+  // re-evaluates when its inputs change, and "nothing changed" is exactly the
+  // case that has to expire on its own.
+  readonly property real holdSeconds: 2.5
+  property real clockMs: 0
+  property string heldNote: ""
+  property int heldOctave: 0
+  property real heldFreq: 0
+  property real heldCents: 0
+  property double heldAtMs: -1e9
+
+  // Live reading while there is one, the held one while there is not, nothing
+  // once the hold has expired. Everything below reads these, never the raw
+  // tuner fields, so the needle cannot snap back to the centre mid-gap.
+  readonly property bool tunerShowing: tunerActive || (clockMs - heldAtMs) < holdSeconds * 1000
+  readonly property string shownNote: tunerActive ? tunerNote : (tunerShowing ? heldNote : "")
+  readonly property int shownOctave: tunerActive ? tunerOctave : (tunerShowing ? heldOctave : 0)
+  readonly property real shownFreq: tunerActive ? tunerFreq : (tunerShowing ? heldFreq : 0)
+  readonly property real shownCents: tunerActive ? cents : (tunerShowing ? heldCents : 0)
+
+  Timer {
+    interval: 150
+    repeat: true
+    running: true
+    onTriggered: {
+      root.clockMs = Date.now();
+      // Sampled here rather than on the snapshot so the held copy is as fresh
+      // as the live one; the panel gets its snapshot every 250 ms.
+      if (root.tunerActive) {
+        root.heldNote = root.tunerNote;
+        root.heldOctave = root.tunerOctave;
+        root.heldFreq = root.tunerFreq;
+        root.heldCents = root.cents;
+        root.heldAtMs = root.clockMs;
+      }
+    }
+  }
   readonly property bool midiMode: midi.mode === true
   readonly property string midiChord: String(midi.currentChord || "")
   readonly property color foreground: Color.popups.text
@@ -827,8 +874,13 @@ Panel {
               : (root.tunerActive
                 ? (root.inTune ? Util.alpha(root.accent, 0.16) : Util.alpha(root.foreground, 0.06))
                 : Util.alpha(root.foreground, 0.04))
-            border.width: root.inTune ? 1 : 0
-            border.color: Util.alpha(root.accent, 0.55)
+            // Always one pixel wide, and coloured rather than removed when in
+            // tune. A border that APPEARS shrinks the card's inner box by a
+            // pixel on each side, so hitting the note nudged every child inside
+            // the card by one pixel — a small jump at exactly the moment the
+            // reading is supposed to feel solid.
+            border.width: 1
+            border.color: root.inTune ? Util.alpha(root.accent, 0.55) : "transparent"
 
             Column {
               id: tunerBody
@@ -844,14 +896,19 @@ Panel {
                 textFormat: Text.PlainText
                 width: parent.width
                 horizontalAlignment: Text.AlignHCenter
+                // shownNote / shownOctave, not the raw tuner fields: the held
+                // reading keeps the last note on screen instead of the "—".
                 text: root.micCut
                   ? "—"
-                  : (root.tunerActive
-                    ? (root.tunerNote + (root.tunerOctave > 0 ? String(root.tunerOctave) : ""))
+                  : (root.tunerShowing
+                    ? (root.shownNote + (root.shownOctave > 0 ? String(root.shownOctave) : ""))
                     : "—")
+                // Held readings are dimmed rather than blanked, so it is obvious
+                // that the note is being remembered and not heard right now.
                 color: root.tunerActive && !root.micCut
                   ? (root.inTune ? root.accent : root.foreground)
-                  : root.muted
+                  : (root.tunerShowing && !root.micCut ? root.muted : root.muted)
+                opacity: root.tunerActive ? 1 : 0.55
                 font.family: root.fontFamily
                 // Pitchfork scales subtitle by 2.2 against a larger base
                 // token; on jamjamjam's scale that lands around 29px, smaller
@@ -923,11 +980,20 @@ Panel {
                   color: root.micCut
                     ? Util.alpha(root.foreground, 0.25)
                     : (root.tunerActive ? (root.inTune ? root.accent : Color.urgent) : Util.alpha(root.foreground, 0.4))
+                  // shownCents, so a dropout holds the needle where the last
+                  // reading put it instead of snapping to the centre and back.
                   x: Math.max(0, Math.min(tunerTrack.width - width,
-                      (tunerTrack.width - width) * (Math.max(-50, Math.min(50, root.cents)) + 50) / 100))
+                      (tunerTrack.width - width) * (Math.max(-50, Math.min(50, root.shownCents)) + 50) / 100))
 
+                  // Short, and eased out: the needle has to arrive before the
+                  // next reading replaces it. At 90 ms a fast passage visibly
+                  // trailed the pitch; 55 ms with an out-cubic keeps small
+                  // corrections crisp without snapping on the big jumps.
                   Behavior on x {
-                    NumberAnimation { duration: 90 }
+                    NumberAnimation {
+                      duration: 55
+                      easing.type: Easing.OutCubic
+                    }
                   }
                 }
               }
@@ -941,13 +1007,25 @@ Panel {
                 width: parent.width
                 horizontalAlignment: Text.AlignHCenter
                 visible: !root.micCut
-                text: root.tunerActive && root.tunerFreq > 0
-                  ? (root.cents > 0 ? "+" : "") + Math.round(root.cents) + " cents  ·  " + root.tunerFreq.toFixed(2) + " Hz"
-                  : (root.micCut ? "mic muted" : "")
+                // Fixed height, always. With the natural height this Text was
+                // empty whenever no note was detected, so it collapsed to zero
+                // and everything anchored below it jumped DOWN by one line the
+                // moment a reading appeared — and back up when it went. The
+                // height is pinned to a single body line and the text is
+                // centred inside it, so the layout is the same in both states.
+                height: Style.font.body * 1.4
+                verticalAlignment: Text.AlignVCenter
+                text: root.tunerShowing && root.shownFreq > 0
+                  ? (root.shownCents > 0 ? "+" : "") + Math.round(root.shownCents) + " cents  ·  " + root.shownFreq.toFixed(2) + " Hz"
+                  : ""
                 color: root.muted
+                // Dimmed while held, for the same reason as the note.
+                opacity: root.tunerActive ? 1 : 0.55
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
-                wrapMode: Text.WordWrap
+                elide: Text.ElideRight
+                maximumLineCount: 1
+                wrapMode: Text.NoWrap
               }
             }
 
@@ -1383,6 +1461,66 @@ Panel {
               spacing: Style.spacing.sm
               topPadding: Style.space(4)
 
+              // Tuner input. Which device the tuner listens to.
+              //
+              // A dropdown, not a pair of arrows. The list is every capture
+              // source on the machine — a desktop with an interface, a laptop
+              // mic and a webcam has several, and stepping through them one at a
+              // time to find the right one is a worse way to pick than looking
+              // at the list.
+              //
+              // Shaped like every other settings row (caption Text + control in a
+              // Row) rather than as its own stacked block: PitchDropdown grows a
+              // caption of its own whenever `label` is set, which made this row
+              // taller than its neighbours and pushed the rest of the list down.
+              // The caption is this row's Text, so `label` stays empty.
+              Row {
+                id: tunerInputRow
+                width: parent.width
+                spacing: Style.spacing.sm
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: root.settingsLabelWidth
+                  text: "TUNER INPUT"
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+                PitchDropdown {
+                  id: tunerInputDropdown
+                  width: Math.max(0, parent.width - root.settingsLabelWidth - Style.spacing.sm)
+                  label: ""
+                  fontFamily: root.fontFamily
+                  // Matches the kit Button these rows use: a caption line plus
+                  // the vertical padding twice. PitchDropdown's own default is
+                  // Style.spacing.controlHeight (28), which is taller than a
+                  // caption Button (~19) and left the dropdown sticking out.
+                  rowHeight: Math.round(Style.font.caption * 1.3) + Style.spacing.xs * 2
+                  // Pitchfork's options are {value, label}; the backend returns
+                  // {name, label}, so the value key is mapped across here rather
+                  // than duplicated in the backend.
+                  //
+                  // The backend's list ALREADY starts with the "System default"
+                  // entry, so it is used as-is: prepending another one here is
+                  // what put two System default rows in the open menu.
+                  options: {
+                    var rows = [];
+                    for (var i = 0; i < root.tunerInputs.length; i++)
+                      rows.push({ value: String(root.tunerInputs[i].name), label: String(root.tunerInputs[i].label) });
+                    return rows;
+                  }
+                  value: root.tunerInput
+                  accent: root.accent
+                  onChanged: function(selected) {
+                    if (root.service)
+                      root.service.setTunerInput(String(selected || ""));
+                    root.tunerInput = String(selected || "");
+                  }
+                }
+              }
+
               // Note naming (flats / sharps)
               Row {
                 width: parent.width
@@ -1461,49 +1599,6 @@ Panel {
                   horizontalPadding: Style.spacing.xs
                   verticalPadding: Style.spacing.xs
                   onClicked: if (root.service) root.service.setConfigBool("showChordBox", false)
-                }
-              }
-
-              // Tuner input. Which device the tuner listens to.
-              //
-              // A dropdown, not a pair of arrows. The list is every capture
-              // source on the machine — a desktop with an interface, a laptop
-              // mic and a webcam has several, and stepping through them one at a
-              // time to find the right one is a worse way to pick than looking
-              // at the list.
-              Column {
-                width: parent.width
-                spacing: Style.spacing.xs
-
-                Text {
-                  text: "TUNER INPUT"
-                  color: root.muted
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                }
-
-                PitchDropdown {
-                  id: tunerInputDropdown
-                  width: parent.width
-                  label: root.tunerInputLabel
-                  fontFamily: root.fontFamily
-                  // Pitchfork's options are {value, label}; the backend returns
-                  // {name, label}, so the value key is mapped across here rather
-                  // than duplicated in the backend.
-                  options: {
-                    var rows = [{ value: "", label: "System default" }];
-                    for (var i = 0; i < root.tunerInputs.length; i++)
-                      rows.push({ value: String(root.tunerInputs[i].name), label: String(root.tunerInputs[i].label) });
-                    return rows;
-                  }
-                  value: root.tunerInput
-                  accent: root.accent
-                  onChanged: function(selected) {
-                    if (root.service)
-                      root.service.setTunerInput(String(selected || ""));
-                    root.tunerInput = String(selected || "");
-                  }
                 }
               }
 

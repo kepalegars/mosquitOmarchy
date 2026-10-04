@@ -138,8 +138,19 @@ MiB during analysis. Re-run the bench on your own machine rather than trusting a
 measured elsewhere.
 
 The tuner's single pass over 4 s of mic audio is about 127 ms, and only runs while the panel
-or a hold is active. Each pass is ~7 ms per frame, which is what the numpy implementation it
-replaced cost too — the reason for the swap was agreement, not speed: see below.
+or a hold is active. Each pass is ~10 ms per frame over a 128 ms window, which is what the numpy
+implementation it replaced cost too — the reason for the swap was agreement, not speed: see below.
+
+**Tuner cadence.** The pitch detector runs every **0.15 s while the panel is open** (or a hold
+or the neck TUI is active) and every 0.5 s otherwise. At a fixed 0.5 s the note sat unchanged
+for half a second between two hops of the needle, which reads as a lag rather than a tuner.
+Measured cost of the fast cadence on the backend: **7.2 % of one core with the panel open, 2.8 %
+with it closed**. 0.12 s was measured too and costs 8.3 % — not worth it.
+
+**The reading outlives the detection.** A pitch detector drops out constantly: between plucks,
+while the peg moves, on any frame straddling two strings. The panel keeps the last reading for
+2.5 s, so the note does not vanish before it has been read; the needle holds its position across
+the gap instead of snapping to the centre.
 
 ### Tuner pitch detection
 

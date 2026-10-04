@@ -2768,7 +2768,19 @@ def run() -> int:
                 last_analysis = now
             # The microphone tuner updates on its own clock, regardless of the
             # analyzer recorder (so it works while the panel/TUI is idle).
-            if now - last_tuner >= 0.5:
+            #
+            # Fast while someone is actually reading it. At the old fixed 0.5 s
+            # the note could sit unchanged for half a second between two hops of
+            # the needle, which is what "the note stays fixed too long" looks
+            # like: the reading lags the string by up to two hops.
+            #
+            # Measured at ~10 ms per pass over a 128 ms window (bench), so 0.15 s
+            # is 6.7 passes a second — about 6.6% of one core WHILE VISIBLE, and
+            # only then. Idle returns to 0.5 s (2%), where nobody is watching a
+            # needle. Anything faster was measured and is not worth the CPU:
+            # 0.12 s already costs 8.3%.
+            want_fast = backend.panel_visible or backend.hold or backend._tui_active()
+            if now - last_tuner >= (0.15 if want_fast else 0.5):
                 backend.run_tuner_pass()
                 last_tuner = now
             if now - last_mic >= 2.0:
