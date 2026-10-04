@@ -104,6 +104,36 @@ qemu-system-x86_64 -name omarchy-<name> -machine q35,accel=kvm:tcg -cpu host
   drives its own resolution. Intel HDA duplex audio.
 - **Shared folder** (optional): `~/VMs/shared` exposed as a 9p mount. In the
   guest: `sudo mkdir -p /mnt/host && sudo mount -t 9p -o trans=virtio hostshare /mnt/host`.
+- **Shared clipboard** (default on, `CLIPBOARD="off"` to disable): the launcher
+  starts `omarchy-vm-clipboard`, a small HTTP server on `127.0.0.1:$CLIPBOARD_PORT`
+  (7789), which slirp exposes to the guest as `10.0.2.2` — the host's loopback.
+  No QEMU argument changes, so the display path is untouched. It lives and dies
+  with the VM: nothing to bridge while the VM is off. Bind to loopback is also
+  the boundary — the bridge answers the VM and nothing else on the network.
+
+  Enable it once inside the guest (one command; nothing is mounted and no
+  package is installed — the host serves the agent itself):
+
+  ```sh
+  curl -s http://10.0.2.2:7789/agent -o ~/vm-clipboard.py && \
+    nohup python3 ~/vm-clipboard.py >/tmp/vm-clipboard.log 2>&1 &
+  ```
+
+  Copy in either direction, ~0.3 s. Stop with `pkill -f vm-clipboard.py`.
+  Both halves are text-only. Two Wayland details cost real debugging time and
+  are worth keeping in mind if you touch them:
+
+  - `wl-paste --watch` takes a **command** argument; it does not stream to
+    stdout, so the bridge polls `wl-paste` on a timer instead.
+  - `wl-copy` must **not** be given `-t text`. This wl-clipboard build then
+    advertises the selection and serves nothing: every copy lands as an empty
+    clipboard, with `wl-copy` still exiting 0. Plain `wl-copy` works.
+
+  SPICE would be the native route (`spice-vdagent` in the guest), but it needs
+  `DISPLAY_BACKEND="spice"` — losing the virgl setup above — and no script in
+  this repo can install anything inside the guest. The `spice` branch of the
+  launcher is also incomplete: it opens a `-spice` server with no
+  `-display spice-app`, so it shows no window.
 - **Passthrough** (optional): USB via the TUI picker (`usb-host`), PCI/GPU via
   `vfio-pci` — requires IOMMU + binding the device to `vfio-pci` beforehand.
   Do not pass the host's boot GPU; use a second GPU or integrated graphics.

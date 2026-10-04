@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""omarchy-vm-clipboard-agent — guest side of the VM clipboard bridge.
+
+Run this INSIDE the Omarchy VM. One command installs and starts it:
+
+    curl -s http://10.0.2.2:7789/agent -o ~/vm-clipboard.py && \
+      nohup python3 ~/vm-clipboard.py >/tmp/vm-clipboard.log 2>&1 &
+
+10.0.2.2 is slirp's gateway, which maps onto the host's loopback, so that URL
+reaches omarchy-vm-clipboard on the desktop. Nothing is mounted, no package is
+installed, and no file is copied: the host serves this script.
+
+Both directions are handled the same way, and loop prevention is by value: the
+text last seen from the other side is remembered, so an observation equal to it
+is by definition not a new event. Publishing updates the remembered text BEFORE
+touching the real clipboard, so the echo of our own write is recognised.
+
+To stop it: pkill -f vm-clipboard.py
+"""
+
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+
+HOST = os.environ.get("VM_CLIPBOARD_HOST", "10.0.2.2")
+PORT = int(os.environ.get("VM_CLIPBOARD_PORT", "7789"))
+BASE = "http://%s:%d" % (HOST, PORT)
+POLL_SECONDS = float(os.environ.get("VM_CLIPBOARD_POLL", "0.3"))
+# Local clipboard sampling interval. Polling rather than `wl-paste --watch`:
+# --watch takes a COMMAND and runs it on each change, so it costs a subprocess
+# per copy anyway, and its state would live in a process that cannot see the
+# revision counter below.
+LOCAL_POLL_SECONDS = 0.25
+MAX_BYTES = 8 * 1024 * 1024
+
+log_lock = threading.Lock()
+# The last wl-copy process, kept only so it can be reaped. Never waited on.
+_last_copy = None
+
+
+def log(message):
+    with log_lock:
+        sys.stderr.write("vm-clipboard-agent: %s\n" % message)
+        sys.stderr.flush()
+
+
+def have(tool):
+    return any(
+        os.access(os.path.join(p, tool), os.X_OK)
+        for p in os.environ.get("PATH", "").split(os.pathsep)
+        if p
+    )
+
+
+def read_clipboard():
+    if not have("wl-paste"):
+        return None
+    try:
+        out = subprocess.run(["wl-paste", "-n", "-t", "text"],
+                             capture_output=True, timeout=3)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if out.returncode != 0:
+        return None
+    return out.stdout.decode("utf-8", "replace")
+
+
+def write_clipboard(text):
+    """Put `text` on the local clipboard.
+
+    Note the absence of `-t text`, which wl-paste wants and wl-copy must NOT be
+    given: with it, this wl-clipboard build advertises the selection and then
+    serves nothing, so every copy lands as an EMPTY clipboard while wl-copy
+    still exits 0. Plain wl-copy infers text/plain and works.
+    """
+    if not have("wl-copy"):
+        log("wl-copy is missing — install wl-clipboard")
+        return False
+    global _last_copy
+    try:
+        # Deliberately not communicate(): it waits for EOF on the pipes AND for
+        # the process to exit, and wl-copy's daemon child keeps running for as
+        # long as the content is current — so waiting hangs forever. Write, close
+        # stdin, and let it own the selection. The previous instance is polled,
+        # never waited on, so it is reaped without blocking; only one daemon
+        # survives at a time anyway, since taking the selection retires the last.
+        if _last_copy is not None:
+            _last_copy.poll()
+        _last_copy = subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE)
+        _last_copy.stdin.write(text.encode("utf-8"))
+        _last_copy.stdin.close()
+    except (OSError, ValueError) as exc:
+        log("wl-copy failed: %s" % exc)
+        return False
+    return True
+
+
+class Agent:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.rev = -1
+        self.text = ""
+
+    def adopt(self, text):
+        """Record text received from the host and put it on the guest clipboard.
+
+        The remembered text is set BEFORE wl-copy so the watcher's echo of this
+        write compares equal and is dropped.
+        """
+        with self.lock:
+            self.text = text
+        write_clipboard(text)
+
+    def observe(self):
+        """A guest-side clipboard edit worth sending to the host."""
+        text = read_clipboard()
+        if text is None:
+            return None
+        with self.lock:
+            if text == self.text:
+                return None
+            self.text = text
+        return text
+
+
+AGENT = Agent()
+
+
+def send(text):
+    body = text.encode("utf-8")
+    if len(body) > MAX_BYTES:
+        log("clipboard too large (%d bytes) — not sending" % len(body))
+        return
+    request = urllib.request.Request(BASE + "/clip", data=body, method="PUT")
+    try:
+        urllib.request.urlopen(request, timeout=5).read()
+    except (urllib.error.URLError, OSError) as exc:
+        log("push failed: %s" % exc)
+
+
+def poll_clipboard():
+    """Send guest-side clipboard edits to the host."""
+    if not have("wl-paste"):
+        log("wl-paste is missing — the guest clipboard cannot be read")
+        return
+    while True:
+        text = AGENT.observe()
+        if text is not None:
+            send(text)
+        time.sleep(LOCAL_POLL_SECONDS)
+
+
+def poll_host():
+    """Pull guest changes of the host clipboard.
+
+    Runs until the host goes away, which is what happens when the VM is shut
+    down: the agent then has nothing to bridge to and exits quietly instead of
+    logging a connection error four times a second.
+    """
+    while True:
+        try:
+            with urllib.request.urlopen(BASE + "/clip", timeout=5) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            rev = int(data.get("rev", 0))
+            text = str(data.get("text", ""))
+        except (urllib.error.URLError, OSError, ValueError):
+            return
+        if rev != AGENT.rev:
+            AGENT.rev = rev
+            AGENT.adopt(text)
+        time.sleep(POLL_SECONDS)
+
+
+def main():
+    missing = [t for t in ("wl-copy", "wl-paste") if not have(t)]
+    if missing:
+        log("missing: %s — install wl-clipboard" % ", ".join(missing))
+    try:
+        urllib.request.urlopen(BASE + "/ping", timeout=5).read()
+    except (urllib.error.URLError, OSError) as exc:
+        log("cannot reach the host at %s (%s)" % (BASE, exc))
+        log("is the VM running with the clipboard bridge started?")
+        return 1
+    log("bridged to %s" % BASE)
+    threading.Thread(target=poll_clipboard, daemon=True).start()
+    poll_host()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

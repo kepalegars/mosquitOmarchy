@@ -490,6 +490,15 @@ for s in setup-omarchy-vm.sh omarchy-vm-tui.sh launch-omarchy-tui.sh omarchy-vm-
   ok "$s deployed"
 done
 
+# The clipboard bridge is a PAIR, and the host half serves the guest half over
+# HTTP, so the guest can install itself with one curl. They must therefore land
+# in the SAME directory: the host resolves the guest half next to itself, the
+# same way the TUI resolves its backend (tui-go actions.go actionsBin).
+for s in omarchy-vm-clipboard omarchy-vm-clipboard-agent; do
+  deploy_file "$SCRIPT_DIR/$s" "$BIN_DIR/$s"
+  ok "$s deployed"
+done
+
 cat > "$BIN_DIR/omarchy-vm" << 'WRAPPER_EOF'
 #!/bin/bash
 # Start an Omarchy VM in QEMU/KVM. Usage: omarchy-vm [VM_NAME]
@@ -557,6 +566,12 @@ GPU_ACCEL="off"
 XRES=1920
 YRES=1080
 SPICE_PORT=5930
+# Shared clipboard between the VM and the host. The bridge is a host-side HTTP
+# server on 127.0.0.1, which slirp exposes to the guest as 10.0.2.2 — so no
+# QEMU argument changes and the display path (virgl) is untouched. The guest
+# pulls its own half with: curl -s http://10.0.2.2:<port>/agent
+CLIPBOARD="on"
+CLIPBOARD_PORT=7789
 USB_PASSTHROUGH=()
 VFIO_DEVICES=()
 EOF
@@ -589,6 +604,8 @@ SSH_PORT="${SSH_PORT:-2222}"
 DISPLAY_BACKEND="${DISPLAY_BACKEND:-gtk}"
 GPU_ACCEL="${GPU_ACCEL:-off}"
 SPICE_PORT="${SPICE_PORT:-5930}"
+CLIPBOARD="${CLIPBOARD:-on}"
+CLIPBOARD_PORT="${CLIPBOARD_PORT:-7789}"
 
 command -v qemu-system-x86_64 >/dev/null || { echo "qemu-system-x86_64 not found (install qemu-desktop)" >&2; exit 1; }
 [[ -f "$VM_DIR/$DISK_IMG" ]] || { echo "Disk image missing: $VM_DIR/$DISK_IMG" >&2; exit 1; }
@@ -727,10 +744,52 @@ for pci in "${VFIO_DEVICES[@]:-}"; do
 done
 
 echo $$ > "$VM_DIR/vm.pid"
-trap 'rm -f "$VM_DIR/vm.pid"' EXIT
+
+# ── Shared clipboard bridge ──
+# Started here rather than as a separate service so it lives and dies with the
+# VM: there is nothing to bridge while the VM is not running, and a daemon left
+# behind holding the host clipboard would outlive its purpose.
+#
+# Setsid detaches it from this script's process group. Without that, Ctrl-C in
+# the QEMU window — or anything else that signals the group — would take the
+# bridge down with it, since it is started from the same shell.
+CLIP_PID=""
+if [[ "$CLIPBOARD" == "on" ]] && command -v python3 >/dev/null 2>&1; then
+  CLIP_SRC=""
+  for cand in "$VM_DIR/../clipboard/omarchy-vm-clipboard" \
+              "$SCRIPT_DIR/omarchy-vm-clipboard" \
+              "$HOME/.local/bin/omarchy-vm-clipboard"; do
+    [[ -x $cand ]] && { CLIP_SRC="$cand"; break; }
+  done
+  if [[ -n $CLIP_SRC ]]; then
+    OMARCHY_VM_CLIPBOARD_PORT="$CLIPBOARD_PORT" \
+    OMARCHY_VM_STATE_DIR="$VM_DIR/clipboard" \
+      setsid python3 "$CLIP_SRC" >"$VM_DIR/clipboard.log" 2>&1 &
+    CLIP_PID=$!
+    # Wait for the port rather than sleeping a fixed amount: the guest is told
+    # this URL the moment the VM window appears, and a bridge that is not
+    # listening yet would make the first copy silently do nothing.
+    for _ in $(seq 1 40); do
+      if curl -sf --max-time 1 "http://127.0.0.1:$CLIPBOARD_PORT/ping" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.1
+    done
+  fi
+fi
+
+cleanup(){
+  rm -f "$VM_DIR/vm.pid"
+  [[ -n $CLIP_PID ]] && kill "$CLIP_PID" 2>/dev/null
+  return 0
+}
+trap cleanup EXIT
 
 # Recommend fullscreen + explain the guest-shortcuts toggle (shortest form).
 VM_TIP="Fullscreen: ${FS_KEY:-SUPER + F}.  Focus VM (shortcuts): SUPER + ALT + V."
+if [[ "$CLIPBOARD" == "on" && -n $CLIP_SRC ]]; then
+  VM_TIP+=$'\n'"Shared clipboard: in the VM run  curl -s http://10.0.2.2:$CLIPBOARD_PORT/agent -o ~/vm-clipboard.py && nohup python3 ~/vm-clipboard.py >/dev/null 2>&1 &"
+fi
 if command -v omarchy-notification-send >/dev/null 2>&1; then
   omarchy-notification-send "Omarchy VM" "$VM_TIP" >/dev/null 2>&1 &
 elif command -v notify-send >/dev/null 2>&1; then

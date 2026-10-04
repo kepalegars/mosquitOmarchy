@@ -1,0 +1,283 @@
+#!/usr/bin/env python3
+"""omarchy-vm-clipboard — host side of the VM clipboard bridge.
+
+The VM is started with user-mode networking (slirp) and nothing else that can
+carry a clipboard: no SPICE channel (DISPLAY_BACKEND is gtk), no virtio-serial,
+no guest agent. What slirp DOES give us is 10.0.2.2 — the gateway address that
+maps onto the host's loopback. So the host runs a small HTTP server bound to
+127.0.0.1, and the guest polls it at 10.0.2.2. No QEMU argument changes, so
+the display path (virgl, the only GL translation that is actually right on an
+AMD APU) is untouched.
+
+Binding to loopback is also the security boundary: slirp forwards the guest's
+connection to the host's 127.0.0.1, so the bridge is reachable from the VM and
+from nowhere else. It is never exposed on a LAN interface.
+
+Endpoints
+    GET  /ping    -> "ok"
+    GET  /clip    -> {"rev": <int>, "text": "<string>"}
+    PUT  /clip    <- raw request body becomes the host clipboard
+    GET  /agent   -> the guest-side agent, so the guest can install itself with
+                      a single curl and no file copying
+
+Loop prevention is by value, not by flag: each side keeps the text it last
+published, and an observed clipboard equal to that text is by definition not a
+new event. Publishing sets the remembered text BEFORE touching the real
+clipboard, so the watcher's echo of our own write is recognised and dropped.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = int(os.environ.get("OMARCHY_VM_CLIPBOARD_PORT", "7789"))
+STATE_DIR = os.path.expanduser(
+    os.environ.get("OMARCHY_VM_STATE_DIR", "~/.local/state/omarchy-vm")
+)
+STATE_FILE = os.path.join(STATE_DIR, "clipboard.json")
+# An 8 MB ceiling. The clipboard travels as JSON over a loopback-forwarded
+# socket, and a stray "select 200 MB of video" in the guest should not turn
+# into an 8 MB body multiplied by every request.
+MAX_BYTES = 8 * 1024 * 1024
+# How often the host clipboard is sampled for changes.
+#
+# Polling, not `wl-paste --watch`. --watch takes a COMMAND argument and runs it
+# on each change (it does not stream to stdout), so using it as a change feed
+# means one subprocess per copy anyway — plus the watcher's state would then
+# live in a process that cannot see the bridge's revision counter. Reading
+# wl-paste on a timer costs a few milliseconds four times a second and has no
+# moving parts.
+POLL_SECONDS = 0.25
+
+log_lock = threading.Lock()
+# The last wl-copy process, kept only so it can be reaped. Never waited on.
+_last_copy = None
+
+
+def log(message):
+    with log_lock:
+        sys.stderr.write("vm-clipboard: %s\n" % message)
+        sys.stderr.flush()
+
+
+def have(tool):
+    return any(
+        os.access(os.path.join(p, tool), os.X_OK)
+        for p in os.environ.get("PATH", "").split(os.pathsep)
+        if p
+    )
+
+
+def read_clipboard():
+    """Current host clipboard as text, or None when it holds no text.
+
+    wl-paste exits non-zero when the selection is not text (an image, say), and
+    that is not an error worth logging: the bridge is text-only by design.
+    """
+    if not have("wl-paste"):
+        return None
+    try:
+        out = subprocess.run(
+            ["wl-paste", "-n", "-t", "text"],
+            capture_output=True,
+            timeout=3,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if out.returncode != 0:
+        return None
+    return out.stdout.decode("utf-8", "replace")
+
+
+def write_clipboard(text):
+    """Put `text` on the local clipboard.
+
+    Note the absence of `-t text`, which wl-paste wants and wl-copy must NOT be
+    given: with it, this wl-clipboard build advertises the selection and then
+    serves nothing, so every copy lands as an EMPTY clipboard while wl-copy
+    still exits 0. Plain wl-copy infers text/plain and works.
+    """
+    if not have("wl-copy"):
+        log("wl-copy is missing — cannot publish to the host clipboard")
+        return False
+    global _last_copy
+    try:
+        # Deliberately not communicate(): it waits for EOF on the pipes AND for
+        # the process to exit, and wl-copy's daemon child keeps running for as
+        # long as the content is current — so waiting hangs forever. Write, close
+        # stdin, and let it own the selection.
+        #
+        # The previous instance is polled, never waited on, so reaps the shell
+        # without blocking. Only one daemon survives at a time anyway: taking the
+        # selection retires the one before it.
+        if _last_copy is not None:
+            _last_copy.poll()
+        _last_copy = subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE)
+        _last_copy.stdin.write(text.encode("utf-8"))
+        _last_copy.stdin.close()
+    except (OSError, ValueError) as exc:
+        log("wl-copy failed: %s" % exc)
+        return False
+    return True
+
+
+class Bridge:
+    """The shared text plus a revision that changes whenever it does."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.rev = 0
+        self.text = ""
+        self._load()
+
+    def _load(self):
+        """Restore the last clipboard so a VM restart does not lose it.
+
+        Without this, closing the VM window and reopening it would silently
+        clear the host clipboard — which is the one thing a clipboard bridge
+        must never do to the machine it is bridging.
+        """
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            self.text = str(data.get("text", ""))
+            self.rev = int(data.get("rev", 0))
+        except (OSError, ValueError):
+            pass
+
+    def _save(self):
+        os.makedirs(STATE_DIR, exist_ok=True)
+        tmp = STATE_FILE + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"rev": self.rev, "text": self.text}, fh)
+            os.replace(tmp, STATE_FILE)
+        except OSError:
+            pass
+
+    def get(self):
+        with self.lock:
+            return self.rev, self.text
+
+    def publish(self, text):
+        """Record `text` as the new clipboard content and hand it to Wayland.
+
+        The remembered text is updated BEFORE wl-copy runs, which is what makes
+        the watcher's echo of this very write compare equal and get dropped.
+        """
+        with self.lock:
+            changed = text != self.text
+            self.text = text
+            if changed:
+                self.rev += 1
+                self._save()
+        write_clipboard(text)
+        return changed
+
+    def observe(self):
+        """Adopt a clipboard change that came from the host itself."""
+        text = read_clipboard()
+        if text is None:
+            return False
+        with self.lock:
+            if text == self.text:
+                return False
+            self.text = text
+            self.rev += 1
+            self._save()
+            return True
+
+
+BRIDGE = Bridge()
+
+
+def poll_clipboard():
+    """Mirror host-side clipboard edits into the bridge."""
+    if not have("wl-paste"):
+        log("wl-paste is missing — the host clipboard cannot be read")
+        return
+    while True:
+        if BRIDGE.observe():
+            log("host clipboard changed (rev %d)" % BRIDGE.get()[0])
+        time.sleep(POLL_SECONDS)
+
+
+def agent_path():
+    """The guest agent, resolved next to this script.
+
+    Same convention as the TUI's actionsBin(): the component that belongs with
+    this one is looked up in this script's own directory, so the pair is found
+    whether they run from the repo or from ~/.local/bin.
+    """
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "omarchy-vm-clipboard-agent")
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *args):
+        pass  # the default writes one line per request to stderr
+
+    def _send(self, code, body, ctype="text/plain; charset=utf-8"):
+        raw = body if isinstance(body, bytes) else body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def do_GET(self):
+        path = self.path.split("?", 1)[0]
+        if path == "/ping":
+            self._send(200, "ok")
+        elif path == "/clip":
+            rev, text = BRIDGE.get()
+            self._send(200, json.dumps({"rev": rev, "text": text}),
+                       "application/json")
+        elif path == "/agent":
+            try:
+                with open(agent_path(), "r", encoding="utf-8") as fh:
+                    self._send(200, fh.read(), "text/x-python; charset=utf-8")
+            except OSError:
+                self._send(404, "agent not found next to omarchy-vm-clipboard\n")
+        else:
+            self._send(404, "unknown endpoint\n")
+
+    def do_PUT(self):
+        if self.path.split("?", 1)[0] != "/clip":
+            self._send(404, "unknown endpoint\n")
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._send(400, "bad Content-Length\n")
+            return
+        if length > MAX_BYTES:
+            self._send(413, "clipboard too large (%d bytes)\n" % length)
+            return
+        body = self.rfile.read(length) if length else b""
+        BRIDGE.publish(body.decode("utf-8", "replace"))
+        self._send(200, "ok")
+
+
+def main():
+    os.makedirs(STATE_DIR, exist_ok=True)
+    thread = threading.Thread(target=poll_clipboard, daemon=True)
+    thread.start()
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    log("listening on 127.0.0.1:%d — guest reaches it at 10.0.2.2:%d" % (PORT, PORT))
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

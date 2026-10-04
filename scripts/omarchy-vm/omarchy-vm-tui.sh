@@ -370,6 +370,7 @@ show_main_menu() {
             "Toggle boot order (ISO / disk)") toggle_boot ;;
             "Toggle virgl 3D accel") toggle_setting GPU_ACCEL on off "virgl" ;;
             "Toggle shared 9p folder") toggle_setting SHARED_FOLDER on off "shared folder" ;;
+            "Toggle shared clipboard") toggle_setting CLIPBOARD on off "shared clipboard" ;;
             "USB passthrough") usb_passthrough ;;
             "PCI/GPU passthrough") pci_passthrough ;;
             *) exit 0 ;;
