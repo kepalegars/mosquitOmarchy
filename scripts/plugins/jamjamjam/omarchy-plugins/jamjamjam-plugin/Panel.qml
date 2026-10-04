@@ -438,8 +438,6 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
               width: Style.space(26)
               height: Style.space(26)
-              iconText: "♪"
-              iconSize: Style.space(18)
               text: ""
               bordered: false
               // `active` paints the selected FILL without the `selected`
@@ -453,6 +451,21 @@ Panel {
               tooltipText: root.pinned
                 ? "Pinned — click (or press p) to unpin and let it close normally"
                 : "Pin the panel (p) — keep it open while you use other apps"
+
+              // The pin button's mark is the plugin's DRAWN note, the same
+              // component the bar widget uses. It used to be a "♪" font glyph,
+              // so this mark and the one in the bar were two different drawings
+              // that happened to look similar — this one took its weight and
+              // slant from whatever font the panel resolved.
+              NoteGlyph {
+                anchors.centerIn: parent
+                width: Style.space(17)
+                height: width
+                // Always the theme's red, pinned or not: the `active` state
+                // paints the button's fill without recolouring the glyph, which
+                // was the whole point of drawing it here.
+                color: Color.urgent
+              }
               onClicked: root.pinned = !root.pinned
             }
 
