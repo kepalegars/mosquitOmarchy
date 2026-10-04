@@ -764,11 +764,16 @@ echo $$ > "$VM_DIR/vm.pid"
 # bridge down with it, since it is started from the same shell.
 CLIP_PID=""
 if [[ "$CLIPBOARD" == "on" ]] && command -v python3 >/dev/null 2>&1; then
+  # Only two places, and deliberately no $SCRIPT_DIR: the generated launcher runs
+  # with `set -euo pipefail` and has no such variable, so naming it here was a
+  # fatal "unbound variable" that killed the launcher BEFORE qemu ran — the VM
+  # simply refused to start. An override is honoured first so a packager can
+  # point at its own copy.
   CLIP_SRC=""
-  for cand in "$VM_DIR/../clipboard/omarchy-vm-clipboard" \
-              "$SCRIPT_DIR/omarchy-vm-clipboard" \
-              "$HOME/.local/bin/omarchy-vm-clipboard"; do
-    [[ -x $cand ]] && { CLIP_SRC="$cand"; break; }
+  for cand in "${OMARCHY_VM_CLIPBOARD_BIN:-}" \
+              "$HOME/.local/bin/omarchy-vm-clipboard" \
+              "$VM_DIR/omarchy-vm-clipboard"; do
+    [[ -n $cand && -x $cand ]] && { CLIP_SRC="$cand"; break; }
   done
   if [[ -n $CLIP_SRC ]]; then
     OMARCHY_VM_CLIPBOARD_PORT="$CLIPBOARD_PORT" \
