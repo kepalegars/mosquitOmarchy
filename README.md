@@ -22,11 +22,12 @@ Re-running any script on a configured machine is safe.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kepalegars/mosquitOmarchy/master/bootstrap.sh | bash -s -- --zips -y
+curl -fsSL https://raw.githubusercontent.com/kepalegars/mosquitOmarchy/master/bootstrap.sh | bash -s -- -y
 ```
 
-That clones the repo, installs the missing modules, builds the TUI, and registers a menu
-entry. From an existing clone, `./bootstrap.sh --zips -y` does the same without the pipe.
+That clones the repo, reports which large installers this machine is still missing,
+installs the missing modules, builds the TUI, and registers a menu entry. From an
+existing clone, `./bootstrap.sh -y` does the same without the pipe.
 
 Large application installers (Ableton, Bitwig, DaVinci, Guitar Pro) are **not** in the
 repo — see [Large installers](#large-installers).
@@ -34,7 +35,7 @@ repo — see [Large installers](#large-installers).
 | Flag | Effect |
 |---|---|
 | `-y` | no questions, apply defaults |
-| `--zips` | also download the large installers |
+| `--zips` | accepted and ignored — nothing has been downloaded for a while |
 | `--status` | report what is installed, change nothing |
 | `--init-git` | attach `origin` to an extracted release copy, so self-update works |
 | `--repo=URL` `--dir=PATH` | use a fork / a different clone location |
@@ -213,19 +214,22 @@ and `scripts/apps/ableton/setup-ableton.sh` both check up front and abort rather
 than half-install.
 
 `assets.links` is the **inventory** of those files: where each one belongs, and
-its sha256. `./scripts/apps/download-assets.sh --check` verifies what you already
-have, and `--status` shows it. The catalog's URLs carry a `TON_HEBERGEUR`
-placeholder on purpose — the repository cannot know where your copies live — and
-it only ever matters if a file is **missing**: with everything present, the run
-reports "All assets are already present and intact" and downloads nothing. If you
-do want the script to fetch a missing one, point it somewhere without editing the
-file (its checksums stay put):
+its sha256 where recording one is worth it. Nothing is ever downloaded — there is
+no URL to download from. Ableton and Bitwig sit behind account logins, and a 4 GB
+zip has no business in a clone, so this is a presence check, not a fetcher:
 
-```sh
-export OMARCHY_ASSETS_BASE_URL=https://my-host/path     # or
-mkdir -p ~/.config/mosquitomarchy
-printf '%s' 'https://my-host/path' > ~/.config/mosquitomarchy/assets-base-url
-```
+| Command | Says |
+|---|---|
+| `download-assets.sh` | one line per file, then where to put whatever is missing |
+| `download-assets.sh --status` | the same list, nothing else |
+| `download-assets.sh --check` | integrity only — exit 1 on corruption, **0** on absence |
+| `download-assets.sh --ready <path>` | silent; exit 0 if usable, 1 if not |
+
+A missing file is a fact about the machine, not a failed install: the module that
+needs it stays visible in Setup but **greyed out**, and pressing Enter on it says
+which file to put where instead of starting something that cannot finish. Drop the
+file in, and the row comes back on its own. DaVinci is inventoried by presence only
+— hashing an 11 GB zip on every `--check` costs more than the answer is worth.
 
 Also not in the repo, and not covered by `assets.links`:
 

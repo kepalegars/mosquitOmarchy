@@ -36,20 +36,26 @@ WEB WhatsApp|https://web.whatsapp.com/|whatsapp
 
 ## Large installers
 
-`download-assets.sh` reads the `assets.links` catalog at the repo root: it checks each file
-(present / absent / corrupt by sha256), downloads what is missing through a `.part` file so an
-interrupted run resumes, verifies the checksum, then renames into place. The URLs in
-`assets.links` are filled in by whoever hosts the files.
+`download-assets.sh` reads the `assets.links` inventory at the repo root and reports what is
+already on disk: present, absent, or corrupt by sha256. **It downloads nothing.** There is no URL
+column and there is not going to be one — Ableton and Bitwig are behind account logins, and a
+4 GB zip does not belong in a git clone. Supply a file by dropping it into the folder
+`assets.links` names, which is where its module's own installer looks anyway.
 
 ```bash
-scripts/apps/download-assets.sh            # select interactively
-scripts/apps/download-assets.sh -y         # everything missing or corrupt
-scripts/apps/download-assets.sh --status
-scripts/apps/download-assets.sh --check    # sha256 only
+scripts/apps/download-assets.sh                    # one line per file + what to supply by hand
+scripts/apps/download-assets.sh --status          # the list only
+scripts/apps/download-assets.sh --check           # integrity: exit 1 on corruption, 0 on absence
+scripts/apps/download-assets.sh --ready <path>    # silent; 0 = usable, 1 = not
 ```
 
-DaVinci Resolve is deliberately **not** in `assets.links` — its zip is about 7 GB, so it is
-dropped by hand in `scripts/apps/davinci/`.
+A missing installer is not a failure. The module that needs it stays visible in Setup, greyed
+out, and Enter on the row names the exact file and folder instead of starting an install that
+cannot finish. The decision is made with globs, never with the sha256, because `_setup_tree`
+runs on every render of that screen.
+
+DaVinci Resolve **is** inventoried, by presence only: its zip is about 11 GB, so recording a
+checksum would mean hashing it on every `--check`.
 
 ## The other folders here
 
