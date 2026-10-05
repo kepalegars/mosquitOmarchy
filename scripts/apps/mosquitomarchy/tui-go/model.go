@@ -146,6 +146,37 @@ func saveBackupOpts(o BackupOpts) {
 	_, _ = runQuick("backup-opts", "set", string(payload))
 }
 
+// saveBackupSelection persists the ticked rows of the Backup content screen the
+// moment one changes.
+//
+// The screen used to rebuild its ticks from the LAST ARCHIVE on every visit, so
+// a selection assembled over several passes — or a row deliberately unticked —
+// was gone the moment you left the page, and gone for good if you quit the TUI
+// instead of running the backup. Saving on the keystroke is what makes the list
+// survive both.
+//
+// Written even when EMPTY: unticking everything is a choice, and a file holding
+// an empty list is what tells the backend "nothing ticked" apart from "no file
+// yet". Only the keys of rows that are currently in the tree are written, so a
+// package that has since been uninstalled prunes itself out.
+func saveBackupSelection(items []SetupItemRec, checked map[string]bool) {
+	keys := make([]string, 0, len(checked))
+	for _, it := range items {
+		if checked[setupValue(it.Folder, it.Key)] {
+			keys = append(keys, it.Key)
+		}
+	}
+	payload, err := json.Marshal(struct {
+		Sel []string `json:"sel"`
+	}{Sel: keys})
+	if err != nil {
+		return
+	}
+	// Best-effort, like saveBackupOpts: a preference that cannot be written must
+	// not turn a keystroke into an error toast.
+	_, _ = runQuick("backup-sel", "set", string(payload))
+}
+
 // model is the single Bubble Tea model for the whole session: every screen
 // is a state in m.nav, never a subprocess.
 type model struct {
@@ -407,7 +438,7 @@ func initialModel() model {
 		treeMode:         "install",
 	}
 	m.mainPicker = newNavPicker("", m.mainMenuItems()).
-		SetHelpKeys(key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "what each page does")))
+		SetHelpKeys(key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "what this page does")))
 	m.setupPicker = newNavPicker("", nil)
 	m.setupCatPicker = newNavPicker("", nil)
 	m.updatePicker = newNavPicker("", nil)
@@ -474,7 +505,7 @@ func (m model) mainMenuItems() []tuikit.PickerItem {
 func (m model) rebuildMainMenu() navPicker {
 	return newNavPicker("", m.mainMenuItems()).SetSize(m.contentSize()).
 		KeepCursor(m.mainPicker.SelectedValue()).
-		SetHelpKeys(key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "what each page does")))
+		SetHelpKeys(key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "what this page does")))
 }
 
 func (m *model) contentSize() (int, int) {

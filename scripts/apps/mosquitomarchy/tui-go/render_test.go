@@ -1047,38 +1047,94 @@ func TestBackupNameReachesTheBackendArgs(t *testing.T) {
 	}
 }
 
-// TestHomeInfoKeyOpensThePageGuide pins `i` on the home screen.
+// TestHomeInfoKeyDescribesThePageUnderTheCursor pins `i` on the home screen.
 //
-// Two things it would catch: the key colliding with something the home screen
-// already used, and it being wired as an ACTION rather than a description — the
-// `i` key used to re-dispatch Enter, so describing a page would have installed
-// it. That is the same mistake TestInfoKeyDescribesAModuleRow guards on Setup.
-func TestHomeInfoKeyOpensThePageGuide(t *testing.T) {
+// Three things it guards:
+//
+//   - the key does not collide with something the home screen already used;
+//   - it is wired as a DESCRIPTION and not as an action — the `i` key used to
+//     re-dispatch Enter, so describing a page would have installed it (the same
+//     mistake TestInfoKeyDescribesAModuleRow guards on Setup);
+//   - it describes the page under the CURSOR. It used to print every page at
+//     once, which meant standing on Backup buried its own paragraph twenty lines
+//     up; scoping it to the row is what every other screen already does.
+func TestHomeInfoKeyDescribesThePageUnderTheCursor(t *testing.T) {
 	m := initialModel()
 	m.w, m.h = 120, 40
+
+	// The cursor starts on Status.
 	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
 	if m.top() != scrInfo {
 		t.Fatalf("i on the home screen should open the page guide, top is %v", m.top())
 	}
-	// Asserted on the guide's own text, not on what the popup happens to show:
-	// Info renders a viewport, so in a short terminal the later pages are
-	// scrolled out of view and a viewport assertion would only ever check the
-	// first screenful.
-	body := m.homePageInfo()
-	// The pages someone has to understand before acting.
-	for _, want := range []string{"Backup", "Restore", "Setup", "Uninstall", "Keybindings"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("page guide does not mention %q", want)
-		}
-	}
-	// Restoring is the irreversible one; the guide has to say so.
-	if !strings.Contains(body, "OVERWRITES") {
-		t.Error("the guide does not warn that a restore overwrites files")
+	if m.pendingAction != "" {
+		t.Errorf("describing a page must not queue an action, got %q", m.pendingAction)
 	}
 	if m.info.View() == "" {
 		t.Error("the popup rendered nothing")
 	}
-	if m.pendingAction != "" {
-		t.Errorf("describing the pages must not queue an action, got %q", m.pendingAction)
+	status := m.homePageInfo()
+	if !strings.Contains(status, "Status") {
+		t.Errorf("the guide for the first row does not mention Status: %q", status)
+	}
+	// Scoped: the other pages must NOT be in there.
+	for _, unwanted := range []string{"Backup / Restore", "Uninstall", "Keybindings"} {
+		if strings.Contains(status, unwanted) {
+			t.Errorf("the guide for Status leaks %q — it is not scoped to the cursor", unwanted)
+		}
+	}
+
+	// Moving the cursor changes the answer, and only that page's text comes back.
+	//
+	// esc does not pop directly: Info.Update returns an InfoDismissedMsg through
+	// a tea.Cmd, so the command has to be run and its message fed back before the
+	// screen is actually gone. Discarding the cmd left the popup open and the rest
+	// of the test asserting against a model still inside it.
+	m, cmd := m.update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		t.Fatal("esc on the popup produced no command to dismiss it")
+	}
+	m, _ = m.update(cmd())
+	if m.top() != scrMain {
+		t.Fatalf("esc should leave the popup, top is %v", m.top())
+	}
+	if got := m.mainPicker.SelectedValue(); got != "status" {
+		t.Fatalf("expected the cursor to still be on status, got %q", got)
+	}
+	m.mainPicker = m.mainPicker.SelectValue("backup")
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	backup := m.homePageInfo()
+	if !strings.Contains(backup, "Backup / Restore") {
+		t.Errorf("the guide on Backup does not describe Backup: %q", backup)
+	}
+	if strings.Contains(backup, "Uninstall") {
+		t.Errorf("the guide for Backup leaks Uninstall: %q", backup)
+	}
+	// Restoring is the irreversible one, so the warning has to sit on the page
+	// that restores rather than somewhere in a wall of text.
+	if !strings.Contains(backup, "OVERWRITES") {
+		t.Error("the Backup guide does not warn that a restore overwrites files")
+	}
+}
+
+// TestHomeInfoOnCloseShowsEveryPage keeps the whole map reachable now that `i`
+// is scoped. The Close row has no page of its own, so it is where "what does
+// each page do" is answered.
+func TestHomeInfoOnCloseShowsEveryPage(t *testing.T) {
+	all := homePageInfoFor("close")
+	for _, want := range []string{"Backup", "Restore", "Setup", "Uninstall", "Keybindings"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the full map does not mention %q", want)
+		}
+	}
+	if !strings.Contains(all, "OVERWRITES") {
+		t.Error("the full map does not warn that a restore overwrites files")
+	}
+	// Every real page must answer for itself too, or `i` would fall through to
+	// the map and quietly print all ten pages again.
+	for _, page := range []string{"status", "update", "setup", "uninstall", "keybindings", "theme", "health", "backup", "settings"} {
+		if got := homePageInfoFor(page); got == all {
+			t.Errorf("page %q falls through to the full map instead of its own text", page)
+		}
 	}
 }

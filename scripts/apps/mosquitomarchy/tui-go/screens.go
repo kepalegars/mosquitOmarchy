@@ -590,6 +590,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					m.backupChecked[v] = true
 				}
 			}
+			// Saved HERE, on the keystroke, not when the backup runs: leaving
+			// this screen and coming back has to show the same ticks, and so
+			// does quitting the TUI.
+			saveBackupSelection(m.backupItems, m.backupChecked)
 			m.backupAppsPicker = m.rebuildBackupApps()
 		case scrUpdate:
 			if msg.Value == "" || msg.Value == "repo" || msg.Value == "back" || msg.Value == "apply" {
@@ -2764,62 +2768,101 @@ func (m model) rebuildFilteredSetup() navPicker {
 // the category is for, then every row in it with its own description. The leaf
 // rows already had an "i" (label + Info), but the category rows answered
 // nothing, so the only way to read what a category covers was to open it.
-// homePageInfo is the `i` popup on the main menu: what every page in this app
-// is for, and what it will and will not do.
+// homePageInfo is the `i` popup on the main menu: what the page UNDER THE
+// CURSOR does.
 //
-// A PAGE-level explanation, not a row-level one. `i` on any other screen
-// describes the row under the cursor; on the home screen the rows ARE the pages,
-// so the same key naturally answers "what does this page do" — and the home
-// screen is where someone decides which page they want, so it is where that
-// question is actually being asked.
+// It used to be one wall of text describing all ten pages at once, on the
+// reasoning that the rows ARE the pages so one text answered everything. It did
+// answer the question, but not the one being asked: standing on Backup, the only
+// line that helps is the one about Backup, and it was twenty lines up in a wall
+// you had to read to find. Every other screen already scopes `i` to the row
+// under the cursor — Status, Setup, Uninstall, the categories — and the home
+// screen is where someone is CHOOSING which page they want, so that is exactly
+// where the scoped answer is the useful one.
 //
-// Backup and restore get the most room because they are the pages whose
-// consequences are least reversible: a restore overwrites the files an archive
-// contains.
+// The full map is still reachable: it is what the Close row shows, because
+// "what does this page do" is a strange question to ask of the row that leaves.
 func (m model) homePageInfo() string {
-	return "What each page does\n" +
-		"\n" +
-		"Status — every module, what it installed and what is missing.\n" +
-		"Press i on a row for the detail behind its state.\n" +
-		"\n" +
-		"Update — fetch the scripts repo when a newer version exists.\n" +
-		"Owner mode updates as fast as possible; anyone else can re-apply\n" +
-		"per module. Installs nothing new and never overwrites your files.\n" +
-		"\n" +
-		"Setup — install, update or re-run modules, grouped in folders.\n" +
-		"Tab ticks, Left/Right folds a folder, i explains a row, Enter applies\n" +
-		"the whole ticked selection. Every script is idempotent, so re-running\n" +
-		"one on a configured machine is safe.\n" +
-		"\n" +
-		"Uninstall — the same tree, filtered to what is installed, in reverse.\n" +
-		"\n" +
-		"Keybindings — add, remove and reset the managed SUPER shortcuts.\n" +
-		"Every change asks whether to reload Hyprland afterwards.\n" +
-		"\n" +
-		"Theming — build an Omarchy theme from an image in the Wallpapers\n" +
-		"folder, or switch between the themes already installed.\n" +
-		"\n" +
-		"Health check — the checks worth running before blaming something.\n" +
-		"\n" +
-		"Backup / Restore — DATED ARCHIVES of your configuration, written to\n" +
-		"~/omarchy-backups as omarchy-backup-<date>.tar.gz.\n" +
-		"  Back up now  — walks three pages: what to include (apps/TUIs/\n" +
-		"                 webapps, VST plugins, KeePassXC passwords, Zen\n" +
-		"                 settings), an optional name for the archive, and\n" +
-		"                 encryption. It ASKS for a passphrase rather than\n" +
-		"                 storing one. The options are remembered, including\n" +
-		"                 when you leave the page without making a backup.\n" +
-		"  Restore      — RESTORING OVERWRITES the files an archive contains.\n" +
-		"                 It restores FILES, not packages: the pkglist.txt and\n" +
-		"                 aurlist.txt inside the archive list what to reinstall\n" +
-		"                 with pacman afterwards. RESTORE.md inside the\n" +
-		"                 archive is the step-by-step version.\n" +
-		"\n" +
-		"Extras — the smaller switches: crash notifications, live mode, and\n" +
-		"the other tools that do not need a page of their own.\n" +
-		"\n" +
-		"Close — leave. Nothing is applied on the way out; everything in this\n" +
-		"app is applied by the Enter you press on the row that does it."
+	return homePageInfoFor(m.mainPicker.SelectedValue())
+}
+
+// homePageInfoFor maps a main-menu row value to its explanation. An unknown
+// value falls back to the whole map rather than to nothing: a page added to
+// mainMenuItems without a paragraph here should still answer `i`.
+func homePageInfoFor(page string) string {
+	switch page {
+	case "status":
+		return "Status — every module, what it installed and what is missing.\n\n" +
+			"Press i on a row for the detail behind its state.\n" +
+			"Read-only: nothing on this page installs or changes anything."
+
+	case "update":
+		return "Update — fetch the scripts repo when a newer version exists.\n\n" +
+			"Owner mode updates as fast as possible; anyone else can re-apply\n" +
+			"per module. Installs nothing new and never overwrites your files."
+
+	case "setup":
+		return "Setup — install, update or re-run modules, grouped in folders.\n\n" +
+			"Tab ticks, Left/Right folds a folder, i explains a row, Enter applies\n" +
+			"the whole ticked selection. Every script is idempotent, so re-running\n" +
+			"one on a configured machine is safe.\n\n" +
+			"A row greyed out has nothing to install: its installer file is not on\n" +
+			"this machine. Drop the file where the row says and it comes back."
+
+	case "uninstall":
+		return "Uninstall — the same tree as Setup, filtered to what is installed,\n" +
+			"in reverse.\n\n" +
+			"i explains a row. Uninstalling a module removes what it deployed; it\n" +
+			"never touches the project data that module was working on."
+
+	case "keybindings":
+		return "Keybindings — add, remove and reset the managed SUPER shortcuts.\n\n" +
+			"Every change asks whether to reload Hyprland afterwards."
+
+	case "theme":
+		return "Theming — build an Omarchy theme from an image in the Wallpapers\n" +
+			"folder, or switch between the themes already installed."
+
+	case "health":
+		return "Health check — the checks worth running before blaming something.\n\n" +
+			"Tick the ones you want, Enter runs them. It re-applies any module left\n" +
+			"half-installed rather than reinstalling everything."
+
+	case "backup":
+		return "Backup / Restore — DATED ARCHIVES of your configuration, written to\n" +
+			"~/omarchy-backups as omarchy-backup-<date>.tar.gz.\n\n" +
+			"  Back up now  — walks three pages: what to include (apps/TUIs/\n" +
+			"                 webapps, VST plugins, KeePassXC passwords, Zen\n" +
+			"                 settings), an optional name for the archive, and\n" +
+			"                 encryption. It ASKS for a passphrase rather than\n" +
+			"                 storing one. The options are remembered, including\n" +
+			"                 when you leave the page without making a backup.\n" +
+			"  Restore      — RESTORING OVERWRITES the files an archive contains.\n" +
+			"                 It restores FILES, not packages: the pkglist.txt and\n" +
+			"                 aurlist.txt inside the archive list what to reinstall\n" +
+			"                 with pacman afterwards. RESTORE.md inside the\n" +
+			"                 archive is the step-by-step version."
+
+	case "settings":
+		return "Extras — the smaller switches: crash notifications, live mode, and\n" +
+			"the other tools that do not need a page of their own."
+	}
+	return homePagesOverview()
+}
+
+// homePagesOverview is every page at once. It is what the Close row answers
+// with, and the fallback for a page added without a paragraph above.
+func homePagesOverview() string {
+	var b strings.Builder
+	b.WriteString("What each page does\n")
+	for _, page := range []string{"status", "update", "setup", "uninstall", "keybindings",
+		"theme", "health", "backup", "settings"} {
+		b.WriteString("\n")
+		b.WriteString(homePageInfoFor(page))
+	}
+	b.WriteString("\n\nClose — leave. Nothing is applied on the way out; everything in\n" +
+		"this app is applied by the Enter you press on the row that does it.")
+	return b.String()
 }
 
 func (m model) categoryInfo(folder string) string {

@@ -297,6 +297,39 @@ cmd_backup_opts(){
   esac
 }
 
+backup_sel_file(){
+  printf '%s\n' "${BACKUP_SEL_FILE:-$HOME/.config/mosquitomarchy/backup-selection.json}"
+}
+
+# ─── The ticked rows of the Backup content screen ──────────────────────────
+# Saved the moment a row is touched, not when a backup is made. The screen used
+# to rebuild its ticks from the LAST ARCHIVE every time it opened, so a
+# selection made — or a row deliberately UNticked — was gone the moment you left
+# the page, and gone for good if you quit the TUI instead of running the backup.
+# A list the user assembles over several passes cannot be thrown away between
+# passes.
+#
+# Stored as the item keys ("APP foo", "TUI septabee", "WEB …") because that is
+# what beginBackup writes to apps.selected: one vocabulary, so there is no
+# second format to keep in step.
+cmd_backup_sel(){
+  local f mode="${1:-get}" arg="${2:-}"
+  f="$(backup_sel_file)"
+  case "$mode" in
+    get)
+      # A missing file means "nothing saved yet", NOT a failure: the caller
+      # treats an empty answer as "fall back to the last archive", and a
+      # non-zero status here would make that fallback unreachable.
+      [[ -r $f ]] && cat "$f"
+      return 0 ;;
+    set)
+      [[ -n $arg ]] || { err "backup-sel set needs a JSON payload"; return 1; }
+      mkdir -p "$(dirname "$f")" 2>/dev/null || true
+      printf '%s\n' "$arg" > "$f" || { err "cannot write $f"; return 1; } ;;
+    clear|"") rm -f "$f" ;;
+  esac
+}
+
 cmd_theme_default_dir(){
   local f mode="${1:-get}" arg="${2:-}"
   f="$(theme_default_dir_file)"
@@ -859,6 +892,27 @@ cmd_backups(){
   done
 }
 
+# ─── Packages the backup files under Apps even though the catalog says TUI ───
+# septabee is a DAW, not a terminal utility. It is cataloged as a TUI because
+# that is how it ships (a terminal app that needs its own launcher and icon,
+# installed by setup-septabee-menu.sh), but in a backup the user looks for it
+# among the applications.
+#
+# The FOLDER is the only thing that changes. The item key stays "TUI septabee"
+# because that is the line apps.selected and --selection= speak: beginBackup
+# writes it.Key and ignores the folder, so the archive is byte-identical to what
+# it was before and an old archive still restores like a new one.
+BACKUP_APP_FOLDER=(septabee)
+
+# 0 when this catalog entry belongs under the Apps folder in the backup.
+_backup_filed_under_apps(){ # catalog entry ("pkg|label")
+  local name="${1%%|*}" p
+  for p in "${BACKUP_APP_FOLDER[@]}"; do
+    [[ $p == "$name" ]] && return 0
+  done
+  return 1
+}
+
 # ─── Backup content options (installed apps/tuis/webapps + facts) ──────────
 # Emits the same content tree the old interactive backup asked about, so the
 # TUI can offer it. Each item's key IS the exact "apps.selected" line
@@ -869,6 +923,38 @@ cmd_backup_options(){
   detect_installed_apps
   local had_prev=0
   load_previous_selection 2>/dev/null && had_prev=1
+  # The ticks the user last touched on this screen. Stronger than had_prev: an
+  # archive is a record of a backup that RAN, while this is a record of an edit
+  # that may never have been applied — and it is the newer of the two whenever
+  # both exist, because saving happens on every toggle.
+  local -a SAVED_SEL=()
+  local has_saved=0
+  load_saved_selection && has_saved=1
+
+  # true/false for one row. Three sources, most recent first: what the user just
+  # ticked, then the last archive, then "everything" on a first run.
+  #
+  #   $1  the item KEY      — "APP vlc", "TUI septabee", "WEB WhatsApp|…|icon"
+  #   $2  the bare package/web name, what PREV_* holds
+  #   $3  the NAME of the PREV_* array to walk (${!3[@]} walks an array by name,
+  #       which is how one helper serves the APP/TUI/WEB lists)
+  #
+  # The key and the bare name are both arguments rather than one derived from the
+  # other on purpose: the saved selection stores KEYS, and the previous-archive
+  # lists store NAMES. Deriving one from the other silently compared "TUI
+  # septabee" against "septabee" and reported every row unticked.
+  backup_checked(){
+    local key="$1" name="$2" listname="$3" p
+    if ((has_saved)); then
+      for p in "${SAVED_SEL[@]:-}"; do [[ $p == "$key" ]] && { printf true; return; }; done
+      printf false; return
+    fi
+    if ((had_prev)); then
+      for p in "${!listname[@]}"; do [[ $p == "$name" ]] && { printf true; return; }; done
+      printf false; return
+    fi
+    printf true
+  }
   local keepass=false zen=false
   # The screen only shows a row for what the backup can actually take, and the
   # backup's own conditions are the reference (see do_backup): KeePassXC needs
@@ -880,28 +966,35 @@ cmd_backup_options(){
   printf '{"opts":true,"keepass":%s,"zen":%s}\n' "$keepass" "$zen"
 
   local e name label checked p
-  if ((${#INSTALLED_APP[@]})); then
+  # Split the installed TUIs into the ones filed under Apps and the ones that
+  # stay in the TUIs folder, so neither folder is emitted empty.
+  local -a tui_apps=() tui_tuis=()
+  for e in "${INSTALLED_TUI[@]:-}"; do
+    if _backup_filed_under_apps "$e"; then tui_apps+=("$e"); else tui_tuis+=("$e"); fi
+  done
+
+  if ((${#INSTALLED_APP[@]})) || ((${#tui_apps[@]})); then
     printf '{"folder":"apps","label":"Apps"}\n'
-    for e in "${INSTALLED_APP[@]}"; do
+    for e in "${INSTALLED_APP[@]:-}"; do
       name="${e%%|*}"; label="${e#*|}"
-      checked=true
-      if ((had_prev)); then
-        checked=false
-        for p in "${PREV_APP[@]:-}"; do [[ $p == "$name" ]] && { checked=true; break; }; done
-      fi
+      checked="$(backup_checked "APP $name" "$name" PREV_APP)"
       printf '{"folder":"apps","key":%s,"label":%s,"checked":%s}\n' \
         "$(json_str "APP $name")" "$(json_str "$label")" "$checked"
     done
-  fi
-  if ((${#INSTALLED_TUI[@]})); then
-    printf '{"folder":"tuis","label":"TUIs"}\n'
-    for e in "${INSTALLED_TUI[@]}"; do
+    # Cataloged as a TUI, filed under Apps. Its previous-selection check reads
+    # PREV_TUI, not PREV_APP, because that is the list its key belongs to.
+    for e in ${tui_apps[@]+"${tui_apps[@]}"}; do
       name="${e%%|*}"; label="${e#*|}"
-      checked=true
-      if ((had_prev)); then
-        checked=false
-        for p in "${PREV_TUI[@]:-}"; do [[ $p == "$name" ]] && { checked=true; break; }; done
-      fi
+      checked="$(backup_checked "TUI $name" "$name" PREV_TUI)"
+      printf '{"folder":"apps","key":%s,"label":%s,"checked":%s}\n' \
+        "$(json_str "TUI $name")" "$(json_str "$label")" "$checked"
+    done
+  fi
+  if ((${#tui_tuis[@]})); then
+    printf '{"folder":"tuis","label":"TUIs"}\n'
+    for e in "${tui_tuis[@]}"; do
+      name="${e%%|*}"; label="${e#*|}"
+      checked="$(backup_checked "TUI $name" "$name" PREV_TUI)"
       printf '{"folder":"tuis","key":%s,"label":%s,"checked":%s}\n' \
         "$(json_str "TUI $name")" "$(json_str "$label")" "$checked"
     done
@@ -910,11 +1003,7 @@ cmd_backup_options(){
     printf '{"folder":"webapps","label":"Webapps"}\n'
     for e in "${INSTALLED_WEB[@]}"; do
       name="${e%%|*}"
-      checked=true
-      if ((had_prev)); then
-        checked=false
-        for p in "${PREV_WEB[@]:-}"; do [[ $p == "$name" ]] && { checked=true; break; }; done
-      fi
+      checked="$(backup_checked "WEB $e" "$name" PREV_WEB)"
       printf '{"folder":"webapps","key":%s,"label":%s,"checked":%s}\n' \
         "$(json_str "WEB $e")" "$(json_str "$name")" "$checked"
     done
@@ -1993,6 +2082,7 @@ case "$sub" in
   preinstalls-remove)       cmd_preinstalls_remove "$@" ;;
   backup-options)           cmd_backup_options ;;
   backup-opts)              cmd_backup_opts "${1:-get}" "${2:-}" ;;
+  backup-sel)               cmd_backup_sel "${1:-get}" "${2:-}" ;;
   backups)                  cmd_backups ;;
   update-check)             cmd_update_check ;;
   install)                  cmd_install "${1:-}" "${@:2}" ;;

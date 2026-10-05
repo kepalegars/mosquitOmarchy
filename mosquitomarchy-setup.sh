@@ -1000,6 +1000,38 @@ load_previous_selection(){
   [[ ${#PREV_APP[@]} -gt 0 || ${#PREV_TUI[@]} -gt 0 || ${#PREV_WEB[@]} -gt 0 ]]
 }
 
+# The ticked keys of the Backup content screen, as saved by the TUI the moment a
+# row is touched (mosquitomarchy-actions `backup-sel`). Preferred over the last
+# archive when both exist: an archive records a backup that RAN, this records an
+# edit that may never have been applied, and this is the newer of the two.
+#
+# Returns 1 when nothing is saved yet, which is a normal first-run state, not an
+# error — the caller falls back to the previous archive and then to "everything".
+load_saved_selection(){
+  SAVED_SEL=()
+  local raw; raw="$(cmd_backup_sel get)"
+  # Return 1 only when NO FILE exists, and 0 when a file exists even if it lists
+  # nothing. Those are different states and must not collapse: "nothing ticked"
+  # is something the user can do on purpose, and treating it as "nothing saved
+  # yet" would tick everything back on the next visit. Only the missing file
+  # falls back to the previous archive and then to "everything".
+  [[ -n $raw ]] || return 1
+  # A JSON array of strings on one line: pull the quoted values out without
+  # needing a JSON parser here (this file is sourced by the interactive wizard
+  # too, and pulling in python/jq for three keys would be absurd).
+  raw="${raw#*\"sel\"}"
+  local k
+  while [[ $raw == *\"* ]]; do
+    raw="${raw#*\"}"
+    k="${raw%%\"*}"
+    SAVED_SEL+=("$k")
+    raw="${raw#*\"}"
+  done
+  # Deliberately not `((${#SAVED_SEL[@]}))`: see above — an empty list in an
+  # existing file is a saved selection of nothing, not the absence of one.
+  return 0
+}
+
 # Detects the catalog entries CURRENTLY installed → INSTALLED_APP / _TUI / _WEB
 detect_installed_apps(){
   INSTALLED_APP=(); INSTALLED_TUI=(); INSTALLED_WEB=()
