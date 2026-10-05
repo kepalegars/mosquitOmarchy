@@ -7,21 +7,25 @@
 # the same engine. There is no second, older wizard.
 #
 # The large installation files (Ableton zips, Guitar Pro installer, Bitwig
-# .deb/.jar) are NOT part of the repo: they are downloaded on demand via
-# scripts/apps/download-assets.sh (assets.links catalog), optionally, to keep
-# the clone lightweight.
+# .deb/.jar) are NOT part of the repo and are NOT downloaded: they sit behind
+# account logins and a 4 GB zip does not belong in a clone. What the bootstrap
+# does instead is INVENTORY them through scripts/apps/download-assets.sh
+# (assets.links catalog) and name, early and in a neutral tone, the ones this
+# machine is missing and where to drop them.
 #
 # Usage:
 #   # Repo already cloned → direct execution:
 #   ./bootstrap.sh        # interactive: assets, then offer to deploy, then TUI
 #   ./bootstrap.sh -y             # no questions: deploy + start the TUI
-#   ./bootstrap.sh --zips -y      # same + downloads the assets (zips/exe/deb)
+#   ./bootstrap.sh --zips         # deprecated no-op, kept so old commands keep
+#                                 #   working: the asset phase always runs and
+#                                 #   has never downloaded anything
 #   ./bootstrap.sh --status       # module status without modifying anything
 #   ./bootstrap.sh --init-git     # in an EXTRACTED release archive: attach it to
 #                                 #   origin/<branch> so the self-update works
 #
 #   # Repo NOT yet cloned → a single terminal command (repo is public):
-#   curl -fsSL https://raw.githubusercontent.com/kepalegars/mosquitOmarchy/master/bootstrap.sh | bash -s -- --zips -y
+#   curl -fsSL https://raw.githubusercontent.com/kepalegars/mosquitOmarchy/master/bootstrap.sh | bash -s -- -y
 #
 # Security: asset downloads are verified by sha256 (assets.links);
 # the script does nothing unless you explicitly ask it to (no silent sudo:
@@ -130,17 +134,16 @@ if ((STATUS_ONLY)); then
   exit $?
 fi
 
-if ((ZIPS)); then
-  msg "Downloading assets (assets.links catalog)"
-  # download-assets.sh refuses the catalog while it still carries the
-  # TON_HEBERGEUR placeholder and says exactly what to set. Its non-zero exit is
-  # the answer here, not a crash: the bootstrap carries on to deploy the manager
-  # either way, since only the big installers are blocked.
-  bash ./scripts/apps/download-assets.sh $([[ $YES == 1 ]] && echo -y) \
-    || warn "Assets were not downloaded — see the message above."
-else
-  warn "Assets (zips/exe/deb) NOT downloaded — run ./scripts/apps/download-assets.sh later if needed."
-fi
+# Unconditional, and that is the point: the answer to "which of the big
+# installers do I still owe this machine" belongs BEFORE the deploy, not as a
+# surprise halfway through Setup. The inventory only reports, so it cannot fail
+# the run — a missing 4 GB zip is a fact about the machine, not a broken
+# bootstrap, and the modules that want one grey themselves out in Setup.
+((ZIPS)) && warn "--zips does nothing now (nothing has been downloaded for a while). Kept so existing commands still run."
+msg "Checking the large installers (assets.links inventory)"
+bash ./scripts/apps/download-assets.sh \
+  || warn "Could not read the asset inventory — continuing; Setup will report per module."
+
 
 # ───────────────────────── Deploy ─────────────────────────
 # Bootstrap's job is to get to a WORKING mosquitOmarchy, not to install every
@@ -158,15 +161,10 @@ DEPLOYER="scripts/apps/mosquitomarchy/install-tui.sh"
 
 deploy(){
   msg "Deploying mosquitOmarchy — builds the TUI, adds the menu entry, the float rule and the post-boot hook"
-  # Checked up front so the failure names the real cause. install-tui.sh would
-  # otherwise report "Go is not installed" from inside its own ensure_go, which
-  # reads like a broken script rather than a missing dependency.
-  if ! command -v go >/dev/null 2>&1; then
-    err "Go is required to build the TUI, and it is not installed."
-    err "  Arch:   sudo pacman -S go"
-    err "  mise:   mise use go@latest"
-    return 1
-  fi
+  # No go pre-check here on purpose. install-tui.sh's ensure_go installs Go
+  # (mise, then pacman) and names both paths if neither works, so a second copy
+  # of the check here could only ever be a worse, earlier version of the same
+  # error.
   bash "./$DEPLOYER" -y
 }
 

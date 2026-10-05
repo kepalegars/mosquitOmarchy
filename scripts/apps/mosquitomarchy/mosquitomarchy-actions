@@ -513,6 +513,25 @@ tree_fingerprint(){
     fi
   done
   out+="|v${REPO_VERSION:-}|f${#FIXES[@]}|c${#CATEGORIES[@]}"
+  # Whether a big installer is on disk is an INPUT to the tree, not a detail of
+  # it: Setup greys out the module that needs it. Without this in the key, the
+  # greying could not appear until the 30-minute reap, and — the part that
+  # actually matters — dropping the Ableton zip into the folder would NOT bring
+  # the row back, which is the opposite of what the row promises.
+  #
+  # Presence only, via the globs in _manual_asset_present. The sha256 in
+  # assets.links would be the stronger check but hashing a 4 GB zip to decide
+  # whether to draw a row greyed is not a trade worth making; checksum
+  # verification stays in `download-assets.sh --check`.
+  local gk
+  for gk in "${ASSET_GATED_KEYS[@]}"; do
+    if _manual_asset_present "$gk"; then out+="|$gk:1"; else out+="|$gk:0"; fi
+  done
+  # The builder's own mtime. A change to THIS file changes the tree, and the
+  # catalog fingerprints above cannot see that: two different versions of the
+  # tree builder produced byte-identical fingerprints and the loser of the race
+  # won the cache.
+  out+="|m$(stat -c %Y "$SCRIPT_SELF" 2>/dev/null || echo 0)"
   # Slashes and spaces would break the filename; this set is enough for a name.
   printf '%s' "${out//[^A-Za-z0-9._|-]/_}"
 }
@@ -576,7 +595,7 @@ cmd_setup(){
 }
 
 _setup_tree(){
-  local c id label accent i e name info
+  local c id label accent i e name info gate disabled
   local sep='  —  '
   # Categories and their scripts are ALWAYS shown in alphabetical order, so a
   # growing catalog never turns into a hunt. The sort key is the label (or the
@@ -641,11 +660,23 @@ _setup_tree(){
           # remove-ai's Setup row reads EXACTLY "bring back omarchy's agentic
           # stuff" (no version suffix; it is an action, not a versioned module).
           [[ ${CAND_KEYS[$i]} == remove-ai ]] && vlabel="$name"
+          # A module whose big installer is not on this machine yet stays in
+          # the tree, greyed, and says which file is missing. The note goes in
+          # `info` because that line is already rendered under the label, so
+          # the reason is visible without a second row or a tooltip.
+          gate="$(_asset_gate "${CAND_KEYS[$i]}")"
+          if [[ -n $gate ]]; then
+            disabled=true
+            info="${info:+$info — }$(_asset_gate_note "${CAND_KEYS[$i]}")"
+          else
+            disabled=false
+          fi
           json_str_into "$id";           j_folder=$JS
           json_str_into "${CAND_KEYS[$i]}"; local j_key=$JS
           json_str_into "$vlabel";       local j_vlabel=$JS
           json_str_into "$info";         local j_info=$JS
-          json_obj_into folder "$j_folder" key "$j_key" label "$j_vlabel" info "$j_info"
+          json_obj_into folder "$j_folder" key "$j_key" label "$j_vlabel" info "$j_info" \
+            disabled "$(json_bool "$disabled")"
           items+=("$id/$name"$'\t'"$JO")
         done
         ;;
@@ -972,6 +1003,57 @@ _manual_asset_note(){ # appkey -> human note (empty when nothing to add)
       ;;
   esac
 }
+# ─── Setup grey-out gate ────────────────────────────────────────────────────
+# Modules whose installer cannot be fetched by the repo: the row stays VISIBLE
+# in Setup but is greyed and refuses Enter, because dropping it from the list
+# would leave the user wondering where Ableton went, and offering it would only
+# produce a failed install.
+#
+# The canonical list of module keys whose installer cannot be fetched by the
+# repo. ONE list on purpose: both the tree builder and the cache key below need
+# it, and two hardcoded copies drift apart silently — davinci got gated while the
+# cache key still did not know about it, so its row would have kept whatever
+# state the last run wrote until the 30-minute reap.
+ASSET_GATED_KEYS=(ableton bitwig guitarpro davinci-resolve)
+
+# Every module in that list: the row stays VISIBLE in Setup but is greyed and
+# refuses Enter, because dropping it from the list would leave the user
+# wondering where Ableton went, and offering it would only produce a failed
+# install.
+#
+# Presence is decided by GLOBS, never by the sha256 in assets.links: this runs
+# inside _setup_tree, i.e. on every render of the Setup screen, and hashing a
+# 4 GB zip per row per keystroke would hang the TUI. Checksum verification stays
+# where it belongs, in `download-assets.sh --check`, off the render path.
+_asset_gate(){ # appkey -> expected filename when gated-and-absent, empty when usable
+  local k listed=0
+  for k in "${ASSET_GATED_KEYS[@]}"; do
+    [[ $k == "$1" ]] && { listed=1; break; }
+  done
+  ((listed)) || return 0
+  _manual_asset_present "$1" && return 0
+  _manual_asset_spec "$1" | cut -d'|' -f1
+}
+# Module id -> the folder its files actually live in. Not always the same string:
+# the module is "davinci-resolve" (that is the id in MODULES/CATEGORIES and the
+# key the tree emits) while its installer sits in scripts/apps/davinci/. Building
+# the note from the id pointed users at a directory that does not exist.
+_asset_dir(){ # appkey -> module folder name
+  case "$1" in
+    davinci|davinci-resolve) printf 'davinci' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# The same answer as a sentence, for the row's info line.
+_asset_gate_note(){ # appkey -> human sentence when gated, empty when usable
+  local expected; expected="$(_asset_gate "$1")"
+  [[ -n $expected ]] || return 0
+  # No leading dash: the caller joins this onto info with " — ", and a note that
+  # starts with its own dash reads as "label — — needs…".
+  printf 'needs %s in scripts/apps/%s/' "$expected" "$(_asset_dir "$1")"
+}
+
 cmd_missing_assets(){
   local folder="${1:-}"; shift || true
   [[ $folder == apps ]] || return 0

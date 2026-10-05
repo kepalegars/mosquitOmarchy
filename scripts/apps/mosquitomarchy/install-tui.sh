@@ -64,9 +64,39 @@ for a in "$@"; do case $a in
   *) usage 1 ;;
 esac; done
 
+# Go is a BUILD dependency, and a machine without it cannot even reach the point
+# where the user is told which modules are missing. So it gets installed rather
+# than reported: mise first (no sudo, and it is how this workstation already has
+# it), then pacman. Both keep their own password prompts — the bootstrap's rule
+# is "no SILENT sudo", not "no sudo".
 ensure_go() {
   if command -v go >/dev/null 2>&1; then ok "go present ($(go version | awk '{print $3}'))"; return 0; fi
-  err "Go is not installed. Install it (e.g. 'mise use go@latest' or 'sudo pacman -S go')."; return 1
+
+  info "Go is not installed — installing it now (needed to build the TUI)."
+
+  if command -v mise >/dev/null 2>&1; then
+    info "Trying mise…"
+    if mise use -g go@latest >/dev/null 2>&1; then
+      # mise has to be told to put its shims on PATH for this shell; without it
+      # the install succeeded and the check below still says "missing".
+      export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+      command -v go >/dev/null 2>&1 && { ok "go installed via mise ($(go version | awk '{print $3}'))"; return 0; }
+    fi
+    warn "mise did not produce a usable go — trying the system package manager."
+  fi
+
+  if command -v pacman >/dev/null 2>&1; then
+    info "Trying pacman — this asks for your password."
+    if command -v sudo >/dev/null 2>&1 && sudo pacman -S --needed go; then
+      command -v go >/dev/null 2>&1 && { ok "go installed via pacman ($(go version | awk '{print $3}'))"; return 0; }
+    fi
+  fi
+
+  err "Could not install Go automatically."
+  err "  Arch:  sudo pacman -S --needed go"
+  err "  mise:  mise use -g go@latest"
+  err "Then re-run this script."
+  return 1
 }
 
 ensure_repo_source() {

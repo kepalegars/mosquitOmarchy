@@ -285,7 +285,21 @@ st_reaper(){
   [[ -x "$HOME/.local/bin/reaper-launch" ]] && echo ok || echo partial
 }
 st_audio(){
-  # Bitwig installed? (flatpak OR AUR/pacman)
+  # The STACK: yabridge present, plus the Audio Plugin Manager deployed. This
+  # used to return whether Bitwig was installed, which was only true while
+  # run_audio still launched setup-bitwig.sh; Bitwig is its own module (st_bitwig)
+  # and reporting it here made this row claim "missing" on a machine whose
+  # yabridge was perfectly installed.
+  if [[ -x "$BIN_DIR/mosquito-audio-plugin-manager-tui" ]] || [[ -x "$BIN_DIR/mosquito-audio-plugin-manager" ]]; then
+    echo ok; return
+  fi
+  # No manager binary yet: acceptable mid-way (the stack is installed but the
+  # TUI was never deployed), wrong once it is gone.
+  systemctl list-unit-files 2>/dev/null | grep -q yabridge-autosync && echo partial || echo missing
+}
+st_bitwig(){
+  # Bitwig installed? (flatpak OR AUR/pacman) — unchanged, but it now answers for
+  # the bitwig module instead of being smuggled inside the audio row.
   local bw_installed=0
   if flatpak list 2>/dev/null | grep -q com.bitwig.BitwigStudio; then
     bw_installed=1
@@ -608,7 +622,8 @@ st_apps(){
 MODULES=(
   "mosquitomarchy:mosquitomarchy-deployer — the manager interface itself (dispatcher + menu entry + float rule + post-boot update hook) — installed first"
   "reaper:REAPER + Hyprland/Wayland integration, and its UI scale is set to the current monitor's DPI on every launch — REAPER cannot do this itself, so the launcher does it before the process starts. No action needed, nothing to remember: launch it from the Omarchy menu, the desktop entry or a shell and the size is right"
-  "audio:yabridge stack + Bitwig 6.0 Beta 6 (local .deb) + local VST folders + cautions"
+  "audio:yabridge stack + local VST folders + the mosquito Audio Plugin Manager (TUI, plugin sharing across DAWs) + cautions"
+  "bitwig:Bitwig Studio 6.0 Beta 6 from the local .deb, its own module + optional patched bitwig.jar"
   "windows-vm:VM launcher + winvm (RAM/CPU/disk) + OEM debloat (auto-detected)"
   "macos-vm:macOS VMs in QEMU/KVM (OSX-For-Omarchy) — installer + TUI manager + shared folders + USB passthrough"
   "omarchy-vm:Omarchy in QEMU/KVM from the official ISO — launcher + TUI manager + shared folder + USB/GPU passthrough"
@@ -707,7 +722,8 @@ run_fixes(){ # loop over FIXES_SELECTED, log results
 module_state(){
   local s
   case $1 in
-    reaper) st_reaper ;; audio) st_audio ;; windows-vm) st_windows_vm ;;
+    reaper) st_reaper ;; audio) st_audio ;; bitwig) st_bitwig ;;
+    windows-vm) st_windows_vm ;;
     macos-vm) st_macos_vm ;;
     omarchy-vm) st_omarchy_vm ;;
     ableton) st_ableton ;; guitarpro) st_guitarpro ;;
@@ -738,13 +754,20 @@ module_state(){
 module_of_path(){
   case "$1" in
     scripts/apps/reaper/*)                                   echo reaper ;;
-    scripts/apps/bitwig/*|scripts/apps/audio-plugin-manager/*) echo audio ;;
+    scripts/apps/bitwig/*)                                  echo bitwig ;;
+    scripts/apps/audio-plugin-manager/*)                    echo audio ;;
     scripts/windows-vm/*)                                    echo windows-vm ;;
     scripts/macos-vm/*)                                      echo macos-vm ;;
     scripts/omarchy-vm/*)                                    echo omarchy-vm ;;
     scripts/apps/ableton/*)                                  echo ableton ;;
     scripts/apps/guitarpro/*)                                echo guitarpro ;;
-    scripts/apps/davinci/*)                                  echo davinci ;;
+    # davinci-resolve, not davinci: that is the id in MODULES/CATEGORIES, and
+    # the caller compares this output against those ids. Returning "davinci"
+    # matched nothing, so a change to any scripts/apps/davinci/* file could
+    # never be attributed to the module and silently never showed up as an
+    # available update.
+    scripts/apps/davinci/*)                                  echo davinci-resolve ;;
+    scripts/mosquitomarchy-update/*)                         echo mosquitomarchy-update ;;
     scripts/apps/ableton-move-*|scripts/apps/ableton-move/*) echo ableton-move-manager ;;
     scripts/apps/handbrake/*)                                echo handbrake ;;
     scripts/apps/extracto/*)                                 echo extracto ;;
@@ -2998,6 +3021,7 @@ uninstall_module(){
   case $id in
     reaper) un_reaper ;;
     audio) un_audio ;;
+    bitwig) un_bitwig ;;
     windows-vm) un_windows_vm ;;
     macos-vm) un_macos_vm ;;
     omarchy-vm) un_omarchy_vm ;;
@@ -3148,18 +3172,77 @@ run_required_libs(){
 run_reaper(){ bash "$REAPER_DIR/setup-reaper.sh"; }
 
 run_audio(){
-  # setup-bitwig.sh (Bitwig 6.0 Beta 6 via local .deb / AUR + custom bitwig.jar),
-  # then setup-reaper.sh, then the local wine/yabridge stack + the Audio Plugin
-  # Manager (scripts/apps/audio-plugin-manager) — without VM link.
-  ok "(audio) launching setup-bitwig.sh (Bitwig 6.0 Beta 6)"
-  if ! bash "$BITWIG_DIR/setup-bitwig.sh" $([[ $YES == 1 ]] && echo -y); then
-    err "audio module: setup-bitwig.sh failed (see messages above)."
-    return 1
-  fi
+  # The wine/yabridge stack + the Audio Plugin Manager — without VM link.
+  #
+  # Bitwig used to be launched from here as the first step, which made "Bitwig"
+  # and "the audio stack" one indivisible row: the .deb cannot be fetched by the
+  # repo, so on a machine without it the whole row had to be either offered and
+  # broken, or hidden along with yabridge and VST sharing that work perfectly
+  # well without a DAW. Bitwig is its own module now (run_bitwig), and REAPER
+  # has been its own module all along — this one is the stack.
   ok "(audio) launching setup-reaper.sh (REAPER)"
   bash "$REAPER_DIR/setup-reaper.sh" $([[ $YES == 1 ]] && echo -y)
   bash "$AUDIO_PLUGIN_MANAGER_DIR/setup-audio-stack.sh" $([[ $YES == 1 ]] && echo -y)
   return 0
+}
+
+run_bitwig(){
+  # setup-bitwig.sh: Bitwig 6.0 Beta 6 from the LOCAL .deb via the pinned AUR
+  # PKGBUILD, then it asks about the patched bitwig.jar.
+  #
+  # Setup greys this row when the .deb is missing, so reaching here with no file
+  # means the user ran the script directly: say so plainly instead of letting it
+  # fail somewhere inside makepkg.
+  if ! compgen -G "$BITWIG_DIR"/bitwig*.deb >/dev/null 2>&1; then
+    err "No Bitwig .deb in scripts/apps/bitwig/ — this module needs the installer"
+    err "supplied by hand. Drop bitwig-studio-*.deb there, then re-run."
+    return 1
+  fi
+  ok "(bitwig) launching setup-bitwig.sh (Bitwig 6.0 Beta 6)"
+  bash "$BITWIG_DIR/setup-bitwig.sh" $([[ $YES == 1 ]] && echo -y)
+}
+
+un_bitwig(){
+  # There is no scripts/apps/bitwig/uninstall-bitwig.sh, so this removes what
+  # setup-bitwig.sh put there. The orphan list is read FROM that script rather
+  # than copied: a second copy of "what Bitwig leaves on disk" is exactly the
+  # thing that goes stale and leaves /opt/bitwig-studio behind.
+  local bw_script="$BITWIG_DIR/setup-bitwig.sh"
+  [[ -f $bw_script ]] || { err "bitwig module: $bw_script not found."; return 1; }
+
+  local present=0
+  pkg_has bitwig-studio && present=1
+  flatpak list 2>/dev/null | grep -q com.bitwig.BitwigStudio && present=1
+  [[ -d /opt/bitwig-studio ]] && present=1
+  if ((!present)); then
+    ok "Bitwig is not installed — nothing to remove."
+    return 0
+  fi
+
+  info "Uninstalling Bitwig Studio"
+  # Packages first, then the leftovers. sudo goes through mq_sudo like every
+  # other module so the prompt is the native one and is primed once.
+  pkg_has bitwig-studio && mq_sudo pacman -R --noconfirm bitwig-studio || true
+  mq_sudo dpkg -r bitwig-studio 2>/dev/null || true
+  flatpak list 2>/dev/null | grep -q com.bitwig.BitwigStudio \
+    && flatpak uninstall --user --assumeyes com.bitwig.BitwigStudio 2>/dev/null || true
+
+  # The orphan list, read as DATA from setup-bitwig.sh rather than copied here:
+  # a second copy of "what Bitwig leaves on disk" is exactly the thing that goes
+  # stale and leaves /opt/bitwig-studio behind. Quotes are stripped by tr instead
+  # of by ${var//"/} — a double quote inside a parameter expansion closes the
+  # surrounding string and the file stops parsing.
+  local pat f
+  while IFS= read -r pat; do
+    pat="${pat# }"; pat="${pat% }"
+    [[ -n $pat && $pat != ORPHAN_FILES=\( && $pat != \) ]] || continue
+    # shellcheck disable=SC2086 # deliberate: the icon patterns carry a wildcard
+    for f in $pat; do
+      [[ -e $f ]] || continue
+      mq_sudo rm -rf "$f" 2>/dev/null || warn "Could not remove $f"
+    done
+  done < <(sed -n '/^ORPHAN_FILES=(/,/^)/p' "$bw_script" | tr -d '"')
+  ok "Bitwig removed (package + /opt/bitwig-studio + desktop entries)."
 }
 
 run_windows_vm(){ bash "$VM_DIR/setup-windows-vm.sh" $([[ $YES == 1 ]] && echo -y); }
@@ -3460,6 +3543,7 @@ exec_modules(){
     case $id in
       reaper)  run_module reaper run_reaper ;;
       audio)   run_module audio run_audio ;;
+      bitwig)  run_module bitwig run_bitwig ;;
       windows-vm) run_module windows-vm run_windows_vm ;;
       macos-vm) run_module macos-vm run_macos_vm ;;
       omarchy-vm) run_module omarchy-vm run_omarchy_vm ;;
@@ -3504,7 +3588,7 @@ exec_modules(){
 
 # Categories of the "setup" action. id|label|modules (space-separated module ids).
 CATEGORIES=(
-  "apps|Apps|reaper audio ableton guitarpro davinci-resolve extracto handbrake superfile zen keepassxc hyprmod"
+  "apps|Apps|reaper audio bitwig ableton guitarpro davinci-resolve extracto handbrake superfile zen keepassxc hyprmod"
   "tuis|TUIs|"
   "webapps|Webapps|"
   # "Plugins" is the project's own layer: the manager itself (the deployer),
