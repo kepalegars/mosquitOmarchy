@@ -81,24 +81,17 @@ BarWidget {
       width: Style.space(20)
       height: Style.space(20)
 
-      // The same drawn note as the panel's pin button, so the two marks are one
-      // drawing instead of a Canvas here and a "♪" font glyph there.
+      // NO backing disc. There used to be one — a `radius: width/2` disc in
+      // Util.alpha(Color.background, 0.72) — put there because the bar has no
+      // background of its own: it is transparent over the wallpaper, and this
+      // theme's red was sampled from that wallpaper, so an unoutlined red note
+      // measured ~1:1 against a red patch and disappeared into it.
       //
-      // On a backing disc, because the bar has no background of its own: it is
-      // transparent over the wallpaper, and this theme's `red` was sampled from
-      // that very wallpaper, so a red note measured a contrast of 1.00:1 against
-      // the patch behind it — literally the same colour, i.e. invisible where the
-      // wallpaper is red. Over the dark parts it was 4.5:1, so the disc only
-      // matters on the red ones, and it is what makes the red readable
-      // everywhere instead of half the time.
-      Rectangle {
-        anchors.fill: parent
-        radius: width / 2
-        color: Util.alpha(Color.background, 0.72)
-        // No border: at bar size a 1px outline is either invisible or lumpy, and
-        // the disc is a separator, not a control.
-      }
-
+      // NoteGlyph draws its own black outline now, which is the cheaper answer:
+      // no slab of grey behind a 20px mark, and the note keeps the plain red
+      // silhouette it had before the disc was introduced. The outline is what
+      // separates it from a red background; the red itself carries it on dark
+      // ones.
       NoteGlyph {
         anchors.fill: parent
         // The theme's red. Color.urgent IS the theme's `red` key (Color.qml maps
