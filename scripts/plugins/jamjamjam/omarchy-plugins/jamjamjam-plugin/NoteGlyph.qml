@@ -37,16 +37,26 @@ Item {
     // exists to fix.
     property color outlineColor: "#000000"
 
-    // Outline thickness in pixels. Fixed rather than proportional because the two
-    // call sites are 20px and 17px, and a thickness that scales with them reads
-    // as two different marks.
-    property real outline: 1
+    // Outline thickness in pixels. OFF (0), which is the better-looking mark.
+    //
+    // It was tried both ways against a real render and lost: at 1px a 20px note
+    // wears a black border two pixels wide and reads as a sticker; at 0.5px the
+    // eight copies still leave a grey halo around the red and muddy it. The plain
+    // red note is what the mark looked like before any of this, and it is what
+    // it looks like now.
+    //
+    // Kept as a property because the reason it existed is real: the bar is
+    // transparent over the wallpaper, and a red note on a red wallpaper is close
+    // to invisible. On THIS theme's dark bar that is moot — the red measures
+    // 4.24:1 against it — but a light or red-tinted bar would want it back, and
+    // raising this to 0.5 is the whole fix.
+    property real outline: 0
 
-    // The ink of ♪ is about 0.7 of its em box and sits low in it, so a pixelSize
-    // equal to the slot leaves the note floating small in the middle of its own
-    // space — measured at ~40% of the slot before this was raised. 1.45 makes the
-    // ink fill it; 1.0 was the guess, and the guess was wrong.
-    property real pixelScale: 1.45
+    // The ink of ♪ is ~0.7 of its em box and sits low in it. Filling the slot
+    // completely (1.45) made the note taller than the workspace numbers beside it
+    // and it read as too big in the bar; 1.1 fills most of the 20px slot and sits
+    // at the same weight as the icons next to it.
+    property real pixelScale: 1.1
 
     implicitWidth: 18
     implicitHeight: 18
@@ -76,12 +86,15 @@ Item {
         // arithmetic on `index` is where the "which one is the centre" special case
         // comes from, and a visible hole in the outline is the failure mode.
         Repeater {
-            model: [
+            // Empty when the outline is off, rather than eight copies stacked on
+            // the same pixel behind an opaque note: dead nodes that render nothing
+            // are still eight Text objects measured and laid out on every frame.
+            model: root.outline > 0 ? [
                 { dx: -1, dy: 0 }, { dx: 1, dy: 0 },
                 { dx: 0, dy: -1 }, { dx: 0, dy: 1 },
                 { dx: -1, dy: -1 }, { dx: 1, dy: -1 },
                 { dx: -1, dy: 1 }, { dx: 1, dy: 1 }
-            ]
+            ] : []
             Text {
                 required property var modelData
                 font.pixelSize: Math.round(box.height * root.pixelScale)
