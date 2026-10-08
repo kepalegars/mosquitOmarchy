@@ -1885,8 +1885,21 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			return m.closeConfirm()
 		}
 		m.pop()
-		if m.top() == scrSetup {
+		// Anything whose rows are DERIVED from a sub-screen has to be rebuilt on
+		// the way back out, and esc is the way people actually leave.
+		//
+		// The Backup options screen is the one that was broken: its "N selected"
+		// figure is computed from the ticks made in the Apps sub-menu, and the
+		// handler that rebuilt it (`case scrBackupApps:` below) is unreachable
+		// from here because Canceled returns before the switch. So esc left the
+		// count stale, and it only caught up when an unrelated key in the options
+		// screen happened to rebuild the picker — which is exactly the symptom
+		// reported: "it does not update, then an arrow key updates it".
+		switch m.top() {
+		case scrSetup:
 			m.setupPicker = m.rebuildSetup()
+		case scrBackupOptions:
+			m.backupOptPicker = m.rebuildBackupOptions()
 		}
 		return m, nil
 	}

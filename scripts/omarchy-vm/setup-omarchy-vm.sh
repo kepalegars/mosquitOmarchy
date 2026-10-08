@@ -733,10 +733,25 @@ else
           -display "${DISPLAY_BACKEND}${gtk_extra}" )
 fi
 
-# 9p shared folder (guest: mount -t 9p -o trans=virtio hostshare /mnt).
+# 9p shared folder. The export is all the HOST can do: QEMU hands the guest a
+# tag called `hostshare` and stops there. Something still has to mount it inside
+# the guest, and the kernel module is not loaded on a fresh install, so without a
+# nudge the folder simply never appears and the feature looks broken.
+#
+# So the guest is told, on the console, exactly what to run — and what to run it
+# for. The old comment ("guest: mount -t 9p -o trans=virtio hostshare /mnt") was
+# a note to whoever read the source, and it also omitted version=9p2000.L, which
+# on a current kernel is the difference between mounting and not.
 if [[ "$SHARED_FOLDER" == "on" ]]; then
   mkdir -p "$SHARED_DIR"
   args+=( -virtfs "local,path=$SHARED_DIR,mount_tag=hostshare,security_model=mapped-xattr,id=hostshare" )
+  printf '\n  Shared folder: %s\n' "$SHARED_DIR"
+  printf '    exported to the guest as the 9p tag "hostshare". To see it from inside\n'
+  printf '    the VM, run there:\n\n'
+  printf '      sudo omarchy-vm-share --install\n\n'
+  printf '    It loads virtio_9p, mounts at /mnt/host and installs a unit so it is\n'
+  printf '    there on every boot. Without it the folder stays invisible — the host\n'
+  printf '    side of this is already done.\n\n'
 fi
 
 # USB passthrough (entries "vendorid:productid", hex).

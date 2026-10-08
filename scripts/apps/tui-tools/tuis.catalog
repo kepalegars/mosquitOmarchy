@@ -16,11 +16,24 @@
 # yt-dlp — see omarchy's install/omarchy-base.packages) are deliberately NOT
 # listed here: they are already present, so offering/backing them up is noise.
 
-PLUG nosignal.monitor-settings|https://github.com/28allday/Monitor-TUI-Omarchy.git|Monitor Settings — Hyprland display/monitor panel (28allday)
+# Label case is part of the convention here: every entry in this catalog starts
+# lower case, because it is a terminal tool and the row reads as part of a list.
+# "Monitor Settings" was the one exception and looked like a GUI app dropped in.
+PLUG nosignal.monitor-settings|https://github.com/28allday/Monitor-TUI-Omarchy.git|monitor settings — Hyprland display/monitor panel (28allday)
 
 TUI calcure|calcure — terminal calendar/planner
-TUI smassh|smassh — typing trainer
-TUI croc|croc — secure file transfer
 TUI crunchycleaner-bin|crunchycleaner — lightweight software cache & junk cleaner
 TUI septabee|SEPTABEE — retro studio DAW & music app (terminal, JIT audio)
 TUI caligula-git|caligula — flash ISOs & USB drives (interactive disk imaging, terminal)
+TUI mutt|mutt — small, powerful text-based mail client
+TUI tdf|tdf — TUI-based PDF viewer
+TUI nsnake|nsnake — customizable Snake game with ncurses
+TUI basalt|basalt — TUI application to manage Obsidian notes
+TUI bagels|bagels — terminal expense tracker
+TUI aria2|aria2 — downloader for HTTP(S), FTP, BitTorrent and Metalink
+
+# REMOVED, at the user's request:
+#   TUI croc   — secure file transfer (the CLI stays installed; only the row goes)
+#   TUI smassh — typing trainer. Asked for as "smash"; there is no `smash` in any
+#                catalog, and smassh is the only typing trainer, so that is the
+#                entry that was removed. Say so if smassh was not meant.

@@ -912,6 +912,16 @@ cmd_backups(){
 # they were and an old archive still restores like a new one.
 AS_APP_PACKAGES=(septabee)
 
+# Modules whose row belongs under the TUIs folder even though they are MODULES.
+#
+# superfile is not a catalog entry: it has its own script that installs the
+# package AND a .desktop menu entry, an icon, a keybind and an Omarchy theme.
+# Turning it into a plain `TUI superfile|` catalog line would install the binary
+# and silently drop all of that, so it stays a module and only its FOLDER moves.
+# The same trade-off, in the other direction, is why septabee is only re-filed
+# and never converted.
+AS_TUI_MODULES=(superfile)
+
 # 0 when this catalog entry is filed under Apps rather than TUIs.
 _filed_under_apps(){ # package name
   local p
@@ -922,13 +932,20 @@ _filed_under_apps(){ # package name
 }
 
 # setup_folder_for <category id> <candidate key> -> the folder to file it under.
-# Only TUIs are ever reclassified; everything else keeps its own category.
+# Only TUIs are ever reclassified, in either direction; everything else keeps its
+# own category.
 setup_folder_for(){
-  local cat="$1" key="$2" name
-  [[ $cat == tuis ]] || { printf '%s' "$cat"; return; }
+  local cat="$1" key="$2" name p
   name="${key#* }"          # "TUI septabee" -> "septabee"
   name="${name%%|*}"
-  if _filed_under_apps "$name"; then printf 'apps'; else printf '%s' "$cat"; fi
+  if [[ $cat == tuis ]]; then
+    if _filed_under_apps "$name"; then printf 'apps'; else printf '%s' "$cat"; fi
+    return
+  fi
+  for p in "${AS_TUI_MODULES[@]}"; do
+    if [[ $p == "$name" || $p == "$key" ]]; then printf 'tuis'; return; fi
+  done
+  printf '%s' "$cat"
 }
 
 # ─── Backup content options (installed apps/tuis/webapps + facts) ──────────

@@ -102,8 +102,27 @@ qemu-system-x86_64 -name omarchy-<name> -machine q35,accel=kvm:tcg -cpu host
   `show-menubar=off,zoom-to-fit=on`, so the window tiles/scales freely.
   Set `GPU_ACCEL="on"` for `virtio-vga-gl` (virgl 3D) instead — the guest then
   drives its own resolution. Intel HDA duplex audio.
-- **Shared folder** (optional): `~/VMs/shared` exposed as a 9p mount. In the
-  guest: `sudo mkdir -p /mnt/host && sudo mount -t 9p -o trans=virtio hostshare /mnt/host`.
+- **Shared folder** (optional): `~/VMs/shared`, exported to the guest as the 9p
+  tag `hostshare`. **The host half is automatic; the guest half is not**, and the
+  launcher now says so on the console when the folder is enabled.
+
+  The export is all QEMU can do from here — it hands over a tag and stops. Inside
+  the guest, something still has to load `virtio_9p` (not built into the kernel,
+  not loaded on a fresh install) and mount it, so without that step the folder
+  never appears and the feature looks broken rather than half-finished.
+
+  ```bash
+  # inside the VM
+  omarchy-vm-share --install     # load the module, mount at /mnt/host, add a unit
+  omarchy-vm-share --status      # what is present and what is missing
+  ```
+
+  `version=9p2000.L` is included on purpose: without it the mount fails on a
+  current kernel. The old one-line `mount -t 9p -o trans=virtio hostshare …`
+  from earlier versions of this README omitted it.
+
+  The boot unit waits for the 9p port to appear rather than assuming it is
+  already there, because the port shows up a moment after the unit starts.
 - **Shared clipboard** (default on, `CLIPBOARD="off"` to disable): the launcher
   starts `omarchy-vm-clipboard`, a small HTTP server on `127.0.0.1:$CLIPBOARD_PORT`
   (7789), which slirp exposes to the guest as `10.0.2.2` — the host's loopback.

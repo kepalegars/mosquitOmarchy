@@ -197,6 +197,15 @@ Panel {
     // That is the same source Pitchfork uses, and the reason this icon stays
     // legible over any wallpaper without this file knowing anything about one.
     readonly property color iconColor: root.bar ? root.bar.barForeground : Color.foreground
+
+    // The grey the rest of the shell dims to. Not Color.muted, and deliberately
+    // not an accent: the network and bluetooth panels derive their secondary
+    // text from the BAR's own foreground with Qt.darker(), so it already follows
+    // both the theme and the bar's per-widget contrast. Reusing that is what
+    // makes this panel's secondary text look like every other panel's rather than
+    // like a different application — and it is the grey that was asked for,
+    // instead of an accent colour that reads as a status.
+    readonly property color dim: Qt.darker(iconColor, 1.5)
     readonly property real iconUnit: Math.min(width, height) / 16   // the grid is 16x16
 
     BarIconButton {
@@ -327,7 +336,7 @@ Panel {
                             // cursor row made the name compete with the number it
                             // describes, which is the only part of the row that
                             // changes.
-                            color: Color.muted
+                            color: root.dim
                             font.family: Style.font.family
                             font.pixelSize: Style.font.body
                         }
@@ -375,7 +384,7 @@ Panel {
 
                 Text {
                     text: "↑↓ choose   ←→ change   enter toggles"
-                    color: Color.muted
+                    color: root.dim
                     font.family: Style.font.family
                     font.pixelSize: Style.font.caption
                     leftPadding: Style.spacing.md
