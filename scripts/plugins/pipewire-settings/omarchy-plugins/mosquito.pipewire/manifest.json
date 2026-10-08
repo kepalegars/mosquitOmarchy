@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "mosquito.pipewire",
+  "name": "PipeWire Settings",
+  "version": "1.0.0",
+  "author": "mosquito",
+  "license": "MIT",
+  "description": "Sample rate and buffer size for the PipeWire graph, with force and persist.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "PipeWire",
+    "description": "Sample rate and buffer size for the audio graph",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaults": {},
+    "schema": []
+  }
+}

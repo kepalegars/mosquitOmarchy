@@ -646,6 +646,7 @@ MODULES=(
   "superfile:SuperFile — terminal file manager (menu entry + keybind + Omarchy theme)"
   "extracto:Simple custom install script for file-roller — restores Nautilus' Extract Here / Create Archive (file-roller + 7zip + unrar, file-roller prompts for the password itself); no desktop entry, no Nautilus script"
   "zen:Zen Browser config — plugins + settings + chrome theme (deployed into the active profile)"
+  "pipewire-settings:PipeWire sample rate + buffer size — panel in the bar, force and persist. Installs no package: it only talks to the PipeWire you already have"
   "jamjamjam-plugin:JamJamJam bar plugin — key/BPM/chord detection, chord progression grid, guitar fretboard scale, MIDI chord mode + synth"
   "live-mode:Live mode — performance session mode (stay-awake + thermal guard + routing tool in scratchpad: live-mode / live-mode-watch / live-mode-root + its row in Setup > mosquito + QML overlay)"
 )
@@ -741,6 +742,7 @@ module_state(){
     extracto) st_extracto ;;
     zen) st_zen ;;
     jamjamjam-plugin) st_jamjamjam_plugin ;;
+    pipewire-settings) st_pipewire_settings ;;
     live-mode) st_live_mode ;;
     mosquitomarchy) st_mosquitomarchy ;;
     remove-ai) ai_state_on && echo missing || echo ok ;;
@@ -786,6 +788,7 @@ module_of_path(){
     scripts/apps/superfile/*)                                echo superfile ;;
     scripts/apps/zen/*)                                      echo zen ;;
     scripts/plugins/jamjamjam/*)                             echo jamjamjam-plugin ;;
+    scripts/plugins/pipewire-settings/*)                     echo pipewire-settings ;;
     scripts/plugins/live-mode/*)                             echo live-mode ;;
     scripts/apps/mosquitomarchy/install-tui.sh|scripts/apps/mosquitomarchy/mosquitomarchy|scripts/apps/mosquitomarchy/mosquitomarchy-actions) echo mosquitomarchy ;;
   esac
@@ -3083,6 +3086,7 @@ uninstall_module(){
     superfile) un_superfile ;;
     zen) un_zen ;;
     jamjamjam-plugin) un_jamjamjam_plugin ;;
+    pipewire-settings) un_pipewire_settings ;;
     live-mode) un_live_mode ;;
     mosquitomarchy) un_mosquitomarchy ;;
     *) err "Unknown module: $id"; return 1 ;;
@@ -3177,6 +3181,7 @@ SUPERFILE_DIR="$SCRIPTS/apps/superfile"
 THEME_DIR="$SCRIPTS/theme"
 ZEN_DIR="$SCRIPTS/apps/zen"
 JAMJAMJAM_PLUGIN_DIR="$SCRIPTS/plugins/jamjamjam"
+PIPEWIRE_SETTINGS_DIR="$SCRIPT_DIR/scripts/plugins/pipewire-settings"
 LIVE_MODE_DIR="$SCRIPTS/plugins/live-mode"
 
 # ─────────────────── Required system libraries (Ableton-linux) ─────────────
@@ -3499,6 +3504,43 @@ run_keybindings(){
 run_mosquitomarchy_update(){
   bash "$SCRIPTS/mosquitomarchy-update/setup-mosquitomarchy-update.sh" $([[ $YES == 1 ]] && echo -y)
 }
+st_pipewire_settings(){
+  # Backend + panel + a shell.json entry. The panel is what makes it usable, so
+  # its absence is "partial", not "missing": the backend alone would still run
+  # from a terminal.
+  local plug="$HOME/.config/omarchy/plugins/mosquito.pipewire"
+  [[ -x "$BIN_DIR/mosquitomarchy-pipewire-settings" ]] || { echo missing; return; }
+  if [[ -d "$plug" && -f "$plug/manifest.json" ]] \
+     && [[ -f "$HOME/.config/omarchy/shell.json" ]] \
+     && grep -q '"mosquito.pipewire"' "$HOME/.config/omarchy/shell.json"; then
+    echo ok
+  else
+    echo partial
+  fi
+}
+run_pipewire_settings(){
+  if [[ -x "$PIPEWIRE_SETTINGS_DIR/setup-pipewire-settings.sh" ]]; then
+    bash "$PIPEWIRE_SETTINGS_DIR/setup-pipewire-settings.sh" -y
+  else
+    err "setup-pipewire-settings.sh not found in $PIPEWIRE_SETTINGS_DIR"
+    return 1
+  fi
+}
+un_pipewire_settings(){
+  info "Uninstalling the PipeWire settings plugin"
+  if [[ -x "$PIPEWIRE_SETTINGS_DIR/setup-pipewire-settings.sh" ]]; then
+    # --remove leaves ~/.config/pipewire/pipewire.conf.d/90-mosquitomarchy-pipewire.conf
+    # in place on purpose: that is the user's audio setting, not ours. The script
+    # prints where it is.
+    bash "$PIPEWIRE_SETTINGS_DIR/setup-pipewire-settings.sh" --remove \
+      || warn "setup-pipewire-settings.sh --remove reported a problem"
+  else
+    warn "setup-pipewire-settings.sh not found — cleaning up directly."
+    rm -rf "$HOME/.config/omarchy/plugins/mosquito.pipewire"
+    rm -f "$BIN_DIR/mosquitomarchy-pipewire-settings"
+  fi
+}
+
 run_jamjamjam_plugin(){
   # jamjamjam-plugin bar plugin (real-time key/BPM/chord analysis,
   # guitar fretboard, MIDI chord mode + synth). Idempotent, no prompts.
@@ -3600,6 +3642,7 @@ exec_modules(){
       superfile) run_module superfile run_superfile ;;
       zen) run_module zen run_zen ;;
       jamjamjam-plugin) run_module jamjamjam-plugin run_jamjamjam_plugin ;;
+      pipewire-settings) run_module pipewire-settings run_pipewire_settings ;;
       live-mode) run_module live-mode run_live_mode ;;
       mosquitomarchy) run_module mosquitomarchy run_mosquitomarchy ;;
       *)
@@ -3748,7 +3791,11 @@ category_items(){ # catid -> echo the space-separated module ids of that categor
 # so they are matched explicitly.
 module_category(){ # module id -> category id
   case "$1" in
-    ableton-move-manager|audio-plugin-manager|jamjamjam-plugin|battery|live-mode) echo mosquito; return 0 ;;
+    # The mosquito category's module list is hardcoded in category_candidates()
+    # AND here. Two copies of the same fact: adding a module to one leaves the
+    # other calling it category-less, which is how pipewire-settings showed up in
+    # the Setup tree under "mosquito" and in `status` with an empty category.
+    ableton-move-manager|audio-plugin-manager|jamjamjam-plugin|battery|live-mode|pipewire-settings) echo mosquito; return 0 ;;
   esac
   local c
   for c in "${CATEGORIES[@]}"; do
@@ -3881,6 +3928,8 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
       CAND_LABELS+=("mosquito-audio-plugin-manager  —  $(module_desc audio-plugin-manager)")
       CAND_KEYS+=("jamjamjam-plugin")
       CAND_LABELS+=("mosquito-jamjamjam  —  $(module_desc jamjamjam-plugin)")
+      CAND_KEYS+=("pipewire-settings")
+      CAND_LABELS+=("mosquito-pipewire  —  $(module_desc pipewire-settings)")
       CAND_KEYS+=("battery")
       CAND_LABELS+=("mosquito-mega-caffeine  —  $(module_desc battery)")
       CAND_KEYS+=("live-mode")

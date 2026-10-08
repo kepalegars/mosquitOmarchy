@@ -1,0 +1,289 @@
+#!/usr/bin/env bash
+# pipewire-settings — read and set PipeWire's sample rate and buffer size.
+#
+# The Omarchy counterpart of gaheldev/pipewire-settings, a GNOME Shell extension.
+# That one cannot run here (no GNOME), but what it does is worth having: a small
+# panel that sets the graph's rate and quantum, forces them, and persists them.
+#
+# Two mechanisms, and the split is not arbitrary:
+#
+#   - LIVE, through `pw-metadata -n settings 0 <key> <value>`. This changes the
+#     running graph immediately, no restart. That is also why it is the only way
+#     to FORCE a value: `clock.force-rate` / `clock.force-quantum` exist as
+#     runtime metadata and nowhere else.
+#
+#   - PERSISTED, by writing ~/.config/pipewire/pipewire.conf.d/<this file>. The
+#     upstream discovered the hard way (and says so in its comment) that
+#     force-quantum is NOT supported in a config file, so a persisted choice has
+#     to pin min = default = max instead. Same reason it does not simply write
+#     `default.clock.quantum`: an application asking for more than that gets
+#     refused, which is why the min/max pair is what gets written.
+#
+# Keys, verbatim from the graph metadata (this is what `show` parses):
+#   clock.rate clock.min-rate clock.max-rate clock.force-rate
+#   clock.quantum clock.min-quantum clock.max-quantum clock.force-quantum
+#
+# The min/max keys are ABSENT unless something set them — an untouched machine
+# reports only rate/quantum and the two force keys. So "absent" is a real answer
+# and is reported as null rather than guessed at.
+set -euo pipefail
+
+G='\033[1;32m'; Y='\033[1;33m'; R='\033[1;31m'; B='\033[1;34m'; N='\033[0m'
+msg(){ printf "${B}==>${N} %s\n" "$*"; }
+ok(){  printf " ${G}✓${N} %s\n" "$*"; }
+warn(){ printf " ${Y}!${N} %s\n" "$*"; }
+err(){ printf "${R}✗${N} %s\n" "$*" >&2; }
+
+CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/pipewire/pipewire.conf.d"
+CONF_FILE="$CONF_DIR/90-mosquitomarchy-pipewire.conf"
+
+# The upstream's lists, unchanged. These are not "the ones PipeWire allows" —
+# they are the ones worth offering — and inventing a longer list would put values
+# in the menu that no hardware here can run.
+ALLOWED_RATES=(0 44100 48000 88200 96000 176000 192000 352800 384000)
+ALLOWED_QUANTUMS=(0 32 48 64 96 128 256 512 1024 2048)
+
+# What "back to PipeWire's own defaults" means. Same numbers as the upstream's
+# resetSampleRate()/resetQuantum(), which are in turn PipeWire's stock values.
+DEF_RATE=48000
+DEF_QUANTUM=1024
+QUANTUM_MIN=32
+QUANTUM_MAX=2048
+
+need_pw_metadata(){
+  command -v pw-metadata >/dev/null 2>&1 || {
+    err "pw-metadata not found — install pipewire (pacman -S pipewire)."
+    return 1
+  }
+}
+
+# The whole settings blob in one call; parsing it per key would fork pw-metadata
+# eight times for one `show`.
+_pw_dump(){ pw-metadata -n settings 0 2>/dev/null || true; }
+
+# pw_get <dump> <key> -> the value, or empty when the key is not reported.
+_pw_get(){
+  local dump="$1" key="$2"
+  [[ -n $dump ]] || return 0
+  printf '%s\n' "$dump" | sed -n "s/.*key:'$key'[[:space:]]*value:'\([0-9]*\)'.*/\1/p" | head -1
+}
+
+pw_set(){ # <key> <value>
+  need_pw_metadata || return 1
+  pw-metadata -n settings 0 "$1" "$2" >/dev/null 2>&1 || {
+    err "pw-metadata refused $1=$2"
+    return 1
+  }
+}
+
+pw_del(){ # <key>
+  need_pw_metadata || return 1
+  pw-metadata -n settings 0 -d "$1" >/dev/null 2>&1 || true
+}
+
+_in_list(){ # <needle> <array...>
+  local n="$1"; shift
+  local v
+  for v in "$@"; do [[ $v == "$n" ]] && return 0; done
+  return 1
+}
+
+json_null_if_empty(){ [[ -z $1 ]] && printf null || printf '"%s"' "$1"; }
+
+cmd_show(){
+  need_pw_metadata || return 1
+  local dump; dump="$(_pw_dump)"
+  [[ -n $dump ]] || { err "PipeWire did not answer. Is pipewire running?"; return 1; }
+
+  local rate quantum force_rate force_quantum
+  rate="$(_pw_get "$dump" clock.rate)"
+  quantum="$(_pw_get "$dump" clock.quantum)"
+  force_rate="$(_pw_get "$dump" clock.force-rate)"; force_rate="${force_rate:-0}"
+  force_quantum="$(_pw_get "$dump" clock.force-quantum)"; force_quantum="${force_quantum:-0}"
+
+  # The EFFECTIVE values, which are not necessarily the configured ones: a forced
+  # value overrides the default, and until it is forced the graph follows the
+  # default. This is the upstream's own rule and the reason its UI shows the
+  # forced number rather than clock.rate.
+  local eff_rate="$rate" eff_quantum="$quantum"
+  [[ $force_rate != 0 ]] && eff_rate="$force_rate"
+  [[ $force_quantum != 0 ]] && eff_quantum="$force_quantum"
+
+  local persist=false
+  [[ -f $CONF_FILE ]] && persist=true
+
+  printf '{"rate":%s,"quantum":%s,"force_rate":"%s","force_quantum":"%s",' \
+    "$(json_null_if_empty "$eff_rate")" "$(json_null_if_empty "$eff_quantum")" \
+    "$force_rate" "$force_quantum"
+  printf '"min_rate":%s,"max_rate":%s,"min_quantum":%s,"max_quantum":%s,' \
+    "$(json_null_if_empty "$(_pw_get "$dump" clock.min-rate)")" \
+    "$(json_null_if_empty "$(_pw_get "$dump" clock.max-rate)")" \
+    "$(json_null_if_empty "$(_pw_get "$dump" clock.min-quantum)")" \
+    "$(json_null_if_empty "$(_pw_get "$dump" clock.max-quantum)")"
+  printf '"configured_rate":%s,"configured_quantum":%s,"persist":%s}\n' \
+    "$(json_null_if_empty "$rate")" "$(json_null_if_empty "$quantum")" "$persist"
+}
+
+# Pin min = default = max, then set force/unforce. The triple is what makes an
+# application asking for something else actually get this value instead of a
+# refusal; the force key is what makes it stick when the graph is dynamic.
+_apply_rate(){
+  local rate="$1" force="$2"
+  if [[ $rate != 0 ]]; then
+    pw_set clock.min-rate "$rate"
+    pw_set clock.rate "$rate"
+    pw_set clock.max-rate "$rate"
+  fi
+  pw_set clock.force-rate "$([[ $force == 1 ]] && echo "$rate" || echo 0)"
+}
+
+_apply_quantum(){
+  local q="$1" force="$2"
+  if [[ $q != 0 ]]; then
+    pw_set clock.min-quantum "$q"
+    pw_set clock.quantum "$q"
+    pw_set clock.max-quantum "$q"
+  fi
+  pw_set clock.force-quantum "$([[ $force == 1 ]] && echo "$q" || echo 0)"
+}
+
+# Write the persisted config from the values the graph is CURRENTLY running, not
+# from the arguments: `set-force 1` alone changes no rate, and a config written
+# from its arguments would record the old one.
+_write_conf(){
+  need_pw_metadata || return 1
+  local dump; dump="$(_pw_dump)"
+  [[ -n $dump ]] || { err "PipeWire did not answer — nothing persisted."; return 1; }
+
+  local rate quantum force_rate force_quantum
+  rate="$(_pw_get "$dump" clock.rate)"
+  quantum="$(_pw_get "$dump" clock.quantum)"
+  force_rate="$(_pw_get "$dump" clock.force-rate)"; force_rate="${force_rate:-0}"
+  force_quantum="$(_pw_get "$dump" clock.force-quantum)"; force_quantum="${force_quantum:-0}"
+  [[ $force_rate != 0 ]] && rate="$force_rate"
+  [[ $force_quantum != 0 ]] && quantum="$force_quantum"
+  [[ -n $rate && -n $quantum ]] || { err "rate/quantum unknown — nothing persisted."; return 1; }
+
+  mkdir -p "$CONF_DIR"
+  cat > "$CONF_FILE" <<EOF
+# Written by the mosquitOmarchy pipewire-settings plugin — do not edit.
+# min = default = max on purpose: force-quantum cannot be set from a config
+# file, and setting only the default gets overridden by any application that
+# asks for a different quantum.
+context.properties = {
+    default.clock.min-rate = $rate
+    default.clock.rate = $rate
+    default.clock.max-rate = $rate
+    default.clock.min-quantum = $quantum
+    default.clock.quantum = $quantum
+    default.clock.max-quantum = $quantum
+}
+EOF
+  ok "persisted in $CONF_FILE"
+}
+
+_delete_conf(){
+  if [[ -f $CONF_FILE ]]; then rm -f "$CONF_FILE"; ok "persisted config removed"; fi
+}
+
+cmd_set_rate(){
+  local rate="${1:-}" force="${2:-auto}"
+  _in_list "$rate" "${ALLOWED_RATES[@]}" || {
+    err "rate '${rate}' is not one of: ${ALLOWED_RATES[*]}"; return 1; }
+  if [[ $rate == 0 ]]; then
+    # 0 means "let the graph decide" — drop the pins and unforce.
+    pw_del clock.min-rate; pw_del clock.max-rate
+    pw_set clock.force-rate 0
+    msg "sample rate left dynamic"
+    _write_conf || true
+    return 0
+  fi
+  [[ $force == auto ]] && force=1
+  _apply_rate "$rate" "$force"
+  # An explicit `0` means "do not force", and ${force:+…} cannot express that:
+  # "0" is non-empty, so the expansion fires either way and every value claimed
+  # to be forced.
+  if [[ $force == 1 ]]; then ok "sample rate ${rate} Hz (forced)"
+  else ok "sample rate ${rate} Hz"; fi
+  _write_conf || true
+}
+
+cmd_set_quantum(){
+  local q="${1:-}" force="${2:-auto}"
+  _in_list "$q" "${ALLOWED_QUANTUMS[@]}" || {
+    err "quantum '${q}' is not one of: ${ALLOWED_QUANTUMS[*]}"; return 1; }
+  if [[ $q == 0 ]]; then
+    pw_del clock.min-quantum; pw_del clock.max-quantum
+    pw_set clock.force-quantum 0
+    msg "buffer size left dynamic"
+    _write_conf || true
+    return 0
+  fi
+  [[ $force == auto ]] && force=1
+  _apply_quantum "$q" "$force"
+  if [[ $force == 1 ]]; then ok "buffer size ${q} frames (forced)"
+  else ok "buffer size ${q} frames"; fi
+  _write_conf || true
+}
+
+# Flip force WITHOUT changing the configured value: force the current default, or
+# unforce and let the graph follow it again.
+cmd_set_force(){
+  local what="${1:-}" on="${2:-}"
+  case "$what" in
+    rate|quantum) ;;
+    *) err "force: expected 'rate' or 'quantum', got '${what}'"; return 1; ;;
+  esac
+  [[ $on == 0 || $on == 1 ]] || { err "force: expected 0 or 1, got '${on}'"; return 1; }
+  local dump; dump="$(_pw_dump)"
+  local cur; cur="$(_pw_get "$dump" "clock.$what")"
+  [[ -n $cur ]] || { err "clock.$what is not reported by this graph."; return 1; }
+  if [[ $what == rate ]]; then
+    if [[ $on == 1 ]]; then _apply_rate "$cur" 1; else pw_set clock.force-rate 0; fi
+  else
+    if [[ $on == 1 ]]; then _apply_quantum "$cur" 1; else pw_set clock.force-quantum 0; fi
+  fi
+  ok "$what force=$on (value $cur)"
+  _write_conf || true
+}
+
+cmd_persist(){
+  case "${1:-}" in
+    1|on|true) _write_conf ;;
+    0|off|false) _delete_conf ;;
+    *) err "persist: expected 0 or 1, got '${1:-}'"; return 1 ;;
+  esac
+}
+
+cmd_reset(){
+  msg "back to PipeWire's defaults: ${DEF_RATE} Hz, quantum ${QUANTUM_MIN}/${DEF_QUANTUM}/${QUANTUM_MAX}"
+  pw_set clock.rate "$DEF_RATE"
+  pw_del clock.min-rate; pw_del clock.max-rate
+  pw_set clock.force-rate 0
+  pw_set clock.min-quantum "$QUANTUM_MIN"
+  pw_set clock.quantum "$DEF_QUANTUM"
+  pw_set clock.max-quantum "$QUANTUM_MAX"
+  pw_set clock.force-quantum 0
+  ok "reset"
+  _write_conf || true
+}
+
+usage(){
+  sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+main(){
+  local cmd="${1:-}"; shift || true
+  case "$cmd" in
+    show)         cmd_show "$@" ;;
+    set-rate)     cmd_set_rate "$@" ;;
+    set-quantum)  cmd_set_quantum "$@" ;;
+    set-force)    cmd_set_force "$@" ;;
+    persist)      cmd_persist "$@" ;;
+    reset)        cmd_reset "$@" ;;
+    -h|--help|help|"") usage ;;
+    *) err "unknown command: $cmd"; usage; return 1 ;;
+  esac
+}
+
+main "$@"
