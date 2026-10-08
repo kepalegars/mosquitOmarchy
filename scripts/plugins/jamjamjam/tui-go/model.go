@@ -329,15 +329,23 @@ func (m model) helpView() string {
 }
 
 // settingsView is the "s" overlay: the TUI-owned settings.
+// Settings is the one screen whose text is NOT accent-coloured.
+//
+// Everywhere else in this TUI the accent is the identity colour and it is the
+// right choice. Here it was green on a settings panel, which reads as a status
+// or an enabled state rather than as a label — settings are neither. Both the
+// frame title and the value go to the bright foreground instead (StyleHeader is
+// the theme's bright_foreground), leaving the accent to the screens where it
+// actually means something.
 func (m model) settingsView() string {
 	rows := []string{
-		tuikit.StyleHeader.Render("NOTE NAMING") + "  " + tuikit.StyleAccent.Render("["+m.config.NoteNaming+"]") +
+		tuikit.StyleHeader.Render("NOTE NAMING") + "  " + tuikit.StyleHeader.Render("["+m.config.NoteNaming+"]") +
 			"   " + tuikit.StyleMuted.Render("press n to toggle flats/sharps"),
 		"",
 		tuikit.StyleMuted.Render("esc / s back · q quit"),
 	}
 	body := strings.Join(rows, "\n")
-	return tuikit.FrameScreen(m.w, m.h, tuikit.StyleAccent.Render("jamjamjam · settings"), body,
+	return tuikit.FrameScreen(m.w, m.h, tuikit.StyleHeader.Render("jamjamjam · settings"), body,
 		tuikit.BottomBar(m.status, tuikit.StyleHelp.Render("n naming · esc back"), m.w))
 }
 

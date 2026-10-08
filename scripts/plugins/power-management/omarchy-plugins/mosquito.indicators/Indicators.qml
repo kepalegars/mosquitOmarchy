@@ -158,9 +158,20 @@ BarWidget {
 
   onIndicatorEntriesChanged: syncActiveIndicatorOrder()
 
+  // The footprint is the ACTIVE indicators only, in the horizontal bar.
+  //
+  // This widget sits in the bar's CENTRE section, immediately left of the clock,
+  // and that clock is the section's centre anchor. So when this widget's width
+  // grew, it pushed the clock to the right and the time visibly slid off centre
+  // the moment the pointer came near — which reads as the bar being broken
+  // rather than as an indicator area revealing itself.
+  //
+  // The revealed icons no longer contribute to layout at all: they are drawn
+  // OUTSIDE the row's flow and grow to the LEFT (see inactiveHorizontalArea),
+  // away from the clock. Nothing the indicators do can move the anchor now.
   implicitWidth: root.vertical
     ? Math.max(activeVerticalBlock.implicitWidth, inactiveVerticalArea.implicitWidth)
-    : activeHorizontalBlock.implicitWidth + inactiveHorizontalArea.implicitWidth
+    : activeHorizontalBlock.implicitWidth
   implicitHeight: root.vertical
     ? activeVerticalBlock.implicitHeight + inactiveVerticalArea.implicitHeight
     : Math.max(activeHorizontalBlock.implicitHeight, inactiveHorizontalArea.implicitHeight)
@@ -194,36 +205,48 @@ BarWidget {
       onHoveredChanged: root.setIndicatorAreaHovered(hovered)
     }
 
-    Item {
-      id: inactiveHorizontalArea
-
-      implicitWidth: root.revealInactiveIndicators ? inactiveHorizontalBlock.implicitWidth : 0
-      implicitHeight: Math.max(inactiveHorizontalBlock.implicitHeight, root.barSize)
-      width: implicitWidth
-      height: implicitHeight
-      clip: true
-
-      IndicatorBlock {
-        id: inactiveHorizontalBlock
-        anchors.verticalCenter: parent.verticalCenter
-        indicatorsModule: root
-        indicatorEntries: root.indicatorEntries
-        indicatorBlock: "inactive"
-        horizontal: true
-        reportActiveState: !root.vertical
-      }
-
-      HoverHandler {
-        onHoveredChanged: root.setIndicatorAreaHovered(hovered)
-      }
-    }
-
     ActiveIndicatorBlock {
       id: activeHorizontalBlock
       indicatorsModule: root
       indicatorModel: activeIndicatorModel
       horizontal: true
       reportActiveState: !root.vertical
+    }
+  }
+
+  // The revealed icons, deliberately NOT inside horizontalIndicators.
+  //
+  // In the Row they were laid out before the active block, so revealing them
+  // widened the row and everything to the right of it — the clock — moved.
+  // Anchored here with its RIGHT edge on the active block's left edge, the same
+  // reveal opens towards the left instead: the row's width never changes, so the
+  // clock cannot be knocked off centre.
+  Item {
+    id: inactiveHorizontalArea
+
+    visible: !root.vertical
+    // Anchored to the Row, not to activeHorizontalBlock: anchors need a parent or
+    // a sibling, and the block lives INSIDE the Row while this lives beside it.
+    // The Row's left edge is the active block's left edge now that the revealed
+    // area is no longer one of its children, so this is the same line.
+    anchors.right: horizontalIndicators.left
+    anchors.verticalCenter: parent.verticalCenter
+    width: root.revealInactiveIndicators ? inactiveHorizontalBlock.implicitWidth : 0
+    height: Math.max(inactiveHorizontalBlock.implicitHeight, root.barSize)
+    clip: true
+
+    IndicatorBlock {
+      id: inactiveHorizontalBlock
+      anchors.verticalCenter: parent.verticalCenter
+      indicatorsModule: root
+      indicatorEntries: root.indicatorEntries
+      indicatorBlock: "inactive"
+      horizontal: true
+      reportActiveState: !root.vertical
+    }
+
+    HoverHandler {
+      onHoveredChanged: root.setIndicatorAreaHovered(hovered)
     }
   }
 

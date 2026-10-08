@@ -206,7 +206,6 @@ Panel {
     // like a different application — and it is the grey that was asked for,
     // instead of an accent colour that reads as a status.
     readonly property color dim: Qt.darker(iconColor, 1.5)
-    readonly property real iconUnit: Math.min(width, height) / 16   // the grid is 16x16
 
     BarIconButton {
         id: button
@@ -224,8 +223,13 @@ Panel {
 
         Item {
             id: mark
-            // 1 unit of the source grid, in this slot's pixels.
-            readonly property real u: root.iconUnit
+            // 1 unit of the source grid, in THIS ICON's pixels.
+            //
+            // It has to be measured here and not on the panel: the panel is a bar
+            // widget sized to the whole slot, so scaling by it put the dots and
+            // strokes outside the icon's own box, where the clipping threw them
+            // away and the bar showed nothing at all.
+            readonly property real u: Math.min(width, height) / 16
             readonly property color ink: root.iconColor
 
             // A stroke of the source SVG, as a rotated rectangle.
