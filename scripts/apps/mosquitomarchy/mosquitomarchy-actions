@@ -704,13 +704,16 @@ _setup_tree(){
           else
             disabled=false
           fi
-          json_str_into "$id";           j_folder=$JS
+          # Folder may differ from the category: septabee is a catalogued TUI that
+          # is filed under Apps, so the folder is resolved per row rather than
+          # taken from $id.
+          json_str_into "$(setup_folder_for "$id" "${CAND_KEYS[$i]}")"; j_folder=$JS
           json_str_into "${CAND_KEYS[$i]}"; local j_key=$JS
           json_str_into "$vlabel";       local j_vlabel=$JS
           json_str_into "$info";         local j_info=$JS
           json_obj_into folder "$j_folder" key "$j_key" label "$j_vlabel" info "$j_info" \
             disabled "$(json_bool "$disabled")"
-          items+=("$id/$name"$'\t'"$JO")
+          items+=("${j_folder//\"/}/$name"$'\t'"$JO")
         done
         ;;
     esac
@@ -828,8 +831,8 @@ _uninstall_tree(){
             info="$(module_desc "$e")"
           fi ;;
       esac
-      items+=("$id/$name"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
-        "$(json_str "$id")" "$(json_str "$e")" "$(json_str "$name")" "$(json_str "$info")")")
+      items+=("$(setup_folder_for "$id" "$e")/$name"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+        "$(json_str "$(setup_folder_for "$id" "$e")")" "$(json_str "$e")" "$(json_str "$name")" "$(json_str "$info")")")
     done
   done
   # ── Extra uninstall-only categories (not part of Setup) ──
@@ -892,25 +895,40 @@ cmd_backups(){
   done
 }
 
-# ─── Packages the backup files under Apps even though the catalog says TUI ───
+# ─── Packages the catalog files as TUIs but mosquitomarchy files as APPS ────
 # septabee is a DAW, not a terminal utility. It is cataloged as a TUI because
-# that is how it ships (a terminal app that needs its own launcher and icon,
-# installed by setup-septabee-menu.sh), but in a backup the user looks for it
-# among the applications.
+# that is how it ships (a terminal app needing its own launcher and icon,
+# installed by setup-septabee-menu.sh), but everywhere the user CHOOSES something
+# — Setup, Uninstall and the backup content screen — it belongs among the
+# applications.
 #
-# The FOLDER is the only thing that changes. The item key stays "TUI septabee"
-# because that is the line apps.selected and --selection= speak: beginBackup
-# writes it.Key and ignores the folder, so the archive is byte-identical to what
-# it was before and an old archive still restores like a new one.
-BACKUP_APP_FOLDER=(septabee)
+# One list for all three. It was a backup-only list first, and the other two trees
+# kept filing septabee under TUIs until this was generalised: three trees, three
+# chances to disagree.
+#
+# The FOLDER is the only thing that changes. The item key stays "TUI septabee",
+# because that is the line apps.selected and --selection= speak — beginBackup
+# writes it.Key and ignores the folder, so archives are byte-identical to what
+# they were and an old archive still restores like a new one.
+AS_APP_PACKAGES=(septabee)
 
-# 0 when this catalog entry belongs under the Apps folder in the backup.
-_backup_filed_under_apps(){ # catalog entry ("pkg|label")
-  local name="${1%%|*}" p
-  for p in "${BACKUP_APP_FOLDER[@]}"; do
-    [[ $p == "$name" ]] && return 0
+# 0 when this catalog entry is filed under Apps rather than TUIs.
+_filed_under_apps(){ # package name
+  local p
+  for p in "${AS_APP_PACKAGES[@]}"; do
+    [[ $p == "$1" ]] && return 0
   done
   return 1
+}
+
+# setup_folder_for <category id> <candidate key> -> the folder to file it under.
+# Only TUIs are ever reclassified; everything else keeps its own category.
+setup_folder_for(){
+  local cat="$1" key="$2" name
+  [[ $cat == tuis ]] || { printf '%s' "$cat"; return; }
+  name="${key#* }"          # "TUI septabee" -> "septabee"
+  name="${name%%|*}"
+  if _filed_under_apps "$name"; then printf 'apps'; else printf '%s' "$cat"; fi
 }
 
 # ─── Backup content options (installed apps/tuis/webapps + facts) ──────────
@@ -970,7 +988,7 @@ cmd_backup_options(){
   # stay in the TUIs folder, so neither folder is emitted empty.
   local -a tui_apps=() tui_tuis=()
   for e in "${INSTALLED_TUI[@]:-}"; do
-    if _backup_filed_under_apps "$e"; then tui_apps+=("$e"); else tui_tuis+=("$e"); fi
+    if _filed_under_apps "${e%%|*}"; then tui_apps+=("$e"); else tui_tuis+=("$e"); fi
   done
 
   if ((${#INSTALLED_APP[@]})) || ((${#tui_apps[@]})); then

@@ -175,18 +175,88 @@ Panel {
             root.write(["persist", root.persisting() ? "0" : "1"])
     }
 
+    // A click always CHANGES the row it lands on, and moves the cursor there
+    // first. The previous version selected on the first click and changed on the
+    // next, which read as a dead button: one click did nothing visible, and a
+    // second one changed the value of a row the cursor had silently jumped to.
+    // delta is never 0 — there is no "select without acting" click any more.
     function adjustAt(index, delta) {
-        if (root.row !== index) { root.row = index; return }
-        root.adjust(delta)
+        root.row = index
+        root.adjust(delta >= 0 ? 1 : -1)
     }
 
     // ── bar button ──────────────────────────────────────────────────────────
+    //
+    // The GNOME extension's own icon, redrawn rather than shipped as an asset:
+    // icons/pipewire-condensed-symbolic.svg is four 4-unit dots and five 2-unit
+    // strokes on a 16x16 grid, which is a handful of rectangles, and a bar that
+    // has to recolour itself per widget cannot use a fixed SVG anyway.
+    //
+    // Colour comes from bar.barForeground, which is the bar's own contrast
+    // decision for this slot — white or black depending on what is behind it.
+    // That is the same source Pitchfork uses, and the reason this icon stays
+    // legible over any wallpaper without this file knowing anything about one.
+    readonly property color iconColor: root.bar ? root.bar.barForeground : Color.foreground
+    readonly property real iconUnit: Math.min(width, height) / 16   // the grid is 16x16
+
     BarIconButton {
         id: button
         anchors.fill: parent
         bar: root.bar
-        text: "♪"
+        iconComponent: pipewireMark
+        tooltipText: root.info.rate
+            ? "PipeWire · " + root.rateLabel() + " · " + root.quantumLabel()
+            : "PipeWire settings"
         onPressed: function (b) { root.toggle() }
+    }
+
+    Component {
+        id: pipewireMark
+
+        Item {
+            id: mark
+            // 1 unit of the source grid, in this slot's pixels.
+            readonly property real u: root.iconUnit
+            readonly property color ink: root.iconColor
+
+            // A stroke of the source SVG, as a rotated rectangle.
+            component Stroke: Rectangle {
+                // x1,y1,x2,y2 in grid units; `round` reproduces stroke-linecap.
+                property real x1; property real y1; property real x2; property real y2
+                property bool round
+                readonly property real len: Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
+                x: ((x1 + x2) / 2) * mark.u - width / 2
+                y: ((y1 + y2) / 2) * mark.u - height / 2
+                width: mark.u * 2
+                height: len * mark.u
+                color: mark.ink
+                radius: round ? width / 2 : 0
+                rotation: Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI
+                transformOrigin: Item.Center
+            }
+
+            // Four dots: (14,2) (8,2) (2,14) (2,2), radius 2 in the source.
+            Repeater {
+                model: [ { x: 14, y: 2 }, { x: 8, y: 2 }, { x: 2, y: 14 }, { x: 2, y: 2 } ]
+                delegate: Rectangle {
+                    required property var modelData
+                    width: 4 * mark.u; height: width
+                    radius: width / 2
+                    color: mark.ink
+                    x: modelData.x * mark.u - width / 2
+                    y: modelData.y * mark.u - height / 2
+                }
+            }
+
+            // The five strokes, verbatim from the SVG. Only the third one has
+            // stroke-linecap="round"; the rest are butt, which is why it is the
+            // only Stroke with round: true.
+            Stroke { x1: 8;  y1: 10.5; x2: 8;  y2: 3.5 }
+            Stroke { x1: 14; y1: 7.5;  x2: 14; y2: 3.5 }
+            Stroke { x1: 8;  y1: 10.5; x2: 14; y2: 7.5;  round: true }
+            Stroke { x1: 2;  y1: 10.5; x2: 8;  y2: 7.5 }
+            Stroke { x1: 2;  y1: 12.5; x2: 2;  y2: 3.5 }
+        }
     }
 
     // ── the panel ───────────────────────────────────────────────────────────
@@ -203,7 +273,18 @@ Panel {
         PanelKeyCatcher {
             id: keyCatcher
             anchors.fill: parent
-            onMoveRequested: function (dx, dy) { root.moveCursor(dy) }
+            // BOTH axes matter, and discarding one of them is what made ←/→
+            // do nothing at all: PanelKeyCatcher reports an arrow key as
+            // moveRequested with one non-zero component, so a handler that only
+            // reads dy silently ignores every horizontal press.
+            //
+            // Vertical moves the cursor between the four settings; horizontal
+            // changes the one under it. Doing both on the same signal is what
+            // makes this feel like the rest of the shell's panels.
+            onMoveRequested: function (dx, dy) {
+                if (dy !== 0) root.moveCursor(dy)
+                else if (dx !== 0) root.adjust(dx > 0 ? 1 : -1)
+            }
             onActivateRequested: root.adjust(1)
             onCloseRequested: function () { root.toggle() }
 
@@ -241,7 +322,12 @@ Panel {
                             anchors.leftMargin: Style.spacing.md
                             anchors.verticalCenter: parent.verticalCenter
                             text: rowItem.modelData.label
-                            color: rowItem.active ? Color.foreground : Color.muted
+                            // Always muted, active row included: the label is the
+                            // category NAME, not the value. Highlighting it on the
+                            // cursor row made the name compete with the number it
+                            // describes, which is the only part of the row that
+                            // changes.
+                            color: Color.muted
                             font.family: Style.font.family
                             font.pixelSize: Style.font.body
                         }
@@ -253,7 +339,10 @@ Panel {
                             text: root.isSwitch(rowItem.index)
                                   ? (root.rowValue(rowItem.index) === "on" ? "[on]" : "[off]")
                                   : "◂ " + root.rowValue(rowItem.index) + " ▸"
-                            color: rowItem.active ? Color.foreground : Color.muted
+                            // Always the full foreground: this is the value, and a
+                            // value that dims when the cursor leaves it is a value
+                            // you have to hunt for. Bold still marks the cursor.
+                            color: Color.foreground
                             font.family: Style.font.family
                             font.pixelSize: Style.font.body
                             font.bold: rowItem.active
@@ -261,12 +350,12 @@ Panel {
 
                         MouseArea {
                             anchors.fill: parent
+                            // Right-click walks the values backwards: a rate list
+                            // runs to eight entries and nobody wants to press → eight
+                            // times to undo one mistake.
                             acceptedButtons: Qt.LeftButton | Qt.RightButton
-                            // Left selects, right changes — and selecting first is
-                            // what keeps a stray click from changing the row the
-                            // cursor was not on, same rule as the keyboard.
                             onClicked: function (mouse) {
-                                root.adjustAt(rowItem.index, mouse.button === Qt.RightButton ? 1 : 0)
+                                root.adjustAt(rowItem.index, mouse.button === Qt.RightButton ? -1 : 1)
                             }
                         }
                     }
