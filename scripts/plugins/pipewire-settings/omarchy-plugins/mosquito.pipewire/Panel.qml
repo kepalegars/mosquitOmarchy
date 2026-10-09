@@ -240,38 +240,74 @@ Panel {
 
         Item {
             id: mark
-            // The theme's red, not the bar foreground.
-            //
-            // Color.urgent IS the theme's `red` key (Color.qml maps red -> urgent),
-            // so this follows whatever the current theme calls red rather than
-            // hardcoding a red that would look foreign on the next one — the same
-            // reasoning as jamjamjam's fork.
-            readonly property color ink: Color.urgent
 
-            // Five rounded bars of alternating height — an equaliser.
-            //
-            // The previous mark transcribed the upstream "condensed" SVG literally:
-            // four dots plus five strokes on a 16-unit grid. At the ~24px the bar
-            // actually gives it, that collapses into an indistinct starburst that
-            // reads as a generic sun/asterisk. It was on screen the whole time and
-            // still looked like "there is no PipeWire widget here".
-            //
-            // Even spacing and a clear 1:3:5:3:1 height ratio, so the shape stays
-            // legible at any icon size.
-            readonly property real barW: Math.min(width, height) / 16 * 2.2
+            // Color.accent is the theme's second colour, read live from the theme,
+            // so the frame follows whatever the current theme makes it — and falls
+            // back to the theme red (the same key jamjamjam's fork uses) if a theme
+            // ever stops defining it.
+            readonly property color frameInk: Color.accent
+            readonly property color artInk: Color.accent
 
-            Repeater {
-                model: 5
-                delegate: Rectangle {
-                    required property int index
-                    readonly property real hFactor: [1, 3, 5, 3, 1][index]
-                    width: mark.barW
-                    height: mark.barW * (1.6 + hFactor * 1.4)
-                    radius: width / 2
-                    color: mark.ink
-                    x: (mark.width - width) / 2 + (index - 2) * mark.barW * 1.5
-                    y: (mark.height - height) / 2
+            // The frame. A hairline rounded rectangle around the mark: it gives the
+            // glyph an edge to sit against, which is what the bare waveform lacked.
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: Style.space(1)
+                radius: Style.cornerRadius
+                color: "transparent"
+                border.width: 1
+                border.color: mark.frameInk
+            }
+
+            Item {
+                id: art
+                anchors.centerIn: parent
+                width: parent.width * 0.56
+                height: parent.height * 0.56
+
+                // Upstream gaheldev/pipewire-settings, icons/
+                // pipewire-condensed-rings-symbolic.svg, on its 16-unit grid.
+                readonly property real u: Math.min(width, height) / 16
+
+                component Stroke: Rectangle {
+                    property real x1; property real y1; property real x2; property real y2
+                    property bool round
+                    readonly property real len: Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
+                    x: ((x1 + x2) / 2) * art.u - width / 2
+                    y: ((y1 + y2) / 2) * art.u - height / 2
+                    width: art.u * 2
+                    height: len * art.u
+                    color: art.artInk
+                    radius: round ? width / 2 : 0
+                    rotation: Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI
+                    transformOrigin: Item.Center
                 }
+
+                // A ring is outer radius 2 with a radius-1 hole, i.e. a 4x4 rounded
+                // square with a 1u border — cheaper than two nested circles and it
+                // cannot antialias into a blob at icon size.
+                component Ring: Rectangle {
+                    property real cx; property real cy
+                    width: art.u * 4
+                    height: width
+                    radius: width / 2
+                    color: "transparent"
+                    border.width: art.u
+                    border.color: art.artInk
+                    x: cx * art.u - width / 2
+                    y: cy * art.u - height / 2
+                }
+
+                Stroke { x1: 8;  y1: 10.5; x2: 8;  y2: 3.5 }
+                Stroke { x1: 14; y1: 7.5;  x2: 14; y2: 3.5 }
+                Stroke { x1: 8;  y1: 10.5; x2: 14; y2: 7.5; round: true }
+                Stroke { x1: 2;  y1: 10.5; x2: 8;  y2: 7.5 }
+                Stroke { x1: 2;  y1: 12.5; x2: 2; y2: 3.5 }
+
+                Ring { cx: 2;  cy: 2 }
+                Ring { cx: 8;  cy: 2 }
+                Ring { cx: 14; cy: 2 }
+                Ring { cx: 2;  cy: 14 }
             }
         }
     }
