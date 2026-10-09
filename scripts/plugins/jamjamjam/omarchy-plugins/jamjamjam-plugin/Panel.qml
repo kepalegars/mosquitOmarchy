@@ -604,7 +604,7 @@ Panel {
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: "KEY"
-                  color: root.keyName !== "" ? root.contrastOn(root.accent, 0.16) : root.muted
+                  color: root.keyName !== "" ? root.accent : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
@@ -614,7 +614,7 @@ Panel {
                   height: root.valueRowHeight
                   verticalAlignment: Text.AlignVCenter
                   text: root.keyName !== "" ? root.keyName : root.dashGlyph
-                  color: root.keyName !== "" ? root.contrastOn(root.accent, 0.16) : root.muted
+                  color: root.keyName !== "" ? root.accent : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.space(32)
                   font.bold: true
@@ -674,7 +674,7 @@ Panel {
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   text: (root.metronomeEnabled ? "BPM ♪ " : "BPM ") + root.beatsPerBar + "/4"
-                  color: root.bpm > 0 ? root.contrastOn(root.accent, 0.16) : root.muted
+                  color: root.bpm > 0 ? root.accent : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
@@ -684,7 +684,7 @@ Panel {
                   height: root.valueRowHeight
                   verticalAlignment: Text.AlignVCenter
                   text: root.bpm > 0 ? Math.round(root.bpm) : root.dashGlyph
-                  color: root.bpm > 0 ? root.contrastOn(root.accent, 0.16) : root.muted
+                  color: root.bpm > 0 ? root.accent : root.muted
                   font.family: root.fontFamily
                   font.pixelSize: Style.space(32)
                   font.bold: true

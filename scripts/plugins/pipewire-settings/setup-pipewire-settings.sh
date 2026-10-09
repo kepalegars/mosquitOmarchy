@@ -329,6 +329,11 @@ main(){
   case "$action" in
     --remove) remove_plugin ;;
     -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
+    # run_pipewire_settings() invokes this with -y for unattended runs, the way every
+    # other setup script in the repo is called. It used to be rejected as an unknown
+    # option, so installing PipeWire Settings from Setup died on its very first step;
+    # the plugin only worked because it had been installed by hand.
+    -y|--yes)  install_plugin ;;
     "")        install_plugin ;;
     *)         err "unknown option: $action"; return 1 ;;
   esac

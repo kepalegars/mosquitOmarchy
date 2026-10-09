@@ -170,7 +170,7 @@ Panel {
         else if (kind === "quantum")
             root.write(["set-quantum", root.step(root.quantums, root.currentQuantum(), delta)])
         else if (kind === "force")
-            root.write(["set-force", "rate", root.forcing() ? "0" : "1"])
+            root.write(["set-force", "both", root.forcing() ? "0" : "1"])
         else if (kind === "persist")
             root.write(["persist", root.persisting() ? "0" : "1"])
     }

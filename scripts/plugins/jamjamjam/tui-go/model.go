@@ -329,17 +329,13 @@ func (m model) helpView() string {
 }
 
 // settingsView is the "s" overlay: the TUI-owned settings.
-// Settings is the one screen whose text is NOT accent-coloured.
-//
-// Everywhere else in this TUI the accent is the identity colour and it is the
-// right choice. Here it was green on a settings panel, which reads as a status
-// or an enabled state rather than as a label — settings are neither. Both the
-// frame title and the value go to the bright foreground instead (StyleHeader is
-// the theme's bright_foreground), leaving the accent to the screens where it
-// actually means something.
+// On this screen the option NAME is muted and the VALUE keeps the bright
+// foreground: the name is a label for the line, the value is what you came to
+// read. Elsewhere in this TUI the accent is the identity colour and it carries
+// the state — key, BPM, the tuner note, the enabled toggles.
 func (m model) settingsView() string {
 	rows := []string{
-		tuikit.StyleHeader.Render("NOTE NAMING") + "  " + tuikit.StyleHeader.Render("["+m.config.NoteNaming+"]") +
+		tuikit.StyleMuted.Render("NOTE NAMING") + "  " + tuikit.StyleHeader.Render("["+m.config.NoteNaming+"]") +
 			"   " + tuikit.StyleMuted.Render("press n to toggle flats/sharps"),
 		"",
 		tuikit.StyleMuted.Render("esc / s back · q quit"),

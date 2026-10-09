@@ -363,7 +363,7 @@ if [[ $REMOVE == true ]]; then
   info "Removing the Omarchy VM module (helpers / menus)"
   rm -f "$BIN_DIR/omarchy-vm" "$BIN_DIR/setup-omarchy-vm.sh" \
         "$BIN_DIR/omarchy-vm-tui" "$BIN_DIR/omarchy-vm-tui.sh" "$BIN_DIR/launch-omarchy-tui.sh" \
-        "$BIN_DIR/omarchy-vm-focus"
+        "$BIN_DIR/omarchy-vm-focus" "$BIN_DIR/omarchy-vm-share"
   rm -f "$APPS_DIR"/omarchy-vm*.desktop
   command -v update-desktop-database >/dev/null && update-desktop-database "$APPS_DIR" 2>/dev/null || true
   remove_menu_block
@@ -494,7 +494,11 @@ info "Deploying the Omarchy VM helpers to $BIN_DIR"
 mkdir -p "$BIN_DIR"
 # The setup script is deployed too, so the TUI can create VMs without the
 # clone (its repo-relative deps are optional when run from ~/.local/bin).
-for s in setup-omarchy-vm.sh omarchy-vm-tui.sh launch-omarchy-tui.sh omarchy-vm-focus; do
+# omarchy-vm-share belongs here: it is the guest half of the shared folder, exactly
+# like omarchy-vm-clipboard-agent is the guest half of the clipboard. It was the one
+# helper left out, so a fresh machine kept the shared-folder command in the repo
+# only and "sudo omarchy-vm-share --install" answered "command not found" in the VM.
+for s in setup-omarchy-vm.sh omarchy-vm-tui.sh launch-omarchy-tui.sh omarchy-vm-focus omarchy-vm-share; do
   deploy_file "$SCRIPT_DIR/$s" "$BIN_DIR/$s"
   ok "$s deployed"
 done

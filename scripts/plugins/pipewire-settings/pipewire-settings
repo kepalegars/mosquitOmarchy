@@ -231,19 +231,31 @@ cmd_set_quantum(){
 cmd_set_force(){
   local what="${1:-}" on="${2:-}"
   case "$what" in
-    rate|quantum) ;;
-    *) err "force: expected 'rate' or 'quantum', got '${what}'"; return 1; ;;
+    rate|quantum|both) ;;
+    *) err "force: expected 'rate', 'quantum' or 'both', got '${what}'"; return 1; ;;
   esac
   [[ $on == 0 || $on == 1 ]] || { err "force: expected 0 or 1, got '${on}'"; return 1; }
-  local dump; dump="$(_pw_dump)"
-  local cur; cur="$(_pw_get "$dump" "clock.$what")"
-  [[ -n $cur ]] || { err "clock.$what is not reported by this graph."; return 1; }
-  if [[ $what == rate ]]; then
-    if [[ $on == 1 ]]; then _apply_rate "$cur" 1; else pw_set clock.force-rate 0; fi
-  else
-    if [[ $on == 1 ]]; then _apply_quantum "$cur" 1; else pw_set clock.force-quantum 0; fi
-  fi
-  ok "$what force=$on (value $cur)"
+
+  # "both" is what the PANEL toggles, and it has to move the two keys TOGETHER.
+  #
+  # Toggling one at a time from a single switch is a no-op in practice: the panel's
+  # one "is it forced?" test is true when EITHER key is forced, so unforcing only
+  # the rate while the quantum is still forced leaves the test true and the row
+  # appears to do nothing. That is precisely what pressing enter on it did.
+  local -a keys=()
+  [[ $what == both ]] && keys=(rate quantum) || keys=("$what")
+  local k dump cur
+  for k in "${keys[@]}"; do
+    dump="$(_pw_dump)"
+    cur="$(_pw_get "$dump" "clock.$k")"
+    [[ -n $cur ]] || { err "clock.$k is not reported by this graph."; return 1; }
+    if [[ $on == 1 ]]; then
+      if [[ $k == rate ]]; then _apply_rate "$cur" 1; else _apply_quantum "$cur" 1; fi
+    else
+      pw_set "clock.force-$k" 0
+    fi
+    ok "$k force=$on (value $cur)"
+  done
   _write_conf || true
 }
 

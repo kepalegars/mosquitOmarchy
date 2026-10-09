@@ -664,6 +664,7 @@ FIXES=(
   "ableton-fullscreen:Ableton Live Full Screen is shifted/broken (content sits off where you click) — launches Live with WINE_WIN32_FULLSCREEN_CLASS=off (documented ableton-linux cure; drag-the-window alternative): (reversible)"
   "omarchy-bar:The Omarchy toolbar disappeared (toggled off / slid off-screen) — clear the bar-off toggle and re-sync the shell"
   "wine-menu:'Uninstall'/'Manual' entries cluttering the launcher: a Windows installer (smartEQ, FabFilter, CrispyTuner, Guitar Pro…) published its Start-Menu shortcuts and Wine turned each one into an app-menu entry — drop the ones belonging to the prefixes mosquitomarchy manages (idempotent; the file associations are kept)"
+  "bar-clock-centring:The bar's clock visibly slides sideways the moment the hidden indicators (night light, stay-awake, DND…) are revealed, and snaps back when they hide again — take the revealed icons out of the bar's layout so the reveal opens to the left and the centre anchor stays put (idempotent, reversible with --revert)"
   "terminal-padding:Omarchy pads every terminal by 14px and paints that padding with the theme background (near-black on the dark themes), so the text block reads as a dark slab floating inside a light window with a heavy frame between the two — keep the padding, make it take the terminal's own background (reversible)"
 )
 
@@ -703,6 +704,7 @@ run_fix(){ # single fix by id
     ableton-fullscreen) bash "$SCRIPT_DIR/scripts/fixes/fix-ableton-fullscreen.sh" ;;
     1px-seam) bash "$SCRIPT_DIR/scripts/fixes/fix-1px-seam.sh" ;;
     omarchy-bar) bash "$SCRIPT_DIR/scripts/fixes/fix-omarchy-bar.sh" ;;
+    bar-clock-centring) bash "$SCRIPT_DIR/scripts/fixes/fix-bar-clock-centring.sh" ;;
     wine-menu) bash "$SCRIPT_DIR/scripts/fixes/fix-wine-menu.sh" ;;
     terminal-padding) bash "$SCRIPT_DIR/scripts/fixes/fix-terminal-padding.sh" ;;
     *) err "Unknown fix: $id"; return 1 ;;
@@ -738,6 +740,13 @@ module_state(){
     keybindings) st_keybindings ;;
     keepassxc) st_keepassxc ;; mosquitomarchy-update) st_mosquitomarchy_update ;;
     hyprmod) st_hyprmod ;;
+    # st_achraff() has existed for a long time and was never called from here,
+    # so module_state fell through the case with no answer. Uninstalled-tree keeps
+    # only modules whose state is ok or partial, so achraff was excluded from the
+    # Uninstall tree and — with Themes holding nothing else — the whole FOLDER
+    # never appeared. The theme was installed and still offered no way to remove
+    # it.
+    achraff) st_achraff ;;
     superfile) st_superfile ;;
     extracto) st_extracto ;;
     zen) st_zen ;;
@@ -3796,6 +3805,12 @@ module_category(){ # module id -> category id
     # other calling it category-less, which is how pipewire-settings showed up in
     # the Setup tree under "mosquito" and in `status` with an empty category.
     ableton-move-manager|audio-plugin-manager|jamjamjam-plugin|battery|live-mode|pipewire-settings) echo mosquito; return 0 ;;
+    # `apps` is the umbrella the three catalogs are installed through. It lists no
+    # modules of its own in CATEGORIES — category_items "apps" returns its CHILDREN,
+    # which is why the loop below never found it and `status` reported an empty
+    # category. It is still a real, re-appliable module, so it gets its category
+    # named here rather than staying invisible in every tree.
+    apps) echo apps; return 0 ;;
   esac
   local c
   for c in "${CATEGORIES[@]}"; do
