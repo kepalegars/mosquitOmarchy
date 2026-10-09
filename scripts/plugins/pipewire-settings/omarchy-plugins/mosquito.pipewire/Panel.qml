@@ -33,6 +33,23 @@ Panel {
     // makes the menu entry work as well as the bar button.
     ipcTarget: "mosquito.pipewire"
 
+    // ── bar geometry ──────────────────────────────────────────────────────────
+    //
+    // These four are what the bar host needs from a `bar-widget` entry point, and
+    // this root was missing all of them — which is why NOTHING appeared in the bar.
+    //
+    // Ui/Panel (the base) extends Item directly and supplies the IPC lifecycle, but
+    // NOT vertical/barSize, and widgets are expected to declare their own implicit
+    // size. With no implicitWidth the bar allocated the slot ZERO pixels wide; the
+    // BarIconButton below is anchors.fill, so the whole widget collapsed to 0x0 and
+    // drew nothing — silently, with no QML error and nothing in the log to notice.
+    // vertical/barSize mirror what Ui/BarWidget provides, so the same widget body
+    // works whichever base it is instantiated from.
+    readonly property bool vertical: bar ? bar.vertical : false
+    readonly property int barSize: bar ? bar.barSize : Style.bar.sizeHorizontal
+    implicitWidth: root.vertical ? root.barSize : Style.space(44)
+    implicitHeight: root.barSize
+
     property string backendPath: Quickshell.env("MOSQUITOMARCHY_PIPEWIRE") ||
         (Quickshell.env("HOME") + "/.local/bin/mosquitomarchy-pipewire-settings")
 
@@ -223,52 +240,39 @@ Panel {
 
         Item {
             id: mark
-            // 1 unit of the source grid, in THIS ICON's pixels.
+            // The theme's red, not the bar foreground.
             //
-            // It has to be measured here and not on the panel: the panel is a bar
-            // widget sized to the whole slot, so scaling by it put the dots and
-            // strokes outside the icon's own box, where the clipping threw them
-            // away and the bar showed nothing at all.
-            readonly property real u: Math.min(width, height) / 16
-            readonly property color ink: root.iconColor
+            // Color.urgent IS the theme's `red` key (Color.qml maps red -> urgent),
+            // so this follows whatever the current theme calls red rather than
+            // hardcoding a red that would look foreign on the next one — the same
+            // reasoning as jamjamjam's fork.
+            readonly property color ink: Color.urgent
 
-            // A stroke of the source SVG, as a rotated rectangle.
-            component Stroke: Rectangle {
-                // x1,y1,x2,y2 in grid units; `round` reproduces stroke-linecap.
-                property real x1; property real y1; property real x2; property real y2
-                property bool round
-                readonly property real len: Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
-                x: ((x1 + x2) / 2) * mark.u - width / 2
-                y: ((y1 + y2) / 2) * mark.u - height / 2
-                width: mark.u * 2
-                height: len * mark.u
-                color: mark.ink
-                radius: round ? width / 2 : 0
-                rotation: Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI
-                transformOrigin: Item.Center
-            }
+            // Five rounded bars of alternating height — an equaliser.
+            //
+            // The previous mark transcribed the upstream "condensed" SVG literally:
+            // four dots plus five strokes on a 16-unit grid. At the ~24px the bar
+            // actually gives it, that collapses into an indistinct starburst that
+            // reads as a generic sun/asterisk. It was on screen the whole time and
+            // still looked like "there is no PipeWire widget here".
+            //
+            // Even spacing and a clear 1:3:5:3:1 height ratio, so the shape stays
+            // legible at any icon size.
+            readonly property real barW: Math.min(width, height) / 16 * 2.2
 
-            // Four dots: (14,2) (8,2) (2,14) (2,2), radius 2 in the source.
             Repeater {
-                model: [ { x: 14, y: 2 }, { x: 8, y: 2 }, { x: 2, y: 14 }, { x: 2, y: 2 } ]
+                model: 5
                 delegate: Rectangle {
-                    required property var modelData
-                    width: 4 * mark.u; height: width
+                    required property int index
+                    readonly property real hFactor: [1, 3, 5, 3, 1][index]
+                    width: mark.barW
+                    height: mark.barW * (1.6 + hFactor * 1.4)
                     radius: width / 2
                     color: mark.ink
-                    x: modelData.x * mark.u - width / 2
-                    y: modelData.y * mark.u - height / 2
+                    x: (mark.width - width) / 2 + (index - 2) * mark.barW * 1.5
+                    y: (mark.height - height) / 2
                 }
             }
-
-            // The five strokes, verbatim from the SVG. Only the third one has
-            // stroke-linecap="round"; the rest are butt, which is why it is the
-            // only Stroke with round: true.
-            Stroke { x1: 8;  y1: 10.5; x2: 8;  y2: 3.5 }
-            Stroke { x1: 14; y1: 7.5;  x2: 14; y2: 3.5 }
-            Stroke { x1: 8;  y1: 10.5; x2: 14; y2: 7.5;  round: true }
-            Stroke { x1: 2;  y1: 10.5; x2: 8;  y2: 7.5 }
-            Stroke { x1: 2;  y1: 12.5; x2: 2;  y2: 3.5 }
         }
     }
 

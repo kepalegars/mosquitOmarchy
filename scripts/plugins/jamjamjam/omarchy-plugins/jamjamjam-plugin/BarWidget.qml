@@ -104,6 +104,7 @@ BarWidget {
       // separates it from a red background; the red itself carries it on dark
       // ones.
       NoteGlyph {
+        id: noteGlyph
         // Deliberately LARGER than its parent box, and centred: this is the
         // "shrink the box, not the icon" half. overflow is not set, so the
         // drawing is not clipped.
@@ -138,14 +139,18 @@ BarWidget {
         }
       }
 
-      // Small pulsing dot when recording
+      // Small pulsing dot when recording.
+      // Anchored to the GLYPH, not to the parent box: the box is 14px and the fork
+      // is 20px drawn centred inside it, so the box's top is 3px BELOW the top of
+      // the icon and a dot hung off the box's corner floated beside the fork
+      // instead of sitting in the notch between its two prongs.
       Rectangle {
         id: recDot
         width: Style.space(5)
         height: Style.space(5)
         radius: width / 2
-        anchors.top: parent.top
-        anchors.right: parent.right
+        anchors.horizontalCenter: noteGlyph.horizontalCenter
+        anchors.top: noteGlyph.top
         visible: root.service ? root.service.recording : false
         color: Color.urgent
 

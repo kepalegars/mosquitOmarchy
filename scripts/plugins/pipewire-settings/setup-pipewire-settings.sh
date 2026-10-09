@@ -111,7 +111,10 @@ if mode == "remove":
 
 block = [
     start_mark,
-    '  "trigger.settings.pipewire": {',
+    # Folder comes from the key's prefix, so this used to land under Trigger while
+    # every other mosquito entry (manager, audio-plugins, move, live, jam) sits in
+    # the setup.mosquito.* namespace. Renamed to join them.
+    '  "setup.mosquito.pipewire": {',
     '    // An emoji, not a Nerd Font code: the mark is a waveform and there is no',
     '    // symbolic glyph for one, so \uf188 (a generic audio icon) stood in and',
     '    // simply did not look like the thing. The menu renders each entry in one',
@@ -293,7 +296,7 @@ install_plugin(){
 
   if enable_plugin; then ok "plugin enabled in shell.json"; fi
   if add_to_bar; then ok "plugin added to the bar ($BAR_SECTION)"; fi
-  if add_menu_block; then ok "menu entry added under Trigger"; fi
+  if add_menu_block; then ok "menu entry added under mosquitOmarchy"; fi
 
   msg "Reload the shell to pick the plugin up: omarchy-restart-shell"
 }

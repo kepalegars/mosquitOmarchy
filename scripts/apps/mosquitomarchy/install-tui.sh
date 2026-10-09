@@ -76,24 +76,53 @@ ensure_go() {
 
   if command -v mise >/dev/null 2>&1; then
     info "Trying mise…"
-    if mise use -g go@latest >/dev/null 2>&1; then
+    # Keep mise's own output: it is the only clue to WHY it failed, and discarding
+    # it used to leave "did not produce a usable go" with nothing to act on.
+    local mise_log; mise_log="$(mktemp)"
+    if mise use -g go@latest >"$mise_log" 2>&1; then
       # mise has to be told to put its shims on PATH for this shell; without it
       # the install succeeded and the check below still says "missing".
       export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
-      command -v go >/dev/null 2>&1 && { ok "go installed via mise ($(go version | awk '{print $3}'))"; return 0; }
+      command -v go >/dev/null 2>&1 && { ok "go installed via mise ($(go version | awk '{print $3}'))"; rm -f "$mise_log"; return 0; }
+      warn "mise installed go but no 'go' command is on PATH; is the shims dir still $HOME/.local/share/mise/shims?"
+    else
+      warn "mise failed:"
+      sed 's/^/    /' "$mise_log"
     fi
+    rm -f "$mise_log"
     warn "mise did not produce a usable go — trying the system package manager."
   fi
 
   if command -v pacman >/dev/null 2>&1; then
     info "Trying pacman — this asks for your password."
-    if command -v sudo >/dev/null 2>&1 && sudo pacman -S --needed go; then
-      command -v go >/dev/null 2>&1 && { ok "go installed via pacman ($(go version | awk '{print $3}'))"; return 0; }
-    fi
+    # Plain -S FIRST, so a healthy machine is never made to re-download every
+    # package index just to install a build dependency.
+    #
+    # It then retries with -Sy. On a machine whose package databases have never
+    # been populated — a freshly imaged box, which is exactly where the TUI build
+    # is most likely to be the first thing that needs Go — pacman answers
+    #   warning: database file for 'core' does not exist
+    #   error: target not found: go
+    # and the install fails for a reason that has nothing to do with Go.
+    local pac; for pac in "-S" "-Sy"; do
+      command -v sudo >/dev/null 2>&1 || break
+      if [[ $pac == "-Sy" ]]; then
+        info "sudo pacman -Sy --needed go   (populating the package databases first)"
+      else
+        info "sudo pacman -S --needed go"
+      fi
+      if sudo pacman "$pac" --needed go; then
+        command -v go >/dev/null 2>&1 && { ok "go installed via pacman ($(go version | awk '{print $3}'))"; return 0; }
+      fi
+      # Only a "no such target" style failure is worth a resync; anything else
+      # (a declined password, a full disk) would just be retried for nothing.
+      [[ $pac == "-S" ]] || break
+    done
   fi
 
   err "Could not install Go automatically."
-  err "  Arch:  sudo pacman -S --needed go"
+  err "  Arch:  sudo pacman -Sy --needed go   (-Sy syncs first, needed on a"
+  err "        machine whose package databases were never populated)"
   err "  mise:  mise use -g go@latest"
   err "Then re-run this script."
   return 1

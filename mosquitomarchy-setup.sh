@@ -320,23 +320,23 @@ st_macos_vm(){
   local miss=""
   [[ -x "$HOME/.local/bin/macos-vm-tui.sh" ]] || miss="${miss:+$miss, }macos-vm-tui.sh"
   [[ -x "$HOME/.local/bin/launch-macos-tui.sh" ]] || miss="${miss:+$miss, }launch-macos-tui.sh"
-  # The menu row and the keybinding are separate files, so name each one that
-  # is absent instead of collapsing the lot into "some files went missing".
-  if [[ -f $MENU ]] && ! grep -qF "Omarchy_Custom_Scripts_MacosVm" "$MENU"; then
+  # The menu row and the window rule are separate files, so name each one that is
+  # absent instead of collapsing the lot into "some files went missing".
+  #
+  # The row is matched by what it actually is, not by the marker comment. The
+  # installed row carries the id "setup.macosvm" and the label "macOS VM", but no
+  # ">>> Omarchy_Custom_Scripts_MacosVm" marker — so requiring the marker reported
+  # a row that was sitting right there in the menu. Any of the three is accepted.
+  if [[ -f $MENU ]] && ! grep -qE 'Omarchy_Custom_Scripts_MacosVm|"setup\.macosvm"|"label"[[:space:]]*:[[:space:]]*"macOS VM"' "$MENU"; then
     miss="${miss:+$miss, }its Omarchy menu row"
   fi
   if [[ -f $HYPRLAND ]] && ! grep -qF "Omarchy_Custom_Scripts_MacosVm" "$HYPRLAND"; then
     miss="${miss:+$miss, }its Hyprland rule"
   fi
-  # Keybinding is owned by mosquitOmarchy (its marker block) → look for the
-  # macOS entry inside that block instead of a dedicated marker.
-  if [[ -f $BINDINGS ]] && ! grep -qF 'Omarchy_Custom_Scripts_Keys' "$BINDINGS"; then
-    miss="${miss:+$miss, }the keybindings block"
-  fi
-  if [[ -f $BINDINGS ]] && ! grep -qF '"macOS VM Manager"' "$BINDINGS"; then
-    miss="${miss:+$miss, }its SUPER+ALT keybinding"
-  fi
-  [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
+  # NO keybinding is expected here, and requiring one is what made this module look
+  # permanently broken: setup-macos-vm.sh only ever calls kb_remove "SUPER + ALT + A",
+  # during uninstall. Nothing in the installer adds a binding, the TUI is reached
+  # from the menu, so there is no SUPER+ALT shortcut to check for.
   echo ok
 }
 st_omarchy_vm(){
@@ -350,8 +350,14 @@ st_omarchy_vm(){
   if [[ -f $HYPRLAND ]] && ! grep -qF "Omarchy_Custom_Scripts_OmarchyVm" "$HYPRLAND"; then
     miss="${miss:+$miss, }its Hyprland rule"
   fi
-  if [[ -f $BINDINGS ]] && ! grep -qF '"Omarchy VM Manager"' "$BINDINGS"; then
-    miss="${miss:+$miss, }its SUPER+ALT keybinding"
+  # Matched on the command, in hyprland.lua — NOT on a label inside bindings.lua.
+  # The shortcut that exists is
+  #   o.bind("SUPER + ALT + V", "Omarchy VM: focus the VM / host shortcuts", "omarchy-vm-focus")
+  # and it lives in the Hyprland file because its job is to move focus between the
+  # VM and the host, not to launch anything. Looking for a "VM Manager" label in
+  # bindings.lua therefore failed forever while the binding was installed.
+  if [[ -f $HYPRLAND ]] && ! grep -qF "omarchy-vm-focus" "$HYPRLAND"; then
+    miss="${miss:+$miss, }its SUPER+ALT+V focus binding"
   fi
   [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
   echo ok
