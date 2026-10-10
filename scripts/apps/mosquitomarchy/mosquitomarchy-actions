@@ -2132,6 +2132,8 @@ case "$sub" in
   theme-list)                cmd_theme_list ;;
   theme-remove)              cmd_theme_remove "$@" ;;
   theme-restore-stock)       cmd_theme_restore_stock ;;
+  theme-list-any)            cmd_theme_list_any ;;
+  theme-remove-any)          cmd_theme_remove_any "$@" ;;
   theme-apply)               cmd_theme_apply "${1:-}" ;;
   update)                   cmd_update "$@" ;;
   update-modules)           cmd_update_modules ;;
@@ -2154,3 +2156,52 @@ case "$sub" in
   restore)                  cmd_restore "${1:-}" ;;
   *) echo "mosquitomarchy-actions: unknown subcommand '$sub'." >&2; exit 2 ;;
 esac
+
+# cmd_theme_list_any — list ALL themes in ~/.config/omarchy/themes, including
+# stock symlinks. Used by "Remove Themes (any)" so the user can hide stock
+# themes they don't want to see.
+cmd_theme_list_any(){
+  local dir="$HOME/.config/omarchy/themes" n
+  [[ -d $dir ]] || exit 0
+  local cur norm n
+  cur="$(omarchy-theme-current 2>/dev/null || echo -)"
+  norm(){ printf '%s' "${1,,}" | tr -d ' _-'; }
+  local want; want="$(norm "$cur")"
+  while IFS= read -r n; do
+    [[ -n $n ]] || continue
+    # Include symlinks (stock themes) — they are marked so the UI can show them
+    # differently, and removing one just deletes the symlink.
+    local is_symlink=false
+    [[ -L "$dir/$n" ]] && is_symlink=true
+    jq -nc --arg name "$n" --argjson current "$([[ "$(norm "$n")" == "$want" ]] && echo true || echo false)" \
+      --argjson stock "$is_symlink" \
+      '{name:$name, current:$current, stock:$stock}'
+  done < <(find "$dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -f)
+}
+
+# cmd_theme_remove_any <name...> — remove themes including stock symlinks.
+# For regular dirs it uses omarchy-theme-remove; for symlinks it just unlinks.
+cmd_theme_remove_any(){
+  local dir="$HOME/.config/omarchy/themes" n rc=0
+  (($#)) || { err "theme-remove-any: at least one theme required"; return 2; }
+  for n in "$@"; do
+    if [[ -L "$dir/$n" ]]; then
+      # Stock theme: just remove the symlink
+      if rm -f "$dir/$n" 2>/dev/null; then
+        echo "removed (stock): $n"
+      else
+        rc=1; echo "could not remove: $n" >&2
+      fi
+    elif [[ -d "$dir/$n" ]]; then
+      # User theme: use omarchy-theme-remove
+      if omarchy-theme-remove "$n" >/dev/null 2>&1; then
+        echo "removed: $n"
+      else
+        rc=1; echo "could not remove: $n" >&2
+      fi
+    else
+      rc=1; echo "not a theme: $n" >&2
+    fi
+  done
+  return $rc
+}

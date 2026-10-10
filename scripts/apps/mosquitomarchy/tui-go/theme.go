@@ -34,6 +34,7 @@ import (
 type ThemeRec struct {
 	Name    string `json:"name"`
 	Current bool   `json:"current"`
+	Stock   bool   `json:"stock"`   // true for stock symlinks
 }
 
 type ThemeImageRec struct {
@@ -391,7 +392,7 @@ func (m model) themePicked(from screen, res tuikit.PickerResultMsg) (model, tea.
 	case "__uninstall__":
 		m.themeList = nil
 		m.themeChecked = map[string]bool{}
-		return m, fetchThemeList()
+		return m, fetchThemeListAny()
 	case "__restorestock__":
 		m.themeStock = nil
 		return m.startWorking("Restoring the stock themes", "theme-restore-stock")
@@ -656,6 +657,18 @@ func fetchThemeList() tea.Cmd {
 	}
 }
 
+// fetchThemeListAny loads ALL themes (user + stock symlinks) for "Remove Themes (any)".
+func fetchThemeListAny() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("theme-list-any")
+		if err != nil {
+			return themeListMsg{err: err}
+		}
+		rows, err := decodeJSONLines[ThemeRec](out)
+		return themeListMsg{themes: rows, err: err}
+	}
+}
+
 // rebuildThemeUninstall lists the user's themes with a circle per row, Tab to
 // tick several and Enter to remove them all at once — the same multi-select
 // shape the plugin and fix screens use, because removing five themes one at a
@@ -667,6 +680,9 @@ func (m model) rebuildThemeUninstall() navPicker {
 		if m.themeChecked[t.Name] {
 			mark = "●"
 		}
+		if t.Stock {
+			mark = "⧉"  // distinct marker for stock symlinks
+		}
 		// No sub-line. The rows are a list of names to tick; the sentence under
 		// each said the same thing the row already said, and the applied-theme
 		// caveat is enforced on the tick itself (it refuses, with a toast), so
@@ -674,9 +690,17 @@ func (m model) rebuildThemeUninstall() navPicker {
 		items = append(items, tuikit.PickerItem{Display: mark + " " + t.Name, Value: t.Name})
 	}
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
+	stockCount := 0
+	for _, t := range m.themeList {
+		if t.Stock {
+			stockCount++
+		}
+	}
 	h := "Uninstall which themes? (Tab ticks, Enter removes the ticked ones)"
 	if len(m.themeList) == 0 {
-		h = "No theme of yours to uninstall — the stock ones belong to Omarchy"
+		h = "No themes to uninstall"
+	} else if stockCount > 0 {
+		h += fmt.Sprintf("  — %d stock theme(s) included (⧉)", stockCount)
 	}
 	return newNavPicker(h, items).SetSize(m.contentSize())
 }

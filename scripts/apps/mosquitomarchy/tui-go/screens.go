@@ -788,12 +788,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, nil
 		}
 		switch m.pendingAction {
-		case "theme-remove":
+		case "theme-remove-any":
 			names := append([]string{}, m.pendingArgs...)
 			m.pendingArgs = nil
 			mm, cmd := m.startWorking(
 				fmt.Sprintf("Removing %d theme(s)", len(names)),
-				workingArgs("theme-remove", names)...)
+				workingArgs("theme-remove-any", names)...)
 			mm.themeRemoveCount = len(names)
 			return mm, cmd
 		case "theme-create":
@@ -1142,10 +1142,18 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	case healthMsg:
 		if msg.err != nil {
 			m.toast, _ = m.toast.SetErr("health check failed")
+			// If we're on the loading health screen, pop it
+			if m.top() == scrHealth && m.healthItems == nil {
+				m.pop()
+			}
 			return m, nil
 		}
 		if len(msg.items) == 0 {
 			m.toast, _ = m.toast.SetOK("health check: everything is in place")
+			// Pop the loading screen if we're still on it
+			if m.top() == scrHealth && m.healthItems == nil {
+				m.pop()
+			}
 			return m, nil
 		}
 		// Missing pieces are the screen's rows: every one becomes a tab-toggle
@@ -1157,7 +1165,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		for _, it := range msg.items {
 			m.healthChecked[it.ID] = true
 		}
-		m.push(scrHealth)
+		// Screen is already pushed; just rebuild the picker
 		m.healthPicker = m.rebuildHealth()
 		return m, nil
 
@@ -1648,7 +1656,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			n := len(targets)
 			m.pendingArgs = targets
-			m.pendingAction = "theme-remove"
+			m.pendingAction = "theme-remove-any"
 			m.pendingMsg = fmt.Sprintf("Delete %d theme(s)?\n\n%s\n\nNothing is kept: the theme folder is removed, not moved to a trash.",
 				n, strings.Join(targets, ", "))
 			m.pendingNo = "Cancel"
@@ -1957,7 +1965,11 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.push(scrThemeFolder)
 			return m, nil
 		case "health":
-			// Re-apply any mosquitOmarchy piece / module whose files went missing.
+			// Push the health screen immediately with a loading indicator, then fetch.
+			m.healthItems = nil
+			m.healthChecked = map[string]bool{}
+			m.push(scrHealth)
+			m.healthPicker = m.rebuildHealth()
 			return m, fetchHealthCmd()
 		case "backup":
 			m.push(scrBackup)
