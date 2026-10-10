@@ -31,7 +31,7 @@ try:
 except ImportError:
     HAVE_SHAZAMIO = False
 
-PLUGIN_ID = "jamjamjam-plugin"
+PLUGIN_ID = "mosquito.jamjamjam"
 
 # Capture tools. PipeWire 1.6 does NOT expose sink monitors as nodes, so
 # `pw-record --target <sink>.monitor` silently records silence (verified on

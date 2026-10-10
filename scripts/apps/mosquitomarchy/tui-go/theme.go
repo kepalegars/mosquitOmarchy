@@ -34,7 +34,7 @@ import (
 type ThemeRec struct {
 	Name    string `json:"name"`
 	Current bool   `json:"current"`
-	Stock   bool   `json:"stock"`   // true for stock symlinks
+	Stock   bool   `json:"stock"` // true for stock symlinks
 }
 
 type ThemeImageRec struct {
@@ -681,7 +681,7 @@ func (m model) rebuildThemeUninstall() navPicker {
 			mark = "●"
 		}
 		if t.Stock {
-			mark = "⧉"  // distinct marker for stock symlinks
+			mark = "⧉" // distinct marker for stock symlinks
 		}
 		// No sub-line. The rows are a list of names to tick; the sentence under
 		// each said the same thing the row already said, and the applied-theme

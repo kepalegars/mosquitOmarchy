@@ -1166,7 +1166,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		for _, it := range msg.items {
 			m.healthChecked[it.ID] = true
 		}
-		// Screen is already pushed; just rebuild the picker
+		// The screen is normally already pushed (with a loading row) by the
+		// selection handler; push it when it is not (slow fetch the user
+		// backed out of, or a bare message in tests) so results always land
+		// somewhere visible.
+		if m.top() != scrHealth {
+			m.push(scrHealth)
+		}
 		m.healthPicker = m.rebuildHealth()
 		return m, nil
 
@@ -1639,31 +1645,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.themeUninstallPicker = m.rebuildThemeUninstall()
 			return m, nil
 		}
-		if res, ok := msg.(tuikit.PickerResultMsg); ok {
-			if res.Canceled || res.Value == "back" {
-				m.pop()
-				return m, nil
-			}
-			// Tab ticks, so Enter on an unticked row still removes that one
-			// theme: the multi-select is the convenience, not a gate.
-			targets := []string{res.Value}
-			if m.themeChecked[res.Value] {
-				targets = targets[:0]
-				for _, t := range m.themeList {
-					if m.themeChecked[t.Name] {
-						targets = append(targets, t.Name)
-					}
-				}
-			}
-			n := len(targets)
-			m.pendingArgs = targets
-			m.pendingAction = "theme-remove-any"
-			m.pendingMsg = fmt.Sprintf("Delete %d theme(s)?\n\n%s\n\nNothing is kept: the theme folder is removed, not moved to a trash.",
-				n, strings.Join(targets, ", "))
-			m.pendingNo = "Cancel"
-			m.pendingYes = "Delete"
-			m.push(scrConfirm)
-			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+		// Enter and Esc arrive as PickerResultMsg and are handled by
+		// screenPicked; catching one here would swallow it, which is the very
+		// bug that made Enter (Back included) do nothing on this screen.
+		if _, ok := msg.(tuikit.PickerResultMsg); ok {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -1671,12 +1656,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		return m, cmd
 
 	case scrThemeRestore:
-		if res, ok := msg.(tuikit.PickerResultMsg); ok {
-			if res.Canceled || res.Value == "back" {
-				m.pop()
-				return m, nil
-			}
-			return m.startWorking("Restoring the stock themes", "theme-restore-stock")
+		// Same routing as above: screenPicked owns Enter/Esc.
+		if _, ok := msg.(tuikit.PickerResultMsg); ok {
+			return m, nil
 		}
 		var cmd tea.Cmd
 		m.themeRestorePicker, cmd = m.themeRestorePicker.Update(msg)
@@ -2580,6 +2562,38 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		// two text screens (scrThemeInput, scrThemeName) are handled in the
 		// key switch because Enter on a TextInput never arrives as a pick.
 		return m.themePicked(m.top(), res)
+	case scrThemeUninstall:
+		if res.Canceled || res.Value == "back" {
+			m.pop()
+			return m, nil
+		}
+		// Tab ticks, so Enter on an unticked row still removes that one
+		// theme: the multi-select is the convenience, not a gate.
+		targets := []string{res.Value}
+		if m.themeChecked[res.Value] {
+			targets = targets[:0]
+			for _, t := range m.themeList {
+				if m.themeChecked[t.Name] {
+					targets = append(targets, t.Name)
+				}
+			}
+		}
+		n := len(targets)
+		m.pendingArgs = targets
+		m.pendingAction = "theme-remove-any"
+		m.pendingMsg = fmt.Sprintf("Delete %d theme(s)?\n\n%s\n\nNothing is kept: the theme folder is removed, not moved to a trash.",
+			n, strings.Join(targets, ", "))
+		m.pendingNo = "Cancel"
+		m.pendingYes = "Delete"
+		m.push(scrConfirm)
+		m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+		return m, nil
+	case scrThemeRestore:
+		if res.Canceled || res.Value == "back" {
+			m.pop()
+			return m, nil
+		}
+		return m.startWorking("Restoring the stock themes", "theme-restore-stock")
 
 	}
 	return m, nil
@@ -3481,11 +3495,23 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 				// The backend greys a row that has nothing left to do, and it
 				// stays listed so the option does not silently vanish. When the
 				// backend explains itself in `info`, show that as the sub-line
-				// rather than leaving a dead-looking row with no reason.
+				// rather than leaving a dead-looking row with no reason —
+				// EXCEPT asset-gated apps, whose info is "long description —
+				// needs <file> in scripts/apps/<dir>/": the description is
+				// noise there, so the row carries "(missing installation
+				// files)" in its own label and no sub-line at all.
 				if it.Disabled {
 					entry.Disabled = true
 					if it.Info != "" {
-						entry.Sub = it.Info
+						if idx := strings.LastIndex(it.Info, " — "); idx >= 0 {
+							if note := it.Info[idx+3:]; strings.HasPrefix(note, "needs ") && strings.Contains(note, "in scripts/apps/") {
+								entry.Display += " (missing installation files)"
+							} else {
+								entry.Sub = it.Info
+							}
+						} else {
+							entry.Sub = it.Info
+						}
 					}
 				}
 				// "remove-ai" means the OPPOSITE thing in each tree, so the
@@ -3572,23 +3598,23 @@ func (m model) rebuildHealth() navPicker {
 		items = append(items, tuikit.PickerItem{Display: "Everything is in place — no action needed", Value: "", Disabled: true})
 	} else {
 		for _, it := range m.healthItems {
-		mark := "○"
-		if m.healthChecked[it.ID] {
-			mark = "●"
+			mark := "○"
+			if m.healthChecked[it.ID] {
+				mark = "●"
+			}
+			// The catalog label is a full sentence ("Live mode — performance
+			// session mode (stay-awake + thermal guard + …)"), which wraps over
+			// three rows and buries the list. Show the piece's own name and keep
+			// the sentence as the sub-line, where it is one truncated line.
+			display, long := healthShortLabel(it)
+			row := tuikit.PickerItem{Display: display, Value: it.ID, Badge: mark}
+			if it.Detail != "" {
+				row.Sub = it.Detail
+			} else if long != "" {
+				row.Sub = long
+			}
+			items = append(items, row)
 		}
-		// The catalog label is a full sentence ("Live mode — performance
-		// session mode (stay-awake + thermal guard + …)"), which wraps over
-		// three rows and buries the list. Show the piece's own name and keep
-		// the sentence as the sub-line, where it is one truncated line.
-		display, long := healthShortLabel(it)
-		row := tuikit.PickerItem{Display: display, Value: it.ID, Badge: mark}
-		if it.Detail != "" {
-			row.Sub = it.Detail
-		} else if long != "" {
-			row.Sub = long
-		}
-		items = append(items, row)
-	}
 	}
 	// Every other screen ends with a Back row. This one had none, so the only
 	// way out was Esc, which does not read as "this is a page you can leave".

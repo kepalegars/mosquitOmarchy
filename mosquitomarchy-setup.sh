@@ -391,8 +391,10 @@ st_battery(){
   # Coffee mode (laptop closed without sleeping): binary deployed + valid syntax.
   [[ -x "$HOME/.local/bin/mega-caffeine" ]] || { echo partial; return; }
   bash -n "$HOME/.local/bin/mega-caffeine" 2>/dev/null || { echo partial; return; }
-  # The parent widget is the custom.power plugin: if enabled, the module is "ok".
-  omarchy plugin list 2>/dev/null | grep -qE '^\s*custom\.power\s+enabled' && echo ok || echo partial
+  # The parent widget is the mosquito.power plugin: if enabled, the module is "ok".
+  # custom.power is still accepted: machines that have not re-run the battery
+  # module since the rename still carry the legacy clone.
+  omarchy plugin list 2>/dev/null | grep -qE '^\s*(mosquito|custom)\.power\s+enabled' && echo ok || echo partial
 }
 st_brightness(){
   [[ -x "$HOME/.local/bin/backlight" ]] || { echo missing; return; }
@@ -529,12 +531,14 @@ st_zen(){
   ((missing == 0)) && echo ok || echo partial
 }
 st_jamjamjam_plugin(){
-  # JamJamJam bar plugin: installed copy + bar entry present
-  local plug="$HOME/.config/omarchy/plugins/jamjamjam-plugin"
+  # JamJamJam bar plugin: installed copy + bar entry present. The legacy
+  # jamjamjam-plugin clone counts too until the rename migration has run.
+  local plug="$HOME/.config/omarchy/plugins/mosquito.jamjamjam"
+  [[ -d "$plug" ]] || plug="$HOME/.config/omarchy/plugins/jamjamjam-plugin"
   [[ -d "$plug" && -f "$plug/manifest.json" ]] || { echo missing; return; }
   compgen -G "$plug/backend/*.py" >/dev/null 2>&1 || { echo partial; return; }
   if [[ -f "$HOME/.config/omarchy/shell.json" ]] \
-     && grep -q '"jamjamjam-plugin"' "$HOME/.config/omarchy/shell.json"; then
+     && grep -q '"mosquito.jamjamjam"\|"jamjamjam-plugin"' "$HOME/.config/omarchy/shell.json"; then
     echo ok
   else
     echo partial
@@ -641,7 +645,7 @@ MODULES=(
   "apps:Apps, tuis & webapps (catalog per type gui/tui/webapps + backup selection via setup-apps.sh)"
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
   "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships. Reversible from Setup."
-  "battery:Battery backend (ultra-save + Lenovo charge-control + custom.power plugin) + coffee mode (mega-caffeine)"
+  "battery:Battery backend (ultra-save + Lenovo charge-control + mosquito.power plugin) + coffee mode (mega-caffeine)"
   "brightness:Display brightness — Omarchy default, plus 0% = screen off"
   "achraff:'Achraff 67' visual theme + unlock/Plymouth logo (lock screen left stock)"
   "touchpad:Touchpad (pointer acceleration + sensitivity — external mouse is not affected)"
@@ -1556,9 +1560,9 @@ do_backup(){
   local p
   for p in .config/hypr .config/REAPER .config/windows .config/opencode \
            .config/omarchy/extensions .config/omarchy/shell.json .config/omarchy/menu \
-           .config/omarchy/themes/achraff-67 .config/omarchy/plugins/custom.power \
+           .config/omarchy/themes/achraff-67 .config/omarchy/plugins/mosquito.power .config/omarchy/plugins/custom.power \
            .config/omarchy/plugins/mosquito.indicators .config/omarchy/plugins/mosquito.confirm \
-           .config/omarchy/plugins/jamjamjam-plugin .local/share/jamjamjam-plugin \
+           .config/omarchy/plugins/mosquito.jamjamjam .config/omarchy/plugins/jamjamjam-plugin .local/share/mosquito.jamjamjam .local/share/jamjamjam-plugin \
            .config/yabridgectl \
            .local/bin/reaper-launch .local/bin/windows-vm-usb \
            .local/bin/winvm .local/bin/ableton-live \
@@ -1937,10 +1941,12 @@ restore_backup(){
   # --- Configuration ---
   if [[ -f "$tmp/config-backup.tar.gz" ]]; then
     if ask "Restore the configuration (~/.config, ~/.local/bin wrappers, Omarchy bar)?" y; then
-      # The battery plugins (custom.power, mosquito.indicators, mosquito.confirm) are recreated by the
+      # The battery plugins (mosquito.power, mosquito.indicators, mosquito.confirm) are recreated by the
       # battery module (setup-battery-management.sh): they are excluded
       # here to avoid restoring frozen copies, then the module reinstalls them.
+      # custom.power is excluded too: the legacy clone some machines still carry.
       tar xzf "$tmp/config-backup.tar.gz" -C "$HOME" \
+        --exclude='.config/omarchy/plugins/mosquito.power' \
         --exclude='.config/omarchy/plugins/custom.power' \
         --exclude='.config/omarchy/plugins/mosquito.indicators' \
         --exclude='.config/omarchy/plugins/mosquito.confirm'
@@ -1949,7 +1955,7 @@ restore_backup(){
         systemctl --user enable yabridge-autosync.path 2>/dev/null || true
       fi
       # The battery plugins are recreated via the battery script (idempotent).
-      if [[ -d "$HOME/.config/omarchy/plugins/custom.power" ]] \
+      if [[ -d "$HOME/.config/omarchy/plugins/mosquito.power" || -d "$HOME/.config/omarchy/plugins/custom.power" ]] \
          && [[ -d "$HOME/.config/omarchy/plugins/mosquito.indicators" ]] \
          && [[ -d "$HOME/.config/omarchy/plugins/mosquito.confirm" ]]; then
         ok "Battery plugins restored as-is (re-adopted)"
@@ -2810,7 +2816,7 @@ un_apps(){
 }
 
 un_battery(){
-  info "Uninstalling battery (ultra-save / power-helper / mega-caffeine / custom.power)"
+  info "Uninstalling battery (ultra-save / power-helper / mega-caffeine / mosquito.power)"
 
   # Full uninstall path of the battery module: stops an active coffee mode,
   # clears its state, removes the menu entry
@@ -2828,13 +2834,15 @@ un_battery(){
   rm -rf "$HOME/.local/state/ultra-save" "$HOME/.local/state/caffeine"
   ok "binaries + battery/caffeine state removed (ultra-save, power-helper, mega-caffeine)"
 
-  # Omarchy custom plugins (custom.power, mosquito.indicators, mosquito.confirm)
+  # Mosquito plugins (mosquito.power, mosquito.indicators, mosquito.confirm),
+  # plus the legacy custom.power clone when a machine still carries it.
+  omarchy plugin disable mosquito.power 2>/dev/null || true
   omarchy plugin disable custom.power 2>/dev/null || true
   omarchy plugin disable "$USER.power" 2>/dev/null || true
   omarchy plugin disable mosquito.indicators 2>/dev/null || true
   omarchy plugin disable mosquito.confirm 2>/dev/null || true
-  rm -rf "$PLUG/custom.power" "$PLUG/$USER.power" "$PLUG/mosquito.indicators" "$PLUG/mosquito.confirm"
-  ok "custom plugins removed (custom.power / mosquito.indicators / mosquito.confirm)"
+  rm -rf "$PLUG/mosquito.power" "$PLUG/custom.power" "$PLUG/$USER.power" "$PLUG/mosquito.indicators" "$PLUG/mosquito.confirm"
+  ok "mosquito plugins removed (mosquito.power / mosquito.indicators / mosquito.confirm)"
 
   # Normalize shell.json back to the stock power/lock widgets — done HERE (the
   # module that owns the plugins), never in un_shared_menu on every uninstall.
@@ -2911,20 +2919,20 @@ un_zen(){
   warn "zen-browser-bin itself stays: uninstall it via the 'apps' module (sudo pacman -Rns zen-browser-bin)."
 }
 un_jamjamjam_plugin(){
-  info "Uninstalling the JamJamJam plugin (jamjamjam-plugin)"
+  info "Uninstalling the JamJamJam plugin (mosquito.jamjamjam)"
   if [[ -x "$JAMJAMJAM_PLUGIN_DIR/setup-jamjamjam-plugin.sh" ]]; then
     bash "$JAMJAMJAM_PLUGIN_DIR/setup-jamjamjam-plugin.sh" --remove \
       || warn "setup-jamjamjam-plugin.sh --remove reported a problem"
   else
     warn "setup-jamjamjam-plugin.sh not found — cleaning up directly."
-    rm -rf "$HOME/.config/omarchy/plugins/jamjamjam-plugin"
+    rm -rf "$HOME/.config/omarchy/plugins/mosquito.jamjamjam" "$HOME/.config/omarchy/plugins/jamjamjam-plugin"
   fi
   if (( PURGE )); then
-    rm -rf "$HOME/.local/share/jamjamjam-plugin"
+    rm -rf "$HOME/.local/share/mosquito.jamjamjam" "$HOME/.local/share/jamjamjam-plugin"
     ok "JamJamJam plugin + data dir removed."
   else
-    rm -rf "$HOME/.local/state/jamjamjam-plugin" 2>/dev/null || true
-    warn "Data kept: ~/.local/share/jamjamjam-plugin. --purge to remove."
+    rm -rf "$HOME/.local/state/mosquito.jamjamjam" "$HOME/.local/state/jamjamjam-plugin" 2>/dev/null || true
+    warn "Data kept: ~/.local/share/mosquito.jamjamjam. --purge to remove."
   fi
 }
 un_live_mode(){
@@ -3025,17 +3033,18 @@ drop_locktitle(){
 
 clean_plugins(){
   # Normalizes the Omarchy plugin state in shell.json to go back to stock:
-  # removes our clones (custom./<user>. power/lock) from bars/plugins/disabled
-  # and re-enables the original Omarchy plugins (omarchy.lock, omarchy.power).
+  # removes our clones (mosquito./custom./<user>. power/lock) from
+  # bars/plugins/disabled and re-enables the original Omarchy plugins
+  # (omarchy.lock, omarchy.power).
   [[ -f $SHELL ]] || return 0
   command -v jq >/dev/null 2>&1 || { warn "jq missing — Omarchy plugin state not normalized"; return 0; }
-  local ours='custom\.(power|lock)|mosquito\.(indicators|confirm)|'"$USER"'\.(power|lock)'
+  local ours='(mosquito|custom)\.(power|lock)|mosquito\.(indicators|confirm)|'"$USER"'\.(power|lock)'
   # Null-safe: .plugins and .disabledPlugins may be absent (null) — the old jq
   # then failed with "Cannot iterate over null" and aborted the uninstall (and
   # tripped the crash reporter). Guard both, and never abort on a jq error.
   if jq '
     ( .. | objects | select(has("moduleList")) )
-      |= ( .moduleList = ((.moduleList // []) | map(select(.id != "custom.power" and .id != "'"$USER"'.power"))) )
+      |= ( .moduleList = ((.moduleList // []) | map(select(.id != "mosquito.power" and .id != "custom.power" and .id != "'"$USER"'.power"))) )
     | .plugins = ((.plugins // []) | map(select(
         (if type == "object" then (.id // "") else (. | tostring) end)
         | test("^(custom|mosquito|'$USER')\\.(power|lock|indicators|confirm)$") | not)))
@@ -3557,7 +3566,7 @@ un_pipewire_settings(){
 }
 
 run_jamjamjam_plugin(){
-  # jamjamjam-plugin bar plugin (real-time key/BPM/chord analysis,
+  # mosquito.jamjamjam bar plugin (real-time key/BPM/chord analysis,
   # guitar fretboard, MIDI chord mode + synth). Idempotent, no prompts.
   bash "$JAMJAMJAM_PLUGIN_DIR/setup-jamjamjam-plugin.sh"
 }

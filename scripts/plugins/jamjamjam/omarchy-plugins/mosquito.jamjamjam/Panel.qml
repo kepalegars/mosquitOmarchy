@@ -6,7 +6,7 @@ import qs.Ui
 
 Panel {
   id: root
-  moduleName: "jamjamjam-plugin"
+  moduleName: "mosquito.jamjamjam"
   manageIpc: false
 
   property var anchorItem: null

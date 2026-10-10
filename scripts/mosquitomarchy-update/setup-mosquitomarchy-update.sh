@@ -143,7 +143,7 @@ qui personnalise des fichiers maintenant susceptibles d'évoluer avec cette mise
 - ~/.config/hypr/bindings.lua                     (blocs -- >>> Omarchy_Custom_Scripts_…)
 - ~/.config/hypr/hyprland.lua                      (blocs Handbrake / Touchpad)
 - ~/.config/omarchy/extensions/omarchy-menu.jsonc  (blocs // >>> Omarchy_Custom_Scripts)
-- ~/.config/omarchy/plugins/                        (custom.power, clones custom.lock/<user>.lock)
+- ~/.config/omarchy/plugins/                        (mosquito.power, clones custom.lock/<user>.lock)
 - ~/.config/hypr/touchpad.lua
 - ~/.local/bin/                                     (backlight, ultra-save, power-helper,
                                                      mega-caffeine, guitarpro, …)

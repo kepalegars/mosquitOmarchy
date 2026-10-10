@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "mosquito.confirm",
-  "name": "Confirm (Mega Caffeine)",
+  "name": "Mosquito Confirm",
   "version": "1.0.0",
   "author": "Mosquito",
   "description": "Native square confirmation dialog (message + Yes/No) for Mega caffeine prompts",

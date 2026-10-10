@@ -2,7 +2,7 @@
 # =============================================================================
 # Omarchy Custom - Battery Management
 # =============================================================================
-# Central installer for ALL battery/charge tooling behind the custom.power
+# Central installer for ALL battery/charge tooling behind the mosquito.power
 # panel widget. Reproduces on a fresh machine:
 #
 #   1. ultra-save          (~/.local/bin/ultra-save)          : on/off/status toggle
@@ -15,11 +15,11 @@
 #   5b. ultra-save-watch    (~/.local/bin/ultra-save-watch)   : CPU-saturation watchdog
 #                          under ultra-save (systemd --user timer, every 60s)
 #   6. Removes the old "System > Ultra-save mode" block from the Omarchy menu
-#      (now useless: the toggle lives in the custom.power plugin).
+#      (now useless: the toggle lives in the mosquito.power plugin).
 #   7. Adds a "Mega caffeine" entry to the Omarchy menu bar
 #      (Trigger > Toggle) toggling the coffee mode on/off.
 #
-# Notifications (charge threshold reached) are sent by the custom.power
+# Notifications (charge threshold reached) are sent by the mosquito.power
 # plugin, no longer by the scripts (ultra-save-monitor has been removed). The
 # ultra-save-watch watchdog does NOT send profile-change notifications: it
 # warns when ultra-save's CPU cap is being saturated and would freeze the
@@ -125,12 +125,14 @@ if [[ $REMOVE == false ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 1b. Omarchy custom.power plugin (bar widget: charge limit + ultra-save)
-#     Recreates it if missing: clones omarchy.power then renames to custom.power.
+# 1b. Mosquito mosquito.power plugin (bar widget: charge limit + ultra-save)
+#     Recreates it if missing: clones omarchy.power then renames to
+#     mosquito.power. The legacy custom.power clone is adopted (renamed) when
+#     found, so no machine keeps the old id.
 # -----------------------------------------------------------------------------
 ensure_power_plugin() {
   local PLUG="$REAL_HOME/.config/omarchy/plugins"
-  local PLUGIN_ID="custom.power"
+  local PLUGIN_ID="mosquito.power"
   local PLUGIN_DIR="$PLUG/$PLUGIN_ID"
   local SHELL_JSON="$REAL_HOME/.config/omarchy/shell.json"
 
@@ -139,8 +141,12 @@ ensure_power_plugin() {
   if [[ -d "$PLUGIN_DIR" ]]; then
     ok "Omarchy plugin $PLUGIN_ID already present"
   else
-    # A residual <user>.power clone (mosquito.power)? re-adopt it.
-    if [[ -d "$PLUG/$REAL_USER.power" ]]; then
+    # A legacy custom.power clone, or a residual <user>.power clone? Re-adopt.
+    if [[ -d "$PLUG/custom.power" ]]; then
+      warn "Legacy clone custom.power present — renamed to $PLUGIN_ID"
+      mv "$PLUG/custom.power" "$PLUGIN_DIR"
+      omarchy plugin disable custom.power >/dev/null 2>&1 || true
+    elif [[ -d "$PLUG/$REAL_USER.power" ]]; then
       warn "Clone $REAL_USER.power present — renamed to $PLUGIN_ID"
       mv "$PLUG/$REAL_USER.power" "$PLUGIN_DIR"
     else
@@ -153,27 +159,29 @@ ensure_power_plugin() {
         return 1
       fi
     fi
-
-    # Force the manifest id to custom.power
-    local mf="$PLUGIN_DIR/manifest.json"
-    if command -v jq >/dev/null 2>&1 && [[ -f $mf ]]; then
-      jq --arg id "$PLUGIN_ID" '.id=$id' "$mf" >"$mf.tmp" && mv "$mf.tmp" "$mf"
-    else
-      sed -i -E "s/\"id\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/\"id\": \"$PLUGIN_ID\"/" "$mf"
-    fi
   fi
 
-  # ALWAYS repoint the bar layout to custom.power and enable it. A reinstall, an
-  # Omarchy update or an earlier partial run can leave shell.json on the STOCK
-  # omarchy.power (or a stale <user>.power clone): the customized widget then
-  # exists but is never shown, so nothing we change in its QML has any effect.
-  if grep -qE "\"(omarchy|${REAL_USER})\\.power\"" "$SHELL_JSON" 2>/dev/null; then
+  # Force the manifest id AND the mosquito display name (a fresh clone carries
+  # omarchy.power's or the legacy custom.power's "My Power" name).
+  local mf="$PLUGIN_DIR/manifest.json"
+  if command -v jq >/dev/null 2>&1 && [[ -f $mf ]]; then
+    jq --arg id "$PLUGIN_ID" '.id=$id | .name="Mosquito Power" | .author="Mosquito" | if has("barWidget") then .barWidget.displayName="Mosquito Power" else . end' "$mf" >"$mf.tmp" && mv "$mf.tmp" "$mf"
+  else
+    sed -i -E "s/\"id\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/\"id\": \"$PLUGIN_ID\"/" "$mf"
+  fi
+
+  # ALWAYS repoint the bar layout to mosquito.power and enable it. A reinstall,
+  # an Omarchy update or an earlier partial run can leave shell.json on the
+  # STOCK omarchy.power (or a stale custom.power / <user>.power clone): the
+  # customized widget then exists but is never shown, so nothing we change in
+  # its QML has any effect.
+  if grep -qE "\"(omarchy|custom|${REAL_USER})\\.power\"" "$SHELL_JSON" 2>/dev/null; then
     cp -f "$SHELL_JSON" "$SHELL_JSON.bak.fix-power-$(date +%s)" 2>/dev/null || true
-    sed -i -E "s#\"(omarchy|${REAL_USER})\.power\"#\"$PLUGIN_ID\"#g" "$SHELL_JSON"
+    sed -i -E "s#\"(omarchy|custom|${REAL_USER})\.power\"#\"$PLUGIN_ID\"#g" "$SHELL_JSON"
     ok "Bar layout repointed: power widget -> $PLUGIN_ID"
   fi
   # And any self-reference inside the plugin's own QML.
-  sed -i -E "s#\"(omarchy|${REAL_USER})\.power\"#\"$PLUGIN_ID\"#g" "$PLUGIN_DIR"/*.qml 2>/dev/null || true
+  sed -i -E "s#\"(omarchy|custom|${REAL_USER})\.power\"#\"$PLUGIN_ID\"#g" "$PLUGIN_DIR"/*.qml 2>/dev/null || true
   omarchy plugin enable "$PLUGIN_ID" >/dev/null 2>&1 || true
   ok "Omarchy plugin $PLUGIN_ID present + enabled (bar widget)"
 }
@@ -182,7 +190,7 @@ ensure_power_plugin() {
 # 1c. Omarchy custom plugins (bar widget + overlay) — same clone/rename pattern
 #     but with QML sources shipped in ./omarchy-plugins/ (the stock clones are
 #     then patched so a fresh machine reproduces this machine's customizations):
-#       • custom.power/Panel.qml          : charge-limit notif + toggles
+#       • mosquito.power/Panel.qml          : charge-limit notif + toggles
 #       • mosquito.indicators/            : StayAwake red icon + time tooltip
 #       • mosquito.confirm/               : native Yes/No overlay for prompts
 # -----------------------------------------------------------------------------
@@ -253,10 +261,10 @@ ensure_confirm_plugin() {
 
 if [[ $REMOVE == false ]]; then
   ensure_power_plugin || true
-  overlay_plugin_files "custom.power" "Panel.qml" "Model.js"
+  overlay_plugin_files "mosquito.power" "Panel.qml" "Model.js"
 
   # Omarchy's OWN power panel, overlaid for the same reason. It is disabled in
-  # favour of custom.power on this desktop, but it is one `omarchy plugin
+  # favour of mosquito.power on this desktop, but it is one `omarchy plugin
   # enable omarchy.power` away from being live again, and its setProfile() calls
   # omarchy-powerprofiles-set directly — so a machine that switched back would
   # silently lose the Live Mode guard. The overlay is only applied when the
@@ -302,7 +310,7 @@ fi
 # -----------------------------------------------------------------------------
 # 3. ultra-save-watch monitor (systemd --user timer).
 #    The old ultra-save-monitor (sent profile-change notifications) stays
-#    removed: notifications are handled by the custom.power plugin. The NEW
+#    removed: notifications are handled by the mosquito.power plugin. The NEW
 #    ultra-save-watch fills a different gap — it watches for CPU saturation
 #    WHILE ultra-save is ON (so the 30% frequency cap freezes the desktop,
 #    e.g. a DAW render) and posts a critical Omarchy notification whose click
@@ -416,7 +424,7 @@ fi
 
 # -----------------------------------------------------------------------------
 # 5. Cleanup of the old "System > Ultra-save mode" block in the Omarchy menu
-#    (now driven by the custom.power widget, no menu entry needed anymore)
+#    (now driven by the mosquito.power widget, no menu entry needed anymore)
 # -----------------------------------------------------------------------------
 remove_menu_block() {
   [[ -f $MENU ]] || { ok "Menu absent, nothing to remove."; return 0; }
@@ -633,7 +641,7 @@ else
   echo "  • Coffee mode           -> $BIN_DIR/mega-caffeine (toggle/status)"
   echo "  • Battery status        -> $BIN_DIR/battery-status (corrected charger/0W detection)"
   echo "  • Charge control (udev) -> thresholds writable by wheel (Lenovo P14s)"
-  echo "  • Omarchy widget        -> custom.power plugin (charge limit + ultra-save)"
+  echo "  • Omarchy widget        -> mosquito.power plugin (charge limit + ultra-save)"
   echo "  • Omarchy overlay       -> mosquito.confirm plugin (native Yes/No prompts)"
   echo "  • Omarchy indicators    -> mosquito.indicators widget (stay-awake red icon + tooltip)"
   echo "  • Omarchy menu          -> Trigger > Toggle > Mega caffeine (coffee mode toggle)"

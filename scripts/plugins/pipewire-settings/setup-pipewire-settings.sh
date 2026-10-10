@@ -115,12 +115,11 @@ block = [
     # every other mosquito entry (manager, audio-plugins, move, live, jam) sits in
     # the setup.mosquito.* namespace. Renamed to join them.
     '  "setup.mosquito.pipewire": {',
-    '    // An emoji, not a Nerd Font code: the mark is a waveform and there is no',
-    '    // symbolic glyph for one, so \uf188 (a generic audio icon) stood in and',
-    '    // simply did not look like the thing. The menu renders each entry in one',
-    '    // foreground colour, but a COLOUR emoji brings its own — which is why the',
-    '    // bar icon is drawn in barForeground and this one is not.',
-    '    "icon": "\U0001F39A",',
+    '    // The bar uses a 4-dot PNG, but omarchy menu icons are text GLYPHS only',
+    '    // (docs: "icon: glyph in the icon column") — a file path would render as',
+    '    // literal text. So this is the closest text mark: FA ellipsis-vertical,',
+    '    // three dots in a column, same dot-cluster family as the bar icon.',
+    '    "icon": "\uf142",',
     '    "label": "PipeWire Settings",',
     '    "description": "Sample rate and buffer size for the audio graph, with force and persist",',
     '    "aliases": ["pipewire", "pw", "sample-rate", "buffer", "quantum", "audio-settings"],',

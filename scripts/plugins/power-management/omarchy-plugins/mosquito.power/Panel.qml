@@ -92,7 +92,7 @@ Panel {
   readonly property bool batteryFull: fullyCharged || (!root.discharging && batteryFraction >= 1)
   readonly property bool batteryFlowIdle: batteryFull || chargeThresholdActive
 
-  // ---- custom.power state (polled via power-helper) ---------------------
+  // ---- mosquito.power state (polled via power-helper) ---------------------
   property bool ultraSaveOn: false
   property bool conservationOn: false
   property int chargeLimitEnd: 100
@@ -277,7 +277,7 @@ Panel {
     if (root.bar && root.bar.shell) root.bar.shell.updateEntryInline(root.moduleName, root.settings)
   }
 
-  // ---- custom.power: ultra-save + charge conservation state ------------
+  // ---- mosquito.power: ultra-save + charge conservation state ------------
 
   function refreshPowerStatus() {
     if (!ultraStatusProc.running) ultraStatusProc.running = true
@@ -547,7 +547,7 @@ Panel {
 
   Timer { interval: 5000; running: root.opened; repeat: true; onTriggered: root.refresh() }
 
-  // custom.power status: ultra-save + charge conservation. Runs persistently
+  // mosquito.power status: ultra-save + charge conservation. Runs persistently
   // (even when the panel is closed) so the bar icon color stays correct and
   // the "charge limit reached" notification can fire while charging.
   Process {

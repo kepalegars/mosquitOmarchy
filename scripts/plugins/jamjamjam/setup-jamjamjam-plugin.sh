@@ -2,7 +2,7 @@
 # =============================================================================
 # Omarchy Custom - jamjamjam plugin
 # =============================================================================
-# Installs the jamjamjam-plugin bar widget plugin into
+# Installs the mosquito.jamjamjam bar widget plugin into
 # ~/.config/omarchy/plugins and enables it in the bar layout.
 #
 # The plugin provides:
@@ -39,8 +39,10 @@ fi
 REAL_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
 REAL_HOME="${REAL_HOME:-$HOME}"
 
-PLUGIN_ID="jamjamjam-plugin"
+PLUGIN_ID="mosquito.jamjamjam"
+LEGACY_PLUGIN_ID="jamjamjam-plugin"
 PLUGIN_DIR="$REAL_HOME/.config/omarchy/plugins/$PLUGIN_ID"
+LEGACY_PLUGIN_DIR="$REAL_HOME/.config/omarchy/plugins/$LEGACY_PLUGIN_ID"
 PLUGIN_SRC="$SCRIPT_DIR/omarchy-plugins/$PLUGIN_ID"
 SHELL_JSON="$REAL_HOME/.config/omarchy/shell.json"
 BIN_DIR="$REAL_HOME/.local/bin"
@@ -90,6 +92,12 @@ install_plugin() {
     err "Plugin sources not found: $PLUGIN_SRC"
     return 1
   fi
+  # Adopt the legacy jamjamjam-plugin clone when present: same plugin, old id.
+  if [[ -d "$LEGACY_PLUGIN_DIR" && ! -d "$PLUGIN_DIR" ]]; then
+    omarchy plugin disable "$LEGACY_PLUGIN_ID" >/dev/null 2>&1 || true
+    mv "$LEGACY_PLUGIN_DIR" "$PLUGIN_DIR"
+    ok "Legacy plugin $LEGACY_PLUGIN_ID adopted as $PLUGIN_ID"
+  fi
   mkdir -p "$PLUGIN_DIR"
   cp -a "$PLUGIN_SRC/." "$PLUGIN_DIR/"
   ok "Plugin $PLUGIN_ID installed to $PLUGIN_DIR"
@@ -97,6 +105,12 @@ install_plugin() {
 
 add_to_bar() {
   [[ -f "$SHELL_JSON" ]] || { warn "No shell.json — plugin copied but not added to the bar."; return 0; }
+  # Legacy bar id from before the mosquito.jamjamjam rename: swap it in place
+  # so the widget keeps its bar position instead of being dropped + re-added.
+  if grep -q "\"$LEGACY_PLUGIN_ID\"" "$SHELL_JSON"; then
+    sed -i "s#\"$LEGACY_PLUGIN_ID\"#\"$PLUGIN_ID\"#g" "$SHELL_JSON"
+    ok "Bar layout migrated: $LEGACY_PLUGIN_ID -> $PLUGIN_ID"
+  fi
   grep -q "\"$PLUGIN_ID\"" "$SHELL_JSON" && { ok "Plugin already in the bar layout."; return 0; }
 
   local tmp
@@ -125,7 +139,12 @@ PYEOF
 }
 
 install_data() {
-  local data_dir="$REAL_HOME/.local/share/jamjamjam-plugin"
+  local data_dir="$REAL_HOME/.local/share/mosquito.jamjamjam"
+  local legacy_data_dir="$REAL_HOME/.local/share/jamjamjam-plugin"
+  if [[ -d "$legacy_data_dir" && ! -d "$data_dir" ]]; then
+    mv "$legacy_data_dir" "$data_dir"
+    ok "Legacy data dir adopted: $data_dir"
+  fi
   mkdir -p "$data_dir"
   ok "Data dir ready: $data_dir"
 }
@@ -264,6 +283,10 @@ remove_plugin() {
   else
     ok "Plugin already absent."
   fi
+  if [[ -d "$LEGACY_PLUGIN_DIR" ]]; then
+    rm -rf "$LEGACY_PLUGIN_DIR"
+    ok "Legacy plugin $LEGACY_PLUGIN_ID removed as well"
+  fi
 }
 
 remove_from_bar() {
@@ -277,11 +300,12 @@ path, plugin_dir, out = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path, encoding='utf-8') as f:
     data = json.load(f)
 layout = data.get('bar', {}).get('layout', {})
+legacy = 'jamjamjam-plugin'
 for section in ('left', 'center', 'right'):
     items = layout.get(section, [])
-    layout[section] = [item for item in items if item.get('id') != plugin_dir]
+    layout[section] = [item for item in items if item.get('id') not in (plugin_dir, legacy)]
 plugins = data.get('plugins', [])
-data['plugins'] = [p for p in plugins if (p.get('id') if isinstance(p, dict) else p) != plugin_dir]
+data['plugins'] = [p for p in plugins if (p.get('id') if isinstance(p, dict) else p) not in (plugin_dir, legacy)]
 with open(out, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2)
     f.write('\n')

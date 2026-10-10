@@ -6,7 +6,7 @@ import qs.Ui
 BarWidget {
   id: root
 
-  moduleName: "jamjamjam-plugin"
+  moduleName: "mosquito.jamjamjam"
 
   readonly property var service: bar && bar.shell ? bar.shell.serviceFor(moduleName) : null
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false

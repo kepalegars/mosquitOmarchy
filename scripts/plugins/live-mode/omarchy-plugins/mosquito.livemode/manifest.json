@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "mosquito.livemode",
-  "name": "Live Mode Frame",
+  "name": "Mosquito Live Mode",
   "version": "1.0.0",
   "author": "Mosquito",
   "description": "Thin red frame drawn around the screen while live mode is active",

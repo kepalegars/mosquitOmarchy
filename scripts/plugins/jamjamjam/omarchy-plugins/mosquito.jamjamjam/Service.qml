@@ -7,7 +7,7 @@ Item {
 
   property var shell: null
   property var manifest: null
-  readonly property string moduleName: "jamjamjam-plugin"
+  readonly property string moduleName: "mosquito.jamjamjam"
 
   property var snapshot: ({
     type: "snapshot",

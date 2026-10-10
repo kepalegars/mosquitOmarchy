@@ -194,7 +194,7 @@ func saveLocalConfigSafe(cfg Config) error {
 	return nil
 }
 
-// appVersion is the version of this SCRIPT (the jamjamjam-plugin module),
+// appVersion is the version of this SCRIPT (the JamJamJam module),
 // shown top-left on the first page only.
 const appVersion = "1.0.0"
 

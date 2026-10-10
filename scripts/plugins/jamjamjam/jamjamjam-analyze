@@ -52,7 +52,7 @@ active=false
 
 # Fast path: the shell IPC reaches the plugin instantly.
 if command -v quickshell >/dev/null 2>&1; then
-  if quickshell ipc -p "$SHELL_CFG" call jamjamjam-plugin setHold "$active" >/dev/null 2>&1; then
+  if quickshell ipc -p "$SHELL_CFG" call mosquito.jamjamjam setHold "$active" >/dev/null 2>&1; then
     exit 0
   fi
 fi

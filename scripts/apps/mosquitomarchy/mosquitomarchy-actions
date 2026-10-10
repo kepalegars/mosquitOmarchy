@@ -23,6 +23,10 @@ set -euo pipefail
 
 SCRIPT_SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SELF")" && pwd)"
+# Frozen BEFORE sourcing mosquitomarchy-setup.sh below: that file sets its own
+# global SCRIPT_DIR (the repo root) on source, clobbering this one, so any
+# late use of $SCRIPT_DIR would resolve to the wrong tree.
+ACTIONS_DIR="$SCRIPT_DIR"
 SETUP="$SCRIPT_DIR/../../../mosquitomarchy-setup.sh"
 # Deployed run (~/.local/bin/mosquitomarchy-actions is a real COPY here, not
 # a symlink): ~/.. from ~/.local/bin is NOT the repo — search known repos.
@@ -1333,9 +1337,12 @@ cmd_heal(){
       || run_mosquitomarchy_update >/dev/null 2>&1 || true
   fi
   # 5. Crash skill symlink (the codebase `mosquitomarchy-crash` skill the agent reads).
+  # NOTE: the source lives next to THIS script (scripts/apps/mosquitomarchy/),
+  # not under APP_DIR (the repo root) — APP_DIR/skills/... dangles, so the
+  # heal "succeeded" while `[[ -e ]]` kept failing and health re-reported it.
   if in_want skill; then
     mkdir -p "$HOME/.agents/skills"
-    ln -sfn "$APP_DIR/skills/mosquitomarchy-crash" "$HOME/.agents/skills/mosquitomarchy-crash"
+    ln -sfn "$ACTIONS_DIR/skills/mosquitomarchy-crash" "$HOME/.agents/skills/mosquitomarchy-crash"
   fi
 
   # 6. Re-apply the ticked partially-installed modules (or all, when no selection).
@@ -2159,7 +2166,7 @@ case "$sub" in
   missing-assets)           cmd_missing_assets "${1:-}" "${@:2}" ;;
   patches)                  cmd_patches "${1:-}" "${@:2}" ;;
   health)                   cmd_health ;;
-  heal)                     cmd_heal ;;
+  heal)                     cmd_heal "$@" ;;
   kb-list)                  cmd_kb_list ;;
   kb-free)                  cmd_kb_free ;;
   kb-add)                   cmd_kb_add "$@" ;;

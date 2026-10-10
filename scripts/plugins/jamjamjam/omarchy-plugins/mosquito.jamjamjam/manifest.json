@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "jamjamjam-plugin",
-  "name": "jamjamjam",
+  "id": "mosquito.jamjamjam",
+  "name": "Mosquito JamJamJam",
   "version": "1.0.0",
   "author": "mosquito",
   "license": "MIT",
@@ -15,7 +15,7 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "jamjamjam",
+    "displayName": "Mosquito JamJamJam",
     "description": "Analyze audio key, BPM, chords in real-time",
     "category": "Media",
     "defaultSection": "left",
