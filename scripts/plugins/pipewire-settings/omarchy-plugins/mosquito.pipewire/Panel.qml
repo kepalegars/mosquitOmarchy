@@ -24,6 +24,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Ui
 import qs.Commons
+import QtQuick.Effects
 
 Panel {
     id: root
@@ -241,73 +242,52 @@ Panel {
         Item {
             id: mark
 
-            // Color.accent is the theme's second colour, read live from the theme,
-            // so the frame follows whatever the current theme makes it — and falls
-            // back to the theme red (the same key jamjamjam's fork uses) if a theme
-            // ever stops defining it.
-            readonly property color frameInk: Color.accent
-            readonly property color artInk: Color.accent
+            // The upstream mark, shipped as the actual file rather than redrawn in
+            // QML. Hand-transcribing the SVG is what produced a starburst nobody could
+            // read: at icon size the geometry collapses and there is no way to tell it
+            // looks wrong until it is on screen.
+            //
+            // assets/ holds both upstream marks. Swap `source` to
+            // pipewire-condensed-symbolic.png for the filled-dot variant.
+            readonly property string markFile: "assets/pipewire-condensed-rings-symbolic.png"
 
-            // The frame. A hairline rounded rectangle around the mark: it gives the
-            // glyph an edge to sit against, which is what the bare waveform lacked.
+            // Color.accent is the theme's second colour read live, so the frame and
+            // the glyph both track the theme rather than being a fixed red.
+            readonly property color tint: Color.accent
+
             Rectangle {
                 anchors.fill: parent
                 anchors.margins: Style.space(1)
                 radius: Style.cornerRadius
                 color: "transparent"
                 border.width: 1
-                border.color: mark.frameInk
+                border.color: mark.tint
             }
 
             Item {
                 id: art
+                // Inset so the frame reads as a frame and not as a border drawn
+                // through the artwork.
                 anchors.centerIn: parent
-                width: parent.width * 0.56
-                height: parent.height * 0.56
+                width: parent.width * 0.58
+                height: parent.height * 0.58
 
-                // Upstream gaheldev/pipewire-settings, icons/
-                // pipewire-condensed-rings-symbolic.svg, on its 16-unit grid.
-                readonly property real u: Math.min(width, height) / 16
-
-                component Stroke: Rectangle {
-                    property real x1; property real y1; property real x2; property real y2
-                    property bool round
-                    readonly property real len: Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
-                    x: ((x1 + x2) / 2) * art.u - width / 2
-                    y: ((y1 + y2) / 2) * art.u - height / 2
-                    width: art.u * 2
-                    height: len * art.u
-                    color: art.artInk
-                    radius: round ? width / 2 : 0
-                    rotation: Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI
-                    transformOrigin: Item.Center
+                Image {
+                    id: glyph
+                    anchors.fill: parent
+                    source: mark.markFile
+                    fillMode: Image.PreserveAspectFit
+                    // The file is white on transparent; MultiEffect below replaces the
+                    // white and keeps the alpha, so the holes inside the rings stay open.
+                    sourceSize.width: 128
                 }
 
-                // A ring is outer radius 2 with a radius-1 hole, i.e. a 4x4 rounded
-                // square with a 1u border — cheaper than two nested circles and it
-                // cannot antialias into a blob at icon size.
-                component Ring: Rectangle {
-                    property real cx; property real cy
-                    width: art.u * 4
-                    height: width
-                    radius: width / 2
-                    color: "transparent"
-                    border.width: art.u
-                    border.color: art.artInk
-                    x: cx * art.u - width / 2
-                    y: cy * art.u - height / 2
+                MultiEffect {
+                    anchors.fill: parent
+                    source: glyph
+                    colorization: 1
+                    colorizationColor: mark.tint
                 }
-
-                Stroke { x1: 8;  y1: 10.5; x2: 8;  y2: 3.5 }
-                Stroke { x1: 14; y1: 7.5;  x2: 14; y2: 3.5 }
-                Stroke { x1: 8;  y1: 10.5; x2: 14; y2: 7.5; round: true }
-                Stroke { x1: 2;  y1: 10.5; x2: 8;  y2: 7.5 }
-                Stroke { x1: 2;  y1: 12.5; x2: 2; y2: 3.5 }
-
-                Ring { cx: 2;  cy: 2 }
-                Ring { cx: 8;  cy: 2 }
-                Ring { cx: 14; cy: 2 }
-                Ring { cx: 2;  cy: 14 }
             }
         }
     }
