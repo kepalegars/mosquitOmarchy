@@ -352,7 +352,13 @@ install_post_boot_hook
 install_shell_state
 install_menu_entry
 install_shell_plugin
-ok "mosquitOmarchy TUI installed. Launch with: omarchy-launch-tui mosquito"
+# NOT omarchy-launch-tui. That wrapper execs the word it is given, so
+# "omarchy-launch-tui mosquito" ran a command called `mosquito` — which does not
+# exist — and it died with "failed to execute: No such file or directory" on the
+# very line telling the user to run it. It would also have used the app-id
+# org.omarchy.mosquito, not the org.omarchy.mosquitomarchy-tui the float rule
+# matches on. The dispatcher already picks its own terminal and that app-id.
+ok "mosquitOmarchy TUI installed. Launch with: mosquitomarchy"
 }
 
 # Run only when EXECUTED directly (not sourced by mosquitomarchy-setup.sh).

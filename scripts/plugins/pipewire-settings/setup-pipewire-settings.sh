@@ -291,6 +291,10 @@ install_plugin(){
   ok "backend installed: $BACKEND_BIN"
 
   mkdir -p "$PLUGIN_DIR"
+  # assets/ is replaced wholesale, not merged. `cp -a` only ever ADDS, so dropping
+  # an icon from the repo left it sitting in the installed plugin forever, and the
+  # manifest-adjacent files beside it went the same way.
+  rm -rf "$PLUGIN_DIR/assets"
   cp -a "$PLUGIN_SRC/." "$PLUGIN_DIR/"
   ok "plugin installed: $PLUGIN_DIR"
 

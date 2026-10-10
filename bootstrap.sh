@@ -198,4 +198,4 @@ msg "Starting the mosquitOmarchy TUI"
 if [[ -t 0 && -t 1 ]]; then
   exec "$TUI"
 fi
-ok "Deployed. Start the TUI with:  $TUI    (or: omarchy-launch-tui mosquito)"
+ok "Deployed. Start the TUI with:  $TUI    (or just: mosquitomarchy)"

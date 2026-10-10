@@ -250,9 +250,9 @@ Panel {
             // read: at icon size the geometry collapses and there is no way to tell it
             // looks wrong until it is on screen.
             //
-            // assets/ holds both upstream marks. Swap to
-            // pipewire-condensed-symbolic.png for the filled-dot variant.
-            readonly property string markFile: "assets/pipewire-condensed-rings-symbolic.png"
+            // The filled-dot variant: its solid dots survive downscaling to icon
+            // size, where the rings variant's holes close up into a blur.
+            readonly property string markFile: "assets/pipewire-condensed-symbolic.png"
 
             // barForeground is the shell's own contrast decision for this bar, so
             // the glyph is white on a dark bar and black on a light one without
@@ -265,8 +265,11 @@ Panel {
                 // every other glyph in — the same size means the same optical
                 // weight as the battery and the speaker.
                 anchors.centerIn: parent
-                width: Style.bar.iconCanvas
-                height: Style.bar.iconCanvas
+                // Below Style.bar.iconCanvas on purpose: at the canvas size this
+                // mark reads heavier than the speaker and battery beside it, and
+                // it is a dense 4-dot cluster where those are sparse strokes.
+                width: Style.bar.iconCanvas * 0.82
+                height: Style.bar.iconCanvas * 0.82
                 source: mark.markFile
                 fillMode: Image.PreserveAspectFit
                 // The file is white on transparent; MultiEffect below replaces the
