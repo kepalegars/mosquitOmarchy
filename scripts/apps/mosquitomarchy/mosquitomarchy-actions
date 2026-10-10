@@ -2120,24 +2120,30 @@ cmd_theme_list_any(){
 
 # cmd_theme_remove_any <name...> — remove themes including stock symlinks.
 # For regular dirs it uses omarchy-theme-remove; for symlinks it just unlinks.
+# If a stock theme is not in the user dir, it is not removable (it lives in
+# /usr/share/omarchy/themes and is managed by Omarchy). The action reports this.
 cmd_theme_remove_any(){
-  local dir="$HOME/.config/omarchy/themes" n rc=0
+  local user_dir="$HOME/.config/omarchy/themes" n rc=0
   (($#)) || { err "theme-remove-any: at least one theme required"; return 2; }
   for n in "$@"; do
-    if [[ -L "$dir/$n" ]]; then
-      # Stock theme: just remove the symlink
-      if rm -f "$dir/$n" 2>/dev/null; then
+    if [[ -L "$user_dir/$n" ]]; then
+      # Stock symlink in user dir: remove the symlink
+      if rm -f "$user_dir/$n" 2>/dev/null; then
         echo "removed (stock): $n"
       else
         rc=1; echo "could not remove: $n" >&2
       fi
-    elif [[ -d "$dir/$n" ]]; then
+    elif [[ -d "$user_dir/$n" ]]; then
       # User theme: use omarchy-theme-remove
       if omarchy-theme-remove "$n" >/dev/null 2>&1; then
         echo "removed: $n"
       else
         rc=1; echo "could not remove: $n" >&2
       fi
+    elif [[ -d "/usr/share/omarchy/themes/$n" ]]; then
+      # Stock theme exists in Omarchy but not in user dir: cannot remove,
+      # it's managed by Omarchy. User would need to hide it via other means.
+      echo "stock theme '$n' is not in your theme directory (managed by Omarchy)"
     else
       rc=1; echo "not a theme: $n" >&2
     fi

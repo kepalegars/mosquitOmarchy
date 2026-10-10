@@ -1152,10 +1152,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		if len(msg.items) == 0 {
 			m.toast, _ = m.toast.SetOK("health check: everything is in place")
-			// Pop the loading screen if we're still on it
-			if m.top() == scrHealth && m.healthItems == nil {
-				m.pop()
-			}
+			// Stay on the health screen (show empty list) instead of popping to main.
+			m.healthItems = nil
+			m.healthPicker = m.rebuildHealth()
 			return m, nil
 		}
 		// Missing pieces are the screen's rows: every one becomes a tab-toggle
@@ -3569,7 +3568,10 @@ func (m model) rebuildHealth() navPicker {
 	// screen read like a debug dump and the labels the backend already
 	// provides were only reachable through "i". The label is what identifies
 	// the piece to the user; the id only has to stay in the Value for heal.
-	for _, it := range m.healthItems {
+	if len(m.healthItems) == 0 {
+		items = append(items, tuikit.PickerItem{Display: "Everything is in place — no action needed", Value: "", Disabled: true})
+	} else {
+		for _, it := range m.healthItems {
 		mark := "○"
 		if m.healthChecked[it.ID] {
 			mark = "●"
@@ -3586,6 +3588,7 @@ func (m model) rebuildHealth() navPicker {
 			row.Sub = long
 		}
 		items = append(items, row)
+	}
 	}
 	// Every other screen ends with a Back row. This one had none, so the only
 	// way out was Esc, which does not read as "this is a page you can leave".

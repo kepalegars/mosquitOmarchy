@@ -494,7 +494,7 @@ func (m model) mainMenuItems() []tuikit.PickerItem {
 		{Display: "Uninstall", Value: "uninstall"},
 		{Display: "Keybindings", Value: "keybindings"},
 		{Display: "Theming", Value: "theme"},
-		{Display: "Health check", Value: "health"},
+		{Display: "Health check", Value: "health", TrailingBadge: conditionalBadge(m.healthPending())},
 		{Display: "Backup / Restore", Value: "backup"},
 		{Display: "Extras", Value: "settings"},
 		{Display: "Close", Value: "close"},
@@ -672,6 +672,18 @@ func toggleTreeFolder(items []SetupItemRec, checked map[string]bool, folder stri
 // the three can never disagree about whether an update exists.
 func (m model) updatePending() bool {
 	return m.updateRec.RepoUpdate || len(m.updateRec.Modules) > 0
+}
+
+func conditionalBadge(show bool) string {
+	if show {
+		return "■"
+	}
+	return ""
+}
+
+// healthPending reports whether the health check found any issues.
+func (m model) healthPending() bool {
+	return len(m.healthItems) > 0
 }
 
 // selectedCount counts the checked Setup items.
