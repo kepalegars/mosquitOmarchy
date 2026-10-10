@@ -3503,8 +3503,12 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 				if it.Disabled {
 					entry.Disabled = true
 					if it.Info != "" {
+						// NOTE: len(" — ") is 5, not 3 — the em dash is 3
+						// bytes in UTF-8, and idx+3 leaves its last byte
+						// glued to the note so the "needs " prefix never
+						// matches.
 						if idx := strings.LastIndex(it.Info, " — "); idx >= 0 {
-							if note := it.Info[idx+3:]; strings.HasPrefix(note, "needs ") && strings.Contains(note, "in scripts/apps/") {
+							if note := it.Info[idx+len(" — "):]; strings.HasPrefix(note, "needs ") && strings.Contains(note, "in scripts/apps/") {
 								entry.Display += " (missing installation files)"
 							} else {
 								entry.Sub = it.Info
