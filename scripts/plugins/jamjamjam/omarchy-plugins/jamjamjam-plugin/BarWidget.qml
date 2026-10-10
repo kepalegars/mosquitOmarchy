@@ -140,17 +140,29 @@ BarWidget {
       }
 
       // Small pulsing dot when recording.
-      // Anchored to the GLYPH, not to the parent box: the box is 14px and the fork
-      // is 20px drawn centred inside it, so the box's top is 3px BELOW the top of
-      // the icon and a dot hung off the box's corner floated beside the fork
-      // instead of sitting in the notch between its two prongs.
+      //
+      // Anchored to the GLYPH, never to the parent box: the box is 14px and the fork
+      // is 20px drawn centred inside it, so a dot hung off the box's top edge sits
+      // where no ink is at all. noteGlyph.top is crownTop's worth of empty space
+      // above the drawing.
+      //
+      // Crown top, spelled the way NoteGlyph spells it, so the dot lands ON the ink:
+      // measured off a screenshot, flush against the glyph's top the dot sat where
+      // the prongs are still tapered and touched BOTH of them, which made it read
+      // as a smudge across the fork instead of a dot in the notch. One space below
+      // crownTop the notch is a clean 5px between two parallel prongs.
       Rectangle {
         id: recDot
-        width: Style.space(5)
-        height: Style.space(5)
+        width: Style.space(4)
+        height: Style.space(4)
         radius: width / 2
         anchors.horizontalCenter: noteGlyph.horizontalCenter
         anchors.top: noteGlyph.top
+        // A separate margin, NOT arithmetic on anchors.top: an anchor line only
+        // accepts another item's anchor, and assigning an expression to it fails
+        // with "Unable to assign double to QQuickAnchorLine" and silently
+        // collapses the rectangle.
+        anchors.topMargin: noteGlyph.height / 2 - noteGlyph.unit * 0.4 + Style.space(1)
         visible: root.service ? root.service.recording : false
         color: Color.urgent
 

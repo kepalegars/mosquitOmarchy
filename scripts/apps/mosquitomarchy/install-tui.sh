@@ -79,7 +79,12 @@ ensure_go() {
     # Keep mise's own output: it is the only clue to WHY it failed, and discarding
     # it used to leave "did not produce a usable go" with nothing to act on.
     local mise_log; mise_log="$(mktemp)"
-    if mise use -g go@latest >"$mise_log" 2>&1; then
+    # Run from a neutral directory. `mise use -g` is a GLOBAL install and the
+    # working directory is irrelevant to it, but mise refuses to run AT ALL when
+    # the cwd holds a config it has not been told to trust — and this repo ships a
+    # .mise.toml. That turned every fresh machine into "mise failed: Config files
+    # are not trusted", straight past a perfectly good installation path.
+    if (cd "${HOME:-/tmp}" && mise use -g go@latest) >"$mise_log" 2>&1; then
       # mise has to be told to put its shims on PATH for this shell; without it
       # the install succeeded and the check below still says "missing".
       export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"

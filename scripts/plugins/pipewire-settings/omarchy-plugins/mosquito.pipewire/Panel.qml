@@ -48,7 +48,10 @@ Panel {
     // works whichever base it is instantiated from.
     readonly property bool vertical: bar ? bar.vertical : false
     readonly property int barSize: bar ? bar.barSize : Style.bar.sizeHorizontal
-    implicitWidth: root.vertical ? root.barSize : Style.space(44)
+    // The same footprint every other bar icon gets: BarIconButton sizes itself to
+    // Style.bar.iconSlot (fixedWidth) and Style.space(44) is a good deal wider than
+    // the battery/speaker next to it, which is what made this one eat the row.
+    implicitWidth: root.vertical ? root.barSize : Style.bar.iconSlot
     implicitHeight: root.barSize
 
     property string backendPath: Quickshell.env("MOSQUITOMARCHY_PIPEWIRE") ||
@@ -247,47 +250,35 @@ Panel {
             // read: at icon size the geometry collapses and there is no way to tell it
             // looks wrong until it is on screen.
             //
-            // assets/ holds both upstream marks. Swap `source` to
+            // assets/ holds both upstream marks. Swap to
             // pipewire-condensed-symbolic.png for the filled-dot variant.
             readonly property string markFile: "assets/pipewire-condensed-rings-symbolic.png"
 
-            // Color.accent is the theme's second colour read live, so the frame and
-            // the glyph both track the theme rather than being a fixed red.
-            readonly property color tint: Color.accent
+            // barForeground is the shell's own contrast decision for this bar, so
+            // the glyph is white on a dark bar and black on a light one without
+            // this plugin having to know anything about the background.
+            readonly property color ink: root.barForeground
 
-            Rectangle {
-                anchors.fill: parent
-                anchors.margins: Style.space(1)
-                radius: Style.cornerRadius
-                color: "transparent"
-                border.width: 1
-                border.color: mark.tint
+            Image {
+                id: glyph
+                // Style.bar.iconCanvas is the optical box BarIconButton centres
+                // every other glyph in — the same size means the same optical
+                // weight as the battery and the speaker.
+                anchors.centerIn: parent
+                width: Style.bar.iconCanvas
+                height: Style.bar.iconCanvas
+                source: mark.markFile
+                fillMode: Image.PreserveAspectFit
+                // The file is white on transparent; MultiEffect below replaces the
+                // white and keeps the alpha, so the holes inside the rings stay open.
+                sourceSize.width: 128
             }
 
-            Item {
-                id: art
-                // Inset so the frame reads as a frame and not as a border drawn
-                // through the artwork.
-                anchors.centerIn: parent
-                width: parent.width * 0.58
-                height: parent.height * 0.58
-
-                Image {
-                    id: glyph
-                    anchors.fill: parent
-                    source: mark.markFile
-                    fillMode: Image.PreserveAspectFit
-                    // The file is white on transparent; MultiEffect below replaces the
-                    // white and keeps the alpha, so the holes inside the rings stay open.
-                    sourceSize.width: 128
-                }
-
-                MultiEffect {
-                    anchors.fill: parent
-                    source: glyph
-                    colorization: 1
-                    colorizationColor: mark.tint
-                }
+            MultiEffect {
+                anchors.fill: glyph
+                source: glyph
+                colorization: 1
+                colorizationColor: mark.ink
             }
         }
     }
