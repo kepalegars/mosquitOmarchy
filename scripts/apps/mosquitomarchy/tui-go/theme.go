@@ -239,7 +239,6 @@ func (m model) rebuildThemeFolderPicker() navPicker {
 		// continues at the name step — the folder is settled by having picked a
 		// file inside it.
 		{Display: "Select image", Value: "__pick__"},
-		{Display: "Remove Themes (any)", Value: "__uninstall__"},
 	}
 	if m.themeDir != "" {
 		if st, err := os.Stat(m.themeDir); err == nil && st.IsDir() {

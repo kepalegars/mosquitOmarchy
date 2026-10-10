@@ -188,15 +188,19 @@ once per boot, and always *before* pending Omarchy updates.
 
 ### `scripts/archive-mosquitomarchy.sh`
 
-Builds a release tarball from `git ls-files` only, so no personal or ignored file can leak
-in, then re-reads its own output and refuses to keep it if a `PATCH/`, log, `Passwords.kdbx`
-or backup slipped in. The two install files GitHub cannot hold are asked about once and the
-answer is recorded in the filename (`-installers` suffix or not).
+Builds an archive of the repo into the directory next to it, in one of three
+types chosen from a menu (or `--type=`): `complete` (the whole working tree,
+logs asked about), `release` (tracked code plus the install files you choose,
+no logs) or `source` (tracked code only). Release and source lists come from
+`git ls-files`, and every build re-reads its own output and refuses to keep
+it if a log, `Passwords.kdbx` or backup slipped in. The two install files
+GitHub cannot hold are asked about once for a release and the answer is
+recorded in the filename (`-installers` suffix or not).
 
 ```bash
-./scripts/archive-mosquitomarchy.sh              # build, asks about the installers
-./scripts/archive-mosquitomarchy.sh --list       # both sizes, writes nothing
-./scripts/archive-mosquitomarchy.sh --no-installers
+./scripts/archive-mosquitomarchy.sh              # menu: choose a type, then build
+./scripts/archive-mosquitomarchy.sh --list       # what would go in, writes nothing
+./scripts/archive-mosquitomarchy.sh --type=source --no-installers
 ./scripts/archive-mosquitomarchy.sh --out=DIR
 ```
 

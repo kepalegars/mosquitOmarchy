@@ -820,9 +820,6 @@ trap cleanup EXIT
 
 # Recommend fullscreen + explain the guest-shortcuts toggle (shortest form).
 VM_TIP="Fullscreen: ${FS_KEY:-SUPER + F}.  Focus VM (shortcuts): SUPER + ALT + V."
-if [[ "$CLIPBOARD" == "on" && -n $CLIP_SRC ]]; then
-  VM_TIP+=$'\n'"Shared clipboard: in the VM run  curl -s http://10.0.2.2:$CLIPBOARD_PORT/agent -o ~/vm-clipboard.py && nohup python3 ~/vm-clipboard.py >/dev/null 2>&1 &"
-fi
 if command -v omarchy-notification-send >/dev/null 2>&1; then
   omarchy-notification-send "Omarchy VM" "$VM_TIP" >/dev/null 2>&1 &
 elif command -v notify-send >/dev/null 2>&1; then

@@ -367,7 +367,7 @@ func TestUnlockScreenHasNoInlineLegendOrSubTitles(t *testing.T) {
 	// after this" when what they actually mean is "this continues".
 	for _, it := range m.rebuildThemeFolderPicker().Items() {
 		switch it.Value {
-		case "__uninstall__", "__restorestock__":
+		case "__restorestock__":
 			if strings.HasSuffix(it.Display, "…") {
 				t.Errorf("theme-management row ends in an ellipsis: %q", it.Display)
 			}
