@@ -3540,7 +3540,7 @@ func (m model) rebuildUpdate() navPicker {
 	p := newNavPicker("", items).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "skip module")),
-			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "what updates")),
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "update")))
 	if prev == "" {
 		return p.selectFirst()
@@ -3847,7 +3847,7 @@ func (m *model) rebuildStatus() navPicker {
 	}
 	return newNavPicker("", m.statusTree()).SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "status")),
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "open")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "close")),
 		).
