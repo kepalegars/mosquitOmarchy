@@ -434,6 +434,47 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				return m, nil
 			}
 			m.statusRecs = msg.status
+			if m.reinstallPending && m.top() == scrUpdate {
+				// The "Reinstall last update" row was chosen: turn the
+				// installed modules into tickable rows (all ticked, untick to
+				// skip) and show them on the Update screen itself.
+				m.reinstallPending = false
+				m.reinstallMode = true
+				m.reinstallMods = nil
+				m.updateSelected = map[string]bool{}
+				for _, s := range msg.status {
+					if s.Excluded {
+						continue
+					}
+					if s.State != "ok" && s.State != "partial" {
+						continue
+					}
+					if s.Id == "" || s.Id == "apps" {
+						continue
+					}
+					okID := true
+					for _, c := range s.Id {
+						if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+							okID = false
+							break
+						}
+					}
+					if !okID {
+						continue
+					}
+					label := s.Label
+					if i := strings.Index(label, " — "); i > 0 {
+						label = label[:i]
+					}
+					if label == "" {
+						label = s.Id
+					}
+					m.reinstallMods = append(m.reinstallMods, ItemRec{Key: s.Id, Label: label})
+					m.updateSelected[s.Id] = true
+				}
+				m.updatePicker = m.rebuildUpdate()
+				return m, nil
+			}
 			if m.top() == scrStatus {
 				// rebuildStatus, NOT a bare statusTree(): it is the one that
 				// seeds statusOpen with the categories we now know about, all
@@ -473,6 +514,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				return m, nil
 			}
 			m.updateRec = msg.update
+			// A fresh check supersedes reinstall mode: real pending updates
+			// go back to the normal Update screen.
+			m.reinstallMode, m.reinstallPending, m.reinstallMods = false, false, nil
 			// The main menu's Update square is the one place a pending update
 			// is visible without opening anything, so it has to be rebuilt when
 			// the check result lands — the root list is built once at startup
@@ -918,11 +962,19 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			return m, fetchMenuEntriesCmd()
 		case "update-modules":
-			if n := m.updateSelectedCount(); n == 0 && len(m.updateRec.Modules) > 0 {
+			mods := m.updateRec.Modules
+			if m.reinstallMode {
+				mods = m.reinstallMods
+			}
+			if n := m.updateSelectedCount(); n == 0 && len(mods) > 0 {
 				m.toast, _ = m.toast.SetWarn("all modules skipped — press tab on the Update screen to re-include them")
 				return m, nil
 			}
-			return m.startWorking("Updating modules", workingArgs("update-modules", m.updateKeys())...)
+			label := "Updating modules"
+			if m.reinstallMode {
+				label = "Re-applying modules"
+			}
+			return m.startWorking(label, workingArgs("update-modules", m.updateKeys())...)
 		case "update-repo":
 			return m.startWorking("Updating the repo", workingArgs("update-repo", nil)...)
 		case "backup":
@@ -1905,6 +1957,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		case "update":
 			m.push(scrUpdate)
 			m.updateSelected = map[string]bool{}
+			m.reinstallMode, m.reinstallPending, m.reinstallMods = false, false, nil
 			m.updatePicker = newNavPicker("", []tuikit.PickerItem{{Display: "checking…", Value: "", Disabled: true}}).SetSize(m.contentSize())
 			return m, fetchUpdateCheckCmd()
 		case "setup":
@@ -2263,6 +2316,12 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.push(scrConfirm)
 			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 			return m, nil
+		case "reinstall":
+			// No update pending: offer the installed modules for re-applying.
+			// The status records may not be loaded (Update does not fetch
+			// them), so fetch first and enter the mode on arrival.
+			m.reinstallPending = true
+			return m, fetchStatusCmd()
 		case "update-modules":
 			m.pendingAction = "update-modules"
 			ver := m.updateRec.RepoVersion
@@ -2273,6 +2332,9 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 				ver = "unknown"
 			}
 			m.pendingMsg = fmt.Sprintf("Update modules?\n\nLocal scripts repo: v%s.\n\nIf a GitHub update is available, the local repo is fast-forwarded FIRST so both versions stay in sync (joining the GitHub version), then the changed installed modules are re-applied. With no repo update (or no connection), the installed modules are re-applied from the local scripts.", ver)
+			if m.reinstallMode {
+				m.pendingMsg = fmt.Sprintf("Re-apply the selected installed modules?\n\nLocal scripts repo: v%s.\n\nIf a GitHub update is available, the local repo is fast-forwarded FIRST so both versions stay in sync, then the selection is re-applied from the fresh scripts.", ver)
+			}
 			m.pendingNo = "Cancel"
 			m.pendingYes = "Update"
 			m.push(scrConfirm)
@@ -3559,27 +3621,56 @@ func (m model) rebuildUpdate() navPicker {
 			TrailingBadge: "■",
 		})
 	}
-	upd := tuikit.PickerItem{Display: "Update modules", Value: "update-modules"}
-	if len(m.updateRec.Modules) == 0 {
-		// Only the repo changed, so "Update modules" had nothing to do and ran
-		// a no-op fast-forward that looked like the update had been applied.
-		upd.Disabled = true
-	}
-	if len(m.updateRec.Modules) > 0 {
-		items = append(items, tuikit.PickerItem{Display: "Modules to update (tab = skip one):", Disabled: true})
-		for _, it := range m.updateRec.Modules {
-			mark := "○"
-			if m.updateSelected[it.Key] {
-				mark = "●"
-			}
-			items = append(items, tuikit.PickerItem{Display: it.Label, Value: it.Key, Badge: mark})
+	// Nothing pending and not reinstalling: offer the re-apply screen
+	// instead of a dead page. Picking it lists the installed modules.
+	if !m.updateRec.RepoUpdate && len(m.updateRec.Modules) == 0 && !m.reinstallMode {
+		items = append(items,
+			tuikit.PickerItem{Display: "No updates available.", Disabled: true},
+			tuikit.PickerItem{Display: "Reinstall last update…", Value: "reinstall"},
+			tuikit.PickerItem{Display: "Back", Value: "back"},
+		)
+	} else {
+		mods := m.updateRec.Modules
+		if m.reinstallMode {
+			mods = m.reinstallMods
+			// The repo row is always offered here: re-applying pairs with
+			// pulling the fresh scripts first, pending or not.
+			items = append(items, tuikit.PickerItem{
+				Display: "Update mosquitOmarchy (repo + scripts)",
+				Value:   "update-repo",
+			})
 		}
-		items = append(items, tuikit.PickerItem{Display: "", Disabled: true})
+		applyLabel := "Update modules"
+		if m.reinstallMode {
+			applyLabel = "Re-apply modules"
+		}
+		upd := tuikit.PickerItem{Display: applyLabel, Value: "update-modules"}
+		if len(mods) == 0 {
+			// Only the repo changed, so the apply row had nothing to do and
+			// ran a no-op fast-forward that looked like the update had been
+			// applied.
+			upd.Disabled = true
+		}
+		if len(mods) > 0 {
+			heading := "Modules to update (tab = skip one):"
+			if m.reinstallMode {
+				heading = "Installed modules (tab = skip one):"
+			}
+			items = append(items, tuikit.PickerItem{Display: heading, Disabled: true})
+			for _, it := range mods {
+				mark := "○"
+				if m.updateSelected[it.Key] {
+					mark = "●"
+				}
+				items = append(items, tuikit.PickerItem{Display: it.Label, Value: it.Key, Badge: mark})
+			}
+			items = append(items, tuikit.PickerItem{Display: "", Disabled: true})
+		}
+		items = append(items,
+			upd,
+			tuikit.PickerItem{Display: "Back", Value: "back"},
+		)
 	}
-	items = append(items,
-		upd,
-		tuikit.PickerItem{Display: "Back", Value: "back"},
-	)
 	p := newNavPicker("", items).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "skip module")),

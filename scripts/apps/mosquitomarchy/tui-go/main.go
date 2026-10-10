@@ -25,6 +25,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	tuikit "mosquitomarchy.local/tui-kit"
 )
 
 func main() {
@@ -49,7 +50,19 @@ func main() {
 			}
 		}
 	}
-	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
+	m := initialModel()
+	for _, a := range os.Args[1:] {
+		// Open straight on the Update page (used by the update-available
+		// notification's click action). The startup update check (see
+		// model.Init) fills the page when it lands.
+		if a == "--update" || a == "update" {
+			m.updateSelected = map[string]bool{}
+			m.push(scrUpdate)
+			m.updatePicker = newNavPicker("", []tuikit.PickerItem{{Display: "checking…", Value: "", Disabled: true}})
+			break
+		}
+	}
+	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "mosquitomarchy-tui:", err)
 		os.Exit(1)

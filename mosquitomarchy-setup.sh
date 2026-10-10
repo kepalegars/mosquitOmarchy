@@ -630,7 +630,7 @@ st_apps(){
 }
 
 MODULES=(
-  "mosquitomarchy:mosquitomarchy-deployer — the manager interface itself (dispatcher + menu entry + float rule + post-boot update hook) — installed first"
+  "mosquitomarchy:mosquitomarchy-deployer — the manager interface itself (dispatcher + menu entry + float rule + post-boot update hook + mosquitomarchy-update watchdog) — installed automatically by the bootstrap"
   "reaper:REAPER + Hyprland/Wayland integration, and its UI scale is set to the current monitor's DPI on every launch — REAPER cannot do this itself, so the launcher does it before the process starts. No action needed, nothing to remember: launch it from the Omarchy menu, the desktop entry or a shell and the size is right"
   "audio:yabridge stack + local VST folders + the mosquito Audio Plugin Manager (TUI, plugin sharing across DAWs) + cautions"
   "bitwig:Bitwig Studio 6.0 Beta 6 from the local .deb, its own module + optional patched bitwig.jar"

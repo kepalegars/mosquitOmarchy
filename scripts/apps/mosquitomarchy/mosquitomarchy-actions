@@ -207,6 +207,21 @@ cmd_candidates(){
 }
 
 # ─── Quick fixes ──────────────────────────────────────────────────────────
+# fix_applied <id>: 0 when the fix's own marker is present on this machine.
+# The uninstall tree lists applied fixes only — offering to remove something
+# that was never applied is a dead row with a confusing log.
+fix_applied(){
+  case "$1" in
+    hyprland-crash)
+      [[ -f "$HOME/.config/omarchy/hooks/post-boot.d/zzz-fix-hyprland-crash" ]] ;;
+    ableton-wine-scroll)
+      [[ -f "$HOME/.local/state/omarchy-ableton-scroll/backup.tsv" ]] ;;
+    1px-seam)
+      grep -q -- "mosquitomarchy-1px-seam" "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/looknfeel.lua" 2>/dev/null ;;
+    *) return 1 ;;
+  esac
+}
+
 # Flat list (the TUI groups by its own category logic if needed).
 cmd_fixes(){
   local e id
@@ -789,7 +804,7 @@ _uninstall_tree(){
         ;;
       mosquito)
         local pk
-        for pk in ableton-move-manager audio-plugin-manager jamjamjam-plugin battery live-mode; do
+        for pk in ableton-move-manager audio-plugin-manager jamjamjam-plugin battery live-mode pipewire-settings; do
           case $pk in
             audio-plugin-manager) _installed_state audio && keys+=("$pk") ;;
             *) _installed_state "$pk" && keys+=("$pk") ;;
@@ -857,15 +872,23 @@ _uninstall_tree(){
         "$(json_str "$mid — remove patch")" "$(json_str "restores the original files")")")
     done
   fi
-  # Quick fixes that can actually be removed (support --remove/--uninstall).
-  folders+=("Quick fixes"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
-    "$(json_str fixes)" "$(json_str "Quick fixes")" false)")
+  # Quick fixes that are currently APPLIED (each supports --remove/--uninstall).
+  # Listing every removable fix unconditionally put rows in front of users who
+  # never applied them, with nothing meaningful for removal to do.
+  local -a applied_fixes=()
   local fid
   for fid in hyprland-crash ableton-wine-scroll 1px-seam; do
-    items+=("fixes/$fid"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
-      "$(json_str fixes)" "$(json_str "fix:$fid")" "$(json_str "$fid")" \
-      "$(json_str "$(fix_desc "$fid")")")")
+    fix_applied "$fid" && applied_fixes+=("$fid")
   done
+  if ((${#applied_fixes[@]})); then
+    folders+=("Quick fixes"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+      "$(json_str fixes)" "$(json_str "Quick fixes")" false)")
+    for fid in "${applied_fixes[@]}"; do
+      items+=("fixes/$fid"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+        "$(json_str fixes)" "$(json_str "fix:$fid")" "$(json_str "$fid")" \
+        "$(json_str "$(fix_desc "$fid")")")")
+    done
+  fi
   # Preinstalls is a row again, and it is TICKABLE. The long description that
   # used to sit under it is gone for good: the page no longer doubles in height
   # when one row carries a sub-line, so a long label is just a long label now

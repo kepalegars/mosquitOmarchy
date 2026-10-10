@@ -50,22 +50,27 @@ if [[ ! -x $TUI ]]; then
 fi
 
 if [[ -t 0 && -t 1 ]]; then
-  exec "$TUI"
+  # Inside a terminal the TUI runs in place — WITH its arguments, so
+  # `mosquitomarchy --update` opens straight on the Update page instead of
+  # dropping them and landing on the main menu.
+  exec "$TUI" "$@"
 fi
 
 # Headless subcommands never open a window: they print to stdout and exit
 # (the boot-time update-check watchdog calls --status; doing this WITHOUT
 # the tty check used to popup a Foot window on the desktop at every boot).
 if (( $# )); then
-  exec "$TUI" "$@"
+  case "$1" in
+    --status|status) exec "$TUI" "$@" ;;
+  esac
 fi
 
 if command -v foot >/dev/null 2>&1; then
   # Wide enough for the full boxed "mosquitomarchy" wordmark (~121 cols).
-  exec foot -W 132x36 --app-id=org.omarchy.mosquitomarchy-tui -e "$TUI"
+  exec foot -W 132x36 --app-id=org.omarchy.mosquitomarchy-tui -e "$TUI" "$@"
 fi
 if command -v xterm >/dev/null 2>&1; then
-  exec xterm -e "$TUI"
+  exec xterm -e "$TUI" "$@"
 fi
 
 echo "mosquitomarchy: no terminal emulator found (foot/xterm) to open the TUI in." >&2

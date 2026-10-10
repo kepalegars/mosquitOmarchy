@@ -109,9 +109,15 @@ Mise à jour des SCRIPTS disponible (repo mosquitOmarchy).
   • RECOMMANDÉ  : attendre la mise à jour du propriétaire.
 M
       printf '%s' "$(cat "$SCRIPTS_FLAG.msg")" > "$SCRIPTS_FLAG"
-      if command -v notify-send >/dev/null 2>&1; then
+      # Short on purpose: long bodies get clipped by the notification daemon.
+      # Clicking opens the TUI straight on its Update page.
+      if command -v omarchy-notification-send >/dev/null 2>&1; then
+        omarchy-notification-send --app-name="Omarchy scripts" --urgency=normal \
+          "update available" "click this to open the update page" \
+          --exec mosquitomarchy --update >/dev/null 2>&1 || true
+      elif command -v notify-send >/dev/null 2>&1; then
         notify-send --app-name="Omarchy scripts" --urgency=normal --expire-time=0 \
-          "Mise à jour mosquitOmarchy disponible" "$(cat "$SCRIPTS_FLAG.msg")" >/dev/null 2>&1 || true
+          "update available" "click this to open the update page" >/dev/null 2>&1 || true
       fi
       exit 0
     fi

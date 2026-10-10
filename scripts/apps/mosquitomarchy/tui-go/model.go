@@ -235,6 +235,14 @@ type model struct {
 	// updateSelected is the Update screen's own selection (kept apart from
 	// the Setup tree's, so visiting one never clears the other).
 	updateSelected map[string]bool
+	// reinstallMode turns the Update screen into a re-apply screen: when no
+	// update is pending, "Reinstall last update" lists every installed
+	// module for ticking instead. reinstallMods are those modules (built
+	// from the status records); reinstallPending means a status fetch is in
+	// flight to build them.
+	reinstallMode    bool
+	reinstallPending bool
+	reinstallMods    []ItemRec
 	// healthChecked is the Health check list's checkbox map (default: every
 	// missing piece checked, since they're all there to be re-applied).
 	healthChecked map[string]bool
@@ -773,10 +781,15 @@ func (m *model) preselectUpdate() {
 }
 
 // updateKeys returns the checked Update module keys as a stable slice (in
-// the order the modules are listed).
+// the order the modules are listed). In reinstall mode the rows come from
+// the installed-modules list instead of the changed-modules list.
 func (m model) updateKeys() []string {
+	mods := m.updateRec.Modules
+	if m.reinstallMode {
+		mods = m.reinstallMods
+	}
 	out := make([]string, 0, len(m.updateSelected))
-	for _, it := range m.updateRec.Modules {
+	for _, it := range mods {
 		if m.updateSelected[it.Key] {
 			out = append(out, it.Key)
 		}

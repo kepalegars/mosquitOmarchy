@@ -187,19 +187,27 @@ install_float_rule() {
 }
 
 install_post_boot_hook() {
+  # The mosquitomarchy-update module owns the post-boot hook: delegate so the
+  # deployer installs the full watchdog (repo check + Omarchy updates +
+  # clickable notification), not a second inline copy that would fight it.
+  local mod="$REPO/scripts/mosquitomarchy-update/setup-mosquitomarchy-update.sh"
+  if [[ -f $mod ]] && GUI_RUN_EXEC=1 bash "$mod" -y >/dev/null 2>&1; then
+    ok "Post-boot update-check hook installed (mosquitomarchy-update module)."
+    return 0
+  fi
+  warn "mosquitomarchy-update module unavailable — minimal hook instead."
   mkdir -p "$HOOK_DIR"
   cat > "$HOOK_FILE" <<'HOOK'
 #!/usr/bin/env bash
-# mosquitOmarchy update-check: notify when the GitHub scripts have moved
-# ahead of the local clone. The TUI itself can apply the update (Status >
-# Update); this hook only keeps the bar badge honest.
+# mosquitOmarchy update-check (minimal fallback): notify when the GitHub
+# scripts have moved ahead of the local clone.
 command -v omarchy >/dev/null || exit 0
 "$HOME/.local/bin/mosquitomarchy" --status 2>/dev/null | jq -e '.updateAvailable' >/dev/null 2>&1 \
-  && omarchy-notification-send --urgency low "mosquitOmarchy" "New scripts version available — run Update from the TUI." \
+  && omarchy-notification-send --urgency low "update available" "click this to open the update page" --exec mosquitomarchy --update \
   || true
 HOOK
   chmod +x "$HOOK_FILE"
-  ok "Post-boot update-check hook installed."
+  ok "Post-boot update-check hook installed (minimal)."
 }
 
 install_shell_state() {
@@ -317,6 +325,18 @@ do_remove() {
     "$HOME/.agents/skills/mosquitomarchy-crash" && ok "Backend/crash links removed."
   rm -f "$APPS_DIR/install.mosquitomarchy.desktop" && update-desktop-database "$APPS_DIR" 2>/dev/null || true
   ok "Desktop entry removed."
+  # The Omarchy menu block (Setup > mosquito > mosquitOmarchy, markers below):
+  # without this the menu row survives the uninstall pointing at a deleted
+  # dispatcher, so the manager looks "still there" after being removed.
+  local menu="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
+  local ms="// >>> Omarchy_Custom_Scripts - mosquitOmarchy setup (managed by mosquitomarchy-setup.sh)"
+  local me="// <<< Omarchy_Custom_Scripts - mosquitOmarchy setup (managed by mosquitomarchy-setup.sh)"
+  if [[ -f $menu ]] && grep -qF "$ms" "$menu"; then
+    local tmp; tmp="$(mktemp)"
+    awk -v s="$ms" -v e="$me" '$0==s{inb=1;next} $0==e{inb=0;next} !inb{print}' "$menu" > "$tmp" && mv "$tmp" "$menu"
+    omarchy menu refresh >/dev/null 2>&1 || true
+    ok "Omarchy menu entry removed."
+  fi
   # The same helper the install path uses, so both clean every bar side and a
   # malformed shell.json is reported instead of swallowed (this inline python
   # had a bare "except: pass", so a parse failure left the entry behind and
