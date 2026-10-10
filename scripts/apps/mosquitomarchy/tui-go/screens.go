@@ -1203,8 +1203,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, nil
 		}
 		if len(msg.items) == 0 {
-			m.toast, _ = m.toast.SetOK("health check: everything is in place")
-			// Stay on the health screen (show empty list) instead of popping to main.
+			// Stay on the health screen instead of popping to main. No
+			// toast: the screen's own headline already says everything is
+			// in place, and a second copy of the sentence is noise.
 			m.healthItems = nil
 			m.healthPicker = m.rebuildHealth()
 			return m, nil
@@ -3689,9 +3690,7 @@ func (m model) rebuildHealth() navPicker {
 	// screen read like a debug dump and the labels the backend already
 	// provides were only reachable through "i". The label is what identifies
 	// the piece to the user; the id only has to stay in the Value for heal.
-	if len(m.healthItems) == 0 {
-		items = append(items, tuikit.PickerItem{Display: "Everything is in place — no action needed", Value: "", Disabled: true})
-	} else {
+	if len(m.healthItems) != 0 {
 		for _, it := range m.healthItems {
 			mark := "○"
 			if m.healthChecked[it.ID] {
@@ -4088,8 +4087,8 @@ func (m model) statusTree() []tuikit.PickerItem {
 		}
 		appendFolder(c, m.categoryDisplayLabel(c), mods, c == "mosquito" && m.blinkOn)
 	}
-	// Modules with no category (the `apps` pseudo-module, mosquitomarchy-update)
-	// go last under "Other" so nothing is ever hidden.
+	// Modules with no category (the `apps` pseudo-module) go last under
+	// "Other" so nothing is ever hidden.
 	if len(loose) > 0 {
 		appendFolder("other", "Other", loose, false)
 	}

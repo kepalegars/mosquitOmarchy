@@ -3589,6 +3589,9 @@ run_mosquitomarchy(){
 
 un_mosquitomarchy(){
   bash "$SCRIPT_DIR/scripts/apps/mosquitomarchy/install-tui.sh" --remove
+  # The update watchdog ships inside this same row (see run/install-tui.sh),
+  # so removing the manager removes it too.
+  un_mosquitomarchy_update
 }
 
 # ───────────────────────── Interactive selection ─────────────────────────
@@ -3697,7 +3700,7 @@ CATEGORIES=(
   # including the deployer, i.e. installed and updatable but reachable from
   # neither Setup nor Uninstall. `battery` is deliberately absent: it is a
   # mosquito-* module now (mega-caffeine), so it lives in the mosquito row.
-  "plugins|Plugins|mosquitomarchy mosquitomarchy-update brightness touchpad mx-master"
+  "plugins|Plugins|brightness touchpad mx-master"
   "fixes|Fixes|"
   "mosquito|mosquito|"
   "lame|lame language models (ai..)|ollama remove-ai"
@@ -3820,6 +3823,10 @@ module_category(){ # module id -> category id
     # other calling it category-less, which is how pipewire-settings showed up in
     # the Setup tree under "mosquito" and in `status` with an empty category.
     ableton-move-manager|audio-plugin-manager|jamjamjam-plugin|battery|live-mode|pipewire-settings) echo mosquito; return 0 ;;
+    # The manager lives in the mosquito folder (single row, update watchdog
+    # included) rather than Plugins; the mapping is explicit so Status keeps
+    # grouping it exactly like Setup does.
+    mosquitomarchy|mosquitomarchy-update) echo mosquito; return 0 ;;
     # `apps` is the umbrella the three catalogs are installed through. It lists no
     # modules of its own in CATEGORIES — category_items "apps" returns its CHILDREN,
     # which is why the loop below never found it and `status` reported an empty
@@ -3964,6 +3971,10 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
       CAND_LABELS+=("mosquito-mega-caffeine  —  $(module_desc battery)")
       CAND_KEYS+=("live-mode")
       CAND_LABELS+=("mosquito-live-mode  —  $(module_desc live-mode)")
+      # The manager (deployer + update watchdog in one row) lives here, not
+      # in Plugins: one mosquito row for the whole manager.
+      CAND_KEYS+=("mosquitomarchy")
+      CAND_LABELS+=("mosquitomarchy  —  $(module_desc mosquitomarchy)")
       ;;
     *)
       items="$(category_items "$cat")"

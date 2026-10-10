@@ -234,7 +234,11 @@ mq_sudo_prime() {
   # rest of the run asks nothing at all.
   local ap
   if ap="$(mq_sudo_askpass)"; then
-    if SUDO_ASKPASS="$ap" sudo -A -v; then
+    # Bounded wait: an unanswered password dialog used to block the caller
+    # FOREVER (the TUI sat on its "Uninstalling" spinner with no way to know
+    # a dialog was even open). After 3 minutes sudo gives up and the run
+    # continues without elevation instead of hanging.
+    if timeout 180 env SUDO_ASKPASS="$ap" sudo -A -v; then
       export SUDO_ASKPASS="$ap"
       MQ_SUDO_PRIMED=1; MQ_PRIME_KIND=sudo; export MQ_SUDO_PRIMED MQ_PRIME_KIND
       ( _mq_pp=$PPID; while kill -0 "$_mq_pp" 2>/dev/null; do sudo -n -v 2>/dev/null; sleep 50; done ) </dev/null >/dev/null 2>&1 &

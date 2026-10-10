@@ -804,7 +804,7 @@ _uninstall_tree(){
         ;;
       mosquito)
         local pk
-        for pk in ableton-move-manager audio-plugin-manager jamjamjam-plugin battery live-mode pipewire-settings; do
+        for pk in ableton-move-manager audio-plugin-manager jamjamjam-plugin battery live-mode pipewire-settings mosquitomarchy; do
           case $pk in
             audio-plugin-manager) _installed_state audio && keys+=("$pk") ;;
             *) _installed_state "$pk" && keys+=("$pk") ;;
@@ -1687,6 +1687,13 @@ cmd_update_modules(){
 cmd_uninstall(){
   local -a modules=() catalog=() patches=() fixids=() menuops=()
   local id
+  # Orientation first: elevation prompts (sudo password dialog) open on the
+  # DESKTOP, not inside the TUI, so a user staring at the spinner never sees
+  # them — which used to read as "uninstalling forever". This line proves the
+  # backend is alive, and says where to look.
+  if ! sudo -n -v 2>/dev/null; then
+    msg "Uninstalling: if a step needs root, answer the password dialog on the desktop (3 min, then it continues without)."
+  fi
   for id in "$@"; do
     case "$id" in
       APP\ *|TUI\ *|WEB\ *|PLUG\ *) catalog+=("$id") ;;
