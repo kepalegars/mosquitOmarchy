@@ -788,6 +788,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, nil
 		}
 		switch m.pendingAction {
+		case "add-shortcut":
+			return m.startWorking("Adding the shortcut", workingArgs("add-shortcut", nil)...)
 		case "theme-remove-any":
 			names := append([]string{}, m.pendingArgs...)
 			m.pendingArgs = nil
