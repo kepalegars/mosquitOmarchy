@@ -438,7 +438,7 @@ func initialModel() model {
 		treeMode:         "install",
 	}
 	m.mainPicker = newNavPicker("", m.mainMenuItems()).
-		SetHelpKeys(key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "what this page does")))
+		SetHelpKeys(key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")))
 	m.setupPicker = newNavPicker("", nil)
 	m.setupCatPicker = newNavPicker("", nil)
 	m.updatePicker = newNavPicker("", nil)
@@ -505,7 +505,7 @@ func (m model) mainMenuItems() []tuikit.PickerItem {
 func (m model) rebuildMainMenu() navPicker {
 	return newNavPicker("", m.mainMenuItems()).SetSize(m.contentSize()).
 		KeepCursor(m.mainPicker.SelectedValue()).
-		SetHelpKeys(key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "what this page does")))
+		SetHelpKeys(key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")))
 }
 
 func (m *model) contentSize() (int, int) {
