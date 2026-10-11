@@ -1323,6 +1323,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				// be inert headings, so a category could not be reached at all
 				// and the list could not be narrowed.
 				v := m.statusPicker.SelectedValue()
+				// Back first: it sits after the last folder, so ParentFolderOf
+				// below claims it for that folder and Enter unfolded instead
+				// of leaving — the "Back does nothing" bug.
+				if km.String() == "enter" && v == "back" {
+					m.pop()
+					return m, nil
+				}
 				// The category the cursor is IN, not only the one it is on:
 				// sitting on a module and pressing ← closes its category.
 				if cat, ok := tuikit.ParentFolderOf(m.statusPicker.items, "status-cat:", v); ok {
@@ -4172,9 +4179,9 @@ const crashNotifyValue = "toggle-crash-notify"
 
 func crashNotifyLabel(on bool) string {
 	if on {
-		return "Crash notifications (AI diagnosis): on"
+		return "mosquitOmarchy crash toasts (AI diagnosis only): on"
 	}
-	return "Crash notifications (AI diagnosis): off"
+	return "mosquitOmarchy crash toasts (AI diagnosis only): off"
 }
 
 // settingsItems2 backs the TOP-LEVEL Settings screen (before Close).

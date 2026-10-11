@@ -65,6 +65,16 @@ mq_crash_notify(){
   command -v omarchy-notification-send >/dev/null 2>&1 || return 0
   local flag="$HOME/.local/state/mosquitomarchy/crash-notify"
   [[ -f "$flag" ]] && [[ "$(cat "$flag" 2>/dev/null)" == off ]] && return 0
+  # Elevated runs see HOME=/root, where the user's switch does not exist — so
+  # a crash under sudo notified even with the toggle off. The invoking user's
+  # switch applies too.
+  if [[ -n ${SUDO_USER:-} ]]; then
+    local uhome; uhome="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)"
+    if [[ -n $uhome ]]; then
+      local uflag="$uhome/.local/state/mosquitomarchy/crash-notify"
+      [[ -f "$uflag" ]] && [[ "$(cat "$uflag" 2>/dev/null)" == off ]] && return 0
+    fi
+  fi
   omarchy-notification-send --urgency critical --glyph "$MQ_CRASH_GLYPH" \
     "mosquitOmarchy: $tool failed" \
     "Click to diagnose with AI" \

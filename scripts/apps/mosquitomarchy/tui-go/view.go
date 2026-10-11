@@ -335,7 +335,11 @@ func (m model) updateBody() string {
 	if n := len(m.updateRec.Modules); n == 0 {
 		lines = append(lines, tuikit.StyleMuted.Render("nothing to re-apply for the installed modules"))
 	} else {
-		lines = append(lines, tuikit.StyleAccent.Render(fmt.Sprintf("● %d installed module(s) have updates — press i for the list, tab on the list to skip some", n)))
+		if n == 1 {
+			lines = append(lines, tuikit.StyleAccent.Render("● 1 installed module has an update"))
+		} else {
+			lines = append(lines, tuikit.StyleAccent.Render(fmt.Sprintf("● %d installed modules have updates", n)))
+		}
 	}
 	return lipgloss.JoinVertical(lipgloss.Center,
 		lipgloss.NewStyle().Width(m.contentSizeW()).Align(lipgloss.Center).Render(strings.Join(lines, "\n")),

@@ -666,7 +666,7 @@ MODULES=(
   "mx-master:MX Master (any model) — thumb gesture button → SUPER (logiops daemon, system service)"
   "hyprmod:Hyprmod — save/switch Hyprland profiles from one menu (list · apply · next · previous), so a config change is one step away from a working desktop"
   "keepassxc:keepassxc  —  secret service (REPLACES gnome-keyring completely (existing keyring secrets must be migrated manually; package removal optional & asked). On FIRST KeePassXC launch choose YOUR .kdbx: the install pins it into keepassxc.ini (Remember*/LastOpened*) so EVERY web app's browser extension and secret service uses it — no more 'create a new database?' prompts. 'i' info below; pin a DIFFERENT file manually with scripts/apps/keepassxc/keepassxc-default-database.sh FILE.kdbx (README in that folder lists a manual select)"
-  "mosquitomarchy-update:Update watchdog (scripts update first, then Omarchy updates — notification + opencode conflict review)"
+  "mosquitomarchy-update:Update watchdog"
   "superfile:SuperFile — terminal file manager (menu entry + keybind + Omarchy theme)"
   "extracto:Simple custom install script for file-roller — restores Nautilus' Extract Here / Create Archive (file-roller + 7zip + unrar, file-roller prompts for the password itself); no desktop entry, no Nautilus script"
   "zen:Zen Browser config — plugins + settings + chrome theme (deployed into the active profile)"
