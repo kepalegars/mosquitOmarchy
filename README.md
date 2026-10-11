@@ -184,7 +184,24 @@ sudoers) need `sudo bash ./mosquitomarchy-setup.sh --uninstall -y`.
 
 **Updates** are strictly `git pull --ff-only`, never `reset --hard`, `clean` or `rebase`, so
 untracked files next to the scripts are never touched. The check runs on every launch and
-once per boot, and always *before* pending Omarchy updates.
+once per boot, and always *before* pending Omarchy updates. An update re-applies every
+module whose files changed — including `mosquitomarchy` itself, so the TUI is rebuilt
+from the new sources (a `pull` alone never rebuilds anything).
+
+**Removing the manager completely** (for a clean retest, from a terminal):
+
+```bash
+# 1. close the TUI if it is open, then remove the manager itself:
+~/.local/bin/mosquitomarchy-actions uninstall mosquitomarchy
+# 2. clear its memory (first-run marker, tree cache, uninstalled-modules list):
+rm -rf ~/.local/state/mosquitomarchy ~/.cache/mosquitomarchy
+rm -f ~/.local/state/omarchy-custom-scripts/excluded
+```
+
+The backend call removes the binaries, the dispatcher, the menu entry, the hook and
+the float rule (plugins and apps stay — they have their own uninstall rows). The
+`rm` lines clear the first-run marker, the tree cache and the uninstalled-modules
+memory, so the next `./bootstrap.sh` starts from zero.
 
 ### `scripts/archive-mosquitomarchy.sh`
 

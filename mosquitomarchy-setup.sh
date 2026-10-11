@@ -163,6 +163,20 @@ is_excluded(){
   local m; for m in "${EXCLUDED[@]}"; do [[ $m == "$1" ]] && return 0; done; return 1
 }
 
+skip_excluded(){
+  # 0 when $1 must be skipped: excluded AND absent. An excluded module that
+  # is INSTALLED is offered normally instead — claiming "uninstalled by you"
+  # next to an installed marker is a contradiction — and the stale exclusion
+  # is lifted, mirroring the TUI (explicit selection means having it back).
+  is_excluded "$1" || return 1
+  local st; st="$(module_state "$1" 2>/dev/null || true)"; st="${st%%:*}"
+  if [[ $st == ok || $st == partial ]]; then
+    unexclude "$1" 2>/dev/null || true
+    return 1
+  fi
+  return 0
+}
+
 # --include=<module>: temporarily re-offer excluded modules (in-memory only;
 # uninstalling again re-persists them as excluded).
 apply_includes(){
@@ -809,7 +823,17 @@ module_of_path(){
     scripts/plugins/jamjamjam/*)                             echo jamjamjam-plugin ;;
     scripts/plugins/pipewire-settings/*)                     echo pipewire-settings ;;
     scripts/plugins/live-mode/*)                             echo live-mode ;;
-    scripts/apps/mosquitomarchy/install-tui.sh|scripts/apps/mosquitomarchy/mosquitomarchy|scripts/apps/mosquitomarchy/mosquitomarchy-actions) echo mosquitomarchy ;;
+    # The WHOLE manager tree (deployer, backend, Go TUI, skills): any change
+    # here must offer the mosquitomarchy module for update, otherwise the
+    # installed TUI is never rebuilt. This used to name three files only, so
+    # a change to tui-go/ matched nothing and silently never showed up as an
+    # available update (fresh clones were fine — only updates went stale).
+    scripts/apps/mosquitomarchy/*) echo mosquitomarchy ;;
+    # Shared Go kit + lib: the manager TUI builds against these, so a change
+    # here rebuilds it too. (Must stay AFTER scripts/apps/... and the
+    # scripts/lib/common.bash -> apps rule above: first match wins.)
+    scripts/lib/*) echo mosquitomarchy ;;
+    bootstrap.sh) echo mosquitomarchy ;;
   esac
 }
 
@@ -3085,6 +3109,9 @@ uninstall_module(){
   if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
     sudo -n -v >/dev/null 2>&1 || true
   fi
+  # Installed-state BEFORE running: the exclusion below must reflect what was
+  # there, not the missing state the uninstall just produced.
+  local pre; pre="$(module_state "$id" 2>/dev/null || true)"; pre="${pre%%:*}"
   case $id in
     reaper) un_reaper ;;
     audio) un_audio ;;
@@ -3124,8 +3151,13 @@ uninstall_module(){
     *) err "Unknown module: $id"; return 1 ;;
   esac
   # Remember the module as voluntarily uninstalled → not re-proposed
-  # (unless --include=<module>).
-  record_excluded "$id"
+  # (unless --include=<module>). Only when it WAS installed (see $pre
+  # above): uninstalling something already absent otherwise plants a
+  # permanent "uninstalled by you" note next to a row the machine never
+  # had, contradicting its own installed marker.
+  if [[ $pre == ok || $pre == partial ]]; then
+    record_excluded "$id"
+  fi
   hr
 }
 
@@ -4042,7 +4074,7 @@ category_run(){ # catid -> run only the CATEGORY_SELECTED items
             # Module-backed mosquito tools (ableton-move-manager, battery
             # = mega-caffeine, jamjamjam-plugin, live-mode) go through
             # exec_modules like any module: excluded ones are skipped.
-            if is_excluded "$k"; then
+            if skip_excluded "$k"; then
               warn "Module '$k' was uninstalled by you — skipped (re-offer with --include=$k)."
               skipped=$((skipped + 1))
             else
@@ -4065,7 +4097,7 @@ category_run(){ # catid -> run only the CATEGORY_SELECTED items
       SELECTED=()
       skipped=0
       for k in "${CATEGORY_SELECTED[@]}"; do
-        if is_excluded "$k"; then
+        if skip_excluded "$k"; then
           warn "Module '$k' was uninstalled by you — skipped (re-offer with --include=$k)."
           skipped=$((skipped + 1))
           continue
@@ -4203,7 +4235,14 @@ main(){
     id="${row%%:*}"; state="$(module_state "$id")"
     [[ $state == na ]] && continue
     if is_excluded "$id"; then
-      warn "(auto) module '$id' excluded (you uninstalled it) — skipped."
+      # Installed despite the exclusion: nothing to do here, and claiming
+      # "you uninstalled it" next to an installed module is a contradiction.
+      # (The interactive paths lift the stale exclusion on explicit select;
+      # the auto path touches nothing.)
+      local ast; ast="$(module_state "$id" 2>/dev/null || true)"; ast="${ast%%:*}"
+      if [[ $ast != ok && $ast != partial ]]; then
+        warn "(auto) module '$id' excluded (you uninstalled it) — skipped."
+      fi
       continue
     fi
     if [[ $state == ok ]]; then
