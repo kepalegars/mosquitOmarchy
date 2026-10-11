@@ -1772,6 +1772,16 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	case scrWorking:
 		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "enter") {
 			if m.runner.Done() {
+				// A run launched straight from the main menu leaves the
+				// runner alone on the stack (startWorking replaces), and
+				// pop() refuses single-element stacks — so Esc stranded
+				// there forever on the frameless finished log. Rewind to
+				// the main menu instead of stranding.
+				if len(m.nav) <= 1 {
+					m.nav = []screen{scrMain}
+					m.mainPicker = m.rebuildMainMenu()
+					return m, nil
+				}
 				m.pop()
 				return m, nil
 			}
@@ -2703,19 +2713,8 @@ func (m model) closeConfirm() (model, tea.Cmd) {
 
 // startWorking swaps to the runner screen and starts a streamed action.
 // args are the full mosquitomarchy-actions command line (subcommand first).
-//
-// Depth matters: from a bare main menu, REPLACING would leave [scrWorking]
-// alone on the stack, and every screen pushed over it (done-confirm, log)
-// pops back onto it — where Esc can no longer leave (pop guards a
-// single-element stack). So at depth 1 the runner is PUSHED, keeping scrMain
-// underneath as the way back out. Deeper flows keep the old replace, which
-// is what keeps their stacks shallow on purpose.
 func (m model) startWorking(label string, args ...string) (model, tea.Cmd) {
-	if len(m.nav) <= 1 {
-		m.push(scrWorking)
-	} else {
-		m.replace(scrWorking)
-	}
+	m.replace(scrWorking)
 	m.workingLabel = label
 	m.runner = tuikit.NewRunner().SetSize(m.contentSize())
 	var cmd tea.Cmd
