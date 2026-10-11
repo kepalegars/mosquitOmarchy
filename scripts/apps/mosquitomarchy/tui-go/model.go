@@ -421,6 +421,12 @@ type model struct {
 	// normal Setup, with selection + Install selection) or "uninstall" (only
 	// the installed entries, Enter uninstalls).
 	treeMode string
+	// treeLoading means a tree fetch is in flight: rebuilds keep showing the
+	// loading row instead of an empty list. Without it the 600ms mosquito
+	// blink rebuilt the picker from not-yet-arrived data and wiped the
+	// loading indicator, so slow trees (uninstall does full installed-state
+	// detection) showed a blank page with no loading sign at all.
+	treeLoading bool
 
 	fatal error
 	quit  bool

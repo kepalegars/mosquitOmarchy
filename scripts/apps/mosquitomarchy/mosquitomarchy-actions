@@ -1604,11 +1604,37 @@ cmd_apply(){
 # Git pull the repo (update zone).
 cmd_update_repo(){
   YES=1
-  if [[ -d "$REPO_DIR/.git" ]] && command -v git >/dev/null 2>&1; then
-    update_repo_ff
-  else
+  if [[ ! -d "$REPO_DIR/.git" ]] || ! command -v git >/dev/null 2>&1; then
     err "No git repo at $REPO_DIR (or git missing) — nothing to update."
+    return 1
   fi
+  local before="" after=""
+  before="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+  update_repo_ff || return 1
+  after="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+  if [[ -z $before || -z $after || $before == "$after" ]]; then
+    ok "Repo already current — nothing to re-apply."
+    return 0
+  fi
+  # The repo moved: re-apply the manager itself so the installed TUI is
+  # rebuilt from the new sources. Without this the update changed files on
+  # disk while the running manager stayed the old build, and only a manual
+  # rebuild (or a fresh clone) ever showed the new code.
+  local st; st="$(module_state mosquitomarchy 2>/dev/null || true)"; st="${st%%:*}"
+  if [[ $st != ok && $st != partial ]]; then
+    warn "mosquitomarchy module not installed — skipping its re-apply."
+    return 0
+  fi
+  msg "Repo updated — re-applying the mosquitomarchy module (rebuilds the TUI)…"
+  RESULTS=()
+  MODULE_FAILURES=0
+  SELECTED=(mosquitomarchy)
+  exec_modules
+  if (( MODULE_FAILURES > 0 )); then
+    err "mosquitomarchy re-apply failed — relaunch it by hand: mosquitomarchy."
+    return 1
+  fi
+  final_report
 }
 
 # Update modules: fast-forward the LOCAL repo from GitHub FIRST (so both

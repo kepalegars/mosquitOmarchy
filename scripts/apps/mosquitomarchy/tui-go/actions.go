@@ -694,9 +694,28 @@ func writeRunLog(tool, output string) string {
 // successful action raised a critical "<tool> failed" notification, a crash log
 // full of green ticks, and an AI diagnosis offer for a run that worked. The
 // success path now calls writeRunLog directly.
+// crashToastOff reports whether the user disabled the crash toasts (same
+// flag file the Settings toggle and lib/crash.bash use). reportCrash must
+// honor it: it used to notify on every failed run even with the switch off,
+// which is exactly the "I disabled them but they keep coming" report.
+func crashToastOff() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	b, err := os.ReadFile(filepath.Join(home, ".local", "state", "mosquitomarchy", "crash-notify"))
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(b)) == "off"
+}
+
 func reportCrash(tool, output string) {
 	path := writeRunLog(tool, output)
 	if path == "" {
+		return
+	}
+	if crashToastOff() {
 		return
 	}
 	if _, err := exec.LookPath("omarchy-notification-send"); err != nil {

@@ -153,6 +153,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// as Setup is left (no re-arm).
 		switch m.top() {
 		case scrSetup:
+			// While the tree is still loading there is nothing to blink:
+			// rebuilding here wiped the loading row the push had just set.
+			if m.treeLoading {
+				return m, blinkCmd()
+			}
 			// The only thing blinkOn changes is the accent on the "mosquito"
 			// category. If that row is not in the visible window there is
 			// nothing on screen to blink, so skip the rebuild entirely rather
@@ -382,8 +387,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		return m, nil
 
 	case setupMsg:
+		m.treeLoading = false
 		if msg.err != nil {
 			m.toast, _ = m.toast.SetErr(msg.err.Error())
+			if m.top() == scrSetup {
+				m.setupPicker = m.rebuildSetup()
+			}
 			return m, nil
 		}
 		m.setupFolders = msg.folders
@@ -518,21 +527,21 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// go back to the normal Update screen.
 			m.reinstallMode, m.reinstallPending, m.reinstallMods = false, false, nil
 			// The main menu's Update square is the one place a pending update
-			// is visible without opening anything, so it has to be rebuilt when
-			// the check result lands — the root list is built once at startup
-			// and never revisited otherwise, which is why the square only ever
-			// appeared after going into Setup (that screen rebuilds) and never
-			// on the main menu.
-			if m.top() == scrMain {
-				m.mainPicker = m.rebuildMainMenu()
-			}
+			// is visible without opening anything, so it is rebuilt on EVERY
+			// check result, not only when the menu is on top: gating on
+			// scrMain meant results landing anywhere else never redrew the
+			// square (late appearance), and results landing under the
+			// post-run confirm never cleared it (stuck square after apply).
+			// rebuildMainMenu keeps the cursor, so rebuilding unseen is free.
+			m.mainPicker = m.rebuildMainMenu()
 			// Everything found changed is preselected: the Update screen
 			// lists the modules with ● marks and the user can un-tick any
 			// module they want to skip before pressing Update.
 			m.preselectUpdate()
-			if m.top() == scrUpdate {
-				m.updatePicker = m.rebuildUpdate()
-			}
+			// Same staleness one level down: after an apply the confirm sits
+			// on top, so gating on scrUpdate left the page behind it showing
+			// the just-applied modules. Rebuild always (cursor + ticks kept).
+			m.updatePicker = m.rebuildUpdate()
 			if m.top() == scrHealth {
 				m.healthPicker = m.rebuildHealth()
 			}
@@ -1135,7 +1144,16 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// always pops scrInfo and lands back on the picker. scrStatus is no
 		// longer an Info pane of its own.
 		if m.top() == scrInfo {
-			m.pop()
+			// Belt and braces with startWorking above: an info screen with
+			// nothing underneath is a trap Esc can never leave (pop refuses
+			// single-element stacks), so rewind to the main menu instead of
+			// stranding there.
+			if len(m.nav) <= 1 {
+				m.nav = []screen{scrMain}
+				m.mainPicker = m.rebuildMainMenu()
+			} else {
+				m.pop()
+			}
 		}
 		return m, nil
 
@@ -1973,7 +1991,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.selected = map[string]bool{}
 			m.filterText = ""
 			m.push(scrSetup)
-			m.setupPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).SetSize(m.contentSize())
+			m.treeLoading = true
+			m.setupPicker = loadingTreePicker(m)
 			// The menu entries are listed under their own folder on this page,
 			// so they have to be fetched here too — they used to be fetched
 			// only when their screen was opened.
@@ -1993,7 +2012,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.folderOpen = map[string]bool{}
 			m.filterText = ""
 			m.push(scrSetup)
-			m.setupPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).SetSize(m.contentSize())
+			m.treeLoading = true
+			m.setupPicker = loadingTreePicker(m)
 			return m, tea.Batch(fetchTreeCmd("uninstall-tree"), blinkCmd(), fetchAIRemovedCmd())
 		case "keybindings":
 			// Its own row in the main menu, next to the other tools, rather
@@ -2683,8 +2703,19 @@ func (m model) closeConfirm() (model, tea.Cmd) {
 
 // startWorking swaps to the runner screen and starts a streamed action.
 // args are the full mosquitomarchy-actions command line (subcommand first).
+//
+// Depth matters: from a bare main menu, REPLACING would leave [scrWorking]
+// alone on the stack, and every screen pushed over it (done-confirm, log)
+// pops back onto it — where Esc can no longer leave (pop guards a
+// single-element stack). So at depth 1 the runner is PUSHED, keeping scrMain
+// underneath as the way back out. Deeper flows keep the old replace, which
+// is what keeps their stacks shallow on purpose.
 func (m model) startWorking(label string, args ...string) (model, tea.Cmd) {
-	m.replace(scrWorking)
+	if len(m.nav) <= 1 {
+		m.push(scrWorking)
+	} else {
+		m.replace(scrWorking)
+	}
 	m.workingLabel = label
 	m.runner = tuikit.NewRunner().SetSize(m.contentSize())
 	var cmd tea.Cmd
@@ -3017,7 +3048,17 @@ func (m model) categoryInfo(folder string) string {
 // navigation round trip to select a single module and made the apply step a
 // separate thing to remember. Now Tab ticks a module where it is listed,
 // Left/Right folds the folder, and Enter applies the whole selection at once.
+// loadingTreePicker is the one-row "loading…" picker shown while a tree
+// fetch is in flight (set at push time, preserved by rebuilds, cleared on
+// arrival). Shared so Setup and Uninstall show the exact same sign.
+func loadingTreePicker(m model) navPicker {
+	return newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).SetSize(m.contentSize())
+}
+
 func (m model) rebuildSetup() navPicker {
+	if m.treeLoading {
+		return loadingTreePicker(m)
+	}
 	if m.filterText != "" {
 		return m.rebuildFilteredSetup()
 	}
