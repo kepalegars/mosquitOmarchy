@@ -245,6 +245,10 @@ mq_sudo_prime() {
       disown 2>/dev/null || true
       return 0
     fi
+    # `timeout` kills sudo, not the askpass dialog it spawned: an abandoned
+    # zenity prompt survived every timed-out run and piled up invisibly, each
+    # holding nothing but confusion. Reap ours (matched by our own title).
+    pkill -f "zenity --password --title=mosquitOmarchy" 2>/dev/null || true
   fi
   # Fallback: one pkexec prompt, reused for the whole run (headless or no
   # askpass available). The persistent helper stays as the no-askpass path

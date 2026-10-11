@@ -64,7 +64,14 @@ hr(){ printf '%.0s─' {1..72}; echo; }
 # it clones. A checkout without the root mosquitomarchy-setup.sh is considered
 # incomplete. The `../` branch is kept only so an older checkout, where this
 # script still lived in scripts/, keeps working.
-DETECTED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+# BASH_SOURCE is empty when this script arrives via `curl | bash` (no file on
+# disk); with `set -u` the bare ${BASH_SOURCE[0]} then prints an "unbound
+# variable" error at the top of the log. Skip detection entirely in that
+# case (a piped install always clones) so the log starts clean.
+DETECTED_DIR=""
+if [[ -n ${BASH_SOURCE[0]:-} ]]; then
+  DETECTED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+fi
 SRC=""
 if [[ -n "$DETECTED_DIR" ]] && [[ -f "$DETECTED_DIR/mosquitomarchy-setup.sh" ]]; then
   SRC="$DETECTED_DIR"; msg "Repo found locally: $SRC"

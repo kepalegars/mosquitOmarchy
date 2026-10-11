@@ -3124,13 +3124,20 @@ func trimOwnPrefix(folder, label string) string {
 		return label
 	}
 	for _, p := range []string{"mosquito-", "mosquito"} {
-		if strings.HasPrefix(label, p) {
-			rest := strings.TrimLeft(label[len(p):], " -")
-			// Only strip when something is left: a label that IS "mosquito"
-			// must not become empty.
-			if rest != "" {
-				return rest
-			}
+		if !strings.HasPrefix(label, p) {
+			continue
+		}
+		rest := label[len(p):]
+		if p == "mosquito" && rest != "" && rest[0] != ' ' && rest[0] != '-' {
+			// Not a prefix but a name: "mosquitomarchy" must not render
+			// as "marchy".
+			continue
+		}
+		rest = strings.TrimLeft(rest, " -")
+		// Only strip when something is left: a label that IS "mosquito"
+		// must not become empty.
+		if rest != "" {
+			return rest
 		}
 	}
 	return label

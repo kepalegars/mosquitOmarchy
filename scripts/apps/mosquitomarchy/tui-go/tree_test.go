@@ -1307,6 +1307,8 @@ func TestTrimOwnPrefix(t *testing.T) {
 		{"mosquito", "mosquito-live-mode - v1.0.0", "live-mode - v1.0.0"},
 		// A label that is nothing but the prefix must not vanish to "".
 		{"mosquito", "mosquito", "mosquito"},
+		// A name that merely STARTS with those letters is not prefixed.
+		{"mosquito", "mosquitomarchy - v1.0.0", "mosquitomarchy - v1.0.0"},
 		// Rows without the prefix are untouched.
 		{"mosquito", "Move Manager - v1.0.0", "Move Manager - v1.0.0"},
 		// Other folders keep it: there the prefix carries real information.

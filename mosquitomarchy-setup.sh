@@ -3076,7 +3076,15 @@ un_shared_menu(){
 
 uninstall_module(){
   local id="$1"
-  mq_sudo_prime >/dev/null 2>&1 || true   # one prompt for the whole uninstall
+  # No speculative priming here: most uninstalls need no root at all, and an
+  # upfront password dialog for nothing was the "uninstalling forever" hang
+  # (dialog unseen, run blocked). Root steps prime on demand through mq_sudo,
+  # which bounds the wait and reaps its dialog. This only refreshes an
+  # already-cached timestamp and never prompts (note: NOT mq_sudo -v, which
+  # would prime interactively and defeat the whole point).
+  if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+    sudo -n -v >/dev/null 2>&1 || true
+  fi
   case $id in
     reaper) un_reaper ;;
     audio) un_audio ;;
