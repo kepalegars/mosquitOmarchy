@@ -3510,24 +3510,23 @@ func (m model) buildSetupRows(uninstall bool, open map[string]bool, idx map[stri
 			open, m.blinkOn)...)
 	}
 	// A category whose every tickable row is ticked carries the accent
-	// square at the end of its row — filled by the Tab-on-folder gesture
-	// only. Anything less (including a partial tick) leaves it empty, so
-	// the square always means "the whole folder goes", never "something".
+	// square at the end of its row AND a filled folder glyph — both filled
+	// by the Tab-on-folder gesture only. Anything less (including a partial
+	// tick) leaves both empty, so filled always means "the whole folder
+	// goes", never "something".
+	full := map[string]bool{}
 	out = tuikit.WithCategoryMark(out, func(v string) int {
 		_, cat, ok := tuikit.TreeSplit(v)
 		if !ok {
 			return 0
 		}
+		isFull := false
 		if cat == menuEntriesFolder {
 			// Menu entries are not setup items — they live in their own cache
 			// and are ticked on their own page.
 			n := m.menuEntriesCheckedCount()
-			if n > 0 && n == len(m.menuEntries) {
-				return 1
-			}
-			return 0
-		}
-		if idx[cat] != nil {
+			isFull = n > 0 && n == len(m.menuEntries)
+		} else if idx[cat] != nil {
 			total, marked := 0, 0
 			for _, it := range m.setupItemsOf(cat) {
 				if it.Disabled {
@@ -3538,12 +3537,21 @@ func (m model) buildSetupRows(uninstall bool, open map[string]bool, idx map[stri
 					marked++
 				}
 			}
-			if total > 0 && marked == total {
-				return 1
-			}
+			isFull = total > 0 && marked == total
+		}
+		if isFull {
+			full[cat] = true
+			return 1
 		}
 		return 0
 	})
+	for i := range out {
+		if out[i].Folder {
+			if _, cat, ok := tuikit.TreeSplit(out[i].Value); ok && full[cat] {
+				out[i].Filled = true
+			}
+		}
+	}
 
 	out = append(out, tuikit.PickerItem{Display: "Back", Value: "back"})
 	return out

@@ -3,8 +3,6 @@ package tuikit
 import (
 	"strings"
 	"testing"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 // TestFolderIconNeedsNoNerdFont is the guard behind dropping U+F07B: the folder
@@ -30,21 +28,24 @@ func TestFolderIconNeedsNoNerdFont(t *testing.T) {
 	}
 }
 
-// TestFolderIconIgnoresFold checks the glyph does NOT follow the row's fold
-// state: a collapsed folder draws the same square as an expanded one, both
-// sitting in the same leading slot.
-func TestFolderIconIgnoresFold(t *testing.T) {
+// TestFolderIconIgnoresFoldAndCursor checks the glyph follows NEITHER the
+// row's fold state NOR the cursor: collapsed, expanded, idle and cursor-on
+// all draw the same empty square. Only Filled fills it in (see below).
+func TestFolderIconIgnoresFoldAndCursor(t *testing.T) {
 	mk := func(fold string) PickerItem {
 		return PickerItem{Display: "Apps", Value: "cat:apps", Folder: true, Fold: fold}
 	}
 	d := newPickerDelegate(2, 2, 0, true)
-	closed := d.leadCell(mk(FoldCollapsed), false)
-	open := d.leadCell(mk(FoldExpanded), false)
-	if !strings.Contains(closed, FolderClosed) {
-		t.Errorf("collapsed folder should draw %q, got %q", FolderClosed, closed)
-	}
-	if !strings.Contains(open, FolderClosed) {
-		t.Errorf("expanded folder should draw %q too, got %q", FolderClosed, open)
+	for _, fold := range []string{FoldCollapsed, FoldExpanded} {
+		for _, selected := range []bool{false, true} {
+			got := d.leadCell(mk(fold), selected)
+			if !strings.Contains(got, FolderClosed) {
+				t.Errorf("fold=%q selected=%v should draw %q, got %q", fold, selected, FolderClosed, got)
+			}
+			if strings.Contains(got, FolderOpen) {
+				t.Errorf("fold=%q selected=%v must not draw the filled %q, got %q", fold, selected, FolderOpen, got)
+			}
+		}
 	}
 	// A leaf keeps its checkbox: the folder glyph must not leak onto items.
 	leaf := d.leadCell(PickerItem{Display: "reaper", Value: "item:r", Badge: "○"}, false)
@@ -53,29 +54,17 @@ func TestFolderIconIgnoresFold(t *testing.T) {
 	}
 }
 
-// TestFolderIconFillsOnSelection pins the idle/selected contrast: the ONLY
-// second state of a folder is selected, where its square fills in. Both
-// states stay clear of the accent: on achraff-67 the accent is a lime and
-// an unselected folder glowing green read as a status rather than a shape.
-func TestFolderIconFillsOnSelection(t *testing.T) {
-	// The palette is normally filled by ApplyTheme() at startup, and the
-	// renderer only emits the exact foreground under a truecolor profile. A
-	// test run without a TTY falls back to short ANSI, where the two theme
-	// neutrals both degrade to grey and would compare equal for the wrong
-	// reason — so pin the profile and the palette.
-	applyPalette(loadOmarchyPalette())
-	old := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(2) // TrueColor
-	t.Cleanup(func() { lipgloss.SetColorProfile(old) })
-
+// TestFolderIconFillsWhenTicked pins the contract: a folder's square fills
+// in if and only if the host marked it Filled (entirely ticked). Cursor,
+// fold state, palette — none of those fill anything on their own.
+func TestFolderIconFillsWhenTicked(t *testing.T) {
 	d := newPickerDelegate(2, 2, 0, true)
 	pi := PickerItem{Display: "Apps", Value: "cat:apps", Folder: true, Fold: FoldExpanded}
-	idle := d.leadCell(pi, false)
-	sel := d.leadCell(pi, true)
-	if !strings.Contains(idle, FolderClosed) {
-		t.Fatalf("idle folder should draw the plain square %q, got %q", FolderClosed, idle)
+	if got := d.leadCell(pi, false); !strings.Contains(got, FolderClosed) {
+		t.Fatalf("unticked folder should draw the plain square %q, got %q", FolderClosed, got)
 	}
-	if !strings.Contains(sel, FolderOpen) {
-		t.Fatalf("selected folder should draw the filled square %q, got %q", FolderOpen, sel)
+	pi.Filled = true
+	if got := d.leadCell(pi, false); !strings.Contains(got, FolderOpen) {
+		t.Fatalf("ticked folder should draw the filled square %q, got %q", FolderOpen, got)
 	}
 }

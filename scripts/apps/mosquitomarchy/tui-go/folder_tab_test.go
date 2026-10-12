@@ -52,4 +52,13 @@ func TestFolderSquareNeedsFullTick(t *testing.T) {
 	if !square() {
 		t.Fatalf("full tick did not fill the folder square")
 	}
+	filled := false
+	for _, it := range m.rebuildSetup().items {
+		if it.Value == "cat:apps" {
+			filled = it.Filled
+		}
+	}
+	if !filled {
+		t.Fatalf("full tick did not fill the folder glyph")
+	}
 }

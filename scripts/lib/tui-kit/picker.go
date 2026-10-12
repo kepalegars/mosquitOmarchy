@@ -89,13 +89,14 @@ type PickerItem struct {
 	// a glance without reading it — a tree of identical marks is unreadable
 	// once it is more than a screen deep.
 	//
-	// The glyph is brightest while the row holds the cursor, which is as close
-	// to "the folder fills in when selected" as a terminal gets: a glyph
-	// cannot be filled, so the cue is carried by weight and brightness.
-	//
 	// Folders stay SELECTABLE (Enter expands/collapses them); use Heading for a
 	// row that is neither.
 	Folder bool
+	// Filled fills a folder's square in (▢ becomes ▣). The host sets it when
+	// the folder is ENTIRELY ticked — open/closed never fills, and neither
+	// does the cursor alone. Anything less than full stays an empty square,
+	// so a filled square always means "the whole folder goes".
+	Filled bool
 	// Heading marks a non-selectable section title: the cursor SKIPS it and
 	// Enter does nothing, but it still renders as a heading (accent block) and
 	// is not greyed out.
@@ -329,6 +330,8 @@ func (d pickerDelegate) leadCell(pi PickerItem, selected bool) string {
 		glyph := FolderClosed
 		if selected {
 			st = lipgloss.NewStyle().Foreground(ColorOnSurface).Bold(true)
+		}
+		if pi.Filled {
 			glyph = FolderOpen
 		}
 		return st.Render(glyph) + strings.Repeat(" ", max(0, d.badgeSlot-1))
