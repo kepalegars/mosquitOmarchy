@@ -25,11 +25,46 @@ func shortcutMarkerPath() string {
 
 func firstRunCmd() tea.Cmd {
 	return func() tea.Msg {
-		if _, err := os.Stat(shortcutMarkerPath()); err != nil {
-			return firstRunMsg{}
+		if _, err := os.Stat(shortcutMarkerPath()); err == nil {
+			return nil
 		}
-		return nil
+		// Never asked AND both already present (synced configs, reinstall
+		// over an existing desktop): asking would offer to create what
+		// exists. Record and stay silent.
+		if launcherShortcutPresent() && launcherMenuEntryPresent() {
+			markShortcutPrompted()
+			return nil
+		}
+		return firstRunMsg{}
 	}
+}
+
+// launcherShortcutPresent reports whether the SUPER + ALT + M binding already
+// opens mosquitOmarchy.
+func launcherShortcutPresent() bool {
+	cfg := os.Getenv("XDG_CONFIG_HOME")
+	if cfg == "" {
+		cfg = filepath.Join(os.Getenv("HOME"), ".config")
+	}
+	b, err := os.ReadFile(filepath.Join(cfg, "hypr", "bindings.lua"))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(b), "SUPER + ALT + M") && strings.Contains(strings.ToLower(string(b)), "mosquitomarchy")
+}
+
+// launcherMenuEntryPresent reports whether the manager row is already in the
+// Omarchy menu.
+func launcherMenuEntryPresent() bool {
+	cfg := os.Getenv("XDG_CONFIG_HOME")
+	if cfg == "" {
+		cfg = filepath.Join(os.Getenv("HOME"), ".config")
+	}
+	b, err := os.ReadFile(filepath.Join(cfg, "omarchy", "extensions", "omarchy-menu.jsonc"))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(b), `"setup.mosquito.manager"`)
 }
 
 // markShortcutPrompted records that the first-run shortcut question was asked,
@@ -2746,13 +2781,12 @@ func (m model) startUninstall(keys []string, prompt string) (model, tea.Cmd) {
 	// of the list before the command is built — handing "preinstalls:choose" to
 	// the uninstall would ask the backend to remove a package by that name.
 	mods, wantPre := splitPreinstallsKey(keys)
-	// Callers hand the key over in two shapes — "reaper" from the tree row,
-	// "apps:reaper" from the filter's ticked set — and the backend wants the
-	// bare module key. Normalise here rather than at every call site.
+	// Callers hand the key over in several shapes — "reaper" from the tree
+	// row, "apps:reaper" from the filter's ticked set, "WEB name|https://…"
+	// for catalog entries — and each needs different treatment. Normalise
+	// here rather than at every call site.
 	for i, k := range mods {
-		if c := strings.IndexByte(k, ':'); c >= 0 {
-			mods[i] = k[c+1:]
-		}
+		mods[i] = uninstallKey(k)
 	}
 	if len(mods) == 0 && !wantPre {
 		return m, nil
@@ -2788,6 +2822,26 @@ const (
 
 // splitPreinstallsKey separates the modules to uninstall from the preinstalls
 // request, reporting whether the request was there at all.
+// uninstallKey normalizes one uninstall key to what the backend's `uninstall`
+// routes on. Module rows arrive bare ("reaper") or folder-prefixed
+// ("apps:reaper") and the backend wants the bare module id — but catalog
+// selection lines ("WEB name|https://…", APP/TUI/PLUG alike) carry URLs, so
+// stripping at the first colon mangles them into "Unknown module:
+// //host/…". Those keep their kind word whole: the backend routes
+// "APP/TUI/WEB/PLUG …" to the apps uninstaller.
+func uninstallKey(k string) string {
+	k = strings.TrimPrefix(k, tuikit.TreeItemPrefix)
+	for _, kind := range []string{"APP ", "TUI ", "WEB ", "PLUG "} {
+		if i := strings.Index(k, kind); i >= 0 {
+			return k[i:]
+		}
+	}
+	if i := strings.IndexByte(k, ':'); i >= 0 {
+		return k[i+1:]
+	}
+	return k
+}
+
 func splitPreinstallsKey(keys []string) (mods []string, wantPre bool) {
 	mods = make([]string, 0, len(keys))
 	for _, k := range keys {
@@ -2970,7 +3024,7 @@ func homePageInfoFor(page string) string {
 
 	case "backup":
 		return "Backup / Restore — DATED ARCHIVES of your configuration, written to\n" +
-			"~/omarchy-backups as omarchy-backup-<date>.tar.gz.\n\n" +
+			"mosquitomarchy-backups/ (next to the repo) as omarchy-backup-<date>.tar.gz.\n\n" +
 			"  Back up now  — walks three pages: what to include (apps/TUIs/\n" +
 			"                 webapps, VST plugins, KeePassXC passwords, Zen\n" +
 			"                 settings), an optional name for the archive, and\n" +
@@ -3958,7 +4012,7 @@ func (m model) backupsList() []tuikit.PickerItem {
 		})
 	}
 	if len(items) == 0 {
-		items = append(items, tuikit.PickerItem{Display: "no backup found in ~/omarchy-backups", Value: "", Disabled: true})
+		items = append(items, tuikit.PickerItem{Display: "no backup found in mosquitomarchy-backups/", Value: "", Disabled: true})
 	}
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
 	return items

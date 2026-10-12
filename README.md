@@ -49,7 +49,7 @@ Once installed, `mosquitOmarchy` is the interface for everything here — run it
 - **Update** — pull the scripts repo, then re-apply the changed installed modules.
 - **Setup** — the module tree. `tab` selects, `←/→` expand a folder, `i` explains the
   highlighted entry, `enter` installs the selection.
-- **Backup / Restore** — a dated archive in `~/omarchy-backups/`, optionally
+- **Backup / Restore** — a dated archive in `mosquitomarchy-backups/` (next to the repo), optionally
   AES-256 encrypted.
 - **Fixes** — the small idempotent fixes in `scripts/fixes/`, as a multi-select.
 - **Close** — leave.
@@ -163,7 +163,7 @@ The orchestrator. It offers backup/restore, then installs modules, then reports.
 ./mosquitomarchy-setup.sh --update-repo      # git pull the scripts
 ```
 
-**Backup.** Each is `~/omarchy-backups/omarchy-backup-<timestamp>.tar.gz`: Hyprland and
+**Backup.** Each is `mosquitomarchy-backups/omarchy-backup-<timestamp>.tar.gz` (next to the repo): Hyprland and
 app configs, the Zen profile (extensions, theme and the browser's own settings — browsing
 data is deliberately excluded), package lists, the app selection, and a `RESTORE.md`. With
 `--backup` the archive is then encrypted in place with AES-256 (gpg, file level, no sudo)

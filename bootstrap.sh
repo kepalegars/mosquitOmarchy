@@ -173,6 +173,10 @@ deploy(){
   # of the check here could only ever be a worse, earlier version of the same
   # error.
   bash "./$DEPLOYER" -y
+  # The backups folder lives next to the repo from day one, so Backup and
+  # Restore agree on where to look even before the first backup exists.
+  mkdir -p "$SRC/mosquitomarchy-backups" 2>/dev/null \
+    && ok "Backups folder ready: $SRC/mosquitomarchy-backups" || true
 }
 
 if [[ -x $TUI ]]; then

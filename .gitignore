@@ -69,13 +69,17 @@ scripts/plugins/live-mode/tui-go/live-mode-tui
 scripts/apps/guitarpro/guitar-pro-8-licence.md
 
 # ── Password files / archives: ultra-safety, NEVER in a repository ──
-# KeePassXC databases and backup archives (the backups normally live in
-# $HOME/omarchy-backups, outside the repo — this is a last-resort guard if
-# one is ever copied here by mistake).
+# KeePassXC databases and backup archives (the backups live in
+# mosquitomarchy-backups/ next to the repo — this is a last-resort guard if
+# one is ever copied elsewhere by mistake).
 *.kdbx
 *.kdbx.*
 omarchy-backup-*.tar.gz
 omarchy-backup-*.tar.gz.gpg
+# The backups folder itself (created by the bootstrap next to the repo):
+# machine archives must never be committed, the complete release type picks
+# them up from disk instead.
+mosquitomarchy-backups/
 
 # ── User-only notes (see archive-customarchy.sh release) ──
 SECRET-README.md

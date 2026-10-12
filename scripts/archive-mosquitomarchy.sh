@@ -165,7 +165,7 @@ collect_complete(){
     git -C "$ROOT" ls-files -z | tr '\0' '\n'
     git -C "$ROOT" ls-files --others -z | tr '\0' '\n'
   } | grep -v -E '(^|/)\.git/' \
-    | grep -v -E '\.tar\.gz$' \
+    | awk '!/\.tar\.gz(\.gpg)?$/ || /^mosquitomarchy-backups\//' \
     | grep -v -E '(^|/)Passwords\.kdbx$' \
     | grep -v -E '(^|/)(pkglist|aurlist)\.txt$' \
     | grep -v -E '(^|/)apps\.selected$' \
@@ -476,7 +476,7 @@ archive is only needed to avoid the download step.
 ## Restore your own settings
 
 This archive has nothing to restore. A machine backup is a different, dated
-file in `~/omarchy-backups/`, made by the mosquitomarchy TUI
+file in `mosquitomarchy-backups/` (next to the repo), made by the mosquitomarchy TUI
 (**Backup**, optionally AES-256 encrypted) and restored with
 `./mosquitomarchy-setup.sh --restore`.
 MDEOF
@@ -601,6 +601,12 @@ build_complete(){
   bad=""
   while IFS= read -r f; do
     [[ -z $f ]] && continue
+    # The backups folder rides along on purpose (complete type only); nested
+    # archives anywhere else, and passwords, still fail the build. Entries
+    # carry the transformed mosquitomarchy/ prefix here.
+    case "$f" in
+      mosquitomarchy/mosquitomarchy-backups/*) continue ;;
+    esac
     for pat in '*.tar.gz' '*Passwords.kdbx'; do
       if [[ $f == $pat ]] || [[ $f == *"$pat" ]]; then bad+="$f"$'\n'; break; fi
     done
@@ -611,7 +617,7 @@ build_complete(){
     rm -f "$out"
     exit 1
   fi
-  ok "verified: no nested archives, no passwords"
+  ok "verified: no nested archives (outside mosquitomarchy-backups/), no passwords"
 
   ok "complete archive: $out ($(human "$bytes"), $(tar tzf "$out" 2>/dev/null | wc -l) entries)"
   echo "  Extract by hand:  tar xzf $(basename "$out") && cd $PROJECT_NAME && ./bootstrap.sh"

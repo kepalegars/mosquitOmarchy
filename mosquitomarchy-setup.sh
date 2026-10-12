@@ -860,8 +860,8 @@ status_report(){
 }
 
 # ───────────────────────── Backup / Restore (integrated) ─────────────────────────
-# Each backup is stored as a dated FILE in a dedicated folder:
-#   ~/omarchy-backups/omarchy-backup-<YYYYMMDD-HHMMSS>.tar.gz
+# Each backup is stored as a dated FILE in a dedicated folder next to the repo:
+#   <repo>/mosquitomarchy-backups/omarchy-backup-<YYYYMMDD-HHMMSS>.tar.gz
 # The archive is optionally encrypted in place with a passphrase (AES-256,
 # gpg --symmetric --cipher-algo AES256 — same cipher LUKS/Omarchy uses, file
 # level, no sudo needed). An encrypted backup keeps the same dated name plus a
@@ -873,7 +873,7 @@ status_report(){
 # and optionally plugins/manifest.txt (inventory) and plugins/plugins-vst.tar.gz
 # (full VST archive). All paths are relative to $HOME: a restore puts them
 # back exactly in the same place.
-BACKUP_DIR="${OMARCHY_BACKUP_DIR:-$HOME/omarchy-backups}"
+BACKUP_DIR="${OMARCHY_BACKUP_DIR:-$SCRIPT_DIR/mosquitomarchy-backups}"
 BACKUP_GLOB="$BACKUP_DIR/omarchy-backup-*.tar.gz*"
 BACKUP_DECRYPTED_RE='.*\.tar\.gz(\.gpg)?$'
 # Most recent available backup (path based on $BACKUP_DIR, so testable).
@@ -1646,7 +1646,7 @@ do_backup(){
     [[ -f $ini ]] && { rel="${ini#"$HOME/"}"; [[ -e "$HOME/$rel" ]] || paths+=("$rel"); }
   done
   # KeePassXC passwords + settings — ONLY if the app is installed, and the
-  # tar archive goes to $BACKUP_DIR (outside the repo, $HOME/omarchy-backups):
+  # tar archive goes to $BACKUP_DIR (next to the repo, mosquitomarchy-backups/):
   # password files must NEVER enter the repository. BACKUP_SKIP_KEEPASS=1
   # (the TUI's "KeePassXC: skip") leaves them out.
   if [[ -z ${BACKUP_SKIP_KEEPASS:-} ]] && pkg_has keepassxc; then
@@ -3460,7 +3460,10 @@ preinstall_label(){
 # removal, because the user installed them on purpose (or restored them from a
 # backup), not as part of the Omarchy ISO.
 preinstall_protected(){
-  local -a keep=("$@") catfiles=() catf line kind name
+  # NOTE: keep starts EMPTY. It used to seed from "$@" (the queried packages
+  # themselves), so every package matched itself and the function was always
+  # true: nothing was ever removable and every row read "your own app — kept".
+  local -a keep=() catfiles=() catf line kind name
   catfiles=("$SCRIPT_DIR/scripts/apps/gui/guis.catalog" "$SCRIPT_DIR/scripts/apps/tui-tools/tuis.catalog")
   for catf in "${catfiles[@]}"; do
     [[ -f $catf ]] || continue
