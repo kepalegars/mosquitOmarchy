@@ -652,12 +652,13 @@ func (m *model) toggleFolder(folder string) {
 }
 
 // toggleTreeFolder is the shared folder select-all/none used by the Setup and
-// backup-content trees.
+// backup-content trees. Greyed (Disabled) rows are never ticked: selecting
+// what cannot run would only produce a failed install.
 func toggleTreeFolder(items []SetupItemRec, checked map[string]bool, folder string) {
 	n := 0
 	anyUnchecked := false
 	for _, it := range items {
-		if it.Folder != folder {
+		if it.Folder != folder || it.Disabled {
 			continue
 		}
 		n++
@@ -670,7 +671,7 @@ func toggleTreeFolder(items []SetupItemRec, checked map[string]bool, folder stri
 		return
 	}
 	for _, it := range items {
-		if it.Folder != folder {
+		if it.Folder != folder || it.Disabled {
 			continue
 		}
 		if anyUnchecked {

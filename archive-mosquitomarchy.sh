@@ -35,15 +35,16 @@
 #
 # Env:
 #   OMARCHY_ARCHIVE_OUT   default output directory (default: the repo's parent dir)
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager — the prompt needs one
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager — the prompt needs one
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# The repo ROOT is three levels up: this script lives in
-# scripts/apps/mosquitomarchy/, next to the manager it archives. Resolved
+# The repo ROOT is right here: this script lives next to bootstrap at the
+# repo root. Resolved
 # from the location rather than assumed, so the archive covers the repo
 # whether it is run from its own folder or by absolute path.
-ROOT="$(dirname "$(dirname "$(dirname "$SCRIPT_DIR")")")"
+# (The script sits AT the root, so its own folder IS the root.)
+ROOT="$SCRIPT_DIR"
 # The folder name inside the archive is the CANONICAL project name, not the
 # name of whoever's checkout produced it: the same commit must give the same
 # archive whatever the directory is called locally (here it is 'mosquitOmarchy').

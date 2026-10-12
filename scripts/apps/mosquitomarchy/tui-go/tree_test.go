@@ -514,6 +514,7 @@ func TestUninstallFoldingDoesNotReflowThePage(t *testing.T) {
 func TestCategoryRowsCarryTheAccentSquareWhenSomethingIsTicked(t *testing.T) {
 	m := flatSetup()
 	m.folderOpen = map[string]bool{"apps": true, "mosquito": true}
+	// A partial tick leaves the square empty: only the whole folder fills it.
 	m.selected[setupValue("apps", "reaper")] = true
 
 	view := ansi.Strip(m.rebuildSetup().View())
@@ -528,8 +529,25 @@ func TestCategoryRowsCarryTheAccentSquareWhenSomethingIsTicked(t *testing.T) {
 			}
 		}
 	}
+	if got := rows["Apps"]; strings.Contains(got, tuikit.MarkBadge) {
+		t.Errorf("partially ticked category shows the %q: %q", tuikit.MarkBadge, got)
+	}
+	// The full folder ticks it: the square means "the whole folder goes".
+	m.selected[setupValue("apps", "extracto")] = true
+	view = ansi.Strip(m.rebuildSetup().View())
+	rows = map[string]string{}
+	for _, l := range strings.Split(view, "\n") {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		for _, name := range []string{"Apps", "mosquito", "Menu entries"} {
+			if strings.Contains(l, name) {
+				rows[name] = l
+			}
+		}
+	}
 	if got := rows["Apps"]; !strings.Contains(got, tuikit.MarkBadge) {
-		t.Errorf("the ticked category has no %q: %q", tuikit.MarkBadge, got)
+		t.Errorf("fully ticked category has no %q: %q", tuikit.MarkBadge, got)
 	}
 	// Nothing ticked inside the others, so no square — otherwise it is noise.
 	for _, name := range []string{"mosquito", "Menu entries"} {

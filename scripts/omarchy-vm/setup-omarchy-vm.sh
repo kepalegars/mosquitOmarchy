@@ -819,7 +819,7 @@ cleanup(){
 trap cleanup EXIT
 
 # Explain the guest-shortcuts toggle (shortest form).
-VM_TIP="Focus VM (shortcuts): SUPER + ALT + V."
+VM_TIP="Focus VM: SUPER + ALT + V."
 if command -v omarchy-notification-send >/dev/null 2>&1; then
   omarchy-notification-send "Omarchy VM" "$VM_TIP" >/dev/null 2>&1 &
 elif command -v notify-send >/dev/null 2>&1; then

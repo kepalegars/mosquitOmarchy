@@ -203,7 +203,7 @@ the float rule (plugins and apps stay — they have their own uninstall rows). T
 `rm` lines clear the first-run marker, the tree cache and the uninstalled-modules
 memory, so the next `./bootstrap.sh` starts from zero.
 
-### `scripts/apps/mosquitomarchy/archive-mosquitomarchy.sh`
+### `archive-mosquitomarchy.sh`
 
 Builds an archive of the repo into the directory next to it, in one of two
 types chosen from a menu (or `--type=`): `complete` (the whole working tree
@@ -213,10 +213,10 @@ only: no logs, no install files, no backups). The source list comes from
 it if a log, `Passwords.kdbx` or backup slipped in where it should not be.
 
 ```bash
-./scripts/apps/mosquitomarchy/archive-mosquitomarchy.sh              # menu: choose a type, then build
-./scripts/apps/mosquitomarchy/archive-mosquitomarchy.sh --list       # what would go in, writes nothing
-./scripts/apps/mosquitomarchy/archive-mosquitomarchy.sh --type=source
-./scripts/apps/mosquitomarchy/archive-mosquitomarchy.sh --out=DIR
+./archive-mosquitomarchy.sh              # menu: choose a type, then build
+./archive-mosquitomarchy.sh --list       # what would go in, writes nothing
+./archive-mosquitomarchy.sh --type=source
+./archive-mosquitomarchy.sh --out=DIR
 ```
 
 A release replaces the bootstrap pipe — extract it, `./bootstrap.sh --init-git` to make

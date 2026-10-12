@@ -75,16 +75,23 @@ func TestTheFixesAreRowsInTheTreeNotASubScreen(t *testing.T) {
 	t.Fatalf("no %q row on the Setup page: removing the sub-screen would strand the fixes", want)
 }
 
-// Enter on a fix's own row opens the same screen rather than offering to
-// install a module called "wine-menu".
+// Enter on a fix's own row asks to run THAT fix rather than offering to
+// install a module called "wine-menu" — and rather than opening the whole
+// fixes screen for a single row.
 func TestEnterOnAFixRowDoesNotTryToInstallAModule(t *testing.T) {
 	m := qfSetup()
 	next, _ := m.update(tuikit.PickerResultMsg{Value: "item:fixes:wine-menu"})
-	if next.top() != scrQuickFixes {
-		t.Fatalf("Enter on a fix row went to screen %d, want the fixes list", next.top())
+	if next.top() != scrConfirm {
+		t.Fatalf("Enter on a fix row went to screen %d, want the confirmation", next.top())
 	}
 	if next.pendingAction == "apply" {
 		t.Error("Enter on a fix queued an INSTALL")
+	}
+	if next.pendingAction != "quick-fixes" {
+		t.Fatalf("pendingAction = %q, want quick-fixes", next.pendingAction)
+	}
+	if len(next.pendingFixIDs) != 1 || next.pendingFixIDs[0] != "wine-menu" {
+		t.Fatalf("pendingFixIDs = %v, want [wine-menu]", next.pendingFixIDs)
 	}
 }
 

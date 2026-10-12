@@ -720,7 +720,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			m.healthPicker = m.rebuildHealth()
 		case scrSetup:
-			if strings.HasPrefix(msg.Value, "item:") {
+			// Tab on a FOLDER ticks the whole folder (or unticks it when
+			// everything tickable already is) — the only gesture that fills
+			// the folder's square. Tab on a row ticks just that row.
+			if strings.HasPrefix(msg.Value, "cat:") {
+				m.toggleFolder(strings.TrimPrefix(msg.Value, "cat:"))
+				m.setupPicker = m.rebuildSetup()
+			} else if strings.HasPrefix(msg.Value, "item:") {
 				m.toggle(msg.Value)
 				m.setupPicker = m.rebuildSetup()
 			}
@@ -3503,13 +3509,10 @@ func (m model) buildSetupRows(uninstall bool, open map[string]bool, idx map[stri
 			map[string][]tuikit.TreeItem{menuEntriesFolder: meChildren},
 			open, m.blinkOn)...)
 	}
-	// A category with something ticked inside it carries the accent square at
-	// the end of its row — the same marker the plugin manager puts on a folder
-	// that has an applied fix. Setup and Uninstall are mostly a wall of
-	// category names with a count on the right, and the count alone does not
-	// say whether the ticked thing is in there yet, so the two are easy to
-	// confuse. The square answers that at a glance, and because it only
-	// appears once something is ticked, it never becomes noise.
+	// A category whose every tickable row is ticked carries the accent
+	// square at the end of its row — filled by the Tab-on-folder gesture
+	// only. Anything less (including a partial tick) leaves it empty, so
+	// the square always means "the whole folder goes", never "something".
 	out = tuikit.WithCategoryMark(out, func(v string) int {
 		_, cat, ok := tuikit.TreeSplit(v)
 		if !ok {
@@ -3517,12 +3520,27 @@ func (m model) buildSetupRows(uninstall bool, open map[string]bool, idx map[stri
 		}
 		if cat == menuEntriesFolder {
 			// Menu entries are not setup items — they live in their own cache
-			// and are ticked on their own page — so the per-category count
-			// would always report 0 here and the folder would never light up.
-			return m.menuEntriesCheckedCount()
+			// and are ticked on their own page.
+			n := m.menuEntriesCheckedCount()
+			if n > 0 && n == len(m.menuEntries) {
+				return 1
+			}
+			return 0
 		}
-		if c := idx[cat]; c != nil {
-			return c.marked
+		if idx[cat] != nil {
+			total, marked := 0, 0
+			for _, it := range m.setupItemsOf(cat) {
+				if it.Disabled {
+					continue
+				}
+				total++
+				if m.selected[setupValue(cat, it.Key)] {
+					marked++
+				}
+			}
+			if total > 0 && marked == total {
+				return 1
+			}
 		}
 		return 0
 	})
