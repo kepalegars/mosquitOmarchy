@@ -49,6 +49,20 @@ if [[ ! -x $TUI ]]; then
   exit 1
 fi
 
+# A repo update defers the manager rebuild to launch time (rebuilding inline
+# froze the running TUI mid-run): when an update left a rebuild pending, do
+# it now — before the UI starts — so this launch already runs the new code.
+# Headless queries (--status) never rebuild: the boot hook calls those, and a
+# toolchain hiccup must not slow boot down.
+REBUILD_FLAG="$HOME/.local/state/mosquitomarchy/rebuild-pending"
+if [[ ${1:-} != "--status" && ${1:-} != "status" && -f $REBUILD_FLAG && -n $_REPO ]]; then
+  if GUI_RUN_EXEC=1 bash "$_REPO/scripts/apps/mosquitomarchy/install-tui.sh" -y >/dev/null 2>&1; then
+    rm -f "$REBUILD_FLAG"
+  else
+    echo "mosquitomarchy: pending rebuild failed — launching the previous build." >&2
+  fi
+fi
+
 if [[ -t 0 && -t 1 ]]; then
   # Inside a terminal the TUI runs in place — WITH its arguments, so
   # `mosquitomarchy --update` opens straight on the Update page instead of

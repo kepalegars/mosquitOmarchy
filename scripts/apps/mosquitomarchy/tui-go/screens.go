@@ -262,6 +262,16 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// The selection is consumed FIRST, while pendingAction still names
 			// the action: overwriting it below would make this test never match.
 			wasApplyOrUninstall := m.pendingAction == "apply" || m.pendingAction == "uninstall"
+			if m.pendingAction == "heal" {
+				// The missing pieces were just re-applied: drop the stale
+				// finding now (square clears instantly) and re-verify behind
+				// the success confirm, so the list shows the verified state.
+				m.healthItems = nil
+				m.healthChecked = map[string]bool{}
+				m.mainPicker = m.rebuildMainMenu()
+				m.healthPicker = m.rebuildHealth()
+				m.deferCmd(fetchHealthCmd())
+			}
 			if wasApplyOrUninstall {
 				m.selected = map[string]bool{}
 				// An apply/uninstall is the one thing that can change the
@@ -273,6 +283,19 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				} else if m.top() == scrSetup {
 					m.setupPicker = m.rebuildSetup()
 				}
+			}
+			// A repo update (or a modules update that included the manager)
+			// rebuilds on NEXT launch, never inline — so success here says
+			// that, and offers quitting to the new version instead of going
+			// back to a stale screen.
+			if m.pendingAction == "update-repo" || wantsSelfRebuild(m.pendingAction, m.pendingArgs) {
+				m.pendingAction = "update-reboot"
+				m.pendingMsg = "Repo updated — the manager rebuilds on next launch.\n\nSee the log, or quit now and reopen for the new version?"
+				m.pendingNo = "Quit"
+				m.pendingYes = "See log"
+				m.push(scrConfirm)
+				m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+				return m, nil
 			}
 			// A SUCCESSFUL run used to get a bare toast and drop straight back
 			// to the previous screen, with no way to read what happened and no
@@ -823,6 +846,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.pop()
 		if msg.Canceled || !msg.Yes {
+			// Quitting here IS the reboot: the dispatcher rebuilds on the
+			// next launch when an update left a rebuild pending.
+			if m.pendingAction == "update-reboot" {
+				m.quit = true
+				return m, tea.Quit
+			}
 			if m.pendingAction == "quick-fixes" {
 				// Declined: nothing runs, and the ticks stay as they were so
 				// the set can be adjusted and applied straight away.
@@ -1040,7 +1069,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case "close":
 			m.quit = true
 			return m, tea.Quit
-		case "run-errors", "run-done-log":
+		case "run-errors", "run-done-log", "update-reboot":
 			// Show the full streamed log in the scrollable Info screen; the
 			// prompt itself was already popped, so closing the log returns to
 			// the previous menu. "run-done-log" is the same prompt on the
@@ -1261,6 +1290,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// in place, and a second copy of the sentence is noise.
 			m.healthItems = nil
 			m.healthPicker = m.rebuildHealth()
+			m.mainPicker = m.rebuildMainMenu()
 			return m, nil
 		}
 		// Missing pieces are the screen's rows: every one becomes a tab-toggle
@@ -1279,7 +1309,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if m.top() != scrHealth {
 			m.push(scrHealth)
 		}
+		// The main menu is rebuilt too: its square follows the LATEST
+		// check, so a finding fixed since (or found while elsewhere)
+		// cannot stick around.
 		m.healthPicker = m.rebuildHealth()
+		m.mainPicker = m.rebuildMainMenu()
 		return m, nil
 
 	case kbMsg:
@@ -2075,10 +2109,13 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			return m, nil
 		case "health":
 			// Push the health screen immediately with a loading indicator, then fetch.
+			// Stale findings are dropped first (with the square): otherwise a
+			// fixed issue keeps its square until the new results land.
 			m.healthItems = nil
 			m.healthChecked = map[string]bool{}
 			m.push(scrHealth)
 			m.healthPicker = m.rebuildHealth()
+			m.mainPicker = m.rebuildMainMenu()
 			return m, fetchHealthCmd()
 		case "backup":
 			m.push(scrBackup)
@@ -2840,6 +2877,21 @@ func uninstallKey(k string) string {
 		return k[i+1:]
 	}
 	return k
+}
+
+// wantsSelfRebuild reports whether a finished backend action included the
+// manager module: those rebuild on next launch now, so the success confirm
+// offers quitting to the new version.
+func wantsSelfRebuild(action string, args []string) bool {
+	if action != "update-modules" {
+		return false
+	}
+	for _, a := range args {
+		if a == "mosquitomarchy" {
+			return true
+		}
+	}
+	return false
 }
 
 func splitPreinstallsKey(keys []string) (mods []string, wantPre bool) {

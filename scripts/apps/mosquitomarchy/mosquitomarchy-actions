@@ -1497,11 +1497,18 @@ cmd_fixes_run(){
 
 # Re-apply the given installed modules (update flow).
 cmd_update(){
-  SELECTED=("$@")
+  local -a inline=()
+  mapfile -t inline < <(without_mosquitomarchy "$@")
+  if ((${#inline[@]} != $#)); then
+    flag_tui_rebuild
+  fi
+  SELECTED=("${inline[@]}")
   YES=1
   RESULTS=()
   MODULE_FAILURES=0
-  exec_modules
+  if ((${#SELECTED[@]})); then
+    exec_modules
+  fi
   if (( MODULE_FAILURES > 0 )); then
     err "One or more modules failed to re-apply."
     return 1
@@ -1602,6 +1609,28 @@ cmd_apply(){
 }
 
 # Git pull the repo (update zone).
+# without_mosquitomarchy <ids...> — prints all but the manager module (one per
+# line); rc=0 when mosquitomarchy was among them. Rebuilding the RUNNING
+# manager inline froze the TUI mid-run, so update flows defer it to the next
+# launch (flag file the dispatcher honors) instead of re-applying it here.
+without_mosquitomarchy(){
+  local m found=1
+  for m in "$@"; do
+    if [[ $m == mosquitomarchy ]]; then found=0; else printf '%s\n' "$m"; fi
+  done
+  return $found
+}
+
+# flag_tui_rebuild — record that the manager must rebuild on next launch
+# (the dispatcher consumes the flag). Content is the new HEAD when known.
+flag_tui_rebuild(){
+  local dir="$HOME/.local/state/mosquitomarchy"
+  mkdir -p "$dir" 2>/dev/null || true
+  git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null > "$dir/rebuild-pending" 2>/dev/null \
+    || printf '1\n' > "$dir/rebuild-pending" 2>/dev/null || true
+  msg "mosquitomarchy will rebuild on next launch — quit and reopen it for the new version."
+}
+
 cmd_update_repo(){
   YES=1
   if [[ ! -d "$REPO_DIR/.git" ]] || ! command -v git >/dev/null 2>&1; then
@@ -1616,25 +1645,14 @@ cmd_update_repo(){
     ok "Repo already current — nothing to re-apply."
     return 0
   fi
-  # The repo moved: re-apply the manager itself so the installed TUI is
-  # rebuilt from the new sources. Without this the update changed files on
-  # disk while the running manager stayed the old build, and only a manual
-  # rebuild (or a fresh clone) ever showed the new code.
+  # The repo moved: the installed manager rebuilds on NEXT launch (flag),
+  # never inline — rebuilding the running TUI froze the update mid-run.
   local st; st="$(module_state mosquitomarchy 2>/dev/null || true)"; st="${st%%:*}"
   if [[ $st != ok && $st != partial ]]; then
-    warn "mosquitomarchy module not installed — skipping its re-apply."
+    warn "mosquitomarchy module not installed — nothing scheduled."
     return 0
   fi
-  msg "Repo updated — re-applying the mosquitomarchy module (rebuilds the TUI)…"
-  RESULTS=()
-  MODULE_FAILURES=0
-  SELECTED=(mosquitomarchy)
-  exec_modules
-  if (( MODULE_FAILURES > 0 )); then
-    err "mosquitomarchy re-apply failed — relaunch it by hand: mosquitomarchy."
-    return 1
-  fi
-  final_report
+  flag_tui_rebuild
 }
 
 # Update modules: fast-forward the LOCAL repo from GitHub FIRST (so both
@@ -1678,24 +1696,40 @@ cmd_update_modules(){
   done
 
   if ((${#only[@]})); then
-    # Re-apply just the subset the user kept selected in the TUI.
-    RESULTS=()
-    MODULE_FAILURES=0
-    SELECTED=("${only[@]}")
-    msg "Re-applying ${#only[@]} selected module(s)…"
-    exec_modules
-    if (( MODULE_FAILURES > 0 )); then
-      err "One or more modules failed to update."
-      return 1
+    # Re-apply just the subset the user kept selected in the TUI — except
+    # the manager itself, which rebuilds on next launch (flag) instead of
+    # freezing this run by rebuilding the TUI it streams through.
+    local -a inline=()
+    mapfile -t inline < <(without_mosquitomarchy "${only[@]}")
+    if ((${#inline[@]} != ${#only[@]})); then
+      flag_tui_rebuild
     fi
-    final_report
+    if ((${#inline[@]})); then
+      RESULTS=()
+      MODULE_FAILURES=0
+      SELECTED=("${inline[@]}")
+      msg "Re-applying ${#inline[@]} selected module(s)…"
+      exec_modules
+      if (( MODULE_FAILURES > 0 )); then
+        err "One or more modules failed to update."
+        return 1
+      fi
+      final_report
+    else
+      ok "Nothing else to re-apply here."
+    fi
     return 0
   fi
 
-  if ((${#ids[@]})); then
+  local -a inline_ids=()
+  mapfile -t inline_ids < <(without_mosquitomarchy "${ids[@]}")
+  if ((${#inline_ids[@]} != ${#ids[@]})); then
+    flag_tui_rebuild
+  fi
+  if ((${#inline_ids[@]})); then
     RESULTS=()
     MODULE_FAILURES=0
-    SELECTED=("${ids[@]}")
+    SELECTED=("${inline_ids[@]}")
     msg "Re-applying ${#ids[@]} changed installed module(s)…"
     exec_modules
     if (( MODULE_FAILURES > 0 )); then

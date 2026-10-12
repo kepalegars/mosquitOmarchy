@@ -316,27 +316,19 @@ type pickerDelegate struct {
 // row, otherwise the ○/● checkbox badge. Returns blank padding of exactly
 // d.badgeSlot columns so every row's title starts on the same offset.
 //
-// A folder's glyph is muted when the row is idle and bright+bold while the
-// cursor is on it. A glyph cannot literally be "filled" in a terminal, so the
-// selection cue is carried by weight and brightness — which reads as the
-// folder lighting up rather than as a second checkbox state.
+// A folder draws the SAME square open or closed; the only second state is
+// selected, where the square fills in. The muted/bright+bold contrast stays
+// on top, and still not the accent: on achraff-67 the accent is a lime, and
+// an unselected folder glowing green read as a status rather than a shape.
 func (d pickerDelegate) leadCell(pi PickerItem, selected bool) string {
 	if d.badgeSlot <= 0 {
 		return ""
 	}
 	if pi.Folder {
-		// The glyph itself carries open vs closed, and the colour carries
-		// selected vs idle. A glyph cannot literally be "filled in" per state,
-		// so the selection cue is brightness + weight — the folder lights up
-		// when the cursor is on it. NOT the accent: on achraff-67 the accent is
-		// a lime, and an unselected folder glowing green read as a status
-		// rather than as a shape.
 		st := lipgloss.NewStyle().Foreground(ColorSubtle)
+		glyph := FolderClosed
 		if selected {
 			st = lipgloss.NewStyle().Foreground(ColorOnSurface).Bold(true)
-		}
-		glyph := FolderClosed
-		if pi.Fold == FoldExpanded {
 			glyph = FolderOpen
 		}
 		return st.Render(glyph) + strings.Repeat(" ", max(0, d.badgeSlot-1))

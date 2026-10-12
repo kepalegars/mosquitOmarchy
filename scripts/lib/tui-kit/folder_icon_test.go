@@ -30,10 +30,10 @@ func TestFolderIconNeedsNoNerdFont(t *testing.T) {
 	}
 }
 
-// TestFolderIconTracksFold checks the glyph follows the row's fold state, so a
-// collapsed folder reads differently from an expanded one even though both sit
-// in the same leading slot.
-func TestFolderIconTracksFold(t *testing.T) {
+// TestFolderIconIgnoresFold checks the glyph does NOT follow the row's fold
+// state: a collapsed folder draws the same square as an expanded one, both
+// sitting in the same leading slot.
+func TestFolderIconIgnoresFold(t *testing.T) {
 	mk := func(fold string) PickerItem {
 		return PickerItem{Display: "Apps", Value: "cat:apps", Folder: true, Fold: fold}
 	}
@@ -43,8 +43,8 @@ func TestFolderIconTracksFold(t *testing.T) {
 	if !strings.Contains(closed, FolderClosed) {
 		t.Errorf("collapsed folder should draw %q, got %q", FolderClosed, closed)
 	}
-	if !strings.Contains(open, FolderOpen) {
-		t.Errorf("expanded folder should draw %q, got %q", FolderOpen, open)
+	if !strings.Contains(open, FolderClosed) {
+		t.Errorf("expanded folder should draw %q too, got %q", FolderClosed, open)
 	}
 	// A leaf keeps its checkbox: the folder glyph must not leak onto items.
 	leaf := d.leadCell(PickerItem{Display: "reaper", Value: "item:r", Badge: "○"}, false)
@@ -53,10 +53,11 @@ func TestFolderIconTracksFold(t *testing.T) {
 	}
 }
 
-// TestFolderIconDistinguishesSelection pins the idle/selected contrast. Both
-// states are grey-ish neutrals on purpose: on achraff-67 the accent is a lime
-// and an unselected folder glowing green read as a status rather than a shape.
-func TestFolderIconDistinguishesSelection(t *testing.T) {
+// TestFolderIconFillsOnSelection pins the idle/selected contrast: the ONLY
+// second state of a folder is selected, where its square fills in. Both
+// states stay clear of the accent: on achraff-67 the accent is a lime and
+// an unselected folder glowing green read as a status rather than a shape.
+func TestFolderIconFillsOnSelection(t *testing.T) {
 	// The palette is normally filled by ApplyTheme() at startup, and the
 	// renderer only emits the exact foreground under a truecolor profile. A
 	// test run without a TTY falls back to short ANSI, where the two theme
@@ -71,10 +72,10 @@ func TestFolderIconDistinguishesSelection(t *testing.T) {
 	pi := PickerItem{Display: "Apps", Value: "cat:apps", Folder: true, Fold: FoldExpanded}
 	idle := d.leadCell(pi, false)
 	sel := d.leadCell(pi, true)
-	if idle == sel {
-		t.Fatal("a folder must look different when the cursor is on it")
+	if !strings.Contains(idle, FolderClosed) {
+		t.Fatalf("idle folder should draw the plain square %q, got %q", FolderClosed, idle)
 	}
-	if !strings.Contains(idle, FolderOpen) || !strings.Contains(sel, FolderOpen) {
-		t.Fatalf("selection must not change the glyph, only its colour: idle=%q selected=%q", idle, sel)
+	if !strings.Contains(sel, FolderOpen) {
+		t.Fatalf("selected folder should draw the filled square %q, got %q", FolderOpen, sel)
 	}
 }
