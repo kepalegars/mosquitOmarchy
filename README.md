@@ -269,13 +269,13 @@ mosquitOmarchy/
 ├── VERSION                   # the single source of the version below
 └── scripts/
     ├── apps/                 # one folder per app, plus the app/TUI/webapp catalogs
+    │   └── mosquitomarchy/   # the manager TUI + backend + archive-mosquitomarchy.sh
     ├── plugins/              # shell plugins: live-mode, jamjamjam, power-management
     ├── fixes/                # small idempotent fixes
     ├── lib/                  # shared helpers, tui-kit/ (the Go component library)
     ├── theme/  LLM/  deps/
     ├── windows-vm/  macos-vm/  omarchy-vm/
-    ├── mosquitomarchy-update/
-    └── archive-mosquitomarchy.sh
+    └── mosquitomarchy-update/
 ```
 
 Each script resolves its resources from its own directory, so moving a whole directory does
