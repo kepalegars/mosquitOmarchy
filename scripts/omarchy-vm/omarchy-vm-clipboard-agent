@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """omarchy-vm-clipboard-agent — guest side of the VM clipboard bridge.
 
-Run this INSIDE the Omarchy VM. One command installs and starts it:
+Run this INSIDE the Omarchy VM, while its launcher runs on the host (the
+bridge lives and dies with the VM — a closed VM means connection refused).
+One command installs and starts it:
 
-    curl -s http://10.0.2.2:7789/agent -o ~/vm-clipboard.py && \
+    curl -sf --retry 3 http://10.0.2.2:7789/agent -o ~/vm-clipboard.py && \
+      test -s ~/vm-clipboard.py && \
       nohup python3 ~/vm-clipboard.py >/tmp/vm-clipboard.log 2>&1 &
+
+If it fails, check `curl -s http://10.0.2.2:7789/ping` prints `ok` first.
 
 10.0.2.2 is slirp's gateway, which maps onto the host's loopback, so that URL
 reaches omarchy-vm-clipboard on the desktop. Nothing is mounted, no package is

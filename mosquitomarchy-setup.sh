@@ -2761,6 +2761,10 @@ AGENTLAYOUT_PY
   mkdir -p "$HOME/.local/state/mosquitomarchy"
   printf '1\n' > "$HOME/.local/state/mosquitomarchy/remove-all-ai"
   ok "Agentic surface removed: agents widget hidden, AI-diagnosis toasts gone"
+  # Bar layout edits only show after a shell reload: without it the widget
+  # sits there visibly enabled-but-removed (or vice versa), which reads as
+  # "bring back did nothing".
+  omarchy restart shell >/dev/null 2>&1 || true
 }
 
 run_restore_ai() {
@@ -2801,6 +2805,7 @@ AGENTLAYOUT_PY
   # hiding block (byte-identical rows underneath, never touched).
   unhide_agents_menu
   ok "Agentic surface back: agents widget in the bar, AI-diagnosis toasts on"
+  omarchy restart shell >/dev/null 2>&1 || true
 }
 
 un_guitarpro(){

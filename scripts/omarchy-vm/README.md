@@ -130,13 +130,19 @@ qemu-system-x86_64 -name omarchy-<name> -machine q35,accel=kvm:tcg -cpu host
   with the VM: nothing to bridge while the VM is off. Bind to loopback is also
   the boundary — the bridge answers the VM and nothing else on the network.
 
-  Enable it once inside the guest (one command; nothing is mounted and no
-  package is installed — the host serves the agent itself):
+  Enable it once inside the guest (nothing is mounted and no package is
+  installed — the host serves the agent itself). The VM launcher must be
+  running: the bridge lives and dies with it, so a closed VM means
+  connection refused and an empty agent file (python then exits 2).
 
   ```sh
-  curl -s http://10.0.2.2:7789/agent -o ~/vm-clipboard.py && \
+  curl -sf --retry 3 http://10.0.2.2:7789/agent -o ~/vm-clipboard.py && \
+    test -s ~/vm-clipboard.py && \
     nohup python3 ~/vm-clipboard.py >/tmp/vm-clipboard.log 2>&1 &
   ```
+
+  Check first when it fails: `curl -s http://10.0.2.2:7789/ping` must print
+  `ok`. Anything else means the bridge is unreachable — relaunch the VM.
 
   Copy in either direction, ~0.3 s. Stop with `pkill -f vm-clipboard.py`.
   Both halves are text-only. Two Wayland details cost real debugging time and
