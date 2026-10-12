@@ -2656,11 +2656,82 @@ ai_state_on(){
   [[ -f "$HOME/.local/state/mosquitomarchy/remove-all-ai" ]]
 }
 
+# Managed block hiding Omarchy's agent menu rows while remove-ai is in
+# effect. Guarded rows hide when `when:` is false, and a submenu with no
+# visible child hides itself — so overriding the parent plus every child it
+# ships today with `"when": "false"` removes the whole Agents category, and
+# dropping the block brings it back byte-identical.
+AI_MENU_START="// >>> mosquitOmarchy remove-ai: hide Omarchy agent menu rows"
+AI_MENU_END="// <<< mosquitOmarchy remove-ai: hide Omarchy agent menu rows"
+
+hide_agents_menu(){
+  [[ -f $MENU ]] || return 0
+  local def="${OMARCHY_PATH:-/usr/share/omarchy}/default/omarchy/omarchy-menu.jsonc"
+  local keys=("setup.default.agent") k
+  if [[ -f $def ]]; then
+    while IFS= read -r k; do [[ -n $k ]] && keys+=("$k"); done < <(grep -oE '"setup\.default\.agent\.[^"]+"' "$def" 2>/dev/null | tr -d '"' | sort -u)
+  fi
+  local tmp stripped; tmp=$(mktemp); stripped=$(mktemp)
+  awk -v s="$AI_MENU_START" -v e="$AI_MENU_END" '$0==s{inb=1;next} $0==e{inb=0;next} !inb{print}' "$MENU" > "$stripped"
+  {
+    printf '%s\n' "$AI_MENU_START"
+    for k in "${keys[@]}"; do
+      printf '  "%s": {"when": "false"},\n' "$k"
+    done
+    printf '%s\n' "$AI_MENU_END"
+  } > "$tmp.block"
+  # Insert before the final top-level closing brace (a trailing comma there
+  # is tolerated by the menu parser, but the entry before the insertion
+  # point needs one added when it has none).
+  if ! python3 - "$stripped" "$tmp.block" "$tmp" <<'PYEOF'; then
+import sys
+src, block, out = sys.argv[1], sys.argv[2], sys.argv[3]
+lines = open(src, encoding="utf-8").read().split("\n")
+close = next((i for i in range(len(lines) - 1, -1, -1) if lines[i].strip() == "}"), None)
+if close is None:
+    sys.exit(1)
+prev = close - 1
+while prev >= 0 and (not lines[prev].strip() or lines[prev].strip().startswith("//")):
+    prev -= 1
+# Only a bare entry close gets a comma: never touch comments or braces.
+if prev >= 0 and lines[prev].rstrip().endswith("}") and not lines[prev].rstrip().endswith("},"):
+    lines[prev] = lines[prev].rstrip() + ","
+block_lines = open(block, encoding="utf-8").read().split("\n")
+while block_lines and not block_lines[-1].strip():
+    block_lines.pop()
+lines[close:close] = block_lines
+open(out, "w").write("\n".join(lines))
+PYEOF
+    rm -f "$tmp" "$tmp.block" "$stripped"
+    warn "Could not place the agent-hiding block in $MENU — left unchanged."
+    return 1
+  fi
+  rm -f "$tmp.block" "$stripped"
+  mv "$tmp" "$MENU"
+  menu_json_valid || warn "Agent rows written but $MENU no longer validates — check it by hand."
+  omarchy menu refresh >/dev/null 2>&1 || true
+  ok "Omarchy menu: Agents category hidden (${#keys[@]} rows)"
+}
+
+unhide_agents_menu(){
+  [[ -f $MENU ]] || return 0
+  grep -qF "$AI_MENU_START" "$MENU" || return 0
+  local tmp; tmp=$(mktemp)
+  awk -v s="$AI_MENU_START" -v e="$AI_MENU_END" '$0==s{inb=1;next} $0==e{inb=0;next} !inb{print}' "$MENU" > "$tmp"
+  mv "$tmp" "$MENU"
+  menu_json_valid || warn "$MENU no longer validates after unhiding — check it by hand."
+  omarchy menu refresh >/dev/null 2>&1 || true
+  ok "Omarchy menu: Agents category back"
+}
+
 un_remove_ai() {
   info "Removing the agentic surface Omarchy ships (reversible from Setup)"
   # 1) the Agents plugin in the Omarchy menu/bar (QML plugin: icon + panel)
   omarchy plugin disable omarchy.agents >/dev/null 2>&1 || true
   ok "omarchy.agents plugin disabled in the Omarchy menu/bar"
+  # 1b) the Agents menu category itself (Default Agent picker + its agent
+  #     rows): disabling the plugin does not remove these JSONC rows.
+  hide_agents_menu
   # 1b) remove the agents widget from the BAR LAYOUT too (disabling the
   #     plugin is not enough: the bar keeps an empty slot / re-adds it).
   python3 - "$HOME/.config/omarchy/shell.json" <<'AGENTLAYOUT_PY'
@@ -2726,6 +2797,9 @@ if not any(
     json.dump(d, open(p, "w"), indent=2)
     open(p, "a").write("\n")
 AGENTLAYOUT_PY
+  # The menu category removed by un_remove_ai comes back by dropping the
+  # hiding block (byte-identical rows underneath, never touched).
+  unhide_agents_menu
   ok "Agentic surface back: agents widget in the bar, AI-diagnosis toasts on"
 }
 

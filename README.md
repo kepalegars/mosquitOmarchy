@@ -203,22 +203,20 @@ the float rule (plugins and apps stay — they have their own uninstall rows). T
 `rm` lines clear the first-run marker, the tree cache and the uninstalled-modules
 memory, so the next `./bootstrap.sh` starts from zero.
 
-### `scripts/archive-mosquitomarchy.sh`
+### `scripts/apps/mosquitomarchy/archive-mosquitomarchy.sh`
 
-Builds an archive of the repo into the directory next to it, in one of three
-types chosen from a menu (or `--type=`): `complete` (the whole working tree,
-logs asked about), `release` (tracked code plus the install files you choose,
-no logs) or `source` (tracked code only). Release and source lists come from
+Builds an archive of the repo into the directory next to it, in one of two
+types chosen from a menu (or `--type=`): `complete` (the whole working tree
+including the backups folder, logs asked about) or `source` (tracked code
+only: no logs, no install files, no backups). The source list comes from
 `git ls-files`, and every build re-reads its own output and refuses to keep
-it if a log, `Passwords.kdbx` or backup slipped in. The two install files
-GitHub cannot hold are asked about once for a release and the answer is
-recorded in the filename (`-installers` suffix or not).
+it if a log, `Passwords.kdbx` or backup slipped in where it should not be.
 
 ```bash
-./scripts/archive-mosquitomarchy.sh              # menu: choose a type, then build
-./scripts/archive-mosquitomarchy.sh --list       # what would go in, writes nothing
-./scripts/archive-mosquitomarchy.sh --type=source --no-installers
-./scripts/archive-mosquitomarchy.sh --out=DIR
+./scripts/apps/mosquitomarchy/archive-mosquitomarchy.sh              # menu: choose a type, then build
+./scripts/apps/mosquitomarchy/archive-mosquitomarchy.sh --list       # what would go in, writes nothing
+./scripts/apps/mosquitomarchy/archive-mosquitomarchy.sh --type=source
+./scripts/apps/mosquitomarchy/archive-mosquitomarchy.sh --out=DIR
 ```
 
 A release replaces the bootstrap pipe — extract it, `./bootstrap.sh --init-git` to make

@@ -3066,8 +3066,8 @@ func homePageInfoFor(page string) string {
 			"Every change asks whether to reload Hyprland afterwards."
 
 	case "theme":
-		return "Theming — build an Omarchy theme from an image in the Wallpapers\n" +
-			"folder, or switch between the themes already installed."
+		return "Theming — build an Omarchy theme from an image you pick.\n\n" +
+			"Choose the image, name the theme, and it is created and applied."
 
 	case "health":
 		return "Health check — the checks worth running before blaming something.\n\n" +

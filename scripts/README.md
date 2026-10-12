@@ -19,7 +19,7 @@ duplicated here.
 | `theme/` `LLM/` `deps/` | theme creation, Ollama, and package lists for things with no module folder |
 | `windows-vm/` `macos-vm/` `omarchy-vm/` | the three VM modules |
 | `mosquitomarchy-update/` | the update watchdog: scripts repo first, then Omarchy |
-| `archive-mosquitomarchy.sh` | builds the release tarball — [root README](../README.md#scriptsarchivemosquitomarchy-sh) |
+| `archive-mosquitomarchy.sh` (in `apps/mosquitomarchy/`) | builds the project archives — [root README](../README.md#scriptsappsmosquitomarchyarchive-mosquitomarchy-sh) |
 
 Every script resolves its resources from its own directory, so a whole folder can be moved
 without breaking its paths. Right-click a `setup-*.sh` → **Run as a Program** to open it in a

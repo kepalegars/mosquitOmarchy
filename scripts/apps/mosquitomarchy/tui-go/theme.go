@@ -249,11 +249,7 @@ func (m model) rebuildThemeFolderPicker() navPicker {
 			})
 		}
 	}
-	// Restoring the deleted stock themes lives at the END of the menu, on its
-	// own, for the same reason it is not the first row: it is a repair for a
-	// situation you have to be in before it means anything.
 	items = append(items,
-		tuikit.PickerItem{Display: "Restore the deleted stock Omarchy themes", Value: "__restorestock__"},
 		tuikit.PickerItem{Display: "Back", Value: "back"},
 	)
 	h := "Create a theme from an image"
@@ -388,13 +384,6 @@ func (m model) themePicked(from screen, res tuikit.PickerResultMsg) (model, tea.
 		m.push(scrConfirm)
 		m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 		return m, nil
-	case "__uninstall__":
-		m.themeList = nil
-		m.themeChecked = map[string]bool{}
-		return m, fetchThemeListAny()
-	case "__restorestock__":
-		m.themeStock = nil
-		return m.startWorking("Restoring the stock themes", "theme-restore-stock")
 	case "log":
 		body, err := os.ReadFile(m.themeLog)
 		if err != nil {

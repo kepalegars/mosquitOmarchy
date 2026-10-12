@@ -360,17 +360,11 @@ func TestUnlockScreenHasNoInlineLegendOrSubTitles(t *testing.T) {
 	if !sawUnlock || !sawCreate {
 		t.Fatalf("the unlock screen is missing its rows (unlock=%v create=%v)", sawUnlock, sawCreate)
 	}
-	// The theme-management rows must not end in an ellipsis. "Select Image…" and
-	// "Type a folder path…" DO, and should: they open an external dialog, so
-	// the ellipsis promises the reader what is about to happen. The theme rows
-	// open a screen of this TUI, and an ellipsis there reads as "there is more
-	// after this" when what they actually mean is "this continues".
+	// The folder picker holds no management rows anymore (remove/restore
+	// left the menu): only "Select image", optional folder rows and Back.
 	for _, it := range m.rebuildThemeFolderPicker().Items() {
-		switch it.Value {
-		case "__restorestock__":
-			if strings.HasSuffix(it.Display, "…") {
-				t.Errorf("theme-management row ends in an ellipsis: %q", it.Display)
-			}
+		if it.Value != "__pick__" && it.Value != "back" && !strings.HasPrefix(it.Value, "__setdefault__") && strings.HasSuffix(it.Display, "…") {
+			t.Errorf("unexpected row ends in an ellipsis: %q", it.Display)
 		}
 	}
 }
