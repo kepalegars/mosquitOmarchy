@@ -285,12 +285,13 @@ type model struct {
 	// mosquito menu blocks (mega-caffeine, live-mode, move converter,
 	// mosquitomarchy) with a present mark; unchecking + Enter strips the
 	// block from omarchy-menu.jsonc (re-check restores).
-	// preinstalls drives the preinstall step that PRECEDES every uninstall:
-	// the full Omarchy stock list, with the already-removed apps greyed out
-	// instead of hidden.
+	// preinstalls drives the stock-app list, in two modes: from Setup it
+	// shows EVERY stock package (nothing greyed), from Uninstall only the
+	// still-installed ones (absent ones are left out, not greyed).
 	preinstalls       []PreinstallRec
 	preinstallChecked map[string]bool
 	preinstallPicker  navPicker
+	preinstallMode    string
 	// uninstallWait holds an uninstall that the preinstalls page is currently
 	// in front of: the keys it would remove, and the confirmation text it will
 	// show once the preinstalls step is out of the way. Empty = no uninstall
@@ -810,6 +811,11 @@ func (m model) applyPlan() []string {
 	for _, f := range m.setupFolders {
 		var keys []string
 		for _, it := range m.setupItemsOf(f.Folder) {
+			// The preinstalls row is navigation (it opens the stock-app
+			// list), never something to install.
+			if it.Key == preinstallsKey {
+				continue
+			}
 			if m.selected[setupValue(f.Folder, it.Key)] {
 				keys = append(keys, it.Key)
 			}
@@ -868,6 +874,9 @@ func (m model) highlightedKey() []string {
 func (m model) applyPlanCat(cat string) []string {
 	var keys []string
 	for _, it := range m.setupItemsOf(cat) {
+		if it.Key == preinstallsKey {
+			continue
+		}
 		if m.selected[setupValue(cat, it.Key)] {
 			keys = append(keys, it.Key)
 		}

@@ -2259,12 +2259,24 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		// time behind an extra keystroke — the whole point of the tree is that
 		// a category opens in place.
 		//
-		// A fix's own row still routes here, because it is a repair and not a
-		// module: falling through to the module path would offer to "install"
-		// something that does not exist.
+		// A fix's own row runs THAT fix (confirm, then run), because it is a
+		// repair and not a module: falling through to the module path would
+		// offer to "install" something that does not exist, and opening the
+		// whole fixes screen for one row is a hop too many. The screen stays
+		// for multi-select (tick several with Tab, Enter applies the set).
 		if _, key := splitSetupValue(res.Value); key != "" && m.isQuickFixKey(key) {
-			mm, cmd := m.openQuickFixes()
-			return mm.(model), cmd
+			label := key
+			if it, ok := m.setupByValue[res.Value]; ok && it.Label != "" {
+				label = it.Label
+			}
+			m.pendingAction = "quick-fixes"
+			m.pendingFixIDs = []string{key}
+			m.pendingMsg = fmt.Sprintf("Apply quick fix?\n\n%s", label)
+			m.pendingNo = "Cancel"
+			m.pendingYes = "Apply"
+			m.push(scrConfirm)
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+			return m, nil
 		}
 		if strings.HasPrefix(res.Value, tuikit.TreeFolderPrefix) {
 			return m, nil
@@ -2441,9 +2453,9 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 				// would state a version nothing ships any more.
 				ver = "unknown"
 			}
-			m.pendingMsg = fmt.Sprintf("Update modules?\n\nLocal scripts repo: v%s.\n\nIf a GitHub update is available, the local repo is fast-forwarded FIRST so both versions stay in sync (joining the GitHub version), then the changed installed modules are re-applied. With no repo update (or no connection), the installed modules are re-applied from the local scripts.", ver)
+			m.pendingMsg = fmt.Sprintf("Update these modules?\n\n%s\n\nLocal scripts repo: v%s.", strings.Join(m.updateKeys(), ", "), ver)
 			if m.reinstallMode {
-				m.pendingMsg = fmt.Sprintf("Re-apply the selected installed modules?\n\nLocal scripts repo: v%s.\n\nIf a GitHub update is available, the local repo is fast-forwarded FIRST so both versions stay in sync, then the selection is re-applied from the fresh scripts.", ver)
+				m.pendingMsg = fmt.Sprintf("Re-apply these modules?\n\n%s\n\nLocal scripts repo: v%s.", strings.Join(m.updateKeys(), ", "), ver)
 			}
 			m.pendingNo = "Cancel"
 			m.pendingYes = "Update"
@@ -2843,6 +2855,7 @@ func (m model) startUninstall(keys []string, prompt string) (model, tea.Cmd) {
 		return m.resumeUninstall()
 	}
 	m.push(scrPreinstalls)
+	m.preinstallMode = "uninstall"
 	m.preinstallChecked = map[string]bool{}
 	m.preinstallPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).
 		SetSize(m.contentSize())
@@ -2911,6 +2924,10 @@ func splitPreinstallsKey(keys []string) (mods []string, wantPre bool) {
 // row does: look at the list, tick what should go, and nothing else happens.
 func (m model) openPreinstalls() (model, tea.Cmd) {
 	m.uninstallWait, m.uninstallMsg = nil, ""
+	m.preinstallMode = m.treeMode
+	if m.preinstallMode != "uninstall" {
+		m.preinstallMode = "setup"
+	}
 	m.push(scrPreinstalls)
 	m.preinstallChecked = map[string]bool{}
 	m.preinstallPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).
@@ -2958,9 +2975,17 @@ func (m model) rebuildFilteredSetup() navPicker {
 	uninstall := m.treeMode == "uninstall"
 	items := make([]tuikit.PickerItem, 0, 32)
 	ft := strings.ToLower(m.filterText)
+	// A query matching a CATEGORY name shows the whole category: typing
+	// "apps" lists every app, not just the rows with "apps" in their label.
+	folderHit := map[string]bool{}
+	for _, f := range m.setupFolders {
+		if strings.Contains(strings.ToLower(f.Label), ft) {
+			folderHit[f.Folder] = true
+		}
+	}
 	for _, f := range m.setupFolders {
 		for _, it := range m.setupItemsOf(f.Folder) {
-			if !strings.Contains(strings.ToLower(it.Label), ft) {
+			if !folderHit[f.Folder] && !strings.Contains(strings.ToLower(it.Label), ft) {
 				continue
 			}
 			v := setupValue(f.Folder, it.Key)
@@ -3043,9 +3068,9 @@ func homePageInfoFor(page string) string {
 			"Read-only: nothing on this page installs or changes anything."
 
 	case "update":
-		return "Update — fetch the scripts repo when a newer version exists.\n\n" +
-			"Owner mode updates as fast as possible; anyone else can re-apply\n" +
-			"per module. Installs nothing new and never overwrites your files."
+		return "Update — fetch the scripts repo when a newer version exists,\n\n" +
+			"then re-apply the changed installed modules. Installs nothing\n" +
+			"new and never overwrites your files."
 
 	case "setup":
 		return "Setup — install, update or re-run modules, grouped in folders.\n\n" +
@@ -4355,9 +4380,10 @@ func (m model) settingsItems2() []tuikit.PickerItem {
 
 func backupItems(items []tuikit.PickerItem) []tuikit.PickerItem { return items }
 
-// rebuildPreinstallPicker lists EVERY stock app, as asked: an app that is no
-// longer installed (or is one of the user's own) is shown greyed and cannot be
-// ticked, so the list does not silently shrink between two visits.
+// rebuildPreinstallPicker lists the stock apps with nothing greyed and no
+// sub-lines: from Setup every stock package is shown and tickable, from
+// Uninstall only the still-installed ones (absent ones are left out, not
+// greyed). Tick what should go; Enter on the bottom row removes the ticked.
 func (m model) rebuildPreinstallPicker() navPicker {
 	// No header row. The instruction used to sit in the list as a greyed
 	// 76-column row ("Omarchy preinstalls (tab = keep; enter or back asks…"),
@@ -4367,6 +4393,9 @@ func (m model) rebuildPreinstallPicker() navPicker {
 	var items []tuikit.PickerItem
 	checked := 0
 	for _, r := range m.preinstalls {
+		if m.preinstallMode == "uninstall" && !r.Installed {
+			continue
+		}
 		mark := "○"
 		if m.preinstallChecked[r.Name] {
 			mark = "●"
@@ -4374,19 +4403,9 @@ func (m model) rebuildPreinstallPicker() navPicker {
 		}
 		// The mark goes in Badge, not glued onto Display. Rows are CENTERED as
 		// a block, so a tick baked into the text made every line a different
-		// width and therefore a different starting column — the list visibly
-		// jumped, and a long "(your own app — kept)" shifted it again. Badge
-		// sits in a fixed-width leading slot, so the labels stay in one column.
-		it := tuikit.PickerItem{Display: r.Label, Value: r.Name, Badge: mark}
-		switch {
-		case !r.Installed:
-			it.Suffix = "  (already removed)"
-			it.Disabled = true
-		case r.Protected:
-			it.Suffix = "  (your own app — kept)"
-			it.Disabled = true
-		}
-		items = append(items, it)
+		// width and none of them shared a starting column. Badge sits in a
+		// fixed-width leading slot, so the labels stay in one column.
+		items = append(items, tuikit.PickerItem{Display: r.Label, Value: r.Name, Badge: mark})
 	}
 	items = append(items,
 		tuikit.PickerItem{Display: fmt.Sprintf("Remove the %d ticked preinstall(s)", checked), Value: "apply"},
