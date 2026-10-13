@@ -279,14 +279,16 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				}
 			}
 			// A repo update (or a modules update that included the manager)
-			// rebuilds on NEXT launch, never inline — so success here says
-			// that, and offers quitting to the new version instead of going
-			// back to a stale screen.
+			// rebuilds on NEXT launch, never inline — so success here
+			// offers restarting straight into the new version instead of
+			// going back to a stale screen. No quit button: Restart quits
+			// AND relaunches, through the dispatcher so a pending rebuild
+			// is applied on the way back in.
 			if m.pendingAction == "update-repo" || wantsSelfRebuild(m.pendingAction, m.pendingArgs) {
 				m.pendingAction = "update-reboot"
-				m.pendingMsg = "Repo updated — the manager rebuilds on next launch.\n\nSee the log, or quit now and reopen for the new version?"
-				m.pendingNo = "Quit"
-				m.pendingYes = "See log"
+				m.pendingMsg = "Repo updated — the manager rebuilds on next launch.\n\nRestart now for the new version, or see the log first?"
+				m.pendingNo = "See log"
+				m.pendingYes = "Restart"
 				m.push(scrConfirm)
 				m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 				return m, nil
@@ -846,11 +848,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.pop()
 		if msg.Canceled || !msg.Yes {
-			// Quitting here IS the reboot: the dispatcher rebuilds on the
-			// next launch when an update left a rebuild pending.
 			if m.pendingAction == "update-reboot" {
-				m.quit = true
-				return m, tea.Quit
+				if msg.Canceled {
+					// Esc: back to the Update screen, no log, no restart.
+					return m, nil
+				}
+				// "See log": the streamed transcript, like any finished run.
+				m.info = tuikit.NewInfo(m.lastOutput).SetSize(m.contentSize())
+				m.push(scrInfo)
+				return m, nil
 			}
 			if m.pendingAction == "quick-fixes" {
 				// Declined: nothing runs, and the ticks stay as they were so
@@ -1071,7 +1077,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case "close":
 			m.quit = true
 			return m, tea.Quit
-		case "run-errors", "run-done-log", "update-reboot":
+		case "run-errors", "run-done-log":
 			// Show the full streamed log in the scrollable Info screen; the
 			// prompt itself was already popped, so closing the log returns to
 			// the previous menu. "run-done-log" is the same prompt on the
@@ -1079,6 +1085,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.info = tuikit.NewInfo(m.lastOutput).SetSize(m.contentSize())
 			m.push(scrInfo)
 			return m, nil
+		case "update-reboot":
+			// Restart, not quit: main() relaunches through the dispatcher
+			// (see there), so a pending rebuild is applied and the new
+			// version opens instead of this stale one.
+			m.restart = true
+			m.quit = true
+			return m, tea.Quit
 		}
 		return m, nil
 
@@ -3795,6 +3808,19 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 
 // rebuildUpdate rebuilds the Update screen picker with ○/● checkboxes, the
 // "Apply N" row and (when the repo has changes) the repo-update row.
+// updateModuleLabel is the Update screen's row text: the bare module id
+// plus its version, nothing else. The catalog descriptions belong to
+// Setup's `i` popup — inlined here they wrapped every row over two lines,
+// and the status-fed rows carried a trailing version only when their
+// description happened to contain no " — " to truncate at, so some rows
+// had one and some did not.
+func updateModuleLabel(m model, it ItemRec) string {
+	if v := m.updateRec.RepoVersion; v != "" {
+		return it.Key + " - v" + v
+	}
+	return it.Key
+}
+
 func (m model) rebuildUpdate() navPicker {
 	prev := m.updatePicker.SelectedValue()
 	items := make([]tuikit.PickerItem, 0, len(m.updateRec.Modules)+3)
@@ -3856,7 +3882,7 @@ func (m model) rebuildUpdate() navPicker {
 				if m.updateSelected[it.Key] {
 					mark = "●"
 				}
-				items = append(items, tuikit.PickerItem{Display: it.Label, Value: it.Key, Badge: mark})
+				items = append(items, tuikit.PickerItem{Display: updateModuleLabel(m, it), Value: it.Key, Badge: mark})
 			}
 			items = append(items, tuikit.PickerItem{Display: "", Disabled: true})
 		}

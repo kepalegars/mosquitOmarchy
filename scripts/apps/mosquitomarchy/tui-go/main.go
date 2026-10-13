@@ -23,6 +23,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	tuikit "mosquitomarchy.local/tui-kit"
@@ -63,8 +65,40 @@ func main() {
 		}
 	}
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
+	final, err := p.Run()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "mosquitomarchy-tui:", err)
+		os.Exit(1)
+	}
+	if fm, ok := final.(model); ok && fm.restart {
+		restartThroughDispatcher()
+	}
+}
+
+// restartThroughDispatcher relaunches the manager after the update-reboot
+// confirm's Restart button. The target is the `mosquitomarchy` dispatcher
+// sitting next to this binary — NOT this binary itself: the dispatcher is
+// what applies a pending rebuild before opening the TUI, so re-execing the
+// TUI would reopen the stale build the restart is meant to leave behind.
+// The original arguments are kept (e.g. --update reopens the Update page).
+func restartThroughDispatcher() {
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mosquitomarchy-tui: restart: cannot locate executable:", err)
+		os.Exit(1)
+	}
+	disp := filepath.Join(filepath.Dir(exe), "mosquitomarchy")
+	args := append([]string{disp}, os.Args[1:]...)
+	if st, err := os.Stat(disp); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
+		if err := syscall.Exec(disp, args, os.Environ()); err != nil {
+			fmt.Fprintln(os.Stderr, "mosquitomarchy-tui: restart: exec dispatcher:", err)
+		}
+	}
+	// No dispatcher beside the binary (dev runs, tests): fall back to the
+	// binary itself. The rebuild-pending flag survives for the next
+	// dispatcher launch, so nothing is lost, just deferred.
+	if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
+		fmt.Fprintln(os.Stderr, "mosquitomarchy-tui: restart: exec:", err)
 		os.Exit(1)
 	}
 }

@@ -586,12 +586,12 @@ open_patchbay() {
     if grep -qF "$existing" "$SCRATCHPAD_SNAPSHOT" 2>/dev/null; then
       echo "$existing" > "$PATCHBAY_ADDR_FILE"
       touch "$PATCHBAY_PREEXISTED"
-      ok "mosquito patchbay already parked in the scratchpad."
+      ok "mosquito mixbay already parked in the scratchpad."
       return 0
     fi
     park_in_scratchpad "$existing" >/dev/null 2>&1 || true
     echo "$existing" > "$PATCHBAY_ADDR_FILE"
-    ok "mosquito patchbay parked in the scratchpad (SUPER + S)."
+    ok "mosquito mixbay parked in the scratchpad (SUPER + S)."
     return 0
   fi
 
@@ -605,7 +605,7 @@ open_patchbay() {
     # Neither the native one nor the fallback is installed. Say so and say how
     # to fix it: a silently missing patchbay reads as "live mode just does not
     # do that any more".
-    warn "No mosquito patchbay available — the patchbay step is skipped."
+    warn "No mosquito mixbay available — the scratchpad step is skipped."
     warn "  Install one with: $(patchbay_install_hint)"
     return 2
   fi
@@ -617,16 +617,16 @@ open_patchbay() {
   local occupants=""
   occupants=$(scratchpad_occupied_by_others | sort -u | tr '\n' ' ')
   if [[ -n "$occupants" ]]; then
-    if ! confirm $"The scratchpad is already occupied (the mosquito patchbay can't be parked there). Patchbay will open in the CURRENT workspace. Continue?"; then
+    if ! confirm $"The scratchpad is already occupied (mosquito mixbay can't be parked there). It will open in the CURRENT workspace. Continue?"; then
       warn "Live Mode activation cancelled (scratchpad occupied)."
       return 1
     fi
-    ok "Opening patchbay in the current workspace (scratchpad kept as-is)."
+    ok "Opening mosquito mixbay in the current workspace (scratchpad kept as-is)."
   fi
 
   local spec
   spec=$(patchbay_provider) || return 2
-  ok "mosquito patchbay: launching ${spec%%|*}."
+  ok "mosquito mixbay: launching ${spec%%|*}."
   patchbay_launch
 
   # qpwgraph is a Qt app: it maps its window AFTER the process is up, and on a
@@ -646,9 +646,9 @@ open_patchbay() {
     # Park it only if the scratchpad is free (no occupants).
     if [[ -z $(scratchpad_occupied_by_others) ]]; then
       park_in_scratchpad "$existing" >/dev/null 2>&1 || true
-      ok "mosquito patchbay parked in the scratchpad (SUPER + S)."
+      ok "mosquito mixbay parked in the scratchpad (SUPER + S)."
     else
-      ok "mosquito patchbay opened in the current workspace (scratchpad left as it was)."
+      ok "mosquito mixbay opened in the current workspace (scratchpad left as it was)."
     fi
   else
     warn "${spec%%|*} launched, but its window could not be detected."
@@ -666,7 +666,7 @@ restore_scratchpad() {
     hyprctl -j clients 2>/dev/null | jq -e --arg a "$ours" \
       'map(select(.address == $a)) | length > 0' >/dev/null 2>&1 && {
       close_window "$ours" >/dev/null 2>&1 || true
-      ok "Session's mosquito patchbay closed (scratchpad back to its pre-live state)."
+      ok "Session's mosquito mixbay closed (scratchpad back to its pre-live state)."
     }
   fi
   : > "$PATCHBAY_ADDR_FILE"; : > "$SCRATCHPAD_SNAPSHOT"; rm -f "$PATCHBAY_CLOSED_FLAG"
@@ -992,7 +992,13 @@ cmd_on() {
       "Always awake (lid closed without sleeping)"
     )
     [[ $CLOSE_APPS == yes ]] && _lm_bullets+=("Close ${CLOSE_APPS_LIST:-(no app selected)}")
-    [[ $ROUTING_TOOL == yes ]] && _lm_bullets+=("mosquito patchbay (${PATCHBAY_APP:-mixbay}) in scratchpad (SUPER + S)")
+    if [[ $ROUTING_TOOL == yes ]]; then
+      if [[ ${PATCHBAY_APP:-mixbay} == mixbay ]]; then
+        _lm_bullets+=("mosquito mixbay in scratchpad (SUPER + S)")
+      else
+        _lm_bullets+=("${PATCHBAY_APP} in scratchpad (SUPER + S)")
+      fi
+    fi
     [[ $NO_GAPS == yes ]] && _lm_bullets+=("Gaps disabled during the session")
     [[ $SILENCE_NOTIFICATIONS == yes ]] && _lm_bullets+=("Notifications silenced")
     [[ $SWITCH_THEME == yes ]] && _lm_bullets+=("Switch to the Live theme")

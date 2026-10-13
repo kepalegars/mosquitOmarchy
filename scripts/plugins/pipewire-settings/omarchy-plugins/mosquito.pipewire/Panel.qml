@@ -196,14 +196,13 @@ Panel {
             root.write(["persist", root.persisting() ? "0" : "1"])
     }
 
-    // A click always CHANGES the row it lands on, and moves the cursor there
-    // first. The previous version selected on the first click and changed on the
-    // next, which read as a dead button: one click did nothing visible, and a
-    // second one changed the value of a row the cursor had silently jumped to.
-    // delta is never 0 — there is no "select without acting" click any more.
-    function adjustAt(index, delta) {
+    // A click only SELECTS the row it lands on and never changes it: the
+    // mouse picks the option, the keyboard (arrows, enter) changes it. A
+    // click that also wrote meant brushing the panel on the way past could
+    // flip the sample rate with no visible intent, and there is no undo for
+    // a graph change mid-take.
+    function selectAt(index) {
         root.row = index
-        root.adjust(delta >= 0 ? 1 : -1)
     }
 
     // ── bar button ──────────────────────────────────────────────────────────
@@ -377,12 +376,12 @@ Panel {
 
                         MouseArea {
                             anchors.fill: parent
-                            // Right-click walks the values backwards: a rate list
-                            // runs to eight entries and nobody wants to press → eight
-                            // times to undo one mistake.
-                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            // Selection only: clicking a row moves the cursor
+                            // there so the keyboard acts on it. No button
+                            // ever writes — see selectAt.
+                            acceptedButtons: Qt.LeftButton
                             onClicked: function (mouse) {
-                                root.adjustAt(rowItem.index, mouse.button === Qt.RightButton ? -1 : 1)
+                                root.selectAt(rowItem.index)
                             }
                         }
                     }
@@ -401,7 +400,7 @@ Panel {
                 }
 
                 Text {
-                    text: "↑↓ choose   ←→ change   enter toggles"
+                    text: "↑↓ choose   ←→ change   enter toggles   click selects"
                     color: root.dim
                     font.family: Style.font.family
                     font.pixelSize: Style.font.caption

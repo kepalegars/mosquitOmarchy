@@ -2,20 +2,26 @@
 # archive-mosquitomarchy.sh — build an archive of the mosquitOmarchy repo.
 #
 # WHAT THIS PRODUCES
-#   One tar.gz in the directory ABOVE the repo, holding the repo under its own
+#   One tar.gz in the mosquitomarchy app folder
+#   (scripts/apps/mosquitomarchy/), holding the repo under its own
 #   `mosquitomarchy/` folder. It is meant to be taken by hand:
 #
 #       tar xzf mosquitomarchy-<type>-<date>.tar.gz
 #       cd mosquitomarchy
 #       ./bootstrap.sh              # or ./mosquitomarchy-setup.sh
 #
+#   With logs asked in, the name reads mosquitomarchy-complete-<date>+logs:
+#   the "+logs" is an addition to the full content, not the content itself.
+#
 #   No mosquitomarchy code is involved in the extraction, and nothing in the
 #   archive is a backup: a restore is done by the user, with tar.
 #
 # TWO ARCHIVE TYPES (the menu below explains each before you pick it)
 #   complete   absolutely everything in the working tree — code, untracked
-#              files, ignored files, the backups folder; logs are asked
-#              about at build time
+#              files, ignored files; logs are asked about at build time.
+#              NEVER any archive (*.tar.gz of any kind, backups included),
+#              whatever the type: the archives land inside the repo, so
+#              letting one in would swallow all the previous ones.
 #   source     the tracked code only: no logs, no install files, no backups
 #
 # BUILT FROM GIT WHERE IT MATTERS
@@ -27,14 +33,14 @@
 # Usage:
 #   ./archive-mosquitomarchy.sh              # menu: choose a type, then build
 #   ./archive-mosquitomarchy.sh --list       # what would go in (and the sizes)
-#   ./archive-mosquitomarchy.sh --out=DIR    # write DIR/ instead of the parent dir
+#   ./archive-mosquitomarchy.sh --out=DIR    # write DIR/ instead of the mosquitomarchy folder
 #   ./archive-mosquitomarchy.sh --type=TYPE  # complete | source (skip the menu)
 #   ./archive-mosquitomarchy.sh --logs / --no-logs   # complete type: log files in or out
 #   ./archive-mosquitomarchy.sh -y           # take the defaults (source type)
 #   ./archive-mosquitomarchy.sh -h
 #
 # Env:
-#   OMARCHY_ARCHIVE_OUT   default output directory (default: the repo's parent dir)
+#   OMARCHY_ARCHIVE_OUT   default output directory (default: scripts/apps/mosquitomarchy/)
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager — the prompt needs one
 set -euo pipefail
 
@@ -49,9 +55,11 @@ ROOT="$SCRIPT_DIR"
 # name of whoever's checkout produced it: the same commit must give the same
 # archive whatever the directory is called locally (here it is 'mosquitOmarchy').
 PROJECT_NAME="mosquitomarchy"
-# The archive always lands NEXT TO the repo, never inside it: extracting by
-# hand yields a single directory, and the repo never collects tarballs.
-OUT_DIR="${OMARCHY_ARCHIVE_OUT:-$(dirname "$ROOT")}"
+# The archive always lands in the mosquitomarchy app folder, so it is found
+# where the manager lives. Archives can never leak INTO an archive (see the
+# unconditional *.tar.gz exclusion in both collectors plus the final gate),
+# which is what makes an in-repo destination safe.
+OUT_DIR="${OMARCHY_ARCHIVE_OUT:-$ROOT/scripts/apps/mosquitomarchy}"
 
 G='\033[1;32m'; B='\033[1;34m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
 msg(){ printf "${B}==>${N} %s\n" "$*"; }
@@ -116,14 +124,15 @@ collect(){
 collect_complete(){
   # Prints the working tree as it stands: the tracked files plus everything
   # else on disk (untracked AND ignored — the --exclude-standard flag is
-  # deliberately absent), minus the few things that must never ship: nested
-  # archives, passwords, machine-generated lists, and the logs unless asked
-  # for at build time.
+  # deliberately absent), minus the things that must never ship: EVERY
+  # archive (*.tar.gz anywhere, backups included — the archives land inside
+  # the repo, so one nested archive would swallow all the previous ones),
+  # passwords, machine-generated lists, and the logs unless asked for.
   {
     git -C "$ROOT" ls-files -z | tr '\0' '\n'
     git -C "$ROOT" ls-files --others -z | tr '\0' '\n'
   } | grep -v -E '(^|/)\.git/' \
-    | awk '!/\.tar\.gz(\.gpg)?$/ || /^mosquitomarchy-backups\//' \
+    | grep -v -E '\.tar\.gz(\.gpg)?$' \
     | grep -v -E '(^|/)Passwords\.kdbx$' \
     | grep -v -E '(^|/)(pkglist|aurlist)\.txt$' \
     | grep -v -E '(^|/)apps\.selected$' \
@@ -141,8 +150,9 @@ type_menu(){
     printf '\n'
     printf '  complete:\n'
     printf '    • absolutely everything in the working tree\n'
-    printf '    • code, untracked files, ignored files, the backups folder\n'
+    printf '    • code, untracked files, ignored files\n'
     printf '    • the logs are asked about when it is built\n'
+    printf '    • never any archive (*.tar.gz anywhere, backups included)\n'
     printf '\n'
     printf '  source:\n'
     printf '    • the tracked code only\n'
@@ -321,7 +331,9 @@ build_complete(){
   local -a tf=(--transform="s|^|${PROJECT_NAME}/|")
   local stamp out tmp suffix=""
   stamp="$(date +%Y-%m-%d)"
-  (( LOGS )) && suffix="-logs"
+  # "+logs" reads as an addition to the full content. The old "-logs" read
+  # as if the logs WERE the content.
+  (( LOGS )) && suffix="+logs"
   out="$OUT_DIR/mosquitomarchy-complete-$stamp$suffix.tar.gz"
   tmp="$out.tmp.$$"
   trap 'rm -f "$tmp"' EXIT
@@ -349,12 +361,9 @@ build_complete(){
   bad=""
   while IFS= read -r f; do
     [[ -z $f ]] && continue
-    # The backups folder rides along on purpose (complete type only); nested
-    # archives anywhere else, and passwords, still fail the build. Entries
-    # carry the transformed mosquitomarchy/ prefix here.
-    case "$f" in
-      mosquitomarchy/mosquitomarchy-backups/*) continue ;;
-    esac
+    # No exception anywhere, backups included: any nested archive or any
+    # password fails the build. Entries carry the transformed
+    # mosquitomarchy/ prefix here.
     for pat in '*.tar.gz' '*Passwords.kdbx'; do
       if [[ $f == $pat ]] || [[ $f == *"$pat" ]]; then bad+="$f"$'\n'; break; fi
     done
@@ -365,7 +374,7 @@ build_complete(){
     rm -f "$out"
     exit 1
   fi
-  ok "verified: no nested archives (outside mosquitomarchy-backups/), no passwords"
+  ok "verified: no nested archives of any kind, no passwords"
 
   ok "complete archive: $out ($(human "$bytes"), $(tar tzf "$out" 2>/dev/null | wc -l) entries)"
   echo "  Extract by hand:  tar xzf $(basename "$out") && cd $PROJECT_NAME && ./bootstrap.sh"
@@ -383,3 +392,10 @@ if [[ -z $ARCHIVE_TYPE ]] && (( ! YES )) && [[ -t 0 ]]; then
 fi
 ARCHIVE_TYPE="${ARCHIVE_TYPE:-source}"
 build
+# The classic finish: without it the terminal closes the instant the archive
+# is done and the result is never seen. Only when interactive — a scripted
+# run (-y, pipes) must never block on a prompt.
+if [[ -t 0 && -t 1 ]]; then
+  hr
+  read -rp "Done — press Enter to quit. " _ || true
+fi

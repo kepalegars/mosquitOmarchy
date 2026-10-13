@@ -774,10 +774,11 @@ func TestUpdateScreenNamesTheSource(t *testing.T) {
 		t.Fatal("Update modules should be disabled when no module has changes")
 	}
 
-	// A module update must still be listed with its own row.
-	m, _ = m.update(queryMsg{kind: "update", update: UpdateRec{Modules: []ItemRec{{Key: "battery", Label: "Battery"}}}})
+	// A module update must still be listed with its own row, as bare
+	// "id - vX.Y.Z" rather than the catalog description.
+	m, _ = m.update(queryMsg{kind: "update", update: UpdateRec{RepoVersion: "1.0.0", Modules: []ItemRec{{Key: "battery", Label: "Battery"}}}})
 	v = m.View()
-	if !strings.Contains(v, "Battery") {
+	if !strings.Contains(v, "battery - v1.0.0") {
 		t.Fatalf("module row missing:\n%s", v)
 	}
 	if strings.Contains(v, "Update mosquitOmarchy (repo + scripts)") {

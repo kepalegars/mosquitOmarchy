@@ -223,7 +223,7 @@ patchbay_watch() {
   # It vanished: ask ONCE via the confirm overlay.
   local payload sel="$STATE_DIR/confirm_sel" donef="$STATE_DIR/confirm_done" ans
   rm -f "$sel" "$donef"
-  payload=$(jq -cn --arg message "Close the mosquito patchbay for this Live session?" \
+  payload=$(jq -cn --arg message "Close the scratchpad app for this Live session?" \
     --arg selectionFile "$sel" --arg doneFile "$donef" \
     '{message:$message, selectionFile:$selectionFile, doneFile:$doneFile}')
   omarchy-shell shell summon mosquito.confirm "$payload" >/dev/null 2>&1 || true

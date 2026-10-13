@@ -425,6 +425,11 @@ type model struct {
 
 	fatal error
 	quit  bool
+	// restart asks main() to relaunch through the dispatcher after Run
+	// returns (the update-reboot confirm's Restart button). Relaunching
+	// the dispatcher — rather than this binary — is what applies a pending
+	// rebuild on the way back in.
+	restart bool
 }
 
 func initialModel() model {
