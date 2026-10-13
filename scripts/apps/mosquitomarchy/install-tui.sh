@@ -157,6 +157,10 @@ install_backend_links() {
   if [[ -f $ACTIONS_SRC ]]; then
     chmod +x "$ACTIONS_SRC"
     ln -sf "$ACTIONS_SRC" "$BIN_DIR/mosquitomarchy-actions"
+    # A similarly-named backend (mosquitomathy-actions, with a y) briefly
+    # existed and was linked on some machines; it is gone from the repo and
+    # nothing ever called it — drop the dangling link if present.
+    rm -f "$BIN_DIR/mosquitomathy-actions"
     ok "Backend linked: $BIN_DIR/mosquitomarchy-actions"
   else
     warn "mosquitomarchy-actions not found at $ACTIONS_SRC"
