@@ -285,22 +285,16 @@ type model struct {
 	// mosquito menu blocks (mega-caffeine, live-mode, move converter,
 	// mosquitomarchy) with a present mark; unchecking + Enter strips the
 	// block from omarchy-menu.jsonc (re-check restores).
-	// preinstalls drives the stock-app list, in two modes: from Setup it
-	// shows EVERY stock package (nothing greyed), from Uninstall only the
-	// still-installed ones (absent ones are left out, not greyed).
-	preinstalls       []PreinstallRec
-	preinstallChecked map[string]bool
-	preinstallPicker  navPicker
-	preinstallMode    string
-	// uninstallWait holds an uninstall that the preinstalls page is currently
+	// uninstallWait holds an uninstall that a preinstall removal is currently
 	// in front of: the keys it would remove, and the confirmation text it will
-	// show once the preinstalls step is out of the way. Empty = no uninstall
-	// pending, which is also what puts the preinstalls page back to its old
-	// standalone behaviour for the paths that are not an uninstall.
-	uninstallWait     []string
-	uninstallMsg      string
-	menuEntries       []MenuEntryRec
-	menuEntriesLoaded bool
+	// show once the removal is done. Empty = no uninstall pending.
+	uninstallWait []string
+	uninstallMsg  string
+	// pendingInstallPlan holds an install plan waiting behind a preinstall
+	// removal confirm (mixed selection). Empty = no install pending.
+	pendingInstallPlan []string
+	menuEntries        []MenuEntryRec
+	menuEntriesLoaded  bool
 	// quickFixes is the Quick fixes catalog (fetched from the backend) and
 	// quickFixChecked the ticks on its own screen. pendingFixIDs is the marked
 	// set the confirmation is about, held while the dialog is up so the answer
@@ -740,19 +734,7 @@ func (m model) filteredCheckedKeys() []string {
 	}
 	ft := strings.ToLower(m.filterText)
 	var out []string
-	// The Preinstalls row is not a module and it is not named after one, so the
-	// text filter would silently drop it from the ticked set. It is a request to
-	// open the stock-app list, not a module to install, so it rides along with
-	// the selection whatever the user typed: filtering to "reaper" and applying
-	// must not quietly forget that the preinstalls list was asked for.
-	pre := setupValue(preinstallsFolder, preinstallsKey)
-	if m.selected[pre] {
-		out = append(out, preinstallsKey)
-	}
 	for _, f := range m.setupFolders {
-		if f.Folder == preinstallsFolder {
-			continue // already handled above, and it is never a module
-		}
 		for _, it := range m.setupItemsOf(f.Folder) {
 			if !strings.Contains(strings.ToLower(it.Label), ft) {
 				continue
@@ -812,9 +794,8 @@ func (m model) applyPlan() []string {
 	for _, f := range m.setupFolders {
 		var keys []string
 		for _, it := range m.setupItemsOf(f.Folder) {
-			// The preinstalls row is navigation (it opens the stock-app
-			// list), never something to install.
-			if it.Key == preinstallsKey {
+			// Preinstall rows remove stock packages; they never install.
+			if strings.HasPrefix(it.Key, "preinstall:") {
 				continue
 			}
 			if m.selected[setupValue(f.Folder, it.Key)] {
@@ -875,7 +856,7 @@ func (m model) highlightedKey() []string {
 func (m model) applyPlanCat(cat string) []string {
 	var keys []string
 	for _, it := range m.setupItemsOf(cat) {
-		if it.Key == preinstallsKey {
+		if strings.HasPrefix(it.Key, "preinstall:") {
 			continue
 		}
 		if m.selected[setupValue(cat, it.Key)] {

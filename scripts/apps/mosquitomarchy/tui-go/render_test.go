@@ -405,76 +405,45 @@ func TestCategoryInfoKey(t *testing.T) {
 	}
 }
 
-// TestPreinstallsNeedConfirm covers the gate in front of `pacman -Rns`. The
-// picker used to remove the ticked preinstalls on Enter AND on back, with no
-// question in between; both now go through one confirmation naming the
-// packages, and only an explicit "Remove them" reaches the backend.
+// TestPreinstallsNeedConfirm covers the gate in front of `pacman -Rns`.
+// Preinstall rows live inline in the trees now: Enter on one asks a
+// confirmation naming the packages, and only an explicit "Remove them"
+// reaches the backend.
 func TestPreinstallsNeedConfirm(t *testing.T) {
-	base := func() model {
-		m := initialModel()
-		m.treeMode = "uninstall"
-		m.nav = []screen{scrMain, scrSetup, scrSetupCat, scrPreinstalls}
-		m.w, m.h = 120, 40
-		m.preinstalls = []PreinstallRec{
-			{Name: "obsidian", Label: "Obsidian", Installed: true, Removable: true},
-			{Name: "pinta", Label: "Pinta", Installed: true, Removable: true},
-			{Name: "omacalc", Label: "Calculator", Installed: true, Protected: true},
-		}
-		m.preinstallChecked = map[string]bool{"obsidian": true, "pinta": false, "omacalc": true}
-		m.preinstallPicker = m.rebuildPreinstallPicker()
-		return m
+	m := initialModel()
+	m.nav = []screen{scrMain, scrSetup}
+	m.w, m.h = 120, 40
+	m.treeMode = "uninstall"
+	m.setupFolders = []FolderRec{{Folder: "preinstalls", Label: "Preinstalls"}}
+	m.setupItems = []SetupItemRec{
+		{Folder: "preinstalls", Key: "preinstall:obsidian", Label: "Obsidian"},
+		{Folder: "preinstalls", Key: "preinstall:pinta", Label: "Pinta"},
+	}
+	for _, it := range m.setupItems {
+		m.setupByValue[setupValue(it.Folder, it.Key)] = it
 	}
 
-	// Enter: must ask, and the question must name the removable ticked apps.
-	m := base()
-	m, _ = m.update(tuikit.PickerResultMsg{Value: "apply"})
-	if m.top() != scrConfirm {
-		t.Fatalf("Enter did not ask for confirmation (top=%d)", m.top())
+	// Enter on the row: must ask, and the question must name the package.
+	m2, _ := m.update(tuikit.PickerResultMsg{Value: "item:preinstalls:preinstall:obsidian"})
+	if m2.top() != scrConfirm {
+		t.Fatalf("Enter did not ask for confirmation (top=%d)", m2.top())
 	}
-	txt := m.confirm.View()
+	txt := m2.confirm.View()
 	for _, want := range []string{"obsidian", "pacman -Rns"} {
 		if !strings.Contains(txt, want) {
 			t.Fatalf("confirmation missing %q: %q", want, txt)
 		}
 	}
-	// A protected app is never in the list handed to the backend, even though
-	// its row was ticked.
-	for _, a := range m.pendingArgs {
-		if a == "omacalc" {
-			t.Fatalf("protected app in the removal list: %v", m.pendingArgs)
-		}
+	if m2.pendingAction != "preinstalls-remove" || len(m2.pendingArgs) != 1 || m2.pendingArgs[0] != "obsidian" {
+		t.Fatalf("pendingAction=%q pendingArgs=%q, want preinstalls-remove [obsidian]", m2.pendingAction, m2.pendingArgs)
 	}
 
-	// Back CANCELS. It used to ask the same question Enter does, which meant
-	// there was no way to open the preinstalls and change your mind: the only
-	// exit removed something. Backing out now drops the uninstall this page
-	// was in front of and asks nothing.
-	m = base()
-	m.uninstallWait = []string{"live-mode"}
-	m.uninstallMsg = "Uninstall live-mode?"
-	m, _ = m.update(tuikit.PickerResultMsg{Value: "back"})
-	if m.top() == scrConfirm {
-		t.Fatalf("back asked for confirmation instead of cancelling")
+	// Declining runs nothing.
+	m3, cmd := m2.update(tuikit.ConfirmResultMsg{Yes: false})
+	if cmd != nil {
+		t.Error("declining the confirmation started a command")
 	}
-	if len(m.uninstallWait) != 0 {
-		t.Fatalf("back left the uninstall waiting: %q", m.uninstallWait)
-	}
-
-	// Nothing ticked: no confirmation, and the uninstall it was in front of
-	// carries on — declining the preinstalls is a decision about the
-	// preinstalls, not about the uninstall.
-	m = base()
-	m.uninstallWait = []string{"live-mode"}
-	m.uninstallMsg = "Uninstall live-mode?"
-	m.preinstallChecked = map[string]bool{"obsidian": false, "pinta": false, "omacalc": true}
-	m.preinstallPicker = m.rebuildPreinstallPicker()
-	m, _ = m.update(tuikit.PickerResultMsg{Value: "apply"})
-	if m.top() != scrConfirm {
-		t.Fatalf("nothing ticked: top=%d, want the uninstall confirmation", m.top())
-	}
-	if m.pendingAction != "uninstall" {
-		t.Fatalf("pendingAction = %q, want uninstall", m.pendingAction)
-	}
+	_ = m3
 }
 
 // TestMenuEntriesReachableFromSetup guards the routing of the level-1

@@ -737,16 +737,28 @@ _setup_tree(){
         ;;
     esac
   done
-  # Preinstalls lives in Setup too: one row opening the stock-app list
-  # (nothing greyed there — the screen filters by mode itself). Ticked it
-  # does nothing installable, so the TUI strips it from install plans and
-  # the install path below ignores it defensively.
-  folders+=("Preinstalls"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
-    "$(json_str preinstalls)" "$(json_str "Preinstalls")" false)")
-  items+=("preinstalls/choose"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s,"disabled":%s}' \
-    "$(json_str preinstalls)" "$(json_str "preinstalls:choose")" \
-    "$(json_str "Choose which Omarchy preinstalls to remove")" \
-    "$(json_str "opens the stock-app list")" false)")
+  # Preinstalls live in Setup too: every stock package as its own row,
+  # visible on unfold, nothing greyed. Ticking/installing never applies —
+  # the TUI routes these rows to removal and strips them from install
+  # plans (the install path below ignores them defensively too).
+  {
+    local -a pre_seen=()
+    local pp pl
+    while read -r pp; do
+      [[ -n $pp ]] || continue
+      pre_seen+=("$pp")
+    done < <(stock_preinstalls)
+    if ((${#pre_seen[@]})); then
+      folders+=("Preinstalls"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+        "$(json_str preinstalls)" "$(json_str "Preinstalls")" false)")
+      for pp in "${pre_seen[@]}"; do
+        pl="$(preinstall_label "$pp")"
+        items+=("preinstalls/$pp"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s}' \
+          "$(json_str preinstalls)" "$(json_str "preinstall:$pp")" \
+          "$(json_str "$pl")")")
+      done
+    fi
+  }
   local line
   while IFS= read -r line; do
     [[ -n $line ]] && printf '%s\n' "${line#*$'\t'}"
@@ -899,16 +911,29 @@ _uninstall_tree(){
         "$(json_str "$(fix_desc "$fid")")")")
     done
   fi
-  # Preinstalls is a row again, and it is TICKABLE. The long description that
-  # used to sit under it is gone for good: the page no longer doubles in height
-  # when one row carries a sub-line, so a long label is just a long label now
-  # and the row says plainly what ticking it is for.
-  folders+=("Preinstalls"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
-    "$(json_str preinstalls)" "$(json_str "Preinstalls")" false)")
-  items+=("preinstalls/choose"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s,"disabled":%s}' \
-    "$(json_str preinstalls)" "$(json_str "preinstalls:choose")" \
-    "$(json_str "Choose which Omarchy preinstalls to remove")" \
-    "$(json_str "tick it, then the list opens when you apply")" false)")
+  # Preinstalls are inline rows here too — but only the still-installed
+  # ones, and the folder itself is omitted when nothing is left to remove.
+  # Nothing greyed, no intermediate row or screen.
+  {
+    local -a pre_have=()
+    local pp
+    while read -r pp; do
+      [[ -n $pp ]] || continue
+      pkg_has "$pp" || continue
+      pre_have+=("$pp")
+    done < <(stock_preinstalls)
+    if ((${#pre_have[@]})); then
+      folders+=("Preinstalls"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+        "$(json_str preinstalls)" "$(json_str "Preinstalls")" false)")
+      local pl
+      for pp in "${pre_have[@]}"; do
+        pl="$(preinstall_label "$pp")"
+        items+=("preinstalls/$pp"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s}' \
+          "$(json_str preinstalls)" "$(json_str "preinstall:$pp")" \
+          "$(json_str "$pl")")")
+      done
+    fi
+  }
 
   local line
   while IFS= read -r line; do [[ -n $line ]] && printf '%s\n' "${line#*$'\t'}"; done \
@@ -1758,7 +1783,7 @@ cmd_update_modules(){
 # Uninstall modules one by one (never the gum chooser). Catalog keys from the
 # uninstall tree (APP/TUI/WEB …) are routed to the apps module's uninstaller.
 cmd_uninstall(){
-  local -a modules=() catalog=() patches=() fixids=() menuops=()
+  local -a modules=() catalog=() patches=() fixids=() menuops=() prestock=()
   local id
   # Orientation first: elevation prompts (sudo password dialog) open on the
   # DESKTOP, not inside the TUI, so a user staring at the spinner never sees
@@ -1767,17 +1792,30 @@ cmd_uninstall(){
   if ! sudo -n -v 2>/dev/null; then
     msg "Uninstalling: if a step needs root, answer the password dialog on the desktop (3 min, then it continues without)."
   fi
+  # Dedupe first: the same row reached twice must run once, not fail the
+  # second time as "already removed".
+  local -a seen=() args=() s
   for id in "$@"; do
+    local dup=false
+    for s in "${seen[@]:-}"; do [[ $s == "$id" ]] && { dup=true; break; }; done
+    $dup && continue
+    seen+=("$id"); args+=("$id")
+  done
+  for id in "${args[@]}"; do
     case "$id" in
       APP\ *|TUI\ *|WEB\ *|PLUG\ *) catalog+=("$id") ;;
       patch:*) patches+=("${id#patch:}") ;;
       fix:*)   fixids+=("${id#fix:}") ;;
       menu:*|shortcut) menuops+=("$id") ;;
+      preinstall:*) prestock+=("${id#preinstall:}") ;;
       *) modules+=("$id") ;;
     esac
   done
   YES=1
   MODULE_FAILURES=0
+  if ((${#prestock[@]})); then
+    cmd_preinstalls_remove "${prestock[@]}" || MODULE_FAILURES=$((MODULE_FAILURES + 1))
+  fi
   if ((${#modules[@]})); then
     for id in "${modules[@]}"; do
       uninstall_module "$id" || MODULE_FAILURES=$((MODULE_FAILURES + 1))

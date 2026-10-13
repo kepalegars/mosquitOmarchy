@@ -807,120 +807,41 @@ func TestSwitchingTabKeepsTheSameColumn(t *testing.T) {
 	}
 }
 
-// withPreinstalls seeds the preinstall list the page renders, the same way the
-// backend result does.
-func (m model) withPreinstalls(rows []PreinstallRec) model {
-	m.preinstalls = rows
-	if m.preinstallChecked == nil {
-		m.preinstallChecked = map[string]bool{}
-	}
-	for _, r := range rows {
-		if _, seen := m.preinstallChecked[r.Name]; !seen {
-			m.preinstallChecked[r.Name] = r.Removable
-		}
-	}
-	return m
-}
-
-// "uninstall selection" with the Preinstalls row ticked goes through the
-// stock-app list, and the module uninstall waits behind it. Ticking that row is
-// the opt-in: it is what asks for the page, and its key is stripped before the
-// command is built.
+// A mixed uninstall (modules + stock preinstall packages) asks the
+// preinstall removal first and holds the module uninstall behind it: nothing
+// runs before its own confirmation, and the preinstall key never reaches the
+// module path.
 func TestUninstallSelectionRunsAfterThePreinstallsStep(t *testing.T) {
 	m := flatSetup()
 	m.treeMode = "uninstall"
-	m.selected[setupValue("apps", "reaper")] = true
-	m.selected[setupValue("preinstalls", preinstallsKey)] = true
-	m.filterText = "re"
-	m.setupPicker = m.rebuildSetup()
-	idx := indexOfValue(m.setupPicker, setupValue("apps", "reaper"))
-	if idx < 0 {
-		t.Fatal("reaper row not found under the filter")
+	m, _ = m.startUninstall([]string{"apps:reaper", "preinstall:obsidian"}, "Uninstall?")
+	if m.top() != scrConfirm {
+		t.Fatalf("expected the removal confirm, top=%d", m.top())
 	}
-	m.setupPicker = m.setupPicker.SelectIndex(idx)
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
-
-	if m.top() != scrPreinstalls {
-		t.Fatalf("the ticked Preinstalls row did not route the apply through its list (top=%d)", m.top())
+	if m.pendingAction != "preinstalls-remove" || len(m.pendingArgs) != 1 || m.pendingArgs[0] != "obsidian" {
+		t.Fatalf("pendingAction=%q pendingArgs=%q, want preinstalls-remove [obsidian]", m.pendingAction, m.pendingArgs)
 	}
 	// The uninstall is held, not run and not confirmed.
 	if len(m.uninstallWait) != 1 || m.uninstallWait[0] != "reaper" {
-		t.Fatalf("uninstallWait = %q — the preinstalls key must not be in the module list", m.uninstallWait)
+		t.Fatalf("uninstallWait = %q — want the module held behind the removal", m.uninstallWait)
 	}
 }
 
-// Ticking preinstalls and confirming removes them FIRST, and only then asks
-// for the uninstall — the order the user asked for.
+// Confirming the removal resumes the held uninstall; declining it carries
+// on to the uninstall too (keeping the apps was a decision about the apps,
+// not about the uninstall).
 func TestPreinstallsAreRemovedBeforeTheUninstallRuns(t *testing.T) {
 	m := flatSetup()
 	m.treeMode = "uninstall"
 	m.uninstallWait = []string{"reaper"}
 	m.uninstallMsg = "Uninstall reaper?"
-	m.nav = append(m.nav, scrPreinstalls)
-	m = m.withPreinstalls([]PreinstallRec{
-		{Name: "obsidian", Label: "Obsidian", Installed: true, Removable: true},
-	})
-	m.preinstallChecked = map[string]bool{"obsidian": true}
-	m.preinstallPicker = m.rebuildPreinstallPicker()
-
-	m, _ = m.update(tuikit.PickerResultMsg{Value: "apply"})
-	if m.top() != scrConfirm {
-		t.Fatalf("the preinstalls removal was not confirmed (top=%d)", m.top())
-	}
-	if m.pendingAction != "preinstalls-remove" || len(m.pendingArgs) != 1 || m.pendingArgs[0] != "obsidian" {
-		t.Fatalf("pendingAction=%q pendingArgs=%q, want preinstalls-remove [obsidian]", m.pendingAction, m.pendingArgs)
-	}
-	// The uninstall is STILL waiting behind it: no confirmation for the modules
-	// may exist while the apps being removed are still unconfirmed.
-	if len(m.uninstallWait) != 1 {
-		t.Fatalf("the uninstall resumed too early: %q", m.uninstallWait)
-	}
-	if m.top() == scrConfirm && m.pendingAction == "uninstall" {
-		t.Fatalf("the uninstall confirmation replaced the preinstalls one")
-	}
-
-	// Confirming the removal resumes the uninstall.
-	m, _ = m.update(tuikit.ConfirmResultMsg{Yes: true})
+	m.nav = []screen{scrMain, scrSetup}
 	m, _ = m.update(preinstallsMsg{done: "obsidian removed"})
 	if m.top() != scrConfirm {
 		t.Fatalf("the uninstall was not confirmed after the removal (top=%d)", m.top())
 	}
-	if m.pendingAction != "uninstall" || m.pendingArgs[0] != "reaper" {
+	if m.pendingAction != "uninstall" || len(m.pendingArgs) != 1 || m.pendingArgs[0] != "reaper" {
 		t.Fatalf("pendingAction=%q pendingArgs=%q, want uninstall [reaper]", m.pendingAction, m.pendingArgs)
-	}
-}
-
-// Backing out cancels the uninstall, but the ticks the user made on the page
-// before it are theirs and are kept.
-func TestBackingOutOfPreinstallsKeepsTheSelection(t *testing.T) {
-	m := flatSetup()
-	m.treeMode = "uninstall"
-	m.selected[setupValue("apps", "reaper")] = true
-	m.selected[setupValue("apps", "extracto")] = true
-	m.uninstallWait = []string{"reaper", "extracto"}
-	m.uninstallMsg = "Uninstall 2 selected item(s)?"
-	m.nav = append(m.nav, scrPreinstalls)
-	m = m.withPreinstalls([]PreinstallRec{
-		{Name: "obsidian", Label: "Obsidian", Installed: true, Removable: true},
-	})
-	m.preinstallChecked = map[string]bool{"obsidian": true}
-	m.preinstallPicker = m.rebuildPreinstallPicker()
-
-	m, _ = m.update(tuikit.PickerResultMsg{Value: "back"})
-	if m.top() == scrConfirm {
-		t.Fatalf("backing out asked for a confirmation")
-	}
-	if len(m.uninstallWait) != 0 || m.uninstallMsg != "" {
-		t.Fatalf("backing out left the uninstall waiting: %q / %q", m.uninstallWait, m.uninstallMsg)
-	}
-	// The module ticks survive; only the preinstall ticks are gone.
-	for _, v := range []string{setupValue("apps", "reaper"), setupValue("apps", "extracto")} {
-		if !m.selected[v] {
-			t.Errorf("tick %q was lost", v)
-		}
-	}
-	if m.preinstallChecked != nil {
-		t.Errorf("preinstall ticks survived the cancellation: %v", m.preinstallChecked)
 	}
 }
 
@@ -1244,37 +1165,43 @@ func TestExtrasSettingPutsTheRowBackWhenTheWriteFails(t *testing.T) {
 	}
 }
 
-// idxPreinstalls finds the Preinstalls row in the tree.
+// idxPreinstalls finds the first inline preinstall row in the tree.
 func idxPreinstalls(m model) int {
-	return indexOfValue(m.setupPicker, setupValue("preinstalls", preinstallsKey))
+	for i, it := range m.setupPicker.Items() {
+		if _, key := splitSetupValue(it.Value); strings.HasPrefix(key, "preinstall:") {
+			return i
+		}
+	}
+	return -1
 }
 
-// With the Preinstalls row ticked, the apply opens its list first and the
-// module uninstall waits behind it.
+// With a preinstall package ticked, the apply asks its removal first and
+// the module uninstall waits behind it.
 func TestTickingPreinstallsRoutesTheApplyThroughItsList(t *testing.T) {
 	m := flatSetup()
 	m.treeMode = "uninstall"
 	m.setupItems = append(m.setupItems, SetupItemRec{
-		Folder: "preinstalls", Key: preinstallsKey, Label: "Choose which Omarchy preinstalls to remove",
+		Folder: "preinstalls", Key: "preinstall:obsidian", Label: "Obsidian",
 	})
 	m.setupFolders = append(m.setupFolders, FolderRec{Folder: "preinstalls", Label: "Preinstalls"})
-	// Categories are folded until opened, like every other one, so the row is
-	// reached with → first. That is the same on a real machine.
 	m.folderOpen["preinstalls"] = true
 	m.setupPicker = m.rebuildSetup()
 
 	idx := idxPreinstalls(m)
 	if idx < 0 {
-		t.Fatal("the Preinstalls row is missing from the Uninstall tree")
+		t.Fatal("no inline preinstall row in the Uninstall tree")
 	}
-	m, _ = m.update(tuikit.PickerToggleMsg{Value: setupValue("preinstalls", preinstallsKey)})
+	m, _ = m.update(tuikit.PickerToggleMsg{Value: setupValue("preinstalls", "preinstall:obsidian")})
 
-	m, _ = m.startUninstall([]string{"reaper", preinstallsKey}, "Uninstall reaper?")
-	if m.top() != scrPreinstalls {
-		t.Fatalf("the preinstalls list did not open (top=%d)", m.top())
+	m, _ = m.startUninstall([]string{"reaper", "preinstall:obsidian"}, "Uninstall reaper?")
+	if m.top() != scrConfirm {
+		t.Fatalf("expected the removal confirm, top=%d", m.top())
+	}
+	if m.pendingAction != "preinstalls-remove" {
+		t.Fatalf("pendingAction = %q, want preinstalls-remove", m.pendingAction)
 	}
 	if len(m.uninstallWait) != 1 || m.uninstallWait[0] != "reaper" {
-		t.Fatalf("uninstallWait = %q — the preinstalls key must not be in the module list", m.uninstallWait)
+		t.Fatalf("uninstallWait = %q — the module must wait behind the removal", m.uninstallWait)
 	}
 }
 
@@ -1290,28 +1217,98 @@ func TestUntickedPreinstallsDoesNotAddAStep(t *testing.T) {
 	}
 }
 
-// Enter on the Preinstalls row opens the list on its own, with no uninstall
-// waiting behind it.
+// Enter on an inline preinstall row asks its removal straight away —
+// no list screen in between.
 func TestEnterOnPreinstallsRowOpensTheList(t *testing.T) {
 	m := flatSetup()
 	m.treeMode = "uninstall"
 	m.setupItems = append(m.setupItems, SetupItemRec{
-		Folder: "preinstalls", Key: preinstallsKey, Label: "Choose which Omarchy preinstalls to remove",
+		Folder: "preinstalls", Key: "preinstall:obsidian", Label: "Obsidian",
 	})
 	m.setupFolders = append(m.setupFolders, FolderRec{Folder: "preinstalls", Label: "Preinstalls"})
-	// Categories are folded until opened, like every other one, so the row is
-	// reached with → first. That is the same on a real machine.
 	m.folderOpen["preinstalls"] = true
 	m.setupPicker = m.rebuildSetup()
 	m.setupPicker = m.setupPicker.SelectIndex(idxPreinstalls(m))
-	m, _ = m.update(tuikit.PickerResultMsg{Value: setupValue("preinstalls", preinstallsKey)})
-	if m.top() != scrPreinstalls {
-		t.Fatalf("Enter on the Preinstalls row went to screen %d, want the list(%d)", m.top(), scrPreinstalls)
+	m, _ = m.update(tuikit.PickerResultMsg{Value: setupValue("preinstalls", "preinstall:obsidian")})
+	if m.top() != scrConfirm {
+		t.Fatalf("Enter on the preinstall row went to screen %d, want the removal confirm", m.top())
+	}
+	if m.pendingAction != "preinstalls-remove" || len(m.pendingArgs) != 1 || m.pendingArgs[0] != "obsidian" {
+		t.Fatalf("pendingAction=%q pendingArgs=%q, want preinstalls-remove [obsidian]", m.pendingAction, m.pendingArgs)
 	}
 	if len(m.uninstallWait) != 0 {
-		t.Fatalf("a standalone visit left an uninstall waiting: %q", m.uninstallWait)
+		t.Fatalf("a standalone removal left an uninstall waiting: %q", m.uninstallWait)
 	}
 }
+
+// A row carrying a description must not change the height of the rows around
+// it. "lame language models" holds "bring back omarchy's agentic stuff", and
+// opening that folder used to leave a blank line between EVERY module: the
+// delegate reported two-line rows for the whole list because of that one row,
+// so the page halved and the extra vertical gaps appeared.
+
+// "bring back omarchy's agentic stuff" carries no description at all, in
+// either tree. Even greyed out — where it used to gain an "already there —
+// nothing to bring back" sub-line — it stays a single line, so it cannot make
+// the page two lines tall.
+
+// withMenuEntries seeds the Menu entries blocks so the tree has children under
+// that folder, the way a loaded backend result would.
+
+// The Menu entries children used to be built with the bare entry name, so the
+// row came out as "item:mega-caffeine" while every other child is
+// "item:<folder>:<key>". visibleSetupRows works out a leaf's owning folder from
+// its value, found a folder called "mega-caffeine" that is never open, and
+// dropped the row. The fold state was being set correctly the whole time, so
+// pressing → on "Menu entries" looked like it did nothing at all.
+
+// Enter on the Menu entries row has to open the entries screen. The check
+// compared against a bare "menu-entries", but the row is a tree folder and
+// carries "cat:menu-entries", so the value could never match — and the generic
+// "Enter on a folder does nothing" guard above it swallowed the row first. The
+// row took focus and did nothing: the menu blocks could not be deployed from
+// Setup at all.
+
+// "i" is INFO, and Enter is the action.
+//
+// It used to be the other way round: `i` re-dispatched Enter, so `i` installed
+// the selection and the description lived on `?`. The reason recorded at the
+// time was that `i` had no branch for a plain module row, so it did nothing at
+// all on the thing you install — but the gap was a missing branch, not a wrong
+// key, and a module row is an "item:" row the info handler already answers.
+
+// The category row keeps its own description, which is a different shape from a
+// module's: what the group is for, not what the one entry is.
+
+// Enter still does the installing. The two keys must not have been swapped into
+// each other's jobs: describing a module is not installing it, and installing a
+// module must not need a second key.
+
+// ...and in the Uninstall tree Enter removes that module, through the
+// preinstalls step, like it always did.
+
+// The shortcut has to be advertised: "i" was in no legend anywhere, which is
+// the other half of "I can't seem to deploy menu entries".
+
+// The Extras setting follows the kit's rule: the row shows the state it is
+// moving to the instant it is chosen, and the write goes on to run afterwards.
+// It used to write FIRST, synchronously, and rebuild the label from a fresh
+// read afterwards — so the row could not change until the subprocess finished
+// and the whole TUI was frozen for the duration.
+
+// A write that fails puts the row back: the menu must never end up claiming a
+// change that did not happen.
+
+// idxPreinstalls finds the first inline preinstall row in the tree.
+
+// With a preinstall package ticked, the apply asks its removal first and
+// the module uninstall waits behind it.
+
+// Unticked, the preinstalls list is not in the way at all: one confirmation and
+// the module goes. The step is opt-in, which is what keeping the row buys.
+
+// Enter on the Preinstalls row opens the list on its own, with no uninstall
+// waiting behind it.
 
 // The "mosquito" folder repeats its own name on every row it contains. The
 // prefix is display-only and must disappear there, and ONLY there.

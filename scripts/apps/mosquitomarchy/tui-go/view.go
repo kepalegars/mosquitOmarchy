@@ -126,8 +126,6 @@ func (m model) View() string {
 		m.backupOptPicker = m.backupOptPicker.SetSize(m.contentSize())
 	case scrBackupApps:
 		m.backupAppsPicker = m.backupAppsPicker.SetSize(m.contentSize())
-	case scrPreinstalls:
-		m.preinstallPicker = m.preinstallPicker.SetSize(m.contentSize())
 	case scrMenuEntries:
 		m.menuEntriesPicker = m.menuEntriesPicker.SetSize(m.contentSize())
 	case scrThemeFolder:
@@ -249,10 +247,6 @@ func (m model) View() string {
 		// or from the home screen for every page at once.
 		body = m.backupPicker.View()
 		bar = barLine(m.backupPicker.ShortcutsHint())
-	case scrPreinstalls:
-		title = screenTitle("Choose which Omarchy preinstalls to remove", w)
-		body = m.preinstallPicker.View()
-		bar = barLine(m.preinstallPicker.ShortcutsHint())
 	case scrMenuEntries:
 		title = screenTitle("Menu entries", w)
 		// The stored picker, not a fresh rebuild: pickPicker2View/…Hint each
