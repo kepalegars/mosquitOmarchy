@@ -111,6 +111,16 @@ if command -v hyprctl >/dev/null 2>&1; then
   fi
 fi
 
+# The clock slide belongs to this fix too: revealing the hidden indicators
+# used to shove the clock sideways (its own fix-bar-clock-centring.sh, kept
+# standalone for targeted use). Run it here so one bar fix covers the bar.
+CLOCK_FIX="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fix-bar-clock-centring.sh"
+if [[ -f $CLOCK_FIX ]]; then
+  bash "$CLOCK_FIX" || warn "Clock centring reported an issue (see above)."
+else
+  warn "fix-bar-clock-centring.sh not next to this script — clock slide unchecked."
+fi
+
 # Report the resulting geometry so the user can confirm.
 if command -v hyprctl >/dev/null 2>&1; then
   echo

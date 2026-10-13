@@ -29,6 +29,10 @@ That clones the repo, reports which large installers this machine is still missi
 installs the missing modules, builds the TUI, and registers a menu entry. From an
 existing clone, `./bootstrap.sh -y` does the same without the pipe.
 
+Every bootstrap run rebuilds the Go TUI from the current sources, even when a
+binary is already deployed — there is no "already built" shortcut, so the
+running manager can never go stale behind the repo.
+
 Large application installers (Ableton, Bitwig, DaVinci, Guitar Pro) are **not** in the
 repo — see [Large installers](#large-installers).
 

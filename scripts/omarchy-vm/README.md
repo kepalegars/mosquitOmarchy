@@ -121,6 +121,12 @@ qemu-system-x86_64 -name omarchy-<name> -machine q35,accel=kvm:tcg -cpu host
   current kernel. The old one-line `mount -t 9p -o trans=virtio hostshare …`
   from earlier versions of this README omitted it.
 
+  If `/mnt/host` stays empty in the guest, work backwards: `omarchy-vm-share
+  --status` (module loaded? mounted?), `mount | grep host`, then
+  `journalctl -u omarchy-vm-share.service`. An empty `/mnt` with no
+  `/mnt/host` underneath means the install step never ran; an empty
+  `/mnt/host` means the mount failed — the status command says which.
+
   The boot unit waits for the 9p port to appear rather than assuming it is
   already there, because the port shows up a moment after the unit starts.
 - **Shared clipboard** (default on, `CLIPBOARD="off"` to disable): the launcher

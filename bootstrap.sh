@@ -179,9 +179,10 @@ deploy(){
     && ok "Backups folder ready: $SRC/mosquitomarchy-backups" || true
 }
 
-if [[ -x $TUI ]]; then
-  ok "mosquitOmarchy is already deployed ($TUI) — nothing to deploy."
-elif ((YES)) || [[ ! -t 0 ]]; then
+# No "already deployed" shortcut: the TUI is rebuilt on EVERY bootstrap run,
+# even when a binary is already there. A skipped rebuild is how machines end
+# up running a stale manager while the repo moved on.
+if ((YES)) || [[ ! -t 0 ]]; then
   deploy || true
 else
   hr
