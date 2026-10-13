@@ -865,6 +865,16 @@ if [[ "$CLIPBOARD" == "on" ]] && command -v python3 >/dev/null 2>&1; then
     printf '\n  Guest clipboard + shared folder, inside the VM:\n'
     printf '    curl -sf --retry 3 http://10.0.2.2:%s/share -o ~/omarchy-vm-share && sudo bash ~/omarchy-vm-share --install\n' "$CLIPBOARD_PORT"
     printf '    curl -sf --retry 3 http://10.0.2.2:%s/agent -o ~/vm-clipboard.py && test -s ~/vm-clipboard.py && nohup python3 ~/vm-clipboard.py >/tmp/vm-clipboard.log 2>&1 &\n' "$CLIPBOARD_PORT"
+    # The lines above go to stdout, which nobody sees when the VM is started
+    # from the app entry. Mirror them into a file so they are retrievable on
+    # the host (and `omarchy-vm-share --status` prints them too).
+    {
+      printf 'Guest setup for __VM_NAME__ — run INSIDE the VM.\n'
+      printf 'Share (once; persists via a boot unit):\n'
+      printf '  curl -sf --retry 3 http://10.0.2.2:%s/share -o ~/omarchy-vm-share && sudo bash ~/omarchy-vm-share --install\n' "$CLIPBOARD_PORT"
+      printf 'Clipboard agent (each boot):\n'
+      printf '  curl -sf --retry 3 http://10.0.2.2:%s/agent -o ~/vm-clipboard.py && test -s ~/vm-clipboard.py && nohup python3 ~/vm-clipboard.py >/tmp/vm-clipboard.log 2>&1 &\n' "$CLIPBOARD_PORT"
+    } >"$VM_DIR/guest-setup.txt" 2>/dev/null || true
   fi
 fi
 

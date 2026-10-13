@@ -134,7 +134,39 @@ do_uninstall(){
   return 0
 }
 
+# Guest or host? Inside the VM the virtio_9p module exists; on the host it
+# does not. This one script serves both sides: the guest mounts, the host
+# reports readiness AND prints the exact commands to run inside the VM (the
+# VM window has no terminal output, so the launch-time print is invisible
+# when started from the app entry — this is the discoverable copy).
+on_guest(){ [[ -d /sys/module/virtio_9p ]]; }
+
+do_status_host(){
+  local _bport="${OMARCHY_VM_CLIPBOARD_PORT:-7789}"
+  local _vms="${OMARCHY_VM_ROOT:-${MOSQUITO_VM_ROOT:-$HOME/VMs}}"
+  local _shared="$_vms/shared"
+  printf 'side      : host\n'
+  if [[ -d $_shared ]]; then
+    printf 'shared    : %s (%d entries)\n' "$_shared" "$(ls -A "$_shared" 2>/dev/null | wc -l)"
+  else
+    printf 'shared    : MISSING %s (run setup-omarchy-vm.sh)\n' "$_shared"
+  fi
+  if command -v curl >/dev/null 2>&1 \
+      && curl -sf --max-time 2 "http://127.0.0.1:${_bport}/ping" >/dev/null 2>&1; then
+    printf 'bridge    : listening on 127.0.0.1:%s (launch a VM to use it)\n' "$_bport"
+  else
+    printf 'bridge    : NOT listening (it starts with the VM launcher)\n'
+  fi
+  local _run=0 _d
+  for _d in "$_vms"/*/; do [[ -f "${_d}vm.pid" ]] && _run=$((_run+1)); done 2>/dev/null
+  printf 'running   : %d VM(s)\n' "$_run"
+  printf '\nInside the VM, run these two lines (once for share, each boot for the agent):\n'
+  printf '  curl -sf --retry 3 http://10.0.2.2:%s/share -o ~/omarchy-vm-share && sudo bash ~/omarchy-vm-share --install\n' "$_bport"
+  printf '  curl -sf --retry 3 http://10.0.2.2:%s/agent -o ~/vm-clipboard.py && test -s ~/vm-clipboard.py && nohup python3 ~/vm-clipboard.py >/tmp/vm-clipboard.log 2>&1 &\n' "$_bport"
+}
+
 do_status(){
+  on_guest || { do_status_host; return 0; }
   printf 'tag       : %s\n' "$TAG"
   printf 'mountpoint: %s\n' "$MOUNTPOINT"
   if compgen -G "/sys/module/virtio_9p" >/dev/null 2>&1; then
@@ -173,6 +205,10 @@ wait_for_port_quiet(){
 
 main(){
   local action="${1:-}"
+  case "$action" in
+    --install|--mount|--mount-nodep|--uninstall)
+      on_guest || { err "$action runs INSIDE the VM — on the host only --status makes sense."; return 1; } ;;
+  esac
   case "$action" in
     --install)          do_mount && write_unit ;;
     --mount|--mount-nodep) do_mount ;;

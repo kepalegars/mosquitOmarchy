@@ -114,10 +114,23 @@ qemu-system-x86_64 -name omarchy-<name> -machine q35,accel=kvm:tcg -cpu host
   not loaded on a fresh install) and mount it, so without that step the folder
   never appears and the feature looks broken rather than half-finished.
 
+  Nothing is injected into the guest: the Omarchy ISO stays stock, and the
+  guest pulls what it needs from the host bridge. So the helper does not
+  exist inside the VM until fetched — on the host, `omarchy-vm-share
+  --status` prints the exact lines to run:
+
+  ```bash
+  # inside the VM (the bridge is reachable at 10.0.2.2; default port 7789)
+  curl -sf --retry 3 http://10.0.2.2:7789/share -o ~/omarchy-vm-share && sudo bash ~/omarchy-vm-share --install
+  curl -sf --retry 3 http://10.0.2.2:7789/agent -o ~/vm-clipboard.py && test -s ~/vm-clipboard.py && nohup python3 ~/vm-clipboard.py >/tmp/vm-clipboard.log 2>&1 &
+  ```
+
+  The first line loads the module, mounts at /mnt/host and adds a boot unit
+  (once); the second starts the clipboard agent (each boot). After that:
+
   ```bash
   # inside the VM
-  omarchy-vm-share --install     # load the module, mount at /mnt/host, add a unit
-  omarchy-vm-share --status      # what is present and what is missing
+  sudo bash ~/omarchy-vm-share --status   # what is present and what is missing
   ```
 
   `version=9p2000.L` is included on purpose: without it the mount fails on a
