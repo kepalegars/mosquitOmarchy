@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# mosquito-mixbay — the single, stable entry point for mosquitomixbay.
+#
+# mosquitomixbay drives the USB audio interfaces over one TUI:
+# Audient EVO 8 (full control today), EVO 4 (same protocol), RME Fireface
+# UCX II / ESI UGM192 / PreSonus Quantum ES 4 (ALSA level 1 + demo).
+#
+# Same architecture as the sibling mosquito-audio-plugin-manager dispatcher:
+#   - No arguments → the interactive TUI (mosquito-mixbay-tui, Go/Bubble Tea
+#     over the shared tui-kit). Needs a real terminal: execs the binary
+#     directly under a tty, else opens foot (fallback xterm) itself.
+#   - With arguments → one-shot backend command, run by the SAME Go binary
+#     (see tui-go/cli.go), e.g. `mosquito-mixbay status-json`.
+#     Scripts and live-mode hooks should call mosquito-mixbay-actions instead
+#     (stable backend name), which is a thin passthrough to the same binary.
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MGR_TUI_BIN="$DIR/mosquito-mixbay-tui"
+MGR_PIDFILE="${XDG_RUNTIME_DIR:-/tmp}/mosquito-mixbay.pid"
+
+_mgr_cleanup() { rm -f "$MGR_PIDFILE"; }
+
+_mgr_running() {
+  local p field
+  while IFS= read -r p; do
+    [[ -n $p && $p != "$$" ]] || continue
+    [[ -r /proc/$p/cmdline ]] || continue
+    while IFS= read -r -d '' field; do
+      if [[ $field == "$MGR_TUI_BIN" || $field == "${MGR_TUI_BIN##*/}" ]]; then
+        echo "$p"; break
+      fi
+    done < "/proc/$p/cmdline"
+  done < <(pgrep -f -- "${MGR_TUI_BIN##*/}" 2>/dev/null || true)
+  return 0
+}
+
+if [[ $# -eq 0 ]]; then
+  trap _mgr_cleanup EXIT
+  pids="$(_mgr_running)"
+  if [[ -n $pids ]]; then
+    echo "mosquito-mixbay: another instance is already open — focusing it (kill it first to open a new one)." >&2
+    exit 0
+  fi
+  printf '%s\n' "$$" > "$MGR_PIDFILE"
+  if [[ ! -x "$MGR_TUI_BIN" ]]; then
+    echo "mosquito-mixbay: TUI binary missing ($MGR_TUI_BIN) — re-run setup-mosquitomixbay.sh." >&2
+    exit 1
+  fi
+  if [[ -t 0 && -t 1 ]]; then
+    "$MGR_TUI_BIN"
+    exit $?
+  elif command -v foot >/dev/null 2>&1; then
+    foot -W 100x30 --app-id=org.omarchy.mosquito-mixbay-tui -e "$MGR_TUI_BIN"
+    exit $?
+  elif command -v xterm >/dev/null 2>&1; then
+    xterm -e "$MGR_TUI_BIN"
+    exit $?
+  else
+    echo "mosquito-mixbay: no terminal emulator found (foot/xterm) to open the TUI in." >&2
+    exit 1
+  fi
+fi
+
+# Flag-driven one-shot action → same Go binary, non-interactive backend.
+exec "$MGR_TUI_BIN" "$@"

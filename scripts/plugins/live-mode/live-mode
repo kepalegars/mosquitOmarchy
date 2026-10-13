@@ -57,6 +57,7 @@ THERMAL_LIMIT_C=85
 CLOSE_APPS=yes
 CLOSE_APPS_LIST="kDrive qBittorrent Steam Discord Slack Spotify"
 ROUTING_TOOL=yes
+PATCHBAY_APP=mixbay
 NO_GAPS=yes
 SILENCE_NOTIFICATIONS=yes
 SWITCH_THEME=yes
@@ -79,6 +80,7 @@ load_settings() {
   CLOSE_APPS=yes
   CLOSE_APPS_LIST=""
   ROUTING_TOOL=yes
+  PATCHBAY_APP=mixbay
   NO_GAPS=yes
   SILENCE_NOTIFICATIONS=yes
   SWITCH_THEME=yes
@@ -100,6 +102,13 @@ load_settings() {
   # The remaining four: only an explicit "no" turns them off, so a settings file
   # written by an older version keeps the behaviour it had.
   [[ $ROUTING_TOOL == no ]] || ROUTING_TOOL=yes
+  # Which app fills the patchbay slot: mixbay (the mosquito USB audio bay,
+  # default), qpwgraph (the PipeWire graph fallback) or mosquito-patchbay
+  # (the future native routing surface). Anything else falls back to mixbay;
+  # a choice that is not installed falls through to whatever IS, inside
+  # patchbay_provider — the setting names the preference, not a hard
+  # requirement.
+  case $PATCHBAY_APP in mixbay|qpwgraph|mosquito-patchbay) ;; *) PATCHBAY_APP=mixbay ;; esac
   [[ $NO_GAPS == no ]] || NO_GAPS=yes
   [[ $SILENCE_NOTIFICATIONS == no ]] || SILENCE_NOTIFICATIONS=yes
   [[ $SWITCH_THEME == no ]] || SWITCH_THEME=yes
@@ -449,28 +458,58 @@ special_clients() {
 
 # mosquito patchbay — WHICH command provides it.
 #
-# `mosquito-patchbay` is the one we are writing: it will own the routing surface
-# and replace the borrowed qpwgraph entirely. It does not exist yet, so until
-# it does we fall back to qpwgraph rather than lose the feature. The first one
-# that is actually installed wins, and a machine with neither is told how to
-# get it.
+# The PATCHBAY_APP setting (Live Mode Manager settings, default mixbay)
+# names the preference: mosquito-mixbay (the mosquito USB audio bay, parked
+# in the scratchpad as the session's desk tool), qpwgraph (the borrowed
+# PipeWire graph) or mosquito-patchbay (the future native routing surface).
+# The setting is a preference, not a hard requirement: a choice that is not
+# installed falls through to whatever IS, in the old priority order, and a
+# machine with nothing installed is told how to get it.
 #
 # Echoes "<command>|<class-regex>": the launcher and the window-class matcher
 # differ per provider, and a provider whose window cannot be recognised is
 # worse than none at all (it would be launched and never parked).
-patchbay_provider() {
+patchbay_have_mixbay() {
+  [[ -x $REAL_HOME/.local/bin/mosquito-mixbay ]] \
+    || command -v mosquito-mixbay >/dev/null 2>&1
+}
+patchbay_have_native() {
   local bin
   for bin in "$REAL_HOME/.local/bin/mosquito-patchbay" "$REAL_HOME/.local/bin/mosquito-patchbay.sh"; do
-    [[ -x $bin ]] && { printf '%s|mosquito[_-]?patchbay\n' "$(basename "$bin")"; return 0; }
+    [[ -x $bin ]] && return 0
   done
-  command -v mosquito-patchbay >/dev/null 2>&1 && { printf 'mosquito-patchbay|mosquito[_-]?patchbay\n'; return 0; }
+  command -v mosquito-patchbay >/dev/null 2>&1
+}
+patchbay_provider() {
+  local choice="${PATCHBAY_APP:-mixbay}"
+  case $choice in
+    mixbay)
+      if patchbay_have_mixbay; then
+        printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay-tui\n'; return 0
+      fi ;;
+    qpwgraph)
+      if command -v qpwgraph >/dev/null 2>&1; then
+        printf 'qpwgraph|qpwgraph|org\.rncbc\.qpwgraph|org\.pq_graph\.Qpwgraph\n'; return 0
+      fi ;;
+    mosquito-patchbay)
+      if patchbay_have_native; then
+        printf 'mosquito-patchbay|mosquito[_-]?patchbay\n'; return 0
+      fi ;;
+  esac
+  # The choice is not installed: fall back to whatever is, native first.
+  if patchbay_have_native; then
+    printf 'mosquito-patchbay|mosquito[_-]?patchbay\n'; return 0
+  fi
+  if patchbay_have_mixbay; then
+    printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay-tui\n'; return 0
+  fi
   command -v qpwgraph >/dev/null 2>&1 && { printf 'qpwgraph|qpwgraph|org\.rncbc\.qpwgraph|org\.pq_graph\.Qpwgraph\n'; return 0; }
   return 1
 }
 
 # patchbay_install_hint — what to run when neither provider is installed.
 patchbay_install_hint() {
-  printf 'pacman -S qpwgraph   # current fallback; run the mosquito setup to get the native one'
+  printf 'run the mixbay module (Setup > mosquito), or pacman -S qpwgraph as fallback'
 }
 
 patchbay_addr() {
@@ -514,17 +553,22 @@ snapshot_scratchpad() {
 }
 
 # scratchpad_occupied_by_others: reports the class|initialTitle lines of
-# scratchpad clients other than the patchbay itself (so a single-instance
-# qpwgraph already there does not count as "occupied").
+# scratchpad clients other than the patchbay itself (so the provider's own
+# window already there does not count as "occupied"). Matched against the
+# CURRENT provider's class regex, so a mixbay parked by an earlier session
+# is recognised just like qpwgraph was.
 scratchpad_occupied_by_others() {
+  local spec re
+  spec=$(patchbay_provider 2>/dev/null || true)
+  re="${spec#*|}"
   local line
   while IFS= read -r line; do
     [[ -z $line ]] && continue
     local addr class init_title pid
     IFS='|' read -r addr class init_title pid <<< "$line"
-    case $class in
-      qpwgraph|org.rncbc.qpwgraph|org.pq_graph.Qpwgraph) continue ;;
-    esac
+    if [[ -n $re ]] && printf '%s' "$class" | grep -Eq "^(${re})$" 2>/dev/null; then
+      continue
+    fi
     printf "%s\n" "$class"
   done < <(special_clients)
 }
@@ -607,7 +651,7 @@ open_patchbay() {
       ok "mosquito patchbay opened in the current workspace (scratchpad left as it was)."
     fi
   else
-    warn "qpwgraph launched, but its window could not be detected."
+    warn "${spec%%|*} launched, but its window could not be detected."
   fi
   return 0
 }
@@ -948,7 +992,7 @@ cmd_on() {
       "Always awake (lid closed without sleeping)"
     )
     [[ $CLOSE_APPS == yes ]] && _lm_bullets+=("Close ${CLOSE_APPS_LIST:-(no app selected)}")
-    [[ $ROUTING_TOOL == yes ]] && _lm_bullets+=("mosquito patchbay in scratchpad (SUPER + S)")
+    [[ $ROUTING_TOOL == yes ]] && _lm_bullets+=("mosquito patchbay (${PATCHBAY_APP:-mixbay}) in scratchpad (SUPER + S)")
     [[ $NO_GAPS == yes ]] && _lm_bullets+=("Gaps disabled during the session")
     [[ $SILENCE_NOTIFICATIONS == yes ]] && _lm_bullets+=("Notifications silenced")
     [[ $SWITCH_THEME == yes ]] && _lm_bullets+=("Switch to the Live theme")

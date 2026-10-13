@@ -95,6 +95,11 @@ install_binaries() {
 PATCHBAY_BIN_NAME="mosquito-patchbay"
 
 install_routing_tool() {
+  # The patchbay slot defaults to mosquito-mixbay (its own mosquitomarchy
+  # module); this step only guarantees the qpwgraph fallback exists.
+  if [[ -x "$REAL_HOME/.local/bin/mosquito-mixbay" ]] || command -v mosquito-mixbay >/dev/null 2>&1; then
+    ok "mosquito patchbay: mosquito-mixbay fills the slot (PATCHBAY_APP default)."
+  fi
   if [[ -x "$REAL_HOME/.local/bin/$PATCHBAY_BIN_NAME" ]] || command -v "$PATCHBAY_BIN_NAME" >/dev/null 2>&1; then
     ok "mosquito patchbay present: $PATCHBAY_BIN_NAME"
     return 0
@@ -104,7 +109,7 @@ install_routing_tool() {
     return 0
   fi
   # Neither. Offer qpwgraph now (it is the only thing that can be installed
-  # today); the native patchbay comes from the mosquitomarchy setup itself.
+  # today); mixbay and the native patchbay come from the mosquitomarchy setup.
   if [[ $EUID -eq 0 ]] && command -v pacman >/dev/null 2>&1; then
     if pacman -S --needed --noconfirm qpwgraph >/dev/null 2>&1; then
       ok "mosquito patchbay installed (qpwgraph stand-in): qpwgraph"
@@ -112,7 +117,7 @@ install_routing_tool() {
       warn "Could not install qpwgraph (pacman failed) — install it manually."
     fi
   else
-    warn "No mosquito patchbay available. Run the mosquitomarchy setup for the native one,"
+    warn "No mosquito patchbay available. Run the mixbay module (Setup > mosquito),"
     warn "or install the stand-in (root): pacman -S qpwgraph"
   fi
 }

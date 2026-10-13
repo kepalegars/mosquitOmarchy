@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# mosquito-mixbay-actions — non-interactive backend for scripts & live-mode.
+#
+# Thin passthrough to the mosquito-mixbay-tui binary's CLI modes (see
+# tui-go/cli.go). Stable name so hooks never depend on the TUI binary name:
+#
+#   mosquito-mixbay-actions devices-json
+#   mosquito-mixbay-actions status-json [--device evo8]
+#   mosquito-mixbay-actions set volume -20 [--device evo8]
+#   mosquito-mixbay-actions set gain 25 -t input1
+#   mosquito-mixbay-actions set mute 1 -t output1
+#   mosquito-mixbay-actions set phantom 0 -t input1
+#   mosquito-mixbay-actions mixer input1 --volume -6 --pan 0
+#   mosquito-mixbay-actions save | load [--device evo8]
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$DIR/mosquito-mixbay-tui" "$@"

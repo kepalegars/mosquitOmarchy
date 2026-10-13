@@ -155,15 +155,43 @@ reassert_state() {
   fi
 }
 
-# The same provider resolution live-mode uses: our own mosquito-patchbay when
-# it is installed, qpwgraph until then. Duplicated rather than sourced because
-# the watchdog is its own long-running process.
-patchbay_provider() {
+# The same provider resolution live-mode uses: the PATCHBAY_APP setting
+# (default mixbay) when installed, otherwise whatever is, native first.
+# Duplicated rather than sourced because the watchdog is its own
+# long-running process.
+patchbay_have_mixbay() {
+  [[ -x $REAL_HOME/.local/bin/mosquito-mixbay ]] \
+    || command -v mosquito-mixbay >/dev/null 2>&1
+}
+patchbay_have_native() {
   local bin
   for bin in "$REAL_HOME/.local/bin/mosquito-patchbay" "$REAL_HOME/.local/bin/mosquito-patchbay.sh"; do
-    [[ -x $bin ]] && { printf '%s|mosquito[_-]?patchbay\n' "$(basename "$bin")"; return 0; }
+    [[ -x $bin ]] && return 0
   done
-  command -v mosquito-patchbay >/dev/null 2>&1 && { printf 'mosquito-patchbay|mosquito[_-]?patchbay\n'; return 0; }
+  command -v mosquito-patchbay >/dev/null 2>&1
+}
+patchbay_provider() {
+  local choice="${PATCHBAY_APP:-mixbay}"
+  case $choice in
+    mixbay)
+      if patchbay_have_mixbay; then
+        printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay-tui\n'; return 0
+      fi ;;
+    qpwgraph)
+      if command -v qpwgraph >/dev/null 2>&1; then
+        printf 'qpwgraph|qpwgraph|org\.rncbc\.qpwgraph|org\.pq_graph\.Qpwgraph\n'; return 0
+      fi ;;
+    mosquito-patchbay)
+      if patchbay_have_native; then
+        printf 'mosquito-patchbay|mosquito[_-]?patchbay\n'; return 0
+      fi ;;
+  esac
+  if patchbay_have_native; then
+    printf 'mosquito-patchbay|mosquito[_-]?patchbay\n'; return 0
+  fi
+  if patchbay_have_mixbay; then
+    printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay-tui\n'; return 0
+  fi
   command -v qpwgraph >/dev/null 2>&1 && { printf 'qpwgraph|qpwgraph|org\.rncbc\.qpwgraph|org\.pq_graph\.Qpwgraph\n'; return 0; }
   return 1
 }
@@ -180,6 +208,7 @@ patchbay_addr() {
 # prompts a confirmation — "yes" parks it for the rest of the session,
 patchbay_watch() {
   [[ -f "$REAL_HOME/.config/live-mode/settings" ]] && source "$REAL_HOME/.config/live-mode/settings" || true
+  case ${PATCHBAY_APP:-mixbay} in mixbay|qpwgraph|mosquito-patchbay) ;; *) PATCHBAY_APP=mixbay ;; esac
   [[ $ROUTING_TOOL == no ]] && return 0
   # -s, not -f: an empty file means "flag reset", not "the user closed it".
   [[ -s "$STATE_DIR/patchbay_closed_this_session" ]] && return 0

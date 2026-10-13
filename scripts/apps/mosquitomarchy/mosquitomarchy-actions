@@ -833,7 +833,7 @@ _uninstall_tree(){
         ;;
       mosquito)
         local pk
-        for pk in ableton-move-manager audio-plugin-manager jamjamjam-plugin battery live-mode pipewire-settings mosquitomarchy; do
+        for pk in ableton-move-manager audio-plugin-manager jamjamjam-plugin battery live-mode mixbay pipewire-settings mosquitomarchy; do
           case $pk in
             audio-plugin-manager) _installed_state audio && keys+=("$pk") ;;
             *) _installed_state "$pk" && keys+=("$pk") ;;
@@ -2100,6 +2100,7 @@ menu_entries_marker() {
     # manager TUI, while this one is what actually turns a session on. Listing
     # only the manager is why "Live Mode" was nowhere in Menu entries.
     live-mode-toggle) printf 'trigger.toggle.live-mode' ;;
+    mixbay)         printf 'setup.mosquito.mixbay' ;;
     jamjamjam)      printf 'setup.mosquito.jam' ;;
     mega-caffeine)  printf 'trigger.toggle.mega-caffeine' ;;
     *)              printf '%s' "$1" ;;
@@ -2115,6 +2116,7 @@ menu_entry_label() {
     move-converter) printf 'mosquito Move Manager' ;;
     live-mode)      printf 'Live Mode Manager' ;;
     live-mode-toggle) printf 'Live Mode' ;;
+    mixbay)         printf 'Mixbay' ;;
     jamjamjam)      printf 'JamJamJam' ;;
     mega-caffeine)  printf 'Mega caffeine' ;;
     *)              printf '%s' "$1" ;;
@@ -2191,7 +2193,7 @@ cmd_menu_entries() {
   # also carries the Audio Plugin Manager and JamJamJam rows, and a
   # "Menu entries" screen that hides rows the user can see in their own menu
   # is exactly what made it look broken.
-  local -a NAMES=(mosquitomarchy audio-plugins move-converter live-mode live-mode-toggle jamjamjam mega-caffeine)
+  local -a NAMES=(mosquitomarchy audio-plugins move-converter live-mode live-mode-toggle mixbay jamjamjam mega-caffeine)
   case "$how" in
     list)
       for b in "${NAMES[@]}"; do
@@ -2224,7 +2226,7 @@ cmd_menu_entries() {
         # restoring any one of its rows brings its siblings back too. The TUI
         # re-lists straight after applying, so the rows show their real state
         # again rather than the one that was asked for.
-        mosquitomarchy|audio-plugins|move-converter|live-mode|jamjamjam)
+        mosquitomarchy|audio-plugins|move-converter|live-mode|mixbay|jamjamjam)
           install_menu_entry >/dev/null 2>&1 \
             && ok "menu re-added: $id" || warn "restore failed: $id" ;;
         mega-caffeine)  bash "$HOME/mosquitOmarchy/scripts/plugins/power-management/setup-battery-management.sh" >/dev/null 2>&1 \

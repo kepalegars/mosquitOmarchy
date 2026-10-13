@@ -20,9 +20,15 @@ type Settings struct {
 	CloseApps     bool     // offer closing background apps at start
 	CloseAppsList []string // subset of knownApps (configured app names)
 	RoutingTool   bool     // park qpwgraph in the scratchpad on activation
-	NoGaps        bool     // disable window gaps during the session
-	SilenceNotifs bool     // DND during the session
-	SwitchTheme   bool     // switch to the Live theme on activation
+	// PatchbayApp fills the patchbay slot: mixbay (the mosquito USB audio
+	// bay, default), qpwgraph (the PipeWire graph fallback) or
+	// mosquito-patchbay (the future native routing surface). live-mode
+	// treats it as a preference: a choice that is not installed falls
+	// through to whatever is.
+	PatchbayApp   string
+	NoGaps        bool // disable window gaps during the session
+	SilenceNotifs bool // DND during the session
+	SwitchTheme   bool // switch to the Live theme on activation
 	// ProfilePrompt gates the power panel: with it on, choosing a power
 	// profile during a live session asks first, because the watchdog reverts it
 	// seconds later and silently. power-saver and ultra-save are refused either
@@ -43,6 +49,7 @@ func defaultSettings() Settings {
 		CloseApps:     true,
 		CloseAppsList: append([]string(nil), knownApps...),
 		RoutingTool:   true,
+		PatchbayApp:   "mixbay",
 		NoGaps:        true,
 		SilenceNotifs: true,
 		SwitchTheme:   true,
@@ -88,6 +95,11 @@ func loadSettings() Settings {
 	if v, ok := kv["ROUTING_TOOL"]; ok {
 		s.RoutingTool = v != "no"
 	}
+	if v, ok := kv["PATCHBAY_APP"]; ok {
+		if validPatchbayApp(v) {
+			s.PatchbayApp = v
+		}
+	}
 	if v, ok := kv["NO_GAPS"]; ok {
 		s.NoGaps = v != "no"
 	}
@@ -114,10 +126,15 @@ func saveSettings(s Settings) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+	app := s.PatchbayApp
+	if !validPatchbayApp(app) {
+		app = "mixbay"
+	}
 	content := "THERMAL_LIMIT_C=\"" + itoa(s.ThermalLimitC) + "\"\n" +
 		"CLOSE_APPS=\"" + boolVal(s.CloseApps) + "\"\n" +
 		"CLOSE_APPS_LIST=\"" + joinFields(s.CloseAppsList) + "\"\n" +
 		"ROUTING_TOOL=\"" + boolVal(s.RoutingTool) + "\"\n" +
+		"PATCHBAY_APP=\"" + app + "\"\n" +
 		"NO_GAPS=\"" + boolVal(s.NoGaps) + "\"\n" +
 		"SILENCE_NOTIFICATIONS=\"" + boolVal(s.SilenceNotifs) + "\"\n" +
 		"SWITCH_THEME=\"" + boolVal(s.SwitchTheme) + "\"\n" +
@@ -133,6 +150,28 @@ func hasApp(list []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// patchbayApps is what Left/Right cycle through on the patchbay row, in
+// display order. mosquito-patchbay (the future native surface) is a valid
+// stored value but not offered until it exists.
+var patchbayApps = []string{"mixbay", "qpwgraph"}
+
+func validPatchbayApp(v string) bool {
+	switch v {
+	case "mixbay", "qpwgraph", "mosquito-patchbay":
+		return true
+	}
+	return false
+}
+
+func nextPatchbayApp(cur string) string {
+	for i, v := range patchbayApps {
+		if v == cur {
+			return patchbayApps[(i+1)%len(patchbayApps)]
+		}
+	}
+	return patchbayApps[0]
 }
 
 func splitFields(s string) []string {

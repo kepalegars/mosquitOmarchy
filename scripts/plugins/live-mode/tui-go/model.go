@@ -107,6 +107,7 @@ func (m model) mainItems() []tuikit.PickerItem {
 		{Display: "Ask to close background apps at start: " + boolLabel(s.CloseApps), Value: "close_apps"},
 		{Display: "Choose background apps to close at start", Value: "choose_apps"},
 		{Display: "mosquito patchbay in the scratchpad: " + boolLabel(s.RoutingTool), Value: "routing"},
+		{Display: "Patchbay app in the scratchpad: " + s.PatchbayApp, Value: "patchbay"},
 		{Display: "Switch to the Live theme on activation: " + boolLabel(s.SwitchTheme), Value: "theme"},
 		{Display: "Confirm before changing power profile: " + boolLabel(s.ProfilePrompt), Value: "profile_prompt"},
 		{Display: "Window gaps disabled during the session: " + boolLabel(s.NoGaps), Value: "gaps"},
@@ -162,6 +163,8 @@ func (m model) mainItemsWithPending() []tuikit.PickerItem {
 			items[i].Display = "Ask to close background apps at start: " + boolLabel(target == "on")
 		case "routing":
 			items[i].Display = "Audio routing tool in the scratchpad: " + boolLabel(target == "on")
+		case "patchbay":
+			items[i].Display = "Patchbay app in the scratchpad: " + target
 		case "gaps":
 			items[i].Display = "Window gaps disabled during the session: " + boolLabel(target == "on")
 		case "notifs":
@@ -191,6 +194,10 @@ func setPending(s Settings, row, target string) Settings {
 		s.CloseApps = target == "on"
 	case "routing":
 		s.RoutingTool = target == "on"
+	case "patchbay":
+		if validPatchbayApp(target) {
+			s.PatchbayApp = target
+		}
 	case "theme":
 		s.SwitchTheme = target == "on"
 	case "profile_prompt":
@@ -304,6 +311,12 @@ func (m model) cycleSetting(dir int) (tea.Model, tea.Cmd) {
 			cur = p == "on"
 		}
 		m.pending[row] = liveToggleTarget(!cur)
+	case "patchbay":
+		curApp := m.settings.PatchbayApp
+		if p, ok := m.pending[row]; ok && validPatchbayApp(p) {
+			curApp = p
+		}
+		m.pending[row] = nextPatchbayApp(curApp)
 	case "gaps":
 		cur := m.settings.NoGaps
 		if p, ok := m.pending[row]; ok {
@@ -387,6 +400,9 @@ func (m *model) apply(choice string) {
 		s.CloseApps = !s.CloseApps
 	case "routing":
 		s.RoutingTool = !s.RoutingTool
+	case "patchbay":
+		// Enter cycles the app too, so the row is key-only usable.
+		s.PatchbayApp = nextPatchbayApp(s.PatchbayApp)
 	case "theme":
 		s.SwitchTheme = !s.SwitchTheme
 	case "profile_prompt":

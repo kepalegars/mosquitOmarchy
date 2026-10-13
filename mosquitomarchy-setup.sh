@@ -581,6 +581,20 @@ st_live_mode(){
   [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
   echo ok
 }
+st_mixbay(){
+  # mosquitomixbay: dispatcher + TUI binary deployed, Hyprland float rule in
+  # place. The evo_raw kmod is a bonus (real hardware control), not a
+  # requirement: without it the bay runs in persistent DEMO mode, fully
+  # usable — so a missing /dev/evo* only ever reads as partial, never broken.
+  [[ -x "$BIN_DIR/mosquito-mixbay" && -x "$BIN_DIR/mosquito-mixbay-tui" ]] || { echo missing; return; }
+  local miss=""
+  grep -qF "mosquito-mixbay-tui-setup" "$HOME/.config/hypr/hyprland.lua" 2>/dev/null \
+    || miss="${miss:+$miss, }hyprland float rule"
+  [[ -e /dev/evo8 || -e /dev/evo4 ]] \
+    || miss="${miss:+$miss, }evo_raw kmod (demo mode only)"
+  [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
+  echo ok
+}
 st_mosquitomarchy(){
   # The manager TUI itself (former install-tui.sh): dispatcher + built binary
   # + desktop entry + float rule + post-boot update hook.
@@ -673,6 +687,7 @@ MODULES=(
   "pipewire-settings:PipeWire sample rate + buffer size — panel in the bar, force and persist. Installs no package: it only talks to the PipeWire you already have"
   "jamjamjam-plugin:JamJamJam bar plugin — key/BPM/chord detection, chord progression grid, guitar fretboard scale, MIDI chord mode + synth"
   "live-mode:Live mode — performance session mode (stay-awake + thermal guard + routing tool in scratchpad: live-mode / live-mode-watch / live-mode-root + its row in Setup > mosquito + QML overlay)"
+  "mixbay:mosquitomixbay — USB audio bay (EVO 8/4 full control via evo_raw kmod, Fireface UCX II / UGM192 / Quantum ES 4 ALSA level 1 + persistent demo without hardware; live mode parks it in the scratchpad)"
 )
 
 # ───────────────────────── Quick system fixes ─────────────────────────
@@ -777,6 +792,7 @@ module_state(){
     jamjamjam-plugin) st_jamjamjam_plugin ;;
     pipewire-settings) st_pipewire_settings ;;
     live-mode) st_live_mode ;;
+    mixbay) st_mixbay ;;
     mosquitomarchy) st_mosquitomarchy ;;
     remove-ai) ai_state_on && echo missing || echo ok ;;
   esac
@@ -823,6 +839,7 @@ module_of_path(){
     scripts/plugins/jamjamjam/*)                             echo jamjamjam-plugin ;;
     scripts/plugins/pipewire-settings/*)                     echo pipewire-settings ;;
     scripts/plugins/live-mode/*)                             echo live-mode ;;
+    scripts/apps/mosquitomixbay/*)                            echo mixbay ;;
     # The WHOLE manager tree (deployer, backend, Go TUI, skills): any change
     # here must offer the mosquitomarchy module for update, otherwise the
     # installed TUI is never rebuilt. This used to name three files only, so
@@ -2202,6 +2219,14 @@ $MENU_MOSQUITO_START
     "when": "test -x $BIN_DIR/mosquito-live-mode-tui",
     "action": "omarchy-launch-or-focus-tui mosquito-live-mode-tui"
   },
+  "setup.mosquito.mixbay": {
+    "icon": "\uf1de",
+    "label": "Mixbay",
+    "description": "USB audio bay: EVO 8/4 full control, ALSA level 1, demo without hardware",
+    "aliases": ["mixbay", "mixer", "evo", "bay", "mmb"],
+    "when": "test -x $BIN_DIR/mosquito-mixbay-tui",
+    "action": "omarchy-launch-or-focus-tui mosquito-mixbay-tui"
+  },
   "setup.mosquito.jam": {
     "icon": "\uef4e",
     "label": "jamjamjam tui",
@@ -3051,6 +3076,16 @@ un_live_mode(){
     rm -f "$BIN_DIR/live-mode" "$BIN_DIR/live-mode-watch" "$BIN_DIR/live-mode-root" "$BIN_DIR/mosquito-live-mode-tui"
   fi
 }
+un_mixbay(){
+  info "Uninstalling mosquitomixbay (USB audio bay)"
+  if [[ -x "$MIXBAY_DIR/setup-mosquitomixbay.sh" ]]; then
+    bash "$MIXBAY_DIR/setup-mosquitomixbay.sh" --uninstall \
+      || warn "setup-mosquitomixbay.sh --uninstall reported a problem"
+  else
+    warn "setup-mosquitomixbay.sh not found — cleaning up directly."
+    rm -f "$BIN_DIR/mosquito-mixbay" "$BIN_DIR/mosquito-mixbay-actions" "$BIN_DIR/mosquito-mixbay-tui"
+  fi
+}
 un_mx_master(){
   info "Uninstalling MX Master thumb→SUPER (logiops)"
   if command -v logid >/dev/null 2>&1 && systemctl is-enabled logid >/dev/null 2>&1; then
@@ -3229,6 +3264,7 @@ uninstall_module(){
     jamjamjam-plugin) un_jamjamjam_plugin ;;
     pipewire-settings) un_pipewire_settings ;;
     live-mode) un_live_mode ;;
+    mixbay) un_mixbay ;;
     mosquitomarchy) un_mosquitomarchy ;;
     *) err "Unknown module: $id"; return 1 ;;
   esac
@@ -3311,6 +3347,7 @@ BITWIG_DIR="$APPS_DIR/bitwig"
 REAPER_DIR="$APPS_DIR/reaper"
 LLM_DIR="$SCRIPTS/LLM"
 VM_DIR="$SCRIPTS/windows-vm"
+MIXBAY_DIR="$APPS_DIR/mosquitomixbay"
 MACOS_VM_DIR="$SCRIPTS/macos-vm"
 OMARCHY_VM_DIR="$SCRIPTS/omarchy-vm"
 ABLETON_DIR="$APPS_DIR/ableton"
@@ -3703,6 +3740,14 @@ run_live_mode(){
   bash "$LIVE_MODE_DIR/setup-live-mode.sh" $([[ $YES == 1 ]] && echo -y)
 }
 
+run_mixbay(){
+  # mosquitomixbay (USB audio bay): TUI + dispatchers + Hyprland float rule.
+  # Idempotent; -y installs non-interactively. The evo_raw kmod prompt is
+  # part of the installer (needed for REAL hardware control, skipped = demo
+  # mode), so a headless -y run keeps asking unless answered.
+  bash "$MIXBAY_DIR/setup-mosquitomixbay.sh" $([[ $YES == 1 ]] && echo -y)
+}
+
 run_mosquitomarchy(){
   # The manager TUI (the interface this script drives): build the Go binary,
   # deploy the dispatcher + desktop entry + float rule + post-boot hook.
@@ -3796,6 +3841,7 @@ exec_modules(){
       jamjamjam-plugin) run_module jamjamjam-plugin run_jamjamjam_plugin ;;
       pipewire-settings) run_module pipewire-settings run_pipewire_settings ;;
       live-mode) run_module live-mode run_live_mode ;;
+      mixbay) run_module mixbay run_mixbay ;;
       mosquitomarchy) run_module mosquitomarchy run_mosquitomarchy ;;
       *)
         # A selected id nothing handles must never look like a success.
@@ -3947,7 +3993,7 @@ module_category(){ # module id -> category id
     # AND here. Two copies of the same fact: adding a module to one leaves the
     # other calling it category-less, which is how pipewire-settings showed up in
     # the Setup tree under "mosquito" and in `status` with an empty category.
-    ableton-move-manager|audio-plugin-manager|jamjamjam-plugin|battery|live-mode|pipewire-settings) echo mosquito; return 0 ;;
+    ableton-move-manager|audio-plugin-manager|jamjamjam-plugin|battery|live-mode|mixbay|pipewire-settings) echo mosquito; return 0 ;;
     # The manager lives in the mosquito folder (single row, update watchdog
     # included) rather than Plugins; the mapping is explicit so Status keeps
     # grouping it exactly like Setup does.
@@ -4096,6 +4142,8 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
       CAND_LABELS+=("mosquito-mega-caffeine  —  $(module_desc battery)")
       CAND_KEYS+=("live-mode")
       CAND_LABELS+=("mosquito-live-mode  —  $(module_desc live-mode)")
+      CAND_KEYS+=("mixbay")
+      CAND_LABELS+=("mosquito-mixbay  —  $(module_desc mixbay)")
       # The manager (deployer + update watchdog in one row) lives here, not
       # in Plugins: one mosquito row for the whole manager.
       CAND_KEYS+=("mosquitomarchy")
