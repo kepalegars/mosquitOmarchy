@@ -62,12 +62,15 @@ the ISO there.
 
 ## VM layout and QEMU invocation
 
-VM data is grouped under a single logical root, **`~/VMs/`** (override with
-`MOSQUITO_VM_ROOT`): `omarchy/` for this module, `shared/` for the 9p folder.
+VM data is grouped under a single flat root, **`~/VMs/`** (override with
+`MOSQUITO_VM_ROOT`): one directory per VM (`<name>/`), plus `shared/` for
+the 9p folder beside them.
 
-Each VM lives in `~/VMs/omarchy/vms/<name>/` (override with
-`OMARCHY_VM_ROOT`, or the parent with `MOSQUITO_VM_ROOT`) and contains `disk.qcow2`, `OVMF_VARS.fd`, `.vm-config` and
-the generated `start-omarchy.sh`. The launcher reads `.vm-config` and runs:
+Each VM lives directly in `~/VMs/<name>/` (override with `OMARCHY_VM_ROOT`,
+or the parent with `MOSQUITO_VM_ROOT`) and contains `disk.qcow2`, `OVMF_VARS.fd`, `.vm-config` and
+the generated `start-omarchy.sh`. (The old nested `omarchy/vms/<name>/` tree
+is moved up automatically by `setup-omarchy-vm.sh`, which also regenerates
+the affected launchers.) The launcher reads `.vm-config` and runs:
 
 ```
 qemu-system-x86_64 -name omarchy-<name> -machine q35,accel=kvm:tcg -cpu host

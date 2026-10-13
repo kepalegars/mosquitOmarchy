@@ -60,10 +60,44 @@ OMARCHY_ISO_SIG_URL="${OMARCHY_ISO_URL}.sig"
 OMARCHY_ISO_SHA256="ddeded2758c48318d201dfdac905ecb28f570441883f0c052ea3cd5d05acf92d"
 ISO_CACHE="${OMARCHY_VM_ISO_CACHE:-$HOME/.cache/omarchy-vm}"
 
-# ─── VM layout (mirrors ~/OSX-KVM of the macOS module) ──────────────────────
+# ─── VM layout ─────────────────────────────────────────────────────────────
+# Flat: VMs live directly in $MOSQUITO_VM_ROOT (<name>/), shared/ beside them.
+# (The old nested omarchy/vms/<name> layout is moved up once, automatically.)
 MOSQUITO_VM_ROOT="${MOSQUITO_VM_ROOT:-$HOME/VMs}"
-VMS_ROOT="${OMARCHY_VM_ROOT:-$MOSQUITO_VM_ROOT/omarchy}"
-VMS_DIR="$VMS_ROOT/vms"
+VMS_ROOT="${OMARCHY_VM_ROOT:-$MOSQUITO_VM_ROOT}"
+VMS_DIR="$VMS_ROOT"
+migrate_flat_layout(){
+  local old="$MOSQUITO_VM_ROOT/omarchy/vms" d name
+  [[ -d $old ]] || return 0
+  # An explicit OMARCHY_VM_ROOT keeps its own tree: never move under it.
+  [[ -n ${OMARCHY_VM_ROOT:-} ]] && return 0
+  local moved=0
+  for d in "$old"/*/; do
+    [[ -d $d ]] || continue
+    name="$(basename "$d")"
+    if [[ -e "$VMS_DIR/$name" ]]; then
+      warn "Flat move skipped (already exists): $VMS_DIR/$name"
+      continue
+    fi
+    mv "$d" "$VMS_DIR/$name" && moved=1 \
+      && ok "VM moved to the flat layout: $VMS_DIR/$name" \
+      || warn "Could not move $d — move it by hand."
+  done
+  if ((moved)); then
+    # Launchers carry their absolute dir: regenerate every moved VM.
+    local cfg vm
+    for d in "$VMS_DIR"/*/; do
+      [[ -f "$d/.vm-config" ]] || continue
+      vm="$(basename "$d")"
+      # Only VMs that came from the old tree (their launcher still points there).
+      grep -qF "$old/$vm" "$d/start-omarchy.sh" 2>/dev/null || continue
+      VM_NAME="$vm" write_launcher "$d" \
+        && ok "Launcher regenerated: $d/start-omarchy.sh" \
+        || warn "Regenerate by hand: setup-omarchy-vm.sh --vm $vm"
+    done
+  fi
+  rmdir "$old" "$MOSQUITO_VM_ROOT/omarchy" 2>/dev/null || true
+}
 DEFAULT_VM="omarchy"
 DISK_SIZE="64G"
 SHARED_DIR="${MOSQUITO_VM_ROOT}/shared"
@@ -308,6 +342,10 @@ pkg_present qemu || MISSING+=(qemu-desktop)
 pkg_present gum || MISSING+=(gum)
 pkg_present curl || MISSING+=(curl)
 
+# Migrate before anything lists, creates or launches: after this point every
+# path below sees the flat layout.
+migrate_flat_layout || true
+
 if [[ $STATUS_ONLY == 0 && $REMOVE == false && $SETUP_ONLY == false && ${#MISSING[@]} -gt 0 ]]; then
   warn "Missing dependencies: ${MISSING[*]}"
   if [[ $YES == 1 ]] || confirm "Install them now with pacman?"; then
@@ -371,9 +409,10 @@ if [[ $REMOVE == true ]]; then
   kb_remove "$KEYBIND" || warn "Could not remove $KEYBIND"
   hyprctl reload >/dev/null 2>&1 || true
   if [[ $PURGE == true ]]; then
-    rm -rf "$VMS_ROOT" "$ISO_CACHE" && ok "VMs ($VMS_ROOT) and ISO cache ($ISO_CACHE) deleted"
+    # VM dirs only: VMS_ROOT also holds shared/, which is data, not a VM.
+    rm -rf "$VMS_DIR"/*/ "$ISO_CACHE" && ok "VMs ($VMS_DIR) and ISO cache ($ISO_CACHE) deleted"
   else
-    warn "VMs kept in $VMS_ROOT and the ISO cache in $ISO_CACHE (use --purge to delete them)."
+    warn "VMs kept in $VMS_DIR and the ISO cache in $ISO_CACHE (use --purge to delete them)."
   fi
   ok "Helpers, menu entry and window rule removed"
   echo ""
@@ -516,7 +555,7 @@ cat > "$BIN_DIR/omarchy-vm" << 'WRAPPER_EOF'
 #!/bin/bash
 # Start an Omarchy VM in QEMU/KVM. Usage: omarchy-vm [VM_NAME]
 set -euo pipefail
-VMS_DIR="${OMARCHY_VM_ROOT:-${MOSQUITO_VM_ROOT:-$HOME/VMs}/omarchy}/vms"
+VMS_DIR="${OMARCHY_VM_ROOT:-${MOSQUITO_VM_ROOT:-$HOME/VMs}}"
 name="${1:-}"
 if [[ -z $name ]]; then
   [[ -f "$VMS_DIR/omarchy/.vm-config" ]] && name=omarchy
@@ -795,19 +834,37 @@ if [[ "$CLIPBOARD" == "on" ]] && command -v python3 >/dev/null 2>&1; then
     [[ -n $cand && -x $cand ]] && { CLIP_SRC="$cand"; break; }
   done
   if [[ -n $CLIP_SRC ]]; then
-    OMARCHY_VM_CLIPBOARD_PORT="$CLIPBOARD_PORT" \
-    OMARCHY_VM_STATE_DIR="$VM_DIR/clipboard" \
-      setsid python3 "$CLIP_SRC" >"$VM_DIR/clipboard.log" 2>&1 &
-    CLIP_PID=$!
-    # Wait for the port rather than sleeping a fixed amount: the guest is told
-    # this URL the moment the VM window appears, and a bridge that is not
-    # listening yet would make the first copy silently do nothing.
-    for _ in $(seq 1 40); do
+    # A bridge orphaned by an unclean exit still holds the port: reuse it
+    # instead of stacking a second one that can never bind.
+    if curl -sf --max-time 1 "http://127.0.0.1:$CLIPBOARD_PORT/ping" >/dev/null 2>&1; then
+      echo "  Clipboard bridge: already listening on :$CLIPBOARD_PORT (reused)."
+    else
+      OMARCHY_VM_CLIPBOARD_PORT="$CLIPBOARD_PORT" \
+      OMARCHY_VM_STATE_DIR="$VM_DIR/clipboard" \
+        setsid python3 "$CLIP_SRC" >"$VM_DIR/clipboard.log" 2>&1 &
+      CLIP_PID=$!
+      # Wait for the port rather than sleeping a fixed amount: the guest is told
+      # this URL the moment the VM window appears, and a bridge that is not
+      # listening yet would make the first copy silently do nothing.
+      for _ in $(seq 1 40); do
+        if curl -sf --max-time 1 "http://127.0.0.1:$CLIPBOARD_PORT/ping" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 0.1
+      done
       if curl -sf --max-time 1 "http://127.0.0.1:$CLIPBOARD_PORT/ping" >/dev/null 2>&1; then
-        break
+        echo "  Clipboard bridge: listening on :$CLIPBOARD_PORT."
+      else
+        echo "  Clipboard bridge: NOT listening — guest clipboard and agent download will fail." >&2
       fi
-      sleep 0.1
-    done
+    fi
+  else
+    echo "  Clipboard bridge: no bridge script found — guest clipboard unavailable." >&2
+  fi
+  if [[ "$CLIPBOARD" == "on" ]]; then
+    printf '\n  Guest clipboard + shared folder, inside the VM:\n'
+    printf '    curl -sf --retry 3 http://10.0.2.2:%s/share -o ~/omarchy-vm-share && sudo bash ~/omarchy-vm-share --install\n' "$CLIPBOARD_PORT"
+    printf '    curl -sf --retry 3 http://10.0.2.2:%s/agent -o ~/vm-clipboard.py && test -s ~/vm-clipboard.py && nohup python3 ~/vm-clipboard.py >/tmp/vm-clipboard.log 2>&1 &\n' "$CLIPBOARD_PORT"
   fi
 fi
 
@@ -857,6 +914,16 @@ EOF
 ensure_vm() {
   local dir="$VMS_DIR/$VM_NAME"
   mkdir -p "$dir"
+  # Shared folder + clipboard are prepared at install time so every launch
+  # finds them ready: the export dir exists and the bridge script is deployed.
+  mkdir -p "$SHARED_DIR" 2>/dev/null \
+    && ok "Shared folder ready: $SHARED_DIR" \
+    || warn "Could not create $SHARED_DIR."
+  if [[ -x "$BIN_DIR/omarchy-vm-clipboard" ]]; then
+    ok "Clipboard bridge deployed."
+  else
+    warn "Clipboard bridge missing from $BIN_DIR — guest clipboard will fail until setup re-deploys it."
+  fi
   if [[ -f "$dir/disk.qcow2" ]]; then
     ok "VM '$VM_NAME' already exists ($dir)"
   else
