@@ -217,6 +217,17 @@ def agent_path():
                         "omarchy-vm-clipboard-agent")
 
 
+def share_path():
+    """The guest 9p-share helper, resolved the same way.
+
+    Served so the guest can fetch it over HTTP: without this the folder
+    helper only exists on the host, and "sudo omarchy-vm-share --install"
+    answers "command not found" inside the VM.
+    """
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "omarchy-vm-share")
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -245,6 +256,12 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, fh.read(), "text/x-python; charset=utf-8")
             except OSError:
                 self._send(404, "agent not found next to omarchy-vm-clipboard\n")
+        elif path == "/share":
+            try:
+                with open(share_path(), "r", encoding="utf-8") as fh:
+                    self._send(200, fh.read(), "text/x-shellscript; charset=utf-8")
+            except OSError:
+                self._send(404, "share helper not found next to omarchy-vm-clipboard\n")
         else:
             self._send(404, "unknown endpoint\n")
 

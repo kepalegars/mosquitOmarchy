@@ -144,6 +144,18 @@ qemu-system-x86_64 -name omarchy-<name> -machine q35,accel=kvm:tcg -cpu host
   Check first when it fails: `curl -s http://10.0.2.2:7789/ping` must print
   `ok`. Anything else means the bridge is unreachable — relaunch the VM.
 
+  One guest bootstrap does both folder and clipboard (the bridge also serves
+  the share helper at `/share`, so nothing needs copying into the VM by hand):
+
+  ```sh
+  # inside the VM, launcher running on the host:
+  curl -sf --retry 3 http://10.0.2.2:7789/share -o ~/omarchy-vm-share && \
+    sudo bash ~/omarchy-vm-share --install && \
+  curl -sf --retry 3 http://10.0.2.2:7789/agent -o ~/vm-clipboard.py && \
+    test -s ~/vm-clipboard.py && \
+    nohup python3 ~/vm-clipboard.py >/tmp/vm-clipboard.log 2>&1 &
+  ```
+
   Copy in either direction, ~0.3 s. Stop with `pkill -f vm-clipboard.py`.
   Both halves are text-only. Two Wayland details cost real debugging time and
   are worth keeping in mind if you touch them:

@@ -203,7 +203,7 @@ install_post_boot_hook() {
 # scripts have moved ahead of the local clone.
 command -v omarchy >/dev/null || exit 0
 "$HOME/.local/bin/mosquitomarchy" --status 2>/dev/null | jq -e '.updateAvailable' >/dev/null 2>&1 \
-  && omarchy-notification-send --urgency low "update available" "click this to open the update page" --exec mosquitomarchy --update \
+  && omarchy-notification-send --urgency low "update available for mosquitomarchy" "click this to open the update page" --exec mosquitomarchy --update \
   || true
 HOOK
   chmod +x "$HOOK_FILE"

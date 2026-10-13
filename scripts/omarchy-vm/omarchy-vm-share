@@ -24,6 +24,9 @@
 #   ./omarchy-vm-share --install    # mount now + a unit that mounts on every boot
 #   ./omarchy-vm-share --uninstall  # remove the unit and unmount
 #   ./omarchy-vm-share --status     # is it mounted, and is the module there
+#
+# Fetch it from the host bridge (no copy needed while the VM launcher runs):
+#   curl -sf --retry 3 http://10.0.2.2:7789/share -o ~/omarchy-vm-share
 set -euo pipefail
 
 TAG="${OMARCHY_VM_SHARE_TAG:-hostshare}"

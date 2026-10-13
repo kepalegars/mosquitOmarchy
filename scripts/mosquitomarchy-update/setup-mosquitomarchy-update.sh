@@ -110,14 +110,15 @@ Mise à jour des SCRIPTS disponible (repo mosquitOmarchy).
 M
       printf '%s' "$(cat "$SCRIPTS_FLAG.msg")" > "$SCRIPTS_FLAG"
       # Short on purpose: long bodies get clipped by the notification daemon.
-      # Clicking opens the TUI straight on its Update page.
+      # Clicking opens the TUI straight on its Update page. Same fa-bug glyph
+      # as the mosquitOmarchy menu entry so the source is recognizable.
       if command -v omarchy-notification-send >/dev/null 2>&1; then
-        omarchy-notification-send --app-name="Omarchy scripts" --urgency=normal \
-          "update available" "click this to open the update page" \
+        omarchy-notification-send --app-name="Omarchy scripts" --urgency=normal -g "" \
+          "update available for mosquitomarchy" "click this to open the update page" \
           --exec mosquitomarchy --update >/dev/null 2>&1 || true
       elif command -v notify-send >/dev/null 2>&1; then
         notify-send --app-name="Omarchy scripts" --urgency=normal --expire-time=0 \
-          "update available" "click this to open the update page" >/dev/null 2>&1 || true
+          "update available for mosquitomarchy" "click this to open the update page" >/dev/null 2>&1 || true
       fi
       exit 0
     fi
