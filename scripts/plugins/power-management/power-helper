@@ -271,13 +271,21 @@ profile_set() {
     fi
     if [[ $prompt != no ]]; then
       local current; current=$(powerprofilesctl get 2>/dev/null || echo unknown)
-      if ! confirm "Live Mode is ON and holds the machine at the performance profile.
-
-Switch to '$want' (currently '$current') anyway? The Live Mode watchdog will
-put performance back within a few seconds."; then
-        echo "profile\t$current"
-        echo "note\tLeft the power profile alone."
-        return 0
+      # No change, no question: clicking the already-active profile during a
+      # session used to ask "Switch to 'performance' (currently
+      # 'performance') anyway?" — the prompt getting its own values wrong.
+      if [[ $want != "$current" ]]; then
+        local question="Live Mode is ON and holds the machine at the performance profile."
+        if [[ -n $current && $current != unknown ]]; then
+          question+=$'\n\n'"Switch to '$want' (currently '$current') anyway?"
+        else
+          question+=$'\n\n'"Switch to '$want' anyway?"
+        fi
+        if ! confirm "$question"; then
+          echo "profile\t$current"
+          echo "note\tLeft the power profile alone."
+          return 0
+        fi
       fi
     fi
   fi

@@ -202,9 +202,9 @@ ask_logs(){
     return 0
   fi
   local r
-  read -rp "  Include the log files? [o/n] " r
+  read -rp "  Include the log files? [y/n] " r
   case "${r:-n}" in
-    [oO]) LOGS=1 ;;
+    [yY]) LOGS=1 ;;
     *)    LOGS=0 ;;
   esac
 }
