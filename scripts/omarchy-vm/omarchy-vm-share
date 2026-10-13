@@ -147,6 +147,16 @@ do_status(){
   else
     printf '9p port   : absent (is SHARED_FOLDER=on on the host?)\n'
   fi
+  # The host clipboard bridge serves this script and the agent download: if
+  # /ping is unreachable, the VM was launched without the bridge (old
+  # launcher?) or the host bridge died — re-launch from the host and retry.
+  local _bport="${OMARCHY_VM_CLIPBOARD_PORT:-7789}"
+  if command -v curl >/dev/null 2>&1 \
+      && curl -sf --max-time 3 "http://10.0.2.2:${_bport}/ping" >/dev/null 2>&1; then
+    printf 'bridge    : reachable at 10.0.2.2:%s\n' "$_bport"
+  else
+    printf 'bridge    : UNREACHABLE at 10.0.2.2:%s (re-launch the VM from the host, then retry)\n' "$_bport"
+  fi
   if mountpoint -q "$MOUNTPOINT"; then
     printf 'mounted   : yes -> %s\n' "$MOUNTPOINT"
     ls -A "$MOUNTPOINT" 2>/dev/null | head -10 | sed 's/^/            /'

@@ -565,6 +565,13 @@ tree_fingerprint(){
     fi
   done
   out+="|v${REPO_VERSION:-}|f${#FIXES[@]}|c${#CATEGORIES[@]}"
+  # The Setup/Uninstall trees embed the stock preinstall list (a "Preinstalls"
+  # folder with one row per package), so the list is an INPUT to the tree:
+  # without it, a cached tree from before the folder existed keeps being
+  # served. stock_preinstalls is a pure builtin printf — no external fork.
+  local _pre
+  _pre="$(stock_preinstalls)"
+  out+="|pre${#_pre}"
   # Whether a big installer is on disk is an INPUT to the tree, not a detail of
   # it: Setup greys out the module that needs it. Without this in the key, the
   # greying could not appear until the 30-minute reap, and — the part that
