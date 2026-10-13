@@ -88,6 +88,7 @@ const (
 	scrReconcileMissingInfo
 	scrReconcileMissingRemove
 	scrReconcileOrphansTick
+	scrOrphansConfirm // "track these N?" before the checked orphans are registered
 	scrCleanupConfirm
 	scrQuarantineClearConfirm // "Empty the quarantine" confirm (destructive)
 	scrQuarantineClearDone    // result prompt: "See log / OK" after emptying
@@ -169,6 +170,13 @@ type model struct {
 	uninstallCache   []Item
 	uninstallChecked map[string]bool
 	uninstallTargets []string
+	// Orphan picker (scrReconcileOrphansTick): the on-disk-but-untracked
+	// plugins grouped in per-format folders, Tab multi-select like
+	// Uninstall, Enter tracking exactly the checked rows. Every visit is a
+	// fresh empty batch; orphanTargets is the confirmed batch.
+	orphanCache   []Item
+	orphanChecked map[string]bool
+	orphanTargets []string
 	// folderExpanded tracks which folder rows are opened (Right arrow) vs
 	// collapsed (Left) on BOTH the Uninstall screen and the Installed
 	// plugins setup list — they share this one map so the tree grouping
@@ -1121,11 +1129,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case reconcileOrphansMsg:
 		if len(msg.items) > 0 {
-			items := make([]tuikit.PickerItem, len(msg.items))
-			for i, it := range msg.items {
-				items[i] = tuikit.PickerItem{Display: it.Display, Value: it.Value}
-			}
-			m.picker = tuikit.NewPicker("Found on disk but not tracked — pick to add (esc to finish):", items).SetSize(m.contentSize())
+			m.orphanCache = msg.items
+			m.orphanChecked = map[string]bool{}
+			m.rebuildOrphanPicker()
 			m.push(scrReconcileOrphansTick)
 		}
 		return m, nil
@@ -1218,11 +1224,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.push(scrReconcileMissingInfo)
 		}
 		if len(msg.items) > 0 {
-			items := make([]tuikit.PickerItem, len(msg.items))
-			for i, it := range msg.items {
-				items[i] = tuikit.PickerItem{Display: it.Display, Value: it.Value}
-			}
-			m.picker = tuikit.NewPicker("Found on disk but not tracked — pick to add (esc to finish):", items).SetSize(m.contentSize())
+			m.orphanCache = msg.items
+			m.orphanChecked = map[string]bool{}
+			m.rebuildOrphanPicker()
 			m.push(scrReconcileOrphansTick)
 		}
 		return m, nil

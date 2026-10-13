@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# mosquito-hotspot — backend for the mosquito Hotspot row in the Wi-Fi panel.
+#
+# A persistent NetworkManager Wi-Fi hotspot profile (con-name
+# "mosquito-hotspot"), toggled from the panel, configured from its gear
+# button. NM-native: no helper daemon, no hostapd units, no extra vif — the
+# station interface serves the AP itself, and NM owns the dnsmasq/DHCP side
+# through ipv4.method=shared.
+#
+#   mosquito-hotspot status    # {"on":bool,"ssid":str,"configured":bool}
+#   mosquito-hotspot toggle    # up when down, down when up
+#   mosquito-hotspot setup     # interactive (needs a tty): SSID, password, band
+set -euo pipefail
+
+CONN="mosquito-hotspot"
+
+have_nm(){ command -v nmcli >/dev/null 2>&1; }
+
+# First Wi-Fi interface name (the AP rides on the station radio).
+wifi_iface(){
+  nmcli -t -f DEVICE,TYPE device status 2>/dev/null \
+    | awk -F: '$2=="wifi"{print $1; exit}'
+}
+
+profile_exists(){
+  nmcli -t -f NAME connection show 2>/dev/null | grep -qxF "$CONN"
+}
+
+profile_ssid(){
+  nmcli -t -f 802-11-wireless.ssid connection show "$CONN" 2>/dev/null | head -1
+}
+
+hotspot_on(){
+  nmcli -t -f NAME connection show --active 2>/dev/null | grep -qxF "$CONN"
+}
+
+json_str(){ printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
+
+cmd_status(){
+  have_nm || { printf '{"on":false,"ssid":"","configured":false,"error":"nmcli missing"}\n'; return 0; }
+  local on=false ssid=""
+  hotspot_on && on=true
+  if profile_exists; then ssid="$(profile_ssid)"; fi
+  printf '{"on":%s,"ssid":%s,"configured":%s}\n' \
+    "$on" "$(json_str "$ssid")" "$([ -n "$ssid" ] && echo true || echo false)"
+}
+
+cmd_toggle(){
+  have_nm || { echo "nmcli not found" >&2; return 1; }
+  if hotspot_on; then
+    nmcli connection down id "$CONN" >/dev/null 2>&1 \
+      || { echo "could not bring the hotspot down" >&2; return 1; }
+    echo "hotspot off"
+    return 0
+  fi
+  profile_exists || { echo "no hotspot profile yet — run 'mosquito-hotspot setup' first (gear button in the Wi-Fi panel)" >&2; return 1; }
+  nmcli connection up id "$CONN" >/dev/null 2>&1 \
+    || { echo "could not bring the hotspot up (password/band rejected?)" >&2; return 1; }
+  echo "hotspot on"
+}
+
+cmd_setup(){
+  have_nm || { echo "nmcli not found" >&2; return 1; }
+  [[ -t 0 ]] || { echo "setup needs a terminal (run: foot -e mosquito-hotspot setup)" >&2; return 1; }
+  local ifname cur_ssid ssid psk1 psk2 band bandval
+  ifname="$(wifi_iface)"
+  [[ -n $ifname ]] || { echo "no Wi-Fi interface found" >&2; return 1; }
+  cur_ssid="$(profile_exists && profile_ssid || true)"
+  read -rp "Hotspot SSID [${cur_ssid:-mosquito-hotspot}]: " ssid
+  ssid="${ssid:-${cur_ssid:-mosquito-hotspot}}"
+  while true; do
+    read -rsp "Password (8+ characters): " psk1; echo
+    ((${#psk1} >= 8)) || { echo "too short — 8 characters minimum."; continue; }
+    read -rsp "Password again: " psk2; echo
+    [[ $psk1 == "$psk2" ]] || { echo "mismatch — try again."; continue; }
+    break
+  done
+  read -rp "Band (auto/2.4/5) [auto]: " band
+  case "${band:-auto}" in
+    2.4) bandval="bg" ;;
+    5)   bandval="a" ;;
+    *)   bandval="" ;;
+  esac
+  # Our own profile: delete + re-add is the idempotent write (modify would
+  # need per-key surgery for band/psk/ssid anyway).
+  nmcli connection delete id "$CONN" >/dev/null 2>&1 || true
+  local -a args=(type wifi ifname "$ifname" con-name "$CONN" autoconnect no
+    ssid "$ssid" mode ap)
+  [[ -n $bandval ]] && args+=(wifi.band "$bandval")
+  args+=(wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$psk1"
+    ipv4.method shared ipv6.method disabled)
+  nmcli connection add "${args[@]}" >/dev/null 2>&1 \
+    || { echo "could not create the hotspot profile" >&2; return 1; }
+  echo "hotspot profile '$ssid' saved — toggle it from the Wi-Fi panel"
+}
+
+case "${1:-status}" in
+  status) cmd_status ;;
+  toggle) cmd_toggle ;;
+  setup)  cmd_setup ;;
+  -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "unknown command: $1 (status|toggle|setup)" >&2; exit 1 ;;
+esac

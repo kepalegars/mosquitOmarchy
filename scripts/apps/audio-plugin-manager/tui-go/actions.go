@@ -100,6 +100,11 @@ type Item struct {
 	// Emitting "iZotope/Neutron 5" as the folder value instead produced two
 	// sibling rows both labelled iZotope, so there was no iZotope to open.
 	Group string `json:"group"`
+	// Folder is the orphan's format folder ("vst2", "vst3", "clap", "lv2"),
+	// emitted by reconcile-orphans only. The untracked screen groups by it
+	// the way Setup groups by category: one folder per format, shown only
+	// when it holds untracked plugins.
+	Folder string `json:"folder"`
 }
 
 // FormatSuffix renders the format list for a plugin row, or "" when there is
@@ -741,6 +746,38 @@ func addOrphanAndRefetch(file string) tea.Cmd {
 		what := strings.TrimSpace(string(addOut))
 		if what == "" {
 			what = "added: " + filepath.Base(file)
+		}
+		return reconcileResultMsg{items: items, ok: what}
+	}
+}
+
+// addOrphansAndRefetch tracks every selected orphan, then refetches like the
+// single version. One backend call per plugin (add-orphan registers that
+// plugin's every variant); a failure aborts the batch with what succeeded
+// so far, and the refetch shows exactly what is still untracked.
+func addOrphansAndRefetch(files []string) tea.Cmd {
+	return func() tea.Msg {
+		done := 0
+		for _, f := range files {
+			if _, err := runQuick("add-orphan", f); err != nil {
+				out, rerr := runQuick("reconcile-orphans")
+				items, _ := decodeJSONLines[Item](out)
+				if rerr != nil {
+					return reconcileResultMsg{err: rerr}
+				}
+				return reconcileResultMsg{items: items,
+					err: fmt.Errorf("tracked %d of %d, then failed: %v", done, len(files), err)}
+			}
+			done++
+		}
+		out, err := runQuick("reconcile-orphans")
+		if err != nil {
+			return reconcileResultMsg{err: err}
+		}
+		items, _ := decodeJSONLines[Item](out)
+		what := fmt.Sprintf("tracked %d plugin(s) — the rest stays untracked", done)
+		if done == 1 {
+			what = "tracked 1 plugin — the rest stays untracked"
 		}
 		return reconcileResultMsg{items: items, ok: what}
 	}

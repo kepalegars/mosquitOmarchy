@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	tuikit "mosquitomarchy.local/tui-kit"
 )
 
 // A machine whose plugins predate the manager has an EMPTY log, so every one of
@@ -52,20 +54,71 @@ func TestSweepsCanReturnNothing(t *testing.T) {
 }
 
 // And the converse, which is what the user actually hit: a pile of orphans
-// DOES open a screen, once, and it is one row per plugin.
-func TestSweepOpensOneRowPerPluginWhenThereIsSomethingToAdopt(t *testing.T) {
+// DOES open a screen, once — grouped in one format folder per format, every
+// folder open so its plugins read directly.
+func TestSweepOpensFormatFoldersWhenThereIsSomethingToAdopt(t *testing.T) {
 	m := initialModel()
 	m.nav = []screen{scrMain}
 	mm, _ := m.update(reconcileOrphansMsg{items: []Item{
 		{Display: "FabFilter One", Value: "vst:vst2:/x/One.dll", Formats: "vst2,vst3"},
 		{Display: "FabFilter Pro-Q 4", Value: "vst:vst3:/x/ProQ.vst3", Formats: "vst3"},
+		{Display: "Some LV2", Value: "native:/home/u/.lv2/some.lv2", Formats: "lv2"},
 	}})
 	got, _ := mm.(model)
 	if got.top() != scrReconcileOrphansTick {
-		t.Fatalf("with two orphans no screen appeared (top=%d)", got.top())
+		t.Fatalf("with three orphans no screen appeared (top=%d)", got.top())
 	}
-	if n := len(got.picker.Items()); n != 2 {
-		t.Errorf("the screen shows %d rows for 2 plugins", n)
+	// One's primary format is vst2, so the folders are vst2, vst3 and
+	// lv2: 3 folders + 3 plugins = 6 rows.
+	vals := map[string]bool{}
+	for _, it := range got.picker.Items() {
+		vals[it.Value] = true
+	}
+	for _, want := range []string{"orphan-folder:vst2", "orphan-folder:vst3", "orphan-folder:lv2",
+		"vst:vst2:/x/One.dll", "vst:vst3:/x/ProQ.vst3", "native:/home/u/.lv2/some.lv2"} {
+		if !vals[want] {
+			t.Errorf("missing row %q (have %v)", want, vals)
+		}
+	}
+	// A format with no orphans has no folder.
+	if vals["orphan-folder:clap"] {
+		t.Error("empty clap folder shown with no clap orphans")
+	}
+}
+
+// Tab on a folder checks everything under it; Enter with nothing checked
+// warns instead of tracking; the confirm names the batch.
+func TestOrphanFolderTabAndConfirm(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain}
+	mm, _ := m.update(reconcileOrphansMsg{items: []Item{
+		{Display: "One", Value: "vst:vst2:/x/One.dll", Formats: "vst2"},
+		{Display: "Two", Value: "vst:vst2:/x/Two.dll", Formats: "vst2"},
+	}})
+	got, _ := mm.(model)
+	// Enter with nothing tab-checked: no confirm, no tracking.
+	mm2, _ := got.update(tuikit.PickerResultMsg{Value: "vst:vst2:/x/One.dll"})
+	got2, _ := mm2.(model)
+	if got2.top() == scrOrphansConfirm {
+		t.Fatal("confirm opened with nothing checked")
+	}
+	// Tab on the folder checks both children.
+	mm3, _ := got2.update(tuikit.PickerToggleMsg{Value: "orphan-folder:vst2"})
+	got3, _ := mm3.(model)
+	if !got3.orphanChecked["vst:vst2:/x/One.dll"] || !got3.orphanChecked["vst:vst2:/x/Two.dll"] {
+		t.Fatalf("folder tab did not check both: %v", got3.orphanChecked)
+	}
+	// Enter opens the batch confirm, not a tracking call.
+	mm4, _ := got3.update(tuikit.PickerResultMsg{Value: "vst:vst2:/x/One.dll"})
+	got4, _ := mm4.(model)
+	if got4.top() != scrOrphansConfirm {
+		t.Fatalf("no batch confirm (top=%d)", got4.top())
+	}
+	// Declining tracks nothing.
+	mm5, _ := got4.update(tuikit.ConfirmResultMsg{Yes: false})
+	got5, _ := mm5.(model)
+	if got5.top() != scrReconcileOrphansTick {
+		t.Fatalf("declined confirm did not return to the list (top=%d)", got5.top())
 	}
 }
 

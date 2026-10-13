@@ -1,0 +1,152 @@
+      // >>> mosquito-hotspot >>> (managed by setup-wifi-hotspot.sh — re-applied on reinstall, do not edit by hand)
+      //
+      // Hotspot row, right below the Wi-Fi band section: same header-left /
+      // switch-right geometry as the band line above (PanelSectionHeader plus
+      // a right-anchored Row, same spacing), gated on Wi-Fi rather than on
+      // the band picker — a single-band radio has no band row but hotspots
+      // fine. Everything here is mouse-driven on purpose: the panel's
+      // keyboard cursor model (focusSection) was left untouched, so neither
+      // control carries hasCursor.
+      QtObject {
+        id: hotspot
+
+        property bool on: false
+        property string ssid: ""
+        property bool busy: false
+        property string backend: Quickshell.env("MOSQUITO_HOTSPOT") ||
+            (Quickshell.env("HOME") + "/.local/bin/mosquito-hotspot")
+
+        function title() {
+          if (hotspot.ssid !== "") return "HOTSPOT: " + hotspot.ssid.toUpperCase()
+          return "HOTSPOT"
+        }
+        function update(text) {
+          try {
+            var st = JSON.parse(String(text).trim())
+            hotspot.on = st.on === true
+            hotspot.ssid = st.ssid || ""
+          } catch (e) {}
+          hotspot.busy = false
+        }
+        function refresh() {
+          if (hotspotProc.running) return
+          hotspotProc.command = [hotspot.backend, "status"]
+          hotspotProc.running = true
+        }
+        function toggle() {
+          if (hotspot.busy || hotspotProc.running) return
+          hotspot.busy = true
+          hotspotProc.command = [hotspot.backend, "toggle"]
+          hotspotProc.running = true
+        }
+        function openSetup() {
+          Quickshell.execDetached(["foot", "-e", hotspot.backend, "setup"])
+        }
+
+        property Process hotspotProc: Process {
+          stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: hotspot.update(text)
+          }
+          // Refresh only after a toggle run: refreshing after every run
+          // would re-queue status forever (status exit -> refresh ->
+          // status exit ...). A toggle run always sets busy first, a
+          // status run never does.
+          onExited: if (hotspot.busy) hotspot.refresh()
+        }
+        // Steady poll while the panel is open, so a setup done in the
+        // terminal next door shows up without reopening.
+        property Timer hotspotPoll: Timer {
+          interval: 5000
+          repeat: true
+          running: root.opened
+          onTriggered: hotspot.refresh()
+        }
+        // One immediate read on open: the poll above would otherwise leave
+        // the row stale for up to five seconds.
+        property Timer hotspotOpenDelay: Timer {
+          interval: 150
+          repeat: false
+          running: root.opened
+          onTriggered: hotspot.refresh()
+        }
+      }
+
+      PanelSeparator {
+        visible: root.kind === "wifi"
+        foreground: root.bar.foreground
+      }
+
+      Column {
+        visible: root.kind === "wifi"
+        width: parent.width
+        spacing: Style.space(10)
+
+        // No Row positioner here: the audio panel's hero puts its switch
+        // straight in the Item for a reason. Both controls anchor to the
+        // Item (or to each other, both plain siblings of it).
+        Item {
+          width: parent.width
+          implicitHeight: Math.max(hotspotHeader.implicitHeight, hotspotSwitch.implicitHeight)
+
+          PanelSectionHeader {
+            id: hotspotHeader
+            text: hotspot.title()
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+          }
+
+          ToggleSwitch {
+            id: hotspotSwitch
+            trackHeight: Math.round(hotspotHeader.font.pixelSize * 1.2)
+            cursorPad: Style.space(3)
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            checked: hotspot.on
+            busy: hotspot.busy
+            foreground: root.bar.foreground
+            onToggled: hotspot.toggle()
+
+            PanelToolTip {
+              visible: hotspotSwitch.containsMouse
+              text: hotspot.on ? "Hotspot on — turn off" : "Turn the hotspot on"
+              fontFamily: root.bar.fontFamily
+            }
+          }
+
+          // Settings, left of the toggle: SSID, password and band live in
+          // the backend's interactive setup, opened here in a terminal.
+          Text {
+            id: hotspotGear
+            text: "\uf013"
+            color: root.bar.foreground
+            opacity: hotspotGearArea.containsMouse ? 1 : 0.55
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body
+            anchors.right: hotspotSwitch.left
+            anchors.rightMargin: Style.space(6)
+            // To the switch, its sibling — the band switch anchors to its
+            // label the same way. (Anchoring here to the parent Item warned,
+            // while the header's identical parent anchor does not; sibling
+            // anchors are the pattern this file proves safe.)
+            anchors.verticalCenter: hotspotSwitch.verticalCenter
+
+            MouseArea {
+              id: hotspotGearArea
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: hotspot.openSetup()
+            }
+
+            PanelToolTip {
+              visible: hotspotGearArea.containsMouse
+              text: "Hotspot settings (name, password, band)"
+              fontFamily: root.bar.fontFamily
+            }
+          }
+        }
+      }
+      // <<< mosquito-hotspot <<<

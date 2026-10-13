@@ -363,7 +363,7 @@ PYWIZARD
     all_plugin_list_rows_sorted > "$_apm_rows"
     cut -f6 < "$_apm_rows" > "$_apm_vals"
     _wpm_cache_populate "$_apm_vals"
-    while IFS=$'\t' read -r sortkey gkey label origin fmt enabled value _v _k; do
+    while IFS=$'\t' read -r sortkey label origin fmt enabled value _v _k; do
       [[ -n $value ]] || continue
       parent="$(_wpm_parent_of "$value")"
       jq -nc --arg display "[$origin/$fmt]  $label" --arg value "$value" \
@@ -396,7 +396,7 @@ PYWIZARD
     all_plugin_list_rows_sorted > "$_apm_rows"
     cut -f6 < "$_apm_rows" > "$_apm_vals"
     _wpm_cache_populate "$_apm_vals"
-    while IFS=$'\t' read -r sortkey gkey label origin fmt enabled value _v _k; do
+    while IFS=$'\t' read -r sortkey label origin fmt enabled value _v _k; do
       [[ -n $value ]] || continue
       parent="$(_wpm_parent_of "$value")"
       jq -nc --arg display "[$origin/$fmt]  $label" --arg value "$value" \
@@ -436,7 +436,7 @@ PYWIZARD
     all_plugin_list_rows_sorted > "$_apm_rows"
     cut -f6 < "$_apm_rows" > "$_apm_vals"
     _wpm_cache_populate "$_apm_vals"
-    while IFS=$'\t' read -r sortkey gkey label origin fmt enabled value _v _k; do
+    while IFS=$'\t' read -r sortkey label origin fmt enabled value _v _k; do
       [[ -n $value ]] || continue
       parent="$(_wpm_parent_of "$value")"
       jq -nc --arg display "[$origin/$fmt]  $label" --arg value "$value" \
@@ -906,6 +906,9 @@ PYWIZARD
     plugin_group_rows > "$_apm_lv"
     awk -F'\t' -v v="$vendor" '$3==v' "$_apm_lv" | while IFS=$'\t' read -r sk label grp formats enabled value variants; do
       [[ -n $value ]] || continue
+      # LV2 bundles take no fixes (every fix is a Wine affair) — they are not
+      # offered as fix targets at all, instead of opening an empty list.
+      case "$value" in native:*.lv2|native:*.lv2.disabled) continue ;; esac
       jq -nc --arg display "$label" --arg value "$value" --arg vendor "$grp" \
         --arg formats "$formats" --argjson enabled "$enabled" --arg variants "$variants" \
         '{display:$display, value:$value, kind:"plugin", vendor:$vendor, formats:$formats, enabled:$enabled, variants:$variants}'
@@ -1293,7 +1296,8 @@ PYWIZARD
       jq -R -s -c 'split("\n")
         | map(select(length > 0) | split("\t"))
         | map({display: .[0], value: .[1], kind: "plugin", vendor: .[2],
-               formats: .[3], variants: .[4]})[]'
+               formats: .[3], variants: .[4],
+               folder: (.[3] | split(",")[0] | ascii_downcase)})[]'
     rm -f "$_apm_ro"
     ;;
 

@@ -4436,6 +4436,14 @@ fix_set_applied_list() {
 # list-plugin-fixes <plugin>: every fix with an "applied" flag for that plugin.
 fixes_for_plugin_json() {
   local plugin="$1" id title scope desc category pfix rec vst applied
+  # LV2 bundles get no fixes, ever: every fix in the catalog is a Wine /
+  # Windows-plugin affair (prefix data, MSVC runtimes, XWayland window
+  # rules for Wine editors). Offering them on a native LV2 — and worse,
+  # recording them as applied — would be a lie either way, so the list is
+  # empty before the catalog is even read.
+  case "$plugin" in
+    *.lv2|*.lv2.disabled) return 0 ;;
+  esac
   while IFS='|' read -r id title scope desc category pfix rec vst; do
     [[ -n $id ]] || continue
     [[ -n $vst ]] || vst=any
@@ -4999,9 +5007,17 @@ apply_plugins_root() {
   VST_VST2="$VST_ROOT/vst"
   VST_VST3="$VST_ROOT/vst3"
   VST_CLAP="$VST_ROOT/clap"
-  NATIVE_LV2_DIRS_USER=("$VST_ROOT/lv2")
-  NATIVE_CLAP_DIRS_USER=("$VST_ROOT/clap-native")
-  NATIVE_VST3_DIRS_USER=("$VST_ROOT/vst3-native")
+  # The XDG user dirs stay scanned ALONGSIDE the managed root: installs
+  # from file land in ~/.lv2|~/.clap|~/.vst3 (the hosts' standard paths),
+  # so dropping them from the scan made every such install invisible to
+  # the list, the uninstall and the orphan detection. Duplicates with the
+  # managed dir are skipped (same dir twice would list every plugin twice).
+  NATIVE_LV2_DIRS_USER=("$HOME/.lv2")
+  [[ "$VST_ROOT/lv2" != "$HOME/.lv2" ]] && NATIVE_LV2_DIRS_USER+=("$VST_ROOT/lv2")
+  NATIVE_CLAP_DIRS_USER=("$HOME/.clap")
+  [[ "$VST_ROOT/clap-native" != "$HOME/.clap" ]] && NATIVE_CLAP_DIRS_USER+=("$VST_ROOT/clap-native")
+  NATIVE_VST3_DIRS_USER=("$HOME/.vst3")
+  [[ "$VST_ROOT/vst3-native" != "$HOME/.vst3" ]] && NATIVE_VST3_DIRS_USER+=("$VST_ROOT/vst3-native")
 }
 
 # Rewrites the state log's recorded plugin file paths after a

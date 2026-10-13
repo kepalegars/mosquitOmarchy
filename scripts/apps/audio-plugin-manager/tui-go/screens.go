@@ -644,6 +644,131 @@ func pluginRow(p Item, checked map[string]bool, pad string, last bool, depth int
 	return row
 }
 
+// orphanFormatOrder is the fixed folder order of the untracked screen: one
+// format folder each, always in the same places, shown only when it holds
+// untracked plugins (a folder with nothing in it is simply absent).
+var orphanFormatOrder = []string{"vst2", "vst3", "clap", "lv2"}
+
+// orphanFolderOf maps an orphan row to its format folder: the primary
+// (first) format, lowercased. Anything unrecognised lands in "other" so no
+// orphan is ever homeless.
+func orphanFolderOf(it Item) string {
+	f := it.Folder
+	if f == "" && it.Formats != "" {
+		f = strings.Split(it.Formats, ",")[0]
+	}
+	f = strings.ToLower(strings.TrimSpace(f))
+	switch f {
+	case "vst2", "vst3", "clap", "lv2":
+		return f
+	}
+	return "other"
+}
+
+// orphanTree groups the flat orphan rows into one format folder each, in
+// canonical order. It reuses uninstallTreeItem so the shared tree renderer
+// draws it exactly like the Uninstall screen: same ○/●, same fold glyphs,
+// same indents. Folder values carry an "orphan-folder:" prefix so they can
+// never collide with a vendor folder in the shared folderExpanded map.
+func orphanTree(items []Item) []uninstallTreeItem {
+	byFolder := map[string][]Item{}
+	for _, it := range items {
+		f := orphanFolderOf(it)
+		byFolder[f] = append(byFolder[f], it)
+	}
+	out := []uninstallTreeItem{}
+	emit := func(f string) {
+		kids := byFolder[f]
+		if len(kids) == 0 {
+			return
+		}
+		out = append(out, uninstallTreeItem{
+			Folder: true, Value: "orphan-folder:" + f, Display: f, Plugins: kids,
+		})
+	}
+	for _, f := range orphanFormatOrder {
+		emit(f)
+	}
+	seen := map[string]bool{}
+	for _, it := range items {
+		f := orphanFolderOf(it)
+		if seen[f] {
+			continue
+		}
+		seen[f] = true
+		known := false
+		for _, k := range orphanFormatOrder {
+			if k == f {
+				known = true
+			}
+		}
+		if !known {
+			emit(f)
+		}
+	}
+	return out
+}
+
+// orphanDisplay is the human name of one orphan value for the track
+// confirm (the display name from the cache, basename fallback).
+func orphanDisplay(items []Item, value string) string {
+	for _, it := range items {
+		if it.Value == value {
+			if it.Display != "" {
+				return it.Display
+			}
+		}
+	}
+	return baseName(value)
+}
+
+// toggleOrphanFolder flips every plugin in one format folder to the opposite
+// extreme (any unchecked → check all; all checked → uncheck all), the same
+// semantics as Tab on an Uninstall folder.
+func toggleOrphanFolder(items []Item, folderValue string, checked map[string]bool) {
+	f := strings.TrimPrefix(folderValue, "orphan-folder:")
+	anyUnchecked := false
+	for _, it := range items {
+		if orphanFolderOf(it) == f && !checked[it.Value] {
+			anyUnchecked = true
+			break
+		}
+	}
+	for _, it := range items {
+		if orphanFolderOf(it) == f {
+			checked[it.Value] = anyUnchecked
+		}
+	}
+}
+
+// rebuildOrphanPicker re-renders the untracked screen from orphanCache +
+// orphanChecked. New folders default to open — the screen's whole point is
+// showing what is untracked — while a folder the user folded stays folded.
+func (m *model) rebuildOrphanPicker() {
+	if m.folderExpanded == nil {
+		m.folderExpanded = map[string]bool{}
+	}
+	if m.orphanChecked == nil {
+		m.orphanChecked = map[string]bool{}
+	}
+	for _, n := range orphanTree(m.orphanCache) {
+		if _, ok := m.folderExpanded[n.Value]; !ok {
+			m.folderExpanded[n.Value] = true
+		}
+	}
+	m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
+		return tuikit.NewPicker("Found on disk but not tracked — tab to pick, enter to track:",
+			treeItemsToPicker(orphanTree(m.orphanCache), m.orphanChecked, m.folderExpanded)).SetSize(m.contentSize()).
+			SetHelpKeys(
+				key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+				key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
+				key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
+				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "track")),
+				key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "leave")),
+			).WithTree(m.folderExpanded)
+	})
+}
+
 // rebuildUninstallPicker re-renders the Uninstall picker from uninstallCache
 // + uninstallChecked, same shape as rebuildPluginPicker. The cursor is
 // preserved across the rebuild (Tab on a row used to jump back to the
@@ -3204,7 +3329,26 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pop()
 				return m, nil
 			}
-			m.picker = tuikit.NewPicker("Found on disk but not tracked — pick to add (esc to finish):", itemsToPicker(ro.items)).SetSize(m.contentSize())
+			m.orphanCache = ro.items
+			m.orphanChecked = map[string]bool{}
+			m.rebuildOrphanPicker()
+			return m, nil
+		}
+		if tg, ok := msg.(tuikit.PickerToggleMsg); ok {
+			// Tab on a format folder checks every untracked plugin under
+			// it; Tab on a plugin row toggles just that one.
+			if strings.HasPrefix(tg.Value, "orphan-folder:") {
+				toggleOrphanFolder(m.orphanCache, tg.Value, m.orphanChecked)
+			} else {
+				m.orphanChecked[tg.Value] = !m.orphanChecked[tg.Value]
+			}
+			m.rebuildOrphanPicker()
+			return m, nil
+		}
+		if fm, ok := msg.(tuikit.TreeFoldMsg); ok {
+			// Kit-owned ←/→ fold, same as Uninstall: repaint and land.
+			m.rebuildOrphanPicker()
+			m.picker = m.picker.SelectValue(fm.Cursor)
 			return m, nil
 		}
 		if res, ok := msg.(tuikit.PickerResultMsg); ok {
@@ -3212,7 +3356,26 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pop()
 				return m, nil
 			}
-			return m, addOrphanAndRefetch(res.Value)
+			var targets []string
+			for _, it := range m.orphanCache {
+				if m.orphanChecked[it.Value] {
+					targets = append(targets, it.Value)
+				}
+			}
+			if len(targets) == 0 {
+				m.toast, _ = m.toast.SetWarn("nothing tab-checked — the rest stays untracked")
+				return m, nil
+			}
+			// Confirm BEFORE tracking: Enter names the batch, and
+			// everything not in it stays exactly as it was.
+			m.orphanTargets = targets
+			if len(targets) == 1 {
+				m.confirm = tuikit.NewConfirm(fmt.Sprintf("Track '%s'? The rest stays untracked.", orphanDisplay(m.orphanCache, targets[0])), "No", "Yes")
+			} else {
+				m.confirm = tuikit.NewConfirm(fmt.Sprintf("Track %d plugins? The rest stays untracked.", len(targets)), "No", "Yes")
+			}
+			m.push(scrOrphansConfirm)
+			return m, nil
 		}
 
 		if rr, ok := msg.(reconcileResultMsg); ok {
@@ -3226,14 +3389,25 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pop()
 				return m, m.enterCmd()
 			}
-			m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
-				return tuikit.NewPicker("Found on disk but not tracked — pick to add (esc to finish):",
-					itemsToPicker(rr.items)).SetSize(m.contentSize())
-			})
+			m.orphanCache = rr.items
+			m.orphanChecked = map[string]bool{}
+			m.rebuildOrphanPicker()
 			return m, nil
 		}
 		var cmd tea.Cmd
 		m.picker, cmd = m.picker.Update(msg)
+		return m, cmd
+
+	case scrOrphansConfirm:
+		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
+			m.pop()
+			if !res.Yes {
+				return m, nil
+			}
+			return m, addOrphansAndRefetch(m.orphanTargets)
+		}
+		var cmd tea.Cmd
+		m.confirm, cmd = m.confirm.Update(msg)
 		return m, cmd
 
 	case scrPrefixMovePluginPick:

@@ -595,6 +595,17 @@ st_mixbay(){
   [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
   echo ok
 }
+st_wifi_hotspot(){
+  # Wi-Fi hotspot row: backend deployed, panel clone patched, bar repointed.
+  [[ -x "$BIN_DIR/mosquito-hotspot" ]] || { echo missing; return; }
+  local miss=""
+  grep -qF "// >>> mosquito-hotspot >>>" "$HOME/.config/omarchy/plugins/mosquito.network/Panel.qml" 2>/dev/null \
+    || miss="${miss:+$miss, }hotspot row"
+  grep -qE '"mosquito\.network"' "$HOME/.config/omarchy/shell.json" 2>/dev/null \
+    || miss="${miss:+$miss, }bar repoint"
+  [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
+  echo ok
+}
 st_mosquitomarchy(){
   # The manager TUI itself (former install-tui.sh): dispatcher + built binary
   # + desktop entry + float rule + post-boot update hook.
@@ -688,6 +699,7 @@ MODULES=(
   "jamjamjam-plugin:JamJamJam bar plugin — key/BPM/chord detection, chord progression grid, guitar fretboard scale, MIDI chord mode + synth"
   "live-mode:Live mode — performance session mode (stay-awake + thermal guard + routing tool in scratchpad: live-mode / live-mode-watch / live-mode-root + its row in Setup > mosquito + QML overlay)"
   "mixbay:mosquitomixbay — USB audio bay (EVO 8/4 full control via evo_raw kmod, Fireface UCX II / UGM192 / Quantum ES 4 ALSA level 1 + persistent demo without hardware; live mode parks it in the scratchpad)"
+  "wifi-hotspot:Hotspot row in the Wi-Fi panel (below the band picker): NM-native persistent hotspot toggle + gear-button setup — panel clone, no menu entry"
 )
 
 # ───────────────────────── Quick system fixes ─────────────────────────
@@ -793,6 +805,7 @@ module_state(){
     pipewire-settings) st_pipewire_settings ;;
     live-mode) st_live_mode ;;
     mixbay) st_mixbay ;;
+    wifi-hotspot) st_wifi_hotspot ;;
     mosquitomarchy) st_mosquitomarchy ;;
     remove-ai) ai_state_on && echo missing || echo ok ;;
   esac
@@ -840,6 +853,7 @@ module_of_path(){
     scripts/plugins/pipewire-settings/*)                     echo pipewire-settings ;;
     scripts/plugins/live-mode/*)                             echo live-mode ;;
     scripts/apps/mosquitomixbay/*)                            echo mixbay ;;
+    scripts/plugins/wifi-hotspot/*)                         echo wifi-hotspot ;;
     # The WHOLE manager tree (deployer, backend, Go TUI, skills): any change
     # here must offer the mosquitomarchy module for update, otherwise the
     # installed TUI is never rebuilt. This used to name three files only, so
@@ -3086,6 +3100,16 @@ un_mixbay(){
     rm -f "$BIN_DIR/mosquito-mixbay" "$BIN_DIR/mosquito-mixbay-actions" "$BIN_DIR/mosquito-mixbay-tui"
   fi
 }
+un_wifi_hotspot(){
+  info "Uninstalling the Wi-Fi hotspot row"
+  if [[ -x "$WIFI_HOTSPOT_DIR/setup-wifi-hotspot.sh" ]]; then
+    bash "$WIFI_HOTSPOT_DIR/setup-wifi-hotspot.sh" --uninstall \
+      || warn "setup-wifi-hotspot.sh --uninstall reported a problem"
+  else
+    warn "setup-wifi-hotspot.sh not found — cleaning up directly."
+    rm -f "$BIN_DIR/mosquito-hotspot"
+  fi
+}
 un_mx_master(){
   info "Uninstalling MX Master thumb→SUPER (logiops)"
   if command -v logid >/dev/null 2>&1 && systemctl is-enabled logid >/dev/null 2>&1; then
@@ -3265,6 +3289,7 @@ uninstall_module(){
     pipewire-settings) un_pipewire_settings ;;
     live-mode) un_live_mode ;;
     mixbay) un_mixbay ;;
+    wifi-hotspot) un_wifi_hotspot ;;
     mosquitomarchy) un_mosquitomarchy ;;
     *) err "Unknown module: $id"; return 1 ;;
   esac
@@ -3348,6 +3373,7 @@ REAPER_DIR="$APPS_DIR/reaper"
 LLM_DIR="$SCRIPTS/LLM"
 VM_DIR="$SCRIPTS/windows-vm"
 MIXBAY_DIR="$APPS_DIR/mosquitomixbay"
+WIFI_HOTSPOT_DIR="$SCRIPTS/plugins/wifi-hotspot"
 MACOS_VM_DIR="$SCRIPTS/macos-vm"
 OMARCHY_VM_DIR="$SCRIPTS/omarchy-vm"
 ABLETON_DIR="$APPS_DIR/ableton"
@@ -3748,6 +3774,12 @@ run_mixbay(){
   bash "$MIXBAY_DIR/setup-mosquitomixbay.sh" $([[ $YES == 1 ]] && echo -y)
 }
 
+run_wifi_hotspot(){
+  # Wi-Fi hotspot row: backend + stock panel clone + hotspot block + bar
+  # repoint. Idempotent; -y installs non-interactively.
+  bash "$WIFI_HOTSPOT_DIR/setup-wifi-hotspot.sh" $([[ $YES == 1 ]] && echo -y)
+}
+
 run_mosquitomarchy(){
   # The manager TUI (the interface this script drives): build the Go binary,
   # deploy the dispatcher + desktop entry + float rule + post-boot hook.
@@ -3842,6 +3874,7 @@ exec_modules(){
       pipewire-settings) run_module pipewire-settings run_pipewire_settings ;;
       live-mode) run_module live-mode run_live_mode ;;
       mixbay) run_module mixbay run_mixbay ;;
+      wifi-hotspot) run_module wifi-hotspot run_wifi_hotspot ;;
       mosquitomarchy) run_module mosquitomarchy run_mosquitomarchy ;;
       *)
         # A selected id nothing handles must never look like a success.
@@ -3993,7 +4026,7 @@ module_category(){ # module id -> category id
     # AND here. Two copies of the same fact: adding a module to one leaves the
     # other calling it category-less, which is how pipewire-settings showed up in
     # the Setup tree under "mosquito" and in `status` with an empty category.
-    ableton-move-manager|audio-plugin-manager|jamjamjam-plugin|battery|live-mode|mixbay|pipewire-settings) echo mosquito; return 0 ;;
+    ableton-move-manager|audio-plugin-manager|jamjamjam-plugin|battery|live-mode|mixbay|wifi-hotspot|pipewire-settings) echo mosquito; return 0 ;;
     # The manager lives in the mosquito folder (single row, update watchdog
     # included) rather than Plugins; the mapping is explicit so Status keeps
     # grouping it exactly like Setup does.
@@ -4144,6 +4177,8 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
       CAND_LABELS+=("mosquito-live-mode  —  $(module_desc live-mode)")
       CAND_KEYS+=("mixbay")
       CAND_LABELS+=("mosquito-mixbay  —  $(module_desc mixbay)")
+      CAND_KEYS+=("wifi-hotspot")
+      CAND_LABELS+=("mosquito-wifi-hotspot  —  $(module_desc wifi-hotspot)")
       # The manager (deployer + update watchdog in one row) lives here, not
       # in Plugins: one mosquito row for the whole manager.
       CAND_KEYS+=("mosquitomarchy")

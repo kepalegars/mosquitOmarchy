@@ -63,21 +63,16 @@ var kbCatalog = []struct {
 		{"REAPER", "reaper", "launch"},
 	}},
 	{"funcs", "quick function", []KbCatItem{
-		{"Brightness +5%", "$HOME/.local/bin/backlight +5%", "cmd"},
-		{"Brightness -5%", "$HOME/.local/bin/backlight 5%-", "cmd"},
 		{"Brightness maximum", "$HOME/.local/bin/backlight 100%", "cmd"},
 		{"Brightness minimum", "$HOME/.local/bin/backlight 0%", "cmd"},
 		{"Ultra-save toggle", "sudo -n $HOME/.local/bin/ultra-save toggle", "cmd"},
-		{"Mega-caffeine on", "mega-caffeine on", "cmd"},
-		{"Mega-caffeine off", "mega-caffeine off", "cmd"},
 		{"Mega-caffeine toggle", "mega-caffeine toggle", "cmd"},
-		{"mosquitOmarchy setup", "foot -e $HOME/mosquitOmarchy/mosquitomarchy-setup.sh", "cmd"},
 		{"SuperFile", "foot -e spf", "cmd"},
 	}},
 	{"move", "Ableton Move", []KbCatItem{
-		{"Move: main menu", "$HOME/.local/bin/mosquito-move-manager", "cmd"},
-		{"Move: Move Manager webapp", "$HOME/.local/bin/move-manager-webapp", "launch"},
-		{"Move: convert a set → MIDI", "$HOME/.local/bin/mosquito-move-manager --midi", "cmd"},
+		{"main menu", "$HOME/.local/bin/mosquito-move-manager", "cmd"},
+		{"Move Manager webapp", "$HOME/.local/bin/move-manager-webapp", "launch"},
+		{"convert a set → MIDI", "$HOME/.local/bin/mosquito-move-manager --midi", "cmd"},
 	}},
 	// Its own category, right above "Custom command" — mosquitomarchy is the
 	// one thing this TUI exists for, so burying its launcher under a list of
@@ -87,6 +82,7 @@ var kbCatalog = []struct {
 	{"mosquito", "mosquito", []KbCatItem{
 		{"mosquitOmarchy", "$HOME/.local/bin/mosquitomarchy", "cmd"},
 		{"JamJamJam", "omarchy-launch-or-focus-tui jamjamjam-tui", "cmd"},
+		{"PipeWire settings", "omarchy-shell shell summon mosquito.pipewire '{}'", "cmd"},
 	}},
 	{"custom", "custom command", nil},
 }
