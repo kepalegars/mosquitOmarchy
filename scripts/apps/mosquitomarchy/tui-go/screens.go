@@ -1144,9 +1144,17 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, nil
 		}
 		if m.top() == scrKBInput {
-			if msg.Canceled || msg.Value == "" {
-				m.toast, _ = m.toast.SetWarn("cancelled — the label and the command are both required")
+			if msg.Canceled {
+				// Esc leaves the custom flow back to the categories. This
+				// used to toast and stay put, so Esc could never leave this
+				// screen: every press just re-toasted on the same input.
+				m.kbInputStep = 0
+				m.pop()
 				return m, nil
+			}
+			if msg.Value == "" {
+				m.toast, _ = m.toast.SetWarn("the label and the command are both required")
+				return m, m.kbInput.Init()
 			}
 			if strings.Contains(msg.Value, "\"") {
 				m.toast, _ = m.toast.SetWarn("quotes are not allowed")
@@ -2552,7 +2560,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 
 	case scrKBCat:
 		// "Add a keybinding" categories: Package app / Quick function /
-		// Ableton Move / mosquitOmarchy / Custom command (no prefix — the
+		// Ableton Move / mosquito / Custom command (no prefix — the
 		// header names it).
 		if res.Canceled || res.Value == "back" {
 			m.pop()

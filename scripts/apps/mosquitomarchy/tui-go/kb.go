@@ -81,11 +81,12 @@ var kbCatalog = []struct {
 	}},
 	// Its own category, right above "Custom command" — mosquitomarchy is the
 	// one thing this TUI exists for, so burying its launcher under a list of
-	// brightness presets made it undiscoverable. The "quick function" entry
-	// below still runs the shell launcher; this one opens the TUI.
-	{"mosquito", "mosquitOmarchy", []KbCatItem{
-		{"mosquitOmarchy (TUI)", "$HOME/.local/bin/mosquitomarchy-tui", "cmd"},
-		{"mosquitOmarchy (shell launcher)", "foot -e $HOME/mosquitOmarchy/mosquitomarchy-setup.sh", "cmd"},
+	// brightness presets made it undiscoverable. One row per opener, through
+	// the same entry points as the Omarchy menu (the dispatcher opens a
+	// terminal itself when there is none, which a bare TUI binary cannot).
+	{"mosquito", "mosquito", []KbCatItem{
+		{"mosquitOmarchy", "$HOME/.local/bin/mosquitomarchy", "cmd"},
+		{"JamJamJam", "omarchy-launch-or-focus-tui jamjamjam-tui", "cmd"},
 	}},
 	{"custom", "custom command", nil},
 }
@@ -221,8 +222,8 @@ func kbCatLabel(title string) string {
 		return "Ableton Move"
 	case "custom command":
 		return "Custom command"
-	case "mosquitOmarchy":
-		return "mosquitOmarchy"
+	case "mosquito":
+		return "mosquito"
 	}
 	return title
 }
@@ -251,6 +252,7 @@ func (m model) rebuildKBKeys() navPicker {
 	}
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
 	return newNavPicker("Pick a free key for: "+m.kbPending.Label, items).SetSize(m.contentSize()).
-		SetHelpKeys(key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "bind"))).
+		SetHelpKeys(key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "bind")),
+			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back"))).
 		SelectIndex(idx)
 }

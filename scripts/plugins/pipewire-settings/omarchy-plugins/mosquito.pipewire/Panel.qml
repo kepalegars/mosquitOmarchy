@@ -218,14 +218,13 @@ Panel {
     // legible over any wallpaper without this file knowing anything about one.
     readonly property color iconColor: root.bar ? root.bar.barForeground : Color.foreground
 
-    // The grey the rest of the shell dims to. Not Color.muted, and deliberately
-    // not an accent: the network and bluetooth panels derive their secondary
-    // text from the BAR's own foreground with Qt.darker(), so it already follows
-    // both the theme and the bar's per-widget contrast. Reusing that is what
-    // makes this panel's secondary text look like every other panel's rather than
-    // like a different application — and it is the grey that was asked for,
-    // instead of an accent colour that reads as a status.
-    readonly property color dim: Qt.darker(iconColor, 1.5)
+    // The grey for secondary text. This used to be the BAR foreground darkened
+    // with Qt.darker(), which collapses to plain black on a light bar — and
+    // the popup card stays dark, so the labels vanished exactly when the icon
+    // went black. An alpha blend of the CARD's own foreground instead: it
+    // stays a readable grey on a dark card and on a light one, because it is
+    // derived from the surface the text sits on rather than from the bar icon.
+    readonly property color dim: Util.alpha(Color.foreground, 0.55)
 
     BarIconButton {
         id: button
