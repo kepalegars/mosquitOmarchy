@@ -63,7 +63,7 @@ MM_BLOCK_START="-- >>> Omarchy_Custom_Scripts_MxMaster"
 MM_BLOCK_END="-- <<< Omarchy_Custom_Scripts_MxMaster"
 MM_SENS="${MX_MASTER_SENSITIVITY:-0}"      # mouse pointer sensitivity (libinput scale -1..1, 0 = stock)
 MM_DPI="${MX_MASTER_DPI:-1000}"            # logid per-dpi (400–4000; 1000 is the good desktop default)
-MM_MATRIX_SCROLL="${MX_MASTER_SCROLL_FACTOR:-1.0}"  # per-device hyprland scroll factor
+MM_MATRIX_SCROLL="${MX_MASTER_SCROLL_FACTOR:-1.5}"  # per-device hyprland scroll factor (faster mouse scroll; touchpad stays 0.6)
 MM_ACCEL="${MX_MASTER_ACCEL:-flat}"        # global input.lua mouse profile
 
 mx_device_name(){

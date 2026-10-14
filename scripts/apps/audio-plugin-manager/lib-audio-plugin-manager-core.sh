@@ -2610,13 +2610,18 @@ open_folder_path() {
     dir="$(dirname "$dir")"
   fi
   [[ -n $dir ]] || return 1
-  # Nautilus, always.
-  #
-  # This is a BROWSE action, not a choice: it opens a window you look at and
-  # navigate. Superfile is the setting for CHOOSING a file to hand back to the
-  # manager, and it is a terminal file manager that cannot present a folder the
-  # way this row means. xdg-open went first once and silently overrode the
-  # setting; the setting should not be in this path at all.
+  # Honour the file-picker setting. If the user chose Superfile, BROWSE
+  # actions open Superfile in a terminal rooted at that folder; otherwise use
+  # the system file manager (Nautilus / Dolphin / Thunar) by name. This binds
+  # the "open plugins folder / default install file directory" actions to the
+  # picker preference so the behaviour stays consistent with the choice.
+  local mode
+  mode="$(cat "${XDG_CONFIG_HOME:-$HOME/.config}/audio-plugin-manager/file-picker" 2>/dev/null || echo default)"
+  if [[ $mode == superfile ]] && command -v spf >/dev/null 2>&1 && command -v xdg-terminal-exec >/dev/null 2>&1; then
+    setsid nohup xdg-terminal-exec spf "$dir" >/dev/null 2>&1 < /dev/null &
+    disown 2>/dev/null || true
+    return 0
+  fi
   local opener=""
   if command -v nautilus >/dev/null 2>&1; then opener="nautilus --new-window"
   elif command -v dolphin >/dev/null 2>&1; then opener="dolphin"

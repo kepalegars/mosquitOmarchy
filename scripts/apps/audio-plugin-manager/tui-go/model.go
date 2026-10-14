@@ -14,6 +14,26 @@ import (
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
+// shortPath renders a filesystem path compactly. Home is replaced by ~, and any
+// path longer than the comfort width keeps its first and last two segments
+// separated by an ellipsis so the user still recognises where it lives.
+func shortPath(p string) string {
+	home, _ := os.UserHomeDir()
+	if home != "" && strings.HasPrefix(p, home) {
+		p = "~" + p[len(home):]
+	}
+	const limit = 52
+	if len(p) <= limit {
+		return p
+	}
+	segs := strings.Split(p, "/")
+	if len(segs) <= 3 {
+		// short but long names: keep head + middle marker + tail
+		return p[:20] + "…" + p[len(p)-20:]
+	}
+	return segs[0] + "/" + segs[1] + "/…" + "/" + segs[len(segs)-2] + "/" + segs[len(segs)-1]
+}
+
 // settingsDwell is how long a Left/Right-adjusted settings value is shown as
 // "pending" before it is applied automatically. Every fresh Left/Right
 // restarts the clock (see settingsDwellMsg/cycleLoadedSetting).
@@ -512,8 +532,8 @@ func settingsItems(s Status) []tuikit.PickerItem {
 	}
 	return []tuikit.PickerItem{
 		{Display: "File picker: " + fp, Value: "switch_file_picker"},
-		{Display: "Plugins folder: " + s.PluginsRoot, Value: "pick_plugins_root"},
-		{Display: "Default plugin installation file directory: " + s.DownloadsDir, Value: "pick_downloads_dir"},
+		{Display: "Plugins folder: " + shortPath(s.PluginsRoot), Value: "pick_plugins_root"},
+		{Display: "Default plugin installation file directory: " + shortPath(s.DownloadsDir), Value: "pick_downloads_dir"},
 		{Display: "Default wine prefix: " + prefixLabel, Value: "pick_default_prefix"},
 		{Display: "Plugin window handler: " + handler, Value: "toggle_plugin_handler"},
 		{Display: "Wine runtime: " + wineRuntimeLabel(), Value: "toggle_wine_runtime"},

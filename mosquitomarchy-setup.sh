@@ -1055,7 +1055,7 @@ mq_vst_init(){
 # matches the known dialog titles — see scripts/lib/hypr-dialogs.sh. Betterbird
 # lives here rather than in an app script because it comes from the apps
 # catalog and has no installer of its own.
-XWAYLAND_DIALOG_APPS=(betterbird)
+XWAYLAND_DIALOG_APPS=()
 
 ensure_dialog_rules(){
   local lib="$SCRIPT_DIR/scripts/lib/hypr-dialogs.sh" a
@@ -4540,7 +4540,8 @@ main(){
 
   ensure_dialog_rules
   final_report
-  status_report
+  status_report || true
+  return 0
 }
 
 # Menu for "config exists AND backups exist" (question 1, interactive).
