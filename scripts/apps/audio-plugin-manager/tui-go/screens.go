@@ -3859,7 +3859,7 @@ func (m model) handleAudioSettingsChoice(v string) (tea.Model, tea.Cmd) {
 		m.scanBusy = true
 		m.scanFrame = 0
 		m.picker = m.picker.SetBusyGlyph(tuikit.BusyFrames[0])
-		m.toast, _ = m.toast.SetWarn("scanning for untracked plugins… (esc cancels)")
+		m.toast, _ = m.toast.SetWarn("scanning for untracked plugins… (esc : cancel)")
 		return m, tea.Batch(rescanCmd(m.scanGen), scanTickCmd())
 	case "pick_plugins_root":
 		m.loading = true

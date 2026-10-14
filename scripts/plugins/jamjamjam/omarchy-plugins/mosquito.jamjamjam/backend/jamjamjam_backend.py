@@ -2064,7 +2064,13 @@ class AudioAnalyzerBackend:
         # PRIVACY GUARD: the microphone (tuner) is captured ONLY while the
         # plugin is actually in use (panel open, analysis hold active, or the
         # neck TUI open). The mic must NEVER run while nothing is open.
-        tuner_desired = desired and (self.tuner is not None)
+        # The tuner runs on its own mic stream and must keep working even
+        # when the chord/analysis path is paused: the user still tunes a guitar
+        # while paused. So the tuner wants the mic whenever anything is open,
+        # independent of "paused" — a paused session still uses the mic.
+        tuner_desired = (not self.analysis_locked) and (
+            self.panel_visible or self.hold or self._tui_active()
+        ) and (self.tuner is not None)
         if tuner_desired and self.tuner_recorder is not None and not self.tuner_recorder.running:
             self.tuner_recorder.start()
             self.dirty = True
