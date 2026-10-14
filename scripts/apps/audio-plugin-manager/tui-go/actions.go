@@ -824,7 +824,46 @@ func setDownloadsDirAndRefetch(dir string) tea.Cmd {
 // output can't be captured without breaking its live terminal takeover via
 // tea.ExecProcess), so this is a deliberate simplification.
 func pickFolderCmd(kind, title, start string) tea.Cmd {
+	// Honour the file-picker preference: when the user wants Superfile, the
+	// folder pick runs INSIDE Superfile (superfile prints its last dir on
+	// exit); otherwise fall back to the native folder dialog. Superfile is a
+	// terminal program, so tea.ExecProcess is what gives it a real TTY.
+	home, _ := os.UserHomeDir()
+	cfg := os.Getenv("XDG_CONFIG_HOME")
+	if cfg == "" {
+		cfg = filepath.Join(home, ".config")
+	}
+	mode, _ := os.ReadFile(filepath.Join(cfg, "audio-plugin-manager", "file-picker"))
+	if strings.TrimSpace(string(mode)) == "superfile" {
+		if _, err := exec.LookPath("spf"); err == nil {
+			tmp, err := os.CreateTemp("", "apm-pickdir-*")
+			if err == nil {
+				tmp.Close()
+				tmpName := tmp.Name()
+				cmd := exec.Command("sh", "-c", "spf "+shellQuote(start)+" --print-last-dir >"+shellQuote(tmpName)+" 2>/dev/null")
+				return tea.ExecProcess(cmd, func(err error) tea.Msg {
+					data, _ := os.ReadFile(tmpName)
+					os.Remove(tmpName)
+					pth := strings.TrimSpace(string(data))
+					if err != nil && pth == "" {
+						return pathMsg{kind: kind, err: err}
+					}
+					if pth == "" {
+						return pathMsg{kind: kind}
+					}
+					return pathMsg{kind: kind, path: pth}
+				})
+			}
+		}
+	}
 	return fetchPath(kind, "pick-folder", title, start)
+}
+
+// shellQuote keeps a path safe to interpolate into a shell command. The
+// paths come from the user's own settings / filesystem, but they may contain
+// spaces (e.g. external drive names) so the quoting is mandatory.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // wizardBrowseThenPick runs superfile IN this terminal so the user can
