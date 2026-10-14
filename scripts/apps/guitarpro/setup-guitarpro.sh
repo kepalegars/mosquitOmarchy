@@ -252,6 +252,7 @@ step_hypr_tile(){
   cat >> "$hypr" <<'EOF'
 -- >>> guitarpro-tiling >>> tile Guitar Pro 8 (overrides the generic .exe float: later rules win).
 o.window({ class = "^guitarpro\\.exe$" }, { float = false })
+o.window({ class = "^guitarpro\\.exe$" }, { focus_on_activate = false })
 -- <<< guitarpro-tiling <<<
 EOF
   command -v hyprctl >/dev/null 2>&1 && hyprctl reload >/dev/null 2>&1 || true
