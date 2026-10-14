@@ -310,7 +310,13 @@ Panel {
                 if (dy !== 0) root.moveCursor(dy)
                 else if (dx !== 0) root.adjust(dx > 0 ? 1 : -1)
             }
-            onActivateRequested: root.adjust(1)
+            // Enter toggles the two-state rows (force / persist), and does
+            // NOTHING on a multi-value one (sample rate, buffer size): a
+            // stray Enter there changed the graph's rate by one step, which
+            // is a setting you notice immediately and regret slowly.
+            onActivateRequested: {
+              if (root.isSwitch(root.row)) root.adjust(1)
+            }
             onCloseRequested: function () { root.toggle() }
 
             Column {
@@ -399,7 +405,7 @@ Panel {
                 }
 
                 Text {
-                    text: "↑↓ choose   ←→ change   enter toggles   click selects"
+                    text: "↑↓ choose   ←→ change   enter toggles"
                     color: root.dim
                     font.family: Style.font.family
                     font.pixelSize: Style.font.caption

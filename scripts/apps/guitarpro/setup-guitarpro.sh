@@ -256,6 +256,13 @@ o.window({ class = "^guitarpro\\.exe$" }, { float = false })
 EOF
   command -v hyprctl >/dev/null 2>&1 && hyprctl reload >/dev/null 2>&1 || true
   ok "Hyprland tile rule written (applies to newly opened windows)"
+
+  # Dialog windows of this app float, the main window stays tiled. Hyprland
+  # cannot tell an XWayland dialog from the main window (same class), so the
+  # shared helper matches the known dialog TITLES instead — see its header.
+  HYPRLAND_CONFIG="$hypr" bash "$SCRIPT_DIR/../../lib/hypr-dialogs.sh" install "guitarpro.exe" >/dev/null 2>&1 \
+    && ok "dialog float rules applied (main window stays tiled)" \
+    || warn "dialog float rules could not be applied"
 }
 
 # ───────────────────── File explorer opens Nautilus ─────────────────────

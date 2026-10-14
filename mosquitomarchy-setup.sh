@@ -1050,6 +1050,22 @@ mq_vst_init(){
 # folder holding both `reaper` and `reaper.ini`), and nothing when REAPER is a
 # system/package install — those keep their config in ~/.config/REAPER only and
 # must NOT be swept into an archive with their multi-GB program folder.
+# XWayland apps whose DIALOG windows must float while their main window stays
+# tiled. Hyprland cannot tell the two apart (same class), so the shared helper
+# matches the known dialog titles — see scripts/lib/hypr-dialogs.sh. Betterbird
+# lives here rather than in an app script because it comes from the apps
+# catalog and has no installer of its own.
+XWAYLAND_DIALOG_APPS=(betterbird)
+
+ensure_dialog_rules(){
+  local lib="$SCRIPT_DIR/scripts/lib/hypr-dialogs.sh" a
+  [[ -x $lib || -f $lib ]] || return 0
+  for a in "${XWAYLAND_DIALOG_APPS[@]:-}"; do
+    [[ -n $a ]] || continue
+    bash "$lib" install "$a" >/dev/null 2>&1 || true
+  done
+}
+
 reaper_portable_root(){
   local d
   for d in "$HOME/REAPER" "$HOME/reaper" "$HOME/.local/share/REAPER"; do
@@ -4522,6 +4538,7 @@ main(){
   # the achraff module (forced achraf67.png image) is what installs a theme
   # unattended.
 
+  ensure_dialog_rules
   final_report
   status_report
 }
