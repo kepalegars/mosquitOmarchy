@@ -589,22 +589,19 @@ step_hypr_rules(){
   cat >> "$HYPR_FILE" <<'EOF'
 -- >>> ableton-setup >>> Ableton Live window handling.
 --
--- Two rules, both of which the Ableton installer already needed:
+-- Three rules:
 --   1. the Windows installer (wine / XWayland) floats — it is a small
 --      wizard with its own sizing and it crashes the tiled layout otherwise;
 --   2. every Ableton window is fully opaque, because Omarchy's default
---      translucency makes a dark DAW unreadable.
---
--- There is deliberately NO rule forcing the main window to tile. The Ableton
--- installer never needed one: a DAW window opens into the tiled layout on its
--- own (verified — Ableton lands on the same 1536x934 slot as every other
--- single-window workspace). An explicit "tile the main window" rule was added
--- and then removed: it changed nothing visible, and it was the only new thing
--- in the config able to interfere with fullscreen, which the user reported
--- breaking the moment it landed. Window rules apply at map time, so a rule
--- that duplicates the default is pure downside.
+--      translucency makes a dark DAW unreadable;
+--   3. the main window tiles: its class ends in .exe (StartupWMClass), so
+--      the generic wine float rule caught it and it opened floating
+--      (verified live). float=false AFTER that rule wins, and — unlike the
+--      removed explicit tile rule — it cannot interfere with fullscreen.
+--      Exact class on purpose: the installer above must keep floating.
 o.window({ class = "^ableton live 12 .*install.*$" }, { float = true })
 o.window({ class = "^ableton.*$" }, { tag = "-default-opacity", opaque = true })
+o.window({ class = "^ableton live 12 suite\\.exe$" }, { float = false })
 -- <<< ableton-setup <<<
 EOF
   added=1

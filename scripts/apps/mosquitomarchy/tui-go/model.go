@@ -643,11 +643,156 @@ func (m *model) toggle(value string) {
 	}
 }
 
+// pushKeepassxcConsent raises the secret-service consent prompt for a newly
+// ticked KeePassXC row (shared by the Tab toggle and the Tab-held range:
+// both can newly check it, and installing without consent is not an option).
+func (m *model) pushKeepassxcConsent(v string) {
+	// Rebuild FIRST so the ticked row shows up even while the
+	// consent prompt is on screen (the prompt pops over it).
+	m.setupCatPicker = m.rebuildSetupCat()
+	m.pendingAction = "keepassxc-consent"
+	m.pendingArgs = []string{v}
+	m.pendingMsg = "Select KeePassXC secret service?\n\nIt REPLACES gnome-keyring completely:\n• your existing gnome-keyring secrets must be migrated to KeePassXC MANUALLY (password/settings transfer comes later);\n• a second prompt during the install asks whether to also remove the gnome-keyring package — its settings stay on disk either way, reinstalling it recovers them;\n• uninstalling this module restores the Omarchy default (gnome-keyring)."
+	m.pendingNo = "Cancel"
+	m.pendingYes = "Select it"
+	m.push(scrConfirm)
+	// Focus Yes: plain Enter = "Select it" (the common answer).
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
+}
+
+// rangeCheck applies a Tab-held range (PickerRangeMsg): every value arrives
+// to be CHECKED, never toggled. Already-checked rows are skipped and the rest
+// runs through the same helpers the Tab toggle uses, so folder rows still
+// fill whole folders and a newly checked KeePassXC row still asks consent.
+func (m *model) rangeCheck(values []string, anchor string) {
+	switch m.top() {
+	case scrSetupCat:
+		for _, v := range values {
+			if strings.HasPrefix(v, "cat:") {
+				f := strings.TrimPrefix(v, "cat:")
+				if treeFolderChecked(m.setupItems, m.selected, f) {
+					continue
+				}
+				m.toggleFolder(f)
+			} else if strings.HasPrefix(v, "item:") {
+				if m.selected[v] {
+					continue
+				}
+				m.toggle(v)
+				if m.treeMode == "install" && strings.HasSuffix(v, ":keepassxc") && m.selected[v] {
+					m.pushKeepassxcConsent(v)
+					m.setupCatPicker = m.setupCatPicker.ArmRange(anchor)
+					return
+				}
+			}
+		}
+		m.setupCatPicker = m.rebuildSetupCat()
+		m.setupCatPicker = m.setupCatPicker.ArmRange(anchor)
+	case scrBackupApps:
+		for _, v := range values {
+			if strings.HasPrefix(v, "cat:") {
+				f := strings.TrimPrefix(v, "cat:")
+				if treeFolderChecked(m.backupItems, m.backupChecked, f) {
+					continue
+				}
+				toggleTreeFolder(m.backupItems, m.backupChecked, f)
+			} else if strings.HasPrefix(v, "item:") {
+				m.backupChecked[v] = true
+			}
+		}
+		saveBackupSelection(m.backupItems, m.backupChecked)
+		m.backupAppsPicker = m.rebuildBackupApps()
+		m.backupAppsPicker = m.backupAppsPicker.ArmRange(anchor)
+	case scrUpdate:
+		for _, v := range values {
+			if v == "" || v == "repo" || v == "back" || v == "apply" {
+				continue
+			}
+			m.updateSelected[v] = true
+		}
+		m.updatePicker = m.rebuildUpdate()
+		m.updatePicker = m.updatePicker.ArmRange(anchor)
+	case scrHealth:
+		for _, v := range values {
+			if v == "back" {
+				continue
+			}
+			m.healthChecked[v] = true
+		}
+		m.healthPicker = m.rebuildHealth()
+		m.healthPicker = m.healthPicker.ArmRange(anchor)
+	case scrSetup:
+		for _, v := range values {
+			if strings.HasPrefix(v, "cat:") {
+				f := strings.TrimPrefix(v, "cat:")
+				if treeFolderChecked(m.setupItems, m.selected, f) {
+					continue
+				}
+				m.toggleFolder(f)
+			} else if strings.HasPrefix(v, "item:") {
+				if m.selected[v] {
+					continue
+				}
+				m.toggle(v)
+			}
+		}
+		m.setupPicker = m.rebuildSetup()
+		m.setupPicker = m.setupPicker.ArmRange(anchor)
+	case scrKBList:
+		for _, v := range values {
+			if strings.HasPrefix(v, "kb:") {
+				m.kbSel[strings.TrimPrefix(v, "kb:")] = true
+			}
+		}
+		m.kbListPicker = m.rebuildKBList()
+		m.kbListPicker = m.kbListPicker.ArmRange(anchor)
+	case scrQuickFixes:
+		if m.quickFixChecked == nil {
+			m.quickFixChecked = map[string]bool{}
+		}
+		for _, v := range values {
+			if _, id, ok := tuikit.TreeSplit(v); ok {
+				m.quickFixChecked[id] = true
+			}
+		}
+		m.quickFixPicker = m.rebuildQuickFixes()
+		m.quickFixPicker = m.quickFixPicker.ArmRange(anchor)
+	case scrMenuEntries:
+		if m.menuEntryChecked == nil {
+			return
+		}
+		for _, v := range values {
+			if name := strings.TrimPrefix(v, "mentry:"); name != v {
+				m.menuEntryChecked[name] = true
+			}
+		}
+		m.menuEntriesPicker = m.rebuildMenuEntriesPicker()
+		m.menuEntriesPicker = m.menuEntriesPicker.ArmRange(anchor)
+	}
+}
+
 // toggleFolder marks every child of a folder, or unmarks them all when they
 // were all marked already (one keystroke always flips to an extreme, exactly
 // like the audio-plugin-manager's folder select-all).
 func (m *model) toggleFolder(folder string) {
 	toggleTreeFolder(m.setupItems, m.selected, folder)
+}
+
+// treeFolderChecked reports whether every tickable row of a folder is
+// already checked (the skip test for Tab-held ranges: a full folder stays
+// full, anything else fills through the normal toggle path).
+func treeFolderChecked(items []SetupItemRec, checked map[string]bool, folder string) bool {
+	n := 0
+	for _, it := range items {
+		if it.Folder != folder || it.Disabled {
+			continue
+		}
+		n++
+		if !checked[setupValue(folder, it.Key)] {
+			return false
+		}
+	}
+	return n > 0
 }
 
 // toggleTreeFolder is the shared folder select-all/none used by the Setup and

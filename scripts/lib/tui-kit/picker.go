@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -34,6 +35,25 @@ type PickerToggleMsg struct{ Value string }
 // the audio manager's plugin list uses it to flip the plugin window
 // handler classic ⇄ hyprland).
 type PickerActionMsg struct{ Key string }
+
+// PickerRangeMsg is the Tab-held range select: Tab, then Up/Down with no
+// other key between (the terminal reports no key release, so "held" means
+// "Tab was the last selection key"). Values holds every selectable row
+// between the Tab row and the new cursor, both ends included; Anchor is
+// the Tab row's value, so the host can re-arm the hold after the rebuild
+// its handling does (a rebuild is a brand-new picker). Hosts CHECK the
+// values (never toggle), so a row Tab already checked stays checked and
+// holding Tab can never untoggle anything by accident.
+type PickerRangeMsg struct {
+	Values []string
+	Anchor string
+}
+
+// tabRepeatWindow is how close two Tab presses on the same row must be to
+// count as key repeat from a physically held Tab (which must NOT flip-flop
+// the row) rather than a deliberate second press. Repeat rate is tens per
+// second; a deliberate re-press is an order of magnitude slower.
+var tabRepeatWindow = 400 * time.Millisecond
 
 // PickerSortMsg is sent on Left/Right — cycle the active sort live without
 // leaving the list (btop's own column-cycle convention). Dir is -1 (left)
@@ -686,6 +706,13 @@ type Picker struct {
 	// arrows keep their original meaning, so a settings screen that cycles a
 	// value with ←/→ is unaffected.
 	treeOpen map[string]bool
+	// Tab-held range select: tabHeld is true once Tab marked a row and no
+	// other key than Tab/Up/Down came since; tabAnchor is the visible index
+	// of that Tab row, lastTab when it happened (key repeat from a held Tab
+	// arrives within tabRepeatWindow and must not flip-flop the row).
+	tabHeld   bool
+	tabAnchor int
+	lastTab   time.Time
 }
 
 // NewPicker builds a picker. It starts unpinned; call SetContentWidth on the
@@ -1029,8 +1056,10 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(m, key.NewBinding(key.WithKeys("ctrl+c", "esc"))):
+			p.tabHeld = false
 			return p, func() tea.Msg { return PickerResultMsg{Canceled: true} }
 		case key.Matches(m, key.NewBinding(key.WithKeys("enter"))):
+			p.tabHeld = false
 			if it, ok := p.list.SelectedItem().(PickerItem); ok {
 				if inert(it) {
 					return p, nil // inert: never choose a heading or an unavailable option
@@ -1056,6 +1085,20 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 				// Tab toggles the CURRENT item only — the cursor stays
 				// exactly where it is (the user's rule: multi-selecting
 				// with Tab must not move the selection; Down/Up navigate).
+				// It also arms the range select: Up/Down with no other key
+				// between checks every row on the way (Tab held, like
+				// Shift+arrows in a file explorer).
+				idx := p.list.Index()
+				if p.tabHeld && idx == p.tabAnchor && time.Since(p.lastTab) < tabRepeatWindow {
+					// Key repeat from a physically held Tab: the row was
+					// already toggled by the first press — toggling again
+					// would flip-flop it for as long as the key is down.
+					p.lastTab = time.Now()
+					return p, nil
+				}
+				p.tabHeld = true
+				p.tabAnchor = idx
+				p.lastTab = time.Now()
 				return p, func() tea.Msg { return PickerToggleMsg{Value: it.Value} }
 			}
 			return p, nil
@@ -1064,6 +1107,7 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 			// "x" means per screen (the audio manager's plugin list uses
 			// it to flip the plugin window handler). A plain single key
 			// is safe — the picker has no text filter.
+			p.tabHeld = false
 			return p, func() tea.Msg { return PickerActionMsg{Key: "x"} }
 		case key.Matches(m, key.NewBinding(key.WithKeys("?"))):
 			// "?" opens/closes the picker's own shortcut-overlay (the
@@ -1072,6 +1116,7 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 			// Overlay replace-IN-PLACE: no host wiring needed, no other
 			// screen moves, the picker keeps its size.
 			p.helpOpen = !p.helpOpen
+			p.tabHeld = false
 			return p, nil
 		case key.Matches(m, key.NewBinding(key.WithKeys("down", "j"))):
 			// Down arrow moves down within the current page only — it
@@ -1086,27 +1131,98 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 			if !moved {
 				return p, nil
 			}
-			return out, nil
+			return out, out.rangeCmd()
 		case key.Matches(m, key.NewBinding(key.WithKeys("up", "k"))):
 			out, moved := p.advanceUp()
 			if !moved {
 				return p, nil
 			}
-			return out, nil
+			return out, out.rangeCmd()
 		case key.Matches(m, key.NewBinding(key.WithKeys("left"))):
+			// Folding reshuffles the visible rows, so a Tab anchor would
+			// point at the wrong row afterwards: the range ends here.
+			p.tabHeld = false
 			return p.foldKey(-1)
 		case key.Matches(m, key.NewBinding(key.WithKeys("right"))):
+			p.tabHeld = false
 			return p.foldKey(1)
 		}
 	}
 	var cmd tea.Cmd
 	p.list, cmd = p.list.Update(msg)
 	if km, ok := msg.(tea.KeyMsg); ok {
+		// Anything the switch above did not consume (printable filter
+		// keys, pgup/pgdn, ...) ends a held Tab for the same reason:
+		// the visible rows moved under the anchor.
+		p.tabHeld = false
 		if dir, isNav := navDirection(km, &p.list); isNav {
 			p = p.clampDisabled(dir)
 		}
 	}
 	return p, cmd
+}
+
+// ArmRange re-arms a Tab-held range on a freshly rebuilt picker, anchored
+// at the row carrying value (no-op when the value is gone: a filter or a
+// fold that removed the anchor ends the range instead of pointing it at a
+// stranger). Hosts call it right after the rebuild their Tab handler does —
+// a rebuild is a brand-new Picker, and without this the hold would die on
+// the very keystroke that started it. It also refreshes the repeat guard,
+// so a fast second Tab on the same row still counts as held, not as toggle.
+func (p Picker) ArmRange(value string) Picker {
+	if value == "" {
+		return p
+	}
+	for i, it := range p.list.Items() {
+		if pi, ok := it.(PickerItem); ok && pi.Value == value {
+			p.tabHeld = true
+			p.tabAnchor = i
+			p.lastTab = time.Now()
+			return p
+		}
+	}
+	return p
+}
+
+// rangeCmd emits the rows a Tab-held Up/Down just crossed, or nil when no
+// range is armed. Both ends included, inert rows (headings, disabled, Back)
+// skipped — the host checks what it receives and can expand folder rows to
+// their children, exactly like its Tab handler does for a single row.
+func (p Picker) rangeCmd() tea.Cmd {
+	if !p.tabHeld {
+		return nil
+	}
+	items := p.list.Items()
+	cur := p.list.Index()
+	lo, hi := p.tabAnchor, cur
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	if lo < 0 {
+		lo = 0
+	}
+	if hi >= len(items) {
+		hi = len(items) - 1
+	}
+	if lo > hi {
+		return nil
+	}
+	var vals []string
+	for i := lo; i <= hi; i++ {
+		if it, ok := items[i].(PickerItem); ok && !inert(it) {
+			vals = append(vals, it.Value)
+		}
+	}
+	if len(vals) == 0 {
+		return nil
+	}
+	anchor := ""
+	if p.tabAnchor >= 0 && p.tabAnchor < len(items) {
+		if it, ok := items[p.tabAnchor].(PickerItem); ok {
+			anchor = it.Value
+		}
+	}
+	return func() tea.Msg { return PickerRangeMsg{Values: vals, Anchor: anchor} }
 }
 
 // foldKey is ←/→ on a picker declared with WithTree.

@@ -503,6 +503,31 @@ st_superfile(){
   # default-file-manager replacement: installed = the .desktop entry exists.
   [[ -f "$HOME/.local/share/applications/superfile.desktop" ]] && echo ok || echo missing
 }
+# Resolves the ACTIVE Betterbird profile (path relative to ~/.thunderbird):
+#   1. the [Install...] block of profiles.ini — what betterbird actually runs,
+#   2. fallback: the [Profile...] block marked Default=1,
+#   3. fallback: the profile with the most recently modified prefs.js.
+# Prints the profile path or nothing.
+betterbird_active_profile(){
+  [[ -f "$HOME/.thunderbird/profiles.ini" ]] || return 1
+  local prof cfg="$HOME/.thunderbird/profiles.ini"
+  prof="$(awk -v FS='=' '
+    /^\[/ { in_install = ($0 ~ /^\[Install/) }
+    in_install && /^Default=/ { print $2; exit }
+  ' "$cfg")"
+  if [[ -n $prof && -d "$HOME/.thunderbird/$prof" ]]; then printf '%s' "$prof"; return 0; fi
+  prof="$(awk -v FS='=' '
+    /^\[/ { in_profile = ($0 ~ /^\[Profile/); default_after = 0 }
+    in_profile && /^Default=1$/ { default_after = 1 }
+    in_profile && default_after && /^Path=/ { print $2; exit }
+  ' "$cfg")"
+  if [[ -n $prof && -d "$HOME/.thunderbird/$prof" ]]; then printf '%s' "$prof"; return 0; fi
+  local newest
+  newest="$(cd "$HOME/.thunderbird" 2>/dev/null && ls -td */prefs.js 2>/dev/null | head -1 || true)"
+  [[ -n $newest ]] && { printf '%s' "${newest%/prefs.js}"; return 0; }
+  return 1
+}
+
 # Resolves the ACTIVE Zen profile (path relative to ~/.config/zen):
 #   1. the [Install...] block of profiles.ini — what zen-bin actually runs,
 #   2. fallback: the [Profile...] block marked Default=1,
@@ -1670,6 +1695,24 @@ do_backup(){
     fi
   else
     info "Zen browser: skipped (--zen=no)."
+  fi
+  # Betterbird — the ACTIVE profile's settings + addons, but only when the
+  # app is present. Same shape as Zen above (identity + extensions + prefs),
+  # same exclusions: mail stores (Mail/, ImapMail/) are hundreds of MB of
+  # private data, not configuration — a backup of the CONFIGURATION.
+  if command -v betterbird >/dev/null 2>&1; then
+    local bb_prof
+    if bb_prof="$(betterbird_active_profile 2>/dev/null || true)"; then
+      paths+=(".thunderbird/profiles.ini")
+      [[ -e "$HOME/.thunderbird/installs.ini" ]] && paths+=(".thunderbird/installs.ini")
+      [[ -d "$HOME/.thunderbird/$bb_prof/extensions" ]] && paths+=(".thunderbird/$bb_prof/extensions")
+      for bb_f in extension-preferences.json addons.json prefs.js user.js; do
+        [[ -e "$HOME/.thunderbird/$bb_prof/$bb_f" ]] && paths+=(".thunderbird/$bb_prof/$bb_f")
+      done
+      ok "Betterbird settings + addons included (profile $bb_prof, no mail stores)"
+    else
+      warn "Betterbird installed but no usable profile (profiles.ini) — settings not backed up."
+    fi
   fi
   # reaper-vstplugins*.ini may contain custom blacklist/paths
   local ini rel

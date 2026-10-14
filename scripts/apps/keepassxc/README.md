@@ -29,6 +29,20 @@ every KeePassXC launch:
 `--status` shows what is pinned, `--clear` restores the stock behaviour.
 
 
+## Browser extension — the first connect is a handshake
+
+The transport (native-messaging manifest + keepassxc-proxy) works as soon as
+the extension is installed — verified with Zen, which spawns the proxy itself.
+But `"database not connected"` on a greyed in-field icon is NOT a setup
+defect: no database is associated with that site yet, and the association
+lives INSIDE the encrypted database, so only you can make it:
+
+1. Unlock the database in KeePassXC.
+2. On the site, click the KeePassXC TOOLBAR icon (not the in-field one) →
+   Connect, then approve the KeePassXC desktop popup for that URL.
+3. From then on the in-field icon fills. One handshake per site.
+
+
 ## What stays manual by design
 
 - **The secrets transfer**: every gnome-keyring secret must be ported to the

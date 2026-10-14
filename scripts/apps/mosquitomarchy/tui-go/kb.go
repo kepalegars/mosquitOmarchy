@@ -61,6 +61,8 @@ var kbCatalog = []struct {
 		{"DaVinci Resolve", "davinci-resolve", "launch"},
 		{"HandBrake", "ghb", "launch"},
 		{"REAPER", "reaper", "launch"},
+		{"Betterbird", "betterbird", "launch"},
+		{"KeePassXC", "keepassxc", "launch"},
 	}},
 	{"funcs", "quick function", []KbCatItem{
 		{"Brightness maximum", "$HOME/.local/bin/backlight 100%", "cmd"},

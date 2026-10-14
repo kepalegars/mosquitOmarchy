@@ -510,6 +510,34 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.settings.appItems(),
 			).SetSize(m.contentSize())
 			m.appsPicker = m.appsPicker.SelectIndex(midx)
+			if hasApp(m.settings.CloseAppsList, name) {
+				m.appsPicker = m.appsPicker.ArmRange(name)
+			}
+			return m, nil
+		}
+		return m, nil
+	case tuikit.PickerRangeMsg:
+		// Tab-held range over the apps list: every known app on the way
+		// joins the close-at-start set (already-listed ones stay).
+		if m.top() == scrApps {
+			for _, v := range msg.Values {
+				known := false
+				for _, k := range knownApps {
+					if k == v {
+						known = true
+						break
+					}
+				}
+				if known && !hasApp(m.settings.CloseAppsList, v) {
+					m.settings.CloseAppsList = append(m.settings.CloseAppsList, v)
+				}
+			}
+			midx := m.appsPicker.Index()
+			m.appsPicker = tuikit.NewPicker("",
+				m.settings.appItems(),
+			).SetSize(m.contentSize())
+			m.appsPicker = m.appsPicker.SelectIndex(midx)
+			m.appsPicker = m.appsPicker.ArmRange(msg.Anchor)
 			return m, nil
 		}
 		return m, nil

@@ -15,6 +15,12 @@ import (
 type navPicker struct {
 	tuikit.Picker
 	items []tuikit.PickerItem
+	// Tab-held range select, mirrored from the kit (which owns Tab but
+	// never sees the arrows: they stop here). tabHeld arms on Tab and
+	// clears on any other forwarded key; tabAnchor is the row index Tab
+	// marked. stepRange emits PickerRangeMsg while armed.
+	tabHeld   bool
+	tabAnchor int
 }
 
 func newNavPicker(header string, items []tuikit.PickerItem) navPicker {
@@ -47,6 +53,19 @@ func (p navPicker) SelectValue(value string) navPicker {
 	return p
 }
 
+// ArmRange re-arms a Tab-held range on a freshly rebuilt picker: the outer
+// hold (this layer owns the arrows) plus the inner one (repeat guard),
+// both anchored at value. Hosts call it right after the rebuild their Tab
+// handler does — without it the hold dies on the keystroke that started it.
+func (p navPicker) ArmRange(value string) navPicker {
+	p.Picker = p.Picker.ArmRange(value)
+	if idx := p.IndexOf(value); idx >= 0 {
+		p.tabHeld = true
+		p.tabAnchor = idx
+	}
+	return p
+}
+
 func (p navPicker) SelectIndex(i int) navPicker {
 	p.Picker = p.Picker.SelectIndex(i)
 	return p
@@ -56,13 +75,30 @@ func (p navPicker) Update(msg tea.Msg) (navPicker, tea.Cmd) {
 	if km, ok := msg.(tea.KeyMsg); ok {
 		switch km.String() {
 		case "down", "j", "pgdown", "l", "f", "d":
-			return p.step(1), nil
+			return p.stepRange(1)
 		case "up", "k", "pgup", "h", "b", "u":
-			return p.step(-1), nil
+			return p.stepRange(-1)
 		case "home", "g":
+			p.tabHeld = false
 			return p.selectFirst(), nil
 		case "end", "G":
+			p.tabHeld = false
 			return p.selectLast(), nil
+		case "tab":
+			// Forwarded so the kit emits the toggle (with its repeat
+			// guard); the anchor mirrors the row Tab marked. A repeated
+			// Tab on the same row re-arms the same anchor — harmless,
+			// since the range is check-only anyway.
+			var cmd tea.Cmd
+			p.Picker, cmd = p.Picker.Update(msg)
+			p.tabHeld = true
+			p.tabAnchor = p.IndexOf(p.SelectedValue())
+			return p, cmd
+		default:
+			// Enter, Esc, x, ?, folds, filter keys... anything but
+			// Tab/arrows ends the hold (folds and filters reshuffle the
+			// rows under a stale anchor).
+			p.tabHeld = false
 		}
 	}
 	var cmd tea.Cmd
@@ -71,6 +107,16 @@ func (p navPicker) Update(msg tea.Msg) (navPicker, tea.Cmd) {
 }
 
 func (p navPicker) step(dir int) navPicker {
+	np, _ := p.stepRange(dir)
+	return np
+}
+
+// stepRange moves one selectable row like step, and while a Tab hold is
+// armed it also emits the crossed rows for checking (the file-explorer
+// Shift+arrows gesture: Tab, then Up/Down). Both ends included, inert rows
+// skipped — the host checks what it receives and expands folder rows, so a
+// held Tab can never untoggle anything.
+func (p navPicker) stepRange(dir int) (navPicker, tea.Cmd) {
 	cur := p.selectedIndex()
 	// Land on the next SELECTABLE row in one go.
 	//
@@ -80,14 +126,49 @@ func (p navPicker) step(dir int) navPicker {
 	// row we came from, so the cursor never moved — going up was stuck at the
 	// last row of a folder. Resolving the target here makes the direction the
 	// one the user asked for.
+	next := -1
 	for i := cur + dir; i >= 0 && i < len(p.items); i += dir {
 		if p.items[i].Disabled || p.items[i].Heading {
 			continue
 		}
-		p.Picker = p.Picker.SelectIndex(i)
-		return p
+		next = i
+		break
 	}
-	return p
+	if next < 0 {
+		return p, nil
+	}
+	p.Picker = p.Picker.SelectIndex(next)
+	if !p.tabHeld {
+		return p, nil
+	}
+	lo, hi := p.tabAnchor, next
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	if lo < 0 {
+		lo = 0
+	}
+	if hi >= len(p.items) {
+		hi = len(p.items) - 1
+	}
+	if lo > hi {
+		return p, nil
+	}
+	var vals []string
+	for i := lo; i <= hi; i++ {
+		if p.items[i].Disabled || p.items[i].Heading {
+			continue
+		}
+		vals = append(vals, p.items[i].Value)
+	}
+	if len(vals) == 0 {
+		return p, nil
+	}
+	anchor := ""
+	if p.tabAnchor >= 0 && p.tabAnchor < len(p.items) {
+		anchor = p.items[p.tabAnchor].Value
+	}
+	return p, func() tea.Msg { return tuikit.PickerRangeMsg{Values: vals, Anchor: anchor} }
 }
 
 func (p navPicker) selectFirst() navPicker {

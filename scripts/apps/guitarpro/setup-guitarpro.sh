@@ -240,6 +240,59 @@ apply_optional_patch(){
   return 0
 }
 
+# ───────────────────── Tile the main window (Hyprland) ─────────────────────
+# GuitarPro.exe ends in .exe, so the generic wine float rule tiles... rather,
+# floats it (verified live: floating:True). An explicit float=false AFTER that
+# rule wins and the window tiles, with no forced tiling involved (so
+# fullscreen stays untouched).
+step_hypr_tile(){
+  local hypr="$HOME/.config/hypr/hyprland.lua"
+  [[ -f $hypr ]] || { warn "hyprland config missing: $hypr — tile rule not applied."; return 0; }
+  sed -i '/-- >>> guitarpro-tiling >>>/,/-- <<< guitarpro-tiling <<</d' "$hypr"
+  cat >> "$hypr" <<'EOF'
+-- >>> guitarpro-tiling >>> tile Guitar Pro 8 (overrides the generic .exe float: later rules win).
+o.window({ class = "^guitarpro\\.exe$" }, { float = false })
+-- <<< guitarpro-tiling <<<
+EOF
+  command -v hyprctl >/dev/null 2>&1 && hyprctl reload >/dev/null 2>&1 || true
+  ok "Hyprland tile rule written (applies to newly opened windows)"
+}
+
+# ───────────────────── File explorer opens Nautilus ─────────────────────
+# Folder-open requests from inside Guitar Pro (ShellExecute) land in Nautilus
+# instead of failing ("no application associated") or opening wine explorer:
+# a wrapper translating the Windows path, registered as the directory/Folder
+# open command in both Classes hives of the prefix.
+step_file_explorer(){
+  local wrapper="$HOME/.local/bin/gp-open-folder"
+  cat > "$wrapper" <<'WRAPEOF'
+#!/bin/bash
+# gp-open-folder — open a Windows path from the Guitar Pro prefix in Nautilus.
+# Called by the prefix's directory-open association (via start.exe /unix):
+# $1 is a Windows path (Z:\... or C:\...), converted with winepath.
+export WINEPREFIX="$HOME/.wine-guitarpro8"
+unix="$(winepath -u "$1" 2>/dev/null || true)"
+[[ -n $unix ]] || unix="$HOME"
+exec /usr/bin/nautilus "$unix" >/dev/null 2>&1
+WRAPEOF
+  chmod +x "$wrapper"
+  ok "file-explorer wrapper: $wrapper"
+  local assoc="C:\\windows\\system32\\start.exe /unix $HOME/.local/bin/gp-open-folder \"%1\""
+  local hive key
+  for hive in "HKEY_CURRENT_USER\\Software\\Classes" "HKEY_CLASSES_ROOT"; do
+    for key in "directory\\shell\\open\\command" "Folder\\shell\\open\\command"; do
+      if WINEARCH=win64 WINEPREFIX="$PFX" wine reg query "$hive\\$key" 2>/dev/null | grep -q "gp-open-folder"; then
+        continue
+      fi
+      printf 'REGEDIT4\n\n[%s\\%s]\n@="%s"\n' "$hive" "$key" "$assoc" > /tmp/gp-dirassoc.reg
+      WINEARCH=win64 WINEPREFIX="$PFX" wine regedit /tmp/gp-dirassoc.reg >/dev/null 2>&1 || \
+        warn "registry write failed: $hive\\$key"
+    done
+  done
+  rm -f /tmp/gp-dirassoc.reg
+  ok "directory-open associations point at Nautilus"
+}
+
 # ───────────────────── Font & DPI hardening (Wine) ─────────────────────
 # Writes the Wine font/DPI settings into the prefix so Guitar Pro renders at
 # the right size (Windows apps ignore the Hyprland scale). Auto-detects the
@@ -519,6 +572,18 @@ MimeType=application/x-guitarpro;audio/x-gp3;audio/x-gp4;audio/x-gp5;audio/x-gp;
 Keywords=guitar;tab;tablature;partition;music;
 DESKEOF
   ok "Shortcut: $DESKTOP_DST"
+
+  # 8bis) Tile the main window (not float): its class ends in .exe, so the
+  # generic wine float rule catches it. One marked block, rewritten every
+  # run; the rule sits after the generic float (later rules win — verified
+  # live: floating:True -> False on relaunch).
+  step_hypr_tile
+
+  # 8ter) File-explorer requests open Nautilus: a wrapper translating the
+  # Windows path plus directory-open associations in the prefix (both HKCU
+  # Classes hives, Folder + directory). Idempotent: wrapper overwritten,
+  # registry skipped when already present.
+  step_file_explorer
 
   # 9) Update the application database
   if command -v update-desktop-database >/dev/null 2>&1; then

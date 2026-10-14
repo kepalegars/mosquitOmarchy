@@ -118,6 +118,17 @@ if [[ -f "$HOME/.local/share/icons/hicolor/256x256/apps/guitarpro.png" ]] && ask
   ok "Icon removed"
 fi
 
+# Hyprland tile rule + file-explorer wrapper (added by the installer).
+if grep -qF -- '-- >>> guitarpro-tiling >>>' "$HOME/.config/hypr/hyprland.lua" 2>/dev/null && ask "Remove the Hyprland tile rule?" y; then
+  sed -i '/-- >>> guitarpro-tiling >>>/,/-- <<< guitarpro-tiling <<</d' "$HOME/.config/hypr/hyprland.lua"
+  command -v hyprctl >/dev/null 2>&1 && hyprctl reload >/dev/null 2>&1 || true
+  ok "Tile rule removed (main window falls back to the generic wine float)"
+fi
+if [[ -x "$HOME/.local/bin/gp-open-folder" ]] && ask "Remove the Nautilus file-explorer wrapper?" y; then
+  rm -f "$HOME/.local/bin/gp-open-folder"
+  ok "Wrapper removed (the prefix associations keep pointing at it until the prefix goes)"
+fi
+
 # Wine start-menu leftovers (duplicates created by the Windows installer)
 if ask "Remove the Wine start-menu leftovers (wine/Programs/…, duplicates)?" y; then
   apps="$HOME/.local/share/applications" dd="$HOME/.local/share/desktop-directories" removed=0

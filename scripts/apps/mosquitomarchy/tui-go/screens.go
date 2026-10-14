@@ -671,21 +671,23 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				// in the SETUP tree triggers an explicit consent prompt —
 				// declining un-ticks it. The Uninstall tree never asks again.
 				if m.treeMode == "install" && strings.HasSuffix(v, ":keepassxc") && m.selected[v] {
-					// Rebuild FIRST so the ticked row shows up even while the
-					// consent prompt is on screen (the prompt pops over it).
-					m.setupCatPicker = m.rebuildSetupCat()
-					m.pendingAction = "keepassxc-consent"
-					m.pendingArgs = []string{v}
-					m.pendingMsg = "Select KeePassXC secret service?\n\nIt REPLACES gnome-keyring completely:\n• your existing gnome-keyring secrets must be migrated to KeePassXC MANUALLY (password/settings transfer comes later);\n• a second prompt during the install asks whether to also remove the gnome-keyring package — its settings stay on disk either way, reinstalling it recovers them;\n• uninstalling this module restores the Omarchy default (gnome-keyring)."
-					m.pendingNo = "Cancel"
-					m.pendingYes = "Select it"
-					m.push(scrConfirm)
-					// Focus Yes: plain Enter = "Select it" (the common answer).
-					m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
+					m.pushKeepassxcConsent(v)
+					m.setupCatPicker = m.setupCatPicker.ArmRange(v)
 					return m, nil
 				}
 			}
 			m.setupCatPicker = m.rebuildSetupCat()
+			// Re-arm the Tab hold only when the row ended checked:
+			// unticking then moving on stays a plain move, not a range.
+			checked := false
+			if f, ok := strings.CutPrefix(v, "cat:"); ok {
+				checked = treeFolderChecked(m.setupItems, m.selected, f)
+			} else if strings.HasPrefix(v, "item:") {
+				checked = m.selected[v]
+			}
+			if checked {
+				m.setupCatPicker = m.setupCatPicker.ArmRange(v)
+			}
 		case scrBackupApps:
 			v := msg.Value
 			if strings.HasPrefix(v, "cat:") {
@@ -702,12 +704,24 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// does quitting the TUI.
 			saveBackupSelection(m.backupItems, m.backupChecked)
 			m.backupAppsPicker = m.rebuildBackupApps()
+			checked := false
+			if f, ok := strings.CutPrefix(v, "cat:"); ok {
+				checked = treeFolderChecked(m.backupItems, m.backupChecked, f)
+			} else if strings.HasPrefix(v, "item:") {
+				checked = m.backupChecked[v]
+			}
+			if checked {
+				m.backupAppsPicker = m.backupAppsPicker.ArmRange(v)
+			}
 		case scrUpdate:
 			if msg.Value == "" || msg.Value == "repo" || msg.Value == "back" || msg.Value == "apply" {
 				return m, nil
 			}
 			m.toggleUpdate(msg.Value)
 			m.updatePicker = m.rebuildUpdate()
+			if m.updateSelected[msg.Value] {
+				m.updatePicker = m.updatePicker.ArmRange(msg.Value)
+			}
 		case scrHealth:
 			// "Back" is navigation, not a healable piece: ticking it would
 			// draw a selection mark on a row that has nothing to re-apply.
@@ -715,6 +729,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.toggleHealth(msg.Value)
 			}
 			m.healthPicker = m.rebuildHealth()
+			if m.healthChecked[msg.Value] {
+				m.healthPicker = m.healthPicker.ArmRange(msg.Value)
+			}
 		case scrSetup:
 			// Tab on a FOLDER ticks the whole folder (or unticks it when
 			// everything tickable already is) — the only gesture that fills
@@ -722,9 +739,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			if strings.HasPrefix(msg.Value, "cat:") {
 				m.toggleFolder(strings.TrimPrefix(msg.Value, "cat:"))
 				m.setupPicker = m.rebuildSetup()
+				if f, ok := strings.CutPrefix(msg.Value, "cat:"); ok && treeFolderChecked(m.setupItems, m.selected, f) {
+					m.setupPicker = m.setupPicker.ArmRange(msg.Value)
+				}
 			} else if strings.HasPrefix(msg.Value, "item:") {
 				m.toggle(msg.Value)
 				m.setupPicker = m.rebuildSetup()
+				if m.selected[msg.Value] {
+					m.setupPicker = m.setupPicker.ArmRange(msg.Value)
+				}
 			}
 		case scrKBList:
 			if strings.HasPrefix(msg.Value, "kb:") {
@@ -735,6 +758,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					m.kbSel[v] = true
 				}
 				m.kbListPicker = m.rebuildKBList()
+				if m.kbSel[v] {
+					m.kbListPicker = m.kbListPicker.ArmRange(msg.Value)
+				}
 			}
 		case scrQuickFixes:
 			// Same reasoning as scrMenuEntries below: this global switch runs
@@ -746,6 +772,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			if _, id, ok := tuikit.TreeSplit(msg.Value); ok {
 				m.quickFixChecked[id] = !m.quickFixChecked[id]
 				m.quickFixPicker = m.rebuildQuickFixes()
+				if m.quickFixChecked[id] {
+					m.quickFixPicker = m.quickFixPicker.ArmRange(msg.Value)
+				}
 			}
 			return m, nil
 		case scrMenuEntries:
@@ -761,9 +790,22 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					// truth until the apply really ran.
 					m.menuEntryChecked[name] = !m.menuEntryChecked[name]
 					m.menuEntriesPicker = m.rebuildMenuEntriesPicker()
+					if m.menuEntryChecked[name] {
+						m.menuEntriesPicker = m.menuEntriesPicker.ArmRange(msg.Value)
+					}
 				}
 			}
 		}
+		return m, nil
+
+	case tuikit.PickerRangeMsg:
+		// Tab-held range: Tab, then Up/Down with nothing between. Every
+		// value arrives to be CHECKED, never toggled — the kit guarantees
+		// the gesture, this hub mirrors the Toggle hub row for row, skipping
+		// what is already checked and running the same helpers for the rest
+		// (so folder rows still fill whole folders, and the KeePassXC
+		// consent still fires when the range newly checks it).
+		m.rangeCheck(msg.Values, msg.Anchor)
 		return m, nil
 
 	case tuikit.PickerSortMsg:
@@ -1788,6 +1830,20 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if tl, ok := msg.(tuikit.PickerToggleMsg); ok {
 			m.toggleThemeTick(tl.Value)
 			m.themeUninstallPicker = m.rebuildThemeUninstall()
+			if m.themeChecked[tl.Value] {
+				m.themeUninstallPicker = m.themeUninstallPicker.ArmRange(tl.Value)
+			}
+			return m, nil
+		}
+		if rg, ok := msg.(tuikit.PickerRangeMsg); ok {
+			for _, v := range rg.Values {
+				if m.themeChecked[v] {
+					continue
+				}
+				m.toggleThemeTick(v)
+			}
+			m.themeUninstallPicker = m.rebuildThemeUninstall()
+			m.themeUninstallPicker = m.themeUninstallPicker.ArmRange(rg.Anchor)
 			return m, nil
 		}
 		// Enter and Esc arrive as PickerResultMsg and are handled by
