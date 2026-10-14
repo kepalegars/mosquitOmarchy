@@ -349,6 +349,23 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.pop()
 		return m, nil
 	}
+	// Modal screens must consume their own keys before any list-screen
+	// shortcut sees them. Without this, the quit confirmation rendered but
+	// stayed inert.
+	if m.top() == scrConfirm {
+		var cmd tea.Cmd
+		m.confirm, cmd = m.confirm.Update(msg)
+		return m, cmd
+	}
+	if m.top() == scrInfo {
+		if k == "esc" || k == "enter" || k == "q" {
+			m.pop()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.info, cmd = m.info.Update(msg)
+		return m, cmd
+	}
 	switch m.top() {
 	case scrDevices:
 		switch k {

@@ -33,9 +33,10 @@ func (m model) View() string {
 	if m.loading {
 		b.WriteString("\n" + tuikit.StyleMuted.Render("loading…"))
 	}
-	out := b.String()
-	// Centre the short device picker vertically so nothing is clipped by
-	// the top border of the window.
+	out := strings.TrimRight(b.String(), " \t\n")
+	// Centre the view vertically. The trailing blank rows the picker adds to
+	// fill its own height have to go first, otherwise the view is already
+	// terminal-tall and there is no room to move it.
 	if m.h > 0 {
 		lines := strings.Count(out, "\n") + 1
 		if m.h > lines {

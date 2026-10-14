@@ -1149,6 +1149,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case reconcileMissingMsg:
 		if len(msg.labels) > 0 {
 			m.missingKeys = msg.keys
+			// Only interrupt the home screen. On any active screen the cache
+			// is taken but the confirm object is left untouched, so a late
+			// sweep never hijacks Settings/uninstall with a modal.
 			if m.top() == scrMain {
 				m.confirm = tuikit.NewConfirm(missingPrompt(msg.labels), "add to log", "remove everywhere")
 				m.push(scrReconcileMissingInfo)
@@ -1160,8 +1163,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.items) > 0 {
 			m.orphanCache = msg.items
 			m.orphanChecked = map[string]bool{}
-			m.rebuildOrphanPicker()
+			// Rebuild the orphan list only when it will actually be shown.
+			// Rebuilding it on top of Settings replaced that screen's
+			// picker, which is the merged/broken view the user saw.
 			if m.top() == scrMain {
+				m.rebuildOrphanPicker()
 				m.push(scrReconcileOrphansTick)
 			}
 		}

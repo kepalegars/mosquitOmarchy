@@ -1322,7 +1322,11 @@ PYWIZARD
     # ("FabFilter Micro" and "FabFilter Micro (Mono)").
     _apm_ao="${TMPDIR:-/tmp}/apm-ao.$$"
     plugin_group_rows > "$_apm_ao"
-    files="$(awk -F'\t' -v v="$target" '$6==v{print $7; exit}' "$_apm_ao" | tr ';' '\n')"
+    # plugin_group_rows emits NINE fields (sortkey, gkey, label, group,
+    # formats, enabled, value, variants, key). The target is field 7 and the
+    # plugin's complete file set is field 8; the old $6/$7 pair matched
+    # nothing and silently tracked only one variant.
+    files="$(awk -F'\t' -v v="$target" '$7==v{print $8; exit}' "$_apm_ao" | tr ';' '\n')"
     rm -f "$_apm_ao"
     [[ -n $files ]] || files="$target"
 
@@ -1338,7 +1342,15 @@ PYWIZARD
         native:*) bare="${f#native:}" ;;
       esac
       [[ -n $first ]] || first="$bare"
-      state_register_install "$(plugin_key "$bare")" "$prefix" "$bare"
+      # Key EXACTLY the way plugin_group_rows keys the row: native plugins
+      # (lv2/clap/vst3 loaded directly) are "native/<label>", not plugin_key()
+      # ("lv2/<label>"), which is why LV2s came back untracked after adding.
+      if [[ $f == native:* ]]; then
+        key="native/$(native_plugin_label "$bare")"
+      else
+        key="$(plugin_key "$bare")"
+      fi
+      state_register_install "$key" "$prefix" "$bare"
     done <<< "$files"
     echo "added to the manager: $(basename "$first")"
     ;;
