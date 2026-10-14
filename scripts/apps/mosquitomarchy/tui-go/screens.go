@@ -3252,10 +3252,10 @@ func loadingTreePicker(m model) navPicker {
 
 func (m model) rebuildSetup() navPicker {
 	if m.treeLoading {
-		return carryRange(loadingTreePicker(m), m.setupPicker)
+		return carryRange(loadingTreePicker(m), m.setupPicker, m.setupAnchorChecked)
 	}
 	if m.filterText != "" {
-		return carryRange(m.rebuildFilteredSetup(), m.setupPicker)
+		return carryRange(m.rebuildFilteredSetup(), m.setupPicker, m.setupAnchorChecked)
 	}
 	idx := m.setupPicker.Index()
 	uninstall := m.treeMode == "uninstall"
@@ -3311,7 +3311,7 @@ func (m model) rebuildSetup() navPicker {
 		// Fallback for when the row the cursor was on is genuinely gone (the
 		// typing filter just hid it): land on the same index, not on row 0.
 		SelectIndex(min(idx, len(out)-1))
-	return carryRange(np, m.setupPicker)
+	return carryRange(np, m.setupPicker, m.setupAnchorChecked)
 }
 
 // allFoldersOpen returns a copy of the fold state with every folder expanded.
@@ -3713,7 +3713,7 @@ func (m model) rebuildSetupCat() navPicker {
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		)
-	return carryRange(p.SelectIndex(idx), m.setupCatPicker)
+	return carryRange(p.SelectIndex(idx), m.setupCatPicker, m.setupAnchorChecked)
 }
 
 // backupTreeItems is the same tree for the backup content selection.

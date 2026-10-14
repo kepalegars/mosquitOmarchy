@@ -782,15 +782,33 @@ func (m *model) toggleFolder(folder string) {
 // rebuilds the Setup pickers every 600ms; without this a hold died on the
 // first blink after Tab and every range past one second silently stopped
 // selecting). The anchor travels as a VALUE resolved in the new rows, so a
-// rebuild that legitimately removed it simply ends the range.
-func carryRange(np navPicker, prev navPicker) navPicker {
+// rebuild that legitimately removed it simply ends the range. Crucially the
+// anchor must still be CHECKED: re-arming after an untoggle is what made a
+// just-emptied folder reselect itself on the next arrow.
+func carryRange(np navPicker, prev navPicker, checked func(string) bool) navPicker {
 	if !prev.tabHeld {
 		return np
 	}
-	if prev.tabAnchor >= 0 && prev.tabAnchor < len(prev.items) {
-		return np.ArmRange(prev.items[prev.tabAnchor].Value)
+	if prev.tabAnchor < 0 || prev.tabAnchor >= len(prev.items) {
+		return np
 	}
-	return np
+	v := prev.items[prev.tabAnchor].Value
+	if !checked(v) {
+		return np
+	}
+	return np.ArmRange(v)
+}
+
+// setupAnchorChecked is the carry gate for both Setup trees: folders count
+// when full, rows when ticked, anything else (Back, headings) never arms.
+func (m model) setupAnchorChecked(v string) bool {
+	if f, ok := strings.CutPrefix(v, "cat:"); ok {
+		return treeFolderChecked(m.setupItems, m.selected, f)
+	}
+	if strings.HasPrefix(v, "item:") {
+		return m.selected[v]
+	}
+	return false
 }
 
 // treeFolderChecked reports whether every tickable row of a folder is

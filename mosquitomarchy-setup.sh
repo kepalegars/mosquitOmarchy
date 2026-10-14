@@ -3947,7 +3947,7 @@ CATEGORIES=(
   # including the deployer, i.e. installed and updatable but reachable from
   # neither Setup nor Uninstall. `battery` is deliberately absent: it is a
   # mosquito-* module now (mega-caffeine), so it lives in the mosquito row.
-  "plugins|Plugins|brightness touchpad mx-master"
+  "plugins|Plugins|brightness touchpad mx-master wifi-hotspot"
   "fixes|Fixes|"
   "mosquito|mosquito|"
   "lame|lame language models (ai..)|ollama remove-ai"
@@ -4069,7 +4069,7 @@ module_category(){ # module id -> category id
     # AND here. Two copies of the same fact: adding a module to one leaves the
     # other calling it category-less, which is how pipewire-settings showed up in
     # the Setup tree under "mosquito" and in `status` with an empty category.
-    ableton-move-manager|audio-plugin-manager|jamjamjam-plugin|battery|live-mode|mixbay|wifi-hotspot|pipewire-settings) echo mosquito; return 0 ;;
+    ableton-move-manager|audio-plugin-manager|jamjamjam-plugin|battery|live-mode|mixbay|pipewire-settings) echo mosquito; return 0 ;;
     # The manager lives in the mosquito folder (single row, update watchdog
     # included) rather than Plugins; the mapping is explicit so Status keeps
     # grouping it exactly like Setup does.
@@ -4220,8 +4220,6 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
       CAND_LABELS+=("mosquito-live-mode  —  $(module_desc live-mode)")
       CAND_KEYS+=("mixbay")
       CAND_LABELS+=("mosquito-mixbay  —  $(module_desc mixbay)")
-      CAND_KEYS+=("wifi-hotspot")
-      CAND_LABELS+=("mosquito-wifi-hotspot  —  $(module_desc wifi-hotspot)")
       # The manager (deployer + update watchdog in one row) lives here, not
       # in Plugins: one mosquito row for the whole manager.
       CAND_KEYS+=("mosquitomarchy")

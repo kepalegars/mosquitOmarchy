@@ -124,3 +124,26 @@ func TestRangeSkipsChecked(t *testing.T) {
 		t.Fatalf("full folder flipped by the range: %v", m.selected)
 	}
 }
+
+// Untick a folder (fast double-tap: tick then untick) and move on: the
+// folder stays unticked instead of reselecting itself on the next arrow.
+func TestUntickFolderThenMoveStaysUnticked(t *testing.T) {
+	m := flatSetup()
+	m.nav = []screen{scrMain, scrSetup}
+	m.w, m.h = 100, 34
+	m.treeMode = "install"
+	m.setupPicker = m.rebuildSetup()
+	m.setupPicker = m.setupPicker.SelectIndex(0)
+	m = driveKeys(m, tabKey())
+	if !m.selected[setupValue("apps", "reaper")] {
+		t.Fatal("setup: folder Tab did not tick")
+	}
+	m = driveKeys(m, tabKey())
+	if len(m.selected) != 0 {
+		t.Fatalf("fast double-tap did not untick: %v", m.selected)
+	}
+	m = driveKeys(m, downKey(), downKey())
+	if len(m.selected) != 0 {
+		t.Fatalf("moving reselected the unticked folder: %v", m.selected)
+	}
+}

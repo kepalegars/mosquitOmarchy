@@ -83,8 +83,9 @@ func TestTabHeldUpChecksUpwards(t *testing.T) {
 	}
 }
 
-// A repeated Tab on the same row (physically held key) must not flip-flop.
-func TestHeldTabRepeatDoesNotToggle(t *testing.T) {
+// A fast double-tap toggles twice (untick works instantly — the old
+// repeat guard ate the second press, which read as "Tab is laggy").
+func TestFastDoubleTapTogglesTwice(t *testing.T) {
 	p := rangePicker()
 	_, msgs := rangeMsgs(p, "tab", "tab")
 	toggles := 0
@@ -93,8 +94,25 @@ func TestHeldTabRepeatDoesNotToggle(t *testing.T) {
 			toggles++
 		}
 	}
-	if toggles != 1 {
-		t.Fatalf("same-row Tab twice gave %d toggles, want 1", toggles)
+	if toggles != 2 {
+		t.Fatalf("same-row Tab twice gave %d toggles, want 2", toggles)
+	}
+}
+
+// The third fast tap locks the hold: further repeats change nothing, so a
+// physically held Tab can never flip-flop the row (two toggles net to zero,
+// the row sits as the hold found it).
+func TestHeldTabLocksAfterTwoToggles(t *testing.T) {
+	p := rangePicker()
+	_, msgs := rangeMsgs(p, "tab", "tab", "tab", "tab", "tab")
+	toggles := 0
+	for _, m := range msgs {
+		if _, ok := m.(PickerToggleMsg); ok {
+			toggles++
+		}
+	}
+	if toggles != 2 {
+		t.Fatalf("held Tab gave %d toggles, want exactly 2 then silence", toggles)
 	}
 }
 
