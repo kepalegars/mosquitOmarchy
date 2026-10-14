@@ -33,7 +33,17 @@ func (m model) View() string {
 	if m.loading {
 		b.WriteString("\n" + tuikit.StyleMuted.Render("loading…"))
 	}
-	return b.String()
+	out := b.String()
+	// Centre the short device picker vertically so nothing is clipped by
+	// the top border of the window.
+	if m.h > 0 {
+		lines := strings.Count(out, "\n") + 1
+		if m.h > lines {
+			pad := (m.h - lines) / 2
+			out = strings.Repeat("\n", pad) + out
+		}
+	}
+	return out
 }
 
 func (m model) statusLine() string {

@@ -354,17 +354,27 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch k {
 		case "enter":
 			if m.picker.SelectedValue() == "quit" {
-				m.quit = true
-				return m, tea.Quit
+				m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")
+				m.confirmAct = func() tea.Cmd {
+					m.quit = true
+					return tea.Quit
+				}
+				m.push(scrConfirm)
+				return m, nil
 			}
 			m.deviceID = m.picker.SelectedValue()
 			m.loading = true
 			m.push(scrControls)
 			m.syncPicker()
 			return m, fetchStatus(m.deviceID)
-		case "q":
-			m.quit = true
-			return m, tea.Quit
+		case "q", "esc":
+			m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")
+			m.confirmAct = func() tea.Cmd {
+				m.quit = true
+				return tea.Quit
+			}
+			m.push(scrConfirm)
+			return m, nil
 		}
 	case scrControls:
 		switch k {
