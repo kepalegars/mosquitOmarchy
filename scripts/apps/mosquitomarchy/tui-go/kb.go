@@ -14,6 +14,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -87,6 +88,17 @@ var kbCatalog = []struct {
 		{"PipeWire settings", "omarchy-shell shell summon mosquito.pipewire '{}'", "cmd"},
 	}},
 	{"custom", "custom command", nil},
+}
+
+// Rows read alphabetically inside every category (case-insensitive on the
+// label), sorted once here so no future addition can break the order.
+func init() {
+	for i := range kbCatalog {
+		items := kbCatalog[i].Items
+		sort.SliceStable(items, func(a, b int) bool {
+			return strings.ToLower(items[a].Label) < strings.ToLower(items[b].Label)
+		})
+	}
 }
 
 func fetchKbCmd() tea.Cmd {

@@ -552,7 +552,9 @@ cmd_status(){
   out="$(bash -c "$HOTSPOT_QUERY")"
   con="$(printf '%s' "$out" | json_name)"
   if nmcli connection show id "$con" >/dev/null 2>&1; then
-    printf '%s' "$out" | jq -c '. + {configured: true}'
+    # MOSQUITO addition: sanitize a stored multi-line SSID down to its
+    # first line (seen live) so labels never jitter, then flag configured.
+    printf '%s' "$out" | jq -c '.ssid |= (split("\n")[0] | gsub("^\\s+|\\s+$";"")) | . + {configured: true}'
   else
     printf '%s' "$out" | jq -c '. + {configured: false}'
   fi

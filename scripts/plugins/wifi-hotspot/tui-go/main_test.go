@@ -39,3 +39,33 @@ func TestSaveValidatesBeforeTouchingTheBackend(t *testing.T) {
 		t.Error("short password accepted")
 	}
 }
+
+func TestArtLinesShareOneWidth(t *testing.T) {
+	w := -1
+	for _, l := range hotspotArt {
+		n := len([]rune(l))
+		if w < 0 {
+			w = n
+		} else if n != w {
+			t.Fatalf("art line %q width %d, want %d", l, n, w)
+		}
+	}
+}
+
+func TestCleanLineTakesFirstLine(t *testing.T) {
+	if got := cleanLine("Omarchy-Hotspot\n\ntestashot"); got != "Omarchy-Hotspot" {
+		t.Fatalf("cleanLine = %q", got)
+	}
+}
+
+func TestQuitSavesOnlyWhenDirty(t *testing.T) {
+	m := initialModel()
+	m.origSsid, m.origPassword, m.origBand = m.ssid, m.password, m.band
+	if m.dirty() {
+		t.Fatal("fresh form reads dirty")
+	}
+	m.ssid += "-x"
+	if !m.dirty() {
+		t.Fatal("edited form reads clean")
+	}
+}

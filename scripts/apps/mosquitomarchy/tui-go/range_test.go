@@ -85,6 +85,28 @@ func TestTabHeldRangeAsksKeepassxcConsent(t *testing.T) {
 	}
 }
 
+// TestTabHeldSurvivesBlink: the blink tick rebuilds the Setup picker every
+// 600ms; a hold must survive it, or every range past one second silently
+// stops selecting (the reported "it selects the first ones then stops").
+func TestTabHeldSurvivesBlink(t *testing.T) {
+	m := flatSetup()
+	m.nav = []screen{scrMain, scrSetup}
+	m.w, m.h = 100, 34
+	m.treeMode = "install"
+	m.setupPicker = m.rebuildSetup()
+	m.setupPicker = m.setupPicker.SelectIndex(0)
+	m = driveKeys(m, tabKey(), downKey())
+	if !m.selected[setupValue("apps", "reaper")] {
+		t.Fatal("first step did not check")
+	}
+	// Blink rebuild, as the 600ms tick does.
+	m.setupPicker = m.rebuildSetup()
+	m = driveKeys(m, downKey())
+	if !m.selected[setupValue("apps", "extracto")] {
+		t.Fatalf("range died on the blink rebuild: %v", m.selected)
+	}
+}
+
 // TestRangeSkipsChecked: a Tab-held pass over an already-full folder leaves
 // it full instead of flipping it empty like a second Tab would.
 func TestRangeSkipsChecked(t *testing.T) {

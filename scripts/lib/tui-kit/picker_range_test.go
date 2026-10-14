@@ -125,6 +125,49 @@ func TestEnterEndsTheHold(t *testing.T) {
 	}
 }
 
+// A held range keeps emitting across a long list: every step from the
+// anchor re-reports the whole crossed span, so no row on the way is missed
+// even over dozens of rows.
+func TestTabHeldRangeSpansLongLists(t *testing.T) {
+	items := make([]PickerItem, 0, 40)
+	for i := 0; i < 40; i++ {
+		items = append(items, PickerItem{Display: "row", Value: "v" + itoa(i)})
+	}
+	p := NewPicker("h", items).SetSize(60, 8)
+	p, msgs := rangeMsgs(p, "tab")
+	for i := 0; i < 39; i++ {
+		var cmd tea.Cmd
+		p, cmd = p.Update(kmsg("down"))
+		if cmd != nil {
+			if m := cmd(); m != nil {
+				msgs = append(msgs, m)
+			}
+		}
+	}
+	vals := rangeValues(msgs)
+	seen := map[string]bool{}
+	for _, v := range vals {
+		seen[v] = true
+	}
+	for _, want := range []string{"v0", "v20", "v39"} {
+		if !seen[want] {
+			t.Fatalf("row %q never crossed (vals=%d)", want, len(vals))
+		}
+	}
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	out := ""
+	for n > 0 {
+		out = string(rune('0'+n%10)) + out
+		n /= 10
+	}
+	return out
+}
+
 // Inert rows (headings, disabled) are skipped by the range.
 func TestRangeSkipsInertRows(t *testing.T) {
 	p := NewPicker("h", []PickerItem{

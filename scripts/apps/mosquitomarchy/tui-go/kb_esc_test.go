@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	tuikit "mosquitomarchy.local/tui-kit"
@@ -55,6 +56,19 @@ func TestMosquitoShortcutCategory(t *testing.T) {
 	for _, it := range cat.Items {
 		if it.Label == "mosquitOmarchy (shell launcher)" {
 			t.Fatal("shell launcher duplicate still present")
+		}
+	}
+}
+
+// Every add-shortcut category reads alphabetically by label, enforced here
+// so no future addition can break the order.
+func TestKbCatalogReadsAlphabetically(t *testing.T) {
+	for _, c := range kbCatalog {
+		for i := 1; i < len(c.Items); i++ {
+			a, b := c.Items[i-1].Label, c.Items[i].Label
+			if strings.ToLower(a) > strings.ToLower(b) {
+				t.Fatalf("category %q: %q before %q", c.ID, a, b)
+			}
 		}
 	}
 }

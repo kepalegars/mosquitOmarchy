@@ -778,6 +778,21 @@ func (m *model) toggleFolder(folder string) {
 	toggleTreeFolder(m.setupItems, m.selected, folder)
 }
 
+// carryRange copies a Tab hold across a repaint rebuild (the blink tick
+// rebuilds the Setup pickers every 600ms; without this a hold died on the
+// first blink after Tab and every range past one second silently stopped
+// selecting). The anchor travels as a VALUE resolved in the new rows, so a
+// rebuild that legitimately removed it simply ends the range.
+func carryRange(np navPicker, prev navPicker) navPicker {
+	if !prev.tabHeld {
+		return np
+	}
+	if prev.tabAnchor >= 0 && prev.tabAnchor < len(prev.items) {
+		return np.ArmRange(prev.items[prev.tabAnchor].Value)
+	}
+	return np
+}
+
 // treeFolderChecked reports whether every tickable row of a folder is
 // already checked (the skip test for Tab-held ranges: a full folder stays
 // full, anything else fills through the normal toggle path).

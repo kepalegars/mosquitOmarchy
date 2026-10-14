@@ -152,7 +152,8 @@ src = open(panel).read()
 # Strip any previous injection, including the first-generation single block.
 for start, end in [("// >>> mosquito-hotspot >>>", "// <<< mosquito-hotspot <<<"),
                    ("// >>> mosquito-hotspot-hero >>>", "// <<< mosquito-hotspot-hero <<<"),
-                   ("// >>> mosquito-hotspot-zone >>>", "// <<< mosquito-hotspot-zone <<<")]:
+                   ("// >>> mosquito-hotspot-zone >>>", "// <<< mosquito-hotspot-zone <<<"),
+                   ("// >>> mosquito-hotspot-scanfilter >>>", "// <<< mosquito-hotspot-scanfilter <<<")]:
     src = re.sub(re.escape(start) + r".*?" + re.escape(end) + r"\n", "", src, flags=re.DOTALL)
 hero = open(hero_frag).read().rstrip() + "\n"
 zone = open(zone_frag).read().rstrip() + "\n"
@@ -162,8 +163,20 @@ src = src.replace(anchor_hero, hero + anchor_hero)
 anchor_zone = "      // DNS provider selection."
 assert src.count(anchor_zone) == 1, "zone anchor not found (stock panel changed?)"
 src = src.replace(anchor_zone, zone + anchor_zone)
+# Hide our own hotspot from the scan list while it runs: the rows carry the
+# SSID, and the keyboard nav indexes this same array, so filtering here (not
+# in the view) keeps cursor and rows aligned.
+scanfilter = """    // >>> mosquito-hotspot-scanfilter >>> hide our own hotspot while it runs
+    if (hotspot.active && hotspot.ssid !== "") {
+      wifiNetworks = wifiNetworks.filter(function(r) { return !r || r.ssid !== hotspot.ssid })
+    }
+    // <<< mosquito-hotspot-scanfilter <<<
+"""
+anchor_sync = "    wifiNetworks = Model.sortWifiRows(nets)"
+assert src.count(anchor_sync) == 1, "sync anchor not found (stock panel changed?)"
+src = src.replace(anchor_sync, anchor_sync + "\n" + scanfilter)
 open(panel, "w").write(src)
-print("hero action + hotspot zone injected")
+print("hero action + hotspot zone + scan filter injected")
 PYEOF
 
 # -----------------------------------------------------------------------------

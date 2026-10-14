@@ -2072,7 +2072,7 @@ func (m model) rebuildQuickFixes() navPicker {
 	cur := m.quickFixPicker.SelectedValue()
 	return newNavPicker("", m.quickFixesList()).SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "select")),
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply selection")),
 		).
@@ -3252,10 +3252,10 @@ func loadingTreePicker(m model) navPicker {
 
 func (m model) rebuildSetup() navPicker {
 	if m.treeLoading {
-		return loadingTreePicker(m)
+		return carryRange(loadingTreePicker(m), m.setupPicker)
 	}
 	if m.filterText != "" {
-		return m.rebuildFilteredSetup()
+		return carryRange(m.rebuildFilteredSetup(), m.setupPicker)
 	}
 	idx := m.setupPicker.Index()
 	uninstall := m.treeMode == "uninstall"
@@ -3297,10 +3297,10 @@ func (m model) rebuildSetup() navPicker {
 	// every blink tick, so holding "down" fought the blink and the cursor
 	// crawled. It also matters for the fold, which rebuilds the list under a
 	// cursor that is sitting on the very row that caused it.
-	return newNavPicker("", out).SetSize(m.contentSize()).
+	np := newNavPicker("", out).SetSize(m.contentSize()).
 		SetContentWidth(pinned).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "select")),
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "open")),
@@ -3311,6 +3311,7 @@ func (m model) rebuildSetup() navPicker {
 		// Fallback for when the row the cursor was on is genuinely gone (the
 		// typing filter just hid it): land on the same index, not on row 0.
 		SelectIndex(min(idx, len(out)-1))
+	return carryRange(np, m.setupPicker)
 }
 
 // allFoldersOpen returns a copy of the fold state with every folder expanded.
@@ -3712,7 +3713,7 @@ func (m model) rebuildSetupCat() navPicker {
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		)
-	return p.SelectIndex(idx)
+	return carryRange(p.SelectIndex(idx), m.setupCatPicker)
 }
 
 // backupTreeItems is the same tree for the backup content selection.
@@ -4558,7 +4559,7 @@ func (m model) rebuildMenuEntriesPicker() navPicker {
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
 	p := newNavPicker("Menu entries — tick = keep in the Omarchy menu (Enter applies the change):", items).SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "toggle")),
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
 		)

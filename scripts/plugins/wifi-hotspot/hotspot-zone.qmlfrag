@@ -1,7 +1,7 @@
       // >>> mosquito-hotspot-zone >>> (managed by setup-wifi-hotspot.sh — re-applied on reinstall, do not edit by hand)
       //
       // Wi-Fi hotspot zone, forked from Guneshbari/omarchy-network (header
-      // with ACTIVE/INACTIVE badge, subtitle, options): same look, driven by
+      // with band qualifier + gear + switch, subtitle, options): same look,
       // the forked mosquito-hotspot backend. Two mosquito adaptations: the
       // repeater/create_ap flows are out (no create_ap here — plain NM access
       // point), and the gear toggles the options below instead of opening
@@ -106,55 +106,37 @@
         width: parent.width
         spacing: Style.space(8)
 
-        // Header line: title + badge on the left, gear + switch on the right.
+        // Header line: title on the left, band label + gear + switch on the
+        // right — the wifi-band line's exact geometry (small qualifier
+        // label sized like AUTOMATIC, switch measured off it, same spacing
+        // and glyph-centering offsets). No badge pill: the two boxes fought
+        // each other.
         Item {
           width: parent.width
-          implicitHeight: Math.max(hotspotTitleRow.implicitHeight, hotspotToggleRow.implicitHeight)
+          implicitHeight: Math.max(hotspotHeader.implicitHeight, hotspotStateRow.implicitHeight)
 
-          Row {
-            id: hotspotTitleRow
+          PanelSectionHeader {
+            id: hotspotHeader
+            text: "WI-FI HOTSPOT"
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(8)
+          }
+
+          Row {
+            id: hotspotStateRow
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(6)
 
             PanelSectionHeader {
-              id: hotspotHeader
-              text: "WI-FI HOTSPOT"
+              id: hotspotStateLabel
+              text: hotspot.band === "a" ? "5 GHZ" : "2.4 GHZ"
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
               anchors.verticalCenter: parent.verticalCenter
             }
-
-            Rectangle {
-              id: hotspotBadge
-              anchors.verticalCenter: parent.verticalCenter
-              radius: height / 2
-              color: hotspot.active ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.2) : Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.08)
-              border.color: hotspot.active ? Color.accent : "transparent"
-              border.width: 1
-              implicitWidth: hotspotBadgeText.implicitWidth + Style.space(12)
-              implicitHeight: hotspotBadgeText.implicitHeight + Style.space(4)
-
-              Text {
-                textFormat: Text.PlainText
-                id: hotspotBadgeText
-                anchors.centerIn: parent
-                text: hotspot.active
-                  ? (hotspot.clients > 0 ? "ACTIVE (" + hotspot.clients + ")" : "ACTIVE")
-                  : "INACTIVE"
-                color: hotspot.active ? Color.accent : Qt.darker(root.bar.foreground, 1.4)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-              }
-            }
-          }
-
-          Row {
-            id: hotspotToggleRow
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(6)
 
             Text {
               id: hotspotGear
@@ -162,8 +144,9 @@
               color: root.bar.foreground
               opacity: hotspotGearArea.containsMouse ? 1 : 0.55
               font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.body
-              anchors.verticalCenter: hotspotSwitch.verticalCenter
+              font.pixelSize: hotspotStateLabel.font.pixelSize
+              anchors.verticalCenter: hotspotStateLabel.verticalCenter
+              anchors.verticalCenterOffset: Math.round(hotspotStateLabel.topPadding / 2)
 
               MouseArea {
                 id: hotspotGearArea
@@ -182,9 +165,10 @@
 
             ToggleSwitch {
               id: hotspotSwitch
-              trackHeight: Math.round(hotspotHeader.font.pixelSize * 1.2)
+              trackHeight: Math.round(hotspotStateLabel.font.pixelSize * 1.2)
               cursorPad: Style.space(3)
-              anchors.verticalCenter: parent.verticalCenter
+              anchors.verticalCenter: hotspotStateLabel.verticalCenter
+              anchors.verticalCenterOffset: Math.round(hotspotStateLabel.topPadding / 2)
               checked: hotspot.active
               busy: hotspot.busy
               foreground: root.bar.foreground
@@ -192,20 +176,21 @@
 
               PanelToolTip {
                 visible: hotspotSwitch.containsMouse
-                text: hotspot.active ? "Stop Wi-Fi Hotspot" : "Start Wi-Fi Hotspot"
+                text: hotspot.active
+                  ? ("Hotspot on" + (hotspot.clients > 0 ? " (" + hotspot.clients + " connected)" : "") + " — turn off")
+                  : "Turn the hotspot on"
                 fontFamily: root.bar.fontFamily
               }
             }
           }
         }
 
-        // Subtitle: what the hotspot is (not) doing, plain words.
+        // Subtitle: what the hotspot is doing. Nothing when off — no
+        // "hotspot off" line taking space for stating the obvious.
         Text {
           textFormat: Text.PlainText
-          visible: hotspot.statusMsg === ""
-          text: hotspot.active
-            ? ("Broadcasting " + hotspot.ssid + (hotspot.clients > 0 ? " · " + hotspot.clients + " connected" : ""))
-            : "Hotspot off"
+          visible: hotspot.statusMsg === "" && hotspot.active
+          text: "Broadcasting " + hotspot.ssid + (hotspot.clients > 0 ? " · " + hotspot.clients + " connected" : "")
           color: Qt.darker(root.bar.foreground, 1.4)
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.caption

@@ -1161,6 +1161,8 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 			// no-wrap rule: once a user has scrolled to the bottom of
 			// the visible list, additional Down presses are no-ops
 			// rather than wrap-and-then-have-to-scroll-back.
+			// A TAB-HELD Down still emits the range behind it (rangeCmd
+			// covers whatever advanceDown crossed, pages included).
 			out, moved := p.advanceDown()
 			if !moved {
 				return p, nil

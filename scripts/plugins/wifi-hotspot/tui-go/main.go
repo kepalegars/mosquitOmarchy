@@ -1,8 +1,9 @@
 // Command mosquito-hotspot-tui is the hotspot settings TUI: SSID, password
 // and band for the mosquito-hotspot backend, opened from the Wi-Fi panel's
 // gear button. One centered form (FrameScreen centers the body): arrows move,
-// Enter edits (SSID/password) or cycles (band), Save writes through the
-// backend (password on stdin, never argv), Esc cancels.
+// Enter edits (SSID/password) or cycles (band). There is no save button and
+// no success chatter: quitting writes back silently when something changed
+// (password on stdin, never argv), and cancelling is just quitting.
 //
 // When no hotspot profile exists yet the fields come prefilled with the
 // working defaults: this machine's hostname, 12345678, 5 GHz.
@@ -60,6 +61,16 @@ func hostnameDefault() string {
 	return h
 }
 
+// hotspotArt is the hand-drawn ASCII banner ("HOTSPOT", block letters —
+// there is no figlet-style font in tui-kit, only the mosquito wordmarks,
+// so this one lives here). All lines share the same visible width so the
+// centered frame keeps it straight.
+var hotspotArt = []string{
+	"█░█ █▀█ ▀█▀ █▀▀ █▀█ █▀█ ▀█▀",
+	"█▀█ █░█ ░█░ ▀▀█ █▀▀ █░█ ░█░",
+	"▀░▀ ▀▀▀ ░▀░ ▀▀▀ ▀░░ ▀▀▀ ░▀░",
+}
+
 type model struct {
 	w, h       int
 	ssid       string
@@ -67,26 +78,27 @@ type model struct {
 	band       string // "a" (5 GHz) | "bg" (2.4 GHz)
 	active     bool
 	configured bool
-	row        int // 0 ssid, 1 password, 2 band, 3 save, 4 cancel
-	editing    int // -1 form, 0 ssid, 1 password
-	input      tuikit.TextInput
-	toast      tuikit.Toast
-	done       bool
-	doneMsg    string
-	doneErr    bool
+	// The values the form opened with: quitting saves back silently only
+	// when something actually changed.
+	origSsid, origPassword, origBand string
+	row                              int // 0 ssid, 1 password, 2 band, 3 quit
+	editing                          int // -1 form, 0 ssid, 1 password
+	input                            tuikit.TextInput
+	toast                            tuikit.Toast
 }
 
 type saveResultMsg struct {
 	err error
-	out string
 }
 
 func initialModel() model {
 	st := loadStatus()
 	m := model{editing: -1, band: "a"}
 	if st.Configured {
-		m.ssid = st.Ssid
-		m.password = st.Password
+		// Stored profiles can carry multi-line garbage (seen live); the
+		// form only ever shows and saves the first line.
+		m.ssid = cleanLine(st.Ssid)
+		m.password = cleanLine(st.Password)
 		if st.Band == "bg" || st.Band == "a" {
 			m.band = st.Band
 		}
@@ -97,7 +109,20 @@ func initialModel() model {
 	}
 	m.active = st.Active
 	m.configured = st.Configured
+	m.origSsid, m.origPassword, m.origBand = m.ssid, m.password, m.band
 	return m
+}
+
+// dirty reports whether the form differs from what the backend reported.
+func (m model) dirty() bool {
+	return m.ssid != m.origSsid || m.password != m.origPassword || m.band != m.origBand
+}
+
+func cleanLine(s string) string {
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
 }
 
 func (m model) Init() tea.Cmd { return nil }
@@ -115,20 +140,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.w, m.h = msg.Width, msg.Height
 		return m, nil
 	case tea.KeyMsg:
-		if m.done {
-			return m, tea.Quit
-		}
 		if m.editing >= 0 {
 			return m.updateInput(msg)
 		}
 		switch msg.String() {
-		case "ctrl+c", "esc":
-			return m, tea.Quit
+		case "ctrl+c", "esc", "q":
+			return m.quit()
 		case "up", "k":
-			m.row = (m.row + 4) % 5
+			m.row = (m.row + 3) % 4
 			return m, nil
 		case "down", "j":
-			m.row = (m.row + 1) % 5
+			m.row = (m.row + 1) % 4
 			return m, nil
 		case "enter":
 			return m.activate()
@@ -137,17 +159,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuikit.InputResultMsg:
 		return m.inputDone(msg)
 	case saveResultMsg:
-		if msg.err != nil {
-			m.done = true
-			m.doneErr = true
-			m.doneMsg = msg.err.Error()
-			return m, nil
-		}
-		m.done = true
-		m.doneMsg = "hotspot saved — toggle it on from the Wi-Fi panel"
-		return m, nil
+		// The quiet quit: success AND failure both leave silently, per the
+		// no-chatter rule. A failed save keeps nothing — the form is gone
+		// with the terminal — which is exactly why invalid input never
+		// reaches this point (quit() holds the form open with a hint).
+		return m, tea.Quit
 	}
 	return m, nil
+}
+
+// quit leaves, saving back silently first when the form changed. Invalid
+// input holds the form open with a hint instead: quitting on garbage would
+// silently throw the user's edits away.
+func (m model) quit() (tea.Model, tea.Cmd) {
+	if !m.dirty() {
+		return m, tea.Quit
+	}
+	if strings.TrimSpace(m.ssid) == "" {
+		m.toast, _ = m.toast.SetWarn("network name is empty — fix it or it stays unsaved")
+		return m, nil
+	}
+	if len(m.password) < 8 {
+		m.toast, _ = m.toast.SetWarn("password needs 8+ characters — fix it or it stays unsaved")
+		return m, nil
+	}
+	return m, saveCmd(m.ssid, m.password, m.band)
 }
 
 func (m model) activate() (tea.Model, tea.Cmd) {
@@ -168,9 +204,7 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case 3:
-		return m, saveCmd(m.ssid, m.password, m.band)
-	case 4:
-		return m, tea.Quit
+		return m.quit()
 	}
 	return m, nil
 }
@@ -224,20 +258,16 @@ func saveCmd(ssid, password, band string) tea.Cmd {
 
 func (m model) View() string {
 	var b strings.Builder
-	if m.done {
-		mark := "✓ "
-		if m.doneErr {
-			mark = "! "
-		}
-		b.WriteString(mark + m.doneMsg + "\n\npress any key to close")
-		return tuikit.FrameScreen(m.w, m.h, "Hotspot settings", b.String(), "enter save · esc cancel")
+	for _, l := range hotspotArt {
+		b.WriteString(l + "\n")
 	}
+	b.WriteString("\n")
 	if m.editing >= 0 {
 		b.WriteString(m.input.View())
 		if t := m.toast.View(); t != "" {
 			b.WriteString("\n\n" + t)
 		}
-		return tuikit.FrameScreen(m.w, m.h, "Hotspot settings", b.String(), "enter confirm · esc back")
+		return tuikit.FrameScreen(m.w, m.h, "", b.String(), "enter confirm · esc back")
 	}
 	rows := []struct {
 		label string
@@ -246,8 +276,7 @@ func (m model) View() string {
 		{"Network name", m.ssid},
 		{"Password", maskPassword(m.password)},
 		{"Band", bandLabel(m.band)},
-		{"Save", ""},
-		{"Cancel", ""},
+		{"Quit", ""},
 	}
 	for i, r := range rows {
 		cursor := "  "
@@ -264,20 +293,20 @@ func (m model) View() string {
 		b.WriteString(line + "\n")
 	}
 	if !m.configured {
-		b.WriteString("\nnot set up yet — showing defaults (this hostname, 12345678, 5 GHz)\n")
+		b.WriteString("\nnot set up yet — showing defaults\n")
 	} else {
-		b.WriteString("\nhotspot profile exists — values above are current\n")
+		b.WriteString("\nquitting saves back automatically\n")
 	}
 	if t := m.toast.View(); t != "" {
 		b.WriteString("\n" + t)
 	}
-	bar := "↑↓ choose · enter edit/save · esc cancel"
-	return tuikit.FrameScreen(m.w, m.h, "Hotspot settings", b.String(), bar)
+	bar := "↑↓ choose · enter edit · esc quit"
+	return tuikit.FrameScreen(m.w, m.h, "", b.String(), bar)
 }
 
 func maskPassword(p string) string {
 	if p == "" {
-		return "(empty — kept/confirmed on save)"
+		return "(empty)"
 	}
 	return "••••••••"
 }

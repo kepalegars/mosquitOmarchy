@@ -277,20 +277,32 @@ exec /usr/bin/nautilus "$unix" >/dev/null 2>&1
 WRAPEOF
   chmod +x "$wrapper"
   ok "file-explorer wrapper: $wrapper"
-  local assoc="C:\\windows\\system32\\start.exe /unix $HOME/.local/bin/gp-open-folder \"%1\""
-  local hive key
+  # NOTE: written with `wine reg add`, not regedit-from-file: regedit
+  # imports .reg files silently WITHOUT writing on wine-staging (verified),
+  # while reg add persists (verified by re-query).
+  local assoc='C:\windows\system32\start.exe /unix '"$HOME"'/.local/bin/gp-open-folder "%1"'
+  local hive key missing=0
   for hive in "HKEY_CURRENT_USER\\Software\\Classes" "HKEY_CLASSES_ROOT"; do
     for key in "directory\\shell\\open\\command" "Folder\\shell\\open\\command"; do
       if WINEARCH=win64 WINEPREFIX="$PFX" wine reg query "$hive\\$key" 2>/dev/null | grep -q "gp-open-folder"; then
         continue
       fi
-      printf 'REGEDIT4\n\n[%s\\%s]\n@="%s"\n' "$hive" "$key" "$assoc" > /tmp/gp-dirassoc.reg
-      WINEARCH=win64 WINEPREFIX="$PFX" wine regedit /tmp/gp-dirassoc.reg >/dev/null 2>&1 || \
-        warn "registry write failed: $hive\\$key"
+      if WINEARCH=win64 WINEPREFIX="$PFX" wine reg add "$hive\\$key" /ve /d "$assoc" /f >/dev/null 2>&1; then
+        ok "association set: $hive\\$key"
+      else
+        warn "registry write failed: $hive\\$key"; missing=1
+      fi
     done
   done
-  rm -f /tmp/gp-dirassoc.reg
-  ok "directory-open associations point at Nautilus"
+  # Verify what is really on disk (see NOTE above): trust, but re-query.
+  local got=0
+  for hive in "HKEY_CURRENT_USER\\Software\\Classes" "HKEY_CLASSES_ROOT"; do
+    for key in "directory\\shell\\open\\command" "Folder\\shell\\open\\command"; do
+      WINEARCH=win64 WINEPREFIX="$PFX" wine reg query "$hive\\$key" 2>/dev/null | grep -q "gp-open-folder" && got=$((got+1))
+    done
+  done
+  (( missing == 0 && got == 4 )) && ok "directory-open associations point at Nautilus (4/4 verified)" || \
+    warn "associations partially applied ($got/4) — folder requests may still fail"
 }
 
 # ───────────────────── Font & DPI hardening (Wine) ─────────────────────

@@ -26,9 +26,9 @@ func TestSuiteLinePluginsAlignUnderTheLine(t *testing.T) {
 	for _, r := range rows {
 		loc := markRe.FindStringIndex(r.Display)
 		switch {
-		case loc != nil && strings.HasSuffix(strings.TrimSpace(r.Display), "Neutron 5"):
-			lineCol = loc[0]
-			t.Logf("line row: %q mark@%d", r.Display, lineCol)
+		case strings.HasSuffix(strings.TrimSpace(r.Display), "Neutron 5"):
+			lineCol = leading(r.Display)
+			t.Logf("line row: %q lead@%d", r.Display, lineCol)
 		case strings.Contains(r.Display, "Neutron 5 Gate"):
 			if loc != nil {
 				pluginCol = loc[0]

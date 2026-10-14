@@ -162,3 +162,36 @@ func TestAdoptionFailureIsReported(t *testing.T) {
 type errBoom struct{}
 
 func (errBoom) Error() string { return "boom" }
+
+// Selecting a whole folder fills its square (▢ becomes ▣), exactly like
+// mosquitomarchy's Setup/Uninstall folders — no ○/● circles on folders,
+// circles are leaf marks.
+func TestFolderSquareFillsWhenFull(t *testing.T) {
+	items := []Item{
+		{Display: "One", Value: "vst:vst2:/x/One.dll", Formats: "vst2"},
+		{Display: "Two", Value: "vst:vst2:/x/Two.dll", Formats: "vst2"},
+	}
+	tree := orphanTree(items)
+	checked := map[string]bool{}
+	rows := treeItemsToPicker(tree, checked, map[string]bool{"orphan-folder:vst2": true})
+	for _, r := range rows {
+		if r.Value == "orphan-folder:vst2" && r.Filled {
+			t.Fatal("empty folder renders filled")
+		}
+	}
+	checked["vst:vst2:/x/One.dll"] = true
+	checked["vst:vst2:/x/Two.dll"] = true
+	rows = treeItemsToPicker(tree, checked, map[string]bool{"orphan-folder:vst2": true})
+	found := false
+	for _, r := range rows {
+		if r.Value == "orphan-folder:vst2" {
+			found = true
+			if !r.Filled {
+				t.Fatal("full folder does not render filled")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("folder row missing")
+	}
+}

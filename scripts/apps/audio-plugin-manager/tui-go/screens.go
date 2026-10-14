@@ -588,14 +588,11 @@ func treeRows(items []uninstallTreeItem, checked map[string]bool, expanded map[s
 			if expanded[n.Value] {
 				fold = tuikit.FoldExpanded
 			}
-			// The folder's own ○/●, filled only when every plugin under it
-			// is checked — selecting a whole folder must SHOW on its row,
-			// the way ticking rows shows on theirs. Same mark, same
-			// spacing as the plugin rows below it.
-			mark := "○"
-			if total > 0 && marked == total {
-				mark = "●"
-			}
+			// Filled fills the folder's square (▢ becomes ▣) when every
+			// plugin under it is checked — selecting a whole folder SHOWS
+			// on its row exactly like mosquitomarchy's Setup/Uninstall
+			// folders. No ○/● on folders: circles are leaf marks, and a
+			// circled folder read as just another tickable row.
 			// A NESTED folder draws its own fold glyph inside the text, one
 			// indent further in, because the kit paints the glyph in a single
 			// badge column shared by every row: a suite line's ▣ then sat level
@@ -603,26 +600,21 @@ func treeRows(items []uninstallTreeItem, checked map[string]bool, expanded map[s
 			// read as belonging to the vendor rather than inside it. Top-level
 			// folders keep the kit's glyph — there is nothing above them to be
 			// out of line with.
-			display := mark + "  " + pad + n.Display
+			display := pad + n.Display
 			folder := tuikit.PickerItem{
 				Display: display,
 				Value:   n.Value,
 				Fold:    fold,
 				Folder:  true,
+				Filled:  total > 0 && marked == total,
 			}
 			if depth > 0 {
-				folder.Folder = false
-				// The kit's OWN folder glyphs (▢ closed / ▣ open), not the
-				// fold arrows: a root folder draws ▢/▣ in its badge slot, and a
-				// suite line drawn with ▼/▶ read as a different kind of row
-				// entirely — a triangle where everything else in the tree is a
-				// box. Same icon as root, same open/closed behaviour, only the
-				// position differs.
-				icon := tuikit.FolderClosed
-				if expanded[n.Value] {
-					icon = tuikit.FolderOpen
-				}
-				folder.Display = mark + "  " + strings.Repeat("  ", depth) + icon + " " + n.Display
+				// Same kit folder rendering as the root (fold glyph in the
+				// cursor slot, ▢/▣ square filled on full check in the badge
+				// slot): a suite line is a folder like any other, and drawing
+				// it by hand with its own icon string is what left its
+				// selection state invisible while root folders showed theirs.
+				folder.Display = pad + n.Display
 			}
 			if total > 0 {
 				folder.Suffix = fmt.Sprintf("  %d/%d", marked, total)
