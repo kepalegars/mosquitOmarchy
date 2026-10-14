@@ -195,3 +195,17 @@ func TestFolderSquareFillsWhenFull(t *testing.T) {
 		t.Fatal("folder row missing")
 	}
 }
+
+// The track confirm must render: a missing View case left it an empty body
+// (black screen), with Esc the only way out and tracking impossible.
+func TestOrphansConfirmRenders(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrReconcileOrphansTick, scrOrphansConfirm}
+	m.w, m.h = 100, 34
+	m.confirm = tuikit.NewConfirm("Track 2 plugins?", "No", "Yes")
+	if v := m.View(); v == "" {
+		t.Fatal("orphans confirm renders nothing")
+	} else if !strings.Contains(v, "Track 2 plugins?") {
+		t.Fatalf("orphans confirm missing its question:\n%s", v)
+	}
+}

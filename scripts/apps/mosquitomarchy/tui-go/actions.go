@@ -302,6 +302,7 @@ type backupOptionsMsg struct {
 	items   []SetupItemRec
 	keepass bool
 	zen     bool
+	reaper  bool
 	err     error
 }
 
@@ -316,7 +317,7 @@ func fetchBackupOptionsCmd() tea.Cmd {
 		}
 		var folders []FolderRec
 		var items []SetupItemRec
-		keepass, zen := false, false
+		keepass, zen, reaper := false, false, false
 		sc := bufio.NewScanner(bytes.NewReader(out))
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for sc.Scan() {
@@ -336,11 +337,12 @@ func fetchBackupOptionsCmd() tea.Cmd {
 				var o struct {
 					Keepass bool `json:"keepass"`
 					Zen     bool `json:"zen"`
+					Reaper  bool `json:"reaper"`
 				}
 				if err := json.Unmarshal(line, &o); err != nil {
 					return backupOptionsMsg{err: err}
 				}
-				keepass, zen = o.Keepass, o.Zen
+				keepass, zen, reaper = o.Keepass, o.Zen, o.Reaper
 			case probe.Key != "":
 				var it SetupItemRec
 				if err := json.Unmarshal(line, &it); err != nil {
@@ -358,7 +360,7 @@ func fetchBackupOptionsCmd() tea.Cmd {
 		if err := sc.Err(); err != nil {
 			return backupOptionsMsg{err: err}
 		}
-		return backupOptionsMsg{folders: folders, items: items, keepass: keepass, zen: zen}
+		return backupOptionsMsg{folders: folders, items: items, keepass: keepass, zen: zen, reaper: reaper}
 	}
 }
 

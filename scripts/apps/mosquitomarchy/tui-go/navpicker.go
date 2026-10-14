@@ -112,10 +112,10 @@ func (p navPicker) step(dir int) navPicker {
 }
 
 // stepRange moves one selectable row like step, and while a Tab hold is
-// armed it also emits the crossed rows for checking (the file-explorer
-// Shift+arrows gesture: Tab, then Up/Down). Both ends included, inert rows
-// skipped — the host checks what it receives and expands folder rows, so a
-// held Tab can never untoggle anything.
+// armed it also emits the crossed rows for toggling (Tab, then Up/Down,
+// turning back re-toggles). The anchor itself is excluded — its Tab already
+// toggled it. Inert rows skipped; the host toggles what it receives through
+// the same path as a single Tab (folders fill-or-empty as usual).
 func (p navPicker) stepRange(dir int) (navPicker, tea.Cmd) {
 	cur := p.selectedIndex()
 	// Land on the next SELECTABLE row in one go.
@@ -141,34 +141,11 @@ func (p navPicker) stepRange(dir int) (navPicker, tea.Cmd) {
 	if !p.tabHeld {
 		return p, nil
 	}
-	lo, hi := p.tabAnchor, next
-	if lo > hi {
-		lo, hi = hi, lo
-	}
-	if lo < 0 {
-		lo = 0
-	}
-	if hi >= len(p.items) {
-		hi = len(p.items) - 1
-	}
-	if lo > hi {
-		return p, nil
-	}
-	var vals []string
-	for i := lo; i <= hi; i++ {
-		if p.items[i].Disabled || p.items[i].Heading {
-			continue
-		}
-		vals = append(vals, p.items[i].Value)
-	}
-	if len(vals) == 0 {
-		return p, nil
-	}
 	anchor := ""
 	if p.tabAnchor >= 0 && p.tabAnchor < len(p.items) {
 		anchor = p.items[p.tabAnchor].Value
 	}
-	return p, func() tea.Msg { return tuikit.PickerRangeMsg{Values: vals, Anchor: anchor} }
+	return p, func() tea.Msg { return tuikit.PickerRangeMsg{Values: []string{p.items[next].Value}, Anchor: anchor} }
 }
 
 func (p navPicker) selectFirst() navPicker {

@@ -175,10 +175,14 @@ scanfilter = """    // >>> mosquito-hotspot-scanfilter >>> hide our own hotspot 
 anchor_sync = "    wifiNetworks = Model.sortWifiRows(nets)"
 assert src.count(anchor_sync) == 1, "sync anchor not found (stock panel changed?)"
 src = src.replace(anchor_sync, anchor_sync + "\n" + scanfilter)
+# Keep the Wi-Fi band row mounted whenever the radio answers. Omarchy's own
+# gate (bandAvailable > 1) races right after a fresh clone and left the row
+# off even though the radio reports two bands; the user asked for it back, so
+# the gate becomes "on Wi-Fi", full stop.
+src = src.replace("visible: root.canSelectBand", 'visible: root.kind === "wifi"')
 open(panel, "w").write(src)
-print("hero action + hotspot zone + scan filter injected")
+print("hero action + hotspot zone + scan filter + band force injected")
 PYEOF
-
 # -----------------------------------------------------------------------------
 # 4. Bar repoint + enable
 # -----------------------------------------------------------------------------

@@ -25,4 +25,13 @@ func TestAppsRangeJoinsKnownApps(t *testing.T) {
 	if hasApp(got.settings.CloseAppsList, "no-such-app") {
 		t.Fatalf("unknown value joined the list: %v", got.settings.CloseAppsList)
 	}
+	// Crossing back toggles off again.
+	mm2, _ := got.update(tuikit.PickerRangeMsg{
+		Values: []string{"kDrive"},
+		Anchor: "kDrive",
+	})
+	got2, _ := mm2.(model)
+	if hasApp(got2.settings.CloseAppsList, "kDrive") {
+		t.Fatalf("re-crossed app stayed listed: %v", got2.settings.CloseAppsList)
+	}
 }

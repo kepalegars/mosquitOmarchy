@@ -3,7 +3,10 @@
 // gear button. One centered form (FrameScreen centers the body): arrows move,
 // Enter edits (SSID/password) or cycles (band). There is no save button and
 // no success chatter: quitting writes back silently when something changed
-// (password on stdin, never argv), and cancelling is just quitting.
+// (password on stdin, never argv), and cancelling is just quitting. Reset
+// removes the NetworkManager profile so the next open starts from the
+// defaults again. --qr prints a scannable code for the current settings and
+// leaves, which is what the panel's "Show QR code" row opens.
 //
 // When no hotspot profile exists yet the fields come prefilled with the
 // working defaults: this machine's hostname, 12345678, 5 GHz.
@@ -147,10 +150,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "esc", "q":
 			return m.quit()
 		case "up", "k":
-			m.row = (m.row + 3) % 4
+			m.row = (m.row + 4) % 5
 			return m, nil
 		case "down", "j":
-			m.row = (m.row + 1) % 4
+			m.row = (m.row + 1) % 5
 			return m, nil
 		case "enter":
 			return m.activate()
@@ -205,6 +208,8 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 		return m, nil
 	case 3:
 		return m.quit()
+	case 4:
+		return m, resetCmd()
 	}
 	return m, nil
 }
@@ -233,6 +238,33 @@ func (m model) inputDone(msg tuikit.InputResultMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// resetCmd drops the hotspot profile; the next status read then reports
+// "not configured" and the form refills the defaults on the next open.
+func resetCmd() tea.Cmd {
+	return func() tea.Msg {
+		var con string
+		out, err := exec.Command(backendBin(), "status").Output()
+		if err == nil {
+			var st struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal(out, &st)
+			con = st.Name
+		}
+		if con == "" {
+			con = "mosquito-hotspot"
+		}
+		if out, err := exec.Command("nmcli", "connection", "delete", "id", con).CombinedOutput(); err != nil {
+			msg := strings.TrimSpace(string(out))
+			if msg == "" {
+				msg = err.Error()
+			}
+			return saveResultMsg{err: fmt.Errorf("%s", msg)}
+		}
+		return saveResultMsg{}
+	}
+}
+
 func saveCmd(ssid, password, band string) tea.Cmd {
 	return func() tea.Msg {
 		if strings.TrimSpace(ssid) == "" {
@@ -258,6 +290,9 @@ func saveCmd(ssid, password, band string) tea.Cmd {
 
 func (m model) View() string {
 	var b strings.Builder
+	// Plain art, no accent fill: on a dark theme the accent block read as a
+	// shadow behind the letters and made the banner smudge. Same characters,
+	// no style — the frame around it is decoration enough.
 	for _, l := range hotspotArt {
 		b.WriteString(l + "\n")
 	}
@@ -277,6 +312,7 @@ func (m model) View() string {
 		{"Password", maskPassword(m.password)},
 		{"Band", bandLabel(m.band)},
 		{"Quit", ""},
+		{"Reset settings", ""},
 	}
 	for i, r := range rows {
 		cursor := "  "
@@ -294,8 +330,6 @@ func (m model) View() string {
 	}
 	if !m.configured {
 		b.WriteString("\nnot set up yet — showing defaults\n")
-	} else {
-		b.WriteString("\nquitting saves back automatically\n")
 	}
 	if t := m.toast.View(); t != "" {
 		b.WriteString("\n" + t)
@@ -311,7 +345,30 @@ func maskPassword(p string) string {
 	return "••••••••"
 }
 
+// qr prints a scannable code for the CURRENT settings (a fresh profile uses
+// the defaults) and exits — the panel's "Show QR code" row opens it in a
+// terminal. WIFI:T:WPA;S:<ssid>;P:<pw>;; is the understood shape.
+func qr() int {
+	st := loadStatus()
+	m := model{ssid: hostnameDefault(), password: "12345678", band: "a"}
+	if st.Configured {
+		m.ssid, m.password, m.band = cleanLine(st.Ssid), cleanLine(st.Password), st.Band
+	}
+	payload := "WIFI:T:WPA;S:" + m.ssid + ";P:" + m.password + ";;"
+	out, err := exec.Command("qrencode", "-t", "ANSIUTF8", payload).Output()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mosquito-hotspot-tui: qrencode:", err)
+		return 1
+	}
+	fmt.Print(string(out))
+	fmt.Printf("\n%s · %s\n", m.ssid, bandLabel(m.band))
+	return 0
+}
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--qr" {
+		os.Exit(qr())
+	}
 	m := initialModel()
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {

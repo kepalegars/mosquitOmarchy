@@ -483,6 +483,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.backupOpts.HasKeep = msg.keepass
 		m.backupOpts.HasZen = msg.zen
+		m.backupOpts.HasReaper = msg.reaper
+		m.backupOpts.HasReaper = msg.reaper
 		if m.top() == scrBackupOptions {
 			m.backupOptPicker = m.rebuildBackupOptions()
 		}
@@ -1819,6 +1821,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.backupPicker, cmd = m.backupPicker.Update(msg)
 	case scrBackupOptions:
 		m.backupOptPicker, cmd = m.backupOptPicker.Update(msg)
+	case scrBackupReaper:
+		m.backupReaperPicker, cmd = m.backupReaperPicker.Update(msg)
 	case scrBackupApps:
 		m.backupAppsPicker, cmd = m.backupAppsPicker.Update(msg)
 	case scrThemeFolder:
@@ -1837,9 +1841,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		if rg, ok := msg.(tuikit.PickerRangeMsg); ok {
 			for _, v := range rg.Values {
-				if m.themeChecked[v] {
-					continue
-				}
 				m.toggleThemeTick(v)
 			}
 			m.themeUninstallPicker = m.rebuildThemeUninstall()
@@ -2727,6 +2728,10 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			saveBackupOpts(m.backupOpts)
 			m.backupOptPicker = m.rebuildBackupOptions()
 			return m, nil
+		case "reaper":
+			m.backupReaperPicker = m.rebuildBackupReaper()
+			m.push(scrBackupReaper)
+			return m, nil
 		case "encrypt":
 			m.backupOpts.Encrypt = !m.backupOpts.Encrypt
 			saveBackupOpts(m.backupOpts)
@@ -2741,6 +2746,18 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 
 	case scrBackupApps:
 		// Enter on any row returns to the options (the checkmarks are kept).
+		m.pop()
+		m.backupOptPicker = m.rebuildBackupOptions()
+		return m, nil
+
+	case scrBackupReaper:
+		if !res.Canceled && res.Value != "back" {
+			switch res.Value {
+			case "none", "settings", "full":
+				m.backupOpts.Reaper = res.Value
+				saveBackupOpts(m.backupOpts)
+			}
+		}
 		m.pop()
 		m.backupOptPicker = m.rebuildBackupOptions()
 		return m, nil
@@ -4099,6 +4116,12 @@ func (m model) rebuildBackupOptions() navPicker {
 	if m.backupOpts.HasZen {
 		items = append(items, tuikit.PickerItem{Display: "Zen browser settings: " + yesno(m.backupOpts.Zen), Value: "zen"})
 	}
+	if m.backupOpts.HasReaper {
+		items = append(items, tuikit.PickerItem{Display: "REAPER backup: " + reaperDepthLabel(m.backupOpts.Reaper), Value: "reaper"})
+	}
+	if m.backupOpts.HasReaper {
+		items = append(items, tuikit.PickerItem{Display: "REAPER backup: " + reaperDepthLabel(m.backupOpts.Reaper), Value: "reaper"})
+	}
 	enc := "no"
 	if m.backupOpts.Encrypt {
 		enc = "yes — passphrase (AES-256)"
@@ -4113,6 +4136,33 @@ func (m model) rebuildBackupOptions() navPicker {
 	return p.SelectIndex(idx)
 }
 
+// rebuildBackupReaper renders the REAPER depth chooser. Enter picks the row
+// under the cursor and returns to the options; Esc does the same as Back.
+func (m model) rebuildBackupReaper() navPicker {
+	idx := m.backupReaperPicker.Index()
+	cur := ""
+	items := []tuikit.PickerItem{
+		{Display: "Settings only — preferences, keymaps, themes, FX chains", Value: "settings"},
+		{Display: "Everything — the whole config folder + the portable install", Value: "full"},
+		{Display: "Nothing", Value: "none"},
+		{Display: "Back", Value: "back"},
+	}
+	for _, it := range items {
+		if it.Value == m.backupOpts.Reaper {
+			cur = it.Display
+		}
+	}
+	if cur == "" {
+		cur = items[0].Display
+	}
+	items = append(items, tuikit.PickerItem{Display: "", Disabled: true})
+	items = append(items, tuikit.PickerItem{Display: "now: " + cur, Value: "", Disabled: true})
+	p := newNavPicker("REAPER backup — how much to include", items).SetSize(m.contentSize()).
+		SetHelpKeys(key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "pick")),
+			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")))
+	return p.SelectIndex(idx)
+}
+
 // rebuildBackupApps rebuilds the backup content tree picker.
 func (m model) rebuildBackupApps() navPicker {
 	idx := m.backupAppsPicker.Index()
@@ -4124,6 +4174,18 @@ func (m model) rebuildBackupApps() navPicker {
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
 		)
 	return p.SelectIndex(idx)
+}
+
+// reaperDepthLabel is the backup-options row text for the REAPER depth.
+func reaperDepthLabel(mode string) string {
+	switch mode {
+	case "none":
+		return "no"
+	case "full":
+		return "everything (config + portable install)"
+	default:
+		return "settings only"
+	}
 }
 
 func yesno(b bool) string {
@@ -4153,6 +4215,8 @@ func (m model) beginBackup() (model, tea.Cmd) {
 		"--vst=" + m.backupOpts.VST,
 		"--keepass=" + yesno(m.backupOpts.Keepass),
 		"--zen=" + yesno(m.backupOpts.Zen),
+		"--reaper=" + m.backupOpts.Reaper,
+		"--reaper=" + m.backupOpts.Reaper,
 		"--selection=" + m.backupSelFile,
 		// Always sent, empty or not: the backend treats an empty name as "use
 		// the dated name", and omitting the flag entirely would make an edit

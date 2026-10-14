@@ -278,6 +278,10 @@ func (m model) View() string {
 		title = screenTitle("Backup options", w)
 		body = m.backupOptPicker.View()
 		bar = barLine(m.backupOptPicker.ShortcutsHint())
+	case scrBackupReaper:
+		title = screenTitle("REAPER backup", w)
+		body = m.backupReaperPicker.View()
+		bar = barLine(m.backupReaperPicker.ShortcutsHint())
 	case scrBackupApps:
 		title = screenTitle("Backup content — apps / TUIs / webapps", w)
 		body = m.backupAppsPicker.View()

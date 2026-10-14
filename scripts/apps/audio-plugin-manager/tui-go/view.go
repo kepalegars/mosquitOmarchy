@@ -278,7 +278,7 @@ func (m model) View() string {
 		body = m.infoConfirm.View()
 		bar = barLine(m.infoConfirm.ShortcutsHint())
 	case scrReconcileMissingInfo, scrReconcileMissingRemove,
-		scrUninstallConfirm, scrInstallPrefixChoice, scrPrefixMoveConfirm,
+		scrUninstallConfirm, scrOrphansConfirm, scrInstallPrefixChoice, scrPrefixMoveConfirm,
 		scrSuperfileInstallConfirm, scrPluginListSaveConfirm,
 		scrPluginsRootConfirm, scrRunnerSuccessConfirm, scrQuitConfirm,
 		scrWizardRoot, scrInstallFixesConfirm, scrInstallFixesHow, scrFixApplyConfirm,

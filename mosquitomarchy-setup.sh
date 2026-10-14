@@ -1046,7 +1046,19 @@ mq_vst_init(){
   has_vst_sources=$(( ${#VST_DIRS[@]} > 0 && 1 ))
 }
 
-# ───- Apps / tuis / webapps ("apps" module) ───
+# reaper_portable_root prints the root of a PORTABLE REAPER install (the
+# folder holding both `reaper` and `reaper.ini`), and nothing when REAPER is a
+# system/package install — those keep their config in ~/.config/REAPER only and
+# must NOT be swept into an archive with their multi-GB program folder.
+reaper_portable_root(){
+  local d
+  for d in "$HOME/REAPER" "$HOME/reaper" "$HOME/.local/share/REAPER"; do
+    [[ -x "$d/reaper" ]] && { printf '%s\n' "$d"; return 0; }
+  done
+  return 1
+}
+
+# ─── Apps / tuis / webapps ("apps" module) ───
 # Modular catalogs: one per type under apps/gui, apps/tui-tools, apps/webapps.
 # Note: catalog PATHS use CAT_FILE_* — CAT_APP/CAT_TUI/CAT_WEB are the loaded
 # entry ARRAYS (a name collision would clobber the paths).
@@ -1719,6 +1731,44 @@ do_backup(){
   for ini in "$HOME"/.config/REAPER/reaper-vstplugins*.ini; do
     [[ -f $ini ]] && { rel="${ini#"$HOME/"}"; [[ -e "$HOME/$rel" ]] || paths+=("$rel"); }
   done
+  # ── REAPER — three depths, only when it is installed ──
+  #   settings  the .ini set (every preference REAPER writes) plus the small
+  #             config folders a user actually edits. No Data/ (42 MB of
+  #             caches, peak files and undo history here), no Scripts/ or
+  #             UserPlugins/ (the plugins' own business).
+  #   full      the whole ~/.config/REAPER AND, when there is one, the
+  #             portable install itself (reaper + reaper.ini side by side) —
+  #             the only way a portable REAPER survives a restore.
+  #   none      nothing REAPER-specific (the vstplugins ini above is always
+  #             kept: without it a restore re-scans every VST from zero).
+  if command -v reaper >/dev/null 2>&1 || [[ -d "$HOME/.config/REAPER" ]]; then
+    case "${BACKUP_REAPER_MODE:-settings}" in
+      none)
+        info "REAPER: not backed up (--reaper=none)"
+        ;;
+      settings)
+        for ini in "$HOME"/.config/REAPER/*.ini; do
+          [[ -f $ini ]] && { rel="${ini#"$HOME/"}"; [[ -e "$HOME/$rel" ]] || paths+=("$rel"); }
+        done
+        local rd
+        for rd in ColorThemes Cursors KeyMaps LangPack MIDINoteNames MouseMaps \
+                  OSC FXChains TrackTemplates ProjectTemplates Effects; do
+          [[ -d "$HOME/.config/REAPER/$rd" ]] && paths+=(".config/REAPER/$rd")
+        done
+        ok "REAPER settings included (preferences, keymaps, themes, FX chains)"
+        ;;
+      full)
+        [[ -d "$HOME/.config/REAPER" ]] && paths+=(".config/REAPER")
+        local rport
+        if rport="$(reaper_portable_root)"; then
+          paths+=("${rport#"$HOME/"}")
+          ok "REAPER full: ~/.config/REAPER + the portable install ($rport)"
+        else
+          ok "REAPER full: ~/.config/REAPER (no portable install found)"
+        fi
+        ;;
+    esac
+  fi
   # KeePassXC passwords + settings — ONLY if the app is installed, and the
   # tar archive goes to $BACKUP_DIR (next to the repo, mosquitomarchy-backups/):
   # password files must NEVER enter the repository. BACKUP_SKIP_KEEPASS=1

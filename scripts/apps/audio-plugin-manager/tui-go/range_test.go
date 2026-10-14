@@ -44,8 +44,8 @@ func TestUninstallRangeFillsFolder(t *testing.T) {
 	}
 }
 
-// A range never untoggles: already-checked rows stay checked.
-func TestOrphanRangeKeepsChecked(t *testing.T) {
+// A range toggles: crossing a checked row unchecks it again.
+func TestOrphanRangeToggles(t *testing.T) {
 	m := initialModel()
 	m.nav = []screen{scrMain, scrReconcileOrphansTick}
 	m.orphanCache = []Item{
@@ -55,7 +55,10 @@ func TestOrphanRangeKeepsChecked(t *testing.T) {
 	m.orphanChecked = map[string]bool{"vst:vst2:/x/One.dll": true}
 	mm, _ := m.update(tuikit.PickerRangeMsg{Values: []string{"vst:vst2:/x/One.dll", "vst:vst2:/x/Two.dll"}, Anchor: "vst:vst2:/x/One.dll"})
 	got, _ := mm.(model)
-	if !got.orphanChecked["vst:vst2:/x/One.dll"] || !got.orphanChecked["vst:vst2:/x/Two.dll"] {
-		t.Fatalf("range lost a check: %v", got.orphanChecked)
+	if got.orphanChecked["vst:vst2:/x/One.dll"] {
+		t.Fatalf("crossed checked row stayed checked: %v", got.orphanChecked)
+	}
+	if !got.orphanChecked["vst:vst2:/x/Two.dll"] {
+		t.Fatalf("crossed unchecked row stayed unchecked: %v", got.orphanChecked)
 	}
 }

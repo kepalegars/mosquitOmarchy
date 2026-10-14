@@ -53,8 +53,8 @@ func TestTabHeldDownChecksThePath(t *testing.T) {
 		t.Fatal("Tab did not toggle the anchor row")
 	}
 	vals := rangeValues(msgs)
-	if len(vals) != 2 || vals[0] != "a" || vals[1] != "b" {
-		t.Fatalf("range = %v, want [a b]", vals)
+	if len(vals) != 1 || vals[0] != "b" {
+		t.Fatalf("range = %v, want [b] (anchor excluded)", vals)
 	}
 }
 
@@ -63,12 +63,9 @@ func TestTabHeldDownTwiceGrowsFromAnchor(t *testing.T) {
 	p := rangePicker()
 	_, msgs := rangeMsgs(p, "tab", "down", "down")
 	vals := rangeValues(msgs)
-	// First down: [a b]; second down: [a b c].
-	if len(vals) != 5 {
-		t.Fatalf("range values = %v, want 5 across two steps", vals)
-	}
-	if vals[4] != "c" {
-		t.Fatalf("extended range does not reach c: %v", vals)
+	// First down emits [b], second emits [c]: one crossed row per step.
+	if len(vals) != 2 || vals[0] != "b" || vals[1] != "c" {
+		t.Fatalf("range values = %v, want [b c]", vals)
 	}
 }
 
@@ -78,8 +75,8 @@ func TestTabHeldUpChecksUpwards(t *testing.T) {
 	p, _ = rangeMsgs(p, "down", "down")
 	_, msgs := rangeMsgs(p, "tab", "up")
 	vals := rangeValues(msgs)
-	if len(vals) != 2 || vals[0] != "b" || vals[1] != "c" {
-		t.Fatalf("range = %v, want [b c]", vals)
+	if len(vals) != 1 || vals[0] != "b" {
+		t.Fatalf("range = %v, want [b]", vals)
 	}
 }
 
@@ -167,7 +164,7 @@ func TestTabHeldRangeSpansLongLists(t *testing.T) {
 	for _, v := range vals {
 		seen[v] = true
 	}
-	for _, want := range []string{"v0", "v20", "v39"} {
+	for _, want := range []string{"v1", "v20", "v39"} {
 		if !seen[want] {
 			t.Fatalf("row %q never crossed (vals=%d)", want, len(vals))
 		}
@@ -195,9 +192,21 @@ func TestRangeSkipsInertRows(t *testing.T) {
 	}).SetSize(60, 20)
 	_, msgs := rangeMsgs(p, "tab", "down", "down")
 	vals := rangeValues(msgs)
-	// One range [a b]: the cursor skips the heading, the second down
+	// One range [b]: the cursor skips the heading, the second down
 	// goes nowhere. The heading itself is never included.
-	if len(vals) != 2 || vals[0] != "a" || vals[1] != "b" {
-		t.Fatalf("range = %v, want [a b]", vals)
+	if len(vals) != 1 || vals[0] != "b" {
+		t.Fatalf("range = %v, want [b]", vals)
+	}
+}
+
+// Turning back re-emits the rows crossed again (anchor still excluded), so
+// the host toggles them back — down over two then up over one unchecks it.
+func TestTabHeldTurnBackReemits(t *testing.T) {
+	p := rangePicker()
+	_, msgs := rangeMsgs(p, "tab", "down", "down", "up")
+	vals := rangeValues(msgs)
+	// [b], [c], [b]: down checks, down checks, back up unchecks.
+	if len(vals) != 3 || vals[0] != "b" || vals[1] != "c" || vals[2] != "b" {
+		t.Fatalf("turn-back ranges = %v, want [b c b]", vals)
 	}
 }

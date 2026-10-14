@@ -1059,7 +1059,7 @@ cmd_backup_options(){
     fi
     printf true
   }
-  local keepass=false zen=false
+  local keepass=false zen=false reaper=false
   # The screen only shows a row for what the backup can actually take, and the
   # backup's own conditions are the reference (see do_backup): KeePassXC needs
   # the package AND its config folder, Zen needs the app AND a live profile.
@@ -1067,7 +1067,10 @@ cmd_backup_options(){
   # that silently does nothing.
   if pkg_has keepassxc && [[ -d "$HOME/.config/keepassxc" ]]; then keepass=true; fi
   if pkg_has zen-browser-bin && [[ -f "$HOME/.config/zen/profiles.ini" ]] && [[ -d "$HOME/.config/zen" ]]; then zen=true; fi
-  printf '{"opts":true,"keepass":%s,"zen":%s}\n' "$keepass" "$zen"
+  # REAPER: present when it is installed or its config folder is there. The
+  # screen only offers the row for what a backup can actually take.
+  if command -v reaper >/dev/null 2>&1 || [[ -d "$HOME/.config/REAPER" ]]; then reaper=true; fi
+  printf '{"opts":true,"keepass":%s,"zen":%s,"reaper":%s}\n' "$keepass" "$zen" "$reaper"
 
   local e name label checked p
   # Split the installed TUIs into the ones filed under Apps and the ones that
@@ -1894,12 +1897,13 @@ cmd_menu_entry(){
 #   --selection=FILE       apps.selected content (the TUI's checkbox tree)
 #   --name=TEXT            label for the archive; sanitised into the filename
 cmd_backup(){
-  local vst="list" keepass="yes" zen="yes" sel="" name="" a
+  local vst="list" keepass="yes" zen="yes" reaper="settings" sel="" name="" a
   for a in "$@"; do
     case $a in
       --vst=*) vst="${a#*=}" ;;
       --keepass=*) keepass="${a#*=}" ;;
       --zen=*) zen="${a#*=}" ;;
+      --reaper=*) reaper="${a#*=}" ;;
       --selection=*) sel="${a#*=}" ;;
       --name=*) name="${a#*=}" ;;
     esac
@@ -1911,6 +1915,12 @@ cmd_backup(){
   # as the caller stops swallowing the status.
   if [[ $keepass == no ]]; then export BACKUP_SKIP_KEEPASS=1; fi
   if [[ $zen == no ]]; then export BACKUP_SKIP_ZEN=1; fi
+  # REAPER depth: none | settings | full. An unknown value is the default
+  # rather than an error: a malformed preference must not kill a backup.
+  case "$reaper" in
+    none|full) export BACKUP_REAPER_MODE="$reaper" ;;
+    *)         export BACKUP_REAPER_MODE="settings" ;;
+  esac
   if [[ -n $sel && -f $sel ]]; then export BACKUP_APPS_SELECTION_FILE="$sel"; fi
   # Empty is meaningful here (an unnamed backup falls back to the dated name),
   # so it is exported unconditionally rather than only when set.

@@ -975,7 +975,7 @@ func TestBackupOptionsPersistAcrossSessions(t *testing.T) {
 	}
 
 	// What the user chose must come back.
-	saved := BackupOpts{VST: "none", Keepass: false, Zen: true, Encrypt: true, Name: "avant upgrade"}
+	saved := BackupOpts{VST: "none", Keepass: false, Zen: true, Reaper: "full", Encrypt: true, Name: "avant upgrade"}
 	saveBackupOpts(saved)
 	back := loadBackupOpts()
 	if back != saved {

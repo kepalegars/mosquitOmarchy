@@ -518,7 +518,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tuikit.PickerRangeMsg:
 		// Tab-held range over the apps list: every known app on the way
-		// joins the close-at-start set (already-listed ones stay).
+		// toggles, like its Tab does.
 		if m.top() == scrApps {
 			for _, v := range msg.Values {
 				known := false
@@ -528,7 +528,18 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						break
 					}
 				}
-				if known && !hasApp(m.settings.CloseAppsList, v) {
+				if !known {
+					continue
+				}
+				if hasApp(m.settings.CloseAppsList, v) {
+					var next []string
+					for _, a := range m.settings.CloseAppsList {
+						if a != v {
+							next = append(next, a)
+						}
+					}
+					m.settings.CloseAppsList = next
+				} else {
 					m.settings.CloseAppsList = append(m.settings.CloseAppsList, v)
 				}
 			}

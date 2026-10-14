@@ -38,12 +38,15 @@ type PickerActionMsg struct{ Key string }
 
 // PickerRangeMsg is the Tab-held range select: Tab, then Up/Down with no
 // other key between (the terminal reports no key release, so "held" means
-// "Tab was the last selection key"). Values holds every selectable row
-// between the Tab row and the new cursor, both ends included; Anchor is
-// the Tab row's value, so the host can re-arm the hold after the rebuild
-// its handling does (a rebuild is a brand-new picker). Hosts CHECK the
-// values (never toggle), so a row Tab already checked stays checked and
-// holding Tab can never untoggle anything by accident.
+// "Tab was the last selection key"). Values holds every selectable row the
+// cursor crossed after the Tab row, up to and including the new cursor —
+// the anchor itself is excluded (its Tab already toggled it). Turning back
+// re-toggles the rows crossed again, so a held Tab works like a toggle
+// brush: down over eight rows checks them, back up over three unchecks
+// those three. Anchor is the Tab row's value, so the host can re-arm the
+// hold after the rebuild its handling does (a rebuild is a brand-new
+// picker). Hosts TOGGLE every value through the same path a single Tab
+// uses (folders fill-or-empty as usual).
 type PickerRangeMsg struct {
 	Values []string
 	Anchor string
@@ -1243,45 +1246,33 @@ func (p Picker) ArmRange(value string) Picker {
 	return p
 }
 
-// rangeCmd emits the rows a Tab-held Up/Down just crossed, or nil when no
-// range is armed. Both ends included, inert rows (headings, disabled, Back)
-// skipped — the host checks what it receives and can expand folder rows to
-// their children, exactly like its Tab handler does for a single row.
+// rangeCmd emits the row a Tab-held Up/Down just entered, or nil when no
+// range is armed (or the cursor did not move). One value per step: the host
+// toggles it exactly like a Tab on it, so walking down over unchecked rows
+// checks them and walking back up unchecks them again — a toggle brush. The
+// anchor itself travels along for re-arming after rebuilds, and IS emitted
+// when the cursor comes back onto it (undoing its Tab, like any crossing).
+// Inert rows never move the cursor (advance skips them), so they never emit.
 func (p Picker) rangeCmd() tea.Cmd {
 	if !p.tabHeld {
 		return nil
 	}
 	items := p.list.Items()
 	cur := p.list.Index()
-	lo, hi := p.tabAnchor, cur
-	if lo > hi {
-		lo, hi = hi, lo
-	}
-	if lo < 0 {
-		lo = 0
-	}
-	if hi >= len(items) {
-		hi = len(items) - 1
-	}
-	if lo > hi {
+	if cur < 0 || cur >= len(items) {
 		return nil
 	}
-	var vals []string
-	for i := lo; i <= hi; i++ {
-		if it, ok := items[i].(PickerItem); ok && !inert(it) {
-			vals = append(vals, it.Value)
-		}
-	}
-	if len(vals) == 0 {
+	it, ok := items[cur].(PickerItem)
+	if !ok || inert(it) {
 		return nil
 	}
 	anchor := ""
 	if p.tabAnchor >= 0 && p.tabAnchor < len(items) {
-		if it, ok := items[p.tabAnchor].(PickerItem); ok {
-			anchor = it.Value
+		if ait, ok := items[p.tabAnchor].(PickerItem); ok {
+			anchor = ait.Value
 		}
 	}
-	return func() tea.Msg { return PickerRangeMsg{Values: vals, Anchor: anchor} }
+	return func() tea.Msg { return PickerRangeMsg{Values: []string{it.Value}, Anchor: anchor} }
 }
 
 // foldKey is ←/→ on a picker declared with WithTree.

@@ -2201,9 +2201,10 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if rg, ok := msg.(tuikit.PickerRangeMsg); ok {
-			// Tab-held range: check what is not checked yet, through the
-			// same folder logic a single Tab uses. Unknown values (Back,
-			// headings) never land in the map.
+			// Tab-held range: toggle every known row on the way through
+			// the same folder logic a single Tab uses (turning back
+			// untoggles again). Unknown values (Back, headings) never
+			// land in the map.
 			rows := pluginItemsAsItems(m.pluginCache)
 			known := map[string]bool{}
 			for _, it := range rows {
@@ -2214,13 +2215,9 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 					continue
 				}
 				if isFolderRow(rows, v) {
-					kids, all := folderRangeKids(rows, v, m.pluginChecked)
-					if all || len(kids) == 0 {
-						continue
-					}
 					toggleFolderPlugins(rows, v, m.pluginChecked)
-				} else if !m.pluginChecked[v] {
-					m.pluginChecked[v] = true
+				} else {
+					m.pluginChecked[v] = !m.pluginChecked[v]
 				}
 			}
 			m.rebuildPluginPicker()
@@ -2573,41 +2570,30 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if rg, ok := msg.(tuikit.PickerRangeMsg); ok {
-			// Tab-held range over the fixes tree: full rows stay full,
-			// the rest runs through toggleFixValue (a partial becomes
-			// complete, an unchecked row checks). Categories fill when
-			// anything under them is unchecked.
+			// Tab-held range over the fixes tree: every known value
+			// toggles like its Tab does (partials cycle, categories
+			// fill-or-empty as usual).
 			for _, v := range rg.Values {
 				if strings.HasPrefix(v, fixCategoryValuePrefix) {
 					cat := strings.TrimPrefix(v, fixCategoryValuePrefix)
-					anyUnchecked := false
 					known := false
 					for _, it := range m.fixCache {
-						if fixCategoryOf(it) != cat {
-							continue
-						}
-						known = true
-						if !m.fixChecked[it.ID] {
-							anyUnchecked = true
+						if fixCategoryOf(it) == cat {
+							known = true
 							break
 						}
 					}
-					if known && anyUnchecked {
+					if known {
 						m.toggleFixValue(v)
 					}
 					continue
 				}
-				known := false
 				for _, it := range m.fixCache {
 					if it.ID == v {
-						known = true
+						m.toggleFixValue(v)
 						break
 					}
 				}
-				if !known || m.fixChecked[v] {
-					continue
-				}
-				m.toggleFixValue(v)
 			}
 			m.rebuildFixPicker()
 			m.picker = m.picker.ArmRange(rg.Anchor)
@@ -2951,13 +2937,9 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 					continue
 				}
 				if isFolderRow(m.uninstallCache, v) {
-					kids, all := folderRangeKids(m.uninstallCache, v, m.uninstallChecked)
-					if all || len(kids) == 0 {
-						continue
-					}
 					toggleFolderPlugins(m.uninstallCache, v, m.uninstallChecked)
-				} else if !m.uninstallChecked[v] {
-					m.uninstallChecked[v] = true
+				} else {
+					m.uninstallChecked[v] = !m.uninstallChecked[v]
 				}
 			}
 			m.rebuildUninstallPicker()
@@ -3513,9 +3495,9 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if rg, ok := msg.(tuikit.PickerRangeMsg); ok {
-			// Tab-held range over the untracked tree: folders fill when
-			// anything under them is unchecked, rows check. Unknown
-			// values (Back, headings) never land in the map.
+			// Tab-held range over the untracked tree: every known value
+			// toggles like its Tab does. Unknown values (Back, headings)
+			// never land in the map.
 			known := map[string]bool{}
 			for _, it := range m.orphanCache {
 				known[it.Value] = true
@@ -3526,26 +3508,13 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 					continue
 				}
 				if strings.HasPrefix(v, "orphan-folder:") {
-					f := strings.TrimPrefix(v, "orphan-folder:")
-					kids, anyUnchecked := 0, false
-					for _, it := range m.orphanCache {
-						if orphanFolderOf(it) != f {
-							continue
-						}
-						kids++
-						if !m.orphanChecked[it.Value] {
-							anyUnchecked = true
-						}
-					}
-					if kids == 0 || !anyUnchecked {
-						continue
-					}
 					toggleOrphanFolder(m.orphanCache, v, m.orphanChecked)
-				} else if !m.orphanChecked[v] {
-					m.orphanChecked[v] = true
+				} else {
+					m.orphanChecked[v] = !m.orphanChecked[v]
 				}
 			}
 			m.rebuildOrphanPicker()
+			m.picker = m.picker.ArmRange(rg.Anchor)
 			return m, nil
 		}
 		if fm, ok := msg.(tuikit.TreeFoldMsg); ok {

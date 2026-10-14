@@ -27,6 +27,7 @@ const (
 	scrKBInput
 	scrBackup
 	scrBackupRestore
+	scrBackupReaper
 	scrMenuEntries
 	scrSettings
 	scrConfirm
@@ -78,10 +79,12 @@ type BackupOpts struct {
 	VST     string // "list" | "full" | "none"
 	Keepass bool   // include KeePassXC passwords (only when installed)
 	Zen     bool   // include the Zen browser settings (prefs.js/user.js/containers.json + extensions)
+	Reaper  string // "none" | "settings" | "full" (full = whole config + portable install)
 	Encrypt bool   // AES-256 with a passphrase
 	Name    string // optional label for the archive, "" = the dated default
 	HasKeep bool   // the machine has keepassxc + its config/db
 	HasZen  bool   // the machine has a Zen profile
+	HasReaper bool // the machine has REAPER (or its config folder)
 }
 
 // storedBackupOpts is the on-disk shape. Deliberately NOT the BackupOpts
@@ -91,6 +94,7 @@ type storedBackupOpts struct {
 	VST     string `json:"vst"`
 	Keepass bool   `json:"keepass"`
 	Zen     bool   `json:"zen"`
+	Reaper  string `json:"reaper"`
 	Encrypt bool   `json:"encrypt"`
 	Name    string `json:"name"`
 }
@@ -100,7 +104,7 @@ type storedBackupOpts struct {
 // the defaults instead of an error: a corrupt preference file must never be
 // able to stop the Backup screen from opening.
 func loadBackupOpts() BackupOpts {
-	def := BackupOpts{VST: "list", Keepass: true, Zen: true}
+	def := BackupOpts{VST: "list", Keepass: true, Zen: true, Reaper: "settings"}
 	out, err := runQuick("backup-opts", "get")
 	if err != nil {
 		return def
@@ -113,6 +117,10 @@ func loadBackupOpts() BackupOpts {
 	case "full", "none", "list":
 		def.VST = st.VST
 	}
+	switch st.Reaper {
+	case "none", "full", "settings":
+		def.Reaper = st.Reaper
+	}
 	// Only take a preference that is actually a preference. A stored false for
 	// keepass/zen is legitimate (the user turned them off), so they are applied
 	// as-is; but an absent field decodes to false too, which would silently
@@ -120,7 +128,7 @@ func loadBackupOpts() BackupOpts {
 	// saveBackupOpts, which always writes all five, so a decode that produced a
 	// zero value anywhere means the file was not written by us.
 	if st.VST == "" {
-		return BackupOpts{VST: "list", Keepass: true, Zen: true}
+		return BackupOpts{VST: "list", Keepass: true, Zen: true, Reaper: "settings"}
 	}
 	def.Keepass = st.Keepass
 	def.Zen = st.Zen
@@ -137,6 +145,7 @@ func saveBackupOpts(o BackupOpts) {
 		VST:     o.VST,
 		Keepass: o.Keepass,
 		Zen:     o.Zen,
+		Reaper:  o.Reaper,
 		Encrypt: o.Encrypt,
 		Name:    o.Name,
 	})
@@ -202,6 +211,7 @@ type model struct {
 	// the apps/tuis/webapps content tree.
 	backupOptPicker  navPicker
 	backupAppsPicker navPicker
+	backupReaperPicker navPicker
 
 	confirm   tuikit.Confirm
 	runner    tuikit.Runner
@@ -458,6 +468,7 @@ func initialModel() model {
 	m.updatePicker = newNavPicker("", nil)
 	m.backupPicker = newNavPicker("", nil)
 	m.backupOptPicker = newNavPicker("", nil)
+	m.backupReaperPicker = newNavPicker("", nil)
 	m.backupAppsPicker = newNavPicker("", nil)
 	m.runner = tuikit.NewRunner()
 	return m
@@ -660,24 +671,18 @@ func (m *model) pushKeepassxcConsent(v string) {
 	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
 }
 
-// rangeCheck applies a Tab-held range (PickerRangeMsg): every value arrives
-// to be CHECKED, never toggled. Already-checked rows are skipped and the rest
-// runs through the same helpers the Tab toggle uses, so folder rows still
-// fill whole folders and a newly checked KeePassXC row still asks consent.
+// rangeCheck applies a Tab-held range (PickerRangeMsg): every value toggles
+// through the same helpers a single Tab uses — folders fill-or-empty as
+// usual, rows flip. Turning back over crossed rows untoggles them, so a
+// held Tab works like a toggle brush. A newly checked KeePassXC row still
+// asks consent, like its Tab does.
 func (m *model) rangeCheck(values []string, anchor string) {
 	switch m.top() {
 	case scrSetupCat:
 		for _, v := range values {
 			if strings.HasPrefix(v, "cat:") {
-				f := strings.TrimPrefix(v, "cat:")
-				if treeFolderChecked(m.setupItems, m.selected, f) {
-					continue
-				}
-				m.toggleFolder(f)
+				m.toggleFolder(strings.TrimPrefix(v, "cat:"))
 			} else if strings.HasPrefix(v, "item:") {
-				if m.selected[v] {
-					continue
-				}
 				m.toggle(v)
 				if m.treeMode == "install" && strings.HasSuffix(v, ":keepassxc") && m.selected[v] {
 					m.pushKeepassxcConsent(v)
@@ -691,13 +696,13 @@ func (m *model) rangeCheck(values []string, anchor string) {
 	case scrBackupApps:
 		for _, v := range values {
 			if strings.HasPrefix(v, "cat:") {
-				f := strings.TrimPrefix(v, "cat:")
-				if treeFolderChecked(m.backupItems, m.backupChecked, f) {
-					continue
-				}
-				toggleTreeFolder(m.backupItems, m.backupChecked, f)
+				toggleTreeFolder(m.backupItems, m.backupChecked, strings.TrimPrefix(v, "cat:"))
 			} else if strings.HasPrefix(v, "item:") {
-				m.backupChecked[v] = true
+				if m.backupChecked[v] {
+					delete(m.backupChecked, v)
+				} else {
+					m.backupChecked[v] = true
+				}
 			}
 		}
 		saveBackupSelection(m.backupItems, m.backupChecked)
@@ -708,7 +713,7 @@ func (m *model) rangeCheck(values []string, anchor string) {
 			if v == "" || v == "repo" || v == "back" || v == "apply" {
 				continue
 			}
-			m.updateSelected[v] = true
+			m.toggleUpdate(v)
 		}
 		m.updatePicker = m.rebuildUpdate()
 		m.updatePicker = m.updatePicker.ArmRange(anchor)
@@ -717,22 +722,15 @@ func (m *model) rangeCheck(values []string, anchor string) {
 			if v == "back" {
 				continue
 			}
-			m.healthChecked[v] = true
+			m.toggleHealth(v)
 		}
 		m.healthPicker = m.rebuildHealth()
 		m.healthPicker = m.healthPicker.ArmRange(anchor)
 	case scrSetup:
 		for _, v := range values {
 			if strings.HasPrefix(v, "cat:") {
-				f := strings.TrimPrefix(v, "cat:")
-				if treeFolderChecked(m.setupItems, m.selected, f) {
-					continue
-				}
-				m.toggleFolder(f)
+				m.toggleFolder(strings.TrimPrefix(v, "cat:"))
 			} else if strings.HasPrefix(v, "item:") {
-				if m.selected[v] {
-					continue
-				}
 				m.toggle(v)
 			}
 		}
@@ -741,7 +739,12 @@ func (m *model) rangeCheck(values []string, anchor string) {
 	case scrKBList:
 		for _, v := range values {
 			if strings.HasPrefix(v, "kb:") {
-				m.kbSel[strings.TrimPrefix(v, "kb:")] = true
+				x := strings.TrimPrefix(v, "kb:")
+				if m.kbSel[x] {
+					delete(m.kbSel, x)
+				} else {
+					m.kbSel[x] = true
+				}
 			}
 		}
 		m.kbListPicker = m.rebuildKBList()
@@ -752,7 +755,7 @@ func (m *model) rangeCheck(values []string, anchor string) {
 		}
 		for _, v := range values {
 			if _, id, ok := tuikit.TreeSplit(v); ok {
-				m.quickFixChecked[id] = true
+				m.quickFixChecked[id] = !m.quickFixChecked[id]
 			}
 		}
 		m.quickFixPicker = m.rebuildQuickFixes()
@@ -763,7 +766,7 @@ func (m *model) rangeCheck(values []string, anchor string) {
 		}
 		for _, v := range values {
 			if name := strings.TrimPrefix(v, "mentry:"); name != v {
-				m.menuEntryChecked[name] = true
+				m.menuEntryChecked[name] = !m.menuEntryChecked[name]
 			}
 		}
 		m.menuEntriesPicker = m.rebuildMenuEntriesPicker()
