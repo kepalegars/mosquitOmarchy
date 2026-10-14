@@ -824,50 +824,9 @@ func setDownloadsDirAndRefetch(dir string) tea.Cmd {
 // output can't be captured without breaking its live terminal takeover via
 // tea.ExecProcess), so this is a deliberate simplification.
 func pickFolderCmd(kind, title, start string) tea.Cmd {
-	// Honour the file-picker preference: when superfile is wanted, browse it
-	// embedded (same mechanism as installing a plugin from a file) and take
-	// the containing folder of whatever was opened. Superfile has no native
-	// "pick a directory" verb, so this is the honest equivalent and keeps the
-	// terminal usable (no black screen / no broken prompt on Esc).
-	home, _ := os.UserHomeDir()
-	cfg := os.Getenv("XDG_CONFIG_HOME")
-	if cfg == "" {
-		cfg = filepath.Join(home, ".config")
-	}
-	mode, _ := os.ReadFile(filepath.Join(cfg, "audio-plugin-manager", "file-picker"))
-	if strings.TrimSpace(string(mode)) == "superfile" {
-		if _, err := exec.LookPath("spf"); err == nil {
-			return pickFolderViaSuperfileEmbedded(kind, start)
-		}
-	}
 	return fetchPath(kind, "pick-folder", title, start)
 }
 
-func pickFolderViaSuperfileEmbedded(kind, start string) tea.Cmd {
-	tmp, err := os.CreateTemp("", "audio-plugin-manager-pickdir-*")
-	if err != nil {
-		return func() tea.Msg { return pathMsg{kind: kind, err: err} }
-	}
-	tmpPath := tmp.Name()
-	tmp.Close()
-	os.Remove(tmpPath)
-	if start == "" {
-		start, _ = os.UserHomeDir()
-	}
-	cmd := exec.Command("spf", "--chooser-file", tmpPath, start)
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		defer os.Remove(tmpPath)
-		if err != nil {
-			return pathMsg{kind: kind, err: err}
-		}
-		data, rerr := os.ReadFile(tmpPath)
-		if rerr != nil || len(bytes.TrimSpace(data)) == 0 {
-			return pathMsg{kind: kind}
-		}
-		picked := strings.TrimSpace(string(data))
-		return pathMsg{kind: kind, path: filepath.Dir(picked)}
-	})
-}
 
 // wizardBrowseThenPick runs superfile IN this terminal so the user can
 // browse to the plugins folder they want (same embedded-terminal trick as
