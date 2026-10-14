@@ -3541,10 +3541,22 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Confirm BEFORE tracking: Enter names the batch, and
 			// everything not in it stays exactly as it was.
 			m.orphanTargets = targets
+			// "The rest stays untracked" is only true when there IS a rest:
+			// saying otherwise when the whole list is ticked reads as a bug report.
+			total := 0
+			for _, it := range m.orphanCache {
+				if m.orphanChecked[it.Value] {
+					total++
+				}
+			}
+			rest := ""
+			if total < len(m.orphanCache) {
+				rest = " The rest stays untracked."
+			}
 			if len(targets) == 1 {
-				m.confirm = tuikit.NewConfirm(fmt.Sprintf("Track '%s'? The rest stays untracked.", orphanDisplay(m.orphanCache, targets[0])), "No", "Yes")
+				m.confirm = tuikit.NewConfirm(fmt.Sprintf("Track '%s'?%s", orphanDisplay(m.orphanCache, targets[0]), rest), "No", "Yes")
 			} else {
-				m.confirm = tuikit.NewConfirm(fmt.Sprintf("Track %d plugins? The rest stays untracked.", len(targets)), "No", "Yes")
+				m.confirm = tuikit.NewConfirm(fmt.Sprintf("Track %d plugins?%s", len(targets), rest), "No", "Yes")
 			}
 			m.push(scrOrphansConfirm)
 			return m, nil
@@ -3552,7 +3564,12 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if rr, ok := msg.(reconcileResultMsg); ok {
 			if rr.err != nil {
-				m.toast, _ = m.toast.SetErr(rr.err.Error())
+				// Not a toast: it expires in seconds and the user is left
+				// believing nothing happened, which is the report this
+				// replaces. A full screen states it and stays until dismissed.
+				m.info = tuikit.NewInfo("Could not track the plugins:\n\n" + rr.err.Error() +
+					"\n\nThe backend command failed. Run this to see it yourself:\n\n  ~/.local/bin/mosquito-audio-plugin-manager-actions add-orphan <value>").SetSize(m.contentSize())
+				m.replace(scrInfo)
 				return m, nil
 			}
 			m.toast, _ = m.toast.SetOK(rr.ok)

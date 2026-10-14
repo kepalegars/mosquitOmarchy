@@ -95,14 +95,18 @@
         }
       }
 
+      // Deliberately NOT gated on `kind === "wifi"`: switching the Wi-Fi band
+      // drops the station link for a moment, and gating made BOTH the band
+      // pills and this row blink out of the panel while it reconnects. An
+      // access point does not need a station connection, so it stays.
       PanelSeparator {
-        visible: root.kind === "wifi" && hotspot.hasAp
+        visible: hotspot.hasAp
         foreground: root.bar.foreground
       }
 
       Column {
         id: hotspotSection
-        visible: root.kind === "wifi" && hotspot.hasAp
+        visible: hotspot.hasAp
         width: parent.width
         spacing: Style.space(8)
 
@@ -138,6 +142,30 @@
               fontFamily: root.bar.fontFamily
               elide: Text.ElideRight
               anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Text {
+              id: hotspotGear
+              text: "\uf013"
+              color: root.bar.foreground
+              opacity: hotspotGearArea.containsMouse ? 1 : 0.55
+              font.family: root.bar.fontFamily
+              font.pixelSize: hotspotStateLabel.font.pixelSize
+              anchors.verticalCenter: hotspotSwitch.verticalCenter
+
+              MouseArea {
+                id: hotspotGearArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: hotspot.toggleOptions()
+              }
+
+              PanelToolTip {
+                visible: hotspotGearArea.containsMouse
+                text: hotspot.showOptions ? "Hide hotspot settings" : "Hotspot settings"
+                fontFamily: root.bar.fontFamily
+              }
             }
 
             ToggleSwitch {
