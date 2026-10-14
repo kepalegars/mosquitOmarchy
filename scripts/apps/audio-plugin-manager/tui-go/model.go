@@ -926,6 +926,14 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
+		// Preserve custom picker height for Settings and VST Menu screens.
+		// These screens use a calculated height based on item count to avoid
+		// pagination artifacts on first render. Full terminal height breaks that.
+		if m.top() == scrSettings || m.top() == scrVstMenu {
+			m.runner = m.runner.SetSize(m.contentSize())
+			// picker height is managed by syncPicker() when the screen is pushed
+			return m, nil
+		}
 		m.picker = m.picker.SetSize(m.contentSize())
 		m.runner = m.runner.SetSize(m.contentSize())
 		return m, nil
