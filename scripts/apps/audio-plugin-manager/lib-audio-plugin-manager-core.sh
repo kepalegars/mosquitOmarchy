@@ -3379,6 +3379,22 @@ install_native_plugin_from_file() {
     *) work="$(dirname "$src")" ;;
   esac
 
+  # LV2 (and some VST3/CLAP) bundles read as plain folders to file
+  # explorers: superfile AND nautilus show foo.lv2 as a directory, so
+  # entering it and picking anything inside must resolve to the bundle
+  # itself instead of descending. Walk up to the nearest *.lv2/*.clap/
+  # *.vst3 ancestor, innermost first (a picked bundle matches itself).
+  if [[ $src != *.zip && $src != *.tar* && $src != *.tgz ]]; then
+    local climb="$src"
+    while [[ $climb != / && $climb != . && -n $climb ]]; do
+      case "${climb,,}" in
+        *.lv2|*.clap|*.vst3) src="$climb"; break ;;
+      esac
+      [[ $climb == */* ]] || break
+      climb="${climb%/*}"
+    done
+  fi
+
   # Look for exactly one recognizable bundle, up to 2 levels deep (archives
   # commonly wrap the bundle in one extra top-level folder).
   local found kind

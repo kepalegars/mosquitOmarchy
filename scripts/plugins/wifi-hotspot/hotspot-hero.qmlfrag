@@ -1,0 +1,23 @@
+          // >>> mosquito-hotspot-hero >>> (managed by setup-wifi-hotspot.sh — re-applied on reinstall, do not edit by hand)
+          //
+          // Hotspot action in the hero toolbar, forked from Guneshbari/
+          // omarchy-network (same glyph, accent-while-active, tooltip with
+          // client count). No keyboard-cursor wiring: this panel's cursor
+          // model was left untouched, like the rest of the mosquito block.
+          Button {
+            id: hsAction
+            visible: hotspot.hasAp
+            iconText: "󱛇"
+            tooltipText: hotspot.active
+              ? ("Hotspot Active (" + hotspot.clients + " connected) - Click to Stop")
+              : "Start Wi-Fi Hotspot"
+            foreground: hotspot.active ? Color.accent : root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            iconSize: Style.font.subtitle * 1.5
+            horizontalPadding: Style.space(5)
+            verticalPadding: Style.space(2)
+            hasCursor: false
+            Layout.alignment: Qt.AlignVCenter
+            onClicked: hotspot.toggle()
+          }
+          // <<< mosquito-hotspot-hero <<<

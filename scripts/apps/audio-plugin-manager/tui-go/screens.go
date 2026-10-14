@@ -588,6 +588,14 @@ func treeRows(items []uninstallTreeItem, checked map[string]bool, expanded map[s
 			if expanded[n.Value] {
 				fold = tuikit.FoldExpanded
 			}
+			// The folder's own ○/●, filled only when every plugin under it
+			// is checked — selecting a whole folder must SHOW on its row,
+			// the way ticking rows shows on theirs. Same mark, same
+			// spacing as the plugin rows below it.
+			mark := "○"
+			if total > 0 && marked == total {
+				mark = "●"
+			}
 			// A NESTED folder draws its own fold glyph inside the text, one
 			// indent further in, because the kit paints the glyph in a single
 			// badge column shared by every row: a suite line's ▣ then sat level
@@ -595,7 +603,7 @@ func treeRows(items []uninstallTreeItem, checked map[string]bool, expanded map[s
 			// read as belonging to the vendor rather than inside it. Top-level
 			// folders keep the kit's glyph — there is nothing above them to be
 			// out of line with.
-			display := pad + n.Display
+			display := mark + "  " + pad + n.Display
 			folder := tuikit.PickerItem{
 				Display: display,
 				Value:   n.Value,
@@ -614,7 +622,7 @@ func treeRows(items []uninstallTreeItem, checked map[string]bool, expanded map[s
 				if expanded[n.Value] {
 					icon = tuikit.FolderOpen
 				}
-				folder.Display = strings.Repeat("  ", depth) + icon + " " + n.Display
+				folder.Display = mark + "  " + strings.Repeat("  ", depth) + icon + " " + n.Display
 			}
 			if total > 0 {
 				folder.Suffix = fmt.Sprintf("  %d/%d", marked, total)
@@ -1988,6 +1996,16 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.applySettingPending(dm.row)
 		}
 		if res, ok := msg.(tuikit.PickerResultMsg); ok {
+			if res.Canceled && m.scanBusy {
+				// Esc mid-scan cancels the sweep and STAYS in Settings:
+				// bumping the generation drops the late result when it
+				// lands, so nothing pops open under the user's cursor.
+				m.scanGen++
+				m.scanBusy = false
+				m.picker = m.picker.SetBusyGlyph("")
+				m.toast, _ = m.toast.SetWarn("scan cancelled")
+				return m, nil
+			}
 			if res.Canceled || res.Value == "back" {
 				// Leaving the screen commits every pending value first.
 				cmd := m.applyAllPending()
@@ -3859,7 +3877,17 @@ func (m model) handleAudioSettingsChoice(v string) (tea.Model, tea.Cmd) {
 		m.loading = true
 		return m, adoptPluginsCmd()
 	case "rescan":
-		return m, rescanCmd()
+		// The sweep takes seconds (wine-prefix indexing on every backend
+		// run) and used to show nothing at all while it did — a static
+		// screen that read as hung. Now: the cursor turns into a spinner
+		// on the row, a toast says what is happening, and Esc cancels
+		// (staying right here in Settings).
+		m.scanGen++
+		m.scanBusy = true
+		m.scanFrame = 0
+		m.picker = m.picker.SetBusyGlyph(tuikit.BusyFrames[0])
+		m.toast, _ = m.toast.SetWarn("scanning for untracked plugins… (esc cancels)")
+		return m, tea.Batch(rescanCmd(m.scanGen), scanTickCmd())
 	case "pick_plugins_root":
 		m.loading = true
 		return m, pickFolderCmd("pick-plugins-root", "Plugins folder", m.status.PluginsRoot)

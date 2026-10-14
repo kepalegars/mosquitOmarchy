@@ -177,6 +177,13 @@ type model struct {
 	orphanCache   []Item
 	orphanChecked map[string]bool
 	orphanTargets []string
+	// Manual rescan state (Settings → "Rescan for untracked plugins"):
+	// scanGen invalidates in-flight sweeps (Esc bumps it and the late
+	// result is dropped), scanBusy drives the cursor spinner + toast,
+	// scanFrame is the current BusyFrames index.
+	scanGen   int
+	scanBusy  bool
+	scanFrame int
 	// folderExpanded tracks which folder rows are opened (Right arrow) vs
 	// collapsed (Left) on BOTH the Uninstall screen and the Installed
 	// plugins setup list — they share this one map so the tree grouping
@@ -1213,7 +1220,22 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.replace(scrQuarantineClearDone)
 		return m, nil
 
+	case scanTickMsg:
+		if !m.scanBusy {
+			return m, nil
+		}
+		m.scanFrame = (m.scanFrame + 1) % len(tuikit.BusyFrames)
+		m.picker = m.picker.SetBusyGlyph(tuikit.BusyFrames[m.scanFrame])
+		return m, scanTickCmd()
 	case rescanMsg:
+		// A result from a cancelled (or superseded) sweep is dropped: the
+		// screen already moved on, and applying it would pop open stale
+		// results over whatever the user is doing now.
+		if msg.gen != m.scanGen {
+			return m, nil
+		}
+		m.scanBusy = false
+		m.picker = m.picker.SetBusyGlyph("")
 		if len(msg.labels) == 0 && len(msg.items) == 0 {
 			m.toast, _ = m.toast.SetOK("No untracked plugins found")
 			return m, nil
@@ -1227,7 +1249,15 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.orphanCache = msg.items
 			m.orphanChecked = map[string]bool{}
 			m.rebuildOrphanPicker()
-			m.push(scrReconcileOrphansTick)
+			// REPLACE, not push: the sweep was launched from Settings,
+			// and pushing would strand the user there — one Esc would
+			// land back in Settings instead of leaving, reading as
+			// "Esc does nothing, I have to press it twice".
+			if len(msg.labels) > 0 {
+				m.push(scrReconcileOrphansTick)
+			} else {
+				m.replace(scrReconcileOrphansTick)
+			}
 		}
 		return m, nil
 

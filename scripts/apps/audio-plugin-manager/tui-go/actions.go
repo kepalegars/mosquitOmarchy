@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -569,12 +570,24 @@ func reconcileOrphansCmd() tea.Cmd {
 // an explicit manual rescan always reports something back, even "nothing
 // found".
 type rescanMsg struct {
+	gen    int
 	labels []string
 	keys   []string
 	items  []Item
 }
 
-func rescanCmd() tea.Cmd {
+// scanTickMsg advances the busy spinner on the settings picker while a
+// rescan runs. Ticks carry no generation: a tick that lands after a cancel
+// finds scanBusy false and dies quietly.
+type scanTickMsg struct{}
+
+func scanTickCmd() tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg {
+		return scanTickMsg{}
+	})
+}
+
+func rescanCmd(gen int) tea.Cmd {
 	return func() tea.Msg {
 		var labels, keys []string
 		if out, err := runQuick("reconcile-missing"); err == nil {
@@ -592,7 +605,7 @@ func rescanCmd() tea.Cmd {
 		if out, err := runQuick("reconcile-orphans"); err == nil {
 			items, _ = decodeJSONLines[Item](out)
 		}
-		return rescanMsg{labels: labels, keys: keys, items: items}
+		return rescanMsg{gen: gen, labels: labels, keys: keys, items: items}
 	}
 }
 

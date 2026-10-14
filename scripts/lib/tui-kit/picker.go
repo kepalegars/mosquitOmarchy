@@ -328,7 +328,16 @@ type pickerDelegate struct {
 	// into every row's maxRowW so a trailing badge can never overflow the
 	// shared, centered row block.
 	trailSlot int
+	// cursorGlyph, when non-empty, replaces the "▶ " selection cursor on
+	// the selected row (a host shows a spinner there while a background
+	// job runs, e.g. a plugin rescan). Include the trailing space, like
+	// "⠋ ", to keep the 3-column indicator slot stable.
+	cursorGlyph string
 }
+
+// BusyFrames is the spinner cycle a busy picker shows in place of its
+// selection cursor, one frame per host tick.
+var BusyFrames = []string{"⠋ ", "⠙ ", "⠹ ", "⠸ ", "⠼ ", "⠴ ", "⠦ ", "⠧ ", "⠇ ", "⠏ "}
 
 // badgeCell renders a row's badge on its fixed leading slot: the accent
 // glyph followed by enough spaces to fill badgeSlot, or plain spaces when
@@ -484,6 +493,9 @@ func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, ite
 		if pi.Fold != "" {
 			glyph = pi.Fold + " "
 		}
+		if d.cursorGlyph != "" {
+			glyph = d.cursorGlyph
+		}
 		indicator = " " + lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render(glyph)
 	}
 	// Compose the row (3-col indicator slot + styled title), then snap
@@ -635,9 +647,28 @@ func (p Picker) SetContentWidth(w int) Picker {
 }
 
 func newPickerDelegate(maxRowW, badgeSlot, trailSlot int, compact bool) pickerDelegate {
+	return newPickerDelegateCursor(maxRowW, badgeSlot, trailSlot, compact, "")
+}
+
+func newPickerDelegateCursor(maxRowW, badgeSlot, trailSlot int, compact bool, cursorGlyph string) pickerDelegate {
 	d := list.NewDefaultDelegate()
 	d = *tuneDelegate(d, compact)
-	return pickerDelegate{DefaultDelegate: d, maxRowW: maxRowW, badgeSlot: badgeSlot, trailSlot: trailSlot}
+	return pickerDelegate{DefaultDelegate: d, maxRowW: maxRowW, badgeSlot: badgeSlot, trailSlot: trailSlot, cursorGlyph: cursorGlyph}
+}
+
+// BusyGlyph reports the current cursor replacement ("" = normal "▶").
+func (p Picker) BusyGlyph() string { return p.busyGlyph }
+
+// SetBusyGlyph swaps the selection cursor for a glyph ("" restores "▶").
+// Hosts show BusyFrames here, one per tick, while a background job runs so
+// the cursor slot itself says something is happening.
+func (p Picker) SetBusyGlyph(glyph string) Picker {
+	if !p.ready {
+		return p
+	}
+	p.busyGlyph = glyph
+	p.list.SetDelegate(newPickerDelegateCursor(p.rowW, p.badgeSlot, p.trailSlot, p.compact, glyph))
+	return p
 }
 
 // tuneDelegate applies the layout that belongs to the ROWS, not to the
@@ -713,6 +744,9 @@ type Picker struct {
 	tabHeld   bool
 	tabAnchor int
 	lastTab   time.Time
+	// busyGlyph, when non-empty, replaces the selection cursor (SetBusyGlyph):
+	// a host shows BusyFrames here while a background job runs.
+	busyGlyph string
 }
 
 // NewPicker builds a picker. It starts unpinned; call SetContentWidth on the
@@ -872,7 +906,7 @@ func (p Picker) applyPin() Picker {
 		return p
 	}
 	p.rowW = w
-	p.list.SetDelegate(newPickerDelegate(w, p.badgeSlot, p.trailSlot, p.compact))
+	p.list.SetDelegate(newPickerDelegateCursor(w, p.badgeSlot, p.trailSlot, p.compact, p.busyGlyph))
 	return p
 }
 
