@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
@@ -11,12 +12,10 @@ func (m model) View() string {
 	if m.quit {
 		return ""
 	}
-	var b strings.Builder
-	cw, _ := m.contentSize()
-	_ = cw
 
-	// Mosquito banner line (text, no ASCII art needed here — the device
-	// picker carries its own title).
+	var b strings.Builder
+	_, ch := m.contentSize()
+
 	switch m.top() {
 	case scrDevices, scrControls, scrMixer:
 		b.WriteString(m.picker.View())
@@ -27,24 +26,22 @@ func (m model) View() string {
 	case scrConfirm:
 		b.WriteString(m.confirm.View())
 	}
+
 	if t := m.toast.View(); t != "" {
 		b.WriteString("\n" + t)
 	}
 	if m.loading {
-		b.WriteString("\n" + tuikit.StyleMuted.Render("loading…"))
+		b.WriteString("\n" + tuikit.StyleMuted.Render("loading..."))
 	}
-	out := strings.TrimRight(b.String(), " \t\n")
-	// Centre the view vertically. The trailing blank rows the picker adds to
-	// fill its own height have to go first, otherwise the view is already
-	// terminal-tall and there is no room to move it.
-	if m.h > 0 {
-		lines := strings.Count(out, "\n") + 1
-		if m.h > lines {
-			pad := (m.h - lines) / 2
-			out = strings.Repeat("\n", pad) + out
-		}
+
+	content := strings.TrimRight(b.String(), " \t\n")
+	lines := strings.Count(content, "\n") + 1
+
+	if ch > lines {
+		content = lipgloss.PlaceVertical(ch, lipgloss.Center, content)
 	}
-	return out
+
+	return content
 }
 
 func (m model) statusLine() string {
@@ -60,8 +57,8 @@ func (m model) statusLine() string {
 		parts = append(parts, m.status.Note)
 	}
 	if len(parts) == 0 {
-		return tuikit.StyleHelp.Render("↑/↓ move · enter open · q quit")
+		return tuikit.StyleHelp.Render("\u2191/\u2193 move \xb7 enter open \xb7 q quit")
 	}
-	hint := "↑/↓ · enter · ←/→ adjust · m mixer · s save · ? help"
+	hint := "\u2191/\u2193 \xb7 enter \xb7 \u2190/\u2192 adjust \xb7 m mixer \xb7 s save \xb7 ? help"
 	return tuikit.StyleHelp.Render(strings.Join(parts, " — ") + "\n" + hint)
 }

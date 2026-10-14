@@ -986,8 +986,16 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// title under it (see view.go's main screen banner).
 			m.picker = tuikit.NewPicker("", mainItems()).SetSize(m.contentSize())
 		case scrSettings:
-			m.picker = tuikit.NewPicker("Settings", m.settingsItemsWithPending()).
-				SetSize(m.contentSize()).
+			items := m.settingsItemsWithPending()
+			rowH := 1
+			extra := 4
+			h := len(items)*rowH + extra
+			cw, ch := m.contentSize()
+			if h > ch {
+				h = ch
+			}
+			m.picker = tuikit.NewPicker("Settings", items).
+				SetSize(cw, h).
 				SetHelpNote(settingsHelpNote())
 		case scrVstMenu:
 			m.picker = tuikit.NewPicker("Windows VST Plugins", m.vstMenuItemsWithPending()).SetSize(m.contentSize())
