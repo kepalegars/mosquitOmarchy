@@ -287,6 +287,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = msg.status
 		idx := m.picker.Index()
 		m.syncPicker()
+		if idx < 0 {
+			idx = 0
+		}
 		m.picker = m.picker.SelectIndex(idx)
 		return m, nil
 
