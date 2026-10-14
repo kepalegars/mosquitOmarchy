@@ -3573,15 +3573,10 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.toast, _ = m.toast.SetOK(rr.ok)
-			if len(rr.items) == 0 {
-				// Every orphan registered — the screen's job is done.
-				m.pop()
-				return m, m.enterCmd()
-			}
-			m.orphanCache = rr.items
-			m.orphanChecked = map[string]bool{}
-			m.rebuildOrphanPicker()
-			return m, nil
+			// Tracking is done: always close the untracked screen so the
+			// user lands back where they were.
+			m.pop()
+			return m, fetchStatus()
 		}
 		var cmd tea.Cmd
 		m.picker, cmd = m.picker.Update(msg)

@@ -1149,8 +1149,10 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case reconcileMissingMsg:
 		if len(msg.labels) > 0 {
 			m.missingKeys = msg.keys
-			m.confirm = tuikit.NewConfirm(missingPrompt(msg.labels), "add to log", "remove everywhere")
-			m.push(scrReconcileMissingInfo)
+			if m.top() == scrMain {
+				m.confirm = tuikit.NewConfirm(missingPrompt(msg.labels), "add to log", "remove everywhere")
+				m.push(scrReconcileMissingInfo)
+			}
 		}
 		return m, nil
 
@@ -1159,7 +1161,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.orphanCache = msg.items
 			m.orphanChecked = map[string]bool{}
 			m.rebuildOrphanPicker()
-			m.push(scrReconcileOrphansTick)
+			if m.top() == scrMain {
+				m.push(scrReconcileOrphansTick)
+			}
 		}
 		return m, nil
 
