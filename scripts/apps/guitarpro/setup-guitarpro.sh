@@ -19,6 +19,7 @@
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/wine-menu.bash"  # wine-menu: drop the shortcuts Wine republishes for this prefix
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/elevate.bash"  # mq_sudo: GUI password prompt, never a blind sudo hang
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -448,8 +449,13 @@ do_install(){
       esac
     done
     if ((YES)) || ask "Install missing dependencies (${pkgs[*]}) now ?" y; then
-      msg "Installing: ${pkgs[*]} (sudo pacman -S --needed)"
-      if sudo pacman -S --needed --noconfirm "${pkgs[@]}" >/dev/null 2>&1; then
+      # mq_sudo, never bare sudo: a bare sudo with swallowed output blocks
+      # forever on its invisible password prompt (fresh VM, no cached stamp),
+      # which is exactly the silent multi-minute hang. mq_sudo raises the
+      # themed GUI askpass (bounded wait), and pacman streams so its progress
+      # is visible instead of another silent stretch.
+      msg "Installing: ${pkgs[*]} (mq_sudo pacman -S --needed)"
+      if mq_sudo pacman -S --needed --noconfirm "${pkgs[@]}" 2>&1; then
         ok "Dependencies installed: ${pkgs[*]}"
       else
         err "Could not install: ${pkgs[*]} (run: sudo pacman -S --needed ${pkgs[*]})"
@@ -480,7 +486,11 @@ do_install(){
 
   if [[ ! -d "$PFX/drive_c" ]]; then
     msg "Creating the wine prefix (win64, Windows 7)..."
-    WINEARCH=win64 WINEPREFIX="$PFX" wineboot --init >/dev/null 2>&1 || true
+    # mscoree/mshtml disabled: otherwise a fresh wineboot pops the Mono/Gecko
+    # installer dialogs, which wait for GUI clicks — another silent hang on a
+    # fresh machine. Guitar Pro needs neither.
+    WINEDLLOVERRIDES="mscoree=d;mshtml=d" WINEARCH=win64 WINEPREFIX="$PFX" \
+      wineboot --init >/dev/null 2>&1 || true
     ok "Prefix created"
   fi
 

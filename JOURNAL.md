@@ -2,7 +2,25 @@
 
 ## Log
 
-### 2026-10-15 — Bootstrap collects installers from ~/Downloads; greyed rows go bare
+### 2026-10-15 — Guitar Pro deps via mq_sudo; fix-guitarpro-toolbar.sh removed
+
+The silent-install dep step used bare `sudo … >/dev/null 2>&1`: on a fresh VM
+with no cached sudo stamp that blocks forever on an invisible password prompt
+(the 5-minute "applying selection" hang), then fails with a content-free
+error. Now sources `lib/elevate.bash` and uses `mq_sudo pacman -S --needed`
+with streaming output (themed GUI askpass, bounded wait). Fresh-prefix
+`wineboot --init` also gets `WINEDLLOVERRIDES="mscoree=d;mshtml=d"` so the
+Mono/Gecko installer dialogs can't stall it waiting for GUI clicks. Removed
+`scripts/fixes/fix-guitarpro-toolbar.sh` per user request (font work moves
+back into the installer flow if needed, not a side script).
+
+### 2026-10-15 — Bootstrap collects installers from ~/Downloads; greyed rows go bare (compressed)
+
+Bootstrap moves recognised installers from `~/Downloads` into module folders
+(never overwriting) and reports greyed rows; `assets.links` +
+`download-assets.sh` deleted. Setup greyed rows render bare (no sub-line);
+Enter/`i` keep the why. APM README documents the bundle climb. tui-kit +
+mosquitomarchy-tui green.
 
 `bootstrap.sh` no longer inventories anything: it scans `~/Downloads`
 (`xdg-user-dir DOWNLOAD` with fallback), moves each recognised installer into
