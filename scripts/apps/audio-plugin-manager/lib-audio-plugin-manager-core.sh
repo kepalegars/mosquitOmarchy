@@ -3829,8 +3829,28 @@ set_plugins_root_icon() {
   gio set "$dir" metadata::custom-icon "file://$icon" >/dev/null 2>&1 || true
 }
 
+# sanitize_path_pref strips terminal escape sequences and control bytes from
+# a path about to be persisted. A folder picker running inside this terminal
+# (superfile, zenity portal stdout capture) once wrote its own alt-screen
+# init/exit bytes into DOWNLOADS_DIR, and every later render of the settings
+# row re-emitted them — including ESC[?1049l, which kicks the terminal OUT of
+# the TUI's alt-screen mid-frame and breaks the display permanently. A real
+# path never contains these bytes, so stripping is always safe; the value is
+# returned on stdout.
+sanitize_path_pref() {
+  # NOTE: one bracket class per expression — this sed silently fails a
+  # substitution whose pattern holds two adjacent classes ([..][..]), so the
+  # textbook single-regex CSI matcher does nothing here. OSC first (it holds
+  # letters inside), then ESC + non-letters + letter (CSI and friends), then
+  # ESC + any one char for strays, then the C0 controls and DEL.
+  printf '%s' "$1" | sed -e 's|\x1b\][^\x07]*\x07||g' -e 's|\x1b[^a-zA-Z]*[a-zA-Z]||g' -e 's|\x1b\[[- !"#$%&'"'"'()*+,.0-9:;<=>?]*||g' -e 's|\x1b.||g' -e 's|\x1b||g' | tr -d '\000-\012\014-\037\177'
+}
+
 save_prefs() {
   mkdir -p "$(dirname "$PREFS_FILE")"
+  PLUGINS_ROOT="$(sanitize_path_pref "$PLUGINS_ROOT")"
+  DOWNLOADS_DIR="$(sanitize_path_pref "$DOWNLOADS_DIR")"
+  DEFAULT_PREFIX="$(sanitize_path_pref "$DEFAULT_PREFIX")"
   cat > "$PREFS_FILE" <<EOF
 HIDE_VST2="$HIDE_VST2"
 HIDE_32BIT="$HIDE_32BIT"

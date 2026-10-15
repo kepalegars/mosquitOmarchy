@@ -2,7 +2,44 @@
 
 ## Log
 
-### 2026-10-15 — Guitar Pro deps via mq_sudo; fix-guitarpro-toolbar.sh removed
+### 2026-10-15 — APM settings page: poisoned DOWNLOADS_DIR broke the alt-screen
+
+Symptom: first visit to APM Settings rendered bizarre (no title, rows 3-14
+only), cursor moves "revealing" the real options progressively. Root cause is
+NOT the picker, cursor memory, or pagination — it is DATA: a folder picker
+running inside this terminal once wrote its own alt-screen init/exit bytes
+into `DOWNLOADS_DIR` (`~/.config/audio-plugin-manager/prefs`). Every render
+of the settings row re-emitted them verbatim, including `ESC[?1049l`, which
+kicks the terminal OUT of the TUI's alt-screen mid-frame; all later frames
+then draw on the main screen (scrolling text, no title). Proof chain: pty
+capture showed the "superfile session" interleaved mid-row with zero spf
+process spawned (shim + pspoll + SPAWN instrumentation all silent), and the
+exact bytes matched the prefs value.
+
+Three layers, all verified in tmux against a headless TUI:
+1. Repaired the machine: stripped escapes from `DOWNLOADS_DIR` (real path
+   `/run/media/mosquito/Crucial X9/plugins from windows` kept) + prefs README.
+2. Backend save-time: new `sanitize_path_pref` in `save_prefs` strips
+   OSC/CSI/stray-ESC + C0/DEL from PLUGINS_ROOT, DOWNLOADS_DIR, DEFAULT_PREFIX
+   before persisting (with a comment on this sed's silent failure on adjacent
+   bracket classes, which cost real debugging time).
+3. Display-time (defense in depth): Go `sanitizeDisplay` applied in
+   `shortPath`/`baseName`, so a future poisoning degrades to a funny label
+   instead of killing the terminal. Subtlety found by testing: sourcing prefs
+   expands `$p` away, so the runtime value holds INCOMPLETE sequences
+   (`\x1b[?2026` + ESC, no final byte) — a separate fragment matcher covers
+   those, minus `/` so it cannot eat the real path's leading slash.
+New `sanitize_display_test.go` (stored bytes + runtime bytes + legit paths).
+Full `audio-plugin-manager-tui` suite green; tmux-confirmed: clean render with
+repaired prefs AND with re-poisoned prefs (zero `?1049l` emitted).
+
+### 2026-10-15 — Guitar Pro deps via mq_sudo; fix-guitarpro-toolbar.sh removed (compressed)
+
+Bare `sudo … >/dev/null` hung on its invisible password prompt (the 5-minute
+"apply selection" stall) — now `mq_sudo` with streaming output, plus
+`WINEDLLOVERRIDES=mscoree=d;mshtml=d` on fresh-prefix wineboot so the
+Mono/Gecko dialogs can't stall it. `fix-guitarpro-toolbar.sh` removed per
+user request.
 
 The silent-install dep step used bare `sudo … >/dev/null 2>&1`: on a fresh VM
 with no cached sudo stamp that blocks forever on an invisible password prompt

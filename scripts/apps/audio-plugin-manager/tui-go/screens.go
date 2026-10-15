@@ -257,6 +257,7 @@ func (m *model) startWizardFinish() tea.Cmd {
 }
 
 func baseName(p string) string {
+	p = sanitizeDisplay(p)
 	for i := len(p) - 1; i >= 0; i-- {
 		if p[i] == '/' {
 			return p[i+1:]

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +18,39 @@ import (
 // shortPath renders a filesystem path compactly. Home is replaced by ~, and any
 // path longer than the comfort width keeps its first and last two segments
 // separated by an ellipsis so the user still recognises where it lives.
+// sanitizeDisplay strips terminal escape sequences and control bytes from a
+// backend-provided string before it is rendered into a row label. A poisoned
+// prefs value (a folder picker once wrote its own alt-screen init/exit bytes
+// into DOWNLOADS_DIR) is re-emitted verbatim by the renderer — including
+// ESC[?1049l, which kicks the terminal OUT of the TUI's alt-screen mid-frame
+// and breaks the display permanently (the APM settings-page bug: bizarre
+// first render, rows "revealed" progressively by cursor moves). The backend
+// now sanitizes on save, but the TUI must not trust the boundary either:
+// stripping here contains any future poisoning to a funny-looking label.
+var (
+	ansiOSC = regexp.MustCompile("\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)")
+	ansiCSI = regexp.MustCompile("\x1b\\[[0-9;?$=>]*[ !\"#$%&'()*+,./-]*[@-~]")
+	// A sourced prefs value goes through shell expansion first ($p vanishes),
+	// so a stored sequence can reach us WITHOUT its final byte
+	// ("\x1b[?2026" + ESC). The complete matcher above cannot fire on those;
+	// this eats the introducer plus any parameter bytes. Slash is excluded
+	// from the parameter class: it would otherwise eat the leading "/" of
+	// the real path glued right behind the fragment.
+	ansiCSIFrag = regexp.MustCompile("\x1b\\[[\x20-\x2e\x30-\x3f]*")
+	ansiESC     = regexp.MustCompile("\x1b.")
+	ansiC0      = regexp.MustCompile("[\x00-\x1f\x7f]")
+)
+
+func sanitizeDisplay(s string) string {
+	s = ansiOSC.ReplaceAllString(s, "")
+	s = ansiCSI.ReplaceAllString(s, "")
+	s = ansiCSIFrag.ReplaceAllString(s, "")
+	s = ansiESC.ReplaceAllString(s, "")
+	return ansiC0.ReplaceAllString(s, "")
+}
+
 func shortPath(p string) string {
+	p = sanitizeDisplay(p)
 	home, _ := os.UserHomeDir()
 	if home != "" && strings.HasPrefix(p, home) {
 		p = "~" + p[len(home):]
