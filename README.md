@@ -1,4 +1,6 @@
-# mosquitOmarchy
+> **Assets & logs:** https://kdrive.infomaniak.com/app/share/1099475/f485fa2d-f3fc-4063-832a-917157290cce
+>
+> # mosquitOmarchy
 
 Idempotent setup scripts for [Omarchy](https://omarchy.org) (Arch + Hyprland), oriented
 toward audio production: REAPER, Bitwig, Ableton Live on Linux, shared Windows VSTs, and
