@@ -2,7 +2,24 @@
 
 ## Log
 
-### 2026-10-15 — Signal module + false-positive fix in _verify_selection_installed
+### 2026-10-15 — Superfile non-default system-wide + APM path truncation + Signal module + false-positive fix
+
+Superfile is now strictly opt-in: default file picker is "default" everywhere; superfile is only invoked by apps that explicitly request it (APM's "Install a plugin from file" when the user set the preference to Superfile). No system-wide default change — the APM preference lives in `~/.config/audio-plugin-manager/file-picker` and defaults to "default".
+
+APM settings path display (`shortPath` in model.go) now truncates intelligently:
+- `$HOME` → `~`
+- `/run/media/user/Label/...` → `Label/...` (external disk label)
+- `/media/user/Label/...` → `Label/...`
+- `/mnt/Label/...` → `Label/...`
+- Still too long → first segment (disk/home) + `…/` + last two segments (e.g. `Crucial X9/…/plugins from windows`)
+
+Signal Desktop module added with minimize-to-tray, start-minimized, hide-menu-bar config + autostart.
+
+`_verify_selection_installed` false positive fixed: `partial` states (e.g. live_mode's un-checkable sudoers file) are now warnings, not failures; only `missing` is a hard failure. Process exit code now matches MODULE_FAILURES.
+
+Verified: bash -n OK, go build OK.
+
+### 2026-10-15 — APM settings page: poisoned DOWNLOADS_DIR broke the alt-screen
 
 `_verify_selection_installed` (mosquitomarchy-actions) treated `module_state == partial` as a hard failure even when all module scripts exited 0 (MODULE_FAILURES == 0). The live_mode module is a classic case: the sudoers file cannot be checked without root, so the state is legitimately "partial" after a successful install — yet the verify step flagged it as failure, returning 1 from `cmd_install` → TUI runner `Err() != nil` → "finished with errors" toast despite MODULE_FAILURES == 0. The fix: verify step now only fails on `missing`; `partial` is downgraded to a warning and does NOT increment `bad`. This makes the process exit code match MODULE_FAILURES as intended.
 

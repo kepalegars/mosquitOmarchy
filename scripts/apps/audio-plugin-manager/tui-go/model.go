@@ -54,17 +54,37 @@ func shortPath(p string) string {
 	home, _ := os.UserHomeDir()
 	if home != "" && strings.HasPrefix(p, home) {
 		p = "~" + p[len(home):]
+	} else if strings.HasPrefix(p, "/run/media/") {
+		// /run/media/user/Label/path -> show disk label
+		parts := strings.SplitN(strings.TrimPrefix(p, "/run/media/"), "/", 3)
+		if len(parts) >= 2 {
+			p = parts[1] + "/" + parts[2]
+		}
+	} else if strings.HasPrefix(p, "/media/") {
+		// /media/user/Label/path -> show disk label
+		parts := strings.SplitN(strings.TrimPrefix(p, "/media/"), "/", 3)
+		if len(parts) >= 2 {
+			p = parts[1] + "/" + parts[2]
+		}
+	} else if strings.HasPrefix(p, "/mnt/") {
+		// /mnt/Label/path -> show mount name
+		parts := strings.SplitN(strings.TrimPrefix(p, "/mnt/"), "/", 2)
+		if len(parts) >= 2 {
+			p = parts[0] + "/" + parts[1]
+		}
 	}
 	const limit = 52
 	if len(p) <= limit {
 		return p
 	}
+	// Path still too long: show ~ or disk label + … + last 2 segments
 	segs := strings.Split(p, "/")
 	if len(segs) <= 3 {
 		// short but long names: keep head + middle marker + tail
 		return p[:20] + "…" + p[len(p)-20:]
 	}
-	return segs[0] + "/" + segs[1] + "/…" + "/" + segs[len(segs)-2] + "/" + segs[len(segs)-1]
+	// Show first segment (home ~ or disk label) + … + last 2 segments
+	return segs[0] + "/…/" + segs[len(segs)-2] + "/" + segs[len(segs)-1]
 }
 
 // settingsDwell is how long a Left/Right-adjusted settings value is shown as
