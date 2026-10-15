@@ -660,6 +660,17 @@ st_handbrake(){
     && grep -qF -- "Omarchy_Custom_Scripts_Handbrake" "$HOME/.config/hypr/hyprland.lua" \
     && echo ok || echo partial
 }
+st_whatsapp_native(){
+  # Native WhatsApp: package + tray/start-in-tray/no-menu-bar + autostart line
+  pkg_has whatsapp-nativefier || { echo missing; return; }
+  local c="/opt/whatsapp-nativefier/resources/app/nativefier.json"
+  local m="/opt/whatsapp-nativefier/resources/app/lib/main.js"
+  local a="$HOME/.config/hypr/autostart.lua"
+  [[ -r $c ]] && grep -q '"showMenuBar":false' "$c" && grep -q '"tray":"start-in-tray"' "$c" \
+    && grep -q 'setPermissionRequestHandler' "$m" \
+    && { [[ -f $a ]] && grep -qxF -- 'o.launch_on_start("whatsapp-nativefier")' "$a"; } \
+    && echo ok || echo partial
+}
 st_extracto(){
   # extracto is a simple custom install script for file-roller: the package is
   # what brings Nautilus' Extract Here / Create Archive back, and our glue is
@@ -706,6 +717,7 @@ MODULES=(
   "davinci-resolve:DaVinci Resolve (Studio or free) + H.264/H.265 (FFmpeg encoder / libav patch) + SpectraFilm OFX option"
   "ableton-move-manager:mosquito Move Manager — Ableton Move → Ableton Live → Bitwig (menu: address / Move Manager / convert — native Omarchy prompts, MIDI export)"
   "handbrake:HandBrake (Qt GUI + CLI) + H.264/H.265 encoders + preset sync + Hyprland rules"
+  "whatsapp-native:Native WhatsApp desktop client — tray, close-to-tray, start minimized, no menu bar, menu entry WhatsApp"
   "apps:Apps, tuis & webapps (catalog per type gui/tui/webapps + backup selection via setup-apps.sh)"
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
   "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships."
@@ -809,6 +821,7 @@ module_state(){
     ableton-move-manager) st_ableton_move_converter ;;
     davinci-resolve) st_davinci ;;
     handbrake) st_handbrake ;;
+    whatsapp-native) st_whatsapp_native ;;
     apps) s="$(st_apps)"; s="${s%%:*}"; echo "$s" ;;
     ollama) st_ollama ;; battery) st_battery ;; brightness) st_brightness ;;
     touchpad) st_touchpad ;;
@@ -859,6 +872,7 @@ module_of_path(){
     scripts/mosquitomarchy-update/*)                         echo mosquitomarchy-update ;;
     scripts/apps/ableton-move-*|scripts/apps/ableton-move/*) echo ableton-move-manager ;;
     scripts/apps/handbrake/*)                                echo handbrake ;;
+    scripts/apps/whatsapp-native/*)                          echo whatsapp-native ;;
     scripts/apps/extracto/*)                                 echo extracto ;;
     scripts/apps/gui/*|scripts/apps/tui-tools/*|scripts/apps/webapps/*|\
     scripts/apps/setup-apps.sh|scripts/apps/uninstall-apps.sh|scripts/lib/common.bash) echo apps ;;
@@ -3024,6 +3038,11 @@ PY
   fi
 }
 
+un_whatsapp_native(){
+  info "Uninstalling the native WhatsApp desktop client (module whatsapp-native)"
+  bash "$WHATSAPP_NATIVE_DIR/setup-whatsapp-native.sh" --remove
+}
+
 un_extracto(){
   info "Uninstalling extracto (module extracto)"
   # Our own glue first: the script knows the exact markers/paths it wrote.
@@ -3374,6 +3393,7 @@ uninstall_module(){
     davinci-resolve) un_davinci ;;
     ableton-move-manager) un_ableton_move_converter ;;
     handbrake) un_handbrake ;;
+    whatsapp-native) un_whatsapp_native ;;
     extracto) un_extracto ;;
     apps) un_apps ;;
     ollama) un_ollama ;;
@@ -3489,6 +3509,7 @@ ABLETON_DIR="$APPS_DIR/ableton"
 GUITARPRO_DIR="$APPS_DIR/guitarpro"
 DAVINCI_DIR="$APPS_DIR/davinci"
 HANDBRAKE_DIR="$APPS_DIR/handbrake"
+WHATSAPP_NATIVE_DIR="$APPS_DIR/whatsapp-native"
 EXTRACTO_DIR="$APPS_DIR/extracto"
 MOVE_CONVERTER_DIR="$SCRIPTS/apps/ableton-move-manager"
 BATTERY_DIR="$SCRIPTS/plugins/power-management"
@@ -3661,6 +3682,12 @@ run_handbrake(){
   # HandBrake Qt GUI + CLI, H.264/H.265 encoders, presets sync (presets/ folder)
   # and Hyprland compatibility rules. Presets must NOT be running in the GUI.
   bash "$HANDBRAKE_DIR/setup-handbrake.sh" $([[ $YES == 1 ]] && echo -y)
+}
+
+run_whatsapp_native(){
+  # Native WhatsApp desktop client: AUR package + tray/start-in-tray/no menu bar
+  # + the "WhatsApp" menu entry and Omarchy login autostart.
+  bash "$WHATSAPP_NATIVE_DIR/setup-whatsapp-native.sh" $([[ $YES == 1 ]] && echo -y)
 }
 
 run_extracto(){
@@ -3964,6 +3991,7 @@ exec_modules(){
       davinci-resolve) run_module davinci-resolve run_davinci ;;
       ableton-move-manager) run_module ableton-move-manager run_ableton_move_converter ;;
       handbrake) run_module handbrake run_handbrake ;;
+      whatsapp-native) run_module whatsapp-native run_whatsapp_native ;;
       extracto) run_module extracto run_extracto ;;
       apps) run_module apps run_apps ;;
       ollama)  run_module ollama run_ollama ;;
@@ -4003,7 +4031,7 @@ exec_modules(){
 
 # Categories of the "setup" action. id|label|modules (space-separated module ids).
 CATEGORIES=(
-  "apps|Apps|reaper audio bitwig ableton guitarpro davinci-resolve extracto handbrake superfile zen keepassxc hyprmod"
+  "apps|Apps|reaper audio bitwig ableton guitarpro davinci-resolve extracto handbrake whatsapp-native superfile zen keepassxc hyprmod"
   "tuis|TUIs|"
   "webapps|Webapps|"
   # "Plugins" is the project's own layer: the manager itself (the deployer),

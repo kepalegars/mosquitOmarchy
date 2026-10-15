@@ -59,6 +59,5 @@ checksum would mean hashing it on every `--check`.
 
 ## The other folders here
 
-`ableton/`, `bitwig/`, `reaper/`, `davinci/`, `zen/` and the rest are **not** catalog entries:
 each is its own module with its own `README.md`, installed directly rather than through a
 selection. See the module table in the [root README](../../README.md#modules).

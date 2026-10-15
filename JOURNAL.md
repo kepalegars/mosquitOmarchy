@@ -2,28 +2,50 @@
 
 ## Log
 
+### 2026-10-15 — Guitar Pro silent install + Ableton/GP Wine fixes
+
+`setup-guitarpro.sh` is now fully silent under `-y` (the TUI path): missing
+`wine-staging`/`winetricks` packages auto-install via pacman, winetricks verbs
+run with `-q`, and the Inno Setup wizard runs with `/VERYSILENT
+/SUPPRESSMSGBOXES /NORESTART /NOCANCEL /CLOSEAPPLICATIONS` pinned to the
+default `DIR`. After the installer, any spawned `GuitarPro.exe` is killed via
+`taskkill` (scoped to the GP prefix) and desktop-icon leftovers are deleted
+from both the prefix `Desktop` and `~/Desktop`. Interactive mode (no `-y`) keeps
+the wizard, but now also gets the kill + desktop cleanup. Also fixed a
+`baseline` → `basename` typo in the icon `convert` fallback.
+
+New standalone fix `scripts/fixes/fix-guitarpro-toolbar.sh` (outside the
+installer): installs + registers the 10 Bitstream Vera faces in
+`~/.wine-guitarpro8` (same fallback chain as ableton-linux), applies
+Hyprland-scale DPI + font smoothing, disables `winemenubuilder`, and sweeps
+Wine menu duplicates. Verified: Vera files land in
+`drive_c/windows/Fonts/` and all 10 entries register in
+`HKLM\…\CurrentVersion\Fonts` (via `reg add`; `reg import` silently no-ops on
+wine-staging). Prereq: `sudo pacman -S ttf-bitstream-vera`.
+
+Post-boot update hook (`setup-mosquitomarchy-update.sh`) now also checks
+`shibco/ableton-linux` GitHub releases at boot: compares the local `.run`
+header version, downloads the new `.run` with sha256 verification, and notifies
+to run `setup-ableton.sh` for the runtime/prefix update.
+
+Known open issue: Ableton Live no longer launches — the `wine-d2d1-nspa-11.13`
+runtime's `winex11` driver fails to load (`nodrv_CreateWindow`, its `ntdll.so`/
+`win32u.so` don't resolve: the build hardcodes `/opt/wine-d2d1-nspa-…` paths
+but lives under `~/.local/opt`). System wine-staging 11.17 creates windows but
+trips an SEH unwind loop under Live 12. `setup-prefix.sh --refresh` with
+`ABLETON_DPI_MODE=dpi120` completes fine; Ableton install + license intact.
+Next: get a complete Wine runtime (or make the launcher fall back to
+`ABLETON_WINE_ROOT=/usr`).
+
+`setup-ableton.sh` and `setup-guitarpro.sh` were restored to their pre-session
+state mid-work per user request; only the changes above are new. Local safety
+copies (`*.backup.*`, `*.experimental.*`) stay untracked next to the scripts.
+
 ### 2026-10-04 — Claude removed from the repository's history
 
-The project is coded with **opencode** driving **BigPickle DeepSeek 4.1 Flash** and **Space Bunny
-Free**, and that is now what `README.md` states. What it did not state was the rest of the
-picture: 18 commits on `master` still carried a `Co-authored-by: Claude …` trailer, which is
-what kept Claude in the repository's contributor graph, and `move-bitwig/README.md` still
-credited "Claude mainly" for its code.
-
-`git filter-repo --message-callback` stripped the trailers and master was force-pushed
-(`2ce73e5 → fc821dd`). The rewrite touched **only** those trailers: `git diff` between the
-pre-rewrite tag and the new master is empty, and the commit count is unchanged at 99. Every
-SHA from 2026-10-01 onward changed, so any other clone must `git fetch && git reset --hard
-origin/master`.
-
-This supersedes the two earlier entries below, which describe the same intent done partially —
-one had rewritten two commits and reported the job finished. A trailer strip has to cover
-every commit in the default branch, not the ones that happened to be at hand; had the count
-been verified first (18 of 99, not 2), it would have been obvious.
-
-Note for the next reader: the local tag made as a safety net before the rewrite
-(`backup-before-claude-strip-…`) is useless — filter-repo rewrote it along with everything
-else, so it points at the NEW head. Recovery is via the remote or GitHub's own reflog.
+Stripped 18 `Co-authored-by: Claude` trailers via `git filter-repo`
+(`2ce73e5 → fc821dd`, force-pushed, SHAs from 2026-10-01 changed). Trailer-only
+rewrite; `README.md` now credits opencode + BigPickle DeepSeek / Space Bunny.
 
 
 ## ⚠️ Maintenance contract — read this before doing anything else

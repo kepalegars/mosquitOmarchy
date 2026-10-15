@@ -11,6 +11,11 @@
 #   ./setup-guitarpro.sh --status    # shows the installation state
 #   ./setup-guitarpro.sh --dpi 120   # force the Wine DPI (96..192), default:
 #                                    #   auto (follows the Hyprland scale)
+#
+# With -y the whole chain is silent: missing wine/winetricks packages are
+# installed via pacman, winetricks verbs run with -q, and the Inno Setup
+# wizard runs with /VERYSILENT (no pages to click, no auto-launched app).
+# Without -y the wizard stays interactive.
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/wine-menu.bash"  # wine-menu: drop the shortcuts Wine republishes for this prefix
@@ -117,7 +122,7 @@ run_quiet(){
 # is installed re-registers every font (minutes of regedit spawns) for nothing.
 verb_installed(){
   local verb="$1"
-  WINEPREFIX="$PFX" WINEDEBUG=-all timeout 120 winetricks list-installed 2>/dev/null \
+  WINEPREFIX="$PFX" WINEDEBUG=-all timeout 120 winetricks -q list-installed 2>/dev/null \
     | tr ' ' '\n' | grep -qx "$verb"
 }
 
@@ -354,7 +359,7 @@ except Exception:
     if verb_installed allfonts; then
       ok "allfonts already installed in this prefix — skipped"
     elif run_quiet allfonts 1800 "allfonts (~17 font packages)" \
-         env WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all winetricks allfonts; then
+         env WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all winetricks -q allfonts; then
       ok "allfonts installed"
     else
       warn "winetricks allfonts failed or timed out — continue anyway"
@@ -393,6 +398,32 @@ dedupe_menu_entries(){
   fi
 }
 
+# ───────────────────── Post-installer cleanup (silent leftovers) ─────────────────────
+# The Inno wizard drops a desktop icon (prefix Desktop → ~/Desktop via Wine)
+# and offers "Launch Guitar Pro" on its last page. In silent mode we kill any
+# app instance the installer spawned and delete the desktop shortcuts; the
+# managed launcher + menu entry below remain the only entry points.
+cleanup_desktop_shortcuts(){
+  local removed=0 f
+  shopt -s nullglob
+  for f in "$PFX"/drive_c/users/*/Desktop/*[Gg]uitar* \
+           "$PFX"/drive_c/users/*/Desktop/*[Aa]robas* \
+           "$PFX/drive_c/users/Public/Desktop"/*[Gg]uitar* \
+           "$PFX/drive_c/users/Public/Desktop"/*[Aa]robas* \
+           "$HOME"/Desktop/*[Gg]uitar* \
+           "$HOME"/Desktop/*[Aa]robas*; do
+    [[ -e $f ]] || continue
+    rm -f -- "$f" && removed=$((removed + 1))
+  done
+  shopt -u nullglob
+  (( removed )) && ok "Desktop shortcut(s) removed: $removed" || ok "No desktop shortcut leftovers"
+}
+
+kill_spawned_guitarpro(){
+  # Targeted: only GuitarPro.exe inside THIS prefix.
+  WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all wine taskkill /F /IM GuitarPro.exe >/dev/null 2>&1 || true
+}
+
 do_install(){
   hr; msg "Guitar Pro 8 installation"
 
@@ -402,16 +433,33 @@ do_install(){
   local exe_path="$INSTALLER_PATH"
   ok "Installer: $(du -h "$exe_path" | cut -f1) ($exe_path)"
 
-  # 1) Check the dependencies
+  # 1) Check the dependencies (auto-installed silently under -y)
   msg "Checking the dependencies"
   local missing=()
   for p in wine winetricks; do
     command -v "$p" >/dev/null 2>&1 || missing+=("$p")
   done
   if ((${#missing[@]})); then
-    err "Missing dependencies: ${missing[*]}"
-    err "Install them: sudo pacman -S --needed wine-staging winetricks"
-    exit 1
+    local pkgs=()
+    for p in "${missing[@]}"; do
+      case "$p" in
+        wine) pkgs+=(wine-staging) ;;
+        winetricks) pkgs+=(winetricks) ;;
+      esac
+    done
+    if ((YES)) || ask "Install missing dependencies (${pkgs[*]}) now ?" y; then
+      msg "Installing: ${pkgs[*]} (sudo pacman -S --needed)"
+      if sudo pacman -S --needed --noconfirm "${pkgs[@]}" >/dev/null 2>&1; then
+        ok "Dependencies installed: ${pkgs[*]}"
+      else
+        err "Could not install: ${pkgs[*]} (run: sudo pacman -S --needed ${pkgs[*]})"
+        return 1
+      fi
+    else
+      err "Missing dependencies: ${missing[*]}"
+      err "Install them: sudo pacman -S --needed wine-staging winetricks"
+      return 1
+    fi
   fi
   ok "wine $(wine --version 2>/dev/null || echo '?') / winetricks present"
 
@@ -442,7 +490,7 @@ do_install(){
     ok "corefonts already installed in this prefix — skipped (log: $LOG_DIR/corefonts.log)"
   else
     if run_quiet corefonts 1800 "corefonts" \
-         env WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all winetricks corefonts; then
+         env WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all winetricks -q corefonts; then
       ok "corefonts installed"
     else
       warn "winetricks corefonts failed or timed out — Guitar Pro may still work"
@@ -469,10 +517,36 @@ do_install(){
   fi
   if (( skip_installer )); then
     ok "Keeping the existing installation — installer step skipped."
+  elif ((YES)); then
+    # Fully silent Inno Setup: no wizard pages, no message boxes, no reboot
+    # prompt. The installer still writes to the default path. Afterwards we
+    # kill any app instance it auto-launched and delete its desktop icon.
+    msg "Running the Guitar Pro 8 installer silently (/VERYSILENT)"
+    local -a inno_flags=(
+      /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCANCEL /CLOSEAPPLICATIONS
+      "/DIR=C:\\Program Files\\Arobas Music\\Guitar Pro 8"
+    )
+    if run_quiet installer "$LOG_TIMEOUT_INSTALL" "Guitar Pro installer (silent)" \
+         env WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all \
+         wine "$exe_path" "${inno_flags[@]}"; then
+      ok "Silent installer finished"
+    else
+      err "Silent installer failed (see $LOG_DIR/installer.log)"
+      return 1
+    fi
+    kill_spawned_guitarpro
+    cleanup_desktop_shortcuts
+    if [[ ! -f "$GP_EXE" ]]; then
+      err "GuitarPro.exe not found after the installation."
+      err "Expected path: $GP_EXE"
+      return 1
+    fi
+    ok "GuitarPro.exe found"
   else
     msg "Launching the Guitar Pro 8 installer"
     echo "  → A Wine window will open. Follow the installation steps."
     echo "  → Install to the default path (change nothing)."
+    echo "  → Uncheck 'Launch Guitar Pro' on the last page if offered."
     echo "  → You can close this window once the installer is finished."
     echo "  → Installer output is written to $LOG_DIR/installer.log"
     echo
@@ -488,6 +562,8 @@ do_install(){
     wait "$wine_pid" 2>/dev/null || true
     echo
 
+    kill_spawned_guitarpro
+    cleanup_desktop_shortcuts
     if [[ ! -f "$GP_EXE" ]]; then
       err "GuitarPro.exe not found after the installation."
       err "Check that the installer finished correctly."

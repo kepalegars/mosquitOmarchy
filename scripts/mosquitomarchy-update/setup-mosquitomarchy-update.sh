@@ -71,7 +71,9 @@ write_hook(){
 #   1. GitHub has a newer version of the mosquitOmarchy repo → notify
 #      (OWNER: update ASAP — commit + push; USERS: --update-repo in emergency;
 #      RECOMMENDED: wait for the owner's update).
-#   2. Omarchy-related packages have pending updates → PERSISTENT notification
+#   2. GitHub has a newer ableton-linux release → download .run, notify
+#      (run setup-ableton.sh to update Ableton Live).
+#   3. Omarchy-related packages have pending updates → PERSISTENT notification
 #      until "omarchy update" is run. "Review with opencode" runs opencode to
 #      review the update for conflicts with the customizations.
 # Safe to delete.
@@ -126,7 +128,78 @@ M
 fi
 rm -f "$SCRIPTS_FLAG" "$SCRIPTS_FLAG.msg"
 
-# ── 2. Omarchy-related package updates ──
+# ── 2. ableton-linux release check (Ableton Live native Linux) ──
+ABLETON_SCRIPT_DIR="$HOME/mosquitOmarchy/scripts/apps/ableton"
+ABLETON_RUN_INSTALLER=""
+for f in "$ABLETON_SCRIPT_DIR"/install-ableton-*.run; do [[ -f $f ]] && ABLETON_RUN_INSTALLER=$f; done
+ABLETON_STATE="$STATE_DIR/ableton-update.txt"
+# Lire la version locale depuis le header du .run (pattern 20YY.MM.DD[.N])
+run_version() {
+  local f="${1:-$ABLETON_RUN_INSTALLER}" v vmax="" pat='20[0-9]{2}\.[0-9]{2}\.[0-9]{2}(\.[0-9]+)?'
+  [[ -f "$f" ]] || return 0
+  while IFS= read -r v; do
+    [[ "$v" =~ ^$pat$ ]] || continue
+    if [[ -z "$vmax" ]] || [[ "$(printf '%s\n%s\n' "$v" "$vmax" | sort -V -r | head -1)" == "$v" ]]; then vmax="$v"; fi
+  done < <(head -c 1572864 "$f" 2>/dev/null | grep -aoE "$pat" | sort -u)
+  printf '%s\n' "$vmax"
+}
+lv="$(run_version)"
+out="$(timeout 25 curl -fsSL "https://api.github.com/repos/shibco/ableton-linux/releases/latest" 2>/dev/null || true)"
+if [[ -n "$out" ]]; then
+  rv="$(printf '%s' "$out" | python3 -c 'import json,sys;print(json.load(sys.stdin)["tag_name"].lstrip("v"))' 2>/dev/null)"
+  if [[ "$rv" =~ ^[0-9]+(\.[0-9]+){2,}$ ]]; then
+    # Comparer versions (semantic: major.minor.patch[.build])
+    if [[ -z "$lv" ]] || [[ "$(printf '%s\n%s\n' "$rv" "$lv" | sort -V -r | head -1)" == "$rv" ]]; then
+      # Nouveau .run disponible — le télécharger
+      url="$(printf '%s' "$out" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(next((a["browser_download_url"] for a in d["assets"] if a["name"]=="install-ableton-latest.run"),""))' 2>/dev/null)"
+      digest="$(printf '%s' "$out" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(next((a["digest"] for a in d["assets"] if a["name"]=="install-ableton-latest.run"),""))' 2>/dev/null)"
+      if [[ -n "$url" ]]; then
+        tmp="$ABLETON_SCRIPT_DIR/.install-ableton-latest.run.part"
+        rm -f -- "$tmp"
+        if curl -fL --max-time 600 -o "$tmp" "$url" 2>/dev/null; then
+          if [[ -n "$digest" ]]; then
+            got="$(sha256sum "$tmp" | awk '{print $1}')"
+            if [[ "$got" != "${digest#sha256:}" ]]; then
+              rm -f -- "$tmp"
+            else
+              chmod +x -- "$tmp"
+              target="$ABLETON_RUN_INSTALLER"
+              [[ -n "$target" ]] || target="$ABLETON_SCRIPT_DIR/install-ableton-latest.run"
+              mv -f -- "$tmp" "$target"
+              ABLETON_RUN_INSTALLER="$target"
+            fi
+          else
+            chmod +x -- "$tmp"
+            target="$ABLETON_RUN_INSTALLER"
+            [[ -n "$target" ]] || target="$ABLETON_SCRIPT_DIR/install-ableton-latest.run"
+            mv -f -- "$tmp" "$target"
+            ABLETON_RUN_INSTALLER="$target"
+          fi
+        fi
+      fi
+      # Notification pour proposer l'update de l'install Ableton
+      cat > "$ABLETON_STATE.msg" <<M
+Nouvelle release ableton-linux $rv disponible.
+L'installateur (.run) a été mis à jour dans ~/mosquitomarchy/scripts/apps/ableton/.
+Lancez : ~/mosquitomarchy/scripts/apps/ableton/setup-ableton.sh
+pour mettre à jour Ableton Live (runtime + prefix, licences conservées).
+M
+      printf '%s' "$(cat "$ABLETON_STATE.msg")" > "$ABLETON_STATE"
+      if command -v omarchy-notification-send >/dev/null 2>&1; then
+        omarchy-notification-send --app-name="Ableton Live" --urgency=normal -g "" \
+          "Ableton Live update available ($rv)" "click to run setup-ableton.sh" \
+          --exec "$ABLETON_SCRIPT_DIR/setup-ableton.sh" >/dev/null 2>&1 || true
+      elif command -v notify-send >/dev/null 2>&1; then
+        notify-send --app-name="Ableton Live" --urgency=normal --expire-time=0 \
+          "Ableton Live update available ($rv)" "run setup-ableton.sh to update" >/dev/null 2>&1 || true
+      fi
+      exit 0
+    fi
+  fi
+fi
+rm -f "$ABLETON_STATE" "$ABLETON_STATE.msg"
+
+# ── 4. Omarchy-related package updates ──
 # Pending updates (pacman -Qu on the synced databases, no network).
 PENDING="$STATE_DIR/pending.txt"
 pacman -Qu 2>/dev/null > "$PENDING" || true
