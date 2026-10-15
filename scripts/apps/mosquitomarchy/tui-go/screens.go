@@ -3160,7 +3160,8 @@ func homePageInfoFor(page string) string {
 			"the whole ticked selection. Every script is idempotent, so re-running\n" +
 			"one on a configured machine is safe.\n\n" +
 			"A row greyed out has nothing to install: its installer file is not on\n" +
-			"this machine. Drop the file where the row says and it comes back."
+			"this machine. Enter on the row names the file; drop it in ~/Downloads\n" +
+			"and re-run bootstrap (it files it away), then the row comes back."
 
 	case "uninstall":
 		return "Uninstall — the same tree as Setup, filtered to what is installed,\n" +

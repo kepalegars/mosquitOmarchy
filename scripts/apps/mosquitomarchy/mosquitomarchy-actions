@@ -720,9 +720,10 @@ _setup_tree(){
           # stuff" (no version suffix; it is an action, not a versioned module).
           [[ ${CAND_KEYS[$i]} == remove-ai ]] && vlabel="$name"
           # A module whose big installer is not on this machine yet stays in
-          # the tree, greyed, and says which file is missing. The note goes in
-          # `info` because that line is already rendered under the label, so
-          # the reason is visible without a second row or a tooltip.
+          # the tree as a bare greyed name, with no sub-line: the note goes in
+          # `info`, which the TUI keeps out of the row and shows behind Enter
+          # and the `i` key, so the reason is one keypress away without
+          # clogging the Setup page.
           gate="$(_asset_gate "${CAND_KEYS[$i]}")"
           if [[ -n $gate ]]; then
             disabled=true

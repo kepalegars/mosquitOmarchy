@@ -7,18 +7,19 @@
 # the same engine. There is no second, older wizard.
 #
 # The large installation files (Ableton zips, Guitar Pro installer, Bitwig
-# .deb/.jar) are NOT part of the repo and are NOT downloaded: they sit behind
-# account logins and a 4 GB zip does not belong in a clone. What the bootstrap
-# does instead is INVENTORY them through scripts/apps/download-assets.sh
-# (assets.links catalog) and name, early and in a neutral tone, the ones this
-# machine is missing and where to drop them.
+# .deb/.jar, DaVinci zip) are NOT part of the repo and are NOT downloaded: they
+# sit behind account logins and a multi-GB zip does not belong in a clone. The
+# clean technique is to drop every installer you want into ~/Downloads, then
+# run the bootstrap: it moves each recognised file into its module folder
+# (never overwriting an existing file) and then names which Setup rows stay
+# greyed out for the files still missing.
 #
 # Usage:
 #   # Repo already cloned → direct execution:
-#   ./bootstrap.sh        # interactive: assets, then offer to deploy, then TUI
+#   ./bootstrap.sh        # interactive: collect installers, then offer to deploy, then TUI
 #   ./bootstrap.sh -y             # no questions: deploy + start the TUI
 #   ./bootstrap.sh --zips         # deprecated no-op, kept so old commands keep
-#                                 #   working: the asset phase always runs and
+#                                 #   working: the collect phase always runs and
 #                                 #   has never downloaded anything
 #   ./bootstrap.sh --status       # module status without modifying anything
 #   ./bootstrap.sh --init-git     # in an EXTRACTED release archive: attach it to
@@ -27,9 +28,10 @@
 #   # Repo NOT yet cloned → a single terminal command (repo is public):
 #   curl -fsSL https://raw.githubusercontent.com/kepalegars/mosquitOmarchy/master/bootstrap.sh | bash -s -- -y
 #
-# Security: asset downloads are verified by sha256 (assets.links);
-# the script does nothing unless you explicitly ask it to (no silent sudo:
-# each step keeps its own password prompts).
+# Security: the script moves files you already downloaded, nothing more;
+# it never overwrites an existing installer, and it does nothing unless you
+# explicitly ask it to (no silent sudo: each step keeps its own password
+# prompts).
 set -euo pipefail
 
 # ── Repository settings (overridable — package root is github.com/kepalegars/mosquitOmarchy) ──
@@ -135,6 +137,79 @@ if ((INIT_GIT)) && [[ ! -d "$SRC/.git" ]]; then
   fi
 fi
 
+# ───────────────────────── Collect the large installers ─────────────────────────
+# Clean technique: drop every installer you want into ~/Downloads, then run
+# the bootstrap — this moves each recognised file into its module folder.
+# An existing file at the destination always wins: the move is skipped, never
+# an overwrite. Anything still missing greys its Setup row out; the report at
+# the end names exactly those rows.
+collect_installers(){
+  local dl="$HOME/Downloads"
+  if command -v xdg-user-dir >/dev/null 2>&1; then
+    dl="$(xdg-user-dir DOWNLOAD 2>/dev/null || echo "$HOME/Downloads")"
+  fi
+  hr
+  msg "Checking $dl for installer files"
+  [[ -d "$dl" ]] || { warn "No Downloads folder at $dl — nothing to collect."; return 0; }
+
+  # glob-pattern → destination dir (relative to the repo root, which is $SRC
+  # by the time this runs). Mirrors the presence globs the Setup greying uses,
+  # so a moved file lights its row back up on the next render.
+  local -a map=(
+    'Ableton*.zip|scripts/apps/ableton'
+    'ableton*.zip|scripts/apps/ableton'
+    'install-ableton-*.run|scripts/apps/ableton'
+    'guitar-pro-8-setup.exe|scripts/apps/guitarpro'
+    'bitwig-studio-*.deb|scripts/apps/bitwig'
+    'bitwig.jar|scripts/apps/bitwig/PATCH'
+    '*[Rr]esolve*.zip|scripts/apps/davinci'
+    '[Dd]a[Vv]inci*.zip|scripts/apps/davinci'
+  )
+  local moved=0 skipped=0 entry pat dest f base target
+  shopt -s nullglob
+  for entry in "${map[@]}"; do
+    pat="${entry%%|*}"; dest="${entry##*|}"
+    mkdir -p "$SRC/$dest"
+    for f in "$dl"/$pat; do
+      [[ -f $f ]] || continue
+      base="$(basename "$f")"; target="$SRC/$dest/$base"
+      if [[ -e "$target" ]]; then
+        warn "• $base — already in $dest/, move skipped (existing file kept)"
+        skipped=$((skipped+1))
+      elif mv -- "$f" "$target"; then
+        ok "• $base → $dest/"
+        moved=$((moved+1))
+      else
+        warn "• $base — could not move to $dest/ (left in Downloads)"
+      fi
+    done
+  done
+  shopt -u nullglob
+  (( moved == 0 && skipped == 0 )) && warn "No installer files found in $dl."
+
+  # Which Setup rows stay greyed out for a still-missing installer.
+  local -a greyed=()
+  compgen -G "$SRC/scripts/apps/ableton/Ableton*.zip" >/dev/null \
+    || compgen -G "$SRC/scripts/apps/ableton/ableton*.zip" >/dev/null \
+    || greyed+=("ableton")
+  compgen -G "$SRC/scripts/apps/bitwig/bitwig*.deb" >/dev/null \
+    || greyed+=("bitwig")
+  [[ -f "$SRC/scripts/apps/guitarpro/guitar-pro-8-setup.exe" ]] \
+    || greyed+=("guitarpro")
+  compgen -G "$SRC/scripts/apps/davinci/*[Rr]esolve*.zip" >/dev/null \
+    || compgen -G "$SRC/scripts/apps/davinci/[Dd]a[Vv]inci*.zip" >/dev/null \
+    || greyed+=("davinci-resolve")
+  hr
+  if ((${#greyed[@]})); then
+    warn "Setup rows staying greyed out (installer still missing): ${greyed[*]}"
+    warn "Drop the file in ~/Downloads and re-run bootstrap — it files it away."
+  else
+    ok "No greyed-out installer rows — every gated module has its file."
+  fi
+  hr
+  return 0
+}
+
 # ───────────────────────── Execution ─────────────────────────
 if ((STATUS_ONLY)); then
   bash ./mosquitomarchy-setup.sh --status
@@ -143,13 +218,12 @@ fi
 
 # Unconditional, and that is the point: the answer to "which of the big
 # installers do I still owe this machine" belongs BEFORE the deploy, not as a
-# surprise halfway through Setup. The inventory only reports, so it cannot fail
-# the run — a missing 4 GB zip is a fact about the machine, not a broken
-# bootstrap, and the modules that want one grey themselves out in Setup.
+# surprise halfway through Setup. Collecting only moves files you already
+# downloaded, so it cannot fail the run — a missing multi-GB zip is a fact
+# about the machine, not a broken bootstrap, and the modules that want one
+# grey themselves out in Setup.
 ((ZIPS)) && warn "--zips does nothing now (nothing has been downloaded for a while). Kept so existing commands still run."
-msg "Checking the large installers (assets.links inventory)"
-bash ./scripts/apps/download-assets.sh \
-  || warn "Could not read the asset inventory — continuing; Setup will report per module."
+collect_installers || warn "Could not scan ~/Downloads — continuing; Setup will report per module."
 
 
 # ───────────────────────── Deploy ─────────────────────────

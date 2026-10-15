@@ -229,32 +229,22 @@ self-update work, then `./bootstrap.sh`.
 ## Large installers
 
 **You bring these yourself.** None of them can be fetched automatically: Bitwig
-and Ableton are behind account logins, and a ~4 GB zip has no business in a git
-clone. Each module looks for its installer **where its own script lives** —
-`scripts/apps/ableton/`, `scripts/apps/guitarpro/`, `scripts/apps/bitwig/` — and
-says which file it expects when it is missing. `scripts/apps/bitwig/setup-bitwig.sh`
-and `scripts/apps/ableton/setup-ableton.sh` both check up front and abort rather
-than half-install.
+and Ableton are behind account logins, and a multi-GB zip has no business in a
+git clone. The clean technique: download every installer you want, drop them
+all in `~/Downloads`, then run `./bootstrap.sh` — it moves each recognised
+file into its module folder (never overwriting an existing file) and tells you
+which Setup rows stay greyed out for the files still missing. You can also drop
+a file straight into its module folder; each module looks for its installer
+**where its own script lives** and says which file it expects when it is
+missing.
 
-`assets.links` is the **inventory** of those files: where each one belongs, and
-its sha256 where recording one is worth it. Nothing is ever downloaded — there is
-no URL to download from. Ableton and Bitwig sit behind account logins, and a 4 GB
-zip has no business in a clone, so this is a presence check, not a fetcher:
+A missing file is a fact about the machine, not a failed install: the module
+that needs it stays visible in Setup but **greyed out**, and pressing Enter on
+it says which file to put where instead of starting something that cannot
+finish. Drop the file in (or re-run bootstrap with it in `~/Downloads`), and
+the row comes back on its own.
 
-| Command | Says |
-|---|---|
-| `download-assets.sh` | one line per file, then where to put whatever is missing |
-| `download-assets.sh --status` | the same list, nothing else |
-| `download-assets.sh --check` | integrity only — exit 1 on corruption, **0** on absence |
-| `download-assets.sh --ready <path>` | silent; exit 0 if usable, 1 if not |
-
-A missing file is a fact about the machine, not a failed install: the module that
-needs it stays visible in Setup but **greyed out**, and pressing Enter on it says
-which file to put where instead of starting something that cannot finish. Drop the
-file in, and the row comes back on its own. DaVinci is inventoried by presence only
-— hashing an 11 GB zip on every `--check` costs more than the answer is worth.
-
-Also not in the repo, and not covered by `assets.links`:
+Also not in the repo:
 
 | App | File | Get it |
 |---|---|---|

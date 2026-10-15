@@ -36,18 +36,14 @@ WEB WhatsApp|https://web.whatsapp.com/|whatsapp
 
 ## Large installers
 
-`download-assets.sh` reads the `assets.links` inventory at the repo root and reports what is
-already on disk: present, absent, or corrupt by sha256. **It downloads nothing.** There is no URL
-column and there is not going to be one — Ableton and Bitwig are behind account logins, and a
-4 GB zip does not belong in a git clone. Supply a file by dropping it into the folder
-`assets.links` names, which is where its module's own installer looks anyway.
-
-```bash
-scripts/apps/download-assets.sh                    # one line per file + what to supply by hand
-scripts/apps/download-assets.sh --status          # the list only
-scripts/apps/download-assets.sh --check           # integrity: exit 1 on corruption, 0 on absence
-scripts/apps/download-assets.sh --ready <path>    # silent; 0 = usable, 1 = not
-```
+Nothing here is downloaded: Ableton and Bitwig are behind account logins, and a
+multi-GB zip does not belong in a git clone. The clean technique is to drop
+every installer you want into `~/Downloads`, then run `./bootstrap.sh` — it
+moves each recognised file into its module folder (never overwriting an
+existing file) and reports which Setup rows stay greyed out. You can also drop
+a file straight into its module folder (`scripts/apps/ableton/`,
+`scripts/apps/guitarpro/`, `scripts/apps/bitwig/`, `scripts/apps/davinci/`),
+which is where each module's own installer looks anyway.
 
 A missing installer is not a failure. The module that needs it stays visible in Setup, greyed
 out, and Enter on the row names the exact file and folder instead of starting an install that

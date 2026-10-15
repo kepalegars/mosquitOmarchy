@@ -2,7 +2,44 @@
 
 ## Log
 
-### 2026-10-15 — Guitar Pro silent install + Ableton/GP Wine fixes
+### 2026-10-15 — Bootstrap collects installers from ~/Downloads; greyed rows go bare
+
+`bootstrap.sh` no longer inventories anything: it scans `~/Downloads`
+(`xdg-user-dir DOWNLOAD` with fallback), moves each recognised installer into
+its module folder (`ableton_live_*.zip`/`Ableton*.zip`/`install-ableton-*.run` →
+`apps/ableton/`, `guitar-pro-8-setup.exe` → `apps/guitarpro/`,
+`bitwig-studio-*.deb` → `apps/bitwig/`, `bitwig.jar` → `apps/bitwig/PATCH/`,
+`*Resolve*`/`DaVinci*` zips → `apps/davinci/`), never overwriting (existing
+file wins, move skipped + reported), then prints exactly which Setup rows stay
+greyed out. Verified in sandbox: moves land, overlap skips, unrelated files
+ignored, greyed report correct. `assets.links` and
+`scripts/apps/download-assets.sh` deleted (`git rm`); root + `apps/` READMEs
+rewritten around the new flow ("drop installers in ~/Downloads, run
+bootstrap"). Setup greying is untouched — it already used presence globs in
+`mosquitomarchy/actions`, never the catalog.
+
+Setup greyed rows now render as a bare greyed name: `tui-kit`
+`BuildFolderTree` drops the sub-line when the disabled row's info matches the
+backend asset-gate note pattern (same pattern the uninstall tree already
+matched — but with NO label suffix, per user request). Enter-toast and the `i`
+popup still read full `Info`, and every other disabled row keeps its sub-line
+("nothing left to do here", uninstall reasons). New `foldertree_test.go`
+covers both. Setup help text updated ("Enter on the row names the file; drop
+it in ~/Downloads and re-run bootstrap"). tui-kit + mosquitomarchy-tui
+`go build/vet/test` green.
+
+APM README now documents the bundle climb: entering a `.lv2` (or picking a
+file inside) resolves to the nearest `.lv2`/`.clap`/`.vst3` ancestor,
+innermost first — proven `manifest.ttl` → installed bundle → clean quarantine
+uninstall. Behavior already in `install_native_plugin_from_file`; docs only.
+
+### 2026-10-15 — Guitar Pro silent install + Ableton/GP Wine fixes (compressed)
+
+Silent `-y` Guitar Pro install (Inno `/VERYSILENT`, pacman auto-deps,
+taskkill + desktop cleanup), standalone `fix-guitarpro-toolbar.sh`
+(Vera fonts/DPI/winemenubuilder), ableton-linux release check in the post-boot
+hook. Open: Ableton won't launch (d2d1-nspa Wine build lacks working X11
+drivers; system wine-staging 11.17 hits an SEH loop).
 
 `setup-guitarpro.sh` is now fully silent under `-y` (the TUI path): missing
 `wine-staging`/`winetricks` packages auto-install via pacman, winetricks verbs

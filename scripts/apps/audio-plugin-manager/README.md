@@ -341,6 +341,13 @@ the wine-prefix wizard, while a raw bundle or a `.zip`/`.tar`/`.tar.gz`/`.tgz` c
 (searched two levels deep, for a vendor zip that wraps the bundle) installs natively. You do not
 say which kind it is up front.
 
+LV2 bundles read as plain folders to file explorers (superfile and Nautilus both show
+`foo.lv2` as a directory), so if you enter one and pick anything inside, the install climbs
+back up to the nearest `.lv2` / `.clap` / `.vst3` ancestor — innermost first — and installs
+that bundle as a whole. Proven: `manifest.ttl` declares the plugin → the bundle lands in
+`~/.lv2` (or `~/.clap` / `~/.vst3`) → uninstall quarantines the whole bundle cleanly, never
+a stray file from inside it.
+
 **Uninstall** is a multi-select — `Tab` to check several, `Enter` to remove them in one batch,
 or `Enter` on a single row with nothing checked. Native bundles go to
 `~/.cache/audio-plugin-manager-quarantine/<timestamp>-uninstall/`. Nothing is deleted.
