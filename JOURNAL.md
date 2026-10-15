@@ -2,6 +2,17 @@
 
 ## Log
 
+### 2026-10-15 — Signal module + false-positive fix in _verify_selection_installed
+
+`_verify_selection_installed` (mosquitomarchy-actions) treated `module_state == partial` as a hard failure even when all module scripts exited 0 (MODULE_FAILURES == 0). The live_mode module is a classic case: the sudoers file cannot be checked without root, so the state is legitimately "partial" after a successful install — yet the verify step flagged it as failure, returning 1 from `cmd_install` → TUI runner `Err() != nil` → "finished with errors" toast despite MODULE_FAILURES == 0. The fix: verify step now only fails on `missing`; `partial` is downgraded to a warning and does NOT increment `bad`. This makes the process exit code match MODULE_FAILURES as intended.
+
+Signal Desktop module added:
+- `scripts/apps/signal/setup-signal.sh`: installs `signal-desktop` (pacman), writes `~/.config/Signal/config.json` with `minimizeToTray=true`, `startMinimized=true`, `hideMenuBar=true`, creates autostart entry `signal-desktop --start-in-tray`, and provides uninstall.
+- Registered in `mosquitomarchy-setup.sh`: `SIGNAL_DIR`, `run_signal`, `un_signal`, `st_signal`, added to MODULES array, exec_modules, uninstall loop, status check.
+- Signal already present in `guis.catalog` (AUR/official package name `signal-desktop`).
+
+Verified: bash -n OK, go test OK for tui-kit + mosquitomarchy-tui.
+
 ### 2026-10-15 — APM settings page: poisoned DOWNLOADS_DIR broke the alt-screen
 
 Symptom: first visit to APM Settings rendered bizarre (no title, rows 3-14

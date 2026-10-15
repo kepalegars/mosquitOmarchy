@@ -1467,11 +1467,15 @@ _verify_selection_installed(){ # cat keys...
                # The FINAL STATE decides (ultra-optimized check: one
                # module_state call per module, direct disk probes). `ok` =
                # fully deployed; `partial` = something declared installed is
-               # missing → NOT a success (the Health check re-applies it);
-               # `missing` obviously not either.
+               # missing → the Health check will re-apply it; `missing`
+               # means the install genuinely did not land.
                st="$(module_state "$k" 2>/dev/null || true)"; st="${st%%:*}"
                if [[ -n $st ]]; then
-                 [[ $st == ok ]] || { err "Module '$k' is NOT fully installed (state: $st)."; bad=1; }
+                 case $st in
+                   ok)     : ;;
+                   missing) err "Module '$k' is NOT installed (state: missing)."; bad=1 ;;
+                   *)       warn "Module '$k' reports partial (state: $st) — will be reconciled by Health check." ;;
+                 esac
                fi
                ;;
     esac

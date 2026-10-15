@@ -648,6 +648,12 @@ st_guitarpro(){
     || { echo missing; return; }
   [[ -x "$HOME/.local/bin/guitarpro" ]] && echo ok || echo partial
 }
+
+st_signal(){
+  # Signal Desktop: official Electron client + autostart entry
+  [[ -x /usr/bin/signal-desktop ]] || { echo missing; return; }
+  [[ -f "$HOME/.config/Signal/config.json" ]] && echo ok || echo partial
+}
 st_davinci(){
   # DaVinci Resolve in /opt/resolve (Studio or free) + launcher
   [[ -x /opt/resolve/bin/resolve ]] || { echo missing; return; }
@@ -661,14 +667,15 @@ st_handbrake(){
     && echo ok || echo partial
 }
 st_whatsapp_native(){
-  # Native WhatsApp: package + tray/start-in-tray/no-menu-bar + autostart line
-  pkg_has whatsapp-nativefier || { echo missing; return; }
-  local c="/opt/whatsapp-nativefier/resources/app/nativefier.json"
-  local m="/opt/whatsapp-nativefier/resources/app/lib/main.js"
+  # Native WhatsApp (self-contained Electron wrapper): launcher + app files +
+  # "WhatsApp" menu entry + login autostart line all present.
+  [[ -e "$HOME/.local/share/whatsapp-native" || -e "$HOME/.local/bin/whatsapp" ]] \
+    || { echo missing; return; }
   local a="$HOME/.config/hypr/autostart.lua"
-  [[ -r $c ]] && grep -q '"showMenuBar":false' "$c" && grep -q '"tray":"start-in-tray"' "$c" \
-    && grep -q 'setPermissionRequestHandler' "$m" \
-    && { [[ -f $a ]] && grep -qxF -- 'o.launch_on_start("whatsapp-nativefier")' "$a"; } \
+  [[ -x "$HOME/.local/bin/whatsapp" ]] \
+    && [[ -f "$HOME/.local/share/whatsapp-native/app/main.js" ]] \
+    && [[ -f "$HOME/.local/share/applications/whatsapp.desktop" ]] \
+    && { [[ -f $a ]] && grep -qxF -- 'o.launch_on_start("whatsapp")' "$a"; } \
     && echo ok || echo partial
 }
 st_extracto(){
@@ -717,7 +724,8 @@ MODULES=(
   "davinci-resolve:DaVinci Resolve (Studio or free) + H.264/H.265 (FFmpeg encoder / libav patch) + SpectraFilm OFX option"
   "ableton-move-manager:mosquito Move Manager — Ableton Move → Ableton Live → Bitwig (menu: address / Move Manager / convert — native Omarchy prompts, MIDI export)"
   "handbrake:HandBrake (Qt GUI + CLI) + H.264/H.265 encoders + preset sync + Hyprland rules"
-  "whatsapp-native:Native WhatsApp desktop client — tray, close-to-tray, start minimized, no menu bar, menu entry WhatsApp"
+  "signal:Signal Desktop — official Electron client + autostart minimized to tray, hide menu bar, menu entry Signal, login autostart"
+  "whatsapp-native:WhatsApp desktop client (self-contained Electron wrapper) — notifications visuelles silencieuses, tray + close-to-tray, no menu bar, menu entry WhatsApp, login autostart"
   "apps:Apps, tuis & webapps (catalog per type gui/tui/webapps + backup selection via setup-apps.sh)"
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
   "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships."
@@ -820,8 +828,9 @@ module_state(){
     ableton) st_ableton ;; guitarpro) st_guitarpro ;;
     ableton-move-manager) st_ableton_move_converter ;;
     davinci-resolve) st_davinci ;;
-    handbrake) st_handbrake ;;
-    whatsapp-native) st_whatsapp_native ;;
+handbrake) st_handbrake ;;
+      signal) st_signal ;;
+      whatsapp-native) st_whatsapp_native ;;
     apps) s="$(st_apps)"; s="${s%%:*}"; echo "$s" ;;
     ollama) st_ollama ;; battery) st_battery ;; brightness) st_brightness ;;
     touchpad) st_touchpad ;;
@@ -2986,6 +2995,16 @@ un_guitarpro(){
   fi
 }
 
+un_signal(){
+  info "Uninstalling Signal Desktop"
+  mq_sudo pacman -R --noconfirm signal-desktop || true
+  rm -f "$HOME/.config/Signal/config.json"
+  rm -f "$HOME/.config/autostart/signal-desktop.desktop"
+  rmdir "$HOME/.config/Signal" 2>/dev/null || true
+  rm_desktops signal-desktop.desktop
+  ok "Signal Desktop uninstalled"
+}
+
 un_davinci(){
   # Delegates to davinci/uninstall-davinci.sh: removes launcher + menu + libav
   # patch + /opt/resolve (sudo) + OFX SpectraFilm, without the project data.
@@ -3039,7 +3058,7 @@ PY
 }
 
 un_whatsapp_native(){
-  info "Uninstalling the native WhatsApp desktop client (module whatsapp-native)"
+  info "Uninstalling the WhatsApp desktop client (module whatsapp-native)"
   bash "$WHATSAPP_NATIVE_DIR/setup-whatsapp-native.sh" --remove
 }
 
@@ -3392,8 +3411,9 @@ uninstall_module(){
     guitarpro) un_guitarpro ;;
     davinci-resolve) un_davinci ;;
     ableton-move-manager) un_ableton_move_converter ;;
-    handbrake) un_handbrake ;;
-    whatsapp-native) un_whatsapp_native ;;
+handbrake) un_handbrake ;;
+      signal) un_signal ;;
+      whatsapp-native) un_whatsapp_native ;;
     extracto) un_extracto ;;
     apps) un_apps ;;
     ollama) un_ollama ;;
@@ -3509,6 +3529,7 @@ ABLETON_DIR="$APPS_DIR/ableton"
 GUITARPRO_DIR="$APPS_DIR/guitarpro"
 DAVINCI_DIR="$APPS_DIR/davinci"
 HANDBRAKE_DIR="$APPS_DIR/handbrake"
+SIGNAL_DIR="$APPS_DIR/signal"
 WHATSAPP_NATIVE_DIR="$APPS_DIR/whatsapp-native"
 EXTRACTO_DIR="$APPS_DIR/extracto"
 MOVE_CONVERTER_DIR="$SCRIPTS/apps/ableton-move-manager"
@@ -3684,9 +3705,15 @@ run_handbrake(){
   bash "$HANDBRAKE_DIR/setup-handbrake.sh" $([[ $YES == 1 ]] && echo -y)
 }
 
+run_signal(){
+  # Signal Desktop (official Electron client) + autostart minimized to tray,
+  # hide menu bar, and the "Signal" menu entry.
+  bash "$SIGNAL_DIR/setup-signal.sh" $([[ $YES == 1 ]] && echo -y)
+}
+
 run_whatsapp_native(){
-  # Native WhatsApp desktop client: AUR package + tray/start-in-tray/no menu bar
-  # + the "WhatsApp" menu entry and Omarchy login autostart.
+  # Native WhatsApp desktop client (self-contained Electron wrapper) + the
+  # "WhatsApp" menu entry and Omarchy login autostart.
   bash "$WHATSAPP_NATIVE_DIR/setup-whatsapp-native.sh" $([[ $YES == 1 ]] && echo -y)
 }
 
@@ -3991,6 +4018,7 @@ exec_modules(){
       davinci-resolve) run_module davinci-resolve run_davinci ;;
       ableton-move-manager) run_module ableton-move-manager run_ableton_move_converter ;;
       handbrake) run_module handbrake run_handbrake ;;
+      signal) run_module signal run_signal ;;
       whatsapp-native) run_module whatsapp-native run_whatsapp_native ;;
       extracto) run_module extracto run_extracto ;;
       apps) run_module apps run_apps ;;
