@@ -291,7 +291,10 @@ func (m model) View() string {
 		body = m.passInput.View()
 		bar = barLine(m.passInput.ShortcutsHint())
 	case scrConfirm:
-		title = screenTitle("Confirm", w)
+		// No title on confirmation prompts: the question inside the dialog
+		// IS the title ("Close mosquitomarchy?"), and a generic "Confirm"
+		// header above it just repeats the obvious.
+		title = ""
 		body = m.confirm.View()
 		bar = barLine(m.confirm.ShortcutsHint())
 	case scrInfo:

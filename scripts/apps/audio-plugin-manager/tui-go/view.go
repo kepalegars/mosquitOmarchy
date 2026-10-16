@@ -113,7 +113,11 @@ func (m model) View() string {
 	case scrMain:
 		version = "v" + appVersion
 		title = m.homeTitle()
-		if m.loading {
+		// A reload with rows already on screen keeps showing them: swapping
+		// in "loading…" for a menu that is fully drawn flashes one short
+		// frame with the layout sitting lower until the fetch lands. Only
+		// a menu with nothing yet earns the loading placeholder.
+		if m.loading && len(m.picker.Items()) == 0 {
 			body = "loading…"
 		} else {
 			body = m.picker.View()

@@ -1042,7 +1042,7 @@ MODULES=(
   "ableton-move-manager:Move Manager — Ableton Move → Ableton Live → Bitwig (menu: address / Move Manager / convert — native Omarchy prompts, MIDI export)"
   "handbrake:HandBrake (Qt GUI + CLI) + H.264/H.265 encoders + preset sync + Hyprland rules"
   "signal:Signal Desktop — official Electron client + autostart minimized to tray, hide menu bar, menu entry Signal, login autostart"
-  "whatsapp-native:WhatsApp desktop client (self-contained Electron wrapper) — notifications visuelles silencieuses, tray + close-to-tray, no menu bar, menu entry WhatsApp, login autostart"
+  "whatsapp-native:WhatsApp desktop client (self-contained Electron wrapper) — silent visual notifications, tray + close-to-tray, no menu bar, menu entry WhatsApp, login autostart"
   "apps:Apps, tuis & webapps (catalog per type gui/tui/webapps + backup selection via setup-apps.sh)"
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
   "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships."

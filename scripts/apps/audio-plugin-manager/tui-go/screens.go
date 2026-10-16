@@ -3693,8 +3693,12 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.quit = true
 				return m, tea.Quit
 			}
+			// Declined: nothing changed, so just pop — no refetch. Reusing
+			// enterCmd here set loading=true on a menu whose rows were
+			// already drawn, flashing one "loading…" frame with the whole
+			// layout sitting lower until the status landed.
 			m.pop()
-			return m, m.enterCmd()
+			return m, nil
 		}
 		var cmd tea.Cmd
 		m.confirm, cmd = m.confirm.Update(msg)

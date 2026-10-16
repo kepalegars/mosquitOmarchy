@@ -6,8 +6,7 @@ AUR build. It covers everything a real chat client needs on Hyprland/Wayland:
 
 - **Notifications that actually show up.** WhatsApp Web only uses desktop
   notifications once `Notification.permission` is `granted`; otherwise it falls
-  back to its own in-page chime with **no popup** — the classic *"ça sonne mais
-  rien n'apparaît"*. `main.js` grants the permission (request + check handlers)
+  back to its own in-page chime with **no popup** — the classic "it rings but nothing shows up". `main.js` grants the permission (request + check handlers)
   and `preload.js` forces `Notification.permission` to read `granted` in the
   page, so WhatsApp stops showing its *"Autoriser les notifications"* banner.
 - **Silent notifications.** WhatsApp's in-page chime only fires while the window

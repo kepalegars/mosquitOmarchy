@@ -49,9 +49,13 @@ func (m model) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.legendLine(w))
 	case scrInfo:
-		b.WriteString(centerModal(m.info.View(), w, h))
+		// Modals return directly: centerModal already fills exactly h
+		// rows. Routing them through the TrimRight + re-center below
+		// eats their bottom padding and shifts them down a second time
+		// (the "prompt sits too low" bug).
+		return centerModal(m.info.View(), w, h)
 	case scrConfirm:
-		b.WriteString(centerModal(m.confirm.View(), w, h))
+		return centerModal(m.confirm.View(), w, h)
 	}
 
 	if t := m.toast.View(); t != "" {

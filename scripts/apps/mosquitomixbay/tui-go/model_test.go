@@ -139,11 +139,15 @@ func TestDbFmt(t *testing.T) {
 
 // A modal prompt (quit, 48V…) must sit dead-center in the window, never
 // glued to a corner: measure equal-ish blank margins on all four sides.
+// Goes through the full View (not just centerModal): the bug was View
+// trimming the modal's bottom padding and re-centering the shorter block,
+// which pushed every prompt down.
 func TestConfirmModalIsCentered(t *testing.T) {
 	m := initialModel()
 	m.w, m.h = 100, 30
 	m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")
-	v := centerModal(m.confirm.View(), 100, 30)
+	m.nav = append(m.nav, scrConfirm)
+	v := m.View()
 	lines := strings.Split(strings.TrimRight(v, "\n"), "\n")
 	if len(lines) > 30 {
 		t.Fatalf("modal frame overflows: %d lines", len(lines))

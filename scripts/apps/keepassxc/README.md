@@ -13,6 +13,10 @@ gnome-keyring — the upstream-documented way:
 - **`keepassxc.ini`** → `[FdoSecrets] Enabled=true` — the exact flag
   KeePassXC writes when the integration is ticked (verified against
   `src/core/Config.cpp`, 2.7.12: `FdoSecrets/Enabled`).
+- **Tray on close** — `[GUI] ShowTrayIcon/MinimizeToTray/MinimizeOnClose =
+  true`: closing the window hides KeePassXC to the tray instead of quitting,
+  so the Secret Service stays alive for web apps. Restart KeePassXC once
+  after applying for it to take effect.
 
 
 ## Default database — pin yours

@@ -382,16 +382,35 @@ apply_tint() {
     hvrs=no
     prev=""
     setsid uwsm-app -- hyprsunset >/dev/null 2>&1 &
+    # hyprsunset can take several seconds before its socket appears (slow
+    # machines, cold start): wait for the PROCESS first, then for the tint.
+    # A cosmetic tint must never abort an activation — every failure path
+    # below warns and returns 0.
+    local i
+    for i in $(seq 1 50); do
+      hyprsunset_running && break
+      sleep 0.2
+    done
+    if ! hyprsunset_running; then
+      warn "hyprsunset would not start — continuing without the red tint."
+      echo "$prev" > "$TINT_PREV_FILE"
+      echo "$hvrs" > "$TINT_HYPRSUNSET_FILE"
+      return 0
+    fi
     sleep 1
   fi
   echo "$prev" > "$TINT_PREV_FILE"
   echo "$hvrs" > "$TINT_HYPRSUNSET_FILE"
   # hyprsunset re-applies its temperature at boot: resend until it takes effect.
-  for _ in {1..10}; do
+  for _ in $(seq 1 30); do
     hyprctl hyprsunset temperature "$RED_TEMP" >/dev/null 2>&1 || true
-    sleep 0.2
+    sleep 0.5
     [[ $(current_tint || true) == "$RED_TEMP" ]] && break
   done
+  if [[ $(current_tint || true) != "$RED_TEMP" ]]; then
+    warn "hyprsunset did not take the $RED_TEMP tint — continuing without it."
+  fi
+  return 0
 }
 
 restore_tint() {
@@ -594,7 +613,10 @@ start_caffeine() {
     rm -f "$MAX_END_FILE"
   fi
 
-  apply_tint || { err "Could not apply the tint."; return 1; }
+  # The tint is cosmetic: a hyprsunset hiccup must never abort the whole
+  # activation (that is exactly the "stops right after the timer prompt"
+  # failure — apply_tint now always returns 0 itself).
+  apply_tint || warn "tint skipped — continuing without it."
   apply_ultrasave
   start_lid_block || { err "systemd-inhibit unavailable."; restore_tint; return 1; }
   start_stayawake

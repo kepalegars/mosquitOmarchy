@@ -10,7 +10,7 @@
 #   1. VISUAL notifications that work. WhatsApp Web only shows desktop
 #      notifications once Notification.permission is "granted"; otherwise it
 #      falls back to its own in-page chime with NO popup (the old symptom:
-#      "sonne mais rien n'apparaît"). main.js grants the permission through
+#      "it rings but nothing shows up"). main.js grants the permission through
 #      setPermissionRequestHandler + setPermissionCheckHandler, and preload.js
 #      forces Notification.permission to read "granted" in the page so WhatsApp
 #      stops showing its "Autoriser les notifications" banner.
@@ -186,7 +186,7 @@ mkdir -p "$APPS_DIR"
 cat > "$DESKTOP" <<EOF
 [Desktop Entry]
 Name=WhatsApp
-Comment=WhatsApp Web (tray, notifications visuelles silencieuses, sans barre de menu)
+Comment=WhatsApp Web (tray, silent visual notifications, no menu bar)
 Exec=$LAUNCHER %U
 Terminal=false
 Type=Application

@@ -2848,12 +2848,13 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 }
 
 // closeConfirm opens the "Close mosquitOmarchy?" confirmation, shared by the
-// Close row and by Esc at the main menu.
+// Close row and by Esc at the main menu. Buttons are Yes/No like every other
+// confirm in the mosquito TUIs (never Cancel/Close).
 func (m model) closeConfirm() (model, tea.Cmd) {
 	m.pendingAction = "close"
-	m.pendingMsg = "Close mosquitOmarchy?\n\nNothing is changed — you can reopen it from the Omarchy menu at any time."
-	m.pendingNo = "Cancel"
-	m.pendingYes = "Close"
+	m.pendingMsg = "Close mosquitomarchy?\n\nNothing is changed — you can reopen it from the Omarchy menu at any time."
+	m.pendingNo = "No"
+	m.pendingYes = "Yes"
 	m.push(scrConfirm)
 	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 	return m, nil

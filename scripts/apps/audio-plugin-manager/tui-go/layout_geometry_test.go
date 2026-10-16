@@ -105,3 +105,27 @@ func TestContentSizeFitsTheGap(t *testing.T) {
 		}
 	}
 }
+
+// TestQuitDeclineKeepsMenuDrawn is the regression for the one-frame dip:
+// declining the Close confirm used to refetch the status, flashing a short
+// "loading…" frame with the layout sitting lower until the fetch landed.
+// Nothing changes on decline, so it pops straight back to the drawn menu.
+func TestQuitDeclineKeepsMenuDrawn(t *testing.T) {
+	m := initialModel()
+	m.w, m.h = 100, 30
+	m.nav = []screen{scrMain, scrQuitConfirm}
+	mm, cmd := m.update(tuikit.ConfirmResultMsg{Yes: false})
+	if cmd != nil {
+		t.Fatalf("declining quit must not start work, got a command")
+	}
+	m = mm.(model)
+	if m.top() != scrMain {
+		t.Fatalf("not back on the menu")
+	}
+	if m.loading {
+		t.Fatalf("menu flagged loading with its rows already drawn")
+	}
+	if strings.Contains(m.View(), "loading…") {
+		t.Fatalf("menu flashed a loading frame with rows on screen")
+	}
+}

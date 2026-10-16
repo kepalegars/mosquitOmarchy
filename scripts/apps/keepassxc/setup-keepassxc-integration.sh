@@ -145,6 +145,42 @@ print("yes" if c.getboolean("FdoSecrets", "Enabled", fallback=False) else "no")
 PY
 }
 
+# ─── low-level: keepassxc.ini tray-on-close ───────────────────────────────────
+# Closing the window must hide KeePassXC to the tray, not quit it: the secret
+# service dies with the app, and every web app relying on it breaks until the
+# next manual launch. Three GUI keys, same python pattern as above:
+#   ShowTrayIcon   = the tray icon itself (without it the other two do nothing)
+#   MinimizeToTray = minimize goes to the tray instead of the taskbar
+#   MinimizeOnClose = the X button minimizes instead of quitting
+set_tray_on_close(){
+  [[ -f $KPXC_INI ]] || { mkdir -p "$KPXC_INI_DIR"; printf '\n' > "$KPXC_INI"; }
+  if [[ ! -e $KPXC_INI_BAK ]]; then cp -f "$KPXC_INI" "$KPXC_INI_BAK"; fi
+  python3 - "$KPXC_INI" <<'PY'
+import configparser, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+c = configparser.ConfigParser()
+c.optionxform = str
+c.read(p)
+if not c.has_section("GUI"):
+    c.add_section("GUI")
+for k, v in (("ShowTrayIcon", "true"), ("MinimizeToTray", "true"),
+             ("MinimizeOnClose", "true")):
+    c.set("GUI", k, v)
+with open(p, "w") as fh:
+    c.write(fh)
+PY
+  ok "keepassxc.ini: tray icon on, minimize-to-tray on, minimize-on-close on (backup: $KPXC_INI_BAK)"
+}
+
+tray_on_close(){
+  python3 - "$KPXC_INI" <<'PY' 2>/dev/null || echo no
+import configparser, sys
+c = configparser.ConfigParser(); c.read(sys.argv[1])
+ok = all(c.getboolean("GUI", k, fallback=False) for k in ("ShowTrayIcon", "MinimizeToTray", "MinimizeOnClose"))
+print("yes" if ok else "no")
+PY
+}
+
 # ─── steps ────────────────────────────────────────────────────────────────────
 ensure_package(){
   if command -v keepassxc >/dev/null 2>&1; then
@@ -245,6 +281,7 @@ do_status(){
   echo "package      : $(command -v keepassxc >/dev/null && echo present || echo absent)"
   echo "dbus override: $([[ -f $KPXC_DBUS_FILE ]] && echo present || echo absent)"
   echo "ini flagged  : $(fdo_enabled)"
+  echo "tray on close: $(tray_on_close)"
   echo "autostart    : $([[ -f "$KPXC_AUTOSTART_DIR/$KPXC_AUTOSTART_SHADE" ]] && echo shadowed || echo stock)"
   echo "user masking : $(systemctl --user is-enabled gnome-keyring-daemon.service 2>/dev/null || echo n/a)"
   local pin
@@ -260,6 +297,7 @@ do_apply(){
   write_dbus_override
   set_fdo_enabled true
   ok "keepassxc.ini: [FdoSecrets] Enabled=true (backup: $KPXC_INI_BAK)"
+  set_tray_on_close
   write_autostart_shade
   mask_daemon_service
   offer_gnome_keyring_removal
