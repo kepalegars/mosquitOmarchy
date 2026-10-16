@@ -64,6 +64,22 @@ func (m model) View() string {
 	content := strings.TrimRight(b.String(), " \t\n")
 	lines := strings.Count(content, "\n") + 1
 
+	// The version owns row 0, detached from the title: it is window chrome
+	// at the same place on every screen, never part of the centred block.
+	// Confirm/info modals own the whole window (no version over a prompt).
+	ver := ""
+	if m.top() == scrDevices || m.top() == scrControls || m.top() == scrMixer || m.top() == scrSettings {
+		ver = versionRow(w)
+		ch := h - 1
+		if ch < 1 {
+			ch = 1
+		}
+		if h > lines {
+			content = lipgloss.PlaceVertical(ch, lipgloss.Center, content)
+		}
+		return ver + "\n" + content
+	}
+
 	if h > lines {
 		content = lipgloss.PlaceVertical(h, lipgloss.Center, content)
 	}
@@ -97,11 +113,12 @@ func screenBudgetConst() int { return statusRows() + pickerChromeRows() + 2 }
 
 func (m model) screenBudget(h int) (string, int) {
 	w, _ := m.contentSize()
-	// Lie to the ladder about the height by the fixed costs, so the rung it
-	// picks always leaves room for at least one list row: at h=12 the
-	// 9-row stacked banner must degrade to the one-line subtitle.
-	l := tuikit.LayoutForLadder(w, h-screenBudgetConst()-1, titleLadder(w))
-	title := versionRow(w) + "\n" + l.RenderLadder(w, titleLadder(w))
+	// Lie to the ladder about the height by the fixed costs (version row
+	// included), so the rung it picks always leaves room for at least one
+	// list row: at h=12 the 9-row stacked banner must degrade to the
+	// one-line subtitle.
+	l := tuikit.LayoutForLadder(w, h-screenBudgetConst()-2, titleLadder(w))
+	title := l.RenderLadder(w, titleLadder(w))
 	rows := h - (l.TitleRows + 1) - screenBudgetConst()
 	if rows < 1 {
 		rows = 1
@@ -110,14 +127,14 @@ func (m model) screenBudget(h int) (string, int) {
 }
 
 // settingsBudget is the same split for the small settings screen, whose
-// title is the version row plus one accent line.
+// title is one accent line under the detached version row.
 func (m model) settingsBudget(h int) (string, int) {
 	w, _ := m.contentSize()
 	rows := h - 2 - screenBudgetConst()
 	if rows < 1 {
 		rows = 1
 	}
-	return versionRow(w) + "\n" + screenTitle("Settings", w), rows
+	return screenTitle("Settings", w), rows
 }
 
 // centerBlock centers every line of a composed title block in the window

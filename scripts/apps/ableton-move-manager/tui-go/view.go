@@ -133,9 +133,7 @@ func (m model) View() string {
 		m.routePicker = m.routePicker.SetSize(m.contentSize())
 	}
 	var body, title, bar string
-	// The script version rides top-left on EVERY screen, not just the
-	// home page: it is fixed chrome, like the shortcut bar.
-	version := "v" + appVersion
+	var version string
 	// The Toast replaces the shortcut hint in the bottom bar whenever it's
 	// active — the bar is a fixed one-row floor, so a notification never
 	// pushes the layout around (the user's rule: an appearing notification
@@ -149,6 +147,7 @@ func (m model) View() string {
 	}
 	switch m.top() {
 	case scrMain:
+		version = "v" + appVersion
 		if m.loading && m.status.Host == "" {
 			title = m.homeTitle()
 			body = "loading…"

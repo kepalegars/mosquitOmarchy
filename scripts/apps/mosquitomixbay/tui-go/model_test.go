@@ -228,8 +228,9 @@ func TestFrameFitsTheWindow(t *testing.T) {
 		if !strings.Contains(v, "Audient EVO 8") {
 			t.Errorf("win %dx%d: first device missing", wh[0], wh[1])
 		}
-		if !strings.Contains(v, "v1.0.0") {
-			t.Errorf("win %dx%d: version missing", wh[0], wh[1])
+		lines0 := strings.Split(strings.TrimRight(v, "\n"), "\n")
+		if !strings.HasPrefix(strings.TrimSpace(stripANSI(lines0[0])), "v1.0.0") {
+			t.Errorf("win %dx%d: version not on row 0: %q", wh[0], wh[1], lines0[0])
 		}
 	}
 }

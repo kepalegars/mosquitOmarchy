@@ -234,3 +234,24 @@ func TestLayoutForLadderAlwaysFits(t *testing.T) {
 		}
 	}
 }
+
+// TestFrameScreenVersionPinsVersionTopLeft: the version owns row 0 at column
+// 0, detached from the centred title block below it — the same place on
+// every screen. An empty version behaves exactly like FrameScreen.
+func TestFrameScreenVersionPinsVersionTopLeft(t *testing.T) {
+	out := FrameScreenVersion(40, 12, "TITLE", "body\nbody", "hint", "v1.0.0")
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) > 12 {
+		t.Fatalf("render is %d rows in a 12-row window", len(lines))
+	}
+	if !strings.HasPrefix(stripANSI(lines[0]), "v1.0.0") {
+		t.Errorf("version not at row 0 col 0: %q", stripANSI(lines[0]))
+	}
+	if !strings.Contains(out, "TITLE") {
+		t.Errorf("title lost")
+	}
+	plain := FrameScreen(40, 12, "TITLE", "body\nbody", "hint")
+	if FrameScreenVersion(40, 12, "TITLE", "body\nbody", "hint", "") != plain {
+		t.Errorf("empty version should behave exactly like FrameScreen")
+	}
+}

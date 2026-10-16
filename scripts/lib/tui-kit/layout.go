@@ -49,22 +49,37 @@ func BottomBar(notify, hint string, w int) string {
 		"\n" + TruncateLine(hint, w)
 }
 
-// FrameScreenVersion is FrameScreen with a small version label pinned to the
-// very top-left corner of the interface (its own first row, column 0), in the
-// same muted style as the shortcut hints. Hosts use it on their FIRST screen
-// only — the version is the version of the SCRIPT/module, not of the app it
-// manages. It prepends a dedicated row so it never overwrites a one-line
-// screen title (FrameScreen then pins that row to the top).
+// FrameScreenVersion is FrameScreen with a small version label pinned to
+// the very top-left corner of the interface (its own first row, column 0),
+// in the same muted style as the shortcut hints.
+//
+// DESIGN RULE — where the version lives, and when it shows:
+//
+//   - The version is WINDOW chrome, never title chrome: it sits on row 0,
+//     detached from the title block, so it is always at the same place no
+//     matter which TUI or which page is on screen. The title+body block is
+//     centred in the rows below it.
+//   - The version shows on content screens ONLY — never on a confirm/info
+//     modal screen (close prompts, patch applies, help popups). A version
+//     string floating over a modal reads as part of the question; hosts
+//     pass "" there. The modal owns the whole window while it is up.
+//   - Hosts budget their pickers against the full window height as before:
+//     the version row comes out of the same centering slack every other
+//     screen already leaves, and FrameScreen clips an over-tall body before
+//     it ever touches the version row or the bar.
 func FrameScreenVersion(w, h int, title, body, bar, version string) string {
-	if w > 0 && version != "" {
-		ver := StyleHelp.Render(version)
-		pad := w - lipgloss.Width(ver)
-		if pad < 0 {
-			pad = 0
-		}
-		title = ver + strings.Repeat(" ", pad) + "\n" + title
+	if version == "" {
+		return FrameScreen(w, h, title, body, bar)
 	}
-	return FrameScreen(w, h, title, body, bar)
+	if w <= 0 || h <= 0 {
+		return version + "\n" + FrameScreen(w, h, title, body, bar)
+	}
+	ver := StyleHelp.Render(version)
+	pad := w - lipgloss.Width(ver)
+	if pad < 0 {
+		pad = 0
+	}
+	return ver + strings.Repeat(" ", pad) + "\n" + FrameScreen(w, h-1, title, body, bar)
 }
 
 // FrameScreen composes a full TUI screen into the universal layout rule:

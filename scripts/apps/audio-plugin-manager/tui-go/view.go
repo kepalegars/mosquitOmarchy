@@ -101,9 +101,7 @@ func (m model) View() string {
 	m.picker = m.picker.SetSize(m.contentSize())
 	m.infoConfirm = m.infoConfirm.SetSize(m.contentSize())
 	var body, title, bar string
-	// The script version rides top-left on EVERY screen, not just the
-	// home page: it is fixed chrome, like the shortcut bar.
-	version := "v" + appVersion
+	var version string
 	// The toast lives on its own reserved row just ABOVE the shortcut hint
 	// (tuikit.BottomBar), so a notification never hides the shortcuts and
 	// never moves the interface when it auto-disappears.
@@ -113,6 +111,7 @@ func (m model) View() string {
 
 	switch m.top() {
 	case scrMain:
+		version = "v" + appVersion
 		title = m.homeTitle()
 		if m.loading {
 			body = "loading…"
