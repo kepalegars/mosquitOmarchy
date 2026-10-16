@@ -237,6 +237,323 @@ REPO_BRANCH="master"
 REPO_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo 1.0.0)"
 module_version(){ printf '%s\n' "$REPO_VERSION"; }
 
+# ── Local applied-version tracking for Updates ─────────────────────────────
+# The Updates screen proposes an installed module whenever files owned by that
+# module differ from what was last successfully applied on THIS machine. The
+# baseline is a tiny local state file per module (never committed): the repo
+# root, the repo commit seen at apply time, and git blob hashes for the owned
+# files that changed. Comparing current content to that baseline means an
+# already-applied local edit stops being proposed even before it is committed,
+# while any later edit (or a different checkout) is proposed again.
+update_baseline_dir(){ printf '%s/.local/state/mosquitomarchy/update-baseline' "$HOME"; }
+update_baseline_file(){
+  local id="$1"
+  [[ $id =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  printf '%s/%s.txt' "$(update_baseline_dir)" "$id"
+}
+
+update_repo_short_head(){ git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || true; }
+
+# Repo-relative paths that should never, by themselves, mark a module changed:
+# editor swaps, backups, experiments and logs next to real scripts.
+update_path_is_noise(){
+  case "$1" in
+    *.backup*|*.bak|*.orig|*~|*.swp|*.swo|*.experimental*|*.log) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# All working-tree paths that differ from HEAD: unstaged edits, staged edits,
+# and new untracked files. Remote-only commits are handled separately by the
+# fast-forward diff in the update check.
+update_working_paths(){
+  [[ -d "$REPO_DIR/.git" ]] || return 0
+  git -C "$REPO_DIR" diff --name-only HEAD 2>/dev/null || true
+  git -C "$REPO_DIR" diff --name-only --cached 2>/dev/null || true
+  local e p
+  while IFS= read -r -d '' e || [[ -n $e ]]; do
+    [[ ${e:0:2} == "??" ]] || continue
+    p="${e:3}"
+    [[ -n $p ]] || continue
+    update_path_is_noise "$p" && continue
+    printf '%s\n' "$p"
+  done < <(git -C "$REPO_DIR" status --porcelain=v1 --untracked-files=all -z 2>/dev/null || true)
+}
+
+# Working-tree paths owned by one module id, de-duplicated.
+update_owned_paths_for(){
+  local want="$1" p m
+  [[ -n $want ]] || return 0
+  declare -A seen=()
+  while IFS= read -r p || [[ -n $p ]]; do
+    [[ -n $p ]] || continue
+    m="$(module_of_path "$p")"
+    [[ $m == "$want" ]] || continue
+    if [[ -z ${seen[$p]:-} ]]; then
+      seen[$p]=1
+      printf '%s\n' "$p"
+    fi
+  done < <(update_working_paths)
+}
+
+# Snapshot the owned working-tree files that a successful module run just used.
+# Best effort: state that cannot be written must never fail an installation.
+record_update_baseline(){
+  local id="$1" dir head tmp p f h
+  [[ -n ${id:-} ]] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  [[ -d "$REPO_DIR/.git" ]] || return 0
+  dir="$(update_baseline_dir)"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  head="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+  tmp="$(mktemp "$dir/.$id.XXXXXX" 2>/dev/null || true)"
+  [[ -n $tmp ]] || return 0
+  {
+    printf 'repo\t%s\n' "$REPO_DIR"
+    printf 'commit\t%s\n' "$head"
+    while IFS= read -r p || [[ -n $p ]]; do
+      [[ -n $p ]] || continue
+      f="$REPO_DIR/$p"
+      if [[ -f $f ]]; then
+        h="$(git -C "$REPO_DIR" hash-object -- "$f" 2>/dev/null || true)"
+        [[ -n $h ]] || h="unhashable"
+        printf 'file\t%s\t%s\n' "$h" "$p"
+      else
+        printf 'deleted\t%s\n' "$p"
+      fi
+    done < <(update_owned_paths_for "$id")
+  } >"$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 0; }
+  mv -f "$tmp" "$(update_baseline_file "$id")" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  return 0
+}
+
+# Look one recorded path up in a module baseline: absent (no record or a repo
+# mismatch), deleted, or hash:<git-blob-hash>.
+update_baseline_lookup(){
+  local id="$1" want="$2" f repo kind a b
+  f="$(update_baseline_file "$id" 2>/dev/null || true)"
+  [[ -n $f && -f $f ]] || { printf 'absent\n'; return 0; }
+  repo="$(awk -F'\t' '$1=="repo"{print $2; exit}' "$f" 2>/dev/null || true)"
+  [[ $repo == "$REPO_DIR" ]] || { printf 'absent\n'; return 0; }
+  while IFS=$'\t' read -r kind a b || [[ -n $kind ]]; do
+    case "$kind" in
+      file) [[ $b == "$want" ]] && { printf 'hash:%s\n' "$a"; return 0; } ;;
+      deleted) [[ $a == "$want" ]] && { printf 'deleted\n'; return 0; } ;;
+    esac
+  done <"$f"
+  printf 'absent\n'
+}
+
+update_baseline_commit(){
+  local id="$1" f
+  f="$(update_baseline_file "$id" 2>/dev/null || true)"
+  [[ -n $f && -f $f ]] || return 0
+  awk -F'\t' -v root="$REPO_DIR" '
+    $1=="repo"{ok=($2==root)}
+    ok && $1=="commit"{print $2; exit}
+  ' "$f" 2>/dev/null || true
+}
+
+# All paths recorded for a module baseline (repo-relative, one per line).
+update_baseline_paths(){
+  local id="$1" f
+  f="$(update_baseline_file "$id" 2>/dev/null || true)"
+  [[ -n $f && -f $f ]] || return 0
+  awk -F'\t' -v root="$REPO_DIR" '
+    $1=="repo"{ok=($2==root); next}
+    ok && $1=="file"{print $3}
+    ok && $1=="deleted"{print $2}
+  ' "$f" 2>/dev/null || true
+}
+
+# Owned paths with pending local-version drift: owned working-tree changes
+# plus recorded baseline files whose current content no longer matches.
+update_pending_paths_for(){
+  local id="$1"
+  shift
+  declare -A seen=()
+  local p
+  for p in "$@"; do
+    if [[ -n $p && -z ${seen[$p]:-} ]] && update_path_is_pending "$id" "$p"; then
+      seen[$p]=1
+      printf '%s\n' "$p"
+    fi
+  done
+  while IFS= read -r p || [[ -n $p ]]; do
+    if [[ -n $p && -z ${seen[$p]:-} ]] && update_path_is_pending "$id" "$p"; then
+      seen[$p]=1
+      printf '%s\n' "$p"
+    fi
+  done < <(update_baseline_paths "$id")
+  return 0
+}
+
+# True when a module-owned path still differs from its recorded applied state.
+update_path_is_pending(){
+  local id="$1" p="$2" f cur recorded
+  f="$REPO_DIR/$p"
+  recorded="$(update_baseline_lookup "$id" "$p")"
+  case "$recorded" in
+    absent) return 0 ;;
+    deleted) [[ -e $f ]] && return 0 || return 1 ;;
+    hash:*)
+      [[ -e $f ]] || return 0
+      cur="$(git -C "$REPO_DIR" hash-object -- "$f" 2>/dev/null || true)"
+      [[ -n $cur && $cur == "${recorded#hash:}" ]] && return 1 || return 0
+      ;;
+  esac
+  return 0
+}
+
+# Rename source for a changed target (empty when this was not a rename).
+update_rename_source(){
+  local want="$1" st src dst
+  [[ -d "$REPO_DIR/.git" ]] || return 0
+  while IFS=$'\t' read -r st src dst || [[ -n $st ]]; do
+    if [[ ${st:0:1} == R && -n ${dst:-} && $dst == "$want" ]]; then
+      printf '%s\n' "$src"
+      return 0
+    fi
+  done < <(git -C "$REPO_DIR" diff --find-renames --name-status HEAD 2>/dev/null || true)
+  return 0
+}
+
+# One-line file-kind label for the changelog (never shell-quoted: the caller
+# JSON-escapes the whole line).
+update_file_kind(){
+  local p="$1" f="$REPO_DIR/$1" base="${1##*/}"
+  case "$p" in
+    *.sh) printf 'installer/setup script'; return 0 ;;
+    *.go) printf 'TUI source'; return 0 ;;
+    *.md) printf 'documentation/notes'; return 0 ;;
+    *.json|*.jsonc) printf 'config/menu metadata'; return 0 ;;
+    *.png|*.jpg|*.jpeg|*.svg|*.ico) printf 'icon/image asset'; return 0 ;;
+    *.tsv|*.csv|*.txt) printf 'data catalog'; return 0 ;;
+  esac
+  if [[ ! -e $f ]]; then printf 'file'; return 0; fi
+  if [[ -x $f ]] && [[ $base != *.* ]] \
+    && [[ $(git -C "$REPO_DIR" diff --numstat -- "$p" 2>/dev/null | awk '{print $1}') == "-" ]]; then
+    printf 'built executable'; return 0
+  fi
+  if [[ $base != *.* ]]; then printf 'helper script/data file'; else printf 'file'; fi
+}
+
+# One-line changelog entry for one changed path, e.g.
+# "M scripts/... — installer/setup script edited (+12/−3 lines)".
+update_path_change_summary(){
+  local p="$1" f="$REPO_DIR/$1" st change status rest kind line
+  local src dst stats add del cur old
+  st="$(git -C "$REPO_DIR" status --porcelain=v1 -- "$p" 2>/dev/null || true)"
+  if [[ $st == '??'* ]]; then
+    change="?? $p"
+  else
+    change="$(git -C "$REPO_DIR" diff --find-renames --name-status HEAD -- "$p" 2>/dev/null | head -n 1 || true)"
+    [[ -n $change ]] || change="M	$p"
+  fi
+  status="${change:0:1}"
+  rest="${change:1}"
+  if [[ $status == "A" || $status == "M" ]]; then
+    # A single-path diff query reports a rename target as added/modified.
+    # Resolve it against the full rename-aware diff before describing it.
+    src="$(update_rename_source "$p")"
+    if [[ -n $src ]]; then
+      change="R070	$src	$p"
+      status="R"
+    fi
+  fi
+  kind="$(update_file_kind "$p")"
+  case "$status" in
+    '?')
+      if stats="$(git -C "$REPO_DIR" diff --no-index --numstat -- /dev/null -- "$f" 2>/dev/null || true)"; then
+        add="$(printf '%s' "$stats" | awk '{print $1}')"
+        del="$(printf '%s' "$stats" | awk '{print $2}')"
+        if [[ $add == "-" ]]; then line="added (untracked $kind)";
+        elif [[ $add =~ ^[0-9]+$ && $del =~ ^[0-9]+$ ]]; then line="added (untracked $kind, +$add/-$del lines)";
+        else line="added (untracked $kind)"; fi
+      else
+        line="added (untracked $kind)"
+      fi
+      ;;
+
+    A) line="added ($kind)" ;;
+    D)
+      if old="$(git -C "$REPO_DIR" cat-file -s "HEAD:$p" 2>/dev/null || true)"; then
+        line="removed ($kind, was $old bytes)"
+      else
+        line="removed ($kind)"
+      fi
+      ;;
+    R)
+      IFS=$'\t' read -r _ src dst <<<"$change"
+      stats="$(git -C "$REPO_DIR" diff --numstat -- "$dst" 2>/dev/null | awk '{print $1, $2}')"
+      add="${stats%% *}"; del="${stats##* }"
+      if [[ -n $add && $add != "-" && ($add != "0" || $del != "0") ]]; then
+        line="moved from $src ($kind, edited +$add/-$del lines)"
+      else
+        line="moved from $src ($kind)"
+      fi
+      ;;
+    M)
+      stats="$(git -C "$REPO_DIR" diff --numstat -- "$p" 2>/dev/null | awk '{print $1, $2}')"
+      add="${stats%% *}"; del="${stats##* }"
+      if [[ $add == "-" ]]; then
+        cur="$(stat -c%s "$f" 2>/dev/null || true)"
+        old="$(git -C "$REPO_DIR" cat-file -s "HEAD:$p" 2>/dev/null || true)"
+        if [[ -n $cur && -n $old ]]; then
+          line="rebuilt ($kind, $old → $cur bytes; no text diff available)"
+        else
+          line="rebuilt ($kind; no text diff available)"
+        fi
+      elif [[ -n $add ]]; then
+        line="edited ($kind, +$add/-$del lines)"
+      else
+        line="touched ($kind)"
+      fi
+      ;;
+    *) line="changed ($kind)" ;;
+  esac
+  printf '%s %s — %s\n' "$status" "$p" "$line"
+}
+
+# Fill UPDATE_DETAIL_* for one proposed module: a one-line reason, the owned
+# changed files, and one changelog line per file. Call as:
+#   update_module_change_details <id> <state> <base> <applied> <path...>
+update_module_change_details(){
+  local id="$1" state="$2" base="$3" applied="$4"
+  shift 4
+  UPDATE_DETAIL_REASON=""
+  UPDATE_DETAIL_BASE="$base"
+  UPDATE_DETAIL_APPLIED="$applied"
+  UPDATE_DETAIL_FILES=()
+  UPDATE_DETAIL_CHANGES=()
+  local p line nbehavior=0 ndocs=0 nartifact=0 kind
+  for p in "$@"; do
+    [[ -n $p ]] || continue
+    line="$(update_path_change_summary "$p")"
+    UPDATE_DETAIL_FILES+=("$p")
+    UPDATE_DETAIL_CHANGES+=("$line")
+    kind="$(update_file_kind "$p")"
+    case "$kind" in
+      documentation/notes*) ndocs=$((ndocs+1)) ;;
+      built\ executable*) nartifact=$((nartifact+1)) ;;
+      *) nbehavior=$((nbehavior+1)) ;;
+    esac
+  done
+  if ((${#UPDATE_DETAIL_FILES[@]} == 0)); then
+    UPDATE_DETAIL_REASON="Installed ($state); no owned file-level changes detected."
+    return 0
+  fi
+  local scope="working-tree changes (repo base ${base:-unknown})"
+  [[ -n $applied ]] && scope="changes since applied scripts ${applied:0:7} (repo base ${base:-unknown})"
+  if ((nbehavior == 0 && ndocs > 0)); then
+    UPDATE_DETAIL_REASON="Installed ($state); docs-only change across ${#UPDATE_DETAIL_FILES[@]} file(s); $scope."
+  elif ((nbehavior == 0 && nartifact > 0)); then
+    UPDATE_DETAIL_REASON="Installed ($state); only tracked build artifact(s) changed; $scope. Reapply rebuilds/verifies the install."
+  else
+    UPDATE_DETAIL_REASON="Installed ($state); ${#UPDATE_DETAIL_FILES[@]} owned file(s) changed; $scope. Reapply is idempotent."
+  fi
+}
+
 repo_update_avail(){ # 0 if a GitHub version is newer than the local one
   command -v git >/dev/null 2>&1 || return 1
   [[ -d "$REPO_DIR/.git" ]] || return 1
@@ -411,7 +728,7 @@ st_battery(){
   omarchy plugin list 2>/dev/null | grep -qE '^\s*(mosquito|custom)\.power\s+enabled' && echo ok || echo partial
 }
 st_brightness(){
-  [[ -x "$HOME/.local/bin/backlight" ]] || { echo missing; return; }
+  [[ -x "$HOME/.local/bin/brightness-0" ]] || { echo missing; return; }
   [[ -f "$HOME/.config/hypr/bindings.lua" ]] \
     && grep -qF -- "Omarchy_Custom_Scripts_Brightness" "$HOME/.config/hypr/bindings.lua" \
     && echo ok || echo partial
@@ -730,7 +1047,7 @@ MODULES=(
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
   "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships."
   "battery:Battery backend (ultra-save + Lenovo charge-control + mosquito.power plugin) + coffee mode (mega-caffeine)"
-  "brightness:Display brightness — Omarchy default, plus 0% = screen off"
+  "brightness:Display brightness — Omarchy default step, 0% = screen off, and a silent 1% ramp on held keys for smoother steps (no run-on beyond the current step)"
   "achraff:'Achraff 67' visual theme + unlock/Plymouth logo (lock screen left stock)"
   "touchpad:Touchpad (pointer acceleration + sensitivity — external mouse is not affected)"
   "mx-master:MX Master (any model) — thumb gesture button → SUPER (logiops daemon, system service)"
@@ -881,15 +1198,16 @@ module_of_path(){
     scripts/mosquitomarchy-update/*)                         echo mosquitomarchy-update ;;
     scripts/apps/ableton-move-*|scripts/apps/ableton-move/*) echo ableton-move-manager ;;
     scripts/apps/handbrake/*)                                echo handbrake ;;
+    scripts/apps/signal/*)                                   echo signal ;;
     scripts/apps/whatsapp-native/*)                          echo whatsapp-native ;;
     scripts/apps/extracto/*)                                 echo extracto ;;
     scripts/apps/gui/*|scripts/apps/tui-tools/*|scripts/apps/webapps/*|\
     scripts/apps/setup-apps.sh|scripts/apps/uninstall-apps.sh|scripts/lib/common.bash) echo apps ;;
     scripts/LLM/*)                                           echo ollama ;;
     scripts/plugins/power-management/*)                      echo battery ;;
-    scripts/fixes/fix-optimized-brightness.sh)               echo brightness ;;
+    scripts/plugins/brightness/*)                            echo brightness ;;
     scripts/theme/*)                                         echo achraff ;;
-    scripts/fixes/fix-touchpad.sh)                           echo touchpad ;;
+    scripts/plugins/touchpad/*)                             echo touchpad ;;
     scripts/fixes/fix-mx-master.sh)                          echo mx-master ;;
     scripts/apps/hyprmod/*)                                 echo apps ;;
     scripts/fixes/fix-ableton-fullscreen.sh)                 echo ableton-fullscreen ;;
@@ -3151,8 +3469,8 @@ un_battery(){
 }
 
 un_brightness(){
-  info "Uninstalling brightness (backlight + bindings)"
-  rm -f "$BIN_DIR/backlight"
+  info "Uninstalling brightness (brightness-0 helper + bindings)"
+  rm -f "$BIN_DIR/brightness-0"
   if [[ -f $BINDINGS ]] && grep -qF -- 'Omarchy_Custom_Scripts_Brightness' "$BINDINGS"; then
     local tmp=$(mktemp)
     awk '
@@ -3450,6 +3768,9 @@ handbrake) un_handbrake ;;
   if [[ $pre == ok || $pre == partial ]]; then
     record_excluded "$id"
   fi
+  # An uninstalled module has no applied-version baseline anymore; a later
+  # reinstall records a fresh one on success.
+  rm -f "$(update_baseline_file "$id" 2>/dev/null || true)" 2>/dev/null || true
   hr
 }
 
@@ -3503,7 +3824,11 @@ MODULE_FAILURES=0
 run_module(){
   local id="$1"; shift
   msg "Module '$id' — running"
-  if "$@"; then RESULTS+=("$id:ok"); ok "Module $id: completed without error"
+  if "$@"; then
+    RESULTS+=("$id:ok"); ok "Module $id: completed without error"
+    # Remember which script content this successful run used, so Updates can
+    # distinguish already-applied local edits from newer ones.
+    record_update_baseline "$id"
   else
     RESULTS+=("$id:fail")
     MODULE_FAILURES=$((MODULE_FAILURES + 1))
@@ -3534,8 +3859,8 @@ WHATSAPP_NATIVE_DIR="$APPS_DIR/whatsapp-native"
 EXTRACTO_DIR="$APPS_DIR/extracto"
 MOVE_CONVERTER_DIR="$SCRIPTS/apps/ableton-move-manager"
 BATTERY_DIR="$SCRIPTS/plugins/power-management"
-DISPLAY_DIR="$SCRIPTS/fixes"
-TOUCHPAD_DIR="$SCRIPTS/fixes"
+BRIGHTNESS_DIR="$SCRIPTS/plugins/brightness"
+TOUCHPAD_DIR="$SCRIPTS/plugins/touchpad"
 MXMASTER_DIR="$SCRIPTS/fixes"
 SUPERFILE_DIR="$SCRIPTS/apps/superfile"
 THEME_DIR="$SCRIPTS/theme"
@@ -3855,9 +4180,9 @@ run_ollama(){
 }
 
 run_battery(){ bash "$BATTERY_DIR/setup-battery-management.sh"; }
-run_brightness(){ bash "$DISPLAY_DIR/fix-optimized-brightness.sh"; }
+run_brightness(){ bash "$BRIGHTNESS_DIR/optimized-brightness.sh"; }
 run_achraff(){ bash "$THEME_DIR/create-theme.sh" --apply "$THEME_DIR/Wallpapers/achraf67.png"; }
-run_touchpad(){ bash "$TOUCHPAD_DIR/fix-touchpad.sh" $([[ $YES == 1 ]] && echo -y); }
+run_touchpad(){ bash "$TOUCHPAD_DIR/touchpad.sh" $([[ $YES == 1 ]] && echo -y); }
 run_superfile(){ bash "$SUPERFILE_DIR/setup-superfile.sh" $([[ $YES == 1 ]] && echo -y); }
 run_zen(){ bash "$ZEN_DIR/setup-zen.sh" $([[ $YES == 1 ]] && echo -y); }
 run_mx_master(){ bash "$MXMASTER_DIR/fix-mx-master.sh" $([[ $YES == 1 ]] && echo -y); }
@@ -4059,7 +4384,7 @@ exec_modules(){
 
 # Categories of the "setup" action. id|label|modules (space-separated module ids).
 CATEGORIES=(
-  "apps|Apps|reaper audio bitwig ableton guitarpro davinci-resolve extracto handbrake whatsapp-native superfile zen keepassxc hyprmod"
+  "apps|Apps|reaper audio bitwig ableton guitarpro davinci-resolve extracto handbrake signal whatsapp-native superfile zen keepassxc hyprmod"
   "tuis|TUIs|"
   "webapps|Webapps|"
   # "Plugins" is the project's own layer: the manager itself (the deployer),

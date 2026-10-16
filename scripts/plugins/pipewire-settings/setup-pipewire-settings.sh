@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
 # setup-pipewire-settings.sh — install the mosquitOmarchy PipeWire settings plugin.
 #
-# Three things, all idempotent:
+# Two things, all idempotent:
 #   1. the backend script, which is the only thing that talks to PipeWire;
-#   2. the shell plugin (a panel summoned from the Omarchy menu);
-#   3. the menu entry that summons it.
+#   2. the shell plugin (a panel summoned from the Omarchy bar).
 #
-# Deliberately NOT installed: nothing. This plugin configures the audio graph you
-# already have; it does not pull in a package, a daemon or a service. PipeWire
-# itself is required and is expected to be there already.
+# Deliberately NOT installed: no package, daemon, service, or fresh menu entry.
+# This plugin configures the audio graph you already have; it does not pull in
+# anything else. PipeWire itself is required and is expected to be there already.
 #
 # Usage:
 #   ./setup-pipewire-settings.sh            # install (idempotent)
-#   ./setup-pipewire-settings.sh --remove   # remove the plugin + menu entry
+#   ./setup-pipewire-settings.sh --remove   # remove the plugin/backend and its managed menu block, if present
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -299,7 +298,7 @@ install_plugin(){
 
   if enable_plugin; then ok "plugin enabled in shell.json"; fi
   if add_to_bar; then ok "plugin added to the bar ($BAR_SECTION)"; fi
-  if add_menu_block; then ok "menu entry added under mosquitOmarchy"; fi
+  # No Omarchy menu entry is created for this plugin; it stays bar-only. Existing entries are left as-is.
 
   msg "Reload the shell to pick the plugin up: omarchy-restart-shell"
 }

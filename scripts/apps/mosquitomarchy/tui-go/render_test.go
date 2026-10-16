@@ -786,6 +786,35 @@ func TestUpdateScreenNamesTheSource(t *testing.T) {
 	}
 }
 
+// TestUpdateModuleInfoShowsChangelog checks the Update screen's `i` key on a
+// proposed module row: it must show that module's own changelog (reason,
+// local versions and changed scripts), not the aggregate selection list.
+func TestUpdateModuleInfoShowsChangelog(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrUpdate}
+	m.w, m.h = 120, 40
+	m, _ = m.update(queryMsg{kind: "update", update: UpdateRec{Modules: []ItemRec{{
+		Key:     "audio",
+		Label:   "Audio",
+		Reason:  "Installed (ok); 1 owned file changed",
+		Base:    "abc1234",
+		Applied: "def5678",
+		Files:   []string{"scripts/apps/audio-plugin-manager/setup-audio-stack.sh"},
+		Changes: []string{"M scripts/apps/audio-plugin-manager/setup-audio-stack.sh — edited (installer/setup script, +1/-1 lines)"},
+	}}}})
+	m.updatePicker = m.updatePicker.SelectValue("audio")
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	if m.top() != scrInfo {
+		t.Fatalf("i on a module row went to screen %d, want the Info screen", m.top())
+	}
+	v := m.info.View()
+	for _, want := range []string{"audio", "Why:", "abc1234", "def5678", "setup-audio-stack.sh"} {
+		if !strings.Contains(v, want) {
+			t.Fatalf("module changelog missing %q:\n%s", want, v)
+		}
+	}
+}
+
 // TestUpdateIsVisibleFromTheMainMenu: a pending update was only ever visible
 // inside the Update screen and as a long line in the Setup tree. The root list
 // was built once at startup, before any check had run, and never rebuilt, so

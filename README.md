@@ -75,15 +75,19 @@ Details, options and caveats live in each module's own `README.md`. This table i
 | Module | Installs | Doc |
 |---|---|---|
 | `reaper` | REAPER + its Hyprland/Wayland integration | [README](scripts/apps/reaper/README.md) |
-| `audio` | yabridge/wine-staging, Bitwig Studio, the shared VST root, the mosquito Audio Plugin Manager | [bitwig](scripts/apps/bitwig/README.md) · [manager](scripts/apps/audio-plugin-manager/README.md) |
+| `audio` | yabridge stack, local VST folders, and the mosquito Audio Plugin Manager | [manager](scripts/apps/audio-plugin-manager/README.md) |
+| `bitwig` | Bitwig Studio from the local `.deb`, with its own module and optional patched `bitwig.jar` | [README](scripts/apps/bitwig/README.md) |
 | `ableton` | Ableton Live 12 native on Linux, sharing the same VST root | [README](scripts/apps/ableton/README.md) |
 | `guitarpro` | Guitar Pro 8 in its own Wine prefix | [README](scripts/apps/guitarpro/README.md) |
 | `davinci-resolve` | DaVinci Resolve (free or Studio) | [README](scripts/apps/davinci/README.md) |
 | `extracto` | Extracto | [README](scripts/apps/extracto/README.md) |
 | `handbrake` | HandBrake GUI + CLI, preset sync, Hyprland rules | [README](scripts/apps/handbrake/README.md) |
-| `superfile` | SuperFile as the default file manager | [README](scripts/apps/superfile/README.md) |
+| `signal` | Signal Desktop, tray behavior, menu entry, and login autostart | [setup](scripts/apps/signal/setup-signal.sh) |
+| `whatsapp-native` | WhatsApp desktop client (self-contained Electron wrapper): silent visual notifications, tray + close-to-tray, no menu bar, login autostart | [README](scripts/apps/whatsapp-native/README.md) |
+| `superfile` | SuperFile terminal file manager; the system default file manager is left unchanged | [README](scripts/apps/superfile/README.md) |
 | `zen` | Zen Browser, seeded extensions and theme | [README](scripts/apps/zen/README.md) |
 | `keepassxc` | KeePassXC as the system Secret Service | [README](scripts/apps/keepassxc/README.md) |
+| `hyprmod` | Hyprmod profile configuration in `~/.config/hypr/hyprmod.d/profiles.conf` | — |
 | `apps` | The app / TUI / webapp catalogs, reinstallable from a backup selection | [README](scripts/apps/README.md) |
 
 The tables below follow the TUI's Setup folders: each heading is one of them.
@@ -106,8 +110,8 @@ The project's own layer: the manager itself, and the desktop-hardware modules.
 |---|---|---|
 | `mosquitomarchy` | This TUI (built from the Go sources in the repo), its dispatcher, menu entry, float rule, post-boot hook and the `SUPER+ALT+M` shortcut | [README](scripts/apps/mosquitomarchy/README.md) |
 | `mosquitomarchy-update` | The update watchdog (scripts repo first, then Omarchy) | [README](scripts/mosquitomarchy-update/README.md) |
-| `brightness` | Perceptual brightness | [notes](scripts/fixes/display-fixes.md) |
-| `touchpad` | Touchpad acceleration and sensitivity | [notes](scripts/fixes/fix-touchpad.md) |
+| `brightness` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp | [notes](scripts/fixes/display-fixes.md) |
+| `touchpad` | Touchpad acceleration, sensitivity, scroll factor, and optional kinetic scrolling | [notes](scripts/fixes/fix-touchpad.md) |
 | `mx-master` | MX Master thumb button → `SUPER`, smartshift off, scroll direction | [notes](scripts/fixes/fix-mx-master.md) |
 
 ### Themes

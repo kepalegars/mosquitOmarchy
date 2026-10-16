@@ -17,16 +17,16 @@ duplicating one.
 
 ```bash
 ./setup-pipewire-settings.sh            # install (idempotent)
-./setup-pipewire-settings.sh --remove   # remove the plugin + menu entry
+./setup-pipewire-settings.sh --remove   # remove the plugin/backend and its managed menu block, if present
 ```
 
-Installs three things and nothing else: the backend script, the shell plugin, and
-a menu entry. **No package, daemon or service is installed** — this configures the
+Installs two things and nothing else: the backend script and the shell plugin.
+**No package, daemon or service is installed** — this configures the
 audio graph you already have. PipeWire itself is required and expected to be
-there.
+there. No menu entry is created by a fresh install.
 
 Then reload the shell (`omarchy-restart-shell`) and open it from the bar, next to
-the audio icon, or from **Omarchy menu → Trigger → PipeWire Settings**.
+the audio icon.
 
 ## What the two switches actually do
 
@@ -80,7 +80,7 @@ cannot produce, so it does not offer one.
 
 ## Removing it
 
-`--remove` takes back the plugin, the backend and the menu entry. It leaves
+`--remove` takes back the plugin and the backend. It leaves
 `~/.config/pipewire/pipewire.conf.d/90-mosquitomarchy-pipewire.conf` **in place**
 on purpose: that file is your audio setting, not ours, and uninstalling a panel
 should not silently reconfigure PipeWire. It says where the file is; deleting it

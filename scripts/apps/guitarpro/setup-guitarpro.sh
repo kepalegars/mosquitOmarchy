@@ -3,7 +3,11 @@
 #
 # Put guitar-pro-8-setup.exe in this folder before launching.
 # The script creates a dedicated wine prefix, installs corefonts, launches the installer,
-# configures the PipeWire audio, and creates a menu shortcut.
+# installs the audio codecs (Media Foundation, quartz, LAV Filters), configures the
+# PipeWire audio, and creates a menu shortcut.
+#
+# The prefix runs on the host's wine-staging installation through the `ge`
+# wrapper, which pins every Wine and winetricks call to this prefix.
 #
 # Usage :
 #   ./setup-guitarpro.sh             # interactive
@@ -45,6 +49,22 @@ ICON_SIZE=256
 DESKTOP_DST="$HOME/.local/share/applications/guitarpro.desktop"
 LAUNCHER="$HOME/.local/bin/guitarpro"
 EXE_NAME="guitar-pro-8-setup.exe"
+
+# The prefix runs on the wine-staging already installed on the host (11.17).
+# (True legacy Wine-GE desktop builds stopped in 2024; the newer GE-Proton build
+# is only a Steam/Proton wrapper around an older Wine 11.0 and is NOT suitable
+# for a desktop prefix. wine-staging 11.17 is the right tool here.)
+WINE_GE_ROOT="${WINE_GE_ROOT:-/usr}"
+WINE_GE="${WINE_GE:-/usr/bin/wine}"
+if [[ ! -x "$WINE_GE" ]] || [[ ! -x /usr/bin/wineserver ]]; then
+  err "wine-staging not found: $WINE_GE / /usr/bin/wineserver"
+  exit 1
+fi
+# Run wine bound to this prefix.
+ge(){ WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all "$WINE_GE" "$@"; }
+# winetricks through wine-staging (honors WINE / WINESERVER).
+ge_wt(){ WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all \
+         WINE="$WINE_GE" WINESERVER=/usr/bin/wineserver winetricks "$@"; }
 
 YES=0 STATUS=0 DPI=""
 while (( $# )); do a="$1"; case "$a" in
@@ -123,8 +143,7 @@ run_quiet(){
 # is installed re-registers every font (minutes of regedit spawns) for nothing.
 verb_installed(){
   local verb="$1"
-  WINEPREFIX="$PFX" WINEDEBUG=-all timeout 120 winetricks -q list-installed 2>/dev/null \
-    | tr ' ' '\n' | grep -qx "$verb"
+  ge_wt -q list-installed 2>/dev/null | tr ' ' '\n' | grep -qx "$verb"
 }
 
 # ───────────────────── Installer missing ? rescan / path / cancel ─────────────────────
@@ -173,8 +192,9 @@ check_manual_installer(){
 
 do_status(){
   hr; msg "Guitar Pro 8 state"
-  if [[ -d "$PFX/drive_c" ]]; then ok "Wine prefix : $PFX"
-  else warn "Wine prefix : missing"; fi
+if [[ -d "$PFX/drive_c" ]]; then ok "Wine prefix : $PFX"
+else warn "Wine prefix : missing"; fi
+ok "Wine: $("$WINE_GE" --version 2>/dev/null || echo '?')"
   if [[ -f "$GP_EXE" ]]; then ok "GuitarPro.exe : $GP_EXE"
   else warn "GuitarPro.exe : not found (installation not finished ?)"; fi
   if [[ -x "$LAUNCHER" ]]; then ok "Launcher : $LAUNCHER"
@@ -285,7 +305,8 @@ step_file_explorer(){
 # Called by the prefix's directory-open association (via start.exe /unix):
 # $1 is a Windows path (Z:\... or C:\...), converted with winepath.
 export WINEPREFIX="$HOME/.wine-guitarpro8"
-unix="$(winepath -u "$1" 2>/dev/null || true)"
+export WINE="$WINE_GE"
+unix="$(/usr/bin/winepath -u "$1" 2>/dev/null || true)"
 [[ -n $unix ]] || unix="$HOME"
 exec /usr/bin/nautilus "$unix" >/dev/null 2>&1
 WRAPEOF
@@ -298,10 +319,10 @@ WRAPEOF
   local hive key missing=0
   for hive in "HKEY_CURRENT_USER\\Software\\Classes" "HKEY_CLASSES_ROOT"; do
     for key in "directory\\shell\\open\\command" "Folder\\shell\\open\\command"; do
-      if WINEARCH=win64 WINEPREFIX="$PFX" wine reg query "$hive\\$key" 2>/dev/null | grep -q "gp-open-folder"; then
+      if ge reg query "$hive\\$key" 2>/dev/null | grep -q "gp-open-folder"; then
         continue
       fi
-      if WINEARCH=win64 WINEPREFIX="$PFX" wine reg add "$hive\\$key" /ve /d "$assoc" /f >/dev/null 2>&1; then
+      if ge reg add "$hive\\$key" /ve /d "$assoc" /f >/dev/null 2>&1; then
         ok "association set: $hive\\$key"
       else
         warn "registry write failed: $hive\\$key"; missing=1
@@ -312,7 +333,7 @@ WRAPEOF
   local got=0
   for hive in "HKEY_CURRENT_USER\\Software\\Classes" "HKEY_CLASSES_ROOT"; do
     for key in "directory\\shell\\open\\command" "Folder\\shell\\open\\command"; do
-      WINEARCH=win64 WINEPREFIX="$PFX" wine reg query "$hive\\$key" 2>/dev/null | grep -q "gp-open-folder" && got=$((got+1))
+      ge reg query "$hive\\$key" 2>/dev/null | grep -q "gp-open-folder" && got=$((got+1))
     done
   done
   (( missing == 0 && got == 4 )) && ok "directory-open associations point at Nautilus (4/4 verified)" || \
@@ -341,10 +362,10 @@ except Exception:
 
   # Registry values (standard Wine font smoothing + scale).
   local reg_ok=1
-  WINEARCH=win64 WINEPREFIX="$PFX" wine reg add 'HKCU\Control Panel\Desktop' /v LogPixels /t REG_DWORD /d "$dpi" /f >/dev/null 2>&1 || reg_ok=0
-  WINEARCH=win64 WINEPREFIX="$PFX" wine reg add 'HKCU\Control Panel\Desktop' /v FontSmoothing /t REG_SZ /d 2 /f >/dev/null 2>&1 || reg_ok=0
-  WINEARCH=win64 WINEPREFIX="$PFX" wine reg add 'HKCU\Control Panel\Desktop' /v FontSmoothingType /t REG_DWORD /d 2 /f >/dev/null 2>&1 || reg_ok=0
-  WINEARCH=win64 WINEPREFIX="$PFX" wine reg add 'HKCU\Control Panel\Desktop' /v FontSmoothingGamma /t REG_DWORD /d 1000 /f >/dev/null 2>&1 || reg_ok=0
+  ge reg add 'HKCU\Control Panel\Desktop' /v LogPixels /t REG_DWORD /d "$dpi" /f >/dev/null 2>&1 || reg_ok=0
+  ge reg add 'HKCU\Control Panel\Desktop' /v FontSmoothing /t REG_SZ /d 2 /f >/dev/null 2>&1 || reg_ok=0
+  ge reg add 'HKCU\Control Panel\Desktop' /v FontSmoothingType /t REG_DWORD /d 2 /f >/dev/null 2>&1 || reg_ok=0
+  ge reg add 'HKCU\Control Panel\Desktop' /v FontSmoothingGamma /t REG_DWORD /d 1000 /f >/dev/null 2>&1 || reg_ok=0
   if (( reg_ok )); then
     ok "DPI=$dpi and font smoothing written to the prefix registry"
   else
@@ -360,12 +381,42 @@ except Exception:
     if verb_installed allfonts; then
       ok "allfonts already installed in this prefix — skipped"
     elif run_quiet allfonts 1800 "allfonts (~17 font packages)" \
-         env WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all winetricks -q allfonts; then
+         env WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all \
+              WINE="$WINE_GE" WINESERVER=/usr/bin/wineserver \
+              winetricks -q allfonts; then
       ok "allfonts installed"
     else
       warn "winetricks allfonts failed or timed out — continue anyway"
     fi
   fi
+}
+
+# ───────────────────── Audio codecs (Media Foundation / quartz / LAV) ─────────────────────
+# GP8 imports audio tracks via Media Foundation on Windows; Wine's builtin MF is
+# incomplete and GP8 freezes on "loading audio file" without the native stack.
+# The classic gstreamer/wmvcodecs verbs no longer exist in current winetricks;
+# installed here instead: native mf.dll, quartz (DirectShow core) and LAV
+# Filters (audio decoders). LAVVideo registration can fail under Wine -- only
+# video decoding needs it, the audio side (LAVAudio/LAVSplitter) succeeds.
+step_codecs(){
+  local failed=""
+  for verb in mf quartz lavfilters; do
+    if verb_installed "$verb"; then
+      ok "$verb already installed in this prefix -- skipped"
+      continue
+    fi
+    if run_quiet "$verb" 900 "$verb (winetricks, wine-staging)" \
+         env WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all \
+              WINE="$WINE_GE" WINESERVER=/usr/bin/wineserver \
+              winetricks -q "$verb"; then
+      ok "$verb installed"
+    else
+      failed="$verb $failed"
+    fi
+  done
+  [[ -z "$failed" ]] && ok "Audio codecs ready (mf + quartz + LAV Filters)" \
+    || warn "Codec installs failed:$failed -- audio import may still freeze (logs: $LOG_DIR)"
+  return 0
 }
 
 # ───────────────────── Menu cleanup (Wine duplicates) ─────────────────────
@@ -422,7 +473,7 @@ cleanup_desktop_shortcuts(){
 
 kill_spawned_guitarpro(){
   # Targeted: only GuitarPro.exe inside THIS prefix.
-  WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all wine taskkill /F /IM GuitarPro.exe >/dev/null 2>&1 || true
+  ge taskkill /F /IM GuitarPro.exe >/dev/null 2>&1 || true
 }
 
 do_install(){
@@ -490,6 +541,7 @@ do_install(){
     # installer dialogs, which wait for GUI clicks — another silent hang on a
     # fresh machine. Guitar Pro needs neither.
     WINEDLLOVERRIDES="mscoree=d;mshtml=d" WINEARCH=win64 WINEPREFIX="$PFX" \
+      WINE="$WINE_GE" WINESERVER=/usr/bin/wineserver \
       wineboot --init >/dev/null 2>&1 || true
     ok "Prefix created"
   fi
@@ -500,7 +552,9 @@ do_install(){
     ok "corefonts already installed in this prefix — skipped (log: $LOG_DIR/corefonts.log)"
   else
     if run_quiet corefonts 1800 "corefonts" \
-         env WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all winetricks -q corefonts; then
+         env WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all \
+              WINE="$WINE_GE" WINESERVER=/usr/bin/wineserver \
+              winetricks -q corefonts; then
       ok "corefonts installed"
     else
       warn "winetricks corefonts failed or timed out — Guitar Pro may still work"
@@ -538,7 +592,7 @@ do_install(){
     )
     if run_quiet installer "$LOG_TIMEOUT_INSTALL" "Guitar Pro installer (silent)" \
          env WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all \
-         wine "$exe_path" "${inno_flags[@]}"; then
+         "$WINE_GE" "$exe_path" "${inno_flags[@]}"; then
       ok "Silent installer finished"
     else
       err "Silent installer failed (see $LOG_DIR/installer.log)"
@@ -563,7 +617,7 @@ do_install(){
     # WINEDEBUG=-all: the installer otherwise sprays several hundred
     # "fixme:…" lines (every unimplemented Windows API it touches) over the
     # terminal, burying the progress messages.
-    ( WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all wine "$exe_path" \
+    ( WINEARCH=win64 WINEPREFIX="$PFX" WINEDEBUG=-all "$WINE_GE" "$exe_path" \
         >"$LOG_DIR/installer.log" 2>&1 || true ) &
     local wine_pid=$!
 
@@ -583,9 +637,14 @@ do_install(){
     ok "GuitarPro.exe found"
   fi
 
-  # 5bis) Optional patch: runs patch-guitarpro (PATCH/ → installation folder,
-  # where GuitarPro.exe lives).
-  apply_optional_patch
+# 5bis) Optional patch: runs patch-guitarpro (PATCH/ → installation folder,
+# where GuitarPro.exe lives).
+apply_optional_patch
+
+# 5ter) Audio codecs -- Media Foundation + quartz + LAV Filters. Fixes the
+# freeze on "loading audio file" when importing an audio track (GP8 imports
+# audio via Media Foundation). Non-fatal: a failed verb only warns.
+step_codecs
 
   # 6) Audio — configure PipeWire for the prefix
   msg "PipeWire/Wine audio configuration..."
@@ -623,7 +682,7 @@ GP_EXE="$GP_EXE"
 # nothing at all: the install was fine, the launcher could never run.
 export WINEARCH=win64
 export WINEPREFIX="\$PFX"
-exec wine "\$GP_EXE" "\$@"
+exec "$WINE_GE" "\$GP_EXE" "\$@"
 LAUNCHEOF
   chmod +x "$LAUNCHER"
   ok "Launcher: $LAUNCHER"

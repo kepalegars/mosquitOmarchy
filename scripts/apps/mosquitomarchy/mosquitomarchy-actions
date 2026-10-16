@@ -127,6 +127,19 @@ json_obj_into(){
 # "cannot unmarshal string into Go struct field StatusRec.excluded of type bool".
 json_bool(){ [[ $1 == true ]] && printf 'true' || printf 'false'; }
 
+# A JSON array of strings from a named Bash array. Command substitutions are
+# accepted here: update rows are few, unlike the ~46-row Setup/Uninstall trees.
+json_str_array(){
+  local -n arr="$1"
+  local out='[' first=1 item
+  for item in "${arr[@]:-}"; do
+    ((first)) || out+=','
+    first=0
+    out+="$(json_str "$item")"
+  done
+  printf '%s]' "$out"
+}
+
 # ── Route sudo to pkexec (native polkit prompt) for this backend ───────────
 # The TUI's Runner gives the child no tty, so a plain `sudo` password prompt
 # can never appear. Elevation is now primed ONCE per run by mq_sudo_prime
@@ -1119,9 +1132,11 @@ cmd_backup_options(){
 }
 
 # ─── Repo update check (read-only mirror of launcher_update) ──────────────
-# Single JSON object: {"repo_update":bool,"modules":[{"key":..,"label":..}]}
+# Single JSON object with one changelog entry per changed installed module:
+# {"repo_update":bool,"repo_version":...,"modules":[{"key":..,"label":..,
+# "reason":..,"base":..,"applied":..,"files":[..],"changes":[..]}]}
 cmd_update_check(){
-  local old_head="" new_head="" p m row id state
+  local old_head="" new_head="" base="" p m row id full_state state detail applied
   local -a changed=() cand=() ids=()
   local repo_update=false
   [[ -d "$REPO_DIR/.git" ]] && old_head="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
@@ -1134,16 +1149,38 @@ cmd_update_check(){
     git -C "$REPO_DIR" diff --name-only HEAD 2>/dev/null
     git -C "$REPO_DIR" diff --name-only --cached 2>/dev/null
   )
+  mapfile -t -O "${#changed[@]}" changed < <(update_working_paths)
+  if ((${#changed[@]})); then
+    local -a unique=()
+    declare -A seen=()
+    for p in "${changed[@]}"; do
+      [[ -n $p && -z ${seen[$p]:-} ]] || continue
+      seen[$p]=1
+      unique+=("$p")
+    done
+    changed=("${unique[@]}")
+  fi
+  base="$(update_repo_short_head)"
   load_excluded
   apply_includes
+  declare -A CAND_STATE=() CAND_APPLIED=()
+  local -a owned=() pending=()
   for row in "${MODULES[@]}"; do
     id="${row%%:*}"
     is_excluded "$id" && continue
-    state="$(module_state "$id")"; state="${state%%:*}"
+    full_state="$(module_state "$id" 2>/dev/null || true)"; state="${full_state%%:*}"
     [[ $state == ok || $state == partial ]] || continue
-    for p in "${changed[@]:-}"; do
-      [[ -n $p && "$(module_of_path "$p")" == "$id" ]] && { cand+=("$id"); break; }
-    done
+    mapfile -t owned < <(
+      for p in "${changed[@]:-}"; do
+        [[ -n $p && "$(module_of_path "$p")" == "$id" ]] && printf '%s\n' "$p"
+      done
+    )
+    mapfile -t pending < <(update_pending_paths_for "$id" "${owned[@]:-}")
+    if ((${#pending[@]})); then
+      cand+=("$id")
+      CAND_STATE[$id]="$full_state"
+      CAND_APPLIED[$id]="$(update_baseline_commit "$id")"
+    fi
   done
   for row in "${MODULES[@]}"; do
     id="${row%%:*}"
@@ -1151,10 +1188,23 @@ cmd_update_check(){
   done
   printf '{"repo_update":%s,"repo_version":%s,"modules":[' \
     "$([[ $repo_update == true ]] && echo true || echo false)" "$(json_str "$REPO_VERSION")"
-  local i=0
+  local i=0 files_json changes_json
   for row in "${ids[@]}"; do
+    id="${row%%:*}"
+    mapfile -t owned < <(
+      for p in "${changed[@]:-}"; do
+        [[ -n $p && "$(module_of_path "$p")" == "$id" ]] && printf '%s\n' "$p"
+      done
+    )
+    mapfile -t pending < <(update_pending_paths_for "$id" "${owned[@]:-}")
+    update_module_change_details "$id" "${CAND_STATE[$id]}" "$base" "${CAND_APPLIED[$id]}" "${pending[@]:-}"
+    files_json="$(json_str_array UPDATE_DETAIL_FILES)"
+    changes_json="$(json_str_array UPDATE_DETAIL_CHANGES)"
     ((i)) && printf ','
-    printf '{"key":%s,"label":%s}' "$(json_str "${row%%:*}")" "$(json_str "${row#*:}")"
+    printf '{"key":%s,"label":%s,"reason":%s,"base":%s,"applied":%s,"files":%s,"changes":%s}' \
+      "$(json_str "$id")" "$(json_str "${row#*:}")" "$(json_str "$UPDATE_DETAIL_REASON")" \
+      "$(json_str "$UPDATE_DETAIL_BASE")" "$(json_str "${UPDATE_DETAIL_APPLIED:0:7}")" \
+      "$files_json" "$changes_json"
     i=$((i+1))
   done
   printf ']}\n'

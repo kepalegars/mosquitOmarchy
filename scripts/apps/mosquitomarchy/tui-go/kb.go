@@ -66,8 +66,8 @@ var kbCatalog = []struct {
 		{"KeePassXC", "keepassxc", "launch"},
 	}},
 	{"funcs", "quick function", []KbCatItem{
-		{"Brightness maximum", "$HOME/.local/bin/backlight 100%", "cmd"},
-		{"Brightness minimum", "$HOME/.local/bin/backlight 0%", "cmd"},
+		{"Brightness maximum", "$HOME/.local/bin/brightness-0 100%", "cmd"},
+		{"Brightness minimum", "$HOME/.local/bin/brightness-0 0%", "cmd"},
 		{"Ultra-save toggle", "sudo -n $HOME/.local/bin/ultra-save toggle", "cmd"},
 		{"Mega-caffeine toggle", "mega-caffeine toggle", "cmd"},
 		{"SuperFile", "foot -e spf", "cmd"},

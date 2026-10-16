@@ -1713,9 +1713,20 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.setupCatPicker, cmd = m.setupCatPicker.Update(msg)
 	case scrUpdate:
-		// 'i' shows exactly which modules will be updated (the preselected
-		// list the user can edit with tab).
+		// 'i' shows the highlighted module's own changelog when the cursor
+		// is on a proposed module row; otherwise it shows exactly which
+		// modules will be updated (the preselected list the user can edit
+		// with tab).
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
+			if sel := m.updatePicker.SelectedValue(); sel != "" {
+				for _, it := range m.updateRec.Modules {
+					if it.Key == sel {
+						m.info = tuikit.NewInfo(updateModuleInfo(it)).SetSize(m.contentSize())
+						m.push(scrInfo)
+						return m, nil
+					}
+				}
+			}
 			var lines []string
 			if m.updateRec.RepoUpdate {
 				lines = append(lines, "• mosquitOmarchy scripts repo — fast-forward to the GitHub version")
@@ -3902,6 +3913,49 @@ func updateModuleLabel(m model, it ItemRec) string {
 		return it.Key + " - v" + v
 	}
 	return it.Key
+}
+
+// updateModuleInfo is the Update screen's per-module `i` popup: the module
+// label plus the backend's local changelog (why this module is proposed,
+// which owned scripts changed, and which local versions were compared).
+func updateModuleInfo(it ItemRec) string {
+	lines := []string{"• " + it.Key}
+	if it.Label != "" {
+		lines = append(lines, it.Label)
+	}
+	if it.Reason != "" {
+		lines = append(lines, "", "Why: "+it.Reason)
+	}
+	version := ""
+	switch {
+	case it.Base != "" && it.Applied != "":
+		version = "Checked base " + it.Base + " · last applied " + it.Applied
+	case it.Base != "":
+		version = "Checked base " + it.Base + " · no applied-version record yet"
+	case it.Applied != "":
+		version = "Last applied " + it.Applied
+	}
+	if version != "" {
+		lines = append(lines, version)
+	}
+	if len(it.Files) > 0 {
+		lines = append(lines, "", "Changed scripts:")
+		for i, f := range it.Files {
+			if i < len(it.Changes) && it.Changes[i] != "" {
+				lines = append(lines, "• "+it.Changes[i])
+			} else {
+				lines = append(lines, "• "+f)
+			}
+		}
+	} else if len(it.Changes) > 0 {
+		lines = append(lines, "", "Changed scripts:")
+		for _, c := range it.Changes {
+			lines = append(lines, "• "+c)
+		}
+	} else if it.Info != "" {
+		lines = append(lines, "", it.Info)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m model) rebuildUpdate() navPicker {

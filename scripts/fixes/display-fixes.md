@@ -1,10 +1,12 @@
 # Display — Omarchy module (brightness)
 
-Two independent customizations of the Omarchy display stack.
+Omarchy default brightness plus 0% screen-off and a 1% hold ramp.
 
-## Perceptual brightness — fix-optimized-brightness.sh
+## Brightness — `scripts/plugins/brightness/optimized-brightness.sh`
 
-Replaces Omarchy's linear brightness with a **perceptual curve** (gamma) driving `actual_brightness` (the real perceived brightness); **0 % = screen actually off** (DPMS off), pressing brightness up turns it back on.
+Keeps Omarchy's default brightness behavior and adds **0 % = screen actually off**
+(DPMS off); pressing brightness up turns it back on. On the internal display, held
+brightness keys use short 1% steps for smoother holding.
 
 | Shortcut | Effect |
 |---|---|
@@ -13,9 +15,13 @@ Replaces Omarchy's linear brightness with a **perceptual curve** (gamma) driving
 | `SHIFT + MonBrightnessDown` | 0 % = screen off |
 | `SHIFT + MonBrightnessUp` | 100 % |
 
+Run these from the repository root:
+
 ```bash
-./fix-optimized-brightness.sh            # applies (idempotent)
-./fix-optimized-brightness.sh --remove   # removes bindings + helper, restores Omarchy
+bash scripts/plugins/brightness/optimized-brightness.sh            # applies (idempotent)
+bash scripts/plugins/brightness/optimized-brightness.sh --remove   # removes bindings + helper, restores Omarchy
 ```
 
-> Curve adjustable via the `GAMMA` variable at the top of `~/.local/bin/backlight`. If an Omarchy update overwrites `bindings.lua` or the helper, re-running the script is enough to re-apply the change.
+> If an Omarchy update overwrites `bindings.lua` or the deployed
+> `~/.local/bin/brightness-0` helper, re-running the script is enough to
+> re-apply the change.

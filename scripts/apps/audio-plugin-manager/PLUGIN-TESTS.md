@@ -86,7 +86,7 @@ there), so that wrapper is what sets the runtime — it now prepends
 system wine, which is why Serum 2's editor died on open even though the right
 runtime was installed; the fix had been written into a second, never-launched
 wrapper (`~/.local/bin/reaper`). Bitwig launches through its own
-`fix-daw-wine-runtime.sh` wrapper.
+`../../fixes/fix-daw-wine-runtime.sh` wrapper.
 
 **Tested and loading on this machine**: Serum 2 ✅ (ableton runtime REQUIRED for
 its editor — see the REAPER launcher note below), CrispyTuner ✅, ScaleFinder ✅,

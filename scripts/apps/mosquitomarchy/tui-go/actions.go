@@ -257,6 +257,14 @@ type ItemRec struct {
 	// empty, so this is additive.
 	Cat  string `json:"cat"`
 	Info string `json:"info"`
+	// Update rows may also carry the update-check's local changelog: a
+	// one-line reason, the checked repo base, the locally recorded applied
+	// commit, the owned changed files, and one changelog line per file.
+	Reason  string   `json:"reason"`
+	Base    string   `json:"base"`
+	Applied string   `json:"applied"`
+	Files   []string `json:"files"`
+	Changes []string `json:"changes"`
 }
 
 // BackupRec is one dated archive in the backup dir.

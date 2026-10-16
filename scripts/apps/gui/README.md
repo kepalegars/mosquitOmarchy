@@ -1,7 +1,7 @@
 # GUI apps module — guis.catalog
 
 Installs the GUI applications listed in `guis.catalog` (type `APP`, AUR/official
-packages via `yay`). This is the per-type installer behind `apps/setup-apps.sh`
+packages via `yay`). This is the per-type installer behind `scripts/apps/setup-apps.sh`
 — see [apps/README.md](../README.md) for the module overview, the catalog
 format and the standalone usage:
 

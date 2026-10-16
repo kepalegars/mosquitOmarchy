@@ -8,6 +8,8 @@ fix again, not by diffing by hand.
 
 These are the entries of the orchestrator's `FIXES` array — offered at setup and under
 **Setup → Fixes** in the TUI, and runnable directly with `bash scripts/fixes/<script>.sh`.
+The brightness and touchpad modules below now live outside this directory; run them with
+their full repository paths.
 
 | id | Script | What it fixes |
 |---|---|---|
@@ -29,9 +31,9 @@ in `--status` and under **Setup → Plugins**.
 
 | Module | Script | Doc |
 |---|---|---|
-| `brightness` | `fix-optimized-brightness.sh` | Perceptual brightness, where 0% really means off via DPMS. Deploys a `backlight` helper. [notes](display-fixes.md) |
+| `brightness` | `scripts/plugins/brightness/optimized-brightness.sh` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp. Deploys a `brightness-0` helper. [notes](display-fixes.md) |
 | `mx-master` | `fix-mx-master.sh` | Thumb button → `SUPER` via logiops, plus a mouse-only pointer block. [notes](fix-mx-master.md) |
-| `touchpad` | `fix-touchpad.sh` | Touchpad-only `hl.device` tuning. [notes](fix-touchpad.md) |
+| `touchpad` | `scripts/plugins/touchpad/touchpad.sh` | Touchpad-only `hl.device` tuning. [notes](fix-touchpad.md) |
 
 `touchpad` and `mx-master` compose: each ships its own `hl.device` block in its own file, each
 handles only its own device, and they can be applied in either order or alone. Every value the
@@ -53,6 +55,6 @@ stays installed as an invisible backend so previews keep working.
 
 ## Notes
 
-- `backlight` in this folder is the **source** of the deployed `~/.local/bin/backlight`
-  helper, not a directory.
+- The brightness source is now `scripts/plugins/brightness/optimized-brightness.sh`;
+  it deploys `~/.local/bin/brightness-0`, not `~/.local/bin/backlight`.
 - A fix absent from the `FIXES` array is opt-in by design, and stays out of the automatic pass.

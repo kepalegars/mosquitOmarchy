@@ -41,7 +41,7 @@ Omarchy moved the compose to a **root-owned** `/var/lib/omarchy/windows/docker-c
 
 ## Ableton (Windows VM) via RemoteApp — setup-ableton-vm-app.sh
 
-> **Deprecated** : since `setup-ableton.sh`, Ableton runs natively on Linux. Kept for specific VM use.
+> **Deprecated** : since `scripts/apps/ableton/setup-ableton.sh`, Ableton runs natively on Linux. Kept for specific VM use.
 
 Adds Ableton (Windows VM) as a menu app via RemoteApp RDP (`xfreerdp3 /app:program:<exe>`), `~/.local/bin/ableton-vm` wrapper (starts the VM, waits for Windows, launches Ableton).
 

@@ -24,7 +24,12 @@ interface.
 | **Backup / Restore** | An archive, plain or encrypted, optionally named; or restoring one. |
 | **Close** | Confirm, then leave. |
 
-`i` works on every screen and explains the thing under the cursor. On the **home**
+`i` works on every screen and explains the thing under the cursor. On **Update**,
+highlighting a proposed module shows its own local changelog: why it was
+proposed, the owned scripts that changed, the checked repository base, and the
+locally recorded applied version. A successful module run records that applied
+version under `~/.local/state/mosquitomarchy/update-baseline/`; uninstalling
+the module clears it. On the **home**
 screen, where the rows ARE the pages, it opens a guide to all of them — including
 the two whose consequences are least reversible: a backup asks what to include,
 and a **restore overwrites the files an archive contains** (it restores files, not

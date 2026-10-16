@@ -1,6 +1,6 @@
 # Guitar Pro 8 — Omarchy module
 
-Installs **Guitar Pro 8** via a dedicated wine prefix (`~/.wine-guitarpro8`), corefonts, PipeWire audio (48 ms latency), `~/.local/bin/guitarpro` launcher and menu shortcut. Place `guitar-pro-8-setup.exe` in `scripts/apps/guitarpro/` before running: at opening, the script verifies it is present and otherwise warns which file is missing (then offers rescan / a typed path).
+Installs **Guitar Pro 8** via a dedicated wine prefix (`~/.wine-guitarpro8`) bound to the host's wine-staging installation, corefonts, audio-import codecs (Media Foundation, quartz and LAV Filters), PipeWire audio (48 ms latency), `~/.local/bin/guitarpro` launcher and menu shortcut. Place `guitar-pro-8-setup.exe` in `scripts/apps/guitarpro/` before running: at opening, the script verifies it is present and otherwise warns which file is missing (then offers rescan / a typed path).
 
 ## Usage
 
@@ -22,6 +22,7 @@ default or an explicit opt-in.
 |---|---|
 | Wine prefix | kept (`Recreate the prefix ?` defaults to **no**) |
 | `winetricks corefonts` | skipped if already registered in the prefix |
+| `winetricks mf`, `quartz`, `lavfilters` | each skipped if already registered in the prefix |
 | `winetricks allfonts` | opt-in, therefore **off** under `-y` |
 | Windows installer | skipped if `GuitarPro.exe` is already there |
 
@@ -29,7 +30,7 @@ default or an explicit opt-in.
 
 winetricks and the Windows installer are pathologically verbose (two `regedit`
 spawns per font, hundreds of `fixme:` lines from the installer). Their output
-goes to `~/.local/state/mosquitOmarchy/guitarpro/{corefonts,allfonts,installer}.log`
+goes to `~/.local/state/mosquitOmarchy/guitarpro/{corefonts,allfonts,mf,quartz,lavfilters,installer}.log`
 and the terminal only shows a one-line result plus the log tail on failure. Set
 `WINETRICKS_VERBOSE=1` to stream everything again.
 
