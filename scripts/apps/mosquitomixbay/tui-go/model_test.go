@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"mosquitomarchy.local/mosquitomixbay-tui/drivers"
+	tuikit "mosquitomarchy.local/tui-kit"
 )
 
 func demoStatus(t *testing.T, id string) drivers.Status {
@@ -136,6 +137,74 @@ func TestDbFmt(t *testing.T) {
 	}
 }
 
+// A modal prompt (quit, 48V…) must sit dead-center in the window, never
+// glued to a corner: measure equal-ish blank margins on all four sides.
+func TestConfirmModalIsCentered(t *testing.T) {
+	m := initialModel()
+	m.w, m.h = 100, 30
+	m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")
+	v := centerModal(m.confirm.View(), 100, 30)
+	lines := strings.Split(strings.TrimRight(v, "\n"), "\n")
+	if len(lines) > 30 {
+		t.Fatalf("modal frame overflows: %d lines", len(lines))
+	}
+	topBlank := 0
+	for _, l := range lines {
+		if strings.TrimSpace(stripANSI(l)) == "" {
+			topBlank++
+		} else {
+			break
+		}
+	}
+	botBlank := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.TrimSpace(stripANSI(lines[i])) == "" {
+			botBlank++
+		} else {
+			break
+		}
+	}
+	if abs(topBlank-botBlank) > 1 {
+		t.Errorf("modal not vertically centered: %d blank rows above, %d below", topBlank, botBlank)
+	}
+	// Horizontally: the first content row must start well past column 0.
+	for _, l := range lines {
+		if s := strings.TrimSpace(stripANSI(l)); s != "" {
+			lead := len(l) - len(strings.TrimLeft(l, " "))
+			if lead < 5 {
+				t.Errorf("modal not horizontally centered: content starts at column %d", lead)
+			}
+			break
+		}
+	}
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func stripANSI(s string) string {
+	out := ""
+	inEsc := false
+	for _, r := range s {
+		if r == 0x1b {
+			inEsc = true
+			continue
+		}
+		if inEsc {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEsc = false
+			}
+			continue
+		}
+		out += string(r)
+	}
+	return out
+}
+
 // The whole frame must fit the window: the picker used to be sized to the
 // full height, so the frame ran 4 rows over and the vertical centering
 // cropped the head of the device list (only the last rows stayed visible).
@@ -159,8 +228,8 @@ func TestFrameFitsTheWindow(t *testing.T) {
 		if !strings.Contains(v, "Audient EVO 8") {
 			t.Errorf("win %dx%d: first device missing", wh[0], wh[1])
 		}
-		if !strings.Contains(v, "mixbay") {
-			t.Errorf("win %dx%d: title missing", wh[0], wh[1])
+		if !strings.Contains(v, "v1.0.0") {
+			t.Errorf("win %dx%d: version missing", wh[0], wh[1])
 		}
 	}
 }

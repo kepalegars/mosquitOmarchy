@@ -51,7 +51,7 @@ if [[ $# -eq 0 ]]; then
     "$MGR_TUI_BIN"
     exit $?
   elif command -v foot >/dev/null 2>&1; then
-    foot -W 132x36 --app-id=org.omarchy.mosquito-mixbay-tui -e "$MGR_TUI_BIN"
+    foot -W 100x40 --app-id=org.omarchy.mosquito-mixbay-tui -e "$MGR_TUI_BIN"
     exit $?
   elif command -v xterm >/dev/null 2>&1; then
     xterm -e "$MGR_TUI_BIN"

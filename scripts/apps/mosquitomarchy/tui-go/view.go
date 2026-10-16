@@ -72,7 +72,9 @@ func (m model) View() string {
 		return ""
 	}
 	var body, title, bar string
-	var version string
+	// The script version rides top-left on EVERY screen, not just the
+	// home page: it is fixed chrome, like the shortcut bar.
+	version := "v" + appVersion
 	w, _ := m.contentSize()
 
 	// contentSize() walks the nav stack and re-derives the budget; it was being
@@ -145,7 +147,6 @@ func (m model) View() string {
 		title = m.homeTitle()
 		body = m.mainPicker.View()
 		bar = barLine(m.mainPicker.ShortcutsHint())
-		version = "v" + appVersion
 	case scrStatus:
 		title = screenTitle("Status", w)
 		body = m.statusPicker.View()

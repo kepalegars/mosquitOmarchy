@@ -80,8 +80,9 @@ if (( $# )); then
 fi
 
 if command -v foot >/dev/null 2>&1; then
-  # Wide enough for the full boxed "mosquitomarchy" wordmark (~121 cols).
-  exec foot -W 132x36 --app-id=org.omarchy.mosquitomarchy-tui -e "$TUI" "$@"
+  # Shared compact default: every mosquito TUI opens at the same size;
+    # title ladders degrade and lists paginate below it.
+  exec foot -W 100x40 --app-id=org.omarchy.mosquitomarchy-tui -e "$TUI" "$@"
 fi
 if command -v xterm >/dev/null 2>&1; then
   exec xterm -e "$TUI" "$@"

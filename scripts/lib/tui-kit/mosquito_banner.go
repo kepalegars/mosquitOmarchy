@@ -79,6 +79,13 @@ var subtitleArt = map[string]string{
 		" _/ \\__,_|_|_|_|/ \\__,_|_|_|_|/ \\__,_|_|_|_|",
 		"|__/          |__/          |__/             ",
 	}, "\n"),
+	"mixbay": strings.Join([]string{
+		`       _     _               `,
+		` _ __ (_)_ _| |__  __ _ _  _ `,
+		`| '  \| \ \ / '_ \/ _` + "`" + ` | || |`,
+		`|_|_|_|_/_\_\_.__/\__,_|\_, |`,
+		`                        |__/ `,
+	}, "\n"),
 	"marchy": strings.Join([]string{
 		"                   _        ",
 		" _ __  __ _ _ _ __| |_ _  _ ",
@@ -106,6 +113,7 @@ var subtitleArtTiny = map[string]string{
 	"move manager":         "m o v e   m a n a g e r",
 	"live mode manager":    "l i v e   m o d e   m a n a g e r",
 	"jamjamjam":            "j a m j a m j a m",
+	"mixbay":               "m i x b a y",
 	"marchy":               "m a r c h y",
 	"setup":                "s e t u p",
 }

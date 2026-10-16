@@ -254,9 +254,9 @@ cat >>"$HYPR_CONF" <<'EOF'
 -- (the Bubble Tea TUI's own window) instead of the tiled default -- its
 -- app-id isn't in Omarchy's own floating-window whitelist (that one only
 -- matches a fixed set of known app-ids verbatim, not a wildcard).
--- Sized explicitly: the stacked ASCII title needs ~90 columns, and at HiDPI
--- scales an unsized float window opens with too few cells for it.
-o.window("org.omarchy.mosquito-audio-plugin-manager-tui", { float = true, center = true, size = { 1500, 950 } })
+-- Shared compact default with every mosquito TUI: one size everywhere,
+-- title ladders degrade and lists paginate below it.
+o.window("org.omarchy.mosquito-audio-plugin-manager-tui", { float = true, center = true, size = { 1000, 780 } })
 -- <<< mosquito-audio-plugin-manager-tui-setup <<<
 EOF
 hyprctl reload >/dev/null 2>&1 || true

@@ -1247,7 +1247,7 @@ cmd_manage() {
     "$TUI_BIN"
     exit $?
   elif command -v foot >/dev/null 2>&1; then
-    foot -W 132x36 --app-id=org.omarchy.mosquito-live-mode-tui -e "$TUI_BIN"
+    foot -W 100x40 --app-id=org.omarchy.mosquito-live-mode-tui -e "$TUI_BIN"
     exit $?
   elif command -v xterm >/dev/null 2>&1; then
     xterm -e "$TUI_BIN"

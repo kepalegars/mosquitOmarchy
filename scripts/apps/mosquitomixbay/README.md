@@ -54,6 +54,8 @@ TUI : appareils → contrôles (sections INPUTS / OUTPUTS) → mixer loopback.
 une valeur · `Enter` mute/48V · `m` mixer · `s` save · `r` refresh · `?` aide.
 Le 48V demande confirmation (condensateurs uniquement, retours baissés).
 Sur la page mixer, la première ligne choisit le bus (MIX 1|2 ou MIX 3|4).
+L'écran Settings (avant Close) filtre les interfaces non connectées ; la
+version du script est épinglée en haut à gauche sur tous les écrans.
 
 ## Fichiers
 

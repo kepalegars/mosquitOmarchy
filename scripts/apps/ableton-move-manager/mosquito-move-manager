@@ -280,9 +280,9 @@ if [[ $# -eq 0 ]]; then
     "$MGR_TUI_BIN"
     exit $?
   elif command -v foot >/dev/null 2>&1; then
-    # Open the terminal as a perfect square (92x92 chars) — small but wide
-    # enough to show the whole ASCII title + every option of the first menu.
-    foot -W 132x36 --app-id=org.omarchy.mosquito-move-manager-tui -e "$MGR_TUI_BIN"
+    # Shared compact default: every mosquito TUI opens at the same size;
+    # title ladders degrade and lists paginate below it.
+    foot -W 100x40 --app-id=org.omarchy.mosquito-move-manager-tui -e "$MGR_TUI_BIN"
     exit $?
   elif command -v xterm >/dev/null 2>&1; then
     xterm -e "$MGR_TUI_BIN"

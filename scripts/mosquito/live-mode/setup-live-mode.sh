@@ -149,7 +149,7 @@ $FLOAT_START
 -- install under "mosquito-audio-plugin-manager-tui-setup" and
 -- "move-manager-tui-setup" — two identical o.window lines for the same class in
 -- the same file. Whoever needs those rules now owns them in one place only.
-o.window("org.omarchy.mosquito-live-mode-tui", { float = true, center = true, size = { 1500, 950 } })
+o.window("org.omarchy.mosquito-live-mode-tui", { float = true, center = true, size = { 1000, 780 } })
 $FLOAT_END
 EOF
   ok "Hyprland rule installed: mosquito live-mode TUI opens untiled (foot 92x92)"

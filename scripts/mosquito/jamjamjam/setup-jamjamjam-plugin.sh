@@ -226,7 +226,7 @@ $TILE_START
 -- The jamjamjam neck TUI opens like every other mosquito terminal TUI:
 -- floating, centered omarchy-style prompt window (dispatcher launches foot
 -- at 120x34 --app-id=org.omarchy.jamjamjam-tui).
-o.window("org.omarchy.jamjamjam-tui", { float = true, center = true, size = { 1500, 950 } })
+o.window("org.omarchy.jamjamjam-tui", { float = true, center = true, size = { 1000, 780 } })
 $TILE_END
 EOF
   ok "Hyprland rule installed: jamjamjam neck TUI floating + centered"

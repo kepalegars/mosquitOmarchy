@@ -2767,9 +2767,9 @@ ensure_mosquitomarchy_float_rule(){
 
 -- >>> mosquitomarchy-tui-floating >>> float the mosquitOmarchy TUI
 -- (its app-id isn't in Omarchy's floating whitelist, so it would open tiled)
--- Sized explicitly: the 121-column ASCII wordmark needs ~130 columns, and at
--- HiDPI scales an unsized float window opens with too few cells for it.
-o.window("org.omarchy.mosquitomarchy-tui", { float = true, center = true, size = { 1500, 950 } })
+-- Shared compact default with every mosquito TUI: one size everywhere,
+-- title ladders degrade and lists paginate below it.
+o.window("org.omarchy.mosquitomarchy-tui", { float = true, center = true, size = { 1000, 780 } })
 -- <<< mosquitomarchy-tui-floating <<<
 HYPR
   hyprctl reload >/dev/null 2>&1 || true

@@ -8,6 +8,21 @@ import (
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
+// appVersion is the version of this SCRIPT (the mosquitomixbay module),
+// pinned top-left on every screen like the other managers.
+const appVersion = "1.0.0"
+
+// versionRow renders the script version at column 0 of a full-width row, so
+// it stays glued to the top-left corner even inside centered blocks.
+func versionRow(w int) string {
+	ver := tuikit.StyleHelp.Render("v" + appVersion)
+	pad := w - lipgloss.Width(ver)
+	if pad < 0 {
+		pad = 0
+	}
+	return ver + strings.Repeat(" ", pad)
+}
+
 func (m model) View() string {
 	if m.quit {
 		return ""
@@ -20,7 +35,7 @@ func (m model) View() string {
 	case scrDevices, scrControls, scrMixer:
 		title, rows := m.screenBudget(h)
 		m.picker = m.picker.SetSize(w, rows)
-		b.WriteString(screenTitle(title, w))
+		b.WriteString(centerBlock(title, w))
 		b.WriteString("\n")
 		b.WriteString(m.picker.View())
 		b.WriteString("\n")
@@ -28,7 +43,7 @@ func (m model) View() string {
 	case scrSettings:
 		title, rows := m.settingsBudget(h)
 		m.picker = m.picker.SetSize(w, rows)
-		b.WriteString(screenTitle(title, w))
+		b.WriteString(centerBlock(title, w))
 		b.WriteString("\n")
 		b.WriteString(m.picker.View())
 		b.WriteString("\n")
@@ -85,9 +100,9 @@ func (m model) screenBudget(h int) (string, int) {
 	// Lie to the ladder about the height by the fixed costs, so the rung it
 	// picks always leaves room for at least one list row: at h=12 the
 	// 9-row stacked banner must degrade to the one-line subtitle.
-	l := tuikit.LayoutForLadder(w, h-screenBudgetConst(), titleLadder(w))
-	title := l.RenderLadder(w, titleLadder(w))
-	rows := h - l.TitleRows - screenBudgetConst()
+	l := tuikit.LayoutForLadder(w, h-screenBudgetConst()-1, titleLadder(w))
+	title := versionRow(w) + "\n" + l.RenderLadder(w, titleLadder(w))
+	rows := h - (l.TitleRows + 1) - screenBudgetConst()
 	if rows < 1 {
 		rows = 1
 	}
@@ -95,13 +110,21 @@ func (m model) screenBudget(h int) (string, int) {
 }
 
 // settingsBudget is the same split for the small settings screen, whose
-// title is one accent line.
+// title is the version row plus one accent line.
 func (m model) settingsBudget(h int) (string, int) {
-	rows := h - 1 - statusRows() - pickerChromeRows()
+	w, _ := m.contentSize()
+	rows := h - 2 - screenBudgetConst()
 	if rows < 1 {
 		rows = 1
 	}
-	return "Settings", rows
+	return versionRow(w) + "\n" + screenTitle("Settings", w), rows
+}
+
+// centerBlock centers every line of a composed title block in the window
+// WITHOUT re-styling it: the ASCII art carries its own colors, and wrapping
+// it in the accent style would repaint the whole box.
+func centerBlock(s string, w int) string {
+	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(s)
 }
 
 // statusRows is the footer height under the list: the note line plus the
