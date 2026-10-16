@@ -122,7 +122,7 @@ touch "$HYPR_CONF"
 sed -i '/-- >>> mosquito-mixbay-tui-setup >>>/,/-- <<< mosquito-mixbay-tui-setup <<</d' "$HYPR_CONF"
 cat >>"$HYPR_CONF" <<'EOF'
 -- >>> mosquito-mixbay-tui-setup >>> float mosquito-mixbay-tui
-o.window("org.omarchy.mosquito-mixbay-tui", { float = true, center = true })
+o.window("org.omarchy.mosquito-mixbay-tui", { float = true, center = true, size = { 1500, 950 } })
 -- <<< mosquito-mixbay-tui-setup <<<
 EOF
 hyprctl reload >/dev/null 2>&1 || true

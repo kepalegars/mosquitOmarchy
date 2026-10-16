@@ -918,7 +918,7 @@ st_live_mode(){
   # setup-live-mode.sh writes a user-readable marker once the file is written
   # AND validated by visudo, and that is what is read here.
   [[ -f "$HOME/.local/state/mosquitomarchy/live-mode-sudoers" ]] \
-    || miss="${miss:+$miss, }the live-mode sudoers grant (rerun: sudo bash scripts/plugins/live-mode/setup-live-mode.sh)"
+    || miss="${miss:+$miss, }the live-mode sudoers grant (rerun: sudo bash scripts/mosquito/live-mode/setup-live-mode.sh)"
   [[ -d "$HOME/.config/omarchy/plugins/mosquito.livemode" ]] || miss="${miss:+$miss, }the mosquito.livemode plugin"
   [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
   echo ok
@@ -1039,7 +1039,7 @@ MODULES=(
   "ableton:Native Linux Ableton Live 12 (ableton-linux) + multi-DAW VST sharing"
   "guitarpro:Guitar Pro 8 via wine (dedicated prefix + launcher + menu shortcut)"
   "davinci-resolve:DaVinci Resolve (Studio or free) + H.264/H.265 (FFmpeg encoder / libav patch) + SpectraFilm OFX option"
-  "ableton-move-manager:mosquito Move Manager — Ableton Move → Ableton Live → Bitwig (menu: address / Move Manager / convert — native Omarchy prompts, MIDI export)"
+  "ableton-move-manager:Move Manager — Ableton Move → Ableton Live → Bitwig (menu: address / Move Manager / convert — native Omarchy prompts, MIDI export)"
   "handbrake:HandBrake (Qt GUI + CLI) + H.264/H.265 encoders + preset sync + Hyprland rules"
   "signal:Signal Desktop — official Electron client + autostart minimized to tray, hide menu bar, menu entry Signal, login autostart"
   "whatsapp-native:WhatsApp desktop client (self-contained Electron wrapper) — notifications visuelles silencieuses, tray + close-to-tray, no menu bar, menu entry WhatsApp, login autostart"
@@ -1215,9 +1215,9 @@ module_of_path(){
     scripts/mosquitomarchy-update/*)                            echo mosquitomarchy-update ;;
     scripts/apps/superfile/*)                                echo superfile ;;
     scripts/apps/zen/*)                                      echo zen ;;
-    scripts/plugins/jamjamjam/*)                             echo jamjamjam-plugin ;;
-    scripts/plugins/pipewire-settings/*)                     echo pipewire-settings ;;
-    scripts/plugins/live-mode/*)                             echo live-mode ;;
+    scripts/mosquito/jamjamjam/*)                             echo jamjamjam-plugin ;;
+    scripts/mosquito/pipewire-settings/*)                     echo pipewire-settings ;;
+    scripts/mosquito/live-mode/*)                             echo live-mode ;;
     scripts/apps/mosquitomixbay/*)                            echo mixbay ;;
     scripts/plugins/wifi-hotspot/*)                         echo wifi-hotspot ;;
     # The WHOLE manager tree (deployer, backend, Go TUI, skills): any change
@@ -2767,7 +2767,9 @@ ensure_mosquitomarchy_float_rule(){
 
 -- >>> mosquitomarchy-tui-floating >>> float the mosquitOmarchy TUI
 -- (its app-id isn't in Omarchy's floating whitelist, so it would open tiled)
-o.window("org.omarchy.mosquitomarchy-tui", { float = true, center = true })
+-- Sized explicitly: the 121-column ASCII wordmark needs ~130 columns, and at
+-- HiDPI scales an unsized float window opens with too few cells for it.
+o.window("org.omarchy.mosquitomarchy-tui", { float = true, center = true, size = { 1500, 950 } })
 -- <<< mosquitomarchy-tui-floating <<<
 HYPR
   hyprctl reload >/dev/null 2>&1 || true
@@ -3865,9 +3867,9 @@ MXMASTER_DIR="$SCRIPTS/fixes"
 SUPERFILE_DIR="$SCRIPTS/apps/superfile"
 THEME_DIR="$SCRIPTS/theme"
 ZEN_DIR="$SCRIPTS/apps/zen"
-JAMJAMJAM_PLUGIN_DIR="$SCRIPTS/plugins/jamjamjam"
-PIPEWIRE_SETTINGS_DIR="$SCRIPT_DIR/scripts/plugins/pipewire-settings"
-LIVE_MODE_DIR="$SCRIPTS/plugins/live-mode"
+JAMJAMJAM_PLUGIN_DIR="$SCRIPTS/mosquito/jamjamjam"
+PIPEWIRE_SETTINGS_DIR="$SCRIPT_DIR/scripts/mosquito/pipewire-settings"
+LIVE_MODE_DIR="$SCRIPTS/mosquito/live-mode"
 
 # ─────────────────── Required system libraries (Ableton-linux) ─────────────
 # gstreamer (1.x) + base/good are prerequisites of the Ableton-linux runtime.
@@ -4649,12 +4651,13 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
     mosquito)
       # The mosquito tools — each user-visible tool gets its own row, labelled
       # with the tool's name rather than the module key it routes to
-      # (battery = mega-caffeine, ableton-move-manager = move-manager, etc).
+      # (battery = mosquito-mega-caffeine, ableton-move-manager =
+      # mosquito-move-manager, etc).
       # The keys are what exec_modules routes on; the labels are what you read.
       # Labels match the row names in the Setup tree, so a module is called the
       # same thing in both menus.
       CAND_KEYS+=("ableton-move-manager")
-      CAND_LABELS+=("move-manager  —  $(module_desc ableton-move-manager)")
+      CAND_LABELS+=("mosquito-move-manager  —  $(module_desc ableton-move-manager)")
       CAND_KEYS+=("audio-plugin-manager")
       CAND_LABELS+=("mosquito-audio-plugin-manager  —  $(module_desc audio-plugin-manager)")
       CAND_KEYS+=("jamjamjam-plugin")

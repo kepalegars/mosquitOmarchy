@@ -22,7 +22,9 @@ absent means "off", except `THERMAL_LIMIT_C` which keeps its default.
 | `THERMAL_LIMIT_C` | temperature the watcher starts reacting at |
 | `CLOSE_APPS` | ask to close the apps below when the session starts |
 | `CLOSE_APPS_LIST` | which ones, e.g. `"kDrive qBittorrent Steam Discord Slack Spotify"` |
-| `ROUTING_TOOL` | patch the audio routing for the session |
+| `ROUTING_TOOL` | park the audio mixer/patchbay in the scratchpad for the session |
+| `PATCHBAY_APP` | which scratchpad audio app(s): `mixbay+qpwgraph` (both, the default), `mixbay`, `qpwgraph` or `mosquito-patchbay` |
+| `POWER_PROFILE_PROMPT` | ask before the session takes the performance profile back after a hand change (default yes; no = silent forcing) |
 | `NO_GAPS` | remove the Hyprland gaps for the session |
 | `SILENCE_NOTIFICATIONS` | suppress notifications for the session |
 | `FENCE_PACKAGES` | **opt-in** — block package installation for the session |
@@ -30,6 +32,35 @@ absent means "off", except `THERMAL_LIMIT_C` which keeps its default.
 
 The TUI edits these same keys, so the file and the TUI never disagree: `live-mode manage`
 writes the file, and the file is what `on` reads.
+
+## Scratchpad audio apps
+
+The session parks **mosquito mixbay** (the desk tool) **plus qpwgraph** (the
+PipeWire graph) in the scratchpad by default. The installer **always installs
+qpwgraph when it is missing** (via the usual one-question password prompt), so
+the slot is never half empty.
+
+For the full live-mode desk, installing **mosquito mixbay** (mosquitomarchy
+Setup › mosquito) is strongly recommended: qpwgraph alone only shows the graph,
+while mixbay is the actual mixer surface.
+
+If **neither** app is on the machine, the two scratchpad rows in the manager
+(*Audio mixer/patchbay in the scratchpad* and *Scratchpad app*) are greyed out
+and cannot be used. They become available again automatically as soon as
+mixbay or qpwgraph is installed — no setting to flip, just install one of them
+and reopen the manager.
+
+## Power profile
+
+While a session is active, live mode pins the `performance` profile (the
+watchdog reasserts it): changing it by hand mid-session is refused by design,
+because a quiet profile would silently undo the audio optimization the
+session guarantees. Change the profile with live mode **off**.
+
+`POWER_PROFILE_PROMPT=yes` (the default) still lets you try: the watchdog
+asks once per hand-picked value whether to switch back — accept and the
+session takes performance back, refuse and that value is left alone until it
+changes again. Set it to `no` for the old silent forcing.
 
 ## Activation prompt
 

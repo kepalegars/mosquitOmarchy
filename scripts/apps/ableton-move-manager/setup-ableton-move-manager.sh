@@ -458,7 +458,7 @@ ensure_tui_float_windowrule() {
 -- Bubble Tea TUI's own window) instead of the tiled default -- its app-id
 -- isn't in Omarchy's own floating-window whitelist (that one only matches
 -- a fixed set of known app-ids verbatim, not a wildcard).
-o.window("org.omarchy.mosquito-move-manager-tui", { float = true, center = true })
+o.window("org.omarchy.mosquito-move-manager-tui", { float = true, center = true, size = { 1500, 950 } })
 -- <<< move-manager-tui-setup <<<
 EOF
   hyprctl reload >/dev/null 2>&1 || true

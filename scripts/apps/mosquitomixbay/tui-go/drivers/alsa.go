@@ -10,12 +10,18 @@
 //   - falls back to the same persistent DEMO state as the EVO driver when
 //     the hardware is absent.
 //
+// Capabilities are explicit per device (Spec.Caps): gains are analog knobs,
+// 48V is a hardware switch and there is no DSP mixer on any of these boxes,
+// so the UI never offers those rows and the setters refuse them loudly.
+// The demo honours the same caps — a rehearsal that lets you automate a
+// knob that does not exist would be a lie.
+//
 // Fireface note: oudeis01/linux-fireface-mixer drives the Fireface 400 over
 // FireWire via snd-fireface-ctl-service. The UCX II is a USB interface and
 // that service does not expose it today, so the full TotalMix crosspoint
-// matrix is out of reach for now. Level 1 (this file: ALSA volumes, mutes,
-// phantom where exposed, PipeWire profile hints) covers daily use; the
-// matrix arrives when the kernel/ctl service exposes UCX II routing.
+// matrix is out of reach for now. Level 1 (this file: ALSA volumes and
+// mutes) covers daily use; the matrix arrives when the kernel/ctl service
+// exposes UCX II routing.
 package drivers
 
 import (
@@ -26,6 +32,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -38,6 +45,7 @@ var (
 		GainMin: 0, GainMax: 65, VolMin: -96, VolMax: 0,
 		MixerInputs: 8, MixerOutputs: 2,
 		HasMonitor: false, Backend: BackendALSA, NeedsKmod: false,
+		Caps:        Caps{Volume: true, Gain: false, Mute: true, Phantom: false, Monitor: false, Mixer: false},
 		Description: "ALSA level 1 (volumes/mutes). TotalMix matrix pending kernel support.",
 	}
 	UGM192Spec = Spec{
@@ -47,6 +55,7 @@ var (
 		GainMin: 0, GainMax: 40, VolMin: -96, VolMax: 0,
 		MixerInputs: 2, MixerOutputs: 2,
 		HasMonitor: false, Backend: BackendALSA, NeedsKmod: false,
+		Caps:        Caps{Volume: true, Gain: false, Mute: true, Phantom: false, Monitor: false, Mixer: false},
 		Description: "Class-compliant USB. ALSA volumes only, no DSP.",
 	}
 	QuantumES4Spec = Spec{
@@ -56,6 +65,7 @@ var (
 		GainMin: 0, GainMax: 60, VolMin: -96, VolMax: 0,
 		MixerInputs: 4, MixerOutputs: 2,
 		HasMonitor: false, Backend: BackendALSA, NeedsKmod: false,
+		Caps:        Caps{Volume: true, Gain: false, Mute: true, Phantom: false, Monitor: false, Mixer: false},
 		Description: "Class-compliant USB. ALSA volumes only, no DSP.",
 	}
 )
@@ -132,7 +142,8 @@ func (d *alsaDriver) ensureDemo() *demoState {
 		Gains:   make([]float64, d.spec.NumInputs),
 		Mutes:   map[string]bool{},
 		Phantom: map[string]bool{},
-		Mixer:   defaultMixerCells(d.spec),
+		Monitor: 50,
+		Mixer:   map[string]MixerCell{},
 	}
 	for i := range st.Volumes {
 		st.Volumes[i] = 0
@@ -156,6 +167,13 @@ func (d *alsaDriver) saveDemo() {
 	_ = os.WriteFile(d.demoFile(), data, 0o644)
 }
 
+func (d *alsaDriver) outName(i int) string {
+	if d.spec.NumOutPairs == 1 {
+		return "output"
+	}
+	return fmt.Sprintf("output%d", i+1)
+}
+
 func (d *alsaDriver) Status() (Status, error) {
 	st := Status{Spec: d.spec, Mixer: map[string]MixerCell{}}
 	if !d.Probe() {
@@ -168,34 +186,20 @@ func (d *alsaDriver) Status() (Status, error) {
 			st.Inputs = append(st.Inputs, InputState{Name: name, GainDb: demo.Gains[i], Muted: demo.Mutes[name], Phantom: demo.Phantom[name]})
 		}
 		for i := 0; i < d.spec.NumOutPairs; i++ {
-			name := fmt.Sprintf("output%d", i+1)
-			if d.spec.NumOutPairs == 1 {
-				name = "output"
-			}
+			name := d.outName(i)
 			st.Outputs = append(st.Outputs, OutputState{Name: name, VolumeDb: demo.Volumes[i], Muted: demo.Mutes[name]})
-		}
-		for k, v := range demo.Mixer {
-			st.Mixer[k] = v
 		}
 		return st, nil
 	}
 	d.demo = nil
 	st.Online = true
 	st.Backend = BackendALSA
-	st.Note = fmt.Sprintf("ALSA card %d — level-1 controls (no DSP matrix on this interface).", d.card)
+	st.Note = fmt.Sprintf("ALSA card %d — level-1 controls (volumes/mutes only, no DSP).", d.card)
 	for i := 0; i < d.spec.NumInputs; i++ {
-		name := fmt.Sprintf("input%d", i+1)
-		st.Inputs = append(st.Inputs, InputState{Name: name, GainDb: 20, Muted: false, Phantom: false})
+		st.Inputs = append(st.Inputs, InputState{Name: fmt.Sprintf("input%d", i+1)})
 	}
 	for i := 0; i < d.spec.NumOutPairs; i++ {
-		name := fmt.Sprintf("output%d", i+1)
-		if d.spec.NumOutPairs == 1 {
-			name = "output"
-		}
-		st.Outputs = append(st.Outputs, OutputState{Name: name, VolumeDb: 0, Muted: false})
-	}
-	for k, v := range defaultMixerCells(d.spec) {
-		st.Mixer[k] = v
+		st.Outputs = append(st.Outputs, OutputState{Name: d.outName(i)})
 	}
 	return st, nil
 }
@@ -210,7 +214,7 @@ func (d *alsaDriver) SetVolume(pair int, db float64) error {
 			}
 		} else {
 			if pair >= len(demo.Volumes) {
-				return fmt.Errorf("output pair %d out of range", pair)
+				return fmt.Errorf("output pair %d out of range (0..%d)", pair, len(demo.Volumes)-1)
 			}
 			demo.Volumes[pair] = db
 		}
@@ -230,13 +234,9 @@ func (d *alsaDriver) SetGain(input int, db float64) error {
 	if input < 1 || input > d.spec.NumInputs {
 		return fmt.Errorf("input must be 1..%d", d.spec.NumInputs)
 	}
-	if !d.Probe() {
-		demo := d.ensureDemo()
-		demo.Gains[input-1] = db
-		d.saveDemo()
-		return nil
-	}
-	return fmt.Errorf("%s: input gain is analog (front-panel knob) — ALSA cannot drive it; showing monitor only", d.spec.Display)
+	// Refused in demo too: the demo mirrors the hardware caps, so a
+	// rehearsal can never automate a knob that does not exist.
+	return fmt.Errorf("%s: input gain is an analog front-panel knob — ALSA cannot drive it", d.spec.Display)
 }
 
 func (d *alsaDriver) SetMute(target string, muted bool) error {
@@ -262,36 +262,21 @@ func (d *alsaDriver) SetPhantom(input int, on bool) error {
 	if input < 1 || input > d.spec.NumInputs {
 		return fmt.Errorf("input must be 1..%d", d.spec.NumInputs)
 	}
-	if !d.Probe() {
-		demo := d.ensureDemo()
-		demo.Phantom[fmt.Sprintf("input%d", input)] = on
-		d.saveDemo()
-		return nil
-	}
 	return fmt.Errorf("%s: 48V is a hardware switch — ALSA cannot drive it", d.spec.Display)
 }
 
 func (d *alsaDriver) SetMonitor(v int) error {
-	return fmt.Errorf("%s has no monitor blend (use your DAW or the loopback mixer)", d.spec.Display)
+	return fmt.Errorf("%s has no monitor blend (use your DAW)", d.spec.Display)
 }
 
 func (d *alsaDriver) SetMixerInput(input int, volDb, pan float64, mixOut int) error {
-	if !d.Probe() {
-		demo := d.ensureDemo()
-		demo.Mixer[fmt.Sprintf("input%d", input)] = MixerCell{VolumeDb: volDb, Pan: pan}
-		d.saveDemo()
-		return nil
+	if input < 1 || input > d.spec.NumInputs {
+		return fmt.Errorf("input must be 1..%d", d.spec.NumInputs)
 	}
 	return fmt.Errorf("%s exposes no DSP mixer over ALSA", d.spec.Display)
 }
 
 func (d *alsaDriver) SetMixerOutput(srcPair int, volDb, panL, panR float64, mixOut int) error {
-	if !d.Probe() {
-		demo := d.ensureDemo()
-		demo.Mixer[fmt.Sprintf("output%d_%d", srcPair*2+1, srcPair*2+2)] = MixerCell{VolumeDb: volDb, Pan: (panL + panR) / 2}
-		d.saveDemo()
-		return nil
-	}
 	return fmt.Errorf("%s exposes no DSP mixer over ALSA", d.spec.Display)
 }
 
@@ -317,9 +302,29 @@ func (d *alsaDriver) Load() error {
 	if err := json.Unmarshal(data, &st); err != nil {
 		return err
 	}
+	// Only volumes and mutes exist on this hardware: restore exactly those
+	// and say what was skipped, instead of pretending a full recall.
 	for i, o := range st.Outputs {
-		_ = i
-		_ = o
+		if i >= d.spec.NumOutPairs {
+			break
+		}
+		if err := d.SetVolume(i, o.VolumeDb); err != nil {
+			return fmt.Errorf("output %s volume: %w", o.Name, err)
+		}
+		if err := d.SetMute(o.Name, o.Muted); err != nil {
+			return fmt.Errorf("output %s mute: %w", o.Name, err)
+		}
 	}
 	return nil
+}
+
+// mixerKeys returns the known shadow keys in stable order (demo only — the
+// hardware has no matrix to list).
+func mixerKeys(m map[string]MixerCell) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

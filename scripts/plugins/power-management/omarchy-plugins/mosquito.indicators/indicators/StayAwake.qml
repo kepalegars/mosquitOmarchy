@@ -20,7 +20,7 @@ BarIndicator {
   activeText: "󰅶"
   inactiveText: "󰅶"
 
-  // Live mode (scripts/plugins/live-mode): the icon blinks red/white. Otherwise it's
+  // Live mode (scripts/mosquito/live-mode): the icon blinks red/white. Otherwise it's
   // red directly when Mega caffeine runs.
   useActiveColor: root.liveMode ? root.blinkOn : root.megaEnabled
 
@@ -84,7 +84,7 @@ BarIndicator {
 
   Process {
     id: statusProc
-    // Live mode (scripts/plugins/live-mode) is tint-free and does not run mega
+    // Live mode (scripts/mosquito/live-mode) is tint-free and does not run mega
     // caffeine — when its active flag exists, report it directly so the
     // coffee icon shows red with the "Live Mode ON" tooltip regardless of
     // any caffeine session state.

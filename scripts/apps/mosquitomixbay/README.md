@@ -1,32 +1,37 @@
 # mosquitomixbay
 
-USB-audio control bay for mosquitOmarchy — one TUI for the interfaces:
+USB-audio control bay for mosquitOmarchy — one TUI for the interfaces.
+EVO 8 first: the interface mirrors evotui (vanzaho/audient-evo-py).
 
 | Interface | Backend | État |
 |---|---|---|
-| Audient EVO 8 | `evo_raw` kmod (`/dev/evo8` ioctl) | **plein contrôle** : volumes, gains 0…58 dB, mutes, 48V, loopback mixer 10×4 |
+| Audient EVO 8 | `evo_raw` kmod (`/dev/evo8` ioctl) | **plein contrôle** : volumes, gains 0…58 dB, mutes, 48V, loopback mixer 10×4 sur 2 bus (MIX 1\|2, MIX 3\|4) |
 | Audient EVO 4 | même protocole | plein contrôle + monitor blend |
 | RME Fireface UCX II | ALSA niveau 1 | volumes/mutes ; matrice TotalMix en attente support kernel UCX II USB |
-| ESI UGM192 | ALSA | volumes (pas de DSP) |
-| PreSonus Quantum ES 4 | ALSA | volumes (pas de DSP) |
+| ESI UGM192 | ALSA | volumes/mutes (pas de DSP) |
+| PreSonus Quantum ES 4 | ALSA | volumes/mutes (pas de DSP) |
 
 Sans hardware (ou sans kmod), chaque driver sert un **état DEMO persistant**
 (même JSON) : la TUI, le CLI et les répètes live-mode marchent débranché.
+La démo respecte les capacités du hardware : un boîtier ALSA n'y expose que
+volumes et mutes, jamais de gain, 48V ni mixer.
 
 ## Protocole EVO
 
 Port Go de [vanzaho/audient-evo-py](https://github.com/vanzaho/audient-evo-py)
 (domaine public, référence principale — interface à répliquer) :
 FU10 volume, FU11 gains, EU56 monitor (EVO 4), EU58 mutes/48V, EU59 mute
-(EVO 4), MU60 loopback **write-only** (shadow logiciel, compatible
-`~/.config/audient-evo-py/<dev>/`). Quirks respectés : 4 octets pleins sur
-EU58/59, jamais de GET sur MU60, EU56 seulement CS=0 CN=0.
+(EVO 4), MU60 loopback **write-only** (shadow logiciel partagé avec evoctl,
+compatible `~/.config/audient-evo-py/<dev>/`). Quirks respectés : 4 octets
+pleins sur EU58/59, jamais de GET sur MU60, EU56 seulement CS=0 CN=0, paires
+de sorties groupées sur des CN impairs, gains en CN 1-based.
 
 Autres inspirations : `soerenbnoergaard/evoctl` (matrice EVO8),
-`vijay-prema/audient-evo-linux-tools`, `subsubl/Evo4mixer`,
-`hoskere/audient-evo8-rp2350-arduino`, `michaelforney/oscmix` et
-`ismail-bahloul/TuxMix` (idiomes), `oudeis01/linux-fireface-mixer`
-(Fireface 400 FireWire — **pas** l'UCX II USB, d'où ALSA niveau 1 ici).
+`vijay-prema/audient-evo-linux-tools`, `hoskere/audient-evo8-rp2350-arduino`
+(table d'encodage EVO 8), `michaelforney/oscmix` et
+`ismail-bahloul/TuxMix` (séparation démon/client, scènes, mock backend),
+`oudeis01/linux-fireface-mixer` (sélection de submix — ici le sélecteur
+MIX 1|2 / MIX 3|4).
 
 ## Usage
 
@@ -44,9 +49,11 @@ mosquito-mixbay-actions mixer input1 --volume -6 --pan -20
 mosquito-mixbay-actions save | load --device evo8
 ```
 
-TUI : `↑/↓` choisir · `←/→` ±1 dB (`Shift` ±5) · `Enter` mute/48V ·
-`m` mixer · `,`/`.` pan · `s` save · `r` refresh · `?` aide.
+TUI : appareils → contrôles (sections INPUTS / OUTPUTS) → mixer loopback.
+`↑/↓` choisir · `←/→` ±1 dB (`Shift` ±5) · chiffres puis `Enter` pour taper
+une valeur · `Enter` mute/48V · `m` mixer · `s` save · `r` refresh · `?` aide.
 Le 48V demande confirmation (condensateurs uniquement, retours baissés).
+Sur la page mixer, la première ligne choisit le bus (MIX 1|2 ou MIX 3|4).
 
 ## Fichiers
 

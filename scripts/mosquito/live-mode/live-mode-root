@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # live-mode-root — privileged helper for Omarchy live mode.
 # Invoked via: sudo -n ~/.local/bin/live-mode-root <command> [args...]
-# Managed by scripts/plugins/live-mode/setup-live-mode.sh
+# Managed by scripts/mosquito/live-mode/setup-live-mode.sh
 
 set -euo pipefail
 

@@ -11,7 +11,7 @@
 //	mosquito-mixbay-actions set monitor 50
 //	mosquito-mixbay-actions mixer input1 --volume -6 --pan 0 [--bus 0]
 //	mosquito-mixbay-actions mixer output1_2 --volume 0 [--bus 0]
-//	mosquito-mixbay-actions save / load
+//	mosquito-mixbay-actions save | load [--device evo8]
 //
 // Flag vocabulary mirrors evoctl (vanZaho) so muscle memory transfers.
 package main
@@ -149,28 +149,31 @@ func printJSON(v any) int {
 	return 0
 }
 
-// shared flags: --device + -t target.
-func deviceAndTarget(args []string) (string, string, []string) {
+// shared flags: --device + -t target. A flag left without its value is an
+// error, never a silent empty string.
+func deviceAndTarget(args []string) (string, string, []string, error) {
 	dev := defaultDevice()
 	target := ""
-	rest := args[:0:0]
+	var rest []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--device":
 			i++
-			if i < len(args) {
-				dev = args[i]
+			if i >= len(args) {
+				return "", "", nil, fmt.Errorf("--device needs a value")
 			}
+			dev = args[i]
 		case "-t", "--target":
 			i++
-			if i < len(args) {
-				target = args[i]
+			if i >= len(args) {
+				return "", "", nil, fmt.Errorf("-t needs a value")
 			}
+			target = args[i]
 		default:
 			rest = append(rest, args[i])
 		}
 	}
-	return dev, target, rest
+	return dev, target, rest, nil
 }
 
 func cliSet(args []string) int {
@@ -179,7 +182,11 @@ func cliSet(args []string) int {
 		return 2
 	}
 	kind := args[0]
-	dev, target, rest := deviceAndTarget(args[1:])
+	dev, target, rest, err := deviceAndTarget(args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
 	d, err := drivers.Open(dev)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -292,17 +299,33 @@ func cliMixer(args []string) int {
 		switch args[i] {
 		case "--volume":
 			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "mixer --volume needs a value")
+				return 2
+			}
 			vol, _ = strconv.ParseFloat(args[i], 64)
 			hasVol = true
 		case "--pan":
 			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "mixer --pan needs a value")
+				return 2
+			}
 			pan, _ = strconv.ParseFloat(args[i], 64)
 			hasPan = true
 		case "--bus", "--mix-output":
 			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "mixer --bus needs a value")
+				return 2
+			}
 			bus, _ = strconv.Atoi(args[i])
 		case "--device":
 			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "mixer --device needs a value")
+				return 2
+			}
 			dev = args[i]
 		}
 	}
@@ -315,16 +338,16 @@ func cliMixer(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	var inNum int
-	if _, err := fmt.Sscanf(src, "input%d", &inNum); err == nil {
-		if !hasPan {
-			// Keep the stored pan when only the volume changes.
-			if st, err := d.Status(); err == nil {
-				if c, ok := st.Mixer[src]; ok {
-					pan = c.Pan
-				}
+	// Without an explicit --pan, keep the stored pan (volume-only change).
+	if !hasPan {
+		if st, err := d.Status(); err == nil {
+			if c, ok := st.Mixer[drivers.MixerKey(src, bus)]; ok {
+				pan = c.Pan
 			}
 		}
+	}
+	var inNum int
+	if _, err := fmt.Sscanf(src, "input%d", &inNum); err == nil {
 		if err := d.SetMixerInput(inNum, vol, pan, bus); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -334,7 +357,7 @@ func cliMixer(args []string) int {
 	}
 	var l, r int
 	if _, err := fmt.Sscanf(src, "output%d_%d", &l, &r); err == nil && r == l+1 && l%2 == 1 {
-		if err := d.SetMixerOutput((l-1)/2, vol, -100, 100, bus); err != nil {
+		if err := d.SetMixerOutput((l-1)/2, vol, pan, pan, bus); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}

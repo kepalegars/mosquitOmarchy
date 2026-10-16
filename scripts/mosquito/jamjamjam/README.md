@@ -118,8 +118,8 @@ followed instead of leaving a stale silent capture.
 ## Install
 
 ```bash
-scripts/plugins/jamjamjam/setup-jamjamjam-plugin.sh            # plugin + bar entry + TUI + float rule
-scripts/plugins/jamjamjam/setup-jamjamjam-plugin.sh --remove
+scripts/mosquito/jamjamjam/setup-jamjamjam-plugin.sh            # plugin + bar entry + TUI + float rule
+scripts/mosquito/jamjamjam/setup-jamjamjam-plugin.sh --remove
 omarchy restart shell
 ```
 

@@ -2,6 +2,8 @@ package drivers
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -94,5 +96,79 @@ func TestEvo8SpecMatchesUpstream(t *testing.T) {
 	}
 	if EVO4Spec.MixerInputs*EVO4Spec.MixerOutputs != 12 {
 		t.Errorf("evo4 mixer should be 12 cross-points")
+	}
+}
+
+func TestMixerBusKeys(t *testing.T) {
+	if got := MixerKey("input1", 0); got != "input1" {
+		t.Errorf("bus 0 keeps the bare key, got %q", got)
+	}
+	if got := MixerKey("input1", 1); got != "input1@1" {
+		t.Errorf("bus 1 suffix, got %q", got)
+	}
+	if got := MixBuses(EVO8Spec); got != 2 {
+		t.Errorf("evo8 has 2 mix buses, got %d", got)
+	}
+	if got := MixBuses(EVO4Spec); got != 1 {
+		t.Errorf("evo4 has 1 mix bus, got %d", got)
+	}
+	if got := BusLabel(1); got != "MIX 3|4" {
+		t.Errorf("bus 1 label = %q, want MIX 3|4", got)
+	}
+}
+
+func TestAlsaCapsRefuseUnsupported(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	d, _ := Open(DevUGM192)
+	if err := d.SetGain(1, 20); err == nil {
+		t.Errorf("ALSA gain should fail (analog knob)")
+	}
+	if err := d.SetPhantom(1, true); err == nil {
+		t.Errorf("ALSA 48V should fail (hardware switch)")
+	}
+	if err := d.SetMonitor(50); err == nil {
+		t.Errorf("ALSA monitor should fail")
+	}
+	if err := d.SetMixerInput(1, -6, 0, 0); err == nil {
+		t.Errorf("ALSA mixer should fail (no DSP)")
+	}
+	if err := d.SetVolume(0, -10); err != nil {
+		t.Errorf("ALSA volume should work in demo: %v", err)
+	}
+}
+
+func TestEvoLoadRestoresEveryMixerRoute(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	// Force demo mode even where a real /dev/evo* node exists.
+	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
+	d, _ := Open(DevEVO8)
+	if err := d.SetMixerInput(1, -6, -20, 0); err != nil {
+		t.Fatalf("set mixer input: %v", err)
+	}
+	if err := d.SetMixerOutput(0, -3, 0, 0, 0); err != nil {
+		t.Fatalf("set mixer output: %v", err)
+	}
+	if err := d.Save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	// A fresh driver (as after a reboot): demo state is factory, but the
+	// shadow files Save() wrote are still on disk.
+	home, _ := os.UserHomeDir()
+	_ = os.Remove(filepath.Join(home, ".config", "mosquitomixbay", DevEVO8, "demo.json"))
+	d2, _ := Open(DevEVO8)
+	st0, _ := d2.Status()
+	if c := st0.Mixer["input1"]; c.VolumeDb != 0 || c.Pan != -100 {
+		t.Fatalf("fresh demo should be factory {0 -100}, got %+v", c)
+	}
+	if err := d2.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	st, _ := d2.Status()
+	if c := st.Mixer["input1"]; c.VolumeDb != -6 || c.Pan != -20 {
+		t.Errorf("input1 not restored: %+v", c)
+	}
+	// The old Load silently dropped outputX_Y keys; both must come back.
+	if c := st.Mixer["output1_2"]; c.VolumeDb != -3 {
+		t.Errorf("output1_2 not restored: %+v", c)
 	}
 }

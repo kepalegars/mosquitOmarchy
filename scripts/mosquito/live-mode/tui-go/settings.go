@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,12 +20,12 @@ type Settings struct {
 	ThermalLimitC int      // 95|90|85|80|75 (°C)
 	CloseApps     bool     // offer closing background apps at start
 	CloseAppsList []string // subset of knownApps (configured app names)
-	RoutingTool   bool     // park qpwgraph in the scratchpad on activation
-	// PatchbayApp fills the patchbay slot: mixbay (the mosquito USB audio
-	// bay, default), qpwgraph (the PipeWire graph fallback) or
-	// mosquito-patchbay (the future native routing surface). live-mode
-	// treats it as a preference: a choice that is not installed falls
-	// through to whatever is.
+	RoutingTool   bool     // park the scratchpad audio apps on activation
+	// PatchbayApp fills the patchbay slot: mixbay+qpwgraph (both together,
+	// the default), mixbay (the mosquito USB audio bay alone), qpwgraph
+	// (the PipeWire graph alone) or mosquito-patchbay (the future native
+	// routing surface). live-mode treats it as a preference: a choice that
+	// is not installed falls through to whatever is.
 	PatchbayApp   string
 	NoGaps        bool // disable window gaps during the session
 	SilenceNotifs bool // DND during the session
@@ -49,7 +50,7 @@ func defaultSettings() Settings {
 		CloseApps:     true,
 		CloseAppsList: append([]string(nil), knownApps...),
 		RoutingTool:   true,
-		PatchbayApp:   "mixbay",
+		PatchbayApp:   PatchbayBoth,
 		NoGaps:        true,
 		SilenceNotifs: true,
 		SwitchTheme:   true,
@@ -128,7 +129,7 @@ func saveSettings(s Settings) error {
 	}
 	app := s.PatchbayApp
 	if !validPatchbayApp(app) {
-		app = "mixbay"
+		app = PatchbayBoth
 	}
 	content := "THERMAL_LIMIT_C=\"" + itoa(s.ThermalLimitC) + "\"\n" +
 		"CLOSE_APPS=\"" + boolVal(s.CloseApps) + "\"\n" +
@@ -152,17 +153,63 @@ func hasApp(list []string, name string) bool {
 	return false
 }
 
+// Patchbay choice values. PatchbayBoth is the default: mosquito mixbay as
+// the session desk tool plus qpwgraph as the PipeWire graph, parked together.
+const (
+	PatchbayBoth   = "mixbay+qpwgraph"
+	PatchbayMixbay = "mixbay"
+	PatchbayGraph  = "qpwgraph"
+	PatchbayNative = "mosquito-patchbay"
+)
+
 // patchbayApps is what Left/Right cycle through on the patchbay row, in
 // display order. mosquito-patchbay (the future native surface) is a valid
 // stored value but not offered until it exists.
-var patchbayApps = []string{"mixbay", "qpwgraph"}
+var patchbayApps = []string{PatchbayBoth, PatchbayMixbay, PatchbayGraph}
 
 func validPatchbayApp(v string) bool {
 	switch v {
-	case "mixbay", "qpwgraph", "mosquito-patchbay":
+	case PatchbayBoth, PatchbayMixbay, PatchbayGraph, PatchbayNative:
 		return true
 	}
 	return false
+}
+
+// patchbayLabel is the display form of a stored choice: the combo reads
+// "mixbay + qpwgraph" on screen while the file keeps the shell-safe value.
+func patchbayLabel(v string) string {
+	if v == PatchbayBoth {
+		return "mixbay + qpwgraph"
+	}
+	return v
+}
+
+// lookPath is exec.LookPath behind a variable so tests can stub the machine
+// without touching PATH.
+var lookPath = exec.LookPath
+
+func haveMixbay() bool {
+	if _, err := lookPath("mosquito-mixbay"); err == nil {
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if st, err := os.Stat(filepath.Join(home, ".local", "bin", "mosquito-mixbay")); err == nil && !st.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+func haveQpwgraph() bool {
+	_, err := lookPath("qpwgraph")
+	return err == nil
+}
+
+// patchbayLocked reports whether the scratchpad audio rows must stay
+// greyed out: neither mixbay nor qpwgraph is on this machine, so there is
+// nothing a session could park. Installing either one re-enables them.
+func patchbayLocked() bool {
+	return !haveMixbay() && !haveQpwgraph()
 }
 
 func nextPatchbayApp(cur string) string {

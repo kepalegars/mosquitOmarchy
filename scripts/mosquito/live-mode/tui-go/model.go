@@ -102,12 +102,17 @@ func screenKey(s screen) string { return strconv.Itoa(int(s)) }
 
 func (m model) mainItems() []tuikit.PickerItem {
 	s := m.settings
+	locked := patchbayLocked()
+	lockedSuffix := ""
+	if locked {
+		lockedSuffix = "  (needs mixbay or qpwgraph)"
+	}
 	return []tuikit.PickerItem{
 		{Display: fmt.Sprintf("Thermal limit: %d°C", s.ThermalLimitC), Value: "thermal"},
 		{Display: "Ask to close background apps at start: " + boolLabel(s.CloseApps), Value: "close_apps"},
-		{Display: "Choose background apps to close at start", Value: "choose_apps"},
-		{Display: "mosquito mixbay in the scratchpad: " + boolLabel(s.RoutingTool), Value: "routing"},
-		{Display: "Scratchpad app: " + s.PatchbayApp, Value: "patchbay"},
+		{Display: "Choose background apps to close in live mode", Value: "choose_apps"},
+		{Display: "Audio mixer/patchbay in the scratchpad: " + boolLabel(s.RoutingTool), Value: "routing", Disabled: locked, Suffix: lockedSuffix},
+		{Display: "Scratchpad app: " + patchbayLabel(s.PatchbayApp), Value: "patchbay", Disabled: locked, Suffix: lockedSuffix},
 		{Display: "Switch to the Live theme on activation: " + boolLabel(s.SwitchTheme), Value: "theme"},
 		{Display: "Confirm before changing power profile: " + boolLabel(s.ProfilePrompt), Value: "profile_prompt"},
 		{Display: "Window gaps disabled during the session: " + boolLabel(s.NoGaps), Value: "gaps"},
@@ -162,9 +167,9 @@ func (m model) mainItemsWithPending() []tuikit.PickerItem {
 		case "close_apps":
 			items[i].Display = "Ask to close background apps at start: " + boolLabel(target == "on")
 		case "routing":
-			items[i].Display = "mosquito mixbay in the scratchpad: " + boolLabel(target == "on")
+			items[i].Display = "Audio mixer/patchbay in the scratchpad: " + boolLabel(target == "on")
 		case "patchbay":
-			items[i].Display = "Scratchpad app: " + target
+			items[i].Display = "Scratchpad app: " + patchbayLabel(target)
 		case "gaps":
 			items[i].Display = "Window gaps disabled during the session: " + boolLabel(target == "on")
 		case "notifs":
@@ -282,6 +287,10 @@ func (m model) cycleSetting(dir int) (tea.Model, tea.Cmd) {
 	if m.pending == nil {
 		m.pending = map[string]string{}
 	}
+	if (row == "routing" || row == "patchbay") && patchbayLocked() {
+		m.toast, _ = m.toast.SetWarn("No scratchpad audio app installed — install mosquito mixbay or qpwgraph first")
+		return m, nil
+	}
 	switch row {
 	case "thermal":
 		cur := m.settings.ThermalLimitC
@@ -365,6 +374,10 @@ func (m model) cycleSetting(dir int) (tea.Model, tea.Cmd) {
 
 func (m *model) apply(choice string) {
 	s := m.settings
+	if (choice == "routing" || choice == "patchbay") && patchbayLocked() {
+		m.toast, _ = m.toast.SetWarn("No scratchpad audio app installed — install mosquito mixbay or qpwgraph first")
+		return
+	}
 	switch choice {
 	case "choose_apps":
 		// Leaving the settings screen commits any pending value first.

@@ -83,42 +83,43 @@ install_binaries() {
 }
 
 # ---------------------------------------------------------------------------
-# 1b. mosquito patchbay (parked in the scratchpad by live mode).
+# 1b. Scratchpad audio apps (parked in the scratchpad by live mode).
 #
-# Our own `mosquito-patchbay` is what live mode will drive once it exists. Until
-# then qpwgraph stands in for it, so a machine never loses the feature just
-# because our binary is not written yet. The native one wins whenever it is
-# installed; qpwgraph is only a fallback, and if NEITHER is there we say how to
-# get one rather than leaving live mode to skip the step silently.
+# The slot defaults to mixbay+qpwgraph: mosquito mixbay (its own mosquitomarchy
+# module) as the session desk tool, plus qpwgraph as the PipeWire graph. The
+# native `mosquito-patchbay` wins whenever it exists. This step GUARANTEES the
+# qpwgraph side exists: it is installed through mq_sudo when missing, so the
+# install never leaves the slot half empty. mixbay itself comes from the
+# mosquitomarchy setup (Setup > mosquito) and is warmly recommended there —
+# and here — for the full live-mode desk, but qpwgraph alone is enough for the
+# slot to work.
 # ---------------------------------------------------------------------------
 
 PATCHBAY_BIN_NAME="mosquito-patchbay"
 
 install_routing_tool() {
-  # The patchbay slot defaults to mosquito-mixbay (its own mosquitomarchy
-  # module); this step only guarantees the qpwgraph fallback exists.
+  # The patchbay slot defaults to mixbay+qpwgraph. mixbay (its own
+  # mosquitomarchy module) is the recommended desk tool; this step guarantees
+  # the qpwgraph side exists no matter what.
   if [[ -x "$REAL_HOME/.local/bin/mosquito-mixbay" ]] || command -v mosquito-mixbay >/dev/null 2>&1; then
-    ok "mosquito mixbay fills the scratchpad slot (PATCHBAY_APP default)."
+    ok "mosquito mixbay fills the desk-tool side of the scratchpad slot."
+  else
+    warn "mosquito mixbay not found — for the full live-mode desk, run the mixbay module (Setup > mosquito)."
   fi
   if [[ -x "$REAL_HOME/.local/bin/$PATCHBAY_BIN_NAME" ]] || command -v "$PATCHBAY_BIN_NAME" >/dev/null 2>&1; then
     ok "native scratchpad app present: $PATCHBAY_BIN_NAME"
-    return 0
   fi
   if command -v qpwgraph >/dev/null 2>&1; then
-    ok "scratchpad app: using qpwgraph as the stand-in until $PATCHBAY_BIN_NAME exists."
+    ok "scratchpad app: qpwgraph present."
     return 0
   fi
-  # Neither. Offer qpwgraph now (it is the only thing that can be installed
-  # today); mixbay and the native patchbay come from the mosquitomarchy setup.
-  if [[ $EUID -eq 0 ]] && command -v pacman >/dev/null 2>&1; then
-    if pacman -S --needed --noconfirm qpwgraph >/dev/null 2>&1; then
-      ok "scratchpad app installed (qpwgraph stand-in): qpwgraph"
-    else
-      warn "Could not install qpwgraph (pacman failed) — install it manually."
-    fi
+  # Missing: install it, with the same themed one-question prompt the rest of
+  # the run uses. qpwgraph is the only piece this installer may pull in.
+  info "Installing qpwgraph (PipeWire graph for the scratchpad slot)…"
+  if mq_sudo pacman -S --needed --noconfirm qpwgraph >/dev/null 2>&1; then
+    ok "scratchpad app installed: qpwgraph"
   else
-    warn "No scratchpad app available. Run the mixbay module (Setup > mosquito),"
-    warn "or install the stand-in (root): pacman -S qpwgraph"
+    warn "Could not install qpwgraph (pacman failed) — install it manually: pacman -S qpwgraph"
   fi
 }
 
@@ -148,7 +149,7 @@ $FLOAT_START
 -- install under "mosquito-audio-plugin-manager-tui-setup" and
 -- "move-manager-tui-setup" — two identical o.window lines for the same class in
 -- the same file. Whoever needs those rules now owns them in one place only.
-o.window("org.omarchy.mosquito-live-mode-tui", { float = true, center = true })
+o.window("org.omarchy.mosquito-live-mode-tui", { float = true, center = true, size = { 1500, 950 } })
 $FLOAT_END
 EOF
   ok "Hyprland rule installed: mosquito live-mode TUI opens untiled (foot 92x92)"

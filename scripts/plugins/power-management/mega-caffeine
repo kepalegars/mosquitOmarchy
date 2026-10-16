@@ -203,7 +203,7 @@ menu_active() {
   return 1
 }
 
-# Live mode (scripts/plugins/live-mode): mega caffeine is locked on for the session.
+# Live mode (scripts/mosquito/live-mode): mega caffeine is locked on for the session.
 LIVE_FLAG="${CAFFEINE_LIVE_FLAG:-$HOME/.local/state/live-mode/active}"
 is_live_mode() { [[ -f "$LIVE_FLAG" ]]; }
 

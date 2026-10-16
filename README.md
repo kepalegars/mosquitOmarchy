@@ -97,8 +97,8 @@ The tables below follow the TUI's Setup folders: each heading is one of them.
 | Module | Installs | Doc |
 |---|---|---|
 | `ableton-move-manager` | Ableton Move → Live → Bitwig conversion (MIDI export, native Omarchy prompts) | [README](scripts/apps/ableton-move-manager/README.md) |
-| `mosquito.jamjamjam` | Real-time key/BPM/chord detection with a fretboard and MIDI output | [README](scripts/plugins/jamjamjam/README.md) |
-| `live-mode` | A thermal/perf session mode: app closing, gaps, routing, package fence | [README](scripts/plugins/live-mode/README.md) |
+| `mosquito.jamjamjam` | Real-time key/BPM/chord detection with a fretboard and MIDI output | [README](scripts/mosquito/jamjamjam/README.md) |
+| `live-mode` | A thermal/perf session mode: app closing, gaps, routing, package fence | [README](scripts/mosquito/live-mode/README.md) |
 | `battery` | Ultra-save, a custom battery plugin, mega caffeine | [README](scripts/plugins/power-management/README.md) |
 | `keybindings` | The `SUPER` bindings of this package, inside one reversible block in `bindings.lua` | [README](scripts/apps/mosquitomarchy/README.md#keybindings) |
 
@@ -268,7 +268,8 @@ mosquitOmarchy/
 └── scripts/
     ├── apps/                 # one folder per app, plus the app/TUI/webapp catalogs
     │   └── mosquitomarchy/   # the manager TUI + backend + archive-mosquitomarchy.sh
-    ├── plugins/              # shell plugins: live-mode, jamjamjam, power-management
+    ├── mosquito/             # mosquito tools: live-mode, jamjamjam, pipewire-settings
+    ├── plugins/              # shell plugins: power-management, brightness, touchpad, ...
     ├── fixes/                # small idempotent fixes
     ├── lib/                  # shared helpers, tui-kit/ (the Go component library)
     ├── theme/  LLM/  deps/

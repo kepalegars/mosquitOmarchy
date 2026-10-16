@@ -1,9 +1,11 @@
 // EVO 4 / EVO 8 driver — Go port of vanzaho/audient-evo-py.
 //
-// Protocol: USB control transfers on endpoint 0 via the evo_raw kernel
+// Transport: USB control transfers on endpoint 0 via the evo_raw kernel
 // module (/dev/evo4, /dev/evo8). The module binds the unused DFU interface
-// so snd-usb-audio keeps streaming undisturbed. All entity IDs, ranges and
-// quirks below come from audient-evo-py's dev/DESIGN.md (public domain):
+// so snd-usb-audio keeps streaming undisturbed.
+//
+// Protocol (entity IDs, ranges, quirks — all from audient-evo-py's
+// dev/DESIGN.md, public domain):
 //
 //	FU10 0x0A00 CS=2 : output volume, 2B signed UAC2 (1/256 dB), [-96,0] dB
 //	FU11 0x0B00 CS=2 : input gain per CN, EVO4 [-8,50], EVO8 [0,58] dB
@@ -32,7 +34,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Device specs — mirrors evo/devices.py.
+// Device specs — mirrors evo/devices.py. EVO 8 is the reference device.
 var (
 	EVO8Spec = Spec{
 		ID: "evo8", Display: "Audient EVO 8", Vendor: "Audient",
@@ -41,7 +43,8 @@ var (
 		GainMin: 0, GainMax: 58, VolMin: -96, VolMax: 0,
 		MixerInputs: 10, MixerOutputs: 4,
 		HasMonitor: false, Backend: BackendEvoRaw, NeedsKmod: true,
-		Description: "4 in / 2 out pairs + loopback. Monitoring via mixer matrix.",
+		Caps:        Caps{Volume: true, Gain: true, Mute: true, Phantom: true, Monitor: false, Mixer: true},
+		Description: "4 in / 2 out pairs + loopback matrix over 2 mix buses. Monitoring via the matrix.",
 	}
 	EVO4Spec = Spec{
 		ID: "evo4", Display: "Audient EVO 4", Vendor: "Audient",
@@ -50,6 +53,7 @@ var (
 		GainMin: -8, GainMax: 50, VolMin: -96, VolMax: 0,
 		MixerInputs: 6, MixerOutputs: 2,
 		HasMonitor: true, Backend: BackendEvoRaw, NeedsKmod: true,
+		Caps:        Caps{Volume: true, Gain: true, Mute: true, Phantom: true, Monitor: true, Mixer: true},
 		Description: "2 in / 1 out pair + loopback. Direct-monitor blend knob.",
 	}
 )
@@ -73,8 +77,10 @@ const evoXferSize = 264
 
 func evoIoctlNr() uintptr { return uintptr((3 << 30) | (evoXferSize << 16) | (0x45 << 8) | 0) }
 
-func dbToUSB(db float64) uint16 { return uint16(int32(math.Round(db * 256)) & 0xFFFF) }
-func usbToDb(raw uint16) float64 { return float64(int16(raw)) / 256.0 }
+// --- pure protocol helpers (no USB, fully unit-testable) -------------------
+
+func dbToUSB(db float64) uint16       { return uint16(int32(math.Round(db*256)) & 0xFFFF) }
+func usbToDb(raw uint16) float64      { return float64(int16(raw)) / 256.0 }
 func clamp(v, lo, hi float64) float64 { return math.Max(lo, math.Min(hi, v)) }
 
 // panToLRDb: equal-power pan law, ported from EVOController._pan_to_lr_db.
@@ -93,6 +99,14 @@ func panToLRDb(volDb, pan float64) (float64, float64) {
 	return math.Max(mixDbMin, lDb), math.Max(mixDbMin, rDb)
 }
 
+func bool4(b bool) []byte {
+	var v [4]byte
+	if b {
+		binary.LittleEndian.PutUint32(v[:], 1)
+	}
+	return v[:]
+}
+
 type evoDriver struct {
 	spec Spec
 	demo *demoState // non-nil once demo fallback is engaged
@@ -102,7 +116,15 @@ func newEvo(spec Spec) *evoDriver { return &evoDriver{spec: spec} }
 
 func (d *evoDriver) Spec() Spec { return d.spec }
 
-func (d *evoDriver) devPath() string { return filepath.Join("/dev", d.spec.ID) }
+func (d *evoDriver) devPath() string {
+	// Overridable for tests: point it at an empty dir to force demo mode
+	// even on a machine with a real /dev/evo* node.
+	base := os.Getenv("MOSQUITOMIXBAY_EVO_DEVDIR")
+	if base == "" {
+		base = "/dev"
+	}
+	return filepath.Join(base, d.spec.ID)
+}
 
 // Probe: the kmod device node exists and opens.
 func (d *evoDriver) Probe() bool {
@@ -190,14 +212,6 @@ func (d *evoDriver) setFU(unit uint16, cn int, raw uint16) error {
 	return d.setCur(uint16(csVolume<<8|cn), unit, b[:])
 }
 
-func bool4(b bool) []byte {
-	var v [4]byte
-	if b {
-		binary.LittleEndian.PutUint32(v[:], 1)
-	}
-	return v[:]
-}
-
 // muteTarget maps a UI target to (wValue, wIndex), mirroring controller.py.
 func (d *evoDriver) muteTarget(target string) (uint16, uint16, error) {
 	for i := 0; i < d.spec.NumInputs; i++ {
@@ -224,29 +238,29 @@ func (d *evoDriver) muteTarget(target string) (uint16, uint16, error) {
 // and live-mode rehearsals work without the interface plugged in.
 
 type demoState struct {
-	Volumes []float64          `json:"volumes"`
-	Gains   []float64          `json:"gains"`
-	Mutes   map[string]bool    `json:"mutes"`
-	Phantom map[string]bool    `json:"phantom"`
-	Monitor int                `json:"monitor"`
+	Volumes []float64            `json:"volumes"`
+	Gains   []float64            `json:"gains"`
+	Mutes   map[string]bool      `json:"mutes"`
+	Phantom map[string]bool      `json:"phantom"`
+	Monitor int                  `json:"monitor"`
 	Mixer   map[string]MixerCell `json:"mixer"`
 }
 
 func defaultMixerCells(spec Spec) map[string]MixerCell {
 	m := map[string]MixerCell{}
-	nSrc := (spec.MixerInputs - spec.NumInputs) / 2
-	for i := 0; i < spec.NumInputs; i++ {
-		m[fmt.Sprintf("input%d", i+1)] = MixerCell{VolumeDb: -128, Pan: 0}
-	}
-	for i := 0; i < nSrc; i++ {
-		m[fmt.Sprintf("output%d_%d", i*2+1, i*2+2)] = MixerCell{VolumeDb: -128, Pan: 0}
+	for _, src := range MixerSources(spec, 0) {
+		m[src] = MixerCell{VolumeDb: -128, Pan: 0}
 	}
 	// Factory default: diagonal routes open at 0 dB (as on hardware).
-	m["input1"] = MixerCell{VolumeDb: 0, Pan: -100}
+	if spec.NumInputs > 0 {
+		m["input1"] = MixerCell{VolumeDb: 0, Pan: -100}
+	}
 	if spec.NumInputs > 1 {
 		m["input2"] = MixerCell{VolumeDb: 0, Pan: 100}
 	}
-	m["output1_2"] = MixerCell{VolumeDb: 0, Pan: 0}
+	if pairs := MixerSources(spec, 0)[spec.NumInputs:]; len(pairs) > 0 {
+		m[pairs[0]] = MixerCell{VolumeDb: 0, Pan: 0}
+	}
 	return m
 }
 
@@ -293,7 +307,7 @@ func (d *evoDriver) saveDemo() {
 	_ = os.WriteFile(d.demoFile(), data, 0o644)
 }
 
-// --- Driver implementation ----------------------------------------------
+// --- readable state -----------------------------------------------------
 
 func (d *evoDriver) Status() (Status, error) {
 	st := Status{Spec: d.spec, Mixer: map[string]MixerCell{}}
@@ -301,7 +315,7 @@ func (d *evoDriver) Status() (Status, error) {
 		demo := d.ensureDemo()
 		st.Online = false
 		st.Backend = BackendDemo
-		st.Note = fmt.Sprintf("DEMO — %s not found (need evo_raw kmod + plugged interface). State is simulated and persistent.", d.devPath())
+		st.Note = fmt.Sprintf("DEMO — %s not found. State is simulated and persistent.", d.spec.Display)
 		for i := 0; i < d.spec.NumInputs; i++ {
 			name := fmt.Sprintf("input%d", i+1)
 			st.Inputs = append(st.Inputs, InputState{Name: name, GainDb: demo.Gains[i], Muted: demo.Mutes[name], Phantom: demo.Phantom[name]})
@@ -329,7 +343,7 @@ func (d *evoDriver) Status() (Status, error) {
 	for i := 0; i < d.spec.NumOutPairs; i++ {
 		raw, err := d.getFU(fu10, i*2+1)
 		if err != nil {
-			return st, err
+			return st, fmt.Errorf("volume output%d: %w", i+1, err)
 		}
 		name := fmt.Sprintf("output%d", i+1)
 		if d.spec.NumOutPairs == 1 {
@@ -347,7 +361,7 @@ func (d *evoDriver) Status() (Status, error) {
 		name := fmt.Sprintf("input%d", i+1)
 		raw, err := d.getFU(fu11, i+1)
 		if err != nil {
-			return st, err
+			return st, fmt.Errorf("gain %s: %w", name, err)
 		}
 		muted := false
 		if wV, wI, err := d.muteTarget(name); err == nil {
@@ -368,9 +382,11 @@ func (d *evoDriver) Status() (Status, error) {
 		}
 	}
 	// Mixer is write-only on hardware: serve the persisted shadow.
-	st.Mixer = d.loadMixerShadow()
+	st.Mixer = d.loadShadow()
 	return st, nil
 }
+
+// --- writes -------------------------------------------------------------
 
 func (d *evoDriver) SetVolume(pair int, db float64) error {
 	db = clamp(db, d.spec.VolMin, d.spec.VolMax)
@@ -382,14 +398,13 @@ func (d *evoDriver) SetVolume(pair int, db float64) error {
 			}
 		} else {
 			if pair >= len(demo.Volumes) {
-				return fmt.Errorf("output pair %d out of range", pair)
+				return fmt.Errorf("output pair %d out of range (0..%d)", pair, len(demo.Volumes)-1)
 			}
 			demo.Volumes[pair] = db
 		}
 		d.saveDemo()
 		return nil
 	}
-	raw := dbToUSB(db)
 	pairs := []int{pair}
 	if pair < 0 {
 		pairs = pairs[:0]
@@ -398,9 +413,12 @@ func (d *evoDriver) SetVolume(pair int, db float64) error {
 		}
 	}
 	for _, p := range pairs {
+		if p < 0 || p >= d.spec.NumOutPairs {
+			return fmt.Errorf("output pair %d out of range (0..%d)", p, d.spec.NumOutPairs-1)
+		}
 		base := p*2 + 1
 		for _, cn := range []int{base, base + 1} {
-			if err := d.setFU(fu10, cn, raw); err != nil {
+			if err := d.setFU(fu10, cn, dbToUSB(db)); err != nil {
 				return err
 			}
 		}
@@ -429,21 +447,20 @@ func (d *evoDriver) SetMute(target string, muted bool) error {
 		d.saveDemo()
 		return nil
 	}
-	wV, wI, err := d.muteTarget(target)
+	wValue, unit, err := d.muteTarget(target)
 	if err != nil {
 		return err
 	}
-	return d.setCur(wV, wI, bool4(muted))
+	return d.setCur(wValue, unit, bool4(muted))
 }
 
 func (d *evoDriver) SetPhantom(input int, on bool) error {
 	if input < 1 || input > d.spec.NumInputs {
 		return fmt.Errorf("input must be 1..%d", d.spec.NumInputs)
 	}
-	name := fmt.Sprintf("input%d", input)
 	if !d.Probe() {
 		demo := d.ensureDemo()
-		demo.Phantom[name] = on
+		demo.Phantom[fmt.Sprintf("input%d", input)] = on
 		d.saveDemo()
 		return nil
 	}
@@ -452,7 +469,7 @@ func (d *evoDriver) SetPhantom(input int, on bool) error {
 
 func (d *evoDriver) SetMonitor(v int) error {
 	if !d.spec.HasMonitor {
-		return fmt.Errorf("%s has no direct monitor control (use the mixer matrix)", d.spec.Display)
+		return fmt.Errorf("%s has no monitor blend knob — route through the loopback mixer instead", d.spec.Display)
 	}
 	v = int(clamp(float64(v), 0, 100))
 	if !d.Probe() {
@@ -461,144 +478,146 @@ func (d *evoDriver) SetMonitor(v int) error {
 		d.saveDemo()
 		return nil
 	}
-	raw := uint16(math.Round(float64(v) * 127 / 100))
-	var b [2]byte
-	binary.LittleEndian.PutUint16(b[:], raw)
-	return d.setCur(0x0000, eu56, b[:])
+	raw := byte(math.Round(float64(v) / 100 * 127))
+	return d.setCur(0, eu56, []byte{raw})
 }
 
-// mixer CN helpers (UAC2: CN = out_idx + in_idx * num_outputs).
+// mixer CN helpers (UAC2: CN = out_idx + in_idx * num_outputs, where the
+// "outputs" here are the loopback mixer's bus channels).
 func (d *evoDriver) setCrosspoint(cn int, db float64) error {
 	max := d.spec.MixerInputs * d.spec.MixerOutputs
 	if cn < 0 || cn >= max {
 		return fmt.Errorf("cross-point CN must be 0..%d", max-1)
 	}
 	db = clamp(db, mixDbMin, mixDbMax)
-	if !d.Probe() {
-		return nil // shadow updated by caller
-	}
 	var b [2]byte
 	binary.LittleEndian.PutUint16(b[:], dbToUSB(db))
 	return d.setCur(uint16(csMixer<<8|cn), mu60, b[:])
+}
+
+// writeMixerCell pushes one shadow cell to the hardware: the cell's volume
+// and pan expand to L/R crosspoint writes on the selected mix bus.
+func (d *evoDriver) writeMixerCell(src string, c MixerCell, bus int) error {
+	lDb, rDb := panToLRDb(c.VolumeDb, c.Pan)
+	off := bus * 2
+	var in int
+	if _, err := fmt.Sscanf(src, "input%d", &in); err == nil {
+		base := (in-1)*d.spec.MixerOutputs + off
+		if err := d.setCrosspoint(base, lDb); err != nil {
+			return err
+		}
+		return d.setCrosspoint(base+1, rDb)
+	}
+	var l, r int
+	if _, err := fmt.Sscanf(src, "output%d_%d", &l, &r); err != nil || r != l+1 || l%2 != 1 {
+		return fmt.Errorf("unknown mixer source %q", src)
+	}
+	// A loopback pair fans out to both channels of the mix bus.
+	inL := d.spec.NumInputs + (l-1)/2*2
+	inR := inL + 1
+	for cn, db := range map[int]float64{
+		inL*d.spec.MixerOutputs + off:     lDb,
+		inL*d.spec.MixerOutputs + off + 1: rDb,
+		inR*d.spec.MixerOutputs + off:     lDb,
+		inR*d.spec.MixerOutputs + off + 1: rDb,
+	} {
+		if err := d.setCrosspoint(cn, db); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (d *evoDriver) SetMixerInput(input int, volDb, pan float64, mixOut int) error {
 	if input < 1 || input > d.spec.NumInputs {
 		return fmt.Errorf("input must be 1..%d", d.spec.NumInputs)
 	}
-	if mixOut < 0 || mixOut >= d.spec.NumOutPairs {
-		return fmt.Errorf("mix bus must be 0..%d", d.spec.NumOutPairs-1)
+	if mixOut < 0 || mixOut >= MixBuses(d.spec) {
+		return fmt.Errorf("mix bus must be 0..%d", MixBuses(d.spec)-1)
 	}
-	if !d.Probe() {
-		demo := d.ensureDemo()
-		demo.Mixer[fmt.Sprintf("input%d", input)] = MixerCell{VolumeDb: volDb, Pan: pan}
-		d.saveDemo()
-		return nil
-	}
-	lDb, rDb := panToLRDb(volDb, pan)
-	base := (input-1)*d.spec.MixerOutputs + mixOut*2
-	if err := d.setCrosspoint(base, lDb); err != nil {
-		return err
-	}
-	if err := d.setCrosspoint(base+1, rDb); err != nil {
-		return err
-	}
-	d.updateMixerShadow(fmt.Sprintf("input%d", input), MixerCell{VolumeDb: volDb, Pan: pan})
-	return nil
-}
-
-func (d *evoDriver) SetMixerOutput(srcPair int, volDb, panL, panR float64, mixOut int) error {
-	nSrc := (d.spec.MixerInputs - d.spec.NumInputs) / 2
-	if srcPair < 0 || srcPair >= nSrc {
-		return fmt.Errorf("source pair must be 0..%d", nSrc-1)
-	}
-	if mixOut < 0 || mixOut >= d.spec.NumOutPairs {
-		return fmt.Errorf("mix bus must be 0..%d", d.spec.NumOutPairs-1)
-	}
-	key := fmt.Sprintf("output%d_%d", srcPair*2+1, srcPair*2+2)
-	cell := MixerCell{VolumeDb: volDb, Pan: (panL + panR) / 2}
+	cell := MixerCell{VolumeDb: clamp(volDb, mixDbMin, mixDbMax), Pan: clamp(pan, -100, 100)}
+	key := MixerKey(fmt.Sprintf("input%d", input), mixOut)
 	if !d.Probe() {
 		demo := d.ensureDemo()
 		demo.Mixer[key] = cell
 		d.saveDemo()
-		return nil
+		// The shadow is the hardware truth even in demo: Load() reads it.
+		sh := d.loadShadow()
+		sh[key] = cell
+		return d.saveShadow(sh)
 	}
-	inL := d.spec.NumInputs + srcPair*2
-	inR := inL + 1
-	lDbL, rDbL := panToLRDb(volDb, panL)
-	lDbR, rDbR := panToLRDb(volDb, panR)
-	off := mixOut * 2
-	for cn, db := range map[int]float64{
-		inL*d.spec.MixerOutputs + off:     lDbL,
-		inL*d.spec.MixerOutputs + off + 1: rDbL,
-		inR*d.spec.MixerOutputs + off:     lDbR,
-		inR*d.spec.MixerOutputs + off + 1: rDbR,
-	} {
-		if err := d.setCrosspoint(cn, db); err != nil {
-			return err
-		}
+	if err := d.writeMixerCell(fmt.Sprintf("input%d", input), cell, mixOut); err != nil {
+		return err
 	}
-	d.updateMixerShadow(fmt.Sprintf("output%d_%d", srcPair*2+1, srcPair*2+2),
-		MixerCell{VolumeDb: volDb, Pan: (panL + panR) / 2})
-	return nil
+	sh := d.loadShadow()
+	sh[key] = cell
+	return d.saveShadow(sh)
 }
 
-// --- mixer shadow + save/load -------------------------------------------
-// Same location as upstream (~/.config/audient-evo-py/<dev>/.mixer-state.json)
-// so evoctl/evotui shadows stay interchangeable.
+func (d *evoDriver) SetMixerOutput(srcPair int, volDb, panL, panR float64, mixOut int) error {
+	if srcPair < 0 || srcPair >= (d.spec.MixerInputs-d.spec.NumInputs)/2 {
+		return fmt.Errorf("loopback pair %d out of range", srcPair)
+	}
+	if mixOut < 0 || mixOut >= MixBuses(d.spec) {
+		return fmt.Errorf("mix bus must be 0..%d", MixBuses(d.spec)-1)
+	}
+	pan := (panL + panR) / 2
+	cell := MixerCell{VolumeDb: clamp(volDb, mixDbMin, mixDbMax), Pan: clamp(pan, -100, 100)}
+	key := MixerKey(fmt.Sprintf("output%d_%d", srcPair*2+1, srcPair*2+2), mixOut)
+	if !d.Probe() {
+		demo := d.ensureDemo()
+		demo.Mixer[key] = cell
+		d.saveDemo()
+		sh := d.loadShadow()
+		sh[key] = cell
+		return d.saveShadow(sh)
+	}
+	if err := d.writeMixerCell(fmt.Sprintf("output%d_%d", srcPair*2+1, srcPair*2+2), cell, mixOut); err != nil {
+		return err
+	}
+	sh := d.loadShadow()
+	sh[key] = cell
+	return d.saveShadow(sh)
+}
 
+// --- shadow + snapshots -------------------------------------------------
+
+// Same location as upstream (~/.config/audient-evo-py/<dev>/.mixer-state.json)
+// so evoctl and this bay share one shadow.
 func (d *evoDriver) shadowDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "audient-evo-py", d.spec.ID)
 }
 
-func (d *evoDriver) loadMixerShadow() map[string]MixerCell {
+func (d *evoDriver) shadowFile() string {
+	return filepath.Join(d.shadowDir(), ".mixer-state.json")
+}
+
+func (d *evoDriver) loadShadow() map[string]MixerCell {
 	m := defaultMixerCells(d.spec)
-	data, err := os.ReadFile(filepath.Join(d.shadowDir(), ".mixer-state.json"))
-	if err != nil {
-		return m
-	}
-	var raw map[string]map[string]float64
-	if json.Unmarshal(data, &raw) == nil {
-		for k, v := range raw {
-			m[k] = MixerCell{VolumeDb: v["volume"], Pan: v["pan"]}
-		}
-		return m
-	}
-	var flat map[string]MixerCell
-	if json.Unmarshal(data, &flat) == nil {
-		for k, v := range flat {
-			m[k] = v
-		}
+	if data, err := os.ReadFile(d.shadowFile()); err == nil {
+		_ = json.Unmarshal(data, &m)
 	}
 	return m
 }
 
-func (d *evoDriver) updateMixerShadow(key string, cell MixerCell) {
-	if d.demo != nil {
-		d.demo.Mixer[key] = cell
-		d.saveDemo()
-		return
-	}
-	m := d.loadMixerShadow()
-	m[key] = cell
-	_ = os.MkdirAll(d.shadowDir(), 0o755)
+func (d *evoDriver) saveShadow(m map[string]MixerCell) error {
+	_ = os.MkdirAll(filepath.Dir(d.shadowFile()), 0o755)
 	data, _ := json.MarshalIndent(m, "", "  ")
-	_ = os.WriteFile(filepath.Join(d.shadowDir(), ".mixer-state.json"), data, 0o644)
+	return os.WriteFile(d.shadowFile(), data, 0o644)
 }
 
-// Save snapshots readable controls to config.json (upstream-compatible).
 func (d *evoDriver) Save() error {
 	st, err := d.Status()
 	if err != nil {
 		return err
 	}
 	cfg := map[string]any{}
-	for _, o := range st.Outputs {
-		cfg[o.Name] = map[string]any{"volume": o.VolumeDb, "mute": o.Muted}
-	}
 	for _, i := range st.Inputs {
 		cfg[i.Name] = map[string]any{"gain": i.GainDb, "mute": i.Muted, "phantom": i.Phantom}
+	}
+	for _, o := range st.Outputs {
+		cfg[o.Name] = map[string]any{"volume": o.VolumeDb, "mute": o.Muted}
 	}
 	if st.Monitor != nil {
 		cfg["monitor"] = *st.Monitor
@@ -608,7 +627,8 @@ func (d *evoDriver) Save() error {
 	return os.WriteFile(filepath.Join(d.shadowDir(), "config.json"), data, 0o644)
 }
 
-// Load re-applies config.json + the mixer shadow.
+// Load re-applies config.json + every mixer shadow route (inputs and
+// loopback pairs alike, on every bus).
 func (d *evoDriver) Load() error {
 	data, err := os.ReadFile(filepath.Join(d.shadowDir(), "config.json"))
 	if err != nil {
@@ -671,20 +691,44 @@ func (d *evoDriver) Load() error {
 			return err
 		}
 	}
-	shadow := d.loadMixerShadow()
-	var keys []string
+	shadow := d.loadShadow()
+	keys := make([]string, 0, len(shadow))
 	for k := range shadow {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
 		cell := shadow[k]
-		var inNum int
-		if _, err := fmt.Sscanf(k, "input%d", &inNum); err == nil {
-			if err := d.SetMixerInput(inNum, cell.VolumeDb, cell.Pan, 0); err != nil {
-				return err
-			}
+		if err := d.SetMixerKey(k, cell.VolumeDb, cell.Pan); err != nil {
+			return fmt.Errorf("mixer %s: %w", k, err)
 		}
 	}
 	return nil
+}
+
+// SetMixerKey restores one shadow cell by key ("inputN[@bus]",
+// "outputX_Y[@bus]").
+func (d *evoDriver) SetMixerKey(key string, volDb, pan float64) error {
+	base, bus := splitMixerKey(key)
+	var n int
+	if _, err := fmt.Sscanf(base, "input%d", &n); err == nil {
+		return d.SetMixerInput(n, volDb, pan, bus)
+	}
+	var l, r int
+	if _, err := fmt.Sscanf(base, "output%d_%d", &l, &r); err == nil && r == l+1 && l%2 == 1 {
+		return d.SetMixerOutput((l-1)/2, volDb, pan, pan, bus)
+	}
+	return fmt.Errorf("unknown mixer source %q", key)
+}
+
+func splitMixerKey(key string) (string, int) {
+	base := key
+	bus := 0
+	if i := len(key) - 2; i > 0 && key[i] == '@' {
+		var b int
+		if _, err := fmt.Sscanf(key[i+1:], "%d", &b); err == nil {
+			base, bus = key[:i], b
+		}
+	}
+	return base, bus
 }

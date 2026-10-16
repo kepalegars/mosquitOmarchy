@@ -1325,7 +1325,7 @@ func TestTrimOwnPrefix(t *testing.T) {
 		// A name that merely STARTS with those letters is not prefixed.
 		{"mosquito", "mosquitomarchy - v1.0.0", "mosquitomarchy - v1.0.0"},
 		// Rows without the prefix are untouched.
-		{"mosquito", "Move Manager - v1.0.0", "Move Manager - v1.0.0"},
+		{"mosquito", "mosquito-move-manager - v1.0.0", "move-manager - v1.0.0"},
 		// Other folders keep it: there the prefix carries real information.
 		{"plugins", "mosquitomarchy - v1.0.0", "mosquitomarchy - v1.0.0"},
 		{"apps", "mosquito-extractor - v1.0.0", "mosquito-extractor - v1.0.0"},

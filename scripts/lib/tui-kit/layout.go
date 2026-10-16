@@ -69,14 +69,11 @@ func FrameScreenVersion(w, h int, title, body, bar, version string) string {
 
 // FrameScreen composes a full TUI screen into the universal layout rule:
 //
-//  1. the title block is pinned to the very top of the window,
-//     horizontally centred across its full width;
-//  2. the body content is LEFT where it fits, horizontally centred, and
-//     vertically CENTRED in the remaining space between the title and
-//     the shortcut bar (this is the universal centering rule — body
-//     content floats in the gap, never glues to the title and never to
-//     the shortcut bar);
-//  3. the shortcut bar is pinned to the very last row, single line;
+//  1. the title block sits directly above the body content, with one blank
+//     row between them, and the title+body block is vertically CENTRED in
+//     the window as a single unit — the title reads as the body's own
+//     heading, never as a header glued to the top edge with a void below;
+//  2. the shortcut bar is pinned to the very last row, single line;
 //     when a toast is active the host passes the toast line in this
 //     slot instead, so a notification never pushes the layout around
 //     (the bar is a fixed one-row floor, not part of the centred body).
@@ -86,14 +83,14 @@ func FrameScreenVersion(w, h int, title, body, bar, version string) string {
 // art, the picker rows, the modal border) always reads as one centered
 // block.
 //
-// The body is CLIPPED to the gap it was given. That is a safety net, not the
-// mechanism: a host sizes its picker from a Layout (see responsive.go) so the
-// body fits by construction. When one does not — a long list, a smaller tile
-// than anything was tested at — the body's last rows are dropped and the title
-// and the shortcut bar survive. Losing the bottom of a list is recoverable;
-// losing the bar means the user cannot see or use the shortcuts, and the
-// screen scrolls the title off the top. An interface is never sacrificed to
-// the content inside it.
+// The body is CLIPPED to the space left by the title and the bar. That is a
+// safety net, not the mechanism: a host sizes its picker from a Layout (see
+// responsive.go) so the body fits by construction. When one does not — a
+// long list, a smaller tile than anything was tested at — the body's last
+// rows are dropped and the title and the shortcut bar survive. Losing the
+// bottom of a list is recoverable; losing the bar means the user cannot see
+// or use the shortcuts, and the screen scrolls the title off the top. An
+// interface is never sacrificed to the content inside it.
 func FrameScreen(w, h int, title, body, bar string) string {
 	if w <= 0 || h <= 0 {
 		return title + "\n" + body + "\n" + bar
@@ -116,42 +113,54 @@ func FrameScreen(w, h int, title, body, bar string) string {
 	barH := lipgloss.Height(bar)
 	bodyH := lipgloss.Height(body)
 
-	// Vertical pass: the body gets the gap between title and bar,
-	// centred — with zero padding once the body is taller than the gap
-	// (no negative rows, no silent clipping of the bar itself, the body
-	// simply overflows the window bottom which hosts avoid by budget).
-	gap := h - titleH - barH
-	if gap < 0 {
-		gap = 0
+	// The title and the body travel together: one blank row between them,
+	// then the whole block is centred in the space above the bar. Clip an
+	// over-tall body to what is left — keeping title+bar on screen is worth
+	// more than keeping the body's tail.
+	avail := h - barH
+	blockH := titleH
+	if bodyH > 0 {
+		blockH += 1 + bodyH
 	}
-	// Clip an over-tall body to the gap. Keeping title+bar on screen is worth
-	// more than keeping the body's tail; see the note above.
-	if bodyH > gap && gap > 0 {
-		body = clipToRows(body, gap)
-		bodyH = gap
+	if blockH > avail && avail > 0 {
+		// Shrink the body first; the title is never clipped.
+		bodyH = avail - titleH - 1
+		if bodyH < 0 {
+			bodyH = 0
+		}
+		if bodyH > 0 {
+			body = clipToRows(body, bodyH)
+		} else {
+			body = ""
+			bodyH = 0
+		}
+		blockH = titleH
+		if bodyH > 0 {
+			blockH += 1 + bodyH
+		}
 	}
-	topPad := (gap - bodyH) / 2
-	botPad := gap - bodyH - topPad
+	topPad := avail - blockH
 	if topPad < 0 {
 		topPad = 0
 	}
-	if botPad < 0 {
-		botPad = 0
-	}
-	out := title
-	if titleH > 0 {
-		out += "\n"
-	}
+	botPad := 0
+	// Split the spare space above and below the block so it sits centred;
+	// the title stays glued to its body either way.
+	topPad, botPad = topPad/2, topPad-topPad/2
+	out := ""
 	for i := 0; i < topPad; i++ {
 		out += "\n"
 	}
-	out += body
+	out += title
+	if bodyH > 0 {
+		out += "\n\n" + body
+	}
 	for i := 0; i < botPad; i++ {
 		out += "\n"
 	}
 	if barH > 0 {
 		// Guarantee the bar starts on its own line: when the body exactly
-		// fills the gap there is no bottom padding, and without this the
+		// fills the space there is no bottom padding, and without this the
 		// bar's first line would concatenate onto the body's last line.
 		if !strings.HasSuffix(out, "\n") {
 			out += "\n"

@@ -2,7 +2,7 @@
 # live-mode — Omarchy live mode orchestrator (performance-audio session).
 # Invoked by user: live-mode on|off|status|toggle|manage
 # sudoers NOPASSWD entry for live-mode-root handles privileged ops.
-# Managed by scripts/plugins/live-mode/setup-live-mode.sh
+# Managed by scripts/mosquito/live-mode/setup-live-mode.sh
 #
 # Live mode deliberately does NOT run mega-caffeine. It replicates only
 # mega-caffeine's sleep management (lid-close inhibition + stay-awake
@@ -57,7 +57,7 @@ THERMAL_LIMIT_C=85
 CLOSE_APPS=yes
 CLOSE_APPS_LIST="kDrive qBittorrent Steam Discord Slack Spotify"
 ROUTING_TOOL=yes
-PATCHBAY_APP=mixbay
+PATCHBAY_APP=mixbay+qpwgraph
 NO_GAPS=yes
 SILENCE_NOTIFICATIONS=yes
 SWITCH_THEME=yes
@@ -80,7 +80,7 @@ load_settings() {
   CLOSE_APPS=yes
   CLOSE_APPS_LIST=""
   ROUTING_TOOL=yes
-  PATCHBAY_APP=mixbay
+  PATCHBAY_APP=mixbay+qpwgraph
   NO_GAPS=yes
   SILENCE_NOTIFICATIONS=yes
   SWITCH_THEME=yes
@@ -102,13 +102,13 @@ load_settings() {
   # The remaining four: only an explicit "no" turns them off, so a settings file
   # written by an older version keeps the behaviour it had.
   [[ $ROUTING_TOOL == no ]] || ROUTING_TOOL=yes
-  # Which app fills the patchbay slot: mixbay (the mosquito USB audio bay,
-  # default), qpwgraph (the PipeWire graph fallback) or mosquito-patchbay
-  # (the future native routing surface). Anything else falls back to mixbay;
-  # a choice that is not installed falls through to whatever IS, inside
-  # patchbay_provider — the setting names the preference, not a hard
-  # requirement.
-  case $PATCHBAY_APP in mixbay|qpwgraph|mosquito-patchbay) ;; *) PATCHBAY_APP=mixbay ;; esac
+  # Which apps fill the patchbay slot: mixbay+qpwgraph (mosquito mixbay
+  # plus the qpwgraph PipeWire graph, the default), mixbay or qpwgraph alone,
+  # or mosquito-patchbay (the future native routing surface). Anything else
+  # falls back to the combo default; a choice that is not installed falls
+  # through to whatever IS, inside patchbay_specs — the setting names the
+  # preference, not a hard requirement.
+  case $PATCHBAY_APP in mixbay+qpwgraph|mixbay|qpwgraph|mosquito-patchbay) ;; *) PATCHBAY_APP=mixbay+qpwgraph ;; esac
   [[ $NO_GAPS == no ]] || NO_GAPS=yes
   [[ $SILENCE_NOTIFICATIONS == no ]] || SILENCE_NOTIFICATIONS=yes
   [[ $SWITCH_THEME == no ]] || SWITCH_THEME=yes
@@ -456,22 +456,26 @@ special_clients() {
     | "\(.address)|\(.class)|\(.initialTitle // .title)|\(.pid)"' 2>/dev/null
 }
 
-# mosquito patchbay — WHICH command provides it.
+# mosquito patchbay — WHICH commands provide it.
 #
-# The PATCHBAY_APP setting (Live Mode Manager settings, default mixbay)
-# names the preference: mosquito-mixbay (the mosquito USB audio bay, parked
-# in the scratchpad as the session's desk tool), qpwgraph (the borrowed
-# PipeWire graph) or mosquito-patchbay (the future native routing surface).
+# The PATCHBAY_APP setting (Live Mode Manager settings, default
+# mixbay+qpwgraph) names the preference: mosquito-mixbay (the mosquito USB
+# audio bay, the session's desk tool) plus qpwgraph (the PipeWire graph),
+# either one alone, or mosquito-patchbay (the future native routing surface).
 # The setting is a preference, not a hard requirement: a choice that is not
 # installed falls through to whatever IS, in the old priority order, and a
 # machine with nothing installed is told how to get it.
 #
-# Echoes "<command>|<class-regex>": the launcher and the window-class matcher
-# differ per provider, and a provider whose window cannot be recognised is
-# worse than none at all (it would be launched and never parked).
+# Echoes one "<command>|<class-regex>" line per provider: the launcher and
+# the window-class matcher differ per provider, and a provider whose window
+# cannot be recognised is worse than none at all (it would be launched and
+# never parked).
 patchbay_have_mixbay() {
   [[ -x $REAL_HOME/.local/bin/mosquito-mixbay ]] \
     || command -v mosquito-mixbay >/dev/null 2>&1
+}
+patchbay_have_qpwgraph() {
+  command -v qpwgraph >/dev/null 2>&1
 }
 patchbay_have_native() {
   local bin
@@ -480,15 +484,19 @@ patchbay_have_native() {
   done
   command -v mosquito-patchbay >/dev/null 2>&1
 }
-patchbay_provider() {
-  local choice="${PATCHBAY_APP:-mixbay}"
+patchbay_specs() {
+  local choice="${PATCHBAY_APP:-mixbay+qpwgraph}"
   case $choice in
+    mixbay+qpwgraph)
+      patchbay_have_mixbay && printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay-tui\n'
+      patchbay_have_qpwgraph && printf 'qpwgraph|qpwgraph|org\.rncbc\.qpwgraph|org\.pq_graph\.Qpwgraph\n'
+      return 0 ;;
     mixbay)
       if patchbay_have_mixbay; then
         printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay-tui\n'; return 0
       fi ;;
     qpwgraph)
-      if command -v qpwgraph >/dev/null 2>&1; then
+      if patchbay_have_qpwgraph; then
         printf 'qpwgraph|qpwgraph|org\.rncbc\.qpwgraph|org\.pq_graph\.Qpwgraph\n'; return 0
       fi ;;
     mosquito-patchbay)
@@ -503,8 +511,18 @@ patchbay_provider() {
   if patchbay_have_mixbay; then
     printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay-tui\n'; return 0
   fi
-  command -v qpwgraph >/dev/null 2>&1 && { printf 'qpwgraph|qpwgraph|org\.rncbc\.qpwgraph|org\.pq_graph\.Qpwgraph\n'; return 0; }
+  if patchbay_have_qpwgraph; then
+    printf 'qpwgraph|qpwgraph|org\.rncbc\.qpwgraph|org\.pq_graph\.Qpwgraph\n'; return 0
+  fi
   return 1
+}
+# patchbay_provider — the first spec, for call sites that only need one.
+# Prefer patchbay_specs when the combo can yield two.
+patchbay_provider() {
+  local first
+  first="$(patchbay_specs | head -n 1)"
+  [[ -n $first ]] || return 1
+  printf '%s\n' "$first"
 }
 
 # patchbay_install_hint — what to run when neither provider is installed.
@@ -513,26 +531,35 @@ patchbay_install_hint() {
 }
 
 patchbay_addr() {
-  # Address of a running patchbay window (any workspace), empty if none.
-  # The class list is built from the provider, so a future mosquito-patchbay is
-  # matched by its own class rather than qpwgraph's.
-  local spec re
-  spec=$(patchbay_provider 2>/dev/null) || return 0
-  re="${spec#*|}"
-  hyprctl -j clients 2>/dev/null | jq -r --arg re "^($re)$" '
-    .[] | select((.class // "") | test($re)) | .address' 2>/dev/null | head -n1
+  # Addresses of the running patchbay windows (any workspace), one per line,
+  # empty if none. The class list is built from every active provider, so a
+  # mixbay+qpwgraph combo matches both windows.
+  local spec re combined=""
+  while IFS= read -r spec; do
+    [[ -n $spec ]] || continue
+    re="${spec#*|}"
+    combined+="${combined:+|}$re"
+  done < <(patchbay_specs 2>/dev/null)
+  [[ -n $combined ]] || return 0
+  hyprctl -j clients 2>/dev/null | jq -r --arg re "^($combined)$" '
+    .[] | select((.class // "") | test($re)) | .address' 2>/dev/null
 }
 
 # Backwards-compatible alias: qpwgraph was the only provider for a long time,
 # and live-mode-watch referenced the old name.
 qpwgraph_addr() { patchbay_addr; }
 
-# The command that launches the patchbay for the current provider.
+# The commands that launch the patchbay providers for the current choice.
 patchbay_launch() {
-  local spec bin
-  spec=$(patchbay_provider) || return 1
-  bin="${spec%%|*}"
-  setsid --fork uwsm-app -- "$bin" >/dev/null 2>&1 || setsid --fork "$bin" >/dev/null 2>&1 || true
+  local spec bin launched=0
+  while IFS= read -r spec; do
+    [[ -n $spec ]] || continue
+    bin="${spec%%|*}"
+    if setsid --fork uwsm-app -- "$bin" >/dev/null 2>&1 || setsid --fork "$bin" >/dev/null 2>&1; then
+      launched=1
+    fi
+  done < <(patchbay_specs) || true
+  (( launched )) || return 1
 }
 
 snapshot_scratchpad() {
@@ -547,26 +574,30 @@ snapshot_scratchpad() {
   rm -f "$PATCHBAY_CLOSED_FLAG"
   rm -f "$PATCHBAY_PREEXISTED"
   # Per-session state: a previous session that died without restoring must not
-  # make this one think it owes a gap toggle.
-  rm -f "$GAPS_WERE_ON_FLAG"
+  # make this one think it owes a gap toggle — same for the power-profile
+  # question, which re-arms every session.
+  rm -f "$GAPS_WERE_ON_FLAG" "$STATE_DIR/profile_asked"
   special_clients > "$SCRATCHPAD_SNAPSHOT"
 }
 
 # scratchpad_occupied_by_others: reports the class|initialTitle lines of
-# scratchpad clients other than the patchbay itself (so the provider's own
+# scratchpad clients other than the patchbay itself (so a provider's own
 # window already there does not count as "occupied"). Matched against the
-# CURRENT provider's class regex, so a mixbay parked by an earlier session
-# is recognised just like qpwgraph was.
+# CURRENT providers' class regexes, so a mixbay parked by an earlier session
+# is recognised just like qpwgraph is.
 scratchpad_occupied_by_others() {
-  local spec re
-  spec=$(patchbay_provider 2>/dev/null || true)
-  re="${spec#*|}"
+  local spec re combined=""
+  while IFS= read -r spec; do
+    [[ -n $spec ]] || continue
+    re="${spec#*|}"
+    combined+="${combined:+|}$re"
+  done < <(patchbay_specs 2>/dev/null || true)
   local line
   while IFS= read -r line; do
     [[ -z $line ]] && continue
     local addr class init_title pid
     IFS='|' read -r addr class init_title pid <<< "$line"
-    if [[ -n $re ]] && printf '%s' "$class" | grep -Eq "^(${re})$" 2>/dev/null; then
+    if [[ -n $combined ]] && printf '%s' "$class" | grep -Eq "^(${combined})$" 2>/dev/null; then
       continue
     fi
     printf "%s\n" "$class"
@@ -580,18 +611,26 @@ open_patchbay() {
   [[ $ROUTING_TOOL == no ]] && return 2
 
   # Already parked in the scratchpad under this session → nothing to do.
-  local existing
-  existing=$(qpwgraph_addr)
+  local existing addr all_pre=1
+  existing=$(patchbay_addr)
   if [[ -n "$existing" ]]; then
-    if grep -qF "$existing" "$SCRATCHPAD_SNAPSHOT" 2>/dev/null; then
-      echo "$existing" > "$PATCHBAY_ADDR_FILE"
+    : > "$PATCHBAY_ADDR_FILE"
+    while IFS= read -r addr; do
+      [[ -n $addr ]] || continue
+      if grep -qF "$addr" "$SCRATCHPAD_SNAPSHOT" 2>/dev/null; then
+        printf '%s\n' "$addr" >> "$PATCHBAY_ADDR_FILE"
+      else
+        park_in_scratchpad "$addr" >/dev/null 2>&1 || true
+        printf '%s\n' "$addr" >> "$PATCHBAY_ADDR_FILE"
+        all_pre=0
+      fi
+    done <<< "$existing"
+    if (( all_pre )); then
       touch "$PATCHBAY_PREEXISTED"
-      ok "mosquito mixbay already parked in the scratchpad."
-      return 0
+      ok "Scratchpad audio app already parked in the scratchpad."
+    else
+      ok "Scratchpad audio app parked in the scratchpad (SUPER + S)."
     fi
-    park_in_scratchpad "$existing" >/dev/null 2>&1 || true
-    echo "$existing" > "$PATCHBAY_ADDR_FILE"
-    ok "mosquito mixbay parked in the scratchpad (SUPER + S)."
     return 0
   fi
 
@@ -601,74 +640,86 @@ open_patchbay() {
   if [[ -s "$PATCHBAY_CLOSED_FLAG" ]]; then
     return 2
   fi
-  if ! patchbay_provider >/dev/null 2>&1; then
-    # Neither the native one nor the fallback is installed. Say so and say how
-    # to fix it: a silently missing patchbay reads as "live mode just does not
-    # do that any more".
-    warn "No mosquito mixbay available — the scratchpad step is skipped."
+  if ! patchbay_specs >/dev/null 2>&1 || [[ -z $(patchbay_specs 2>/dev/null) ]]; then
+    # No provider installed. Say so and say how to fix it: a silently missing
+    # patchbay reads as "live mode just does not do that any more".
+    warn "No scratchpad audio app available — the scratchpad step is skipped."
     warn "  Install one with: $(patchbay_install_hint)"
     return 2
   fi
 
   # The scratchpad may already hold another app (a chat, a music player, a
-  # scratch terminal…) → ask the user BEFORE moving it to the scratchpad.
-  # Park qpwgraph in the current workspace instead, on accept; refuse → the
-  # caller aborts the whole activation.
+  # scratch terminal…) → ask the user BEFORE moving anything there. The apps
+  # open in the current workspace instead, on accept; refuse → the caller
+  # aborts the whole activation.
   local occupants=""
   occupants=$(scratchpad_occupied_by_others | sort -u | tr '\n' ' ')
   if [[ -n "$occupants" ]]; then
-    if ! confirm $"The scratchpad is already occupied (mosquito mixbay can't be parked there). It will open in the CURRENT workspace. Continue?"; then
+    if ! confirm $"The scratchpad is already occupied (the scratchpad audio apps can't be parked there). They will open in the CURRENT workspace. Continue?"; then
       warn "Live Mode activation cancelled (scratchpad occupied)."
       return 1
     fi
-    ok "Opening mosquito mixbay in the current workspace (scratchpad kept as-is)."
+    ok "Opening the scratchpad audio apps in the current workspace (scratchpad kept as-is)."
   fi
 
-  local spec
-  spec=$(patchbay_provider) || return 2
-  ok "mosquito mixbay: launching ${spec%%|*}."
+  local spec names=""
+  while IFS= read -r spec; do
+    [[ -n $spec ]] || continue
+    names+="${names:+, }${spec%%|*}"
+  done < <(patchbay_specs)
+  ok "Scratchpad audio: launching $names."
   patchbay_launch
 
-  # qpwgraph is a Qt app: it maps its window AFTER the process is up, and on a
-  # loaded machine that took longer than 6 s here, so the loop gave up and
-  # reported "could not be detected" for a patchbay that was about to appear.
-  # 20 x 0.3s was simply too short. It is now 15 s, and the address is recorded
+  # Qt apps map their windows AFTER the process is up, and on a loaded
+  # machine that took longer than 6 s here, so the loop gave up and reported
+  # "could not be detected" for a patchbay that was about to appear. 20 x
+  # 0.3s was simply too short. It is now 15 s, and the address is recorded
   # as soon as it shows up so the rest of the session has it.
-  local addr i
+  local want i found=0
+  want=$(patchbay_specs 2>/dev/null | grep -c .)
   for i in $(seq 1 50); do
     sleep 0.3
     existing=$(patchbay_addr)
-    [[ -n "$existing" ]] && break
+    found=$(printf '%s' "$existing" | grep -c . || true)
+    (( found >= want )) && break
   done
 
   if [[ -n "$existing" ]]; then
-    echo "$existing" > "$PATCHBAY_ADDR_FILE"
-    # Park it only if the scratchpad is free (no occupants).
+    : > "$PATCHBAY_ADDR_FILE"
+    while IFS= read -r addr; do
+      [[ -n $addr ]] || continue
+      printf '%s\n' "$addr" >> "$PATCHBAY_ADDR_FILE"
+      # Park it only if the scratchpad is free (no occupants).
+      if [[ -z $(scratchpad_occupied_by_others) ]]; then
+        park_in_scratchpad "$addr" >/dev/null 2>&1 || true
+      fi
+    done <<< "$existing"
     if [[ -z $(scratchpad_occupied_by_others) ]]; then
-      park_in_scratchpad "$existing" >/dev/null 2>&1 || true
-      ok "mosquito mixbay parked in the scratchpad (SUPER + S)."
+      ok "Scratchpad audio apps parked in the scratchpad (SUPER + S)."
     else
-      ok "mosquito mixbay opened in the current workspace (scratchpad left as it was)."
+      ok "Scratchpad audio apps opened in the current workspace (scratchpad left as it was)."
     fi
   else
-    warn "${spec%%|*} launched, but its window could not be detected."
+    warn "$names launched, but no window could be detected."
   fi
   return 0
 }
 
 # restore_scratchpad: at deactivation, remove what live mode added and put
-# back what was there before. A patchbay already there is left alone; one
-# the session spawned is closed so an empty scratchpad returns empty.
+# back what was there before. A patchbay already there is left alone; ones
+# the session spawned are closed so an empty scratchpad returns empty.
 restore_scratchpad() {
   local ours
-  ours=$(cat "$PATCHBAY_ADDR_FILE" 2>/dev/null || true)
-  if [[ -n "$ours" ]] && ! grep -qF "$ours" "$SCRATCHPAD_SNAPSHOT" 2>/dev/null; then
-    hyprctl -j clients 2>/dev/null | jq -e --arg a "$ours" \
-      'map(select(.address == $a)) | length > 0' >/dev/null 2>&1 && {
-      close_window "$ours" >/dev/null 2>&1 || true
-      ok "Session's mosquito mixbay closed (scratchpad back to its pre-live state)."
-    }
-  fi
+  while IFS= read -r ours; do
+    [[ -n $ours ]] || continue
+    if ! grep -qF "$ours" "$SCRATCHPAD_SNAPSHOT" 2>/dev/null; then
+      hyprctl -j clients 2>/dev/null | jq -e --arg a "$ours" \
+        'map(select(.address == $a)) | length > 0' >/dev/null 2>&1 && {
+        close_window "$ours" >/dev/null 2>&1 || true
+        ok "Session's scratchpad audio app closed (scratchpad back to its pre-live state)."
+      }
+    fi
+  done < "$PATCHBAY_ADDR_FILE" 2>/dev/null || true
   : > "$PATCHBAY_ADDR_FILE"; : > "$SCRATCHPAD_SNAPSHOT"; rm -f "$PATCHBAY_CLOSED_FLAG"
 }
 
@@ -993,8 +1044,8 @@ cmd_on() {
     )
     [[ $CLOSE_APPS == yes ]] && _lm_bullets+=("Close ${CLOSE_APPS_LIST:-(no app selected)}")
     if [[ $ROUTING_TOOL == yes ]]; then
-      if [[ ${PATCHBAY_APP:-mixbay} == mixbay ]]; then
-        _lm_bullets+=("mosquito mixbay in scratchpad (SUPER + S)")
+      if [[ ${PATCHBAY_APP:-mixbay+qpwgraph} == mixbay+qpwgraph ]]; then
+        _lm_bullets+=("mixbay + qpwgraph in scratchpad (SUPER + S)")
       else
         _lm_bullets+=("${PATCHBAY_APP} in scratchpad (SUPER + S)")
       fi
@@ -1196,7 +1247,7 @@ cmd_manage() {
     "$TUI_BIN"
     exit $?
   elif command -v foot >/dev/null 2>&1; then
-    foot -W 100x30 --app-id=org.omarchy.mosquito-live-mode-tui -e "$TUI_BIN"
+    foot -W 132x36 --app-id=org.omarchy.mosquito-live-mode-tui -e "$TUI_BIN"
     exit $?
   elif command -v xterm >/dev/null 2>&1; then
     xterm -e "$TUI_BIN"

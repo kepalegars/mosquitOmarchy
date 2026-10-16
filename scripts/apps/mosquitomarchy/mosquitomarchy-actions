@@ -2300,8 +2300,8 @@ cmd_menu_entries() {
         # needs root and the password prompt is the point. --status is the
         # cheap check first so a healthy install does not prompt for nothing.
         live-mode-toggle)
-          if bash "$HOME/mosquitOmarchy/scripts/plugins/live-mode/setup-live-mode.sh" --status >/dev/null 2>&1; then
-            bash "$HOME/mosquitOmarchy/scripts/plugins/live-mode/setup-live-mode.sh" >/dev/null 2>&1 \
+          if bash "$HOME/mosquitOmarchy/scripts/mosquito/live-mode/setup-live-mode.sh" --status >/dev/null 2>&1; then
+            bash "$HOME/mosquitOmarchy/scripts/mosquito/live-mode/setup-live-mode.sh" >/dev/null 2>&1 \
               && ok "menu re-added: live-mode toggle" || warn "restore failed: live-mode toggle"
           else
             warn "live-mode is not installed — run the live-mode module first"
