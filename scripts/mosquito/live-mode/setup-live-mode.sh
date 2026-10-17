@@ -126,7 +126,7 @@ install_routing_tool() {
 # ---------------------------------------------------------------------------
 # 1c. Hyprland float rule: all mosquito terminal managers open untiled, at
 # the same fixed foot size (-W 92x92 at launch). Idempotent marked block in
-# hyprland.lua, the same pattern fix-keepassxc-window.sh established.
+# hyprland.lua, the same pattern tweak-keepassxc-window.sh established.
 # ---------------------------------------------------------------------------
 
 CONF_HYPR="$REAL_HOME/.config/hypr/hyprland.lua"

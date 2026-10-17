@@ -76,15 +76,15 @@ const (
 // they are re-detected on every visit, and a stale "true" for a program that has
 // since been uninstalled would put a row on screen that cannot work.
 type BackupOpts struct {
-	VST     string // "list" | "full" | "none"
-	Keepass bool   // include KeePassXC passwords (only when installed)
-	Zen     bool   // include the Zen browser settings (prefs.js/user.js/containers.json + extensions)
-	Reaper  string // "none" | "settings" | "full" (full = whole config + portable install)
-	Encrypt bool   // AES-256 with a passphrase
-	Name    string // optional label for the archive, "" = the dated default
-	HasKeep bool   // the machine has keepassxc + its config/db
-	HasZen  bool   // the machine has a Zen profile
-	HasReaper bool // the machine has REAPER (or its config folder)
+	VST       string // "list" | "full" | "none"
+	Keepass   bool   // include KeePassXC passwords (only when installed)
+	Zen       bool   // include the Zen browser settings (prefs.js/user.js/containers.json + extensions)
+	Reaper    string // "none" | "settings" | "full" (full = whole config + portable install)
+	Encrypt   bool   // AES-256 with a passphrase
+	Name      string // optional label for the archive, "" = the dated default
+	HasKeep   bool   // the machine has keepassxc + its config/db
+	HasZen    bool   // the machine has a Zen profile
+	HasReaper bool   // the machine has REAPER (or its config folder)
 }
 
 // storedBackupOpts is the on-disk shape. Deliberately NOT the BackupOpts
@@ -209,8 +209,8 @@ type model struct {
 	backupPicker navPicker
 	// backupOptPicker drives the Backup options screen; backupAppsPicker is
 	// the apps/tuis/webapps content tree.
-	backupOptPicker  navPicker
-	backupAppsPicker navPicker
+	backupOptPicker    navPicker
+	backupAppsPicker   navPicker
 	backupReaperPicker navPicker
 
 	confirm   tuikit.Confirm
@@ -309,10 +309,14 @@ type model struct {
 	// quickFixChecked the ticks on its own screen. pendingFixIDs is the marked
 	// set the confirmation is about, held while the dialog is up so the answer
 	// carries the exact list that was shown.
-	quickFixes       []ItemRec
-	quickFixChecked  map[string]bool
-	quickFixPicker   navPicker
-	quickFixLoaded   bool
+	quickFixes      []ItemRec
+	quickFixChecked map[string]bool
+	quickFixPicker  navPicker
+	quickFixLoaded  bool
+	// tweaks is the Tweaks (preferences) catalog, fetched the same way as the
+	// fixes. The Setup tree already carries every tweak row, but Enter-on-row
+	// reads this to tell a tweak key from a fix key without a hard-coded list.
+	tweaks           []ItemRec
 	pendingFixIDs    []string
 	menuEntryChecked map[string]bool
 	menuEntryOrig    map[string]bool

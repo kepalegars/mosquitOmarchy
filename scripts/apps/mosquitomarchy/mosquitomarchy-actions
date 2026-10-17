@@ -235,10 +235,42 @@ fix_applied(){
   esac
 }
 
+# tweak_applied <id>: 0 when the tweak left its marker on this machine. Only the
+# tweaks with a real revert path are listed in the uninstall tree (the rest
+# would be dead rows), so this mirrors run_tweak_remove's set.
+tweak_applied(){
+  case "$1" in
+    keepassxc-window)
+      grep -q -- "keepassxc-window-setup" "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua" 2>/dev/null ;;
+    bar-clock-centring)
+      bash "$APP_DIR/scripts/tweaks/tweak-bar-clock-centring.sh" --status 2>/dev/null | grep -q '^applied' ;;
+    terminal-padding)
+      grep -rqs -- "mosquitomarchy-terminal-padding" \
+        "${XDG_CONFIG_HOME:-$HOME/.config}/kitty" \
+        "${XDG_CONFIG_HOME:-$HOME/.config}/foot" \
+        "${XDG_CONFIG_HOME:-$HOME/.config}/alacritty" \
+        "${XDG_CONFIG_HOME:-$HOME/.config}/ghostty" 2>/dev/null ;;
+    wine-theme)
+      [[ -f "$HOME/.local/state/mosquitomarchy/wine-theme/mode" ]] ;;
+    *) return 1 ;;
+  esac
+}
+
 # Flat list (the TUI groups by its own category logic if needed).
 cmd_fixes(){
   local e id
   for e in "${FIXES[@]:-}"; do
+    id="${e%%:*}"
+    printf '{"key":%s,"label":%s,"cat":%s,"info":%s}\n' \
+      "$(json_str "$id")" "$(json_str "${e#*:}")" "$(json_str "$(fix_category "$id")")" \
+      "$(json_str "${e#*:}")"
+  done
+}
+
+# Same shape as cmd_fixes, over the Tweaks (preferences) catalog.
+cmd_tweaks(){
+  local e id
+  for e in "${TWEAKS[@]:-}"; do
     id="${e%%:*}"
     printf '{"key":%s,"label":%s,"cat":%s,"info":%s}\n' \
       "$(json_str "$id")" "$(json_str "${e#*:}")" "$(json_str "$(fix_category "$id")")" \
@@ -577,7 +609,7 @@ tree_fingerprint(){
       out+="|${f##*/}:x"
     fi
   done
-  out+="|v${REPO_VERSION:-}|f${#FIXES[@]}|c${#CATEGORIES[@]}"
+  out+="|v${REPO_VERSION:-}|f${#FIXES[@]}|t${#TWEAKS[@]}|c${#CATEGORIES[@]}"
   # The Setup/Uninstall trees embed the stock preinstall list (a "Preinstalls"
   # folder with one row per package), so the list is an INPUT to the tree:
   # without it, a cached tree from before the folder existed keeps being
@@ -702,6 +734,17 @@ _setup_tree(){
           json_str_into "${fe#*:}"; local j_info=$JS
           json_obj_into folder "$j_folder" key "$j_fid" label "$j_fid" info "$j_info"
           items+=("fixes/$fid"$'\t'"$JO")
+        done
+        ;;
+      tweaks)
+        local te tid
+        json_str_into "$id"; j_folder=$JS
+        for te in "${TWEAKS[@]:-}"; do
+          tid="${te%%:*}"
+          json_str_into "$tid"; local j_tid=$JS
+          json_str_into "${te#*:}"; local j_tinfo=$JS
+          json_obj_into folder "$j_folder" key "$j_tid" label "$j_tid" info "$j_tinfo"
+          items+=("tweaks/$tid"$'\t'"$JO")
         done
         ;;
       *)
@@ -835,8 +878,9 @@ _uninstall_tree(){
   local -a folders=() items=()
   for c in "${CATEGORIES[@]}"; do
     id="${c%%|*}"; label="${c#*|}"; label="${label%%|*}"
-    # `menu` and `fixes` are not modules: nothing to uninstall there.
-    [[ $id == menu || $id == fixes ]] && continue
+    # `menu`, `fixes` and `tweaks` are not modules: nothing to uninstall there
+    # (fixes/tweaks get their own applied-only blocks further down).
+    [[ $id == menu || $id == fixes || $id == tweaks ]] && continue
     local -a keys=()
     case $id in
       tuis)
@@ -930,6 +974,23 @@ _uninstall_tree(){
       items+=("fixes/$fid"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
         "$(json_str fixes)" "$(json_str "fix:$fid")" "$(json_str "$fid")" \
         "$(json_str "$(fix_desc "$fid")")")")
+    done
+  fi
+  # Tweaks that are currently APPLIED and support a real revert. Same reasoning
+  # as the fixes above: an unconditional row for a tweak that was never applied
+  # is a dead row.
+  local -a applied_tweaks=()
+  local tid
+  for tid in keepassxc-window bar-clock-centring terminal-padding wine-theme; do
+    tweak_applied "$tid" && applied_tweaks+=("$tid")
+  done
+  if ((${#applied_tweaks[@]})); then
+    folders+=("Tweaks"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+      "$(json_str tweaks)" "$(json_str "Tweaks")" false)")
+    for tid in "${applied_tweaks[@]}"; do
+      items+=("tweaks/$tid"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+        "$(json_str tweaks)" "$(json_str "tweak:$tid")" "$(json_str "$tid")" \
+        "$(json_str "$(fix_desc "$tid")")")")
     done
   fi
   # Preinstalls are inline rows here too — but only the still-installed
@@ -1595,6 +1656,20 @@ cmd_fixes_run(){
   final_report
 }
 
+# Apply quick tweaks (ids from cmd_tweaks). Same machinery, TWEAKS catalog.
+cmd_tweaks_run(){
+  RESULTS=()
+  TWEAKS_SELECTED=("$@")
+  YES=1
+  MODULE_FAILURES=0
+  run_tweaks || true
+  if (( MODULE_FAILURES > 0 )); then
+    err "One or more tweaks failed — see the messages above."
+    return 1
+  fi
+  final_report
+}
+
 # Re-apply the given installed modules (update flow).
 cmd_update(){
   local -a inline=()
@@ -1685,6 +1760,9 @@ cmd_apply(){
     case $folder in
       fixes)
         ((${#keys[@]})) && cmd_fixes_run "${keys[@]}"
+        ;;
+      tweaks)
+        ((${#keys[@]})) && cmd_tweaks_run "${keys[@]}"
         ;;
       menu)
         cmd_menu_entry
@@ -1848,7 +1926,7 @@ cmd_update_modules(){
 # Uninstall modules one by one (never the gum chooser). Catalog keys from the
 # uninstall tree (APP/TUI/WEB …) are routed to the apps module's uninstaller.
 cmd_uninstall(){
-  local -a modules=() catalog=() patches=() fixids=() menuops=() prestock=()
+  local -a modules=() catalog=() patches=() fixids=() tweakids=() menuops=() prestock=()
   local id
   # Orientation first: elevation prompts (sudo password dialog) open on the
   # DESKTOP, not inside the TUI, so a user staring at the spinner never sees
@@ -1871,6 +1949,7 @@ cmd_uninstall(){
       APP\ *|TUI\ *|WEB\ *|PLUG\ *) catalog+=("$id") ;;
       patch:*) patches+=("${id#patch:}") ;;
       fix:*)   fixids+=("${id#fix:}") ;;
+      tweak:*) tweakids+=("${id#tweak:}") ;;
       menu:*|shortcut) menuops+=("$id") ;;
       preinstall:*) prestock+=("${id#preinstall:}") ;;
       *) modules+=("$id") ;;
@@ -1903,6 +1982,16 @@ cmd_uninstall(){
         ok "Quick fix '$fid' removed."
       else
         MODULE_FAILURES=$((MODULE_FAILURES + 1)); err "Quick fix '$fid' removal failed."
+      fi
+    done
+  fi
+  if ((${#tweakids[@]})); then
+    local tid
+    for tid in "${tweakids[@]}"; do
+      if run_tweak_remove "$tid" </dev/null; then
+        ok "Tweak '$tid' removed."
+      else
+        MODULE_FAILURES=$((MODULE_FAILURES + 1)); err "Tweak '$tid' removal failed."
       fi
     done
   fi
@@ -2389,6 +2478,7 @@ case "$sub" in
   kb-reset)                 cmd_kb_reset ;;
   kb-reload)                cmd_kb_reload ;;
   fixes)                    cmd_fixes ;;
+  tweaks)                   cmd_tweaks ;;
   setup)                    cmd_setup ;;
   uninstall-tree)           cmd_uninstall_tree ;;
   preinstalls)              cmd_preinstalls ;;
@@ -2403,6 +2493,7 @@ case "$sub" in
   run-patch)                cmd_run_patch "$@" ;;
   remove-patch)             cmd_remove_patch "$@" ;;
   fixes-run)                cmd_fixes_run "$@" ;;
+  tweaks-run)               cmd_tweaks_run "$@" ;;
   theme-images)              cmd_theme_images "${1:-}" ;;
   theme-default-dir)         cmd_theme_default_dir "${1:-get}" "${2:-}" ;;
   theme-pick)                cmd_theme_pick "${1:-file}" "${2:-}" ;;

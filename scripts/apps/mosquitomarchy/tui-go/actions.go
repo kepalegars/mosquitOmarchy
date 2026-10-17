@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -165,27 +164,32 @@ func menuEntriesApplyCmd(name string, restore bool) tea.Cmd {
 	}
 }
 
-// quickFixesRunMsg reports the outcome of a batch of quick fixes.
+// quickFixesRunMsg reports the outcome of a batch of quick fixes or tweaks.
 type quickFixesRunMsg struct {
 	what string
 	err  error
 }
 
-// quickFixesRunCmd applies the ticked quick fixes in ONE backend call.
-//
-// fixes-run takes the fix ids as arguments and runs them through the very same
-// run_fixes() the shell launcher uses, so a fix applied from the TUI is applied
-// identically to one applied from the CLI — same RESULTS accounting, same
-// failure counting, same final report.
-func quickFixesRunCmd(ids []string) tea.Cmd {
+// quickCatalogRunCmd applies the ticked entries of ONE catalog in a single
+// backend call. catalog is "fixes" or "tweaks"; the backend command is
+// "<catalog>-run", which runs the ids through the very same run_fixes() /
+// run_tweaks() the shell launcher uses, so an entry applied from the TUI is
+// applied identically to one applied from the CLI — same RESULTS accounting,
+// same failure counting, same final report.
+func quickCatalogRunCmd(catalog string, ids []string) tea.Cmd {
+	runCmd := catalog + "-run"
+	label := "quick fix"
+	if catalog == "tweaks" {
+		label = "tweak"
+	}
 	return func() tea.Msg {
 		if len(ids) == 0 {
-			return quickFixesRunMsg{err: errors.New("no quick fix selected")}
+			return quickFixesRunMsg{err: fmt.Errorf("no %s selected", label)}
 		}
-		if _, err := runQuick(append([]string{"fixes-run"}, ids...)...); err != nil {
+		if _, err := runQuick(append([]string{runCmd}, ids...)...); err != nil {
 			return quickFixesRunMsg{err: err}
 		}
-		return quickFixesRunMsg{what: fmt.Sprintf("%d quick fix(es) applied", len(ids))}
+		return quickFixesRunMsg{what: fmt.Sprintf("%d %s(s) applied", len(ids), label)}
 	}
 }
 
@@ -443,11 +447,12 @@ func fetchTreeCmd(sub string) tea.Cmd {
 
 // queryMsg reports the outcome of one actions-backend query.
 type queryMsg struct {
-	kind    string // "status" | "categories" | "candidates" | "fixes" | "backups" | "update"
+	kind    string // "status" | "categories" | "candidates" | "fixes" | "tweaks" | "backups" | "update"
 	status  []StatusRec
 	cats    []CatRec
 	items   []ItemRec
 	fixes   []ItemRec
+	tweaks  []ItemRec
 	backups []BackupRec
 	update  UpdateRec
 	err     error
@@ -476,6 +481,9 @@ func fetch(kind string, args ...string) tea.Cmd {
 		case "fixes":
 			recs, err := decodeJSONLines[ItemRec](out)
 			return queryMsg{kind: kind, fixes: recs, err: err}
+		case "tweaks":
+			recs, err := decodeJSONLines[ItemRec](out)
+			return queryMsg{kind: kind, tweaks: recs, err: err}
 		case "backups":
 			recs, err := decodeJSONLines[BackupRec](out)
 			return queryMsg{kind: kind, backups: recs, err: err}
@@ -498,6 +506,7 @@ func fetchStatusCmd() tea.Cmd             { return fetch("status", "status") }
 func fetchCatsCmd() tea.Cmd               { return fetch("categories", "categories") }
 func fetchCandidatesCmd(c string) tea.Cmd { return fetch("candidates", "candidates", c) }
 func fetchFixesCmd() tea.Cmd              { return fetch("fixes", "fixes") }
+func fetchTweaksCmd() tea.Cmd             { return fetch("tweaks", "tweaks") }
 func fetchBackupsCmd() tea.Cmd            { return fetch("backups", "backups") }
 
 // MissingAssetRec is one selected app whose manually-downloaded installer is

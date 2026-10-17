@@ -14,7 +14,8 @@ duplicated here.
 | `apps/` | one folder per app, plus the app / TUI / webapp catalogs — [README](apps/README.md) |
 | `apps/mosquitomarchy/` | the launcher TUI, its backend and the `SUPER` keybinding primitives — [README](apps/mosquitomarchy/README.md) |
 | `plugins/` | Omarchy shell plugins: `live-mode/`, `jamjamjam/`, `power-management/` |
-| `fixes/` | small idempotent fixes, proposed at startup — [README](fixes/README.md) |
+| `fixes/` | small idempotent repairs, proposed at startup — [README](fixes/README.md) |
+| `tweaks/` | optional preference changes, never auto-applied — [README](tweaks/README.md) |
 | `lib/` | shared helpers — `tui-kit/` (the Go component library), `common.bash`, `crash.bash`, `elevate.bash`, `keybindings.bash` |
 | `theme/` `LLM/` `deps/` | theme creation, Ollama, and package lists for things with no module folder |
 | `windows-vm/` `macos-vm/` `omarchy-vm/` | the three VM modules |

@@ -25,7 +25,8 @@
 #   them in.
 #
 # Usage (idempotent, one marked block per app):
-#   hypr_dialogs_install guitarpro
+#   hypr_dialogs_install guitarpro            # dialogs only (caller tiles main)
+#   hypr_app_windows_install betterbird '^eu\\.betterbird\\.Betterbird$'  # tile main + float dialogs
 #   hypr_dialogs_remove guitarpro
 #
 # The caller owns HYPRLAND_CONFIG (defaults to ~/.config/hypr/hyprland.lua).
@@ -55,10 +56,34 @@ hypr_dialogs_regex(){
   done
 }
 
+# Escape a regex so it survives being embedded in a Lua DOUBLE-QUOTED string.
+# Lua treats backslash as an escape introducer: `\.` is an "invalid escape
+# sequence" (a hard parse error that takes the whole hyprland.lua down, the very
+# breakage fix-hyprland-crash.sh repairs), and `\b` silently becomes a backspace
+# character instead of the regex word boundary. Doubling every backslash (and
+# escaping the quote) makes Lua hand the regex to Hyprland byte-for-byte.
+lua_escape(){ printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# The dialog rule itself: float, at the pointer, without stealing focus.
+#
+# This is the "intelligent" bit borrowed from the Zoom recipe: a menu/dialog
+# that opens where the cursor is (instead of glued to the monitor's top-left
+# corner) and that does NOT steal the initial focus is what makes the small
+# popups of an app stop fighting the user. The Lua expression form is the
+# documented equivalent of the old `windowrule = move onscreen cursor`:
+#   move = { "cursor_x-(window_w*0.5)", "cursor_y-(window_h*0.5)" }
+# centers the window on the pointer; no_initial_focus keeps the main window
+# focused. See https://wiki.hypr.land/configuring/core/rules/window-rules/
+hypr_dialog_rule(){ # <class-lua-regex> <title-lua-regex> -> one Lua line
+  printf 'o.window({ class = "%s", title = "%s" }, { float = true, no_initial_focus = true, move = { "cursor_x-(window_w*0.5)", "cursor_y-(window_h*0.5)" } })' \
+    "$(lua_escape "$1")" "$(lua_escape "$2")"
+}
+
 # hypr_dialogs_install <app-id>
-# Writes (or rewrites) the app's marked block: its tiled main window first,
-# then the dialog-title float. Order matters — later rules win in Hyprland, so
-# the float must come after the caller's own tiling rule.
+# Dialog-only variant for callers that own their tiling rule elsewhere (the
+# Guitar Pro setup writes its own guitarpro-tiling block). Floats the app's
+# dialog-title windows at the pointer, without focus steal, and leaves the
+# main window untouched.
 hypr_dialogs_install(){
   local app="$1" f rx
   f="$(hypr_dialogs_file)"
@@ -66,15 +91,40 @@ hypr_dialogs_install(){
   hypr_dialogs_remove "$app" >/dev/null 2>&1 || true
   rx="$(hypr_dialogs_regex)"
   cat >> "$f" <<EOF
--- >>> mosquito-dialogs-$app >>> float $app's dialog windows (titles), main window untouched.
+-- >>> mosquito-dialogs-$app >>> float $app's dialog windows (titles) at the
+-- pointer, no initial focus; the main window is left to its own tiling rule.
 -- Matching the known dialog titles is the only signal Hyprland has for an
 -- XWayland dialog: it shares its main window's class. See scripts/lib/
 -- hypr-dialogs.sh for the full rationale and the word list.
-o.window({ class = "^(?i)${app}.*$", title = "^(?i)(${rx})" }, { float = true, center = true })
+$(hypr_dialog_rule "^(?i)${app}.*\$" "^(?i)(${rx})")
 -- <<< mosquito-dialogs-$app <<<
 EOF
   command -v hyprctl >/dev/null 2>&1 && hyprctl reload >/dev/null 2>&1 || true
   echo "dialog rules installed for $app"
+}
+
+# hypr_app_windows_install <app-id> <class-lua-regex>
+# The complete per-app deal: the MAIN window is explicitly tiled (so an app
+# whose class ends in .exe, or any generic float rule, cannot leave it
+# floating), then its dialogs/menus float at the pointer without focus steal.
+# Order matters: later rules win, so the dialog rule comes after the tiling
+# one and a title that matches a dialog word overrides the tiling.
+hypr_app_windows_install(){
+  local app="$1" cls="$2" f rx
+  f="$(hypr_dialogs_file)"
+  [[ -f $f ]] || { echo "no hyprland config at $f" >&2; return 1; }
+  hypr_dialogs_remove "$app" >/dev/null 2>&1 || true
+  rx="$(hypr_dialogs_regex)"
+  cat >> "$f" <<EOF
+-- >>> mosquito-dialogs-$app >>> $app: main window TILED, dialogs/menus float
+-- at the pointer without stealing focus (the Zoom-recipe fix, applied to this
+-- app alone). See scripts/lib/hypr-dialogs.sh for the rationale + word list.
+o.window({ class = "$(lua_escape "$cls")" }, { float = false, tile = true })
+$(hypr_dialog_rule "${cls}" "^(?i)(${rx})")
+-- <<< mosquito-dialogs-$app <<<
+EOF
+  command -v hyprctl >/dev/null 2>&1 && hyprctl reload >/dev/null 2>&1 || true
+  echo "window rules installed for $app"
 }
 
 hypr_dialogs_remove(){
@@ -95,8 +145,10 @@ hypr_dialogs_status(){
   fi
 }
 
-# CLI: install|remove|status <app>. Lets a setup script call it without
-# sourcing (which would run the whole file under `set -e` in its own shell).
+# CLI: install|remove|status <app> [class-regex]. Lets a setup script call it
+# without sourcing (which would run the whole file under `set -e` in its own
+# shell). `appwin <app> <class-regex>` installs the full tile+float deal.
 case "${1:-}" in
   install|remove|status) "hypr_dialogs_${1}" "${2:?app id required}" ;;
+  appwin)               hypr_app_windows_install "${2:?app id required}" "${3:?class regex required}" ;;
 esac

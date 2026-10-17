@@ -24,6 +24,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/elevate.bash"  #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HYPR_DIALOGS="$SCRIPT_DIR/../../lib/hypr-dialogs.sh"
 GHB_DIR="$HOME/.config/ghb"
 PRESETS_FILE="$GHB_DIR/presets.json"
 HYPR="$HOME/.config/hypr/hyprland.lua"
@@ -190,6 +191,15 @@ o.window({ class = "^org\\.handbrake\\.ghb$|^ghb$|^HandBrake$" }, { tag = "-defa
 EOF
     hyprctl reload >/dev/null 2>&1 || true
     ok "Hyprland rules added ($HYPR)"
+  fi
+  # Main window TILED, dialogs/menus float at the pointer without stealing
+  # focus (the Zoom-recipe fix, applied to HandBrake alone). Its class is one
+  # of org.handbrake.ghb (Wayland app-id) / ghb / HandBrake (X11) depending on
+  # the platform it runs under.
+  if [[ -f $HYPR_DIALOGS ]]; then
+    bash "$HYPR_DIALOGS" appwin handbrake '^(?i)org\.handbrake\.ghb$|^(?i)ghb$|^(?i)HandBrake$' \
+      && ok "HandBrake window rules applied (main tiled, popups at the pointer)" \
+      || warn "HandBrake window rules could not be applied"
   fi
 }
 

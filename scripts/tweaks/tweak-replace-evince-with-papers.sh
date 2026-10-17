@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fix-replace-evince-with-papers.sh — Optional: replace Evince with Papers (GNOME documents).
+# tweak-replace-evince-with-papers.sh — Optional: replace Evince with Papers (GNOME documents).
 #
 # PART OF THE APPS MODULE, but NOT part of guis.catalog: replacing the system
 # document viewer is a deliberate system-wide change, so it is a standalone
@@ -23,13 +23,13 @@
 #     and every other GNOME/GTK app, not just Papers.
 #
 # Usage :
-#   ./fix-replace-evince-with-papers.sh            # apply the swap (asks nothing, idempotent)
-#   ./fix-replace-evince-with-papers.sh -y         # same (no prompts)
-#   ./fix-replace-evince-with-papers.sh --status   # current state, nothing done
-#   ./fix-replace-evince-with-papers.sh --uninstall  # restore Evince as viewer, remove the
+#   ./tweak-replace-evince-with-papers.sh            # apply the swap (asks nothing, idempotent)
+#   ./tweak-replace-evince-with-papers.sh -y         # same (no prompts)
+#   ./tweak-replace-evince-with-papers.sh --status   # current state, nothing done
+#   ./tweak-replace-evince-with-papers.sh --uninstall  # restore Evince as viewer, remove the
 #                                  # menu-hide, the float rule and the hook
 #                                  # (papers/evince packages are left alone)
-#   ./fix-replace-evince-with-papers.sh -h
+#   ./tweak-replace-evince-with-papers.sh -h
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/gui-run.bash"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/..//lib/marker-strip.bash"  # marker_strip: safe managed-block removal
 set -euo pipefail
@@ -52,7 +52,7 @@ THEME_HOOK="$HOOKS_DIR/gnome-gtk-theme.sh"
 PALETTE="$HOME/.local/state/omarchy/current/theme/colors.toml"
 
 # Papers window(s) float rule — "untiled" (reuses Omarchy's floating-window
-# tag, same pattern as scripts/fixes/fix-keepassxc-window.sh).
+# tag, same pattern as scripts/tweaks/tweak-keepassxc-window.sh).
 FLOAT_MARK_START="-- >>> papers-window-setup >>>"
 FLOAT_MARK_END="-- <<< papers-window-setup <<<"
 
@@ -183,7 +183,7 @@ write_theme_hook(){
   mkdir -p "$HOOKS_DIR"
   cat > "$THEME_HOOK" <<EOF
 #!/bin/bash
-# Installed by fix-replace-evince-with-papers.sh -- keeps GNOME/GTK apps (Papers, Nautilus, …)
+# Installed by tweak-replace-evince-with-papers.sh -- keeps GNOME/GTK apps (Papers, Nautilus, …)
 # in sync with Omarchy's active theme every time it changes. Re-reads the
 # CURRENT theme palette (~/.local/state/omarchy/current/theme/colors.toml)
 # rather than the \$1 argument, so it stays correct even if invoked out of
@@ -272,8 +272,8 @@ main(){
   hr
   ok "Done. Papers is now your document viewer (opens floating); Nautilus previews still work via sushi/evince."
   echo "  • Re-run this script any time to refresh defaults/hide (idempotent)."
-  echo "  • Revert:  ./fix-replace-evince-with-papers.sh --uninstall"
-  echo "  • Status:  ./fix-replace-evince-with-papers.sh --status"
+  echo "  • Revert:  ./tweak-replace-evince-with-papers.sh --uninstall"
+  echo "  • Status:  ./tweak-replace-evince-with-papers.sh --status"
   hr
 }
 

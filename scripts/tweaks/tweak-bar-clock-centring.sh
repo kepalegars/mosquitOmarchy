@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fix-bar-clock-centring.sh — stop the indicator reveal from shoving the clock sideways.
+# tweak-bar-clock-centring.sh — stop the indicator reveal from shoving the clock sideways.
 #
 # Symptom: moving the pointer near the Omarchy bar reveals the hidden indicators
 # (night light, stay-awake, DND…). If the clock visibly slides off centre the

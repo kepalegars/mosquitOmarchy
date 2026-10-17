@@ -562,6 +562,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			if m.top() == scrQuickFixes {
 				m.quickFixPicker = m.rebuildQuickFixes()
 			}
+		case "tweaks":
+			// The tweaks catalog is informational in the TUI (the tree carries
+			// the rows); storing it lets isTweakKey answer without the tree.
+			if msg.err == nil {
+				m.tweaks = msg.tweaks
+			}
 		case "backups":
 			if msg.err != nil {
 				m.toast, _ = m.toast.SetErr(msg.err.Error())
@@ -999,7 +1005,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// final report are identical whichever way a fix is started.
 			ids := m.pendingFixIDs
 			m.pendingFixIDs = nil
-			return m, quickFixesRunCmd(ids)
+			return m, quickCatalogRunCmd("fixes", ids)
+		case "quick-tweaks":
+			// Same shape as quick-fixes, over the Tweaks (preferences) catalog:
+			// run_tweaks() in one backend call.
+			ids := m.pendingFixIDs
+			m.pendingFixIDs = nil
+			return m, quickCatalogRunCmd("tweaks", ids)
 		case "keepassxc-gnomerm":
 			if msg.Yes {
 				m.kpxGnomeRm = 1
@@ -1982,6 +1994,11 @@ func folderLabel(m model, fid string) string {
 // quickFixesFolder is the Setup folder id the backend gives the quick fixes.
 const quickFixesFolder = "fixes"
 
+// quickTweaksFolder is the Setup folder id the backend gives the tweaks
+// (preferences). Same tree treatment as the fixes: a category that opens in
+// place, whose rows run their own tweak on Enter.
+const quickTweaksFolder = "tweaks"
+
 // isQuickFixKey reports whether a tree key is one of the quick fixes.
 //
 // The list is read from the backend's own catalog rather than hard-coded, so a
@@ -1998,6 +2015,23 @@ func (m model) isQuickFixKey(key string) bool {
 	// evidence there is; they are already in m.setupItems.
 	for _, it := range m.setupItems {
 		if it.Folder == quickFixesFolder && it.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// isTweakKey reports whether a tree key is one of the tweaks, from the Setup
+// rows the backend emitted for the "tweaks" folder (the tweaks catalog is not
+// fetched separately — the tree already carries every row).
+func (m model) isTweakKey(key string) bool {
+	for _, t := range m.tweaks {
+		if t.Key == key {
+			return true
+		}
+	}
+	for _, it := range m.setupItems {
+		if it.Folder == quickTweaksFolder && it.Key == key {
 			return true
 		}
 	}
@@ -2344,14 +2378,19 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		// offer to "install" something that does not exist, and opening the
 		// whole fixes screen for one row is a hop too many. The screen stays
 		// for multi-select (tick several with Tab, Enter applies the set).
-		if _, key := splitSetupValue(res.Value); key != "" && m.isQuickFixKey(key) {
+		if _, key := splitSetupValue(res.Value); key != "" && (m.isQuickFixKey(key) || m.isTweakKey(key)) {
 			label := key
 			if it, ok := m.setupByValue[res.Value]; ok && it.Label != "" {
 				label = it.Label
 			}
-			m.pendingAction = "quick-fixes"
+			if m.isTweakKey(key) {
+				m.pendingAction = "quick-tweaks"
+				m.pendingMsg = fmt.Sprintf("Apply tweak?\n\n%s", label)
+			} else {
+				m.pendingAction = "quick-fixes"
+				m.pendingMsg = fmt.Sprintf("Apply quick fix?\n\n%s", label)
+			}
 			m.pendingFixIDs = []string{key}
-			m.pendingMsg = fmt.Sprintf("Apply quick fix?\n\n%s", label)
 			m.pendingNo = "Cancel"
 			m.pendingYes = "Apply"
 			m.push(scrConfirm)

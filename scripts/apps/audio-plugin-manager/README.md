@@ -537,7 +537,7 @@ at the end of both setup scripts scoped to the prefixes this stack owns (`~/.win
 prunes the empty `.directory` publishers. `~/.wine` is never swept in bulk — that is where you run
 your own Windows apps — and the `NoDisplay=true` file associations are never touched.
 
-Full detail, and the standalone version: [`scripts/fixes/fix-wine-menu.sh`](../../fixes/README.md).
+Full detail, and the standalone version: [`scripts/tweaks/tweak-wine-menu.sh`](../../tweaks/README.md).
 
 ## Install the manager
 

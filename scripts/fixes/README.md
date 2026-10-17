@@ -8,21 +8,18 @@ fix again, not by diffing by hand.
 
 These are the entries of the orchestrator's `FIXES` array — offered at setup and under
 **Setup → Fixes** in the TUI, and runnable directly with `bash scripts/fixes/<script>.sh`.
-The brightness and touchpad modules below now live outside this directory; run them with
-their full repository paths.
+They are **system workarounds**: each restores a broken or regressed state (a recovery, or a
+workaround for a bug in some component), so run them when something does not work the way it
+should. Preferences live next door, in `scripts/tweaks/` (see its README).
 
 | id | Script | What it fixes |
 |---|---|---|
-| `keepassxc-window` | `fix-keepassxc-window.sh` | The KeePassXC window floats and centers in Hyprland instead of misbehaving when tiled. Idempotent marked block in `hyprland.lua`, matching both the native app-id and the XWayland class. |
-| `tui-theme` | `fix-tui-theme.sh` | Regenerates the Omarchy palette and rebuilds every Go TUI so their colours follow the **active** theme. The dynamic palette re-read already ships in `tui-kit`; this forces it. |
 | `omarchy-menu` | `fix-omarchy-menu.sh` | A broken menu — blank rows, empty Apps list — caused by a user-space clone of `omarchy.menu`. Removes the clones, re-enables the stock menu, restarts the shell. |
 | `hyprland-crash` | `fix-hyprland-crash.sh` | The "desktop came up broken" case: a truncated or fragmented `hyprland.lua` is restored from the newest valid backup, fatal Lua escapes are normalized, the keyboard layout and shell are re-armed. Installs a post-boot hook so it also self-heals at every boot. |
 | `ableton-wine-scroll` | `fix-wine-scroll.sh` | While Ableton is open under Wine, the patched build's optional pointer features create an XInput2 implicit grab that **freezes the trackpad in other apps**. Disables those features in the prefix's registry — the persistent form of upstream's `WINE_X11_POINTER_FEATURES=disabled`. `--remove` reverts. |
 | `1px-seam` | `fix-1px-seam.sh` | A hair-thin transparent line flashing between the bar and a window in borderless or no-gaps tiling: the blur is switched to its legacy path. Only useful with blur on. `--remove` reverts. |
 | `ableton-fullscreen` | `fix-ableton-fullscreen.sh` | Ableton's Full Screen mode is shifted, so the content sits off where you click. Launches Live with `WINE_WIN32_FULLSCREEN_CLASS=off`. `--remove` reverts. |
-| `omarchy-bar` | `fix-omarchy-bar.sh` | The Omarchy toolbar disappeared — toggled off or slid off-screen. Clears the bar-off toggle and re-syncs the shell; if the bar stays parked past the monitor edge, restarts the shell as a last resort. Also re-applies the clock centring (`fix-bar-clock-centring.sh`) so revealed indicators stop shoving the clock sideways. |
-| `wine-menu` | `fix-wine-menu.sh` | `Uninstall` / `Manual` entries cluttering the launcher: a Windows installer wrote Start-Menu shortcuts into its prefix and Wine republished each as an app entry. Removes the ones belonging to prefixes mosquitOmarchy manages, plus the empty publisher folders, and refreshes the desktop database. `--all-prefixes` widens it; the `NoDisplay` file associations are never touched. Also applied at the end of the audio plugin manager, the audio stack and the Guitar Pro setup. |
-| `terminal-padding` | `fix-terminal-padding.sh` | Omarchy pads every terminal by 14px and paints that padding with the theme background, so on a dark theme the text block reads as a dark slab inside a light window. Keeps the padding but makes it take the terminal's own background. `--remove` reverts. |
+| `omarchy-bar` | `fix-omarchy-bar.sh` | The Omarchy toolbar disappeared — toggled off or slid off-screen. Clears the bar-off toggle and re-syncs the shell; if the bar stays parked past the monitor edge, restarts the shell as a last resort. Also re-applies the clock centring (`../tweaks/tweak-bar-clock-centring.sh`) so revealed indicators stop shoving the clock sideways. |
 
 ## Modules
 
@@ -45,13 +42,6 @@ MX Master fix writes can be overridden with `MX_MASTER_SENSITIVITY`, `MX_MASTER_
 `fix-daw-wine-runtime.sh` installs the `wine-d2d1-nspa` runtime wrappers that let REAPER and
 Bitwig share Ableton's Wine build. It is pointed at by the audio and REAPER setups when the
 runtime is missing, rather than being listed here to pick from.
-
-## Opt-in only
-
-`fix-replace-evince-with-papers.sh` swaps the system document viewer for Papers. It is
-deliberately **not** a quick fix and never offered automatically: changing the default PDF
-handler is a system-wide decision. `--status` and `--uninstall` are supported, and Evince
-stays installed as an invisible backend so previews keep working.
 
 ## Notes
 

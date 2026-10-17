@@ -174,3 +174,27 @@ func TestTheFixesListIsGroupedByCategory(t *testing.T) {
 		t.Errorf("categories = %v, want both of the fix's own categories", cats)
 	}
 }
+
+// A tweak is a Setup row of the "tweaks" folder just like a fix is a row of
+// "fixes". Enter on it must queue the TWEAKS catalog (run_tweaks), not the
+// fixes one — otherwise a preference would be run through the repair path, and
+// a key present in neither catalog would fall through to the module installer.
+func TestEnterOnATweakRowQueuesTheTweaksCatalog(t *testing.T) {
+	m := flatSetup()
+	m.setupFolders = append(m.setupFolders, FolderRec{Folder: "tweaks", Label: "Tweaks"})
+	m.setupItems = append(m.setupItems,
+		SetupItemRec{Folder: "tweaks", Key: "wine-theme", Label: "wine-theme", Info: "dark/light"},
+	)
+	m.setupPicker = m.rebuildSetup()
+
+	next, _ := m.update(tuikit.PickerResultMsg{Value: "item:tweaks:wine-theme"})
+	if next.top() != scrConfirm {
+		t.Fatalf("Enter on a tweak row went to screen %d, want the confirmation", next.top())
+	}
+	if next.pendingAction != "quick-tweaks" {
+		t.Fatalf("pendingAction = %q, want quick-tweaks", next.pendingAction)
+	}
+	if len(next.pendingFixIDs) != 1 || next.pendingFixIDs[0] != "wine-theme" {
+		t.Fatalf("pendingFixIDs = %v, want [wine-theme]", next.pendingFixIDs)
+	}
+}

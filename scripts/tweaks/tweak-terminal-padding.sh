@@ -35,11 +35,11 @@
 # re-applies the fix: those overwrite the file, the marker goes with it.
 #
 # Usage:
-#   ./fix-terminal-padding.sh              # apply, padding = 0
-#   ./fix-terminal-padding.sh --set 6      # apply, padding = 6px
-#   ./fix-terminal-padding.sh --status     # one line per terminal, no changes
-#   ./fix-terminal-padding.sh --remove     # restore every remembered value
-#   ./fix-terminal-padding.sh -y           # non-interactive (accepted, no prompt)
+#   ./tweak-terminal-padding.sh              # apply, padding = 0
+#   ./tweak-terminal-padding.sh --set 6      # apply, padding = 6px
+#   ./tweak-terminal-padding.sh --status     # one line per terminal, no changes
+#   ./tweak-terminal-padding.sh --remove     # restore every remembered value
+#   ./tweak-terminal-padding.sh -y           # non-interactive (accepted, no prompt)
 # =============================================================================
 set -euo pipefail
 

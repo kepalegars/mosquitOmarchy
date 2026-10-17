@@ -55,7 +55,7 @@ o.window({ class = "^REAPER$", title = ".*REAPER v[0-9].*" }, { float = false, t
 -- these, and the main window's title ("REAPER v7.79 - EVALUATION LICENSE")
 -- cannot match "^REAPER " followed by a dialog word. So this rule cannot move
 -- an editor and cannot reintroduce the yabridge#409 click-offset bug.
-o.window({ class = "^REAPER$", title = "^REAPER (Query|Error|Warning|Info|Message|MsgBox|Confirm)$" }, { float = true, center = true, size = { 440, 200 } })
+o.window({ class = "^REAPER$", title = "^REAPER (Query|Error|Warning|Info|Message|MsgBox|Confirm)$" }, { float = true, no_initial_focus = true, size = { 440, 200 }, move = { "cursor_x-(window_w*0.5)", "cursor_y-(window_h*0.5)" } })
 --
 -- There is deliberately NO keybinding here for the UI scale. It was tried, and
 -- it was the wrong shape: REAPER reads ui_scale once at startup and writes its

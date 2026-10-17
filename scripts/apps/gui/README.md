@@ -27,12 +27,12 @@ KeePassXC does not adapt well when tiled next to other windows. Apply the
 window fix to float/center it (idempotent, safe to re-run):
 
 ```bash
-./scripts/fixes/fix-keepassxc-window.sh
+./scripts/tweaks/tweak-keepassxc-window.sh
 ```
 
-It is also registered as the `keepassxc-window` quick fix in
-`./mosquitomarchy-setup.sh` (multi-select list at startup, or applied
-automatically with `-y`).
+It is also registered as the `keepassxc-window` tweak in
+`./mosquitomarchy-setup.sh` (multi-select list at startup). Being a tweak, it is
+**not** applied by the unattended `-y` pass: pick it explicitly.
 
 ### Browser integration (KeePassXC-Browser)
 
@@ -58,9 +58,9 @@ deliberate system-wide change, so it now ships as an idempotent fix in
 `scripts/fixes/`:
 
 ```bash
-./scripts/fixes/fix-replace-evince-with-papers.sh            # apply the swap
-./scripts/fixes/fix-replace-evince-with-papers.sh --status   # current state
-./scripts/fixes/fix-replace-evince-with-papers.sh --uninstall  # revert to Evince
+./scripts/tweaks/tweak-replace-evince-with-papers.sh            # apply the swap
+./scripts/tweaks/tweak-replace-evince-with-papers.sh --status   # current state
+./scripts/tweaks/tweak-replace-evince-with-papers.sh --uninstall  # revert to Evince
 ```
 
 It installs `papers` (via `yay`), makes it the default handler for every

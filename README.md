@@ -55,7 +55,9 @@ Once installed, `mosquitOmarchy` is the interface for everything here — run it
   highlighted entry, `enter` installs the selection.
 - **Backup / Restore** — a dated archive in `mosquitomarchy-backups/` (next to the repo), optionally
   AES-256 encrypted.
-- **Fixes** — the small idempotent fixes in `scripts/fixes/`, as a multi-select.
+- **Fixes** — the small idempotent repairs in `scripts/fixes/`, as a multi-select.
+- **Tweaks** — optional preference changes in `scripts/tweaks/` (same multi-select; never
+  auto-applied by `-y`).
 - **Close** — leave.
 
 `mosquitomarchy-setup.sh` is the engine underneath: every TUI action shells out to it, so
@@ -83,6 +85,7 @@ Details, options and caveats live in each module's own `README.md`. This table i
 | `extracto` | Extracto | [README](scripts/apps/extracto/README.md) |
 | `handbrake` | HandBrake GUI + CLI, preset sync, Hyprland rules | [README](scripts/apps/handbrake/README.md) |
 | `signal` | Signal Desktop, tray behavior, menu entry, and login autostart | [setup](scripts/apps/signal/setup-signal.sh) |
+| `betterbird` | Betterbird (Thunderbird fork): install, system-tray close/minimise, login autostart, tiled main window + popups at the pointer | [setup](scripts/apps/betterbird/setup-betterbird.sh) |
 | `whatsapp-native` | WhatsApp desktop client (self-contained Electron wrapper): silent visual notifications, tray + close-to-tray, no menu bar, login autostart | [README](scripts/apps/whatsapp-native/README.md) |
 | `superfile` | SuperFile terminal file manager; the system default file manager is left unchanged | [README](scripts/apps/superfile/README.md) |
 | `zen` | Zen Browser, seeded extensions and theme | [README](scripts/apps/zen/README.md) |
@@ -270,7 +273,8 @@ mosquitOmarchy/
     │   └── mosquitomarchy/   # the manager TUI + backend + archive-mosquitomarchy.sh
     ├── mosquito/             # mosquito tools: live-mode, jamjamjam, pipewire-settings
     ├── plugins/              # shell plugins: power-management, brightness, touchpad, ...
-    ├── fixes/                # small idempotent fixes
+    ├── fixes/                # small idempotent repairs
+    ├── tweaks/               # optional preference changes (never auto-applied)
     ├── lib/                  # shared helpers, tui-kit/ (the Go component library)
     ├── theme/  LLM/  deps/
     ├── windows-vm/  macos-vm/  omarchy-vm/

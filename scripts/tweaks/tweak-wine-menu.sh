@@ -35,12 +35,12 @@
 #   NoDisplay=true): those are what makes "open a .gp5 with Guitar Pro" work.
 #
 # Usage:
-#   ./fix-wine-menu.sh                  # clean the mosquitOmarchy prefixes
-#   ./fix-wine-menu.sh --status         # read-only report, changes nothing
-#   ./fix-wine-menu.sh --prefix DIR     # also clean one specific prefix
-#   ./fix-wine-menu.sh --all-prefixes   # clean EVERY wine prefix found
-#   ./fix-wine-menu.sh -y               # non-interactive (nothing is prompted)
-#   ./fix-wine-menu.sh -h
+#   ./tweak-wine-menu.sh                  # clean the mosquitOmarchy prefixes
+#   ./tweak-wine-menu.sh --status         # read-only report, changes nothing
+#   ./tweak-wine-menu.sh --prefix DIR     # also clean one specific prefix
+#   ./tweak-wine-menu.sh --all-prefixes   # clean EVERY wine prefix found
+#   ./tweak-wine-menu.sh -y               # non-interactive (nothing is prompted)
+#   ./tweak-wine-menu.sh -h
 # =============================================================================
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 set -uo pipefail

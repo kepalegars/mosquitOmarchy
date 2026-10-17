@@ -971,6 +971,13 @@ st_signal(){
   [[ -x /usr/bin/signal-desktop ]] || { echo missing; return; }
   [[ -f "$HOME/.config/Signal/config.json" ]] && echo ok || echo partial
 }
+st_betterbird(){
+  # Betterbird: Thunderbird fork + tray prefs (user.js) + login autostart
+  [[ -x /usr/bin/betterbird ]] || { echo missing; return; }
+  [[ -f "$HOME/.config/autostart/betterbird.desktop" ]] \
+    && grep -rqs "mail.startupMinimized" "$HOME/.thunderbird"/*/user.js \
+    && echo ok || echo partial
+}
 st_davinci(){
   # DaVinci Resolve in /opt/resolve (Studio or free) + launcher
   [[ -x /opt/resolve/bin/resolve ]] || { echo missing; return; }
@@ -1042,6 +1049,7 @@ MODULES=(
   "ableton-move-manager:Move Manager — Ableton Move → Ableton Live → Bitwig (menu: address / Move Manager / convert — native Omarchy prompts, MIDI export)"
   "handbrake:HandBrake (Qt GUI + CLI) + H.264/H.265 encoders + preset sync + Hyprland rules"
   "signal:Signal Desktop — official Electron client + autostart minimized to tray, hide menu bar, menu entry Signal, login autostart"
+  "betterbird:Betterbird — Thunderbird fork + system tray (close/minimise to tray), starts in the tray at login, main window tiled + popups at the pointer"
   "whatsapp-native:WhatsApp desktop client (self-contained Electron wrapper) — silent visual notifications, tray + close-to-tray, no menu bar, menu entry WhatsApp, login autostart"
   "apps:Apps, tuis & webapps (catalog per type gui/tui/webapps + backup selection via setup-apps.sh)"
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
@@ -1068,29 +1076,41 @@ MODULES=(
 # Small idempotent one-shot fixes, proposed at startup (multi-select).
 # Each entry: id:micro explanation.
 FIXES=(
-  "keepassxc-window:KeePassXC window floats/centers in Hyprland instead of misbehaving when tiled next to other windows"
-  "tui-theme:Force-adapt the TUIs' theme to the current Omarchy theme (regenerate the palette + rebuild both Go TUIs; the dynamic theme already ships with tui-kit)"
   "omarchy-menu:Recover the Omarchy menu when clones leave blank rows / an empty Apps list (remove menu-plugin clones, re-enable omarchy.menu, restart the shell)"
   "hyprland-crash:Recover a Hyprland desktop after a crash (broken/truncated hyprland.lua, fatal Lua escapes, lost keyboard layout, missing Omarchy shell) — self-heals at every boot via a post-boot hook"
   "ableton-wine-scroll:Ableton/Wine: stop the patched Wine's optional pointer features (XInput2 grab) from freezing trackpad scrolling in other apps while Live is open (persistent master switch in the prefix)"
   "1px-seam:Hair-thin transparent 1px line between the Omarchy bar and a window in borderless/no-gaps tiling — switch the blur to its legacy path (helps when blur is enabled)"
   "ableton-fullscreen:Ableton Live Full Screen is shifted/broken (content sits off where you click) — launches Live with WINE_WIN32_FULLSCREEN_CLASS=off (documented ableton-linux cure; drag-the-window alternative)"
   "omarchy-bar:The Omarchy toolbar disappeared (toggled off / slid off-screen) — clear the bar-off toggle, re-sync the shell, and re-centre the clock so revealing indicators no longer shoves it sideways"
-  "wine-menu:'Uninstall'/'Manual' entries cluttering the launcher: a Windows installer (smartEQ, FabFilter, CrispyTuner, Guitar Pro…) published its Start-Menu shortcuts and Wine turned each one into an app-menu entry — drop the ones belonging to the prefixes mosquitomarchy manages (idempotent; the file associations are kept)"
-  "bar-clock-centring:The bar's clock visibly slides sideways the moment the hidden indicators (night light, stay-awake, DND…) are revealed, and snaps back when they hide again — take the revealed icons out of the bar's layout so the reveal opens to the left and the centre anchor stays put (idempotent)"
-  "terminal-padding:Omarchy pads every terminal by 14px and paints that padding with the theme background (near-black on the dark themes), so the text block reads as a dark slab floating inside a light window with a heavy frame between the two — keep the padding, make it take the terminal's own background"
 )
 
-fix_desc(){ # id -> description
+# ── Two families, one mechanism ──────────────────────────────────────────────
+# FIXES  = system workarounds: they restore a broken/regressed state (recovery,
+#          a workaround for a bug in some component). Run them when something
+#          does not work the way it should.
+# TWEAKS = preferences: the desktop works, the user just wants it different
+#          (appearance, window behaviour, de-cluttering). Purely optional.
+# Both are idempotent, both use the same multi-select + run machinery; only the
+# catalog and the on-disk folder differ (scripts/fixes/ vs scripts/tweaks/).
+TWEAKS=(
+  "keepassxc-window:KeePassXC window floats/centers in Hyprland instead of misbehaving when tiled next to other windows"
+  "tui-theme:Force-adapt the TUIs' theme to the current Omarchy theme (regenerate the palette + rebuild both Go TUIs; the dynamic theme already ships with tui-kit)"
+  "terminal-padding:Omarchy pads every terminal by 14px and paints that padding with the theme background (near-black on the dark themes), so the text block reads as a dark slab floating inside a light window with a heavy frame between the two — keep the padding, make it take the terminal's own background"
+  "bar-clock-centring:The bar's clock visibly slides sideways the moment the hidden indicators (night light, stay-awake, DND…) are revealed, and snaps back when they hide again — take the revealed icons out of the bar's layout so the reveal opens to the left and the centre anchor stays put (idempotent)"
+  "wine-menu:'Uninstall'/'Manual' entries cluttering the launcher: a Windows installer (smartEQ, FabFilter, CrispyTuner, Guitar Pro…) published its Start-Menu shortcuts and Wine turned each one into an app-menu entry — drop the ones belonging to the prefixes mosquitomarchy manages (idempotent; the file associations are kept)"
+  "wine-theme:Make every native Windows (Wine/XWayland) window follow the Omarchy theme — dark title bars and controls on a dark theme, light on a light one (per-prefix registry + a theme-watch hook that re-applies on every theme change)"
+)
+
+fix_desc(){ # id -> description (searches both catalogs)
   local f
-  for f in "${FIXES[@]:-}"; do
+  for f in "${FIXES[@]:-}" "${TWEAKS[@]:-}"; do
     [[ "${f%%:*}" == "$1" ]] && { printf '%s' "${f#*:}"; return 0; }
   done
   return 1
 }
 
-# Category shown as a "folder" row in the quick-fixes multi-select, so a fix
-# can be picked alone or its whole category in one keystroke.
+# Category shown as a "folder" row in the multi-select, so a fix/tweak can be
+# picked alone or its whole category in one keystroke.
 fix_category(){
   case $1 in
     keepassxc-window) echo "Windows & input" ;;
@@ -1102,6 +1122,9 @@ fix_category(){
     ableton-wine-scroll) echo "Windows & input" ;;
     ableton-fullscreen) echo "Windows & input" ;;
     wine-menu)          echo "Windows & input" ;;
+    wine-theme)         echo "Appearance" ;;
+    1px-seam)           echo "Appearance" ;;
+    bar-clock-centring) echo "Appearance" ;;
     *)                echo "Other" ;;
   esac
 }
@@ -1109,18 +1132,39 @@ fix_category(){
 run_fix(){ # single fix by id
   local id="$1"
   case $id in
-    keepassxc-window) bash "$SCRIPT_DIR/scripts/fixes/fix-keepassxc-window.sh" ;;
-    tui-theme) bash "$SCRIPT_DIR/scripts/fixes/fix-tui-theme.sh" ;;
     omarchy-menu) bash "$SCRIPT_DIR/scripts/fixes/fix-omarchy-menu.sh" ;;
     hyprland-crash) bash "$SCRIPT_DIR/scripts/fixes/fix-hyprland-crash.sh" ;;
     ableton-wine-scroll) bash "$SCRIPT_DIR/scripts/fixes/fix-wine-scroll.sh" ;;
     ableton-fullscreen) bash "$SCRIPT_DIR/scripts/fixes/fix-ableton-fullscreen.sh" ;;
     1px-seam) bash "$SCRIPT_DIR/scripts/fixes/fix-1px-seam.sh" ;;
     omarchy-bar) bash "$SCRIPT_DIR/scripts/fixes/fix-omarchy-bar.sh" ;;
-    bar-clock-centring) bash "$SCRIPT_DIR/scripts/fixes/fix-bar-clock-centring.sh" ;;
-    wine-menu) bash "$SCRIPT_DIR/scripts/fixes/fix-wine-menu.sh" ;;
-    terminal-padding) bash "$SCRIPT_DIR/scripts/fixes/fix-terminal-padding.sh" ;;
     *) err "Unknown fix: $id"; return 1 ;;
+  esac
+}
+
+run_tweak(){ # single tweak by id
+  local id="$1"
+  case $id in
+    keepassxc-window) bash "$SCRIPT_DIR/scripts/tweaks/tweak-keepassxc-window.sh" ;;
+    tui-theme) bash "$SCRIPT_DIR/scripts/tweaks/tweak-tui-theme.sh" ;;
+    bar-clock-centring) bash "$SCRIPT_DIR/scripts/tweaks/tweak-bar-clock-centring.sh" ;;
+    wine-menu) bash "$SCRIPT_DIR/scripts/tweaks/tweak-wine-menu.sh" ;;
+    terminal-padding) bash "$SCRIPT_DIR/scripts/tweaks/tweak-terminal-padding.sh" ;;
+    wine-theme) bash "$SCRIPT_DIR/scripts/tweaks/tweak-wine-theme.sh" ;;
+    *) err "Unknown tweak: $id"; return 1 ;;
+  esac
+}
+
+# Remove a single tweak (uninstall tree). Only the ones with a real revert
+# path answer; the rest return 1 and the caller reports "not removable".
+run_tweak_remove(){ # single tweak removal by id
+  local id="$1"
+  case $id in
+    keepassxc-window) bash "$SCRIPT_DIR/scripts/tweaks/tweak-keepassxc-window.sh" --remove ;;
+    bar-clock-centring) bash "$SCRIPT_DIR/scripts/tweaks/tweak-bar-clock-centring.sh" --revert ;;
+    terminal-padding) bash "$SCRIPT_DIR/scripts/tweaks/tweak-terminal-padding.sh" --remove ;;
+    wine-theme) bash "$SCRIPT_DIR/scripts/tweaks/tweak-wine-theme.sh" --remove ;;
+    *) return 1 ;;
   esac
 }
 
@@ -1131,6 +1175,17 @@ run_fixes(){ # loop over FIXES_SELECTED, log results
     hr
     if run_fix "$id"; then RESULTS+=("quick-fix/$id:ok")
     else RESULTS+=("quick-fix/$id:fail"); MODULE_FAILURES=$((MODULE_FAILURES + 1)); fi
+  done
+  hr
+}
+
+run_tweaks(){ # loop over TWEAKS_SELECTED, log results
+  mq_sudo_prime >/dev/null 2>&1 || true   # one prompt for the whole tweak batch
+  local id
+  for id in "${TWEAKS_SELECTED[@]:-}"; do
+    hr
+    if run_tweak "$id"; then RESULTS+=("quick-tweak/$id:ok")
+    else RESULTS+=("quick-tweak/$id:fail"); MODULE_FAILURES=$((MODULE_FAILURES + 1)); fi
   done
   hr
 }
@@ -1147,6 +1202,7 @@ module_state(){
     davinci-resolve) st_davinci ;;
 handbrake) st_handbrake ;;
       signal) st_signal ;;
+      betterbird) st_betterbird ;;
       whatsapp-native) st_whatsapp_native ;;
     apps) s="$(st_apps)"; s="${s%%:*}"; echo "$s" ;;
     ollama) st_ollama ;; battery) st_battery ;; brightness) st_brightness ;;
@@ -1199,6 +1255,7 @@ module_of_path(){
     scripts/apps/ableton-move-*|scripts/apps/ableton-move/*) echo ableton-move-manager ;;
     scripts/apps/handbrake/*)                                echo handbrake ;;
     scripts/apps/signal/*)                                   echo signal ;;
+    scripts/apps/betterbird/*)                               echo betterbird ;;
     scripts/apps/whatsapp-native/*)                          echo whatsapp-native ;;
     scripts/apps/extracto/*)                                 echo extracto ;;
     scripts/apps/gui/*|scripts/apps/tui-tools/*|scripts/apps/webapps/*|\
@@ -3325,6 +3382,17 @@ un_signal(){
   ok "Signal Desktop uninstalled"
 }
 
+un_betterbird(){
+  info "Uninstalling Betterbird"
+  # Delegates the session bits (autostart, Hyprland rules) to the module, then
+  # removes the package. Profiles and mail are deliberately left in place.
+  [[ -f "$BETTERBIRD_DIR/setup-betterbird.sh" ]] \
+    && bash "$BETTERBIRD_DIR/setup-betterbird.sh" uninstall || true
+  mq_sudo pacman -R --noconfirm betterbird-fr-bin || true
+  rm_desktops eu.betterbird.Betterbird.desktop
+  ok "Betterbird uninstalled (profiles and mail kept)"
+}
+
 un_davinci(){
   # Delegates to davinci/uninstall-davinci.sh: removes launcher + menu + libav
   # patch + /opt/resolve (sudo) + OFX SpectraFilm, without the project data.
@@ -3733,6 +3801,7 @@ uninstall_module(){
     ableton-move-manager) un_ableton_move_converter ;;
 handbrake) un_handbrake ;;
       signal) un_signal ;;
+      betterbird) un_betterbird ;;
       whatsapp-native) un_whatsapp_native ;;
     extracto) un_extracto ;;
     apps) un_apps ;;
@@ -3857,6 +3926,7 @@ GUITARPRO_DIR="$APPS_DIR/guitarpro"
 DAVINCI_DIR="$APPS_DIR/davinci"
 HANDBRAKE_DIR="$APPS_DIR/handbrake"
 SIGNAL_DIR="$APPS_DIR/signal"
+BETTERBIRD_DIR="$APPS_DIR/betterbird"
 WHATSAPP_NATIVE_DIR="$APPS_DIR/whatsapp-native"
 EXTRACTO_DIR="$APPS_DIR/extracto"
 MOVE_CONVERTER_DIR="$SCRIPTS/apps/ableton-move-manager"
@@ -4036,6 +4106,12 @@ run_signal(){
   # Signal Desktop (official Electron client) + autostart minimized to tray,
   # hide menu bar, and the "Signal" menu entry.
   bash "$SIGNAL_DIR/setup-signal.sh" $([[ $YES == 1 ]] && echo -y)
+}
+
+run_betterbird(){
+  # Betterbird (Thunderbird fork): install + tray prefs + login autostart
+  # (in the tray) + Hyprland rules (main tiled, popups at the pointer).
+  bash "$BETTERBIRD_DIR/setup-betterbird.sh" $([[ $YES == 1 ]] && echo -y)
 }
 
 run_whatsapp_native(){
@@ -4346,6 +4422,7 @@ exec_modules(){
       ableton-move-manager) run_module ableton-move-manager run_ableton_move_converter ;;
       handbrake) run_module handbrake run_handbrake ;;
       signal) run_module signal run_signal ;;
+      betterbird) run_module betterbird run_betterbird ;;
       whatsapp-native) run_module whatsapp-native run_whatsapp_native ;;
       extracto) run_module extracto run_extracto ;;
       apps) run_module apps run_apps ;;
@@ -4386,7 +4463,7 @@ exec_modules(){
 
 # Categories of the "setup" action. id|label|modules (space-separated module ids).
 CATEGORIES=(
-  "apps|Apps|reaper audio bitwig ableton guitarpro davinci-resolve extracto handbrake signal whatsapp-native superfile zen keepassxc hyprmod"
+  "apps|Apps|reaper audio bitwig ableton guitarpro davinci-resolve extracto handbrake signal betterbird whatsapp-native superfile zen keepassxc hyprmod"
   "tuis|TUIs|"
   "webapps|Webapps|"
   # "Plugins" is the project's own layer: the manager itself (the deployer),
@@ -4398,6 +4475,7 @@ CATEGORIES=(
   # mosquito-* module now (mega-caffeine), so it lives in the mosquito row.
   "plugins|Plugins|brightness touchpad mx-master wifi-hotspot"
   "fixes|Fixes|"
+  "tweaks|Tweaks|"
   "mosquito|mosquito|"
   "lame|lame language models (ai..)|ollama remove-ai"
   "themes|Themes|achraff"
@@ -4532,7 +4610,7 @@ module_category(){ # module id -> category id
   esac
   local c
   for c in "${CATEGORIES[@]}"; do
-    [[ "${c%%|*}" == fixes || "${c%%|*}" == menu ]] && continue
+    [[ "${c%%|*}" == fixes || "${c%%|*}" == tweaks || "${c%%|*}" == menu ]] && continue
     case " $(category_items "${c%%|*}") " in
       *" $1 "*) printf '%s' "${c%%|*}"; return 0 ;;
     esac

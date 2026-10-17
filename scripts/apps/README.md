@@ -29,7 +29,7 @@ One entry per line, the type prefix kept, so `apps.selected` holds the same line
 catalog it came from. `|`-separated, `#` starts a comment.
 
 ```
-APP betterbird-fr-bin|Betterbird (e-mail)
+APP vlc|VLC — media player
 TUI bat|bat
 WEB WhatsApp|https://web.whatsapp.com/|whatsapp
 ```

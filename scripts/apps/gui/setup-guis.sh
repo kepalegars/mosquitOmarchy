@@ -20,7 +20,7 @@
 #   ./setup-guis.sh -h
 #
 # Optional extra (NOT in the catalog — a system-wide viewer swap): replace
-# Evince with Papers:  ../fixes/fix-replace-evince-with-papers.sh
+# Evince with Papers:  ../tweaks/tweak-replace-evince-with-papers.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 set -euo pipefail
 
@@ -100,7 +100,7 @@ main(){
   # the README section for it (browser integration, backup of the database).
   if [[ ${KPXC_JUST_INSTALLED:-0} == 1 ]]; then
     warn "KeePassXC was installed — remember its window fix and docs:"
-    echo "    ./scripts/fixes/fix-keepassxc-window.sh   (float/center in Hyprland)"
+    echo "    ./scripts/tweaks/tweak-keepassxc-window.sh   (tweak: float/center in Hyprland)"
     echo "    See scripts/apps/gui/README.md — KeePassXC (browser integration, backup)"
   fi
   ((rc == 0)) && ok "Done." || err "Some entries failed (relaunch to resume)."
