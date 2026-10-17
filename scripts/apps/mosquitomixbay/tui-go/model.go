@@ -460,6 +460,14 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.pop()
 			return m, fetchStatus(m.deviceID)
+		case "tab":
+			if !m.status.Spec.Caps.Mixer {
+				m.toast, _ = m.toast.SetWarn("No loopback mixer on this interface")
+				return m, nil
+			}
+			m.push(scrMixer)
+			m.syncPicker()
+			return m, nil
 		case "?":
 			m.info = tuikit.NewInfo(helpText()).SetSize(m.contentSize())
 			m.push(scrInfo)
@@ -474,18 +482,35 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "s":
 			return m, applyCmd(m.deviceID, func(d drivers.Driver) error { return d.Save() }, "state saved")
+		case "o":
+			m.confirmTitle = "Reload the saved state onto the hardware?"
+			m.confirm = tuikit.NewConfirm(m.confirmTitle, "Cancel", "Reload")
+			m.confirmAct = func() tea.Cmd {
+				return applyCmd(m.deviceID, func(d drivers.Driver) error { return d.Load() }, "saved state re-applied")
+			}
+			m.push(scrConfirm)
+			return m, nil
+		case "p":
+			v := m.picker.SelectedValue()
+			if strings.HasPrefix(v, "phantom:") {
+				return m, m.activateControl(v)
+			}
+			m.toast, _ = m.toast.SetWarn("phantom only on an input row")
+			return m, nil
 		case "r":
 			return m, fetchStatus(m.deviceID)
 		case "enter":
 			return m, m.activateControl(m.picker.SelectedValue())
-		case "left", "right":
+		case "left", "right", "[", "]":
 			if m.numBuf != "" {
 				m.cancelNumeric()
 				return m, nil
 			}
-			return m, m.nudgeControl(m.picker.SelectedValue(), k == "right")
-		case "shift+left", "shift+right":
-			return m, m.nudgeControlBig(m.picker.SelectedValue(), k == "shift+right")
+			up := k == "right" || k == "]"
+			return m, m.nudgeControl(m.picker.SelectedValue(), up)
+		case "shift+left", "shift+right", "{", "}":
+			up := k == "shift+right" || k == "}"
+			return m, m.nudgeControlBig(m.picker.SelectedValue(), up)
 		default:
 			if m.startNumeric(k, m.picker.SelectedValue()) {
 				return m, nil
@@ -500,14 +525,24 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.pop()
 			return m, nil
+		case "tab":
+			m.pop()
+			return m, nil
 		case "?":
 			m.info = tuikit.NewInfo(helpText()).SetSize(m.contentSize())
 			m.push(scrInfo)
 			return m, nil
+		case "s":
+			return m, applyCmd(m.deviceID, func(d drivers.Driver) error { return d.Save() }, "state saved")
 		case "r":
 			return m, fetchStatus(m.deviceID)
 		case "enter":
 			return m, m.activateMixer(m.picker.SelectedValue())
+		case "[", "]":
+			// adjust the selected source's volume (evotui [ ] rule)
+			return m, m.nudgeMixer(m.picker.SelectedValue(), map[string]string{"[": "left", "]": "right"}[k])
+		case "{", "}":
+			return m, m.nudgeMixer(m.picker.SelectedValue(), map[string]string{"{": ",", "}": "."}[k])
 		case "left", "right", ",", ".":
 			if m.numBuf != "" {
 				m.cancelNumeric()
@@ -650,7 +685,7 @@ func (m *model) activateControl(val string) tea.Cmd {
 		m.confirmTitle = "Reload the saved state onto the hardware?"
 		m.confirm = tuikit.NewConfirm(m.confirmTitle, "Cancel", "Reload")
 		m.confirmAct = func() tea.Cmd {
-			return applyCmd(dev, func(d drivers.Driver) error { return d.Load() }, "saved state re-applied")
+			return applyCmd(m.deviceID, func(d drivers.Driver) error { return d.Load() }, "saved state re-applied")
 		}
 		m.push(scrConfirm)
 		return nil
@@ -831,11 +866,12 @@ func helpText() string {
 		"Devices: pick your interface (EVO 8 first). [demo] = no hardware,\n" +
 		"persistent simulated state for rehearsals and live-mode prep.\n\n" +
 		"Controls page (INPUTS / OUTPUTS sections):\n" +
-		"  ↑/↓ select · ←/→ ±1dB (Shift = ±5dB) · digits type a dB value, Enter applies\n" +
-		"  Enter toggles mute/48V · m loopback mixer · s save · r refresh · esc back\n\n" +
+		"  j/k or ↑/↓ select · h/l switch subsections · Tab mixer · [ ] ±1dB · { } ±5dB\n" +
+		"  digits type a dB value, Enter applies · Enter toggles mute (m) · P toggles 48V\n" +
+		"  s save · o load · r refresh · ? help · esc back\n\n" +
 		"Mixer page (loopback bus, write-only on EVO — shadowed on disk):\n" +
-		"  first row switches the MIX bus (MIX 1|2, MIX 3|4 on EVO 8)\n" +
-		"  ←/→ source volume ±1dB · ,/. pan ±5 · digits type a dB value\n\n" +
+		"  Tab or esc controls · [ ] volume ±1dB · { } / ,/. pan ±5 · space next param\n" +
+		"  first row switches the MIX bus (MIX 1|2, MIX 3|4 on EVO 8)\n\n" +
 		"48V asks first (condenser mics only, monitors down).\n" +
 		"Same commands exist non-interactively: mosquito-mixbay-actions --help"
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"mosquitomarchy.local/mosquitomixbay-tui/drivers"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
@@ -32,12 +33,36 @@ func (m model) View() string {
 	w, h := m.contentSize()
 
 	switch m.top() {
-	case scrDevices, scrControls, scrMixer:
+	case scrDevices:
 		title, rows := m.screenBudget(h)
 		m.picker = m.picker.SetSize(w, rows)
 		b.WriteString(centerBlock(title, w))
 		b.WriteString("\n")
 		b.WriteString(m.picker.View())
+		b.WriteString("\n")
+		b.WriteString(m.statusLine(w))
+	case scrControls:
+		titleText := "Controls"
+		if m.status.Spec.Display != "" {
+			titleText = m.status.Spec.Display + " — controls"
+		}
+		title, rows := m.accentBudget(h, titleText)
+		m.picker = m.picker.SetSize(w, rows)
+		b.WriteString(centerBlock(title, w))
+		b.WriteString("\n")
+		b.WriteString(m.visualBody(w))
+		b.WriteString("\n")
+		b.WriteString(m.statusLine(w))
+	case scrMixer:
+		titleText := "Loopback mixer"
+		if m.status.Spec.Display != "" {
+			titleText = m.status.Spec.Display + " — " + drivers.BusLabel(m.mixBus)
+		}
+		title, rows := m.accentBudget(h, titleText)
+		m.picker = m.picker.SetSize(w, rows)
+		b.WriteString(centerBlock(title, w))
+		b.WriteString("\n")
+		b.WriteString(m.visualBody(w))
 		b.WriteString("\n")
 		b.WriteString(m.statusLine(w))
 	case scrSettings:
@@ -141,6 +166,19 @@ func (m model) settingsBudget(h int) (string, int) {
 	return screenTitle("Settings", w), rows
 }
 
+// accentBudget is the same split for the other sub-screens (controls, mixer):
+// one accent-colored line names the page you are on, under the detached
+// version row. Only the devices page keeps the boxed mosquito + mixbay
+// banner.
+func (m model) accentBudget(h int, title string) (string, int) {
+	w, _ := m.contentSize()
+	rows := h - 2 - screenBudgetConst()
+	if rows < 1 {
+		rows = 1
+	}
+	return screenTitle(title, w), rows
+}
+
 // centerBlock centers every line of a composed title block in the window
 // WITHOUT re-styling it: the ASCII art carries its own colors, and wrapping
 // it in the accent style would repaint the whole box.
@@ -171,9 +209,9 @@ func (m model) legendLine(w int) string {
 	var hint string
 	switch m.top() {
 	case scrControls:
-		hint = "↑/↓ · enter · ←/→ adjust · digits dial · m mixer · s save · ? help"
+		hint = "Tab mixer · enter · [ ] adjust · { } big · digits dial · s/o save/load · ? help"
 	case scrMixer:
-		hint = "↑/↓ · ←/→ vol · ,/. pan · digits dial · bus row switches MIX · ? help"
+		hint = "Tab controls · [ ] vol · { }/,/. pan · digits dial · bus row switches MIX · ? help"
 	case scrSettings:
 		hint = "enter toggles · esc back"
 	default:
