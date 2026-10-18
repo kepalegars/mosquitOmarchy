@@ -1265,7 +1265,7 @@ module_of_path(){
     scripts/plugins/brightness/*)                            echo brightness ;;
     scripts/theme/*)                                         echo achraff ;;
     scripts/plugins/touchpad/*)                             echo touchpad ;;
-    scripts/fixes/fix-mx-master.sh)                          echo mx-master ;;
+    scripts/plugins/mx-master/*)                             echo mx-master ;;
     scripts/apps/hyprmod/*)                                 echo apps ;;
     scripts/fixes/fix-ableton-fullscreen.sh)                 echo ableton-fullscreen ;;
     scripts/apps/keepassxc/*)                                echo keepassxc ;;
@@ -3933,7 +3933,7 @@ MOVE_CONVERTER_DIR="$SCRIPTS/apps/ableton-move-manager"
 BATTERY_DIR="$SCRIPTS/plugins/power-management"
 BRIGHTNESS_DIR="$SCRIPTS/plugins/brightness"
 TOUCHPAD_DIR="$SCRIPTS/plugins/touchpad"
-MXMASTER_DIR="$SCRIPTS/fixes"
+MXMASTER_DIR="$SCRIPTS/plugins/mx-master"
 SUPERFILE_DIR="$SCRIPTS/apps/superfile"
 THEME_DIR="$SCRIPTS/theme"
 ZEN_DIR="$SCRIPTS/apps/zen"
@@ -4263,7 +4263,7 @@ run_achraff(){ bash "$THEME_DIR/create-theme.sh" --apply "$THEME_DIR/Wallpapers/
 run_touchpad(){ bash "$TOUCHPAD_DIR/touchpad.sh" $([[ $YES == 1 ]] && echo -y); }
 run_superfile(){ bash "$SUPERFILE_DIR/setup-superfile.sh" $([[ $YES == 1 ]] && echo -y); }
 run_zen(){ bash "$ZEN_DIR/setup-zen.sh" $([[ $YES == 1 ]] && echo -y); }
-run_mx_master(){ bash "$MXMASTER_DIR/fix-mx-master.sh" $([[ $YES == 1 ]] && echo -y); }
+run_mx_master(){ bash "$MXMASTER_DIR/mx-master.sh" $([[ $YES == 1 ]] && echo -y); }
 run_keepassxc(){
   bash "$SCRIPTS/apps/keepassxc/setup-keepassxc-integration.sh" $([[ $YES == 1 ]] && echo -y)
 }

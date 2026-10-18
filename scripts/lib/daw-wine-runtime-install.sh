@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fix-daw-wine-runtime.sh — REAPER + Bitwig use the ableton wine runtime.
+# daw-wine-runtime-install.sh — REAPER + Bitwig use the ableton wine runtime.
 #
 # ableton-linux's wine fork (wine-d2d1-nspa) implements Windows
 # DirectComposition properly. Stock wine-staging crashes VST3 editors whose GUI
@@ -25,9 +25,9 @@
 # *.transaction-installer.* sibling sort last and win).
 #
 # Usage:
-#   fix-daw-wine-runtime.sh             # install/refresh both wrappers (idempotent)
-#   fix-daw-wine-runtime.sh --status    # what each DAW currently launches under
-#   fix-daw-wine-runtime.sh --remove    # delete the wrappers (stock wine)
+#   daw-wine-runtime-install.sh             # install/refresh both wrappers (idempotent)
+#   daw-wine-runtime-install.sh --status    # what each DAW currently launches under
+#   daw-wine-runtime-install.sh --remove    # delete the wrappers (stock wine)
 set -euo pipefail
 
 BIN="$HOME/.local/bin"

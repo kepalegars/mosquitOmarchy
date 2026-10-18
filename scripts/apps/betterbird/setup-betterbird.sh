@@ -15,7 +15,7 @@
 #   ./setup-betterbird.sh uninstall  # remove autostart + rules (keep your mails)
 # =============================================================================
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/mq_sudo.bash"  # mq_sudo: GUI password prompt, never a blind sudo hang
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/elevate.bash"  # mq_sudo: GUI password prompt, never a blind sudo hang
 set -uo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

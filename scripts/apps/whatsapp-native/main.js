@@ -70,8 +70,10 @@ function createTray() {
   tray.on('click', showWindow);
 }
 
-function createWindow() {
+function createWindow(startHidden) {
+  startHidden = !!startHidden;
   mainWindow = new BrowserWindow({
+    show: !startHidden,
     width: 1100,
     height: 780,
     icon: ICON_PATH,
@@ -162,8 +164,12 @@ function grantNotifications() {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   grantNotifications();
-  createWindow();
+  const startInTray = process.argv.some((a) => a === '--start-in-tray');
+  createWindow(startInTray);
   createTray();
+  if (startInTray && mainWindow) {
+    mainWindow.hide();
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

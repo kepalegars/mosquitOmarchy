@@ -28,9 +28,9 @@ in `--status` and under **Setup → Plugins**.
 
 | Module | Script | Doc |
 |---|---|---|
-| `brightness` | `scripts/plugins/brightness/optimized-brightness.sh` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp. Deploys a `brightness-0` helper. [notes](display-fixes.md) |
-| `mx-master` | `fix-mx-master.sh` | Thumb button → `SUPER` via logiops, plus a mouse-only pointer block. [notes](fix-mx-master.md) |
-| `touchpad` | `scripts/plugins/touchpad/touchpad.sh` | Touchpad-only `hl.device` tuning. [notes](fix-touchpad.md) |
+| `brightness` | `scripts/plugins/brightness/optimized-brightness.sh` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp. Deploys a `brightness-0` helper. [notes](../plugins/brightness/display-fixes.md) |
+| `mx-master` | `scripts/plugins/mx-master/mx-master.sh` | Thumb button → `SUPER` via logiops, plus a mouse-only pointer block. [notes](../plugins/mx-master/mx-master.md) |
+| `touchpad` | `scripts/plugins/touchpad/touchpad.sh` | Touchpad-only `hl.device` tuning. [notes](../plugins/touchpad/touchpad.md) |
 
 `touchpad` and `mx-master` compose: each ships its own `hl.device` block in its own file, each
 handles only its own device, and they can be applied in either order or alone. Every value the
@@ -39,9 +39,10 @@ MX Master fix writes can be overridden with `MX_MASTER_SENSITIVITY`, `MX_MASTER_
 
 ## Invoked by a module, not offered on its own
 
-`fix-daw-wine-runtime.sh` installs the `wine-d2d1-nspa` runtime wrappers that let REAPER and
-Bitwig share Ableton's Wine build. It is pointed at by the audio and REAPER setups when the
-runtime is missing, rather than being listed here to pick from.
+The DAW Wine-runtime installer lives in `scripts/lib/daw-wine-runtime-install.sh`; it installs
+the `wine-d2d1-nspa` runtime wrappers that let REAPER and Bitwig share Ableton's Wine build. It
+is pointed at by the audio and REAPER setups when the runtime is missing, rather than being
+listed here to pick from.
 
 ## Notes
 

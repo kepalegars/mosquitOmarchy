@@ -44,7 +44,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/lib/wine-runtime-daw
 if ! mosquitomarchy_apply_daw_wine_runtime; then
   echo "   WARNING: no wine-d2d1-nspa runtime in ~/.local/opt. REAPER will use the" >&2
   echo "   system wine, and VST3 editors needing DirectComposition (Serum 2) may" >&2
-  echo "   crash on open. Run the Ableton setup, or scripts/fixes/fix-daw-wine-runtime.sh." >&2
+  echo "   crash on open. Run the Ableton setup, or scripts/lib/daw-wine-runtime-install.sh." >&2
 fi
 
 echo "== 3/5 Application shortcut =="

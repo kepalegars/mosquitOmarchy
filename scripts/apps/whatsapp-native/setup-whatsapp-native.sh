@@ -65,7 +65,7 @@ ICON_DST="$REAL_HOME/.local/share/icons/hicolor/256x256/apps/whatsapp.png"
 DESKTOP="$APPS_DIR/whatsapp.desktop"
 LAUNCHER="$REAL_HOME/.local/bin/whatsapp"
 AUTOSTART="$REAL_HOME/.config/hypr/autostart.lua"
-AUTOSTART_LINE='o.launch_on_start("whatsapp")'
+AUTOSTART_LINE='o.launch_on_start("whatsapp --start-in-tray")'
 
 STATUS_ONLY=false REMOVE=false YES=false
 for a in "$@"; do case "$a" in
@@ -105,8 +105,7 @@ if $REMOVE; then
   rm -rf "$REAL_HOME/.local/share/whatsapp-native"
   rm -f "$LAUNCHER" "$DESKTOP" "$ICON_DST"
   if [[ -f "$AUTOSTART" ]]; then
-    sed -i "\|^$AUTOSTART_LINE\$|d" "$AUTOSTART" 2>/dev/null || \
-      sed -i "\|o.launch_on_start(\"whatsapp\")|d" "$AUTOSTART" 2>/dev/null || true
+    sed -i '\|^o.launch_on_start("whatsapp[^"]*")$|d' "$AUTOSTART" 2>/dev/null || true
   fi
   command -v update-desktop-database >/dev/null 2>&1 \
     && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true

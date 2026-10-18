@@ -113,9 +113,9 @@ The project's own layer: the manager itself, and the desktop-hardware modules.
 |---|---|---|
 | `mosquitomarchy` | This TUI (built from the Go sources in the repo), its dispatcher, menu entry, float rule, post-boot hook and the `SUPER+ALT+M` shortcut | [README](scripts/apps/mosquitomarchy/README.md) |
 | `mosquitomarchy-update` | The update watchdog (scripts repo first, then Omarchy) | [README](scripts/mosquitomarchy-update/README.md) |
-| `brightness` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp | [notes](scripts/fixes/display-fixes.md) |
-| `touchpad` | Touchpad acceleration, sensitivity, scroll factor, and optional kinetic scrolling | [notes](scripts/fixes/fix-touchpad.md) |
-| `mx-master` | MX Master thumb button → `SUPER`, smartshift off, scroll direction | [notes](scripts/fixes/fix-mx-master.md) |
+| `brightness` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp | [notes](scripts/plugins/brightness/display-fixes.md) |
+| `touchpad` | Touchpad acceleration, sensitivity, scroll factor, and optional kinetic scrolling | [notes](scripts/plugins/touchpad/touchpad.md) |
+| `mx-master` | MX Master thumb button → `SUPER`, smartshift off, scroll direction | [notes](scripts/plugins/mx-master/mx-master.md) |
 
 ### Themes
 

@@ -2099,7 +2099,7 @@ ensure_daw_runtime_for_known_plugin() {
   if source "$helper" && mosquitomarchy_apply_daw_wine_runtime; then
     ok "REAPER + Bitwig launchers now use the patched runtime — the $token editor will open."
   else
-    warn "no wine-d2d1-nspa runtime under ~/.local/opt: REAPER/Bitwig keep the system wine and the $token editor will crash on open. Run the Ableton setup, or scripts/fixes/fix-daw-wine-runtime.sh."
+    warn "no wine-d2d1-nspa runtime under ~/.local/opt: REAPER/Bitwig keep the system wine and the $token editor will crash on open. Run the Ableton setup, or scripts/lib/daw-wine-runtime-install.sh."
   fi
 }
 

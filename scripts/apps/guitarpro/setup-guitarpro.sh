@@ -277,7 +277,7 @@ step_hypr_tile(){
   sed -i '/-- >>> guitarpro-tiling >>>/,/-- <<< guitarpro-tiling <<</d' "$hypr"
   cat >> "$hypr" <<'EOF'
 -- >>> guitarpro-tiling >>> tile Guitar Pro 8 (overrides the generic .exe float: later rules win).
-o.window({ class = "^guitarpro\\.exe$" }, { float = false })
+o.window({ class = "^guitarpro\\.exe$" }, { float = false, tile = true })
 o.window({ class = "^guitarpro\\.exe$" }, { focus_on_activate = false })
 -- <<< guitarpro-tiling <<<
 EOF
@@ -342,9 +342,11 @@ WRAPEOF
 
 # ───────────────────── Font & DPI hardening (Wine) ─────────────────────
 # Writes the Wine font/DPI settings into the prefix so Guitar Pro renders at
-# the right size (Windows apps ignore the Hyprland scale). Auto-detects the
-# scale from Hyprland unless --dpi N is given. Also adds the extra Windows
-# fonts (winetricks allfonts) that fix missing glyphs (empty boxes, etc.).
+# the right size. Hyprland already scales XWayland windows by the monitor
+# scale, so Wine must render at its native 96 DPI: multiplying LogPixels by the
+# monitor scale applied the scale TWICE and produced an oversized UI (the "mega
+# scale" bug — the prefix was left at 154 DPI / ~1.6x). 96 keeps Guitar Pro the
+# same size as every native window. --dpi N overrides it for a special taste.
 step_fonts(){
   local dpi="$DPI"
   if [[ -z "$dpi" ]]; then
@@ -354,8 +356,10 @@ try:
     print(json.load(sys.stdin)[0].get("scale",1))
 except Exception:
     print(1)' 2>/dev/null || echo 1)"
-    dpi="$(awk -v s="$scale" 'BEGIN{d=int(96*s+0.5); print (d<96?96:(d>192?192:d))}')"
-    msg "Font & DPI hardening — detected Hyprland scale=$scale → LogPixels=$dpi"
+    # 96 = Wine's native DPI. NOT 96*scale: Hyprland scales the XWayland window
+    # itself, so a scaled Wine DPI double-applies it (the oversized-UI bug).
+    dpi=96
+    msg "Font & DPI hardening — Hyprland scale=$scale → LogPixels=$dpi (native; Hyprland scales XWayland)"
   else
     msg "Font & DPI hardening — forced LogPixels=$dpi"
   fi

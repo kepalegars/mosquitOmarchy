@@ -21,10 +21,10 @@ need the Logitech Options Plus app (Windows/macOS only).
 ## Install / usage
 
 ```
-./fix-mx-master.sh            # install + configure (idempotent)
-./fix-mx-master.sh --status   # package / config / service status
-./fix-mx-master.sh --remove   # disable service + restore previous config
-./fix-mx-master.sh -y         # non-interactive
+./mx-master.sh            # install + configure (idempotent)
+./mx-master.sh --status   # package / config / service status
+./mx-master.sh --remove   # disable service + restore previous config
+./mx-master.sh -y         # non-interactive
 ```
 
 Root parts (`/etc/logid.cfg`, `logid.service`) use `sudo` internally.
@@ -48,7 +48,7 @@ logid.service       AUR-provided systemd unit (root), enabled + started
 ## Revert
 
 ```
-sudo bash fix-mx-master.sh --remove
+sudo bash mx-master.sh --remove
 ```
 
 or, manually: `sudo systemctl disable --now logid` and restore `/etc/logid.cfg`.
@@ -81,6 +81,6 @@ remove either in any order; the live config always reflects it.
 
 The same pattern applies to any pair of pointer devices: write one
 `hl.device` block per device, named after its `hyprctl devices` name. Add
-your own module by copying `scripts/plugins/touchpad/touchpad.sh` (or `fix-mx-master.sh`),
+your own module by copying `scripts/plugins/touchpad/touchpad.sh` (or `mx-master.sh`),
 swapping the device name and the values you want. The marker blocks and the
 `require()` line in `hyprland.lua` are independent.

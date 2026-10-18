@@ -58,6 +58,6 @@ remove either in any order; the live config always reflects it.
 
 The same pattern applies to any pair of pointer devices: write one
 `hl.device` block per device, named after its `hyprctl devices` name. Add
-your own module by copying `scripts/plugins/touchpad/touchpad.sh` (or `fix-mx-master.sh`),
+your own module by copying `scripts/plugins/touchpad/touchpad.sh` (or `mx-master.sh`),
 swapping the device name and the values you want. The marker blocks and the
 `require()` line in `hyprland.lua` are independent.
