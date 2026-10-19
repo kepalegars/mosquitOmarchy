@@ -1078,7 +1078,9 @@ FIXES=(
   "ableton-wine-scroll:Ableton/Wine: stop the patched Wine's optional pointer features (XInput2 grab) from freezing trackpad scrolling in other apps while Live is open (persistent master switch in the prefix)"
   "1px-seam:Hair-thin transparent 1px line between the Omarchy bar and a window in borderless/no-gaps tiling — switch the blur to its legacy path (helps when blur is enabled)"
   "ableton-fullscreen:Ableton Live Full Screen is shifted/broken (content sits off where you click) — launches Live with WINE_WIN32_FULLSCREEN_CLASS=off (documented ableton-linux cure; drag-the-window alternative)"
-  "omarchy-bar:The Omarchy toolbar disappeared (toggled off / slid off-screen) — clear the bar-off toggle, re-sync the shell, and re-centre the clock so revealing indicators no longer shoves it sideways"
+  "omarchy-bar:The Omarchy toolbar disappeared (toggled off / slid off-screen) — clear the bar-off toggle and re-sync the shell (also repairs the centre anchor below)"
+  "bar-center-anchor:The bar's centre modules shuffle and the clock slides sideways when the hidden indicators (night light, stay-awake, DND…) are revealed — shell.json's bar.centerAnchor names a widget that is not in the centre layout, so the section reflows as a whole; point it back at a real centre module (omarchy.clock, the default)"
+  "bluetooth:Fix Bluetooth stutter/instability — MX Master freezing every second (BLE params Latency=0 / 6-7 ms + USB autosuspend off) and audio glitches (stop BlueZ AVDTP polling of paired speakers)"
 )
 
 # ── Two families, one mechanism ──────────────────────────────────────────────
@@ -1093,7 +1095,6 @@ TWEAKS=(
   "keepassxc-window:KeePassXC window floats/centers in Hyprland instead of misbehaving when tiled next to other windows"
   "tui-theme:Force-adapt the TUIs' theme to the current Omarchy theme (regenerate the palette + rebuild both Go TUIs; the dynamic theme already ships with tui-kit)"
   "terminal-padding:Omarchy pads every terminal by 14px and paints that padding with the theme background (near-black on the dark themes), so the text block reads as a dark slab floating inside a light window with a heavy frame between the two — keep the padding, make it take the terminal's own background"
-  "bar-clock-centring:The bar's clock visibly slides sideways the moment the hidden indicators (night light, stay-awake, DND…) are revealed, and snaps back when they hide again — take the revealed icons out of the bar's layout so the reveal opens to the left and the centre anchor stays put (idempotent)"
   "wine-menu:'Uninstall'/'Manual' entries cluttering the launcher: a Windows installer (smartEQ, FabFilter, CrispyTuner, Guitar Pro…) published its Start-Menu shortcuts and Wine turned each one into an app-menu entry — drop the ones belonging to the prefixes mosquitomarchy manages (idempotent; the file associations are kept)"
   "wine-theme:Make every native Windows (Wine/XWayland) window follow the Omarchy theme — dark title bars and controls on a dark theme, light on a light one (per-prefix registry + a theme-watch hook that re-applies on every theme change)"
 )
@@ -1121,7 +1122,8 @@ fix_category(){
     wine-menu)          echo "Windows & input" ;;
     wine-theme)         echo "Appearance" ;;
     1px-seam)           echo "Appearance" ;;
-    bar-clock-centring) echo "Appearance" ;;
+    bar-center-anchor)  echo "Omarchy" ;;
+    bluetooth)          echo "Hardware" ;;
     *)                echo "Other" ;;
   esac
 }
@@ -1135,6 +1137,8 @@ run_fix(){ # single fix by id
     ableton-fullscreen) bash "$SCRIPT_DIR/scripts/fixes/fix-ableton-fullscreen.sh" ;;
     1px-seam) bash "$SCRIPT_DIR/scripts/fixes/fix-1px-seam.sh" ;;
     omarchy-bar) bash "$SCRIPT_DIR/scripts/fixes/fix-omarchy-bar.sh" ;;
+    bar-center-anchor) bash "$SCRIPT_DIR/scripts/fixes/fix-bar-center-anchor.sh" ;;
+    bluetooth) bash "$SCRIPT_DIR/scripts/fixes/fix-bluetooth.sh" ;;
     *) err "Unknown fix: $id"; return 1 ;;
   esac
 }
@@ -1144,7 +1148,6 @@ run_tweak(){ # single tweak by id
   case $id in
     keepassxc-window) bash "$SCRIPT_DIR/scripts/tweaks/tweak-keepassxc-window.sh" ;;
     tui-theme) bash "$SCRIPT_DIR/scripts/tweaks/tweak-tui-theme.sh" ;;
-    bar-clock-centring) bash "$SCRIPT_DIR/scripts/tweaks/tweak-bar-clock-centring.sh" ;;
     wine-menu) bash "$SCRIPT_DIR/scripts/tweaks/tweak-wine-menu.sh" ;;
     terminal-padding) bash "$SCRIPT_DIR/scripts/tweaks/tweak-terminal-padding.sh" ;;
     wine-theme) bash "$SCRIPT_DIR/scripts/tweaks/tweak-wine-theme.sh" ;;
@@ -1158,7 +1161,6 @@ run_tweak_remove(){ # single tweak removal by id
   local id="$1"
   case $id in
     keepassxc-window) bash "$SCRIPT_DIR/scripts/tweaks/tweak-keepassxc-window.sh" --remove ;;
-    bar-clock-centring) bash "$SCRIPT_DIR/scripts/tweaks/tweak-bar-clock-centring.sh" --revert ;;
     terminal-padding) bash "$SCRIPT_DIR/scripts/tweaks/tweak-terminal-padding.sh" --remove ;;
     wine-theme) bash "$SCRIPT_DIR/scripts/tweaks/tweak-wine-theme.sh" --remove ;;
     *) return 1 ;;
@@ -1265,6 +1267,8 @@ module_of_path(){
     scripts/plugins/mx-master/*)                             echo mx-master ;;
     scripts/apps/hyprmod/*)                                 echo apps ;;
     scripts/fixes/fix-ableton-fullscreen.sh)                 echo ableton-fullscreen ;;
+    scripts/fixes/fix-bar-center-anchor.sh)                 echo bar-center-anchor ;;
+    scripts/fixes/fix-bluetooth.sh)                         echo bluetooth ;;
     scripts/apps/keepassxc/*)                                echo keepassxc ;;
     scripts/mosquitomarchy-update/*)                            echo mosquitomarchy-update ;;
     scripts/apps/superfile/*)                                echo superfile ;;

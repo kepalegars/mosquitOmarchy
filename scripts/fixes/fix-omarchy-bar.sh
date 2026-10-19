@@ -111,15 +111,15 @@ if command -v hyprctl >/dev/null 2>&1; then
   fi
 fi
 
-# The clock slide belongs to this fix too: revealing the hidden indicators
-# used to shove the clock sideways (its own tweak-bar-clock-centring.sh, kept
-# standalone as a preference under scripts/tweaks/). Run it here so one bar
-# fix covers the bar.
-CLOCK_FIX="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/../tweaks/tweak-bar-clock-centring.sh"
-if [[ -f $CLOCK_FIX ]]; then
-  bash "$CLOCK_FIX" || warn "Clock centring reported an issue (see above)."
+# The clock slide belongs to this fix too: a stale bar.centerAnchor is why the
+# centre section reflows and the clock moves when the indicators reveal. That
+# repair used to be a tweak; it is a fix now (the bar is broken, not merely
+# different), so run it here and one bar fix still covers the bar.
+ANCHOR_FIX="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/fix-bar-center-anchor.sh"
+if [[ -f $ANCHOR_FIX ]]; then
+  bash "$ANCHOR_FIX" || warn "Centre anchor repair reported an issue (see above)."
 else
-  warn "tweak-bar-clock-centring.sh not next to this script — clock slide unchecked."
+  warn "fix-bar-center-anchor.sh not next to this script — clock slide unchecked."
 fi
 
 # Report the resulting geometry so the user can confirm.

@@ -242,8 +242,6 @@ tweak_applied(){
   case "$1" in
     keepassxc-window)
       grep -q -- "keepassxc-window-setup" "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua" 2>/dev/null ;;
-    bar-clock-centring)
-      bash "$APP_DIR/scripts/tweaks/tweak-bar-clock-centring.sh" --status 2>/dev/null | grep -q '^applied' ;;
     terminal-padding)
       grep -rqs -- "mosquitomarchy-terminal-padding" \
         "${XDG_CONFIG_HOME:-$HOME/.config}/kitty" \
@@ -900,7 +898,7 @@ uninstall_state_signature(){
   for f in hyprland-crash ableton-wine-scroll 1px-seam; do
     fix_applied "$f" && sig+="fix:$f|"
   done
-  for t in keepassxc-window bar-clock-centring terminal-padding wine-theme; do
+  for t in keepassxc-window terminal-padding wine-theme; do
     tweak_applied "$t" && sig+="tweak:$t|"
   done
   # Still-present stock preinstalls (input to the Preinstalls folder).
@@ -1053,7 +1051,7 @@ _uninstall_tree(){
   # is a dead row.
   local -a applied_tweaks=()
   local tid
-  for tid in keepassxc-window bar-clock-centring terminal-padding wine-theme; do
+  for tid in keepassxc-window terminal-padding wine-theme; do
     tweak_applied "$tid" && applied_tweaks+=("$tid")
   done
   if ((${#applied_tweaks[@]})); then
