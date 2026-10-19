@@ -26,6 +26,18 @@ const path = require('path');
 const START_URL = 'https://web.whatsapp.com/';
 const ICON_PATH = path.join(__dirname, 'icon.png');
 
+// WhatsApp Web refuses to load in a browser it considers unsupported, and a
+// rejected client renders as a permanent, silent WHITE window (no error page).
+// Electron's own default UA advertises "Electron/<v>" (and its bundled Chromium
+// may be far newer than the Chrome token we used to hard-code: Electron 43 ships
+// Chromium 150, while the old string said Chrome/130) — an inconsistency
+// WhatsApp's client-side checks can flag. Report the REAL bundled Chromium
+// version, and drop the Electron token, so the UA matches navigator.userAgentData.
+const CHROME_VERSION = process.versions.chrome || '130.0.0.0';
+const USER_AGENT =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/' + CHROME_VERSION + ' Safari/537.36';
+
 let mainWindow = null;
 let tray = null;
 let isQuitting = false;
@@ -94,10 +106,28 @@ function createWindow(startHidden) {
   mainWindow.setMenuBarVisibility(false);
   mainWindow.removeMenu();
 
-  mainWindow.loadURL(START_URL, {
-    userAgent:
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ' +
-      '(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+  mainWindow.loadURL(START_URL, { userAgent: USER_AGENT });
+
+  // A failed main-frame load used to leave the window blank forever (there was
+  // no handler at all). WhatsApp Web can also lose its renderer; retry instead
+  // of staying white. `-3` is ERR_ABORTED, which fires on ordinary in-app
+  // navigations, so ignore it.
+  let reloadTimer = null;
+  const retryLoad = (why) => {
+    if (reloadTimer) return;
+    console.error('WhatsApp: ' + why + ' — reloading in 2s');
+    reloadTimer = setTimeout(() => {
+      reloadTimer = null;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.loadURL(START_URL, { userAgent: USER_AGENT });
+      }
+    }, 2000);
+  };
+  mainWindow.webContents.on('did-fail-load', (_e, code, desc, _url, isMainFrame) => {
+    if (isMainFrame && code !== -3) retryLoad('main-frame load failed (' + code + ' ' + desc + ')');
+  });
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    if (details.reason !== 'clean-exit') retryLoad('renderer gone (' + details.reason + ')');
   });
 
   // Open external links (e.g. wa.me, help pages) in the system browser.

@@ -16,8 +16,10 @@
 #   ./setup-ableton.sh -y           # everything automatic (default choices)
 #   ./setup-ableton.sh --links      # only (re)links the shared VST folders
 #   ./setup-ableton.sh --status     # current state, without modifying anything
-#   ./setup-ableton.sh -u|--uninstall  # uninstalls one or several editions
-#   ./setup-ableton.sh -y -u        # idem, automatic (uninstall everything)
+#   ./setup-ableton.sh -u|--uninstall  # pick editions to uninstall (Tab = several),
+#                                       # confirm, then a CLEAN runtime/prefix removal
+#                                       # through the official .run (see step_uninstall)
+#   ./setup-ableton.sh -y -u        # idem, automatic (uninstall every edition + all)
 #   ./setup-ableton.sh --check-update  # checks/downloads the latest update
 #                                       # of the native installer from GitHub
 #
@@ -857,82 +859,158 @@ step_cleanup(){
 
 # ───────────────────────── Uninstalling editions ─────────────────────────
 # Lists every edition folder in ProgramData/Ableton, including the update
-# leftovers ".X_updated" (5 GB) left by an interrupted transaction.
-# Proposes a multi-selection ("1 3" / "1,3" / "1-3") and deletes the chosen
-# folders + their menu entries. The other editions remain installed.
-step_uninstall(){
-  local ableton_root="$HOME/.wine-ableton/drive_c/ProgramData/Ableton"
-  local all_dirs=()
-  local d label i=1 choice sel_input n sel n2 line
-  hr; msg "Uninstall of Ableton editions (several at once ?)"
-  if [[ ! -d "$ableton_root" ]]; then
-    warn "No edition folder in $ableton_root — nothing to uninstall."
-    return 0
+# leftovers ".X_updated" (5 GB) left by an interrupted transaction. The user
+# picks which ones (Tab multi-select under gum; the numbered "1 3" / "1,3" /
+# "1-3" prompt otherwise), confirms, then the chosen folders and their menu
+# entries are removed. Once the prefix holds no edition any more, the official
+# installer's own uninstall (sh install-ableton-*.run uninstall …) is offered
+# for a CLEAN runtime/prefix removal instead of an rm -rf of the prefix by hand.
+
+# uninstall_dirs → the edition dirs, main editions first then update leftovers.
+uninstall_dirs(){
+  local ableton_root="$HOME/.wine-ableton/drive_c/ProgramData/Ableton" d
+  for d in "$ableton_root"/Live*/; do [[ -d "$d" ]] && printf '%s\n' "${d%/}"; done
+  for d in "$ableton_root"/.*_updated;  do [[ -d "$d" ]] && printf '%s\n' "${d%/}"; done
+}
+
+# dir_label DIR → a human label ("Live 12 Suite", ".Live 12 Suite_updated (…)").
+dir_label(){
+  local base; base="$(basename "$1")"
+  if [[ "$base" = .*_updated ]]; then
+    printf '%s   (update leftover — %s)' "$base" "$(du -sh "$1" 2>/dev/null | cut -f1 || echo '?')"
+  else
+    printf '%s' "$base"
   fi
+}
 
-  # Main edition folders ("Live 12 Suite", "Live 12 Intro", ...) then
-  # update leftovers (".Live 12 Suite_updated", ...) — listed in this order.
-  for d in "$ableton_root"/Live*/; do
-    [[ -d "$d" ]] && all_dirs+=("${d%/}")
-  done
-  for d in "$ableton_root"/.*_updated; do
-    [[ -d "$d" ]] && all_dirs+=("${d%/}")
-  done
-
-  [[ "${#all_dirs[@]}" -gt 0 ]] || {
-    warn "No edition found in $ableton_root."
+# Clean removal of the runtime/prefix through the official .run, whose own
+# scopes are: runtime only (--keep-prefix), prefix only (--prefix-only), all
+# (--delete-prefix). Offered once no edition is left in the prefix.
+step_run_uninstall(){
+  [[ -n "$RUN_INSTALLER" && -f "$RUN_INSTALLER" ]] || {
+    warn "install-ableton-*.run absent — the runtime/prefix are left in place."
     return 0
   }
-
-  for d in "${all_dirs[@]}"; do
-    label="$(basename "$d")"
-    if [[ "$label" = .*_updated ]]; then
-      printf ' %2d) %s   (update leftover — %s)\n' "$i" "$label" "$(du -sh "$d" 2>/dev/null | cut -f1 || echo '?')"
-    else
-      printf ' %2d) %s\n' "$i" "$label"
-    fi
-    i=$((i+1))
-  done
-  echo
-  local -a update_dir_list=()
-  for d in "${all_dirs[@]}"; do [[ "$(basename "$d")" = .*_updated ]] && update_dir_list+=("$d"); done
-  [[ "${#update_dir_list[@]}" -gt 0 ]] && \
-    warn "The _updated folders are duplicates of an interrupted update: safe to delete."
-
+  local scope="" pick c
   if (( YES )); then
-    sel_input="$(seq 1 $((i-1)) | tr '\n' ' ')"
+    scope=--delete-prefix
+  elif command -v gum >/dev/null; then
+    pick="$(printf '%s\n' \
+      "Everything — remove the runtime and the prefix" \
+      "Runtime only — keep the prefix" \
+      "Prefix only — keep the runtime" \
+      "Nothing — keep both" \
+      | gum choose --header "Also remove the Linux runtime / prefix ?")" || true
+    case "$pick" in
+      Everything*) scope=--delete-prefix ;;
+      Runtime*)    scope=--keep-prefix ;;
+      Prefix*)     scope=--prefix-only ;;
+      *)           scope="" ;;
+    esac
   else
+    echo "   Also remove the Linux runtime / prefix ?"
+    echo "     a) Everything        r) Runtime only"
+    echo "     p) Prefix only       n) Nothing"
+    read -rp "   Choice [a/r/p/n] : " c
+    case "$c" in
+      a|A) scope=--delete-prefix ;; r|R) scope=--keep-prefix ;;
+      p|P) scope=--prefix-only ;;   *)   scope="" ;;
+    esac
+  fi
+  [[ -n "$scope" ]] || { ok "Runtime and prefix kept."; return 0; }
+  msg "Official uninstaller: sh ${RUN_INSTALLER##*/} uninstall $scope"
+  if sh "$RUN_INSTALLER" uninstall "$scope"; then
+    rm -f "$HOME/.local/bin/ableton-live" "$HOME/.local/share/applications/ableton-live.desktop"
+    command -v update-desktop-database >/dev/null && update-desktop-database "$HOME/.local/share/applications" >/dev/null 2>&1 || true
+    ok "Clean removal done ($scope)."
+  else
+    warn "The official uninstaller returned $? — check its output above."
+  fi
+}
+
+step_uninstall(){
+  local ableton_root="$HOME/.wine-ableton/drive_c/ProgramData/Ableton"
+  local -a all_dirs=() labels=() sel_list=() chosen=()
+  local d i sel sel_input n n2 line label
+  hr; msg "Uninstall of Ableton editions (several at once ?)"
+  if [[ ! -d "$ableton_root" ]]; then
+    warn "No edition folder in $ableton_root."
+    step_run_uninstall
+    return 0
+  fi
+
+  while IFS= read -r d; do [[ -n "$d" ]] && all_dirs+=("$d"); done < <(uninstall_dirs)
+  if (( ${#all_dirs[@]} == 0 )); then
+    warn "No edition found in $ableton_root."
+    step_run_uninstall
+    return 0
+  fi
+  for d in "${all_dirs[@]}"; do labels+=("$(dir_label "$d")"); done
+
+  # The _updated folders are duplicates left by an interrupted update.
+  local has_upd=0
+  for d in "${all_dirs[@]}"; do [[ "$(basename "$d")" = .*_updated ]] && has_upd=1; done
+  (( has_upd )) && warn "The _updated folders are duplicates of an interrupted update: safe to delete."
+  echo
+
+  # ── selection ────────────────────────────────────────────────────────────
+  if (( ${#all_dirs[@]} == 1 )); then
+    sel_list=(1)
+  elif (( YES )); then
+    for ((i=1; i<=${#all_dirs[@]}; i++)); do sel_list+=("$i"); done
+  elif command -v gum >/dev/null; then
+    local tsel
+    tsel="$(printf '%s\n' "${labels[@]}" \
+      | gum choose --no-limit --height 15 \
+        --header "Editions to uninstall — Tab = select several, Enter = OK")" || true
+    [[ -n "$tsel" ]] || { ok "Nothing selected — nothing uninstalled."; return 0; }
+    while IFS= read -r sel; do
+      [[ -n "$sel" ]] || continue
+      for i in "${!labels[@]}"; do
+        [[ "${labels[$i]}" == "$sel" ]] && sel_list+=("$((i+1))")
+      done
+    done <<< "$tsel"
+  else
+    i=1
+    for d in "${all_dirs[@]}"; do printf ' %2d) %s\n' "$i" "$(dir_label "$d")"; i=$((i+1)); done
+    echo
     read -rp "Uninstall which ones ? [numbers separated by spaces/commas or range] (Enter=none) " sel_input
-  fi
-  [[ -n "$sel_input" ]] || { ok "Nothing uninstalled."; return 0; }
-
-  # "1,3" -> "1 3" ; "1-3" -> "1 2 3"
-  sel_input="${sel_input//,/ }"
-  local -a sel_list=()
-  if [[ "$sel_input" =~ ^[0-9-]+([[:space:]][0-9-]+)*$ ]]; then
-    for n in $sel_input; do
-      if [[ "$n" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-        for ((n2=${BASH_REMATCH[1]}; n2<=${BASH_REMATCH[2]}; n2++)); do sel_list+=("$n2"); done
-      else
-        sel_list+=("$n")
-      fi
-    done
-  else
-    err "Invalid input — numbers separated by spaces (e.g. 1 3) or range (e.g. 2-4)."
-    return 1
+    [[ -n "$sel_input" ]] || { ok "Nothing uninstalled."; return 0; }
+    sel_input="${sel_input//,/ }"
+    if [[ "$sel_input" =~ ^[0-9-]+([[:space:]][0-9-]+)*$ ]]; then
+      for n in $sel_input; do
+        if [[ "$n" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+          for ((n2=${BASH_REMATCH[1]}; n2<=${BASH_REMATCH[2]}; n2++)); do sel_list+=("$n2"); done
+        else
+          sel_list+=("$n")
+        fi
+      done
+    else
+      err "Invalid input — numbers separated by spaces (e.g. 1 3) or range (e.g. 2-4)."
+      return 1
+    fi
   fi
 
-  local removed=0 total=${#all_dirs[@]}
+  [[ "${#sel_list[@]}" -gt 0 ]] || { ok "Nothing selected — nothing uninstalled."; return 0; }
+
+  # ── confirmation ─────────────────────────────────────────────────────────
   for sel in "${sel_list[@]}"; do
-    (( sel >= 1 && sel <= total )) || { warn "Number $sel out of range — ignored."; continue; }
+    (( sel >= 1 && sel <= ${#all_dirs[@]} )) || { warn "Number $sel out of range — ignored."; continue; }
+    chosen+=("$(basename "${all_dirs[$((sel-1))]}")")
+  done
+  (( ${#chosen[@]} )) || { ok "Nothing selected — nothing uninstalled."; return 0; }
+  ask "Uninstall ${#chosen[@]} item(s): ${chosen[*]} ?" y || { ok "Cancelled — nothing uninstalled."; return 0; }
+
+  # ── removal ──────────────────────────────────────────────────────────────
+  local removed=0 entry
+  for sel in "${sel_list[@]}"; do
+    (( sel >= 1 && sel <= ${#all_dirs[@]} )) || continue
     d="${all_dirs[$((sel-1))]}"
     [[ -d "$d" ]] || continue
     line="$(basename "$d")"
     msg "Removing $line …"
-    pkill -f "ProgramData/Ableton/${line}/" 2>/dev/null || true   # closes the edition if it is running
+    pkill -f "ProgramData/Ableton/${line}/" 2>/dev/null || true   # closes the edition if running
     rm -rf -- "$d"
-    # Remove the corresponding menu entry
-    local entry
     for entry in "$HOME/.local/share/applications/ableton-live-"*.desktop; do
       if grep -qF "$line/Program/Ableton Live" "$entry" 2>/dev/null; then
         rm -f -- "$entry"
@@ -943,10 +1021,18 @@ step_uninstall(){
     removed=$((removed+1))
   done
   if (( removed )); then
-    command -v update-desktop-database >/dev/null && update-desktop-database "$HOME/.local/share/applications" >/dev/null 2>&1
+    command -v update-desktop-database >/dev/null && update-desktop-database "$HOME/.local/share/applications" >/dev/null 2>&1 || true
     ok "$removed edition(s) uninstalled."
   else
     ok "Nothing deleted."
+  fi
+
+  # ── clean runtime/prefix removal once the prefix holds no edition ─────────
+  local -a left=()
+  while IFS= read -r d; do [[ -n "$d" ]] && left+=("$d"); done < <(uninstall_dirs)
+  if (( ${#left[@]} == 0 )); then
+    hr; msg "No edition left in the prefix."
+    step_run_uninstall
   fi
 }
 

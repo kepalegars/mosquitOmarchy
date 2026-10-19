@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,6 +19,11 @@ import (
 // firstRunMsg is delivered once, at startup, when the "add a shortcut?" question
 // has never been answered (marker file absent).
 type firstRunMsg struct{}
+
+// abletonUninstallMsg reports that the Ableton module's own interactive
+// uninstall (edition picker + confirmation + clean removal) has exited and the
+// terminal is ours again.
+type abletonUninstallMsg struct{ err error }
 
 func shortcutMarkerPath() string {
 	return filepath.Join(os.Getenv("HOME"), ".local/state/mosquitomarchy/shortcut-prompted")
@@ -107,6 +113,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case abletonUninstallMsg:
+		// The module's picker and clean removal ran in the terminal; the TUI is
+		// back. Resume anything batched behind Ableton first (a batched
+		// uninstall re-enters startUninstall), then refresh the installed-only
+		// tree so the removed editions disappear.
+		if len(m.uninstallWait) > 0 {
+			keys, pmsg := m.uninstallWait, m.uninstallMsg
+			m.uninstallWait, m.uninstallMsg = nil, ""
+			return m.startUninstall(keys, pmsg)
+		}
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("ableton uninstall finished with errors")
+		} else {
+			m.toast, _ = m.toast.SetOK("ableton uninstalled")
+		}
+		return m, fetchTreeCmd("uninstall-tree")
+
 	// THE SETTINGS RULE (see PickerItem.Toggle). A toggle repaints FIRST and
 	// applies SECOND, so the row answers the instant it is chosen and the menu
 	// never blocks on a subprocess. The write is a command, and its result is
@@ -2947,6 +2970,17 @@ func (m model) startUninstall(keys []string, prompt string) (model, tea.Cmd) {
 	if len(rest) == 0 {
 		return m, nil
 	}
+	// Ableton carries its own uninstall with a step this generic confirm cannot
+	// express: when several Live editions share the prefix, the user picks which
+	// ones (Tab = several) BEFORE the confirmation, and a clean runtime/prefix
+	// removal follows through the official installer. That picker lives in the
+	// module, so hand it the terminal (tea.ExecProcess) instead of extending the
+	// confirm here. Any keys batched behind Ableton resume once it returns.
+	if i := indexOfString(rest, "ableton"); i >= 0 {
+		m.uninstallWait = append(append([]string(nil), rest[:i]...), rest[i+1:]...)
+		m.uninstallMsg = prompt
+		return m.runAbletonUninstall()
+	}
 	m.uninstallWait = rest
 	m.uninstallMsg = prompt
 	m.pendingAction = "uninstall"
@@ -2955,6 +2989,30 @@ func (m model) startUninstall(keys []string, prompt string) (model, tea.Cmd) {
 	m.pendingNo = "Cancel"
 	m.pendingYes = "Uninstall"
 	return m.resumeUninstall()
+}
+
+// indexOfString is a tiny helper (no slices.Index in the stdlib yet).
+func indexOfString(ss []string, want string) int {
+	for i, s := range ss {
+		if s == want {
+			return i
+		}
+	}
+	return -1
+}
+
+// runAbletonUninstall suspends the TUI and runs the Ableton module's own
+// `--uninstall` flow in the real terminal: the edition multi-select (Tab), the
+// confirmation, and the clean removal. Re-implementing that picker in the TUI
+// would duplicate the module's logic and drift from it; this way the two are
+// always the same screen.
+func (m model) runAbletonUninstall() (model, tea.Cmd) {
+	m.pendingAction = ""
+	script := filepath.Join(repoRoot(), "scripts/apps/ableton/setup-ableton.sh")
+	c := exec.Command("bash", script, "--uninstall")
+	return m, tea.ExecProcess(c, func(err error) tea.Msg {
+		return abletonUninstallMsg{err: err}
+	})
 }
 
 // preinstallsFolder is the tree folder holding the per-package stock
@@ -3086,6 +3144,12 @@ func (m model) resumeUninstall() (model, tea.Cmd) {
 	m.uninstallWait, m.uninstallMsg = nil, ""
 	if len(keys) == 0 {
 		return m, nil
+	}
+	// Ableton goes through its own edition picker (see startUninstall).
+	if i := indexOfString(keys, "ableton"); i >= 0 {
+		m.uninstallWait = append(append([]string(nil), keys[:i]...), keys[i+1:]...)
+		m.uninstallMsg = msg
+		return m.runAbletonUninstall()
 	}
 	m.pendingAction = "uninstall"
 	m.pendingArgs = keys

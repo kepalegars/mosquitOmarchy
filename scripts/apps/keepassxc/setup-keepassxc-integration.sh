@@ -1,60 +1,59 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - KeePassXC secret service (REPLACES gnome-keyring)
+# Omarchy Custom - KeePassXC (password manager + BROWSER INTEGRATION)
 # =============================================================================
-# Makes KeePassXC the desktop's system-wide Secret Service provider
-# (freedesktop.org Secret Service, the D-Bus `org.freedesktop.secrets` name)
-# instead of gnome-keyring. Applications talking to the system keyring
-# (browsers saving passwords, Seahorse, libsecret, secret-tool, …) then
-# store/retrieve their secrets in an UNLOCKED KeePassXC database.
+# This module keeps KeePassXC as your personal password manager and wires the
+# KeePassXC-Browser extension to it. It does NOT touch Omarchy's system keyring:
+# gnome-keyring keeps serving the freedesktop.org Secret Service
+# (org.freedesktop.secrets) for apps (Chromium "Safe Storage", kDrive tokens,
+# libsecret/secret-tool, …), exactly as Omarchy ships it.
 #
-# IMPORTANT — this REPLACES gnome-keyring COMPLETELY:
-#   • every existing gnome-keyring secret (saved app/Wi-Fi passwords, …) is
-#     NOT migrating automatically: they must be ported to KeePassXC MANUALLY.
-#     (Migrating the passwords/settings from one to the other is planned
-#     later; nothing in this script touches them.)
-#   • gnome-keyring is NOT removed automatically: setup ASKS whether to
-#     remove the package (option). Its settings stay on the disk either way —
-#     a plain reinstall of gnome-keyring recovers them.
-#   • KeePassXC is a graphical password manager: the exposed database must be
-#     opened/unlocked for apps to store secrets (KeePassXC prompts).
+# WHY (history): an earlier version of this module REPLACED gnome-keyring with
+# KeePassXC (D-Bus override + gnome-keyring masked + [FdoSecrets] Enabled=true).
+# That made KeePassXC answer every "give me my secret" request from Chromium,
+# which shows an "app requests access to Chromium Safe Storage" prompt on EVERY
+# launch — even after "allow all & future" — and left apps that already had a
+# secret in gnome-keyring (kDrive, for example) unable to read it, so they asked
+# to log in again on every boot. KeePassXC FdoSecrets cannot import the existing
+# gnome-keyring store, so the two simply do not mix for app secrets.
 #
-# What this script does (idempotent, marker-managed):
+# The old takeover is still available (opt-in) with --secret-service for anyone
+# who really wants KeePassXC to own org.freedesktop.secrets.
+#
+# What the DEFAULT apply does (idempotent):
 #   1. Ensures the keepassxc package (pacman).
-#   2. Registers KeePassXC as the DBus default Secret Service provider —
-#      the upstream-documented user-level override
-#      ~/.local/share/dbus-1/services/org.freedesktop.secrets.service
-#      (Exec=/usr/bin/keepassxc). The system gnome-keyring file is untouched.
-#   3. Shadows gnome-keyring's session autostart so it never races KeePassXC
-#      for the D-Bus name: ~/.config/autostart/gnome-keyring-secrets.desktop
-#      (Hidden=true — user file wins over /etc/xdg/autostart) and
-#      systemctl --user mask gnome-keyring-daemon.service.
-#   4. Writes ~/.config/keepassxc/keepassxc.ini → [FdoSecrets] Enabled=true
-#      (the same flag KeePassXC itself sets; a .pre-keepassxc backup of the
-#      ini is kept on first write).
-#   5. Asks (confirm overlay) whether to also UNINSTALL the gnome-keyring
-#      package — its settings stay on the disk, a plain reinstall restores.
-#   6. Starts KeePassXC so the D-Bus name is owned immediately.
-#
-# Generic manual step that stays interactive BY DESIGN (KeePassXC keeps the
-# exposure inside the encrypted database):
-#   • KeePassXC → Tools → Settings → Secret Service Integration → confirm the
-#     enable, then Database → Database Settings → Secret Service Integration
-#     → expose a group (apps only read/write inside that group).
+#   2. REVERTS any previous takeover so Omarchy's gnome-keyring serves the
+#      Secret Service again (removes the D-Bus override, restores the backup,
+#      removes the gnome-keyring autostart shadow, unmasks gnome-keyring-daemon,
+#      sets [FdoSecrets] Enabled=false) and starts gnome-keyring.
+#   3. Installs the KeePassXC-Browser native-messaging manifests for both
+#      Firefox/Zen and Chromium (the Chromium one was missing, which is why the
+#      browser link "never worked").
+#   4. Enables tray-on-close so KeePassXC survives closing its window.
+#   5. Pins the default .kdbx so KeePassXC opens your database instead of
+#      offering "create a new database" on every launch.
 #
 # Usage:
-#   ./setup-keepassxc-integration.sh            # apply (idempotent)
-#   ./setup-keepassxc-integration.sh --status   # status
-#   ./setup-keepassxc-integration.sh --remove   # restore the omarchy default
-#   ./setup-keepassxc-integration.sh -y         # non-interactive (nothing asked)
+#   ./setup-keepassxc-integration.sh                  # apply (browser integration)
+#   ./setup-keepassxc-integration.sh --secret-service # ALSO replace gnome-keyring (old behaviour)
+#   ./setup-keepassxc-integration.sh --status         # status
+#   ./setup-keepassxc-integration.sh --remove         # undo this module (browser manifests + pin + any takeover)
+#   ./setup-keepassxc-integration.sh -y               # non-interactive (nothing asked)
+#
+# Settings that stay manual BY DESIGN (encrypted in the database, not scriptable):
+#   • KeePassXC → Tools → Settings → Browser Integration → tick the browsers you
+#     use and "Connect to database on startup"; then, in the browser, click the
+#     KeePassXC-Browser icon → Connect and grant access.
+#   • When switching to --secret-service: Database → Database Settings → Secret
+#     Service Integration → expose a group.
 #
 # KEEPASSXC module — was in scripts/plugins/, now lives in scripts/apps/
 # (the module is an APP manager, no longer a plugin. Done in depth: module
 # path, README link, catalog entry and the TUI 'i' info all point here).
 #
-# Source: keepassxc docs topics/SecretService.adoc (the exact upstream
-# snippet), issues #6274/#13464 (masking gnome-keyring-daemon.service is the
-# documented fallback when the D-Bus override alone is not enough).
+# Source: keepassxc-browser wiki "Native-messaging-script-files" (the manifest
+# templates), keepassxc docs topics/SecretService.adoc (the --secret-service
+# opt-in), and issues #6274/#13464 (why masking gnome-keyring breaks apps).
 # =============================================================================
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/elevate.bash"  # mq_sudo: native pkexec prompt when not root
@@ -74,15 +73,20 @@ KPXC_AUTOSTART_SHADE='gnome-keyring-secrets.desktop'
 KPXC_INI_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/keepassxc"
 KPXC_INI="$KPXC_INI_DIR/keepassxc.ini"
 KPXC_INI_BAK="$KPXC_INI.pre-keepassxc"
+KPXC_PROXY="/usr/bin/keepassxc-proxy"
+# KeePassXC-Browser extension ids (stable store id, and the Edge id).
+KPXC_CHROME_ID="oboonakemofpalcgghocfoadofidjkkk"
+KPXC_EDGE_ID="pdffhmdngciaglkoonimfcmckehcpafo"
 
-YES=0
+YES=0 WANT_SECRET_SERVICE=0
 for a in "$@"; do case "$a" in
   -y|--yes) YES=1 ;;
+  --secret-service|--replace-keyring) WANT_SECRET_SERVICE=1 ;;
   --remove-gnome-keyring) export MOSQUITOMARCHY_KEEPASSXC_REMOVE_GNOME_KEYRING=1 ;;
   --keep-gnome-keyring) export MOSQUITOMARCHY_KEEPASSXC_REMOVE_GNOME_KEYRING=0 ;;
   --status) MODE=status ;;
   --remove|--uninstall) MODE=remove ;;
-  -h|--help) sed -n '2,50p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,58p' "$0"; exit 0 ;;
 esac; done
 MODE="${MODE:-apply}"
 
@@ -111,7 +115,7 @@ ask_yes(){
     return $ret
   fi
   if command -v zenity >/dev/null 2>&1; then
-    zenity --question --title="KeePassXC secret service" --text="$q" 2>/dev/null && return 0
+    zenity --question --title="KeePassXC integration" --text="$q" 2>/dev/null && return 0
     return 1
   fi
   warn "No GUI to ask — assuming 'no'."
@@ -145,10 +149,26 @@ print("yes" if c.getboolean("FdoSecrets", "Enabled", fallback=False) else "no")
 PY
 }
 
+# ─── low-level: keepassxc.ini [Browser] flag ─────────────────────────────────
+set_browser_enabled(){
+  [[ -f $KPXC_INI ]] || { mkdir -p "$KPXC_INI_DIR"; printf '\n' > "$KPXC_INI"; }
+  if [[ ! -e $KPXC_INI_BAK ]]; then cp -f "$KPXC_INI" "$KPXC_INI_BAK"; fi
+  python3 - "$KPXC_INI" <<'PY'
+import configparser, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+c = configparser.ConfigParser(); c.optionxform = str; c.read(p)
+if not c.has_section("Browser"):
+    c.add_section("Browser")
+c.set("Browser", "Enabled", "true")
+with open(p, "w") as fh:
+    c.write(fh)
+PY
+}
+
 # ─── low-level: keepassxc.ini tray-on-close ───────────────────────────────────
-# Closing the window must hide KeePassXC to the tray, not quit it: the secret
-# service dies with the app, and every web app relying on it breaks until the
-# next manual launch. Three GUI keys, same python pattern as above:
+# Closing the window must hide KeePassXC to the tray, not quit it: the browser
+# proxy and any secret-service use survive, and the user stops losing it.
+# Three GUI keys, same python pattern as above:
 #   ShowTrayIcon   = the tray icon itself (without it the other two do nothing)
 #   MinimizeToTray = minimize goes to the tray instead of the taskbar
 #   MinimizeOnClose = the X button minimizes instead of quitting
@@ -181,7 +201,117 @@ print("yes" if ok else "no")
 PY
 }
 
-# ─── steps ────────────────────────────────────────────────────────────────────
+# ─── browser integration (§3) ────────────────────────────────────────────────
+# KeePassXC-Browser talks to keepassxc-proxy over the browser's native-messaging
+# channel. Each browser reads a JSON manifest from its own directory; KeePassXC
+# normally writes these from its Settings UI, but the Chromium one was missing
+# here — so the extension could never reach KeePassXC ("le link browser ne
+# fonctionne toujours pas"). We write both manifests directly.
+install_browser_manifests(){
+  if [[ ! -x $KPXC_PROXY ]]; then
+    warn "keepassxc-proxy not found ($KPXC_PROXY) — browser integration unavailable."
+    return 0
+  fi
+
+  # Firefox / Zen (and other Gecko browsers): ~/.mozilla/native-messaging-hosts
+  local ff="$HOME/.mozilla/native-messaging-hosts"
+  mkdir -p "$ff"
+  cat > "$ff/org.keepassxc.keepassxc_browser.json" <<EOF
+{
+  "allowed_extensions": ["keepassxc-browser@keepassxc.org"],
+  "description": "KeePassXC integration with native messaging support",
+  "name": "org.keepassxc.keepassxc_browser",
+  "path": "$KPXC_PROXY",
+  "type": "stdio"
+}
+EOF
+  ok "Firefox/Zen native-messaging manifest: $ff/org.keepassxc.keepassxc_browser.json"
+
+  # Chromium (and Chromium-based: Brave, Vivaldi, …) keep per-browser dirs.
+  local nm
+  for nm in \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/chromium/NativeMessagingHosts" \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/BraveSoftware/Brave-Browser/NativeMessagingHosts" \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/vivaldi/NativeMessagingHosts"; do
+    mkdir -p "$nm"
+    cat > "$nm/org.keepassxc.keepassxc_browser.json" <<EOF
+{
+  "allowed_origins": [
+    "chrome-extension://$KPXC_CHROME_ID/",
+    "chrome-extension://$KPXC_EDGE_ID/"
+  ],
+  "description": "KeePassXC integration with native messaging support",
+  "name": "org.keepassxc.keepassxc_browser",
+  "path": "$KPXC_PROXY",
+  "type": "stdio"
+}
+EOF
+  done
+  ok "Chromium native-messaging manifest installed (chromium/Brave/Vivaldi)."
+  set_browser_enabled
+  ok "keepassxc.ini: [Browser] Enabled=true"
+}
+
+remove_browser_manifests(){
+  local f
+  for f in \
+    "$HOME/.mozilla/native-messaging-hosts/org.keepassxc.keepassxc_browser.json" \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/chromium/NativeMessagingHosts/org.keepassxc.keepassxc_browser.json" \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/BraveSoftware/Brave-Browser/NativeMessagingHosts/org.keepassxc.keepassxc_browser.json" \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/vivaldi/NativeMessagingHosts/org.keepassxc.keepassxc_browser.json"; do
+    [[ -f $f ]] && rm -f "$f" && ok "removed $f"
+  done
+}
+
+# ─── keyring (§2): keep Omarchy's gnome-keyring as the Secret Service ─────────
+start_gnome_keyring(){
+  systemctl --user start gnome-keyring-daemon.socket >/dev/null 2>&1 || true
+  systemctl --user start gnome-keyring-daemon.service >/dev/null 2>&1 || true
+  if ! pgrep -x gnome-keyring-daemon >/dev/null 2>&1; then
+    setsid --fork gnome-keyring-daemon --start --foreground --components=secrets >/dev/null 2>&1 &
+    disown
+  fi
+}
+
+restore_omarchy_keyring(){
+  local changed=0
+  # D-Bus activation override → KeePassXC. Only remove it if it is OURS
+  # (marker) or plainly points at keepassxc, so we never delete a user file.
+  if [[ -f $KPXC_DBUS_FILE ]] && grep -qE 'KeePassXCSecretService|Exec=/usr/bin/keepassxc' "$KPXC_DBUS_FILE" 2>/dev/null; then
+    rm -f "$KPXC_DBUS_FILE"; changed=1
+  fi
+  if [[ -f $KPXC_DBUS_BAK ]]; then
+    # The "backup" is only the ORIGINAL owner if it does not itself name
+    # keepassxc — an earlier run of the old module could have backed up its own
+    # override, which would silently re-install the takeover. Discard that case.
+    if grep -qE 'KeePassXCSecretService|Exec=/usr/bin/keepassxc' "$KPXC_DBUS_BAK" 2>/dev/null; then
+      rm -f "$KPXC_DBUS_BAK"
+    else
+      mv -f "$KPXC_DBUS_BAK" "$KPXC_DBUS_FILE" 2>/dev/null || true
+    fi
+    changed=1
+  fi
+  # gnome-keyring autostart shadow.
+  if [[ -f "$KPXC_AUTOSTART_DIR/$KPXC_AUTOSTART_SHADE" ]]; then
+    rm -f "$KPXC_AUTOSTART_DIR/$KPXC_AUTOSTART_SHADE"; changed=1
+  fi
+  # Unmask gnome-keyring so D-Bus activation works again.
+  systemctl --user unmask gnome-keyring-daemon.service >/dev/null 2>&1 || true
+  systemctl --user unmask gnome-keyring-daemon.socket >/dev/null 2>&1 || true
+  # KeePassXC must not claim org.freedesktop.secrets.
+  if [[ "$(fdo_enabled)" == yes ]]; then
+    set_fdo_enabled false; changed=1
+  fi
+  if (( changed )); then
+    ok "Omarchy's gnome-keyring secret service restored; KeePassXC FdoSecrets disabled."
+    warn "Restart KeePassXC once (quit from the tray, then relaunch) so it releases 'org.freedesktop.secrets'."
+  else
+    ok "Omarchy's gnome-keyring secret service already in place."
+  fi
+  start_gnome_keyring
+}
+
+# ─── takeover (§ --secret-service), kept for opt-in ──────────────────────────
 ensure_package(){
   if command -v keepassxc >/dev/null 2>&1; then
     ok "keepassxc package present ($(pacman -Q keepassxc 2>/dev/null | cut -d' ' -f2))"
@@ -276,50 +406,79 @@ offer_gnome_keyring_removal(){
   fi
 }
 
+takeover_secret_service(){
+  info "Opt-in: making KeePassXC the system Secret Service (REPLACES gnome-keyring)."
+  info "Existing gnome-keyring secrets must be MIGRATED MANUALLY to KeePassXC."
+  write_dbus_override
+  set_fdo_enabled true
+  ok "keepassxc.ini: [FdoSecrets] Enabled=true (backup: $KPXC_INI_BAK)"
+  write_autostart_shade
+  mask_daemon_service
+  offer_gnome_keyring_removal
+  start_keepassxc
+  info "Still to do in the KeePassXC UI: Settings → Secret Service Integration →"
+  info "confirm enabled; Database → Database Settings → expose a group."
+}
+
 # ─── entry points ─────────────────────────────────────────────────────────────
 do_status(){
-  echo "package      : $(command -v keepassxc >/dev/null && echo present || echo absent)"
-  echo "dbus override: $([[ -f $KPXC_DBUS_FILE ]] && echo present || echo absent)"
-  echo "ini flagged  : $(fdo_enabled)"
-  echo "tray on close: $(tray_on_close)"
-  echo "autostart    : $([[ -f "$KPXC_AUTOSTART_DIR/$KPXC_AUTOSTART_SHADE" ]] && echo shadowed || echo stock)"
-  echo "user masking : $(systemctl --user is-enabled gnome-keyring-daemon.service 2>/dev/null || echo n/a)"
+  echo "package        : $(command -v keepassxc >/dev/null && echo present || echo absent)"
+  echo "fdo secrets    : $(fdo_enabled)   (secret service owned by KeePassXC when yes)"
+  echo "browser integ. : $(python3 - "$KPXC_INI" <<'PY' 2>/dev/null || echo no
+import configparser, sys
+c = configparser.ConfigParser(); c.read(sys.argv[1])
+print("yes" if c.getboolean("Browser", "Enabled", fallback=False) else "no")
+PY
+)"
+  echo "chromium link  : $([[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/chromium/NativeMessagingHosts/org.keepassxc.keepassxc_browser.json" ]] && echo manifest-present || echo absent)"
+  echo "firefox link   : $([[ -f "$HOME/.mozilla/native-messaging-hosts/org.keepassxc.keepassxc_browser.json" ]] && echo manifest-present || echo absent)"
+  echo "tray on close  : $(tray_on_close)"
+  echo "dbus override  : $([[ -f $KPXC_DBUS_FILE ]] && echo present || echo absent)"
+  echo "gnome-keyring  : $(systemctl --user is-enabled gnome-keyring-daemon.service 2>/dev/null || echo n/a)"
   local pin
   pin="$(grep -E '^LastActiveDatabase=' "$KPXC_INI" 2>/dev/null | cut -d= -f2-)"
-  echo "pinned DB    : ${pin:-<none — first KeePassXC run chooses it, then it is pinned>}"
+  echo "pinned DB      : ${pin:-<none — first KeePassXC run chooses it, then it is pinned>}"
 }
 
 do_apply(){
   hr
-  info "KeePassXC secret service — REPLACES gnome-keyring completely."
-  info "Existing gnome-keyring secrets must be MIGRATED MANUALLY to KeePassXC."
+  if (( WANT_SECRET_SERVICE )); then
+    info "KeePassXC — password manager + browser integration + SECRET SERVICE takeover."
+  else
+    info "KeePassXC — password manager + browser integration (Omarchy keyring left intact)."
+  fi
   ensure_package
-  write_dbus_override
-  set_fdo_enabled true
-  ok "keepassxc.ini: [FdoSecrets] Enabled=true (backup: $KPXC_INI_BAK)"
+
+  # Step 1: make sure Omarchy's keyring is the Secret Service (revert any
+  # previous takeover) — unless the user explicitly asked for the takeover.
+  if (( WANT_SECRET_SERVICE )); then
+    takeover_secret_service
+  else
+    restore_omarchy_keyring
+  fi
+
+  # Step 2: browser integration (both manifests) + tray-on-close.
+  install_browser_manifests
   set_tray_on_close
-  write_autostart_shade
-  mask_daemon_service
-  offer_gnome_keyring_removal
-  # DEFAULT DATABASE: at the KeePassXC FIRST launch the user chooses (creates
-  # or opens) the ONE .kdbx that everything else should use; this module
-  # records it into keepassxc.ini (pin step) so every FUTURE launch — and
-  # the browser extension + secret service flow of any web app — opens THAT
-  # database instead of offering "create a new database" every time.
+
+  # Step 3: DEFAULT DATABASE — at the KeePassXC FIRST launch the user chooses
+  # (creates or opens) the ONE .kdbx that everything else should use; this
+  # module records it into keepassxc.ini (pin step) so every FUTURE launch opens
+  # THAT database instead of offering "create a new database" every time.
   info "Pin the default database, keyed to the one KeePassXC opens at its first run…"
-  local pin_script="$SCRIPT_DIR/keepassxc-default-database.sh"
-  # Non-blocking drive-by: the pin script waits up to 15 min for a .kdbx to
-  # appear / be opened, then pins it. This is the "first launch" flow.
   if command -v keepassxc >/dev/null 2>&1; then
-    "$SCRIPT_DIR/keepassxc-default-database.sh" >/dev/null 2>&1 \
+    "$(dirname "${BASH_SOURCE[0]}")/keepassxc-default-database.sh" >/dev/null 2>&1 \
       && ok "Default database pinned into keepassxc.ini (RememberLast + LastOpened)". \
       || warn "Database pin NOT set — run 'scripts/apps/keepassxc/keepassxc-default-database.sh FILE.kdbx' manually once your DB exists (see the README in this folder)."
   else
     warn "keepassxc missing — skipping the default-database pin."
   fi
-  info "Still to do in the KeePassXC UI (encrypted in the database, not scriptable):"
-  info "  Tools → Settings → Secret Service Integration → confirm enabled;"
-  info "  Database → Database Settings → Secret Service Integration → expose a group."
+
+  if ! (( WANT_SECRET_SERVICE )); then
+    info "Browser link: in KeePassXC → Settings → Browser Integration, tick the"
+    info "browsers you use; then in the browser click the KeePassXC-Browser icon"
+    info "→ Connect and grant access."
+  fi
   hr
 }
 
@@ -332,27 +491,15 @@ pin_info(){
 }
 
 do_remove(){
-  info "Restoring the omarchy default (gnome-keyring secret service)"
-  rm -f "$KPXC_DBUS_FILE" && ok "DBus keepassxc override removed."
-  if [[ -f $KPXC_DBUS_BAK ]]; then
-    mv -f "$KPXC_DBUS_BAK" "$KPXC_DBUS_FILE" 2>/dev/null || true
-    ok "previous org.freedesktop.secrets owner restored."
-  fi
-  rm -f "$KPXC_AUTOSTART_DIR/$KPXC_AUTOSTART_SHADE" \
-    && ok "gnome-keyring-secrets autostart restored (shadow removed)."
-  systemctl --user unmask gnome-keyring-daemon.service > /dev/null 2>&1 \
-    && ok "gnome-keyring-daemon.service unmasked."
-  set_fdo_enabled false
-  ok "keepassxc.ini: [FdoSecrets] Enabled=false (your KeePassXC settings/database keep everything)."
-  setsid --fork gnome-keyring-daemon --start --foreground --components=secrets >/dev/null 2>&1 &
-  disown
-  ok "gnome-keyring secret service started again."
+  info "Undoing the KeePassXC module (Omarchy defaults restored)"
+  restore_omarchy_keyring
+  remove_browser_manifests
   ok "KeePassXC database and settings were NEVER touched — they stay installed."
   # Un-pin the remembered default database (the user's own). The whole
   # Remember* / LastOpened* block is dropped from keepassxc.ini; the backup
   # .pre-keepassxc stays untouched.
-  if [[ -f "$SCRIPT_DIR/keepassxc-default-database.sh" ]]; then
-    "$SCRIPT_DIR/keepassxc-default-database.sh" --clear \
+  if [[ -f "$(dirname "${BASH_SOURCE[0]}")/keepassxc-default-database.sh" ]]; then
+    "$(dirname "${BASH_SOURCE[0]}")/keepassxc-default-database.sh" --clear \
       && ok "Default-database pin cleared (stock behaviour — no remembered .kdbx)." \
       || warn "database pin could not be cleared."
   fi

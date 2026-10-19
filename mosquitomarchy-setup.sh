@@ -785,21 +785,18 @@ EOF
 }
 
 st_keepassxc(){
-  # KeePassXC secret service: dbus override + autostart shadow + user mask
-  # + keepassxc.ini [FdoSecrets] Enabled=true
+  # KeePassXC password manager + KeePassXC-Browser integration. Omarchy's
+  # gnome-keyring stays the system Secret Service (FdoSecrets disabled) unless
+  # the user opted into the takeover with --secret-service.
   [[ -x /usr/bin/keepassxc ]] || { echo missing; return; }
-  local f="$HOME/.local/share/dbus-1/services/org.freedesktop.secrets.service"
-  [[ -f $f ]] && grep -q '^Exec=/usr/bin/keepassxc' "$f" || { echo partial; return; }
-  [[ -f "$HOME/.config/autostart/gnome-keyring-secrets.desktop" ]]     && grep -q '^Hidden=true' "$HOME/.config/autostart/gnome-keyring-secrets.desktop"     || { echo partial; return; }
-  # NOTE: `systemctl is-enabled` prints "masked" but EXITS 1 — under pipefail
-  # the pipeline would fail; read the stdout instead of piping.
-  [[ $(systemctl --user is-enabled gnome-keyring-daemon.service 2>/dev/null || true) == masked ]] \
-    || { echo partial; return; }
   python3 - <<'PY' || { echo partial; return; }
 import configparser, os, sys
 c = configparser.ConfigParser(); c.read(os.path.expanduser("~/.config/keepassxc/keepassxc.ini"))
-raise SystemExit(0 if c.getboolean("FdoSecrets", "Enabled", fallback=False) else 1)
+sys.exit(0 if c.getboolean("Browser", "Enabled", fallback=False) else 1)
 PY
+  [[ -f "$HOME/.config/chromium/NativeMessagingHosts/org.keepassxc.keepassxc_browser.json" \
+     || -f "$HOME/.mozilla/native-messaging-hosts/org.keepassxc.keepassxc_browser.json" ]] \
+    || { echo partial; return; }
   echo ok
 }
 
@@ -999,7 +996,7 @@ st_whatsapp_native(){
   [[ -x "$HOME/.local/bin/whatsapp" ]] \
     && [[ -f "$HOME/.local/share/whatsapp-native/app/main.js" ]] \
     && [[ -f "$HOME/.local/share/applications/whatsapp.desktop" ]] \
-    && { [[ -f $a ]] && grep -qxF -- 'o.launch_on_start("whatsapp")' "$a"; } \
+    && { [[ -f $a ]] && grep -qxF -- 'o.launch_on_start("whatsapp --start-in-tray")' "$a"; } \
     && echo ok || echo partial
 }
 st_extracto(){
@@ -1060,7 +1057,7 @@ MODULES=(
   "touchpad:Touchpad (pointer acceleration + sensitivity — external mouse is not affected)"
   "mx-master:MX Master (any model) — thumb gesture button → SUPER (logiops daemon, system service)"
   "hyprmod:Hyprmod — save/switch Hyprland profiles from one menu (list · apply · next · previous), so a config change is one step away from a working desktop"
-  "keepassxc:keepassxc  —  secret service (REPLACES gnome-keyring completely (existing keyring secrets must be migrated manually; package removal optional & asked). On FIRST KeePassXC launch choose YOUR .kdbx: the install pins it into keepassxc.ini (Remember*/LastOpened*) so EVERY web app's browser extension and secret service uses it — no more 'create a new database?' prompts. 'i' info below; pin a DIFFERENT file manually with scripts/apps/keepassxc/keepassxc-default-database.sh FILE.kdbx (README in that folder lists a manual select)"
+  "keepassxc:KeePassXC as your password manager + KeePassXC-Browser integration (Firefox/Zen and Chromium). Omarchy's keyring is left INTACT — LibreSecret apps (Chromium Safe Storage, kDrive, …) keep using gnome-keyring, so no 'KeePassXC requests access to Chromium Safe Storage' prompt and apps don't lose their login. Browser link: the native-messaging manifests are installed; finish by ticking the browsers in KeePassXC → Settings → Browser Integration and clicking Connect in the extension. On FIRST KeePassXC launch choose YOUR .kdbx: the install pins it into keepassxc.ini so every launch opens THAT database. Opt into replacing gnome-keyring with 'setup-keepassxc-integration.sh --secret-service'."
   "mosquitomarchy-update:Update watchdog"
   "superfile:SuperFile — terminal file manager (menu entry + keybind + Omarchy theme)"
   "extracto:Simple custom install script for file-roller — restores Nautilus' Extract Here / Create Archive (file-roller + 7zip + unrar, file-roller prompts for the password itself); no desktop entry, no Nautilus script"

@@ -89,7 +89,7 @@ Details, options and caveats live in each module's own `README.md`. This table i
 | `whatsapp-native` | WhatsApp desktop client (self-contained Electron wrapper): silent visual notifications, tray + close-to-tray, no menu bar, login autostart | [README](scripts/apps/whatsapp-native/README.md) |
 | `superfile` | SuperFile terminal file manager; the system default file manager is left unchanged | [README](scripts/apps/superfile/README.md) |
 | `zen` | Zen Browser, seeded extensions and theme | [README](scripts/apps/zen/README.md) |
-| `keepassxc` | KeePassXC as the system Secret Service | [README](scripts/apps/keepassxc/README.md) |
+| `keepassxc` | KeePassXC password manager + browser integration (Leaves Omarchy's keyring intact) | [README](scripts/apps/keepassxc/README.md) |
 | `hyprmod` | Hyprmod profile configuration in `~/.config/hypr/hyprmod.d/profiles.conf` | — |
 | `apps` | The app / TUI / webapp catalogs, reinstallable from a backup selection | [README](scripts/apps/README.md) |
 
