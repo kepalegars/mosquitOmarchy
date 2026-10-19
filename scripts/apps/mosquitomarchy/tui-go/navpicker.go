@@ -18,7 +18,9 @@ type navPicker struct {
 	// Tab-held range select, mirrored from the kit (which owns Tab but
 	// never sees the arrows: they stop here). tabHeld arms on Tab and
 	// clears on any other forwarded key; tabAnchor is the row index Tab
-	// marked. stepRange emits PickerRangeMsg while armed.
+	// marked. stepRange emits PickerRangeMsg while armed AND the kit still
+	// reports the key down (tuikit.TabActive) — so letting Tab go ends the
+	// range instead of leaving it armed under a cursor that is just moving.
 	tabHeld   bool
 	tabAnchor int
 }
@@ -85,10 +87,10 @@ func (p navPicker) Update(msg tea.Msg) (navPicker, tea.Cmd) {
 			p.tabHeld = false
 			return p.selectLast(), nil
 		case "tab":
-			// Forwarded so the kit emits the toggle (with its repeat
-			// guard); the anchor mirrors the row Tab marked. A repeated
-			// Tab on the same row re-arms the same anchor — harmless,
-			// since the range is check-only anyway.
+			// Forwarded so the kit emits the toggle (with its package-level
+			// repeat guard); the anchor mirrors the row Tab marked. A repeat
+			// that the kit swallows still reaches here, so re-reading the
+			// cursor keeps the anchor on the same row — harmless.
 			var cmd tea.Cmd
 			p.Picker, cmd = p.Picker.Update(msg)
 			p.tabHeld = true
@@ -112,10 +114,12 @@ func (p navPicker) step(dir int) navPicker {
 }
 
 // stepRange moves one selectable row like step, and while a Tab hold is
-// armed it also emits the crossed rows for toggling (Tab, then Up/Down,
-// turning back re-toggles). The anchor itself is excluded — its Tab already
-// toggled it. Inert rows skipped; the host toggles what it receives through
-// the same path as a single Tab (folders fill-or-empty as usual).
+// armed AND the key is still down (tuikit.TabActive, refreshed by the
+// repeat stream) it also emits the crossed rows for toggling (Tab held,
+// then Up/Down, turning back re-toggles). Releasing Tab stops it dead, so
+// a plain move after a Tab is a plain move. The anchor itself is excluded —
+// its Tab already toggled it. Inert rows skipped; the host toggles what it
+// receives through the same path as a single Tab (folders fill-or-empty).
 func (p navPicker) stepRange(dir int) (navPicker, tea.Cmd) {
 	cur := p.selectedIndex()
 	// Land on the next SELECTABLE row in one go.
@@ -138,7 +142,7 @@ func (p navPicker) stepRange(dir int) (navPicker, tea.Cmd) {
 		return p, nil
 	}
 	p.Picker = p.Picker.SelectIndex(next)
-	if !p.tabHeld {
+	if !p.tabHeld || !tuikit.TabActive() {
 		return p, nil
 	}
 	anchor := ""

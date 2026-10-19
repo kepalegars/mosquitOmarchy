@@ -2,11 +2,19 @@ package tuikit
 
 import (
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// resetTabGuard clears the package-level Tab repeat guard. It is shared by
+// every Picker in the process (by design: a host rebuilds the Picker on each
+// toggle, so a per-struct guard would be reset by the toggle itself), so
+// tests must clear it before driving Tab.
+func resetTabGuard() { ResetTabRepeatGuard() }
+
 func rangePicker() Picker {
+	resetTabGuard()
 	return NewPicker("h", []PickerItem{
 		{Display: "a", Value: "a"},
 		{Display: "b", Value: "b"},
@@ -80,8 +88,8 @@ func TestTabHeldUpChecksUpwards(t *testing.T) {
 	}
 }
 
-// A fast double-tap toggles twice (untick works instantly — the old
-// repeat guard ate the second press, which read as "Tab is laggy").
+// A fast double-tap toggles twice (untick works instantly — the guard does
+// not eat the second press).
 func TestFastDoubleTapTogglesTwice(t *testing.T) {
 	p := rangePicker()
 	_, msgs := rangeMsgs(p, "tab", "tab")
@@ -96,9 +104,9 @@ func TestFastDoubleTapTogglesTwice(t *testing.T) {
 	}
 }
 
-// The third fast tap locks the hold: further repeats change nothing, so a
-// physically held Tab can never flip-flop the row (two toggles net to zero,
-// the row sits as the hold found it).
+// A held Tab (the repeat stream) is: two toggles then the lock. The row
+// cannot flip-flop forever — the bug the user saw as "Tab acting like the
+// key was stuck down".
 func TestHeldTabLocksAfterTwoToggles(t *testing.T) {
 	p := rangePicker()
 	_, msgs := rangeMsgs(p, "tab", "tab", "tab", "tab", "tab")
@@ -110,6 +118,52 @@ func TestHeldTabLocksAfterTwoToggles(t *testing.T) {
 	}
 	if toggles != 2 {
 		t.Fatalf("held Tab gave %d toggles, want exactly 2 then silence", toggles)
+	}
+}
+
+// The lock must outlive the host's repaint: the host rebuilds the Picker (and
+// calls ArmRange) between every repeat. Drive that exact cycle and the row
+// still toggles twice then goes quiet, instead of restarting the count on
+// each rebuild (the real-world flip-flop).
+func TestHeldTabSurvivesRepaintRebuild(t *testing.T) {
+	p := rangePicker()
+	toggles := 0
+	var cmd tea.Cmd
+	p, cmd = p.Update(kmsg("tab"))
+	for i := 0; i < 5; i++ {
+		if cmd != nil {
+			if m := cmd(); m != nil {
+				if _, ok := m.(PickerToggleMsg); ok {
+					toggles++
+				}
+			}
+		}
+		// The host's PickerToggleMsg handler: rebuild and re-arm at the row.
+		p = p.ArmRange("a")
+		p, cmd = p.Update(kmsg("tab"))
+	}
+	if toggles != 2 {
+		t.Fatalf("held Tab across repaints gave %d toggles, want exactly 2", toggles)
+	}
+}
+
+// Letting Tab go ends the range: once the guard clock lapses the next Down
+// is a plain move, not another brush stroke. Key-up is unobservable to the
+// program, so the lapse is faked by shrinking the window.
+func TestReleasedTabEndsTheRange(t *testing.T) {
+	p := rangePicker()
+	old := tabRangeWindow
+	tabRangeWindow = time.Nanosecond
+	defer func() { tabRangeWindow = old }()
+	var cmd tea.Cmd
+	p, cmd = p.Update(kmsg("tab"))
+	if cmd != nil {
+		cmd()
+	}
+	time.Sleep(time.Millisecond)
+	_, msgs := rangeMsgs(p, "down")
+	if vals := rangeValues(msgs); len(vals) != 0 {
+		t.Fatalf("range after release = %v, want none", vals)
 	}
 }
 
@@ -148,6 +202,7 @@ func TestTabHeldRangeSpansLongLists(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		items = append(items, PickerItem{Display: "row", Value: "v" + itoa(i)})
 	}
+	resetTabGuard()
 	p := NewPicker("h", items).SetSize(60, 8)
 	p, msgs := rangeMsgs(p, "tab")
 	for i := 0; i < 39; i++ {
@@ -185,6 +240,7 @@ func itoa(n int) string {
 
 // Inert rows (headings, disabled) are skipped by the range.
 func TestRangeSkipsInertRows(t *testing.T) {
+	resetTabGuard()
 	p := NewPicker("h", []PickerItem{
 		{Display: "a", Value: "a"},
 		{Display: "head", Heading: true},

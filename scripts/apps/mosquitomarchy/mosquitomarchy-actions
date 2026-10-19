@@ -836,12 +836,81 @@ _setup_tree(){
 # Same folders and order as `setup`, but only the INSTALLED entries. Each item
 # carries the exact key the `uninstall` action expects: a module id, or a
 # catalog selection line (APP/TUI/WEB) routed to the apps module's uninstaller.
+#
+# Memoised: the Uninstall cache key now calls this for every module (see
+# uninstall_state_signature) and _uninstall_tree calls it again to build the
+# rows. Detection stats binaries and wine prefixes, so the two passes must not
+# each pay for it.
+declare -A _INSTALLED_STATE_MEMO
 _installed_state(){ # module id -> 0 when installed (ok/partial) and not excluded
   local id="$1" st
-  is_excluded "$id" 2>/dev/null && return 1
+  if [[ -n ${_INSTALLED_STATE_MEMO[$id]+x} ]]; then
+    [[ ${_INSTALLED_STATE_MEMO[$id]} == 1 ]]
+    return
+  fi
+  if is_excluded "$id" 2>/dev/null; then _INSTALLED_STATE_MEMO[$id]=0; return 1; fi
   st="$(module_state "$id" 2>/dev/null)"; st="${st%%:*}"
-  [[ $st == ok || $st == partial ]]
+  if [[ $st == ok || $st == partial ]]; then
+    _INSTALLED_STATE_MEMO[$id]=1
+    return 0
+  fi
+  _INSTALLED_STATE_MEMO[$id]=0
+  return 1
 }
+# ── Uninstall cache key: the DETECTED STATE the tree is built from ─────────
+# tree_fingerprint covers the catalog, the repo version, the fixes/tweaks count
+# and the asset-gated installers — none of which change when you install or
+# remove a module. The Uninstall tree, though, is built almost entirely out of
+# DETECTED state: which modules are installed, which patches/fixes/tweaks are
+# applied, which stock packages are present. Without that state in the key,
+# removing Ableton left the cached tree still offering it — the fingerprint did
+# not move, so the stale tree was served until the 30-minute reap. Summarise
+# the state here and append it to the fingerprint. The _installed_state calls
+# are memoised, so _uninstall_tree's own pass is free.
+uninstall_state_signature(){
+  local c id mid spec f t pp pk sig=""
+  for c in "${CATEGORIES[@]}"; do
+    id="${c%%|*}"
+    case $id in
+      # Not module folders (fixes/tweaks get their own block below).
+      menu|fixes|tweaks) continue ;;
+      # INSTALLED_TUI / INSTALLED_WEB already go into the key.
+      tuis|webapps) continue ;;
+      mosquito)
+        for pk in ableton-move-manager audio-plugin-manager jamjamjam-plugin battery live-mode mixbay pipewire-settings mosquitomarchy; do
+          case $pk in
+            audio-plugin-manager) _installed_state audio && sig+="$pk|" ;;
+            *) _installed_state "$pk" && sig+="$pk|" ;;
+          esac
+        done ;;
+      *)
+        for mid in $(category_items "$id"); do
+          _installed_state "$mid" && sig+="$mid|"
+        done ;;
+    esac
+  done
+  # Applied patches (input to the Patches folder).
+  for mid in $(category_items apps); do
+    _installed_state "$mid" || continue
+    spec="$(_manual_patch_spec "$mid")"; [[ -n $spec ]] || continue
+    [[ -f "$APPS_DIR/$spec" ]] || continue
+    _patch_applied "$APPS_DIR/$spec" && sig+="patch:$mid|"
+  done
+  # Applied quick fixes and tweaks.
+  for f in hyprland-crash ableton-wine-scroll 1px-seam; do
+    fix_applied "$f" && sig+="fix:$f|"
+  done
+  for t in keepassxc-window bar-clock-centring terminal-padding wine-theme; do
+    tweak_applied "$t" && sig+="tweak:$t|"
+  done
+  # Still-present stock preinstalls (input to the Preinstalls folder).
+  while read -r pp; do
+    [[ -n $pp ]] || continue
+    pkg_has "$pp" && sig+="pre:$pp|"
+  done < <(stock_preinstalls)
+  printf '%s' "$sig"
+}
+
 cmd_uninstall_tree(){
   TREE_MODE=uninstall
   local fp
@@ -864,6 +933,9 @@ cmd_uninstall_tree(){
   for e in "${INSTALLED_TUI[@]:-}" "${INSTALLED_WEB[@]:-}"; do
     [[ -n $e ]] && inst+="${e%%|*}|"
   done
+  # The rest of the detected state (installed modules, applied patches/fixes/
+  # tweaks, present preinstalls). Same reasoning as the TUI/WEB set above.
+  inst+="$(uninstall_state_signature)"
   fp="$(tree_fingerprint)$(cache_key_digest "$inst")"
   if cache_read uninstall "$fp"; then return 0; fi
   local tree

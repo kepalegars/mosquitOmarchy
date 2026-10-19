@@ -35,6 +35,7 @@ func upKey() tea.KeyMsg {
 // more step onto live-mode itself would toggle it back off — the brush
 // toggles everything it enters).
 func TestTabHeldBrushChecksUnchecks(t *testing.T) {
+	tuikit.ResetTabRepeatGuard()
 	m := flatSetup()
 	m.nav = []screen{scrMain, scrSetup}
 	m.w, m.h = 100, 34
@@ -55,6 +56,7 @@ func TestTabHeldBrushChecksUnchecks(t *testing.T) {
 // TestTabHeldTurnBackUntoggles: down over two rows checks them, back up
 // over one unchecks it again — the range is a toggle brush, not check-only.
 func TestTabHeldTurnBackUntoggles(t *testing.T) {
+	tuikit.ResetTabRepeatGuard()
 	m := flatSetup()
 	m.nav = []screen{scrMain, scrSetup}
 	m.w, m.h = 100, 34
@@ -93,6 +95,7 @@ func TestTabHeldRangeAsksKeepassxcConsent(t *testing.T) {
 // 600ms; a hold must survive it, or every range past one second silently
 // stops selecting (the reported "it selects the first ones then stops").
 func TestTabHeldSurvivesBlink(t *testing.T) {
+	tuikit.ResetTabRepeatGuard()
 	m := flatSetup()
 	m.nav = []screen{scrMain, scrSetup}
 	m.w, m.h = 100, 34
@@ -132,6 +135,7 @@ func TestRangeTogglesFolder(t *testing.T) {
 // Untick a folder (fast double-tap: tick then untick) and move on: the
 // folder stays unticked instead of reselecting itself on the next arrow.
 func TestUntickFolderThenMoveStaysUnticked(t *testing.T) {
+	tuikit.ResetTabRepeatGuard()
 	m := flatSetup()
 	m.nav = []screen{scrMain, scrSetup}
 	m.w, m.h = 100, 34

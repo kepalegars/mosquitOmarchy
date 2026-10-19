@@ -1083,6 +1083,63 @@ func TestEnterRemovesAModuleRowInTheUninstallTree(t *testing.T) {
 	}
 }
 
+// Enter on a module row acts on the WHOLE ticked set, not just the row under
+// the cursor: ticking several with Tab and pressing Enter used to uninstall
+// one and silently drop the rest.
+func TestEnterUninstallsEveryTickedModule(t *testing.T) {
+	m := flatSetup()
+	m.treeMode = "uninstall"
+	m.selected[setupValue("apps", "reaper")] = true
+	m.selected[setupValue("mosquito", "live-mode")] = true
+	m.setupPicker = m.rebuildSetup()
+	idx := indexOfValue(m.setupPicker, setupValue("apps", "reaper"))
+	if idx < 0 {
+		t.Fatal("reaper row not found")
+	}
+	m.setupPicker = m.setupPicker.SelectIndex(idx)
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.top() != scrConfirm {
+		t.Fatalf("Enter on a ticked module did not confirm, top=%d", m.top())
+	}
+	if m.pendingAction != "uninstall" {
+		t.Fatalf("pendingAction = %q want uninstall", m.pendingAction)
+	}
+	got := map[string]bool{}
+	for _, k := range m.pendingArgs {
+		got[k] = true
+	}
+	if len(m.pendingArgs) != 2 || !got["reaper"] || !got["live-mode"] {
+		t.Fatalf("pendingArgs = %q, want reaper AND live-mode", m.pendingArgs)
+	}
+}
+
+// Same rule on the install side: the whole ticked set is installed, grouped
+// by folder, in one confirmation.
+func TestEnterInstallsEveryTickedModule(t *testing.T) {
+	m := flatSetup()
+	m.selected[setupValue("apps", "reaper")] = true
+	m.selected[setupValue("mosquito", "live-mode")] = true
+	m.setupPicker = m.rebuildSetup()
+	idx := indexOfValue(m.setupPicker, setupValue("apps", "reaper"))
+	if idx < 0 {
+		t.Fatal("reaper row not found")
+	}
+	m.setupPicker = m.setupPicker.SelectIndex(idx)
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.top() != scrConfirm {
+		t.Fatalf("Enter on a ticked module did not confirm, top=%d", m.top())
+	}
+	if m.pendingAction != "apply" {
+		t.Fatalf("pendingAction = %q want apply", m.pendingAction)
+	}
+	joined := strings.Join(m.pendingArgs, "|")
+	if !strings.Contains(joined, "reaper") || !strings.Contains(joined, "live-mode") {
+		t.Fatalf("pendingArgs = %q, want both reaper and live-mode", m.pendingArgs)
+	}
+}
+
 // The shortcut has to be advertised: "i" was in no legend anywhere, which is
 // the other half of "I can't seem to deploy menu entries".
 func TestSetupLegendAdvertisesTheInstallKey(t *testing.T) {

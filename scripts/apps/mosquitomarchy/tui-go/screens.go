@@ -2423,9 +2423,12 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		if strings.HasPrefix(res.Value, tuikit.TreeFolderPrefix) {
 			return m, nil
 		}
-		// Enter on a MODULE row installs just that one: a single click for a
-		// single module, with no tick-then-apply round trip. Tab is still there
-		// to select several and apply them in one go.
+		// Enter on a MODULE row acts on the WHOLE ticked set, not just the
+		// row under the cursor: ticking several with Tab and then pressing
+		// Enter used to act on the cursor row alone and silently drop the
+		// rest (the reported "Enter only uninstalls one of the ticked
+		// items"). With nothing ticked it still acts on the highlighted
+		// row — a single click for a single module.
 		if strings.HasPrefix(res.Value, tuikit.TreeItemPrefix) {
 			v := res.Value
 			// A stock preinstall row removes its package. It is not a
@@ -2440,16 +2443,50 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 					return m, nil
 				}
 				folder, key := splitSetupValue(v)
-				// Uninstall mirrors install on the same page: Enter on a module
-				// removes exactly that one, in either mode.
 				if m.treeMode == "uninstall" {
-					return m.startUninstall([]string{key}, fmt.Sprintf("Uninstall %s?", it.Label))
+					keys := m.allSelectedKeys()
+					if len(keys) == 0 {
+						keys = []string{key}
+					}
+					m.kpxGnomeRm = 0
+					prompt := fmt.Sprintf("Uninstall %s?", it.Label)
+					if len(keys) > 1 {
+						prompt = fmt.Sprintf("Uninstall %d selected item(s)?\n\n%s",
+							len(keys), strings.Join(keys, "\n"))
+					}
+					return m.startUninstall(keys, prompt)
 				}
-				plan := []string{strings.Join([]string{folder, key}, "\t")}
+				keys := m.allSelectedKeys()
+				if len(keys) == 0 {
+					// Nothing ticked: the highlighted module alone.
+					m.pendingAction = "apply"
+					m.pendingArgs = []string{strings.Join([]string{folder, key}, "\t")}
+					m.kpxGnomeRm = 0
+					m.pendingMsg = fmt.Sprintf("Install %s?", it.Label)
+					m.pendingNo = "Cancel"
+					m.pendingYes = "Install"
+					m.push(scrConfirm)
+					m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
+					return m, nil
+				}
+				// Ticked set: grouped by folder, with any ticked preinstall
+				// package confirmed for removal first and the install plan
+				// held behind it (same shape as the typing-filter path).
+				plan := m.applyPlan()
+				var pre []string
+				for _, k := range keys {
+					if strings.HasPrefix(k, "preinstall:") {
+						pre = append(pre, strings.TrimPrefix(k, "preinstall:"))
+					}
+				}
+				if len(pre) > 0 {
+					m.pendingInstallPlan = plan
+					return m.confirmPreinstallRemove(pre)
+				}
 				m.pendingAction = "apply"
 				m.pendingArgs = plan
 				m.kpxGnomeRm = 0
-				m.pendingMsg = fmt.Sprintf("Install %s?", it.Label)
+				m.pendingMsg = fmt.Sprintf("Install %d selected item(s)?\n\n%s", len(keys), strings.Join(keys, "\n"))
 				m.pendingNo = "Cancel"
 				m.pendingYes = "Install"
 				m.push(scrConfirm)
