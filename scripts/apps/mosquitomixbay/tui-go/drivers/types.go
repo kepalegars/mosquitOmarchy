@@ -92,10 +92,14 @@ type OutputState struct {
 }
 
 // MixerCell is one source → mix-bus route (loopback mixer, write-only on
-// hardware, shadowed in software — same as audient-evo-py).
+// hardware, shadowed in software — same as audient-evo-py). Inputs carry a
+// mono Pan; stereo loopback sources carry separate PanL/PanR (as upstream's
+// pan_l/pan_r do), with Pan kept as their mean for the CLI and old shadows.
 type MixerCell struct {
 	VolumeDb float64 `json:"volume_db"`
 	Pan      float64 `json:"pan"` // -100..+100
+	PanL     float64 `json:"pan_l,omitempty"`
+	PanR     float64 `json:"pan_r,omitempty"`
 }
 
 // Status is the full readable state of one device.

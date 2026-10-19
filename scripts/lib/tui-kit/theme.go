@@ -29,6 +29,15 @@ var (
 	ColorErr      lipgloss.Color
 	ColorRed      lipgloss.Color
 	ColorBorder   lipgloss.Color
+	// The remaining ANSI slots, exposed so rich device panels (mosquitomixbay's
+	// EVO screens) can colour-code channels the way the upstream evotui does —
+	// outputs green, inputs blue, monitor/mix cyan, dial/loop yellow — while
+	// every tone still comes from the live Omarchy palette and re-stamps on a
+	// theme switch like the rest.
+	ColorGreen  lipgloss.Color
+	ColorBlue   lipgloss.Color
+	ColorCyan   lipgloss.Color
+	ColorYellow lipgloss.Color
 	// ColorSubtle is the NEUTRAL tone for interface text — shortcut hints,
 	// legends, sub-titles, sub-lines. It is deliberately NOT the theme's
 	// "muted": achraff-67 defines muted as a saturated green (#4e9237), so
@@ -140,6 +149,10 @@ func applyPalette(p map[string]string) {
 	// e.g. the jamjamjam "recording" box around the wordmark.
 	ColorRed = pick("red", "196")
 	ColorBorder = pick("muted", "240")
+	ColorGreen = pick("green", "42")
+	ColorBlue = pick("blue", "33")
+	ColorCyan = pick("cyan", "51")
+	ColorYellow = pick("yellow", "214")
 
 	StyleHeader = lipgloss.NewStyle().Foreground(ColorHeader).Bold(true)
 	StyleMuted = lipgloss.NewStyle().Foreground(ColorMuted)

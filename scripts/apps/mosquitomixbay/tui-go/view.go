@@ -42,6 +42,9 @@ func (m model) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.statusLine(w))
 	case scrControls:
+		if m.isEvoDevice() {
+			return m.evoView()
+		}
 		titleText := "Controls"
 		if m.status.Spec.Display != "" {
 			titleText = m.status.Spec.Display + " — controls"
@@ -50,10 +53,13 @@ func (m model) View() string {
 		m.picker = m.picker.SetSize(w, rows)
 		b.WriteString(centerBlock(title, w))
 		b.WriteString("\n")
-		b.WriteString(m.visualBody(w))
+		b.WriteString(m.picker.View())
 		b.WriteString("\n")
 		b.WriteString(m.statusLine(w))
 	case scrMixer:
+		if m.isEvoDevice() {
+			return m.evoView()
+		}
 		titleText := "Loopback mixer"
 		if m.status.Spec.Display != "" {
 			titleText = m.status.Spec.Display + " — " + drivers.BusLabel(m.mixBus)
@@ -62,7 +68,7 @@ func (m model) View() string {
 		m.picker = m.picker.SetSize(w, rows)
 		b.WriteString(centerBlock(title, w))
 		b.WriteString("\n")
-		b.WriteString(m.visualBody(w))
+		b.WriteString(m.picker.View())
 		b.WriteString("\n")
 		b.WriteString(m.statusLine(w))
 	case scrSettings:

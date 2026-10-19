@@ -62,6 +62,9 @@ type model struct {
 	confirmTitle string
 	confirmAct   func() tea.Cmd
 
+	// evo is the faithful evotui-style state for the EVO 4 / EVO 8 screens.
+	evo evoUI
+
 	quit bool
 }
 
@@ -332,6 +335,12 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		tuikit.ApplyTheme()
 		return m, tuikit.ThemeWatchCmd()
 
+	case evoStatusExpireMsg:
+		if msg.gen == m.evo.statusGen {
+			m.evo.statusMsg = ""
+		}
+		return m, nil
+
 	case statusMsg:
 		m.loading = false
 		if msg.err != nil {
@@ -339,6 +348,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = msg.status
+		if m.isEvoDevice() && m.evo.spec.ID == "" {
+			m.evoEnter()
+		}
 		idx := m.picker.Index()
 		m.syncPicker()
 		if idx < 0 {
@@ -349,10 +361,16 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case applyMsg:
 		if msg.err != nil {
+			if m.isEvoDevice() && (m.top() == scrControls || m.top() == scrMixer) {
+				return m, m.evo.evoStatus(msg.err.Error(), true)
+			}
 			m.toast, _ = m.toast.SetErr(msg.err.Error())
 			return m, nil
 		}
 		if msg.what != "" {
+			if m.isEvoDevice() && (m.top() == scrControls || m.top() == scrMixer) {
+				return m, tea.Batch(m.evo.evoStatus(msg.what, false), fetchStatus(m.deviceID))
+			}
 			m.toast, _ = m.toast.SetOK(msg.what)
 		}
 		return m, fetchStatus(m.deviceID)
@@ -419,6 +437,10 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.info, cmd = m.info.Update(msg)
 		return m, cmd
 	}
+	// EVO 4 / EVO 8 draw their own evotui frame and own their keys.
+	if m.isEvoDevice() && (m.top() == scrControls || m.top() == scrMixer) {
+		return m, m.evoKey(k)
+	}
 	switch m.top() {
 	case scrDevices:
 		switch k {
@@ -441,6 +463,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			m.push(scrControls)
 			m.syncPicker()
+			m.evoEnter()
 			return m, fetchStatus(m.deviceID)
 		case "q", "esc":
 			m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")

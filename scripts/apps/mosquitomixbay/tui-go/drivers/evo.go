@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -249,7 +250,12 @@ type demoState struct {
 func defaultMixerCells(spec Spec) map[string]MixerCell {
 	m := map[string]MixerCell{}
 	for _, src := range MixerSources(spec, 0) {
-		m[src] = MixerCell{VolumeDb: -128, Pan: 0}
+		if strings.HasPrefix(src, "output") {
+			// Stereo loopback sources carry pan_l/pan_r, as upstream does.
+			m[src] = MixerCell{VolumeDb: -128, Pan: 0, PanL: -100, PanR: 100}
+		} else {
+			m[src] = MixerCell{VolumeDb: -128, Pan: 0}
+		}
 	}
 	// Factory default: diagonal routes open at 0 dB (as on hardware).
 	if spec.NumInputs > 0 {
@@ -259,7 +265,9 @@ func defaultMixerCells(spec Spec) map[string]MixerCell {
 		m["input2"] = MixerCell{VolumeDb: 0, Pan: 100}
 	}
 	if pairs := MixerSources(spec, 0)[spec.NumInputs:]; len(pairs) > 0 {
-		m[pairs[0]] = MixerCell{VolumeDb: 0, Pan: 0}
+		c := m[pairs[0]]
+		c.VolumeDb = 0
+		m[pairs[0]] = c
 	}
 	return m
 }
@@ -561,8 +569,12 @@ func (d *evoDriver) SetMixerOutput(srcPair int, volDb, panL, panR float64, mixOu
 	if mixOut < 0 || mixOut >= MixBuses(d.spec) {
 		return fmt.Errorf("mix bus must be 0..%d", MixBuses(d.spec)-1)
 	}
-	pan := (panL + panR) / 2
-	cell := MixerCell{VolumeDb: clamp(volDb, mixDbMin, mixDbMax), Pan: clamp(pan, -100, 100)}
+	cell := MixerCell{
+		VolumeDb: clamp(volDb, mixDbMin, mixDbMax),
+		Pan:      clamp((panL+panR)/2, -100, 100),
+		PanL:     clamp(panL, -100, 100),
+		PanR:     clamp(panR, -100, 100),
+	}
 	key := MixerKey(fmt.Sprintf("output%d_%d", srcPair*2+1, srcPair*2+2), mixOut)
 	if !d.Probe() {
 		demo := d.ensureDemo()
@@ -608,6 +620,11 @@ func (d *evoDriver) saveShadow(m map[string]MixerCell) error {
 }
 
 func (d *evoDriver) Save() error {
+	return d.SaveTo(filepath.Join(d.shadowDir(), "config.json"))
+}
+
+// SaveTo writes the snapshot to an arbitrary path (the evotui config picker).
+func (d *evoDriver) SaveTo(path string) error {
 	st, err := d.Status()
 	if err != nil {
 		return err
@@ -622,15 +639,21 @@ func (d *evoDriver) Save() error {
 	if st.Monitor != nil {
 		cfg["monitor"] = *st.Monitor
 	}
-	_ = os.MkdirAll(d.shadowDir(), 0o755)
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	data, _ := json.MarshalIndent(cfg, "", "  ")
-	return os.WriteFile(filepath.Join(d.shadowDir(), "config.json"), data, 0o644)
+	return os.WriteFile(path, data, 0o644)
 }
 
 // Load re-applies config.json + every mixer shadow route (inputs and
 // loopback pairs alike, on every bus).
 func (d *evoDriver) Load() error {
-	data, err := os.ReadFile(filepath.Join(d.shadowDir(), "config.json"))
+	return d.LoadFrom(filepath.Join(d.shadowDir(), "config.json"))
+}
+
+// LoadFrom re-applies a snapshot from an arbitrary path (the evotui config
+// picker).
+func (d *evoDriver) LoadFrom(path string) error {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("no saved config: %w", err)
 	}
@@ -698,8 +721,7 @@ func (d *evoDriver) Load() error {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		cell := shadow[k]
-		if err := d.SetMixerKey(k, cell.VolumeDb, cell.Pan); err != nil {
+		if err := d.SetMixerKey(k, shadow[k]); err != nil {
 			return fmt.Errorf("mixer %s: %w", k, err)
 		}
 	}
@@ -707,16 +729,20 @@ func (d *evoDriver) Load() error {
 }
 
 // SetMixerKey restores one shadow cell by key ("inputN[@bus]",
-// "outputX_Y[@bus]").
-func (d *evoDriver) SetMixerKey(key string, volDb, pan float64) error {
+// "outputX_Y[@bus]"), preserving a stereo source's separate pan_l/pan_r.
+func (d *evoDriver) SetMixerKey(key string, cell MixerCell) error {
 	base, bus := splitMixerKey(key)
 	var n int
 	if _, err := fmt.Sscanf(base, "input%d", &n); err == nil {
-		return d.SetMixerInput(n, volDb, pan, bus)
+		return d.SetMixerInput(n, cell.VolumeDb, cell.Pan, bus)
 	}
 	var l, r int
 	if _, err := fmt.Sscanf(base, "output%d_%d", &l, &r); err == nil && r == l+1 && l%2 == 1 {
-		return d.SetMixerOutput((l-1)/2, volDb, pan, pan, bus)
+		pl, pr := cell.PanL, cell.PanR
+		if pl == 0 && pr == 0 && cell.Pan != 0 {
+			pl, pr = cell.Pan, cell.Pan
+		}
+		return d.SetMixerOutput((l-1)/2, cell.VolumeDb, pl, pr, bus)
 	}
 	return fmt.Errorf("unknown mixer source %q", key)
 }

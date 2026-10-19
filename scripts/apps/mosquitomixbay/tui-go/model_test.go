@@ -183,6 +183,84 @@ func TestConfirmModalIsCentered(t *testing.T) {
 	}
 }
 
+// The EVO screens are the evotui port: render both devices on both tabs and
+// check the frame appears, fits the window, and carries evotui's own chrome
+// (tab bar, boxed cards, the MIX bus labels) instead of the picker.
+func TestEvoViewRendersEvotuiFrame(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
+	for _, id := range []string{drivers.DevEVO8, drivers.DevEVO4} {
+		for _, window := range []int{0, 1} {
+			m := initialModel()
+			m.w, m.h = 110, 40
+			m.deviceID = id
+			st, err := m.driversStatus(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m.status = st
+			m.evoEnter()
+			m.evo.window = window
+			if window == 0 {
+				m.nav = append(m.nav, scrControls)
+			} else {
+				m.nav = append(m.nav, scrMixer)
+			}
+			v := m.View()
+			lines := strings.Split(strings.TrimRight(v, "\n"), "\n")
+			if len(lines) > m.h {
+				t.Errorf("%s window=%d: frame overflows (%d lines)", id, window, len(lines))
+			}
+			plain := stripANSI(v)
+			if window == 0 {
+				for _, needle := range []string{"CONTROLS", "MIXER", "IN 1"} {
+					if !strings.Contains(plain, needle) {
+						t.Errorf("%s controls: missing %q", id, needle)
+					}
+				}
+			} else {
+				bus := "MIX 1|2"
+				if id == drivers.DevEVO4 {
+					bus = "MIX 3|4"
+				}
+				for _, needle := range []string{"CONTROLS", "MIXER", bus} {
+					if !strings.Contains(plain, needle) {
+						t.Errorf("%s mixer: missing %q", id, needle)
+					}
+				}
+			}
+		}
+	}
+}
+
+// EVO 4 has a monitor blend knob; its card must render the IN/Mix/OUT fader.
+func TestEvo4ControlsShowMonitorBlend(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
+	m := initialModel()
+	m.w, m.h = 90, 40
+	m.deviceID = drivers.DevEVO4
+	st, err := m.driversStatus(drivers.DevEVO4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.status = st
+	m.evoEnter()
+	m.nav = append(m.nav, scrControls)
+	plain := stripANSI(m.View())
+	if !strings.Contains(plain, "MONITOR") || !strings.Contains(plain, "Mix:") {
+		t.Errorf("EVO4 controls should render the monitor blend fader")
+	}
+}
+
+func (m model) driversStatus(id string) (drivers.Status, error) {
+	d, err := drivers.Open(id)
+	if err != nil {
+		return drivers.Status{}, err
+	}
+	return d.Status()
+}
+
 func abs(n int) int {
 	if n < 0 {
 		return -n
