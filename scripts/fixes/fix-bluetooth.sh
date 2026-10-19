@@ -235,8 +235,7 @@ status() {
 apply() {
   info "Applying Bluetooth fix"
   backup_info_files
-  apply_info_files
-  ok "ConnectionParameters updated (Latency=0, 6/7) for paired LE HID devices"
+  ok "Backed up ConnectionParameters for paired LE HID devices"
 
   install_persist
   ok "Persistence installed (udev + modprobe + debugfs script)"
@@ -253,6 +252,12 @@ apply() {
   priv systemctl restart bluetooth.service >/dev/null 2>&1 || true
   ok "bluetooth.service restarted"
   sleep 2
+
+  # Edit info files while devices are disconnected so BlueZ does not
+  # overwrite our ConnectionParameters on the next (re)connect.
+  apply_info_files
+  ok "ConnectionParameters updated (Latency=0, 6/7) for paired LE HID devices"
+
   write_debugfs_now
 
   if [[ -n $MX_MAC ]]; then
@@ -266,6 +271,8 @@ apply() {
 remove() {
   info "Removing Bluetooth fix"
   remove_persist
+  priv systemctl restart bluetooth.service >/dev/null 2>&1 || true
+  sleep 2
   restore_info_files
   restore_main_conf
   # restore USB runtime to auto
@@ -273,7 +280,6 @@ remove() {
     printf 'auto' | priv tee "$USB_SYS/power/control" >/dev/null 2>&1 || true
     printf '2000' | priv tee "$USB_SYS/power/autosuspend_delay_ms" >/dev/null 2>&1 || true
   fi
-  priv systemctl restart bluetooth.service >/dev/null 2>&1 || true
   if [[ -n $MX_MAC ]]; then
     bluetoothctl connect "$MX_MAC" >/dev/null 2>&1 || true
   fi
