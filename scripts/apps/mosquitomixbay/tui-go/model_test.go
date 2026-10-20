@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -253,6 +255,228 @@ func TestEvo4ControlsShowMonitorBlend(t *testing.T) {
 	}
 }
 
+// evoModel prepares a demo-mode EVO model parked on a screen.
+func evoModel(t *testing.T, id string, window int) model {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
+	m := initialModel()
+	m.w, m.h = 120, 40
+	m.deviceID = id
+	st, err := m.driversStatus(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.status = st
+	m.evoEnter()
+	m.evo.window = window
+	if window == 0 {
+		m.nav = append(m.nav, scrControls)
+	} else {
+		m.nav = append(m.nav, scrMixer)
+	}
+	return m
+}
+
+// Crossing controls columns must keep the row index (IN 3 -> OUT 3|4), not
+// snap back to the first output.
+func TestEvoControlsGridNavigation(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	if m.evo.cursor != 0 {
+		t.Fatalf("start cursor = %d", m.evo.cursor)
+	}
+	m.evoKey("j")
+	m.evoKey("j") // IN 3 (index 2)
+	if got := m.evo.activeElements()[m.evo.cursor].label; got != "IN 3" {
+		t.Fatalf("expected IN 3, got %q", got)
+	}
+	m.evoKey("l") // into OUTPUTS, same row
+	if m.evo.sub != 1 {
+		t.Fatalf("expected outputs subsection, got %d", m.evo.sub)
+	}
+	if got := m.evo.activeElements()[m.evo.cursor].label; got != "OUT 3|4" {
+		t.Fatalf("row not preserved: got %q", got)
+	}
+	// Only two outputs: IN 4 (index 3) clamps to the last output.
+	m.evoKey("h")
+	m.evoKey("j")
+	m.evoKey("l")
+	if got := m.evo.activeElements()[m.evo.cursor].label; got != "OUT 3|4" {
+		t.Fatalf("clamped row wrong: got %q", got)
+	}
+}
+
+// Artist Mix off mirrors a mixer edit to every bus.
+func TestEvoArtistMixMirrorsBothBuses(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 1)
+	m.evo.artistMix = false
+	msg := m.evoMxSetValTo("input1", "volume", -6)()
+	if a, ok := msg.(applyMsg); !ok || a.err != nil {
+		t.Fatalf("apply failed: %+v", msg)
+	}
+	d, _ := drivers.Open(drivers.DevEVO8)
+	st, _ := d.Status()
+	if c := st.Mixer["input1"]; c.VolumeDb != -6 {
+		t.Errorf("bus 0 not set: %+v", c)
+	}
+	if c := st.Mixer["input1@1"]; c.VolumeDb != -6 {
+		t.Errorf("bus 1 not mirrored: %+v", c)
+	}
+}
+
+// The built-in preset is always listed and can never be overwritten.
+func TestEvoProtectedDefaultConfig(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	files := m.evoScanFiles()
+	if len(files) == 0 || files[0] != drivers.ProtectedConfigName+".json" {
+		t.Fatalf("default preset must lead the list, got %v", files)
+	}
+	m.evo.mode = 1
+	m.evo.fileInput = drivers.ProtectedConfigName
+	if cmd := m.evoPickerKey("enter"); cmd == nil {
+		t.Fatal("expected an error status cmd")
+	}
+	if m.evo.mode != 1 {
+		t.Error("picker should stay open after refusing the default name")
+	}
+	if m.evo.fileInput != "" {
+		t.Errorf("input should be cleared to force a new name, got %q", m.evo.fileInput)
+	}
+	if !m.evo.statusErr {
+		t.Error("expected an error status")
+	}
+}
+
+// The MIX 1|2 and MIX 3|4 markers must start in the same column: outline and
+// filled triangles have different advances in some fonts.
+func TestEvoMixArrowsAligned(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 1)
+	m.evo.artistMix = false // both buses are shown and must line up
+	var cols []int
+	for _, line := range strings.Split(stripANSI(m.View()), "\n") {
+		if !strings.Contains(line, "MIX 1|2") && !strings.Contains(line, "MIX 3|4") {
+			continue
+		}
+		for i, r := range []rune(line) {
+			if r == '▶' || r == '▷' {
+				cols = append(cols, i)
+			}
+		}
+	}
+	if len(cols) != 2 || cols[0] != cols[1] {
+		t.Fatalf("mix markers misaligned: %v", cols)
+	}
+}
+
+// "Reset all" must ask before wiping every crosspoint on every bus.
+func TestEvoResetAllConfirms(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 1)
+	if cmd := m.evoMxSetValTo("input1", "volume", -6); cmd != nil {
+		cmd()
+	}
+	read := func() float64 {
+		d, _ := drivers.Open(drivers.DevEVO8)
+		st, _ := d.Status()
+		return st.Mixer["input1"].VolumeDb
+	}
+	if read() != -6 {
+		t.Fatalf("setup route not written: %v", read())
+	}
+	if cmd := m.evoMixerKey("R"); cmd != nil {
+		t.Fatal("R must open a confirmation, not reset immediately")
+	}
+	if m.top() != scrConfirm {
+		t.Fatalf("R should push the confirm screen, top=%v", m.top())
+	}
+	if read() != -6 {
+		t.Errorf("opening the confirmation must not reset the mixer: %v", read())
+	}
+	act := m.confirmAct
+	if act == nil {
+		t.Fatal("no pending reset action")
+	}
+	if cmd := act(); cmd != nil {
+		cmd()
+	}
+	if read() != -128 {
+		t.Errorf("confirmed reset did not clear the mixer: %v", read())
+	}
+}
+
+// The save picker's trailing "new preset" row accepts a typed name.
+func TestEvoSavePickerNewPreset(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	m.evoKey("s")
+	if m.evo.mode != 1 {
+		t.Fatalf("save mode not entered: mode=%d", m.evo.mode)
+	}
+	for i := 0; i < len(m.evo.fileList); i++ {
+		m.evoKey("down")
+	}
+	if !m.evo.pickerEditable() {
+		t.Fatal("new-preset row must accept typing")
+	}
+	for _, ch := range []string{"g", "i", "g"} {
+		m.evoKey(ch)
+	}
+	if m.evo.fileInput != "gig" {
+		t.Fatalf("typed input = %q", m.evo.fileInput)
+	}
+	if cmd := m.evoKey("enter"); cmd != nil {
+		cmd()
+	}
+	if m.evo.mode != 0 {
+		t.Error("picker should close after saving")
+	}
+	if _, err := os.Stat(filepath.Join(m.evoConfigDir(), "gig.json")); err != nil {
+		t.Fatalf("new preset not written: %v", err)
+	}
+}
+
+// Pressing r renames the selected preset on disk, Enter commits, Esc cancels.
+func TestEvoSavePickerRename(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	dir := m.evoConfigDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gig.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.evoKey("s")
+	idx := -1
+	for i, f := range m.evo.fileList {
+		if f == "gig.json" {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("gig.json not listed: %v", m.evo.fileList)
+	}
+	m.evo.fileCursor = idx
+	if cmd := m.evoKey("r"); cmd != nil {
+		t.Fatal("r must enter rename mode, not act")
+	}
+	if !m.evo.renaming {
+		t.Fatal("rename mode not entered")
+	}
+	for n := len(m.evo.fileInput); n > 0; n-- {
+		m.evoKey("backspace")
+	}
+	for _, ch := range []string{"l", "i", "v", "e"} {
+		m.evoKey(ch)
+	}
+	if cmd := m.evoKey("enter"); cmd != nil {
+		cmd()
+	}
+	if _, err := os.Stat(filepath.Join(dir, "live.json")); err != nil {
+		t.Fatalf("rename target missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "gig.json")); err == nil {
+		t.Error("original still present after rename")
+	}
+}
+
 func (m model) driversStatus(id string) (drivers.Status, error) {
 	d, err := drivers.Open(id)
 	if err != nil {
@@ -369,4 +593,183 @@ func TestOnlineOnlyFilter(t *testing.T) {
 	if got := loadUIPrefs(); !got.ShowOnlineOnly {
 		t.Errorf("filter choice did not persist")
 	}
+}
+
+// Switching EVO 4 -> EVO 8 used to leave the renderer bound to the EVO 4 spec
+// while the header/layout used the EVO 8 status: the mixer then indexed a
+// 4-section list at index 4 and panicked. The fresh status must rebind the
+// spec, and a stale reply for a device already left must be ignored.
+func TestEvoDeviceSwitchRebindsSpec(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO4, 1)
+	st8, err := m.driversStatus(drivers.DevEVO8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.deviceID = drivers.DevEVO8
+	mm, _ := m.Update(statusMsg{dev: drivers.DevEVO8, status: st8})
+	m = mm.(model)
+	if m.evo.spec.ID != drivers.DevEVO8 {
+		t.Fatalf("evo spec not rebound: %q", m.evo.spec.ID)
+	}
+	m.evo.window = 1
+	_ = m.View()
+}
+
+func TestEvoStaleStatusIgnored(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	st4, err := m.driversStatus(drivers.DevEVO4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mm, _ := m.Update(statusMsg{dev: drivers.DevEVO4, status: st4})
+	m = mm.(model)
+	if m.status.Spec.ID != drivers.DevEVO8 || m.evo.spec.ID != drivers.DevEVO8 {
+		t.Fatalf("stale EVO 4 status was applied: status=%q spec=%q",
+			m.status.Spec.ID, m.evo.spec.ID)
+	}
+}
+
+// Esc out of the mixer must land on CONTROLS with the renderer in controls
+// mode, not leave the mixer visible on the controls screen.
+func TestEvoEscFromMixerLandsOnControls(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	m.evo.window = 1
+	m.nav = append(m.nav, scrMixer)
+	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = mm.(model)
+	if m.top() != scrControls || m.evo.window != 0 {
+		t.Fatalf("esc left top=%v window=%d", m.top(), m.evo.window)
+	}
+}
+
+// Pressing Enter on the device list clears evo.spec while status still holds
+// the previous interface. With a real terminal size, View() used to draw the
+// old spec's groups against an empty activeElements() list and panic with
+// "index out of range [0] with length 0" before the new status arrived.
+func TestEvoViewWhileSwitchingDeviceDoesNotPanic(t *testing.T) {
+	for _, id := range []string{drivers.DevEVO8, drivers.DevEVO4} {
+		m := evoModel(t, id, 0)
+		m.w, m.h = 120, 40
+		m.loading = true
+		m.evo.spec = drivers.Spec{}
+		_ = m.View()
+		m.evo.window = 1
+		m.nav = append(m.nav, scrMixer)
+		_ = m.View()
+	}
+}
+
+// Artist Mix shows only the selected bus. MIX 1|2 is one straight horizontal
+// run; MIX 3|4 ends ON the fork (╗), with the label below and no right stub.
+func TestEvoBusRouteArtistMixTrajectory(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 1)
+	m.evo.artistMix = true
+
+	m.evo.mixBus = 0
+	out := stripANSI(m.View())
+	if !strings.Contains(out, "MIX 3|4") {
+		t.Fatal("MIX 3|4 title must stay visible as the unselected legend")
+	}
+	if strings.Contains(out, "▶ MIX 3|4") {
+		t.Fatal("unselected MIX 3|4 must not draw a second arrow")
+	}
+	if strings.Contains(out, "╗") {
+		t.Fatal("MIX 1|2 must not draw a fork")
+	}
+	var arrowRow string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "▶ MIX 1|2") {
+			arrowRow = line
+		}
+	}
+	if arrowRow == "" {
+		t.Fatal("MIX 1|2 label missing")
+	}
+	rs := []rune(arrowRow)
+	for i, r := range rs {
+		if r == '▶' {
+			if i == 0 || rs[i-1] == ' ' {
+				t.Fatalf("horizontal run does not reach the MIX 1|2 arrow: %q", arrowRow)
+			}
+			break
+		}
+	}
+
+	m.evo.mixBus = 1
+	out = stripANSI(m.View())
+	if !strings.Contains(out, "MIX 1|2") {
+		t.Fatal("MIX 1|2 title must stay visible as the unselected legend")
+	}
+	if strings.Contains(out, "▶ MIX 1|2") {
+		t.Fatal("unselected MIX 1|2 must not draw a second arrow")
+	}
+	if !strings.Contains(out, "╚▶ MIX 3|4") {
+		t.Fatal("MIX 3|4 label missing below the fork")
+	}
+	stopped := false
+	for _, line := range strings.Split(out, "\n") {
+		if i := strings.IndexRune(line, '╗'); i >= 0 {
+			stopped = true
+			rest := line[i+len("╗"):]
+			if rest != "" && !strings.HasPrefix(rest, " ") {
+				t.Fatalf("horizontal run must stop ON the ╗ fork, got %q", line)
+			}
+		}
+	}
+	if !stopped {
+		t.Fatal("╗ fork missing for MIX 3|4")
+	}
+}
+
+// The help legend always states the current Artist Mix mode.
+func TestEvoArtistMixLegendState(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 1)
+	m.evo.artistMix = true
+	if out := stripANSI(m.View()); !strings.Contains(out, "artist mix: on") {
+		t.Fatal("legend must say artist mix: on")
+	}
+	m.evo.artistMix = false
+	if out := stripANSI(m.View()); !strings.Contains(out, "artist mix: off") {
+		t.Fatal("legend must say artist mix: off")
+	}
+}
+
+// The accent separator under the tabs must be immediately followed by the
+// cards: no blank row between them.
+func TestEvoCardsTouchTopSeparator(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	lines := strings.Split(stripANSI(m.View()), "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, "CONTROLS") || !strings.Contains(line, "Audient EVO 8") {
+			continue
+		}
+		if i+2 >= len(lines) {
+			break
+		}
+		if !strings.Contains(lines[i+1], "─") {
+			t.Fatalf("expected accent separator after tabs, got %q", lines[i+1])
+		}
+		if !strings.HasPrefix(strings.TrimSpace(lines[i+2]), "╭") {
+			t.Fatalf("card must touch the separator, got %q", lines[i+2])
+		}
+		return
+	}
+	t.Fatal("controls header not found")
+}
+
+// The bottom accent separator must also touch the cards: no blank row between
+// the last card border and the "s save" line.
+func TestEvoCardsTouchBottomSeparator(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	lines := strings.Split(stripANSI(m.View()), "\n")
+	for i, line := range lines {
+		if i == 0 || !strings.Contains(line, "s save") || !strings.Contains(line, "─") {
+			continue
+		}
+		if !strings.Contains(lines[i-1], "╯") {
+			t.Fatalf("bottom separator must touch the cards, got %q above %q", lines[i-1], line)
+		}
+		return
+	}
+	t.Fatal("bottom separator not found")
 }

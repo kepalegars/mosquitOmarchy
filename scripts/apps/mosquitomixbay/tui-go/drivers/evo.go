@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -109,11 +110,63 @@ func bool4(b bool) []byte {
 }
 
 type evoDriver struct {
-	spec Spec
-	demo *demoState // non-nil once demo fallback is engaged
+	spec  Spec
+	demo  *demoState // non-nil once demo fallback is engaged
+	fd    int        // shared fd for the current transfer batch (-1 = closed)
+	depth int        // begin/end nesting so batches can compose
 }
 
-func newEvo(spec Spec) *evoDriver { return &evoDriver{spec: spec} }
+func newEvo(spec Spec) *evoDriver { return &evoDriver{spec: spec, fd: -1} }
+
+// begin opens the device once for a whole batch of control transfers.
+// Opening/closing /dev/evo* for every transfer in quick succession makes the
+// device STALL (design doc: "rapid transfer storms"), which surfaces as EPIPE
+// ("broken pipe") on the next transfer — e.g. when muting an output. Keeping
+// one fd for the batch mirrors what the upstream controller does.
+func (d *evoDriver) begin() error {
+	d.depth++
+	if d.depth > 1 {
+		return nil
+	}
+	fd, err := unix.Open(d.devPath(), unix.O_RDONLY, 0)
+	if err != nil {
+		d.depth--
+		return err
+	}
+	d.fd = fd
+	return nil
+}
+
+func (d *evoDriver) end() {
+	if d.depth == 0 {
+		return
+	}
+	d.depth--
+	if d.depth == 0 && d.fd >= 0 {
+		unix.Close(d.fd)
+		d.fd = -1
+	}
+}
+
+// xferFD returns the fd to use for one transfer and whether it is temporary.
+func (d *evoDriver) xferFD() (int, bool, error) {
+	if d.fd >= 0 {
+		return d.fd, false, nil
+	}
+	fd, err := unix.Open(d.devPath(), unix.O_RDONLY, 0)
+	if err != nil {
+		return -1, false, err
+	}
+	return fd, true, nil
+}
+
+// pace is the small gap the design doc recommends between transfers when a
+// batch holds one fd, so back-to-back SET_CURs cannot trip the STALL watchdog.
+func (d *evoDriver) pace() {
+	if d.fd >= 0 {
+		time.Sleep(time.Millisecond)
+	}
+}
 
 func (d *evoDriver) Spec() Spec { return d.spec }
 
@@ -137,7 +190,17 @@ func (d *evoDriver) Probe() bool {
 	return true
 }
 
-func (d *evoDriver) online() bool { return d.demo == nil && d.Probe() }
+func (d *evoDriver) online() bool { return d.demo == nil && d.hasDevice() }
+
+// hasDevice reports whether a hardware device is usable. It short-circuits
+// when a batch fd is already open, so nested method calls in one batch do not
+// trigger extra open/close probes (which is what caused USB STALLs).
+func (d *evoDriver) hasDevice() bool {
+	if d.fd >= 0 {
+		return true
+	}
+	return d.Probe()
+}
 
 // --- raw transfers -----------------------------------------------------
 
@@ -163,15 +226,18 @@ func ioctlCtrl(fd int, buf []byte) error {
 }
 
 func (d *evoDriver) getCur(wValue, wIndex uint16, length int) ([]byte, error) {
-	fd, err := unix.Open(d.devPath(), unix.O_RDONLY, 0)
+	fd, temp, err := d.xferFD()
 	if err != nil {
 		return nil, err
 	}
-	defer unix.Close(fd)
+	if temp {
+		defer unix.Close(fd)
+	}
 	buf := evoXfer(0xA1, 0x01, wValue, wIndex, uint16(length), make([]byte, 256))
 	if err := ioctlCtrl(fd, buf); err != nil {
 		return nil, fmt.Errorf("GET_CUR wValue=%#04x wIndex=%#04x: %w", wValue, wIndex, err)
 	}
+	d.pace()
 	respLen := int(binary.LittleEndian.Uint16(buf[6:]))
 	if respLen > 256 {
 		respLen = 256
@@ -182,17 +248,20 @@ func (d *evoDriver) getCur(wValue, wIndex uint16, length int) ([]byte, error) {
 }
 
 func (d *evoDriver) setCur(wValue, wIndex uint16, data []byte) error {
-	fd, err := unix.Open(d.devPath(), unix.O_RDONLY, 0)
+	fd, temp, err := d.xferFD()
 	if err != nil {
 		return err
 	}
-	defer unix.Close(fd)
+	if temp {
+		defer unix.Close(fd)
+	}
 	payload := make([]byte, 256)
 	copy(payload, data)
 	buf := evoXfer(0x21, 0x01, wValue, wIndex, uint16(len(data)), payload)
 	if err := ioctlCtrl(fd, buf); err != nil {
 		return fmt.Errorf("SET_CUR wValue=%#04x wIndex=%#04x: %w", wValue, wIndex, err)
 	}
+	d.pace()
 	return nil
 }
 
@@ -257,18 +326,6 @@ func defaultMixerCells(spec Spec) map[string]MixerCell {
 			m[src] = MixerCell{VolumeDb: -128, Pan: 0}
 		}
 	}
-	// Factory default: diagonal routes open at 0 dB (as on hardware).
-	if spec.NumInputs > 0 {
-		m["input1"] = MixerCell{VolumeDb: 0, Pan: -100}
-	}
-	if spec.NumInputs > 1 {
-		m["input2"] = MixerCell{VolumeDb: 0, Pan: 100}
-	}
-	if pairs := MixerSources(spec, 0)[spec.NumInputs:]; len(pairs) > 0 {
-		c := m[pairs[0]]
-		c.VolumeDb = 0
-		m[pairs[0]] = c
-	}
 	return m
 }
 
@@ -293,11 +350,8 @@ func (d *evoDriver) ensureDemo() *demoState {
 		st.Volumes[i] = 0
 	}
 	for i := range st.Gains {
-		if d.spec.ID == "evo4" {
-			st.Gains[i] = -8
-		} else {
-			st.Gains[i] = 25
-		}
+		// Neutral unity default (not GainMin, which confused users).
+		st.Gains[i] = 0
 	}
 	if data, err := os.ReadFile(d.demoFile()); err == nil {
 		_ = json.Unmarshal(data, st)
@@ -319,7 +373,7 @@ func (d *evoDriver) saveDemo() {
 
 func (d *evoDriver) Status() (Status, error) {
 	st := Status{Spec: d.spec, Mixer: map[string]MixerCell{}}
-	if !d.Probe() {
+	if !d.hasDevice() {
 		demo := d.ensureDemo()
 		st.Online = false
 		st.Backend = BackendDemo
@@ -347,23 +401,33 @@ func (d *evoDriver) Status() (Status, error) {
 	d.demo = nil
 	st.Online = true
 	st.Backend = BackendEvoRaw
+	if err := d.begin(); err != nil {
+		return st, err
+	}
+	defer d.end()
 	// Volumes (CH1 of each pair; pairs are ganged on write).
+	var outMutes map[string]float64
+	if !d.supportsNativeOutputMute() {
+		outMutes = d.loadOutputMutes()
+	}
 	for i := 0; i < d.spec.NumOutPairs; i++ {
 		raw, err := d.getFU(fu10, i*2+1)
 		if err != nil {
 			return st, fmt.Errorf("volume output%d: %w", i+1, err)
 		}
-		name := fmt.Sprintf("output%d", i+1)
-		if d.spec.NumOutPairs == 1 {
-			name = "output"
-		}
+		name := d.outputName(i)
+		vol := usbToDb(raw)
 		muted := false
-		if wV, wI, err := d.muteTarget(name); err == nil {
+		if outMutes != nil {
+			if saved, ok := outMutes[name]; ok {
+				muted, vol = true, saved
+			}
+		} else if wV, wI, err := d.muteTarget(name); err == nil {
 			if b, err := d.getCur(wV, wI, 4); err == nil && len(b) >= 4 {
 				muted = binary.LittleEndian.Uint32(b) == 1
 			}
 		}
-		st.Outputs = append(st.Outputs, OutputState{Name: name, VolumeDb: usbToDb(raw), Muted: muted})
+		st.Outputs = append(st.Outputs, OutputState{Name: name, VolumeDb: vol, Muted: muted})
 	}
 	for i := 0; i < d.spec.NumInputs; i++ {
 		name := fmt.Sprintf("input%d", i+1)
@@ -398,7 +462,7 @@ func (d *evoDriver) Status() (Status, error) {
 
 func (d *evoDriver) SetVolume(pair int, db float64) error {
 	db = clamp(db, d.spec.VolMin, d.spec.VolMax)
-	if !d.Probe() {
+	if !d.hasDevice() {
 		demo := d.ensureDemo()
 		if pair < 0 {
 			for i := range demo.Volumes {
@@ -413,6 +477,10 @@ func (d *evoDriver) SetVolume(pair int, db float64) error {
 		d.saveDemo()
 		return nil
 	}
+	if err := d.begin(); err != nil {
+		return err
+	}
+	defer d.end()
 	pairs := []int{pair}
 	if pair < 0 {
 		pairs = pairs[:0]
@@ -420,13 +488,30 @@ func (d *evoDriver) SetVolume(pair int, db float64) error {
 			pairs = append(pairs, i)
 		}
 	}
+	// A level set on an emulated-muted pair updates the remembered level but
+	// leaves the output silent, so unmuting restores the new level.
+	var mutes map[string]float64
+	if !d.supportsNativeOutputMute() {
+		mutes = d.loadOutputMutes()
+	}
 	for _, p := range pairs {
 		if p < 0 || p >= d.spec.NumOutPairs {
 			return fmt.Errorf("output pair %d out of range (0..%d)", p, d.spec.NumOutPairs-1)
 		}
+		writeDb := db
+		if mutes != nil {
+			name := d.outputName(p)
+			if _, ok := mutes[name]; ok {
+				mutes[name] = db
+				if err := d.saveOutputMutes(mutes); err != nil {
+					return err
+				}
+				writeDb = d.spec.VolMin
+			}
+		}
 		base := p*2 + 1
 		for _, cn := range []int{base, base + 1} {
-			if err := d.setFU(fu10, cn, dbToUSB(db)); err != nil {
+			if err := d.setFU(fu10, cn, dbToUSB(writeDb)); err != nil {
 				return err
 			}
 		}
@@ -439,39 +524,146 @@ func (d *evoDriver) SetGain(input int, db float64) error {
 		return fmt.Errorf("input must be 1..%d", d.spec.NumInputs)
 	}
 	db = clamp(db, d.spec.GainMin, d.spec.GainMax)
-	if !d.Probe() {
+	if !d.hasDevice() {
 		demo := d.ensureDemo()
 		demo.Gains[input-1] = math.Round(db)
 		d.saveDemo()
 		return nil
 	}
+	if err := d.begin(); err != nil {
+		return err
+	}
+	defer d.end()
 	return d.setFU(fu11, input, dbToUSB(db))
 }
 
 func (d *evoDriver) SetMute(target string, muted bool) error {
-	if !d.Probe() {
+	if !d.hasDevice() {
 		demo := d.ensureDemo()
 		demo.Mutes[target] = muted
 		d.saveDemo()
 		return nil
 	}
+	// The EVO 8 firmware STALLs the documented EU58 CS=2 output-mute selector
+	// (SET_CUR wValue=0x0204 wIndex=0x3a00 → EPIPE / "broken pipe"). Rather
+	// than leave the key dead, emulate the mute through the one output control
+	// that always answers, FU10: drop the pair to VolMin and remember the
+	// previous level so unmuting restores it. The EVO 4 has a real output mute
+	// (EU59) and keeps using it.
+	if d.isOutputTarget(target) && !d.supportsNativeOutputMute() {
+		return d.setOutputMuteEmulated(target, muted)
+	}
 	wValue, unit, err := d.muteTarget(target)
 	if err != nil {
 		return err
 	}
+	if err := d.begin(); err != nil {
+		return err
+	}
+	defer d.end()
 	return d.setCur(wValue, unit, bool4(muted))
+}
+
+// supportsNativeOutputMute reports whether the device exposes a working
+// hardware output mute. Only the single-pair EVO 4 (EU59) does; the EVO 8's
+// EU58 CS=2 selector is rejected by the firmware.
+func (d *evoDriver) supportsNativeOutputMute() bool {
+	return d.spec.NumOutPairs == 1
+}
+
+func (d *evoDriver) isOutputTarget(target string) bool {
+	if d.spec.NumOutPairs == 1 {
+		return target == "output"
+	}
+	for i := 0; i < d.spec.NumOutPairs; i++ {
+		if target == d.outputName(i) {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *evoDriver) outputName(pair int) string {
+	if d.spec.NumOutPairs == 1 {
+		return "output"
+	}
+	return fmt.Sprintf("output%d", pair+1)
+}
+
+// outputMuteFile persists the pre-mute level of each emulated output mute so
+// the state survives a restart (the hardware mute flag cannot be read back).
+func (d *evoDriver) outputMuteFile() string {
+	return filepath.Join(d.shadowDir(), ".output-mute.json")
+}
+
+func (d *evoDriver) loadOutputMutes() map[string]float64 {
+	m := map[string]float64{}
+	if data, err := os.ReadFile(d.outputMuteFile()); err == nil {
+		_ = json.Unmarshal(data, &m)
+	}
+	return m
+}
+
+func (d *evoDriver) saveOutputMutes(m map[string]float64) error {
+	_ = os.MkdirAll(d.shadowDir(), 0o755)
+	data, _ := json.MarshalIndent(m, "", "  ")
+	return os.WriteFile(d.outputMuteFile(), data, 0o644)
+}
+
+func (d *evoDriver) setOutputMuteEmulated(target string, muted bool) error {
+	pair := -1
+	for i := 0; i < d.spec.NumOutPairs; i++ {
+		if target == d.outputName(i) {
+			pair = i
+		}
+	}
+	if pair < 0 {
+		return fmt.Errorf("unknown mute target %q", target)
+	}
+	mutes := d.loadOutputMutes()
+	if !muted {
+		db, ok := mutes[target]
+		if !ok {
+			return nil
+		}
+		delete(mutes, target)
+		if err := d.saveOutputMutes(mutes); err != nil {
+			return err
+		}
+		return d.SetVolume(pair, db)
+	}
+	if _, ok := mutes[target]; ok {
+		return nil
+	}
+	if err := d.begin(); err != nil {
+		return err
+	}
+	raw, err := d.getFU(fu10, pair*2+1)
+	d.end()
+	if err != nil {
+		return err
+	}
+	mutes[target] = usbToDb(raw)
+	if err := d.saveOutputMutes(mutes); err != nil {
+		return err
+	}
+	return d.SetVolume(pair, d.spec.VolMin)
 }
 
 func (d *evoDriver) SetPhantom(input int, on bool) error {
 	if input < 1 || input > d.spec.NumInputs {
 		return fmt.Errorf("input must be 1..%d", d.spec.NumInputs)
 	}
-	if !d.Probe() {
+	if !d.hasDevice() {
 		demo := d.ensureDemo()
 		demo.Phantom[fmt.Sprintf("input%d", input)] = on
 		d.saveDemo()
 		return nil
 	}
+	if err := d.begin(); err != nil {
+		return err
+	}
+	defer d.end()
 	return d.setCur(uint16(input-1), eu58, bool4(on))
 }
 
@@ -480,12 +672,16 @@ func (d *evoDriver) SetMonitor(v int) error {
 		return fmt.Errorf("%s has no monitor blend knob — route through the loopback mixer instead", d.spec.Display)
 	}
 	v = int(clamp(float64(v), 0, 100))
-	if !d.Probe() {
+	if !d.hasDevice() {
 		demo := d.ensureDemo()
 		demo.Monitor = v
 		d.saveDemo()
 		return nil
 	}
+	if err := d.begin(); err != nil {
+		return err
+	}
+	defer d.end()
 	raw := byte(math.Round(float64(v) / 100 * 127))
 	return d.setCur(0, eu56, []byte{raw})
 }
@@ -506,6 +702,10 @@ func (d *evoDriver) setCrosspoint(cn int, db float64) error {
 // writeMixerCell pushes one shadow cell to the hardware: the cell's volume
 // and pan expand to L/R crosspoint writes on the selected mix bus.
 func (d *evoDriver) writeMixerCell(src string, c MixerCell, bus int) error {
+	if err := d.begin(); err != nil {
+		return err
+	}
+	defer d.end()
 	lDb, rDb := panToLRDb(c.VolumeDb, c.Pan)
 	off := bus * 2
 	var in int
@@ -545,7 +745,7 @@ func (d *evoDriver) SetMixerInput(input int, volDb, pan float64, mixOut int) err
 	}
 	cell := MixerCell{VolumeDb: clamp(volDb, mixDbMin, mixDbMax), Pan: clamp(pan, -100, 100)}
 	key := MixerKey(fmt.Sprintf("input%d", input), mixOut)
-	if !d.Probe() {
+	if !d.hasDevice() {
 		demo := d.ensureDemo()
 		demo.Mixer[key] = cell
 		d.saveDemo()
@@ -576,7 +776,7 @@ func (d *evoDriver) SetMixerOutput(srcPair int, volDb, panL, panR float64, mixOu
 		PanR:     clamp(panR, -100, 100),
 	}
 	key := MixerKey(fmt.Sprintf("output%d_%d", srcPair*2+1, srcPair*2+2), mixOut)
-	if !d.Probe() {
+	if !d.hasDevice() {
 		demo := d.ensureDemo()
 		demo.Mixer[key] = cell
 		d.saveDemo()
@@ -639,9 +839,78 @@ func (d *evoDriver) SaveTo(path string) error {
 	if st.Monitor != nil {
 		cfg["monitor"] = *st.Monitor
 	}
+	// Full named snapshots include the loopback mixer (all buses), so several
+	// configs can carry distinct routings.
+	shadow := map[string]MixerCell{}
+	for k, c := range st.Mixer {
+		shadow[k] = c
+	}
+	for bus := 0; bus < MixBuses(d.spec); bus++ {
+		for _, src := range MixerSources(d.spec, bus) {
+			if _, ok := shadow[src]; ok {
+				continue
+			}
+			if strings.HasPrefix(src, "output") {
+				shadow[src] = MixerCell{VolumeDb: mixDbMin, PanL: -100, PanR: 100}
+			} else {
+				shadow[src] = MixerCell{VolumeDb: mixDbMin}
+			}
+		}
+	}
+	mixer := map[string]any{}
+	for k, c := range shadow {
+		mixer[k] = map[string]any{"volume": c.VolumeDb, "pan": c.Pan, "pan_l": c.PanL, "pan_r": c.PanR}
+	}
+	if len(mixer) > 0 {
+		cfg["mixer"] = mixer
+	}
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 	return os.WriteFile(path, data, 0o644)
+}
+
+// ProtectedConfigName is the built-in preset that cannot be overwritten.
+const ProtectedConfigName = "default"
+
+// ResetToDefaults restores the neutral factory default: unity input gains,
+// output volume at the minimum (so loading the default never blasts the
+// monitors), nothing muted, phantom off, centred input pans, full-width
+// stereo sources and a silent loopback matrix (no route open).
+func (d *evoDriver) ResetToDefaults() error {
+	if d.hasDevice() {
+		if err := d.begin(); err != nil {
+			return err
+		}
+		defer d.end()
+	}
+	// Clear output mutes first: an emulated unmute restores the remembered
+	// level, which the volume reset below must then overwrite.
+	for i := 0; i < d.spec.NumOutPairs; i++ {
+		if err := d.SetMute(d.outputName(i), false); err != nil {
+			return err
+		}
+	}
+	if err := d.SetVolume(-1, d.spec.VolMin); err != nil {
+		return err
+	}
+	for i := 0; i < d.spec.NumInputs; i++ {
+		name := fmt.Sprintf("input%d", i+1)
+		if err := d.SetGain(i+1, 0); err != nil {
+			return err
+		}
+		if err := d.SetMute(name, false); err != nil {
+			return err
+		}
+		if err := d.SetPhantom(i+1, false); err != nil {
+			return err
+		}
+	}
+	if d.spec.HasMonitor {
+		if err := d.SetMonitor(50); err != nil {
+			return err
+		}
+	}
+	return d.ResetMixer()
 }
 
 // Load re-applies config.json + every mixer shadow route (inputs and
@@ -668,6 +937,14 @@ func (d *evoDriver) LoadFrom(path string) error {
 	boolean := func(m map[string]any, k string) bool {
 		v, _ := m[k].(bool)
 		return v
+	}
+	// Hold one fd for the whole restore so the burst of SET_CURs doesn't
+	// STALL the device (see begin/end).
+	if d.hasDevice() {
+		if err := d.begin(); err != nil {
+			return err
+		}
+		defer d.end()
 	}
 	// Deterministic order: outputs, inputs, monitor, mixer.
 	var outNames []string
@@ -715,6 +992,28 @@ func (d *evoDriver) LoadFrom(path string) error {
 		}
 	}
 	shadow := d.loadShadow()
+	if rawMixer, ok := cfg["mixer"]; ok && len(rawMixer) > 0 {
+		// Named snapshot carries its own mixer state.
+		shadow = map[string]MixerCell{}
+		for k, v := range rawMixer {
+			cell := MixerCell{}
+			if m, ok := v.(map[string]any); ok {
+				if f, ok := num(m, "volume"); ok {
+					cell.VolumeDb = f
+				}
+				if f, ok := num(m, "pan"); ok {
+					cell.Pan = f
+				}
+				if f, ok := num(m, "pan_l"); ok {
+					cell.PanL = f
+				}
+				if f, ok := num(m, "pan_r"); ok {
+					cell.PanR = f
+				}
+			}
+			shadow[k] = cell
+		}
+	}
 	keys := make([]string, 0, len(shadow))
 	for k := range shadow {
 		keys = append(keys, k)
@@ -723,6 +1022,30 @@ func (d *evoDriver) LoadFrom(path string) error {
 	for _, k := range keys {
 		if err := d.SetMixerKey(k, shadow[k]); err != nil {
 			return fmt.Errorf("mixer %s: %w", k, err)
+		}
+	}
+	return nil
+}
+
+// ResetMixer clears the loopback matrix on every bus (silent, centred).
+func (d *evoDriver) ResetMixer() error {
+	if d.hasDevice() {
+		if err := d.begin(); err != nil {
+			return err
+		}
+		defer d.end()
+	}
+	sources := (d.spec.MixerInputs - d.spec.NumInputs) / 2
+	for bus := 0; bus < MixBuses(d.spec); bus++ {
+		for i := 0; i < d.spec.NumInputs; i++ {
+			if err := d.SetMixerInput(i+1, mixDbMin, 0, bus); err != nil {
+				return err
+			}
+		}
+		for i := 0; i < sources; i++ {
+			if err := d.SetMixerOutput(i, mixDbMin, -100, 100, bus); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

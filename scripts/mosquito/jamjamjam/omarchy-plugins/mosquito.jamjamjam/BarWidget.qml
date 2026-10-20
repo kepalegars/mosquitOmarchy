@@ -12,7 +12,21 @@ BarWidget {
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool midiMode: service ? service.midiMode : false
   readonly property bool midiConnected: service ? service.midiConnected : false
-  readonly property bool analyzing: service ? service.hold === true : false
+  readonly property bool holdAnalyzing: service ? service.hold === true : false
+  // Capture runs while the panel is open, the hold is active, or the TUI is
+  // analyzing. Any of those means the plugin is listening, so the fork blinks.
+  readonly property bool listening: service ? (service.hold === true || (service.recording === true && service.paused !== true)) : false
+  property bool blinkOn: false
+
+  // While jamjamjam listens, the fork alternates white/red. Reset when it stops
+  // so it always comes back to a steady white mark.
+  Timer {
+    interval: 420
+    repeat: true
+    running: root.listening
+    onRunningChanged: if (!running) root.blinkOn = false
+    onTriggered: root.blinkOn = !root.blinkOn
+  }
 
   function open() {
     if (panelLoader.item) panelLoader.item.open()
@@ -34,7 +48,8 @@ BarWidget {
     target.service = root.service
   }
 
-  implicitWidth: root.vertical ? root.barSize : Style.space(44)
+  // Same square slot as the other bar icons, in either orientation.
+  implicitWidth: root.barSize
   // The BAR's height, not the button's implicit height. The button sizes itself
   // around its 20px icon box, so taking the widget's height from it made this one
   // taller than its neighbours in the same row and the fork sat high.
@@ -68,10 +83,10 @@ BarWidget {
     bar: root.bar
     labelVisible: false
     hasVisualContent: true
-    fixedWidth: root.vertical ? root.barSize : Style.space(44)
+    fixedWidth: root.barSize
     tooltipText: !root.service ? "jamjamjam is starting"
-      : (root.analyzing ? "jamjamjam · analyzing… (hold released to stop)"
-        : (root.service.recording ? (root.midiMode ? "jamjamjam · recording · MIDI on" : "jamjamjam · recording")
+      : (root.holdAnalyzing ? "jamjamjam · analyzing… (hold released to stop)"
+        : (root.service.recording ? (root.service.paused ? "jamjamjam · paused" : (root.midiMode ? "jamjamjam · analyzing · MIDI on" : "jamjamjam · analyzing"))
           : "jamjamjam · tap to analyze audio"))
 
     onPressed: function(buttonCode) {
@@ -79,42 +94,23 @@ BarWidget {
       else root.toggle()
     }
 
-    // The box is SMALLER than the icon it holds, on purpose.
-    //
-    // The fork is a wide, top-heavy shape: at box size it filled its 20px square
-    // edge to edge, and the square itself was taller than the row, so the mark
-    // read as sitting too high next to the icons on its right. Shrinking the box
-    // and keeping the drawing at its own size centres it without making it
-    // smaller — the two were tied together before, so one could not move without
-    // the other.
+    // The 14px box is only the centring/ring anchor; the 16px fork overflows
+    // it slightly, which keeps the mark optically centred in the bar slot.
     Item {
       anchors.centerIn: parent
       width: Style.space(14)
       height: Style.space(14)
 
-      // NO backing disc. There used to be one — a `radius: width/2` disc in
-      // Util.alpha(Color.background, 0.72) — put there because the bar has no
-      // background of its own: it is transparent over the wallpaper, and this
-      // theme's red was sampled from that wallpaper, so an unoutlined red note
-      // measured ~1:1 against a red patch and disappeared into it.
-      //
-      // NoteGlyph draws its own black outline now, which is the cheaper answer:
-      // no slab of grey behind a 20px mark, and the note keeps the plain red
-      // silhouette it had before the disc was introduced. The outline is what
-      // separates it from a red background; the red itself carries it on dark
-      // ones.
+      // White at rest, so the fork matches the other monochrome bar icons.
       NoteGlyph {
         id: noteGlyph
-        // Deliberately LARGER than its parent box, and centred: this is the
-        // "shrink the box, not the icon" half. overflow is not set, so the
-        // drawing is not clipped.
         anchors.centerIn: parent
-        width: Style.space(20)
-        height: Style.space(20)
-        // The theme's red. Color.urgent IS the theme's `red` key (Color.qml maps
-        // red -> urgent), so this follows the theme rather than hardcoding a
-        // colour that would look foreign on the next one.
-        color: Color.urgent
+        // 16px matches the other bar icons. The old 20px fork filled the row
+        // and read as a larger, unrelated mark.
+        width: Style.space(16)
+        height: Style.space(16)
+        // White at rest; white/red blink while the plugin is listening.
+        color: root.listening && root.blinkOn ? Color.urgent : "#ffffff"
       }
 
 // Analysis indicator: a pulsing ring while the analyze hold is active (the
@@ -128,7 +124,7 @@ BarWidget {
         color: "transparent"
         border.color: Color.urgent
         border.width: 1
-        visible: root.analyzing
+        visible: root.holdAnalyzing
         // Pulses by thickness, never by opacity, so the ring always reads as
         // the solid theme red instead of fading to a pale wash.
         SequentialAnimation on border.width {
@@ -136,41 +132,6 @@ BarWidget {
           loops: Animation.Infinite
           NumberAnimation { to: 3; duration: 320 }
           NumberAnimation { to: 1; duration: 320 }
-        }
-      }
-
-      // Small pulsing dot when recording.
-      //
-      // Anchored to the GLYPH, never to the parent box: the box is 14px and the fork
-      // is 20px drawn centred inside it, so a dot hung off the box's top edge sits
-      // where no ink is at all. noteGlyph.top is crownTop's worth of empty space
-      // above the drawing.
-      //
-      // Crown top, spelled the way NoteGlyph spells it, so the dot lands ON the ink:
-      // measured off a screenshot, flush against the glyph's top the dot sat where
-      // the prongs are still tapered and touched BOTH of them, which made it read
-      // as a smudge across the fork instead of a dot in the notch. One space below
-      // crownTop the notch is a clean 5px between two parallel prongs.
-      Rectangle {
-        id: recDot
-        width: Style.space(4)
-        height: Style.space(4)
-        radius: width / 2
-        anchors.horizontalCenter: noteGlyph.horizontalCenter
-        anchors.top: noteGlyph.top
-        // A separate margin, NOT arithmetic on anchors.top: an anchor line only
-        // accepts another item's anchor, and assigning an expression to it fails
-        // with "Unable to assign double to QQuickAnchorLine" and silently
-        // collapses the rectangle.
-        anchors.topMargin: noteGlyph.height / 2 - noteGlyph.unit * 0.4 + Style.space(1)
-        visible: root.service ? root.service.recording : false
-        color: Color.urgent
-
-        SequentialAnimation on opacity {
-          running: recDot.visible
-          loops: Animation.Infinite
-          NumberAnimation { to: 0.2; duration: 500 }
-          NumberAnimation { to: 1.0; duration: 500 }
         }
       }
 

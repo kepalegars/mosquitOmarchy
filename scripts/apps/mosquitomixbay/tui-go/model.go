@@ -75,8 +75,10 @@ func initialModel() model {
 	return m
 }
 
-func (m model) Init() tea.Cmd { return tea.Batch(fetchStatus(m.deviceID), tuikit.ThemeWatchCmd()) }
-func (m model) top() screen   { return m.nav[len(m.nav)-1] }
+func (m model) Init() tea.Cmd {
+	return tea.Batch(fetchStatus(m.deviceID), tuikit.ThemeWatchCmd(), evoDotBlinkTick())
+}
+func (m model) top() screen { return m.nav[len(m.nav)-1] }
 
 func (m *model) push(s screen) {
 	m.cursor.Remember(strconv.Itoa(int(m.top())), m.picker)
@@ -105,9 +107,11 @@ func (m model) contentSize() (int, int) {
 }
 
 // uiPrefs is the tiny interface-side preferences file (NOT device state):
-// ~/.config/mosquitomixbay/ui.json. One key for now.
+// ~/.config/mosquitomixbay/ui.json.
 type uiPrefs struct {
 	ShowOnlineOnly bool `json:"show_online_only"`
+	// ArtistMixOff keeps OUT 1|2 and OUT 3|4 unified (one mirrored mix).
+	ArtistMixOff bool `json:"artist_mix_off"`
 }
 
 func uiPrefsFile() string {
@@ -132,6 +136,10 @@ func saveUIPrefs(p uiPrefs) error {
 // --- data fetching -----------------------------------------------------
 
 type statusMsg struct {
+	// dev is the device the reply was requested for. A slow reply from the
+	// device we just left must not overwrite the new device's status (that
+	// mismatch is what crashed the EVO mixer).
+	dev    string
 	status drivers.Status
 	err    error
 }
@@ -140,10 +148,10 @@ func fetchStatus(dev string) tea.Cmd {
 	return func() tea.Msg {
 		d, err := drivers.Open(dev)
 		if err != nil {
-			return statusMsg{err: err}
+			return statusMsg{dev: dev, err: err}
 		}
 		st, err := d.Status()
-		return statusMsg{status: st, err: err}
+		return statusMsg{dev: dev, status: st, err: err}
 	}
 }
 
@@ -216,7 +224,7 @@ func (m model) settingsItems() []tuikit.PickerItem {
 
 func onOff(b bool) string {
 	if b {
-		return "ON"
+		return "on"
 	}
 	return "off"
 }
@@ -341,15 +349,37 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case evoDotBlinkMsg:
+		m.evo.dotLit = !m.evo.dotLit
+		return m, evoDotBlinkTick()
+
 	case statusMsg:
+		// Drop a reply for a device we have already navigated away from.
+		if msg.dev != "" && msg.dev != m.deviceID {
+			return m, nil
+		}
 		m.loading = false
 		if msg.err != nil {
 			m.toast, _ = m.toast.SetErr(msg.err.Error())
 			return m, nil
 		}
 		m.status = msg.status
-		if m.isEvoDevice() && m.evo.spec.ID == "" {
-			m.evoEnter()
+		// (Re)bind the EVO renderer to THIS status's spec. Selecting a new
+		// device leaves evo.spec empty until its real status arrives, so the
+		// mixer can never iterate an old spec's section list over a new
+		// device's layout.
+		if m.isEvoDevice() {
+			switch {
+			case m.evo.spec.ID == "":
+				m.evoEnter()
+				// A fast Tab while the status was loading can already have
+				// pushed the mixer; keep the screen and the nav stack in step.
+				if m.top() == scrMixer {
+					m.evo.window = 1
+				}
+			case m.evo.spec.ID != msg.status.Spec.ID:
+				m.evoRebindSpec()
+			}
 		}
 		idx := m.picker.Index()
 		m.syncPicker()
@@ -461,9 +491,13 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.deviceID = m.picker.SelectedValue()
 			m.loading = true
+			// Unbind the previous device's spec: evoEnter() here would copy
+			// the STALE status.Spec (the interface we just left) into the
+			// renderer. The fresh statusMsg binds the real spec instead.
+			m.evo.spec = drivers.Spec{}
+			m.evo.window = 0
 			m.push(scrControls)
 			m.syncPicker()
-			m.evoEnter()
 			return m, fetchStatus(m.deviceID)
 		case "q", "esc":
 			m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")

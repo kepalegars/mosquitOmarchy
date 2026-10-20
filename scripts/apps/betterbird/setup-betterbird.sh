@@ -115,13 +115,24 @@ setup_autostart(){
 [Desktop Entry]
 Type=Application
 Name=Betterbird
-Exec=betterbird
+Exec=/usr/bin/betterbird
 Icon=betterbird
 Terminal=false
 Categories=Network;Email;
 StartupNotify=false
+StartupWMClass=eu.betterbird.Betterbird
 X-GNOME-Autostart-enabled=true
 EOF
+  # XDG autostart is consumed by systemd-xdg-autostart-generator, which runs
+  # at login. A file created after login therefore sits there until the next
+  # one — exactly the "autostart does nothing" report. Regenerate the units now
+  # and start the generated one so the setup is effective immediately.
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    if ! pgrep -x betterbird >/dev/null 2>&1; then
+      systemctl --user start 'app-betterbird@autostart.service' >/dev/null 2>&1 || true
+    fi
+  fi
   ok "autostart entry created at $AUTOSTART_FILE"
 }
 
@@ -146,6 +157,13 @@ status_betterbird(){
   for d in "${dirs[@]}"; do [[ -f $d/user.js ]] && have=$((have+1)); done
   echo "prefs      : $have/${#dirs[@]} user.js present"
   echo "autostart  : $([[ -f $AUTOSTART_FILE ]] && echo present || echo absent)"
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl --user cat 'app-betterbird@autostart.service' >/dev/null 2>&1; then
+      echo "autostart unit: generated"
+    else
+      echo "autostart unit: missing (re-run install to regenerate)"
+    fi
+  fi
   [[ -f $HYPR_DIALOGS ]] && echo "hypr rules : $(bash "$HYPR_DIALOGS" status betterbird)"
 }
 

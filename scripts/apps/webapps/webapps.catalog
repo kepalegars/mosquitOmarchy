@@ -6,9 +6,14 @@
 # identical whatever the catalog:
 #
 #   WEB <name> | <url> | <icon>  → Omarchy webapp (omarchy webapp install)
+#   WEB <name> | native:<pkg> | <icon>
+#                              → desktop package kept in this catalog (yay);
+#                                an optional native-<pkg>.sh hook runs after
+#                                install / before removal (config patching).
 #
 # Blank lines and lines starting with "#" are ignored.
 # The actual selection is saved by the backup (mosquitomarchy-setup.sh --backup) in apps.selected.
 
 WEB kSuite|https://ksuite.infomaniak.com/all/kdrive/app/drive/1099475/files/5|ksuite
 WEB Schwung Manager|http://move.local:7700|schwung-manager
+WEB TIDAL Hi-Fi (TidaLuna)|native:tidal-hifi-tidaluna|tidal-hifi

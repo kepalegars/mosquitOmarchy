@@ -63,6 +63,7 @@ Icon=signal-desktop
 Terminal=false
 Categories=Network;InstantMessaging;
 StartupNotify=false
+StartupWMClass=signal
 X-GNOME-Autostart-enabled=true
 EOF
 

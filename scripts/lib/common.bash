@@ -51,9 +51,17 @@ ask(){
 pkg_has(){ pacman -Q "$1" &>/dev/null; }
 
 is_webapp_installed(){
-  [[ -f "$HOME/.local/share/applications/$1.desktop" ]] \
+  local name="$1" url="${2:-}"
+  # A "native:" entry is a desktop package that lives in the webapps catalog
+  # (e.g. TIDAL Hi-Fi/TidaLuna) but is installed with yay, not with
+  # `omarchy webapp install`. Its "URL" field carries the package name.
+  if [[ $url == native:* ]]; then
+    pkg_has "${url#native:}"
+    return
+  fi
+  [[ -f "$HOME/.local/share/applications/$name.desktop" ]] \
     && grep -qE '^Exec=.*(omarchy-launch-webapp|omarchy-webapp-handler)' \
-         "$HOME/.local/share/applications/$1.desktop"
+         "$HOME/.local/share/applications/$name.desktop"
 }
 
 # PLUG entries are git-based Omarchy shell plugins (omarchy plugin add/remove),
@@ -317,12 +325,13 @@ status_type(){
   load_catalog
   hr; msg "State of $label"
   local -n arr="$arrname"
-  local entry name
+  local entry name url
   for entry in "${arr[@]:-}"; do
     name="${entry%%|*}"
     if [[ $type == WEB ]]; then
-      if is_webapp_installed "$name"; then printf " ${G}✓${N} %-24s web  %s\n" "$name" "$(echo "$entry" | cut -d'|' -f2)"
-      else printf " ${D}—${N} %-24s web  %s${D} (not installed)${N}\n" "$name" "$(echo "$entry" | cut -d'|' -f2)"; fi
+      url="$(echo "$entry" | cut -d'|' -f2)"
+      if is_webapp_installed "$name" "$url"; then printf " ${G}✓${N} %-24s web  %s\n" "$name" "$url"
+      else printf " ${D}—${N} %-24s web  %s${D} (not installed)${N}\n" "$name" "$url"; fi
     elif [[ $type == PLUG ]]; then
       if plugin_installed "$name"; then printf " ${G}✓${N} %-24s plug %s\n" "$name" "$(echo "$entry" | cut -d'|' -f3)"
       else printf " ${D}—${N} %-24s plug %s${D} (not installed)${N}\n" "$name" "$(echo "$entry" | cut -d'|' -f3)"; fi
@@ -349,7 +358,26 @@ install_one(){
       ;;
     WEB)
       name="${entry%%|*}"; url="$(echo "$entry" | cut -d'|' -f2)"; icon="$(echo "$entry" | cut -d'|' -f3)"
-      is_webapp_installed "$name" && { ok "Webapp $name : already present"; return 0; }
+      if [[ $url == native:* ]]; then
+        # Native desktop package listed in the webapps catalog. Optional
+        # integration script (menu-bar/config patches) sits next to it and
+        # runs even when the package is already present, so re-running the
+        # module re-applies the config instead of silently doing nothing.
+        local pkg="${url#native:}" hook="$APP_DIR/webapps/native-${url#native:}.sh"
+        if pkg_has "$pkg"; then
+          ok "Native webapp $name : already installed"
+          [[ -f $hook ]] && bash "$hook" --install
+          return 0
+        fi
+        msg "Native webapp: $name ($pkg)"
+        require_yay || return 1
+        if yay -S --needed --noconfirm "$pkg"; then
+          [[ -f $hook ]] && bash "$hook" --install
+          ok "Native webapp $name : installed"
+        else err "Native webapp $name : INSTALL FAILED"; return 1; fi
+        return 0
+      fi
+      is_webapp_installed "$name" "$url" && { ok "Webapp $name : already present"; return 0; }
       msg "Webapp: $name ($url)"
       if omarchy webapp install "$name" "$url" "$icon" 2>/dev/null; then ok "Webapp $name : installed"
       else err "Webapp $name : FAILED"; return 1; fi
@@ -365,7 +393,7 @@ install_one(){
 }
 
 remove_one(){
-  local kind="$1" entry="$2" name
+  local kind="$1" entry="$2" name url
   case $kind in
     APP|TUI)
       name="${entry%%|*}"
@@ -376,8 +404,18 @@ remove_one(){
       else ok "$name : not installed"; fi
       ;;
     WEB)
-      name="${entry%%|*}"
-      if is_webapp_installed "$name"; then
+      name="${entry%%|*}"; url="$(echo "$entry" | cut -d'|' -f2)"
+      if [[ $url == native:* ]]; then
+        local pkg="${url#native:}" hook="$APP_DIR/webapps/native-${url#native:}.sh"
+        if pkg_has "$pkg"; then
+          msg "Native webapp: removing $name ($pkg)"
+          [[ -f $hook ]] && bash "$hook" --remove
+          if mq_sudo pacman -Rns --noconfirm "$pkg" 2>/dev/null; then ok "$name : removed"
+          else err "$name : FAILED"; return 1; fi
+        else ok "$name : not installed"; fi
+        return 0
+      fi
+      if is_webapp_installed "$name" "$url"; then
         msg "Webapp: removing $name"
         if omarchy webapp remove "$name" 2>/dev/null; then ok "Webapp $name : removed"
         else err "Webapp $name : FAILED"; return 1; fi

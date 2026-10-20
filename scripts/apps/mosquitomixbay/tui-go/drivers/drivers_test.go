@@ -47,6 +47,44 @@ func TestEvo8MuteTargets(t *testing.T) {
 	}
 }
 
+// The EVO 8 firmware rejects the documented EU58 CS=2 output mute, so only the
+// EVO 4 (EU59) may claim a native output mute; the EVO 8 emulates it via FU10.
+func TestEvoOutputMuteCapability(t *testing.T) {
+	d8 := newEvo(EVO8Spec)
+	if d8.supportsNativeOutputMute() {
+		t.Error("EVO 8 must not claim a native output mute")
+	}
+	if !d8.isOutputTarget("output1") || !d8.isOutputTarget("output2") {
+		t.Error("EVO 8 output1/output2 must be output targets")
+	}
+	if d8.isOutputTarget("output") || d8.isOutputTarget("input1") {
+		t.Error("EVO 8 'output'/'input1' are not output targets")
+	}
+	if d8.outputName(0) != "output1" || d8.outputName(1) != "output2" {
+		t.Errorf("EVO 8 output names: %q %q", d8.outputName(0), d8.outputName(1))
+	}
+	d4 := newEvo(EVO4Spec)
+	if !d4.supportsNativeOutputMute() {
+		t.Error("EVO 4 has a native output mute (EU59)")
+	}
+	if !d4.isOutputTarget("output") || d4.outputName(0) != "output" {
+		t.Error("EVO 4 bare output target")
+	}
+}
+
+// The emulated-mute level memory must round-trip through disk.
+func TestEvoOutputMuteMemory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	d := newEvo(EVO8Spec)
+	if err := d.saveOutputMutes(map[string]float64{"output1": -12}); err != nil {
+		t.Fatal(err)
+	}
+	got := d.loadOutputMutes()
+	if got["output1"] != -12 {
+		t.Errorf("output mute memory = %v, want -12", got["output1"])
+	}
+}
+
 func TestDemoStatus(t *testing.T) {
 	// No hardware on CI: every driver must serve a demo status, never fail.
 	for _, spec := range Registry() {
@@ -157,8 +195,8 @@ func TestEvoLoadRestoresEveryMixerRoute(t *testing.T) {
 	_ = os.Remove(filepath.Join(home, ".config", "mosquitomixbay", DevEVO8, "demo.json"))
 	d2, _ := Open(DevEVO8)
 	st0, _ := d2.Status()
-	if c := st0.Mixer["input1"]; c.VolumeDb != 0 || c.Pan != -100 {
-		t.Fatalf("fresh demo should be factory {0 -100}, got %+v", c)
+	if c := st0.Mixer["input1"]; c.VolumeDb != -128 || c.Pan != 0 {
+		t.Fatalf("fresh demo should be neutral {-128 0}, got %+v", c)
 	}
 	if err := d2.Load(); err != nil {
 		t.Fatalf("load: %v", err)
@@ -170,5 +208,48 @@ func TestEvoLoadRestoresEveryMixerRoute(t *testing.T) {
 	// The old Load silently dropped outputX_Y keys; both must come back.
 	if c := st.Mixer["output1_2"]; c.VolumeDb != -3 {
 		t.Errorf("output1_2 not restored: %+v", c)
+	}
+}
+
+// The built-in "default" preset must leave the outputs at the minimum so
+// loading it never blasts the monitors. Inputs stay at unity.
+func TestEvoDefaultPresetOutputsAtMin(t *testing.T) {
+	for _, id := range []string{EVO8Spec.ID, EVO4Spec.ID} {
+		t.Setenv("HOME", t.TempDir())
+		drv, err := Open(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Never reset real hardware from a test.
+		pre, err := drv.Status()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pre.Online {
+			t.Logf("%s: hardware online, skipping demo assertion", id)
+			continue
+		}
+		r, ok := drv.(interface{ ResetToDefaults() error })
+		if !ok {
+			t.Fatalf("%s: ResetToDefaults missing", id)
+		}
+		if err := r.ResetToDefaults(); err != nil {
+			t.Fatal(err)
+		}
+		st, err := drv.Status()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, out := range st.Outputs {
+			if out.VolumeDb != st.Spec.VolMin {
+				t.Errorf("%s output %d = %v dB, want VolMin %v dB",
+					id, i, out.VolumeDb, st.Spec.VolMin)
+			}
+		}
+		for i, in := range st.Inputs {
+			if in.GainDb != 0 {
+				t.Errorf("%s input %d gain = %v dB, want 0", id, i, in.GainDb)
+			}
+		}
 	}
 }

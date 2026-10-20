@@ -8,17 +8,40 @@
 (() => {
   'use strict';
 
+  // Bridge to the main process so clicking a notification can raise the
+  // window. WhatsApp Web manages the notification in the page, but clicking
+  // the OS popup only fires the page-side click handler — it never shows the
+  // window the user closed to the tray. We forward every click to main.js,
+  // which calls showWindow() on the real BrowserWindow.
+  let ipcRenderer = null;
+  try {
+    ({ ipcRenderer } = require('electron'));
+  } catch (e) {
+    ipcRenderer = null;
+  }
+
   const ForcedNotification = function Notification(title, options) {
     if (!(this instanceof ForcedNotification)) {
       return new ForcedNotification(title, options);
     }
     const opts = Object.assign({}, options || {}, { silent: true });
+    let n = null;
     try {
-      return new nativeNotification(title, opts);
+      n = new nativeNotification(title, opts);
     } catch (e) {
       // Fallback: if the native constructor throws, ignore quietly.
       return null;
     }
+    // Additive listener: WhatsApp's own onclick stays intact, ours just asks
+    // the main process to surface the window.
+    try {
+      if (n && ipcRenderer) {
+        n.addEventListener('click', () => {
+          try { ipcRenderer.send('whatsapp:notification-click'); } catch (e) { /* ignore */ }
+        });
+      }
+    } catch (e) { /* ignore */ }
+    return n;
   };
 
   // Capture the real, page-native Notification before we shadow it.

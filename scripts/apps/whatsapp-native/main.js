@@ -20,6 +20,7 @@ const {
   nativeImage,
   session,
   shell,
+  ipcMain,
 } = require('electron');
 const path = require('path');
 
@@ -57,6 +58,12 @@ function showWindow() {
   mainWindow.show();
   mainWindow.focus();
 }
+
+// Clicking a desktop notification (forwarded by preload.js) must raise the
+// window — even when it was closed to the tray.
+ipcMain.on('whatsapp:notification-click', () => {
+  showWindow();
+});
 
 function createTray() {
   let image = nativeImage.createFromPath(ICON_PATH);

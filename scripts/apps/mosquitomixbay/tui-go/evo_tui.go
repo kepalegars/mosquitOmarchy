@@ -40,25 +40,30 @@ const (
 	evoPanStep      = 5.0
 	evoMixDbMin     = -128.0
 	evoMixDbMax     = 6.0
-	evoControlsTop  = 3
+	evoControlsTop  = 2
 	evoControlsTail = 5
 	evoHsep         = " · "
 )
 
-// evotui's box / slider / bus glyphs, verbatim.
+// Box glyphs follow the native mosquito TUIs (lipgloss RoundedBorder): rounded
+// corners instead of evotui's square ones, so the EVO cards read as part of the
+// same desktop. Selection is carried by the accent colour and weight, not by
+// switching to a heavier line set.
 const (
-	boxTLA, boxHA, boxTRA = '┏', '━', '┓'
-	boxVA, boxBLA, boxBRA = '┃', '┗', '┛'
-	boxTL, boxH, boxTR    = '┌', '─', '┐'
-	boxV, boxBL, boxBR    = '│', '└', '┘'
-	busTR, busBL          = '╗', '╚'
-	busH                  = '═'
-	busJStart, busJTUp    = '╘', '╧'
-	busJTDown             = '╦'
-	slFull                = '▬'
-	arrowR, arrowREmpty   = '▶', '▷'
-	arrowD, arrowU        = '↓', '↑'
-	evoTabSym             = "Tab"
+	boxTL, boxH, boxTR = '╭', '─', '╮'
+	boxV, boxBL, boxBR = '│', '╰', '╯'
+	busBL              = '╚'
+	busH               = '═'
+	busJStart, busJTUp = '╘', '╧'
+	busJTDown          = '╦'
+	busTR              = '╗'
+	slFull             = '▬'
+	// Both arrow cells use the same filled glyph: an outline variant (▷) has a
+	// different advance width in some fonts, which visibly misaligned the
+	// MIX 1|2 / MIX 3|4 markers. Selection is conveyed by colour instead.
+	arrowR         = '▶'
+	arrowD, arrowU = '↓', '↑'
+	evoTabSym      = "Tab"
 )
 
 const evoArrows = "←↓↑→"
@@ -74,12 +79,14 @@ const (
 	cYellow
 	cWhite
 	cBlue
+	cAccent
+	cBorder
 )
 
 // --- canvas -----------------------------------------------------------------
 
 type evoStyle struct {
-	col       int
+	col, bg   int
 	bold, dim bool
 	rev       bool
 }
@@ -132,7 +139,7 @@ func (c *evoCanvas) repeat(x, y, n int, r rune, st evoStyle) {
 
 // render turns the canvas into styled lines, trimming trailing blanks so a
 // sparse frame does not emit kilometres of spaces.
-func (c *evoCanvas) render(pal [7]lipgloss.Color) string {
+func (c *evoCanvas) render(pal [9]lipgloss.Color) string {
 	var b strings.Builder
 	for y := 0; y < c.h; y++ {
 		end := c.w
@@ -168,10 +175,13 @@ func (c *evoCanvas) render(pal [7]lipgloss.Color) string {
 	return b.String()
 }
 
-func evoStyleFor(pal [7]lipgloss.Color, st evoStyle) lipgloss.Style {
+func evoStyleFor(pal [9]lipgloss.Color, st evoStyle) lipgloss.Style {
 	s := lipgloss.NewStyle()
 	if st.col != cNone {
 		s = s.Foreground(pal[st.col])
+	}
+	if st.bg != cNone {
+		s = s.Background(pal[st.bg])
 	}
 	if st.bold {
 		s = s.Bold(true)
@@ -195,6 +205,8 @@ type evoUI struct {
 	mxSection int
 	mxParam   int
 	mixBus    int
+	artistMix bool // false = OUT 1|2 and OUT 3|4 share one mirrored mix
+	dotLit    bool // online connection dot alternates accent/white
 
 	numBuf    string
 	statusMsg string
@@ -206,6 +218,18 @@ type evoUI struct {
 	fileCursor int
 	fileScroll int
 	fileInput  string
+	renaming   bool   // save picker: renaming the entry under renameFrom
+	renameFrom string // original filename being renamed
+}
+
+// pickerCount is the number of selectable rows: the config files, plus a
+// trailing "new preset" slot on the save picker.
+func (u *evoUI) pickerCount() int {
+	n := len(u.fileList)
+	if u.mode == 1 {
+		n++
+	}
+	return n
 }
 
 type evoElement struct {
@@ -403,7 +427,7 @@ func (m model) evoElemFrac(e evoElement, val float64) float64 {
 }
 
 func (m model) evoMxCell(section, param string) float64 {
-	c := m.status.Mixer[drivers.MixerKey(section, m.evo.mixBus)]
+	c := m.status.Mixer[drivers.MixerKey(section, m.evo.readBus())]
 	switch param {
 	case "volume":
 		return c.VolumeDb
@@ -425,24 +449,29 @@ type evoHint struct {
 }
 
 type evoRender struct {
-	c         *evoCanvas
-	m         model
-	u         *evoUI
-	spec      drivers.Spec
-	boxAttr   evoStyle
-	boxActive bool
+	c       *evoCanvas
+	m       model
+	u       *evoUI
+	spec    drivers.Spec
+	boxAttr evoStyle
 }
 
 func (r *evoRender) put(x, y int, s string, st evoStyle) { r.c.put(x, y, s, st) }
 
-func evoPalette() [7]lipgloss.Color {
-	var p [7]lipgloss.Color
+func evoPalette() [9]lipgloss.Color {
+	var p [9]lipgloss.Color
 	p[cGreen] = tuikit.ColorGreen
 	p[cRed] = tuikit.ColorRed
 	p[cCyan] = tuikit.ColorCyan
 	p[cYellow] = tuikit.ColorYellow
-	p[cWhite] = tuikit.ColorSubtle
+	// Body text and structural lines are the theme's own foreground
+	// (bright_foreground), not ColorBorder/ColorSubtle: on achraff-67 the
+	// former is muted green (#4e9237) and the latter a warm grey, which is
+	// exactly the "green lines / grey text" the EVO panel must not show.
+	p[cWhite] = tuikit.ColorOnSurface
 	p[cBlue] = tuikit.ColorBlue
+	p[cAccent] = tuikit.ColorAccent
+	p[cBorder] = tuikit.ColorOnSurface
 	return p
 }
 
@@ -466,38 +495,25 @@ func (r *evoRender) boxTop(row, cx int, label string, active bool, iw int, attr 
 	case active:
 		st = evoStyle{col: cWhite, bold: true}
 	default:
-		st = evoStyle{col: cWhite, dim: true}
-	}
-	h, d, e := boxTL, boxH, boxTR
-	if active {
-		h, d, e = boxTLA, boxHA, boxTRA
+		st = evoStyle{col: cBorder, dim: true}
 	}
 	dashes := iw - len([]rune(label)) - 2
 	if dashes < 0 {
 		dashes = 0
 	}
-	r.put(cx, row, string(h)+" ", st)
+	r.put(cx, row, string(boxTL)+" ", st)
 	r.put(cx+2, row, label, st)
-	r.put(cx+2+len([]rune(label)), row, " "+strings.Repeat(string(d), dashes)+string(e), st)
+	r.put(cx+2+len([]rune(label)), row, " "+strings.Repeat(string(boxH), dashes)+string(boxTR), st)
 	r.boxAttr = st
-	r.boxActive = active
 }
 
 func (r *evoRender) boxSide(row, cx, iw int) {
-	v := boxV
-	if r.boxActive {
-		v = boxVA
-	}
-	r.put(cx, row, string(v), r.boxAttr)
-	r.put(cx+iw+1, row, string(v), r.boxAttr)
+	r.put(cx, row, string(boxV), r.boxAttr)
+	r.put(cx+iw+1, row, string(boxV), r.boxAttr)
 }
 
 func (r *evoRender) boxBot(row, cx, iw int) {
-	bl, d, br := boxBL, boxH, boxBR
-	if r.boxActive {
-		bl, d, br = boxBLA, boxHA, boxBRA
-	}
-	r.put(cx, row, string(bl)+strings.Repeat(string(d), iw)+string(br), r.boxAttr)
+	r.put(cx, row, string(boxBL)+strings.Repeat(string(boxH), iw)+string(boxBR), r.boxAttr)
 }
 
 // hslider is evotui's half-block fader: 2 cells per slider cell, the odd cell
@@ -517,14 +533,14 @@ func (r *evoRender) hslider(row, x int, frac float64, muted, sel bool, color, w 
 		fillCol = cRed
 	}
 	fillSt := evoStyle{col: fillCol, dim: !sel}
-	emptySt := evoStyle{col: cWhite, dim: !sel}
+	emptySt := evoStyle{col: cBorder, dim: !sel}
 	pos := x
 	if full > 0 {
 		r.c.repeat(pos, row, full, slFull, fillSt)
 		pos += full
 	}
 	if partial > 0 {
-		r.put(pos, row, string(boxHA), fillSt)
+		r.put(pos, row, string(slFull), fillSt)
 		pos++
 	}
 	if empty := w - full - partial; empty > 0 {
@@ -537,7 +553,7 @@ func (r *evoRender) hslider(row, x int, frac float64, muted, sel bool, color, w 
 func (r *evoRender) panSlider(row, x int, frac float64, sel bool, color, w int) {
 	half := w / 2
 	fillSt := evoStyle{col: color, dim: !sel}
-	emptySt := evoStyle{col: cWhite, dim: !sel}
+	emptySt := evoStyle{col: cBorder, dim: !sel}
 	r.c.repeat(x, row, w, boxH, emptySt)
 	leftSlots := int(math.Round((1 - frac) * float64(half) * 2))
 	if leftSlots < 0 {
@@ -553,22 +569,23 @@ func (r *evoRender) panSlider(row, x int, frac float64, sel bool, color, w int) 
 		r.c.repeat(x+half-lf, row, lf, slFull, fillSt)
 	}
 	if lp > 0 {
-		r.put(x+half-lf-1, row, string(boxHA), fillSt)
+		r.put(x+half-lf-1, row, string(slFull), fillSt)
 	}
 	if rf > 0 {
 		r.c.repeat(x+half+1, row, rf, slFull, fillSt)
 	}
 	if rp > 0 {
-		r.put(x+half+1+rf, row, string(boxHA), fillSt)
+		r.put(x+half+1+rf, row, string(slFull), fillSt)
 	}
 	r.put(x+half, row, string(boxV), evoStyle{col: cWhite, bold: true})
 }
 
 func (r *evoRender) muteInd(row, x int, muted bool) {
+	// The legend is always uppercase; only the colour carries the state.
 	if muted {
 		r.put(x, row, "[M]", evoStyle{col: cRed, bold: true})
 	} else {
-		r.put(x, row, "[m]", evoDim)
+		r.put(x, row, "[M]", evoDim)
 	}
 }
 
@@ -576,30 +593,45 @@ func (r *evoRender) phantomInd(row, x int, on bool) {
 	if on {
 		r.put(x, row, "[48V]", evoStyle{col: cYellow, bold: true})
 	} else {
-		r.put(x, row, "[48v]", evoDim)
+		r.put(x, row, "[48V]", evoDim)
 	}
 }
 
 func (r *evoRender) drawTabBar(row, cx, sectionW int) {
 	const ctrlLabel, mixLabel = " CONTROLS ", " MIXER "
-	dim := evoDim
-	rev := evoStyle{col: cWhite, bold: true, rev: true}
+	lineAttr := evoStyle{col: cAccent}
 	controls := r.u.window == 0
-	ctrlAttr, mixAttr := dim, rev
+	// Like the mosquito Close buttons: the selected tab is an accent block
+	// with white text. Text stays pure white in both states (no grey).
+	ctrlAttr, mixAttr := evoVal, evoVal
 	if controls {
-		ctrlAttr, mixAttr = rev, dim
+		ctrlAttr = evoStyle{col: cWhite, bg: cAccent, bold: true}
+	} else {
+		mixAttr = evoStyle{col: cWhite, bg: cAccent, bold: true}
 	}
 	r.put(cx+1, row, ctrlLabel, ctrlAttr)
 	mixX := cx + 1 + len([]rune(ctrlLabel)) + 1
 	r.put(mixX, row, mixLabel, mixAttr)
+	// Connection dot + device name, right-aligned. Offline is always accent
+	// (hollow); online pulses accent <-> white.
 	name := r.spec.Display
-	r.put(cx+sectionW-len([]rune(name)), row, name, dim)
-	r.c.repeat(cx, row+1, sectionW, boxH, dim)
+	dot := "● "
+	dotAttr := evoStyle{col: cAccent}
+	if !r.m.status.Online {
+		dot, dotAttr = "○ ", evoStyle{col: cAccent}
+	} else if !r.u.dotLit {
+		dotAttr = evoVal
+	}
+	rightX := cx + sectionW - len([]rune(name)) - len([]rune(dot))
+	r.put(rightX, row, dot, dotAttr)
+	r.put(rightX+len([]rune(dot)), row, name, evoStyle{col: cAccent, bold: true})
+	// The panel's top separator is accent; the active tab sits on a gap in it.
+	r.c.repeat(cx, row+1, sectionW, boxH, lineAttr)
 	activeX, activeW := cx+1, len([]rune(ctrlLabel))
 	if !controls {
 		activeX, activeW = mixX, len([]rune(mixLabel))
 	}
-	r.put(activeX, row+1, strings.Repeat(" ", activeW), dim)
+	r.put(activeX, row+1, strings.Repeat(" ", activeW), lineAttr)
 }
 
 func (r *evoRender) drawSection(row, cx, idx, sw, bw int, forceInactive bool) int {
@@ -619,7 +651,7 @@ func (r *evoRender) drawSection(row, cx, idx, sw, bw int, forceInactive bool) in
 	}
 	row++
 	r.boxSide(row, cx, bw)
-	lblAttr := evoDim
+	lblAttr := evoVal
 	if active {
 		lblAttr = evoBold
 	}
@@ -673,7 +705,7 @@ func (r *evoRender) drawControlsBody(row, cx, mixerW int) int {
 			row++
 		}
 	}
-	return row + 1
+	return row - 1
 }
 
 func (r *evoRender) drawControlsTwoCol(row, cx, mixerW int) int {
@@ -698,13 +730,18 @@ func (r *evoRender) drawControlsTwoCol(row, cx, mixerW int) int {
 	right := drawCol(1, cx+colW+evoColGap)
 	r.u.sub = saved
 	if right > left {
-		return right + 1
+		return right - 1
 	}
-	return left + 1
+	return left - 1
 }
 
 func (r *evoRender) drawMixerSection(topRow, cx, secIdx int, compact bool) {
 	sections := r.u.flatMx()
+	// Defensive: never index past the spec the UI is bound to (a stale spec
+	// from the previously selected interface used to panic here).
+	if secIdx < 0 || secIdx >= len(sections) {
+		return
+	}
 	s := sections[secIdx]
 	selSec := r.u.mxSection == secIdx
 	var panIdx []int
@@ -721,7 +758,7 @@ func (r *evoRender) drawMixerSection(topRow, cx, secIdx int, compact bool) {
 	connected := volVal > evoMixDbMin
 	var boxAttr *evoStyle
 	if connected {
-		st := evoStyle{col: cCyan}
+		st := evoStyle{col: cWhite}
 		if selSec {
 			st.bold = true
 		}
@@ -757,7 +794,7 @@ func (r *evoRender) drawMixerSection(topRow, cx, secIdx int, compact bool) {
 			} else if p == "pan_r" {
 				plabel = "Pan R"
 			}
-			attr := evoDim
+			attr := evoVal
 			if sel {
 				attr = evoBold
 			}
@@ -780,7 +817,7 @@ func (r *evoRender) drawMixerSection(topRow, cx, secIdx int, compact bool) {
 	r.hslider(row, cx+2, volFrac, false, volSel, s.color, siw-2)
 	row++
 	r.boxSide(row, cx, siw)
-	volAttr := evoDim
+	volAttr := evoVal
 	if volSel {
 		volAttr = evoBold
 	}
@@ -806,8 +843,9 @@ func evoMixOutputLabel(spec drivers.Spec, i int) string {
 
 func (r *evoRender) drawBusRoute(row, cx, width int) {
 	secOW := r.sectionIW() + 3
-	dim := evoDim
-	busAttr := evoStyle{col: cCyan, bold: true}
+	// The bus is the panel's accent route; only the unselected branch turns
+	// white, so the eye follows the selected MIX without losing the fork.
+	busAttr := evoStyle{col: cAccent}
 	rows := evoMixerRows(r.spec)
 	wall := map[int]bool{}
 	for i, s := range rows[0] {
@@ -827,7 +865,9 @@ func (r *evoRender) drawBusRoute(row, cx, width int) {
 			up, down := wall[p], outWall[p]
 			switch {
 			case p == 0 && !up:
-				sb.WriteRune(' ')
+				// Start the bus at the same column as the separator under
+				// the tabs ("la flèche doit commencer un peu plus tôt").
+				sb.WriteRune(busH)
 			case p == 0:
 				sb.WriteRune(busJStart)
 			case up && down:
@@ -861,31 +901,35 @@ func (r *evoRender) drawBusRoute(row, cx, width int) {
 	}
 	jx := cx + width - (3 + labelW)
 	mixOutput := r.u.mixBus
-	a0, a1 := dim, dim
+	// Selected route: white triangle + title. The other bus keeps its title as
+	// an accent legend (no triangle): the arrow shape alone shows which route
+	// is live, while both destinations stay readable.
+	selAttr := evoVal
+	unselAttr := evoStyle{col: cAccent, bold: true}
+	if !r.u.artistMix {
+		// Linked: both buses receive the same route, so both branches exist.
+		r.put(cx, row+1, busChars(jx-cx), busAttr)
+		r.put(jx, row+1, string(busJTDown), busAttr)
+		r.put(jx+1, row+1, string(arrowR)+" "+mixLabels[0], selAttr)
+		r.put(jx, row+2, string(busBL), busAttr)
+		r.put(jx+1, row+2, string(arrowR)+" "+mixLabels[1], selAttr)
+		return
+	}
 	if mixOutput == 0 {
-		a0 = evoStyle{col: cCyan, bold: true}
+		// MIX 1|2: one straight horizontal run, no fork at all. MIX 3|4 is
+		// still named below as the accent legend.
+		r.put(cx, row+1, busChars(jx-cx+1), busAttr)
+		r.put(jx+1, row+1, string(arrowR)+" "+mixLabels[0], selAttr)
+		r.put(jx+1, row+2, mixLabels[1], unselAttr)
+		return
 	}
-	if mixOutput == 1 {
-		a1 = evoStyle{col: cCyan, bold: true}
-	}
+	// MIX 3|4: the horizontal run ends ON the fork, which turns down to the
+	// selected label. MIX 1|2 stays named to the right of the corner in accent.
 	r.put(cx, row+1, busChars(jx-cx), busAttr)
-	if len(mixLabels) > 0 {
-		pre := string(arrowREmpty)
-		junc := string(busH)
-		if mixOutput == 0 {
-			pre = string(arrowR)
-		} else {
-			junc = string(busTR)
-		}
-		r.put(jx, row+1, junc+pre+" "+mixLabels[0], a0)
-	}
-	if len(mixLabels) > 1 {
-		pre := string(arrowREmpty)
-		if mixOutput == 1 {
-			pre = string(arrowR)
-		}
-		r.put(jx, row+2, string(busBL)+pre+" "+mixLabels[1], a1)
-	}
+	r.put(jx, row+1, string(busTR), busAttr)
+	r.put(jx+1, row+1, " "+mixLabels[0], unselAttr)
+	r.put(jx, row+2, string(busBL), busAttr)
+	r.put(jx+1, row+2, string(arrowR)+" "+mixLabels[1], selAttr)
 }
 
 func (r *evoRender) drawMixerBody(row, cx int) int {
@@ -907,7 +951,7 @@ func (r *evoRender) drawMixerBody(row, cx int) int {
 		r.drawMixerSection(row, cx+i*secOW, flat, false)
 		flat++
 	}
-	return row + r.sectionH() + 1
+	return row + r.sectionH() - 1
 }
 
 func (r *evoRender) drawHints(row, col int, hints []evoHint, dim evoStyle) int {
@@ -977,8 +1021,9 @@ func (r *evoRender) drawStatusBar(row, cx, sectionW int) int {
 	if dashes < 0 {
 		dashes = 0
 	}
-	r.c.repeat(cx, row, dashes, boxH, dim)
-	r.put(cx+sectionW-1, row, string(boxH), dim)
+	lineAttr := evoStyle{col: cAccent}
+	r.c.repeat(cx, row, dashes, boxH, lineAttr)
+	r.put(cx+sectionW-1, row, string(boxH), lineAttr)
 	r.drawHints(row, cx+dashes+1, hints, dim)
 	return row + 1
 }
@@ -1031,9 +1076,16 @@ func (r *evoRender) mixerHelp() ([]evoHint, []evoHint) {
 		{key: "[]", desc: " " + evoPM + step},
 		{key: "{}", desc: " " + evoPM + big},
 		{key: "0-9", desc: " dial"},
+		{key: "r", desc: " reset"},
+		{key: "R", desc: " reset all"},
 	}
 	if r.spec.NumOutPairs > 1 {
 		set = append(set, evoHint{key: "m", desc: " mix", col: cCyan})
+		am := "off"
+		if r.u.artistMix {
+			am = "on"
+		}
+		set = append(set, evoHint{key: "A", desc: " artist mix: " + am, col: cCyan})
 	}
 	return nav, set
 }
@@ -1054,7 +1106,7 @@ func evoControlsBodyH(spec drivers.Spec) int {
 				h = v
 			}
 		}
-		return h + 1
+		return h
 	}
 	n := len(groups[0].elements)
 	return n*4 + (n - 1)
@@ -1066,20 +1118,22 @@ func (m model) evoConfigDir() string {
 }
 
 func (m model) evoScanFiles() []string {
+	// The built-in preset is always offered and can never be overwritten.
+	out := []string{drivers.ProtectedConfigName + ".json"}
 	entries, err := os.ReadDir(m.evoConfigDir())
 	if err != nil {
-		return nil
+		return out
 	}
-	var out []string
+	var rest []string
 	for _, e := range entries {
 		n := e.Name()
-		if e.IsDir() || strings.HasPrefix(n, ".") || !strings.HasSuffix(n, ".json") {
+		if e.IsDir() || strings.HasPrefix(n, ".") || !strings.HasSuffix(n, ".json") || n == out[0] {
 			continue
 		}
-		out = append(out, n)
+		rest = append(rest, n)
 	}
-	sort.Strings(out)
-	return out
+	sort.Strings(rest)
+	return append(out, rest...)
 }
 
 // evoView renders the EVO screens with evotui's exact frame.
@@ -1089,7 +1143,24 @@ func (m model) evoView() string {
 	if m.evo.mode != 0 {
 		return m.evoFilePicker(w, h, pal)
 	}
-	spec := m.status.Spec
+	// The renderer must drive BOTH the layout and activeElements() from the
+	// same spec. Using m.status.Spec here while evo.spec was still empty (the
+	// device-selection loading window) made drawControlsTwoCol iterate the old
+	// device's groups against an empty activeElements() list and panic.
+	spec := m.evo.spec
+	if spec.ID == "" {
+		c := newEvoCanvas(w, h)
+		msg := "loading…"
+		x, y := (w-len([]rune(msg)))/2, h/2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		c.put(x, y, msg, evoDim)
+		return c.render(pal)
+	}
 	rows := evoMixerRows(spec)
 	maxRowLen := len(rows[0])
 	if len(rows[1]) > maxRowLen {
@@ -1114,7 +1185,7 @@ func (m model) evoView() string {
 	}
 	r := &evoRender{c: c, m: m, u: &m.evo, spec: spec}
 	r.drawTabBar(row, cx, mixerW)
-	row += 3
+	row += 2
 	var nav, set []evoHint
 	if m.evo.window == 0 {
 		row = r.drawControlsBody(row, cx, mixerW)
@@ -1128,7 +1199,7 @@ func (m model) evoView() string {
 	return c.render(pal)
 }
 
-func (m model) evoFilePicker(w, h int, pal [7]lipgloss.Color) string {
+func (m model) evoFilePicker(w, h int, pal [9]lipgloss.Color) string {
 	c := newEvoCanvas(w, h)
 	u := &m.evo
 	boxW := evoBoxIW + 2
@@ -1142,13 +1213,16 @@ func (m model) evoFilePicker(w, h int, pal [7]lipgloss.Color) string {
 	}
 	totalH := evoPickerListH + 3
 	if u.mode == 1 {
-		totalH++
+		totalH += 2
 	}
 	row := (h - totalH) / 2
 	if row < 0 {
 		row = 0
 	}
 	dim := evoDim
+	// The panel frame is the one accent surface here; everything inside it is
+	// plain white so the preset list reads like the rest of the interface.
+	frame := evoStyle{col: cAccent, bold: true}
 	pathStr := m.evoConfigDir() + "/"
 	maxPath := evoBoxIW - len([]rune(action)) - 5
 	if maxPath < 4 {
@@ -1163,30 +1237,44 @@ func (m model) evoFilePicker(w, h int, pal [7]lipgloss.Color) string {
 	if titleDashes < 0 {
 		titleDashes = 0
 	}
-	c.put(cx, row, string(boxTL)+string(boxH)+" ", dim)
-	c.put(cx+3, row, title, dim)
-	c.put(cx+3+len([]rune(title)), row, " "+strings.Repeat(string(boxH), titleDashes)+string(boxTR), dim)
+	c.put(cx, row, string(boxTL)+string(boxH)+" ", frame)
+	c.put(cx+3, row, title, evoBold)
+	c.put(cx+3+len([]rune(title)), row, " "+strings.Repeat(string(boxH), titleDashes)+string(boxTR), frame)
 	row++
-	r := &evoRender{c: c, m: m, u: u, spec: m.status.Spec, boxAttr: dim}
+	r := &evoRender{c: c, m: m, u: u, spec: m.status.Spec, boxAttr: frame}
 	r.boxSide(row, cx, evoBoxIW)
 	row++
+	total := u.pickerCount()
 	for i := 0; i < evoPickerListH; i++ {
 		r.boxSide(row, cx, evoBoxIW)
 		abs := u.fileScroll + i
-		if len(u.fileList) == 0 && i == 0 {
-			c.put(cx+evoSliderOff, row, "(no configs found)", dim)
-		} else if abs < len(u.fileList) {
-			f := u.fileList[abs]
+		if total == 0 && i == 0 {
+			c.put(cx+evoSliderOff, row, "(no configs found)", evoDim)
+		} else if abs < total {
+			sentinel := u.mode == 1 && abs == len(u.fileList)
 			sel := abs == u.fileCursor
 			pre := "  "
 			if sel {
-				pre = string(arrowR) + " "
+				if sentinel {
+					pre = "+ "
+				} else {
+					pre = string(arrowR) + " "
+				}
 			}
-			attr := evoDim
+			attr := evoVal
 			if sel {
 				attr = evoBold
 			}
-			text := pre + f
+			text := pre
+			if sentinel {
+				text += "new preset…"
+			} else {
+				f := u.fileList[abs]
+				text += f
+				if f == drivers.ProtectedConfigName+".json" {
+					text += "  (read-only)"
+				}
+			}
 			if rr := []rune(text); len(rr) > evoBoxIW-2 {
 				text = string(rr[:evoBoxIW-2])
 			}
@@ -1197,11 +1285,37 @@ func (m model) evoFilePicker(w, h int, pal [7]lipgloss.Color) string {
 	if u.mode == 1 {
 		r.boxSide(row, cx, evoBoxIW)
 		fileX := cx + evoSliderOff
-		c.put(fileX, row, "File: ", dim)
-		fileX += 6
-		c.put(fileX, row, u.fileInput, evoBold)
-		fileX += len([]rune(u.fileInput))
-		c.put(fileX, row, ".json", dim)
+		label := "File: "
+		if u.renaming {
+			label = "Rename "
+		}
+		c.put(fileX, row, label, evoVal)
+		fileX += len([]rune(label))
+		nameAttr := evoVal
+		if u.pickerEditable() {
+			nameAttr = evoBold
+		}
+		if u.fileInput == "" {
+			c.put(fileX, row, "type a name…", evoDim)
+			fileX += len([]rune("type a name…"))
+		} else {
+			c.put(fileX, row, u.fileInput, nameAttr)
+			fileX += len([]rune(u.fileInput))
+		}
+		c.put(fileX, row, ".json", evoDim)
+		row++
+		r.boxSide(row, cx, evoBoxIW)
+		if u.statusMsg != "" {
+			attr := evoStyle{col: cYellow}
+			if u.statusErr {
+				attr = evoStyle{col: cRed, bold: true}
+			}
+			msg := u.statusMsg
+			if rr := []rune(msg); len(rr) > evoBoxIW-2 {
+				msg = string(rr[:evoBoxIW-2])
+			}
+			c.put(cx+evoSliderOff, row, msg, attr)
+		}
 		row++
 	}
 	act := "save"
@@ -1213,6 +1327,9 @@ func (m model) evoFilePicker(w, h int, pal [7]lipgloss.Color) string {
 		{key: "↵", desc: " " + act},
 		{key: "Esc", desc: " cancel"},
 	}
+	if u.mode == 1 {
+		hints = append(hints, evoHint{key: "r", desc: " rename"})
+	}
 	contentW := len([]rune(evoHsep)) * (len(hints) - 1)
 	for _, hh := range hints {
 		contentW += len([]rune(hh.key)) + len([]rune(hh.desc))
@@ -1221,11 +1338,11 @@ func (m model) evoFilePicker(w, h int, pal [7]lipgloss.Color) string {
 	if botDashes < 0 {
 		botDashes = 0
 	}
-	c.put(cx, row, string(boxBL)+strings.Repeat(string(boxH), botDashes), dim)
+	c.put(cx, row, string(boxBL)+strings.Repeat(string(boxH), botDashes), frame)
 	col := cx + 1 + botDashes + 1
 	col = r.drawHints(row, col, hints, dim)
-	c.put(col, row, " "+string(boxH), dim)
-	c.put(cx+evoBoxIW+1, row, string(boxBR), dim)
+	c.put(col, row, " "+string(boxH), frame)
+	c.put(cx+evoBoxIW+1, row, string(boxBR), frame)
 	return c.render(pal)
 }
 
@@ -1243,6 +1360,15 @@ type evoStatusExpireMsg struct{ gen int }
 
 func evoStatusTick(gen int) tea.Cmd {
 	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return evoStatusExpireMsg{gen: gen} })
+}
+
+// evoDotBlinkMsg drives the online connection dot's accent/white pulse. It is
+// deliberately a model tick, not a render-time animation: Bubble Tea only
+// repaints when a message arrives.
+type evoDotBlinkMsg struct{}
+
+func evoDotBlinkTick() tea.Cmd {
+	return tea.Tick(700*time.Millisecond, func(time.Time) tea.Msg { return evoDotBlinkMsg{} })
 }
 
 // evoStatus sets a status line and returns the cmd that will expire it.
@@ -1269,6 +1395,39 @@ func (m *model) evoEnter() {
 	m.evo.mxSection = 0
 	m.evo.mxParam = 1
 	m.evo.mixBus = 0
+	m.evo.artistMix = !m.ui.ArtistMixOff
+	m.evo.numBuf = ""
+	m.evo.mode = 0
+}
+
+// evoRebindSpec re-points the EVO view at the current status's spec without
+// resetting the screen the user is on. A device swap (EVO 4 -> EVO 8) can
+// change the mixer's section count, so every index is re-clamped: indexing the
+// old spec's section list against the new layout was a hard panic.
+func (m *model) evoRebindSpec() {
+	m.evo.spec = m.status.Spec
+	if groups := len(evoGroups(m.evo.spec)); m.evo.sub >= groups {
+		m.evo.sub = 0
+	}
+	if els := len(m.evo.activeElements()); m.evo.cursor >= els {
+		if els == 0 {
+			m.evo.cursor = 0
+		} else {
+			m.evo.cursor = els - 1
+		}
+	}
+	sections := m.evo.flatMx()
+	if m.evo.mxSection >= len(sections) {
+		m.evo.mxSection = 0
+	}
+	if m.evo.mxSection >= 0 && m.evo.mxSection < len(sections) {
+		if params := len(sections[m.evo.mxSection].params); m.evo.mxParam >= params {
+			m.evo.mxParam = 0
+		}
+	}
+	if m.evo.mixBus >= m.evo.spec.NumOutPairs {
+		m.evo.mixBus = 0
+	}
 	m.evo.numBuf = ""
 	m.evo.mode = 0
 }
@@ -1297,9 +1456,19 @@ func (m *model) evoKey(k string) tea.Cmd {
 			return nil
 		}
 		m.pop()
+		// Keep the rendered screen and the nav stack in step: leaving the
+		// mixer with Esc must land on CONTROLS, not keep the mixer on screen.
+		if m.top() == scrMixer {
+			u.window = 1
+		} else {
+			u.window = 0
+		}
+		u.numBuf = ""
 		return fetchStatus(m.deviceID)
 	case "s":
-		u.mode, u.fileInput = 1, "config"
+		u.mode, u.fileInput = 1, ""
+		u.renaming, u.renameFrom = false, ""
+		u.statusMsg = ""
 		u.fileList = m.evoScanFiles()
 		u.fileCursor, u.fileScroll = 0, 0
 		return nil
@@ -1360,6 +1529,19 @@ func (m *model) evoKey(k string) tea.Cmd {
 	return m.evoMixerKey(k)
 }
 
+// evoClampCursor keeps the row index when crossing columns: IN 3 -> OUT 3|4
+// where possible, clamped to the shorter column.
+func (m *model) evoClampCursor() {
+	els := m.evo.activeElements()
+	if len(els) == 0 {
+		m.evo.cursor = 0
+		return
+	}
+	if m.evo.cursor >= len(els) {
+		m.evo.cursor = len(els) - 1
+	}
+}
+
 func (m *model) evoControlsKey(k string) tea.Cmd {
 	els := m.evo.activeElements()
 	ngroups := len(evoGroups(m.evo.spec))
@@ -1371,12 +1553,12 @@ func (m *model) evoControlsKey(k string) tea.Cmd {
 	case "l", "L", "right":
 		if ngroups > 1 {
 			m.evo.sub = (m.evo.sub + 1) % ngroups
-			m.evo.cursor = 0
+			m.evoClampCursor()
 		}
 	case "h", "H", "left":
 		if ngroups > 1 {
 			m.evo.sub = (m.evo.sub - 1 + ngroups) % ngroups
-			m.evo.cursor = 0
+			m.evoClampCursor()
 		}
 	case "m":
 		return m.evoToggleMute()
@@ -1487,6 +1669,15 @@ func (m *model) evoSelectMx(idx int) {
 	m.evo.mxParam = len(sections[idx].params) - 1
 }
 
+// readBus is the bus whose state the mixer panel shows. With Artist Mix off
+// both output pairs are unified, so the panel always reads bus 0.
+func (u *evoUI) readBus() int {
+	if !u.artistMix {
+		return 0
+	}
+	return u.mixBus
+}
+
 func (m *model) evoMixerKey(k string) tea.Cmd {
 	rows := evoMixerRows(m.evo.spec)
 	r, c := m.evoMxRowCol()
@@ -1527,9 +1718,33 @@ func (m *model) evoMixerKey(k string) tea.Cmd {
 			m.evoSelectMx(evoColOffset(nr, rows) + cc)
 		}
 	case "m":
+		if !m.evo.artistMix {
+			return m.evo.evoStatus("Artist Mix off — OUT 1|2 and 3|4 are linked", false)
+		}
 		if m.evo.spec.NumOutPairs > 1 {
 			m.evo.mixBus = (m.evo.mixBus + 1) % m.evo.spec.NumOutPairs
 		}
+	case "A":
+		if m.evo.spec.NumOutPairs <= 1 {
+			return m.evo.evoStatus("Artist Mix needs two output pairs", false)
+		}
+		m.evo.artistMix = !m.evo.artistMix
+		if !m.evo.artistMix {
+			m.evo.mixBus = 0
+		}
+		m.ui.ArtistMixOff = !m.evo.artistMix
+		_ = saveUIPrefs(m.ui)
+		if m.evo.artistMix {
+			return m.evo.evoStatus("Artist Mix on — OUT 1|2 and 3|4 have separate mixes", false)
+		}
+		return m.evo.evoStatus("Artist Mix off — anything routed to 3|4 also goes to 1|2", false)
+	case "r":
+		return m.evoResetMxParam()
+	case "R":
+		m.confirm = tuikit.NewConfirm("Reset every mixer crosspoint on all buses?", "Cancel", "Reset all")
+		m.confirmAct = func() tea.Cmd { return m.evoResetMixer() }
+		m.push(scrConfirm)
+		return nil
 	case " ":
 		m.evo.mxParam = (m.evo.mxParam + 1) % nparams
 	case "]":
@@ -1577,7 +1792,7 @@ func (m *model) evoMxSetVal(v float64) tea.Cmd {
 }
 
 func (m *model) evoMxSetValTo(key, param string, val float64) tea.Cmd {
-	c := m.status.Mixer[drivers.MixerKey(key, m.evo.mixBus)]
+	c := m.status.Mixer[drivers.MixerKey(key, m.evo.readBus())]
 	vol, pan, panL, panR := c.VolumeDb, c.Pan, c.PanL, c.PanR
 	switch param {
 	case "volume":
@@ -1590,20 +1805,92 @@ func (m *model) evoMxSetValTo(key, param string, val float64) tea.Cmd {
 		panR = clampf(val, evoPanMin, evoPanMax)
 	}
 	dev := m.deviceID
-	bus := m.evo.mixBus
+	buses := []int{m.evo.mixBus}
+	if !m.evo.artistMix {
+		buses = buses[:0]
+		for b := 0; b < drivers.MixBuses(m.evo.spec); b++ {
+			buses = append(buses, b)
+		}
+	}
 	var n int
 	if _, err := fmt.Sscanf(key, "input%d", &n); err == nil {
-		return applyCmd(dev, func(d drivers.Driver) error { return d.SetMixerInput(n, vol, pan, bus) }, "")
+		return applyCmd(dev, func(d drivers.Driver) error {
+			for _, bus := range buses {
+				if err := d.SetMixerInput(n, vol, pan, bus); err != nil {
+					return err
+				}
+			}
+			return nil
+		}, "")
 	}
 	var l, rr int
 	if _, err := fmt.Sscanf(key, "output%d_%d", &l, &rr); err == nil {
-		return applyCmd(dev, func(d drivers.Driver) error { return d.SetMixerOutput((l-1)/2, vol, panL, panR, bus) }, "")
+		return applyCmd(dev, func(d drivers.Driver) error {
+			for _, bus := range buses {
+				if err := d.SetMixerOutput((l-1)/2, vol, panL, panR, bus); err != nil {
+					return err
+				}
+			}
+			return nil
+		}, "")
 	}
 	return nil
 }
 
+func evoMxDefault(param string) float64 {
+	switch param {
+	case "volume":
+		return evoMixDbMin
+	case "pan":
+		return 0
+	case "pan_l":
+		return evoPanMin
+	case "pan_r":
+		return evoPanMax
+	}
+	return 0
+}
+
+// evoResetMxParam resets the selected mixer parameter to its neutral default.
+func (m *model) evoResetMxParam() tea.Cmd {
+	sections := m.evo.flatMx()
+	if m.evo.mxSection >= len(sections) {
+		return nil
+	}
+	s := sections[m.evo.mxSection]
+	if m.evo.mxParam >= len(s.params) {
+		return nil
+	}
+	param := s.params[m.evo.mxParam]
+	return m.evoMxSetValTo(s.key, param, evoMxDefault(param))
+}
+
+// evoResetMixer clears every crosspoint on every bus (silent, centred).
+func (m *model) evoResetMixer() tea.Cmd {
+	dev := m.deviceID
+	spec := m.evo.spec
+	return applyCmd(dev, func(d drivers.Driver) error {
+		if r, ok := d.(interface{ ResetMixer() error }); ok {
+			return r.ResetMixer()
+		}
+		for bus := 0; bus < drivers.MixBuses(spec); bus++ {
+			for i := 0; i < spec.NumInputs; i++ {
+				if err := d.SetMixerInput(i+1, evoMixDbMin, 0, bus); err != nil {
+					return err
+				}
+			}
+			for i := 0; i < evoNumMixerSources(spec); i++ {
+				if err := d.SetMixerOutput(i, evoMixDbMin, evoPanMin, evoPanMax, bus); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}, "mixer reset")
+}
+
 func (u *evoUI) pickerMove(delta int, wrap bool) {
-	n := len(u.fileList)
+	n := u.pickerCount()
 	if n == 0 {
 		return
 	}
@@ -1630,7 +1917,29 @@ func (m *model) evoPickerKey(k string) tea.Cmd {
 	moved := false
 	switch k {
 	case "esc":
+		if u.renaming {
+			u.renaming, u.renameFrom = false, ""
+			if u.fileCursor < len(u.fileList) {
+				u.fileInput = strings.TrimSuffix(u.fileList[u.fileCursor], ".json")
+			}
+			return nil
+		}
 		u.mode = 0
+		return nil
+	case "r":
+		if u.mode != 1 {
+			return nil
+		}
+		if u.fileCursor >= len(u.fileList) {
+			return u.evoStatus("the “new preset” row has no name to rename", true)
+		}
+		f := u.fileList[u.fileCursor]
+		if f == drivers.ProtectedConfigName+".json" {
+			return u.evoStatus("“"+drivers.ProtectedConfigName+"” is read-only", true)
+		}
+		u.renaming = true
+		u.renameFrom = f
+		u.fileInput = strings.TrimSuffix(f, ".json")
 		return nil
 	case "up":
 		u.pickerMove(-1, false)
@@ -1647,28 +1956,43 @@ func (m *model) evoPickerKey(k string) tea.Cmd {
 	case "enter":
 		if u.mode == 2 {
 			if len(u.fileList) > 0 && u.fileCursor < len(u.fileList) {
-				path := filepath.Join(m.evoConfigDir(), u.fileList[u.fileCursor])
+				picked := u.fileList[u.fileCursor]
 				u.mode = 0
+				if picked == drivers.ProtectedConfigName+".json" {
+					return m.evoLoadDefault()
+				}
+				path := filepath.Join(m.evoConfigDir(), picked)
 				return tea.Batch(
-					m.evo.evoStatus("loading "+u.fileList[u.fileCursor], false),
+					m.evo.evoStatus("loading "+picked, false),
 					m.evoLoadFrom(path),
 				)
 			}
 			u.mode = 0
 			return nil
 		}
-		name := strings.TrimSpace(u.fileInput)
-		u.mode = 0
-		if name != "" {
-			return m.evoSaveTo(filepath.Join(m.evoConfigDir(), name+".json"))
+		name := strings.TrimSpace(strings.TrimSuffix(u.fileInput, ".json"))
+		if u.renaming {
+			return m.evoCommitRename(name)
 		}
-		return nil
+		if name == "" {
+			return u.evoStatus("name your config first", true)
+		}
+		if strings.EqualFold(name, drivers.ProtectedConfigName) {
+			// Never overwrite the built-in preset: force a fresh name.
+			u.fileInput = ""
+			return u.evoStatus("“"+drivers.ProtectedConfigName+"” is read-only — name a new config", true)
+		}
+		if err := evoValidName(name); err != nil {
+			return u.evoStatus(err.Error(), true)
+		}
+		u.mode = 0
+		return m.evoSaveTo(filepath.Join(m.evoConfigDir(), name+".json"))
 	case "backspace":
-		if u.mode == 1 && len(u.fileInput) > 0 {
+		if u.mode == 1 && u.pickerEditable() && len(u.fileInput) > 0 {
 			u.fileInput = u.fileInput[:len(u.fileInput)-1]
 		}
 	default:
-		if u.mode == 1 && len(k) == 1 {
+		if u.mode == 1 && u.pickerEditable() && len(k) == 1 {
 			c := k[0]
 			if c >= 32 && c <= 126 {
 				maxLen := evoBoxIW - len("File: ") - len(".json") - 1
@@ -1678,10 +2002,64 @@ func (m *model) evoPickerKey(k string) tea.Cmd {
 			}
 		}
 	}
-	if moved && u.mode == 1 && len(u.fileList) > 0 && u.fileCursor < len(u.fileList) {
-		u.fileInput = strings.TrimSuffix(u.fileList[u.fileCursor], ".json")
+	if moved && u.mode == 1 {
+		u.renaming, u.renameFrom = false, ""
+		if u.fileCursor < len(u.fileList) {
+			u.fileInput = strings.TrimSuffix(u.fileList[u.fileCursor], ".json")
+		} else {
+			u.fileInput = ""
+		}
 	}
 	return nil
+}
+
+// pickerEditable reports whether the save picker's name field accepts typing:
+// while renaming, or while the "new preset" slot is selected.
+func (u *evoUI) pickerEditable() bool {
+	return u.renaming || u.fileCursor >= len(u.fileList)
+}
+
+func evoValidName(name string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
+		return fmt.Errorf("invalid name — letters, digits and dashes only")
+	}
+	return nil
+}
+
+// evoCommitRename renames the file picked for rename, then re-reads the list.
+func (m *model) evoCommitRename(name string) tea.Cmd {
+	u := &m.evo
+	if name == "" {
+		return u.evoStatus("name your config first", true)
+	}
+	if err := evoValidName(name); err != nil {
+		return u.evoStatus(err.Error(), true)
+	}
+	if strings.EqualFold(name, drivers.ProtectedConfigName) {
+		return u.evoStatus("“"+drivers.ProtectedConfigName+"” is reserved", true)
+	}
+	dir := m.evoConfigDir()
+	to := name + ".json"
+	if to == u.renameFrom {
+		u.renaming, u.renameFrom = false, ""
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(dir, to)); err == nil {
+		return u.evoStatus(to+" already exists", true)
+	}
+	if err := os.Rename(filepath.Join(dir, u.renameFrom), filepath.Join(dir, to)); err != nil {
+		return u.evoStatus("rename failed: "+err.Error(), true)
+	}
+	u.renaming, u.renameFrom = false, ""
+	u.fileList = m.evoScanFiles()
+	u.fileCursor, u.fileScroll = 0, 0
+	for i, f := range u.fileList {
+		if f == to {
+			u.fileCursor = i
+		}
+	}
+	u.fileInput = strings.TrimSuffix(to, ".json")
+	return u.evoStatus("renamed to "+to, false)
 }
 
 func (m *model) evoSaveTo(path string) tea.Cmd {
@@ -1702,4 +2080,15 @@ func (m *model) evoLoadFrom(path string) tea.Cmd {
 		}
 		return d.Load()
 	}, "")
+}
+
+// evoLoadDefault applies the built-in, read-only preset.
+func (m *model) evoLoadDefault() tea.Cmd {
+	dev := m.deviceID
+	return applyCmd(dev, func(d drivers.Driver) error {
+		if r, ok := d.(interface{ ResetToDefaults() error }); ok {
+			return r.ResetToDefaults()
+		}
+		return fmt.Errorf("default preset unavailable for this device")
+	}, "default preset applied")
 }

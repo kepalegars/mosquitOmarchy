@@ -22,6 +22,11 @@
 #   3. Tray icon + close-to-tray: closing the window hides it to the tray
 #      instead of quitting; the tray menu opens it again or really quits.
 #   4. No menu bar: Menu.setApplicationMenu(null) + the window's menu removed.
+#   5. Clicking a notification opens the app. The Omarchy notification daemon
+#      (quickshell) invokes the sender's own "default" action on click; WhatsApp
+#      Web's page handler only marks the chat read, so a window closed to the
+#      tray stayed hidden. preload.js forwards the notification click over IPC
+#      and main.js calls showWindow() on the real window.
 #
 # Plus an Omarchy applications-menu entry ("WhatsApp"), its icon in the hicolor
 # theme, and login autostart (o.launch_on_start).

@@ -235,11 +235,10 @@ func (c Confirm) View() string {
 			// wrong one.
 			s = s.Background(ColorAccent).Foreground(BestContrastOn(ColorAccent)).Bold(true)
 		} else {
-			// Same tone as the shortcut legends under the dialog, not the
-			// dimmer ColorMuted: an answer you are NOT currently on is still a
-			// first-class option, and reading it darker than the hints made
-			// "See log" / "OK" look disabled next to the focused one.
-			s = s.Foreground(ColorSubtle)
+			// Plain foreground, not ColorSubtle: an answer you are NOT
+			// currently on is still a first-class option, and the dialog body
+			// (accent frame) reads as white text throughout.
+			s = s.Foreground(ColorOnSurface)
 		}
 		return s.Render(label)
 	}
@@ -257,7 +256,7 @@ func (c Confirm) View() string {
 	// content space), so a long single line used to push the modal past the
 	// narrow default window and break its frame. Word-wrap every message
 	// line at 72 columns (the same width the layout caps content at).
-	body := wrapLines(c.Message, 72)
+	body := lipgloss.NewStyle().Foreground(ColorOnSurface).Render(wrapLines(c.Message, 72))
 	// The list goes between the message and the buttons, indented so it reads as
 	// evidence under the question rather than as a fourth answer.
 	if len(c.List) > 0 {

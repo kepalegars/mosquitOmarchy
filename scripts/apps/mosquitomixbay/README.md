@@ -33,6 +33,64 @@ Autres inspirations : `soerenbnoergaard/evoctl` (matrice EVO8),
 `oudeis01/linux-fireface-mixer` (sélection de submix — ici le sélecteur
 MIX 1|2 / MIX 3|4).
 
+## Interface : ce qui vient d'evotui, ce que mixbay ajoute
+
+L'écran EVO 4/8 est un port fidèle d'`evotui.py` : mêmes cadres, glyphes,
+sliders, ligne de bus et raccourcis. Ce qui est **partagé avec upstream** :
+
+- le chemin `~/.config/audient-evo-py/<evo4|evo8>/` — le nom vient du projet
+  amont, écrit en Python. mixbay le réutilise tel quel pour que `evoctl` et le
+  bay lisent/écrivent le même état (poids historique, pas une dépendance) ;
+- `.mixer-state.json` : shadow du MU60 (write-only), clés `inputN` /
+  `outputX_Y`, suffixe `@bus` pour MIX 3|4 ;
+- les cibles de contrôle (FU10/FU11/EU56/EU58/EU59/MU60) et les quirks USB.
+
+Ce que **mixbay ajoute** :
+
+- transferts groupés sur un seul fd par lot : un `SET_CUR` isolé par transfert
+  provoquait des STALL USB (« broken pipe ») lors des rafales ;
+- **mute de sortie EVO 8 émulé** : le firmware *rejette* le sélecteur EU58
+  CS=2 documenté (`SET_CUR wValue=0x0204 wIndex=0x3a00` → « broken pipe »).
+  mixbay baisse alors la sortie à `VolMin` via FU10 (qui répond toujours) et
+  mémorise le niveau précédent dans `.output-mute.json` pour le restaurer au
+  dé-mute. L'EVO 4 garde son vrai mute matériel (EU59) ;
+- snapshots nommés complets (contrôles **et** mixer, tous les bus) ;
+- picker de sauvegarde : entrée `+ new preset…` toujours en dernier (le curseur
+  devient `+`) et `r` renomme le fichier sélectionné (`Enter` valide, `Esc`
+  annule) ;
+- preset `default.json` en lecture seule, toujours en tête du picker : sauver
+  sous ce nom est refusé et force un nouveau nom ;
+- `A` Artist Mix : OFF lie OUT 1|2 et OUT 3|4 (même mix, volumes de sortie
+  restant séparés) ;
+- `r` remet le paramètre sélectionné au défaut, `R` (rename « reset all ») vide
+  tout le mixer après confirmation ;
+- défauts neutres : gains d'entrée 0 dB, **volume de sortie au minimum**
+  (`VolMin` : charger `default` ne peut pas envoyer un niveau fort aux
+  monitors), pans d'entrée centrés, sources stéréo -100/+100, aucun
+  crosspoint ouvert ;
+- chrome en **texte blanc** : cadres arrondis, libellés PAN / VOL / gains et
+  ligne de bus utilisent le `bright_foreground` du thème, plus jamais `muted`
+  (vert sur achraff-67) ni `dark_foreground` (gris chaud) ;
+- onglets CONTROLS / MIXER : texte blanc dans les deux états, l'actif sur un
+  bloc accent (comme les boutons Close) ; les deux lignes de cadre
+  (sous les onglets, au-dessus des raccourcis) sont accent ; devant
+  `Audient EVO 8/4`, un point plein clignote entre accent et blanc quand
+  l'interface est connectée, et un point creux accent reste fixe quand elle
+  est absente ;
+- indicateurs toujours en majuscules (`[M]`, `[48V]`), l'état ne changeant que
+  la couleur (rouge allumé, jaune 48V actif, blanc atténué éteint).
+
+Le trait vertical en début de ligne de bus (`╘`) n'est pas un séparateur :
+il marque le départ du bus lorsque l'entrée 1 y est routée. La ligne de bus
+commence à la même colonne que le trait sous les onglets et reste toujours
+accent. Les deux titres `MIX 1|2` et `MIX 3|4` sont toujours visibles. Avec
+**Artist Mix** actif, le bus sélectionné est blanc et précédé de `▶` :
+`MIX 1|2` est un trait horizontal continu, sans fourche ; `MIX 3|4` s'arrête
+pile sur la fourche `╗`, puis descend vers `╚` et son libellé. L'autre titre
+reste affiché en accent, sans triangle. Artist Mix inactif (bus liés) affiche
+les deux branches, la fourche `╦` et les deux libellés blancs avec `▶`,
+alignés. La légende des raccourcis suit l'état : `artist mix: on` / `off`.
+
 ## Usage
 
 ```bash
@@ -49,13 +107,22 @@ mosquito-mixbay-actions mixer input1 --volume -6 --pan -20
 mosquito-mixbay-actions save | load --device evo8
 ```
 
-TUI : appareils → contrôles (sections INPUTS / OUTPUTS) → mixer loopback.
-`↑/↓` choisir · `←/→` ±1 dB (`Shift` ±5) · chiffres puis `Enter` pour taper
-une valeur · `Enter` mute/48V · `m` mixer · `s` save · `r` refresh · `?` aide.
-Le 48V demande confirmation (condensateurs uniquement, retours baissés).
-Sur la page mixer, la première ligne choisit le bus (MIX 1|2 ou MIX 3|4).
-L'écran Settings (avant Close) filtre les interfaces non connectées ; la
-version du script est épinglée en haut à gauche sur tous les écrans.
+TUI : appareils → écran EVO (CONTROLS / MIXER). Raccourcis EVO :
+
+- `Tab` bascule CONTROLS ↔ MIXER ; `hjkl` navigue (le passage d'une colonne à
+  l'autre conserve l'indice de ligne) ;
+- `[` / `]` ±1, `{` / `}` ±5, chiffres puis `Enter` pour saisir une valeur ;
+- `m` mute (controls) ou choisit le bus (mixer), `P` 48V, `Space` paramètre
+  suivant dans le mixer ;
+- `r` remet le paramètre au défaut, `R` (reset all) vide tout le mixer après
+  confirmation, `A` Artist Mix ;
+- `s` sauve (`+ new preset` pour un nouveau nom, `r` pour renommer), `o` charge,
+  `Esc` retour, `q` quitte.
+
+Le 48V bascule immédiatement (comme evotui). Sur EVO 4 le bus loopback est
+unique (`MIX 3|4`, capture USB CH3/4) ; sur EVO 8 les deux bus sont nommés
+`MIX 1|2` et `MIX 3|4`. L'écran Settings (avant Close) filtre les interfaces
+non connectées ; la version du script est épinglée en haut à gauche.
 
 ## Fichiers
 
@@ -71,5 +138,8 @@ mosquitomixbay/
   README.md  INTEGRATION.md
 ```
 
-État disque : `~/.config/audient-evo-py/<dev>/` (config + shadow mixer,
-compatible evoctl) et `~/.config/mosquitomixbay/<dev>/demo.json` (DEMO).
+État disque : `~/.config/audient-evo-py/<dev>/` (shadow `.mixer-state.json`
+partagé avec evoctl, `config.json`, les snapshots nommés et `.output-mute.json`
+pour le mute de sortie émulé — le preset `default` n'existe pas sur disque, il
+est fourni par le binaire et protégé) et
+`~/.config/mosquitomixbay/<dev>/demo.json` (DEMO).

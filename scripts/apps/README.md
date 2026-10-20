@@ -32,7 +32,14 @@ catalog it came from. `|`-separated, `#` starts a comment.
 APP vlc|VLC — media player
 TUI bat|bat
 WEB WhatsApp|https://web.whatsapp.com/|whatsapp
+WEB TIDAL Hi-Fi (TidaLuna)|native:tidal-hifi-tidaluna|tidal-hifi
 ```
+
+A `native:<pkg>` webapp is a desktop package kept in the webapps catalog because
+it is conceptually a web app (it is installed with `yay`, not
+`omarchy webapp install`). If `webapps/native-<pkg>.sh` exists, it runs with
+`--install` after the package and `--remove` before removal; TIDAL Hi-Fi uses it
+to hide the Electron menu bar (`menuBar: false`, `disableAltMenuBar: true`).
 
 ## Large installers
 

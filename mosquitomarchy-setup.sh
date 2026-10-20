@@ -1488,8 +1488,13 @@ load_catalog(){
 }
 
 is_webapp_installed(){
-  [[ -f "$HOME/.local/share/applications/$1.desktop" ]] \
-    && grep -qE '^Exec=.*(omarchy-launch-webapp|omarchy-webapp-handler)' "$HOME/.local/share/applications/$1.desktop"
+  local name="$1" url="${2:-}"
+  if [[ $url == native:* ]]; then
+    pkg_has "${url#native:}"
+    return
+  fi
+  [[ -f "$HOME/.local/share/applications/$name.desktop" ]] \
+    && grep -qE '^Exec=.*(omarchy-launch-webapp|omarchy-webapp-handler)' "$HOME/.local/share/applications/$name.desktop"
 }
 
 # Loads the apps selection of the most recent backup (if it has one) → PREV_APP /
@@ -1553,7 +1558,9 @@ detect_installed_apps(){
   local e name
   for e in "${CAT_APP[@]:-}"; do name="${e%%|*}"; pkg_has "$name" && INSTALLED_APP+=("$e"); done
   for e in "${CAT_TUI[@]:-}"; do name="${e%%|*}"; pkg_has "$name" && INSTALLED_TUI+=("$e"); done
-  for e in "${CAT_WEB[@]:-}"; do name="${e%%|*}"; is_webapp_installed "$name" && INSTALLED_WEB+=("$e"); done
+  for e in "${CAT_WEB[@]:-}"; do
+    name="${e%%|*}"; is_webapp_installed "$name" "$(echo "$e" | cut -d'|' -f2)" && INSTALLED_WEB+=("$e")
+  done
 }
 
 # Multiple selection (gum multi-select with tab/space) of an array of entries.
@@ -1632,13 +1639,19 @@ backup_apps_selection(){
   # exists) ∩ still installed, + sone-bin (always). Without a previous backup →
   # everything detected is pre-checked. Apps also found on the system
   # (detected but outside this set) stay unchecked.
-  local had_prev=0 name
+  local had_prev=0 name _e
   load_previous_selection && had_prev=1
   local -a pre_app=() pre_tui=() pre_web=()
   if ((had_prev)); then
     for name in "${PREV_APP[@]:-}"; do pkg_has "$name" && pre_app+=("$name"); done
     for name in "${PREV_TUI[@]:-}"; do pkg_has "$name" && pre_tui+=("$name"); done
-    for name in "${PREV_WEB[@]:-}"; do is_webapp_installed "$name" && pre_web+=("$name"); done
+    for name in "${PREV_WEB[@]:-}"; do
+      local _u=""
+      for _e in "${CAT_WEB[@]:-}"; do
+        [[ ${_e%%|*} == "$name" ]] && { _u="$(echo "$_e" | cut -d'|' -f2)"; break; }
+      done
+      is_webapp_installed "$name" "$_u" && pre_web+=("$name")
+    done
   else
     for name in "${INSTALLED_APP[@]:-}"; do pre_app+=("${name%%|*}"); done
     for name in "${INSTALLED_TUI[@]:-}"; do pre_tui+=("${name%%|*}"); done
@@ -2730,8 +2743,13 @@ $MENU_MOSQUITO_START
   "setup.mosquito.mixbay": {
     "icon": "\uf1de",
     "label": "Mixbay",
-    "description": "USB audio bay: EVO 8/4 full control, ALSA level 1, demo without hardware",
-    "aliases": ["mixbay", "mixer", "evo", "bay", "mmb"],
+    "description": "USB audio bay: Audient EVO 8/4 full control, RME Fireface UCX II, ESI UGM192, PreSonus Quantum ES 4, ALSA level 1, demo without hardware",
+    "aliases": ["mixbay", "mixer", "evo", "bay", "mmb",
+      "audient", "audient evo", "audient evo 8", "evo 8", "evo8",
+      "audient evo 4", "evo 4", "evo4",
+      "rme", "rme fireface", "fireface", "fireface ucx ii", "ucx ii", "ucx2",
+      "esi", "esi ugm192", "ugm192",
+      "presonus", "presonus quantum", "quantum es 4", "quantum es4", "quantum"],
     "when": "test -x $BIN_DIR/mosquito-mixbay-tui",
     "action": "omarchy-launch-or-focus-tui mosquito-mixbay-tui"
   },
