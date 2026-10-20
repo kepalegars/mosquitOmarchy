@@ -368,6 +368,50 @@ func TestEvoMixArrowsAligned(t *testing.T) {
 	}
 }
 
+// Selected and unselected MIX titles must start on the same column. The old
+// unselected branch omitted the arrow cell entirely, so its title drifted two
+// columns left.
+func TestEvoMixTitlesKeepSameColumn(t *testing.T) {
+	for _, artist := range []bool{true, false} {
+		for _, bus := range []int{0, 1} {
+			m := evoModel(t, drivers.DevEVO8, 1)
+			m.evo.artistMix = artist
+			m.evo.mixBus = bus
+			cols := map[string]int{}
+			for _, line := range strings.Split(stripANSI(m.View()), "\n") {
+				rs := []rune(line)
+				for _, title := range []string{"MIX 1|2", "MIX 3|4"} {
+					tr := []rune(title)
+					for i := 0; i+len(tr) <= len(rs); i++ {
+						if string(rs[i:i+len(tr)]) == title {
+							cols[title] = i
+							break
+						}
+					}
+				}
+			}
+			if len(cols) != 2 {
+				t.Fatalf("artist=%v bus=%d: missing MIX titles: %v", artist, bus, cols)
+			}
+			if cols["MIX 1|2"] != cols["MIX 3|4"] {
+				t.Fatalf("artist=%v bus=%d: titles misaligned: %v", artist, bus, cols)
+			}
+		}
+	}
+}
+
+// The bus route keeps evotui's vertical drops: ╦/╧ mark the strip boundaries
+// that actually feed the selected bus, while inactive strips stay a plain ═.
+func TestEvoBusKeepsVerticalTicks(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 1)
+	m.evo.artistMix = true
+	m.evo.mixBus = 1
+	out := stripANSI(m.View())
+	if !strings.Contains(out, "╦") || !strings.Contains(out, "╧") {
+		t.Fatalf("bus route lost its vertical ticks:\n%s", out)
+	}
+}
+
 // "Reset all" must ask before wiping every crosspoint on every bus.
 func TestEvoResetAllConfirms(t *testing.T) {
 	m := evoModel(t, drivers.DevEVO8, 1)
@@ -757,17 +801,25 @@ func TestEvoCardsTouchTopSeparator(t *testing.T) {
 	t.Fatal("controls header not found")
 }
 
-// The bottom accent separator must also touch the cards: no blank row between
-// the last card border and the "s save" line.
-func TestEvoCardsTouchBottomSeparator(t *testing.T) {
+// The top separator stays glued to the cards, but the bottom one keeps one
+// clear row: status notifications (Artist Mix, save errors, …) land there and
+// must not overwrite the card borders.
+func TestEvoBottomSpacerForNotifications(t *testing.T) {
 	m := evoModel(t, drivers.DevEVO8, 0)
 	lines := strings.Split(stripANSI(m.View()), "\n")
 	for i, line := range lines {
-		if i == 0 || !strings.Contains(line, "s save") || !strings.Contains(line, "─") {
+		if i < 2 || !strings.Contains(line, "s save") || !strings.Contains(line, "─") {
 			continue
 		}
-		if !strings.Contains(lines[i-1], "╯") {
-			t.Fatalf("bottom separator must touch the cards, got %q above %q", lines[i-1], line)
+		j := i - 1
+		for j >= 0 && strings.TrimSpace(lines[j]) == "" {
+			j--
+		}
+		if j == i-1 {
+			t.Fatalf("cards must not touch the bottom separator: %q", line)
+		}
+		if !strings.Contains(lines[j], "╯") {
+			t.Fatalf("expected the card bottom above the notification spacer, got %q", lines[j])
 		}
 		return
 	}

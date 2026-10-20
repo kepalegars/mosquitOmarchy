@@ -705,7 +705,7 @@ func (r *evoRender) drawControlsBody(row, cx, mixerW int) int {
 			row++
 		}
 	}
-	return row - 1
+	return row + 1
 }
 
 func (r *evoRender) drawControlsTwoCol(row, cx, mixerW int) int {
@@ -730,9 +730,9 @@ func (r *evoRender) drawControlsTwoCol(row, cx, mixerW int) int {
 	right := drawCol(1, cx+colW+evoColGap)
 	r.u.sub = saved
 	if right > left {
-		return right - 1
+		return right + 1
 	}
-	return left - 1
+	return left + 1
 }
 
 func (r *evoRender) drawMixerSection(topRow, cx, secIdx int, compact bool) {
@@ -920,14 +920,16 @@ func (r *evoRender) drawBusRoute(row, cx, width int) {
 		// still named below as the accent legend.
 		r.put(cx, row+1, busChars(jx-cx+1), busAttr)
 		r.put(jx+1, row+1, string(arrowR)+" "+mixLabels[0], selAttr)
-		r.put(jx+1, row+2, mixLabels[1], unselAttr)
+		// Reserve the arrow cell too, so the unselected title starts on the
+		// same column as the selected one instead of drifting left.
+		r.put(jx+3, row+2, mixLabels[1], unselAttr)
 		return
 	}
 	// MIX 3|4: the horizontal run ends ON the fork, which turns down to the
 	// selected label. MIX 1|2 stays named to the right of the corner in accent.
 	r.put(cx, row+1, busChars(jx-cx), busAttr)
 	r.put(jx, row+1, string(busTR), busAttr)
-	r.put(jx+1, row+1, " "+mixLabels[0], unselAttr)
+	r.put(jx+3, row+1, mixLabels[0], unselAttr)
 	r.put(jx, row+2, string(busBL), busAttr)
 	r.put(jx+1, row+2, string(arrowR)+" "+mixLabels[1], selAttr)
 }
@@ -951,7 +953,7 @@ func (r *evoRender) drawMixerBody(row, cx int) int {
 		r.drawMixerSection(row, cx+i*secOW, flat, false)
 		flat++
 	}
-	return row + r.sectionH() - 1
+	return row + r.sectionH() + 1
 }
 
 func (r *evoRender) drawHints(row, col int, hints []evoHint, dim evoStyle) int {
@@ -1106,7 +1108,7 @@ func evoControlsBodyH(spec drivers.Spec) int {
 				h = v
 			}
 		}
-		return h
+		return h + 1
 	}
 	n := len(groups[0].elements)
 	return n*4 + (n - 1)

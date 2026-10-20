@@ -83,13 +83,23 @@ Ce que **mixbay ajoute** :
 Le trait vertical en début de ligne de bus (`╘`) n'est pas un séparateur :
 il marque le départ du bus lorsque l'entrée 1 y est routée. La ligne de bus
 commence à la même colonne que le trait sous les onglets et reste toujours
-accent. Les deux titres `MIX 1|2` et `MIX 3|4` sont toujours visibles. Avec
-**Artist Mix** actif, le bus sélectionné est blanc et précédé de `▶` :
-`MIX 1|2` est un trait horizontal continu, sans fourche ; `MIX 3|4` s'arrête
-pile sur la fourche `╗`, puis descend vers `╚` et son libellé. L'autre titre
-reste affiché en accent, sans triangle. Artist Mix inactif (bus liés) affiche
-les deux branches, la fourche `╦` et les deux libellés blancs avec `▶`,
-alignés. La légende des raccourcis suit l'état : `artist mix: on` / `off`.
+accent. Les petits traits verticaux de la ligne (`╦` vers le bas, `╧` vers le
+haut) viennent d'evotui : chacun marque une tranche dont le volume alimente
+réellement le bus. Une tranche à `VolMin` reste un simple `═` ; ces traits ne
+sont donc pas décoratifs. Les deux titres `MIX 1|2` et `MIX 3|4` sont toujours
+visibles et commencent à la même colonne : le titre non sélectionné réserve la
+cellule du `▶`, même sans triangle. Avec **Artist Mix** actif, le bus
+sélectionné est blanc et précédé de `▶` : `MIX 1|2` est un trait horizontal
+continu, sans fourche ; `MIX 3|4` s'arrête pile sur la fourche `╗`, puis
+descend vers `╚` et son libellé. L'autre titre reste affiché en accent, sans
+triangle. Artist Mix inactif (bus liés) affiche les deux branches, la fourche
+`╦` et les deux libellés blancs avec `▶`, alignés. La légende des raccourcis
+suit l'état : `artist mix: on` / `off`.
+
+Les cartes touchent le séparateur **du haut** ; sous la dernière carte, une
+ligne reste libre avant le séparateur des raccourcis pour les notifications
+(`artist mix: on/off`, sauvegarde, erreur), qui ne peuvent plus écraser les
+bordures.
 
 ## Usage
 
