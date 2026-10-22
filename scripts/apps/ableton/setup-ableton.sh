@@ -14,12 +14,13 @@
 # Usage :
 #   ./setup-ableton.sh              # menu: Install / Uninstall / VST links / Status
 #   ./setup-ableton.sh -y           # everything automatic (default choices)
+#   ./setup-ableton.sh -i           # install flow only, with interactive prompts
 #   ./setup-ableton.sh --links      # only (re)links the shared VST folders
 #   ./setup-ableton.sh --status     # current state, without modifying anything
-#   ./setup-ableton.sh -u|--uninstall  # pick editions to uninstall (Tab = several),
-#                                       # confirm, then a CLEAN runtime/prefix removal
-#                                       # through the official .run (see step_uninstall)
-#   ./setup-ableton.sh -y -u        # idem, automatic (uninstall every edition + all)
+#   ./setup-ableton.sh -u|--uninstall  # uninstall editions ONE BY ONE; removing the
+#                                       # last one also removes the prefix via the
+#                                       # official .run (see step_uninstall)
+#   ./setup-ableton.sh -y -u        # automatic: every edition one by one + prefix
 #   ./setup-ableton.sh --check-update  # checks/downloads the latest update
 #                                       # of the native installer from GitHub
 #
@@ -38,12 +39,11 @@
 # ASIO/PipeASIO on this machine). One-off override:
 # BUFFER=64|128|256|1024 ./setup-ableton.sh -y
 #
-# Multi-editions: if several zips of different editions are lying in the folder
-# (e.g. Suite + Intro), the script proposes a multi-selection and installs
-# the chosen editions one after the other ON THE SAME prefix — each one
-# is passed alone to the .run (--live-installer, one per call). The versions
-# coexist; to choose which one to launch:
-#   env ABLETON_LIVE_EXE="$HOME/.wine-ableton/drive_c/ProgramData/Ableton/Live 12 Suite/Program/Ableton Live 12 Suite.exe" ableton-live
+# One archive per run: if several zips are in the folder (e.g. Suite +
+# Intro), the script asks WHICH ONE to install now. Several editions can
+# coexist in the prefix, each with its own launcher entry. Uninstall asks
+# for one edition at a time; removing the last edition also removes the
+# whole Ableton runtime/prefix.
 #
 # Hyprland windows: the script ensures that the Ableton rules are in place
 # in ~/.config/hypr/hyprland.lua — floating installer (fixes the tile crash)
@@ -64,9 +64,10 @@ LINKER="$SCRIPT_DIR/../audio-plugin-manager/link-vst-shared.sh"
 POWER_DEFAULT="${POWER:-off}"   # off = do not change the power profile (mosquito.power keeps control)
 BUFFER_DEFAULT="${BUFFER:-512}" # 512 frames = stable latency for PipeASIO
 
-YES=0 LINKS_ONLY=0 STATUS_ONLY=0 UNINSTALL_ONLY=0 UPDATE_ONLY=0
+YES=0 LINKS_ONLY=0 STATUS_ONLY=0 UNINSTALL_ONLY=0 UPDATE_ONLY=0 INSTALL_ONLY=0
 while (( $# )); do a="$1"; case "$a" in
   -y|--yes) YES=1 ;;
+  -i|--install) INSTALL_ONLY=1 ;;
   --links) LINKS_ONLY=1 ;;
   --status) STATUS_ONLY=1 ;;
   --check-update) UPDATE_ONLY=1 ;;
@@ -92,6 +93,24 @@ ask(){
   fi
   read -rp "$q [$([ $def = y ] && echo Y/n || echo y/N)] " r
   r="${r:-$def}"; [[ $r =~ ^[oOyY] ]]
+}
+
+# Like ask, but with explicit action labels. Used for the install/uninstall
+# confirmations so the buttons read Install/Cancel and Uninstall/Cancel.
+ask_action(){
+  local q="$1" yes="${2:-Yes}" no="${3:-No}" def="${4:-n}" r
+  ((YES)) && { ok "(auto) $q -> $yes"; return 0; }
+  if command -v gum >/dev/null; then
+    gum confirm "$q" --affirmative="$yes" --negative="$no" \
+      --default=$([[ $def == y ]] && echo true || echo false) && return 0 || return 1
+  fi
+  printf '%s\n' "$q"
+  read -rp "  $yes / $no [default: $([[ $def == y ]] && echo "$yes" || echo "$no")] : " r
+  r="${r:-$def}"
+  case "${r,,}" in
+    y|yes|o|oui|install|uninstall) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 ver_ge(){ # ver_ge "1.4.2" "1.6.8" → true if $1 ≥ $2 (semantic)
@@ -223,41 +242,28 @@ check_manual_installer(){
   return 1
 }
 
-# "1 3" / "1,3" / "1-3" → list of indices (array referenced by the 2nd argument)
-expand_numbers(){
-  local input="${1//,/ }" n m
-  local -n dst="$2"
-  dst=()
-  if [[ "$input" =~ ^[0-9]+(-[0-9]+)?([[:space:]]+[0-9]+(-[0-9]+)?)*[[:space:]]*$ ]]; then
-    for n in $input; do
-      if [[ "$n" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-        for ((m=${BASH_REMATCH[1]}; m<=${BASH_REMATCH[2]}; m++)); do dst+=("$m"); done
-      else
-        dst+=("$n")
-      fi
-    done
-    return 0
-  fi
-  return 1
-}
-
-# ───────────────────────── Selecting the editions to install ─────────────────────────
-# When several zips are in the folder, we propose to choose one or
-# more; only the selected zips are then passed to the native installer
-# (one --live-installer per call — the .run only accepts one).
-# Fills the global array SEL_ZIPS.
+# ───────────────────────── Selecting the edition to install ─────────────────────────
+# When several zips are present, the user picks exactly one per run; it is
+# then passed alone to the native installer. Existing editions stay installed,
+# so another edition can be added by running the setup again. Fills the
+# global array SEL_ZIPS with that single path.
 SEL_ZIPS=()
-select_editions(){
+select_edition(){
   local -a cand=("$@")
   SEL_ZIPS=()
   (( ${#cand[@]} )) || return 1
-  if (( YES )) || (( ${#cand[@]} == 1 )); then
-    SEL_ZIPS=("${cand[@]}")
+  if (( ${#cand[@]} == 1 )); then
+    SEL_ZIPS=("${cand[0]}")
+    return 0
+  fi
+  if (( YES )); then
+    SEL_ZIPS=("${cand[0]}")
+    warn "Automatic mode: first archive selected ($(basename "${cand[0]}"))."
+    warn "Run without -y to choose another edition/version."
     return 0
   fi
   local i=1 z base ed ver sel
-  local -a idx
-  hr; msg "Several editions found in $SCRIPT_DIR — which ones to install ?"
+  hr; msg "Several Ableton archives found — which one to install now?"
   for z in "${cand[@]}"; do
     base="${z##*/}"
     ed="$(zip_edition "$z")"
@@ -266,17 +272,13 @@ select_editions(){
     i=$((i+1))
   done
   echo
-  read -rp "  Choice (separated numbers / range, e.g. 1 3) [Enter = all] : " sel
-  sel="${sel//,/ }"
-  [[ -n "$sel" ]] || sel="$(seq 1 $((i-1)) | tr '\n' ' ')"
-  if expand_numbers "$sel" idx; then
-    for n in "${idx[@]}"; do
-      (( n >= 1 && n <= ${#cand[@]} )) && SEL_ZIPS+=("${cand[$((n-1))]}")
-    done
-  else
-    warn "Invalid input ($sel) — all the editions will be installed."
+  read -rp "  Which one to install? [1-$((i-1)), Enter = 1] : " sel
+  [[ -n "$sel" ]] || sel=1
+  if [[ ! "$sel" =~ ^[0-9]+$ ]] || (( 10#$sel < 1 || 10#$sel > ${#cand[@]} )); then
+    warn "Invalid choice ($sel) — keeping 1."
+    sel=1
   fi
-  (( ${#SEL_ZIPS[@]} )) || SEL_ZIPS=("${cand[@]}")
+  SEL_ZIPS=("${cand[$((10#$sel-1))]}")
 }
 
 # ───────────────────────── Detection / state ─────────────────────────
@@ -285,6 +287,16 @@ ableton_installed(){
 }
 ableton_version(){
   [[ -x "$HOME/.local/bin/ableton-live" ]] && "$HOME/.local/bin/ableton-live" --version 2>/dev/null | head -1 | tr -d '\r' || echo "unknown"
+}
+
+# active_transactions → newest first. A transaction left with an `active`
+# marker means an install stopped before it committed or restored its Wine
+# runtime/prefix; the ableton-live launcher then refuses to start Live.
+active_transactions(){
+  local root="$HOME/.local/state/ableton-wine/transactions"
+  [[ -d "$root" ]] || return 0
+  find "$root" -mindepth 2 -maxdepth 2 -type f -name active -printf '%T@\t%h\n' 2>/dev/null \
+    | sort -rn | cut -f2-
 }
 
 status_check(){
@@ -305,6 +317,14 @@ status_check(){
   do
     printf " %s\n" "$c"
   done
+  if (( STATUS_ONLY )); then
+    local -a active=()
+    mapfile -t active < <(active_transactions)
+    if (( ${#active[@]} )); then
+      warn "${#active[@]} interrupted install transaction(s) found — Live will refuse to launch."
+      warn "Run: $SCRIPT_DIR/setup-ableton.sh -i   (or -y) to restore the previous runtime/prefix."
+    fi
+  fi
   hr
 }
 
@@ -411,36 +431,112 @@ step_pydeps(){
 }
 
 # ───────────────────────── Installation ─────────────────────────
+# The upstream .run runs winetricks with -f, so vcrun2022 re-runs on every
+# existing prefix and vc_redist exits 102 ("already installed / reboot
+# required"), which winetricks treats as fatal (step 4). The prefix already has
+# a winetricks.log entry for it. Running the same installer from a temporary
+# copy with -f removed lets winetricks skip the verbs it has already applied.
+# The original .run stays byte-identical; only the copy is edited, and the
+# copy's official transaction/rollback still runs.
+ableton_winetricks_cache_ready(){
+  local log="$HOME/.wine-ableton/winetricks.log" dll
+  [[ -f "$log" ]] && grep -qx 'vcrun2022' "$log" || return 1
+  for dll in vcruntime140.dll vcruntime140_1.dll msvcp140.dll msvcp140_1.dll; do
+    [[ -s "$HOME/.wine-ableton/drive_c/windows/system32/$dll" ]] || return 1
+  done
+}
+
+install_with_cached_winetricks(){
+  local zip="$1" workdir patched rc newest
+  [[ -n "$zip" ]] || return 1
+  [[ -n "$RUN_INSTALLER" ]] || { err "No install-ableton-latest.run found in $SCRIPT_DIR/"; return 1; }
+  command -v python3 >/dev/null 2>&1 || { err "python3 is required for the existing-prefix workaround."; return 1; }
+  workdir="$(mktemp -d "${TMPDIR:-/tmp}/ableton-install-workaround.XXXXXX")" || return 1
+  patched="$workdir/install-ableton-latest.run"
+  if ! cp -- "$RUN_INSTALLER" "$patched" \
+     || ! python3 - "$patched" <<'PATCHER'
+import sys
+path = sys.argv[1]
+anchor = b'bash "$kit/scripts/installer.sh" "${original_args[@]}"'
+inject = b"""python3 - "$kit/scripts/setup-prefix.sh" <<'PATCHKIT'
+import sys
+p = sys.argv[1]
+old = b'bash "$root/vendor/winetricks" -q -f "${verbs[@]}"'
+new = b'bash "$root/vendor/winetricks" -q    "${verbs[@]}"'
+data = open(p, 'rb').read()
+if data.count(old) != 1:
+    raise SystemExit("expected exactly one winetricks invocation")
+open(p, 'wb').write(data.replace(old, new, 1))
+PATCHKIT
+""" + anchor
+data = open(path, 'rb').read()
+if data.count(anchor) != 1:
+    raise SystemExit("expected exactly one installer.sh launch")
+# The anchor is in the wrapper header, before __PAYLOAD_BELOW__, so the
+# embedded payload (and its SHA-256) is untouched. The extracted kit is
+# patched after its own integrity check.
+open(path, 'wb').write(data.replace(anchor, inject, 1))
+PATCHER
+  then
+    rm -rf -- "$workdir"
+    err "Could not prepare the existing-prefix installer copy."
+    warn "The .run layout may have changed; for an existing install run:"
+    warn "  sh \"$RUN_INSTALLER\" update"
+    return 1
+  fi
+  msg "Existing prefix: reusing the Winetricks verbs already applied (no -f)."
+  msg "This avoids re-running vcrun2022 (step 4) while keeping the .run transaction intact."
+  local -a cached_args=(install --live-installer "$zip"
+    --power="$POWER_DEFAULT" --audio-buffer="$BUFFER_DEFAULT")
+  if ((YES)); then cached_args+=(--yes); fi
+  sh "$patched" "${cached_args[@]}"
+  rc=$?
+  newest="$(ls -1t "$workdir"/ableton-linux-installer-*.log 2>/dev/null | head -1 || true)"
+  if [[ -n "$newest" ]]; then
+    cp -p -- "$newest" "$SCRIPT_DIR/" 2>/dev/null || true
+    msg "Saved installer log: $(basename "$newest")"
+  fi
+  rm -rf -- "$workdir"
+  return "$rc"
+}
+
 step_install(){
-  local z ed installed
+  local z ed
+  local -a installed_list=()
 
   if ableton_installed; then
-    ok "Ableton already installed ($(ableton_version))"
-
-    # Other editions in the folder (e.g. Suite) not yet on the prefix:
-    # multiple choice possible, installed in sequence on the same prefix
-    installed="$(installed_editions | sort -u)"
-    local -a pick=()
-    for z in "${LIVE_ZIPS[@]:-}"; do
-      [[ -n "$z" ]] || continue
-      ed="$(zip_edition "$z")"
-      if grep -q "^$ed$" <<<"$installed"; then
-        ok "Already installed: $ed"
-      else
-        msg "Edition detected, not installed: $ed ($z)"
-        pick+=("$z")
-      fi
-    done
-    if (( ${#pick[@]} )); then
-      select_editions "${pick[@]}"
-      for z in "${SEL_ZIPS[@]:-}"; do do_install "$z"; done
-    else
-      ok "All the editions of the folder are already installed."
+    # A module update re-applies the script, not the Live application. Running
+    # the install flow here used to pick the first archive present and add a
+    # different edition (Suite) on top of the installed one. Refresh the
+    # runtime/prefix/integration instead; adding an edition stays an explicit
+    # install action.
+    if [[ "${MOSQUITOMARCHY_UPDATE:-0}" == 1 ]]; then
+      [[ -n "$RUN_INSTALLER" ]] || { err "No install-ableton-latest.run found in $SCRIPT_DIR/"; return 1; }
+      msg "Update mode: keeping installed editions; refreshing runtime/prefix/integration."
+      sh "$RUN_INSTALLER" update --power="$POWER_DEFAULT" --audio-buffer="$BUFFER_DEFAULT"
+      return $?
     fi
-
-    warn "For a new version of the runtime/launcher:"
-    warn "  sh \"$RUN_INSTALLER\" update   (updates the runtime, keeps Live/licenses)"
-    return 0
+    while IFS= read -r ed; do [[ -n "$ed" ]] && installed_list+=("$ed"); done < <(installed_editions | sort -u)
+    if (( ${#installed_list[@]} > 0 )); then
+      ok "Ableton already installed (${installed_list[*]}, $(ableton_version))"
+      if (( ${#LIVE_ZIPS[@]} == 0 )); then
+        warn "No Ableton zip in this folder — cannot install another edition/version."
+        warn "For a new version of the runtime/launcher:"
+        warn "  sh \"$RUN_INSTALLER\" update   (updates the runtime, keeps Live/licenses)"
+        return 0
+      fi
+      select_edition "${LIVE_ZIPS[@]}"
+      z="${SEL_ZIPS[0]}"
+      ed="$(zip_edition "$z")"
+      if printf '%s\n' "${installed_list[@]}" | grep -qx "$ed"; then
+        msg "Reinstalling/updating: $ed"
+      else
+        msg "Installing '$ed' alongside: ${installed_list[*]}"
+      fi
+      do_install "$z"
+      return $?
+    fi
+    # Runtime/prefix exists but no edition: fall through and install one.
   fi
 
   [[ -n "$RUN_INSTALLER" ]] || { err "No install-ableton-latest.run found in $SCRIPT_DIR/"; return 1; }
@@ -449,13 +545,82 @@ step_install(){
       warn "No Ableton zip found in $SCRIPT_DIR/ — the installer will try to find one itself."
       do_install ""
     elif resolve_missing_zips; then
-      select_editions "${LIVE_ZIPS[@]}"
-      for z in "${SEL_ZIPS[@]:-}"; do do_install "$z"; done
+      select_edition "${LIVE_ZIPS[@]}"
+      do_install "${SEL_ZIPS[0]}"
     fi
   else
-    select_editions "${LIVE_ZIPS[@]}"
-    for z in "${SEL_ZIPS[@]:-}"; do do_install "$z"; done
+    select_edition "${LIVE_ZIPS[@]}"
+    do_install "${SEL_ZIPS[0]}"
   fi
+}
+
+# Uncompressed payload size from the zip central directory. The installer
+# expands the edition into the Wine prefix, so the compressed file size on
+# disk says nothing about whether the install can fit.
+ableton_required_kb(){
+  local zip="$1" bytes
+  [[ -f "$zip" ]] || return 1
+  command -v unzip >/dev/null 2>&1 || return 1
+  bytes="$(unzip -Z -t "$zip" 2>/dev/null | awk '
+    /bytes uncompressed/ {
+      for (i = 2; i <= NF; i++)
+        if ($i == "bytes") value = $(i - 1)
+    }
+    END { if (value != "") print value }
+  ')"
+  [[ "$bytes" =~ ^[0-9]+$ ]] || return 1
+  # Payload + 1.5 GiB for the runtime, staging copy and the installer's
+  # transaction workspace. The upstream installer also warns below 10 GiB
+  # free, because the Wine runtime, prefix, Live payload and rollback snapshot
+  # coexist during the transaction. Keep the stricter of the two.
+  local payload_kb=$(( (bytes + 1023) / 1024 ))
+  local need_kb=$(( payload_kb + 1536 * 1024 ))
+  local upstream_min_kb=$(( 10 * 1024 * 1024 ))
+  (( need_kb < upstream_min_kb )) && need_kb=$upstream_min_kb
+  echo "$need_kb"
+}
+
+fmt_gb(){
+  awk -v kb="${1:-0}" 'BEGIN { printf "%.1f GB", kb / 1024 / 1024 }'
+}
+
+DISK_FREE_H=""
+DISK_REQUIRED_H=""
+disk_preflight(){
+  local zip="$1" need_kb free_kb
+  DISK_FREE_H=""
+  DISK_REQUIRED_H=""
+  if [[ -z "$zip" || ! -f "$zip" ]]; then
+    warn "Disk space: no edition zip selected — required space cannot be estimated."
+    return 0
+  fi
+  if ! need_kb="$(ableton_required_kb "$zip")"; then
+    warn "Disk space: cannot read the uncompressed size of $(basename "$zip")."
+    return 0
+  fi
+  free_kb="$(df -Pk -- "$HOME" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+  [[ "$free_kb" =~ ^[0-9]+$ ]] || { warn "Disk space: cannot read the free space on $HOME."; return 0; }
+
+  DISK_FREE_H="$(fmt_gb "$free_kb")"
+  DISK_REQUIRED_H="$(fmt_gb "$need_kb")"
+  msg "Disk space for $(basename "$zip"):"
+  msg "  Free space    : $DISK_FREE_H"
+  msg "  Required space: ~$DISK_REQUIRED_H (payload + runtime/workspace, 10 GiB minimum)"
+  if (( free_kb >= need_kb )); then
+    ok "Enough free space for the installation."
+    return 0
+  fi
+
+  err "Not enough free space on $HOME: $DISK_FREE_H free, ~$DISK_REQUIRED_H required."
+  err "Short by: ~$(fmt_gb $((need_kb - free_kb)))."
+  if [[ "${ABLETON_ALLOW_LOW_SPACE:-0}" == "1" ]]; then
+    warn "ABLETON_ALLOW_LOW_SPACE=1 — continuing despite low disk space."
+    return 0
+  fi
+  err "Aborting before the installer starts. Moving unused Ableton edition archives"
+  err "to another disk is the quickest way to free space. Only set"
+  err "ABLETON_ALLOW_LOW_SPACE=1 if you accept a likely rollback."
+  return 1
 }
 
 do_install(){
@@ -472,7 +637,20 @@ do_install(){
   if [[ -n "$zip" ]]; then cmd+=(--live-installer "$zip"); fi
   cmd+=(--power="$POWER_DEFAULT")
   cmd+=(--audio-buffer="$BUFFER_DEFAULT")
+  # In automatic mode (-y) the upstream prompts (DPI, shortcuts, Link) use
+  # their saved/default answers too; without this the TUI runner would block on
+  # a prompt it cannot show. Interactive installs keep their prompts.
+  if ((YES)); then cmd+=(--yes); fi
+  local use_cached=0
+  if [[ -n "$zip" ]] && ableton_installed && ableton_winetricks_cache_ready; then
+    use_cached=1
+  fi
   if ((YES)); then
+    disk_preflight "$zip" || return 1
+    if ((use_cached)); then
+      install_with_cached_winetricks "$zip"
+      return $?
+    fi
     msg "Command: ${cmd[*]}"
     "${cmd[@]}"
     return $?
@@ -485,7 +663,16 @@ do_install(){
   msg "  command, the installer applies the defaults/options passed."
   msg "  (To choose each option by hand: run the .run without argument.)"
   echo
-  if ! ask "Launch the installation now ?" y; then warn "Installation cancelled."; return 1; fi
+  disk_preflight "$zip" || return 1
+  echo
+  local q="Install $(basename "${zip:-Ableton Live}") now?"
+  [[ -n "$DISK_FREE_H" ]] && q+=$'\n\n'"Free space    : $DISK_FREE_H"
+  [[ -n "$DISK_REQUIRED_H" ]] && q+=$'\n'"Required space: ~$DISK_REQUIRED_H"
+  if ! ask_action "$q" "Install" "Cancel" y; then warn "Installation cancelled."; return 1; fi
+  if ((use_cached)); then
+    install_with_cached_winetricks "$zip"
+    return $?
+  fi
   "${cmd[@]}"
 }
 
@@ -591,19 +778,25 @@ step_hypr_rules(){
   cat >> "$HYPR_FILE" <<'EOF'
 -- >>> ableton-setup >>> Ableton Live window handling.
 --
--- Three rules:
+-- Four rules:
 --   1. the Windows installer (wine / XWayland) floats — it is a small
 --      wizard with its own sizing and it crashes the tiled layout otherwise;
 --   2. every Ableton window is fully opaque, because Omarchy's default
 --      translucency makes a dark DAW unreadable;
---   3. the main window tiles: its class ends in .exe (StartupWMClass), so
---      the generic wine float rule caught it and it opened floating
---      (verified live). float=false AFTER that rule wins, and — unlike the
---      removed explicit tile rule — it cannot interfere with fullscreen.
---      Exact class on purpose: the installer above must keep floating.
+--   3. everything with Live's class floats: VST/VST3 editors and Live's own
+--      dialogs/popups share WM class "ableton live 12 <edition>.exe" with the
+--      main window (verified with hyprctl clients), so a class-only
+--      float=false tiled every plugin GUI;
+--   4. the main window is the exception and tiles, recognised by its title
+--      suffix "<project> - Ableton Live 12 <Edition>" (verified at map time:
+--      "Untitled - Ableton Live 12 Suite"). No center/size on this class: a
+--      Wine plugin editor moved away from the origin gets offset mouse
+--      coordinates (yabridge#409). float=false only, no tile=true: the
+--      explicit tile rule broke fullscreen. Later rules win, hence the order.
 o.window({ class = "^ableton live 12 .*install.*$" }, { float = true })
 o.window({ class = "^ableton.*$" }, { tag = "-default-opacity", opaque = true })
-o.window({ class = "^ableton live 12 suite\\.exe$" }, { float = false })
+o.window({ class = "^ableton live 12 (suite|standard|intro)\\.exe$" }, { float = true, no_blur = true })
+o.window({ class = "^ableton live 12 (suite|standard|intro)\\.exe$", title = ".* - Ableton Live 12 (Suite|Standard|Intro)$" }, { float = false })
 -- <<< ableton-setup <<<
 EOF
   added=1
@@ -634,6 +827,79 @@ step_links(){
 #   • single edition → we keep ONLY the launcher entry (generic) ;
 #   • several editions → one entry per edition (targeted exe env ABLETON_LIVE_EXE),
 #     the generic entry is removed (ambiguous).
+#
+# The removal above only lasts until the next launch: the launcher runs
+# repair_live_desktop_entry() even when started from one of our targeted
+# entries, and writes the generic entry back. Patch that function once so it
+# keeps the menu consistent with the installed editions: no generic entry with
+# several editions, and no targeted leftovers with a single one (the case after
+# uninstalling one of two: the generic entry then reappeared next to the
+# remaining targeted one). The .run may replace the launcher during an
+# install/update, so this is re-applied on every run.
+patch_launcher_multi_edition(){
+  local launcher="$HOME/.local/bin/ableton-live"
+  [[ -f "$launcher" ]] || return 0
+  command -v python3 >/dev/null 2>&1 || {
+    warn "python3 missing — cannot stop the launcher from recreating the duplicate entry."
+    return 0
+  }
+  python3 - "$launcher" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    text = fh.read()
+marker = "mosquitOmarchy: keep targeted edition entries"
+cleanup_marker = "Single edition: this function writes the generic entry"
+anchor = "repair_live_desktop_entry()\n{\n"
+old_guards = (
+    (
+        "    # mosquitOmarchy: keep targeted edition entries; the generic one\n"
+        "    # duplicates the selected edition and cannot choose one by itself.\n"
+        "    [ \"${live_count:-0}\" -gt 1 ] && return 0\n"
+    ),
+    (
+        "    # mosquitOmarchy: keep targeted edition entries; the generic one\n"
+        "    # duplicates the selected edition and cannot choose one by itself.\n"
+        "    local _edition_count=0 _edition_exe\n"
+        "    for _edition_exe in \"$WINEPREFIX\"/drive_c/ProgramData/Ableton/*/Program/\"Ableton Live\"*.exe; do\n"
+        "        [ -f \"$_edition_exe\" ] && _edition_count=$((_edition_count + 1))\n"
+        "    done\n"
+        "    [ \"$_edition_count\" -gt 1 ] && return 0\n"
+    ),
+)
+guard = (
+    "    # mosquitOmarchy: keep targeted edition entries; the generic one\n"
+    "    # duplicates the selected edition and cannot choose one by itself.\n"
+    "    local _edition_count=0 _edition_exe\n"
+    "    for _edition_exe in \"$WINEPREFIX\"/drive_c/ProgramData/Ableton/*/Program/\"Ableton Live\"*.exe; do\n"
+    "        [ -f \"$_edition_exe\" ] && _edition_count=$((_edition_count + 1))\n"
+    "    done\n"
+    "    [ \"$_edition_count\" -gt 1 ] && return 0\n"
+    "    # Single edition: this function writes the generic entry, so remove the\n"
+    "    # targeted ones (left behind after uninstalling the other edition).\n"
+    "    rm -f -- \"${XDG_DATA_HOME:-$HOME/.local/share}/applications\"/ableton-live-*.desktop\n"
+)
+if cleanup_marker in text:
+    sys.exit(0)
+old = next((g for g in old_guards if g in text), None)
+if old is not None:
+    text = text.replace(old, guard, 1)
+elif marker in text:
+    sys.exit(2)
+elif anchor in text:
+    text = text.replace(anchor, anchor + guard, 1)
+else:
+    sys.exit(2)
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(text)
+PY
+  case $? in
+    0) ok "Launcher patched: menu entry count follows the installed editions." ;;
+    *) warn "Could not patch the launcher — duplicate menu entries may reappear after a launch." ;;
+  esac
+  return 0
+}
+
 step_menu_entries(){
   msg "Menu entries: one per installed edition"
   local apps_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
@@ -699,6 +965,7 @@ step_menu_entries(){
     fi
     ok "Single edition — generic launcher entry kept ($generic)"
   elif (( count > 1 )); then
+    patch_launcher_multi_edition
     rm -f -- "$generic"
     ok "Generic entry removed (several editions: targeted exe required)"
   fi
@@ -813,6 +1080,13 @@ step_cleanup(){
     [[ -n "$p" ]] || continue
     kill "$p" >/dev/null 2>&1 && n=$((n+1))
   done < <(pgrep -f 'ABLE_PATCH_WATCH' 2>/dev/null || true)
+  # 2b) A launcher still finishing its previous session holds the installer
+  #     lifecycle lock (flock on $HOME); recovery and install would fail until
+  #     it exits. It is the module's own launcher, so stopping it is safe here.
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    kill "$p" >/dev/null 2>&1 && n=$((n+1))
+  done < <(pgrep -f "$HOME/.local/bin/ableton-live" 2>/dev/null || true)
   # 3) Ableton prefix wine still alive: the native installer refuses to start
   #    as long as a process of this runtime runs (wineserver, winedevice, services.exe,
   #    svchost, rpcss, plugplay, EdgeUpdate…). wineserver -k is not enough: when
@@ -840,6 +1114,7 @@ step_cleanup(){
     done
     # Stubborn leftovers: KILL, always bounded to the Ableton prefix
     for p2 in "${wine_pids[@]}"; do
+      [[ -r "/proc/$p2/environ" ]] || continue
       if tr '\0' '\n' < "/proc/$p2/environ" 2>/dev/null | grep -qx "WINEPREFIX=$prefix" \
          && kill -0 "$p2" 2>/dev/null; then
         kill -9 "$p2" 2>/dev/null || true
@@ -857,13 +1132,113 @@ step_cleanup(){
   fi
 }
 
+# ───────────────────────── Interrupted-install recovery ─────────────────────────
+# A killed/aborted native install leaves a transaction with an `active`
+# marker and complete backups of the Wine runtime and the prefix. The
+# ableton-live launcher refuses to start Live rather than run on that
+# half-installed state. Restore the newest transaction (the failed attempt)
+# with the installer's own rollback helpers, then retire the older stale
+# markers that were superseded by it.
+#
+# Only the NEWEST transaction is rolled back: its backup was taken after the
+# older ones, so applying an older backup afterwards would undo the newer
+# state (for example, remove Live Suite restored by the newer backup).
+step_recover_transactions(){
+  local -a txns=()
+  mapfile -t txns < <(active_transactions)
+  (( ${#txns[@]} )) || return 0
+
+  msg "Recovery of an interrupted Ableton installation"
+  warn "${#txns[@]} active transaction(s) found — Live would refuse to launch."
+  local newest="${txns[0]}" txn rc=0
+
+  # The install committed; only cleanup left the marker behind.
+  if [[ -f "$newest/core-complete" || -f "$newest/COMMITTED_CLEANUP_FAILURE" ]]; then
+    for txn in "${txns[@]}"; do
+      rm -f -- "$txn/active" 2>/dev/null || rc=1
+    done
+    if (( rc )); then warn "A stale transaction marker could not be removed."; return 1; fi
+    ok "Last install had committed — stale marker(s) cleared."
+    return 0
+  fi
+
+  # A previous recovery already restored this transaction's domains.
+  if [[ ! -e "$newest/runtime.tsv" && ! -e "$newest/prefix.tsv" ]] \
+     && [[ ! -s "$newest/files.tsv" && ! -d "$newest/prefix-host" ]]; then
+    for txn in "${txns[@]}"; do
+      rm -f -- "$txn/active" 2>/dev/null || rc=1
+    done
+    if (( rc )); then warn "A stale transaction marker could not be removed."; return 1; fi
+    ok "No recovery data left — stale marker(s) cleared."
+    return 0
+  fi
+
+  if [[ -z "$RUN_INSTALLER" || ! -f "$RUN_INSTALLER" ]]; then
+    warn "Cannot recover automatically: the install-ableton .run is missing."
+    warn "Keep the transaction files in $newest and report the problem."
+    return 1
+  fi
+
+  local kit log
+  kit="$(mktemp -d "${TMPDIR:-/tmp}/ableton-recovery.XXXXXX")" || {
+    warn "Cannot create a temporary directory for recovery."; return 1; }
+  log="$(mktemp "${TMPDIR:-/tmp}/ableton-recovery.XXXXXX")" || {
+    rm -rf -- "$kit"; warn "Cannot create a recovery log."; return 1; }
+
+  if ! ( cd "$kit" && sh "$RUN_INSTALLER" extract "$kit" ) >"$log" 2>&1; then
+    warn "Could not extract the installer kit — nothing was changed."
+    warn "Details: $log"
+    rm -rf -- "$kit"
+    return 1
+  fi
+  local prefix_helper="$kit/scripts/setup-prefix.sh" runtime_helper="$kit/scripts/install.sh"
+  if [[ ! -f "$prefix_helper" || ! -f "$runtime_helper" ]]; then
+    warn "The extracted installer kit is incomplete — nothing was changed."
+    warn "Details: $log"
+    rm -rf -- "$kit"
+    return 1
+  fi
+
+  # Check both domains before touching either one.
+  bash "$prefix_helper" --preflight-rollback "$newest" </dev/null >>"$log" 2>&1 || rc=1
+  bash "$runtime_helper" --preflight-rollback "$newest" </dev/null >>"$log" 2>&1 || rc=1
+  if (( rc )); then
+    warn "Recovery preflight failed — the previous files were left untouched."
+    warn "Details: $log"
+    rm -rf -- "$kit"
+    return 1
+  fi
+
+  bash "$prefix_helper" --rollback "$newest" </dev/null >>"$log" 2>&1 || rc=1
+  bash "$runtime_helper" --rollback "$newest" </dev/null >>"$log" 2>&1 || rc=1
+  if (( rc )); then
+    warn "Automatic recovery did not finish. Keep $newest and the log:"
+    warn "  $log"
+    rm -rf -- "$kit"
+    return 1
+  fi
+
+  # The newest attempt is restored; older transactions are superseded.
+  for txn in "${txns[@]}"; do
+    rm -f -- "$txn/active" 2>/dev/null || rc=1
+  done
+  rm -rf -- "$kit"
+  rm -f -- "$log"
+  if (( rc )); then
+    warn "Files were restored, but a stale transaction marker could not be removed."
+    return 1
+  fi
+  ok "Previous Wine runtime and prefix restored; the partial install was rolled back."
+  ok "Relaunch the installation to continue."
+  return 0
+}
+
 # ───────────────────────── Uninstalling editions ─────────────────────────
 # Lists every edition folder in ProgramData/Ableton, including the update
 # leftovers ".X_updated" (5 GB) left by an interrupted transaction. The user
-# picks which ones (Tab multi-select under gum; the numbered "1 3" / "1,3" /
-# "1-3" prompt otherwise), confirms, then the chosen folders and their menu
-# entries are removed. Once the prefix holds no edition any more, the official
-# installer's own uninstall (sh install-ableton-*.run uninstall …) is offered
+# picks ONE edition, confirms, then its folder and menu entry are removed.
+# After that the script asks whether to remove another one. Removing the last
+# edition also runs the official installer's uninstall with --delete-prefix,
 # for a CLEAN runtime/prefix removal instead of an rm -rf of the prefix by hand.
 
 # uninstall_dirs → the edition dirs, main editions first then update leftovers.
@@ -891,8 +1266,10 @@ step_run_uninstall(){
     warn "install-ableton-*.run absent — the runtime/prefix are left in place."
     return 0
   }
-  local scope="" pick c
-  if (( YES )); then
+  local forced="${1:-}" scope="" pick c
+  if [[ -n "$forced" ]]; then
+    scope="$forced"
+  elif (( YES )); then
     scope=--delete-prefix
   elif command -v gum >/dev/null; then
     pick="$(printf '%s\n' \
@@ -930,110 +1307,96 @@ step_run_uninstall(){
 
 step_uninstall(){
   local ableton_root="$HOME/.wine-ableton/drive_c/ProgramData/Ableton"
-  local -a all_dirs=() labels=() sel_list=() chosen=()
-  local d i sel sel_input n n2 line label
-  hr; msg "Uninstall of Ableton editions (several at once ?)"
+  local -a all_dirs=() labels=() left=()
+  local d i sel sel_input pick label removed=0 entry
+  hr; msg "Uninstall of Ableton editions — one at a time"
   if [[ ! -d "$ableton_root" ]]; then
     warn "No edition folder in $ableton_root."
     step_run_uninstall
     return 0
   fi
 
-  while IFS= read -r d; do [[ -n "$d" ]] && all_dirs+=("$d"); done < <(uninstall_dirs)
-  if (( ${#all_dirs[@]} == 0 )); then
-    warn "No edition found in $ableton_root."
-    step_run_uninstall
-    return 0
-  fi
-  for d in "${all_dirs[@]}"; do labels+=("$(dir_label "$d")"); done
-
-  # The _updated folders are duplicates left by an interrupted update.
-  local has_upd=0
-  for d in "${all_dirs[@]}"; do [[ "$(basename "$d")" = .*_updated ]] && has_upd=1; done
-  (( has_upd )) && warn "The _updated folders are duplicates of an interrupted update: safe to delete."
-  echo
-
-  # ── selection ────────────────────────────────────────────────────────────
-  if (( ${#all_dirs[@]} == 1 )); then
-    sel_list=(1)
-  elif (( YES )); then
-    for ((i=1; i<=${#all_dirs[@]}; i++)); do sel_list+=("$i"); done
-  elif command -v gum >/dev/null; then
-    local tsel
-    tsel="$(printf '%s\n' "${labels[@]}" \
-      | gum choose --no-limit --height 15 \
-        --header "Editions to uninstall — Tab = select several, Enter = OK")" || true
-    [[ -n "$tsel" ]] || { ok "Nothing selected — nothing uninstalled."; return 0; }
-    while IFS= read -r sel; do
-      [[ -n "$sel" ]] || continue
-      for i in "${!labels[@]}"; do
-        [[ "${labels[$i]}" == "$sel" ]] && sel_list+=("$((i+1))")
-      done
-    done <<< "$tsel"
-  else
-    i=1
-    for d in "${all_dirs[@]}"; do printf ' %2d) %s\n' "$i" "$(dir_label "$d")"; i=$((i+1)); done
-    echo
-    read -rp "Uninstall which ones ? [numbers separated by spaces/commas or range] (Enter=none) " sel_input
-    [[ -n "$sel_input" ]] || { ok "Nothing uninstalled."; return 0; }
-    sel_input="${sel_input//,/ }"
-    if [[ "$sel_input" =~ ^[0-9-]+([[:space:]][0-9-]+)*$ ]]; then
-      for n in $sel_input; do
-        if [[ "$n" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-          for ((n2=${BASH_REMATCH[1]}; n2<=${BASH_REMATCH[2]}; n2++)); do sel_list+=("$n2"); done
-        else
-          sel_list+=("$n")
-        fi
-      done
-    else
-      err "Invalid input — numbers separated by spaces (e.g. 1 3) or range (e.g. 2-4)."
-      return 1
+  while :; do
+    all_dirs=(); labels=()
+    while IFS= read -r d; do [[ -n "$d" ]] && all_dirs+=("$d"); done < <(uninstall_dirs)
+    if (( ${#all_dirs[@]} == 0 )); then
+      if (( removed == 0 )); then
+        warn "No edition found in $ableton_root."
+        step_run_uninstall
+      else
+        hr; msg "Last edition removed — removing the whole Ableton prefix."
+        step_run_uninstall --delete-prefix
+      fi
+      return 0
     fi
-  fi
+    for d in "${all_dirs[@]}"; do labels+=("$(dir_label "$d")"); done
 
-  [[ "${#sel_list[@]}" -gt 0 ]] || { ok "Nothing selected — nothing uninstalled."; return 0; }
+    local has_upd=0
+    for d in "${all_dirs[@]}"; do [[ "$(basename "$d")" = .*_updated ]] && has_upd=1; done
+    (( has_upd )) && warn "The _updated folders are duplicates of an interrupted update: safe to delete."
+    echo
 
-  # ── confirmation ─────────────────────────────────────────────────────────
-  for sel in "${sel_list[@]}"; do
-    (( sel >= 1 && sel <= ${#all_dirs[@]} )) || { warn "Number $sel out of range — ignored."; continue; }
-    chosen+=("$(basename "${all_dirs[$((sel-1))]}")")
-  done
-  (( ${#chosen[@]} )) || { ok "Nothing selected — nothing uninstalled."; return 0; }
-  ask "Uninstall ${#chosen[@]} item(s): ${chosen[*]} ?" y || { ok "Cancelled — nothing uninstalled."; return 0; }
+    if (( YES )); then
+      sel=1
+    elif command -v gum >/dev/null; then
+      pick="$(printf '%s\n' "${labels[@]}" \
+        | gum choose --height 15 \
+          --header "Select ONE edition to uninstall (the last one removes the prefix)")" || true
+      [[ -n "$pick" ]] || { ok "Nothing selected — nothing uninstalled."; return 0; }
+      sel=0
+      for i in "${!labels[@]}"; do
+        [[ "${labels[$i]}" == "$pick" ]] && sel=$((i+1))
+      done
+      (( sel )) || { warn "Selection lost — nothing uninstalled."; return 0; }
+    else
+      i=1
+      for d in "${all_dirs[@]}"; do printf ' %2d) %s\n' "$i" "$(dir_label "$d")"; i=$((i+1)); done
+      echo
+      if ! read -rp "Which edition to uninstall? [1-${#all_dirs[@]}, Enter = none] : " sel_input; then
+        ok "Nothing uninstalled."
+        return 0
+      fi
+      [[ -n "$sel_input" ]] || { ok "Nothing uninstalled."; return 0; }
+      if [[ ! "$sel_input" =~ ^[0-9]+$ ]] || (( 10#$sel_input < 1 || 10#$sel_input > ${#all_dirs[@]} )); then
+        warn "Invalid choice ($sel_input) — nothing uninstalled."
+        return 1
+      fi
+      sel="$((10#$sel_input))"
+    fi
 
-  # ── removal ──────────────────────────────────────────────────────────────
-  local removed=0 entry
-  for sel in "${sel_list[@]}"; do
-    (( sel >= 1 && sel <= ${#all_dirs[@]} )) || continue
     d="${all_dirs[$((sel-1))]}"
-    [[ -d "$d" ]] || continue
-    line="$(basename "$d")"
-    msg "Removing $line …"
-    pkill -f "ProgramData/Ableton/${line}/" 2>/dev/null || true   # closes the edition if running
+    label="$(basename "$d")"
+    local free_kb free_h q
+    free_kb="$(du -sk -- "$d" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+    free_h=""
+    [[ "$free_kb" =~ ^[0-9]+$ ]] && free_h="$(fmt_gb "$free_kb")"
+    q="Uninstall $label ?"
+    [[ -n "$free_h" ]] && q+=$'\n\n'"Space freed after uninstall: ~$free_h"
+    (( ${#all_dirs[@]} == 1 )) && q+=$'\n'"This is the last edition: the whole Ableton prefix will be removed."
+    ask_action "$q" "Uninstall" "Cancel" y \
+      || { ok "Cancelled — nothing uninstalled."; return 0; }
+
+    msg "Removing $label …"
+    pkill -f "ProgramData/Ableton/${label}/" 2>/dev/null || true
     rm -rf -- "$d"
     for entry in "$HOME/.local/share/applications/ableton-live-"*.desktop; do
-      if grep -qF "$line/Program/Ableton Live" "$entry" 2>/dev/null; then
+      if grep -qF "$label/Program/Ableton Live" "$entry" 2>/dev/null; then
         rm -f -- "$entry"
         ok "Menu entry removed: $(basename "$entry")"
       fi
     done
-    ok "Deleted: $line"
-    removed=$((removed+1))
-  done
-  if (( removed )); then
     command -v update-desktop-database >/dev/null && update-desktop-database "$HOME/.local/share/applications" >/dev/null 2>&1 || true
-    ok "$removed edition(s) uninstalled."
-  else
-    ok "Nothing deleted."
-  fi
+    ok "Deleted: $label"
+    removed=$((removed+1))
 
-  # ── clean runtime/prefix removal once the prefix holds no edition ─────────
-  local -a left=()
-  while IFS= read -r d; do [[ -n "$d" ]] && left+=("$d"); done < <(uninstall_dirs)
-  if (( ${#left[@]} == 0 )); then
-    hr; msg "No edition left in the prefix."
-    step_run_uninstall
-  fi
+    if (( ! YES )); then
+      left=()
+      while IFS= read -r d; do [[ -n "$d" ]] && left+=("$d"); done < <(uninstall_dirs)
+      if (( ${#left[@]} > 0 )); then
+        ask "Uninstall another edition? (${#left[@]} left)" n || return 0
+      fi
+    fi
+  done
 }
 
 # ───────────────────────── Summary ─────────────────────────
@@ -1047,8 +1410,7 @@ recap(){
     echo " • Installed editions: ${editions}"
   fi
   if [[ "$(installed_editions | sort -u | wc -l)" -gt 1 ]]; then
-    echo " • Several editions on the same prefix: specify which one to launch:"
-    echo "     env ABLETON_LIVE_EXE=\"\$HOME/.wine-ableton/drive_c/ProgramData/Ableton/Live 12 Suite/Program/Ableton Live 12 Suite.exe\" ableton-live"
+    echo " • Several editions installed — each one has its own launcher menu entry."
   fi
   echo
   echo " • First audio setup: Settings > Audio > Driver ASIO > Device PipeASIO."
@@ -1068,8 +1430,8 @@ recap(){
 }
 
 # ───────────────────────── Choice menu ─────────────────────────
-# Offered at the interactive launch (without flag) : install/update,
-# uninstall one or several editions, link the plugins, or quit.
+# Offered at the interactive launch (without flag): install/update,
+# uninstall editions one at a time, link the plugins, or quit.
 step_main_menu(){
   local choice installed=0
   ableton_installed && installed=1
@@ -1080,7 +1442,7 @@ step_main_menu(){
   else
     echo "    1) Install Ableton Live"
   fi
-  echo "    2) Uninstall editions (one or several)"
+  echo "    2) Uninstall editions (one at a time)"
   echo "    3) Link the shared VST plugins (all DAWs)"
   echo "    4) Status"
   echo "    5) Quit"
@@ -1097,6 +1459,20 @@ step_main_menu(){
 }
 
 # ───────────────────────── Opening the install folder at the end ─────────────────────────
+# Read-only: does the module's patch script say the patch is applied? Used to
+# decide whether the closing "open the install folder" offer makes sense at all.
+# ABLE_PATCH_HELD/MOSQUITOMARCHY_TUI keep the patch script from relaunching in
+# foot when this runs without a TTY; the timeout turns an unexpected probe hang
+# into "not applied" instead of blocking the end of the setup.
+ableton_patch_applied(){
+  local p="$SCRIPT_DIR/PATCH/patch-ableton.sh" out
+  [[ -f "$p" ]] || return 1
+  out="$(ABLE_PATCH_HELD=1 MOSQUITOMARCHY_TUI=1 timeout 15 bash "$p" --check 2>/dev/null || true)"
+  # "not applied" also contains "applied"; reject the negative form first.
+  grep -qiE 'not[[:space:]]+(applied|patched)|not[[:space:]]+in[[:space:]]+place' <<<"$out" && return 1
+  grep -qiE 'applied|in place|patched' <<<"$out"
+}
+
 # Repeats the logic (sourced function) of PATCH/fixes/open-patched-folder.sh: open the
 # install folder of the last patched Ableton in the file explorer.
 open_last_patched_folder(){
@@ -1114,13 +1490,18 @@ main(){
   msg "install-ableton — Ableton Live native Linux + multi-DAW VST sharing"
   status_check
 
-  if ((UNINSTALL_ONLY)); then step_cleanup; step_uninstall; exit 0; fi
+  if ((UNINSTALL_ONLY)); then
+    step_cleanup
+    step_recover_transactions || { err "Aborting: recover the interrupted install before uninstalling."; exit 1; }
+    step_uninstall
+    exit 0
+  fi
   if ((STATUS_ONLY)); then exit 0; fi
   if ((LINKS_ONLY)); then step_links; exit 0; fi
   if ((UPDATE_ONLY)); then step_update_check; exit 0; fi
 
   # Up-front: name the manually-downloaded file if it is missing. In
-  # non-interactive runs (the TUI passes -y) abort before touching anything;
+  # non-interactive runs (a headless -y apply) abort before touching anything;
   # interactively, the install flow still offers rescan / a typed path.
   if ! check_manual_installer; then
     if (( YES )) || [[ ! -t 0 ]]; then
@@ -1131,13 +1512,15 @@ main(){
 
   # Without flag and interactive (TTY), we propose the Install/Uninstall menu.
   if [[ ! -t 0 ]] && (( ! YES )); then echo "stdin without a TTY: a flag is required (e.g. -y, --uninstall)." >&2; exit 0; fi
-  if (( ! YES )); then
+  if (( ! YES )) && (( ! INSTALL_ONLY )); then
     step_main_menu
   fi
 
   step_prereqs; echo
   step_pydeps;  echo
   step_cleanup; echo
+  step_recover_transactions || { err "Aborting: the interrupted install could not be recovered safely."; exit 1; }
+  echo
   step_update_check; echo
   step_install;  echo
   step_block_updates; echo
@@ -1153,8 +1536,10 @@ main(){
     warn "Ableton was not installed (cancelled or installer failure). You can always relaunch."
   fi
 
-  # Closing: press a key → opens the install folder of the last patched Ableton.
-  if [[ -t 0 ]]; then
+  # Closing: only when a patch is actually applied does it make sense to offer
+  # the patched install folder. Without a patch there is nothing to open, so do
+  # not even propose it.
+  if [[ -t 0 ]] && ableton_patch_applied; then
     echo
     ok "Press a key to close — the Ableton folder will open in the file explorer."
     read -r -s -n1 2>/dev/null || true
