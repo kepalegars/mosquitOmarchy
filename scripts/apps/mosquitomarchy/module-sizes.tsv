@@ -1,0 +1,24 @@
+# Extra on-disk payload per module, outside its pacman packages.
+#
+# key|install_paths|uninstall_paths|install_kb|uninstall_kb|note
+#
+# Paths are separated by ';'. ~ is expanded by the backend. The *_kb columns
+# are a reference produced by scripts/dev/gen-module-sizes.sh; cmd_space
+# measures the paths that exist on this machine, and falls back to install_kb
+# only when none of the install paths exist yet. Package sizes are resolved
+# live with pacman (module-sizes.tsv covers Wine prefixes, /opt payloads,
+# downloaded models, etc.).
+davinci-resolve|/opt/resolve|/opt/resolve|17546212|17546212|Resolve payload; project files stay
+bitwig|/opt/bitwig-studio|/opt/bitwig-studio|680692|680692|Deb payload; user projects stay
+guitarpro|~/.wine-guitarpro8||2802032|0|Wine prefix kept by default
+ableton|~/.wine-ableton||8204448|0|Wine prefix kept by default
+ollama|~/.ollama||16|0|Models kept by default
+audio|~/Music/Audio Plugins;~/VST|~/.local/bin/mosquito-audio-plugin-manager;~/.local/bin/mosquito-audio-plugin-manager-tui;~/.local/bin/mosquito-audio-plugin-manager-actions;~/.local/bin/lib-audio-plugin-manager-core.sh;~/.local/bin/vst-install;~/.local/bin/vst-manager;~/.local/bin/vst-manager-native;~/.local/bin/vst-manager-tui;~/.local/bin/mosquito-vst-manager;~/.local/bin/mosquito-vst-manager-native;~/.local/bin/mosquito-vst-manager-tui;~/.local/share/icons/hicolor/256x256/apps/mosquito-audio-plugin-manager.png;~/.config/systemd/user/yabridge-autosync.service|1938972|8660|Plugins and audio packages kept by default
+ableton-move-manager|~/.local/share/mosquito-move-manager||768|0|User data kept by default
+battery||~/.local/state/ultra-save;~/.local/state/caffeine;~/.config/omarchy/plugins/mosquito.power;~/.config/omarchy/plugins/mosquito.indicators;~/.config/omarchy/plugins/mosquito.confirm|0|128|State and plugins removed
+whatsapp-native|~/.local/share/whatsapp-native|~/.local/share/whatsapp-native/app;~/.local/bin/whatsapp;~/.local/share/applications/whatsapp.desktop;~/.local/share/icons/hicolor/256x256/apps/whatsapp.png|144|280|Login data kept
+superfile|~/.local/share/applications/superfile.desktop;~/.local/share/icons/hicolor/256x256/apps/superfile.png;~/.local/bin/superfile-open-exec|~/.local/share/applications/superfile.desktop;~/.local/share/icons/hicolor/256x256/apps/superfile.png;~/.local/bin/superfile-open-exec;~/.config/superfile-module|16|24|Package and profile kept
+flea|||0|0|Package removed; state kept
+reaper|~/.local/bin/reaper-launch;~/.local/bin/reaper-satellite|~/.local/bin/reaper-launch;~/.local/bin/reaper-satellite;~/.local/share/applications/cockos-reaper.desktop;~/.local/share/applications/reaper.desktop|4|8|Package kept by default
+extracto||~/.local/share/nautilus/scripts/Extract with password;~/.local/share/nautilus/scripts/Extract-with-password|0|0|Packages kept by default
+mosquitomarchy|~/.local/bin/mosquitomarchy;~/.local/bin/mosquitomarchy-tui;~/.local/bin/mosquitomarchy-actions|~/.local/bin/mosquitomarchy;~/.local/bin/mosquitomarchy-tui;~/.local/bin/mosquitomarchy-actions;~/.local/share/applications/mosquitomarchy.desktop|24908|24908|Dispatcher/TUI binaries removed

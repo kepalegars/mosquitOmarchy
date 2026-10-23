@@ -104,10 +104,10 @@ func TestSetupLeafValueRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSetupEnterOnCategoryDoesNothing pins the rule that Enter only ever
-// installs. Folding belongs to the arrows alone; letting Enter fold as well
-// meant the same key meant "toggle" or "install" depending on the row.
-func TestSetupEnterOnCategoryDoesNothing(t *testing.T) {
+// TestSetupEnterOnCategoryNeedsSelection pins the folder rule: Enter on a
+// category applies the Tab-checked rows, never the whole folder and never the
+// cursor row. Folding still belongs to the arrows alone.
+func TestSetupEnterOnCategoryNeedsSelection(t *testing.T) {
 	m := flatSetup()
 	idx := -1
 	for i, it := range m.setupPicker.items {
@@ -121,17 +121,17 @@ func TestSetupEnterOnCategoryDoesNothing(t *testing.T) {
 	m.setupPicker = m.setupPicker.SelectIndex(idx)
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	if m.top() != scrSetup {
-		t.Fatalf("Enter on a category must stay on the page, top=%d", m.top())
+	if m.top() != scrSetup || m.pendingAction != "" {
+		t.Fatalf("Enter on an unticked category acted, top=%d action=%q", m.top(), m.pendingAction)
 	}
 	if !m.folderOpen["apps"] {
 		t.Fatal("Enter must not fold: that is the arrows' job")
 	}
-	if m.pendingAction != "" || m.top() == scrConfirm {
-		t.Fatal("Enter on a category must not start an install")
+	if len(m.selected) != 0 {
+		t.Fatalf("folder Enter auto-selected rows: %v", m.selected)
 	}
 
-	// The arrows still do it, both ways.
+	// The arrows still fold, both ways.
 	mm, _ := m.update(tuikit.PickerSortMsg{Dir: -1})
 	if mm.folderOpen["apps"] {
 		t.Fatal("← should fold the category")
@@ -160,8 +160,8 @@ func TestSetupEnterOnCategoryDoesNothing(t *testing.T) {
 	}
 }
 
-// TestSetupEnterOnModuleInstallsOne checks Enter on a module row applies that
-// single module without the old tick-then-apply round trip.
+// TestSetupEnterOnModuleInstallsOne checks Enter on a module row applies the
+// module only after it has been explicitly Tab-checked.
 func TestSetupEnterOnModuleInstallsOne(t *testing.T) {
 	m := flatSetup()
 	idx := -1
@@ -174,6 +174,7 @@ func TestSetupEnterOnModuleInstallsOne(t *testing.T) {
 		t.Fatal("reaper row not found on the flat page")
 	}
 	m.setupPicker = m.setupPicker.SelectIndex(idx)
+	m.selected[setupValue("apps", "reaper")] = true
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if m.top() != scrConfirm {
@@ -188,7 +189,7 @@ func TestSetupEnterOnModuleInstallsOne(t *testing.T) {
 }
 
 // TestSetupEnterOnModuleUninstalls is the uninstall-mode mirror of the test
-// above: the same one page also removes a single module.
+// above: the same one page also removes an explicitly selected module.
 func TestSetupEnterOnModuleUninstalls(t *testing.T) {
 	m := flatSetup()
 	m.treeMode = "uninstall"
@@ -203,6 +204,7 @@ func TestSetupEnterOnModuleUninstalls(t *testing.T) {
 		t.Fatal("live-mode row not found")
 	}
 	m.setupPicker = m.setupPicker.SelectIndex(idx)
+	m.selected[setupValue("mosquito", "live-mode")] = true
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	// Enter on a MODULE asks to remove that module. The preinstalls list is NOT
@@ -1045,6 +1047,7 @@ func TestEnterStillActsOnAModuleRow(t *testing.T) {
 		t.Fatal("reaper row not found")
 	}
 	m.setupPicker = m.setupPicker.SelectIndex(idx)
+	m.selected[setupValue("apps", "reaper")] = true
 	// pressKey, not a bare update: Enter is turned into a PickerResultMsg by
 	// the PICKER, and a command's message lands on the next update. The old
 	// test could call update once because `i` re-dispatched the result
@@ -1073,6 +1076,7 @@ func TestEnterRemovesAModuleRowInTheUninstallTree(t *testing.T) {
 		t.Fatal("live-mode row not found")
 	}
 	m.setupPicker = m.setupPicker.SelectIndex(idx)
+	m.selected[setupValue("mosquito", "live-mode")] = true
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	if m.top() != scrConfirm {
@@ -1426,5 +1430,101 @@ func TestSetupRowLabelHidesTheFolderPrefix(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("the live-mode row vanished from the Setup tree")
+	}
+}
+
+func TestAudioStackFolderLooksFlatAndStaysNested(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrSetup}
+	m.w, m.h = 100, 34
+	keys := []string{"audio-plugin-manager", "mixbay", "levels-guard", "live-mode", "pipewire-settings"}
+	m.setupFolders = []FolderRec{
+		{Folder: "mosquito", Label: "mosquito"},
+		{Folder: "audio-stack", Label: "audio-stack", Parent: "mosquito", Bundle: true},
+	}
+	for _, k := range keys {
+		m.setupItems = append(m.setupItems, SetupItemRec{Folder: "audio-stack", Key: k, Label: k, Group: "mosquito"})
+	}
+	m.setupItems = append(m.setupItems, SetupItemRec{Folder: "mosquito", Key: "jamjamjam", Label: "jamjamjam"})
+	for _, it := range m.setupItems {
+		m.setupByValue[setupValue(it.Folder, it.Key)] = it
+	}
+	m.folderOpen["mosquito"] = true
+	m.folderOpen["audio-stack"] = true
+	m.setupPicker = m.rebuildSetup()
+
+	var folderRow, childRow, parentRow bool
+	for _, it := range m.setupPicker.items {
+		if it.Value == folderValue("audio-stack") {
+			folderRow = it.Parent == "mosquito" && strings.Contains(it.Display, "    └─ □ audio-stack")
+		}
+		if it.Value == setupValue("audio-stack", "mixbay") {
+			childRow = it.Parent == "mosquito" && strings.Contains(it.Display, "        ├─ ○ mixbay")
+		}
+		if it.Value == setupValue("mosquito", "jamjamjam") {
+			parentRow = strings.Contains(it.Display, "    ├─ ○ jamjamjam")
+		}
+	}
+	if !folderRow {
+		t.Fatal("audio-stack row is not a flat-looking folder row under mosquito")
+	}
+	if !childRow {
+		t.Fatal("audio-stack children are not nested one level below it")
+	}
+	if !parentRow {
+		t.Fatal("the last ordinary mosquito row must stay open-ended before the nested folder")
+	}
+
+	got, _ := m.screenPicked(tuikit.PickerResultMsg{Value: folderValue("audio-stack")})
+	if got.top() != scrSetup || len(got.pendingArgs) != 0 {
+		t.Fatalf("unticked audio-stack Enter acted: top=%d args=%#v", got.top(), got.pendingArgs)
+	}
+
+	toggled, _ := m.update(tuikit.PickerToggleMsg{Value: folderValue("audio-stack")})
+	for _, k := range keys {
+		if !toggled.selected[setupValue("audio-stack", k)] {
+			t.Fatalf("Tab on audio-stack did not select %s", k)
+		}
+	}
+	toggled, _ = toggled.screenPicked(tuikit.PickerResultMsg{Value: folderValue("audio-stack")})
+	if toggled.top() != scrConfirm {
+		t.Fatalf("ticked audio-stack Enter did not confirm: top=%d", toggled.top())
+	}
+	plan := strings.Join(toggled.pendingArgs, "|")
+	for _, k := range keys {
+		if !strings.Contains(plan, k) {
+			t.Fatalf("bundle install plan = %q, missing %s", plan, k)
+		}
+	}
+	info := m.categoryInfo("audio-stack")
+	if !strings.Contains(info, "Installing the bundle") || strings.Contains(info, "audio-plugin-manager") {
+		t.Fatalf("audio-stack info should describe the bundle, not list its children:\n%s", info)
+	}
+}
+
+func TestAudioBundleDedupesChildren(t *testing.T) {
+	got := dedupeAudioBundle([]string{"mixbay", "audio", "levels-guard", "reaper"})
+	if strings.Join(got, ",") != "audio,reaper" {
+		t.Fatalf("dedupe = %v, want audio,reaper", got)
+	}
+	got = dedupeAudioBundle([]string{"mixbay", "levels-guard"})
+	if strings.Join(got, ",") != "mixbay,levels-guard" {
+		t.Fatalf("standalone children changed: %v", got)
+	}
+}
+
+func TestAudioChildrenInstallThroughMosquitoGroup(t *testing.T) {
+	m := initialModel()
+	m.setupFolders = []FolderRec{{Folder: "audio-stack", Label: "audio-stack", Parent: "mosquito", Bundle: true}}
+	m.setupItems = []SetupItemRec{
+		{Folder: "audio-stack", Key: "mixbay", Label: "mixbay", Group: "mosquito"},
+		{Folder: "audio-stack", Key: "levels-guard", Label: "levels-guard", Group: "mosquito"},
+	}
+	for _, it := range m.setupItems {
+		m.selected[setupValue(it.Folder, it.Key)] = true
+	}
+	got := strings.Join(m.applyPlan(), "|")
+	if got != "mosquito\tmixbay\tlevels-guard" && got != "mosquito\tlevels-guard\tmixbay" {
+		t.Fatalf("audio children plan = %q", got)
 	}
 }

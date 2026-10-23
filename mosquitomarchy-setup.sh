@@ -616,17 +616,17 @@ st_reaper(){
   [[ -x "$HOME/.local/bin/reaper-launch" ]] && echo ok || echo partial
 }
 st_audio(){
-  # The STACK: yabridge present, plus the Audio Plugin Manager deployed. This
-  # used to return whether Bitwig was installed, which was only true while
-  # run_audio still launched setup-bitwig.sh; Bitwig is its own module (st_bitwig)
-  # and reporting it here made this row claim "missing" on a machine whose
-  # yabridge was perfectly installed.
-  if [[ -x "$BIN_DIR/mosquito-audio-plugin-manager-tui" ]] || [[ -x "$BIN_DIR/mosquito-audio-plugin-manager" ]]; then
-    echo ok; return
-  fi
-  # No manager binary yet: acceptable mid-way (the stack is installed but the
-  # TUI was never deployed), wrong once it is gone.
-  systemctl list-unit-files 2>/dev/null | grep -q yabridge-autosync && echo partial || echo missing
+  # The folder row: all five children. Any installed child reads partial until
+  # the whole stack is there, so re-running the row completes it.
+  local out ok=0 part=0
+  out="$(bash "$AUDIO_STACK_DIR/setup-audio-stack.sh" --status 2>/dev/null)" || { echo missing; return; }
+  while read -r _name state _rest; do
+    [[ $state == ok ]] && ok=$((ok+1))
+    [[ $state == partial* ]] && part=$((part+1))
+  done <<<"$out"
+  if ((ok == 5)); then echo ok
+  elif ((ok + part > 0)); then echo partial
+  else echo missing; fi
 }
 st_bitwig(){
   # Bitwig installed? (flatpak OR AUR/pacman) — unchanged, but it now answers for
@@ -817,6 +817,11 @@ st_superfile(){
   # default-file-manager replacement: installed = the .desktop entry exists.
   [[ -f "$HOME/.local/share/applications/superfile.desktop" ]] && echo ok || echo missing
 }
+st_flea(){
+  command -v flea >/dev/null 2>&1 || { echo missing; return; }
+  [[ "$(xdg-mime query default inode/directory 2>/dev/null || true)" == *flea* ]] \
+    && echo ok || echo partial
+}
 # Resolves the ACTIVE Betterbird profile (path relative to ~/.thunderbird):
 #   1. the [Install...] block of profiles.ini — what betterbird actually runs,
 #   2. fallback: the [Profile...] block marked Default=1,
@@ -915,10 +920,17 @@ st_live_mode(){
   # setup-live-mode.sh writes a user-readable marker once the file is written
   # AND validated by visudo, and that is what is read here.
   [[ -f "$HOME/.local/state/mosquitomarchy/live-mode-sudoers" ]] \
-    || miss="${miss:+$miss, }the live-mode sudoers grant (rerun: sudo bash scripts/mosquito/live-mode/setup-live-mode.sh)"
+    || miss="${miss:+$miss, }the live-mode sudoers grant (rerun: sudo bash scripts/mosquito/audio-stack/live-mode/setup-live-mode.sh)"
   [[ -d "$HOME/.config/omarchy/plugins/mosquito.livemode" ]] || miss="${miss:+$miss, }the mosquito.livemode plugin"
   [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
   echo ok
+}
+st_audio_plugin_manager(){
+  [[ -x "$BIN_DIR/mosquito-audio-plugin-manager-tui" || -x "$BIN_DIR/mosquito-audio-plugin-manager" ]] \
+    && echo ok || echo missing
+}
+st_levels_guard(){
+  bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" --status 2>/dev/null || echo missing
 }
 st_mixbay(){
   # mosquitomixbay: dispatcher + TUI binary deployed, Hyprland float rule in
@@ -1024,7 +1036,7 @@ st_apps(){
 MODULES=(
   "mosquitomarchy:mosquitomarchy-deployer — the manager interface itself (dispatcher + menu entry + float rule + post-boot update hook + mosquitomarchy-update watchdog) — installed automatically by the bootstrap"
   "reaper:REAPER + Hyprland/Wayland integration, and its UI scale is set to the current monitor's DPI on every launch — REAPER cannot do this itself, so the launcher does it before the process starts. No action needed, nothing to remember: launch it from the Omarchy menu, the desktop entry or a shell and the size is right"
-  "audio:yabridge stack + local VST folders + the mosquito Audio Plugin Manager (TUI, plugin sharing across DAWs) + cautions"
+  "audio:mosquito audio stack — yabridge/APM, Mixbay, Levels Guard, live mode, PipeWire (folder row installs all five)"
   "bitwig:Bitwig Studio 6.0 Beta 6 from the local .deb, its own module + optional patched bitwig.jar"
   "windows-vm:VM launcher + winvm (RAM/CPU/disk) + OEM debloat (auto-detected)"
   "macos-vm:macOS VMs in QEMU/KVM (OSX-For-Omarchy) — installer + TUI manager + shared folders + USB passthrough"
@@ -1049,11 +1061,13 @@ MODULES=(
   "keepassxc:KeePassXC as your password manager + KeePassXC-Browser integration (Firefox/Zen and Chromium). Omarchy's keyring is left INTACT — LibreSecret apps (Chromium Safe Storage, kDrive, …) keep using gnome-keyring, so no 'KeePassXC requests access to Chromium Safe Storage' prompt and apps don't lose their login. Browser link: the native-messaging manifests are installed; finish by ticking the browsers in KeePassXC → Settings → Browser Integration and clicking Connect in the extension. On FIRST KeePassXC launch choose YOUR .kdbx: the install pins it into keepassxc.ini so every launch opens THAT database. Opt into replacing gnome-keyring with 'setup-keepassxc-integration.sh --secret-service'."
   "mosquitomarchy-update:Update watchdog"
   "superfile:SuperFile — terminal file manager (menu entry + keybind + Omarchy theme)"
+  "flea:Flea — fastest GUI file manager; installs flea (Omarchy) or flea-bin (AUR) and makes it the default explorer/chooser"
   "extracto:Simple custom install script for file-roller — restores Nautilus' Extract Here / Create Archive (file-roller + 7zip + unrar, file-roller prompts for the password itself); no desktop entry, no Nautilus script"
   "zen:Zen Browser config — plugins + settings + chrome theme (deployed into the active profile)"
   "pipewire-settings:PipeWire sample rate + buffer size — panel in the bar, force and persist. Installs no package: it only talks to the PipeWire you already have"
   "jamjamjam-plugin:JamJamJam bar plugin — key/BPM/chord detection, chord progression grid, guitar fretboard scale, MIDI chord mode + synth"
   "live-mode:Live mode — performance session mode (stay-awake + thermal guard + routing tool in scratchpad: live-mode / live-mode-watch / live-mode-root + its row in Setup > mosquito + QML overlay)"
+  "levels-guard:Levels Guard — native volume panel clone + media-key guard for the EVO (off unless the user opts in)"
   "mixbay:mosquitomixbay — USB audio bay (EVO 8/4 full control via evo_raw kmod, Fireface UCX II / UGM192 / Quantum ES 4 ALSA level 1 + persistent demo without hardware; live mode parks it in the scratchpad)"
 )
 
@@ -1085,6 +1099,7 @@ TWEAKS=(
   "terminal-padding:Omarchy pads every terminal by 14px and paints that padding with the theme background (near-black on the dark themes), so the text block reads as a dark slab floating inside a light window with a heavy frame between the two — keep the padding, make it take the terminal's own background"
   "wine-menu:'Uninstall'/'Manual' entries cluttering the launcher: a Windows installer (smartEQ, FabFilter, CrispyTuner, Guitar Pro…) published its Start-Menu shortcuts and Wine turned each one into an app-menu entry — drop the ones belonging to the prefixes mosquitomarchy manages (idempotent; the file associations are kept)"
   "wine-theme:Make every native Windows (Wine/XWayland) window follow the Omarchy theme — dark title bars and controls on a dark theme, light on a light one (per-prefix registry + a theme-watch hook that re-applies on every theme change)"
+  "colors-unifier:Make GTK4/GTK3 (and Qt via qgtk3) apps follow the active Omarchy theme with guaranteed-readable text, and offer to refresh Nautilus immediately (hardened fork of Accord; replaces its plugin)"
 )
 
 fix_desc(){ # id -> description (searches both catalogs)
@@ -1109,6 +1124,7 @@ fix_category(){
     ableton-fullscreen) echo "Windows & input" ;;
     wine-menu)          echo "Windows & input" ;;
     wine-theme)         echo "Appearance" ;;
+    colors-unifier)     echo "Appearance" ;;
     1px-seam)           echo "Appearance" ;;
     bar-center-anchor)  echo "Omarchy" ;;
     bluetooth)          echo "Hardware" ;;
@@ -1139,6 +1155,7 @@ run_tweak(){ # single tweak by id
     wine-menu) bash "$SCRIPT_DIR/scripts/tweaks/tweak-wine-menu.sh" ;;
     terminal-padding) bash "$SCRIPT_DIR/scripts/tweaks/tweak-terminal-padding.sh" ;;
     wine-theme) bash "$SCRIPT_DIR/scripts/tweaks/tweak-wine-theme.sh" ;;
+    colors-unifier) bash "$SCRIPT_DIR/scripts/tweaks/tweak-colors-unifier.sh" ;;
     *) err "Unknown tweak: $id"; return 1 ;;
   esac
 }
@@ -1151,6 +1168,7 @@ run_tweak_remove(){ # single tweak removal by id
     keepassxc-window) bash "$SCRIPT_DIR/scripts/tweaks/tweak-keepassxc-window.sh" --remove ;;
     terminal-padding) bash "$SCRIPT_DIR/scripts/tweaks/tweak-terminal-padding.sh" --remove ;;
     wine-theme) bash "$SCRIPT_DIR/scripts/tweaks/tweak-wine-theme.sh" --remove ;;
+    colors-unifier) bash "$SCRIPT_DIR/scripts/tweaks/tweak-colors-unifier.sh" --remove ;;
     *) return 1 ;;
   esac
 }
@@ -1180,7 +1198,7 @@ run_tweaks(){ # loop over TWEAKS_SELECTED, log results
 module_state(){
   local s
   case $1 in
-    reaper) st_reaper ;; audio) st_audio ;; bitwig) st_bitwig ;;
+    reaper) st_reaper ;; audio) st_audio ;; audio-plugin-manager) st_audio_plugin_manager ;; bitwig) st_bitwig ;;
     windows-vm) st_windows_vm ;;
     macos-vm) st_macos_vm ;;
     omarchy-vm) st_omarchy_vm ;;
@@ -1206,11 +1224,13 @@ handbrake) st_handbrake ;;
     # it.
     achraff) st_achraff ;;
     superfile) st_superfile ;;
+    flea) st_flea ;;
     extracto) st_extracto ;;
     zen) st_zen ;;
     jamjamjam-plugin) st_jamjamjam_plugin ;;
     pipewire-settings) st_pipewire_settings ;;
     live-mode) st_live_mode ;;
+    levels-guard) st_levels_guard ;;
     mixbay) st_mixbay ;;
     mosquitomarchy) st_mosquitomarchy ;;
     remove-ai) ai_state_on && echo missing || echo ok ;;
@@ -1225,8 +1245,7 @@ module_of_path(){
   case "$1" in
     scripts/apps/reaper/*)                                   echo reaper ;;
     scripts/apps/bitwig/*)                                  echo bitwig ;;
-    scripts/apps/audio-plugin-manager/*)                    echo audio ;;
-    scripts/windows-vm/*)                                    echo windows-vm ;;
+        scripts/windows-vm/*)                                    echo windows-vm ;;
     scripts/macos-vm/*)                                      echo macos-vm ;;
     scripts/omarchy-vm/*)                                    echo omarchy-vm ;;
     scripts/apps/ableton/*)                                  echo ableton ;;
@@ -1244,6 +1263,7 @@ module_of_path(){
     scripts/apps/betterbird/*)                               echo betterbird ;;
     scripts/apps/whatsapp-native/*)                          echo whatsapp-native ;;
     scripts/apps/extracto/*)                                 echo extracto ;;
+    scripts/apps/gui/setup-flea.sh)                          echo flea ;;
     scripts/apps/gui/*|scripts/apps/tui-tools/*|scripts/apps/webapps/*|\
     scripts/apps/setup-apps.sh|scripts/apps/uninstall-apps.sh|scripts/lib/common.bash) echo apps ;;
     scripts/LLM/*)                                           echo ollama ;;
@@ -1261,9 +1281,12 @@ module_of_path(){
     scripts/apps/superfile/*)                                echo superfile ;;
     scripts/apps/zen/*)                                      echo zen ;;
     scripts/mosquito/jamjamjam/*)                             echo jamjamjam-plugin ;;
-    scripts/mosquito/pipewire-settings/*)                     echo pipewire-settings ;;
-    scripts/mosquito/live-mode/*)                             echo live-mode ;;
-    scripts/apps/mosquitomixbay/*)                            echo mixbay ;;
+    scripts/mosquito/audio-stack/apm/*)                        echo audio-plugin-manager ;;
+    scripts/mosquito/audio-stack/mixbay/*)                     echo mixbay ;;
+    scripts/mosquito/audio-stack/levels-guard/*)               echo levels-guard ;;
+    scripts/mosquito/audio-stack/live-mode/*)                  echo live-mode ;;
+    scripts/mosquito/audio-stack/pipewire/*)                   echo pipewire-settings ;;
+    scripts/mosquito/audio-stack/*)                            echo audio ;;
     # The WHOLE manager tree (deployer, backend, Go TUI, skills): any change
     # here must offer the mosquitomarchy module for update, otherwise the
     # installed TUI is never rebuilt. This used to name three files only, so
@@ -1358,8 +1381,8 @@ apm_plugins_root(){
 apm_state_file(){
   local c
   for c in "$HOME/.local/bin/audio-plugin-manager-state.json" \
-           "$SCRIPT_DIR/scripts/apps/audio-plugin-manager/audio-plugin-manager-state.json" \
-           "$HOME/mosquitOmarchy/scripts/apps/audio-plugin-manager/audio-plugin-manager-state.json"; do
+           "$SCRIPT_DIR/scripts/mosquito/audio-stack/apm/audio-plugin-manager-state.json" \
+           "$HOME/mosquitOmarchy/scripts/mosquito/audio-stack/apm/audio-plugin-manager-state.json"; do
     [[ -f $c ]] && { printf '%s\n' "$c"; return 0; }
   done
   return 1
@@ -2675,7 +2698,7 @@ remove_menu_blocks(){
 mosquitomarchy_icon(){
   local f
   for f in "$SCRIPT_DIR/scripts/apps/ableton-move-manager/move-manager-icon.png" \
-           "$SCRIPT_DIR/scripts/apps/audio-plugin-manager/audio-plugin-manager-icon.png"; do
+           "$SCRIPT_DIR/scripts/mosquito/audio-stack/apm/audio-plugin-manager-icon.png"; do
     [[ -f $f ]] && { printf '%s' "$f"; return 0; }
   done
   return 1
@@ -2786,7 +2809,7 @@ ensure_mosquitomarchy_tui(){
     # clobber a destination that isn't a Go build output — see the same
     # pattern in setup-ableton-move-manager.sh).
     tmp_out="$(mktemp "$BIN_DIR/.mosquitomarchy-tui.XXXXXX")"
-    if (cd "$MOSQUITOMARCHY_APP_DIR/tui-go" && go build -o "$tmp_out" .); then
+    if (cd "$MOSQUITOMARCHY_APP_DIR/tui-go" && go build -ldflags "-X main.appVersion=$REPO_VERSION" -o "$tmp_out" .); then
       chmod +x "$tmp_out"
       mv -f "$tmp_out" "$BIN_DIR/mosquitomarchy-tui"
       ok "mosquitomarchy-tui built and deployed ($BIN_DIR/mosquitomarchy-tui)"
@@ -3034,7 +3057,11 @@ un_reaper(){
 }
 
 un_audio(){
-  info "Uninstalling the audio stack (yabridge / autosync)"
+  info "Uninstalling the audio stack (yabridge / APM / Mixbay / guard / live mode / PipeWire)"
+  bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" --uninstall || warn "levels-guard uninstall reported a problem"
+  bash "$MIXBAY_DIR/setup-mosquitomixbay.sh" --uninstall || warn "mixbay uninstall reported a problem"
+  bash "$LIVE_MODE_DIR/setup-live-mode.sh" --uninstall || warn "live-mode uninstall reported a problem"
+  bash "$PIPEWIRE_SETTINGS_DIR/setup-pipewire-settings.sh" --remove || warn "pipewire remove reported a problem"
   rm_unit yabridge-autosync
   ok "yabridge autosync removed"
 
@@ -3591,6 +3618,14 @@ un_superfile(){
     warn "$SUPERFILE_DIR/setup-superfile.sh not found — nothing to revert."
   fi
 }
+un_flea(){
+  info "Uninstalling Flea (defaults + package)"
+  if [[ -x "$FLEA_DIR/setup-flea.sh" ]]; then
+    bash "$FLEA_DIR/setup-flea.sh" --uninstall || warn "setup-flea.sh --uninstall reported a problem"
+  else
+    warn "$FLEA_DIR/setup-flea.sh not found — nothing to remove."
+  fi
+}
 un_zen(){
   # Removes ONLY what the zen module deployed (seed extensions + settings +
   # chrome). The browser and its profile stay — the browser itself is managed
@@ -3619,6 +3654,11 @@ un_jamjamjam_plugin(){
     rm -rf "$HOME/.local/state/mosquito.jamjamjam" "$HOME/.local/state/jamjamjam-plugin" 2>/dev/null || true
     warn "Data kept: ~/.local/share/mosquito.jamjamjam. --purge to remove."
   fi
+}
+un_levels_guard(){
+  info "Uninstalling Levels Guard"
+  bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" --uninstall \
+    || warn "setup-levels-guard.sh --uninstall reported a problem"
 }
 un_live_mode(){
   info "Uninstalling the live mode (live-mode)"
@@ -3817,10 +3857,12 @@ handbrake) un_handbrake ;;
     keybindings) un_keybindings ;;
     mosquitomarchy-update) un_mosquitomarchy_update ;;
     superfile) un_superfile ;;
+    flea) un_flea ;;
     zen) un_zen ;;
     jamjamjam-plugin) un_jamjamjam_plugin ;;
     pipewire-settings) un_pipewire_settings ;;
     live-mode) un_live_mode ;;
+    levels-guard) un_levels_guard ;;
     mixbay) un_mixbay ;;
     mosquitomarchy) un_mosquitomarchy ;;
     *) err "Unknown module: $id"; return 1 ;;
@@ -3906,12 +3948,13 @@ run_module(){
 # scripts/apps/, one folder per app; the other modules each in scripts/).
 SCRIPTS="$SCRIPT_DIR/scripts"
 APPS_DIR="$SCRIPTS/apps"
-AUDIO_PLUGIN_MANAGER_DIR="$APPS_DIR/audio-plugin-manager"
+AUDIO_STACK_DIR="$SCRIPTS/mosquito/audio-stack"
+AUDIO_PLUGIN_MANAGER_DIR="$AUDIO_STACK_DIR/apm"
 BITWIG_DIR="$APPS_DIR/bitwig"
 REAPER_DIR="$APPS_DIR/reaper"
 LLM_DIR="$SCRIPTS/LLM"
 VM_DIR="$SCRIPTS/windows-vm"
-MIXBAY_DIR="$APPS_DIR/mosquitomixbay"
+MIXBAY_DIR="$AUDIO_STACK_DIR/mixbay"
 MACOS_VM_DIR="$SCRIPTS/macos-vm"
 OMARCHY_VM_DIR="$SCRIPTS/omarchy-vm"
 ABLETON_DIR="$APPS_DIR/ableton"
@@ -3928,11 +3971,14 @@ BRIGHTNESS_DIR="$SCRIPTS/plugins/brightness"
 TOUCHPAD_DIR="$SCRIPTS/plugins/touchpad"
 MXMASTER_DIR="$SCRIPTS/plugins/mx-master"
 SUPERFILE_DIR="$SCRIPTS/apps/superfile"
+FLEA_DIR="$SCRIPTS/apps/gui"
 THEME_DIR="$SCRIPTS/theme"
 ZEN_DIR="$SCRIPTS/apps/zen"
 JAMJAMJAM_PLUGIN_DIR="$SCRIPTS/mosquito/jamjamjam"
-PIPEWIRE_SETTINGS_DIR="$SCRIPT_DIR/scripts/mosquito/pipewire-settings"
-LIVE_MODE_DIR="$SCRIPTS/mosquito/live-mode"
+PIPEWIRE_SETTINGS_DIR="$AUDIO_STACK_DIR/pipewire"
+LIVE_MODE_DIR="$AUDIO_STACK_DIR/live-mode"
+LEVELS_GUARD_DIR="$AUDIO_STACK_DIR/levels-guard"
+AUDIO_STACK_CHILDREN=(audio-plugin-manager mixbay levels-guard live-mode pipewire-settings)
 
 # ─────────────────── Required system libraries (Ableton-linux) ─────────────
 # gstreamer (1.x) + base/good are prerequisites of the Ableton-linux runtime.
@@ -3959,20 +4005,10 @@ run_required_libs(){
 run_reaper(){ bash "$REAPER_DIR/setup-reaper.sh"; }
 
 run_audio(){
-  # The wine/yabridge stack + the Audio Plugin Manager — without VM link.
-  #
-  # Bitwig used to be launched from here as the first step, which made "Bitwig"
-  # and "the audio stack" one indivisible row: the .deb cannot be fetched by the
-  # repo, so on a machine without it the whole row had to be either offered and
-  # broken, or hidden along with yabridge and VST sharing that work perfectly
-  # well without a DAW. Bitwig is its own module now (run_bitwig), and REAPER
-  # has been its own module all along — this one is the stack.
-  ok "(audio) launching setup-reaper.sh (REAPER)"
-  bash "$REAPER_DIR/setup-reaper.sh" $([[ $YES == 1 ]] && echo -y)
-  bash "$AUDIO_PLUGIN_MANAGER_DIR/setup-audio-stack.sh" $([[ $YES == 1 ]] && echo -y)
-  return 0
+  # The audio-stack folder row: its installer runs all five children. Bitwig
+  # and REAPER remain their own modules.
+  bash "$AUDIO_STACK_DIR/setup-audio-stack.sh" $([[ $YES == 1 ]] && echo -y)
 }
-
 run_bitwig(){
   # setup-bitwig.sh: Bitwig 6.0 Beta 6 from the LOCAL .deb via the pinned AUR
   # PKGBUILD, then it asks about the patched bitwig.jar.
@@ -4255,6 +4291,7 @@ run_brightness(){ bash "$BRIGHTNESS_DIR/optimized-brightness.sh"; }
 run_achraff(){ bash "$THEME_DIR/create-theme.sh" --apply "$THEME_DIR/Wallpapers/achraf67.png"; }
 run_touchpad(){ bash "$TOUCHPAD_DIR/touchpad.sh" $([[ $YES == 1 ]] && echo -y); }
 run_superfile(){ bash "$SUPERFILE_DIR/setup-superfile.sh" $([[ $YES == 1 ]] && echo -y); }
+run_flea(){ bash "$FLEA_DIR/setup-flea.sh" $([[ $YES == 1 ]] && echo -y); }
 run_zen(){ bash "$ZEN_DIR/setup-zen.sh" $([[ $YES == 1 ]] && echo -y); }
 run_mx_master(){ bash "$MXMASTER_DIR/mx-master.sh" $([[ $YES == 1 ]] && echo -y); }
 run_keepassxc(){
@@ -4318,7 +4355,16 @@ run_jamjamjam_plugin(){
   bash "$JAMJAMJAM_PLUGIN_DIR/setup-jamjamjam-plugin.sh"
 }
 
-run_live_mode(){
+run_levels_guard(){
+  bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" $([[ $YES == 1 ]] && echo -y)
+}
+
+run_levels_guard(){
+  info "Uninstalling Levels Guard"
+  bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" --uninstall \
+    || warn "setup-levels-guard.sh --uninstall reported a problem"
+}
+un_live_mode(){
   # Live mode (performance session): stay-awake + thermal + routing in
   # scratchpad. Idempotent; -y installs non-interactively (same flag the
   # move-manager / audio scripts accept). Needs root for the sudoers part.
@@ -4376,7 +4422,7 @@ final_report(){
   echo " • The Windows VM itself: omarchy-windows-vm install (long download)."
   echo " • The Omarchy VM itself: install Omarchy from the ISO, then mark the install done (omarchy-vm-tui)."
   echo " • iLok-type plugin licenses: separate Wine (Linux) / VM activation."
-  echo " • Rerun './scripts/apps/audio-plugin-manager/setup-audio-stack.sh --tweaks' after each new VST plugin."
+  echo " • Rerun './scripts/mosquito/audio-stack/apm/setup-yabridge.sh --tweaks' after each new VST plugin."
   echo " • Re-login required if the realtime group was just joined."
   echo " • Ableton Linux: first setup in Live — Settings > Audio > Device PipeASIO."
   echo " • Bitwig 6.0 Beta 6: license via the app at first launch."
@@ -4399,6 +4445,7 @@ exec_modules(){
     case $id in
       reaper)  run_module reaper run_reaper ;;
       audio)   run_module audio run_audio ;;
+      audio-plugin-manager) run_module audio-plugin-manager bash "$AUDIO_PLUGIN_MANAGER_DIR/setup-audio-plugin-manager.sh" $([[ $YES == 1 ]] && echo -y) ;;
       bitwig)  run_module bitwig run_bitwig ;;
       windows-vm) run_module windows-vm run_windows_vm ;;
       macos-vm) run_module macos-vm run_macos_vm ;;
@@ -4425,10 +4472,12 @@ exec_modules(){
       keybindings) run_module keybindings run_keybindings ;;
       mosquitomarchy-update) run_module mosquitomarchy-update run_mosquitomarchy_update ;;
       superfile) run_module superfile run_superfile ;;
+      flea) run_module flea run_flea ;;
       zen) run_module zen run_zen ;;
       jamjamjam-plugin) run_module jamjamjam-plugin run_jamjamjam_plugin ;;
       pipewire-settings) run_module pipewire-settings run_pipewire_settings ;;
       live-mode) run_module live-mode run_live_mode ;;
+      levels-guard) run_module levels-guard run_levels_guard ;;
       mixbay) run_module mixbay run_mixbay ;;
       mosquitomarchy) run_module mosquitomarchy run_mosquitomarchy ;;
       *)
@@ -4449,7 +4498,7 @@ exec_modules(){
 
 # Categories of the "setup" action. id|label|modules (space-separated module ids).
 CATEGORIES=(
-  "apps|Apps|reaper audio bitwig ableton guitarpro davinci-resolve extracto handbrake signal betterbird whatsapp-native superfile zen keepassxc hyprmod"
+  "apps|Apps|reaper bitwig ableton guitarpro davinci-resolve extracto handbrake signal betterbird whatsapp-native superfile flea zen keepassxc hyprmod"
   "tuis|TUIs|"
   "webapps|Webapps|"
   # "Plugins" is the project's own layer: the manager itself (the deployer),
@@ -4582,7 +4631,7 @@ module_category(){ # module id -> category id
     # AND here. Two copies of the same fact: adding a module to one leaves the
     # other calling it category-less, which is how pipewire-settings showed up in
     # the Setup tree under "mosquito" and in `status` with an empty category.
-    ableton-move-manager|audio-plugin-manager|jamjamjam-plugin|battery|live-mode|mixbay|pipewire-settings) echo mosquito; return 0 ;;
+    ableton-move-manager|audio|audio-plugin-manager|levels-guard|jamjamjam-plugin|battery|live-mode|mixbay|pipewire-settings) echo mosquito; return 0 ;;
     # The manager lives in the mosquito folder (single row, update watchdog
     # included) rather than Plugins; the mapping is explicit so Status keeps
     # grouping it exactly like Setup does.
@@ -4724,6 +4773,8 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
       CAND_LABELS+=("mosquito-move-manager  —  $(module_desc ableton-move-manager)")
       CAND_KEYS+=("audio-plugin-manager")
       CAND_LABELS+=("mosquito-audio-plugin-manager  —  $(module_desc audio-plugin-manager)")
+      CAND_KEYS+=("levels-guard")
+      CAND_LABELS+=("mosquito-levels-guard  —  $(module_desc levels-guard)")
       CAND_KEYS+=("jamjamjam-plugin")
       CAND_LABELS+=("mosquito-jamjamjam  —  $(module_desc jamjamjam-plugin)")
       CAND_KEYS+=("pipewire-settings")
@@ -4791,8 +4842,12 @@ category_run(){ # catid -> run only the CATEGORY_SELECTED items
       local skipped=0
       for k in "${CATEGORY_SELECTED[@]}"; do
         case $k in
+          audio)
+            run_module audio bash "$AUDIO_STACK_DIR/setup-audio-stack.sh" $([[ $YES == 1 ]] && echo -y) ;;
           audio-plugin-manager)
-            run_module audio-plugin-manager bash "$AUDIO_PLUGIN_MANAGER_DIR/setup-audio-stack.sh" $([[ $YES == 1 ]] && echo -y) ;;
+            run_module audio-plugin-manager bash "$AUDIO_PLUGIN_MANAGER_DIR/setup-audio-plugin-manager.sh" $([[ $YES == 1 ]] && echo -y) ;;
+          levels-guard)
+            run_module levels-guard bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" $([[ $YES == 1 ]] && echo -y) ;;
           *)
             # Module-backed mosquito tools (ableton-move-manager, battery
             # = mega-caffeine, jamjamjam-plugin, live-mode) go through

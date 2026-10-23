@@ -111,8 +111,8 @@ func TestSetupLevel1Markers(t *testing.T) {
 			t.Fatalf("selection row %q should no longer exist", it.Value)
 		}
 	}
-	if got := m.applyPlanCat("apps"); len(got) != 1 || !strings.Contains(got[0], "reaper") {
-		t.Fatalf("applyPlanCat(apps) = %q", got)
+	if got := m.applyPlan(); len(got) != 1 || !strings.Contains(got[0], "reaper") {
+		t.Fatalf("applyPlan() = %q", got)
 	}
 }
 
@@ -799,8 +799,8 @@ func TestUpdateModuleInfoShowsChangelog(t *testing.T) {
 		Reason:  "Installed (ok); 1 owned file changed",
 		Base:    "abc1234",
 		Applied: "def5678",
-		Files:   []string{"scripts/apps/audio-plugin-manager/setup-audio-stack.sh"},
-		Changes: []string{"M scripts/apps/audio-plugin-manager/setup-audio-stack.sh — edited (installer/setup script, +1/-1 lines)"},
+		Files:   []string{"scripts/mosquito/audio-stack/apm/setup-yabridge.sh"},
+		Changes: []string{"M scripts/mosquito/audio-stack/apm/setup-yabridge.sh — edited (installer/setup script, +1/-1 lines)"},
 	}}}})
 	m.updatePicker = m.updatePicker.SelectValue("audio")
 	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
@@ -808,7 +808,7 @@ func TestUpdateModuleInfoShowsChangelog(t *testing.T) {
 		t.Fatalf("i on a module row went to screen %d, want the Info screen", m.top())
 	}
 	v := m.info.View()
-	for _, want := range []string{"audio", "Why:", "abc1234", "def5678", "setup-audio-stack.sh"} {
+	for _, want := range []string{"audio", "Why:", "abc1234", "def5678", "setup-yabridge.sh"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("module changelog missing %q:\n%s", want, v)
 		}

@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "author": "mosquito",
   "license": "MIT",
-  "description": "Real-time audio analysis: detect key, BPM, chord progressions, with guitar fretboard and MIDI synth.",
+  "description": "Real-time audio analysis: key, BPM, chords, guitar fretboard, tuner and metronome.",
   "kinds": [
     "service",
     "bar-widget"

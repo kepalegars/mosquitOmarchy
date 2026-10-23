@@ -4,7 +4,7 @@
 
 Benchmarks AudioAnalyzer.analyze() (the exact code path while the panel is
 open, once per second) built on real signals; include the tuner pass and the
-metronome synth garbage collection. Useful to embed the worst-case overhead
+metronome click-track garbage collection. Useful to embed the worst-case overhead
 into the plugin README.
 """
 from __future__ import annotations

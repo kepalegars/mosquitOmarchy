@@ -292,6 +292,8 @@ type FolderRec struct {
 	Folder string `json:"folder"`
 	Label  string `json:"label"`
 	Accent bool   `json:"accent"`
+	Parent string `json:"parent"`
+	Bundle bool   `json:"bundle"`
 }
 
 // SetupItemRec is one selectable Setup item inside a folder. Info is the long
@@ -302,6 +304,7 @@ type SetupItemRec struct {
 	Key     string `json:"key"`
 	Label   string `json:"label"`
 	Info    string `json:"info"`
+	Group   string `json:"group"`
 	Checked bool   `json:"checked"`
 	// Disabled greys the row and refuses Enter. The backend uses it to keep an
 	// option visible in its "nothing left to do" state instead of dropping it.
@@ -442,6 +445,45 @@ func fetchTreeCmd(sub string) tea.Cmd {
 			return setupMsg{err: err}
 		}
 		return setupMsg{folders: folders, items: items}
+	}
+}
+
+// DiskRec is the backend's best-effort disk-space answer for one confirm.
+// Free is exact; Need/Freed only cover what pacman could prove (stock
+// preinstalls and module ids that happen to be package names), so the
+// *_unknown flags are part of the answer, not an error.
+type DiskRec struct {
+	FreeKB       int64 `json:"free_kb"`
+	NeedKB       int64 `json:"need_kb"`
+	FreedKB      int64 `json:"freed_kb"`
+	FreeUnknown  bool  `json:"free_unknown"`
+	NeedUnknown  bool  `json:"need_unknown"`
+	FreedUnknown bool  `json:"freed_unknown"`
+}
+
+// spaceMsg carries the answer back to the confirm that asked for it. seq makes
+// a late answer for a confirm the user already answered a no-op.
+type spaceMsg struct {
+	seq int
+	rec DiskRec
+	err error
+}
+
+// fetchSpaceCmd asks the backend for one confirm's disk line. It is a tea.Cmd
+// (not a direct call) so a slow df/pacman never freezes the UI, and the confirm
+// is usable before the answer lands.
+func fetchSpaceCmd(op string, keys []string, seq int) tea.Cmd {
+	args := append([]string{"space", op}, keys...)
+	return func() tea.Msg {
+		out, err := runQuick(args...)
+		if err != nil {
+			return spaceMsg{seq: seq, err: err}
+		}
+		var r DiskRec
+		if err := json.Unmarshal(bytes.TrimSpace(out), &r); err != nil {
+			return spaceMsg{seq: seq, err: err}
+		}
+		return spaceMsg{seq: seq, rec: r}
 	}
 }
 

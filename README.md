@@ -77,11 +77,10 @@ Details, options and caveats live in each module's own `README.md`. This table i
 | Module | Installs | Doc |
 |---|---|---|
 | `reaper` | REAPER + its Hyprland/Wayland integration | [README](scripts/apps/reaper/README.md) |
-| `audio` | yabridge stack, local VST folders, and the mosquito Audio Plugin Manager | [manager](scripts/apps/audio-plugin-manager/README.md) |
 | `bitwig` | Bitwig Studio from the local `.deb`, with its own module and optional patched `bitwig.jar` | [README](scripts/apps/bitwig/README.md) |
 | `ableton` | Ableton Live 12 native on Linux, sharing the same VST root | [README](scripts/apps/ableton/README.md) |
 | `guitarpro` | Guitar Pro 8 in its own Wine prefix | [README](scripts/apps/guitarpro/README.md) |
-| `davinci-resolve` | DaVinci Resolve (free or Studio) | [README](scripts/apps/davinci/README.md) |
+| `davinci-resolve` | DaVinci Resolve (free or Studio) + silent DRwrap integration | [README](scripts/apps/davinci/README.md) |
 | `extracto` | Extracto | [README](scripts/apps/extracto/README.md) |
 | `handbrake` | HandBrake GUI + CLI, preset sync, Hyprland rules | [README](scripts/apps/handbrake/README.md) |
 | `signal` | Signal Desktop, tray behavior, menu entry, and login autostart | [setup](scripts/apps/signal/setup-signal.sh) |
@@ -100,8 +99,12 @@ The tables below follow the TUI's Setup folders: each heading is one of them.
 | Module | Installs | Doc |
 |---|---|---|
 | `ableton-move-manager` | Ableton Move → Live → Bitwig conversion (MIDI export, native Omarchy prompts) | [README](scripts/apps/ableton-move-manager/README.md) |
-| `mosquito.jamjamjam` | Real-time key/BPM/chord detection with a fretboard and MIDI output | [README](scripts/mosquito/jamjamjam/README.md) |
-| `live-mode` | A thermal/perf session mode: app closing, gaps, routing, package fence | [README](scripts/mosquito/live-mode/README.md) |
+| `audio-stack` (folder) | APM/yabridge, Mixbay, Levels Guard, live mode, PipeWire — Enter installs/removes all five | [stack](scripts/mosquito/audio-stack/README.md) |
+| `audio-plugin-manager` | Audio Plugin Manager (Wine/yabridge plugins) | [README](scripts/mosquito/audio-stack/apm/README.md) |
+| `mixbay` | USB audio bay (EVO 8/4 + ALSA interfaces) | [README](scripts/mosquito/audio-stack/mixbay/README.md) |
+| `levels-guard` | Native audio panel + media-key guard | [stack](scripts/mosquito/audio-stack/README.md) |
+| `mosquito.jamjamjam` | Real-time key/BPM/chord detection with a fretboard and tuner | [README](scripts/mosquito/jamjamjam/README.md) |
+| `live-mode` | A thermal/perf session mode: app closing, gaps, routing, package fence | [README](scripts/mosquito/audio-stack/live-mode/README.md) |
 | `battery` | Ultra-save, a custom battery plugin, mega caffeine | [README](scripts/plugins/power-management/README.md) |
 | `keybindings` | The `SUPER` bindings of this package, inside one reversible block in `bindings.lua` | [README](scripts/apps/mosquitomarchy/README.md#keybindings) |
 
@@ -147,8 +150,8 @@ own device, and never touches the other.
 `scripts/apps/*/` is its own selectable item rather than a single module. See
 [scripts/apps/README.md](scripts/apps/README.md) and [scripts/fixes/README.md](scripts/fixes/README.md).
 
-One TUI row is not in the tables above, because it is not an orchestrator module: the **mosquito
-Audio Plugin Manager** is selected as its own row under *mosquito* but is installed by `audio`.
+**audio-stack** is a folder row under *mosquito*, not a module of its own: Enter installs or
+removes all five components, while Left/Right folds the folder and each child stays selectable.
 
 **Creating a theme from an image** is not in the tables either, and not in Setup either: it is a
 row on the [TUI's main menu](scripts/apps/mosquitomarchy/README.md), right after Keybindings,
@@ -293,7 +296,8 @@ at 1.0.0, which is what "check for updates" acts on. Nothing in the list is the 
 own version, so there is nothing there to compare against a vendor release.
 
 There is one source: the root [`VERSION`](VERSION) file, currently **1.0.0**, which
-`module_version()` reads and the Go TUIs mirror in `appVersion`. There is deliberately no
+`module_version()` reads and the installers inject into `mosquitomarchy-tui` and
+`mosquito-mixbay-tui` at build time (`-X main.appVersion`). There is deliberately no
 second list — a list next to `VERSION` is how the two drift.
 
 The rule is what makes the update zone meaningful. A row saying 1.0.0 next to a row saying
@@ -306,7 +310,7 @@ their installers, and the only real comparison is against the version on GitHub.
    The module does the host side itself.
 2. **Windows plugins** — install them into the shared VST root so every DAW sees them, or
    into a Wine prefix. One install in the shared root is visible everywhere.
-3. `./scripts/apps/audio-plugin-manager/setup-audio-stack.sh --tweaks` after each new plugin.
+3. `./scripts/mosquito/audio-stack/apm/setup-yabridge.sh --tweaks` after each new plugin.
 4. iLok licenses are activated per Wine prefix; reconnect if you just joined `realtime`.
 5. Ableton Live: first-time ASIO / PipeASIO configuration under *Settings → Audio*.
 

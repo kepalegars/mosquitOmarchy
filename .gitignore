@@ -22,9 +22,9 @@ scripts/apps/bitwig/*.deb
 # yabridge-driver.* pair is the same thing for the yabridge build/install
 # bookkeeping the core writes next to itself (YABRIDGE_STATE / YABRIDGE_LOCK).
 # All three describe THIS machine, and differ on every other one.
-scripts/apps/audio-plugin-manager/audio-plugin-manager-state.json
-scripts/apps/audio-plugin-manager/yabridge-driver.json
-scripts/apps/audio-plugin-manager/yabridge-driver.lock
+scripts/mosquito/audio-stack/apm/audio-plugin-manager-state.json
+scripts/mosquito/audio-stack/apm/yabridge-driver.json
+scripts/mosquito/audio-stack/apm/yabridge-driver.lock
 
 # ── Patches (whole folders): provided separately, never on GitHub ──
 # All the files (including each app's patches) are recovered via the
@@ -60,7 +60,7 @@ scripts/mosquito/jamjamjam/tui-go/jamjamjam-tui
 # A bare `go build .` in a directory whose main package is "live-mode-tui" also
 # drops a binary with the PACKAGE name next to the real one. Only the
 # mosquito-live-mode-tui name is deployed and tracked.
-scripts/mosquito/live-mode/tui-go/live-mode-tui
+scripts/mosquito/audio-stack/live-mode/tui-go/live-mode-tui
 
 # ── Sensitive / never on a repository (even private) ──
 # Authorization files (Ableton license), license-workaround tools

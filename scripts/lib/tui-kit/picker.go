@@ -36,22 +36,6 @@ type PickerToggleMsg struct{ Value string }
 // handler classic ⇄ hyprland).
 type PickerActionMsg struct{ Key string }
 
-// PickerRangeMsg is the Tab-held range select: Tab, then Up/Down with no
-// other key between (the terminal reports no key release, so "held" means
-// "Tab was the last selection key"). Values holds every selectable row the
-// cursor crossed after the Tab row, up to and including the new cursor —
-// the anchor itself is excluded (its Tab already toggled it). Turning back
-// re-toggles the rows crossed again, so a held Tab works like a toggle
-// brush: down over eight rows checks them, back up over three unchecks
-// those three. Anchor is the Tab row's value, so the host can re-arm the
-// hold after the rebuild its handling does (a rebuild is a brand-new
-// picker). Hosts TOGGLE every value through the same path a single Tab
-// uses (folders fill-or-empty as usual).
-type PickerRangeMsg struct {
-	Values []string
-	Anchor string
-}
-
 // tabRepeatWindow groups consecutive Tab presses on the same row: inside it
 // they are one held gesture — a lone repeat stream, or a fast double-tap.
 // The first two presses toggle (so a deliberate double-tap still unticks
@@ -61,20 +45,12 @@ type PickerRangeMsg struct {
 // that delay; a deliberate re-press past it starts fresh.
 var tabRepeatWindow = 600 * time.Millisecond
 
-// tabRangeWindow is how long after the last Tab the arrows still count as
-// "while Tab is held": a physical hold keeps refreshing it through the
-// repeat stream, and the moment the key comes up it lapses. So the range
-// can never stay armed under a cursor the user is merely moving — the bug
-// where a Tab "acted like it was still held" one arrow later.
-var tabRangeWindow = 350 * time.Millisecond
-
 // tabGuardValue/tabGuardCount/tabGuardAt are the Tab repeat guard. They live
 // at package scope, NOT on the Picker, because every host repaints a toggle
-// by building a brand-new Picker (and re-arming it with ArmRange): a guard
-// kept in the struct was zeroed by the very rebuild the toggle triggered, so
-// a held Tab toggled on every repeat and the row flickered instead of
-// settling. The guard is process-wide on purpose — one interaction drives
-// one picker at a time.
+// by building a brand-new Picker: a guard kept in the struct was zeroed by
+// the very rebuild the toggle triggered, so a held Tab toggled on every
+// repeat and the row flickered instead of settling. The guard is process-wide
+// on purpose — one interaction drives one picker at a time.
 var (
 	tabGuardValue string
 	tabGuardCount int
@@ -86,14 +62,6 @@ var (
 // across independent cases must clear it between them.
 func ResetTabRepeatGuard() {
 	tabGuardValue, tabGuardCount, tabGuardAt = "", 0, time.Time{}
-}
-
-// TabActive reports whether the arrows should still extend a Tab range: true
-// while the last Tab is recent, which — because a held key repeats — means
-// the key is still down. Hosts that own the arrows (the multi-select
-// navPicker wrappers) gate their range step on it.
-func TabActive() bool {
-	return !tabGuardAt.IsZero() && time.Since(tabGuardAt) < tabRangeWindow
 }
 
 // PickerSortMsg is sent on Left/Right — cycle the active sort live without
@@ -153,6 +121,16 @@ type PickerItem struct {
 	// Folders stay SELECTABLE (Enter expands/collapses them); use Heading for a
 	// row that is neither.
 	Folder bool
+	// Flat keeps Folder's folding behaviour but renders the row in the ordinary
+	// item style: no leading folder glyph and no bold title. The host puts the
+	// mark in Display, where it can line up with its siblings' ○/● checkboxes.
+	// Used by a nested bundle row that should look like one of the parent's
+	// modules while its children stay indented underneath.
+	Flat bool
+	// Parent is the id of the folder that CONTAINS this row, for a nested
+	// folder or leaf. Empty means top level. Hosts use it to hide a subtree
+	// when its ancestor is folded.
+	Parent string
 	// Filled fills a folder's square in (▢ becomes ▣). The host sets it when
 	// the folder is ENTIRELY ticked — open/closed never fills, and neither
 	// does the cursor alone. Anything less than full stays an empty square,
@@ -396,6 +374,9 @@ func (d pickerDelegate) leadCell(pi PickerItem, selected bool) string {
 		return ""
 	}
 	if pi.Folder {
+		if pi.Flat {
+			return strings.Repeat(" ", d.badgeSlot)
+		}
 		st := lipgloss.NewStyle().Foreground(ColorSubtle)
 		glyph := FolderClosed
 		if selected {
@@ -463,7 +444,7 @@ func (d pickerDelegate) titleStyleFor(pi PickerItem, index, selected int) lipglo
 // Everything else (Accent, terminal box) is delegated unchanged.
 func (d pickerDelegate) folderTitleStyle(pi PickerItem, index, selected int) lipgloss.Style {
 	st := d.titleStyleFor(pi, index, selected)
-	if pi.Folder {
+	if pi.Folder && !pi.Flat {
 		st = st.Bold(true)
 	}
 	return st
@@ -778,12 +759,6 @@ type Picker struct {
 	// arrows keep their original meaning, so a settings screen that cycles a
 	// value with ←/→ is unaffected.
 	treeOpen map[string]bool
-	// Tab-held range select: tabHeld is true once Tab marked a row and no
-	// other key than Tab/Up/Down came since; tabAnchor is the visible index
-	// of that Tab row. The repeat guard itself (what tells a held Tab from a
-	// deliberate re-press) is package-level — see tabGuardValue.
-	tabHeld   bool
-	tabAnchor int
 	// busyGlyph, when non-empty, replaces the selection cursor (SetBusyGlyph):
 	// a host shows BusyFrames here while a background job runs.
 	busyGlyph string
@@ -1130,10 +1105,8 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(m, key.NewBinding(key.WithKeys("ctrl+c", "esc"))):
-			p.tabHeld = false
 			return p, func() tea.Msg { return PickerResultMsg{Canceled: true} }
 		case key.Matches(m, key.NewBinding(key.WithKeys("enter"))):
-			p.tabHeld = false
 			if it, ok := p.list.SelectedItem().(PickerItem); ok {
 				if inert(it) {
 					return p, nil // inert: never choose a heading or an unavailable option
@@ -1159,8 +1132,6 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 				// Tab toggles the CURRENT item only — the cursor stays
 				// exactly where it is (the user's rule: multi-selecting
 				// with Tab must not move the selection; Down/Up navigate).
-				// It also arms the range select: Up/Down WHILE TAB IS HELD
-				// checks every row on the way (like Shift+arrows).
 				//
 				// The first two fast presses on a row both toggle (a fast
 				// double-tap unticks instantly); the third locks, so a held
@@ -1171,7 +1142,6 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 				now := time.Now()
 				if it.Value == tabGuardValue && now.Sub(tabGuardAt) < tabRepeatWindow {
 					tabGuardAt = now
-					p.tabHeld = true
 					if tabGuardCount >= 3 {
 						return p, nil
 					}
@@ -1179,12 +1149,9 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 					if tabGuardCount >= 3 {
 						return p, nil
 					}
-					p.tabAnchor = p.list.Index()
 					return p, func() tea.Msg { return PickerToggleMsg{Value: it.Value} }
 				}
 				tabGuardValue, tabGuardCount, tabGuardAt = it.Value, 1, now
-				p.tabHeld = true
-				p.tabAnchor = p.list.Index()
 				return p, func() tea.Msg { return PickerToggleMsg{Value: it.Value} }
 			}
 			return p, nil
@@ -1193,7 +1160,6 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 			// "x" means per screen (the audio manager's plugin list uses
 			// it to flip the plugin window handler). A plain single key
 			// is safe — the picker has no text filter.
-			p.tabHeld = false
 			return p, func() tea.Msg { return PickerActionMsg{Key: "x"} }
 		case key.Matches(m, key.NewBinding(key.WithKeys("?"))):
 			// "?" opens/closes the picker's own shortcut-overlay (the
@@ -1202,7 +1168,6 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 			// Overlay replace-IN-PLACE: no host wiring needed, no other
 			// screen moves, the picker keeps its size.
 			p.helpOpen = !p.helpOpen
-			p.tabHeld = false
 			return p, nil
 		case key.Matches(m, key.NewBinding(key.WithKeys("down", "j"))):
 			// Down arrow moves down within the current page only — it
@@ -1213,92 +1178,31 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 			// no-wrap rule: once a user has scrolled to the bottom of
 			// the visible list, additional Down presses are no-ops
 			// rather than wrap-and-then-have-to-scroll-back.
-			// A TAB-HELD Down still emits the range behind it (rangeCmd
-			// covers whatever advanceDown crossed, pages included).
 			out, moved := p.advanceDown()
 			if !moved {
 				return p, nil
 			}
-			return out, out.rangeCmd()
+			return out, nil
 		case key.Matches(m, key.NewBinding(key.WithKeys("up", "k"))):
 			out, moved := p.advanceUp()
 			if !moved {
 				return p, nil
 			}
-			return out, out.rangeCmd()
+			return out, nil
 		case key.Matches(m, key.NewBinding(key.WithKeys("left"))):
-			// Folding reshuffles the visible rows, so a Tab anchor would
-			// point at the wrong row afterwards: the range ends here.
-			p.tabHeld = false
 			return p.foldKey(-1)
 		case key.Matches(m, key.NewBinding(key.WithKeys("right"))):
-			p.tabHeld = false
 			return p.foldKey(1)
 		}
 	}
 	var cmd tea.Cmd
 	p.list, cmd = p.list.Update(msg)
 	if km, ok := msg.(tea.KeyMsg); ok {
-		// Anything the switch above did not consume (printable filter
-		// keys, pgup/pgdn, ...) ends a held Tab for the same reason:
-		// the visible rows moved under the anchor.
-		p.tabHeld = false
 		if dir, isNav := navDirection(km, &p.list); isNav {
 			p = p.clampDisabled(dir)
 		}
 	}
 	return p, cmd
-}
-
-// ArmRange re-arms a Tab-held range on a freshly rebuilt picker, anchored
-// at the row carrying value (no-op when the value is gone: a filter or a
-// fold that removed the anchor ends the range instead of pointing it at a
-// stranger). Hosts call it right after the rebuild their Tab handler does —
-// a rebuild is a brand-new Picker, and without this the range would forget
-// which row Tab marked. The repeat guard is NOT touched: it is package-level
-// (tabLastValue/tabLastAt), so a rebuild cannot turn a held Tab back into a
-// first press.
-func (p Picker) ArmRange(value string) Picker {
-	if value == "" {
-		return p
-	}
-	for i, it := range p.list.Items() {
-		if pi, ok := it.(PickerItem); ok && pi.Value == value {
-			p.tabHeld = true
-			p.tabAnchor = i
-			return p
-		}
-	}
-	return p
-}
-
-// rangeCmd emits the row a Tab-held Up/Down just entered, or nil when no
-// range is armed (or the cursor did not move). One value per step: the host
-// toggles it exactly like a Tab on it, so walking down over unchecked rows
-// checks them and walking back up unchecks them again — a toggle brush. The
-// anchor itself travels along for re-arming after rebuilds, and IS emitted
-// when the cursor comes back onto it (undoing its Tab, like any crossing).
-// Inert rows never move the cursor (advance skips them), so they never emit.
-func (p Picker) rangeCmd() tea.Cmd {
-	if !p.tabHeld || !TabActive() {
-		return nil
-	}
-	items := p.list.Items()
-	cur := p.list.Index()
-	if cur < 0 || cur >= len(items) {
-		return nil
-	}
-	it, ok := items[cur].(PickerItem)
-	if !ok || inert(it) {
-		return nil
-	}
-	anchor := ""
-	if p.tabAnchor >= 0 && p.tabAnchor < len(items) {
-		if ait, ok := items[p.tabAnchor].(PickerItem); ok {
-			anchor = ait.Value
-		}
-	}
-	return func() tea.Msg { return PickerRangeMsg{Values: []string{it.Value}, Anchor: anchor} }
 }
 
 // foldKey is ←/→ on a picker declared with WithTree.

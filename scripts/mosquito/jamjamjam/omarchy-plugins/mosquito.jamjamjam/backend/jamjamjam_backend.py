@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""jamjamjam backend: key/BPM/chord detection, MIDI input, and simple synth."""
+"""jamjamjam backend: key/BPM/chord detection, tuner, and metronome."""
 
 from __future__ import annotations
 
@@ -24,12 +24,6 @@ try:
     HAVE_NUMPY = True
 except ImportError:
     HAVE_NUMPY = False
-
-try:
-    import shazamio  # type: ignore  # noqa: E402
-    HAVE_SHAZAMIO = True
-except ImportError:
-    HAVE_SHAZAMIO = False
 
 PLUGIN_ID = "mosquito.jamjamjam"
 
@@ -146,16 +140,66 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 STATE_FILE = os.path.expanduser("~/.local/state/jamjamjam/state.json")
 DEFAULT_CONFIG = {
     "noteNaming": "flats",
-    "showChordBox": True,
+    "showChordBox": False,
+    "showKeyCard": True,
+    "showBpmCard": True,
+    "showChordCard": True,
+    "autoAnalyze": True,
     "aecEnabled": False,
     "metronomeVolume": 0.7,
-    "clickStyle": "classic",
     "clickCustom": False,
     "customDown": "",
     "customUp": "",
 }
 
-CLICK_STYLES = ("classic", "wood", "kick", "beep")
+TEMPO_SIGNATURE_RE = re.compile(r"(?<!\d)(\d{1,2})\s*/\s*(\d{1,2})(?!\d)")
+TEMPO_BPM_RE = re.compile(
+    r"(?<!\d)(\d{1,3}(?:[.,]\d+)?)\s*(?:bpm|b\.?p\.?m\.?)(?!\w)", re.IGNORECASE)
+TEMPO_NUMBER_RE = re.compile(r"(?<!\d)(\d{1,3}(?:[.,]\d+)?)(?!\d)")
+
+
+def parse_tempo_entry(value: object) -> tuple[float | None, str | None]:
+    """Parse a free-form tempo/time-signature entry.
+
+    Accepted examples: "120", "6/8", "120 4/4", "140bpm 4/4",
+    "7/8 134 BPm". A bare signature changes only the meter; a bare
+    number changes only the tempo.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None, None
+    text = (text.replace("\u00a0", " ").replace("\uff0f", "/")
+            .replace("，", ",").replace("·", " ").replace("|", " ")
+            .replace(";", " "))
+    text = re.sub(r"(?<=\d),(?=\d)", ".", text).replace(",", " ")
+    if not text.strip():
+        return None, None
+
+    signature = None
+    match = TEMPO_SIGNATURE_RE.search(text)
+    if match:
+        numerator = int(match.group(1))
+        denominator = int(match.group(2))
+        if not (1 <= numerator <= 16 and denominator in (1, 2, 4, 8, 16)):
+            raise ValueError("Beat count must be 1-16 and the note value 1, 2, 4, 8 or 16")
+        signature = f"{numerator}/{denominator}"
+
+    bpm = None
+    match = TEMPO_BPM_RE.search(text)
+    if match:
+        bpm = float(match.group(1).replace(",", "."))
+    else:
+        remainder = TEMPO_SIGNATURE_RE.sub(" ", text)
+        remainder = re.sub(r"b\.?p\.?m\.?", " ", remainder, flags=re.IGNORECASE)
+        match = TEMPO_NUMBER_RE.search(remainder)
+        if match:
+            bpm = float(match.group(1).replace(",", "."))
+
+    if bpm is not None and not (40.0 <= bpm <= 240.0):
+        raise ValueError("BPM must be between 40 and 240")
+    if bpm is None and signature is None:
+        raise ValueError("Enter a BPM (120), a meter (6/8), or both (120 4/4)")
+    return bpm, signature
 
 
 def load_config() -> dict:
@@ -656,74 +700,6 @@ class Tuner:
         return self.current
 
 
-class ShazamDetector:
-    """Optional song fingerprinting. Stays inert unless `shazamio` is installed."""
-
-    def __init__(self):
-        self.result: dict | None = None
-        self._enabled = HAVE_SHAZAMIO
-        self._period_seconds = 8.0
-        self._lock = threading.Lock()
-        self._last_attempt = 0.0
-        self._error = ""
-        if not self._enabled:
-            return
-        self._thread = threading.Thread(target=self._loop, name="jamjamjam-shazam", daemon=True)
-        self._thread.start()
-
-    def enabled(self) -> bool:
-        return self._enabled
-
-    def feed(self, frames: list[float]) -> None:
-        if not self._enabled or not frames:
-            return
-        now = time.monotonic()
-        if now - self._last_attempt < self._period_seconds:
-            return
-        self._last_attempt = now
-        # Downsample to 44100 mono int16, 5 seconds for shazamio.
-        step = max(1, int(SAMPLE_RATE / 44100))
-        samples_16 = frames[-44100 * 5::step]
-        raw = array.array("h")
-        for sample in samples_16:
-            raw.append(max(-32767, min(32767, int(sample * 32767))))
-        if len(raw) < 44100:
-            return
-        threading.Thread(target=self._recognize, args=(raw.tobytes(),), daemon=True).start()
-
-    def _recognize(self, data: bytes) -> None:
-        try:
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            sh = shazamio.Shazam()
-            result = loop.run_until_complete(sh.recognize(data))
-            loop.close()
-            track = (result or {}).get("track", {}) if isinstance(result, dict) else {}
-            title = (track.get("title") or track.get("full_title") or "").strip()
-            artist = "; ".join(item.get("name", "") for item in track.get("subtitle") if isinstance(track.get("subtitle"), list)) or ""
-            subtitle = (track.get("subtitle") or "").strip()
-            if title:
-                with self._lock:
-                    self.result = {
-                        "title": title,
-                        "artist": artist or subtitle,
-                        "match": True,
-                    }
-        except Exception:
-            with self._lock:
-                self._error = "shazam failed"
-
-    def snapshot(self) -> dict:
-        with self._lock:
-            result = dict(self.result) if self.result else None
-            return {
-                "available": self._enabled,
-                "match": result,
-                "error": self._error,
-            }
-
-
 class AudioBuffer:
     """Rolling mono int16 buffer with hop-based frame alignment."""
 
@@ -872,6 +848,10 @@ class AudioAnalyzer:
         self.key = ""
         self.key_confidence = 0.0
         self.bpm = 0.0
+        # Manual overrides freeze the matching detector: setting a BPM or key
+        # by hand stops that analysis until a reset clears the lock.
+        self.bpm_locked = False
+        self.key_locked = False
         # BPM stabilization: the readout only starts publishing a non-zero bpm
         # after 10 seconds of consistent analysis (median history not noisy).
         self._bpm_started_at: float = 0.0
@@ -1008,6 +988,8 @@ class AudioAnalyzer:
         return self._spectrum_chroma(frames)[0]
 
     def _update_key(self, frames: np.ndarray) -> None:
+        if self.key_locked:
+            return
         chroma = self.smoothed_chroma
         if chroma is None or float(np.max(chroma)) < KEY_PEAK_MIN:
             return
@@ -1063,6 +1045,8 @@ class AudioAnalyzer:
         Unlike a per-chunk single onset value, this builds ~90 onset frames per
         analysis, so the tempo locks in within a couple of chunks instead of ~20.
         """
+        if self.bpm_locked:
+            return
         hop = HOP_SIZE
         frame_total = len(frames) // hop
         if frame_total < 12:
@@ -1100,7 +1084,18 @@ class AudioAnalyzer:
                 best_lag = lag
         if best_lag == 0:
             return
-        bpm = 60.0 * frame_rate / best_lag
+        # Refine the integer lag: at ~47 fps one lag is ~5 BPM around 120, so
+        # the raw peak gives a quantized tempo. Fit a parabola through the
+        # neighbouring correlations to estimate the true peak position.
+        lag = float(best_lag)
+        left = correlations.get(best_lag - 1)
+        right = correlations.get(best_lag + 1)
+        if left is not None and right is not None:
+            curvature = left - 2.0 * best_corr + right
+            if abs(curvature) > 1e-9:
+                lag += 0.5 * (left - right) / curvature
+        lag = max(1.0, lag)
+        bpm = 60.0 * frame_rate / lag
         while bpm < 65.0:
             bpm *= 2.0
         while bpm > 175.0:
@@ -1246,99 +1241,29 @@ class AudioAnalyzer:
         self.buffer.clear()
 
 
-class MetronomeClicks:
-    """Precomputed metronome click pool with FOUR RADICALLY different
-    archetypes — the settings buttons must each produce a NOTABLY different
-    sound (the user asked for that explicitly; the previous pool only swapped
-    two sine frequencies and the louder "pop" all sounded alike).
+CLICK_SECONDS = 0.032
+CLICK_CHUNK_FRAMES = 256
 
-    - classic = MPC-2000XL pop (phosphor-core): 12 ms sine burst (down 1800,
-      up 1200 Hz, e^{-500·t} decay) + faint deterministic noise — the clean
-      dry "pop" of a hiphop sequencer.
-    - wood    = woodblock clave: struck-bar modal bank with three
-                NON-harmonic modes (f, 1.2822·f, 2.0849·f), 1.2 ms mallet
-                contact burst, dry, NO long ring.
-    - kick    = low felt thump: the pitch GLIDES from 3× the target to the
-                target within 6 ms (a real kick shape), 30 ms decay.
-    - beep    = digital square beeper: constant amplitude flat cycles with
-                hard truncation, electronic.
+
+class ClickTrack:
+    """Metronome click streaming to PipeWire through pw-play.
+
+    Modelled on dlpwaters.metronome's engine: one continuous raw s16 stream
+    written in 256-frame chunks, with the click synthesised per sample (32 ms,
+    exponential envelope, 1320 Hz downbeat / 880 Hz other beats) and a 20 ms
+    PipeWire latency. The player paces the writes; there is no sleep loop.
     """
 
-    def __init__(self, sample_rate: int = SAMPLE_RATE):
-        self.rate = int(sample_rate)
-        self.cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-        self._build("classic", 1800.0, 1200.0, "classic")
-        self._build("wood", 1100.0, 880.0, "wood")
-        self._build("kick", 120.0, 90.0, "kick")
-        self._build("beep", 2800.0, 2300.0, "beep")
-
-    def _generate_click(self, t: np.ndarray, freq: float, is_down: bool,
-                        style: str) -> np.ndarray:
-        rng = np.random.default_rng(int(freq) or 7)
-        decay = np.exp(-t * 500.0)
-        if style == "wood":
-            wave = np.zeros_like(t)
-            for f, tau, amp in (
-                (freq, 0.012, 1.0),
-                (freq * 1.2822, 0.007, 0.55),
-                (freq * 2.0849, 0.004, 0.35),
-            ):
-                wave += amp * np.sin(2.0 * np.pi * f * t) * np.exp(-t / tau)
-            contact = rng.standard_normal(64) * np.exp(-np.arange(64) / 48.0)
-            wave[:64] += contact * 0.5
-        elif style == "kick":
-            phase = 2.0 * np.pi * freq * (1.0 + 2.0 * np.exp(-t / 0.002))
-            wave = 0.6 * np.sin(phase * t) * np.exp(-t / 0.030)
-        elif style == "beep":
-            wave = np.sign(np.sin(2.0 * np.pi * freq * t)) * np.exp(-t / 0.010)
-        else:  # classic: MPC-style pop
-            sine = np.sin(2.0 * np.pi * freq * t)
-            noise = (np.sin(2.0 * np.pi * 7919.0 * t)
-                     * np.cos(2.0 * np.pi * 3571.0 * t) * 0.3)
-            wave = (sine + noise) * decay
-        peak = float(np.max(np.abs(wave))) + 1e-9
-        wave /= peak
-        return wave.astype(np.float32)
-
-    def _build(self, style: str, f_down: float, f_up: float, kind: str):
-        n = int(0.055 * self.rate)
-        t = np.arange(n, dtype=np.float64) / self.rate
-        self.cache[style] = (
-            self._generate_click(t, f_down, True, kind),
-            self._generate_click(t, f_up, False, kind),
-        )
-
-    def get(self, style: str, down_beat: bool) -> np.ndarray:
-        pair = self.cache.get(style) or self.cache["classic"]
-        return pair[0] if down_beat else pair[1]
-
-
-class MidiSynth:
-    """Very simple additive synth streaming to PipeWire through pw-cat."""
-
-    def __init__(self, enabled: bool = True, volume: float = 0.4):
-        self.enabled = enabled
-        self.volume = max(0.0, min(1.0, volume))
-        self.waveform = "sine"
-        self.voices: dict[int, dict[str, float]] = {}
-        # Metronome click settings (UI-configurable). `metronome_gain` is the
-        # dedicated click volume (independent of the MIDI synth master vol);
-        # click_style picks the built-in tone, custom_* optional .wav samples
-        # loaded from disk that override the tone for down/up beats.
+    def __init__(self):
         self.metronome_gain = 0.7
-        self.click_style = "classic"
         self.click_custom = False
         self.custom_down: list[float] | None = None
         self.custom_up: list[float] | None = None
         self.metronome_enabled = False
-        self.metronome_tick_phase = 0.0
-        self.metronome_tick_elapsed = 0.0
-        # Precomputed click pool (Reaper-style "pop"): at every beat INSTANT
-        # we copy these cached 45 ms samples instead of running a DSP module
-        # — no double-click artifacts, no decay-tail bleed.
-        self.metronome_clicks = MetronomeClicks(SAMPLE_RATE)
         self.metronome_bpm = 120.0
         self.metronome_beats = 4
+        self.metronome_phase = 0.0
+        self.metronome_beat = 0
         self.running = False
         self.error = ""
         self._process: subprocess.Popen[bytes] | None = None
@@ -1346,35 +1271,12 @@ class MidiSynth:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
-        self._thread = threading.Thread(target=self._run, name="jamjamjam-synth", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="jamjamjam-click", daemon=True)
         self._thread.start()
-
-    def set_enabled(self, enabled: bool) -> None:
-        with self._lock:
-            self.enabled = bool(enabled)
-            if not self.enabled:
-                self.voices.clear()
-        self._wake.set()
-
-    def set_waveform(self, waveform: str) -> None:
-        with self._lock:
-            self.waveform = waveform
-
-    def set_volume(self, volume: float) -> None:
-        with self._lock:
-            self.volume = max(0.0, min(1.0, volume))
 
     def set_metronome_gain(self, gain: float) -> None:
         with self._lock:
             self.metronome_gain = max(0.0, min(1.0, float(gain)))
-
-    def set_click_style(self, style: str) -> None:
-        if style not in CLICK_STYLES:
-            return
-        with self._lock:
-            self.click_style = style
-            # Restart on the next tick cleanly.
-            self.metronome_tick_left = 0.0
 
     def set_click_custom(self, enabled: bool, down: str = "", up: str = "") -> None:
         """Enable/refresh custom click samples. Paths are reloaded when given;
@@ -1420,44 +1322,17 @@ class MidiSynth:
         except (OSError, ValueError, ImportError):
             return None
 
-    def note_on(self, note: int, velocity: int) -> None:
-        with self._lock:
-            if not self.enabled:
-                return
-            freq = 440.0 * (2.0 ** ((note - 69) / 12.0))
-            self.voices[note] = {
-                "freq": freq, "phase": 0.0, "velocity": math.sqrt(max(1, velocity) / 127.0),
-                "env": 0.0, "stage": "attack",
-            }
-        self._wake.set()
-
-    def note_off(self, note: int) -> None:
-        with self._lock:
-            voice = self.voices.get(note)
-            if not voice:
-                return
-            voice["stage"] = "release"
-            voice["release_step"] = max(voice["env"], 0.001) / max(1, int(0.2 * SAMPLE_RATE))
-
-    def panic(self) -> None:
-        with self._lock:
-            self.voices.clear()
-        self._wake.set()
-
     def set_metronome(self, enabled: bool, bpm: float = 120.0, beats: int = 4) -> None:
         with self._lock:
+            was_enabled = self.metronome_enabled
             self.metronome_enabled = bool(enabled) and bpm > 0.0
             self.metronome_bpm = max(40.0, min(240.0, float(bpm)))
             self.metronome_beats = max(1, int(beats))
-            if self.metronome_enabled:
-                # Restart metronome at a downbeat: click immediately, then
-                # the next click lands exactly one beat later.
+            if self.metronome_enabled and not was_enabled:
+                # Start on a downbeat; tempo updates while running keep the
+                # current phase so the pulse does not jump.
                 self.metronome_phase = 0.0
                 self.metronome_beat = 0
-                self.metronome_in_beat = True
-                self.metronome_tick_left = 0.09
-                self.metronome_tick_phase = 0.0
-                self.metronome_tick_elapsed = 0.0
         self._wake.set()
 
     def stop(self) -> None:
@@ -1468,173 +1343,84 @@ class MidiSynth:
         self._close_process()
 
     def _render_block(self, frame_count: int) -> array.array:
-        output = array.array("h")
-        attack_step = 1.0 / (SAMPLE_RATE * 0.005)
         with self._lock:
-            voices = dict(self.voices)
-            master = self.volume * 0.3
             met_on = self.metronome_enabled
-            met_bpm = self.metronome_bpm
+            bpm = self.metronome_bpm
             met_beats = self.metronome_beats
-        metAccum = 0.0
-        beat_len = 60.0 / met_bpm if met_on else 0.0
-        with self._lock:
             click_gain = self.metronome_gain
-            style = self.click_style
             custom_down = self.custom_down if self.click_custom else None
             custom_up = self.custom_up if self.click_custom else None
-        custom_step = 0
-        custom_done = False
-        custom_samples = None
-        click_wave = np.zeros(0, dtype=np.float32)
-        click_cursor = 0
-        accent_click = 1.0
-        click_custom = self.click_custom  # read once; reloaded on the next beat
-        
+
+        output = array.array("h")
+        if not met_on or bpm <= 0.0:
+            output.extend([0] * frame_count)
+            return output
+
+        frames_per_beat = SAMPLE_RATE * 60.0 / bpm
+        click_frames = max(1, int(SAMPLE_RATE * CLICK_SECONDS))
         for _ in range(frame_count):
-            mixed = 0.0
-            finished = []
-            for note, voice in voices.items():
-                if voice["stage"] == "attack":
-                    voice["env"] = min(1.0, voice["env"] + attack_step)
-                    if voice["env"] >= 1.0:
-                        voice["stage"] = "sustain"
-                elif voice["stage"] == "release":
-                    voice["env"] -= voice["release_step"]
-                    if voice["env"] <= 0.0:
-                        finished.append(note)
-                        continue
-                phase = voice["phase"]
-                freq = voice["freq"]
-                waveform = self.waveform
-                if waveform == "sine":
-                    value = math.sin(phase)
-                elif waveform == "triangle":
-                    value = 2.0 / math.pi * math.asin(math.sin(phase))
-                elif waveform == "sawtooth":
-                    value = 2.0 * (phase / (2.0 * math.pi) - math.floor(0.5 + phase / (2.0 * math.pi)))
-                elif waveform == "square":
-                    value = 1.0 if math.sin(phase) >= 0 else -1.0
-                elif waveform == "organ":
-                    value = 0.5 * math.sin(phase) + 0.3 * math.sin(phase * 2.0) + 0.2 * math.sin(phase * 3.0)
-                else:
-                    value = math.sin(phase) + 0.5 * math.sin(phase * 2.0)
-                mixed += value * voice["env"] * voice["velocity"]
-                voice["phase"] = (phase + 2.0 * math.pi * freq / SAMPLE_RATE) % (2.0 * math.pi)
-            with self._lock:
-                for note in finished:
-                    self.voices.pop(note, None)
-            if met_on:
-                self.metronome_phase += 1.0 / SAMPLE_RATE
-                if self.metronome_phase >= beat_len:
-                    self.metronome_phase -= beat_len
-                    self.metronome_beat = (self.metronome_beat + 1) % met_beats
-                    self.metronome_in_beat = self.metronome_beat == 0
-                    self.metronome_tick_left = 0.09
-                    self.metronome_tick_phase = 0.0
-                    self.metronome_tick_elapsed = 0.0
-                    # New beat: choose the sample for this beat (down or up)
-                    # and reset the custom-sample cursor. When a custom
-                    # sample is chosen the BUILTIN tick timer is zeroed —
-                    # otherwise, once the custom sample finishes, the still
-                    # alive tick_left ran the builtin click too (both clicks
-                    # sounded "twice at once", imprecise and glitchy).
-                    custom_step = 0
-                    custom_done = False
-                    if not self.click_custom:
-                        # PRECOMPUTED cache (MPC-2000XL / phosphor-core pop).
-                        # The accent is BAKED into the waveform (the downbeat
-                        # plays 1.3× hotter there), so the up-beat is NEVER
-                        # inaudible: accent_click stays at 1.0 for both.
-                        click_wave = self.metronome_clicks.get(
-                            style, self.metronome_in_beat)
-                        accent_click = 1.0
-                        click_cursor = 0
-                        custom_samples = click_wave # reuse the stream slot
-                        custom_step = 0
-                        custom_done = False
-                    elif self.metronome_in_beat:
-                        click_wave = np.asarray(custom_down, dtype=np.float32) \
-                            if custom_down is not None else np.zeros(0, dtype=np.float32)
-                        custom_samples = click_wave
-                        accent_click = 1.0
-                        click_cursor = 0
-                    else:
-                        click_wave = np.asarray(custom_up, dtype=np.float32) \
-                            if custom_up is not None else np.zeros(0, dtype=np.float32)
-                        custom_samples = click_wave
-                        accent_click = 1.0
-                        click_cursor = 0
-                    self.metronome_tick_left = 0.0
-                if not click_custom and click_cursor < len(click_wave):
-                    # PRECOMPUTED cached click (Reaper-style pop) frames.
-                    value = float(click_wave[click_cursor])
-                    metAccum += value * click_gain * accent_click
-                    click_cursor += 1
-                elif click_custom and not custom_done and custom_samples is not None and custom_step < len(custom_samples):
-                    # .wav custom click (imported from Settings).
-                    value = float(custom_samples[custom_step]) * click_gain
-                    custom_step += 1
-                    if custom_step >= len(custom_samples):
-                        custom_done = True
-                    metAccum += value
-            sample = metAccum + math.tanh(mixed * master) * 0.9
-            output.append(max(-32767, min(32767, int(sample * 32767))))
+            accented = self.metronome_beat % met_beats == 0
+            value = 0.0
+            wave = (custom_down if accented else custom_up)
+            if wave is not None:
+                index = int(self.metronome_phase)
+                if index < len(wave):
+                    value = float(wave[index]) * click_gain
+            elif self.metronome_phase < click_frames:
+                frequency = 1320.0 if accented else 880.0
+                gain = click_gain * (0.80 if accented else 0.56)
+                phase = self.metronome_phase
+                envelope = math.exp(-7.0 * phase / click_frames)
+                transient = math.exp(-35.0 * phase / click_frames)
+                sine = math.sin(2.0 * math.pi * frequency * phase / SAMPLE_RATE)
+                value = gain * envelope * sine + gain * 0.12 * transient
+            output.append(max(-32767, min(32767, int(32767 * value))))
+
+            self.metronome_phase += 1.0
+            if self.metronome_phase >= frames_per_beat:
+                self.metronome_phase -= frames_per_beat
+                self.metronome_beat = (self.metronome_beat + 1) % met_beats
         return output
 
     def _run(self) -> None:
-        """Streaming thread: keeps pw-cat fed from the render loop, and also
-        updates the property-download one for pw-cat Media (chill), using the
-        normal realtime-cadence pattern.
-        """
-        block_frames = 384
-        block_seconds = block_frames / SAMPLE_RATE
-        silence = bytes(block_frames * 2)
-        next_write = time.perf_counter()
+        """Keep the player fed with small continuous chunks, like dlpwaters."""
         while not self._stop.is_set():
             with self._lock:
-                should_stream = self.enabled or bool(self.voices) or self.metronome_enabled
+                should_stream = self.metronome_enabled
             if not should_stream:
                 self._close_process()
                 self._wake.wait(0.2)
                 self._wake.clear()
-                next_write = time.perf_counter()
                 continue
             if not self._process and not self._start_process():
                 self._stop.wait(1.0)
                 continue
-            now = time.perf_counter()
-            wait_seconds = next_write - now
-            if wait_seconds > 0:
-                self._wake.wait(wait_seconds)
-                self._wake.clear()
-            with self._lock:
-                has_voices = bool(self.voices) or self.metronome_enabled
-            block = self._render_block(block_frames).tobytes() if has_voices else silence
+            block = self._render_block(CLICK_CHUNK_FRAMES).tobytes()
             try:
                 assert self._process and self._process.stdin
                 self._process.stdin.write(block)
-                next_write += block_seconds
-                if next_write < time.perf_counter() - block_seconds:
-                    next_write = time.perf_counter() + block_seconds
             except (BrokenPipeError, OSError) as error:
                 self.error = f"PipeWire audio stopped: {error}"
                 self._close_process()
                 self._stop.wait(0.5)
-                next_write = time.perf_counter()
-
 
     def _start_process(self) -> bool:
+        if shutil.which("pw-play"):
+            command = [
+                "pw-play", "--raw", "--format", "s16", "--rate", str(SAMPLE_RATE),
+                "--channels", "1", "--latency", "20ms", "--media-role", "Music",
+                "-P", 'media.name=jamjamjam, application.name="jamjamjam (click)", node.name="jamjamjam-click"',
+                "-",
+            ]
+        elif shutil.which("aplay"):
+            command = ["aplay", "-q", "-r", str(SAMPLE_RATE), "-f", "S16_LE", "-c", "1"]
+        else:
+            self.running = False
+            self.error = "Metronome needs pw-play or aplay, but neither was found."
+            return False
         try:
             self._process = subprocess.Popen(
-                [
-                    # Name the stream "jamjamjam" so the audio panel (and
-                    # wpctl) shows the plugin, not a generic "pw-cat".
-                    "pw-cat", "-P", 'media.name=jamjamjam, application.name="jamjamjam (synth)", node.name="jamjamjam-click"',
-                    "--playback", "--raw", "--format", "s16", "--rate", str(SAMPLE_RATE),
-                    "--channels", "1", "--latency", "128", "--media-role", "Music",
-                    "-",
-                ],
+                command,
                 stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, bufsize=0,
             )
             self.running = True
@@ -1757,37 +1543,6 @@ class AudioRecorder:
         self.running = False
 
 
-PORT_RE = re.compile(r"^\s*(\d+:\d+)\s{2,}(.+?)\s{2,}(.+?)\s*$")
-NOTE_RE = re.compile(r"Note\s+(on|off)\s+(\d+),\s+note\s+(\d+),\s+velocity\s+(\d+)", re.IGNORECASE)
-CC_RE = re.compile(r"Control\s+change\s+(\d+),\s+controller\s+(\d+),\s+value\s+(\d+)", re.IGNORECASE)
-
-
-def parse_port_listing(text: str) -> list[dict[str, str]]:
-    ports = []
-    for line in text.splitlines():
-        match = PORT_RE.match(line)
-        if not match:
-            continue
-        port_id, client, name = match.groups()
-        if client == "System":
-            continue
-        ports.append({"id": port_id, "client": client.strip(), "name": name.strip(), "label": f"{client.strip()} · {name.strip()}"})
-    return ports
-
-
-def parse_midi_line(line: str) -> dict | None:
-    note_match = NOTE_RE.search(line)
-    if note_match:
-        kind, channel, note, velocity = note_match.groups()
-        event_type = "note_on" if kind.lower() == "on" and int(velocity) > 0 else "note_off"
-        return {"type": event_type, "channel": int(channel), "note": int(note), "velocity": int(velocity)}
-    cc_match = CC_RE.search(line)
-    if cc_match:
-        channel, controller, value = cc_match.groups()
-        return {"type": "control_change", "channel": int(channel), "controller": int(controller), "value": int(value)}
-    return None
-
-
 class GuitarModes:
     """Scale degree positions on a guitar neck."""
 
@@ -1851,10 +1606,9 @@ class AudioAnalyzerBackend:
         self.naming = self.config.get("noteNaming", "flats")
         self.state_file = state_file or os.path.expanduser("~/.local/state/jamjamjam/state.json")
         self.command_file = command_file or os.path.expanduser("~/.local/state/jamjamjam/commands.json")
-        self.tui_pid_file = os.path.expanduser("~/.local/state/jamjamjam/tui.pid")
         self.analyzer = AudioAnalyzer(self.naming)
         self.recorder = AudioRecorder(self.analyzer)
-        self.synth = MidiSynth(enabled=True, volume=0.4)
+        self.click = ClickTrack()
         # self.naming, not a `naming` parameter: this is read straight from the
         # saved config so the tuner starts on the naming the user chose, rather
         # than the flats default and silently disagreeing with every chord.
@@ -1865,16 +1619,6 @@ class AudioAnalyzerBackend:
         # default sink monitor changes (the loopback must follow the output).
         self.aec_source: AecSource | None = None
         self.aec_recorder: AudioRecorder | None = None
-        self.shazam = ShazamDetector()
-        self.midi_in_process: subprocess.Popen[str] | None = None
-        self.ports: list[dict[str, str]] = []
-        self.selected_port = ""
-        self.selected_name = ""
-        self.midi_connected = False
-        self.midi_mode = False
-        self.held: dict[int, int] = {}
-        self.midi_chord = ""
-        self.last_port_scan = 0.0
         self.running = True
         self.dirty = True
         self.last_chord_throttle = 0.0
@@ -1896,14 +1640,19 @@ class AudioAnalyzerBackend:
         self.hold = False
         self.paused = False
         self.analysis_locked = False
+        # When False, opening the panel only enables the tuner; the analyzer
+        # waits for an explicit start (resetAnalysis/startAnalysis or hold).
+        self.auto_analyze = bool(self.config.get("autoAnalyze", True))
+        self.analysis_suspended = not self.auto_analyze
         # MANUAL overrides (right-click a KEY/BPM card): pinned values that
         # SURVIVE until a reset ('r'/resetAnalysis) clears them back to the
         # detector's live state.
         self.manual_key = ""
         self.manual_bpm = 0.0
+        self.manual_time_signature = ""
         # UI-configurable settings from config.json (chord box, AEC hint,
-        # metronome click). Applied onto the synth / published in snapshot.
-        self.show_chord_box = bool(self.config.get("showChordBox", True))
+        # metronome click). Applied onto the click track / published in snapshot.
+        self.show_chord_box = bool(self.config.get("showChordBox", False))
         self.aec_enabled = bool(self.config.get("aecEnabled", False))
         # An empty value means "follow the system default", which is also what a
         # config without the key means -- so a machine whose default source moves
@@ -1930,9 +1679,8 @@ class AudioAnalyzerBackend:
 
     def _auto_start(self):
         # PRIVACY GUARD: the tuner's mic capture must NEVER run while the
-        # panel (and any TUI session) is closed — set up the tuner WITHOUT
-        # starting its capture. _sync_capture() starts/stops it against the
-        # panel-visible/hold/TUI-active gate at every state change.
+        # panel is closed — set up the tuner WITHOUT starting its capture.
+        # _sync_capture() starts/stops it against the panel-visible/hold gate.
         self._restart_tuner()
 
     def _restart_tuner(self):
@@ -1976,20 +1724,6 @@ class AudioAnalyzerBackend:
             self.aec_recorder = None
         if was_running:
             self._sync_capture()
-
-    def _tui_active(self) -> bool:
-        """True while a jamjamjam-neck TUI owns the session (its pid is alive)."""
-        try:
-            pid = int(Path(self.tui_pid_file).read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
-            return False
-        if pid <= 0:
-            return False
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            return False
-        return True
 
     # A source the user picked explicitly, overriding the default source. Empty
     # means "follow the system default", which is what makes the plugin behave
@@ -2047,12 +1781,11 @@ class AudioAnalyzerBackend:
         self.dirty = True
 
     def _sync_capture(self) -> None:
-        # The plugin analyses independently of the neck TUI, and vice versa:
-        # capture runs while the panel is open, a global hold is active, OR the
-        # neck TUI is open (its pid is alive) -- so the TUI sees live chords too.
+        # Analysis runs while the panel is open or a hold is active, unless the
+        # user turned auto-analysis off and has not started it explicitly.
         desired = (not self.paused) and (not self.analysis_locked) and (
-            self.panel_visible or self.hold or self._tui_active()
-        )
+            not self.analysis_suspended
+        ) and (self.panel_visible or self.hold)
         self._apply_target()
         if desired and not self.recorder.running:
             self.recorder.start()
@@ -2062,14 +1795,11 @@ class AudioAnalyzerBackend:
             self.dirty = True
 
         # PRIVACY GUARD: the microphone (tuner) is captured ONLY while the
-        # plugin is actually in use (panel open, analysis hold active, or the
-        # neck TUI open). The mic must NEVER run while nothing is open.
-        # The tuner runs on its own mic stream and must keep working even
-        # when the chord/analysis path is paused: the user still tunes a guitar
-        # while paused. So the tuner wants the mic whenever anything is open,
-        # independent of "paused" — a paused session still uses the mic.
+        # plugin is actually in use (panel open or analysis hold active). The
+        # mic must NEVER run while nothing is open. The tuner keeps working
+        # even when the chord/analysis path is paused or suspended.
         tuner_desired = (not self.analysis_locked) and (
-            self.panel_visible or self.hold or self._tui_active()
+            self.panel_visible or self.hold
         ) and (self.tuner is not None)
         if tuner_desired and self.tuner_recorder is not None and not self.tuner_recorder.running:
             self.tuner_recorder.start()
@@ -2086,20 +1816,19 @@ class AudioAnalyzerBackend:
             self.aec_recorder.stop()
             self.dirty = True
 
+    def active_time_signature(self) -> str:
+        if self.manual_time_signature:
+            return self.manual_time_signature
+        return f"{max(1, int(self.analyzer.beats_per_bar))}/4"
+
+    def active_beats_per_bar(self) -> int:
+        try:
+            return max(1, int(self.active_time_signature().split("/", 1)[0]))
+        except (TypeError, ValueError):
+            return max(1, int(self.analyzer.beats_per_bar))
+
     def snapshot(self) -> dict:
         now = time.time()
-        midi_state = "off"
-        midi_message = "MIDI mode disabled"
-        if self.midi_mode:
-            if self.midi_connected:
-                midi_state = "connected"
-                midi_message = self.selected_name or "MIDI device connected"
-            elif self.ports:
-                midi_state = "available"
-                midi_message = "Choose a MIDI input"
-            else:
-                midi_state = "waiting"
-                midi_message = "Connect a MIDI keyboard"
         tuner_result = self.tuner_result
         return {
             "type": "snapshot",
@@ -2112,33 +1841,40 @@ class AudioAnalyzerBackend:
             "hold": self.hold,
             "paused": self.paused,
             "locked": self.analysis_locked,
-            "tuiActive": self._tui_active(),
+            "autoAnalyze": self.auto_analyze,
+            "analysisSuspended": self.analysis_suspended,
             "needsReset": self.needs_reset,
             "mic": {"available": self.mic_available, "muted": self.mic_muted},
             "config": {
                 "noteNaming": self.naming,
                 "showChordBox": self.show_chord_box,
+                "showKeyCard": bool(self.config.get("showKeyCard", True)),
+                "showBpmCard": bool(self.config.get("showBpmCard", True)),
+                "showChordCard": bool(self.config.get("showChordCard", True)),
+                "autoAnalyze": self.auto_analyze,
                 "aecEnabled": self.aec_enabled,
             },
             "metronome": {
                 "enabled": self.metronome_enabled,
-                "bpm": round(self.synth.metronome_bpm, 1),
-                "beats": self.synth.metronome_beats,
-                "volume": self.synth.metronome_gain,
-                "style": self.synth.click_style,
-                "custom": self.synth.click_custom,
+                "bpm": round(self.click.metronome_bpm, 1),
+                "beats": self.click.metronome_beats,
+                "volume": self.click.metronome_gain,
+                "custom": self.click.click_custom,
                 "customDown": self.config.get("customDown", ""),
                 "customUp": self.config.get("customUp", ""),
-                "styles": list(CLICK_STYLES),
             },
             "analyzer": {
                 "key": self.manual_key or self.analyzer.key,
                 "keyConfidence": (1.0 if self.manual_key else round(self.analyzer.key_confidence, 3)),
                 "keyStable": bool(self.manual_key) or self.analyzer.key_stable,
+                # Show the tempo the metronome is actually playing even before
+                # any analysis exists; live analysis takes over once it has a value.
                 "bpm": (round(self.manual_bpm, 1) if self.manual_bpm
-                        else (round(self.analyzer.bpm, 1) if self.analyzer.bpm else 0)),
-                "beatsPerBar": self.analyzer.beats_per_bar,
-                "timeSignature": f"{self.analyzer.beats_per_bar}/4",
+                        else (round(self.analyzer.bpm, 1) if self.analyzer.bpm
+                              else (round(self.click.metronome_bpm, 1)
+                                    if self.metronome_enabled else 0))),
+                "beatsPerBar": self.active_beats_per_bar(),
+                "timeSignature": self.active_time_signature(),
                 "currentChord": self.analyzer.current_chord,
                 "chordNotes": list(self.analyzer.current_chord_notes),
                 "noSignal": self.analyzer.no_signal,
@@ -2147,26 +1883,11 @@ class AudioAnalyzerBackend:
             },
             "loop": self.analyzer.sequence.loop_snapshot() if PROGRESSION_ENABLED
                     else {"active": False, "length": 0, "chords": [], "pos": 0},
-            "midi": {
-                "mode": self.midi_mode,
-                "state": midi_state,
-                "message": midi_message,
-                "ports": self.ports,
-                "selectedPort": self.selected_port,
-                "connected": self.midi_connected,
-                "currentChord": self.midi_chord,
-                "heldNotes": sorted(self.held),
-                "deviceCount": len(self.ports),
-            },
-            "synth": {
-                "enabled": self.synth.enabled,
-                "waveform": self.synth.waveform,
-                "volume": self.synth.volume,
-                "running": self.synth.running,
-                "error": self.synth.error,
+            "click": {
+                "running": self.click.running,
+                "error": self.click.error,
             },
             "tuner": tuner_result,
-            "song": self.shazam.snapshot(),
             "guitar": GuitarModes.scales_for(self.analyzer.key, self.naming),
             "noteNaming": self.naming,
         }
@@ -2174,6 +1895,8 @@ class AudioAnalyzerBackend:
     def handle_command(self, request: dict) -> dict:
         op = str(request.get("op", ""))
         if op == "startRecording":
+            self.analysis_suspended = False
+            self.analysis_locked = False
             changed = self.recorder.start()
             if changed:
                 self.analyzer.reset()
@@ -2185,6 +1908,8 @@ class AudioAnalyzerBackend:
             if self.recorder.running:
                 self.recorder.stop()
             else:
+                self.analysis_suspended = False
+                self.analysis_locked = False
                 self.recorder.start()
                 self.analyzer.reset()
             return {}
@@ -2193,10 +1918,14 @@ class AudioAnalyzerBackend:
             # detector's live state (the only way to leave a manual entry).
             self.manual_key = ""
             self.manual_bpm = 0.0
+            self.manual_time_signature = ""
+            self.analyzer.key_locked = False
+            self.analyzer.bpm_locked = False
             self.analyzer.reset()
             self.needs_reset = False
             self._progression_key = ""
             self.analysis_locked = False
+            self.analysis_suspended = False
             self._sync_capture()
             self.dirty = True
             return {}
@@ -2204,44 +1933,70 @@ class AudioAnalyzerBackend:
             # Right-click on the KEY card: pin a key manually (e.g. "F#m").
             # Persists until reset. Empty string clears the override.
             self.manual_key = str(request.get("key", "")).strip()
+            self.analyzer.key_locked = bool(self.manual_key)
             self.dirty = True
             return {"key": self.manual_key}
         if op == "setManualBpm":
-            # Right-click on the BPM card: pin a tempo manually. Persists
-            # until reset. 0 clears the override.
-            try:
-                bpm = float(request.get("bpm", 0) or 0)
-            except (TypeError, ValueError):
-                bpm = 0.0
-            self.manual_bpm = bpm if bpm > 0 else 0.0
-            if self.metronome_enabled and self.manual_bpm > 0:
-                self.synth.set_metronome(True, self.manual_bpm)
+            # Right-click on the BPM card: pin a tempo and/or meter manually
+            # ("120", "6/8", "140bpm 4/4"...). Persists until reset. Empty
+            # input clears both overrides.
+            raw = request.get("bpm", "")
+            if raw in (None, "", 0, 0.0):
+                self.manual_bpm = 0.0
+                self.manual_time_signature = ""
+            else:
+                bpm, signature = parse_tempo_entry(raw)
+                if bpm is not None:
+                    self.manual_bpm = bpm
+                if signature is not None:
+                    self.manual_time_signature = signature
+            self.analyzer.bpm_locked = self.manual_bpm > 0
+            bpm_now = (self.manual_bpm or self.analyzer.bpm
+                       or self.click.metronome_bpm)
+            if self.metronome_enabled and bpm_now > 0:
+                self.click.set_metronome(
+                    True, bpm_now, self.active_beats_per_bar())
             self.dirty = True
-            return {"bpm": self.manual_bpm}
+            return {
+                "bpm": self.manual_bpm,
+                "timeSignature": self.active_time_signature(),
+                "beatsPerBar": self.active_beats_per_bar(),
+            }
         if op == "setVisible":
             visible = bool(request.get("visible", True))
             if visible and not self.panel_visible:
                 self.analyzer.reset()
                 self.analysis_locked = False
+                if self.auto_analyze:
+                    self.analysis_suspended = False
+            elif not visible and self.panel_visible and not self.auto_analyze:
+                self.analysis_suspended = True
             self.panel_visible = visible
             self._sync_capture()
             self.dirty = True
             return {}
-        if op == "resumeAnalysis":
-            # Space in the plugin: if the analysis auto-stopped on a confident
-            # key, restart it fresh; otherwise stop it.
-            if self.analysis_locked:
-                self.analyzer.reset()
-                self.analysis_locked = False
-            else:
-                self.analysis_locked = True
+        if op == "startAnalysis":
+            self.analysis_locked = False
+            self.analysis_suspended = False
+            self.analyzer.reset()
             self._sync_capture()
             self.dirty = True
-            return {"locked": self.analysis_locked}
+            return {"suspended": False}
+        if op == "toggleAnalysis":
+            if self.analysis_suspended or self.analysis_locked:
+                self.analysis_locked = False
+                self.analysis_suspended = False
+                self.analyzer.reset()
+            else:
+                self.analysis_suspended = True
+            self._sync_capture()
+            self.dirty = True
+            return {"suspended": self.analysis_suspended}
         if op == "setHold":
             active = bool(request.get("active", True))
             if active:
                 self.analysis_locked = False
+                self.analysis_suspended = False
             if active and not self.hold:
                 # Accumulate across holds (no reset). If a progression already
                 # exists under a different key, advise a reset instead of
@@ -2339,8 +2094,18 @@ class AudioAnalyzerBackend:
                     self.tuner.naming = naming
                 changed = True
             if "showChordBox" in request:
-                self.config["showChordBox"] = bool(request.get("showChordBox", True))
+                self.config["showChordBox"] = bool(request.get("showChordBox", False))
                 self.show_chord_box = bool(self.config["showChordBox"])
+                changed = True
+            for key in ("showKeyCard", "showBpmCard", "showChordCard"):
+                if key in request:
+                    self.config[key] = bool(request.get(key, True))
+                    changed = True
+            if "autoAnalyze" in request:
+                self.auto_analyze = bool(request.get("autoAnalyze", True))
+                self.config["autoAnalyze"] = self.auto_analyze
+                self.analysis_suspended = not self.auto_analyze
+                self._sync_capture()
                 changed = True
             if "aecEnabled" in request:
                 self.config["aecEnabled"] = bool(request.get("aecEnabled", False))
@@ -2350,14 +2115,8 @@ class AudioAnalyzerBackend:
             if "metronomeVolume" in request:
                 self.config["metronomeVolume"] = max(
                     0.0, min(1.0, float(request.get("metronomeVolume", 0.7))))
-                self.synth.set_metronome_gain(float(self.config["metronomeVolume"]))
+                self.click.set_metronome_gain(float(self.config["metronomeVolume"]))
                 changed = True
-            if "clickStyle" in request:
-                style = str(request.get("clickStyle", "classic"))
-                if style in CLICK_STYLES:
-                    self.config["clickStyle"] = style
-                    self.synth.set_click_style(style)
-                    changed = True
             if "clickCustom" in request or "customDown" in request or "customUp" in request:
                 if "clickCustom" in request:
                     self.config["clickCustom"] = bool(request.get("clickCustom", False))
@@ -2397,50 +2156,11 @@ class AudioAnalyzerBackend:
         if op == "setMetronome":
             self.metronome_enabled = bool(request.get("enabled", True))
             bpm = float(request.get("bpm", 0) or 0)
-            if bpm > 0:
-                self.synth.set_metronome(self.metronome_enabled, bpm)
-            else:
-                self.synth.set_metronome(self.metronome_enabled, self.analyzer.bpm or 120.0)
+            if bpm <= 0:
+                bpm = (self.manual_bpm or self.analyzer.bpm or 120.0)
+            self.click.set_metronome(
+                self.metronome_enabled, bpm, self.active_beats_per_bar())
             self.dirty = True
-            return {}
-        if op == "openTui":
-            self.open_tui()
-            return {}
-        if op == "refreshPorts":
-            self.last_port_scan = 0.0
-            self.scan_ports()
-            return {}
-        if op == "enableMidi":
-            self.midi_mode = bool(request.get("enabled", True))
-            if self.midi_mode:
-                self.scan_ports()
-            else:
-                self.stop_midi_process()
-            return {}
-        if op == "toggleMidi":
-            self.midi_mode = not self.midi_mode
-            if self.midi_mode:
-                self.scan_ports()
-            else:
-                self.stop_midi_process()
-            return {}
-        if op == "selectPort":
-            self.select_port(str(request.get("port", "")))
-            return {}
-        if op == "setSynthEnabled":
-            self.synth.set_enabled(bool(request.get("enabled", False)))
-            return {}
-        if op == "setWaveform":
-            waveform = str(request.get("waveform", "sine"))
-            if waveform not in ("sine", "triangle", "sawtooth", "square", "organ"):
-                raise ValueError("Unknown waveform")
-            self.synth.set_waveform(waveform)
-            return {}
-        if op == "setVolume":
-            self.synth.set_volume(float(request.get("volume", 0.4)))
-            return {}
-        if op == "panicMidi":
-            self.synth.panic()
             return {}
         if op == "setNoteNaming":
             naming = str(request.get("naming", "flats"))
@@ -2451,105 +2171,17 @@ class AudioAnalyzerBackend:
             return {}
         raise ValueError(f"Unknown operation: {op}")
 
-    def scan_ports(self) -> None:
-        if not self.midi_mode:
-            return
-        try:
-            result = subprocess.run(["aseqdump", "-l"], capture_output=True, text=True, timeout=2, check=False)
-            next_ports = parse_port_listing(result.stdout)
-        except (OSError, subprocess.TimeoutExpired):
-            next_ports = []
-        if next_ports != self.ports:
-            self.ports = next_ports
-            self.dirty = True
-        available_ids = {port["id"] for port in self.ports}
-        if self.selected_port and self.selected_port not in available_ids:
-            self.stop_midi_process()
-            self.selected_port = ""
-        if not self.selected_port:
-            candidate = next((port for port in self.ports if "korg" in port["label"].lower() or "microkey" in port["label"].lower()), None)
-            if candidate:
-                self.select_port(candidate["id"], persist=False)
-        if self.selected_port and (not self.midi_in_process or self.midi_in_process.poll() is not None):
-            self.start_midi_process()
-
-    def select_port(self, port_id: str, persist: bool = True) -> None:
-        port = next((item for item in self.ports if item["id"] == port_id), None)
-        self.stop_midi_process()
-        if not port:
-            self.selected_port = ""
-            self.selected_name = ""
-            self.midi_connected = False
-            return
-        self.selected_port = port["id"]
-        self.selected_name = port["label"]
-        self.start_midi_process()
-        self.dirty = True
-
-    def start_midi_process(self) -> None:
-        if not self.selected_port:
-            return
-        try:
-            self.midi_in_process = subprocess.Popen(
-                ["stdbuf", "-oL", "-eL", "aseqdump", "-p", self.selected_port],
-                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1,
-            )
-            self.midi_connected = True
-            self.dirty = True
-        except OSError:
-            self.midi_in_process = None
-            self.midi_connected = False
-
-    def stop_midi_process(self) -> None:
-        process = self.midi_in_process
-        self.midi_in_process = None
-        self.midi_connected = False
-        self.held.clear()
-        self.midi_chord = ""
-        self.synth.panic()
-        if not process:
-            return
-        try:
-            process.terminate()
-            process.wait(timeout=0.4)
-        except (OSError, subprocess.TimeoutExpired):
-            try:
-                process.kill()
-            except OSError:
-                pass
-
-    def process_midi_line(self, line: str) -> None:
-        event = parse_midi_line(line)
-        if not event:
-            return
-        if event["type"] == "note_on":
-            note = int(event["note"])
-            velocity = int(event["velocity"])
-            self.held[note] = velocity
-            self.synth.note_on(note, velocity)
-        elif event["type"] == "note_off":
-            note = int(event["note"])
-            self.held.pop(note, None)
-            self.synth.note_off(note)
-        elif event["type"] == "control_change" and event["controller"] == 64:
-            pass
-        self.midi_chord = identify_chord(list(self.held), self.naming)
-        self.dirty = True
-
     def run_analysis_pass(self) -> None:
         results = self.analyzer.analyze(record_progression=self.hold)
         if results:
             self.dirty = True
-            self.shazam.feed(self.analyzer.buffer.last(6.0))
             bpm_now = self.manual_bpm or self.analyzer.bpm
             if self.metronome_enabled and bpm_now > 0:
-                self.synth.set_metronome(True, bpm_now)
-            # Stop hunting once the key is confidently established; space (or a
-            # global hold) resumes/restarts it. Skipped while the neck TUI owns
-            # the session, which wants continuous detection.
+                self.click.set_metronome(
+                    True, bpm_now, self.active_beats_per_bar())
+            # Stop hunting once the key is confidently established; a manual
+            # start (or a global hold) resumes/restarts it.
             if not self.analysis_locked and not self.hold and self.panel_visible \
-                    and not self._tui_active() \
                     and self.analyzer.key_stable and self.analyzer.key_confidence >= 0.2:
                 self.analysis_locked = True
                 self._sync_capture()
@@ -2575,50 +2207,6 @@ class AudioAnalyzerBackend:
             self.dirty = True
         self.mic_available = available
         self.mic_muted = muted
-
-    def open_tui(self) -> None:
-        # The Go TUI opens a /dev/tty when run with no controlling terminal,
-        # so spawning it detached via Popen leaves the user staring at
-        # nothing. Mirror the other mosquito managers (live-mode / move /
-        # audio plugin) and wrap it in a square terminal when needed.
-        launcher = os.path.expanduser("~/.local/bin/jamjamjam-tui")
-        if not os.path.isfile(launcher):
-            self.dirty = True
-            return
-        # Already running — bring it to the foreground instead of stacking.
-        pid_file = os.path.expanduser("~/.local/state/jamjamjam/tui.pid")
-        try:
-            with open(pid_file, "r") as fh:
-                existing = int((fh.read() or "0").strip() or 0)
-        except (OSError, ValueError):
-            existing = 0
-        if existing and os.path.isdir(f"/proc/{existing}"):
-            env = os.environ.copy()
-            env["DISPLAY"] = env.get("DISPLAY", ":0")
-            env["WAYLAND_DISPLAY"] = env.get("WAYLAND_DISPLAY", "wayland-1")
-            subprocess.run(["loginctl", "activate"], env=env, check=False) if False else None
-            os.system(f"hyprctl dispatch bringactivetotop pid:{existing} >/dev/null 2>&1 || true")
-            return
-        cmd = [launcher, "open"]
-        if not (sys.stdout and sys.stdout.isatty()):
-            if os.path.exists("/usr/bin/foot"):
-                cmd = ["foot", "-W", "100x30", "--app-id=org.omarchy.mosquito-jamjamjam-tui", "-e", launcher, "open"]
-            elif os.path.exists("/usr/bin/xterm"):
-                cmd = ["xterm", "-e", launcher, "open"]
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, start_new_session=True,
-            )
-            try:
-                os.makedirs(os.path.dirname(pid_file), exist_ok=True)
-                with open(pid_file, "w") as fh:
-                    fh.write(str(proc.pid))
-            except OSError:
-                pass
-        except OSError:
-            pass
 
     def write_state_file(self) -> None:
         if not self.state_file:
@@ -2665,19 +2253,16 @@ class AudioAnalyzerBackend:
         return True
 
     def _apply_click_config(self) -> None:
-        """Push the config.json metronome settings into the synth."""
-        self.synth.set_metronome_gain(float(self.config.get("metronomeVolume", 0.7)))
-        style = str(self.config.get("clickStyle", "classic"))
-        if style in CLICK_STYLES:
-            self.synth.set_click_style(style)
+        """Push the config.json metronome settings into the click track."""
+        self.click.set_metronome_gain(float(self.config.get("metronomeVolume", 0.7)))
         if self.config.get("clickCustom"):
-            self.synth.set_click_custom(
+            self.click.set_click_custom(
                 True,
                 str(self.config.get("customDown", "") or ""),
                 str(self.config.get("customUp", "") or ""),
             )
         else:
-            self.synth.set_click_custom(False)
+            self.click.set_click_custom(False)
 
     def poll_command_file(self) -> None:
         if not self.command_file:
@@ -2705,7 +2290,7 @@ class AudioAnalyzerBackend:
         known = {
             "resetAnalysis", "toggleRecording", "startRecording", "stopRecording",
             "setVisible", "setHold", "setSource", "setMetronome",
-            "setPaused", "togglePaused", "setConfig", "resumeAnalysis", "importClick",
+            "setPaused", "togglePaused", "setConfig", "startAnalysis", "toggleAnalysis", "importClick",
             "setManualKey", "setManualBpm",
         }
         # CONSUMED = CLEARED: the command file is a one-shot TRANSPORT. Once a
@@ -2730,8 +2315,7 @@ class AudioAnalyzerBackend:
         self.recorder.stop()
         if self.tuner_recorder:
             self.tuner_recorder.stop()
-        self.stop_midi_process()
-        self.synth.stop()
+        self.click.stop()
 
 
 def emit(message: dict) -> None:
@@ -2750,10 +2334,8 @@ def run() -> int:
     backend = AudioAnalyzerBackend(state_file=args.state_file, command_file=args.command_file, tuner=not args.no_tuner)
     selector = selectors.PollSelector()
     selector.register(sys.stdin, selectors.EVENT_READ, "stdin")
-    registered_midi = None
     state = "waiting"
     try:
-        backend.scan_ports()
         emit(backend.snapshot())
         last_tick = time.monotonic()
         last_analysis = time.monotonic()
@@ -2785,7 +2367,7 @@ def run() -> int:
             # only then. Idle returns to 0.5 s (2%), where nobody is watching a
             # needle. Anything faster was measured and is not worth the CPU:
             # 0.12 s already costs 8.3%.
-            want_fast = backend.panel_visible or backend.hold or backend._tui_active()
+            want_fast = backend.panel_visible or backend.hold
             if now - last_tuner >= (0.15 if want_fast else 0.5):
                 backend.run_tuner_pass()
                 last_tuner = now
@@ -2806,22 +2388,6 @@ def run() -> int:
                 time.sleep(0.1)
                 backend.dirty = True
                 continue
-
-            midi_stdout = backend.midi_in_process.stdout if backend.midi_in_process and backend.midi_in_process.poll() is None else None
-            if midi_stdout is not None and midi_stdout is not registered_midi:
-                if registered_midi is not None:
-                    try:
-                        selector.unregister(registered_midi)
-                    except (KeyError, ValueError):
-                        pass
-                selector.register(midi_stdout, selectors.EVENT_READ, "midi")
-                registered_midi = midi_stdout
-            elif midi_stdout is None and registered_midi is not None:
-                try:
-                    selector.unregister(registered_midi)
-                except (KeyError, ValueError):
-                    pass
-                registered_midi = None
 
             try:
                 events = selector.select(timeout=0.1)
@@ -2846,10 +2412,6 @@ def run() -> int:
                         request_id = request.get("id", "")
                         if request_id:
                             emit({"type": "result", "id": request_id, "ok": False, "error": str(error)})
-                elif key.data == "midi" and key.fileobj is not None:
-                    line = key.fileobj.readline()
-                    if line:
-                        backend.process_midi_line(line)
     finally:
         backend.close()
     return 0

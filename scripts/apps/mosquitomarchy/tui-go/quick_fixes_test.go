@@ -58,6 +58,17 @@ func TestEnterOnTheFolderStaysOnTheSameScreen(t *testing.T) {
 	}
 }
 
+// Ticked fix rows must not turn the fixes folder into an install plan: fixes
+// have their own action and their own confirmation.
+func TestFolderEnterOnTickedFixesStaysInert(t *testing.T) {
+	m := qfSetup()
+	m.selected[setupValue("fixes", "wine-menu")] = true
+	next, _ := m.update(tuikit.PickerResultMsg{Value: folderValue("fixes")})
+	if next.top() != scrSetup || next.pendingAction != "" || len(next.pendingArgs) != 0 {
+		t.Fatalf("fixes folder Enter acted: top=%d action=%q args=%v", next.top(), next.pendingAction, next.pendingArgs)
+	}
+}
+
 // And the fixes must actually be IN that tree, or removing the sub-screen
 // would leave no way to reach them at all.
 func TestTheFixesAreRowsInTheTreeNotASubScreen(t *testing.T) {

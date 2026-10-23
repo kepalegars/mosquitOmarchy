@@ -7,18 +7,14 @@
 #
 # The plugin provides:
 #   • Real-time audio analysis: key, BPM, chord + a tuner (INPUT: PC/MIC)
-#   • Chord progression + loop detection, live in the guitar neck TUI while
-#     you hold its big scout button (also drives the metronome at the BPM)
+#   • Chord progression + loop detection, plus a metronome at the BPM
 #   • Guitar neck visualization of the detected key's scale (numbered degrees)
-#   • Optional Shazam song hook (pip install --user shazamio, via this script)
-#   • MIDI device detection + real-time chord display for played chords
-#   • A simple synthesizer with 5 selectable waveforms (plays MIDI input)
 #
 # Usage:
 #   ./setup-jamjamjam-plugin.sh           # installs/enables the plugin
 #   ./setup-jamjamjam-plugin.sh --remove  # removes the plugin + bar entry
 #
-# Prerequisites: python3 with numpy; pw-cat, pw-record, aseqdump (PipeWire + ALSA).
+# Prerequisites: python3 with numpy; pw-cat and pw-record (PipeWire).
 # =============================================================================
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../..//lib/marker-strip.bash"  # marker_strip: safe managed-block removal
@@ -46,10 +42,6 @@ LEGACY_PLUGIN_DIR="$REAL_HOME/.config/omarchy/plugins/$LEGACY_PLUGIN_ID"
 PLUGIN_SRC="$SCRIPT_DIR/omarchy-plugins/$PLUGIN_ID"
 SHELL_JSON="$REAL_HOME/.config/omarchy/shell.json"
 BIN_DIR="$REAL_HOME/.local/bin"
-TUI_SRC="$SCRIPT_DIR/tui-go"
-DISPATCHER="$SCRIPT_DIR/jamjamjam-tui"
-ANALYZE_SRC="$SCRIPT_DIR/jamjamjam-analyze"
-ANALYZE_BIN="$BIN_DIR/jamjamjam-analyze"
 BINDINGS_LUA="$REAL_HOME/.config/hypr/bindings.lua"
 ANALYZE_BIND_START="-- jamjamjam-analyze-bind-start"
 ANALYZE_BIND_END="-- jamjamjam-analyze-bind-end"
@@ -78,7 +70,6 @@ ensure_deps() {
   local missing=0
   check_dep pw-cat   "pipewire / pipewire-utils"
   check_dep pw-record "pipewire / pipewire-utils"
-  check_dep aseqdump "alsa-utils"
   check_dep python3  "python"
   python3 -c "import numpy" 2>/dev/null || { warn "Missing: python3 numpy (pip install numpy)"; missing=1; }
   return "$missing"
@@ -150,127 +141,26 @@ install_data() {
 }
 
 # -----------------------------------------------------------------------------
-# Optional Shazam song hook: needs shazamio (python3 -m pip install --user).
-# The backend runs without it — matching is simply reported as unavailable.
+# Retire the abandoned neck TUI / RIGHT CTRL helper from older installs.
+# The sources stay in the repository, but nothing is installed or bound.
 # -----------------------------------------------------------------------------
-install_shazam() {
-  if python3 -c "import shazamio" 2>/dev/null; then
-    ok "Shazamio present — song matching enabled."
-    return 0
-  fi
-  info "Installing optional Shazamio (user) for song recognition…"
-  if ! python3 -m pip --version >/dev/null 2>&1; then
-    warn "python3-pip missing — skipping shazamio (song matching stays off)."
-    return 0
-  fi
-  # Never fatal: shazamio is an optional extra.
-  if python3 -m pip install --user shazamio >/dev/null 2>&1; then
-    ok "Shazamio installed — song matching enabled."
-    return 0
-  fi
-  # Arch's PEP 668 ("externally-managed-environment") blocks --user pip; a
-  # user-scope install is the documented workaround for per-user packages.
-  if python3 -m pip install --user --break-system-packages shazamio >/dev/null 2>&1 &&
-     python3 -c "import shazamio" 2>/dev/null; then
-    ok "Shazamio installed (user, --break-system-packages) — song matching enabled."
-  else
-    warn "shazamio install failed — song matching stays off (offline / no permission?)."
-  fi
-}
-
-# -----------------------------------------------------------------------------
-# Guitar-neck TUI: build the Go viewer, install dispatcher + floating prompt rule.
-# -----------------------------------------------------------------------------
-install_tui() {
-  mkdir -p "$BIN_DIR"
-  if [[ ! -d "$TUI_SRC" ]]; then
-    warn "TUI sources not found ($TUI_SRC) — skipping the neck TUI."
-    return 0
-  fi
-  if [[ ! -f "$TUI_SRC/go.sum" ]]; then
-    (cd "$TUI_SRC" && go mod tidy >/dev/null 2>&1) || warn "go mod tidy skipped"
-  fi
-  local out
-  out=$( (cd "$TUI_SRC" && go build -o "$BIN_DIR/jamjamjam-neck" .) 2>&1 ) || {
-    warn "Could not build the neck TUI (go said: $out)"
-    return 0
-  }
-  chmod 755 "$BIN_DIR/jamjamjam-neck"
-  ok "Neck TUI built and installed: $BIN_DIR/jamjamjam-neck"
-
-  if [[ ! -f "$DISPATCHER" ]]; then
-    warn "Dispatcher missing ($DISPATCHER) — skipping."
-    return 0
-  fi
-  cp "$DISPATCHER" "$BIN_DIR/jamjamjam-tui"
-  chmod 755 "$BIN_DIR/jamjamjam-tui"
-  ok "Dispatcher installed: $BIN_DIR/jamjamjam-tui"
-}
-
 CONF_HYPR="$REAL_HOME/.config/hypr/hyprland.lua"
 TILE_START="-- >>> jamjamjam-neck-tiled >>> guitar neck TUI opens tiled"
-# The closing marker said ">>>" instead of "<<<". Nothing in the strip logic ever
-# matched it, so every run APPENDED a fresh block instead of replacing the
-# previous one: the rule for the neck TUI was duplicated in hyprland.lua after
-# each setup, and the malformed block also broke the marker accounting for every
-# other block in the file.
 TILE_END="-- <<< jamjamjam-neck-tiled <<<"
 
-install_hypr_rule() {
-  mkdir -p "$(dirname "$CONF_HYPR")"
-  touch "$CONF_HYPR"
-  # Strip an earlier block (idempotent install).
-  marker_strip "$CONF_HYPR" "$TILE_START" "$TILE_END"
-  cat >> "$CONF_HYPR" <<EOF
-$TILE_START
--- The jamjamjam neck TUI opens like every other mosquito terminal TUI:
--- floating, centered omarchy-style prompt window (dispatcher launches foot
--- at 120x34 --app-id=org.omarchy.jamjamjam-tui).
-o.window("org.omarchy.jamjamjam-tui", { float = true, center = true, size = { 1000, 780 } })
-$TILE_END
-EOF
-  ok "Hyprland rule installed: jamjamjam neck TUI floating + centered"
-}
-
-install_analyze_helper() {
-  [[ -f "$ANALYZE_SRC" ]] || { warn "analyze helper missing: $ANALYZE_SRC"; return 0; }
-  mkdir -p "$BIN_DIR"
-  cp "$ANALYZE_SRC" "$ANALYZE_BIN"
-  chmod 755 "$ANALYZE_BIN"
-  ok "Global analyze helper installed: $ANALYZE_BIN"
-}
-
-install_analyze_bind() {
-  mkdir -p "$(dirname "$BINDINGS_LUA")"
-  touch "$BINDINGS_LUA"
-  # Strip an earlier block (idempotent install).
-  marker_strip "$BINDINGS_LUA" "$ANALYZE_BIND_START" "$ANALYZE_BIND_END"
-  cat >> "$BINDINGS_LUA" <<EOF
-$ANALYZE_BIND_START
--- Hold to run the jamjamjam analysis while the neck TUI is open, even when the
--- TUI is not focused (the helper no-ops when the TUI is closed). Bound to the
--- RIGHT CTRL key. A modifier keysym gives no usable keydown for a bind, so the
--- press half uses the physical keycode (code:105 = evdev KEY_RIGHTCTRL 97 + 8)
--- and the release half the modifier form that Hyprland actually matches on
--- keyup (CTRL + Control_R). Verified with injected key events.
-o.bind("code:105", "jamjamjam analyze (hold)", "$ANALYZE_BIN start")
-o.bind("CTRL + Control_R", "jamjamjam analyze (release)", "$ANALYZE_BIN stop", { release = true })
-$ANALYZE_BIND_END
-EOF
+retire_tui() {
+  if [[ -f "$BINDINGS_LUA" ]]; then
+    marker_strip "$BINDINGS_LUA" "$ANALYZE_BIND_START" "$ANALYZE_BIND_END" || true
+  fi
+  if [[ -f "$CONF_HYPR" ]]; then
+    marker_strip "$CONF_HYPR" "$TILE_START" "$TILE_END" || true
+  fi
+  rm -f "$BIN_DIR/jamjamjam-neck" "$BIN_DIR/jamjamjam-tui" "$BIN_DIR/jamjamjam-analyze"
+  rm -f "$REAL_HOME/.local/state/jamjamjam/tui.pid"
   if command -v hyprctl >/dev/null 2>&1; then
     hyprctl reload >/dev/null 2>&1 || true
   fi
-  ok "Hyprland binding installed: RIGHT CTRL (hold to analyze)"
-}
-
-remove_analyze_bind() {
-  [[ -f "$BINDINGS_LUA" ]] || return 0
-  marker_strip "$BINDINGS_LUA" "$ANALYZE_BIND_START" "$ANALYZE_BIND_END"
-  rm -f "$ANALYZE_BIN"
-  if command -v hyprctl >/dev/null 2>&1; then
-    hyprctl reload >/dev/null 2>&1 || true
-  fi
-  ok "Global analyze helper + binding removed."
+  ok "Legacy neck TUI, helper, window rule and binding retired."
 }
 
 # -----------------------------------------------------------------------------
@@ -320,28 +210,20 @@ PYEOF
 if [[ $REMOVE == true ]]; then
   remove_from_bar
   remove_plugin
-  remove_analyze_bind
+  retire_tui
   info "Uninstall complete. Restart the shell: omarchy restart shell"
 else
   ensure_deps || true
   install_plugin
   add_to_bar
   install_data
-  install_shazam
-  install_tui
-  install_hypr_rule
-  install_analyze_helper
-  install_analyze_bind
+  retire_tui
   info "Setup complete. Summary:"
   echo "  • Plugin installed  -> $PLUGIN_DIR"
   echo "  • Bar entry added   -> LEFT section (after omarchy.workspaces)"
-  echo "  • Neck TUI          -> $BIN_DIR/jamjamjam-neck + jamjamjam-tui"
-  echo "  • Window rule       -> jamjamjam neck opens floating + centered"
-  echo "  • Global analyze    -> RIGHT CTRL (hold) while the neck TUI is open"
   echo "  • Audio analysis    -> speaker monitor (INPUT icon switches to MIC)"
   echo
   echo "  Restart the shell if the widget does not show: omarchy restart shell"
   echo "  Open the panel to analyze audio (key/BPM/chords), view the guitar"
-  echo "  neck, toggle MIDI mode and pick a synth waveform."
-  echo "  The panel's GUITAR button (or: jamjamjam-tui) opens the neck TUI."
+  echo "  neck, tune an instrument, and use the metronome."
 fi

@@ -15,14 +15,6 @@ import (
 type navPicker struct {
 	tuikit.Picker
 	items []tuikit.PickerItem
-	// Tab-held range select, mirrored from the kit (which owns Tab but
-	// never sees the arrows: they stop here). tabHeld arms on Tab and
-	// clears on any other forwarded key; tabAnchor is the row index Tab
-	// marked. stepRange emits PickerRangeMsg while armed AND the kit still
-	// reports the key down (tuikit.TabActive) — so letting Tab go ends the
-	// range instead of leaving it armed under a cursor that is just moving.
-	tabHeld   bool
-	tabAnchor int
 }
 
 func newNavPicker(header string, items []tuikit.PickerItem) navPicker {
@@ -55,19 +47,6 @@ func (p navPicker) SelectValue(value string) navPicker {
 	return p
 }
 
-// ArmRange re-arms a Tab-held range on a freshly rebuilt picker: the outer
-// hold (this layer owns the arrows) plus the inner one (repeat guard),
-// both anchored at value. Hosts call it right after the rebuild their Tab
-// handler does — without it the hold dies on the keystroke that started it.
-func (p navPicker) ArmRange(value string) navPicker {
-	p.Picker = p.Picker.ArmRange(value)
-	if idx := p.IndexOf(value); idx >= 0 {
-		p.tabHeld = true
-		p.tabAnchor = idx
-	}
-	return p
-}
-
 func (p navPicker) SelectIndex(i int) navPicker {
 	p.Picker = p.Picker.SelectIndex(i)
 	return p
@@ -77,30 +56,13 @@ func (p navPicker) Update(msg tea.Msg) (navPicker, tea.Cmd) {
 	if km, ok := msg.(tea.KeyMsg); ok {
 		switch km.String() {
 		case "down", "j", "pgdown", "l", "f", "d":
-			return p.stepRange(1)
+			return p.step(1), nil
 		case "up", "k", "pgup", "h", "b", "u":
-			return p.stepRange(-1)
+			return p.step(-1), nil
 		case "home", "g":
-			p.tabHeld = false
 			return p.selectFirst(), nil
 		case "end", "G":
-			p.tabHeld = false
 			return p.selectLast(), nil
-		case "tab":
-			// Forwarded so the kit emits the toggle (with its package-level
-			// repeat guard); the anchor mirrors the row Tab marked. A repeat
-			// that the kit swallows still reaches here, so re-reading the
-			// cursor keeps the anchor on the same row — harmless.
-			var cmd tea.Cmd
-			p.Picker, cmd = p.Picker.Update(msg)
-			p.tabHeld = true
-			p.tabAnchor = p.IndexOf(p.SelectedValue())
-			return p, cmd
-		default:
-			// Enter, Esc, x, ?, folds, filter keys... anything but
-			// Tab/arrows ends the hold (folds and filters reshuffle the
-			// rows under a stale anchor).
-			p.tabHeld = false
 		}
 	}
 	var cmd tea.Cmd
@@ -109,18 +71,6 @@ func (p navPicker) Update(msg tea.Msg) (navPicker, tea.Cmd) {
 }
 
 func (p navPicker) step(dir int) navPicker {
-	np, _ := p.stepRange(dir)
-	return np
-}
-
-// stepRange moves one selectable row like step, and while a Tab hold is
-// armed AND the key is still down (tuikit.TabActive, refreshed by the
-// repeat stream) it also emits the crossed rows for toggling (Tab held,
-// then Up/Down, turning back re-toggles). Releasing Tab stops it dead, so
-// a plain move after a Tab is a plain move. The anchor itself is excluded —
-// its Tab already toggled it. Inert rows skipped; the host toggles what it
-// receives through the same path as a single Tab (folders fill-or-empty).
-func (p navPicker) stepRange(dir int) (navPicker, tea.Cmd) {
 	cur := p.selectedIndex()
 	// Land on the next SELECTABLE row in one go.
 	//
@@ -139,17 +89,10 @@ func (p navPicker) stepRange(dir int) (navPicker, tea.Cmd) {
 		break
 	}
 	if next < 0 {
-		return p, nil
+		return p
 	}
 	p.Picker = p.Picker.SelectIndex(next)
-	if !p.tabHeld || !tuikit.TabActive() {
-		return p, nil
-	}
-	anchor := ""
-	if p.tabAnchor >= 0 && p.tabAnchor < len(p.items) {
-		anchor = p.items[p.tabAnchor].Value
-	}
-	return p, func() tea.Msg { return tuikit.PickerRangeMsg{Values: []string{p.items[next].Value}, Anchor: anchor} }
+	return p
 }
 
 func (p navPicker) selectFirst() navPicker {

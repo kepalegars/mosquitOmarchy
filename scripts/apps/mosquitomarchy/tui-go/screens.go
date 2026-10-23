@@ -13,6 +13,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
@@ -21,9 +22,13 @@ import (
 type firstRunMsg struct{}
 
 // abletonUninstallMsg reports that the Ableton module's own interactive
-// uninstall (edition picker + confirmation + clean removal) has exited and the
+// uninstall (edition choice + confirmation + clean removal) has exited and the
 // terminal is ours again.
 type abletonUninstallMsg struct{ err error }
+
+// abletonInstallMsg reports that the Ableton module's own interactive install
+// has exited and the terminal is ours again.
+type abletonInstallMsg struct{ err error }
 
 func shortcutMarkerPath() string {
 	return filepath.Join(os.Getenv("HOME"), ".local/state/mosquitomarchy/shortcut-prompted")
@@ -114,21 +119,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case abletonUninstallMsg:
-		// The module's picker and clean removal ran in the terminal; the TUI is
-		// back. Resume anything batched behind Ableton first (a batched
-		// uninstall re-enters startUninstall), then refresh the installed-only
-		// tree so the removed editions disappear.
-		if len(m.uninstallWait) > 0 {
-			keys, pmsg := m.uninstallWait, m.uninstallMsg
-			m.uninstallWait, m.uninstallMsg = nil, ""
-			return m.startUninstall(keys, pmsg)
-		}
+		// The module's flow and clean removal ran in the terminal; the TUI is
+		// back. Show the captured transcript first, exactly like a normal
+		// runner action, then resume/refresh once the log is dismissed.
+		out := abletonLogText(m.takeAbletonLog(), msg.err)
+		m.lastOutput = out
 		if msg.err != nil {
+			reportCrash("ableton uninstall", out)
 			m.toast, _ = m.toast.SetErr("ableton uninstall finished with errors")
-		} else {
-			m.toast, _ = m.toast.SetOK("ableton uninstalled")
+			return m.askAbletonLog("ableton-uninstall-err")
 		}
-		return m, fetchTreeCmd("uninstall-tree")
+		writeRunLog("ableton uninstall", out)
+		m.toast, _ = m.toast.SetOK("ableton uninstalled")
+		return m.askAbletonLog("ableton-uninstall-ok")
+
+	case abletonInstallMsg:
+		// Same contract as install: keep the transcript in a real Info frame
+		// (so `c` copies it), never drop the user straight back to the menu.
+		out := abletonLogText(m.takeAbletonLog(), msg.err)
+		m.lastOutput = out
+		if msg.err != nil {
+			reportCrash("ableton install", out)
+			m.toast, _ = m.toast.SetErr("ableton install finished with errors")
+			return m.askAbletonLog("ableton-install-err")
+		}
+		writeRunLog("ableton install", out)
+		m.toast, _ = m.toast.SetOK("ableton installed")
+		return m.askAbletonLog("ableton-install-ok")
 
 	// THE SETTINGS RULE (see PickerItem.Toggle). A toggle repaints FIRST and
 	// applies SECOND, so the row answers the instant it is chosen and the menu
@@ -225,6 +242,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case scrSetupCat:
 			m.blinkOn = !m.blinkOn
 			m.setupCatPicker = m.rebuildSetupCat()
+			return m, blinkCmd()
+		case scrConfirm:
+			// The disk warning uses the same 600 ms rhythm as the Setup
+			// "mosquito" row, but toggles its own red fill: the theme accent
+			// must never replace the red.
+			if m.spaceShort {
+				m.spaceBlinkOn = !m.spaceBlinkOn
+				m.refreshSpaceMessage()
+			}
 			return m, blinkCmd()
 		}
 		return m, nil
@@ -687,6 +713,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.toast, _ = m.toast.SetWarn(msg.err.Error())
 		return m, nil
 
+	case spaceMsg:
+		m.applySpaceMsg(msg)
+		return m, nil
+
 	case tuikit.PickerResultMsg:
 		return m.screenPicked(msg)
 
@@ -703,22 +733,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				// declining un-ticks it. The Uninstall tree never asks again.
 				if m.treeMode == "install" && strings.HasSuffix(v, ":keepassxc") && m.selected[v] {
 					m.pushKeepassxcConsent(v)
-					m.setupCatPicker = m.setupCatPicker.ArmRange(v)
 					return m, nil
 				}
 			}
 			m.setupCatPicker = m.rebuildSetupCat()
-			// Re-arm the Tab hold only when the row ended checked:
-			// unticking then moving on stays a plain move, not a range.
-			checked := false
-			if f, ok := strings.CutPrefix(v, "cat:"); ok {
-				checked = treeFolderChecked(m.setupItems, m.selected, f)
-			} else if strings.HasPrefix(v, "item:") {
-				checked = m.selected[v]
-			}
-			if checked {
-				m.setupCatPicker = m.setupCatPicker.ArmRange(v)
-			}
 		case scrBackupApps:
 			v := msg.Value
 			if strings.HasPrefix(v, "cat:") {
@@ -735,24 +753,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// does quitting the TUI.
 			saveBackupSelection(m.backupItems, m.backupChecked)
 			m.backupAppsPicker = m.rebuildBackupApps()
-			checked := false
-			if f, ok := strings.CutPrefix(v, "cat:"); ok {
-				checked = treeFolderChecked(m.backupItems, m.backupChecked, f)
-			} else if strings.HasPrefix(v, "item:") {
-				checked = m.backupChecked[v]
-			}
-			if checked {
-				m.backupAppsPicker = m.backupAppsPicker.ArmRange(v)
-			}
 		case scrUpdate:
 			if msg.Value == "" || msg.Value == "repo" || msg.Value == "back" || msg.Value == "apply" {
 				return m, nil
 			}
 			m.toggleUpdate(msg.Value)
 			m.updatePicker = m.rebuildUpdate()
-			if m.updateSelected[msg.Value] {
-				m.updatePicker = m.updatePicker.ArmRange(msg.Value)
-			}
 		case scrHealth:
 			// "Back" is navigation, not a healable piece: ticking it would
 			// draw a selection mark on a row that has nothing to re-apply.
@@ -760,26 +766,16 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.toggleHealth(msg.Value)
 			}
 			m.healthPicker = m.rebuildHealth()
-			if m.healthChecked[msg.Value] {
-				m.healthPicker = m.healthPicker.ArmRange(msg.Value)
-			}
 		case scrSetup:
 			// Tab on a FOLDER ticks the whole folder (or unticks it when
 			// everything tickable already is) — the only gesture that fills
 			// the folder's square. Tab on a row ticks just that row.
 			if strings.HasPrefix(msg.Value, "cat:") {
 				m.toggleFolder(strings.TrimPrefix(msg.Value, "cat:"))
-				m.setupPicker = m.rebuildSetup()
-				if f, ok := strings.CutPrefix(msg.Value, "cat:"); ok && treeFolderChecked(m.setupItems, m.selected, f) {
-					m.setupPicker = m.setupPicker.ArmRange(msg.Value)
-				}
 			} else if strings.HasPrefix(msg.Value, "item:") {
 				m.toggle(msg.Value)
-				m.setupPicker = m.rebuildSetup()
-				if m.selected[msg.Value] {
-					m.setupPicker = m.setupPicker.ArmRange(msg.Value)
-				}
 			}
+			m.setupPicker = m.rebuildSetup()
 		case scrKBList:
 			if strings.HasPrefix(msg.Value, "kb:") {
 				v := strings.TrimPrefix(msg.Value, "kb:")
@@ -789,9 +785,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					m.kbSel[v] = true
 				}
 				m.kbListPicker = m.rebuildKBList()
-				if m.kbSel[v] {
-					m.kbListPicker = m.kbListPicker.ArmRange(msg.Value)
-				}
 			}
 		case scrQuickFixes:
 			// Same reasoning as scrMenuEntries below: this global switch runs
@@ -803,9 +796,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			if _, id, ok := tuikit.TreeSplit(msg.Value); ok {
 				m.quickFixChecked[id] = !m.quickFixChecked[id]
 				m.quickFixPicker = m.rebuildQuickFixes()
-				if m.quickFixChecked[id] {
-					m.quickFixPicker = m.quickFixPicker.ArmRange(msg.Value)
-				}
 			}
 			return m, nil
 		case scrMenuEntries:
@@ -821,22 +811,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					// truth until the apply really ran.
 					m.menuEntryChecked[name] = !m.menuEntryChecked[name]
 					m.menuEntriesPicker = m.rebuildMenuEntriesPicker()
-					if m.menuEntryChecked[name] {
-						m.menuEntriesPicker = m.menuEntriesPicker.ArmRange(msg.Value)
-					}
 				}
 			}
 		}
-		return m, nil
-
-	case tuikit.PickerRangeMsg:
-		// Tab-held range: Tab, then Up/Down with nothing between. Every
-		// value arrives to be CHECKED, never toggled — the kit guarantees
-		// the gesture, this hub mirrors the Toggle hub row for row, skipping
-		// what is already checked and running the same helpers for the rest
-		// (so folder rows still fill whole folders, and the KeePassXC
-		// consent still fires when the range newly checks it).
-		m.rangeCheck(msg.Values, msg.Anchor)
 		return m, nil
 
 	case tuikit.PickerSortMsg:
@@ -959,6 +936,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					return m.resumeInstallPlan()
 				}
 				return m.resumeUninstall()
+			}
+			if strings.HasPrefix(m.pendingAction, "ableton-") {
+				// "Back" (or Esc): do not open the log, but still finish the
+				// Ableton flow (refresh the tree, resume batched work).
+				return m.finishAbleton(m.pendingAction)
 			}
 			if m.pendingAction == "davinci-spektra" {
 				// Declined = install Resolve without the optional OFX. That is a
@@ -1156,6 +1138,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case "close":
 			m.quit = true
 			return m, tea.Quit
+		case "ableton-install-ok", "ableton-install-err", "ableton-uninstall-ok", "ableton-uninstall-err":
+			// Same log frame as a runner action; remember which follow-up to
+			// run when the frame is dismissed.
+			m.abletonLogReturn = m.pendingAction
+			m.info = tuikit.NewInfo(m.lastOutput).SetSize(m.contentSize())
+			m.push(scrInfo)
+			return m, nil
 		case "run-errors", "run-done-log":
 			// Show the full streamed log in the scrollable Info screen; the
 			// prompt itself was already popped, so closing the log returns to
@@ -1321,6 +1310,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.pop()
 			}
 		}
+		if m.abletonLogReturn != "" {
+			kind := m.abletonLogReturn
+			m.abletonLogReturn = ""
+			return m.finishAbleton(kind)
+		}
 		return m, nil
 
 	case preinstallsMsg:
@@ -1356,6 +1350,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if msg.err != nil || len(msg.items) == 0 {
 			if len(msg.plan) == 0 {
 				return m, nil
+			}
+			if planHasAbleton(msg.plan) {
+				return m.startAbletonInstall(msg.plan)
 			}
 			return m.startWorking("Applying the selection", workingArgs("apply", msg.plan)...)
 		}
@@ -1639,6 +1636,20 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// (a module row is an "item:" row, and the handler below answers it from
 		// setupByValue), so `i` can go back to doing what its help text and
 		// every other screen in these apps say it does.
+		// Secret "p": same contract as the category screen. The root Setup
+		// tree is where a user lands first, so pressing "p" on a checked or
+		// highlighted patchable app must not silently do nothing there.
+		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "p" {
+			keys := m.allSelectedKeys()
+			if len(keys) == 0 {
+				keys = highlightedKeyOf(m.setupPicker.SelectedValue())
+			}
+			if len(keys) == 0 {
+				m.toast, _ = m.toast.SetWarn("nothing selected")
+				return m, nil
+			}
+			return m, fetchPatchSecretCmd(m.treeMode == "uninstall", keys)
+		}
 		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "i" || km.String() == "?") {
 			v := m.setupPicker.SelectedValue()
 			// Menu entries FIRST: it is a cat: row, but its description is not
@@ -1880,17 +1891,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if tl, ok := msg.(tuikit.PickerToggleMsg); ok {
 			m.toggleThemeTick(tl.Value)
 			m.themeUninstallPicker = m.rebuildThemeUninstall()
-			if m.themeChecked[tl.Value] {
-				m.themeUninstallPicker = m.themeUninstallPicker.ArmRange(tl.Value)
-			}
-			return m, nil
-		}
-		if rg, ok := msg.(tuikit.PickerRangeMsg); ok {
-			for _, v := range rg.Values {
-				m.toggleThemeTick(v)
-			}
-			m.themeUninstallPicker = m.rebuildThemeUninstall()
-			m.themeUninstallPicker = m.themeUninstallPicker.ArmRange(rg.Anchor)
 			return m, nil
 		}
 		// Enter and Esc arrive as PickerResultMsg and are handled by
@@ -1983,6 +1983,19 @@ func planHasDavinci(plan []string) bool {
 	for _, group := range plan {
 		for _, k := range strings.Split(group, "\t") {
 			if k == "davinci-resolve" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// planHasAbleton reports whether an install plan contains the ableton module
+// (it needs the terminal for its own archive/disk prompts).
+func planHasAbleton(plan []string) bool {
+	for _, group := range plan {
+		for _, k := range strings.Split(group, "\t") {
+			if k == "ableton" {
 				return true
 			}
 		}
@@ -2294,67 +2307,16 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 	case scrSetup:
 		// Level 1: the category options. Entering one opens its folder tree;
 		// the "Menu entry" option runs the menu registration directly.
-		if res.Value == "back" {
-			m.pop()
-			return m, nil
-		}
 		// The typing-filter view (m.filterText != "") is the ONLY case whose
 		// rows are bare "item:<folder>:<key>" leaves: there Enter acts on the
 		// ticked set. In the normal tree the item rows are handled further
 		// down, so without this guard the filter branch swallowed every module
-		// press and the apply/uninstall of a single module was impossible.
+		// press.
 		if m.filterText != "" && strings.HasPrefix(res.Value, "item:") {
-			// Typing-filter rows: Enter acts on the ticked leaf rows (or the
-			// focused row when nothing is ticked) — install in the Setup tree,
-			// uninstall in the Uninstall tree.
-			keys := m.filteredCheckedKeys()
-			if len(keys) == 0 {
-				keys = []string{strings.TrimPrefix(res.Value, "item:")}
-			}
 			if m.treeMode == "uninstall" {
-				m.kpxGnomeRm = 0
-				return m.startUninstall(keys, fmt.Sprintf("Uninstall %d selected item(s)?\n\n%s", len(keys), strings.Join(keys, "\n")))
-			} else {
-				var groups []string
-				var pre []string
-				for _, f := range m.setupFolders {
-					var sel []string
-					for _, it := range m.setupItemsOf(f.Folder) {
-						if !m.selected[setupValue(f.Folder, it.Key)] {
-							continue
-						}
-						if strings.HasPrefix(it.Key, "preinstall:") {
-							pre = append(pre, strings.TrimPrefix(it.Key, "preinstall:"))
-							continue
-						}
-						sel = append(sel, it.Key)
-					}
-					if len(sel) > 0 {
-						groups = append(groups, f.Folder+"\t"+strings.Join(sel, "\t"))
-					}
-				}
-				if len(groups) == 0 {
-					name := strings.TrimPrefix(res.Value, "item:")
-					folder, key := name[:strings.Index(name, ":")], name[strings.Index(name, ":")+1:]
-					if strings.HasPrefix(key, "preinstall:") {
-						return m.confirmPreinstallRemove([]string{strings.TrimPrefix(key, "preinstall:")})
-					}
-					groups = []string{folder + "\t" + key}
-				}
-				if len(pre) > 0 {
-					m.pendingInstallPlan = groups
-					return m.confirmPreinstallRemove(pre)
-				}
-				m.pendingAction = "apply"
-				m.pendingArgs = groups
-				m.kpxGnomeRm = 0
-				m.pendingMsg = fmt.Sprintf("Install %d selected item(s)?\n\n%s", len(keys), strings.Join(keys, "\n"))
-				m.pendingNo = "Cancel"
-				m.pendingYes = "Install"
+				return m.confirmUninstallSelection()
 			}
-			m.push(scrConfirm)
-			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
-			return m, nil
+			return m.confirmInstallSelection()
 		}
 		if res.Value == "updates" {
 			// Jump to the Update screen (repo update + changed modules).
@@ -2367,19 +2329,11 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.pop()
 			return m, nil
 		}
-		// Enter on a CATEGORY row does NOTHING, on purpose. Folding is the
-		// left/right arrows' job and they already do it, so Enter folding too
-		// meant the key meant two different things depending on what it landed
-		// on. Enter is reserved for the one thing only a user can ask for:
-		// install (or uninstall) the module under the cursor.
-		// "Menu entries" is a folder row too, but Enter on it opens the
-		// entries screen. It has to be recognised BEFORE the generic
-		// folder early-return below, which swallowed `cat:menu-entries`
-		// whole: the row took focus, the arrows set the fold state, and
-		// nothing ever happened on Enter — so the menu blocks could not be
-		// deployed from Setup at all. The value here is the TREE value
-		// ("cat:menu-entries"), not the bare folder id the old check
-		// compared against, which is why it never matched.
+		// Enter on a folder applies the Tab-checked rows, never the folder
+		// itself and never the row under the cursor. Folding stays on the
+		// left/right arrows. Menu entries has its own screen, recognised
+		// before the generic folder path below: it must be matched on the
+		// TREE value ("cat:menu-entries"), not the bare id.
 		if res.Value == tuikit.TreeValue(tuikit.TreeFolderPrefix, menuEntriesFolder) {
 			m.push(scrMenuEntries)
 			m.menuEntryChecked = map[string]bool{}
@@ -2421,19 +2375,22 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			return m, nil
 		}
 		if strings.HasPrefix(res.Value, tuikit.TreeFolderPrefix) {
-			return m, nil
+			// Fixes and tweaks are not modules: their rows run repairs or
+			// preference changes, never an install plan. Keep folder Enter
+			// inert for them, exactly like the old catalog-folder rule.
+			folder := strings.TrimPrefix(res.Value, tuikit.TreeFolderPrefix)
+			if folder == quickFixesFolder || folder == quickTweaksFolder {
+				return m, nil
+			}
+			if m.treeMode == "uninstall" {
+				return m.confirmUninstallSelection()
+			}
+			return m.confirmInstallSelection()
 		}
-		// Enter on a MODULE row acts on the WHOLE ticked set, not just the
-		// row under the cursor: ticking several with Tab and then pressing
-		// Enter used to act on the cursor row alone and silently drop the
-		// rest (the reported "Enter only uninstalls one of the ticked
-		// items"). With nothing ticked it still acts on the highlighted
-		// row — a single click for a single module.
+		// Enter on a MODULE row applies the Tab-checked set, not the row under
+		// the cursor. Stock preinstall rows keep their own removal action.
 		if strings.HasPrefix(res.Value, tuikit.TreeItemPrefix) {
 			v := res.Value
-			// A stock preinstall row removes its package. It is not a
-			// module, so it must not fall through to the install path
-			// below.
 			if _, key := splitSetupValue(v); strings.HasPrefix(key, "preinstall:") {
 				return m.confirmPreinstallRemove([]string{strings.TrimPrefix(key, "preinstall:")})
 			}
@@ -2442,56 +2399,10 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 					m.toast, _ = m.toast.SetErr("nothing to do here")
 					return m, nil
 				}
-				folder, key := splitSetupValue(v)
 				if m.treeMode == "uninstall" {
-					keys := m.allSelectedKeys()
-					if len(keys) == 0 {
-						keys = []string{key}
-					}
-					m.kpxGnomeRm = 0
-					prompt := fmt.Sprintf("Uninstall %s?", it.Label)
-					if len(keys) > 1 {
-						prompt = fmt.Sprintf("Uninstall %d selected item(s)?\n\n%s",
-							len(keys), strings.Join(keys, "\n"))
-					}
-					return m.startUninstall(keys, prompt)
+					return m.confirmUninstallSelection()
 				}
-				keys := m.allSelectedKeys()
-				if len(keys) == 0 {
-					// Nothing ticked: the highlighted module alone.
-					m.pendingAction = "apply"
-					m.pendingArgs = []string{strings.Join([]string{folder, key}, "\t")}
-					m.kpxGnomeRm = 0
-					m.pendingMsg = fmt.Sprintf("Install %s?", it.Label)
-					m.pendingNo = "Cancel"
-					m.pendingYes = "Install"
-					m.push(scrConfirm)
-					m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
-					return m, nil
-				}
-				// Ticked set: grouped by folder, with any ticked preinstall
-				// package confirmed for removal first and the install plan
-				// held behind it (same shape as the typing-filter path).
-				plan := m.applyPlan()
-				var pre []string
-				for _, k := range keys {
-					if strings.HasPrefix(k, "preinstall:") {
-						pre = append(pre, strings.TrimPrefix(k, "preinstall:"))
-					}
-				}
-				if len(pre) > 0 {
-					m.pendingInstallPlan = plan
-					return m.confirmPreinstallRemove(pre)
-				}
-				m.pendingAction = "apply"
-				m.pendingArgs = plan
-				m.kpxGnomeRm = 0
-				m.pendingMsg = fmt.Sprintf("Install %d selected item(s)?\n\n%s", len(keys), strings.Join(keys, "\n"))
-				m.pendingNo = "Cancel"
-				m.pendingYes = "Install"
-				m.push(scrConfirm)
-				m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
-				return m, nil
+				return m.confirmInstallSelection()
 			}
 		}
 		m.filterText = ""
@@ -2500,78 +2411,25 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		// Keybindings is a single screen, not a category folder: open its
 		// manager directly (Setup flavor here; Uninstall flavor when the tree
 		// is the uninstall one).
-		// Everything else on this page folds in place now (Enter on a category
-		// toggles it), so there is no second level to enter. This branch is
-		// unreachable for categories; it stays as a no-op guard so a future
-		// row that somehow falls through does not push a dead screen.
+		// Everything else on this page folds in place, and Enter applies the
+		// checked set, so categories never reach here. It stays as a no-op
+		// guard so a future row that somehow falls through does not push a
+		// dead screen.
 		return m, nil
 
 	case scrSetupCat:
-		// Level 2: the folder tree. Enter installs ONLY the items checked in
-		// this category (Uninstall mode: Enter uninstalls the checked items, or
-		// the highlighted row when nothing is checked).
+		// Level 2: the category tree. Enter applies the same Tab-checked set
+		// as the flat tree: the selection, and nothing else.
 		if res.Value == "back" {
 			m.pop()
 			m.filterText = ""
 			m.setupPicker = m.rebuildSetup()
 			return m, nil
 		}
-		// The keybindings manager is PART of the TUI now: Enter directly on
-		// that row (and nothing else ticked) opens its dedicated screen —
-		// Setup flavor here, Uninstall flavor in uninstall mode.
-		eff := m.selectedKeysOfCat(m.setupCat)
-		if len(eff) == 0 {
-			eff = m.highlightedKey()
-		}
-		// A greyed row is not an action: Enter on it says why instead of
-		// opening a screen that would have nothing selectable in it.
-		if len(eff) == 1 {
-			if it, ok := m.setupByValue[setupValue(m.setupCat, eff[0])]; ok && it.Disabled {
-				m.toast, _ = m.toast.SetWarn(it.Info)
-				return m, nil
-			}
-		}
-
 		if m.treeMode == "uninstall" {
-			keys := m.selectedKeysOfCat(m.setupCat)
-			if len(keys) == 0 {
-				keys = m.highlightedKey()
-			}
-			if len(keys) == 0 {
-				m.toast, _ = m.toast.SetWarn("nothing to uninstall — press tab to select items")
-				return m, nil
-			}
-			return m.startUninstall(keys, fmt.Sprintf("Uninstall %d item(s) in %s?\n\n%s",
-				len(keys), m.setupCatLabel(), strings.Join(keys, "\n")))
+			return m.confirmUninstallSelection()
 		}
-		// Stock preinstall rows remove; everything else installs. A
-		// preinstall selection goes to its own confirm first, with the
-		// install plan stashed behind it.
-		var pre []string
-		for _, it := range m.setupItemsOf(m.setupCat) {
-			if strings.HasPrefix(it.Key, "preinstall:") && m.selected[setupValue(m.setupCat, it.Key)] {
-				pre = append(pre, strings.TrimPrefix(it.Key, "preinstall:"))
-			}
-		}
-		plan := m.applyPlanCat(m.setupCat)
-		if len(pre) > 0 {
-			m.pendingInstallPlan = plan
-			return m.confirmPreinstallRemove(pre)
-		}
-		if len(plan) == 0 {
-			m.toast, _ = m.toast.SetWarn("nothing selected here — press tab to select items")
-			return m, nil
-		}
-		m.pendingAction = "apply"
-		m.pendingArgs = plan
-		m.kpxGnomeRm = 0 // each install plan answers the gnome-keyring question again
-		m.pendingMsg = fmt.Sprintf("Install %d selected item(s) in %s?\n\n%s",
-			m.categorySelectedCount(m.setupCat), m.setupCatLabel(), m.categorySummary(m.setupCat))
-		m.pendingNo = "Cancel"
-		m.pendingYes = "Install"
-		m.push(scrConfirm)
-		m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
-		return m, nil
+		return m.confirmInstallSelection()
 
 	case scrUpdate:
 		switch res.Value {
@@ -2999,6 +2857,7 @@ func (m model) startUninstall(keys []string, prompt string) (model, tea.Cmd) {
 		mods = append(mods, uninstallKey(k))
 	}
 	rest, pre := splitPreinstallKeys(mods)
+	rest = dedupeAudioBundle(rest)
 	if len(pre) > 0 {
 		m.uninstallWait = rest
 		m.uninstallMsg = prompt
@@ -3008,11 +2867,11 @@ func (m model) startUninstall(keys []string, prompt string) (model, tea.Cmd) {
 		return m, nil
 	}
 	// Ableton carries its own uninstall with a step this generic confirm cannot
-	// express: when several Live editions share the prefix, the user picks which
-	// ones (Tab = several) BEFORE the confirmation, and a clean runtime/prefix
-	// removal follows through the official installer. That picker lives in the
-	// module, so hand it the terminal (tea.ExecProcess) instead of extending the
-	// confirm here. Any keys batched behind Ableton resume once it returns.
+	// express: editions are removed one at a time, and removing the last one
+	// also performs a clean runtime/prefix removal through the official
+	// installer. That flow lives in the module, so hand it the terminal
+	// (tea.ExecProcess) instead of extending the confirm here. Any keys batched
+	// behind Ableton resume once it returns.
 	if i := indexOfString(rest, "ableton"); i >= 0 {
 		m.uninstallWait = append(append([]string(nil), rest[:i]...), rest[i+1:]...)
 		m.uninstallMsg = prompt
@@ -3039,16 +2898,229 @@ func indexOfString(ss []string, want string) int {
 }
 
 // runAbletonUninstall suspends the TUI and runs the Ableton module's own
-// `--uninstall` flow in the real terminal: the edition multi-select (Tab), the
-// confirmation, and the clean removal. Re-implementing that picker in the TUI
+// `--uninstall` flow in the real terminal: one-edition-at-a-time selection, the
+// confirmation, and the clean removal. Re-implementing that flow in the TUI
 // would duplicate the module's logic and drift from it; this way the two are
 // always the same screen.
 func (m model) runAbletonUninstall() (model, tea.Cmd) {
 	m.pendingAction = ""
-	script := filepath.Join(repoRoot(), "scripts/apps/ableton/setup-ableton.sh")
-	c := exec.Command("bash", script, "--uninstall")
+	c, logPath := abletonInteractiveCommand("--uninstall")
+	m.abletonLogFile = logPath
+	m.abletonLogSince = time.Now()
 	return m, tea.ExecProcess(c, func(err error) tea.Msg {
 		return abletonUninstallMsg{err: err}
+	})
+}
+
+// abletonInteractiveCommand wraps the module in script(1): the child still
+// gets a real PTY (gum/read prompts keep working), while the transcript is
+// written to a temp file. Without script(1) the flow still runs, just without
+// a copyable log.
+func abletonInteractiveCommand(flag string) (*exec.Cmd, string) {
+	script := filepath.Join(repoRoot(), "scripts/apps/ableton/setup-ableton.sh")
+	env := append(os.Environ(), "MOSQUITOMARCHY_TUI=1")
+	if scriptBin, err := exec.LookPath("script"); err == nil {
+		// script(1) creates the log 0644, so put it inside a 0700 temp dir
+		// instead of directly in /tmp. takeAbletonLog removes the whole dir.
+		if dir, err := os.MkdirTemp("", "mosquitomarchy-ableton-*"); err == nil {
+			logPath := filepath.Join(dir, "run.log")
+			cmdline := "bash " + shellQuote(script) + " " + shellQuote(flag)
+			c := exec.Command(scriptBin, "-q", "-e", "-c", cmdline, logPath)
+			c.Env = env
+			return c, logPath
+		}
+	}
+	c := exec.Command("bash", script, flag)
+	c.Env = env
+	return c, ""
+}
+
+// shellQuote is single-quote shell quoting for the script(1) command string.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// takeAbletonLog reads and removes the temp PTY transcript, then appends the
+// native installer log the .run writes beside itself. The native log is the
+// detailed one (the "failed step 4" line lives there); the PTY transcript
+// covers the module's own prompts/preflight. The parent is a value receiver,
+// so the field resets must happen through the pointer.
+func (m *model) takeAbletonLog() string {
+	var parts []string
+	if path := m.abletonLogFile; path != "" {
+		m.abletonLogFile = ""
+		if b, err := os.ReadFile(path); err == nil {
+			if clean := cleanAbletonLog(string(b)); clean != "" {
+				parts = append(parts, clean)
+			}
+		}
+		_ = os.RemoveAll(filepath.Dir(path))
+	}
+	if since := m.abletonLogSince; !since.IsZero() {
+		m.abletonLogSince = time.Time{}
+		if path, native := newestAbletonInstallerLog(since); native != "" {
+			parts = append(parts, "===== Saved installer log: "+filepath.Base(path)+" =====\n\n"+native)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// newestAbletonInstallerLog returns the .run log written at or after since.
+// The .run names it ableton-linux-installer-<timestamp>-<pid>.log next to
+// itself; it records the detailed per-step failure (e.g. the winetricks task
+// and exit status), which the terminal summary does not.
+func newestAbletonInstallerLog(since time.Time) (string, string) {
+	var dirs []string
+	if repo := repoRoot(); repo != "" {
+		dirs = append(dirs, filepath.Join(repo, "scripts/apps/ableton"))
+	}
+	// The .run falls back to TMPDIR when its own folder is read-only.
+	dirs = append(dirs, os.TempDir())
+	var best string
+	var bestTime time.Time
+	for _, dir := range dirs {
+		matches, _ := filepath.Glob(filepath.Join(dir, "ableton-linux-installer-*.log"))
+		for _, path := range matches {
+			st, err := os.Stat(path)
+			if err != nil || st.ModTime().Before(since.Add(-2*time.Second)) {
+				continue
+			}
+			if best == "" || st.ModTime().After(bestTime) {
+				best, bestTime = path, st.ModTime()
+			}
+		}
+	}
+	if best == "" {
+		return "", ""
+	}
+	b, err := os.ReadFile(best)
+	if err != nil {
+		return "", ""
+	}
+	return best, cleanAbletonLog(string(b))
+}
+
+// cleanAbletonLog turns script(1)'s raw PTY transcript into something that is
+// readable in Info and clean on the clipboard: strip ANSI, CR and the
+// script(1) header/footer.
+func cleanAbletonLog(raw string) string {
+	s := ansi.Strip(raw)
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	lines := strings.Split(s, "\n")
+	for len(lines) > 0 && strings.TrimSpace(lines[0]) == "" {
+		lines = lines[1:]
+	}
+	for len(lines) > 0 && strings.Contains(lines[0], "COMMAND=") {
+		lines = lines[1:]
+	}
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if n := len(lines); n > 0 && strings.Contains(lines[n-1], "COMMAND_EXIT_CODE=") {
+		lines = lines[:n-1]
+	}
+	s = strings.Join(lines, "\n")
+	s = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' || r >= 0x20 {
+			return r
+		}
+		return -1
+	}, s)
+	return strings.TrimSpace(s)
+}
+
+// abletonLogText guarantees the log frame is never empty, and prefixes the
+// exit error the way the runner does for a failed action.
+func abletonLogText(out string, err error) string {
+	if strings.TrimSpace(out) == "" {
+		out = "No log captured."
+	}
+	if err != nil {
+		return fmt.Sprintf("# exit: %v\n%s", err, out)
+	}
+	return out
+}
+
+// askAbletonLog is the runner's "finished / View log / Back" step for the
+// module's interactive runs.
+func (m model) askAbletonLog(kind string) (model, tea.Cmd) {
+	noun := "installation"
+	if strings.HasPrefix(kind, "ableton-uninstall") {
+		noun = "uninstallation"
+	}
+	m.pendingAction = kind
+	m.pendingMsg = "The Ableton " + noun + " finished successfully.\n\nView the full log, or go back?"
+	if strings.HasSuffix(kind, "-err") {
+		m.pendingMsg = "The Ableton " + noun + " finished with errors.\n\nView the full log, or go back?"
+	}
+	m.pendingNo = "Back"
+	m.pendingYes = "View log"
+	m.push(scrConfirm)
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+	return m, nil
+}
+
+// finishAbleton runs the follow-up after the log prompt is answered: refresh
+// the tree, resume a batched install/uninstall, clear the selection.
+func (m model) finishAbleton(kind string) (model, tea.Cmd) {
+	m.pendingAction = ""
+	m.pendingMsg, m.pendingNo, m.pendingYes = "", "", ""
+	switch kind {
+	case "ableton-install-ok":
+		m.selected = map[string]bool{}
+		m.deferCmd(fetchAIRemovedCmd())
+		rest := m.abletonInstallWait
+		m.abletonInstallWait = nil
+		if len(rest) > 0 {
+			// The runner completion handler recognises "apply" and refreshes
+			// the tree/selection once the held-back part of the plan lands.
+			m.pendingAction = "apply"
+			return m.startWorking("Applying the rest of the selection", workingArgs("apply", rest)...)
+		}
+		return m, fetchTreeCmd("setup")
+	case "ableton-install-err":
+		m.abletonInstallWait = nil
+		return m, nil
+	case "ableton-uninstall-ok", "ableton-uninstall-err":
+		if len(m.uninstallWait) > 0 {
+			keys, pmsg := m.uninstallWait, m.uninstallMsg
+			m.uninstallWait, m.uninstallMsg = nil, ""
+			return m.startUninstall(keys, pmsg)
+		}
+		return m, fetchTreeCmd("uninstall-tree")
+	}
+	return m, nil
+}
+
+// startAbletonInstall runs the module's install flow in the TUI's own terminal:
+// tea.ExecProcess suspends the TUI and hands it to the interactive prompts, then
+// the captured PTY transcript is shown in the usual log frame. The rest of a
+// batched plan is held back until Ableton returns.
+func (m model) startAbletonInstall(plan []string) (model, tea.Cmd) {
+	var rest []string
+	for _, group := range plan {
+		parts := strings.Split(group, "\t")
+		if len(parts) == 0 {
+			continue
+		}
+		keys := make([]string, 0, len(parts)-1)
+		for _, k := range parts[1:] {
+			if k != "ableton" {
+				keys = append(keys, k)
+			}
+		}
+		if len(keys) > 0 {
+			rest = append(rest, parts[0]+"\t"+strings.Join(keys, "\t"))
+		}
+	}
+	m.abletonInstallWait = rest
+	m.pendingAction = ""
+	c, logPath := abletonInteractiveCommand("-i")
+	m.abletonLogFile = logPath
+	m.abletonLogSince = time.Now()
+	return m, tea.ExecProcess(c, func(err error) tea.Msg {
+		return abletonInstallMsg{err: err}
 	})
 }
 
@@ -3120,13 +3192,55 @@ func splitPreinstallKeys(keys []string) (mods, pre []string) {
 func (m model) confirmPreinstallRemove(pkgs []string) (model, tea.Cmd) {
 	m.pendingAction = "preinstalls-remove"
 	m.pendingArgs = pkgs
-	m.pendingMsg = fmt.Sprintf("Remove %d Omarchy preinstall(s)?\n\n%s\n\nThey are removed with `pacman -Rns`; their settings stay on disk, so reinstalling the package brings the app back.", len(pkgs), strings.Join(pkgs, ", "))
+	var cmd tea.Cmd
+	m.pendingMsg, cmd = m.withSpace(fmt.Sprintf("Remove %d Omarchy preinstall(s)?\n\n%s\n\nThey are removed with `pacman -Rns`; their settings stay on disk, so reinstalling the package brings the app back.", len(pkgs), strings.Join(pkgs, ", ")), "uninstall", pkgs)
 	m.pendingNo = "Keep them"
 	m.pendingYes = "Remove them"
 	m.push(scrConfirm)
 	// Focus "Keep them": a removal must be a deliberate yes.
 	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(0)
-	return m, nil
+	return m, cmd
+}
+
+// confirmInstallSelection installs the Tab-checked rows, and only those. An
+// empty selection is a warning, not an implicit cursor install.
+func (m model) confirmInstallSelection() (model, tea.Cmd) {
+	keys := dedupeAudioBundle(m.allSelectedKeys())
+	if len(keys) == 0 {
+		m.toast, _ = m.toast.SetWarn("nothing selected — press tab to select items")
+		return m, nil
+	}
+	mods, pre := splitPreinstallKeys(keys)
+	plan := m.applyPlan()
+	if len(pre) > 0 {
+		m.pendingInstallPlan = plan
+		return m.confirmPreinstallRemove(pre)
+	}
+	if len(mods) == 0 {
+		return m, nil
+	}
+	m.pendingAction = "apply"
+	m.pendingArgs = plan
+	m.kpxGnomeRm = 0
+	var cmd tea.Cmd
+	m.pendingMsg, cmd = m.withSpace(fmt.Sprintf("Install %d selected item(s)?\n\n%s", len(keys), strings.Join(keys, "\n")), "install", planKeys(plan))
+	m.pendingNo = "Cancel"
+	m.pendingYes = "Install"
+	m.push(scrConfirm)
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
+	return m, cmd
+}
+
+// confirmUninstallSelection removes the Tab-checked rows, and only those.
+func (m model) confirmUninstallSelection() (model, tea.Cmd) {
+	keys := dedupeAudioBundle(m.allSelectedKeys())
+	if len(keys) == 0 {
+		m.toast, _ = m.toast.SetWarn("nothing selected — press tab to select items")
+		return m, nil
+	}
+	m.kpxGnomeRm = 0
+	return m.startUninstall(keys, fmt.Sprintf("Uninstall %d selected item(s)?\n\n%s",
+		len(keys), strings.Join(keys, "\n")))
 }
 
 // resumeInstallPlan shows the install confirm for a plan stashed behind a
@@ -3156,12 +3270,27 @@ func (m model) resumeInstallPlan() (model, tea.Cmd) {
 	m.pendingAction = "apply"
 	m.pendingArgs = plan
 	m.kpxGnomeRm = 0
-	m.pendingMsg = fmt.Sprintf("Install %d selected item(s)?\n\n%s", n, strings.Join(names, "\n"))
+	var cmd tea.Cmd
+	m.pendingMsg, cmd = m.withSpace(fmt.Sprintf("Install %d selected item(s)?\n\n%s", n, strings.Join(names, "\n")), "install", planKeys(plan))
 	m.pendingNo = "Cancel"
 	m.pendingYes = "Install"
 	m.push(scrConfirm)
 	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
-	return m, nil
+	return m, cmd
+}
+
+// planKeys flattens the grouped apply plan ("folder<TAB>key<TAB>key") back to
+// plain keys, for the space estimate only.
+func planKeys(plan []string) []string {
+	var out []string
+	for _, g := range plan {
+		parts := strings.Split(g, "\t")
+		if len(parts) < 2 {
+			continue
+		}
+		out = append(out, parts[1:]...)
+	}
+	return out
 }
 
 // refetchTree reloads whichever tree the user is looking at (Setup or
@@ -3182,7 +3311,7 @@ func (m model) resumeUninstall() (model, tea.Cmd) {
 	if len(keys) == 0 {
 		return m, nil
 	}
-	// Ableton goes through its own edition picker (see startUninstall).
+	// Ableton goes through its own one-edition-at-a-time uninstall flow.
 	if i := indexOfString(keys, "ableton"); i >= 0 {
 		m.uninstallWait = append(append([]string(nil), keys[:i]...), keys[i+1:]...)
 		m.uninstallMsg = msg
@@ -3190,12 +3319,13 @@ func (m model) resumeUninstall() (model, tea.Cmd) {
 	}
 	m.pendingAction = "uninstall"
 	m.pendingArgs = keys
-	m.pendingMsg = msg
+	var cmd tea.Cmd
+	m.pendingMsg, cmd = m.withSpace(msg, "uninstall", keys)
 	m.pendingNo = "Cancel"
 	m.pendingYes = "Uninstall"
 	m.push(scrConfirm)
 	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
-	return m, nil
+	return m, cmd
 }
 
 // rebuildSetup rebuilds the LEVEL-1 Setup picker: the categories as plain
@@ -3371,7 +3501,28 @@ func homePagesOverview() string {
 	return b.String()
 }
 
+// categoryPurpose answers the first question `i` on a category should answer:
+// what is this group for, and what does acting on it touch? The item list
+// below it is the inventory, not the explanation.
+var categoryPurpose = map[string]string{
+	"apps":        "Full desktop applications from the catalog. Each row installs one app; removing it leaves your project files and personal settings alone.",
+	"tuis":        "Terminal applications from the TUI catalog. They are installed as normal packages and their own configuration is kept on removal.",
+	"webapps":     "Web apps deployed as desktop entries (native wrappers where one exists). Removing one takes the launcher away, not your account or data online.",
+	"plugins":     "Omarchy and Hyprland shell plugins plus the small desktop-hardware modules. These change the desktop itself rather than adding an app.",
+	"fixes":       "Idempotent repairs for known breakage. Uninstall lists only the fixes that are actually applied; nothing is removed speculatively.",
+	"tweaks":      "Optional, reversible preference changes. Nothing here is applied automatically, and each tweak has its own undo path.",
+	"mosquito":    "The project's own tools, including the manager itself: the deployer, the update watchdog, and the audio and desktop helpers built for this machine.",
+	"lame":        "Local language models and the switches around Omarchy's agentic layer. Model data can be large; the row that installs it is the row that explains the trade-off.",
+	"themes":      "Extra Omarchy themes that can be installed and removed here. Your current theme and wallpaper are not changed by listing them.",
+	"vms":         "Virtual machines for Windows, macOS and Omarchy. The disk images are large; removing a VM module keeps the images unless you explicitly remove them.",
+	"preinstalls": "Stock Omarchy packages listed for deliberate removal. Their settings stay on disk, so reinstalling the package brings the app back.",
+	"patches":     "Removal rows for vendor patches that are currently applied. Each row restores the original files.",
+}
+
 func (m model) categoryInfo(folder string) string {
+	if folder == "audio-stack" {
+		return "audio-stack\n\n" + audioBundleInfo
+	}
 	label := folder
 	for _, f := range m.setupFolders {
 		if f.Folder == folder {
@@ -3382,10 +3533,14 @@ func (m model) categoryInfo(folder string) string {
 	items := m.setupItemsOf(folder)
 	var b strings.Builder
 	b.WriteString(label)
+	if purpose := categoryPurpose[folder]; purpose != "" {
+		b.WriteString("\n\n" + purpose)
+	}
+	b.WriteString("\n\n")
 	if n := len(items); n == 1 {
-		b.WriteString("\n\n1 item")
+		b.WriteString("1 item")
 	} else {
-		fmt.Fprintf(&b, "\n\n%d items", n)
+		fmt.Fprintf(&b, "%d items", n)
 	}
 	if n := m.categorySelectedCount(folder); n > 0 {
 		fmt.Fprintf(&b, " — %d ticked", n)
@@ -3422,10 +3577,10 @@ func loadingTreePicker(m model) navPicker {
 
 func (m model) rebuildSetup() navPicker {
 	if m.treeLoading {
-		return carryRange(loadingTreePicker(m), m.setupPicker, m.setupAnchorChecked)
+		return loadingTreePicker(m)
 	}
 	if m.filterText != "" {
-		return carryRange(m.rebuildFilteredSetup(), m.setupPicker, m.setupAnchorChecked)
+		return m.rebuildFilteredSetup()
 	}
 	idx := m.setupPicker.Index()
 	uninstall := m.treeMode == "uninstall"
@@ -3481,7 +3636,7 @@ func (m model) rebuildSetup() navPicker {
 		// Fallback for when the row the cursor was on is genuinely gone (the
 		// typing filter just hid it): land on the same index, not on row 0.
 		SelectIndex(min(idx, len(out)-1))
-	return carryRange(np, m.setupPicker, m.setupAnchorChecked)
+	return np
 }
 
 // allFoldersOpen returns a copy of the fold state with every folder expanded.
@@ -3534,7 +3689,7 @@ type setupCategory struct {
 // did not ask about. The version suffix is left alone: "- v1.0.0" is what tells
 // you a module can be updated.
 func trimOwnPrefix(folder, label string) string {
-	if folder != "mosquito" {
+	if folder != "mosquito" && folder != "audio-stack" {
 		return label
 	}
 	for _, p := range []string{"mosquito-", "mosquito"} {
@@ -3647,6 +3802,9 @@ func (m model) setupRows(uninstall bool) (visible, full []tuikit.PickerItem) {
 func visibleSetupRows(full []tuikit.PickerItem, open map[string]bool) []tuikit.PickerItem {
 	out := make([]tuikit.PickerItem, 0, len(full))
 	for _, r := range full {
+		if r.Parent != "" && !open[r.Parent] {
+			continue
+		}
 		if r.Folder {
 			_, id, ok := tuikit.TreeSplit(r.Value)
 			if ok {
@@ -3675,6 +3833,48 @@ func visibleSetupRows(full []tuikit.PickerItem, open map[string]bool) []tuikit.P
 	return out
 }
 
+func (m model) setupFolderByID(id string) *FolderRec {
+	for i := range m.setupFolders {
+		if m.setupFolders[i].Folder == id {
+			return &m.setupFolders[i]
+		}
+	}
+	return nil
+}
+
+// nestedSetupRows renders audio-stack under mosquito. It keeps the folder's
+// fold/Tab/Enter behaviour, but the folder row itself uses the ordinary module
+// look: its □/■ mark sits in the same column as the parent's ○/● checkboxes,
+// and its children stay indented one level down.
+func (m model) nestedSetupRows(parent string, open map[string]bool, idx map[string]*setupCategory) []tuikit.PickerItem {
+	af := m.setupFolderByID("audio-stack")
+	if af == nil || af.Parent != parent {
+		return nil
+	}
+	c := idx[af.Folder]
+	if c == nil {
+		return nil
+	}
+	mark := "□"
+	if c.total > 0 && c.marked == c.total {
+		mark = "■"
+	}
+	rows := tuikit.BuildFolderTree(
+		[]tuikit.TreeFolder{{ID: af.Folder, Label: af.Label, Total: c.total, Marked: c.marked}},
+		map[string][]tuikit.TreeItem{af.Folder: c.rows}, open, m.blinkOn)
+	for i := range rows {
+		rows[i].Parent = parent
+		if rows[i].Folder {
+			rows[i].Flat = true
+			rows[i].Suffix = ""
+			rows[i].Display = "    └─ " + mark + " " + af.Label
+			continue
+		}
+		rows[i].Display = "    " + rows[i].Display
+	}
+	return rows
+}
+
 func (m model) buildSetupRows(uninstall bool, open map[string]bool, idx map[string]*setupCategory) []tuikit.PickerItem {
 	out := make([]tuikit.PickerItem, 0, len(m.setupFolders)+8)
 
@@ -3694,6 +3894,9 @@ func (m model) buildSetupRows(uninstall bool, open map[string]bool, idx map[stri
 	// BuildFolderTree call: BuildFolderTree needs every folder's children up
 	// front, and open state is per folder.
 	for _, f := range m.setupFolders {
+		if f.Parent != "" {
+			continue
+		}
 		c := idx[f.Folder]
 		tf := tuikit.TreeFolder{
 			ID:     f.Folder,
@@ -3706,6 +3909,18 @@ func (m model) buildSetupRows(uninstall bool, open map[string]bool, idx map[stri
 			tf.Total, tf.Marked = 0, 0
 		}
 		out = append(out, tuikit.BuildFolderTree([]tuikit.TreeFolder{tf}, seen, open, m.blinkOn)...)
+		if f.Folder == "mosquito" {
+			// audio-stack is the last child, so the normal last row must end in
+			// ├─ and the nested folder row supplies the closing └─. Otherwise
+			// the tree showed a └─ followed by a second branch.
+			for i := len(out) - 1; i >= 0; i-- {
+				if strings.HasPrefix(out[i].Display, "    └─ ") {
+					out[i].Display = "    ├─ " + strings.TrimPrefix(out[i].Display, "    └─ ")
+					break
+				}
+			}
+			out = append(out, m.nestedSetupRows(f.Folder, open, idx)...)
+		}
 	}
 
 	if !uninstall {
@@ -3883,7 +4098,7 @@ func (m model) rebuildSetupCat() navPicker {
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		)
-	return carryRange(p.SelectIndex(idx), m.setupCatPicker, m.setupAnchorChecked)
+	return p.SelectIndex(idx)
 }
 
 // backupTreeItems is the same tree for the backup content selection.

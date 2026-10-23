@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# ABANDONED — kept for reference. setup-jamjamjam-plugin.sh no longer installs
+# this helper or binds RIGHT CTRL.
+#
 # jamjamjam-analyze — global push-to-talk trigger for the jamjamjam neck TUI.
 #
 # Bound by setup-jamjamjam-plugin.sh to the RIGHT CTRL key:

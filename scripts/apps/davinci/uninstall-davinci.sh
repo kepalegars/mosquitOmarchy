@@ -111,6 +111,13 @@ if [[ -d "$OFX_PLUGIN_DIR" ]] && find "$OFX_PLUGIN_DIR" -maxdepth 1 -iname '*spe
   fi
 fi
 
+# 4) DRwrap integration (service + generated launcher; package and converted files kept)
+if command -v drwrap >/dev/null 2>&1; then
+  if ask "Remove the DRwrap service/launcher integration (package and converted files kept)?" y; then
+    drwrap setup --remove >/dev/null 2>&1 && ok "DRwrap integration removed" || warn "drwrap setup --remove failed"
+  fi
+fi
+
 echo
 ok "Done — the data (projects, LUTs, preferences) is kept."
 warn "To also wipe everything:  rm -rf ~/.local/share/DaVinciResolve ~/.local/share/BlackmagicDesign ~/.config/Blackmagic\ Design"

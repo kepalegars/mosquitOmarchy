@@ -179,3 +179,47 @@ func TestPatchesSilentWhenAbsent(t *testing.T) {
 		t.Fatalf("top = %d, want scrMain(%d)", m.top(), scrMain)
 	}
 }
+
+// TestSecretPatchWorksOnSetupRoot checks the hidden "p" shortcut from the
+// top-level Setup tree, not only from a category screen. It only asserts that
+// the key dispatches the backend query; the query itself is covered by the
+// backend tests.
+func TestSecretPatchWorksOnSetupRoot(t *testing.T) {
+	m := initialModel()
+	m.w, m.h = 120, 40
+	m.push(scrSetup)
+	m.setupItems = []SetupItemRec{{Folder: "apps", Key: "ableton", Label: "Ableton"}}
+	m.selected[setupValue("apps", "ableton")] = true
+	_, cmd := m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if cmd == nil {
+		t.Fatal("p on Setup root did not dispatch the patch query")
+	}
+}
+
+func TestHighlightedKeyOf(t *testing.T) {
+	if got := highlightedKeyOf("item:apps:ableton"); len(got) != 1 || got[0] != "ableton" {
+		t.Fatalf("highlightedKeyOf = %v", got)
+	}
+	if got := highlightedKeyOf("cat:apps"); got != nil {
+		t.Fatalf("highlightedKeyOf(category) = %v, want nil", got)
+	}
+}
+
+// TestStartAbletonInstallRunsInteractive pins the terminal contract: the install
+// must take the terminal over (tea.ExecProcess) for the module's prompts, with
+// the rest of a batched plan held back.
+func TestStartAbletonInstallRunsInteractive(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrSetup}
+	m.w, m.h = 120, 40
+	m2, cmd := m.startAbletonInstall([]string{"apps\tbitwig\tableton"})
+	if cmd == nil {
+		t.Fatal("startAbletonInstall returned no command")
+	}
+	if m2.pendingAction != "" {
+		t.Fatalf("pendingAction = %q, want empty (interactive flow)", m2.pendingAction)
+	}
+	if len(m2.abletonInstallWait) != 1 || m2.abletonInstallWait[0] != "apps\tbitwig" {
+		t.Fatalf("abletonInstallWait = %#v, want [apps\\tbitwig]", m2.abletonInstallWait)
+	}
+}

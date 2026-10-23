@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 
@@ -303,8 +304,19 @@ type model struct {
 	// pendingInstallPlan holds an install plan waiting behind a preinstall
 	// removal confirm (mixed selection). Empty = no install pending.
 	pendingInstallPlan []string
-	menuEntries        []MenuEntryRec
-	menuEntriesLoaded  bool
+	// abletonInstallWait holds the rest of an install plan while Ableton runs
+	// in its own interactive flow (the module needs a real TTY for its
+	// archive/disk prompts). Empty = no continuation pending.
+	abletonInstallWait []string
+	// abletonLogFile is the temporary transcript captured while the module
+	// owns the terminal; abletonLogSince bounds the native .run log lookup;
+	// abletonLogReturn is the finishing action to run once the user closes the
+	// copyable log frame.
+	abletonLogFile    string
+	abletonLogSince   time.Time
+	abletonLogReturn  string
+	menuEntries       []MenuEntryRec
+	menuEntriesLoaded bool
 	// quickFixes is the Quick fixes catalog (fetched from the backend) and
 	// quickFixChecked the ticks on its own screen. pendingFixIDs is the marked
 	// set the confirmation is about, held while the dialog is up so the answer
@@ -410,6 +422,18 @@ type model struct {
 	pendingNo   string
 	pendingYes  string
 
+	// spaceSeq/spaceOp tag the async disk-space answer to the confirm that
+	// asked for it, so a late answer cannot rewrite a later prompt.
+	spaceSeq int
+	spaceOp  string
+	// spaceBase is the question without the disk line; a blink rebuilds from
+	// it so only the red warning changes. spaceShort drives the blink.
+	spaceBase     string
+	spaceArmed    bool
+	spaceLineText string
+	spaceShort    bool
+	spaceBlinkOn  bool
+
 	// passphraseSet tracks whether OMARCHY_BACKUP_PASSPHRASE is currently
 	// exported for the running child, so RunnerDone can unset it.
 	passphraseSet bool
@@ -495,7 +519,19 @@ func (m model) Init() tea.Cmd {
 // not.
 func (m *model) top() screen { return m.nav[len(m.nav)-1] }
 
-func (m *model) push(s screen) { m.nav = append(m.nav, s) }
+func (m *model) push(s screen) {
+	if s == scrConfirm {
+		// A new dialog must never inherit the previous one's shortfall blink.
+		if !m.spaceArmed {
+			m.spaceBase = ""
+		}
+		m.spaceArmed = false
+		m.spaceShort = false
+		m.spaceBlinkOn = false
+		m.spaceLineText = ""
+	}
+	m.nav = append(m.nav, s)
+}
 
 func (m *model) pop() {
 	if len(m.nav) > 1 {
@@ -659,8 +695,7 @@ func (m *model) toggle(value string) {
 }
 
 // pushKeepassxcConsent raises the secret-service consent prompt for a newly
-// ticked KeePassXC row (shared by the Tab toggle and the Tab-held range:
-// both can newly check it, and installing without consent is not an option).
+// ticked KeePassXC row (installing without consent is not an option).
 func (m *model) pushKeepassxcConsent(v string) {
 	// Rebuild FIRST so the ticked row shows up even while the
 	// consent prompt is on screen (the prompt pops over it).
@@ -675,152 +710,21 @@ func (m *model) pushKeepassxcConsent(v string) {
 	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
 }
 
-// rangeCheck applies a Tab-held range (PickerRangeMsg): every value toggles
-// through the same helpers a single Tab uses — folders fill-or-empty as
-// usual, rows flip. Turning back over crossed rows untoggles them, so a
-// held Tab works like a toggle brush. A newly checked KeePassXC row still
-// asks consent, like its Tab does.
-func (m *model) rangeCheck(values []string, anchor string) {
-	switch m.top() {
-	case scrSetupCat:
-		for _, v := range values {
-			if strings.HasPrefix(v, "cat:") {
-				m.toggleFolder(strings.TrimPrefix(v, "cat:"))
-			} else if strings.HasPrefix(v, "item:") {
-				m.toggle(v)
-				if m.treeMode == "install" && strings.HasSuffix(v, ":keepassxc") && m.selected[v] {
-					m.pushKeepassxcConsent(v)
-					m.setupCatPicker = m.setupCatPicker.ArmRange(anchor)
-					return
-				}
-			}
-		}
-		m.setupCatPicker = m.rebuildSetupCat()
-		m.setupCatPicker = m.setupCatPicker.ArmRange(anchor)
-	case scrBackupApps:
-		for _, v := range values {
-			if strings.HasPrefix(v, "cat:") {
-				toggleTreeFolder(m.backupItems, m.backupChecked, strings.TrimPrefix(v, "cat:"))
-			} else if strings.HasPrefix(v, "item:") {
-				if m.backupChecked[v] {
-					delete(m.backupChecked, v)
-				} else {
-					m.backupChecked[v] = true
-				}
-			}
-		}
-		saveBackupSelection(m.backupItems, m.backupChecked)
-		m.backupAppsPicker = m.rebuildBackupApps()
-		m.backupAppsPicker = m.backupAppsPicker.ArmRange(anchor)
-	case scrUpdate:
-		for _, v := range values {
-			if v == "" || v == "repo" || v == "back" || v == "apply" {
-				continue
-			}
-			m.toggleUpdate(v)
-		}
-		m.updatePicker = m.rebuildUpdate()
-		m.updatePicker = m.updatePicker.ArmRange(anchor)
-	case scrHealth:
-		for _, v := range values {
-			if v == "back" {
-				continue
-			}
-			m.toggleHealth(v)
-		}
-		m.healthPicker = m.rebuildHealth()
-		m.healthPicker = m.healthPicker.ArmRange(anchor)
-	case scrSetup:
-		for _, v := range values {
-			if strings.HasPrefix(v, "cat:") {
-				m.toggleFolder(strings.TrimPrefix(v, "cat:"))
-			} else if strings.HasPrefix(v, "item:") {
-				m.toggle(v)
-			}
-		}
-		m.setupPicker = m.rebuildSetup()
-		m.setupPicker = m.setupPicker.ArmRange(anchor)
-	case scrKBList:
-		for _, v := range values {
-			if strings.HasPrefix(v, "kb:") {
-				x := strings.TrimPrefix(v, "kb:")
-				if m.kbSel[x] {
-					delete(m.kbSel, x)
-				} else {
-					m.kbSel[x] = true
-				}
-			}
-		}
-		m.kbListPicker = m.rebuildKBList()
-		m.kbListPicker = m.kbListPicker.ArmRange(anchor)
-	case scrQuickFixes:
-		if m.quickFixChecked == nil {
-			m.quickFixChecked = map[string]bool{}
-		}
-		for _, v := range values {
-			if _, id, ok := tuikit.TreeSplit(v); ok {
-				m.quickFixChecked[id] = !m.quickFixChecked[id]
-			}
-		}
-		m.quickFixPicker = m.rebuildQuickFixes()
-		m.quickFixPicker = m.quickFixPicker.ArmRange(anchor)
-	case scrMenuEntries:
-		if m.menuEntryChecked == nil {
-			return
-		}
-		for _, v := range values {
-			if name := strings.TrimPrefix(v, "mentry:"); name != v {
-				m.menuEntryChecked[name] = !m.menuEntryChecked[name]
-			}
-		}
-		m.menuEntriesPicker = m.rebuildMenuEntriesPicker()
-		m.menuEntriesPicker = m.menuEntriesPicker.ArmRange(anchor)
-	}
-}
-
 // toggleFolder marks every child of a folder, or unmarks them all when they
 // were all marked already (one keystroke always flips to an extreme, exactly
 // like the audio-plugin-manager's folder select-all).
 func (m *model) toggleFolder(folder string) {
-	toggleTreeFolder(m.setupItems, m.selected, folder)
-}
-
-// carryRange copies a Tab hold across a repaint rebuild (the blink tick
-// rebuilds the Setup pickers every 600ms; without this a hold died on the
-// first blink after Tab and every range past one second silently stopped
-// selecting). The anchor travels as a VALUE resolved in the new rows, so a
-// rebuild that legitimately removed it simply ends the range. Crucially the
-// anchor must still be CHECKED: re-arming after an untoggle is what made a
-// just-emptied folder reselect itself on the next arrow.
-func carryRange(np navPicker, prev navPicker, checked func(string) bool) navPicker {
-	if !prev.tabHeld {
-		return np
+	folders := []string{folder}
+	for _, f := range m.setupFolders {
+		if f.Parent == folder {
+			folders = append(folders, f.Folder)
+		}
 	}
-	if prev.tabAnchor < 0 || prev.tabAnchor >= len(prev.items) {
-		return np
-	}
-	v := prev.items[prev.tabAnchor].Value
-	if !checked(v) {
-		return np
-	}
-	return np.ArmRange(v)
-}
-
-// setupAnchorChecked is the carry gate for both Setup trees: folders count
-// when full, rows when ticked, anything else (Back, headings) never arms.
-func (m model) setupAnchorChecked(v string) bool {
-	if f, ok := strings.CutPrefix(v, "cat:"); ok {
-		return treeFolderChecked(m.setupItems, m.selected, f)
-	}
-	if strings.HasPrefix(v, "item:") {
-		return m.selected[v]
-	}
-	return false
+	toggleTreeFolders(m.setupItems, m.selected, folders)
 }
 
 // treeFolderChecked reports whether every tickable row of a folder is
-// already checked (the skip test for Tab-held ranges: a full folder stays
-// full, anything else fills through the normal toggle path).
+// already checked (the folder row's ● mark).
 func treeFolderChecked(items []SetupItemRec, checked map[string]bool, folder string) bool {
 	n := 0
 	for _, it := range items {
@@ -839,14 +743,26 @@ func treeFolderChecked(items []SetupItemRec, checked map[string]bool, folder str
 // backup-content trees. Greyed (Disabled) rows are never ticked: selecting
 // what cannot run would only produce a failed install.
 func toggleTreeFolder(items []SetupItemRec, checked map[string]bool, folder string) {
+	toggleTreeFolders(items, checked, []string{folder})
+}
+
+func toggleTreeFolders(items []SetupItemRec, checked map[string]bool, folders []string) {
+	inFolders := func(folder string) bool {
+		for _, f := range folders {
+			if f == folder {
+				return true
+			}
+		}
+		return false
+	}
 	n := 0
 	anyUnchecked := false
 	for _, it := range items {
-		if it.Folder != folder || it.Disabled {
+		if !inFolders(it.Folder) || it.Disabled {
 			continue
 		}
 		n++
-		if !checked[setupValue(folder, it.Key)] {
+		if !checked[setupValue(it.Folder, it.Key)] {
 			anyUnchecked = true
 			break
 		}
@@ -855,13 +771,13 @@ func toggleTreeFolder(items []SetupItemRec, checked map[string]bool, folder stri
 		return
 	}
 	for _, it := range items {
-		if it.Folder != folder || it.Disabled {
+		if !inFolders(it.Folder) || it.Disabled {
 			continue
 		}
 		if anyUnchecked {
-			checked[setupValue(folder, it.Key)] = true
+			checked[setupValue(it.Folder, it.Key)] = true
 		} else {
-			delete(checked, setupValue(folder, it.Key))
+			delete(checked, setupValue(it.Folder, it.Key))
 		}
 	}
 }
@@ -915,29 +831,6 @@ func (m *model) toggleHealth(key string) {
 	}
 }
 
-// filteredCheckedKeys lists the ticked Setup/Uninstall leaf rows. While the
-// typing filter is active only the visible (matching) rows count, so acting
-// from the filtered view never touches unlisted ticked rows.
-func (m model) filteredCheckedKeys() []string {
-	if m.filterText == "" {
-		return nil
-	}
-	ft := strings.ToLower(m.filterText)
-	var out []string
-	for _, f := range m.setupFolders {
-		for _, it := range m.setupItemsOf(f.Folder) {
-			if !strings.Contains(strings.ToLower(it.Label), ft) {
-				continue
-			}
-			v := setupValue(f.Folder, it.Key)
-			if m.selected[v] {
-				out = append(out, strings.TrimPrefix(v, "item:"))
-			}
-		}
-	}
-	return out
-}
-
 // healthKeys returns the checked Health check pieces in list order.
 func (m model) healthKeys() []string {
 	out := make([]string, 0, len(m.healthChecked))
@@ -979,26 +872,64 @@ func (m model) updateKeys() []string {
 
 // applyPlan groups the checked Setup items by folder, in folder order, as
 // TAB-separated "<folder>\t<key>…" groups for the backend's `apply`.
+var audioStackChildren = map[string]bool{
+	"audio-plugin-manager": true,
+	"mixbay":               true,
+	"levels-guard":         true,
+	"live-mode":            true,
+	"pipewire-settings":    true,
+}
+
+const audioBundleInfo = `Installs the whole EVO recording chain in one pass: the Wine/yabridge foundation and Audio Plugin Manager, Mixbay (EVO control and USB audio bay), Levels Guard (Omarchy audio panel and media-key protection), live mode, and the PipeWire sample-rate/buffer panel.
+
+Installing the bundle runs all five setup scripts back to back: packages, Wine prefixes, plugin-manager data, the EVO kernel module and audio bay, the guarded panel and media keys, live-session tooling, and the PipeWire panel. It is idempotent — running it again only fills gaps — and every component can still be installed or removed on its own from the rows below.
+
+Why one bundle: all five are built around the same EVO and the same low-latency session. Installing them together avoids five hand-run installers and the usual mismatch between native volume, Mixbay levels, the plugin manager and PipeWire.`
+
+func dedupeAudioBundle(keys []string) []string {
+	hasBundle := false
+	for _, k := range keys {
+		if k == "audio" {
+			hasBundle = true
+			break
+		}
+	}
+	if !hasBundle {
+		return keys
+	}
+	out := keys[:0]
+	for _, k := range keys {
+		if !audioStackChildren[k] {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 func (m model) applyPlan() []string {
-	var groups []string
+	var order []string
+	byGroup := map[string][]string{}
 	for _, f := range m.setupFolders {
-		var keys []string
 		for _, it := range m.setupItemsOf(f.Folder) {
-			// Preinstall rows remove stock packages; they never install.
 			if strings.HasPrefix(it.Key, "preinstall:") {
 				continue
 			}
-			if m.selected[setupValue(f.Folder, it.Key)] {
-				keys = append(keys, it.Key)
+			if !m.selected[setupValue(f.Folder, it.Key)] {
+				continue
 			}
-		}
-		if len(keys) > 0 {
-			group := f.Folder
-			for _, k := range keys {
-				group += "\t" + k
+			group := it.Group
+			if group == "" {
+				group = f.Folder
 			}
-			groups = append(groups, group)
+			if _, ok := byGroup[group]; !ok {
+				order = append(order, group)
+			}
+			byGroup[group] = append(byGroup[group], it.Key)
 		}
+	}
+	groups := make([]string, 0, len(order))
+	for _, g := range order {
+		groups = append(groups, g+"\t"+strings.Join(dedupeAudioBundle(byGroup[g]), "\t"))
 	}
 	return groups
 }
@@ -1030,7 +961,13 @@ func (m model) allSelectedKeys() []string {
 // highlightedKey returns the item key under the cursor in the Setup folder
 // tree (used by Uninstall: Enter on an unchecked row uninstalls just that row).
 func (m model) highlightedKey() []string {
-	v := m.setupCatPicker.SelectedValue()
+	return highlightedKeyOf(m.setupCatPicker.SelectedValue())
+}
+
+// highlightedKeyOf decodes a picker value ("item:<folder>:<key>") into the
+// bare module key. Both the Setup root tree and a category tree use it, so the
+// hidden "p" shortcut works wherever a patchable app is highlighted.
+func highlightedKeyOf(v string) []string {
 	if !strings.HasPrefix(v, "item:") {
 		return nil
 	}
@@ -1039,26 +976,4 @@ func (m model) highlightedKey() []string {
 		return []string{rest[i+1:]}
 	}
 	return nil
-}
-
-// applyPlanCat is the apply plan for ONE category only (the Setup submenu's
-// Enter installs just what is checked there).
-func (m model) applyPlanCat(cat string) []string {
-	var keys []string
-	for _, it := range m.setupItemsOf(cat) {
-		if strings.HasPrefix(it.Key, "preinstall:") {
-			continue
-		}
-		if m.selected[setupValue(cat, it.Key)] {
-			keys = append(keys, it.Key)
-		}
-	}
-	if len(keys) == 0 {
-		return nil
-	}
-	group := cat
-	for _, k := range keys {
-		group += "\t" + k
-	}
-	return []string{group}
 }

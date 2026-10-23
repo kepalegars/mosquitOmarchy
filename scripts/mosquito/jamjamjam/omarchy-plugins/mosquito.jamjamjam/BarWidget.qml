@@ -10,11 +10,9 @@ BarWidget {
 
   readonly property var service: bar && bar.shell ? bar.shell.serviceFor(moduleName) : null
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
-  readonly property bool midiMode: service ? service.midiMode : false
-  readonly property bool midiConnected: service ? service.midiConnected : false
   readonly property bool holdAnalyzing: service ? service.hold === true : false
-  // Capture runs while the panel is open, the hold is active, or the TUI is
-  // analyzing. Any of those means the plugin is listening, so the fork blinks.
+  // Capture runs while the panel is open or the hold is active; any of those
+  // means the plugin is listening, so the fork blinks.
   readonly property bool listening: service ? (service.hold === true || (service.recording === true && service.paused !== true)) : false
   property bool blinkOn: false
 
@@ -86,7 +84,7 @@ BarWidget {
     fixedWidth: root.barSize
     tooltipText: !root.service ? "jamjamjam is starting"
       : (root.holdAnalyzing ? "jamjamjam · analyzing… (hold released to stop)"
-        : (root.service.recording ? (root.service.paused ? "jamjamjam · paused" : (root.midiMode ? "jamjamjam · analyzing · MIDI on" : "jamjamjam · analyzing"))
+        : (root.service.recording ? (root.service.paused ? "jamjamjam · paused" : "jamjamjam · analyzing")
           : "jamjamjam · tap to analyze audio"))
 
     onPressed: function(buttonCode) {
@@ -113,9 +111,8 @@ BarWidget {
         color: root.listening && root.blinkOn ? Color.urgent : "#ffffff"
       }
 
-// Analysis indicator: a pulsing ring while the analyze hold is active (the
-// global Right Ctrl hold), so the hold is visible from the bar even when the
-// TUI window is not focused.
+      // Analysis indicator: a pulsing ring while a global analysis hold is
+      // active, so the hold is visible from the bar.
       Rectangle {
         id: analyzeRing
         anchors.fill: parent
@@ -135,16 +132,6 @@ BarWidget {
         }
       }
 
-      // Small badge when MIDI device connected
-      Rectangle {
-        width: Style.space(6)
-        height: Style.space(6)
-        radius: width / 2
-        anchors.top: parent.top
-        anchors.left: parent.left
-        visible: root.midiConnected
-        color: Color.accent
-      }
     }
   }
 }

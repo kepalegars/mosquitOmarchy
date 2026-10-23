@@ -216,7 +216,7 @@ func WithCategoryMark(items []PickerItem, marked func(folderValue string) int) [
 		return items
 	}
 	for i := range items {
-		if !items[i].Folder {
+		if !items[i].Folder || items[i].Flat {
 			continue
 		}
 		if marked(items[i].Value) > 0 {
@@ -301,7 +301,7 @@ func BuildFolderTree(folders []TreeFolder, items map[string][]TreeItem, open map
 				branch = "└─ "
 			}
 			row := PickerItem{
-				Display: "    " + branch + mark + "  " + it.Label,
+				Display: "    " + branch + mark + " " + it.Label,
 				Value:   TreeValue(TreeItemPrefix, it.ID),
 				Badge:   it.Badge,
 			}

@@ -13,7 +13,7 @@ func TestIsAssetGateNote(t *testing.T) {
 	for _, tc := range []string{
 		"",
 		"nothing left to do here",
-		"needs something",                      // no "in scripts/apps/" tail
+		"needs something", // no "in scripts/apps/" tail
 		"something in scripts/apps/ without — ", // separator but no "needs " tail
 		"a — b — needs x in scripts/apps/y/",    // last " — " wins: still gated
 	} {

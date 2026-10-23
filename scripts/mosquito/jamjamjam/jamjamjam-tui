@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# ABANDONED — kept for reference. setup-jamjamjam-plugin.sh no longer installs
+# this dispatcher.
+#
 # jamjamjam-tui — opens the jamjamjam guitar-neck TUI (floating, centered
 # omarchy-style prompt window) in a foot terminal.
 # Invoked by:

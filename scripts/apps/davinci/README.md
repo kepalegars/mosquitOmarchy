@@ -15,7 +15,18 @@ Installs **DaVinci Resolve** (Studio or free) from the official Blackmagic insta
 
 Drop the zip in `scripts/apps/davinci/` (exact file name = edition chosen automatically). When the zip is missing, the script itself displays these three links as clickable hyperlinks (Ctrl+click to open).
 
-Steps: dependencies + OpenCL runtime depending on GPU → copy to `/opt/resolve` → XWayland launcher (`QT_QPA_PLATFORM=xcb`), adjustable zoom → **H.264/H.265** (Studio = native codecs, optional FFmpeg plugin; free = experimental and reversible system-codec enablement — reliable alternative: transcode to DNxHR) → optional OFX **SpectraFilm**. Data (projects, preferences) is never touched.
+Steps: dependencies + OpenCL runtime depending on GPU → copy to `/opt/resolve` → XWayland launcher (`QT_QPA_PLATFORM=xcb`), adjustable zoom → **H.264/H.265** (Studio = native codecs, optional FFmpeg plugin; free = experimental and reversible system-codec enablement — reliable alternative: transcode to DNxHR) → **DRwrap** → optional OFX **SpectraFilm**. Data (projects, preferences) is never touched.
+
+## DRwrap
+
+[DRwrap](https://github.com/fedsfarm/drwrap) (GPL-3.0, external package) is installed and configured silently:
+
+- AUR package `drwrap` (via `yay`/`paru`) and the `drwrap.service` user service.
+- `drwrap setup --no-adopt`: the existing `davinci-resolve` launcher and menu entry stay authoritative; DRwrap does **not** replace them.
+- Desktop notifications and progress bubbles are turned off in `~/.config/drwrap/config.toml`; conversion failures are still logged.
+- It fixes drag-and-drop, clipboard paste (`Ctrl+V`) and unsupported-codec imports. Its watch folder is `~/Videos/ResolveDrop`; converted files land in `~/Videos/ResolveIngest` (keep that folder — projects point at it).
+
+Check it later with `drwrap doctor`, or remove just the integration with `drwrap setup --remove` (the package and converted files stay).
 
 > Launchable from the file manager too: started without a terminal, the script reopens itself inside a terminal emulator (foot/xterm) and the window stays open with a *"Press Enter to close this terminal."* prompt once it finishes (success or crash) — same for all `setup-*.sh` / `uninstall-*.sh` (`gui-run.bash`).
 

@@ -50,6 +50,19 @@ ask(){
 
 pkg_has(){ pacman -Q "$1" &>/dev/null; }
 
+# Catalog name -> the package that actually provides it. Flea ships as
+# `flea` (Omarchy repo), `flea-bin` (AUR release) or `flea-git` (AUR dev);
+# the catalog row stays `flea` whichever one is installed.
+catalog_pkg(){
+  local name="$1" p
+  if [[ $name == flea ]]; then
+    for p in flea flea-bin flea-git; do
+      pkg_has "$p" && { printf '%s\n' "$p"; return 0; }
+    done
+  fi
+  printf '%s\n' "$name"
+}
+
 is_webapp_installed(){
   local name="$1" url="${2:-}"
   # A "native:" entry is a desktop package that lives in the webapps catalog
@@ -336,7 +349,7 @@ status_type(){
       if plugin_installed "$name"; then printf " ${G}✓${N} %-24s plug %s\n" "$name" "$(echo "$entry" | cut -d'|' -f3)"
       else printf " ${D}—${N} %-24s plug %s${D} (not installed)${N}\n" "$name" "$(echo "$entry" | cut -d'|' -f3)"; fi
     else
-      if pkg_has "$name"; then printf " ${G}✓${N} %-24s %-4s %s\n" "$name" "$type" "${entry#*|}"
+      if pkg_has "$(catalog_pkg "$name")"; then printf " ${G}✓${N} %-24s %-4s %s\n" "$name" "$type" "${entry#*|}"
       else printf " ${D}—${N} %-24s %-4s %s${D} (not installed)${N}\n" "$name" "$type" "${entry#*|}"; fi
     fi
   done
@@ -350,6 +363,13 @@ install_one(){
   case $kind in
     APP|TUI)
       name="${entry%%|*}"
+      # Flea's install is not only the package: it also has to become the
+      # default explorer/chooser. Its script owns the repo/AUR package choice
+      # and runs even when the package is already present.
+      if [[ $kind == APP && $name == flea ]]; then
+        bash "$APP_DIR/gui/setup-flea.sh" -y
+        return
+      fi
       pkg_has "$name" && { ok "$name : already installed"; return 0; }
       msg "Installing: $name"
       require_yay || return 1
@@ -397,9 +417,19 @@ remove_one(){
   case $kind in
     APP|TUI)
       name="${entry%%|*}"
-      if pkg_has "$name"; then
+      # Flea owns desktop defaults AND a package variant (flea/flea-bin/
+      # flea-git), so its script removes both in the right order.
+      if [[ $name == flea && -x "$APP_DIR/gui/setup-flea.sh" ]]; then
         msg "Uninstalling: $name"
-        if mq_sudo pacman -Rns --noconfirm "$name" 2>/dev/null; then ok "$name : uninstalled"
+        if bash "$APP_DIR/gui/setup-flea.sh" --uninstall; then ok "$name : uninstalled"
+        else err "$name : FAILED"; return 1; fi
+        return 0
+      fi
+      local pkg
+      pkg="$(catalog_pkg "$name")"
+      if pkg_has "$pkg"; then
+        msg "Uninstalling: $name"
+        if mq_sudo pacman -Rns --noconfirm "$pkg" 2>/dev/null; then ok "$name : uninstalled"
         else err "$name : FAILED"; return 1; fi
       else ok "$name : not installed"; fi
       ;;
@@ -517,7 +547,8 @@ remove_icon_and_launcher(){
     name="${e#* }"; name="${name%%|*}"
     base="${name%-bin}"
     if [[ -f "$TUI_ASSETS_DIR/setup-$base-menu.sh" ]]; then
-      ok "$base : desktop/menu removal handled by setup-$base-menu.sh"
+      "$TUI_ASSETS_DIR/setup-$base-menu.sh" --remove || warn "$base : setup-$base-menu.sh --remove reported a problem"
+      ok "$base : desktop/menu removed by setup-$base-menu.sh"
       continue
     fi
     [[ -f "$TUI_ASSETS_DIR/$base-logo.png" ]] || continue

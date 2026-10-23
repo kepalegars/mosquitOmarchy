@@ -214,6 +214,15 @@ do_status(){
   else
     warn "SpectraFilm OFX : absent"
   fi
+  if command -v drwrap >/dev/null 2>&1; then
+    if systemctl --user is-enabled drwrap.service >/dev/null 2>&1; then
+      ok "DRwrap          : installed (converter service enabled)"
+    else
+      warn "DRwrap          : installed (service disabled)"
+    fi
+  else
+    warn "DRwrap          : absent"
+  fi
   local n=0 z
   while IFS= read -r z; do
     [[ -n $z ]] || continue
@@ -440,6 +449,73 @@ DESKE
   fi
 }
 
+# ───────────────────────── DRwrap companion ─────────────────────────
+# GPL-3.0 external companion (https://github.com/fedsfarm/drwrap). Kept as a
+# package, never vendored: it fixes drag/drop, clipboard paste and unsupported
+# codec imports. `--no-adopt` is important — our launcher/menu entry stays the
+# one the user clicks; drwrap only provides its converter service.
+DRWRAP_CONFIG="${DRWRAP_CONFIG:-$HOME/.config/drwrap/config.toml}"
+
+drwrap_silence_notifications(){
+  python3 - "$DRWRAP_CONFIG" <<'PYEOF'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1]).expanduser()
+lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+out = []
+skip = False
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        skip = stripped == "[notify]"
+        if skip:
+            continue
+    if skip:
+        continue
+    out.append(line)
+while out and not out[-1].strip():
+    out.pop()
+out += ["", "[notify]", "enabled = false", "progress = false", ""]
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text("\n".join(out), encoding="utf-8")
+PYEOF
+}
+
+install_drwrap(){
+  msg "DRwrap — drag/drop, clipboard and codec fixes for Resolve"
+  if ! command -v drwrap >/dev/null 2>&1; then
+    local -a aur=()
+    if command -v yay >/dev/null 2>&1; then aur=(yay)
+    elif command -v paru >/dev/null 2>&1; then aur=(paru)
+    fi
+    if (( ${#aur[@]} == 0 )); then
+      warn "No AUR helper (yay/paru) — drwrap not installed."
+      warn "Install it manually, then run: drwrap setup --no-adopt"
+      return 0
+    fi
+    msg "Installing drwrap from the AUR (one-time)…"
+    if ! "${aur[@]}" -S --needed --noconfirm drwrap; then
+      warn "drwrap installation failed — Resolve still works without it."
+      return 0
+    fi
+  fi
+  command -v drwrap >/dev/null 2>&1 || { warn "drwrap still unavailable — skipped."; return 0; }
+
+  local out
+  if out="$(drwrap setup --no-adopt 2>&1)"; then
+    ok "drwrap service configured (Resolve launcher left untouched)."
+  else
+    warn "drwrap setup failed — Resolve still works without it."
+    printf '%s\n' "$out" | tail -n 5
+    return 0
+  fi
+
+  drwrap_silence_notifications || true
+  systemctl --user restart drwrap.service >/dev/null 2>&1 || true
+  ok "drwrap notifications disabled; converter service enabled."
+}
+
 # ───────────────────────── H.264 / H.265 ─────────────────────────
 ensure_ffmpeg(){
   if pkg_has ffmpeg; then ok "ffmpeg already present (system codecs)"; return 0; fi
@@ -580,6 +656,8 @@ recap(){
     echo "   → re-test after every Resolve update (re-run this script)."
   fi
   echo " • First-run config: Preferences > System > Memory & GPU (OpenCL auto-detected)."
+  echo " • DRwrap: drag/drop, clipboard paste and codec conversion handled silently."
+  echo "   Watch folder: ~/Videos/ResolveDrop · ready files: ~/Videos/ResolveIngest."
   echo " • Project / LUT data: kept in ~/.local/share, ~/.config/Blackmagic Design."
   echo " • Uninstall: ./uninstall-davinci.sh"
   hr
@@ -614,6 +692,7 @@ main(){
   install_resolve "$zip" || exit 1
   install_launcher
   ((SKIP_CODECS)) && warn "--no-codecs: H.264/H.265 patches NOT applied." || step_codecs "$ed"
+  install_drwrap
   echo
 
   if ((WITH_SPEKTRA)) || { ((YES == 0)) && ask "Install the free \"SpectraFilm\" OFX (film simulation) into Resolve?" n; }; then

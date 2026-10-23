@@ -1,0 +1,64 @@
+#!/bin/bash
+# =============================================================================
+# mosquitOmarchy - levels-guard
+# =============================================================================
+# Media-key guard installed by setup-levels-guard.sh. When the default
+# output/source is a Mixbay-managed Audient EVO, the native volume keys are
+# blocked unless the user enabled "Allow native volume controls" in Mixbay.
+# The blocked OSD is shown at 0% so the key still answers visually.
+# Other interfaces delegate to Omarchy unchanged.
+#
+# This guard only covers the control surfaces (media keys + Omarchy audio
+# panel). Direct pactl/wpctl calls and applications are never intercepted.
+# =============================================================================
+set -u
+
+mode="${1:-output}"
+shift || true
+
+prefs="${XDG_CONFIG_HOME:-$HOME/.config}/mosquitomixbay/ui.json"
+
+allow_native() {
+  [[ -r $prefs ]] && grep -Eq '"allow_native_volume"[[:space:]]*:[[:space:]]*true' "$prefs"
+}
+
+output_sink() {
+  if command -v omarchy-audio-output-sink >/dev/null 2>&1; then
+    omarchy-audio-output-sink 2>/dev/null
+  elif command -v pactl >/dev/null 2>&1; then
+    pactl get-default-sink 2>/dev/null
+  fi
+}
+
+blocked_osd(){
+  command -v omarchy-osd >/dev/null 2>&1 || return 0
+  case "$1" in
+    input) omarchy-osd -i microphone-muted -p 0 >/dev/null 2>&1 || true ;;
+    *)     omarchy-osd -i volume-muted -p 0 >/dev/null 2>&1 || true ;;
+  esac
+}
+
+case "$mode" in
+  output)
+    ignore=0
+    if [[ $(output_sink) == alsa_output.usb-Audient_EVO* ]] && ! allow_native; then
+      ignore=1
+    fi
+    if ((ignore)); then blocked_osd output; exit 0; fi
+    command -v omarchy-audio-output-volume >/dev/null 2>&1 || exit 0
+    exec omarchy-audio-output-volume "$@"
+    ;;
+  input)
+    ignore=0
+    if [[ $(pactl get-default-source 2>/dev/null) == alsa_input.usb-Audient_EVO* ]] && ! allow_native; then
+      ignore=1
+    fi
+    if ((ignore)); then blocked_osd input; exit 0; fi
+    command -v omarchy-audio-input-mute >/dev/null 2>&1 || exit 0
+    exec omarchy-audio-input-mute "$@"
+    ;;
+  *)
+    echo "Usage: levels-guard <output|input> [args...]" >&2
+    exit 2
+    ;;
+esac

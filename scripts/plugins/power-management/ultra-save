@@ -70,7 +70,7 @@ enable() {
     [[ $EUID -ne 0 ]] && { echo "Run as root (sudo)." >&2; exit 1; }
     is_on && { echo "Already on."; return 0; }
 
-    # Live mode (scripts/mosquito/live-mode) locks ultra-save off for max performance.
+    # Live mode (scripts/mosquito/audio-stack/live-mode) locks ultra-save off for max performance.
     if [[ -f "${REAL_HOME}/.local/state/live-mode/active" ]]; then
         echo "Blocked by live mode (performance max)." >&2
         exit 1

@@ -142,7 +142,9 @@ build_tui() {
   ensure_go || return 1
   ensure_repo_source || return 1
   info "Building the TUI (Go/Bubble Tea)…"
-  (cd "$TUI_GO" && go build -o "$TUI_BIN" .) || { err "TUI build failed."; return 1; }
+  local version
+  version="$(cat "$REPO/VERSION" 2>/dev/null || echo dev)"
+  (cd "$TUI_GO" && go build -ldflags "-X main.appVersion=$version" -o "$TUI_BIN" .) || { err "TUI build failed."; return 1; }
   ok "TUI built and deployed: $TUI_BIN"
   install -m 0755 "$DISPATCHER" "$DISPATCHER_DST"
   ok "Dispatcher deployed: $DISPATCHER_DST"

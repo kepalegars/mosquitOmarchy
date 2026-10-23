@@ -41,7 +41,7 @@ rebuild_tui() { # src_dir, bin_name
 }
 
 mkdir -p "$BIN_DIR"
-rebuild_tui "$REPO_ROOT/scripts/apps/audio-plugin-manager/tui-go" mosquito-audio-plugin-manager-tui
+rebuild_tui "$REPO_ROOT/scripts/mosquito/audio-stack/apm/tui-go" mosquito-audio-plugin-manager-tui
 rebuild_tui "$REPO_ROOT/scripts/apps/ableton-move-manager/tui-go" mosquito-move-manager-tui
 
 echo "Thème des TUIs synchronisé avec le thème Omarchy courant (redémarre le menu si déjà ouvert)."

@@ -68,3 +68,15 @@ func TestFolderIconFillsWhenTicked(t *testing.T) {
 		t.Fatalf("ticked folder should draw the filled square %q, got %q", FolderOpen, got)
 	}
 }
+
+func TestFlatFolderDrawsNoLeadingGlyph(t *testing.T) {
+	d := newPickerDelegate(2, 2, 0, true)
+	pi := PickerItem{Display: "    ├─ ▢ audio-stack", Value: "cat:audio-stack", Folder: true, Flat: true}
+	got := d.leadCell(pi, false)
+	if strings.Contains(got, FolderClosed) || strings.Contains(got, FolderOpen) {
+		t.Fatalf("flat folder must keep the mark in Display, got lead %q", got)
+	}
+	if strings.TrimSpace(got) != "" {
+		t.Fatalf("flat folder lead slot should be blank, got %q", got)
+	}
+}
