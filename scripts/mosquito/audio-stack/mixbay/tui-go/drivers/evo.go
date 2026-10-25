@@ -8,7 +8,8 @@
 // dev/DESIGN.md, public domain):
 //
 //	FU10 0x0A00 CS=2 : output volume, 2B signed UAC2 (1/256 dB), [-96,0] dB
-//	FU11 0x0B00 CS=2 : input gain per CN, both [-8,50] dB (writes >50 clamp)
+//	FU11 0x0B00 CS=2 : input gain per CN, EVO4 [-8,50], EVO8 [-8,50] wire
+//	                   (the card shows the same gain on a 0..58 scale)
 //	EU56 0x3800 CS=0 : monitor blend 0..127 (EVO4 ONLY — EVO8 STALLs)
 //	EU58 0x3A00 CS=0 : phantom 48V per input, 4B LE bool
 //	EU58 0x3A00 CS=2 : input mute (+ EVO8 output mutes), 4B LE bool
@@ -38,15 +39,15 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Device specs — mirrors evo/devices.py, except the EVO 8 gain range: FU11
-// and ALSA expose -8…50 dB (the card's real scale); devices.py's 0…58 is
-// stale and 58 dB writes clamp to 50 in firmware.
+// Device specs — mirrors evo/devices.py, except the EVO 8 gain scale: the
+// card/app shows 0…58 dB while FU11/ALSA use the same physical gain as
+// -8…50 dB. GainOffset = 8 bridges them (display 0 → wire -8, 58 → 50).
 var (
 	EVO8Spec = Spec{
 		ID: "evo8", Display: "Audient EVO 8", Vendor: "Audient",
 		USBVID: "2708", USBPID: "0007",
 		NumInputs: 4, NumOutPairs: 2,
-		GainMin: -8, GainMax: 50, VolMin: -96, VolMax: 0,
+		GainMin: 0, GainMax: 58, GainOffset: 8, VolMin: -96, VolMax: 0,
 		MixerInputs: 10, MixerOutputs: 4,
 		HasMonitor: false, Backend: BackendEvoRaw, NeedsKmod: true,
 		Caps:        Caps{Volume: true, Gain: true, Mute: true, Phantom: true, Monitor: false, Mixer: true},
@@ -493,7 +494,8 @@ func (d *evoDriver) readHardware() (Status, error) {
 		if b, err := d.getCur(uint16(i), eu58, 4); err == nil && len(b) >= 4 {
 			phantom = binary.LittleEndian.Uint32(b) == 1
 		}
-		st.Inputs = append(st.Inputs, InputState{Name: name, GainDb: math.Round(usbToDb(raw)), Muted: muted, Phantom: phantom})
+		gain := math.Round(usbToDb(raw) + d.spec.GainOffset)
+		st.Inputs = append(st.Inputs, InputState{Name: name, GainDb: gain, Muted: muted, Phantom: phantom})
 	}
 	if d.spec.HasMonitor {
 		if b, err := d.getCur(0x0000, eu56, 2); err == nil && len(b) >= 2 {
@@ -588,7 +590,7 @@ func (d *evoDriver) SetGain(input int, db float64) error {
 		return err
 	}
 	defer d.end()
-	return d.setFU(fu11, input, dbToUSB(db))
+	return d.setFU(fu11, input, dbToUSB(db-d.spec.GainOffset))
 }
 
 func (d *evoDriver) SetMute(target string, muted bool) error {

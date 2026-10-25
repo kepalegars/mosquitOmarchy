@@ -7,7 +7,8 @@
 // Device roadmap:
 //   - evo8 / evo4  : full control via evo_raw kmod (/dev/evo* ioctl).
 //     Protocol reverse-engineered by vanzaho/audient-evo-py (public domain).
-//     EVO 8 is the reference device: 4 inputs (gain -8..50 dB), 2 output
+//     EVO 8 is the reference device: 4 inputs (gain 0..58 dB card scale;
+//     FU11 wire is -8..50 dB), 2 output
 //     pairs (-96..0 dB), 10x4 loopback matrix over 2 mix buses, no monitor
 //     blend knob (monitoring goes through the matrix).
 //   - fireface-ucx2: RME Fireface UCX II. Level 1 = ALSA volumes + mutes
@@ -72,6 +73,7 @@ type Spec struct {
 	NumOutPairs  int     `json:"num_output_pairs"`
 	GainMin      float64 `json:"gain_min_db"`
 	GainMax      float64 `json:"gain_max_db"`
+	GainOffset   float64 `json:"gain_offset_db"`
 	VolMin       float64 `json:"vol_min_db"`
 	VolMax       float64 `json:"vol_max_db"`
 	MixerInputs  int     `json:"mixer_inputs"`

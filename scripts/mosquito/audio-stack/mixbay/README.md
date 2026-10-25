@@ -5,7 +5,7 @@ EVO 8 first: the interface mirrors evotui (vanzaho/audient-evo-py).
 
 | Interface | Backend | État |
 |---|---|---|
-| Audient EVO 8 | `evo_raw` kmod (`/dev/evo8` ioctl) | **plein contrôle** : volumes, gains -8…50 dB, mutes, 48V, loopback mixer 10×4 sur 2 bus (MIX 1\|2, MIX 3\|4) |
+| Audient EVO 8 | `evo_raw` kmod (`/dev/evo8` ioctl) | **plein contrôle** : volumes, gains 0…58 dB (échelle carte ; FU11/ALSA -8…50), mutes, 48V, loopback mixer 10×4 sur 2 bus (MIX 1\|2, MIX 3\|4) |
 | Audient EVO 4 | même protocole | plein contrôle + monitor blend |
 | RME Fireface UCX II | ALSA niveau 1 | volumes/mutes ; matrice TotalMix en attente support kernel UCX II USB |
 | ESI UGM192 | ALSA | volumes/mutes (pas de DSP) |
