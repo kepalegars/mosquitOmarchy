@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1245,6 +1246,22 @@ func TestEvoLevelsTabRendersUSBStreams(t *testing.T) {
 	}
 	if strings.Contains(plain, "[M]") {
 		t.Error("mute legend must be lowercase [m]")
+	}
+}
+
+func TestVerticalBarPeakIsThinFullWidth(t *testing.T) {
+	c := newEvoCanvas(8, 20)
+	r := &evoRender{c: c}
+	r.drawVerticalBar(1, 0, 19, 4, 0.8, 0.8)
+	peakRow := 19 - int(math.Round(20*meterFraction(0.8))) + 1
+	for col := 0; col < 4; col++ {
+		cell := c.cells[peakRow*c.w+1+col]
+		if cell.r != '─' {
+			t.Fatalf("peak cell %d = %q, want thin line", col, cell.r)
+		}
+		if cell.st.bg == 0 {
+			t.Fatalf("peak cell %d lost the green fill background", col)
+		}
 	}
 }
 
