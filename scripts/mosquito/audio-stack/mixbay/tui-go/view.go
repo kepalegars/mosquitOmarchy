@@ -72,8 +72,6 @@ func (m model) View() string {
 		b.WriteString(m.picker.View())
 		b.WriteString("\n")
 		b.WriteString(m.statusLine(w))
-	case scrLevels:
-		return m.levelsView()
 	case scrSettings:
 		title, rows := m.settingsBudget(h)
 		m.picker = m.picker.SetSize(w, rows)

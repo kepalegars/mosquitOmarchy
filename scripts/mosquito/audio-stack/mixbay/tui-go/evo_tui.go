@@ -74,6 +74,12 @@ const (
 	evoTabSym      = "Tab"
 )
 
+const (
+	evoWinControls = iota
+	evoWinMixer
+	evoWinLevels
+)
+
 // --- colour slots (mirror evotui's C_* pairs) -------------------------------
 
 const (
@@ -204,7 +210,7 @@ func evoStyleFor(pal [9]lipgloss.Color, st evoStyle) lipgloss.Style {
 
 type evoUI struct {
 	spec      drivers.Spec
-	window    int // 0 controls, 1 mixer
+	window    int // evoWinControls, evoWinMixer or evoWinLevels (EVO 8)
 	sub       int // controls subsection (EVO 8: 0 inputs, 1 outputs)
 	cursor    int
 	mxSection int
@@ -634,20 +640,30 @@ func (r *evoRender) phantomInd(row, x int, on bool) {
 }
 
 func (r *evoRender) drawTabBar(row, cx, sectionW int) {
-	const ctrlLabel, mixLabel = " CONTROLS ", " MIXER "
+	const ctrlLabel, mixLabel, levLabel = " CONTROLS ", " MIXER ", " LEVELS "
+	levels := r.spec.ID == drivers.DevEVO8
 	lineAttr := evoStyle{col: cAccent}
-	controls := r.u.window == 0
 	// Like the mosquito Close buttons: the selected tab is an accent block
 	// with white text. Text stays pure white in both states (no grey).
-	ctrlAttr, mixAttr := evoVal, evoVal
-	if controls {
-		ctrlAttr = evoStyle{col: cWhite, bg: cAccent, bold: true}
-	} else {
-		mixAttr = evoStyle{col: cWhite, bg: cAccent, bold: true}
+	active := evoStyle{col: cWhite, bg: cAccent, bold: true}
+	ctrlAttr, mixAttr, levAttr := evoVal, evoVal, evoVal
+	switch r.u.window {
+	case evoWinControls:
+		ctrlAttr = active
+	case evoWinMixer:
+		mixAttr = active
+	case evoWinLevels:
+		if levels {
+			levAttr = active
+		}
 	}
 	r.put(cx+1, row, ctrlLabel, ctrlAttr)
 	mixX := cx + 1 + len([]rune(ctrlLabel)) + 1
 	r.put(mixX, row, mixLabel, mixAttr)
+	levX := mixX + len([]rune(mixLabel)) + 1
+	if levels {
+		r.put(levX, row, levLabel, levAttr)
+	}
 	// Connection dot + device name, right-aligned. Offline is always accent
 	// (hollow); online pulses accent <-> white.
 	name := r.spec.Display
@@ -664,8 +680,11 @@ func (r *evoRender) drawTabBar(row, cx, sectionW int) {
 	// The panel's top separator is accent; the active tab sits on a gap in it.
 	r.c.repeat(cx, row+1, sectionW, boxH, lineAttr)
 	activeX, activeW := cx+1, len([]rune(ctrlLabel))
-	if !controls {
+	switch {
+	case r.u.window == evoWinMixer:
 		activeX, activeW = mixX, len([]rune(mixLabel))
+	case r.u.window == evoWinLevels && levels:
+		activeX, activeW = levX, len([]rune(levLabel))
 	}
 	r.put(activeX, row+1, strings.Repeat(" ", activeW), lineAttr)
 }
@@ -1112,7 +1131,6 @@ func (r *evoRender) controlsHelp() ([]evoHint, []evoHint) {
 		{key: "Ctrl+←→", desc: evoStepLabel("volume", true)},
 		{key: "Ctrl+Shift+←→", desc: evoStepLabel("volume", false)},
 		{key: "0-9", desc: " dial"},
-		{key: "v", desc: " levels"},
 	}
 	return nav, set
 }
@@ -1136,7 +1154,6 @@ func (r *evoRender) mixerHelp() ([]evoHint, []evoHint) {
 		{key: "Ctrl+←→", desc: evoStepLabel(param, true)},
 		{key: "Ctrl+Shift+←→", desc: evoStepLabel(param, false)},
 		{key: "0-9", desc: " dial"},
-		{key: "v", desc: " levels"},
 	}
 	// Two output pairs own the extra mix/artist actions. On a single-pair
 	// interface they are omitted, which also keeps the footer inside 59 cols.
@@ -1251,14 +1268,22 @@ func (m model) evoView() string {
 	r.drawTabBar(row, cx, mixerW)
 	row += 2
 	var nav, set []evoHint
-	if m.evo.window == 0 {
+	levels := m.evo.window == evoWinLevels && spec.ID == drivers.DevEVO8
+	switch {
+	case levels:
+		row = r.drawLevelsBody(row, cx, mixerW)
+		nav, set = r.levelsHelp()
+		row = r.drawLevelsStatusBar(row, cx, mixerW)
+	case m.evo.window == evoWinControls:
 		row = r.drawControlsBody(row, cx, mixerW)
 		nav, set = r.controlsHelp()
-	} else {
+	default:
 		row = r.drawMixerBody(row, cx)
 		nav, set = r.mixerHelp()
 	}
-	row = r.drawStatusBar(row, cx, mixerW)
+	if !levels {
+		row = r.drawStatusBar(row, cx, mixerW)
+	}
 	r.drawHelpFooter(row+1, cx, nav, set)
 	return c.render(pal)
 }
@@ -1521,7 +1546,7 @@ func (m *model) evoEnter() {
 		return
 	}
 	m.evo.spec = m.status.Spec
-	m.evo.window = 0
+	m.evo.window = evoWinControls
 	m.evo.sub = 0
 	m.evo.cursor = 0
 	m.evo.mxSection = 0
@@ -1541,6 +1566,9 @@ func (m *model) evoEnter() {
 // old spec's section list against the new layout was a hard panic.
 func (m *model) evoRebindSpec() {
 	m.evo.spec = m.status.Spec
+	if m.evo.window == evoWinLevels && m.evo.spec.ID != drivers.DevEVO8 {
+		m.evo.window = evoWinControls
+	}
 	if groups := len(evoGroups(m.evo.spec)); m.evo.sub >= groups {
 		m.evo.sub = 0
 	}
@@ -1568,20 +1596,27 @@ func (m *model) evoRebindSpec() {
 	m.evo.clearAnims()
 }
 
+func (m *model) evoQuitConfirm() tea.Cmd {
+	m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")
+	m.confirmAct = func() tea.Cmd {
+		m.quit = true
+		return tea.Quit
+	}
+	m.push(scrConfirm)
+	return nil
+}
+
 func (m *model) evoKey(k string) tea.Cmd {
 	u := &m.evo
 	if u.mode != 0 {
 		return m.evoPickerKey(k)
 	}
+	if u.window == evoWinLevels && u.spec.ID == drivers.DevEVO8 {
+		return m.evoLevelsKey(k)
+	}
 	switch k {
 	case "q":
-		m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")
-		m.confirmAct = func() tea.Cmd {
-			m.quit = true
-			return tea.Quit
-		}
-		m.push(scrConfirm)
-		return nil
+		return m.evoQuitConfirm()
 	case "esc":
 		if u.numBuf != "" {
 			u.numBuf = ""
@@ -1595,9 +1630,9 @@ func (m *model) evoKey(k string) tea.Cmd {
 		// Keep the rendered screen and the nav stack in step: leaving the
 		// mixer with Esc must land on CONTROLS, not keep the mixer on screen.
 		if m.top() == scrMixer {
-			u.window = 1
+			u.window = evoWinMixer
 		} else {
-			u.window = 0
+			u.window = evoWinControls
 		}
 		u.numBuf = ""
 		return fetchStatus(m.deviceID)
@@ -1617,12 +1652,22 @@ func (m *model) evoKey(k string) tea.Cmd {
 		u.mode, u.fileList, u.fileCursor, u.fileScroll = 2, files, 0, 0
 		return nil
 	case "tab":
-		if u.window == 0 {
-			u.window = 1
+		switch u.window {
+		case evoWinControls:
+			u.window = evoWinMixer
 			m.push(scrMixer)
-		} else {
-			u.window = 0
-			m.pop()
+		case evoWinMixer:
+			if u.spec.ID == drivers.DevEVO8 {
+				u.window = evoWinLevels
+			} else {
+				u.window = evoWinControls
+				m.pop()
+			}
+		default:
+			u.window = evoWinControls
+			if m.top() == scrMixer {
+				m.pop()
+			}
 		}
 		u.numBuf = ""
 		return nil

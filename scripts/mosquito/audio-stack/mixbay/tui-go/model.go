@@ -37,7 +37,6 @@ const (
 	scrMixer
 	scrSettings
 	scrPatchbay
-	scrLevels
 	scrInput
 	scrInfo
 	scrConfirm
@@ -81,8 +80,8 @@ type model struct {
 	// patchbay is loaded on demand only: no polling, no auto-apply.
 	patchbay patchbayView
 
-	// meter captures the EVO USB streams only while an EVO panel is focused.
-	// Peaks live on the model so freezing them is a pure UI decision.
+	// meter captures the EVO USB streams while an EVO panel is visible, even
+	// when the terminal loses focus. Freezing is a pure UI decision.
 	meter         *meters.Engine
 	meterStarting bool
 	meterSnap     meters.Snapshot
@@ -554,7 +553,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// A fast Tab while the status was loading can already have
 				// pushed the mixer; keep the screen and the nav stack in step.
 				if m.top() == scrMixer {
-					m.evo.window = 1
+					m.evo.window = evoWinMixer
 				}
 			case m.evo.spec.ID != msg.status.Spec.ID:
 				m.evoRebindSpec()
@@ -595,11 +594,12 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.meter == nil || m.meter != msg.engine {
 			return m, nil
 		}
-		m.meterSnap = msg.snap
-		if !m.meterFrozen {
-			copy(m.meterPeakIn[:], msg.snap.Peaks[meters.KeyInput])
-			copy(m.meterPeakOut[:], msg.snap.Peaks[meters.KeyPlayback])
+		if m.meterFrozen {
+			return m, waitMetersCmd(m.meter)
 		}
+		m.meterSnap = msg.snap
+		copy(m.meterPeakIn[:], msg.snap.Peaks[meters.KeyInput])
+		copy(m.meterPeakOut[:], msg.snap.Peaks[meters.KeyPlayback])
 		return m, waitMetersCmd(m.meter)
 
 	case meterClosedMsg:
@@ -769,14 +769,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	// EVO 4 / EVO 8 draw their own evotui frame and own their keys.
 	if m.isEvoDevice() && (m.top() == scrControls || m.top() == scrMixer) {
-		if k == "v" && m.evo.mode == 0 {
-			m.push(scrLevels)
-			return m, nil
-		}
 		return m, m.evoKey(k)
-	}
-	if m.top() == scrLevels {
-		return m, m.levelsKey(k)
 	}
 	if m.top() == scrPatchbay {
 		return m.patchbayKey(msg)
@@ -818,7 +811,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// the STALE status.Spec (the interface we just left) into the
 			// renderer. The fresh statusMsg binds the real spec instead.
 			m.evo.spec = drivers.Spec{}
-			m.evo.window = 0
+			m.evo.window = evoWinControls
 			m.push(scrControls)
 			m.syncPicker()
 			return m, fetchStatus(m.deviceID)

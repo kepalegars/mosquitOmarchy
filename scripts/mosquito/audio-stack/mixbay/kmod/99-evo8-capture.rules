@@ -1,0 +1,4 @@
+# Open the EVO 8 USB capture selector as soon as the evo_raw node appears.
+# Without this, EU51 may stay disabled after power-on and all six capture
+# channels are silent even when gain, mute and 48V are correct.
+ACTION=="add", KERNEL=="evo8", SUBSYSTEM=="misc", RUN+="/usr/bin/python3 /usr/local/lib/mosquitomixbay/evo8-capture-enable.py"

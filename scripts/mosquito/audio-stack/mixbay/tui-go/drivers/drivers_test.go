@@ -122,12 +122,13 @@ func TestDemoStatus(t *testing.T) {
 	}
 }
 
-func TestEvo8SpecMatchesUpstream(t *testing.T) {
-	// Values cross-checked against audient-evo-py evo/devices.py.
+func TestEvo8SpecMatchesHardware(t *testing.T) {
+	// FU11/ALSA expose -8…50 dB; writes above 50 clamp, so devices.py's
+	// 0…58 range is not the card's scale.
 	if EVO8Spec.NumInputs != 4 || EVO8Spec.NumOutPairs != 2 {
 		t.Errorf("evo8 io: %+v", EVO8Spec)
 	}
-	if EVO8Spec.GainMin != 0 || EVO8Spec.GainMax != 58 {
+	if EVO8Spec.GainMin != -8 || EVO8Spec.GainMax != 50 {
 		t.Errorf("evo8 gain range: %+v", EVO8Spec)
 	}
 	if EVO8Spec.MixerInputs*EVO8Spec.MixerOutputs != 40 {

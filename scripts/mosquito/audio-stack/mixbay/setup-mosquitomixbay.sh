@@ -76,6 +76,11 @@ if ((UNINSTALL)); then
   fi
   rm -f "$HOME/.local/share/applications/mosquito-mixbay.desktop"
   command -v update-desktop-database >/dev/null && update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+  if [[ -f /etc/udev/rules.d/99-evo8-capture.rules || -f /usr/local/lib/mosquitomixbay/evo8-capture-enable.py ]]; then
+    mq_sudo bash -c 'rm -f /etc/udev/rules.d/99-evo8-capture.rules /usr/local/lib/mosquitomixbay/evo8-capture-enable.py; udevadm control --reload-rules' \
+      && ok "EVO 8 capture helper removed" \
+      || warn "could not remove the EVO 8 capture helper (needs sudo)"
+  fi
   # The evo_raw kernel module stays: unloading it mid-session would cut a live
   # interface, and DKMS removal needs its own reboot story. Unload by hand
   # with `sudo modprobe -r evo_raw` if the hardware is gone for good.
@@ -149,7 +154,27 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 5. Menu: lives in Setup ▸ mosquito (no Apps .desktop), like the siblings
+# 5. EVO 8 USB capture enable (system-wide, on every connect)
+# -----------------------------------------------------------------------------
+# EU51 may be disabled by the firmware after power-on. The Go driver also asks
+# for it once per process, but this udev hook makes capture work in every app
+# (DAW included) before Mixbay is ever launched.
+CAPTURE_HELPER=/usr/local/lib/mosquitomixbay/evo8-capture-enable.py
+CAPTURE_RULE=/etc/udev/rules.d/99-evo8-capture.rules
+if mq_sudo bash -c "
+  install -D -m 755 '$SCRIPT_DIR/kmod/evo8-capture-enable.py' '$CAPTURE_HELPER'
+  install -D -m 644 '$SCRIPT_DIR/kmod/99-evo8-capture.rules' '$CAPTURE_RULE'
+  udevadm control --reload-rules
+  udevadm trigger --action=add --subsystem-match=misc --sysname-match=evo8 2>/dev/null || true
+  [[ -e /dev/evo8 ]] && /usr/bin/python3 '$CAPTURE_HELPER' || true
+"; then
+  ok "EVO 8 capture helper installed ($CAPTURE_RULE)"
+else
+  warn "EVO 8 capture helper not installed — mic capture may stay silent"
+fi
+
+# -----------------------------------------------------------------------------
+# 6. Menu: lives in Setup ▸ mosquito (no Apps .desktop), like the siblings
 # -----------------------------------------------------------------------------
 rm -f "$HOME/.local/share/applications/mosquito-mixbay.desktop"
 command -v update-desktop-database >/dev/null && update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true

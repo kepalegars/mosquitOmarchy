@@ -8,7 +8,7 @@
 // dev/DESIGN.md, public domain):
 //
 //	FU10 0x0A00 CS=2 : output volume, 2B signed UAC2 (1/256 dB), [-96,0] dB
-//	FU11 0x0B00 CS=2 : input gain per CN, EVO4 [-8,50], EVO8 [0,58] dB
+//	FU11 0x0B00 CS=2 : input gain per CN, both [-8,50] dB (writes >50 clamp)
 //	EU56 0x3800 CS=0 : monitor blend 0..127 (EVO4 ONLY — EVO8 STALLs)
 //	EU58 0x3A00 CS=0 : phantom 48V per input, 4B LE bool
 //	EU58 0x3A00 CS=2 : input mute (+ EVO8 output mutes), 4B LE bool
@@ -31,19 +31,22 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
 
-// Device specs — mirrors evo/devices.py. EVO 8 is the reference device.
+// Device specs — mirrors evo/devices.py, except the EVO 8 gain range: FU11
+// and ALSA expose -8…50 dB (the card's real scale); devices.py's 0…58 is
+// stale and 58 dB writes clamp to 50 in firmware.
 var (
 	EVO8Spec = Spec{
 		ID: "evo8", Display: "Audient EVO 8", Vendor: "Audient",
 		USBVID: "2708", USBPID: "0007",
 		NumInputs: 4, NumOutPairs: 2,
-		GainMin: 0, GainMax: 58, VolMin: -96, VolMax: 0,
+		GainMin: -8, GainMax: 50, VolMin: -96, VolMax: 0,
 		MixerInputs: 10, MixerOutputs: 4,
 		HasMonitor: false, Backend: BackendEvoRaw, NeedsKmod: true,
 		Caps:        Caps{Volume: true, Gain: true, Mute: true, Phantom: true, Monitor: false, Mixer: true},
@@ -64,6 +67,7 @@ var (
 const (
 	fu10     = 0x0A00
 	fu11     = 0x0B00
+	eu51     = 0x3300
 	eu56     = 0x3800
 	eu58     = 0x3A00
 	eu59     = 0x3B00
@@ -79,6 +83,11 @@ const (
 const evoXferSize = 264
 
 func evoIoctlNr() uintptr { return uintptr((3 << 30) | (evoXferSize << 16) | (0x45 << 8) | 0) }
+
+// captureOnce keeps the EU51 fallback to one transfer per process: the udev
+// helper already enables it on connect, and polling it every 500 ms would
+// hammer a write-only control.
+var captureOnce sync.Once
 
 // --- pure protocol helpers (no USB, fully unit-testable) -------------------
 
@@ -284,6 +293,18 @@ func (d *evoDriver) setFU(unit uint16, cn int, raw uint16) error {
 	return d.setCur(uint16(csVolume<<8|cn), unit, b[:])
 }
 
+// enableCapture opens the EVO 8's 6-channel USB capture selector (EU51).
+// The firmware may leave it disabled after power-on, which silences every
+// capture channel even when gain, mute and 48V are correct. Best-effort:
+// the controls still work if the device STALLs this vendor unit, and EU51's
+// Enable selector is write-only on this unit.
+func (d *evoDriver) enableCapture() {
+	if d.spec.ID != DevEVO8 {
+		return
+	}
+	captureOnce.Do(func() { _ = d.setCur(0x0000, eu51, []byte{1}) })
+}
+
 // muteTarget maps a UI target to (wValue, wIndex), mirroring controller.py.
 func (d *evoDriver) muteTarget(target string) (uint16, uint16, error) {
 	for i := 0; i < d.spec.NumInputs; i++ {
@@ -431,6 +452,7 @@ func (d *evoDriver) readHardware() (Status, error) {
 		return st, fmt.Errorf("%w: %v", ErrOffline, err)
 	}
 	defer d.end()
+	d.enableCapture()
 	// Volumes (CH1 of each pair; pairs are ganged on write).
 	var outMutes map[string]float64
 	if !d.supportsNativeOutputMute() {

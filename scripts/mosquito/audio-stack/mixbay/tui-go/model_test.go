@@ -195,7 +195,11 @@ func TestEvoViewRendersEvotuiFrame(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
 	for _, id := range []string{drivers.DevEVO8, drivers.DevEVO4} {
-		for _, window := range []int{0, 1} {
+		windows := []int{0, 1}
+		if id == drivers.DevEVO8 {
+			windows = append(windows, evoWinLevels)
+		}
+		for _, window := range windows {
 			m := initialModel()
 			m.w, m.h = 110, 40
 			m.deviceID = id
@@ -217,13 +221,14 @@ func TestEvoViewRendersEvotuiFrame(t *testing.T) {
 				t.Errorf("%s window=%d: frame overflows (%d lines)", id, window, len(lines))
 			}
 			plain := stripANSI(v)
-			if window == 0 {
+			switch window {
+			case 0:
 				for _, needle := range []string{"CONTROLS", "MIXER", "IN 1"} {
 					if !strings.Contains(plain, needle) {
 						t.Errorf("%s controls: missing %q", id, needle)
 					}
 				}
-			} else {
+			case 1:
 				bus := "MIX 1|2"
 				if id == drivers.DevEVO4 {
 					bus = "MIX 3|4"
@@ -231,6 +236,12 @@ func TestEvoViewRendersEvotuiFrame(t *testing.T) {
 				for _, needle := range []string{"CONTROLS", "MIXER", bus} {
 					if !strings.Contains(plain, needle) {
 						t.Errorf("%s mixer: missing %q", id, needle)
+					}
+				}
+			default:
+				for _, needle := range []string{"CONTROLS", "MIXER", "LEVELS", "CAPTURE", "PLAYBACK"} {
+					if !strings.Contains(plain, needle) {
+						t.Errorf("%s levels: missing %q", id, needle)
 					}
 				}
 			}
@@ -1206,10 +1217,10 @@ func TestLiveApplyRefusesOffline(t *testing.T) {
 	}
 }
 
-// The Levels screen is the explicit USB meter view. It must name both capture
+// The Levels tab is the explicit USB meter view. It must name both capture
 // streams and never pretend the analog OUT controls are being measured.
-func TestEvoLevelsScreenRendersUSBStreams(t *testing.T) {
-	m := evoModel(t, drivers.DevEVO8, 0)
+func TestEvoLevelsTabRendersUSBStreams(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, evoWinLevels)
 	m.meterSnap = meters.Snapshot{
 		Input:    []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6},
 		Playback: []float64{0.2, 0.2, 0.4, 0.4, 0.6, 0.6},
@@ -1220,15 +1231,70 @@ func TestEvoLevelsScreenRendersUSBStreams(t *testing.T) {
 	}
 	copy(m.meterPeakIn[:], m.meterSnap.Peaks[meters.KeyInput])
 	copy(m.meterPeakOut[:], m.meterSnap.Peaks[meters.KeyPlayback])
-	m.nav = append(m.nav, scrLevels)
 	plain := stripANSI(m.View())
-	for _, needle := range []string{"CAPTURE", "PLAYBACK", "PC 1|2", "LOOP 5|6", "analog OUT not metered"} {
+	for _, needle := range []string{"CAPTURE", "PLAYBACK", "IN1", "PC1", "LP5", "USB DIGITAL METERS"} {
 		if !strings.Contains(plain, needle) {
 			t.Errorf("levels view missing %q", needle)
 		}
 	}
+	if strings.Contains(plain, "analog OUT not metered") {
+		t.Error("removed analog OUT note is still rendered")
+	}
+	if strings.Contains(plain, "▬") {
+		t.Error("peak marker must be a thin line, not a block")
+	}
 	if strings.Contains(plain, "[M]") {
 		t.Error("mute legend must be lowercase [m]")
+	}
+}
+
+func TestMetersContinueWhenBlurred(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, evoWinLevels)
+	m.session.live = true
+	m.status.Online = true
+	m.focused = false
+	if !m.wantsMeters() {
+		t.Fatal("meters must keep running while the terminal is unfocused")
+	}
+}
+
+func TestMeterDBShortAndColor(t *testing.T) {
+	for _, tc := range []struct {
+		level float64
+		want  string
+	}{
+		{1, "  0"},
+		{0, " -∞"},
+		{0.1, "-20"},
+	} {
+		if got := meterDBShort(tc.level); got != tc.want {
+			t.Errorf("meterDBShort(%v) = %q, want %q", tc.level, got, tc.want)
+		}
+	}
+	if meterColor(-3) != cRed || meterColor(-12) != cYellow || meterColor(-13) != cGreen {
+		t.Error("meter color thresholds drifted")
+	}
+}
+
+func TestEvoTabCyclesControlsMixerLevels(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, evoWinControls)
+	m.evoKey("tab")
+	if m.evo.window != evoWinMixer || m.top() != scrMixer {
+		t.Fatalf("first tab: window=%d top=%v", m.evo.window, m.top())
+	}
+	m.evoKey("tab")
+	if m.evo.window != evoWinLevels || m.top() != scrMixer {
+		t.Fatalf("second tab: window=%d top=%v", m.evo.window, m.top())
+	}
+	m.evoKey("tab")
+	if m.evo.window != evoWinControls || m.top() != scrControls {
+		t.Fatalf("third tab: window=%d top=%v", m.evo.window, m.top())
+	}
+	m.evoKey("tab")
+	m.evoKey("tab")
+	m.evoKey("esc")
+	if m.evo.window != evoWinControls || m.top() != scrControls {
+		t.Fatalf("esc from levels: window=%d top=%v", m.evo.window, m.top())
 	}
 }
 

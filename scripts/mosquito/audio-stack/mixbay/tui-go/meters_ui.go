@@ -6,10 +6,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"mosquitomarchy.local/mosquitomixbay-tui/drivers"
 	"mosquitomarchy.local/mosquitomixbay-tui/meters"
-	tuikit "mosquitomarchy.local/tui-kit"
 )
 
 // The EVO 8's USB names are stable: 6 capture channels (IN 1-4 + LOOP 5|6)
@@ -50,14 +48,14 @@ func waitMetersCmd(e *meters.Engine) tea.Cmd {
 }
 
 func (m model) wantsMeters() bool {
-	if !m.focused || m.quit || !m.session.live || !m.status.Online {
+	if m.quit || !m.session.live || !m.status.Online {
 		return false
 	}
 	if !m.isEvoDevice() || m.evo.spec.ID != drivers.DevEVO8 {
 		return false
 	}
 	switch m.top() {
-	case scrControls, scrMixer, scrLevels:
+	case scrControls, scrMixer:
 		return true
 	}
 	return false
@@ -106,25 +104,28 @@ func (m model) meterPeak(key string, ch int) float64 {
 	return arr[ch]
 }
 
-func (m model) levelsKey(k string) tea.Cmd {
+// evoLevelsKey owns the Levels tab so Tab/Esc can leave it and the mixer's
+// number-entry state can never leak into a meter-only screen.
+func (m *model) evoLevelsKey(k string) tea.Cmd {
 	switch k {
-	case "esc", "v":
-		m.pop()
+	case "tab", "esc":
+		m.evo.window = evoWinControls
+		if m.top() == scrMixer {
+			m.pop()
+		}
+		m.evo.numBuf = ""
 		return nil
 	case "p":
 		m.meterFrozen = !m.meterFrozen
 		return nil
 	case " ":
 		m.meterPeakIn, m.meterPeakOut = [6]float64{}, [6]float64{}
+		if m.meter != nil {
+			m.meter.ResetPeaks()
+		}
 		return nil
 	case "q":
-		m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")
-		m.confirmAct = func() tea.Cmd {
-			m.quit = true
-			return tea.Quit
-		}
-		m.push(scrConfirm)
-		return nil
+		return m.evoQuitConfirm()
 	}
 	return nil
 }
@@ -143,190 +144,194 @@ func meterDB(level float64) float64 {
 	return db
 }
 
-func meterDBString(level float64) string {
+func meterDBShort(level float64) string {
 	if level <= 1e-5 {
-		return "  -inf"
+		return " -∞"
 	}
-	return fmt.Sprintf("%6.1f", meterDB(level))
+	db := meterDB(level)
+	if db > -0.5 {
+		db = 0
+	}
+	return fmt.Sprintf("%3.0f", db)
 }
 
 func meterFraction(level float64) float64 {
 	return clampf((meterDB(level)+60)/60, 0, 1)
 }
 
-func meterColor(db float64) lipgloss.Color {
+func meterColor(db float64) int {
 	switch {
 	case db >= -3:
-		return tuikit.ColorRed
+		return cRed
 	case db >= -12:
-		return tuikit.ColorYellow
+		return cYellow
 	default:
-		return tuikit.ColorGreen
+		return cGreen
 	}
 }
 
-func meterBarStyled(level, peak float64, width int) string {
-	if width < 1 {
-		return ""
-	}
-	full := int(math.Round(float64(width) * meterFraction(level)))
-	peakPos := int(math.Round(float64(width) * meterFraction(peak)))
-	fill := lipgloss.NewStyle().Foreground(meterColor(meterDB(level)))
-	empty := lipgloss.NewStyle().Foreground(tuikit.ColorBorder)
-	mark := lipgloss.NewStyle().Foreground(tuikit.ColorOnSurface).Bold(true)
-	var b strings.Builder
-	for i := 0; i < width; i++ {
-		switch {
-		case i < full:
-			b.WriteString(fill.Render("▮"))
-		case i == peakPos && peakPos >= full:
-			b.WriteString(mark.Render("│"))
-		default:
-			b.WriteString(empty.Render("▯"))
-		}
-	}
-	return b.String()
+type evoMeterBar struct {
+	label string
+	key   string
+	ch    int
 }
 
-func padStyled(s string, width int) string {
-	if w := lipgloss.Width(s); w < width {
-		return s + strings.Repeat(" ", width-w)
-	}
-	return s
+var evoCaptureBars = []evoMeterBar{
+	{label: "IN1", key: meters.KeyInput, ch: 0},
+	{label: "IN2", key: meters.KeyInput, ch: 1},
+	{label: "IN3", key: meters.KeyInput, ch: 2},
+	{label: "IN4", key: meters.KeyInput, ch: 3},
+	{label: "LP5", key: meters.KeyInput, ch: 4},
+	{label: "LP6", key: meters.KeyInput, ch: 5},
 }
 
-func meterLabel(label string, width int) string {
-	label = tuikit.TruncateLine(label, width)
-	return padStyled(tuikit.StyleMuted.Render(label), width)
+var evoPlaybackBars = []evoMeterBar{
+	{label: "PC1", key: meters.KeyPlayback, ch: 0},
+	{label: "PC2", key: meters.KeyPlayback, ch: 1},
+	{label: "PC3", key: meters.KeyPlayback, ch: 2},
+	{label: "PC4", key: meters.KeyPlayback, ch: 3},
+	{label: "LP5", key: meters.KeyPlayback, ch: 4},
+	{label: "LP6", key: meters.KeyPlayback, ch: 5},
 }
 
-type meterRowDef struct {
-	label  string
-	chans  []int
-	stereo bool
-}
-
-var inputMeterRows = []meterRowDef{
-	{label: "IN 1", chans: []int{0}},
-	{label: "IN 2", chans: []int{1}},
-	{label: "IN 3", chans: []int{2}},
-	{label: "IN 4", chans: []int{3}},
-	{label: "LOOP 5|6", chans: []int{4, 5}, stereo: true},
-}
-
-var playbackMeterRows = []meterRowDef{
-	{label: "PC 1|2", chans: []int{0, 1}, stereo: true},
-	{label: "PC 3|4", chans: []int{2, 3}, stereo: true},
-	{label: "LOOP", chans: []int{4, 5}, stereo: true},
-}
-
-func (m model) meterRows(key string, defs []meterRowDef, labelW, barW int) []string {
-	out := make([]string, 0, len(defs))
-	for _, d := range defs {
-		levels := m.meterLevels(key)
-		if len(levels) == 0 {
-			levels = make([]float64, 6)
-		}
-		maxLvl, maxPeak := 0.0, 0.0
-		for _, ch := range d.chans {
-			if ch < len(levels) && levels[ch] > maxLvl {
-				maxLvl = levels[ch]
-			}
-			if p := m.meterPeak(key, ch); p > maxPeak {
-				maxPeak = p
-			}
-		}
-		var bars string
-		if d.stereo && len(d.chans) > 1 {
-			bw := (barW - 1) / 2
-			bars = meterBarStyled(m.meterLevel(key, d.chans[0]), m.meterPeak(key, d.chans[0]), bw) +
-				" " + meterBarStyled(m.meterLevel(key, d.chans[1]), m.meterPeak(key, d.chans[1]), barW-bw-1)
-		} else {
-			bars = meterBarStyled(maxLvl, maxPeak, barW)
-		}
-		out = append(out, meterLabel(d.label, labelW)+" "+bars+" "+tuikit.StyleHelp.Render(meterDBString(maxLvl)))
-	}
-	return out
-}
-
-func (m model) levelsBody(w int) []string {
-	labelW, barW, gap := 9, 20, 3
-	colW := (w - gap) / 2
-	barW = colW - labelW - 8
-	if barW < 8 {
-		barW = 8
-	}
-	if barW > 30 {
-		barW = 30
-	}
-	left := []string{tuikit.StyleAccent.Render("CAPTURE  interface → computer")}
-	left = append(left, m.meterRows(meters.KeyInput, inputMeterRows, labelW, barW)...)
-	right := []string{tuikit.StyleAccent.Render("PLAYBACK  computer → interface (USB)")}
-	right = append(right, m.meterRows(meters.KeyPlayback, playbackMeterRows, labelW, barW)...)
-
-	if w < 78 {
-		return append(append(left, ""), right...)
-	}
-	colL := labelW + barW + 8
-	if colL < 34 {
-		colL = 34
-	}
-	if colL > w-gap-20 {
-		colL = w - gap - 20
-	}
-	var out []string
-	n := len(left)
-	if len(right) > n {
-		n = len(right)
-	}
-	for i := 0; i < n; i++ {
-		l, rr := "", ""
-		if i < len(left) {
-			l = left[i]
-		}
-		if i < len(right) {
-			rr = right[i]
-		}
-		out = append(out, padStyled(l, colL)+strings.Repeat(" ", gap)+rr)
-	}
-	return out
-}
-
-func (m model) meterStatusLine() string {
+func (m model) meterStatus() (string, int) {
 	if !m.isEvoDevice() || m.evo.spec.ID != drivers.DevEVO8 {
-		return tuikit.StyleWarn.Render("Meters need the live EVO 8 USB streams.")
+		return "Meters need the live EVO 8 USB streams.", cYellow
 	}
 	if !m.session.live || !m.status.Online {
-		return tuikit.StyleWarn.Render("EVO 8 is offline — reconnect to meter.")
+		return "EVO 8 is offline — reconnect to meter.", cYellow
 	}
 	if m.meterStarting && m.meter == nil {
-		return tuikit.StyleMuted.Render("Starting USB capture…")
+		return "Starting USB capture…", cNone
 	}
 	if len(m.meterSnap.Errors) > 0 {
-		return tuikit.StyleErr.Render(strings.Join(m.meterSnap.Errors, " · "))
+		return strings.Join(m.meterSnap.Errors, " · "), cRed
 	}
 	if m.meterFrozen {
-		return tuikit.StyleAccent.Render("peak hold frozen")
+		return "meters frozen", cAccent
 	}
-	return ""
+	return "", cNone
 }
 
-func (m model) levelsView() string {
-	w, h := m.contentSize()
-	lines := []string{screenTitle("Levels — USB digital meters (analog OUT not metered)", w), ""}
-	lines = append(lines, m.levelsBody(w)...)
-	if status := m.meterStatusLine(); status != "" {
-		lines = append(lines, "", status)
-	}
-	lines = append(lines, "", tuikit.StyleHelp.Render("esc/v back · space reset peaks · p freeze peaks · q quit"))
-	content := strings.Join(lines, "\n")
+func (r *evoRender) levelsHelp() ([]evoHint, []evoHint) {
+	return []evoHint{
+		{key: evoTabSym, desc: " view"},
+		{key: "Esc", desc: " controls"},
+		{key: "Space", desc: " reset peaks"},
+		{key: "p", desc: " freeze"},
+		{key: "q", desc: " quit"},
+	}, nil
+}
 
-	ch := h - 1
-	if ch < 1 {
-		ch = 1
+func (r *evoRender) drawLevelsBody(row, cx, sectionW int) int {
+	const (
+		barW     = 4
+		gap      = 1
+		groupW   = 6*barW + 5*gap
+		scaleW   = 7
+		groupGap = 3
+		totalW   = scaleW + groupW*2 + groupGap
+	)
+	bodyRow := row
+	x := cx + (sectionW-totalW)/2
+	if x < cx {
+		x = cx
 	}
-	content = lipgloss.PlaceVertical(ch, lipgloss.Center, content)
-	return versionRow(w) + "\n" + content
+	captureX := x + scaleW
+	playbackX := captureX + groupW + groupGap
+
+	title := "USB DIGITAL METERS"
+	r.put(x+totalW-len([]rune(title)), row, title, evoDim)
+	row++
+	r.put(captureX+(groupW-len([]rune("CAPTURE")))/2, row, "CAPTURE", evoStyle{col: cAccent, bold: true})
+	r.put(playbackX+(groupW-len([]rune("PLAYBACK")))/2, row, "PLAYBACK", evoStyle{col: cAccent, bold: true})
+	row++
+	readoutRow := row
+	row++
+	barTop := row
+	const barRows = 18
+	barBot := barTop + barRows - 1
+
+	for y := barTop; y <= barBot; y++ {
+		r.put(x+5, y, "│", evoVal)
+	}
+	for _, db := range []float64{-60, -40, -20, -12, -6, 0} {
+		y := barBot - int(math.Round((db+60)/60*float64(barRows-1)))
+		if y < barTop {
+			y = barTop
+		}
+		if y > barBot {
+			y = barBot
+		}
+		label := fmt.Sprintf("%g", db)
+		if db == 0 {
+			label = "0"
+		}
+		r.put(x, y, fmt.Sprintf("%4s", label), evoVal)
+		r.put(x+5, y, "┤", evoVal)
+	}
+
+	draw := func(bars []evoMeterBar, groupX int) {
+		for i, b := range bars {
+			bx := groupX + i*(barW+gap)
+			level := r.m.meterLevel(b.key, b.ch)
+			peak := r.m.meterPeak(b.key, b.ch)
+			attr := evoDim
+			if level > 1e-5 {
+				attr = evoStyle{col: meterColor(meterDB(level))}
+			}
+			r.put(bx+(barW-len([]rune(b.label))+1)/2, readoutRow, meterDBShort(level), attr)
+			r.drawVerticalBar(bx, barTop, barBot, barW, level, peak)
+			r.put(bx+(barW-len([]rune(b.label))+1)/2, barBot+1, b.label, evoDim)
+		}
+	}
+	draw(evoCaptureBars, captureX)
+	draw(evoPlaybackBars, playbackX)
+
+	return bodyRow + evoControlsBodyH(r.spec)
+}
+
+func (r *evoRender) drawVerticalBar(x, top, bot, width int, level, peak float64) {
+	rows := bot - top + 1
+	full := int(math.Round(float64(rows) * meterFraction(level)))
+	fillTop := bot - full + 1
+	peakPos := int(math.Round(float64(rows) * meterFraction(peak)))
+	peakRow := bot - peakPos + 1
+	for y := top; y <= bot; y++ {
+		for col := 0; col < width; col++ {
+			if y >= fillTop {
+				db := -60 + 60*float64(bot-y+1)/float64(rows)
+				r.c.put(x+col, y, "█", evoStyle{col: meterColor(db)})
+			} else {
+				r.c.put(x+col, y, "░", evoStyle{col: cBorder, dim: true})
+			}
+		}
+	}
+	if peakPos > 0 {
+		st := evoStyle{col: cWhite}
+		if peakRow >= fillTop {
+			db := -60 + 60*float64(bot-peakRow+1)/float64(rows)
+			st.bg = meterColor(db)
+		}
+		for col := 0; col < width; col++ {
+			r.c.put(x+col, peakRow, "─", st)
+		}
+	}
+}
+
+func (r *evoRender) drawLevelsStatusBar(row, cx, sectionW int) int {
+	if msg, col := r.m.meterStatus(); msg != "" {
+		attr := evoDim
+		if col != cNone {
+			attr = evoStyle{col: col}
+		}
+		r.put(cx+evoSliderOff, row, msg, attr)
+	}
+	row++
+	lineAttr := evoStyle{col: cAccent}
+	r.c.repeat(cx, row, sectionW-1, boxH, lineAttr)
+	r.put(cx+sectionW-1, row, string(boxH), lineAttr)
+	return row + 1
 }
 
 // evoMeterChannels maps a control/mixer row key to the USB capture channels

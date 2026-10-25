@@ -50,6 +50,7 @@ type Snapshot struct {
 // Engine owns the pw-record children and one ticker that publishes snapshots.
 type Engine struct {
 	updates chan Snapshot
+	reset   chan struct{}
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 	once    sync.Once
@@ -66,7 +67,7 @@ type partial struct {
 // TUI can render the meter panel with a useful message.
 func Start(sources []Source) *Engine {
 	ctx, cancel := context.WithCancel(context.Background())
-	e := &Engine{updates: make(chan Snapshot, 4), cancel: cancel}
+	e := &Engine{updates: make(chan Snapshot, 4), reset: make(chan struct{}, 1), cancel: cancel}
 	ch := make(chan partial, 16)
 
 	for _, src := range sources {
@@ -79,6 +80,17 @@ func Start(sources []Source) *Engine {
 }
 
 func (e *Engine) Updates() <-chan Snapshot { return e.updates }
+
+// ResetPeaks clears the ballistics peak hold. A reset during Stop is ignored.
+func (e *Engine) ResetPeaks() {
+	if e == nil {
+		return
+	}
+	select {
+	case e.reset <- struct{}{}:
+	default:
+	}
+}
 
 // Stop kills the captures and waits for their pipes to close. Safe to call
 // more than once.
@@ -171,6 +183,10 @@ func (e *Engine) publish(ctx context.Context, sources []Source, in <-chan partia
 			}
 			latest[p.key] = p.levels
 			delete(errs, p.key)
+		case <-e.reset:
+			for _, b := range smoothers {
+				b.ResetPeaks()
+			}
 		case now := <-ticker.C:
 			snap := Snapshot{Peaks: map[string][]float64{}}
 			for _, src := range sources {
@@ -318,6 +334,13 @@ func (b *Ballistics) Update(target []float64, now time.Time) (levels, peaks []fl
 	}
 	b.last = now
 	return copyFloats(b.levels), copyFloats(b.peaks)
+}
+
+func (b *Ballistics) ResetPeaks() {
+	for i := range b.peaks {
+		b.peaks[i] = 0
+		b.until[i] = time.Time{}
+	}
 }
 
 func (b *Ballistics) Last() time.Time { return b.last }

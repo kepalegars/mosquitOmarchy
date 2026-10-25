@@ -49,6 +49,18 @@ ok "upstream sources ready ($CACHE)"
 mq_sudo -v || die "sudo required for the kernel module install"
 mq_sudo bash "$CACHE/kmod/install.sh"
 
+# The upstream installer builds DKMS only for the kernel it runs under. With
+# both linux and linux-omarchy installed, booting the other kernel left
+# /dev/evo8 missing and Mixbay silently fell back to DEMO. Build for every
+# installed kernel and load the module at boot so a kernel switch cannot
+# break the bay again.
+if command -v dkms >/dev/null 2>&1; then
+  mq_sudo dkms autoinstall \
+    || warn "dkms autoinstall failed — build the running kernel with: sudo dkms install evo_raw/0.1 -k $(uname -r)"
+fi
+mq_sudo bash -c 'printf "%s\n" evo_raw > /etc/modules-load.d/evo_raw.conf; modprobe evo_raw' \
+  || warn "could not load evo_raw now — run: sudo modprobe evo_raw"
+
 if [[ -e /dev/evo8 || -e /dev/evo4 ]]; then
   ok "evo_raw live ($(ls /dev/evo* 2>/dev/null | tr '\n' ' '))"
 else

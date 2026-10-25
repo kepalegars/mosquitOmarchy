@@ -61,8 +61,8 @@ Depuis v1.3, la garde des volumes natifs est un module séparé
 `levels-guard` dans `bindings.lua`). Mixbay seul ne pose que son propre
 raccourci. `ui.json` porte `allow_native_volume` (défaut false), mais le
 réglage n'est actif que si `mosquito.levels-guard` est installé et activé. La
-capture des mètres USB ne tourne que sur un EVO 8 live, fenêtre focused, écran
-EVO visible.
+capture des mètres USB tourne sur un EVO 8 live dès qu'un onglet EVO est visible
+(CONTROLS, MIXER ou LEVELS), même si la fenêtre perd le focus.
 
 Le watchdog `live-mode-watch` peut poller `status-json | jq .online` et
 lever un toast via le plugin `mosquito.livemode` si l'interface décroche

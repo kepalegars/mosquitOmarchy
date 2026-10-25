@@ -63,6 +63,17 @@ func TestBallisticsAttackReleaseAndPeakHold(t *testing.T) {
 	}
 }
 
+func TestBallisticsResetPeaks(t *testing.T) {
+	b := NewBallistics(1)
+	now := time.Unix(0, 0)
+	b.Update([]float64{0.8}, now)
+	b.ResetPeaks()
+	_, peak := b.Update([]float64{0.1}, now.Add(time.Millisecond))
+	if peak[0] != 0.1 {
+		t.Fatalf("peak after reset = %v, want 0.1", peak[0])
+	}
+}
+
 func TestRecordCommandUsesRawF32AndMonitorProperty(t *testing.T) {
 	cmd := recordCommand(t.Context(), Source{Node: "node", Channels: 6, Monitor: true})
 	args := strings.Join(cmd.Args, " ")

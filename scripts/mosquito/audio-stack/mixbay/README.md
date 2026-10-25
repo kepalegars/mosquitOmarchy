@@ -5,7 +5,7 @@ EVO 8 first: the interface mirrors evotui (vanzaho/audient-evo-py).
 
 | Interface | Backend | État |
 |---|---|---|
-| Audient EVO 8 | `evo_raw` kmod (`/dev/evo8` ioctl) | **plein contrôle** : volumes, gains 0…58 dB, mutes, 48V, loopback mixer 10×4 sur 2 bus (MIX 1\|2, MIX 3\|4) |
+| Audient EVO 8 | `evo_raw` kmod (`/dev/evo8` ioctl) | **plein contrôle** : volumes, gains -8…50 dB, mutes, 48V, loopback mixer 10×4 sur 2 bus (MIX 1\|2, MIX 3\|4) |
 | Audient EVO 4 | même protocole | plein contrôle + monitor blend |
 | RME Fireface UCX II | ALSA niveau 1 | volumes/mutes ; matrice TotalMix en attente support kernel UCX II USB |
 | ESI UGM192 | ALSA | volumes/mutes (pas de DSP) |
@@ -20,9 +20,10 @@ volumes et mutes, jamais de gain, 48V ni mixer.
 
 Port Go de [vanzaho/audient-evo-py](https://github.com/vanzaho/audient-evo-py)
 (domaine public, référence principale — interface à répliquer) :
-FU10 volume, FU11 gains, EU56 monitor (EVO 4), EU58 mutes/48V, EU59 mute
-(EVO 4), MU60 loopback **write-only** (shadow logiciel partagé avec evoctl,
-compatible `~/.config/audient-evo-py/<dev>/`). Quirks respectés : 4 octets
+FU10 volume, FU11 gains, EU51 capture 6 canaux (EVO 8), EU56 monitor (EVO 4),
+EU58 mutes/48V, EU59 mute (EVO 4), MU60 loopback **write-only** (shadow
+logiciel partagé avec evoctl, compatible `~/.config/audient-evo-py/<dev>/`).
+Quirks respectés : 4 octets
 pleins sur EU58/59, jamais de GET sur MU60, EU56 seulement CS=0 CN=0, paires
 de sorties groupées sur des CN impairs, gains en CN 1-based.
 
@@ -71,8 +72,8 @@ Ce que **mixbay ajoute** :
 - chrome en **texte blanc** : cadres arrondis, libellés PAN / VOL / gains et
   ligne de bus utilisent le `bright_foreground` du thème, plus jamais `muted`
   (vert sur achraff-67) ni `dark_foreground` (gris chaud) ;
-- onglets CONTROLS / MIXER : texte blanc dans les deux états, l'actif sur un
-  bloc accent (comme les boutons Close) ; les deux lignes de cadre
+- onglets CONTROLS / MIXER / LEVELS (EVO 8) : texte blanc dans les deux états,
+  l'actif sur un bloc accent (comme les boutons Close) ; les deux lignes de cadre
   (sous les onglets, au-dessus des raccourcis) sont accent ; devant
   `Audient EVO 8/4`, un point plein clignote entre accent et blanc quand
   l'interface est connectée, et un point creux accent reste fixe quand elle
@@ -82,9 +83,10 @@ Ce que **mixbay ajoute** :
 - **mètres USB** : chaque carte de contrôle (IN, OUT, sources du mixer) porte
   une fine barre de niveau et un repère de crête. Le signal lu est le monitor
   USB de la carte, jamais le niveau analogique OUT (l'EVO n'en expose pas) ;
-- écran **Levels** (`v`) : les 6 canaux de capture (IN 1-4, LOOP 5\|6) et les
-  6 canaux de lecture (PC 1\|2, PC 3\|4, LOOP) avec dBFS, crête, `Space` pour
-  remettre les crêtes à zéro et `p` pour figer le peak-hold ;
+- onglet **LEVELS** (`Tab` depuis MIXER) : 12 mètres verticaux dBFS, les 6
+  canaux de capture (IN1-4, LP5/6) et les 6 canaux de lecture (PC1-4, LP5/6),
+  avec repère de crête, `Space` pour remettre les crêtes à zéro et `p` pour
+  figer l'affichage ; `Tab`/`Esc` reviennent à CONTROLS ;
 - les valeurs reçues du matériel (gain, volume, monitor) glissent sur ~220 ms
   après chaque poll de 500 ms ; une écriture locale (Molette/clavier/TUI)
   s'affiche immédiatement, sans animation ;
@@ -115,7 +117,7 @@ bordures.
 ## Usage
 
 ```bash
-./setup-mosquitomixbay.sh            # installe (TUI + dispatchers + kmod)
+./setup-mosquitomixbay.sh            # installe (TUI + dispatchers + kmod + capture EU51)
 ./setup-mosquitomixbay.sh --status   # missing | partial:… | ok
 mosquito-mixbay                      # la TUI (seule interface)
 mosquito-mixbay-actions devices-json
@@ -128,6 +130,11 @@ mosquito-mixbay-actions mixer input1 --volume -6 --pan -20
 mosquito-mixbay-actions save | load --device evo8
 ```
 
+L'installateur pose aussi `/etc/udev/rules.d/99-evo8-capture.rules` et
+`/usr/local/lib/mosquitomixbay/evo8-capture-enable.py` : à chaque connexion,
+EU51 est demandé (best-effort, Enable write-only) pour que le DAW voie les 6
+canaux de capture. Le driver Go le retente une fois par processus.
+
 Les écritures (`set`, `mixer`, `save`, `load`) sont **strictes** : carte
 absente, elles échouent au lieu d'écrire le shadow DEMO. `--demo` est
 l'opt-out explicite. `status-json` reste en lecture ; sur EVO, `--live` ne
@@ -136,7 +143,7 @@ renvoie que la lecture matérielle et échoue si la carte est absente.
 Dans foot, le zoom se règle au terminal, pas dans la TUI :
 `Ctrl++` / `Ctrl+=` agrandit, `Ctrl+-` réduit, `Ctrl+0` remet à zéro.
 
-TUI : appareils → écran EVO (CONTROLS / MIXER). Raccourcis EVO — les flèches
+TUI : appareils → écran EVO (CONTROLS / MIXER / LEVELS sur EVO 8). Raccourcis EVO — les flèches
 seules déplacent, les modificateurs règlent la valeur sélectionnée :
 
 - `←` / `→` ou `h` / `l` : changer de colonne (CONTROLS) ou de source (MIXER) ;
@@ -150,8 +157,8 @@ seules déplacent, les modificateurs règlent la valeur sélectionnée :
   suivant dans le mixer ;
 - `r` remet le paramètre au défaut, `R` (reset all) vide tout le mixer après
   confirmation, `A` Artist Mix ;
-- `v` ouvre **Levels** (mètres USB) : `Space` remet les crêtes à zéro, `p`
-  fige le peak-hold, `Esc`/`v` retour ;
+- `Tab` cycle CONTROLS → MIXER → LEVELS (EVO 8) → CONTROLS ; sur LEVELS,
+  `Space` remet les crêtes à zéro, `p` fige l'affichage, `Esc`/`Tab` retour ;
 - `s` sauve (`+ new preset` pour un nouveau nom, `r` pour renommer), `o` charge
   (même picker : `r` renomme, `d` supprime après confirmation ; `default` est
   protégé), `Esc` retour, `q` quitte.
@@ -162,9 +169,9 @@ wezterm/alacritty/VTE/xterm). Un changement fait sur l'EVO 8 apparaît donc
 dans la TUI sans touche, avec un court ramp à l'affichage. Le mixer MU60 étant
 *write-only*, seuls les gains, volumes, mutes et 48V viennent du matériel ; la
 matrice reste le shadow disque partagé (les changements d'evoctl sont relus).
-Les mètres sont capturés uniquement quand un écran EVO 8 (CONTROLS, MIXER ou
-Levels) est visible et que la fenêtre a le focus ; la capture s'arrête en
-quittant ou en perdant le focus. EVO 4 et DEMO n'ont pas de mètres. Si une session réelle perd la
+Les mètres sont capturés tant qu'un onglet EVO 8 (CONTROLS, MIXER ou LEVELS)
+est visible, même si la fenêtre perd le focus ; la capture s'arrête en
+quittant l'onglet ou l'application. EVO 4 et DEMO n'ont pas de mètres. Si une session réelle perd la
 carte, les dernières valeurs sont figées, le point passe creux et les écritures
 sont refusées jusqu'au retour de l'interface ; le poll suivant réactive les
 écritures dès que la carte répond. Un rafraîchissement manuel pendant la
@@ -226,15 +233,19 @@ Mixbay seul ne touche ni au panneau audio d'Omarchy ni aux touches média.
   Omarchy et sauvegarde de `shell.json` (`shell.json.levels-guard.bak`) ;
 - touches média : bloc marqué `levels-guard` dans
   `~/.config/hypr/bindings.lua`, qui délègue à Omarchy dès que l'interface par
-  défaut n'est plus un EVO.
+  défaut n'est plus gérée par Mixbay.
+
+Sur une interface gérée, le panneau remplace le slider par une barre pleine
+non ajustable (100 %), sans bouton ; le mètre de crête d'entrée reste réel.
 
 Le réglage **Allow native volume controls** (Settings) écrit
 `allow_native_volume` dans `ui.json` ; le panneau le relit à chaud. Il est
 grisé tant que `mosquito.levels-guard` n'est pas actif. La garde ne bloque que
 ces surfaces : `pactl`/`wpctl` directs et les applications ne sont jamais
-interceptés. Une touche bloquée affiche quand même l'OSD à 0 %. Si le panneau
-upstream change, la mise à jour refuse de rafraîchir le clone (supprimer le
-dossier, ou réinstaller Levels Guard, pour repartir de l'upstream).
+interceptés. Une touche bloquée affiche quand même l'OSD avec son icône et
+100 %, mais la barre de niveau vide (0 %). Si le panneau upstream change,
+la mise à jour refuse de rafraîchir le clone (supprimer le dossier, ou
+réinstaller Levels Guard, pour repartir de l'upstream).
 
 ## Fichiers
 
