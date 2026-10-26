@@ -105,7 +105,7 @@ The tables below follow the TUI's Setup folders: each heading is one of them.
 | `levels-guard` | Native audio panel + media-key guard | [stack](scripts/mosquito/audio-stack/README.md) |
 | `mosquito.jamjamjam` | Real-time key/BPM/chord detection with a fretboard and tuner | [README](scripts/mosquito/jamjamjam/README.md) |
 | `live-mode` | A thermal/perf session mode: app closing, gaps, routing, package fence | [README](scripts/mosquito/audio-stack/live-mode/README.md) |
-| `battery` | Ultra-save, a custom battery plugin, mega caffeine | [README](scripts/plugins/power-management/README.md) |
+| `mega-caffeine` | Coffee mode: laptop closed without sleeping, red tint, natural-language durations (installs battery management first if missing) | [README](scripts/mosquito/mega-caffeine/README.md) |
 | `keybindings` | The `SUPER` bindings of this package, inside one reversible block in `bindings.lua` | [README](scripts/apps/mosquitomarchy/README.md#keybindings) |
 
 ### Plugins
@@ -114,6 +114,7 @@ The project's own layer: the manager itself, and the desktop-hardware modules.
 
 | Module | Installs | Doc |
 |---|---|---|
+| `battery-management` | Ultra-save low-power mode, `power-helper`, watchdog, and the `mosquito.power` bar plugin | [README](scripts/plugins/battery-management/README.md) |
 | `mosquitomarchy` | This TUI (built from the Go sources in the repo), its dispatcher, menu entry, float rule, post-boot hook and the `SUPER+ALT+M` shortcut | [README](scripts/apps/mosquitomarchy/README.md) |
 | `mosquitomarchy-update` | The update watchdog (scripts repo first, then Omarchy) | [README](scripts/mosquitomarchy-update/README.md) |
 | `brightness` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp | [notes](scripts/plugins/brightness/display-fixes.md) |
@@ -274,8 +275,8 @@ mosquitOmarchy/
 └── scripts/
     ├── apps/                 # one folder per app, plus the app/TUI/webapp catalogs
     │   └── mosquitomarchy/   # the manager TUI + backend + archive-mosquitomarchy.sh
-    ├── mosquito/             # mosquito tools: live-mode, jamjamjam, pipewire-settings
-    ├── plugins/              # shell plugins: power-management, brightness, touchpad, ...
+    ├── mosquito/             # mosquito tools: live-mode, jamjamjam, pipewire-settings, mega-caffeine
+    ├── plugins/              # shell plugins: battery-management, brightness, touchpad, ...
     ├── fixes/                # small idempotent repairs
     ├── tweaks/               # optional preference changes (never auto-applied)
     ├── lib/                  # shared helpers, tui-kit/ (the Go component library)

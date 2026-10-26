@@ -92,7 +92,7 @@ VST_ICON_DST="$HOME/.local/share/icons/hicolor/256x256/apps/mosquito-audio-plugi
 if ! command -v wine >/dev/null 2>&1 || ! command -v yabridgectl >/dev/null 2>&1; then
   info "Runtime dependencies (wine-staging + yabridge) — required for Windows-VST support"
   missing_deps=()
-  for p in wine-staging yabridge yabridgectl; do
+  for p in wine-staging yabridgectl; do
     pacman -Q "$p" &>/dev/null || missing_deps+=("$p")
   done
   if ((${#missing_deps[@]})) && ask "Install the missing packages (${missing_deps[*]}) ?"; then
@@ -100,6 +100,18 @@ if ! command -v wine >/dev/null 2>&1 || ! command -v yabridgectl >/dev/null 2>&1
     mq_sudo pacman -S --needed --noconfirm "${missing_deps[@]}" \
       || die "Installation failed: ${missing_deps[*]}"
     ok "Installed: ${missing_deps[*]}"
+  fi
+fi
+
+# The distro yabridge (5.1.1) shadows the fixed master build kept in
+# ~/.local/share/yabridge: its /usr/bin/yabridge-host.exe wins the chainloader's
+# PATH lookup. yabridgectl does not depend on the package and stays.
+if pacman -Q yabridge &>/dev/null; then
+  warn "The distro yabridge package shadows the fixed build in ~/.local/share/yabridge."
+  if ask "Remove the distro yabridge package (yabridgectl stays) ?"; then
+    mq_sudo -v || die "Password required to remove yabridge"
+    mq_sudo pacman -R --noconfirm yabridge || die "Could not remove yabridge"
+    ok "Removed the distro yabridge package"
   fi
 fi
 
@@ -116,6 +128,9 @@ deploy_one() {
 }
 deploy_one "lib-audio-plugin-manager-core.sh"
 deploy_one "mosquito-audio-plugin-manager-actions"
+# The core/actions call the linker next to themselves first, so a stale copy in
+# ~/.local/bin silently overrides the repo version. Deploy it like the rest.
+deploy_one "link-vst-shared.sh"
 
 # known-plugins.tsv is DATA, not code: it must ship next to the library or every
 # installer silently reports "unknown plugin" again, with no error to notice.
@@ -211,7 +226,7 @@ ok "Pre-rename \"VST Manager\" artifacts cleaned up (binaries, .desktop, icon, H
 # update is never left stale (this module and mosquito-move-manager share
 # the exact same plugin, one source of truth).
 # -----------------------------------------------------------------------------
-PLUGIN_SRC="$SCRIPT_DIR/../../../plugins/power-management/omarchy-plugins/mosquito.confirm"
+PLUGIN_SRC="$SCRIPT_DIR/../../../plugins/battery-management/omarchy-plugins/mosquito.confirm"
 PLUGIN_DST="$HOME/.config/omarchy/plugins/mosquito.confirm"
 if [[ -d $PLUGIN_SRC ]]; then
   mkdir -p "$PLUGIN_DST"

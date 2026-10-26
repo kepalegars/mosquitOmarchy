@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Self-check for plugin-clone.bash: upstream vs locally-modified detection,
+# stamp updates, and the split-manifest (Indicators-style) source hash.
+set -euo pipefail
+
+# shellcheck source=plugin-clone.bash
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/plugin-clone.bash"
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+fail=0
+check(){ # description expected actual
+  if [[ $3 == "$2" ]]; then
+    echo "  ✓ $1"
+  else
+    echo "  ✗ $1: got '$3', want '$2'" >&2
+    fail=1
+  fi
+}
+
+# Whole-directory clone (omarchy.power / omarchy.audio shape).
+src="$tmp/source"
+clone="$tmp/clone"
+mkdir -p "$src"
+printf '{"entryPoints":{"barWidget":"Panel.qml"}}\n' >"$src/manifest.json"
+printf 'panel v1\n' >"$src/Panel.qml"
+printf 'model v1\n' >"$src/Model.js"
+cp -a "$src/." "$clone/"
+up="$(plugin_clone_source_hash_at "$src" "$src/manifest.json")"
+plugin_clone_write_stamp "$clone" "$up"
+check "fresh clone is ok" ok "$(plugin_clone_state "$clone" "$up")"
+
+printf 'edited\n' >>"$clone/Panel.qml"
+check "local edit is reported" locally-modified "$(plugin_clone_state "$clone" "$up")"
+
+plugin_clone_update_stamp "$clone"
+check "stamp update accepts overlay changes" ok "$(plugin_clone_state "$clone" "$up")"
+check "stamp update keeps upstream hash" "$up" "$(sed -n '1p' "$(plugin_clone_stamp_file "$clone")")"
+
+printf 'panel v2\n' >"$src/Panel.qml"
+up2="$(plugin_clone_source_hash_at "$src" "$src/manifest.json")"
+[[ $up2 != "$up" ]] || { echo "  ✗ upstream hash did not change" >&2; fail=1; }
+check "upstream change is reported" upstream-changed "$(plugin_clone_state "$clone" "$up2")"
+
+rm -f "$(plugin_clone_stamp_file "$clone")"
+check "missing baseline is reported" unstamped "$(plugin_clone_state "$clone" "$up2")"
+
+# Split clone with clonePaths (omarchy.indicators shape): unrelated sibling
+# files must not count as upstream changes.
+split="$tmp/split"
+mkdir -p "$split/widgets" "$split/indicators"
+printf '{"entryPoints":{"barWidget":"Indicators.qml"},"omarchy":{"clonePaths":[{"source":"../indicators","target":"indicators"}]}}\n' \
+  >"$split/widgets/Indicators.manifest.json"
+printf 'indicators v1\n' >"$split/widgets/Indicators.qml"
+printf 'stayawake v1\n' >"$split/indicators/StayAwake.qml"
+up="$(plugin_clone_source_hash_at "$split/widgets" "$split/widgets/Indicators.manifest.json")"
+printf 'unrelated\n' >"$split/widgets/Other.qml"
+check "unrelated sibling does not affect source hash" "$up" \
+  "$(plugin_clone_source_hash_at "$split/widgets" "$split/widgets/Indicators.manifest.json")"
+printf 'stayawake v2\n' >"$split/indicators/StayAwake.qml"
+[[ "$(plugin_clone_source_hash_at "$split/widgets" "$split/widgets/Indicators.manifest.json")" != "$up" ]] \
+  || { echo "  ✗ clonePaths source change missed" >&2; fail=1; }
+
+if ((fail)); then
+  echo "plugin-clone-test: FAILED" >&2
+  exit 1
+fi
+echo "plugin-clone-test: ok"

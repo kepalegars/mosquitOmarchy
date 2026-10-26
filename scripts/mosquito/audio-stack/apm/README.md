@@ -68,7 +68,7 @@ scripts/mosquito/audio-stack/apm/setup-yabridge.sh --wine-menu   # step 5 only
 
 | Vendor | Precaution |
 |---|---|
-| Xfer Serum | winetricks `gdiplus`, override `d2d1`, tooltips off |
+| Xfer Serum | tooltips off. `gdiplus` and the `d2d1` override are no longer applied automatically: they are global and can break other plugins; use them manually only if the GUI is broken |
 | FabFilter | group `"fabfilter"` — inter-plugin communication, VST2 |
 | Arturia / Kick 2 / The Drop | `HideWineExports`; Bitwig sandbox recommended |
 | MeldaProduction | disable GPU rendering in each plugin |
@@ -83,6 +83,8 @@ scripts/mosquito/audio-stack/apm/setup-yabridge.sh --wine-menu   # step 5 only
 | Sonible (JUCE8) | black GUI; winetricks `vcrun6sp6 w_workaround_wine_bug-50894` |
 | Scaler | software rendering if the GUI stays black |
 | Softube / Plugin Alliance | black GUI is standard; install via `wine msiexec /i` |
+
+`gdiplus`, the `d2d1` DLL override, and `editor_force_dnd` were removed from the automatic fixes: they are no longer needed, are prefix-wide, can break plugins that work without them, and `editor_force_dnd` breaks file drag-and-drop into REAPER. Apply them by hand only for a plugin that specifically needs them.
 
 Re-run `--tweaks` after every new plugin.
 

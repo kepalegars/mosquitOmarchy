@@ -25,20 +25,45 @@ TOUCHPAD_NAME=syna8018:00-06cb:ce67-touchpad TOUCHPAD_SENSITIVITY=-0.2 \
 ## Kinetic scrolling
 
 Kinetic/inertial scrolling is enabled by default through the `hypr-kinetic-scroll`
-Hyprland plugin, installed with `hyprpm`. The generated `touchpad.lua` keeps the
-plugin settings separate from the per-device `hl.device` block and aligns the
-global touchpad scroll factor with the touchpad's own scroll factor, so momentum
-follows the same scrolling direction. Current defaults are:
+Hyprland plugin, installed with `hyprpm`. The script installs a pinned revision
+of upstream PR #23 until it is merged: upstream `master` is not yet safe on
+Hyprland 0.56 (its config values abort the compositor on load/unload).
 
-- `KINETIC_DECEL=0.98`
-- `KINETIC_MIN_VELOCITY=0.5`
-- `KINETIC_INTERVAL_MS=16`
-- `KINETIC_DELTA_MULT=1.25`
-- `KINETIC_DISABLE_BROWSER=1`
-- global `scroll_factor=1.2`
+Hyprland 0.56 rejects plugin options in `hl.config`. The generated
+`touchpad.lua` therefore keeps the plugin's compiled defaults and only applies
+per-app opt-outs through `hl.plugin.kinetic_scroll.disable(...)`. The global
+touchpad scroll factor is aligned with the touchpad's own scroll factor, so
+momentum follows the same scrolling direction.
 
-Set `KINETIC_SCROLL_ENABLED=0` before running the script to keep the classic
-touchpad configuration without the kinetic plugin.
+Tune for the current session with, for example:
+
+```bash
+hyprctl keyword plugin:kinetic-scroll:decel 0.98
+hyprctl keyword plugin:kinetic-scroll:debug 1
+```
+
+Set `KINETIC_DISABLED_CLASSES="org.telegram.desktop steam"` to opt those apps
+out. Set `KINETIC_SCROLL_ENABLED=0` before running the script to keep the
+classic touchpad configuration without the kinetic plugin.
+
+Verify the plugin after applying:
+
+```bash
+hyprpm list                          # Plugin hypr-kinetic-scroll, enabled: true
+hyprctl plugin list                  # hypr-kinetic-scroll loaded
+hyprctl getoption plugin:kinetic-scroll:enabled
+```
+
+If install fails, rerun the script to see the full `hyprpm` output. A manual
+retry is:
+
+```bash
+hyprpm update
+echo y | hyprpm add https://github.com/oliverlukschander/hypr-kinetic-scroll \
+  f533b6cd24447a9b4191bf5c798a267f64026f0b
+hyprpm enable hypr-kinetic-scroll
+hyprpm reload
+```
 
 
 ## Together: touchpad + MX Master (or any mouse)

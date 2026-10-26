@@ -13,7 +13,7 @@ duplicated here.
 |---|---|
 | `apps/` | one folder per app, plus the app / TUI / webapp catalogs — [README](apps/README.md) |
 | `apps/mosquitomarchy/` | the launcher TUI, its backend and the `SUPER` keybinding primitives — [README](apps/mosquitomarchy/README.md) |
-| `plugins/` | Omarchy shell plugins: `live-mode/`, `jamjamjam/`, `power-management/` |
+| `plugins/` | Omarchy shell plugins: `live-mode/`, `jamjamjam/`, `battery-management/` |
 | `fixes/` | small idempotent repairs, proposed at startup — [README](fixes/README.md) |
 | `tweaks/` | optional preference changes, never auto-applied — [README](tweaks/README.md) |
 | `lib/` | shared helpers — `tui-kit/` (the Go component library), `common.bash`, `crash.bash`, `elevate.bash`, `keybindings.bash` |

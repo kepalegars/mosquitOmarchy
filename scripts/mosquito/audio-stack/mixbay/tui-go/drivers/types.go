@@ -9,7 +9,7 @@
 //     Protocol reverse-engineered by vanzaho/audient-evo-py (public domain).
 //     EVO 8 is the reference device: 4 inputs (gain 0..58 dB card scale;
 //     FU11 wire is -8..50 dB), 2 output
-//     pairs (-96..0 dB), 10x4 loopback matrix over 2 mix buses, no monitor
+//     pairs (-127..0 dB), 10x4 loopback matrix over 2 mix buses, no monitor
 //     blend knob (monitoring goes through the matrix).
 //   - fireface-ucx2: RME Fireface UCX II. Level 1 = ALSA volumes + mutes
 //     (works today, class-compliant). Level 2 = full TotalMix matrix once

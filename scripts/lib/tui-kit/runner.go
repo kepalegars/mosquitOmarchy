@@ -3,7 +3,9 @@ package tuikit
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -128,7 +130,20 @@ func runExternal(cmd *exec.Cmd, lines chan<- string, result chan<- error) {
 	err := cmd.Wait()
 	pw.Close()
 	<-scanDone
-	result <- err
+	result <- waitErr(err, cmd.ProcessState)
+}
+
+// waitErr treats a WaitDelay expiry after a clean exit as success. WaitDelay
+// closes the pipes when the command exits but a background child it spawned
+// (a daemon, a portal restart helper) still holds stdout/stderr open; Go then
+// returns exec.ErrWaitDelay even though the command itself exited 0. Without
+// this, every already-installed module whose installer leaves such a child
+// behind was reported as "finished with errors" while its log said success.
+func waitErr(err error, ps *os.ProcessState) error {
+	if errors.Is(err, exec.ErrWaitDelay) && ps != nil && ps.ExitCode() == 0 {
+		return nil
+	}
+	return err
 }
 
 // Update must be fed every Msg the host receives while a Runner is active.

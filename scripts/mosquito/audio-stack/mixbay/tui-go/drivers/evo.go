@@ -7,7 +7,8 @@
 // Protocol (entity IDs, ranges, quirks — all from audient-evo-py's
 // dev/DESIGN.md, public domain):
 //
-//	FU10 0x0A00 CS=2 : output volume, 2B signed UAC2 (1/256 dB), [-96,0] dB
+//	FU10 0x0A00 CS=2 : output volume, 2B signed UAC2 (1/256 dB), [-127,0] dB
+//	                   (EVO 8; the EVO 4 stops at -96 dB)
 //	FU11 0x0B00 CS=2 : input gain per CN, EVO4 [-8,50], EVO8 [-8,50] wire
 //	                   (the card shows the same gain on a 0..58 scale)
 //	EU56 0x3800 CS=0 : monitor blend 0..127 (EVO4 ONLY — EVO8 STALLs)
@@ -47,7 +48,7 @@ var (
 		ID: "evo8", Display: "Audient EVO 8", Vendor: "Audient",
 		USBVID: "2708", USBPID: "0007",
 		NumInputs: 4, NumOutPairs: 2,
-		GainMin: 0, GainMax: 58, GainOffset: 8, VolMin: -96, VolMax: 0,
+		GainMin: 0, GainMax: 58, GainOffset: 8, VolMin: -127, VolMax: 0,
 		MixerInputs: 10, MixerOutputs: 4,
 		HasMonitor: false, Backend: BackendEvoRaw, NeedsKmod: true,
 		Caps:        Caps{Volume: true, Gain: true, Mute: true, Phantom: true, Monitor: false, Mixer: true},

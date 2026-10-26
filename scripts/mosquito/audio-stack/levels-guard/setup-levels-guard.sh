@@ -2,8 +2,8 @@
 # =============================================================================
 # mosquitOmarchy - Levels Guard (install / status / uninstall)
 # =============================================================================
-# Owns the two native control surfaces that must not touch an Audient EVO's USB
-# hardware volume while Mixbay manages it:
+# Owns the two native control surfaces that must not touch a Mixbay-managed
+# interface's USB hardware volume while Mixbay controls it:
 #   1. the cloned Omarchy audio panel (mosquito.levels-guard);
 #   2. the media-key block in Hyprland bindings.
 #
@@ -15,6 +15,8 @@
 #   ./setup-levels-guard.sh            install
 #   ./setup-levels-guard.sh -y         non-interactive
 #   ./setup-levels-guard.sh --status   ok | partial:missing ... | missing
+#   ./setup-levels-guard.sh --plugin-status  clone drift for the Health check
+#   ./setup-levels-guard.sh --refresh  rebuild the clone from the current panel
 #   ./setup-levels-guard.sh --uninstall
 # =============================================================================
 set -euo pipefail
@@ -37,10 +39,12 @@ info()  { echo -e "\033[1;34m==>\033[0m $*"; }
 ok()    { echo -e "\033[1;32m ✓\033[0m $*"; }
 warn()  { echo -e "\033[1;33m !\033[0m $*"; }
 
-STATUS_ONLY=0 UNINSTALL=0 YES=0
+STATUS_ONLY=0 PLUGIN_STATUS=0 REFRESH=0 UNINSTALL=0 YES=0
 for a in "$@"; do case "$a" in
   -y|--yes) YES=1 ;;
   --status) STATUS_ONLY=1 ;;
+  --plugin-status) PLUGIN_STATUS=1 ;;
+  --refresh) REFRESH=1 ;;
   --uninstall|--remove) UNINSTALL=1 ;;
 esac; done
 
@@ -68,16 +72,36 @@ guard_status(){
   echo ok
 }
 
-if ((STATUS_ONLY)); then guard_status; exit 0; fi
-
 audio_upstream_hash(){
-  sha256sum "$AUDIO_UPSTREAM/Panel.qml" "$AUDIO_UPSTREAM/Model.js" "$AUDIO_UPSTREAM/manifest.json" 2>/dev/null |
+  ( cd "$AUDIO_UPSTREAM" && sha256sum Panel.qml Model.js manifest.json 2>/dev/null ) |
     sha256sum | awk '{print $1}'
 }
 
 audio_installed_hash(){
-  sha256sum "$1/Panel.qml" "$1/Model.js" 2>/dev/null | sha256sum | awk '{print $1}'
+  ( cd "$1" && sha256sum Panel.qml Model.js 2>/dev/null ) | sha256sum | awk '{print $1}'
 }
+
+plugin_drift_status(){
+  [[ -d $PLUGIN_DIR ]] || { echo missing; return 0; }
+  [[ -f $AUDIO_UPSTREAM/Panel.qml && -f $AUDIO_UPSTREAM/Model.js && -f $AUDIO_UPSTREAM/manifest.json ]] \
+    || { echo "missing:the Omarchy audio panel source is not installed"; return 0; }
+  local stamp="$PLUGIN_DIR/.levels-guard-upstream" old_up old_inst up_now cur_inst
+  [[ -f $stamp ]] || { echo "unstamped:no upstream baseline recorded"; return 0; }
+  old_up="$(sed -n '1p' "$stamp" 2>/dev/null)"
+  old_inst="$(sed -n '2p' "$stamp" 2>/dev/null)"
+  [[ -n $old_up && -n $old_inst ]] || { echo "unstamped:no upstream baseline recorded"; return 0; }
+  up_now="$(audio_upstream_hash)"
+  if [[ -n $up_now && $old_up != "$up_now" ]]; then
+    echo "upstream-changed:Omarchy's audio panel changed since this clone was built"
+    return 0
+  fi
+  cur_inst="$(audio_installed_hash "$PLUGIN_DIR")"
+  if [[ $old_inst == "$cur_inst" ]]; then echo ok
+  else echo "locally-modified:plugin files were edited outside mosquitOmarchy"; fi
+}
+
+if ((STATUS_ONLY)); then guard_status; exit 0; fi
+if ((PLUGIN_STATUS)); then plugin_drift_status; exit 0; fi
 
 remove_key_block(){
   [[ -f $HYPR_BINDINGS ]] || return 0
@@ -105,7 +129,7 @@ install_key_block(){
   touch "$HYPR_BINDINGS"
   remove_key_block
   cat >>"$HYPR_BINDINGS" <<EOF
--- >>> levels-guard >>> EVO USB volume belongs to mosquitomixbay
+-- >>> levels-guard >>> Mixbay interface volume belongs to mosquitomixbay
 hl.unbind("XF86AudioRaiseVolume")
 hl.unbind("XF86AudioLowerVolume")
 hl.unbind("XF86AudioMute")
@@ -153,7 +177,7 @@ install_plugin(){
   done
   local up_now old_up old_inst cur_inst
   up_now="$(audio_upstream_hash)"
-  if [[ -e $PLUGIN_DIR ]]; then
+  if [[ -e $PLUGIN_DIR ]] && (( ! REFRESH )); then
     old_up="$(sed -n '1p' "$PLUGIN_DIR/.levels-guard-upstream" 2>/dev/null)"
     old_inst="$(sed -n '2p' "$PLUGIN_DIR/.levels-guard-upstream" 2>/dev/null)"
     cur_inst="$(audio_installed_hash "$PLUGIN_DIR")"
@@ -204,6 +228,13 @@ install_plugin(){
   done
   omarchy-plugin-enable "$PLUGIN_ID" >/dev/null 2>&1 \
     || { warn "installed but could not enable $PLUGIN_ID"; return 1; }
+  # The running shell caches QML components; a rescan alone keeps the old panel.
+  if command -v omarchy-restart-shell >/dev/null 2>&1; then
+    omarchy-restart-shell >/dev/null 2>&1 \
+      || warn "restart the shell to load the guard (omarchy-restart-shell)"
+  else
+    warn "restart the shell to load the guard"
+  fi
   ok "Omarchy audio panel guard installed ($PLUGIN_ID)"
 }
 

@@ -9,7 +9,7 @@ import (
 )
 
 func TestDbRoundtrip(t *testing.T) {
-	for _, db := range []float64{-96, -20, -3.5, 0, 25, 58} {
+	for _, db := range []float64{-127, -96, -20, -3.5, 0, 25, 58} {
 		if got := usbToDb(dbToUSB(db)); math.Abs(got-db) > 1.0/256+1e-9 {
 			t.Errorf("db %v roundtrip = %v", db, got)
 		}
@@ -133,6 +133,9 @@ func TestEvo8SpecMatchesHardware(t *testing.T) {
 	}
 	if EVO8Spec.GainMin-EVO8Spec.GainOffset != -8 || EVO8Spec.GainMax-EVO8Spec.GainOffset != 50 {
 		t.Errorf("evo8 wire gain range: %+v", EVO8Spec)
+	}
+	if EVO8Spec.VolMin != -127 {
+		t.Errorf("evo8 volume floor = %v dB, want -127", EVO8Spec.VolMin)
 	}
 	if EVO8Spec.MixerInputs*EVO8Spec.MixerOutputs != 40 {
 		t.Errorf("evo8 mixer should be 40 cross-points")

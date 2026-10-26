@@ -64,6 +64,8 @@ if [[ ! -f $SETUP ]]; then
   [[ -f $alt ]] && SETUP="$alt"
 fi
 source "$SETUP"
+# shellcheck source=../../lib/plugin-clone.bash
+source "$APP_DIR/scripts/lib/plugin-clone.bash"
 
 # ── JSON helpers (single-line, no trailing comma, escaped) ────────────────
 #
@@ -634,6 +636,10 @@ tree_fingerprint(){
   # tree builder produced byte-identical fingerprints and the loser of the race
   # won the cache.
   out+="|m$(stat -c %Y "$SCRIPT_SELF" 2>/dev/null || echo 0)"
+  # The setup script's mtime too: MODULES/CATEGORIES and the row labels live
+  # there, and a rename changed no COUNT, so the cache kept serving the old
+  # name until the TTL.
+  out+="|s$(stat -c %Y "$SETUP" 2>/dev/null || echo 0)"
   # Slashes and spaces would break the filename; this set is enough for a name.
   printf '%s' "${out//[^A-Za-z0-9._|-]/_}"
 }
@@ -885,7 +891,7 @@ uninstall_state_signature(){
       # INSTALLED_TUI / INSTALLED_WEB already go into the key.
       tuis|webapps) continue ;;
       mosquito)
-        for pk in ableton-move-manager jamjamjam-plugin battery mosquitomarchy; do
+        for pk in ableton-move-manager jamjamjam-plugin mega-caffeine mosquitomarchy; do
           _installed_state "$pk" && sig+="$pk|"
         done
         for pk in "${AUDIO_STACK_CHILDREN[@]}"; do _installed_state "$pk" && sig+="$pk|"; done ;;
@@ -969,7 +975,7 @@ _uninstall_tree(){
         ;;
       mosquito)
         local pk
-        for pk in ableton-move-manager jamjamjam-plugin battery mosquitomarchy; do
+        for pk in ableton-move-manager jamjamjam-plugin mega-caffeine mosquitomarchy; do
           _installed_state "$pk" && keys+=("$pk")
         done
         ;;
@@ -1061,8 +1067,8 @@ _uninstall_tree(){
     fix_applied "$fid" && applied_fixes+=("$fid")
   done
   if ((${#applied_fixes[@]})); then
-    folders+=("Quick fixes"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
-      "$(json_str fixes)" "$(json_str "Quick fixes")" false)")
+    folders+=("Fixes"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+      "$(json_str fixes)" "$(json_str "Fixes")" false)")
     for fid in "${applied_fixes[@]}"; do
       items+=("fixes/$fid"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
         "$(json_str fixes)" "$(json_str "fix:$fid")" "$(json_str "$fid")" \
@@ -1526,10 +1532,57 @@ cmd_patches(){
 }
 
 # ─── Health check: what drifted from the chosen install ────────────────────
-# {"kind":"module|infra","id":..,"label":..,"detail":..} for every installed
-# module whose artifacts went missing (state "partial") and every mosquitOmarchy
-# piece that must be present (TUI binary, float rule, menu entry, shortcut,
-# update hook, crash skill). Nothing when everything matches.
+# {"kind":"module|infra|plugin","id":..,"label":..,"detail":..} for every
+# installed module whose artifacts went missing (state "partial"), every
+# mosquitOmarchy piece that must be present (TUI binary, float rule, menu
+# entry, shortcut, update hook, crash skill), and every owned Omarchy plugin
+# clone whose source changed or whose files were edited. Nothing when
+# everything matches.
+#
+# ─── Cloned Omarchy plugins ────────────────────────────────────────────────
+# Omarchy updates its built-in plugins in /usr/share; a clone in
+# ~/.config/omarchy/plugins keeps running the files it was built from. The
+# stamps written by the owning module let Health tell an upstream change from
+# a local edit, and the heal action rebuilds the clone from the current source.
+_plugin_clone_drift(){
+  local id="$1" source_id="$2" dir="$HOME/.config/omarchy/plugins/$1" up
+  [[ -d $dir ]] || { echo missing; return 0; }
+  up="$(plugin_clone_source_hash "$source_id" 2>/dev/null || true)"
+  [[ -n $up ]] || { echo missing; return 0; }
+  plugin_clone_state "$dir" "$up"
+}
+
+_plugin_drift(){
+  case "$1" in
+    levels-guard) bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" --plugin-status 2>/dev/null || true ;;
+    power)        _plugin_clone_drift "mosquito.power" "omarchy.power" ;;
+    indicators)   _plugin_clone_drift "mosquito.indicators" "omarchy.indicators" ;;
+  esac
+}
+
+_plugin_health_detail(){
+  case "$1" in
+    upstream-changed)
+      printf "Omarchy's %s changed since this clone was built — replace it with the current mosquitOmarchy-managed version" "$2" ;;
+    locally-modified)
+      printf "plugin files were edited outside mosquitOmarchy — replace it to restore the managed version (local edits are discarded)" ;;
+    unstamped)
+      printf "plugin predates upstream tracking — replace it once to establish a baseline" ;;
+  esac
+}
+
+_plugin_health_record(){
+  local key="$1" label="$2" source_label="$3" raw state detail
+  raw="$(_plugin_drift "$key")"
+  state="${raw%%:*}"; detail="${raw#*:}"
+  [[ $detail == "$raw" ]] && detail=""
+  case $state in ok|missing|"") return 0 ;; esac
+  [[ -n $detail ]] || detail="$(_plugin_health_detail "$state" "$source_label")"
+  [[ -n $detail ]] || return 0
+  printf '{"kind":"plugin","id":%s,"label":%s,"detail":%s}\n' \
+    "$(json_str "plugin-$key")" "$(json_str "$label")" "$(json_str "$detail")"
+}
+
 cmd_health(){
   load_excluded
   local row id state raw detail
@@ -1548,6 +1601,9 @@ cmd_health(){
     printf '{"kind":"module","id":%s,"label":%s,"detail":%s}\n' \
       "$(json_str "$id")" "$(json_str "${row#*:}")" "$(json_str "$detail")"
   done
+  _plugin_health_record levels-guard "Levels Guard plugin — clone of Omarchy's audio panel" "audio panel"
+  _plugin_health_record power "Mosquito Power plugin — clone of Omarchy's power panel" "power panel"
+  _plugin_health_record indicators "Mosquito Indicators plugin — clone of Omarchy's indicators widget" "indicators widget"
   [[ -x "$BIN_DIR/mosquitomarchy" && -x "$BIN_DIR/mosquitomarchy-tui" ]] || \
     printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
       "$(json_str tui)" "$(json_str "mosquitOmarchy TUI")" "$(json_str "launcher binary missing")"
@@ -1628,7 +1684,27 @@ cmd_heal(){
     ln -sfn "$ACTIONS_DIR/skills/mosquitomarchy-crash" "$HOME/.agents/skills/mosquitomarchy-crash"
   fi
 
-  # 6. Re-apply the ticked partially-installed modules (or all, when no selection).
+  # 6. Rebuild drifted clones from the current Omarchy source. This is the one
+  # action that can discard files edited outside mosquitOmarchy; only rows the
+  # user ticked (or every drifted clone when heal is called with no selection)
+  # are rebuilt.
+  local key want_id drift refreshed_plugins=0
+  for key in levels-guard power indicators; do
+    want_id="plugin-$key"
+    in_want "$want_id" || continue
+    drift="$(_plugin_drift "$key")"
+    case "${drift%%:*}" in ok|missing|"") continue ;; esac
+    if [[ $key == levels-guard ]]; then
+      bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" --refresh -y \
+        || { err "Levels Guard clone refresh failed."; MODULE_FAILURES=$((MODULE_FAILURES + 1)); continue; }
+    else
+      bash "$BATTERY_DIR/setup-battery-management.sh" --refresh-plugin "$key" \
+        || { err "$key clone refresh failed."; MODULE_FAILURES=$((MODULE_FAILURES + 1)); continue; }
+    fi
+    refreshed_plugins=$((refreshed_plugins + 1))
+  done
+
+  # 7. Re-apply the ticked partially-installed modules (or all, when no selection).
   load_excluded
   local row id state raw detail
   SELECTED=()
@@ -1647,7 +1723,7 @@ cmd_heal(){
   if ((${#SELECTED[@]})); then
     msg "Re-applying ${#SELECTED[@]} partially-installed module(s)…"
     exec_modules
-  else
+  elif (( refreshed_plugins == 0 )); then
     ok "No partially-installed module to re-apply."
   fi
 
@@ -2104,12 +2180,12 @@ cmd_uninstall(){
         hyprland-crash)      flag=--remove;    script=scripts/fixes/fix-hyprland-crash.sh ;;
         ableton-wine-scroll) flag=--uninstall; script=scripts/fixes/fix-wine-scroll.sh ;;
         1px-seam)            flag=--remove;    script=scripts/fixes/fix-1px-seam.sh ;;
-        *) warn "Quick fix '$fid' is not removable — skipped."; continue ;;
+        *) warn "Fix '$fid' is not removable — skipped."; continue ;;
       esac
       if [[ -f "$SCRIPT_DIR/$script" ]] && bash "$SCRIPT_DIR/$script" "$flag" -y; then
-        ok "Quick fix '$fid' removed."
+        ok "Fix '$fid' removed."
       else
-        MODULE_FAILURES=$((MODULE_FAILURES + 1)); err "Quick fix '$fid' removal failed."
+        MODULE_FAILURES=$((MODULE_FAILURES + 1)); err "Fix '$fid' removal failed."
       fi
     done
   fi
@@ -2320,6 +2396,34 @@ _space_manifest_row(){ # key -> the TSV row, rc=1 when the key is not listed
   awk -F'|' -v k="$1" '!/^[[:space:]]*#/ && $1==k {print; exit}' "$f"
 }
 
+# GPU-specific OpenCL package, using the same lspci mapping as
+# scripts/apps/davinci/setup-davinci.sh's detect_opencl_pkg.
+_space_opencl_pkg(){
+  local gpu
+  gpu="$(lspci -k 2>/dev/null | grep -iE 'vga|3d|display' \
+    | grep -ioE 'nvidia|amd|radeon|advanced micro|intel' \
+    | tr '[:upper:]' '[:lower:]' | sort -u | head -n1 || true)"
+  case "$gpu" in
+    nvidia) printf '%s\n' opencl-nvidia ;;
+    amd|radeon|"advanced micro") printf '%s\n' rocm-opencl-runtime ;;
+    intel) printf '%s\n' intel-compute-runtime ;;
+  esac
+}
+
+# The Davinci installer needs ~30 GiB free in ONE writable temp base before it
+# extracts the payload. Same candidate order and threshold as
+# davinci_work_base() in setup-davinci.sh.
+_space_davinci_temp_ok(){
+  local base avail
+  for base in "$HOME/.cache" "${TMPDIR:-/tmp}" /var/tmp /opt; do
+    [[ -d $base && -w $base ]] || continue
+    avail=$(df -Pk -- "$base" 2>/dev/null | awk 'NR==2{print $4}')
+    [[ $avail =~ ^[0-9]+$ ]] || continue
+    (( avail >= 30 * 1024 * 1024 )) && return 0
+  done
+  return 1
+}
+
 # Key -> packages that key installs (or removes). Returns:
 #   0 = complete, 2 = known but incomplete (e.g. GPU-dependent OpenCL),
 #   3 = known to install nothing, 1 = unknown.
@@ -2365,9 +2469,15 @@ _space_pkgs(){
     install:ollama)      printf '%s\n' ollama ;;
     install:mx-master)   printf '%s\n' logiops ;;
     install:davinci|install:davinci-resolve)
-      # The GPU-specific OpenCL runtime is picked at install time, so the
-      # known dependencies are a lower bound, not the whole answer.
+      # Base dependencies plus the GPU-specific OpenCL runtime the installer
+      # would pick. Only an unidentified GPU leaves the package half unknown.
       printf '%s\n' gtk3 apr ocl-icd libxcrypt-compat librsvg libgudev glu clinfo unzip curl pciutils ffmpeg
+      local opencl
+      opencl="$(_space_opencl_pkg)"
+      if [[ -n $opencl ]]; then
+        printf '%s\n' "$opencl"
+        return 0
+      fi
       return 2 ;;
     install:windows-vm|install:macos-vm|install:omarchy-vm)
       return 1 ;;
@@ -2377,7 +2487,8 @@ _space_pkgs(){
       return 1 ;;
     install:zen|install:mosquitomarchy|install:pipewire-settings|\
     install:jamjamjam-plugin|install:remove-ai|install:hyprmod|\
-    install:keybindings|install:battery|install:brightness|\
+    install:keybindings|install:battery|install:battery-management|\
+    install:mega-caffeine|install:brightness|\
     install:achraff|install:touchpad|install:levels-guard|\
     install:mosquitomarchy-update)
       return 3 ;;
@@ -2391,7 +2502,8 @@ _space_pkgs(){
     uninstall:ollama|uninstall:zen|uninstall:mosquitomarchy|\
     uninstall:pipewire-settings|uninstall:jamjamjam-plugin|\
     uninstall:remove-ai|uninstall:hyprmod|uninstall:keybindings|\
-    uninstall:battery|uninstall:brightness|uninstall:achraff|\
+    uninstall:battery|uninstall:battery-management|uninstall:mega-caffeine|\
+    uninstall:brightness|uninstall:achraff|\
     uninstall:touchpad|uninstall:mx-master|uninstall:mixbay|\
     uninstall:ableton|uninstall:ableton-move-manager|\
     uninstall:windows-vm|uninstall:macos-vm|uninstall:omarchy-vm|\
@@ -2451,7 +2563,7 @@ cmd_space(){
 
   local need_kb=0 freed_kb=0 need_unknown=false freed_unknown=false resolved=0
   local pkgs rc pkg size targets trc row mkey ipaths upaths plist path key_known
-  local ref_install_kb path_found path_missing
+  local ref_install_kb path_found path_missing temp_short=false
   local -a install_pkgs=()
   for k in "${keys[@]:-}"; do
     [[ -n $k ]] || continue
@@ -2502,6 +2614,9 @@ cmd_space(){
           need_unknown=true
         fi
       fi
+    fi
+    if [[ $op == install && $mkey == davinci-resolve ]]; then
+      _space_davinci_temp_ok || temp_short=true
     fi
     pkgs=''; rc=0
     pkgs="$(_space_pkgs "$op" "$k")" || rc=$?
@@ -2556,9 +2671,9 @@ cmd_space(){
     (( ${#keys[@]} > 0 && resolved == 0 )) && freed_unknown=true
   fi
 
-  printf '{"free_kb":%d,"need_kb":%d,"freed_kb":%d,"free_unknown":%s,"need_unknown":%s,"freed_unknown":%s}\n' \
+  printf '{"free_kb":%d,"need_kb":%d,"freed_kb":%d,"free_unknown":%s,"need_unknown":%s,"freed_unknown":%s,"temp_short":%s}\n' \
     "$free_kb" "$need_kb" "$freed_kb" \
-    "$free_unknown" "$need_unknown" "$freed_unknown"
+    "$free_unknown" "$need_unknown" "$freed_unknown" "$temp_short"
 }
 
 sub="${1:-}"
@@ -2793,7 +2908,7 @@ cmd_menu_entries() {
         mosquitomarchy|audio-plugins|move-converter|live-mode|mixbay|jamjamjam)
           install_menu_entry >/dev/null 2>&1 \
             && ok "menu re-added: $id" || warn "restore failed: $id" ;;
-        mega-caffeine)  bash "$HOME/mosquitOmarchy/scripts/plugins/power-management/setup-battery-management.sh" >/dev/null 2>&1 \
+        mega-caffeine)  bash "$MEGA_CAFFEINE_DIR/setup-mega-caffeine.sh" >/dev/null 2>&1 \
           && ok "menu re-added: mega-caffeine" || warn "restore failed: mega-caffeine" ;;
         # Its own module's installer, but WITHOUT -y: the sudoers part of it
         # needs root and the password prompt is the point. --status is the

@@ -17,6 +17,36 @@ Format:
 
 ---
 
+## Ozone 12 — iZotope (VST3) — ⚠️ registry shared
+- 2026-10-24: the main plugin and its 21 modules were present, but Ableton
+  reported "one of the files this plug-in needs cannot be found".
+- Cause: `.wine-ableton` had only 34 of the 55 iZotope `CorePath` keys. The
+  linker skipped the whole `HKLM\Software\iZotope` tree as soon as it saw
+  **any** `CorePath`, so the 21 `OZONE12*` keys were never imported.
+- Fixed in `link-vst-shared.sh`: compare the owner's CorePath-bearing product
+  keys per product and import when one is missing. Verified 55 keys in
+  `.wine-vst`, `.wine`, and `.wine-ableton`.
+- Second cause: the main `OZONE12` and `NEUTRON5` keys had `InstallPath` but
+  no `CorePath` (only the sub-plugins did). The linker now copies it from a
+  sibling key such as `OZONE12BASS`; all three prefixes were repaired.
+
+## Valhalla DSP suite — VST2 — ⚠️ presets + GUI
+- 2026-10-24: 1666 factory/user `.vpreset` files were present in `.wine-vst`
+  but invisible because `Valhalla DSP, LLC` was not in `DATA_RELS`; the
+  plugin-created empty shells in `.wine`/`.wine-ableton` looked populated.
+  Now linked into both prefixes (1666 presets visible from each).
+- GUI clicks only registered at the top-left in Bitwig/REAPER: the distro
+  `yabridge 5.1.1` host shadowed the master build. Removed the `yabridge`
+  package (kept `yabridgectl`); `yabridgectl status` now reports
+  `~/.local/share/yabridge/yabridge-host.exe` (commit b580a9f7, which contains
+  the Wine 9.22+ editor-embedding fix).
+
+## AAX copies — policy
+- AAX only works in Pro Tools, which is not installed here. `post_install()`
+  deletes `Common Files/Avid/Audio/Plug-Ins` after every install/uninstall so
+  vendor reinstallers stop reporting "components already installed: 64-bit AAX
+  Plugins". Revisit this if Pro Tools is ever added.
+
 ## Serum 2 — Xfer (0, .vst3 bundle) — ⚠️
 - Installed 2026-09-24 via the audio-plugin-manager TUI.
 - The install itself completes, but the installer wrote its plugin OUTSIDE the

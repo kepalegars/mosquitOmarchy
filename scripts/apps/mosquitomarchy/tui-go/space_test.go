@@ -81,6 +81,12 @@ func TestSpaceWarningWithPartialNeed(t *testing.T) {
 	if spaceWarning(DiskRec{FreeKB: 4096, NeedKB: 2048, NeedUnknown: true}) {
 		t.Fatal("unknown extra alone is not proof of a shortfall")
 	}
+	if !spaceWarning(DiskRec{FreeKB: 4096, NeedKB: 2048, TempShort: true}) {
+		t.Fatal("an install that lacks scratch space must warn even when the final payload fits")
+	}
+	if spaceWarning(DiskRec{FreeKB: 1024, FreeUnknown: true, NeedKB: 2048, TempShort: true}) {
+		t.Fatal("without a free-space answer neither half can be proven short")
+	}
 }
 
 func TestWithSpaceThenPushKeepsWarningBase(t *testing.T) {

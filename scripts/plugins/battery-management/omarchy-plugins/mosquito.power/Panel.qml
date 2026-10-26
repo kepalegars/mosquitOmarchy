@@ -67,7 +67,7 @@ Panel {
 
   readonly property bool fullyCharged: {
     var device = UPower.displayDevice
-    return device && device.isPresent && device.state === UPowerDeviceState.FullyCharged && !root.chargeThresholdActive
+    return device && device.isPresent && device.state === UPowerDeviceState.FullyCharged
   }
   // "discharging" is what every label, phrase and profile choice keys off, and
   // upstream takes it straight from UPower.onBattery. That inherits upower's
@@ -85,19 +85,12 @@ Panel {
     if (s === "charging" || s === "full" || s === "holding" || s === "plugged") return false
     return !!UPower.onBattery
   }
-  readonly property bool chargeThresholdActive: {
-    var device = UPower.displayDevice
-    return Model.chargeThresholdActive(device, root.discharging, upowerStates())
-  }
   readonly property bool batteryFull: fullyCharged || (!root.discharging && batteryFraction >= 1)
-  readonly property bool batteryFlowIdle: batteryFull || chargeThresholdActive
+  readonly property bool batteryFlowIdle: batteryFull
 
   // ---- mosquito.power state (polled via power-helper) ---------------------
   property bool ultraSaveOn: false
-  property bool conservationOn: false
-  property int chargeLimitEnd: 100
   property string liveProfile: ""
-  property bool chargeLimitNotified: false
 
   // Bar icon color, by power profile:
   //   eco (power-saver) = green · performance = blue · ultra-save = orange ·
@@ -277,87 +270,23 @@ Panel {
     if (root.bar && root.bar.shell) root.bar.shell.updateEntryInline(root.moduleName, root.settings)
   }
 
-  // ---- mosquito.power: ultra-save + charge conservation state ------------
+  // ---- mosquito.power: ultra-save state ------------------------------------
 
   function refreshPowerStatus() {
     if (!ultraStatusProc.running) ultraStatusProc.running = true
-    if (!chargeStatusProc.running) chargeStatusProc.running = true
-    checkChargeLimitReached()
   }
 
   function updateUltraStatus(raw) {
     var next = Model.parseKeyValue(raw)
     if (Object.keys(next).length === 0) return
-    var was = root.ultraSaveOn
     root.ultraSaveOn = next.state === "on"
     if (next.profile) root.liveProfile = next.profile
-    // Ultra-save is off: the charge-limit toast has nothing left to warn
-    // about, so it goes away by itself. It is sent with -t 0 (a notice the
-    // user must be able to come back to), and nothing else ever took it down —
-    // it survived the user turning ultra-save off, so the screen kept showing
-    // a warning about a mode that was no longer running. Every path that
-    // disables ultra-save converges here: the toggle, the AC plug-in, and the
-    // timer below.
-    if (was && !root.ultraSaveOn) {
-      ultraSaveLimitTimer.stop()
-      root.dismissChargeLimitNotice()
-    }
-  }
-
-  // Turns ultra-save off on purpose (not a toggle): the timer fires this when
-  // the charge limit was reached, and the toggle already calls power-helper
-  // itself.
-  function disableUltraSave() {
-    if (ultraOffProc.running) return
-    ultraOffProc.command = ["power-helper", "ultrasave", "off"]
-    ultraOffProc.running = true
-  }
-
-  // Takes the charge-limit notice down. The title must match the one it was
-  // sent with, or the daemon dismisses nothing and the toast stays put.
-  function dismissChargeLimitNotice() {
-    if (dismissNotifyProc.running) return
-    dismissNotifyProc.command = ["omarchy-notification-dismiss", "Charge limit reached"]
-    dismissNotifyProc.running = true
-  }
-
-  function updateChargeStatus(raw) {
-    var next = Model.parseKeyValue(raw)
-    if (Object.keys(next).length === 0) return
-    root.conservationOn = next.state === "on"
-    var end = parseInt(next.end, 10)
-    if (!isNaN(end) && end > 0 && end < 100) root.chargeLimitEnd = end
-    else root.chargeLimitEnd = 100
-  }
-
-  function toggleConservation() {
-    if (conservationActionProc.running) return
-    var next = !root.conservationOn
-    conservationActionProc.command = ["power-helper", "charging", "conservation", next ? "on" : "off"]
-    conservationActionProc.running = true
   }
 
   function toggleUltraSave() {
     if (ultraActionProc.running) return
     ultraActionProc.command = ["power-helper", "ultrasave", "toggle"]
     ultraActionProc.running = true
-  }
-
-  // The single manual notification: fire once when the battery reaches the
-  // firmware charge ceiling (80% with conservation on). The flag resets ONLY
-  // on raw AC plug-in (UPower.onBatteryChanged → plugged) or when conservation
-  // turns off — NOT when the held charge dips a fraction under the ceiling,
-  // which would re-fire the toast on 80% overshoot/undershoot oscillation.
-  function checkChargeLimitReached() {
-    if (!root.conservationOn || root.chargeLimitEnd >= 100) {
-      root.chargeLimitNotified = false
-      return
-    }
-    var pct = root.batteryFraction * 100
-    if (pct >= root.chargeLimitEnd && !root.chargeLimitNotified && !root.discharging) {
-      root.chargeLimitNotified = true
-      notifyChargeLimitReached(root.chargeLimitEnd)
-    }
   }
 
   // One notification per charger plug-in: a fresh plug (AC) opens the window
@@ -376,7 +305,6 @@ Panel {
   }
 
   function onAcPlugged() {
-    root.chargeLimitNotified = false
     if (acPowersaveProc.running) return
     acPowersaveProc.command = [
       "bash", "-c",
@@ -393,39 +321,6 @@ Panel {
   Process {
     id: acPowersaveProc
     onExited: root.refreshPowerStatus()
-  }
-
-  function notifyChargeLimitReached(limit) {
-    if (chargeNotifyProc.running) return
-    var glyph = root.batteryIcon() || "󰂁"
-    chargeNotifyProc.command = [
-      "omarchy-notification-send",
-      "Charge limit reached",
-      "Battery held at " + limit + "%",
-      "-g", glyph, "-u", "low", "-t", "0"
-    ]
-    chargeNotifyProc.running = true
-    // The limit exists so the battery lasts; ultra-save (dimmed screen, CPU
-    // caps, power-saver profile) is what makes it last, and past the ceiling it
-    // has nothing left to protect. Rather than leave it on until the user
-    // notices, give them a minute to read the notice and then turn it off by
-    // itself. Only armed while ultra-save is actually running — arming it
-    // otherwise would "disable" a mode that was already off and, on the way,
-    // dismiss a notice about a mode that was never on.
-    if (root.ultraSaveOn) ultraSaveLimitTimer.restart()
-  }
-
-  // The 1 minute the charge-limit notice stays up before ultra-save is turned
-  // off for the user. It is stopped (and the notice dismissed) the moment
-  // ultra-save goes off by any other route, so it can never fire into a state
-  // that no longer needs it.
-  Timer {
-    id: ultraSaveLimitTimer
-    interval: 60000
-    repeat: false
-    onTriggered: {
-      if (root.ultraSaveOn) root.disableUltraSave()
-    }
   }
 
   IpcHandler {
@@ -467,7 +362,7 @@ Panel {
     // that never flip the AC (type=Mains) flag. Same --shell key/value
     // contract, corrected state (charging|discharging|full|holding|plugged),
     // "-" instead of an empty field, plus an extra external-power key. See
-    // scripts/plugins/power-management/battery-status in the mosquitOmarchy
+    // scripts/plugins/battery-management/battery-status in the mosquitOmarchy
     // repo and its battery-status-test fixtures.
     command: ["battery-status", "--shell"]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateKeyValue(text, "battery") }
@@ -547,9 +442,8 @@ Panel {
 
   Timer { interval: 5000; running: root.opened; repeat: true; onTriggered: root.refresh() }
 
-  // mosquito.power status: ultra-save + charge conservation. Runs persistently
-  // (even when the panel is closed) so the bar icon color stays correct and
-  // the "charge limit reached" notification can fire while charging.
+  // mosquito.power status: ultra-save. Runs persistently (even when the panel
+  // is closed) so the bar icon color stays correct.
   Process {
     id: ultraStatusProc
     command: ["power-helper", "ultrasave", "status"]
@@ -557,37 +451,8 @@ Panel {
   }
 
   Process {
-    id: chargeStatusProc
-    command: ["power-helper", "charging", "status"]
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateChargeStatus(text) }
-  }
-
-  Process {
-    id: conservationActionProc
-    onExited: root.refreshPowerStatus()
-  }
-
-  Process {
     id: ultraActionProc
     onExited: root.refreshPowerStatus()
-  }
-
-  Process {
-    id: chargeNotifyProc
-  }
-
-  // ultra-save turned off by the charge-limit timer (an explicit "off", never
-  // a toggle, so it cannot turn a mode ON by accident).
-  Process {
-    id: ultraOffProc
-    onExited: root.refreshPowerStatus()
-  }
-
-  // Takes the charge-limit toast back down. Fire-and-forget: nothing depends
-  // on the exit code, and a refresh here would fight the refresh the
-  // ultra-save transition already triggers.
-  Process {
-    id: dismissNotifyProc
   }
 
   Timer {
@@ -811,12 +676,12 @@ Panel {
             width: (parent.width - parent.spacing) / 2
             spacing: Style.spacing.labelGap
             InfoPair {
-              label: root.chargeThresholdActive ? "Charge limit" : (root.discharging ? "Time left" : "Time to full")
-              value: root.chargeThresholdActive ? (root.batteryInfo.threshold || "-") : (root.batteryFlowIdle ? "-" : (root.batteryInfo.time || "—"))
+              label: root.discharging ? "Time left" : "Time to full"
+              value: root.batteryFlowIdle ? "-" : (root.batteryInfo.time || "—")
             }
             InfoPair {
-              label: root.chargeThresholdActive ? "Battery state" : (root.discharging ? "Discharging" : "Charging")
-              value: root.chargeThresholdActive ? "Holding" : (root.batteryFull ? "-" : (root.batteryInfo.rate || ""))
+              label: root.discharging ? "Discharging" : "Charging"
+              value: root.batteryFull ? "-" : (root.batteryInfo.rate || "")
             }
           }
         }
@@ -883,16 +748,7 @@ Panel {
           }
         }
 
-        // ---------- Battery conservation + Ultra-save toggles ----------
-        //
-        // No separator and no "BATTERY & POWER" header here on purpose.
-        //
-        // Both were added to break the panel into "battery stuff" and "power
-        // stuff", which was the right instinct and the wrong cut: these two
-        // toggles are the last section, the header named nothing they do not
-        // already say, and it duplicated the panel's own name above them. It
-        // read as an empty shelf between two groups that are one group.
-
+        // ---------- Ultra-save toggle ----------
         Column {
           width: parent.width
           spacing: Style.space(10)
@@ -908,19 +764,6 @@ Panel {
             accent: Color.accent
             fontFamily: root.bar.fontFamily
             onClicked: root.toggleUltraSave()
-          }
-
-          Toggle {
-            width: parent.width
-            label: "Battery conservation"
-            description: root.conservationOn
-              ? "Hold at " + root.chargeLimitEnd + "% to protect battery health"
-              : "Limit charging to 80% to protect battery health"
-            checked: root.conservationOn
-            foreground: root.bar.foreground
-            accent: Color.accent
-            fontFamily: root.bar.fontFamily
-            onClicked: root.toggleConservation()
           }
         }
       }

@@ -15,6 +15,9 @@
 #   ./link-vst-shared.sh --prefix ~/.wine   # one specific prefix only
 #   ./link-vst-shared.sh -y          # non-interactive (no questions)
 set -euo pipefail
+# Valhalla's preset requirement is recursive (`**/*.vpreset`); compgen only
+# expands ** with globstar on.
+shopt -s globstar
 
 # Wine's Mono/Gecko installers open a bare white window in the corner of
 # the screen when a prefix lacks .NET/HTML support (seen during every
@@ -152,6 +155,11 @@ data_requirement() {
       # what makes smart:chain work at all, and they are ~400 MB -- so a prefix
       # without them does not fail loudly, it just analyses nothing.
       printf '*/*.nn\n' ;;
+    *Valhalla*)
+      # The plugin creates the product/Presets/{Factory,User} shell itself, so
+      # "the folder exists" proves nothing. Any real preset, at any depth, is
+      # what makes the copy usable.
+      printf '**/*.vpreset\n' ;;
     *iZotope)
       local link target rel="${1##*/}" seen="" p
       while IFS= read -r -d '' link; do
@@ -193,7 +201,7 @@ data_copy_usable() {
 data_owner_prefix() {
   local pf rel
   for rel in "ProgramData/Kilohearts" "Program Files/iZotope" \
-             "Program Files/Common Files/sonible"; do
+             "Program Files/Common Files/sonible" "ProgramData/Valhalla DSP, LLC"; do
     for pf in "$HOME/.wine-vst" "$HOME/.wine" "$HOME/.wine-ableton"; do
       [[ -d "$pf/drive_c" ]] || continue
       if data_copy_usable "$pf/drive_c/$rel" "$rel"; then
@@ -208,6 +216,7 @@ OWNER_PREFIX="$(data_owner_prefix)"
 
 DATA_RELS=(
   "ProgramData/Kilohearts"
+  "ProgramData/Valhalla DSP, LLC"
   "Program Files/iZotope"
   "Program Files (x86)/iZotope"
   "Program Files/Common Files/sonible"
@@ -398,13 +407,23 @@ VENDOR_REGISTRY=(
   "iZotope|HKLM\Software\iZotope"
 )
 
-registry_has_state() { # <prefix> <regkey> -> 0 when the prefix already has it
-  local pf="$1" key="$2" sys="$1/system.reg"
-  [[ -f $sys ]] || return 1
-  # "CorePath" is iZotope's marker; a prefix that has any of it is not a
-  # candidate for overwriting, whatever else it happens to hold.
+registry_has_state() { # <prefix> <regkey> [owner] -> 0 when the prefix already has every owner product
+  local pf="$1" key="$2"
+  local owner="${3:-$1}"
+  local sys="$1/system.reg" osys="$owner/system.reg"
+  [[ -f $sys && -f $osys ]] || return 1
   case "$key" in
-    *iZotope) grep -qa '"CorePath"' "$sys" && return 0 ;;
+    *iZotope)
+      # "CorePath" is iZotope's marker, but ONE product's CorePath proves
+      # nothing about a newly installed product. Ozone 12's 21 keys were
+      # skipped because Neutron 5's 34 were already there. Compare the
+      # CorePath-bearing product keys against the owner instead.
+      local missing
+      missing="$(comm -23 \
+        <(awk '/^\[Software\\\\iZotope\\\\/ {k=$1} /"CorePath"/ {print k}' "$osys" 2>/dev/null | sort -u) \
+        <(awk '/^\[Software\\\\iZotope\\\\/ {k=$1} /"CorePath"/ {print k}' "$sys" 2>/dev/null | sort -u))"
+      [[ -z $missing ]]
+      return ;;
   esac
   return 1
 }
@@ -429,7 +448,7 @@ link_vendor_registry() {
     local pf
     for pf in "$HOME"/.wine "$HOME"/.wine-ableton "$HOME"/.wine-vst; do
       [[ -d $pf/drive_c && $pf != "$owner" ]] || continue
-      registry_has_state "$pf" "$key" && continue
+      registry_has_state "$pf" "$key" "$owner" && continue
       if prefix_busy "$pf"; then
         warn "$(basename "$pf") is running: the $label registry state was NOT shared into it."
         warn "  a registry import into a live prefix is overwritten when wineserver exits."
@@ -447,6 +466,105 @@ link_vendor_registry() {
   done
   rm -f "$export"
   return $rc
+}
+
+# iZotope writes CorePath on the sub-plugins but not always on the main
+# product key (Ozone 12, Neutron 5); the plugin then reports a missing file.
+# Copy it from a sibling key that has it.
+ensure_izotope_corepaths() {
+  local pf="$1" sys="$1/system.reg"
+  [[ -f $sys ]] || return 0
+  command -v wine >/dev/null 2>&1 || return 0
+
+  local -A core=()
+  local sec val
+  while IFS=$'\t' read -r sec val; do
+    [[ -n $sec ]] && core["$sec"]="$val"
+  done < <(awk '
+    /^\[/ {
+      sec = ""
+      if ($0 ~ /^\[Software\\\\iZotope\\\\/) sec=$1
+      next
+    }
+    sec != "" && /"CorePath"/ {
+      v=$0; sub(/^[^=]*="/, "", v); sub(/"$/, "", v)
+      print sec "\t" v
+    }
+  ' "$sys")
+
+  local -a missing=()
+  while IFS= read -r sec; do
+    [[ -n $sec ]] && missing+=("$sec")
+  done < <(awk '
+    /^\[/ {
+      if (sec != "" && inst && !core) print sec
+      sec=""; inst=0; core=0
+      if ($0 ~ /^\[Software\\\\iZotope\\\\/) sec=$1
+      next
+    }
+    sec != "" && /"InstallPath"/ { inst=1 }
+    sec != "" && /"CorePath"/ { core=1 }
+    END { if (sec != "" && inst && !core) print sec }
+  ' "$sys")
+  # A CorePath written with a short 8.3 name is just as broken as a missing one:
+  # Wine's short names are not the Windows defaults (this prefix has PROG~FBU,
+  # not PROGRA~1), so C:\PROGRA~1\... does not resolve and the plugin
+  # fail-fasts (Ozone 12's OZONE12MS key). The long Program Files path is the
+  # one the sibling product keys already carry.
+  local -a broken=()
+  for sec in "${!core[@]}"; do
+    val="${core[$sec]//\\\\/\\}"
+    [[ $val == *PROGRA~1* || $val == *PROGRA~2* ]] && broken+=("$sec")
+  done
+  ((${#missing[@]} + ${#broken[@]})) || return 0
+
+  if prefix_busy "$pf"; then
+    warn "$(basename "$pf") is running: the iZotope CorePath repair was skipped."
+    return 0
+  fi
+  local root; root="$(prefix_wine_root "$pf")"
+  [[ -x $root/bin/wine ]] || return 0
+
+  local m key cand found
+  for sec in "${missing[@]}"; do
+    m="${sec%]}"; found=""
+    for cand in "${!core[@]}"; do
+      if [[ $cand == "$m"* && $cand != "$m" ]]; then found="${core[$cand]}"; break; fi
+    done
+    [[ -n $found ]] || continue
+    key="${sec#\[}"; key="${key%\]}"; key="${key//\\\\/\\}"
+    val="${found//\\\\/\\}"
+    if WINEPREFIX="$pf" "$root/bin/wine" reg add "HKLM\\$key" /v CorePath /d "$val" /f >/dev/null 2>&1; then
+      ok "   iZotope CorePath repaired: ${key##*\\}"
+    else
+      warn "could not repair the iZotope CorePath for ${key##*\\} in $(basename "$pf")"
+    fi
+  done
+
+  local newv inst
+  for sec in "${broken[@]}"; do
+    key="${sec#\[}"; key="${key%\]}"; key="${key//\\\\/\\}"
+    val="${core[$sec]//\\\\/\\}"
+    newv="${val//PROGRA~1/Program Files}"
+    newv="${newv//PROGRA~2/Program Files (x86)}"
+    [[ $newv != "$val" ]] || continue
+    if ! WINEPREFIX="$pf" "$root/bin/wine" reg add "HKLM\\$key" /v CorePath /d "$newv" /f >/dev/null 2>&1; then
+      warn "could not repair the iZotope short CorePath for ${key##*\\} in $(basename "$pf")"
+      continue
+    fi
+    ok "   iZotope CorePath repaired (short path): ${key##*\\}"
+    case "$newv" in
+      *'\Cores\'*)
+        inst="${newv%%\\Cores\\*}"
+        WINEPREFIX="$pf" "$root/bin/wine" reg add "HKLM\\$key" /v InstallPath /d "$inst" /f >/dev/null 2>&1 || true
+        ;;
+    esac
+  done
+  # Our own reg add left a wineserver behind, and link_vendor_registry below
+  # would read it as "prefix running" and skip sharing the repaired keys. This
+  # function only reaches here after prefix_busy said no, so that server is ours.
+  WINEPREFIX="$pf" "$root/bin/wineserver" -k >/dev/null 2>&1 || true
+  return 0
 }
 
 changed=0
@@ -477,6 +595,12 @@ for pf in "${PREFIXES[@]}"; do
   link_vendor_data "$pf"
 done
 link_plugin_deps
+# Repair BEFORE the vendor registry is shared: the owner prefix is the export
+# source, so a broken short CorePath there would be copied into every prefix.
+for pf in "${PREFIXES[@]}"; do
+  [[ -d "$pf/drive_c" ]] || continue
+  ensure_izotope_corepaths "$pf"
+done
 link_vendor_registry
 
 if ((changed)); then

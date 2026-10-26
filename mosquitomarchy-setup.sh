@@ -716,16 +716,19 @@ st_ollama(){
   command -v ollama >/dev/null || { echo missing; return; }
   systemctl is-enabled ollama &>/dev/null && echo ok || echo partial
 }
-st_battery(){
+st_battery_management(){
   [[ -x "$HOME/.local/bin/ultra-save" ]] || { echo missing; return; }
   [[ -x "$HOME/.local/bin/power-helper" ]] || { echo partial; return; }
-  # Coffee mode (laptop closed without sleeping): binary deployed + valid syntax.
-  [[ -x "$HOME/.local/bin/mega-caffeine" ]] || { echo partial; return; }
-  bash -n "$HOME/.local/bin/mega-caffeine" 2>/dev/null || { echo partial; return; }
   # The parent widget is the mosquito.power plugin: if enabled, the module is "ok".
   # custom.power is still accepted: machines that have not re-run the battery
   # module since the rename still carry the legacy clone.
   omarchy plugin list 2>/dev/null | grep -qE '^\s*(mosquito|custom)\.power\s+enabled' && echo ok || echo partial
+}
+st_mega_caffeine(){
+  [[ -x "$HOME/.local/bin/mega-caffeine" ]] || { echo missing; return; }
+  bash -n "$HOME/.local/bin/mega-caffeine" 2>/dev/null || { echo partial; return; }
+  grep -qF '"trigger.toggle.mega-caffeine"' "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc" 2>/dev/null \
+    && echo ok || echo partial
 }
 st_brightness(){
   [[ -x "$HOME/.local/bin/brightness-0" ]] || { echo missing; return; }
@@ -741,12 +744,19 @@ st_achraff(){
     && echo ok || echo partial
 }
 st_touchpad(){
-  # Touchpad: generated per-device file + require registered in hyprland.lua
-  [[ -f "$HOME/.config/hypr/touchpad.lua" && -f "$HOME/.config/hypr/hyprland.lua" ]] \
-    || { echo missing; return; }
-  grep -qF -- "Omarchy_Custom_Scripts_Touchpad" "$HOME/.config/hypr/touchpad.lua" \
+  # Touchpad: generated per-device file + require registered in hyprland.lua.
+  # When the generated file asks for kinetic scrolling, the plugin must be loaded.
+  local tp="$HOME/.config/hypr/touchpad.lua"
+  [[ -f "$tp" && -f "$HOME/.config/hypr/hyprland.lua" ]] || { echo missing; return; }
+  grep -qF -- "Omarchy_Custom_Scripts_Touchpad" "$tp" \
     && grep -qF -- "hypr.touchpad" "$HOME/.config/hypr/hyprland.lua" \
-    && echo ok || echo partial
+    || { echo partial; return; }
+  if grep -qF -- "hypr-kinetic-scroll" "$tp"; then
+    command -v hyprctl >/dev/null 2>&1 \
+      && grep -q 'hypr-kinetic-scroll' < <(hyprctl plugin list 2>/dev/null) \
+      || { echo partial; return; }
+  fi
+  echo ok
 }
 st_mx_master(){
   # MX Master thumb→SUPER: logiops installed + our /etc/logid.cfg + service
@@ -1052,10 +1062,11 @@ MODULES=(
   "apps:Apps, tuis & webapps (catalog per type gui/tui/webapps + backup selection via setup-apps.sh)"
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
   "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships."
-  "battery:Battery backend (ultra-save + Lenovo charge-control + mosquito.power plugin) + coffee mode (mega-caffeine)"
+  "battery-management:Battery management — ultra-save low-power mode + mosquito.power bar plugin, which replaces Omarchy's stock battery widget"
+  "mega-caffeine:Coffee mode (mega-caffeine) — laptop closed without sleeping, red tint, natural-language durations; installs battery management first if missing"
   "brightness:Display brightness — Omarchy default step, 0% = screen off, and a silent 1% ramp on held keys for smoother steps (no run-on beyond the current step)"
   "achraff:'Achraff 67' visual theme + unlock/Plymouth logo (lock screen left stock)"
-  "touchpad:Touchpad (pointer acceleration + sensitivity — external mouse is not affected)"
+  "touchpad:Touchpad (pointer acceleration, sensitivity + kinetic scrolling — external mouse is not affected)"
   "mx-master:MX Master (any model) — thumb gesture button → SUPER (logiops daemon, system service)"
   "hyprmod:Hyprmod — save/switch Hyprland profiles from one menu (list · apply · next · previous), so a config change is one step away from a working desktop"
   "keepassxc:KeePassXC as your password manager + KeePassXC-Browser integration (Firefox/Zen and Chromium). Omarchy's keyring is left INTACT — LibreSecret apps (Chromium Safe Storage, kDrive, …) keep using gnome-keyring, so no 'KeePassXC requests access to Chromium Safe Storage' prompt and apps don't lose their login. Browser link: the native-messaging manifests are installed; finish by ticking the browsers in KeePassXC → Settings → Browser Integration and clicking Connect in the extension. On FIRST KeePassXC launch choose YOUR .kdbx: the install pins it into keepassxc.ini so every launch opens THAT database. Opt into replacing gnome-keyring with 'setup-keepassxc-integration.sh --secret-service'."
@@ -1210,7 +1221,10 @@ handbrake) st_handbrake ;;
       betterbird) st_betterbird ;;
       whatsapp-native) st_whatsapp_native ;;
     apps) s="$(st_apps)"; s="${s%%:*}"; echo "$s" ;;
-    ollama) st_ollama ;; battery) st_battery ;; brightness) st_brightness ;;
+    ollama) st_ollama ;;
+    battery-management|battery) st_battery_management ;;
+    mega-caffeine) st_mega_caffeine ;;
+    brightness) st_brightness ;;
     touchpad) st_touchpad ;;
     mx-master) st_mx_master ;;
     keybindings) st_keybindings ;;
@@ -1267,7 +1281,8 @@ module_of_path(){
     scripts/apps/gui/*|scripts/apps/tui-tools/*|scripts/apps/webapps/*|\
     scripts/apps/setup-apps.sh|scripts/apps/uninstall-apps.sh|scripts/lib/common.bash) echo apps ;;
     scripts/LLM/*)                                           echo ollama ;;
-    scripts/plugins/power-management/*)                      echo battery ;;
+    scripts/plugins/battery-management/*)                     echo battery-management ;;
+    scripts/mosquito/mega-caffeine/*)                        echo mega-caffeine ;;
     scripts/plugins/brightness/*)                            echo brightness ;;
     scripts/theme/*)                                         echo achraff ;;
     scripts/plugins/touchpad/*)                             echo touchpad ;;
@@ -2527,7 +2542,7 @@ restore_backup(){
   if [[ -f "$tmp/config-backup.tar.gz" ]]; then
     if ask "Restore the configuration (~/.config, ~/.local/bin wrappers, Omarchy bar)?" y; then
       # The battery plugins (mosquito.power, mosquito.indicators, mosquito.confirm) are recreated by the
-      # battery module (setup-battery-management.sh): they are excluded
+      # battery-management module (setup-battery-management.sh): they are excluded
       # here to avoid restoring frozen copies, then the module reinstalls them.
       # custom.power is excluded too: the legacy clone some machines still carry.
       tar xzf "$tmp/config-backup.tar.gz" -C "$HOME" \
@@ -2544,13 +2559,13 @@ restore_backup(){
          && [[ -d "$HOME/.config/omarchy/plugins/mosquito.indicators" ]] \
          && [[ -d "$HOME/.config/omarchy/plugins/mosquito.confirm" ]]; then
         ok "Battery plugins restored as-is (re-adopted)"
-      elif [[ -f "$SCRIPT_DIR/scripts/plugins/power-management/setup-battery-management.sh" ]] \
+      elif [[ -f "$BATTERY_DIR/setup-battery-management.sh" ]] \
            && ([[ -x "$HOME/.local/bin/ultra-save" ]] || [[ -x "$HOME/.local/bin/power-helper" ]]); then
-        warn "Battery plugins missing from the backup — recreated by the battery module."
-        bash "$SCRIPT_DIR/scripts/plugins/power-management/setup-battery-management.sh" || \
-          warn "Rerun 'battery' via ./mosquitomarchy-setup.sh to recreate the plugins."
+        warn "Battery plugins missing from the backup — recreated by the battery-management module."
+        bash "$BATTERY_DIR/setup-battery-management.sh" || \
+          warn "Rerun 'battery-management' via ./mosquitomarchy-setup.sh to recreate the plugins."
       else
-        warn "Battery plugins not restored — rerun the 'battery' module."
+        warn "Battery plugins not restored — rerun the 'battery-management' module."
       fi
       ok "Configuration restored"
     fi
@@ -3046,7 +3061,7 @@ rm_unit(){ local u="$1"; systemctl --user disable --now "$u" 2>/dev/null || true
 
 un_reaper(){
   info "Uninstalling REAPER"
-  rm -f "$BIN_DIR/reaper-launch" "$BIN_DIR/reaper-satellite"  # reaper-satellite: leftover from older installs
+  rm -f "$BIN_DIR/reaper-launch"
   rm_desktops cockos-reaper.desktop reaper.desktop
   [[ -f "$APPS_DIR/cockos-reaper.desktop" ]] || ok "REAPER wrapper + entry removed"
   if (( YES || PURGE )); then
@@ -3527,24 +3542,22 @@ un_apps(){
   fi
 }
 
-un_battery(){
-  info "Uninstalling battery (ultra-save / power-helper / mega-caffeine / mosquito.power)"
+un_battery_management(){
+  info "Uninstalling battery-management (ultra-save / power-helper / mosquito.power)"
 
-  # Full uninstall path of the battery module: stops an active coffee mode,
-  # clears its state, removes the menu entry
-  # (also removes udev+sudoers when run as root).
-  if [[ -f "$SCRIPT_DIR/scripts/plugins/power-management/setup-battery-management.sh" ]]; then
-    bash "$SCRIPT_DIR/scripts/plugins/power-management/setup-battery-management.sh" --remove || true
+  if [[ -f "$BATTERY_DIR/setup-battery-management.sh" ]]; then
+    bash "$BATTERY_DIR/setup-battery-management.sh" --remove || true
   else
-    warn "setup-battery-management.sh not found — menu/sudoers/udev not cleaned by it."
+    warn "setup-battery-management.sh not found — sudoers/legacy udev not cleaned by it."
   fi
 
+  systemctl --user disable --now mosquito-ultra-save-watch.timer 2>/dev/null || true
   rm_unit ultra-save-monitor
   rm -f "$BIN_DIR/ultra-save" "$BIN_DIR/ultra-save-monitor" "$BIN_DIR/power-helper" \
-        "$BIN_DIR/mega-caffeine" \
+        "$BIN_DIR/ultra-save-watch" "$BIN_DIR/battery-status" \
         "$BIN_DIR/ultra-save-setup" "$BIN_DIR/ultra-save.sudoers"
-  rm -rf "$HOME/.local/state/ultra-save" "$HOME/.local/state/caffeine"
-  ok "binaries + battery/caffeine state removed (ultra-save, power-helper, mega-caffeine)"
+  rm -rf "$HOME/.local/state/ultra-save"
+  ok "binaries + state removed (ultra-save, power-helper, battery-status, ultra-save-watch)"
 
   # Mosquito plugins (mosquito.power, mosquito.indicators, mosquito.confirm),
   # plus the legacy custom.power clone when a machine still carries it.
@@ -3560,14 +3573,26 @@ un_battery(){
   # module that owns the plugins), never in un_shared_menu on every uninstall.
   clean_plugins
 
-  # System (sudo): sudoers, udev, /usr/local/bin helper
+  # System (sudo): sudoers, legacy udev rule, /usr/local/bin helper
   if (( YES || PURGE )) && [[ $EUID -eq 0 || -n ${SUDO_USER:-} ]]; then
     rm -f /etc/sudoers.d/battery-management /etc/udev/rules.d/99-lenovo-charge-threshold.rules /usr/local/bin/power-helper
     udevadm control --reload 2>/dev/null || true
-    ok "sudoers + udev rule + /usr/local/bin helper removed"
+    ok "sudoers + legacy udev rule + /usr/local/bin helper removed"
   else
     warn "System part (sudoers/udev) not removed: run  sudo bash $0"
   fi
+}
+
+un_mega_caffeine(){
+  info "Uninstalling mega-caffeine (coffee mode)"
+  if [[ -f "$MEGA_CAFFEINE_DIR/setup-mega-caffeine.sh" ]]; then
+    bash "$MEGA_CAFFEINE_DIR/setup-mega-caffeine.sh" --remove || true
+  else
+    warn "setup-mega-caffeine.sh not found — menu entry not cleaned by it."
+  fi
+  rm -f "$BIN_DIR/mega-caffeine"
+  rm -rf "$HOME/.local/state/caffeine"
+  ok "mega-caffeine binary + state + menu entry removed"
 }
 
 un_brightness(){
@@ -3805,7 +3830,7 @@ un_shared_menu(){
   # Called after EVERY module uninstall. It must NOT touch shell.json: doing so
   # (clean_plugins below) removed the custom.power widget from the bar on any
   # module uninstall — the "battery plugin disappeared" bug. Plugin state is
-  # normalized by the module that owns the plugins (battery), not here.
+  # normalized by the module that owns the plugins (battery-management), not here.
   return 0
 }
 
@@ -3842,7 +3867,8 @@ handbrake) un_handbrake ;;
     apps) un_apps ;;
     ollama) un_ollama ;;
     remove-ai) un_remove_ai ;;
-    battery) un_battery ;;
+    battery-management|battery) un_battery_management ;;
+    mega-caffeine) un_mega_caffeine ;;
     brightness) un_brightness ;;
     achraff) un_achraff ;;
     touchpad) un_touchpad ;;
@@ -3966,7 +3992,8 @@ BETTERBIRD_DIR="$APPS_DIR/betterbird"
 WHATSAPP_NATIVE_DIR="$APPS_DIR/whatsapp-native"
 EXTRACTO_DIR="$APPS_DIR/extracto"
 MOVE_CONVERTER_DIR="$SCRIPTS/apps/ableton-move-manager"
-BATTERY_DIR="$SCRIPTS/plugins/power-management"
+BATTERY_DIR="$SCRIPTS/plugins/battery-management"
+MEGA_CAFFEINE_DIR="$SCRIPTS/mosquito/mega-caffeine"
 BRIGHTNESS_DIR="$SCRIPTS/plugins/brightness"
 TOUCHPAD_DIR="$SCRIPTS/plugins/touchpad"
 MXMASTER_DIR="$SCRIPTS/plugins/mx-master"
@@ -4286,7 +4313,8 @@ run_ollama(){
   mq_sudo bash "$LLM_DIR/setup-ollama-audio-expert.sh"
 }
 
-run_battery(){ bash "$BATTERY_DIR/setup-battery-management.sh"; }
+run_battery_management(){ bash "$BATTERY_DIR/setup-battery-management.sh"; }
+run_mega_caffeine(){ bash "$MEGA_CAFFEINE_DIR/setup-mega-caffeine.sh"; }
 run_brightness(){ bash "$BRIGHTNESS_DIR/optimized-brightness.sh"; }
 run_achraff(){ bash "$THEME_DIR/create-theme.sh" --apply "$THEME_DIR/Wallpapers/achraf67.png"; }
 run_touchpad(){ bash "$TOUCHPAD_DIR/touchpad.sh" $([[ $YES == 1 ]] && echo -y); }
@@ -4462,7 +4490,8 @@ exec_modules(){
       apps) run_module apps run_apps ;;
       ollama)  run_module ollama run_ollama ;;
       remove-ai) run_module remove-ai run_restore_ai ;;
-      battery) run_module battery run_battery ;;
+      battery-management|battery) run_module battery-management run_battery_management ;;
+      mega-caffeine) run_module mega-caffeine run_mega_caffeine ;;
       brightness) run_module brightness run_brightness ;;
       achraff) run_module achraff run_achraff ;;
       touchpad) run_module touchpad run_touchpad ;;
@@ -4506,9 +4535,9 @@ CATEGORIES=(
   # mistake in b097c2f (that commit removed the keyboard-backlight MODULE and
   # this whole row in one go), which left six modules with no category at all —
   # including the deployer, i.e. installed and updatable but reachable from
-  # neither Setup nor Uninstall. `battery` is deliberately absent: it is a
-  # mosquito-* module now (mega-caffeine), so it lives in the mosquito row.
-  "plugins|Plugins|brightness touchpad mx-master"
+  # neither Setup nor Uninstall. `mega-caffeine` is deliberately absent: it is a
+  # mosquito tool and lives in the mosquito row.
+  "plugins|Plugins|battery-management brightness touchpad mx-master"
   "fixes|Fixes|"
   "tweaks|Tweaks|"
   "mosquito|mosquito|"
@@ -4631,7 +4660,7 @@ module_category(){ # module id -> category id
     # AND here. Two copies of the same fact: adding a module to one leaves the
     # other calling it category-less, which is how pipewire-settings showed up in
     # the Setup tree under "mosquito" and in `status` with an empty category.
-    ableton-move-manager|audio|audio-plugin-manager|levels-guard|jamjamjam-plugin|battery|live-mode|mixbay|pipewire-settings) echo mosquito; return 0 ;;
+    ableton-move-manager|audio|audio-plugin-manager|levels-guard|jamjamjam-plugin|mega-caffeine|live-mode|mixbay|pipewire-settings) echo mosquito; return 0 ;;
     # The manager lives in the mosquito folder (single row, update watchdog
     # included) rather than Plugins; the mapping is explicit so Status keeps
     # grouping it exactly like Setup does.
@@ -4764,7 +4793,7 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
     mosquito)
       # The mosquito tools — each user-visible tool gets its own row, labelled
       # with the tool's name rather than the module key it routes to
-      # (battery = mosquito-mega-caffeine, ableton-move-manager =
+      # (mega-caffeine = mosquito-mega-caffeine, ableton-move-manager =
       # mosquito-move-manager, etc).
       # The keys are what exec_modules routes on; the labels are what you read.
       # Labels match the row names in the Setup tree, so a module is called the
@@ -4779,8 +4808,8 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
       CAND_LABELS+=("mosquito-jamjamjam  —  $(module_desc jamjamjam-plugin)")
       CAND_KEYS+=("pipewire-settings")
       CAND_LABELS+=("mosquito-pipewire  —  $(module_desc pipewire-settings)")
-      CAND_KEYS+=("battery")
-      CAND_LABELS+=("mosquito-mega-caffeine  —  $(module_desc battery)")
+      CAND_KEYS+=("mega-caffeine")
+      CAND_LABELS+=("mosquito-mega-caffeine  —  $(module_desc mega-caffeine)")
       CAND_KEYS+=("live-mode")
       CAND_LABELS+=("mosquito-live-mode  —  $(module_desc live-mode)")
       CAND_KEYS+=("mixbay")
@@ -4849,8 +4878,8 @@ category_run(){ # catid -> run only the CATEGORY_SELECTED items
           levels-guard)
             run_module levels-guard bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" $([[ $YES == 1 ]] && echo -y) ;;
           *)
-            # Module-backed mosquito tools (ableton-move-manager, battery
-            # = mega-caffeine, jamjamjam-plugin, live-mode) go through
+            # Module-backed mosquito tools (ableton-move-manager, mega-caffeine,
+            # jamjamjam-plugin, live-mode) go through
             # exec_modules like any module: excluded ones are skipped.
             if skip_excluded "$k"; then
               warn "Module '$k' was uninstalled by you — skipped (re-offer with --include=$k)."

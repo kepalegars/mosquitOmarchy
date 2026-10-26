@@ -9,6 +9,8 @@ release: it is a private extra and stays on the machine that has it.
 
 **The Live edition zip must be downloaded manually** (from your ableton.com account) and dropped in `scripts/apps/ableton/`. At opening, the script verifies it is present and otherwise warns which file is missing (`Ableton_Live_<edition>_<version>_64.zip`) before offering rescan / a typed path.
 
+**Hyprland focus.** Les fenêtres Ableton, y compris la fenêtre principale au lancement, ne prennent jamais le focus d'elles-mêmes (`no_initial_focus` + `focus_on_activate = false`) : un clic est nécessaire pour les activer. Les dialogues et éditeurs de plugins sont donc aussi ouverts sans focus.
+
 **One archive per run.** When several zips are present (Suite/Intro), setup asks which single archive to install now. Several editions can coexist in the prefix; each gets its own launcher entry. Uninstall still removes one edition at a time.
 
 Steps: checks prerequisites (kernel 6.14+ NTSync, PipeWire 1.4.2+, glibc 2.35+) → **disk-space preflight** → runs `install-ableton-latest.run install --live-installer <zip>` (prompts: DPI, buffer, shortcuts, Link) → **links shared plugins** from `~/VST/*`.

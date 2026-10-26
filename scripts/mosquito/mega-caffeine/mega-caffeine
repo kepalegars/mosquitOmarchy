@@ -41,9 +41,9 @@
 # Environment variables: CAFFEINE_STATE_DIR, CAFFEINE_TINT,
 #   CAFFEINE_TEMP_LIMIT, CAFFEINE_BATTERY_LIMIT, CAFFEINE_POLL_SECONDS, CAFFEINE_MAX_MINUTES
 #
-# Omarchy integration (already in place in power-management/):
-#   1. deployed to ~/.local/bin (mega-caffeine) by power-management/setup-battery-management.sh
-#   2. omarchy-menu.jsonc menu: Trigger > Toggle > Mega caffeine (managed by setup-battery-management.sh)
+# Omarchy integration (already in place in battery-management/):
+#   1. deployed to ~/.local/bin (mega-caffeine) by mosquito/mega-caffeine/setup-mega-caffeine.sh
+#   2. omarchy-menu.jsonc menu: Trigger > Toggle > Mega caffeine (managed by setup-mega-caffeine.sh)
 # =============================================================================
 set -euo pipefail
 

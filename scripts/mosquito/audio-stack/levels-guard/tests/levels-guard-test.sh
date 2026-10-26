@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Self-check for levels-guard: managed EVO is blocked until the user opts in
-# (with a 0% OSD); every other default delegates to Omarchy.
+# Self-check for levels-guard: every Mixbay-managed interface is blocked until
+# the user opts in (with a 100% icon/text and an empty level bar); every other
+# default delegates to Omarchy.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,7 +28,7 @@ cat >"$tmp/bin/omarchy-audio-input-mute" <<'SH'
 #!/bin/bash
 printf 'input mute\n' >>"$LOG"
 SH
-cat >"$tmp/bin/omarchy-osd" <<'SH'
+cat >"$tmp/bin/omarchy-shell" <<'SH'
 #!/bin/bash
 printf '%s\n' "$*" >>"$OSD_LOG"
 SH
@@ -41,26 +42,53 @@ printf 'alsa_input.pci-0000.test\n' >"$tmp/source"
 export SINK_NAME="$tmp/sink"
 export SOURCE_NAME="$tmp/source"
 
-# Managed output, no opt-in: ignored.
 run() { : >"$log"; : >"$osd_log"; "$helper" "$@" || true; cat "$log"; }
+blocked_osd() {  # blocked_osd ICON : empty level bar, 100% text
+  grep -qF -- "\"icon\":\"$1\"" "$osd_log" \
+    && grep -qF -- '"value":0' "$osd_log" \
+    && grep -qF -- '"progressText":"100%"' "$osd_log"
+}
+set_sink() { printf '%s\n' "$1" >"$tmp/sink"; SINK_NAME="$tmp/sink"; }
+set_source() { printf '%s\n' "$1" >"$tmp/source"; SOURCE_NAME="$tmp/source"; }
+
+# Managed output, no opt-in: ignored, full icon + 100% text + empty bar.
 [[ -z $(run output raise) ]] || { echo "managed output was not blocked"; exit 1; }
-[[ $(cat "$osd_log") == *"-i volume-muted -p 0"* ]] || { echo "blocked output did not show the 0% OSD"; exit 1; }
+blocked_osd volume || { echo "blocked output OSD is wrong"; exit 1; }
+
+# Every supported Mixbay interface is recognised by its PipeWire node name.
+set_sink 'alsa_output.usb-RME_Fireface_UCX_II_12345678-00.analog-stereo'
+[[ -z $(run output raise) ]] || { echo "RME output was not blocked"; exit 1; }
+blocked_osd volume || { echo "RME output OSD is wrong"; exit 1; }
+
+set_sink 'alsa_output.usb-PreSonus_Quantum_ES_4_1234-00.analog-stereo'
+[[ -z $(run output raise) ]] || { echo "PreSonus output was not blocked"; exit 1; }
+blocked_osd volume || { echo "PreSonus output OSD is wrong"; exit 1; }
+
+# Unmanaged USB and PCI outputs delegate.
+set_sink 'alsa_output.usb-Focusrite_Scarlett_2i2_USB-00.analog-stereo'
+[[ $(run output lower) == "output lower" ]] || { echo "unmanaged USB output did not delegate"; exit 1; }
+set_sink 'alsa_output.pci-0000.00.0.analog-stereo'
+[[ $(run output lower) == "output lower" ]] || { echo "unmanaged PCI output did not delegate"; exit 1; }
 
 # Managed output, opt-in: delegated.
+set_sink 'alsa_output.usb-Audient_EVO8-00.pro-output-0'
 echo '{"allow_native_volume": true}' >"$tmp/config/mosquitomixbay/ui.json"
 [[ $(run output raise) == "output raise" ]] || { echo "opt-in did not delegate"; exit 1; }
 rm -f "$tmp/config/mosquitomixbay/ui.json"
 
-# Unmanaged output: delegated.
-printf 'alsa_output.pci-0000.00.0.analog-stereo\n' >"$tmp/sink2"
-export SINK_NAME="$tmp/sink2"
-[[ $(run output lower) == "output lower" ]] || { echo "unmanaged output did not delegate"; exit 1; }
-
-# Managed input, no opt-in: ignored; then opt-in delegates.
-printf 'alsa_input.usb-Audient_EVO8-00.pro-input-0\n' >"$tmp/source2"
-export SOURCE_NAME="$tmp/source2"
+# Managed input, no opt-in: ignored with the mic icon; then opt-in delegates.
+set_source 'alsa_input.usb-Audient_EVO8-00.pro-input-0'
 [[ -z $(run input) ]] || { echo "managed input was not blocked"; exit 1; }
-[[ $(cat "$osd_log") == *"-i microphone-muted -p 0"* ]] || { echo "blocked input did not show the 0% OSD"; exit 1; }
+blocked_osd microphone || { echo "blocked input OSD is wrong"; exit 1; }
+
+set_source 'alsa_input.usb-ESI_Audiotechnik_UGM192_1234-00.analog-stereo'
+[[ -z $(run input) ]] || { echo "ESI input was not blocked"; exit 1; }
+blocked_osd microphone || { echo "ESI input OSD is wrong"; exit 1; }
+
+set_source 'alsa_input.usb-Focusrite_Scarlett_2i2_USB-00.analog-stereo'
+[[ $(run input) == "input mute" ]] || { echo "unmanaged input did not delegate"; exit 1; }
+
+set_source 'alsa_input.usb-Audient_EVO8-00.pro-input-0'
 echo '{"allow_native_volume": true}' >"$tmp/config/mosquitomixbay/ui.json"
 [[ $(run input) == "input mute" ]] || { echo "input opt-in did not delegate"; exit 1; }
 

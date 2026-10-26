@@ -23,7 +23,7 @@
 #                              Bitwig preset; output under <projects>/Presets)
 #   8. Omarchy overlay        : mosquito.confirm (native Yes/No prompts,
 #                              used by the dispatcher's flag-driven flows
-#                              and shared with power-management) enabled
+#                              and shared with battery-management) enabled
 #   9. Omarchy menu           : ONE entry "mosquito Move Manager"
 #                              (legacy/duplicate entries are purged)
 #  10. Legacy launcher        : ~/.local/share/applications/move-session.desktop
@@ -423,7 +423,7 @@ ensure_confirm_plugin() {
   # drifted apart in an earlier round, before that got caught and both
   # were manually re-synced. `cp -a` is cheap and idempotent either way.
   local PLUG_DIR="$REAL_HOME/.config/omarchy/plugins"
-  local SRC_DIR="$SCRIPT_DIR/../../plugins/power-management/omarchy-plugins/mosquito.confirm"
+  local SRC_DIR="$SCRIPT_DIR/../../plugins/battery-management/omarchy-plugins/mosquito.confirm"
   if [[ -d $SRC_DIR ]]; then
     mkdir -p "$PLUG_DIR/mosquito.confirm"
     cp -a "$SRC_DIR/." "$PLUG_DIR/mosquito.confirm/"

@@ -30,7 +30,6 @@ done
 
 echo "== 2/5 Launch wrapper =="
 mkdir -p "$HOME/.local/bin"
-rm -f "$HOME/.local/bin/reaper-satellite"  # old xwayland-satellite-based wrapper, superseded
 # The wrapper MUST put Ableton's patched wine runtime (d2d1-nspa) first in PATH:
 # REAPER resolves `wine` from PATH, and the system wine-staging has no working
 # DirectComposition, so a VST3 editor that needs it dies during creation with

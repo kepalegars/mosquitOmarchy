@@ -2287,6 +2287,10 @@ yabridge_build() {
 # (post_install); otherwise it is throttled by $YABRIDGE_POLL.
 yabridge_ensure() {
   local force="${1:-}"
+  if yabridge_distro_shadowing; then
+    warn "yabridge: the distro package shadows the fixed build at $YABRIDGE_DST"
+    warn "  remove it: sudo pacman -R yabridge   (yabridgectl can stay)"
+  fi
   # No sensible state dir (tests, exotic setups) — stay out of the way.
   [[ -n $STATE_DIR && -d $STATE_DIR ]] || return 0
   command -v git >/dev/null 2>&1 || { warn "yabridge: git is required to track master"; return 0; }
@@ -2330,6 +2334,29 @@ yabridge_state_json() {
     '{dir:$dir, commit:$commit, built:$built, installed:$installed, distro:$distro}'
 }
 
+# AAX only serves Pro Tools, which is not installed here. Vendors still drop
+# AAX copies, and their own reinstaller then reports "components already
+# installed: 64-bit AAX Plugins". Delete the copies after every install or
+# uninstall instead of keeping a format nothing on this machine can load.
+# shortcut: AAX is deleted because Pro Tools is not installed; revisit if Pro Tools is added.
+purge_aax() {
+  local pf root n=0
+  for pf in "$HOME"/.wine "$HOME"/.wine-ableton "$HOME"/.wine-vst; do
+    [[ -d $pf/drive_c ]] || continue
+    for root in "$pf/drive_c/Program Files/Common Files/Avid/Audio/Plug-Ins" \
+                "$pf/drive_c/Program Files (x86)/Common Files/Avid/Audio/Plug-Ins"; do
+      [[ -d $root ]] || continue
+      if rm -rf "$root" 2>/dev/null; then
+        n=$((n + 1))
+      else
+        warn "could not remove AAX folder: $root"
+      fi
+    done
+  done
+  if ((n)); then ok "AAX components removed (no Pro Tools)"; fi
+  return 0
+}
+
 post_install() {
   # In a batch, everything machine-wide is skipped and the batch's final call
   # does it once. NOTE the sense of the test: the yabridge remote check runs
@@ -2357,15 +2384,18 @@ post_install() {
   # reading only $1 worked and reading only the environment did not. Both are
   # read, so either caller is right.
   local defer_sync="${1:-${APM_DEFER_SYNC:-}}"
+  # In a batch these run once at the end, not once per removed plugin: every
+  # prefix is walked, and nothing between two removals depends on the result.
   if [[ $defer_sync != defer-sync && $defer_sync != 1 ]]; then
+    purge_aax
     yabridge_ensure force || true
+    local pf
+    for pf in "${WINE_PREFIXES[@]:-}"; do
+      fix_sonible_runtime_deps "$pf"
+    done
+    fix_sonible_runtime_deps "$(default_prefix)"
   fi
 
-  local pf
-  for pf in "${WINE_PREFIXES[@]:-}"; do
-    fix_sonible_runtime_deps "$pf"
-  done
-  fix_sonible_runtime_deps "$(default_prefix)"
   # Deferred in a batch, like the sync: re-linking every prefix and re-fixing
   # the runtime once per removed plugin is the same cost, repeated.
   if [[ $defer_sync != defer-sync && $defer_sync != 1 ]]; then
@@ -2690,8 +2720,9 @@ uninstall_target() {
   local kind="${pick%%:*}"
   local target="${pick#*:}"
 
-  local qdir="$HOME/.cache/vst-quarantine/$(date +%Y%m%d-%H%M%S)-uninstall"
+  local qdir="${APM_QUARANTINE_DIR:-$HOME/.cache/vst-quarantine/$(date +%Y%m%d-%H%M%S)-uninstall}"
   mkdir -p "$qdir"
+  export APM_QUARANTINE_DIR="$qdir"
 
   # Snapshot which ~/VST plugins have a Windows source BEFORE the uninstaller
   # runs (the uninstaller will remove those sources; the ~/VST copies then
@@ -2719,10 +2750,14 @@ uninstall_target() {
     unins="$(find "$winedir" -maxdepth 1 -type f \( -iname 'unins*.exe' -o -iname 'uninstall*.exe' \) 2>/dev/null | head -1 || true)"
   fi
   if [[ -n $unins ]]; then
-    msg "Running uninstaller: $(basename "$unins")"
-    wine "$unins" /VERYSILENT /NORESTART >/dev/null 2>&1 || warn "(uninstaller exit code ignored)"
+    if [[ -z ${APM_SEEN_UNINSTALLERS:-} || $APM_SEEN_UNINSTALLERS != *"|$unins|"* ]]; then
+      msg "Running uninstaller: $(basename "$unins")"
+      wine "$unins" /VERYSILENT /NORESTART >/dev/null 2>&1 || warn "(uninstaller exit code ignored)"
+      APM_SEEN_UNINSTALLERS="${APM_SEEN_UNINSTALLERS:-}|$unins|"
+      export APM_SEEN_UNINSTALLERS
+      sleep 1
+    fi
   fi
-  sleep 1
 
   # 2. Quarantine the wine folder (leave the original untouched).
   #
@@ -2732,12 +2767,12 @@ uninstall_target() {
   # directories. The first copy of a folder is the one that matters, since the
   # source is not touched until the batch ends.
   if [[ -n $winedir && -d $winedir ]]; then
-    if [[ -n ${APM_SEEN_FOLDERS:-} && $APM_SEEN_FOLDERS == *"|$winedir|"* ]]; then
-      msg "windows folder already quarantined this run: ${winedir##*/}"
-    elif cp -a "$winedir" "$qdir/" 2>/dev/null; then
-      ok "windows folder → quarantine"
-      APM_SEEN_FOLDERS="${APM_SEEN_FOLDERS:-}|$winedir|"
-      export APM_SEEN_FOLDERS
+    if [[ -z ${APM_SEEN_FOLDERS:-} || $APM_SEEN_FOLDERS != *"|$winedir|"* ]]; then
+      if cp -a "$winedir" "$qdir/" 2>/dev/null; then
+        ok "windows folder → quarantine"
+        APM_SEEN_FOLDERS="${APM_SEEN_FOLDERS:-}|$winedir|"
+        export APM_SEEN_FOLDERS
+      fi
     fi
   fi
 
@@ -5501,7 +5536,7 @@ plugin_scan_fingerprint() {
   done
   {
     find "${roots[@]}" -maxdepth 6 \( -type f -o -type l \) -printf '%T@|%s|%p\n' 2>/dev/null
-    printf 'h2=%s h32=%s\n' "${HIDE_VST2:-false}" "${HIDE_32BIT:-false}"
+    printf 'h2=%s h32=%s g=2\n' "${HIDE_VST2:-false}" "${HIDE_32BIT:-false}"
   } | sort | md5sum | cut -c1-16
 }
 
@@ -5509,13 +5544,9 @@ plugin_scan_fingerprint() {
 # prepending the sort key for the CURRENT sort mode. Cached rows hold no sort
 # key, which is what lets one cache serve all three orderings.
 plugin_group_rows_emit() {
-  local src="$1" k label grp formats enabled value variants key
-  while IFS=$'\t' read -r label grp formats enabled value variants key; do
+  local src="$1" k label grp formats enabled value variants key date
+  while IFS=$'\t' read -r label grp formats enabled value variants key date; do
     [[ -n $key ]] || continue
-    # Newest first for `date`: stat is only reached in that mode, so the other
-    # three cost nothing extra.
-    date=""
-    [[ $PLUGIN_SORT_MODE == date ]] && date="$(stat -c '%Y' "${value#vst:*:}" 2>/dev/null || echo 0)"
     # Two keys, not one. The first orders the FOLDERS, the second orders the
     # plugins inside each of them. One key could not do both: sorting by vendor
     # ordered the folders and left every folder's contents in scan order, which
@@ -5636,6 +5667,11 @@ plugin_group_rows_build() {
   local f type key grp label sortkey enabled fmt
   local -A g_label=() g_formats=() g_first=() g_enabled=() g_any=() g_variants=() g_grp=()
   local -a order=()
+
+  # Build the prefix index ONCE in this shell. vendor_folder_for_plugin runs
+  # inside command substitutions below, and a subshell that builds the index
+  # itself throws it away on exit, so every root-level plugin paid a full walk.
+  _wine_source_index
 
   while IFS=$'\t' read -r f type; do
     [[ -n $f ]] || continue
@@ -5767,6 +5803,7 @@ plugin_group_rows_build() {
   done < <(scan_native_plugins)
 
   local k
+  local date
   for k in "${order[@]}"; do
     # The group computed while scanning, NOT "${k%/*}" again: the suite
     # subgrouping lives in that value, and recomputing it here threw the
@@ -5778,10 +5815,16 @@ plugin_group_rows_build() {
     # cannot rebuild the key from the display label — "FabFilter Micro" and
     # "FabFilter Micro (Mono)" are different plugins, and the vendor folder is
     # already split out into field 3, so the key is not derivable from the row.
+    # A ninth, trailing field caches the mtime `date` sorts on: one stat per
+    # plugin at BUILD time instead of one per row on every cache read.
+    date=0
+    if [[ ${g_first[$k]} == vst:* ]]; then
+      date="$(stat -c '%Y' "${g_first[$k]#vst:*:}" 2>/dev/null || echo 0)"
+    fi
     # No sort key here: the cache stores the grouping, and the sort is applied
     # at read time so `s` reorders without a rescan.
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "${g_label[$k]}" "$grp" "${g_formats[$k]}" "${g_enabled[$k]}" "${g_first[$k]}" "${g_variants[$k]}" "$k"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "${g_label[$k]}" "$grp" "${g_formats[$k]}" "${g_enabled[$k]}" "${g_first[$k]}" "${g_variants[$k]}" "$k" "$date"
   done
   return 0
 }

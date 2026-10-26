@@ -549,9 +549,12 @@ PYWIZARD
     # and `local` outside a function is a hard bash error.
     APM_DEFER_SYNC=1
     export APM_DEFER_SYNC
-    # A fresh run has not quarantined anything yet.
+    # A fresh run has not quarantined anything yet, and the whole batch shares
+    # ONE timestamped quarantine directory instead of one per plugin.
     APM_SEEN_FOLDERS=
-    export APM_SEEN_FOLDERS
+    APM_SEEN_UNINSTALLERS=
+    APM_QUARANTINE_DIR=
+    export APM_SEEN_FOLDERS APM_SEEN_UNINSTALLERS APM_QUARANTINE_DIR
     _apm_ub_deferred=0
     for tgt in "$@"; do
       case "$tgt" in

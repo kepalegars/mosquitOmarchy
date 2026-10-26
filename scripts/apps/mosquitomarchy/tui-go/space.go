@@ -75,7 +75,9 @@ func spaceWarning(r DiskRec) bool {
 	// A partially-known need is a lower bound: if that already exceeds free,
 	// the rest can only make it worse. Requiring NeedUnknown to be false hid
 	// the warning exactly when a folder mixed known and unknown modules.
-	return !r.FreeUnknown && r.NeedKB > r.FreeKB
+	// TempShort covers installers that need more scratch space than the final
+	// payload (Davinci extracts ~30 GiB before copying it into /opt).
+	return !r.FreeUnknown && (r.NeedKB > r.FreeKB || r.TempShort)
 }
 
 // warningText keeps the phrase red in both blink phases. The "on" phase adds

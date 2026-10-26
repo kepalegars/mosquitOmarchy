@@ -21,6 +21,7 @@ const {
   session,
   shell,
   ipcMain,
+  powerMonitor,
 } = require('electron');
 const path = require('path');
 
@@ -42,6 +43,7 @@ const USER_AGENT =
 let mainWindow = null;
 let tray = null;
 let isQuitting = false;
+let lastRecovery = 0;
 
 // Single instance: a second launch just focuses the existing window.
 if (!app.requestSingleInstanceLock()) {
@@ -57,6 +59,19 @@ function showWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+}
+
+// After suspend/resume (and after a GPU process crash) the Wayland surface can
+// come back blank while the page itself is still loaded. Reload once, throttled
+// so a crash loop cannot turn into a reload loop.
+function recoverWindow(why) {
+  if (isQuitting || !mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.webContents.isLoading()) return;
+  const now = Date.now();
+  if (now - lastRecovery < 5000) return;
+  lastRecovery = now;
+  console.error('WhatsApp: ' + why + ' — reloading');
+  mainWindow.webContents.reload();
 }
 
 // Clicking a desktop notification (forwarded by preload.js) must raise the
@@ -159,6 +174,9 @@ function createWindow(startHidden) {
   mainWindow.on('hide', () => {
     if (mainWindow) mainWindow.webContents.setAudioMuted(true);
   });
+  mainWindow.on('show', () => {
+    if (mainWindow) mainWindow.webContents.invalidate();
+  });
 
   // Close-to-tray: hide instead of quitting when the user closes the window.
   mainWindow.on('close', (event) => {
@@ -208,6 +226,10 @@ app.whenReady().then(() => {
     mainWindow.hide();
   }
 
+  powerMonitor.on('resume', () => {
+    setTimeout(() => recoverWindow('resumed from sleep'), 2000);
+  });
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
@@ -220,6 +242,12 @@ app.whenReady().then(() => {
 // Do NOT quit on window close — we live in the tray.
 app.on('window-all-closed', () => {
   // Keep running in the tray on all platforms.
+});
+
+app.on('child-process-gone', (_event, details) => {
+  if (details.type === 'GPU' && details.reason !== 'clean-exit') {
+    recoverWindow('GPU process gone (' + details.reason + ')');
+  }
 });
 
 app.on('before-quit', () => {

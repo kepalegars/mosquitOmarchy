@@ -459,6 +459,7 @@ type DiskRec struct {
 	FreeUnknown  bool  `json:"free_unknown"`
 	NeedUnknown  bool  `json:"need_unknown"`
 	FreedUnknown bool  `json:"freed_unknown"`
+	TempShort    bool  `json:"temp_short"`
 }
 
 // spaceMsg carries the answer back to the confirm that asked for it. seq makes
@@ -595,7 +596,8 @@ func fetchMissingAssetsCmd(plan []string) tea.Cmd {
 }
 
 // HealthRec is one drifted piece the `health` query reports: a partially
-// installed module, or a mosquitOmarchy artifact that went missing.
+// installed module, a mosquitOmarchy artifact that went missing, or an owned
+// Omarchy plugin clone whose source changed / whose files were edited.
 type HealthRec struct {
 	Kind   string `json:"kind"`
 	ID     string `json:"id"`

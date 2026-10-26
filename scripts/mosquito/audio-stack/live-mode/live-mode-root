@@ -11,7 +11,6 @@ STATE_DIR="$REAL_HOME/.local/state/live-mode"
 PRE_STATE="$STATE_DIR/pre_state.json"
 
 BIN_DIR="$HOME/.local/bin"
-POWER_HELPER="/usr/local/bin/power-helper"
 SETTINGS_FILE="$REAL_HOME/.config/live-mode/settings"
 
 # fence_setting is the package fence, OFF unless the file says otherwise.
@@ -106,7 +105,8 @@ EOF
   powerprofilesctl set performance 2>/dev/null || true
 
   # 2. Disable battery conservation / restore to 0 100
-  "$POWER_HELPER" charging preset off >/dev/null 2>&1 || true
+  echo 0 > /sys/class/power_supply/BAT0/charge_control_start_threshold 2>/dev/null || true
+  echo 100 > /sys/class/power_supply/BAT0/charge_control_end_threshold 2>/dev/null || true
 
   # 3. Audio: disable HDA power-save
   w /sys/module/snd_hda_intel/parameters/power_save "0"

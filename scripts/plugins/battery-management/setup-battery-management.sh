@@ -2,36 +2,33 @@
 # =============================================================================
 # Omarchy Custom - Battery Management
 # =============================================================================
-# Central installer for ALL battery/charge tooling behind the mosquito.power
-# panel widget. Reproduces on a fresh machine:
+# Battery management: the power tooling behind the mosquito.power panel widget.
+# Reproduces on a fresh machine:
 #
 #   1. ultra-save          (~/.local/bin/ultra-save)          : on/off/status toggle
 #   2. sudoers             (/etc/sudoers.d/battery-management) : NOPASSWD + D-BUS env
 #   3. power-helper        (~/.local/bin + /usr/local/bin)     : plugin back-end helper
-#   4. udev rule           (/etc/udev/rules.d/99-lenovo-charge-threshold.rules)
-#                          : makes charge_control_*_threshold writable by wheel
-#   5. mega-caffeine       (~/.local/bin/mega-caffeine)       : coffee mode (laptop
-#                          closed without sleeping, red tint, natural-language durations)
-#   5b. ultra-save-watch    (~/.local/bin/ultra-save-watch)   : CPU-saturation watchdog
+#   4. ultra-save-watch    (~/.local/bin/ultra-save-watch)    : CPU-saturation watchdog
 #                          under ultra-save (systemd --user timer, every 60s)
-#   6. Removes the old "System > Ultra-save mode" block from the Omarchy menu
+#   5. Removes the old "System > Ultra-save mode" block from the Omarchy menu
 #      (now useless: the toggle lives in the mosquito.power plugin).
-#   7. Adds a "Mega caffeine" entry to the Omarchy menu bar
-#      (Trigger > Toggle) toggling the coffee mode on/off.
 #
-# Notifications (charge threshold reached) are sent by the mosquito.power
-# plugin, no longer by the scripts (ultra-save-monitor has been removed). The
-# ultra-save-watch watchdog does NOT send profile-change notifications: it
+# Coffee mode (mega-caffeine) is a SEPARATE module: scripts/mosquito/mega-caffeine.
+# Battery conservation / charge thresholds are not part of this module.
+# The ultra-save-watch watchdog does NOT send profile-change notifications: it
 # warns when ultra-save's CPU cap is being saturated and would freeze the
 # desktop, with a clickable action that disables ultra-save.
 #
 # Usage:
 #   ./setup-battery-management.sh            # applies everything (idempotent)
-#   ./setup-battery-management.sh --remove   # removes udev+sudoers+menu, stops caffeine
+#   ./setup-battery-management.sh --remove   # removes sudoers (+ legacy udev rule)
+#   ./setup-battery-management.sh --refresh-plugin power|indicators
+#                                             # rebuild one cloned Omarchy plugin
 #
 # One-stop install/uninstall for the whole battery module:
-#   • install   -> this script (also triggered by the 'battery' module of mosquitomarchy-setup.sh)
-#   • uninstall -> this script --remove, or the 'battery' module of mosquitomarchy-setup.sh --uninstall
+#   • install   -> this script (also triggered by the 'battery-management' module)
+#   • uninstall -> this script --remove, or the 'battery-management' module of
+#                  mosquitomarchy-setup.sh --uninstall
 #
 # Prerequisites: power-profiles-daemon, amd-pstate/intel_pstate, Omarchy.
 # =============================================================================
@@ -39,6 +36,8 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"  #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../../lib/plugin-clone.bash
+source "$SCRIPT_DIR/../../lib/plugin-clone.bash"
 
 info() { echo -e "\033[1;34m==>\033[0m $*"; }
 ok()   { echo -e "\033[1;32m  ✓\033[0m $*"; }
@@ -47,8 +46,13 @@ err()  { echo -e "\033[1;31m  ✗\033[0m $*" >&2; }
 
 # Resolve the REAL invoking user's home even when run via `sudo bash`
 # (as root, $HOME=/root, but the binaires/scripts live in the user's home).
-if [[ $EUID -eq 0 && -n ${SUDO_USER:-} ]]; then
-  REAL_USER="$SUDO_USER"
+if [[ $EUID -eq 0 ]]; then
+  REAL_USER="${SUDO_USER:-}"
+  if [[ -z $REAL_USER && -n ${PKEXEC_UID:-} ]]; then
+    REAL_USER="$(getent passwd "$PKEXEC_UID" | cut -d: -f1)"
+  fi
+  [[ -n $REAL_USER ]] || REAL_USER="$(logname 2>/dev/null || true)"
+  [[ -n $REAL_USER ]] || REAL_USER="root"
 else
   REAL_USER="${USER:-$(id -un)}"
 fi
@@ -61,18 +65,8 @@ MENU_DIR="$REAL_HOME/.config/omarchy/extensions"
 MENU="$MENU_DIR/omarchy-menu.jsonc"
 BLOCK_START="// >>> Omarchy_Custom_Scripts_UltraSave"
 BLOCK_END="// <<< Omarchy_Custom_Scripts_UltraSave"
-MENU_MC_START="// >>> Omarchy_Custom_Scripts - managed by setup-battery-management.sh (mega-caffeine)"
-MENU_MC_END="// <<< Omarchy_Custom_Scripts - managed by setup-battery-management.sh (mega-caffeine)"
-# Historical names of this script, in case the menu file still carries the
-# markers of a previous rename (either the very first setup- name or the
-# intermediate battery-management.sh name).
-MENU_MC_LEGACY_START="// >>> Omarchy_Custom_Scripts - managed by battery-management.sh (mega-caffeine)"
-MENU_MC_LEGACY_END="// <<< Omarchy_Custom_Scripts - managed by battery-management.sh (mega-caffeine)"
-MENU_MC_LEGACY2_START="// >>> Omarchy_Custom_Scripts - managed by setup-battery-management.sh (mega-caffeine)"
-MENU_MC_LEGACY2_END="// <<< Omarchy_Custom_Scripts - managed by setup-battery-management.sh (mega-caffeine)"
 SUDOERS_FILE="/etc/sudoers.d/battery-management"
 STATE_DIR="$REAL_HOME/.local/state/ultra-save"
-UDEV_SRC="$SCRIPT_DIR/power-plugin/99-lenovo-charge-threshold.rules"
 UDEV_DST="/etc/udev/rules.d/99-lenovo-charge-threshold.rules"
 
 if [[ ! -d /usr/share/omarchy ]]; then
@@ -81,7 +75,15 @@ if [[ ! -d /usr/share/omarchy ]]; then
 fi
 
 REMOVE=false
-[[ ${1:-} == "--remove" ]] && REMOVE=true
+REFRESH_PLUGIN=""
+case "${1:-}" in
+  --remove) REMOVE=true ;;
+  --refresh-plugin) REFRESH_PLUGIN="${2:-}" ;;
+esac
+if [[ ${1:-} == --refresh-plugin && -z $REFRESH_PLUGIN ]]; then
+  err "--refresh-plugin needs power or indicators"
+  exit 2
+fi
 
 # -----------------------------------------------------------------------------
 # 1. Deployment of the binaries (~/.local/bin)
@@ -110,7 +112,6 @@ if [[ $REMOVE == false ]]; then
 
   deploy_bin "ultra-save"
   deploy_bin "power-helper"
-  deploy_bin "mega-caffeine"
   # battery-status: corrected battery telemetry. The stock
   # omarchy-battery-status / omarchy-power-present pair reports a USB-C
   # PERIPHERAL as a charger (any type=USB supply with online=1), which made the
@@ -118,18 +119,19 @@ if [[ $REMOVE == false ]]; then
   # empty time / 0.0W / no charging icon on real USB-C PD chargers that never
   # flip the AC (type=Mains) flag. This fork decides from the battery's own
   # status and only reports "-" instead of inventing a 0.0W. Tests:
-  # scripts/plugins/power-management/battery-status-test
+  # scripts/plugins/battery-management/battery-status-test
   deploy_bin "battery-status"
 
   [[ -d "$BIN_DIR" ]] && PATH="$BIN_DIR:$PATH"
 fi
 
 # -----------------------------------------------------------------------------
-# 1b. Mosquito mosquito.power plugin (bar widget: charge limit + ultra-save)
+# 1b. Mosquito mosquito.power plugin (bar widget: power profiles + ultra-save)
 #     Recreates it if missing: clones omarchy.power then renames to
 #     mosquito.power. The legacy custom.power clone is adopted (renamed) when
 #     found, so no machine keeps the old id.
 # -----------------------------------------------------------------------------
+POWER_CLONED=0
 ensure_power_plugin() {
   local PLUG="$REAL_HOME/.config/omarchy/plugins"
   local PLUGIN_ID="mosquito.power"
@@ -151,6 +153,7 @@ ensure_power_plugin() {
       mv "$PLUG/$REAL_USER.power" "$PLUGIN_DIR"
     else
       warn "Plugin $PLUGIN_ID missing — cloning from omarchy.power"
+      POWER_CLONED=1
       omarchy plugin clone omarchy.power || { warn "Could not clone omarchy.power"; return 1; }
       if [[ -d "$PLUG/$REAL_USER.power" ]]; then
         mv "$PLUG/$REAL_USER.power" "$PLUGIN_DIR"
@@ -190,7 +193,7 @@ ensure_power_plugin() {
 # 1c. Omarchy custom plugins (bar widget + overlay) — same clone/rename pattern
 #     but with QML sources shipped in ./omarchy-plugins/ (the stock clones are
 #     then patched so a fresh machine reproduces this machine's customizations):
-#       • mosquito.power/Panel.qml          : charge-limit notif + toggles
+#       • mosquito.power/Panel.qml          : power-profile + ultra-save toggles
 #       • mosquito.indicators/            : StayAwake red icon + time tooltip
 #       • mosquito.confirm/               : native Yes/No overlay for prompts
 # -----------------------------------------------------------------------------
@@ -212,6 +215,7 @@ overlay_plugin_files() {
   [[ -n $found ]] && ok "Custom QML applied to $dir" || true
 }
 
+INDICATORS_CLONED=0
 ensure_indicators_plugin() {
   [[ -f "$REAL_HOME/.config/omarchy/shell.json" ]] || return 0
   if [[ -d "$PLUG_DIR/mosquito.indicators" ]]; then
@@ -222,6 +226,7 @@ ensure_indicators_plugin() {
       mv "$PLUG_DIR/$REAL_USER.indicators" "$PLUG_DIR/mosquito.indicators"
     else
       warn "Plugin mosquito.indicators missing — cloning from omarchy.indicators"
+      INDICATORS_CLONED=1
       omarchy plugin clone omarchy.indicators || { warn "Could not clone omarchy.indicators"; return 1; }
       if [[ -d "$PLUG_DIR/$REAL_USER.indicators" ]]; then
         mv "$PLUG_DIR/$REAL_USER.indicators" "$PLUG_DIR/mosquito.indicators"
@@ -259,9 +264,87 @@ ensure_confirm_plugin() {
   ok "Omarchy plugin mosquito.confirm enabled (overlay)"
 }
 
+
+# Record or refresh the upstream baseline for a managed clone. A pre-existing
+# clone with no stamp is left unstamped on purpose: writing today's upstream
+# hash would hide the very drift Health is meant to report. Only a clone this
+# run actually created gets a baseline.
+record_clone_stamp(){
+  local id="$1" source_id="$2" fresh="$3" dir="$PLUG_DIR/$1" up
+  [[ -d $dir ]] || return 0
+  if [[ -f $(plugin_clone_stamp_file "$dir") ]]; then
+    plugin_clone_update_stamp "$dir" >/dev/null 2>&1 || true
+  elif (( fresh )); then
+    up="$(plugin_clone_source_hash "$source_id" 2>/dev/null || true)"
+    [[ -n $up ]] && plugin_clone_write_stamp "$dir" "$up" >/dev/null 2>&1 || true
+  fi
+}
+
+refresh_plugin(){
+  local key="$1" id source_id ensure dir leftover leftover_bak backup
+  local -a files
+  case $key in
+    power)
+      id="mosquito.power"; source_id="omarchy.power"; ensure="ensure_power_plugin"
+      files=("Panel.qml" "Model.js") ;;
+    indicators)
+      id="mosquito.indicators"; source_id="omarchy.indicators"; ensure="ensure_indicators_plugin"
+      files=("Indicators.qml" "indicators/StayAwake.qml") ;;
+    *) err "Unknown plugin to refresh: $key"; return 2 ;;
+  esac
+
+  dir="$PLUG_DIR/$id"
+  [[ -d $dir ]] || { warn "$id is not installed — nothing to refresh."; return 1; }
+  leftover="$PLUG_DIR/$REAL_USER.${id#mosquito.}"
+  backup="$PLUG_DIR/.refresh-$id.$$"
+  leftover_bak="$leftover.refresh.$$"
+  mv "$dir" "$backup" || return 1
+  if [[ -e $leftover ]]; then
+    mv "$leftover" "$leftover_bak" || {
+      mv "$backup" "$dir" 2>/dev/null || true
+      warn "Could not move the old $REAL_USER ${id#mosquito.} clone aside."
+      return 1
+    }
+  fi
+
+  local rc=0 up
+  "$ensure" || rc=1
+  if (( rc == 0 )) && [[ -d $dir ]]; then
+    overlay_plugin_files "$id" "${files[@]}" || rc=1
+    up="$(plugin_clone_source_hash "$source_id" 2>/dev/null || true)"
+    if [[ -z $up ]] || ! plugin_clone_write_stamp "$dir" "$up"; then rc=1; fi
+    omarchy plugin validate "$dir" >/dev/null 2>&1 || rc=1
+  else
+    rc=1
+  fi
+
+  if (( rc == 0 )); then
+    omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+    omarchy plugin enable "$id" >/dev/null 2>&1 || true
+    rm -rf "$backup" || true
+    if [[ -e $leftover_bak ]]; then rm -rf "$leftover_bak" || true; fi
+    ok "Refreshed $id from the current $source_id"
+    return 0
+  fi
+
+  rm -rf "$dir" "$leftover" || true
+  mv "$backup" "$dir" 2>/dev/null || true
+  if [[ -e $leftover_bak ]]; then mv "$leftover_bak" "$leftover" 2>/dev/null || true; fi
+  omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+  omarchy plugin enable "$id" >/dev/null 2>&1 || true
+  warn "Could not refresh $id — the previous clone was restored."
+  return 1
+}
+
+if [[ -n $REFRESH_PLUGIN ]]; then
+  refresh_plugin "$REFRESH_PLUGIN"
+  exit $?
+fi
+
 if [[ $REMOVE == false ]]; then
   ensure_power_plugin || true
   overlay_plugin_files "mosquito.power" "Panel.qml" "Model.js"
+  record_clone_stamp "mosquito.power" "omarchy.power" "$POWER_CLONED"
 
   # Omarchy's OWN power panel, overlaid for the same reason. It is disabled in
   # favour of mosquito.power on this desktop, but it is one `omarchy plugin
@@ -276,6 +359,7 @@ if [[ $REMOVE == false ]]; then
       || warn "Could not overlay omarchy.power/Panel.qml"
   fi
   ensure_indicators_plugin || true
+  record_clone_stamp "mosquito.indicators" "omarchy.indicators" "$INDICATORS_CLONED"
   ensure_confirm_plugin || true
 fi
 
@@ -387,39 +471,18 @@ if [[ $REMOVE == false ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 4. udev charge-control rule (requires root) — makes the thresholds writable
+# 4. Legacy charge-control udev rule (battery conservation removed) — drop it
 # -----------------------------------------------------------------------------
-if [[ $REMOVE == true ]]; then
-  if [[ -f "$UDEV_DST" ]]; then
+if [[ -f "$UDEV_DST" ]]; then
+  if [[ $EUID -eq 0 ]]; then
     rm -f "$UDEV_DST"
     udevadm control --reload 2>/dev/null || true
-    ok "udev charge-control rule removed"
+    ok "legacy charge-control udev rule removed"
   else
-    ok "udev charge-control rule absent, nothing to do."
+    warn "legacy charge-control udev rule present — rerun as root to remove: sudo bash $0"
   fi
 else
-  if [[ $EUID -eq 0 ]]; then
-    if [[ ! -f "$UDEV_SRC" ]]; then
-      warn "udev rule not found ($UDEV_SRC) — charge-control not configured."
-    else
-      cp "$UDEV_SRC" "$UDEV_DST"
-      chown root:root "$UDEV_DST"
-      chmod 0644 "$UDEV_DST"
-      udevadm control --reload
-      udevadm trigger --subsystem-match=power_supply
-      ok "udev rule installed ($UDEV_DST)"
-    fi
-    # Apply immediately (and not only via the trigger): chown + chmod.
-    # chown alone does NOT grant write — the chmod 0660 for wheel is required.
-    for t in charge_control_start_threshold charge_control_end_threshold; do
-      [[ -e "/sys/class/power_supply/BAT0/$t" ]] || continue
-      chown root:wheel "/sys/class/power_supply/BAT0/$t" 2>/dev/null
-      chmod 0660 "/sys/class/power_supply/BAT0/$t" 2>/dev/null
-    done
-    ok "Charge thresholds made writable by wheel (0660)"
-  else
-    warn "udev rule + thresholds not configured (requires root). Run: sudo bash $0"
-  fi
+  ok "No charge-control udev rule (battery conservation removed)."
 fi
 
 # -----------------------------------------------------------------------------
@@ -480,171 +543,23 @@ remove_menu_block() {
 remove_menu_block
 
 # -----------------------------------------------------------------------------
-# 5b. Omarchy menu bar: "Mega caffeine" entry (Trigger > Toggle)
-# -----------------------------------------------------------------------------
-migrate_mc_markers() {
-  # One-time rename of the block markers (old script names → the current one).
-  [[ -f $MENU ]] || return 0
-  if grep -qF "$MENU_MC_LEGACY_START" "$MENU" || grep -qF "$MENU_MC_LEGACY_END" "$MENU" \
-     || grep -qF "$MENU_MC_LEGACY2_START" "$MENU" || grep -qF "$MENU_MC_LEGACY2_END" "$MENU"; then
-    sed -i "s|$MENU_MC_LEGACY_START|$MENU_MC_START|g; s|$MENU_MC_LEGACY_END|$MENU_MC_END|g; s|$MENU_MC_LEGACY2_START|$MENU_MC_START|g; s|$MENU_MC_LEGACY2_END|$MENU_MC_END|g" "$MENU"
-    ok "Mega caffeine menu markers migrated to setup-battery-management.sh"
-  fi
-}
-FIX_JSONC=$(cat << 'PYEOF'
-import json, re, sys, io
-path = sys.argv[1]
-data = io.open(path, encoding='utf-8').read()
-data = re.sub(r'(?m)^[ \t]*//.*$', '', data)
-data = re.sub(r'/\*.*?\*/', '', data, flags=re.S)
-data = re.sub(r',(\s*[}\]])', r'\1', data)
-try:
-    json.loads(data)
-    print("ok")
-except Exception as e:
-    sys.stderr.write("menu-not-json: %s\n" % e)
-    sys.exit(1)
-PYEOF
-)
-
-write_menu() {
-  if [[ ! -f $MENU ]]; then return 0; fi
-  local out
-  out=$(python3 -c "$FIX_JSONC" "$MENU" 2>&1) || {
-    warn "Invalid JSONC in $MENU (python said: $out)"
-    return 1
-  }
-  ok "Menu $MENU valid"
-  return 0
-}
-
-mc_block() {
-  cat <<MC_EOF
-$MENU_MC_START
-  "trigger.toggle.mega-caffeine": {
-    "icon": "\uf0f4",
-    "label": "Mega caffeine",
-    "description": "Coffee mode: laptop closed without sleeping, red tint, natural-language duration",
-    "aliases": ["coffee", "cafe", "mode-cafe", "power-mode", "mosquito"],
-    "when": "test -x $REAL_HOME/.local/bin/mega-caffeine",
-    // NOT a plain read of ~/.local/state/caffeine/state: a reboot leaves that
-    // file saying "on" with no session behind it, so the entry stayed ticked
-    // and clicking it ran a "turn it off" for something already dead. The
-    // script's --active checks the state AND that the inhibitor is really
-    // running, and clears the leftover on the way.
-    //
-    // These MUST be // comments: the menu is JSONC and the installer validates
-    // it by stripping // lines. A # line here produced a menu that looked
-    // right in a diff and would not parse at all.
-    "checked": "$REAL_HOME/.local/bin/mega-caffeine --active",
-    "action": "$REAL_HOME/.local/bin/mega-caffeine toggle"
-  },
-$MENU_MC_END
-MC_EOF
-}
-
-install_mc_menu() {
-  mkdir -p "$MENU_DIR"
-  local block start_line end_line open_line tmp
-  block="$(mc_block)"
-  if [[ ! -f $MENU ]]; then
-    printf '{\n%s\n}\n' "$block" > "$MENU"
-  elif grep -qF "$MENU_MC_START" "$MENU"; then
-    start_line=$(grep -nF "$MENU_MC_START" "$MENU" | head -1 | cut -d: -f1)
-    end_line=$(grep -nF "$MENU_MC_END" "$MENU" | head -1 | cut -d: -f1)
-    if [[ -z $start_line || -z $end_line || $end_line -le $start_line ]]; then
-      warn "Inconsistent mega-caffeine markers in $MENU - manual fix needed."
-      return 0
-    fi
-    tmp=$(mktemp)
-    head -n $((start_line - 1)) "$MENU" > "$tmp"
-    printf '%s\n' "$block" >> "$tmp"
-    tail -n +$((end_line + 1)) "$MENU" >> "$tmp"
-    mv "$tmp" "$MENU"
-  else
-    open_line=$(grep -n '^{[[:space:]]*$' "$MENU" | head -1 | cut -d: -f1 || true)
-    tmp=$(mktemp)
-    if [[ -n $open_line ]]; then
-      head -n ${open_line} "$MENU" > "$tmp"
-      printf '%s\n' "$block" >> "$tmp"
-      tail -n +$((open_line + 1)) "$MENU" >> "$tmp"
-    else
-      cp "$MENU" "$tmp"
-      printf '%s\n' "$block" >> "$tmp"
-      printf '%s\n' '}' >> "$tmp"
-    fi
-    mv "$tmp" "$MENU"
-  fi
-  if write_menu; then
-    ok "Menu bar entry added: Trigger > Toggle > Mega caffeine"
-  else
-    warn "Menu JSONC invalid after adding the entry - fix $MENU manually."
-  fi
-}
-
-remove_mc_menu() {
-  if [[ -f $MENU ]] && grep -qF "$MENU_MC_START" "$MENU"; then
-    local start_line end_line tmp
-    start_line=$(grep -nF "$MENU_MC_START" "$MENU" | head -1 | cut -d: -f1)
-    end_line=$(grep -nF "$MENU_MC_END" "$MENU" | head -1 | cut -d: -f1)
-    if [[ -n $start_line && -n $end_line && $end_line -gt $start_line ]]; then
-      tmp=$(mktemp)
-      head -n $((start_line - 1)) "$MENU" > "$tmp"
-      tail -n +$((end_line + 1)) "$MENU" >> "$tmp"
-      mv "$tmp" "$MENU"
-      sed -i ':a;N;$!ba;s/,\([[:space:]]*\n[[:space:]]*}\)/\1/' "$MENU"
-      [[ -s $MENU ]] || printf '{\n}\n' > "$MENU"
-      write_menu || true
-      ok "Menu bar entry removed: Mega caffeine"
-    else
-      warn "Inconsistent mega-caffeine markers in $MENU."
-    fi
-  else
-    ok "No Mega caffeine entry in the menu, nothing to do."
-  fi
-}
-
-migrate_mc_markers   # rename legacy markers before install/remove (idempotent)
-
-# -----------------------------------------------------------------------------
-# 5c. On --remove: stop any active coffee mode and clear its state, then remove
-#     the menu entry (the binaries themselves are kept).
-# -----------------------------------------------------------------------------
-if [[ $REMOVE == true ]]; then
-  if [[ -x "$BIN_DIR/mega-caffeine" ]]; then
-    "$BIN_DIR/mega-caffeine" off >/dev/null 2>&1 || true
-    ok "Coffee mode stopped (if it was active)"
-  fi
-  rm -rf "$REAL_HOME/.local/state/caffeine"
-  ok "Caffeine state directory removed (${REAL_HOME}/.local/state/caffeine)"
-  remove_mc_menu
-else
-  migrate_mc_markers
-  install_mc_menu
-fi
-
-# -----------------------------------------------------------------------------
 # 6. Summary
 # -----------------------------------------------------------------------------
 echo ""
 if [[ $REMOVE == true ]]; then
-  info "Uninstall complete: udev + sudoers + menu entry removed."
-  echo "  Caffeine stopped and its state cleared."
+  info "Uninstall complete: legacy udev + sudoers removed."
   echo "  Ultra-save watchdog timer removed."
-  echo "  The scripts stay in $BIN_DIR (ultra-save, power-helper, mega-caffeine, battery-status, ultra-save-watch):"
-  echo "    use the 'battery' module of mosquitomarchy-setup.sh --uninstall to remove them too."
+  echo "  The scripts stay in $BIN_DIR (ultra-save, power-helper, battery-status, ultra-save-watch):"
+  echo "    use the 'battery-management' module of mosquitomarchy-setup.sh --uninstall to remove them too."
 else
   info "Setup complete. Summary:"
   echo "  • ultra-save            -> $BIN_DIR/ultra-save (toggle/status)"
   echo "  • Watchdog              -> $BIN_DIR/ultra-save-watch (timer every 60s)"
   echo "  • Plugin helper         -> $BIN_DIR/power-helper + /usr/local/bin"
-  echo "  • Coffee mode           -> $BIN_DIR/mega-caffeine (toggle/status)"
   echo "  • Battery status        -> $BIN_DIR/battery-status (corrected charger/0W detection)"
-  echo "  • Charge control (udev) -> thresholds writable by wheel (Lenovo P14s)"
-  echo "  • Omarchy widget        -> mosquito.power plugin (charge limit + ultra-save)"
+  echo "  • Omarchy widget        -> mosquito.power plugin (power profiles + ultra-save)"
   echo "  • Omarchy overlay       -> mosquito.confirm plugin (native Yes/No prompts)"
   echo "  • Omarchy indicators    -> mosquito.indicators widget (stay-awake red icon + tooltip)"
-  echo "  • Omarchy menu          -> Trigger > Toggle > Mega caffeine (coffee mode toggle)"
   echo "  • Omarchy menu          -> old 'System > Ultra-save mode' block removed"
   echo
   # The QML/bar changes only take effect after a shell restart: do it now for
@@ -657,6 +572,6 @@ else
     fi
   else
     echo "  Restart the shell if the widget does not show: omarchy restart shell"
-    echo "  (if not run as root, rerun once: sudo bash $0 for udev/sudoers)"
+    echo "  (if not run as root, rerun once: sudo bash $0 for sudoers)"
   fi
 fi

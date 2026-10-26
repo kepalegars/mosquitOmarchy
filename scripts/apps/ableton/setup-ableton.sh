@@ -46,8 +46,9 @@
 # whole Ableton runtime/prefix.
 #
 # Hyprland windows: the script ensures that the Ableton rules are in place
-# in ~/.config/hypr/hyprland.lua — floating installer (fixes the tile crash)
-# and 100% opaque windows/popups/menus (no transparency behind).
+# in ~/.config/hypr/hyprland.lua — floating installer (fixes the tile crash),
+# 100% opaque windows/popups/menus (no transparency behind), and no focus
+# stealing (no_initial_focus + focus_on_activate = false).
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 set -euo pipefail
 
@@ -778,7 +779,7 @@ step_hypr_rules(){
   cat >> "$HYPR_FILE" <<'EOF'
 -- >>> ableton-setup >>> Ableton Live window handling.
 --
--- Four rules:
+-- Five concerns:
 --   1. the Windows installer (wine / XWayland) floats — it is a small
 --      wizard with its own sizing and it crashes the tiled layout otherwise;
 --   2. every Ableton window is fully opaque, because Omarchy's default
@@ -792,15 +793,18 @@ step_hypr_rules(){
 --      "Untitled - Ableton Live 12 Suite"). No center/size on this class: a
 --      Wine plugin editor moved away from the origin gets offset mouse
 --      coordinates (yabridge#409). float=false only, no tile=true: the
---      explicit tile rule broke fullscreen. Later rules win, hence the order.
-o.window({ class = "^ableton live 12 .*install.*$" }, { float = true })
-o.window({ class = "^ableton.*$" }, { tag = "-default-opacity", opaque = true })
+--      explicit tile rule broke fullscreen. Later rules win, hence the order;
+--   5. no Ableton window may take focus on its own, including the main one
+--      at launch: no_initial_focus suppresses map focus and
+--      focus_on_activate suppresses activation requests. Click to focus.
+o.window({ class = "^ableton live 12 .*install.*$" }, { float = true, no_initial_focus = true })
+o.window({ class = "^ableton.*$" }, { tag = "-default-opacity", opaque = true, no_initial_focus = true, focus_on_activate = false })
 o.window({ class = "^ableton live 12 (suite|standard|intro)\\.exe$" }, { float = true, no_blur = true })
 o.window({ class = "^ableton live 12 (suite|standard|intro)\\.exe$", title = ".* - Ableton Live 12 (Suite|Standard|Intro)$" }, { float = false })
 -- <<< ableton-setup <<<
 EOF
   added=1
-  ok "Hyprland rules written (main window tiled, installer floating, all opaque)"
+  ok "Hyprland rules written (main window tiled, installer floating, all opaque, no focus stealing)"
 
   if (( added )); then
     if command -v hyprctl >/dev/null && hyprctl reload >/dev/null 2>&1; then
