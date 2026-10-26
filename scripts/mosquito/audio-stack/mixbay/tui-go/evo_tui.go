@@ -745,7 +745,7 @@ func (r *evoRender) drawSection(row, cx, idx, sw, bw int, forceInactive bool) in
 	row++
 	if evoMeterRows(r.spec) == 1 {
 		r.boxSide(row, cx, bw)
-		r.drawKeyMeter(row, cx+2, bw-4, e.key, e.color)
+		r.drawKeyMeter(row, cx+2, bw-2, e.key, e.color)
 		row++
 	}
 	r.boxBot(row, cx, bw)

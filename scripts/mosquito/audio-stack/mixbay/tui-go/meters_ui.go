@@ -240,11 +240,9 @@ func (r *evoRender) drawLevelsBody(row, cx, sectionW int) int {
 	captureX := x + scaleW
 	playbackX := captureX + groupW + groupGap
 
-	title := "USB DIGITAL METERS"
-	r.put(x+totalW-len([]rune(title)), row, title, evoDim)
-	row++
 	r.put(captureX+(groupW-len([]rune("CAPTURE")))/2, row, "CAPTURE", evoStyle{col: cAccent, bold: true})
-	r.put(playbackX+(groupW-len([]rune("PLAYBACK")))/2, row, "PLAYBACK", evoStyle{col: cAccent, bold: true})
+	playbackTitle := "PLAYBACK (USB)"
+	r.put(playbackX+(groupW-len([]rune(playbackTitle)))/2, row, playbackTitle, evoStyle{col: cAccent, bold: true})
 	row++
 	readoutRow := row
 	row++
@@ -252,9 +250,6 @@ func (r *evoRender) drawLevelsBody(row, cx, sectionW int) int {
 	const barRows = 18
 	barBot := barTop + barRows - 1
 
-	for y := barTop; y <= barBot; y++ {
-		r.put(x+5, y, "│", evoVal)
-	}
 	for _, db := range []float64{-60, -40, -20, -12, -6, 0} {
 		y := barBot - int(math.Round((db+60)/60*float64(barRows-1)))
 		if y < barTop {
@@ -268,7 +263,7 @@ func (r *evoRender) drawLevelsBody(row, cx, sectionW int) int {
 			label = "0"
 		}
 		r.put(x, y, fmt.Sprintf("%4s", label), evoVal)
-		r.put(x+5, y, "┤", evoVal)
+		r.put(x+5, y, "──", evoVal)
 	}
 
 	draw := func(bars []evoMeterBar, groupX int) {
@@ -375,7 +370,7 @@ func (r *evoRender) drawMiniBar(row, x, width int, level, peak float64, col int)
 		switch {
 		case i < full:
 			r.c.put(x+i, row, "▮", fill)
-		case i == peakPos && peakPos >= full:
+		case i == peakPos && peakPos > 0 && peakPos >= full:
 			r.c.put(x+i, row, "│", mark)
 		default:
 			r.c.put(x+i, row, "▯", empty)

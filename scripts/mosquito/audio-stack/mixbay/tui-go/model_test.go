@@ -1233,10 +1233,13 @@ func TestEvoLevelsTabRendersUSBStreams(t *testing.T) {
 	copy(m.meterPeakIn[:], m.meterSnap.Peaks[meters.KeyInput])
 	copy(m.meterPeakOut[:], m.meterSnap.Peaks[meters.KeyPlayback])
 	plain := stripANSI(m.View())
-	for _, needle := range []string{"CAPTURE", "PLAYBACK", "IN1", "PC1", "LP5", "USB DIGITAL METERS"} {
+	for _, needle := range []string{"CAPTURE", "PLAYBACK (USB)", "IN1", "PC1", "LP5"} {
 		if !strings.Contains(plain, needle) {
 			t.Errorf("levels view missing %q", needle)
 		}
+	}
+	if strings.Contains(plain, "USB DIGITAL METERS") {
+		t.Error("removed USB DIGITAL METERS title is still rendered")
 	}
 	if strings.Contains(plain, "analog OUT not metered") {
 		t.Error("removed analog OUT note is still rendered")
@@ -1261,6 +1264,17 @@ func TestVerticalBarPeakIsThinFullWidth(t *testing.T) {
 		}
 		if cell.st.bg == 0 {
 			t.Fatalf("peak cell %d lost the green fill background", col)
+		}
+	}
+}
+
+func TestMiniBarHasNoPeakMarkerAtZero(t *testing.T) {
+	c := newEvoCanvas(10, 1)
+	r := &evoRender{c: c}
+	r.drawMiniBar(0, 0, 10, 0, 0, cGreen)
+	for i := 0; i < 10; i++ {
+		if c.cells[i].r == '│' {
+			t.Fatalf("mini bar cell %d has a peak marker at zero", i)
 		}
 	}
 }
