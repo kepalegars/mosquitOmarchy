@@ -36,8 +36,8 @@
 #
 # Root: /etc writes + systemctl require sudo; the script calls it internally.
 # =============================================================================
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/elevate.bash"  # mq_sudo: native pkexec prompt when not root
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/elevate.bash"  # mq_sudo: native pkexec prompt when not root
 set -euo pipefail
 
 info() { echo -e "\033[1;34m==>\033[0m $*"; }
@@ -61,7 +61,7 @@ HYPRLAND_LUA="$HYPR_DIR/hyprland.lua"
 MM_LUA="$HYPR_DIR/mx-master.lua"
 MM_BLOCK_START="-- >>> Omarchy_Custom_Scripts_MxMaster"
 MM_BLOCK_END="-- <<< Omarchy_Custom_Scripts_MxMaster"
-MM_SENS="${MX_MASTER_SENSITIVITY:-0}"      # mouse pointer sensitivity (libinput scale -1..1, 0 = stock)
+MM_SENS="${MX_MASTER_SENSITIVITY:--0.05}"  # mouse pointer sensitivity (libinput scale -1..1, 0 = stock)
 MM_DPI="${MX_MASTER_DPI:-1000}"            # logid per-dpi (400–4000; 1000 is the good desktop default)
 MM_MATRIX_SCROLL="${MX_MASTER_SCROLL_FACTOR:-1.5}"  # per-device hyprland scroll factor (faster mouse scroll; touchpad stays 0.6)
 MM_ACCEL="${MX_MASTER_ACCEL:-flat}"        # global input.lua mouse profile
@@ -102,8 +102,8 @@ gen_mx_lua(){
     echo "hl.device({"
     echo "    name = \"$name\","
     echo "    -- Pointer profile: flat (no acceleration). Sensitivity $MM_SENS —"
-    echo "    -- (the old default 1.0 made the cursor crawl; 0 keeps the device at"
-    echo "    --  its own DPI curve: a slower, more controllable pointer)."
+    echo "    -- (negative values slow the pointer; -0.05 is a very slight trim"
+    echo "    --  below stock, on top of the device's own DPI curve)."
     echo "    accel_profile = \"$MM_ACCEL\","
     echo "    sensitivity = $MM_SENS,"
     echo "    -- SCROLL: force plain 'notch' scrolling. Hi-res wheel events from"

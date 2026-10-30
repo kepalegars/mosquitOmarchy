@@ -234,7 +234,7 @@ Rules for whoever (human or AI) touches this project from now on:
 | What does the whole repo do, module by module? | [`README.md`](README.md) — canonical reference, module table, orchestrator usage |
 | What's under `scripts/`, folder by folder? | [`scripts/README.md`](scripts/README.md) |
 | How does module X work in detail (flags, files, caveats)? | `scripts/<module>/README.md` (linked from the root README's Modules table) |
-| What's the current status / what's next? | **This file** — Roadmap + Log below |
+| What's the current status / what's next? | [`TODO.md`](TODO.md) for open work, [`TESTING.md`](TESTING.md) for remaining checks; this file for the history and Roadmap |
 
 ## Current state at a glance
 
@@ -494,8 +494,9 @@ under active work. The ones currently receiving attention:
   menu-toggle lists driven by the state log (foreign executables never show), launch
   reconciliation (log-but-missing warning in a native info card; disk-but-untracked plugins
   offered as a ✓/○ checkbox add), empty-state feedback via native info prompts. Menu entry +
-  `setup-vst-manager.sh` (renamed from `setup-vst-install-menu.sh`) aligned; **pending**:
-  `setup-audio-stack.sh` re-check, commit/push. **Twenty-first round: split into a shared
+  `setup-vst-manager.sh` (renamed from `setup-vst-install-menu.sh`) aligned; the
+  `setup-audio-stack.sh` re-check is tracked in `TODO.md`; commit/push still not authorized.
+  **Twenty-first round: split into a shared
   core + two real interfaces**, the identical architecture applied to `ableton-move-converter`
   the same round (see that module's own bullet for the full rationale — kept deliberately
   consistent between the two, per explicit request): `lib-vst-manager-core.sh` (all logic) +
@@ -528,13 +529,9 @@ under active work. The ones currently receiving attention:
   gesture button → **SUPER**, momentary, via **logiops** (`/etc/logid.cfg` with one device
   block per known MX Master model name, marker `mosquitOmarchy-mx-master`, idempotent, user
   config backed up to `.bak`). Registered in `setup-customarchy.sh` + both READMEs; sandbox-
-  tested (install/config/status/remove). **Pending:** user runs `setup-customarchy.sh` and
-  picks `mx-master` (or `sudo bash scripts/mx-master/setup-mx-master.sh`); then either logiops
-  from the AUR or the gesture-button pay attention — first live check on the real device.
+  tested (install/config/status/remove). Live check pending — tracked in `TODO.md`.
   Also re-verified the earlier "No plugin found in … should be OK, not Yes/No" report: already
   satisfied in the deployed v0.4.0 `vst-manager` (L931 `ui_info`, `okOnly`).
-- **`guitarpro`** — a font-rendering issue was reported; not yet diagnosed (waiting on the
-  exact symptom from the user — missing/blank glyphs vs. everything too small/DPI).
 - **`power-management`** — the `custom.power` panel now couples **ultra-save** with the power
   profile: picking a plan (≠ power-saver) while ultra-save is on turns ultra-save **off** first,
   then applies the plan (live plugin copy synced). The `mx-master` setup script's right-click
@@ -672,8 +669,7 @@ items, this list is also part of the history.
       `setup-vst-manager.sh` (renamed from `setup-vst-install-menu.sh`), which
       also drops the old `vst-install` wrapper/entry. `setup-audio-stack.sh` `step_vst_menu`
       aligns with the new entry name. Re-deployed and pty-tested this session.
-- [ ] **1j2. (unplanned) `setup-audio-stack.sh` step_vst_menu re-verify** against the
-      current repo state (entry name now matches; quick read-through left for a later pass).
+- **1j2** — moved to `TODO.md` (re-verify `setup-audio-stack.sh` `step_vst_menu`).
 - [x] **1k. (unplanned) Seventh real-usage round: abandoned the live-redraw mechanism,
       Super+W + lsof-tracked Ableton→Bitwig handoff, disconnect-during-Manager-use
       notification.** Done 2026-09-11 — see Log. The previous round's omarchy-shell-IPC
@@ -878,33 +874,8 @@ items, this list is also part of the history.
       never had this feature, so it needed no change). Confirmed live: the real production
       menu and a submenu rendered correctly, repeatably. Also added, per explicit request:
       `setup-ableton-move-converter.sh`'s own menu can now switch interface directly.
-- [ ] **2. `guitarpro` font-rendering fix.** Blocked: need the exact symptom from the user
-      (missing/blank glyphs? DPI/size?) before touching `setup-guitarpro.sh` (`step_fonts`,
-      `corefonts`, `winetricks allfonts`, `--dpi`). Verify with `patch-guitarpro --check`.
-- [ ] **3. Regression tests**, in this order (each against the *current* repo state, not
-      historical):
-  - [ ] 3.1 **Orchestrator** — `setup-customarchy.sh` status + per-module `st_`/`un_`
-        (including the 4 move bins), update/exclude/uninstall roles, `MODULES` descriptions.
-  - [ ] 3.2 **Backup/restore** — `setup-customarchy.sh --backup` to `/tmp`, then
-        `--restore`.
-  - [ ] 3.3 **Bootstrap** — `scripts/bootstrap.sh` against a real GitHub connection
-        (`curl … | bash -s -- --status` without triggering a full install at `$HOME`);
-        `--zips` checked demo/status-only.
-  - [ ] 3.4 **Keybindings** — `scripts/setup-keybindings.sh` (category "Ableton Move
-        converter" / `CAT_MOVE`, `launch`/`cmd` types, `--status`, add/show a binding
-        without breaking the existing Hyprland config).
-  - [ ] 3.5 **Update watchdog** — `scripts/customarchy-update/setup-customarchy-update.sh`
-        + `setup-customarchy.sh --update-repo` (detects an update without pushing,
-        notifies; never push without explicit user authorization).
-  - [ ] 3.6 **Archive** — `archive-customarchy.sh` (tar.gz to `/tmp`, `tar tzf` contents
-        check, Ableton/DaVinci/GuitarPro filtering, no large installers ending up
-        committed to the repo).
-- [ ] **3.7 (new) Zen config follow-up** — `scripts/browsers/zen/` module built (round
-      24): seeds the active profile's plugins/settings/chrome. `keepassxc-browser`
-      v1.10.3 XPI fetched into the seed (password autofill). Remaining: KeePassXC
-      browser-integration step live (see `scripts/browsers/zen/README.md`), then
-      optionally refresh `seed/extension-settings.json` from the live profile.
-      `deps`-by-module restore mechanism + omagrab backup are in place.
+- **2–5** — the regression tests, Zen/TUI follow-ups, end-of-session review and
+      final clean pass now live in `TODO.md` (tests in `TESTING.md`).
 - [x] **3.8 (unplanned) User's UI-list round 1/2: menu icons + grayed-out disabled TUI
       options.** Done 2026-09-15 — see Log (top entry). Keyboard-backlight menu icon
       `""`→`\uf11c`; music trigger icon deduped (orphan block removed) and
@@ -917,37 +888,6 @@ items, this list is also part of the history.
       managers** — `ableton-move-converter` and `audio-stack` move/vst-manager setup scripts
       + TUIs — including their "Switch interface" options, leaving the TUI as the only
       interface. Done 2026-09-15 — see Log (top entry).
-- [ ] **3.10 (user's list) TUI colors auto-adapt to the active Omarchy theme** (e.g. the
-      lime achraff-67 palette) instead of the current hardcoded `tui-kit` color constants.
-- [ ] **4. End-of-session review** — list commit candidates, **always ask before any
-      `git push`**, tidy the README if needed, confirm with the user the remaining `sudo`
-      steps (udev rule + Chromium policy for the Move module).
-- [ ] **5. FINAL — full project clean & coherence pass.** Do this **last**, only once
-      everything above is done. Scope (this is deliberately broad — that's the point):
-  - **Naming coherence**: every module folder name, script name (`setup-*.sh`,
-    `uninstall-*.sh`), and the module id used in `setup-customarchy.sh`'s `MODULES` table
-    line up with each other and with what the README calls them.
-  - **Docs-vs-code accuracy**: every module README (and the root README's module table)
-    actually matches current script behavior, flags, and file paths — no stale
-    documentation left over from a rename or refactor.
-  - **Dead code / cruft**: unused functions, leftover debug scaffolding, orphaned files,
-    stale TODOs.
-  - **Convention consistency**: shared idioms (the `ui_confirm`/`ui_select`/`ui_input`
-    native-Omarchy-prompt pattern, `log()`/`info()`/`ok()`/`warn()`/`err()` logging, idempotent
-    re-run behavior) are applied the same way across modules, not reinvented per-module
-    where a shared helper would do.
-  - **Static checks**: `bash -n` (and `shellcheck` if available) clean across every script.
-  - **Repo hygiene**: `.gitignore` coverage still correct, no stray build artifacts,
-    secrets, or personal paths committed.
-  - **Deferred marker rename** (from the 2026-09-10 project rename, see Log): decide
-    whether to rename the `Omarchy_Custom_Scripts_*` Hyprland/`omarchy-menu.jsonc` block
-    markers to `mosquitOmarchy_*` across `power-management`, `touchpad`, `display`
-    (brightness + keyboard-backlight), `apps/handbrake`, `windows-vm`, and the general
-    `setup-keybindings.sh` — and if so, write + test a live-config migration (old marker
-    text → new, in place) for each, since this machine already has several of these blocks
-    actually deployed in `~/.config/hypr/*.lua`.
-  - Produce a short report of what was found/fixed; get the user's sign-off before any
-    resulting `git push`.
 
 ## Log
 
@@ -2105,9 +2045,8 @@ copy, `bash -n` clean. `--version` now `vst-manager v0.3.0`. Extra find during t
 move-history timestamp was empty (`date +%Y-%m-%d %H:%M` unquoted → "date: extra operand");
 now `date '+%Y-%m-%d %H:%M'`, verified the move writes `at` into the history.
 
-**Pending** (unchanged): root Move converter steps awaiting the user's `sudo bash
-…/setup-ableton-move-converter.sh`; commit/push still not authorized; Guitar Pro font
-symptom still untransmitted; `ScaleFinder.vst3` (lost via the old CrispyTuner uninstaller)
+**Pending** (unchanged): remaining sudo steps tracked in `TODO.md`; commit/push
+still not authorized; `ScaleFinder.vst3` (lost via the old CrispyTuner uninstaller)
 still sitting in `~/.cache/vst-quarantine/` awaiting the user's word.
 
 ---
@@ -2220,9 +2159,7 @@ New user batch, three parts:
 
 Deployed via `setup-vst-install-menu.sh`; `cmp` says deployed copy == repo copy.
 
-**Pending**: root Move converter steps still awaiting the user's `sudo bash
-…/setup-ableton-move-converter.sh`; commit/push still not authorized; Guitar Pro font
-symptom still untransmitted (glyphs vs DPI).
+**Pending**: remaining sudo steps tracked in `TODO.md`; commit/push still not authorized.
 
 ---
 
@@ -2689,9 +2626,9 @@ Changes DEPLOYED to ~/.local/bin. Not committed/pushed yet (explicit request nee
 4. Redeployed move/audio/live TUIs (18:48); `hyprctl configerrors` clean.
 
 
-## Open TODOs
+## Open work
 
-- [ ] Compatibilité audio interface Ableton Move avec Bitwig (audio interface Move ↔ Bitwig).
+Moved to `TODO.md` (Ableton Move audio-interface compatibility with Bitwig).
 
 **Follow-up 22 (2026-09-18)**: folder-collapse crash, Apply-fixes chooser grouping, deferred-apply settings.
 
@@ -2733,10 +2670,6 @@ Changes DEPLOYED to ~/.local/bin. Not committed/pushed yet (explicit request nee
 4. **Bitwig tip** — prompt changed to "Open Bitwig to set up the controller in Settings?" (No/Yes); the tip body renders through `tuikit.Info` (same framed modal as the Readme) and leads with the vendor/controller wording.
 5. **Stuck prompt** — removing the Move module / controller scripts now pops the confirm+runner on success OR failure (with the right toast); previously the runner's pop landed back on the open confirm until "keep".
 6. Redeployed all three TUIs (20:40); `hyprctl configerrors` clean.
-
-## Open TODO (added)
-- ~~Trackpad scroll stops working in the browser and some apps~~ — **RESOLVED by the user (2026-09-30)**, not by this repo. Removed from the list; nothing was investigated.
-
 
 **Follow-up 27 (2026-09-18)**: Ableton→Bitwig post-save pipeline completed; `test-ableton.sh` removed.
 
@@ -2791,46 +2724,7 @@ will be done, or do not claim it.
   prompt: everything on / everything off / fence
   only / empty app list / a one-key settings file
 
-### NOT tested by the user yet
+### Testing
 
-  the manager row (←/→ and Tab on it) and the persisted `FENCE_PACKAGES`;
-  a real `live-mode on` with the fence ON, i.e. that pacman really is refused
-  and the lock really is released on `live-mode off`.
-
----
-
-## Open TODO — live mode (opened 2026-09-30; the two points below are LANDED, see above)
-
-Deferred by the user on purpose: "oublie le truc sur le setup battery, j'ai réglé ça
-moi meme. occupe toi des 4 points plugin manager et note quelque part les points
-pour live mode pour les faire ensuite". The plugin-manager work landed first; these
-are the live-mode items that were queued in the same request.
-
-1. **Option in the Live Mode Manager: fence package installation.**
-   Re-introduce the pacman fence *as a setting*, default OFF. The fence was removed
-   in `7728430` because it blocked every package operation for the whole session
-   (`db.lck`), which the user hit as
-   `error: failed to init transaction (unable to lock database)`. It was never
-   justified — live mode installs nothing — but the user liked the idea of pinning
-   the machine, so it must come back only if the user can turn it off. Implement as
-   `FENCE_PACKAGES=yes|no` in `~/.config/live-mode/settings`, read by
-   `live-mode-root apply` (create `db.lck`) and `restore` (remove it), with a row in
-   `scripts/plugins/live-mode/tui-go/{settings.go,model.go}` following the existing
-   toggle pattern (`SWITCH_THEME`, `POWER_PROFILE_PROMPT`). The restore must keep
-   the `fuser` guard added in `7728430`: never delete a lock a running pacman owns.
-
-2. **The activation prompt must state what will actually happen.**
-   `live-mode` hardcodes its confirmation card (see the `confirm $'Activate Live
-   Mode?\n• Max performance…'` call in `cmd_on`): it always lists
-   "mosquito patchbay in scratchpad", "Notifications silenced" and "Gaps disabled"
-   regardless of the manager's settings. Build the bullet list from the effective
-   settings instead (`ROUTING_TOOL`, `NO_GAPS`, `SILENCE_NOTIFICATIONS`,
-   `SWITCH_THEME`, `CLOSE_APPS`, `THERMAL_LIMIT_C`, and once it exists the new
-   fence option), so a disabled option is not announced as something that is about
-   to happen. Same rule as the power-profile question: say what will be done, or
-   do not claim it.
-
-Context for whoever picks this up: the guard for the power profile already lives in
-`power-helper profile-set` (bash, testable) rather than in QML, and the DND guard in
-`live-mode-watch enforce_dnd` (0.4s loop). Live mode's own `open_patchbay` /
-`force_dnd_on` / `toggle_gaps_off` are the three things the prompt describes.
+The remaining user/hardware checks (manager row, real fence, prompt cases) are in
+`TESTING.md`.

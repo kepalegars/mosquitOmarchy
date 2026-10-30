@@ -25,7 +25,6 @@ type State struct {
 	Analyzer      Analyzer  `json:"analyzer"`
 	Loop          Loop      `json:"loop"`
 	Tuner         Tuner     `json:"tuner"`
-	Song          Song      `json:"song"`
 	Guitar        Guitar    `json:"guitar"`
 	NoteNaming    string    `json:"noteNaming"`
 }
@@ -79,18 +78,6 @@ type Tuner struct {
 	Note   string  `json:"note"`
 	Octave int     `json:"octave"`
 	Cents  int     `json:"cents"`
-}
-
-type SongMatch struct {
-	Title  string  `json:"title"`
-	Artist string  `json:"artist"`
-	Score  float64 `json:"score"`
-}
-
-type Song struct {
-	Available bool       `json:"available"`
-	Match     *SongMatch `json:"match"`
-	Error     string     `json:"error"`
 }
 
 type Fret struct {

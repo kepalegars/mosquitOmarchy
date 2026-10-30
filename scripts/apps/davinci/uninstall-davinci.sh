@@ -2,7 +2,8 @@
 # uninstall-davinci.sh — Removes DaVinci Resolve
 #
 # Removes /opt/resolve (sudo required), the launcher, the menu shortcut, the
-# optional libav patch (back to stock libs) and the SpectraFilm OFX.
+# Hyprland tiling rule, the optional AAC patch (back to the stock binary/libs)
+# and the SpectraFilm OFX.
 # The DATA (projects, LUTs, preferences) in ~/.local/share and
 # ~/.config/Blackmagic Design are kept by default.
 #
@@ -16,6 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESOLVE_DIR=/opt/resolve
 LAUNCHER="$HOME/.local/bin/davinci-resolve"
+HYPR="$HOME/.config/hypr/hyprland.lua"
 OFX_PLUGIN_DIR=/usr/OFX/Plugins
 
 
@@ -39,20 +41,15 @@ ask(){
   r="${r:-$def}"; [[ $r =~ ^[oOyY] ]]
 }
 
-# restores the stock libs if the libav patch was applied (symlinks)
-restore_libav() {
-  local lib
-  for lib in libavcodec libavformat libavutil; do
-    [[ -L "$RESOLVE_DIR/libs/$lib.so" ]] || continue
-    if [[ -e "$RESOLVE_DIR/libs/$lib.so.stock" ]]; then
-      mq_sudo rm -f "$RESOLVE_DIR/libs/$lib.so"
-      mq_sudo mv -f "$RESOLVE_DIR/libs/$lib.so.stock" "$RESOLVE_DIR/libs/$lib.so" 2>/dev/null
-      ok "$lib.so restored (stock)"
-    else
-      mq_sudo rm -f "$RESOLVE_DIR/libs/$lib.so"
-      ok "$lib.so removed (symlink)"
-    fi
-  done
+# restores the stock binary and libav libs if resolve-aacfix was applied
+restore_aacfix() {
+  [[ -e "$RESOLVE_DIR/bin/resolve.aac-orig" ]] || return 0
+  mq_sudo mv -f "$RESOLVE_DIR/bin/resolve.aac-orig" "$RESOLVE_DIR/bin/resolve" \
+    && ok "resolve binary restored (AAC patch removed)"
+  if [[ -d "$RESOLVE_DIR/libs/_bmd_orig" ]]; then
+    mq_sudo cp -a "$RESOLVE_DIR/libs/_bmd_orig/." "$RESOLVE_DIR/libs/" \
+      && ok "stock libav libs restored"
+  fi
 }
 
 hr
@@ -61,7 +58,10 @@ msg "Uninstalling DaVinci Resolve"
 found=0
 [[ -x /opt/resolve/bin/resolve ]] && found=1
 [[ -x "$LAUNCHER" ]] && found=1
-[[ -L /opt/resolve/libs/libavcodec.so ]] && found=1
+[[ -e "$HOME/.local/share/applications/davinci-resolve-wrapper.desktop" ]] && found=1
+[[ -f "$HYPR" ]] && grep -qF -- '-- >>> mosquito-davinci-tiling >>>' "$HYPR" && found=1
+[[ -e "${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/davinci-state" ]] && found=1
+[[ -e /opt/resolve/bin/resolve.aac-orig ]] && found=1
 [[ -d "$OFX_PLUGIN_DIR" ]] && find "$OFX_PLUGIN_DIR" -maxdepth 1 -iname '*spektra*' | grep -q . && found=1
 
 if (( ! found )); then
@@ -70,16 +70,27 @@ if (( ! found )); then
 fi
 
 # 1) Launcher + menu shortcut
-if [[ -x "$LAUNCHER" ]] && ask "Remove the launcher (~/.local/bin/davinci-resolve) and the menu shortcut?" y; then
+rm -f "$HOME/.local/share/applications/davinci-resolve-wrapper.desktop"
+rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/davinci-state"
+if { [[ -x "$LAUNCHER" ]] || grep -qF -- '-- >>> mosquito-davinci-tiling >>>' "$HYPR" 2>/dev/null; } \
+   && ask "Remove the launcher (~/.local/bin/davinci-resolve), the menu shortcut and the Hyprland tiling rule?" y; then
   rm -f "$LAUNCHER" "$HOME/.local/bin/davinci-resolve-rocm" "$HOME/.local/bin/davinci-resolve-mesa"
   rm -f "$HOME/.local/share/applications/davinci-resolve.desktop" \
         "$HOME/.local/share/applications/DaVinciResolve.desktop"
+  if [[ -L /usr/local/bin/resolve-omarchy ]]; then
+    mq_sudo rm -f /usr/local/bin/resolve-omarchy && ok "System wrapper removed"
+  fi
   command -v update-desktop-database >/dev/null 2>&1 \
     && update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
   ok "Launcher + shortcuts removed"
+  if [[ -f "$HYPR" ]] && grep -qF -- '-- >>> mosquito-davinci-tiling >>>' "$HYPR"; then
+    sed -i '/-- >>> mosquito-davinci-tiling >>>/,/-- <<< mosquito-davinci-tiling <<</d' "$HYPR"
+    hyprctl reload >/dev/null 2>&1 || true
+    ok "Hyprland tiling rule removed"
+  fi
 fi
 
-# 2) System part: libav patch + /opt/resolve (sudo)
+# 2) System part: AAC patch + /opt/resolve (sudo)
 system_ok=0
 if [[ -d /opt/resolve ]]; then
   if [[ $EUID -eq 0 || -n "${SUDO_USER:-}" ]] || mq_sudo -v 2>/dev/null; then
@@ -87,12 +98,12 @@ if [[ -d /opt/resolve ]]; then
   fi
   if (( system_ok )); then
     if ask "Remove /opt/resolve (the application)?" y; then
-      restore_libav
+      restore_aacfix
       mq_sudo rm -rf "$RESOLVE_DIR"
       ok "$RESOLVE_DIR removed"
     else
-      restore_libav || true
-      warn "$RESOLVE_DIR kept (the libav patch has been removed)"
+      restore_aacfix || true
+      warn "$RESOLVE_DIR kept (the AAC patch has been removed)"
     fi
   else
     warn "System part ($RESOLVE_DIR) not removed: run  sudo bash $0"

@@ -32,7 +32,8 @@ reconnect.
 ## Current Status: v0.6 — first public release (beta)
 
 Hardware-tested on a real Move. Expect rough edges — bug reports welcome.
-Known area that still needs work: the step sequencer (see TODO.md).
+Known area that still needs work: the step sequencer (see the repo root `TODO.md`
+and `TESTING.md`).
 
 ## Control Reference
 

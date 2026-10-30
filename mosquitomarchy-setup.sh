@@ -912,6 +912,17 @@ st_jamjamjam_plugin(){
     echo partial
   fi
 }
+st_better_pip(){
+  # Better PiP service plugin: installed copy + enabled in shell.json.
+  local plug="$HOME/.config/omarchy/plugins/mosquito.better-pip"
+  [[ -d "$plug" && -f "$plug/manifest.json" ]] || { echo missing; return; }
+  if [[ -f "$HOME/.config/omarchy/shell.json" ]] \
+     && grep -q '"mosquito.better-pip"' "$HOME/.config/omarchy/shell.json"; then
+    echo ok
+  else
+    echo partial
+  fi
+}
 st_live_mode(){
   # Live mode: the whole set is 4 binaries + the sudoers root helper + the
   # QML overlay plugin. The sudoers part needs root, so a normal (non-sudo)
@@ -1053,7 +1064,7 @@ MODULES=(
   "omarchy-vm:Omarchy in QEMU/KVM from the official ISO — launcher + TUI manager + shared folder + USB/GPU passthrough"
   "ableton:Native Linux Ableton Live 12 (ableton-linux) + multi-DAW VST sharing"
   "guitarpro:Guitar Pro 8 via wine (dedicated prefix + launcher + menu shortcut)"
-  "davinci-resolve:DaVinci Resolve (Studio or free) + H.264/H.265 (FFmpeg encoder / libav patch) + SpectraFilm OFX option"
+  "davinci-resolve:DaVinci Resolve (Studio or free) + AAC fix + FFmpeg encoder + SpectraFilm OFX option"
   "ableton-move-manager:Move Manager — Ableton Move → Ableton Live → Bitwig (menu: address / Move Manager / convert — native Omarchy prompts, MIDI export)"
   "handbrake:HandBrake (Qt GUI + CLI) + H.264/H.265 encoders + preset sync + Hyprland rules"
   "signal:Signal Desktop — official Electron client + autostart minimized to tray, hide menu bar, menu entry Signal, login autostart"
@@ -1063,6 +1074,7 @@ MODULES=(
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
   "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships."
   "battery-management:Battery management — ultra-save low-power mode + mosquito.power bar plugin, which replaces Omarchy's stock battery widget"
+  "better-pip:Better PiP — picture-in-picture windows as plain floating windows (never pinned, stays on its workspace): aspect ratio kept, grabbable border, idle inhibitor while open"
   "mega-caffeine:Coffee mode (mega-caffeine) — laptop closed without sleeping, red tint, natural-language durations; installs battery management first if missing"
   "brightness:Display brightness — Omarchy default step, 0% = screen off, and a silent 1% ramp on held keys for smoother steps (no run-on beyond the current step)"
   "achraff:'Achraff 67' visual theme + unlock/Plymouth logo (lock screen left stock)"
@@ -1242,6 +1254,7 @@ handbrake) st_handbrake ;;
     extracto) st_extracto ;;
     zen) st_zen ;;
     jamjamjam-plugin) st_jamjamjam_plugin ;;
+    better-pip) st_better_pip ;;
     pipewire-settings) st_pipewire_settings ;;
     live-mode) st_live_mode ;;
     levels-guard) st_levels_guard ;;
@@ -1284,6 +1297,7 @@ module_of_path(){
     scripts/plugins/battery-management/*)                     echo battery-management ;;
     scripts/mosquito/mega-caffeine/*)                        echo mega-caffeine ;;
     scripts/plugins/brightness/*)                            echo brightness ;;
+    scripts/plugins/better-pip/*)                            echo better-pip ;;
     scripts/theme/*)                                         echo achraff ;;
     scripts/plugins/touchpad/*)                             echo touchpad ;;
     scripts/plugins/mx-master/*)                             echo mx-master ;;
@@ -2106,6 +2120,7 @@ do_backup(){
            .config/omarchy/extensions .config/omarchy/shell.json .config/omarchy/menu \
            .config/omarchy/themes/achraff-67 .config/omarchy/plugins/mosquito.power .config/omarchy/plugins/custom.power \
            .config/omarchy/plugins/mosquito.indicators .config/omarchy/plugins/mosquito.confirm \
+           .config/omarchy/plugins/mosquito.better-pip \
            .config/omarchy/plugins/mosquito.jamjamjam .config/omarchy/plugins/jamjamjam-plugin .local/share/mosquito.jamjamjam .local/share/jamjamjam-plugin \
            .config/yabridgectl \
            .local/bin/reaper-launch .local/bin/windows-vm-usb \
@@ -3635,6 +3650,17 @@ un_touchpad(){
   fi
   [[ -f "$HYPRLAND" ]] && hyprctl reload >/dev/null 2>&1 || true
 }
+un_better_pip(){
+  info "Uninstalling Better PiP (mosquito.better-pip)"
+  if [[ -x "$BETTER_PIP_DIR/setup-better-pip.sh" ]]; then
+    bash "$BETTER_PIP_DIR/setup-better-pip.sh" --remove \
+      || warn "setup-better-pip.sh --remove reported a problem"
+  else
+    warn "setup-better-pip.sh not found — cleaning up directly."
+    rm -rf "$HOME/.config/omarchy/plugins/mosquito.better-pip"
+    omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+  fi
+}
 un_superfile(){
   info "Uninstalling SuperFile default-file-manager wiring"
   if [[ -x "$SUPERFILE_DIR/setup-superfile.sh" ]]; then
@@ -3870,6 +3896,7 @@ handbrake) un_handbrake ;;
     battery-management|battery) un_battery_management ;;
     mega-caffeine) un_mega_caffeine ;;
     brightness) un_brightness ;;
+    better-pip) un_better_pip ;;
     achraff) un_achraff ;;
     touchpad) un_touchpad ;;
     mx-master) un_mx_master ;;
@@ -3993,6 +4020,7 @@ WHATSAPP_NATIVE_DIR="$APPS_DIR/whatsapp-native"
 EXTRACTO_DIR="$APPS_DIR/extracto"
 MOVE_CONVERTER_DIR="$SCRIPTS/apps/ableton-move-manager"
 BATTERY_DIR="$SCRIPTS/plugins/battery-management"
+BETTER_PIP_DIR="$SCRIPTS/plugins/better-pip"
 MEGA_CAFFEINE_DIR="$SCRIPTS/mosquito/mega-caffeine"
 BRIGHTNESS_DIR="$SCRIPTS/plugins/brightness"
 TOUCHPAD_DIR="$SCRIPTS/plugins/touchpad"
@@ -4118,9 +4146,15 @@ run_guitarpro(){
 run_davinci(){
   # DaVinci Resolve (Studio or free): the Blackmagic zip must be placed in
   # davinci/ (the file name picks the edition). H.264/H.265 handled according to
-  # the edition; the libav patch / FFmpeg plugin proposed. With -y: auto libav
-  # patch (free), FFmpeg plugin not forced (Studio), SpectraFilm not forced.
+  # the edition; the AAC patch / FFmpeg plugin proposed. With -y: auto AAC
+  # patch (Studio), FFmpeg plugin not forced (Studio), SpectraFilm not forced.
   #
+  # Update mode (MOSQUITOMARCHY_UPDATE=1): the user updated Resolve itself.
+  # Re-apply the integration/patches without asking for the zip or the OFX.
+  if [[ "${MOSQUITOMARCHY_UPDATE:-0}" == 1 ]]; then
+    bash "$DAVINCI_DIR/setup-davinci.sh" -y
+    return
+  fi
   # spektrFilm (the free photochemical film-simulation OFX) is asked HERE rather
   # than left to setup-davinci.sh's own prompt: the TUI runs this module with
   # YES=1, and setup-davinci.sh only offers it under `((YES == 0)) && ask`, so
@@ -4314,6 +4348,7 @@ run_ollama(){
 }
 
 run_battery_management(){ bash "$BATTERY_DIR/setup-battery-management.sh"; }
+run_better_pip(){ bash "$BETTER_PIP_DIR/setup-better-pip.sh"; }
 run_mega_caffeine(){ bash "$MEGA_CAFFEINE_DIR/setup-mega-caffeine.sh"; }
 run_brightness(){ bash "$BRIGHTNESS_DIR/optimized-brightness.sh"; }
 run_achraff(){ bash "$THEME_DIR/create-theme.sh" --apply "$THEME_DIR/Wallpapers/achraf67.png"; }
@@ -4455,7 +4490,7 @@ final_report(){
   echo " • Ableton Linux: first setup in Live — Settings > Audio > Device PipeASIO."
   echo " • Bitwig 6.0 Beta 6: license via the app at first launch."
   echo " • DaVinci Resolve: Studio activation at first launch (file/dongle);"
-  echo "     free version → check the H.264 import/export (libav patch)."
+  echo "     free version → H.264/H.265/AAC are not native: transcode to DNxHR/PCM."
   echo " • Achraff (achraff module): the Plymouth BOOT screen to apply by hand:"
   echo "     omarchy-plymouth-set-by-theme \"achraff-67\"   (asks for the password)"
   hr
@@ -4491,6 +4526,7 @@ exec_modules(){
       ollama)  run_module ollama run_ollama ;;
       remove-ai) run_module remove-ai run_restore_ai ;;
       battery-management|battery) run_module battery-management run_battery_management ;;
+      better-pip) run_module better-pip run_better_pip ;;
       mega-caffeine) run_module mega-caffeine run_mega_caffeine ;;
       brightness) run_module brightness run_brightness ;;
       achraff) run_module achraff run_achraff ;;
@@ -4537,7 +4573,7 @@ CATEGORIES=(
   # including the deployer, i.e. installed and updatable but reachable from
   # neither Setup nor Uninstall. `mega-caffeine` is deliberately absent: it is a
   # mosquito tool and lives in the mosquito row.
-  "plugins|Plugins|battery-management brightness touchpad mx-master"
+  "plugins|Plugins|battery-management better-pip brightness touchpad mx-master"
   "fixes|Fixes|"
   "tweaks|Tweaks|"
   "mosquito|mosquito|"

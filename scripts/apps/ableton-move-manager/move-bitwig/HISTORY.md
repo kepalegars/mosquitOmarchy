@@ -1,7 +1,9 @@
-# TODO — Bitwig Move Controller
+# HISTORY — Bitwig Move Controller
 
-Ordered backlog. See SPEC.md for the full feature specification and API pointers.
-Compilation/on-hardware testing is done manually by the maintainer.
+Historical backlog and test results. Open work is in `../../../../TODO.md`;
+remaining tests are in `../../../../TESTING.md`. See SPEC.md for the full feature
+specification and API pointers. Compilation/on-hardware testing is done manually
+by the maintainer.
 
 ## Done — v0.2.0 "protocol v2" rework (2026-07-12, untested on hardware)
 
@@ -262,42 +264,42 @@ Bitwig-side only, driven by v0.5 hardware feedback:
 10. Drum: held pad + Volume encoder = chain volume (v0.5 item, retest)
 
 ## Infrastructure / platform
-- [ ] **I5 — Shared hardware constants.** Generate/copy one constants file used by both
+- (moved) **I5 — Shared hardware constants.** Generate/copy one constants file used by both
       `src/ui.js` and `Controller Scripts/MoveHardware.js` so CC numbers can't drift.
-- [ ] **I6 — Logging & test setup.** Document `debug_log_on` + `debug.log` tail for the
+- (moved) **I6 — Logging & test setup.** Document `debug_log_on` + `debug.log` tail for the
       module; look at schwung's `tools/pytest-schwung` e2e harness for scripted MIDI
       injection tests against real hardware.
 - [x] **I7 (workflow) — Release automation.** `.github/workflows/release.yml`:
       pushing a `v*` tag builds `move-bitwig-module.tar.gz` +
       `move-bitwig-controller-scripts.zip` and publishes the GitHub release
       (guards that module.json/release.json versions match the tag).
-- [ ] **I7 (catalog)** — consider a schwung catalog PR once stable.
+- (moved) **I7 (catalog)** — consider a schwung catalog PR once stable.
 - [x] **I9 — resolved.** Pads use `LED_NOTE` + `nearestColor()` (palette); RGB sysex
       kept for CC-addressed LEDs only (track row 40-43, Sample 118, knob rings 71-78).
 - [x] **I10 — Knob-ring value feedback** — rings 71-78 show macro values as brightness.
 
 ## Remaining features
 
-- [ ] **Sequencer rework (post-v0.6 priority).** User: "the sequencer needs more
+- (moved) **Sequencer rework (post-v0.6 priority).** User: "the sequencer needs more
       work." Candidates to scope: page-follow while playing (playhead beyond 16
       steps), page indicator on the display/icon row, per-step velocity/length
       view, note-length painting (hold step A + press step B = long note),
       swing/repeat integration, and better behavior when the clip is shorter
       than a page.
-- [ ] **Global Key & Scale sync** — blocked: not in the controller API (checked
+- (moved) **Global Key & Scale sync** — blocked: not in the controller API (checked
       through API 21 / Bitwig 5.3). Re-check on new Bitwig releases.
-- [ ] **F25 — Note repeat** (Shift+Step 11): script-generated repeats while pad held,
+- (moved) **F25 — Note repeat** (Shift+Step 11): script-generated repeats while pad held,
       rate menu. Optional / stretch (scheduleTask timing jitter needs a hardware
       feel-test before building the rate menu).
-- [ ] Overview polish: green pulse on blocks containing playing clips.
-- [ ] Drum Pad sequencer should be all on a different lanes, eg. when kick (c1) is active only show the notes for that lane, when changing to another
+- (moved) Overview polish: green pulse on blocks containing playing clips.
+- (moved) Drum Pad sequencer should be all on a different lanes, eg. when kick (c1) is active only show the notes for that lane, when changing to another
 
 ## Nice-to-have / research
 
-- [ ] `suspend_keeps_js` + Back handling: jump back to Move browser while Bitwig link
+- (moved) `suspend_keeps_js` + Back handling: jump back to Move browser while Bitwig link
       persists, resume on re-entry (`onResume()` full LED repaint).
-- [ ] Aftertouch → channel pressure to Bitwig NoteInput (Move pads send it; check what
+- (moved) Aftertouch → channel pressure to Bitwig NoteInput (Move pads send it; check what
       schwung forwards in overtake mode).
 - [x] Bitwig popup browser control — done in v0.6 (`MoveBrowser.js`).
-- [ ] Java port of the controller script — only if JS API 18 becomes a limiter; not
+- (moved) Java port of the controller script — only if JS API 18 becomes a limiter; not
       needed for speed so far.

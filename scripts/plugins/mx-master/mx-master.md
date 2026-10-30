@@ -56,8 +56,8 @@ or, manually: `sudo systemctl disable --now logid` and restore `/etc/logid.cfg`.
 
 Besides the gesture button, applying this module also writes a per-device
 pointer block for the MX Master itself in `~/.config/hypr/mx-master.lua`
-(`accel_profile = "flat"`, `sensitivity = 1` — the same values the global
-`input.lua` block gives the mouse), registered via its own marked
+(`accel_profile = "flat"`, `sensitivity = -0.05` — a very slight trim below the
+stock value), registered via its own marked
 `require("hypr.mx-master")` block in `hyprland.lua`. Settings are RESERVED to
 the mouse device: the touchpad module's block (`touchpad.lua`) and the global
 `input.lua` block are never touched, and the two modules can be applied or
@@ -70,7 +70,7 @@ Both modules compose without conflict — each writes its OWN marker block in
 `hyprland.lua` and its OWN device file, applied in any order:
 
 - the **touchpad** module writes `~/.config/hypr/touchpad.lua` with
-  `hl.device({ name = <touchpad>, … })` (adaptive / -0.2 / 0.6),
+  `hl.device({ name = <touchpad>, … })` (adaptive / 0.0 / 1.8, kinetic decel 0.96),
 - the **MX Master** module (or any mouse that picks its own settings) writes
   `~/.config/hypr/mx-master.lua` with `hl.device({ name = <mouse>, … })`
   (flat / 1.0 / same as the global mouse block in `input.lua`).

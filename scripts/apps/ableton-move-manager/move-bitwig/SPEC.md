@@ -160,7 +160,7 @@ Note/Session button; Menu is the nearest equivalent). Shift+Menu = sub-mode togg
 ## 5. Feature Specification
 
 Mapping of the Move Control Live manual (§18) onto Bitwig API concepts. ✅ = already works,
-🔶 = partial, ⬜ = planned. See TODO.md for ordering.
+🔶 = partial, ⬜ = planned. See the repo root `TODO.md` for ordering.
 
 ### 5.1 Transport & global
 
@@ -194,7 +194,7 @@ scenes move to Shift+track or a dedicated column, see 5.4):
 | Track LED | white = selected, red = armed, else track color | color observers |
 
 Volume knob default = **Master volume** (`host.createMasterTrack()`), matching the manual —
-currently it moves cursor-track volume (mismatch, see TODO).
+currently it moves cursor-track volume (mismatch, see the repo root `TODO.md`).
 
 ### 5.3 Device & parameters
 

@@ -11,8 +11,9 @@ Re-running any script on a configured machine is safe.
 > config layout (`~/.config/hypr/hyprland.lua`, `foot`, `omarchy-notification-send`).
 > Porting them to another distribution or desktop means adapting them first.
 
-> **Picking this project back up?** Read [`JOURNAL.md`](JOURNAL.md) — it holds the
-> current status, the active roadmap, and why things are the way they are.
+> **Picking this project back up?** Read [`TODO.md`](TODO.md) for open work,
+> [`TESTING.md`](TESTING.md) for the remaining checks, and [`JOURNAL.md`](JOURNAL.md)
+> for the history and why things are the way they are.
 
 > **Written with AI.** This repository was coded with [OpenCode](https://opencode.ai)
 > driving **BigPickle DeepSeek 4.1 Flash** and **Space Bunny Free**. Everything was

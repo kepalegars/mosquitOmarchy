@@ -1294,6 +1294,13 @@ cmd_backup_options(){
   fi
 }
 
+# DaVinci Resolve state written by setup-davinci.sh. Lets the update check
+# notice a user-installed Resolve update (the integration lives in /opt, which
+# the update replaces).
+_davinci_state_file(){ printf '%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/davinci-state"; }
+_davinci_state_field(){ local f; f="$(_davinci_state_file)"; [[ -r "$f" ]] || return 0; sed -n "s/^$1=//p" "$f" | head -n1; }
+_davinci_version(){ local f=/opt/resolve/docs/ReadMe.html; [[ -r "$f" ]] || return 0; sed -n 's:.*<title>DaVinci Resolve \([0-9][0-9.]*\)</title>.*:\1:p' "$f" | head -n1; }
+
 # ─── Repo update check (read-only mirror of launcher_update) ──────────────
 # Single JSON object with one changelog entry per changed installed module:
 # {"repo_update":bool,"repo_version":...,"modules":[{"key":..,"label":..,
@@ -1370,6 +1377,26 @@ cmd_update_check(){
       "$files_json" "$changes_json"
     i=$((i+1))
   done
+
+  # Resolve was updated by the user: /opt/resolve was replaced, so the AAC
+  # fix/license patch/FFmpeg plugin are gone. Propose the davinci module even
+  # when no repo file changed; selecting it re-applies the recorded patches.
+  local dv_old dv_new dv_seen=0
+  dv_old="$(_davinci_state_field version)"
+  dv_new="$(_davinci_version)"
+  if [[ -x /opt/resolve/bin/resolve && -n "$dv_old" && -n "$dv_new" && "$dv_old" != "$dv_new" ]]; then
+    for row in "${ids[@]}"; do [[ ${row%%:*} == davinci-resolve ]] && dv_seen=1; done
+    if (( ! dv_seen )); then
+      local dv_state; dv_state="$(module_state davinci-resolve 2>/dev/null || true)"; dv_state="${dv_state%%:*}"
+      if [[ $dv_state == ok || $dv_state == partial ]]; then
+        ((i)) && printf ','
+        printf '{"key":"davinci-resolve","label":"DaVinci Resolve","reason":%s,"base":"","applied":"","files":[],"changes":[%s]}' \
+          "$(json_str "Resolve ${dv_new} detected (integration recorded for ${dv_old}) — re-apply the DaVinci integration and patches")" \
+          "$(json_str "Re-apply the license patch, AAC fix, FFmpeg plugin, launcher and audio settings")"
+        i=$((i+1))
+      fi
+    fi
+  fi
   printf ']}\n'
 }
 
@@ -2488,7 +2515,7 @@ _space_pkgs(){
     install:zen|install:mosquitomarchy|install:pipewire-settings|\
     install:jamjamjam-plugin|install:remove-ai|install:hyprmod|\
     install:keybindings|install:battery|install:battery-management|\
-    install:mega-caffeine|install:brightness|\
+    install:better-pip|install:mega-caffeine|install:brightness|\
     install:achraff|install:touchpad|install:levels-guard|\
     install:mosquitomarchy-update)
       return 3 ;;
@@ -2502,8 +2529,8 @@ _space_pkgs(){
     uninstall:ollama|uninstall:zen|uninstall:mosquitomarchy|\
     uninstall:pipewire-settings|uninstall:jamjamjam-plugin|\
     uninstall:remove-ai|uninstall:hyprmod|uninstall:keybindings|\
-    uninstall:battery|uninstall:battery-management|uninstall:mega-caffeine|\
-    uninstall:brightness|uninstall:achraff|\
+    uninstall:battery|uninstall:battery-management|uninstall:better-pip|\
+    uninstall:mega-caffeine|uninstall:brightness|uninstall:achraff|\
     uninstall:touchpad|uninstall:mx-master|uninstall:mixbay|\
     uninstall:ableton|uninstall:ableton-move-manager|\
     uninstall:windows-vm|uninstall:macos-vm|uninstall:omarchy-vm|\

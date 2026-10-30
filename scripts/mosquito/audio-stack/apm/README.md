@@ -28,7 +28,6 @@ Two things live here:
 - [Plugin fixes](#plugin-fixes)
 - [Known traps](#known-traps)
 - [Settings](#settings)
-- [Parked work](#parked-work)
 - [Cleanup inconsistencies](#cleanup-inconsistencies)
 - [Wine menu cleanup](#wine-menu-cleanup)
 - [Install the manager](#install-the-manager)
@@ -493,26 +492,6 @@ it, and verify the result parses before writing it.
 
 A deployed `~/.config/audio-plugin-manager/README.md` mirrors the current settings and is
 regenerated on every change.
-
-## Parked work
-
-`future/install-many.action` holds an `install-many` backend that is **not wired in** —
-`install-many` is not a valid action. It ran every installer concurrently, each in its own
-process group, with `link_prefix_to_vst` once before any of them, `post_install` once at the end
-(`APM_DEFER_SYNC` on each child, the pattern already proven for uninstall batches), and a JSON
-summary of status, exit code and log tail per file. A failing installer did not stop the rest.
-
-It is parked because the half the user meets was never written: superfile still returns a single
-path, so there is no queue screen, no scroll, no selection limit, no end-of-install recap, and
-`Esc` during an install still means *quit* rather than *interrupt*. Wiring the action in as it
-stands would add a second way to install one file at a time with none of the affordances that
-make several files bearable.
-
-Worth knowing before reviving it: **superfile has no per-item select key**. Toggling an item is
-`confirm` — the same `Enter` / `Right` / `l` that opens a file — so inside selection mode the key
-you would press to confirm is the key that flips a checkbox. The flow is `v`, `a` (or `A`),
-`v` again, `Enter`. An invented binding is not an option: superfile validates its hotkey file
-and warns on unknown fields.
 
 ## Cleanup inconsistencies
 

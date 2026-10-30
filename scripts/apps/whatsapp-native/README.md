@@ -17,7 +17,7 @@ AUR build. It covers everything a real chat client needs on Hyprland/Wayland:
   menu reopens it or really quits.
 - **No menu bar.** `Menu.setApplicationMenu(null)` + the window menu removed.
 - A **"WhatsApp"** applications-menu entry, its icon in the hicolor theme, and
-  **login autostart** (`o.launch_on_start("whatsapp")` in `~/.config/hypr/autostart.lua`).
+  **login autostart** (`o.launch_on_start("whatsapp --start-in-tray")` in `~/.config/hypr/autostart.lua`).
 
 ## Install
 
@@ -39,7 +39,7 @@ user-scoped.
 | `~/.local/bin/whatsapp` | launcher (Wayland flags + electron runtime) |
 | `~/.local/share/applications/whatsapp.desktop` | the "WhatsApp" menu entry |
 | `~/.local/share/icons/hicolor/256x256/apps/whatsapp.png` | the icon |
-| `~/.config/hypr/autostart.lua` | the `o.launch_on_start("whatsapp")` line |
+| `~/.config/hypr/autostart.lua` | the `o.launch_on_start("whatsapp --start-in-tray")` line |
 | `~/.config/WhatsApp/` | WhatsApp Web login data (kept on uninstall) |
 
 ## Uninstall

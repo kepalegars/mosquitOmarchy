@@ -13,11 +13,12 @@
 #   https://www.blackmagicdesign.com/support/download/59dd4eef1f4941c29fb8dc48b33f5c87/Linux   (free)
 #   https://www.blackmagicdesign.com/support/download/baf7c071c0524fbf8ccc961925c9f443/Linux   (Studio)
 #
-# H.264/H.265: NATIVE codecs in Resolve Studio. In the free version, Resolve
-# Linux does NOT ship H.264/H.265/AAC (commercial license): the script then
-# offers the "libav" patch (symlinks the system libavcodec/libavformat/libavutil
-# into /opt/resolve — experimental and reversible) and reminds about DNxHR
-# transcoding. For Studio, an FFmpeg encoding plugin (x264/x265/SVT-AV1/VAAPI)
+# H.264/H.265: NATIVE in Resolve Studio. The FREE Linux build does NOT ship
+# H.264/H.265 (commercial license): the script reminds about DNxHR transcoding.
+# AAC: NOT decodable on Linux in EITHER edition (Blackmagic removed it for
+# licensing). For Studio 21.x the script offers resolve-aacfix
+# (https://github.com/josephg/resolve-aacfix, reversible); otherwise transcode
+# the audio to PCM. For Studio, an FFmpeg encoding plugin (x264/x265/SVT-AV1/VAAPI)
 # can be added: drop the ffmpeg_encoder_plugin.dvcp.bundle.zip here or
 # downloaded from GitHub.
 #
@@ -29,8 +30,7 @@
 #   ./setup-davinci.sh -y                  # non-interactive (default choices)
 #   ./setup-davinci.sh --studio|--free     # force the edition if ambiguous
 #   ./setup-davinci.sh --with-spektrafilm  # also installs the SpectraFilm OFX
-#   ./setup-davinci.sh --scale 1.5         # UI zoom (default 1.0)
-#   ./setup-davinci.sh --no-codecs         # leave H.264/H.265 codecs alone
+#   ./setup-davinci.sh --no-codecs         # leave codec setup alone
 #   ./setup-davinci.sh --keep-mesa         # do not remove opencl-mesa (AMD)
 #   ./setup-davinci.sh --status            # current state, changes nothing
 #   ./setup-davinci.sh -h                  # help
@@ -52,7 +52,7 @@ OFX_PLUGIN_DIR=/usr/OFX/Plugins
 FFMPEG_PLUGIN_URL="https://github.com/EdvinNilsson/ffmpeg_encoder_plugin/releases/latest/download/ffmpeg_encoder_plugin.dvcp.bundle.zip"
 SPEKTRAFILM_URL="https://downloads.spektrafilm.114c.de/latest/spektrafilm-OFX-linux.zip"
 
-YES=0 STATUS_ONLY=0 FORCE_ED="" WITH_SPEKTRA=0 SKIP_CODECS=0 KEEP_MESA=0 SCALE=1.0
+YES=0 STATUS_ONLY=0 FORCE_ED="" WITH_SPEKTRA=0 SKIP_CODECS=0 KEEP_MESA=0
 while (( $# )); do a="$1"; case "$a" in
   -y|--yes) YES=1 ;;
   --status) STATUS_ONLY=1 ;;
@@ -60,11 +60,9 @@ while (( $# )); do a="$1"; case "$a" in
   --with-spektrafilm) WITH_SPEKTRA=1 ;;
   --no-codecs) SKIP_CODECS=1 ;;
   --keep-mesa) KEEP_MESA=1 ;;
-  --scale) SCALE="$2"; shift ;;
   -h|--help) sed -n '2,/^# Launched from a file manager/p' "$0" | head -n -1 || true; exit 0 ;;
   *) echo "Unknown option: $a" >&2; exit 1 ;;
 esac; shift; done
-[[ "$SCALE" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "invalid --scale: $SCALE (expected a number)" >&2; exit 2; }
 
 G='\033[1;32m'; B='\033[1;34m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
 msg(){ printf "${B}==>${N} %s\n" "$*"; }
@@ -103,6 +101,53 @@ ask(){
 
 pkg_has(){ pacman -Q "$1" &>/dev/null; }
 resolve_installed(){ [[ -x "$RESOLVE_DIR/bin/resolve" ]]; }
+
+# Persistent state outside /opt/resolve (which a Resolve update replaces):
+# lets the mosquitOmarchy update flow notice a user-installed Resolve update
+# and re-apply the integration/patches that were enabled before it.
+DAVINCI_STATE="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/davinci-state"
+
+resolve_version(){
+  local f="$RESOLVE_DIR/docs/ReadMe.html"
+  if [[ -r "$f" ]]; then
+    sed -n 's:.*<title>DaVinci Resolve \([0-9][0-9.]*\)</title>.*:\1:p' "$f" | head -n1
+    return 0
+  fi
+  f="$RESOLVE_DIR/docs/Welcome.txt"
+  [[ -r "$f" ]] && grep -oE 'DaVinci Resolve [0-9]+\.[0-9]+(\.[0-9]+)?' "$f" | head -n1 | awk '{print $3}'
+}
+
+state_get(){
+  [[ -r "$DAVINCI_STATE" ]] || return 0
+  sed -n "s/^$1=//p" "$DAVINCI_STATE" | head -n1
+}
+
+license_patched(){
+  local s="$SCRIPT_DIR/PATCH/patch-resolve.sh"
+  [[ -x "$s" ]] || return 1
+  bash "$s" --check 2>/dev/null | grep -q 'binary patched'
+}
+
+save_davinci_state(){
+  local ed="${1:-}" lic="${2:-}" aac="${3:-}" ff="${4:-}"
+  [[ -n "$lic" ]] || lic=$(license_patched && echo 1 || echo 0)
+  [[ -n "$aac" ]] || aac=$([[ -e "$RESOLVE_DIR/bin/resolve.aac-orig" ]] && echo 1 || echo 0)
+  [[ -n "$ff" ]] || ff=$([[ -d "$RESOLVE_DIR/IOPlugins/ffmpeg_encoder_plugin.dvcp.bundle" ]] && echo 1 || echo 0)
+  mkdir -p "$(dirname "$DAVINCI_STATE")"
+  {
+    echo "version=$(resolve_version)"
+    echo "edition=$ed"
+    echo "aacfix=$aac"
+    echo "license_patch=$lic"
+    echo "ffmpeg_plugin=$ff"
+  } > "$DAVINCI_STATE"
+}
+
+infer_edition(){
+  local z
+  z="$(davinci_zips | head -n1 || true)"
+  if [[ -n "$z" ]]; then edition_of "$z"; else echo studio; fi
+}
 
 # Detection of the edition from the zip name (Studio or free), case-insensitive
 # and version-agnostic: only "resolve_studio" vs "resolve" matters, so EVERY
@@ -205,8 +250,8 @@ do_status(){
   else warn "Launcher       : absent"; fi
   if [[ -f "$DESKTOP" ]]; then ok "Menu shortcut  : present"
   else warn "Menu shortcut  : absent"; fi
-  if [[ -L "$RESOLVE_DIR/libs/libavcodec.so" ]]; then ok "libav patch    : applied (system codecs in /opt/resolve/libs)"
-  else warn "libav patch    : not applied"; fi
+  if [[ -e "$RESOLVE_DIR/bin/resolve.aac-orig" ]]; then ok "AAC decode     : enabled (resolve-aacfix)"
+  else warn "AAC decode     : not enabled (AAC imports are silent)"; fi
   if [[ -d "$RESOLVE_DIR/IOPlugins/ffmpeg_encoder_plugin.dvcp.bundle" ]]; then ok "FFmpeg encoder plugin : installed (Studio)"
   else warn "FFmpeg encoder plugin : absent"; fi
   if [[ -d "$OFX_PLUGIN_DIR" ]] && find "$OFX_PLUGIN_DIR" -maxdepth 1 -iname '*spektra*' -print -quit 2>/dev/null | grep -q .; then
@@ -264,7 +309,7 @@ select_install_zip(){  # fills SEL_ZIP (edition: Studio takes priority in -y)
 }
 
 # ───────────────────────── Dependencies ─────────────────────────
-DEPS=(gtk3 apr ocl-icd libxcrypt-compat librsvg libgudev glu clinfo unzip curl pciutils)
+DEPS=(gtk3 apr ocl-icd libxcrypt-compat librsvg libgudev glu clinfo unzip curl jq ffmpeg binutils pciutils)
 
 detect_opencl_pkg(){  # OpenCL runtime according to the GPU (nvidia | amd | intel | empty)
   local gpu=""
@@ -389,7 +434,6 @@ install_launcher(){
 set -euo pipefail
 
 RESOLVE_DIR="$RESOLVE_DIR"
-DEFAULT_SCALE="$SCALE"
 
 # Cleans residual instance locks (after a crash) that block relaunching.
 if ! pgrep -f "\$RESOLVE_DIR/bin/resolve" >/dev/null 2>&1; then
@@ -397,12 +441,13 @@ if ! pgrep -f "\$RESOLVE_DIR/bin/resolve" >/dev/null 2>&1; then
 fi
 
 # Native UI under Wayland not supported: force XWayland (xcb).
-export QT_QPA_PLATFORM=xcb QT_AUTO_SCREEN_SCALE_FACTOR=1
+export QT_QPA_PLATFORM=xcb
 # ROCm OpenCL (AMD): points the driver if present, otherwise system ICD (GPU detected at install).
-[[ -r /opt/rocm/lib/libamdocl64.so ]] && export OCL_ICD_FILENAMES=/opt/rocm/lib/libamdocl64.so
-# UI zoom, overridden by DAVINCI_SCALE (e.g. DAVINCI_SCALE=1.25 davinci-resolve).
-export QT_SCALE_FACTOR="\${DAVINCI_SCALE:-\$DEFAULT_SCALE}"
-
+resolve_gpu_pick(){
+  [[ -r /opt/rocm/lib/libamdocl64.so ]] && export OCL_ICD_FILENAMES=/opt/rocm/lib/libamdocl64.so
+}
+resolve_gpu_pick
+# UI scale is left to Resolve's own preferences (no QT_*/DisplayScale override).
 exec "\$RESOLVE_DIR/bin/resolve" "\$@"
 LAUNE
   chmod +x "$LAUNCHER"
@@ -447,6 +492,83 @@ DESKE
   if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$APPS_DIR" 2>/dev/null || true
   fi
+}
+
+# Omarchy's default app rule (default/hypr/apps/davinci-resolve.lua) floats
+# every Resolve window and fullscreens the project window. Append a user rule
+# after the defaults so the main project window tiles; dialogs keep floating.
+install_hypr_rule(){
+  local hypr="$HOME/.config/hypr/hyprland.lua"
+  local start="-- >>> mosquito-davinci-tiling >>>"
+  local end="-- <<< mosquito-davinci-tiling <<<"
+  if [[ ! -f "$hypr" ]]; then
+    warn "Hyprland config not found at $hypr — tiling rule skipped."
+    return 0
+  fi
+  if [[ ! -w "$hypr" ]]; then
+    warn "Hyprland config not writable: $hypr — tiling rule skipped."
+    return 0
+  fi
+  sed -i "\|${start#--}|,/${end#--}/d" "$hypr"
+  cat >> "$hypr" <<'EOF'
+-- >>> mosquito-davinci-tiling >>> Resolve opens tiled, not fullscreen.
+-- Omarchy's default app rule floats Resolve and fullscreens the project window
+-- (usr/share/omarchy/default/hypr/apps/davinci-resolve.lua). Later rules win:
+-- undo both for the main project window only; the Project Manager stays floating.
+o.window({ class = ".*[Rr]esolve.*", title = "^DaVinci Resolve( Studio)? - .+$" }, { float = false, fullscreen = false })
+-- <<< mosquito-davinci-tiling <<<
+EOF
+  if command -v hyprctl >/dev/null 2>&1; then
+    hyprctl reload >/dev/null 2>&1 || true
+    local errs
+    errs="$(hyprctl configerrors 2>/dev/null || true)"
+    [[ -z "$errs" ]] || warn "Hyprland config errors: $errs"
+  fi
+  ok "Hyprland tiling rule: $hypr"
+}
+
+# Stable system path expected by external tools (notably the nosignal
+# omarchy-resolve panel's XWayland check). A symlink to our launcher keeps the
+# XWayland environment in one place.
+install_wrapper(){
+  local w=/usr/local/bin/resolve-omarchy
+  if [[ -L "$w" && "$(readlink -f "$w")" == "$(readlink -f "$LAUNCHER")" ]]; then
+    ok "System wrapper: $w"
+  else
+    mq_sudo mkdir -p /usr/local/bin
+    mq_sudo ln -sf "$LAUNCHER" "$w"
+    ok "System wrapper: $w → $LAUNCHER"
+  fi
+
+  # Hidden compatibility entry for external panels (they look for this exact
+  # file + Exec). NoDisplay keeps the single visible "DaVinci Resolve" entry.
+  local hidden="$APPS_DIR/davinci-resolve-wrapper.desktop"
+  mkdir -p "$APPS_DIR"
+  cat > "$hidden" <<DESKW
+[Desktop Entry]
+Type=Application
+Name=DaVinci Resolve (wrapper)
+Comment=Compatibility entry for external panels; not shown in the menu
+Exec=$w
+Icon=davinci-resolve
+NoDisplay=true
+Hidden=true
+StartupWMClass=resolve
+DESKW
+  command -v update-desktop-database >/dev/null 2>&1 \
+    && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
+}
+
+# Resolve defaults its audio backend to DeckLink, which aborts on a machine
+# without a Blackmagic card. The setting lives in the user config, so a Resolve
+# update does not touch it — but a fresh config can reintroduce it.
+fix_audio_backend(){
+  local cfg="$HOME/.local/share/DaVinciResolve/configs/config.dat"
+  [[ -f "$cfg" ]] || return 0
+  grep -q '^Local\.Audio\.Type = DeckLink$' "$cfg" || return 0
+  cp -a "$cfg" "$cfg.bak.$(date +%s)"
+  sed -i 's|^Local\.Audio\.Type = DeckLink$|Local.Audio.Type = ALSA|' "$cfg"
+  ok "Audio backend: DeckLink → ALSA"
 }
 
 # ───────────────────────── DRwrap companion ─────────────────────────
@@ -511,60 +633,82 @@ install_drwrap(){
     return 0
   fi
 
+  # drwrap ships its own "DaVinci Resolve (wrapped)" menu entry (user or
+  # system dir depending on version). Our davinci-resolve.desktop is the
+  # complete one (MIME type, icon, path), so remove the duplicate and keep the
+  # converter service.
+  local removed=0 f
+  for f in /usr/share/applications/drwrap.desktop "$HOME/.local/share/applications/drwrap.desktop"; do
+    [[ -e "$f" ]] || continue
+    if [[ "$f" == /usr/* ]]; then mq_sudo rm -f "$f"; else rm -f "$f"; fi
+    removed=1
+  done
+  if ((removed)); then
+    command -v update-desktop-database >/dev/null 2>&1 \
+      && update-desktop-database "$HOME/.local/share/applications" >/dev/null 2>&1 || true
+    command -v update-desktop-database >/dev/null 2>&1 \
+      && update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+    ok "Removed the duplicate DRwrap menu entry (service kept)."
+  fi
+
   drwrap_silence_notifications || true
   systemctl --user restart drwrap.service >/dev/null 2>&1 || true
   ok "drwrap notifications disabled; converter service enabled."
 }
 
-# ───────────────────────── H.264 / H.265 ─────────────────────────
-ensure_ffmpeg(){
-  if pkg_has ffmpeg; then ok "ffmpeg already present (system codecs)"; return 0; fi
-  mq_sudo -v || { warn "Password required to install ffmpeg."; return 1; }
-  mq_sudo pacman -S --needed --noconfirm ffmpeg && ok "ffmpeg installed" || { warn "Failed to install ffmpeg."; return 1; }
-}
+# ───────────────────────── AAC (resolve-aacfix) ─────────────────────────
+AACFIX_API="https://api.github.com/repos/josephg/resolve-aacfix/releases/latest"
 
-apply_libav_fix(){
-  # Known fix for the FREE version: symlinks the system ffmpeg libs
-  # (provided by the ffmpeg package) into /opt/resolve/libs, which re-enables
-  # H.264/H.265/AAC. Experimental, fully reversible (stock files are kept as .stock).
-  local lib nov s missed=0
-  for lib in libavcodec libavformat libavutil; do
-    if [[ ! -e "$RESOLVE_DIR/libs/$lib.so" ]]; then
-      warn "$lib.so absent from $RESOLVE_DIR/libs — ignored"
-      continue
-    fi
-    s="$(ls /usr/lib/$lib.so.* 2>/dev/null | sort -V | tail -n1)"
-    if [[ -z "$s" ]]; then
-      warn "System lib $lib not found — install ffmpeg."
-      missed=1
-      continue
-    fi
-    if [[ ! -L "$RESOLVE_DIR/libs/$lib.so" ]]; then
-      mq_sudo mv -f "$RESOLVE_DIR/libs/$lib.so" "$RESOLVE_DIR/libs/$lib.so.stock" 2>/dev/null \
-        || { warn "Not writable: $RESOLVE_DIR/libs/$lib.so"; continue; }
-    fi
-    mq_sudo ln -sf "$s" "$RESOLVE_DIR/libs/$lib.so"
-    ok "$lib.so -> $(basename "$s")"
-  done
-  (( missed )) && return 1
-  ok "libav patch applied — test the H.264 import/export of a clip."
+install_aacfix(){
+  # Resolve Linux ships libavcodec with AAC compiled out AND its binary never
+  # asks for AAC; resolve-aacfix lifts both gates (Studio 21.x). Reversible:
+  # sudo ./aac-fix uninstall. A Resolve update wipes it — re-run this script.
+  if [[ -e "$RESOLVE_DIR/bin/resolve.aac-orig" ]]; then
+    ok "AAC decode already enabled (resolve-aacfix)."
+    return 0
+  fi
+  if pgrep -f "^$RESOLVE_DIR/bin/resolve" >/dev/null 2>&1; then
+    warn "Close DaVinci Resolve before installing the AAC patch."
+    return 1
+  fi
+  command -v jq >/dev/null 2>&1 || { warn "jq is required to find the resolve-aacfix release."; return 1; }
+
+  local url tmp fix
+  url="$(curl -fsSL "$AACFIX_API" | jq -r '.assets[] | select(.name|test("tar\\.gz$")) | .browser_download_url' | head -n1)"
+  [[ -n "$url" ]] || { warn "Could not find the resolve-aacfix release."; return 1; }
+
+  tmp="$(davinci_tmpdir aacfix)"
+  install_tmp="$tmp"
+  msg "Downloading resolve-aacfix…"
+  curl -fL --max-time 180 -o "$tmp/aacfix.tar.gz" "$url" || { warn "Download failed."; return 1; }
+  tar -xzf "$tmp/aacfix.tar.gz" -C "$tmp" || { warn "Cannot extract resolve-aacfix."; return 1; }
+  fix="$(find "$tmp" -maxdepth 3 -name aac-fix -type f -print -quit 2>/dev/null)"
+  [[ -n "$fix" ]] || { warn "aac-fix not found in the archive."; return 1; }
+  chmod +x "$fix"
+
+  if mq_sudo "$fix" install; then
+    ok "AAC decode enabled — restart Resolve and re-import the file."
+  else
+    warn "resolve-aacfix failed — see its output above."
+    return 1
+  fi
 }
 
 step_codecs(){
   local ed="$1"
   if [[ "$ed" == studio ]]; then
-    ok "Resolve Studio: H.264 / H.265 / AAC natively supported — nothing to do."
+    ok "Resolve Studio: H.264 / H.265 native."
+    warn "AAC audio is NOT decodable on Linux (both editions) — AAC imports are silent."
+    if (( YES )) || ask "Enable AAC decode with resolve-aacfix (Studio 21.x, reversible)?" y; then
+      install_aacfix || true
+    fi
     if (( YES )) || ask "Also add the FFmpeg encoding plugin (x264/x265/SVT-AV1/VAAPI)?" n; then
       install_ffmpeg_plugin
     fi
   else
-    warn "FREE Resolve Linux: no H.264/H.265/AAC (commercial license restriction)."
-    if (( YES )) || ask "Install ffmpeg + apply the \"libav\" patch (H.264/H.265/AAC)? [experimental, reversible]" y; then
-      ensure_ffmpeg || true
-      apply_libav_fix
-    fi
-    echo
-    warn "Reliable alternative (no patch): transcode your sources to DNxHR before editing:"
+    warn "FREE Resolve Linux: no H.264/H.265 (commercial license restriction)."
+    warn "AAC audio is NOT decodable on Linux either — resolve-aacfix targets Studio only."
+    warn "Reliable path: transcode sources before editing:"
     warn "  ffmpeg -i input.mp4 -c:v dnxhd -profile:v dnxhr_sq -c:a pcm_s16le output.mov"
   fi
 }
@@ -650,10 +794,14 @@ recap(){
   hr; msg "DaVinci Resolve — ready"
   ok "Launch: davinci-resolve   (or menu Applications > DaVinci Resolve)"
   if [[ "$ed" == studio ]]; then
-    echo " • H.264/H.265/AAC: native (Studio)."
+    if [[ -e "$RESOLVE_DIR/bin/resolve.aac-orig" ]]; then
+      echo " • H.264/H.265: native (Studio). AAC: enabled via resolve-aacfix."
+      echo "   → re-run this script after every Resolve update (the patch is wiped)."
+    else
+      echo " • H.264/H.265: native (Studio). AAC: NOT enabled — AAC imports are silent."
+    fi
   else
-    echo " • H.264/H.265/AAC: libav patch applied (experimental)."
-    echo "   → re-test after every Resolve update (re-run this script)."
+    echo " • H.264/H.265/AAC: not supported by Resolve Linux (free) — transcode to DNxHR/PCM."
   fi
   echo " • First-run config: Preferences > System > Memory & GPU (OpenCL auto-detected)."
   echo " • DRwrap: drag/drop, clipboard paste and codec conversion handled silently."
@@ -663,10 +811,65 @@ recap(){
   hr
 }
 
+# ───────────────────────── Update mode ─────────────────────────
+# Called by the mosquitOmarchy update flow (MOSQUITOMARCHY_UPDATE=1) when the
+# user updated Resolve themselves. Never needs the Blackmagic zip and never
+# reinstalls Resolve: it re-applies what was enabled before (license patch,
+# AAC fix, FFmpeg plugin, launcher, wrapper, audio backend).
+update_davinci(){
+  msg "DaVinci Resolve — update mode"
+  if ! resolve_installed; then
+    ok "Resolve is not installed — nothing to re-apply."
+    return 0
+  fi
+  YES=1
+  local ed aac lic ff cur_ver state_ver
+  state_ver="$(state_get version)"
+  ed="$(state_get edition)"; [[ -n "$ed" ]] || ed="$(infer_edition)"
+  aac="$(state_get aacfix)"; lic="$(state_get license_patch)"; ff="$(state_get ffmpeg_plugin)"
+  cur_ver="$(resolve_version)"
+  if [[ -z "$state_ver" ]]; then
+    # First update after this feature existed: infer from the current install.
+    aac=$([[ -e "$RESOLVE_DIR/bin/resolve.aac-orig" ]] && echo 1 || echo 0)
+    lic=$(license_patched && echo 1 || echo 0)
+    ff=$([[ -d "$RESOLVE_DIR/IOPlugins/ffmpeg_encoder_plugin.dvcp.bundle" ]] && echo 1 || echo 0)
+  fi
+  if [[ -n "$state_ver" && -n "$cur_ver" && "$state_ver" != "$cur_ver" ]]; then
+    msg "Resolve updated: $state_ver → $cur_ver — re-applying the integration."
+  fi
+
+  install_launcher
+  install_hypr_rule
+  install_wrapper
+  fix_audio_backend
+  install_drwrap
+
+  if [[ "$lic" == 1 ]]; then
+    if license_patched; then
+      ok "License patch already applied."
+    else
+      msg "Re-applying the license patch…"
+      mq_sudo bash "$SCRIPT_DIR/PATCH/patch-resolve.sh" || warn "License patch failed."
+    fi
+  fi
+  if [[ "$aac" == 1 && "$ed" == studio ]]; then
+    install_aacfix || warn "AAC patch failed."
+  fi
+  if [[ "$ff" == 1 ]]; then
+    install_ffmpeg_plugin || warn "FFmpeg encoder plugin failed."
+  fi
+  save_davinci_state "$ed" "$lic" "$aac" "$ff"
+  recap "$ed"
+}
+
 # ───────────────────────── Main ─────────────────────────
 main(){
   msg "install-davinci — DaVinci Resolve (Studio or free) for Omarchy"
   ((STATUS_ONLY)) && { do_status; exit 0; }
+  if [[ "${MOSQUITOMARCHY_UPDATE:-0}" == 1 ]]; then
+    update_davinci
+    exit $?
+  fi
 
   # Up-front: name the manually-downloaded file if it is missing. In
   # non-interactive runs (the TUI passes -y) abort before touching anything.
@@ -691,7 +894,10 @@ main(){
   install_deps || exit 1
   install_resolve "$zip" || exit 1
   install_launcher
-  ((SKIP_CODECS)) && warn "--no-codecs: H.264/H.265 patches NOT applied." || step_codecs "$ed"
+  install_hypr_rule
+  install_wrapper
+  fix_audio_backend
+  ((SKIP_CODECS)) && warn "--no-codecs: codec setup NOT applied." || step_codecs "$ed"
   install_drwrap
   echo
 
@@ -701,14 +907,6 @@ main(){
   echo
   recap "$ed"
 
-  # ─── Optional companion tool: omarchy-resolve (28allday) ───
-  # Asked here, BEFORE the patch step below, but actually installed AFTER it
-  # (at the end of main) — the two are independent decisions and neither
-  # should block or reorder the other.
-  local want_omarchy_resolve=0
-  if ((YES == 0)) && ask "Also install \"omarchy-resolve\" (28allday) — a bundled panel to manage, repair and diagnose this DaVinci install ?" n; then
-    want_omarchy_resolve=1
-  fi
 
   # ─── Resolution patch (PATCH/patch-resolve.sh) ───
   local patch_script="$SCRIPT_DIR/PATCH/patch-resolve.sh"
@@ -737,29 +935,7 @@ main(){
       warn "  sudo bash $patch_script  (or --revert to restore the stock binary)"
     fi
   fi
-
-  # ─── omarchy-resolve install (asked above; run after the patch step) ───
-  if ((want_omarchy_resolve)); then
-    echo
-    msg "Installing omarchy-resolve (28allday)…"
-    if ! command -v omarchy >/dev/null 2>&1; then
-      warn "omarchy CLI not found — cannot install omarchy-resolve as a shell plugin."
-    elif omarchy plugin add https://github.com/28allday/omarchy-resolve.git --enable --yes; then
-      ok "omarchy-resolve installed."
-      command -v omarchy-shell >/dev/null 2>&1 && { omarchy-shell -q nosignal.davinci-resolve show status & disown; }
-      if command -v omarchy-notification-send >/dev/null 2>&1; then
-        omarchy-notification-send -g "🎬" "DaVinci Resolve installed" \
-          "Manage, repair and diagnose it anytime from the bundled panel (omarchy-shell shell toggle nosignal.davinci-resolve)." \
-          -t 10000 >/dev/null 2>&1 || true
-      else
-        notify-send -i video-x-generic "DaVinci Resolve installed" \
-          "Manage, repair and diagnose it anytime from the bundled DaVinci panel." 2>/dev/null || true
-      fi
-    else
-      warn "omarchy-resolve install failed. Retry manually:"
-      warn "  omarchy plugin add https://github.com/28allday/omarchy-resolve.git --enable"
-    fi
-  fi
+  save_davinci_state "$ed"
 }
 
 main "$@"

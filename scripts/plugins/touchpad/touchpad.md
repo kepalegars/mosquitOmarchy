@@ -1,6 +1,6 @@
 # Touchpad-only configuration — Omarchy module
 
-Configures the **touchpad only** (per-device `hl.device` config) without touching the mouse/trackpoint: `adaptive` acceleration (Omarchy global = `flat`), `sensitivity -0.2` (the mouse keeps the separate global `input.lua` pointer settings), and `scroll_factor 1.2` by default. Detects the device (`hyprctl devices`, names `*-touchpad`), regenerates `~/.config/hypr/touchpad.lua` (idempotent) and registers `require("hypr.touchpad")` in `hyprland.lua`.
+Configures the **touchpad only** (per-device `hl.device` config) without touching the mouse/trackpoint: `adaptive` acceleration (Omarchy global = `flat`), `sensitivity 0.0` (the mouse keeps the separate global `input.lua` pointer settings), and `scroll_factor 1.8` by default. Detects the device (`hyprctl devices`, names `*-touchpad`), regenerates `~/.config/hypr/touchpad.lua` (idempotent) and registers `require("hypr.touchpad")` in `hyprland.lua`.
 
 ## Usage
 
@@ -16,7 +16,7 @@ bash scripts/plugins/touchpad/touchpad.sh -y         # non-interactive
 Override (e.g. device or values):
 
 ```bash
-TOUCHPAD_NAME=syna8018:00-06cb:ce67-touchpad TOUCHPAD_SENSITIVITY=-0.2 \
+TOUCHPAD_NAME=syna8018:00-06cb:ce67-touchpad TOUCHPAD_SENSITIVITY=0.0 \
   bash scripts/plugins/touchpad/touchpad.sh
 ```
 
@@ -29,20 +29,20 @@ Hyprland plugin, installed with `hyprpm`. The script installs a pinned revision
 of upstream PR #23 until it is merged: upstream `master` is not yet safe on
 Hyprland 0.56 (its config values abort the compositor on load/unload).
 
-Hyprland 0.56 rejects plugin options in `hl.config`. The generated
-`touchpad.lua` therefore keeps the plugin's compiled defaults and only applies
-per-app opt-outs through `hl.plugin.kinetic_scroll.disable(...)`. The global
+Hyprland 0.56 rejects hyphenated plugin keys in `hl.config`. The generated
+`touchpad.lua` therefore sets the deceleration through the plugin's Lua
+namespace (`hl.config({ plugin = { kinetic_scroll = { decel = 0.96 } } })`) and
+applies per-app opt-outs through `hl.plugin.kinetic_scroll.disable(...)`. The global
 touchpad scroll factor is aligned with the touchpad's own scroll factor, so
 momentum follows the same scrolling direction.
 
-Tune for the current session with, for example:
+Override the deceleration with `KINETIC_DECEL` (closer to 1 = longer glide)
+before re-running the script.
 
-```bash
-hyprctl keyword plugin:kinetic-scroll:decel 0.98
-hyprctl keyword plugin:kinetic-scroll:debug 1
-```
-
-Set `KINETIC_DISABLED_CLASSES="org.telegram.desktop steam"` to opt those apps
+Zen is always opted out of kinetic momentum and its touchpad speed is pinned to
+the Omarchy stock `-0.5`, so the kinetic settings never change browser
+scrolling (not even the speed). Set
+`KINETIC_DISABLED_CLASSES="org.telegram.desktop steam"` to opt additional apps
 out. Set `KINETIC_SCROLL_ENABLED=0` before running the script to keep the
 classic touchpad configuration without the kinetic plugin.
 
@@ -72,7 +72,7 @@ Both modules compose without conflict — each writes its OWN marker block in
 `hyprland.lua` and its OWN device file, applied in any order:
 
 - the **touchpad** module writes `~/.config/hypr/touchpad.lua` with
-  `hl.device({ name = <touchpad>, … })` (adaptive / -0.2 / 1.2 by default),
+  `hl.device({ name = <touchpad>, … })` (adaptive / 0.0 / 1.8 by default),
 - the **MX Master** module (or any mouse that picks its own settings) writes
   `~/.config/hypr/mx-master.lua` with `hl.device({ name = <mouse>, … })`
   (flat / 1.0 / same as the global mouse block in `input.lua`).

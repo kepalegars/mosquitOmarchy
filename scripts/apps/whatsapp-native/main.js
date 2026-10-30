@@ -63,12 +63,13 @@ function showWindow() {
 
 // After suspend/resume (and after a GPU process crash) the Wayland surface can
 // come back blank while the page itself is still loaded. Reload once, throttled
-// so a crash loop cannot turn into a reload loop.
-function recoverWindow(why) {
+// so a crash loop cannot turn into a reload loop. The first show after a hidden
+// start passes force=true: it must not be swallowed by that throttle.
+function recoverWindow(why, force) {
   if (isQuitting || !mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.webContents.isLoading()) return;
   const now = Date.now();
-  if (now - lastRecovery < 5000) return;
+  if (!force && now - lastRecovery < 5000) return;
   lastRecovery = now;
   console.error('WhatsApp: ' + why + ' — reloading');
   mainWindow.webContents.reload();
@@ -106,6 +107,7 @@ function createTray() {
 
 function createWindow(startHidden) {
   startHidden = !!startHidden;
+  let needsFirstShowReload = startHidden;
   mainWindow = new BrowserWindow({
     show: !startHidden,
     width: 1100,
@@ -174,8 +176,21 @@ function createWindow(startHidden) {
   mainWindow.on('hide', () => {
     if (mainWindow) mainWindow.webContents.setAudioMuted(true);
   });
+  // Starting in the tray loads WhatsApp Web while the Wayland surface is
+  // unmapped. The page is ready (title set) but never paints; showing the
+  // window later leaves it white, and invalidate() is not enough. Reload once
+  // on the first show so the UI is painted, then keep normal hide/show cheap.
   mainWindow.on('show', () => {
-    if (mainWindow) mainWindow.webContents.invalidate();
+    if (!mainWindow) return;
+    mainWindow.webContents.invalidate();
+    if (!needsFirstShowReload) return;
+    needsFirstShowReload = false;
+    const reload = () => recoverWindow('first show after tray start', true);
+    if (mainWindow.webContents.isLoading()) {
+      mainWindow.webContents.once('did-finish-load', reload);
+    } else {
+      reload();
+    }
   });
 
   // Close-to-tray: hide instead of quitting when the user closes the window.

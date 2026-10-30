@@ -154,8 +154,9 @@ can never make the module look absent.
 
 The controller itself is a **separate upstream project**, vendored here in `move-bitwig/`
 (v0.6.0, from [pi43r/move-bitwig](https://github.com/pi43r/move-bitwig)). Its own
-`README.md` is the control reference, `SPEC.md` how it works and `TODO.md` what is still open.
-This module only installs and removes it.
+`README.md` is the control reference, `SPEC.md` how it works, `HISTORY.md` the
+historical backlog, and the repo root `TODO.md` / `TESTING.md` what is still open
+or untested. This module only installs and removes it.
 
 ## Settings
 
