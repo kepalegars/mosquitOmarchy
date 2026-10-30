@@ -103,6 +103,17 @@ did, with the same user-visible result.
       `apz.gtk.kinetic_scroll.enabled = false` and
       `general.smoothScroll = false` (from `user.js`).
 
+## Health check
+
+- [ ] With a deliberate Hyprland config error (e.g. an invalid window-rule
+      value), Health check shows the error text as a manual row (badge `!`);
+      Enter never sends it to heal.
+- [ ] With `hyprpm` missing (or hidden from `PATH`), Health check lists
+      `hyprpm` and the kinetic-scroll plugin; ticking them installs the
+      package and reloads the plugin.
+- [x] Manual findings are not ticked by default and are excluded from
+      `healthKeys` (Go test `TestHealthManualFindingCannotBeTicked`).
+
 ## MixBay / audio hardware
 
 - [ ] EVO 8 inputs 3/4: USB capture CH3/4 and loopback CH5/6; decode vendor init

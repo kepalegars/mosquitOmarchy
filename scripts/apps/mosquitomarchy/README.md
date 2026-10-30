@@ -20,7 +20,7 @@ interface.
 | **Update** | Whether the scripts repo moved, and which installed modules changed; offers the pull then re-applying the selection. |
 | **Setup** | The category tree, then each category's items. |
 | **Uninstall** | The same tree, showing only what is actually installed. |
-| **Health check** | What drifted from your install: modules that went partially missing, and missing mosquitOmarchy pieces (TUI, float rule, menu entry, shortcut, update hook, crash skill). Offers to re-apply. |
+| **Health check** | What drifted from your install: modules that went partially missing, missing mosquitOmarchy pieces (TUI, float rule, menu entry, shortcut, update hook, crash skill), Hyprland config errors (`hyprctl configerrors`), and missing prerequisites the Lua configs call (hyprpm, the kinetic-scroll plugin). Fixable rows are ticked and re-applied; a config-error banner is shown as a manual finding. |
 | **Backup / Restore** | An archive, plain or encrypted, optionally named; or restoring one. |
 | **Close** | Confirm, then leave. |
 

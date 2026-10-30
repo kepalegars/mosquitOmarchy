@@ -603,6 +603,9 @@ type HealthRec struct {
 	ID     string `json:"id"`
 	Label  string `json:"label"`
 	Detail string `json:"detail"`
+	// Manual marks a finding with no automatic fix (a Hyprland config-error
+	// banner): it is shown, but heal cannot re-apply it.
+	Manual bool `json:"manual"`
 }
 
 // healthMsg carries the health-check result.

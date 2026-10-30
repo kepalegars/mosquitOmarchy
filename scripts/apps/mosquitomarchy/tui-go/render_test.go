@@ -590,6 +590,32 @@ func TestHealthBackCannotBeTicked(t *testing.T) {
 	}
 }
 
+// TestHealthManualFindingCannotBeTicked: a Hyprland config-error banner has no
+// automatic fix, so it is shown but never sent to heal.
+func TestHealthManualFindingCannotBeTicked(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrHealth}
+	m.w, m.h = 120, 40
+	m, _ = m.update(healthMsg{items: []HealthRec{
+		{Kind: "config", ID: "hypr-config", Label: "Hyprland config error",
+			Detail: "value -0.50 is less than the minimum of 0.01", Manual: true},
+		{Kind: "config", ID: "hypr-kinetic", Label: "Kinetic scroll plugin", Detail: "not loaded"},
+	}})
+	if m.healthChecked["hypr-config"] {
+		t.Fatal("manual finding was ticked")
+	}
+	if !m.healthChecked["hypr-kinetic"] {
+		t.Fatal("fixable finding was not ticked")
+	}
+	m, _ = m.update(tuikit.PickerToggleMsg{Value: "hypr-config"})
+	if m.healthChecked["hypr-config"] {
+		t.Fatal("manual finding became tickable")
+	}
+	if keys := m.healthKeys(); len(keys) != 1 || keys[0] != "hypr-kinetic" {
+		t.Fatalf("healthKeys = %v, want [hypr-kinetic]", keys)
+	}
+}
+
 // TestHealthCursorStaysOnTheTitle guards the health page's marker. Each fix is
 // drawn on two lines (name, then what is wrong with it), and the row marker
 // used to be redrawn on the description line as well — so a row showed its ●

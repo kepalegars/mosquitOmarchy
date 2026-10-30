@@ -822,8 +822,15 @@ func (m *model) toggleUpdate(key string) {
 	}
 }
 
-// toggleHealth marks/unmarks one piece of the Health check list.
+// toggleHealth marks/unmarks one piece of the Health check list. Manual
+// findings (a Hyprland config-error banner) have no automatic fix, so they
+// cannot be ticked.
 func (m *model) toggleHealth(key string) {
+	for _, it := range m.healthItems {
+		if it.ID == key && it.Manual {
+			return
+		}
+	}
 	if m.healthChecked[key] {
 		delete(m.healthChecked, key)
 	} else {
@@ -835,7 +842,7 @@ func (m *model) toggleHealth(key string) {
 func (m model) healthKeys() []string {
 	out := make([]string, 0, len(m.healthChecked))
 	for _, it := range m.healthItems {
-		if m.healthChecked[it.ID] {
+		if !it.Manual && m.healthChecked[it.ID] {
 			out = append(out, it.ID)
 		}
 	}

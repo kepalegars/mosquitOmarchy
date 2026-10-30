@@ -1610,6 +1610,54 @@ _plugin_health_record(){
     "$(json_str "plugin-$key")" "$(json_str "$label")" "$(json_str "$detail")"
 }
 
+# ─── Hyprland config health ────────────────────────────────────────────────
+# Cheap checks for what the Lua configs can lose:
+#   • hyprctl configerrors — the same text Hyprland shows in its top banner.
+#     Arbitrary text errors cannot be fixed automatically, so the row is
+#     informational ("manual"): it is shown, but heal never ticks it.
+#   • a config file calling hyprpm, or enabling a plugin, when that tool or
+#     plugin is gone (e.g. the hyprpm package was removed). Those rows are
+#     tickable and heal installs the package / re-runs the owning module.
+# _hyprpm_wanted: a Hyprland Lua config actually calls hyprpm. Used by both
+# health and heal so a config that never uses plugins stays quiet.
+_hyprpm_wanted(){
+  local f
+  for f in "$HYPR_DIR"/*.lua; do
+    [[ -f $f ]] || continue
+    grep -q 'hyprpm' "$f" && return 0
+  done
+  return 1
+}
+
+# _kinetic_wanted: the touchpad config enables the kinetic-scroll plugin.
+_kinetic_wanted(){
+  [[ -f $HYPR_DIR/touchpad.lua ]] && grep -q 'kinetic_scroll' "$HYPR_DIR/touchpad.lua"
+}
+
+_hypr_config_health(){
+  command -v hyprctl >/dev/null 2>&1 || return 0
+  local errors detail
+
+  errors="$(hyprctl configerrors 2>/dev/null || true)"
+  if [[ -n $errors ]]; then
+    detail="$(printf '%s' "$errors" | tr '\n' ' ' | cut -c1-240)"
+    printf '{"kind":"config","id":"hypr-config","label":"Hyprland config error","detail":%s,"manual":true}\n' \
+      "$(json_str "$detail")"
+  fi
+
+  # hyprpm ships in its own package; only report it when a Lua config calls it.
+  if _hyprpm_wanted && ! command -v hyprpm >/dev/null 2>&1; then
+    printf '{"kind":"config","id":"hypr-hyprpm","label":"hyprpm","detail":%s}\n' \
+      "$(json_str "a Hyprland config calls hyprpm, but the hyprpm package is not installed")"
+  fi
+
+  # hypr-kinetic-scroll is the one hyprpm plugin mosquitOmarchy manages.
+  if _kinetic_wanted && ! grep -q 'hypr-kinetic-scroll' < <(hyprctl plugin list 2>/dev/null); then
+    printf '{"kind":"config","id":"hypr-kinetic","label":"Kinetic scroll plugin","detail":%s}\n' \
+      "$(json_str "touchpad.lua enables hypr-kinetic-scroll, but the plugin is not loaded")"
+  fi
+}
+
 cmd_health(){
   load_excluded
   local row id state raw detail
@@ -1656,6 +1704,7 @@ cmd_health(){
   [[ -e "$HOME/.agents/skills/mosquitomarchy-crash" ]] || \
     printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
       "$(json_str skill)" "$(json_str "Crash skill")" "$(json_str "skill symlink missing")"
+  _hypr_config_health
   return 0
 }
 
@@ -1679,6 +1728,28 @@ cmd_heal(){
     for w in "${want[@]}"; do [[ $w == "$1" ]] && return 0; done
     return 1
   }
+
+  # 0. Hyprland config prerequisites. hyprpm is a separate package in Omarchy;
+  # the kinetic plugin is installed by its owning module (touchpad.sh), which
+  # also re-writes touchpad.lua and reloads Hyprland.
+  if in_want hypr-hyprpm && _hyprpm_wanted && ! command -v hyprpm >/dev/null 2>&1; then
+    msg "Installing hyprpm…"
+    mq_sudo pacman -S --needed --noconfirm hyprpm \
+      || { err "hyprpm install failed."; MODULE_FAILURES=$((MODULE_FAILURES + 1)); }
+  fi
+  if in_want hypr-kinetic && _kinetic_wanted && command -v hyprctl >/dev/null 2>&1 \
+     && ! grep -q 'hypr-kinetic-scroll' < <(hyprctl plugin list 2>/dev/null); then
+    if ! command -v hyprpm >/dev/null 2>&1; then
+      msg "Installing hyprpm (required by the kinetic scroll plugin)…"
+      mq_sudo pacman -S --needed --noconfirm hyprpm \
+        || { err "hyprpm install failed."; MODULE_FAILURES=$((MODULE_FAILURES + 1)); }
+    fi
+    if command -v hyprpm >/dev/null 2>&1; then
+      msg "Re-installing the kinetic scroll plugin…"
+      bash "$APP_DIR/scripts/plugins/touchpad/touchpad.sh" -y \
+        || { err "kinetic scroll plugin re-install failed."; MODULE_FAILURES=$((MODULE_FAILURES + 1)); }
+    fi
+  fi
 
   # 1. Launcher infra (idempotent): TUI binary + dispatcher + float rule + crash tool + skill.
   if in_want tui; then

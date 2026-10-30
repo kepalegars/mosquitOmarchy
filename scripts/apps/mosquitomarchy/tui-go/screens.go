@@ -1426,7 +1426,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.healthItems = msg.items
 		m.healthChecked = map[string]bool{}
 		for _, it := range msg.items {
-			m.healthChecked[it.ID] = true
+			if !it.Manual {
+				m.healthChecked[it.ID] = true
+			}
 		}
 		// The screen is normally already pushed (with a loading row) by the
 		// selection handler; push it when it is not (slow fetch the user
@@ -4405,7 +4407,9 @@ func (m model) rebuildHealth() navPicker {
 	if len(m.healthItems) != 0 {
 		for _, it := range m.healthItems {
 			mark := "○"
-			if m.healthChecked[it.ID] {
+			if it.Manual {
+				mark = "!" // shown, but there is no automatic fix to tick
+			} else if m.healthChecked[it.ID] {
 				mark = "●"
 			}
 			// The catalog label is a full sentence ("Live mode — performance
@@ -4429,7 +4433,13 @@ func (m model) rebuildHealth() navPicker {
 	// The headline goes in as a disabled row rather than as the picker's
 	// header: NewPicker's header becomes the bubbles list Title, which this
 	// theme does not draw, so anything passed there is invisible.
-	head := tuikit.PickerItem{Display: healthHeadline(len(m.healthItems)), Value: "", Disabled: true}
+	fixable := 0
+	for _, it := range m.healthItems {
+		if !it.Manual {
+			fixable++
+		}
+	}
+	head := tuikit.PickerItem{Display: healthHeadline(len(m.healthItems), fixable), Value: "", Disabled: true}
 	items = append([]tuikit.PickerItem{head}, items...)
 
 	p := newNavPicker("", items).SetSize(m.contentSize()).
@@ -4458,11 +4468,15 @@ func (m model) rebuildHealth() navPicker {
 // ("Files went missing on these modules :") described the mechanism rather
 // than the result, and it was wrong for the infrastructure rows, which are not
 // modules at all.
-func healthHeadline(n int) string {
-	switch n {
-	case 0:
+func healthHeadline(n, fixable int) string {
+	switch {
+	case n == 0:
 		return "Everything is in place — nothing to re-apply."
-	case 1:
+	case fixable == 0 && n == 1:
+		return "1 finding, no automatic fix (press i for details):"
+	case fixable == 0:
+		return fmt.Sprintf("%d findings, no automatic fix (press i for details):", n)
+	case n == 1:
 		return "1 piece needs attention (tick it, then Enter re-applies it):"
 	default:
 		return fmt.Sprintf("%d pieces need attention (tick the ones to re-apply, then Enter):", n)
