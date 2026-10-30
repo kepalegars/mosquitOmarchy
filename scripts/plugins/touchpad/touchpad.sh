@@ -175,8 +175,10 @@ gen_touchpad_lua() {
       echo "-- Kinetic scrolling requested, but hypr-kinetic-scroll is not loaded."
     fi
     echo "-- The browser is not part of the kinetic experiment: no momentum and"
-    echo "-- the stock touchpad speed, even though the global factor is $SCROLL."
-    echo "o.window(\"zen\", { scroll_touchpad = -0.5 })"
+    echo "-- the stock scroll speed. scroll_touchpad REPLACES the factor, and"
+    echo "-- Hyprland rejects negative rule values, so use the stock magnitude"
+    echo "-- (input.lua's -0.5); the sign follows the rest of the system."
+    echo "o.window(\"zen\", { scroll_touchpad = 0.5 })"
     echo "$BLOCK_END"
   } > "$tmp"
   mv "$tmp" "$TOUCHPAD_LUA"

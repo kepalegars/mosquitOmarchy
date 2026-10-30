@@ -97,7 +97,7 @@ did, with the same user-visible result.
 ## Touchpad / browser
 
 - [ ] In Zen, touchpad scrolling has **no kinetic momentum** and keeps the
-      stock speed (`scroll_touchpad = -0.5`), while another app still gets the
+      stock speed (`scroll_touchpad = 0.5`), while another app still gets the
       kinetic glide and the `1.8` factor. `hyprctl configerrors` stays empty.
 - [ ] After a Zen restart, `about:config` shows
       `apz.gtk.kinetic_scroll.enabled = false` and

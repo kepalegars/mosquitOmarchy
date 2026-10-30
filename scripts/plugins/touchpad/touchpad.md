@@ -40,8 +40,10 @@ Override the deceleration with `KINETIC_DECEL` (closer to 1 = longer glide)
 before re-running the script.
 
 Zen is always opted out of kinetic momentum and its touchpad speed is pinned to
-the Omarchy stock `-0.5`, so the kinetic settings never change browser
-scrolling (not even the speed). Set
+the stock magnitude (`0.5`), so the kinetic settings never change browser
+scrolling (not even the speed). `scroll_touchpad` replaces the factor outright
+and Hyprland rejects negative rule values, so the stock sign (`-0.5`) cannot be
+reproduced per window: the browser follows the system's scroll direction. Set
 `KINETIC_DISABLED_CLASSES="org.telegram.desktop steam"` to opt additional apps
 out. Set `KINETIC_SCROLL_ENABLED=0` before running the script to keep the
 classic touchpad configuration without the kinetic plugin.
