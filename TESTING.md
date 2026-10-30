@@ -94,6 +94,15 @@ did, with the same user-visible result.
       list, one-key settings file; only enabled lines are announced.
 - [ ] Restore with no pre-state and a free lock: lock cleaned.
 
+## Touchpad / browser
+
+- [ ] In Zen, touchpad scrolling has **no kinetic momentum** and keeps the
+      stock speed (`scroll_touchpad = -0.5`), while another app still gets the
+      kinetic glide and the `1.8` factor. `hyprctl configerrors` stays empty.
+- [ ] After a Zen restart, `about:config` shows
+      `apz.gtk.kinetic_scroll.enabled = false` and
+      `general.smoothScroll = false` (from `user.js`).
+
 ## MixBay / audio hardware
 
 - [ ] EVO 8 inputs 3/4: USB capture CH3/4 and loopback CH5/6; decode vendor init
