@@ -162,6 +162,16 @@ version_for_id(){
     *) echo beta ;;
   esac
 }
+display_name_for_id(){
+  case "$1" in
+    evo8) echo "Audient EVO 8" ;;
+    evo4) echo "Audient EVO 4" ;;
+    ssl12) echo "Solid State Logic SSL 12" ;;
+    fireface-ucx2) echo "RME Fireface UCX II" ;;
+    ugm192) echo "ESI UGM192" ;;
+    *) echo "" ;;
+  esac
+}
 seed_log_once(){
   [[ -f $CONNLOG ]] && return 0
   mkdir -p "$(dirname "$CONNLOG")"
@@ -198,14 +208,16 @@ track_connections(){
     if [[ -n $id ]]; then
       native=true
       version="$(version_for_id "$id")"
+      name="$(display_name_for_id "$id")"
+      [[ -n $name ]] || name=$desc
     else
       native=false
       version=beta
       existing="$(jq -r --arg n "$desc" '.[]|select(.name==$n)|.id' \
-        "$CONF/mosquitomixbay/beta-devices.json" 2>/dev/null | head -1)"
+        "$CONF/mosquitomixbay/beta-devices.json" 2>/dev/null | head -1 || true)"
       id="${existing:-beta-$(slug "$desc")}"
     fi
-    jq --arg id "$id" --arg name "$desc" --arg match "$match" \
+    jq --arg id "$id" --arg name "$name" --arg match "$match" \
       --arg version "$version" --argjson native "$native" \
       'map(select(.id != $id)) + [{id:$id,name:$name,match:$match,version:$version,native:$native,last_seen:(now|todate)}]' \
       "$CONNLOG" > "$CONNLOG.tmp" && mv "$CONNLOG.tmp" "$CONNLOG"
@@ -330,7 +342,7 @@ status_json(){
     installed=false; native_installed "$id" && installed=true
     if [[ $beta == true ]]; then
       jq -e --arg id "$id" '.[]|select(.id==$id)' \
-        "$CONF/mosquitomarchy/beta-devices.json" >/dev/null 2>&1 && installed=true
+        "$CONF/mosquitomixbay/beta-devices.json" >/dev/null 2>&1 && installed=true
     fi
     online=false
     if [[ $native == true ]]; then native_online "$id" && online=true; else
@@ -352,7 +364,7 @@ status_json(){
     # CARDS only carries native or explicitly added beta interfaces; the
     # DEFAULT picker uses the full connection log below.
     if [[ $beta == false ]] || jq -e --arg id "$id" '.[]|select(.id==$id)' \
-        "$CONF/mosquitomarchy/beta-devices.json" >/dev/null 2>&1; then
+        "$CONF/mosquitomixbay/beta-devices.json" >/dev/null 2>&1; then
       cards="$(jq -c --argjson d "$cards" --argjson r "$row" '. + [$r]' <<< "$cards")"
     fi
   done < <(jq -r '.[] | [.id,.name,.version,(.native|tostring),.match] | @tsv' "$CONNLOG" 2>/dev/null || true)
@@ -391,7 +403,7 @@ status_human(){
     [[ -n $dev ]] || continue
     installed="no"; native_installed "$dev" && installed="yes"
     if [[ $native == false ]] && jq -e --arg id "$dev" '.[]|select(.id==$id)' \
-        "$CONF/mosquitomarchy/beta-devices.json" >/dev/null 2>&1; then
+        "$CONF/mosquitomixbay/beta-devices.json" >/dev/null 2>&1; then
       installed="yes"
     fi
     online="offline"

@@ -102,7 +102,7 @@ func (m model) foundationItems() []tuikit.PickerItem {
 	items := []tuikit.PickerItem{
 		{Display: "Default", Heading: true},
 		{Display: "  Default audio interface: " + def, Value: "default"},
-		{Display: "Cards", Heading: true},
+		{Display: "Audio interfaces", Heading: true},
 	}
 	for _, c := range m.foundation.Devices {
 		installed := "not set"

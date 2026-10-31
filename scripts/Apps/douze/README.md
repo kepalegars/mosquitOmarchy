@@ -4,7 +4,8 @@ Installs the reverse-engineered SSL 12 control stack on Linux:
 
 - **douze** — USB control daemon + CLI, local web GUI, and the
   Protocol notes in `STUDY.md`.
-- **Omarchy360** — native Omarchy bar/overlay mixer for douze.
+- **Omarchy360** — native Omarchy overlay mixer for douze. The setup keeps the
+  overlay but removes its Quickshell bar icon.
 - **PipeWire split** — four stereo sinks (`ssl12.pb12` … `pb78`) from the
   card's Pro Audio 8-channel sink, plus the WirePlumber no-suspend rule.
 
@@ -29,7 +30,8 @@ What it does, in order:
    (`graphical-session.target`),
 5. when the card is connected and in **Pro Audio**, runs douze's
    `install-pipewire.sh` (four stereo loopbacks + WirePlumber rule),
-6. installs/enables the Omarchy360 plugin.
+6. installs/enables the Omarchy360 plugin and removes its Quickshell bar
+   icon (the overlay stays available).
 
 ## Update
 

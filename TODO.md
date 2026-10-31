@@ -179,10 +179,13 @@ Last reviewed: 2026-10-30.
 - [ ] **Mixbay — Add an audio interface / reverse engineering** (menu added,
       real harness landed: `harness/mixbay-reverse.py`, deployed as
       `mixbay-reverse`; Settings → Reverse engineering harness and the beta
-      card shortcut both launch it). The harness captures usbmon text, merges
-      submission/callback by URB, diffs a quiet baseline against one action,
-      labels/stores the session, and replays only captured bytes with
-      GET/acks, `--dry-run` and an explicit `REPLAY` confirmation. Remaining:
+      card shortcut both launch it, and **Add an audio interface** launches
+      the guided mode right after storing the beta card). The harness captures
+      usbmon text, discovers the card channels from PipeWire/pactl, merges
+      submission/callback by URB, diffs a quiet baseline against one action per
+      control, labels/stores each session, shows a final confirmation, and
+      replays only captured bytes with GET/acks, `--dry-run` and an explicit
+      `REPLAY` confirmation. Remaining:
       - map the universal EVO 8 model (strips, gains, 48V, mixer, meters)
         onto captured controls, and promote a beta card to native only after
         hardware verification;
@@ -255,6 +258,14 @@ and the activation-prompt cases.
       check).
 
 ## Project hygiene / regression
+
+- [ ] **Create the remote per-module repos** (monorepo canonical + generated
+      mirrors): add `modules.json` (module id → path → remote → tag prefix),
+      `scripts/lib/modules-sync.sh` (`git subtree split -P <path> -b
+      sync/<id>` then push), and a GitHub Actions workflow on tags. Create the
+      `mosquitOmarchy-<module>` repositories with `gh repo create`, push the
+      mirrors, and document that the monorepo is the source of truth. Do not
+      use submodules for code that also lives in the monorepo.
 
 - [ ] Run regression tests 3.1–3.7 and 3.10 against the current repo state
       (commands and checks in `TESTING.md`).

@@ -15,9 +15,8 @@ import (
 // does not support natively as beta interfaces. The real guided usbmon harness
 // is launched right after the card is stored (see reverseHarnessCmd).
 type scanCard struct {
-	Name    string
-	Match   string
-	Profile string
+	Name  string
+	Match string
 }
 
 type scanMsg struct {
@@ -41,9 +40,8 @@ func scanCardsCmd() tea.Cmd {
 			return scanMsg{err: err}
 		}
 		var raw []struct {
-			Name          string            `json:"name"`
-			ActiveProfile string            `json:"active_profile"`
-			Properties    map[string]string `json:"properties"`
+			Name       string            `json:"name"`
+			Properties map[string]string `json:"properties"`
 		}
 		if err := json.Unmarshal(out, &raw); err != nil {
 			return scanMsg{err: err}
@@ -70,7 +68,7 @@ func scanCardsCmd() tea.Cmd {
 			if isNativeCard(desc + " " + cardName + " " + c.Name) {
 				continue
 			}
-			cards = append(cards, scanCard{Name: desc, Match: match, Profile: c.ActiveProfile})
+			cards = append(cards, scanCard{Name: desc, Match: match})
 		}
 		return scanMsg{cards: cards}
 	}
@@ -127,7 +125,7 @@ func (m model) addInterfaceItems() []tuikit.PickerItem {
 	items := []tuikit.PickerItem{{Display: "Connected, not native", Heading: true}}
 	for i, c := range m.scanCards {
 		items = append(items, tuikit.PickerItem{
-			Display: fmt.Sprintf("  %-32s %s", c.Name, c.Profile),
+			Display: "  " + c.Name,
 			Value:   fmt.Sprintf("scan:%d", i),
 		})
 	}

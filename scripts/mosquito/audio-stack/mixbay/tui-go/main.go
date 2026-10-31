@@ -19,6 +19,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Println(appVersion)
+		return
+	}
 	if code := runCLI(os.Args[1:]); code >= 0 {
 		os.Exit(code)
 	}

@@ -5,8 +5,8 @@
 # douze (https://github.com/xenicle/douze) reverse-engineers the SSL 12's USB
 # control interface and gives Linux back what SSL 360 does on Windows/macOS:
 # mixer, monitoring, preamps, loopback, clock, meters, profiles. Omarchy360
-# (https://github.com/FenrirRhogar/omarchy360) is the native Omarchy bar/overlay
-# front end for douze's local HTTP API.
+# (https://github.com/FenrirRhogar/omarchy360) is the native Omarchy overlay
+# front end for douze's local HTTP API. Its bar icon is removed by setup.
 #
 # This module installs the whole chain cleanly:
 #   1. douze checkout in ~/.local/share/douze (the omarchy360 branch, which
@@ -17,7 +17,8 @@
 #   4. the douze user service (graphical-session.target, restarted on update),
 #   5. the PipeWire split into ssl12.pb12/pb34/pb56/pb78 + the WirePlumber
 #      no-suspend rule, when the SSL 12 is connected and in Pro Audio,
-#   6. the Omarchy360 shell plugin (bar icon + overlay).
+#   6. the Omarchy360 shell plugin (overlay; the Quickshell bar icon is
+#      removed on every install/update so only the overlay remains).
 #
 # Everything is idempotent. `--update` pulls the latest douze and the plugin,
 # then restarts the daemon.
@@ -100,6 +101,54 @@ service_active()  { systemctl --user is-active --quiet douze 2>/dev/null; }
 plugin_installed() {
   command -v omarchy >/dev/null 2>&1 \
     && omarchy plugin list --json 2>/dev/null | grep -q "\"$PLUGIN_ID\""
+}
+
+# The Omarchy360 plugin is kept for its overlay, but its Quickshell bar icon
+# is removed from shell.json on every install/update. `omarchy plugin enable`
+# re-adds the entry, so this must run last.
+remove_bar_icon() {
+  local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"
+  [[ -f $cfg ]] || return 0
+  python3 - "$cfg" "$PLUGIN_ID" <<'PY' || return 0
+import json, os, sys, tempfile
+
+path, plugin_id = sys.argv[1], sys.argv[2]
+with open(path) as fh:
+    data = json.load(fh)
+
+changed = False
+
+def strip(entries):
+    global changed
+    if not isinstance(entries, list):
+        return entries
+    kept = [e for e in entries
+            if not (isinstance(e, dict) and e.get("id") == plugin_id)]
+    if len(kept) != len(entries):
+        changed = True
+    return kept
+
+layout = (data.get("bar") or {}).get("layout") or {}
+for section in ("left", "center", "right"):
+    if section in layout:
+        layout[section] = strip(layout[section])
+
+# Older configs kept the layout under top-level `entries`.
+entries = data.get("entries") or {}
+for section in ("left", "center", "right"):
+    if section in entries:
+        entries[section] = strip(entries[section])
+
+if changed:
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path),
+                               prefix=".shell.", suffix=".json")
+    with os.fdopen(fd, "w") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+    print("Omarchy360 bar icon removed")
+PY
+  omarchy-shell -q shell reloadConfig >/dev/null 2>&1 || true
 }
 
 ssl12_present() {
@@ -329,14 +378,20 @@ else
   info "Installing Omarchy360"
   if (( YES )); then
     omarchy plugin add "$PLUGIN_URL" --enable --yes >/dev/null 2>&1 \
-      && ok "Omarchy360 installed (bar icon on the right)" \
+      && ok "Omarchy360 installed (overlay; bar icon removed)" \
       || warn "Omarchy360 install failed — install it later: omarchy plugin add $PLUGIN_URL --enable"
   else
-    ask "Install the Omarchy360 mixer plugin (bar icon + overlay)?" y \
+    ask "Install the Omarchy360 mixer plugin (overlay; no bar icon)?" y \
       && { omarchy plugin add "$PLUGIN_URL" --enable >/dev/null 2>&1 \
-             && ok "Omarchy360 installed" \
+             && ok "Omarchy360 installed (overlay; bar icon removed)" \
              || warn "Omarchy360 install failed"; }
   fi
+fi
+
+# Keep the overlay, drop the Quickshell bar icon. `omarchy plugin enable`
+# (and an update's rescan) can re-add the layout entry, so this is last.
+if command -v omarchy >/dev/null 2>&1; then
+  remove_bar_icon
 fi
 
 # ---------------------------------------------------------------------------
@@ -345,7 +400,8 @@ fi
 echo
 info "douze ready"
 echo "  web GUI   : http://localhost:1212  (douze daemon)"
-echo "  mixer     : Omarchy360 bar icon, or: omarchy-shell shell toggle $PLUGIN_ID"
+echo "  mixer     : Omarchy360 overlay, or: omarchy-shell shell toggle $PLUGIN_ID"
+echo "  bar       : Omarchy360 icon removed (overlay only)"
 echo "  card      : Pro Audio profile in the Omarchy audio panel / pavucontrol"
 echo "  state     : ~/.config/sslctl (profiles, mixer state)"
 echo "  update    : ./setup-douze.sh --update   (or mosquitomarchy update)"

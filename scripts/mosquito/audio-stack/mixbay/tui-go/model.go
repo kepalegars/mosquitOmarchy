@@ -349,7 +349,7 @@ func (m *model) syncPicker() {
 	case scrPatchbay:
 		m.picker = tuikit.NewPicker("PipeWire patchbay", m.patchbayItems()).SetSize(cw, ch)
 	case scrFoundation:
-		m.picker = tuikit.NewPicker("Audio foundation", m.foundationItems()).SetSize(cw, ch)
+		m.picker = tuikit.NewPicker("Audio foundation settings", m.foundationItems()).SetSize(cw, ch)
 	case scrFoundationDefault:
 		m.picker = tuikit.NewPicker("Default audio interface", m.foundationDefaultItems()).SetSize(cw, ch)
 	case scrAddInterface:
@@ -450,8 +450,7 @@ func (m model) settingsItems() []tuikit.PickerItem {
 		native,
 		{Display: "Launch Mixbay at startup: " + onOff(m.ui.LaunchAtStartup), Value: "launch_startup"},
 		{Display: "Launch in scratchpad: " + onOff(m.ui.LaunchInScratchpad), Value: "launch_scratchpad"},
-		{Display: "Reverse engineering harness (usbmon)", Value: "reverse_harness"},
-		{Display: "Audio foundation (PipeWire/udev/rate)", Value: "foundation"},
+		{Display: "Audio foundation settings", Value: "foundation"},
 		{Display: "Add an audio interface", Value: "add_interface"},
 		{Display: "Back", Value: "back"},
 	}
@@ -1178,8 +1177,6 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "launch_scratchpad":
 				m.ui.LaunchInScratchpad = !m.ui.LaunchInScratchpad
 				post = startupApplyCmd()
-			case "reverse_harness":
-				return m, reverseHarnessCmd("", "", true)
 			case "foundation":
 				m.foundationLoading = true
 				m.push(scrFoundation)

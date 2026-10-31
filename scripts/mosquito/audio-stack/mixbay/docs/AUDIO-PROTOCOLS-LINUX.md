@@ -7,6 +7,11 @@ supporté par Mixbay et par l'écosystème Linux, pour préparer un outil
 **Statut :** document de référence. Les implémentations sont dans les TODO, pas
 dans ce fichier.
 
+> **Ceci n'est pas le README de Mixbay.** C'est le rapport de référence
+> protocoles / matériel / reverse engineering. Le README décrit l'usage de la
+> TUI ; ce fichier décrit les protocoles, les interfaces et les décisions
+> d'architecture.
+
 > **Définition utilisée ici — « support complet » :** le flux audio *et* tous les
 > contrôles matériels utiles (préamplis, gain, 48 V, mute, routing, mixer DSP,
 > monitoring) sont pilotables depuis Linux, de façon stable et documentée. Un

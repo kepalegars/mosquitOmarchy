@@ -97,7 +97,7 @@ func (m model) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.legendLine(w))
 	case scrFoundation:
-		title, rows := m.accentBudget(h, "Audio foundation")
+		title, rows := m.accentBudget(h, "Audio foundation settings")
 		m.picker = m.picker.SetSize(w, rows)
 		b.WriteString(centerBlock(title, w))
 		b.WriteString("\n")
