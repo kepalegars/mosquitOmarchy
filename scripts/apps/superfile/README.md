@@ -18,7 +18,7 @@ point it is needed (same convention as this repo's other AUR/app modules).
 | Icon | `~/.local/share/icons/hicolor/256x256/apps/superfile.png` |
 | Script/executable launcher | `~/.local/bin/superfile-open-exec` |
 | PDF viewer | Floating `foot` window running `tdf --terminal-colors` when installed; otherwise existing `xdg-open` |
-| TDF window rule | `~/.config/hypr/hyprland.lua` (managed `superfile-tdf-setup` block) |
+| TDF window rule | Managed by `scripts/apps/tui-tools/setup-tdf-menu.sh` when the `tdf-git` TUI is installed |
 | Theme | `~/.config/superfile/theme/omarchy.toml` + `theme` line in `~/.config/superfile/config.toml` |
 | Theme-change hook | `~/.config/omarchy/hooks/theme-set.d/superfile-module.sh` |
 
@@ -37,15 +37,15 @@ scripts/apps/superfile/setup-superfile.sh --status
 scripts/apps/superfile/setup-superfile.sh --remove
 ```
 
-`--remove` reverses only what this module installs: the menu entry, icon, wrapper, floating
-TDF rule, the
+`--remove` reverses only what this module installs: the menu entry, icon, wrapper, the
 `[open_with]` keys it added (between the `superfile-module-exec-open` and
 `superfile-module-tdf-open` markers), generated theme
 + config `theme` line, and the theme-set hook (plus the stale `superfile-apply-omarchy-theme`
 copy left by older installs). It also strips the legacy `superfile-module-keybindings` block
 from `~/.config/hypr/bindings.lua` if an earlier version added it, and deletes any stale editor
 preference (`~/.config/superfile-module/editor`) left by those older installs. The `superfile`
-package itself is left installed (remove it with `sudo pacman -Rns superfile` if wanted).
+package itself is left installed (remove it with `sudo pacman -Rns superfile` if wanted). The
+floating TDF rule belongs to the TDF package hook and is removed when uninstalling that TUI.
 
 ## Running scripts and editing (part of the install)
 

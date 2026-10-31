@@ -21,7 +21,7 @@
 TUI crunchycleaner-bin|crunchycleaner — lightweight software cache & junk cleaner
 TUI septabee|SEPTABEE — retro studio DAW & music app (terminal, JIT audio)
 TUI caligula-git|caligula — flash ISOs & USB drives (interactive disk imaging, terminal)
-TUI tdf|tdf — TUI-based PDF viewer
+TUI tdf-git|tdf — TUI-based PDF viewer
 TUI basalt|basalt — TUI application to manage Obsidian notes
 TUI bagels|bagels — terminal expense tracker
 TUI aria2|aria2 — downloader for HTTP(S), FTP, BitTorrent and Metalink

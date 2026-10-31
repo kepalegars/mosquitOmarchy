@@ -79,7 +79,7 @@ main(){
   local e pkg stem
   for e in "${REMOVE_LIST[@]:-}"; do
     [[ $e == TUI\ * ]] || continue
-    pkg="${e#TUI }"
+    pkg="${e#TUI }"; pkg="${pkg%%|*}"
     stem="${pkg%-git}"; stem="${stem%-bin}"
     [[ -x "$SCRIPT_DIR/setup-$stem-menu.sh" ]] && "$SCRIPT_DIR/setup-$stem-menu.sh" --remove || true
   done

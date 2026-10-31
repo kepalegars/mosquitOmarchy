@@ -16,7 +16,7 @@ func TestUninstallKeyKeepsCatalogLines(t *testing.T) {
 		{"WEB WhatsApp|https://web.whatsapp.com/|whatsapp", "WEB WhatsApp|https://web.whatsapp.com/|whatsapp"},
 		{"item:webapps:WEB WhatsApp|https://web.whatsapp.com/|whatsapp", "WEB WhatsApp|https://web.whatsapp.com/|whatsapp"},
 		{"webapps:WEB Schwung Manager|http://move.local:7700|schwung-manager", "WEB Schwung Manager|http://move.local:7700|schwung-manager"},
-		{"item:tuis:TUI aria2|aria2 — downloader", "TUI aria2|aria2 — downloader"},
+		{"item:tuis:TUI tdf-git|tdf — PDF viewer", "TUI tdf-git|tdf — PDF viewer"},
 		{"item:apps:APP GIMP|gimp", "APP GIMP|gimp"},
 		{"mosquitomarchy", "mosquitomarchy"},
 		{"plugins:mosquitomarchy", "mosquitomarchy"},

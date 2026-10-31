@@ -68,7 +68,6 @@ SUPERFILE_CONFIG="$SUPERFILE_CONFIG_DIR/config.toml"
 SUPERFILE_THEME_DIR="$SUPERFILE_CONFIG_DIR/theme"
 SUPERFILE_THEME_FILE="$SUPERFILE_THEME_DIR/omarchy.toml"
 EXEC_WRAPPER="$REAL_HOME/.local/bin/superfile-open-exec"
-HYPRLAND_LUA="$REAL_HOME/.config/hypr/hyprland.lua"
 
 OMARCHY_COLORS="$REAL_HOME/.local/state/omarchy/current/theme/colors.toml"
 OMARCHY_HOOKS_DIR="$REAL_HOME/.config/omarchy/hooks/theme-set.d"
@@ -405,31 +404,6 @@ remove_open_with_exec_mappings() {
   ok "superfile [open_with] script/executable mappings removed"
 }
 
-ensure_tdf_float_windowrule() {
-  local conf="$REAL_HOME/.config/hypr/hyprland.lua"
-  if ! command -v tdf >/dev/null 2>&1; then
-    sed -i '/-- >>> superfile-tdf-setup >>>/,/-- <<< superfile-tdf-setup <<</d' "$conf" 2>/dev/null || true
-    return 0
-  fi
-  mkdir -p "$(dirname "$conf")"
-  touch "$conf"
-  if ! grep -qF -- '-- >>> superfile-tdf-setup >>>' "$conf"; then
-    cp -n "$conf" "$conf.bak.$(date +%Y%m%d%H%M%S)"
-  fi
-  sed -i '/-- >>> superfile-tdf-setup >>>/,/-- <<< superfile-tdf-setup <<</d' "$conf"
-  cat >> "$conf" <<'EOF'
--- >>> superfile-tdf-setup >>> float the foot window used for TDF PDFs
-o.window("org.mosquitOmarchy.superfile-tdf", { float = true, center = true, size = { 1100, 800 } })
--- <<< superfile-tdf-setup <<<
-EOF
-}
-
-remove_tdf_float_windowrule() {
-  local conf="$REAL_HOME/.config/hypr/hyprland.lua"
-  [[ -f $conf ]] || return 0
-  sed -i '/-- >>> superfile-tdf-setup >>>/,/-- <<< superfile-tdf-setup <<</d' "$conf"
-}
-
 # -----------------------------------------------------------------------------
 # Omarchy theme sync (superfile follows the active Omarchy theme, not just at
 # install — a theme-set hook re-applies it on every Omarchy theme switch too)
@@ -585,7 +559,6 @@ do_status() {
   echo "  • Editing files: superfile's own editor hotkey, using \${EDITOR:-nano} (Omarchy/system default)"
   echo "  • superfile [open_with] script/exec mappings: $(grep -q 'superfile-module-exec-open' "$SUPERFILE_CONFIG" 2>/dev/null && echo active || echo "not active")"
   echo "  • PDF viewer: $(command -v tdf >/dev/null 2>&1 && grep -q 'superfile-module-tdf-open' "$SUPERFILE_CONFIG" 2>/dev/null && echo 'tdf (terminal)' || echo 'system xdg-open')"
-  echo "  • TDF floating window: $(grep -q 'superfile-tdf-setup' "$HYPRLAND_LUA" 2>/dev/null && echo active || echo absent)"
   echo "  • Omarchy theme sync: $([[ -x $THEME_HOOK_FILE ]] && echo "active (hook: $THEME_HOOK_FILE)" || echo "not active")"
   echo "  • superfile theme: $(sed -n 's/^theme *= *"\(.*\)"/\1/p' "$SUPERFILE_CONFIG" 2>/dev/null | head -1 || echo unknown)"
   if [[ -f $HYPR_BINDINGS ]] && grep -q 'superfile-module-keybindings' "$HYPR_BINDINGS" 2>/dev/null; then
@@ -601,7 +574,6 @@ do_status() {
 do_remove() {
   remove_open_with_exec_mappings
   remove_exec_open_wrapper
-  remove_tdf_float_windowrule
   remove_omarchy_theme
   remove_theme_hook
   remove_desktop_entry
@@ -633,9 +605,8 @@ install_icon
 write_desktop_entry
 hide_pkg_spf_desktop
 remove_legacy_editor_preference
-  write_exec_open_wrapper
-  write_open_with_exec_mappings
-  ensure_tdf_float_windowrule
+write_exec_open_wrapper
+write_open_with_exec_mappings
 write_select_hotkeys
 apply_omarchy_theme || warn "Omarchy theme sync failed — superfile keeps its previous theme."
 write_theme_hook
