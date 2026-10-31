@@ -1,4 +1,5 @@
-// ALSA-level driver: RME Fireface UCX II, ESI UGM192, PreSonus Quantum ES 4.
+// ALSA-level driver: RME Fireface UCX II, ESI UGM192, beta interfaces, and
+// the Quantum ES 4 spec kept as the reverse-engineering test base.
 //
 // These three interfaces are USB class-compliant: no vendor DSP protocol to
 // reverse-engineer, everything goes through the kernel's snd-usb-audio ALSA
@@ -45,6 +46,7 @@ var (
 		GainMin: 0, GainMax: 65, VolMin: -96, VolMax: 0,
 		MixerInputs: 8, MixerOutputs: 2,
 		HasMonitor: false, Backend: BackendALSA, NeedsKmod: false,
+		Version:     "v0.0.1",
 		Caps:        Caps{Volume: true, Gain: false, Mute: true, Phantom: false, Monitor: false, Mixer: false},
 		Description: "ALSA level 1 (volumes/mutes). TotalMix matrix pending kernel support.",
 	}
@@ -55,6 +57,7 @@ var (
 		GainMin: 0, GainMax: 40, VolMin: -96, VolMax: 0,
 		MixerInputs: 2, MixerOutputs: 2,
 		HasMonitor: false, Backend: BackendALSA, NeedsKmod: false,
+		Version:     "v0.0.1",
 		Caps:        Caps{Volume: true, Gain: false, Mute: true, Phantom: false, Monitor: false, Mixer: false},
 		Description: "Class-compliant USB. ALSA volumes only, no DSP.",
 	}
@@ -65,6 +68,7 @@ var (
 		GainMin: 0, GainMax: 60, VolMin: -96, VolMax: 0,
 		MixerInputs: 4, MixerOutputs: 2,
 		HasMonitor: false, Backend: BackendALSA, NeedsKmod: false,
+		Version:     "beta",
 		Caps:        Caps{Volume: true, Gain: false, Mute: true, Phantom: false, Monitor: false, Mixer: false},
 		Description: "Class-compliant USB. ALSA volumes only, no DSP.",
 	}
@@ -99,6 +103,9 @@ func (d *alsaDriver) Probe() bool {
 	}
 	defer f.Close()
 	want := alsaMatch[d.spec.ID]
+	if len(d.spec.CardMatch) > 0 {
+		want = d.spec.CardMatch
+	}
 	sc := bufio.NewScanner(f)
 	cardRe := regexp.MustCompile(`^\s*(\d+)\s*\[`)
 	var cur = -1

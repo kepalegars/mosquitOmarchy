@@ -43,6 +43,166 @@ Last reviewed: 2026-10-30.
 
 ## Audio stack
 
+- [ ] **Mixbay — fork the whole interface and embed as much of douze/Omarchy360
+      as possible**, then decline it across the maximum number of interfaces and
+      extend compatibility as far as possible. The concrete first step is the
+      compatibility/onboarding layer (below), not a copy of the SSL 12 UI:
+      keep the driver registry as the only device boundary, add a per-interface
+      "needs setup" descriptor, and let the UI render whatever the descriptor
+      advertises. Long-term: a shared control abstraction (direct USB ioctl /
+      ALSA / vendor HTTP daemon) so the same strips, meters and monitor section
+      work for EVO, SSL 12, RME, PreSonus, ESI and future boxes.
+- [ ] **Mixbay — first-connection onboarding prompt** (started: `compat/
+      interface-onboarding.sh`, the EVO check in the `mosquito-mixbay`
+      dispatcher, and the `foundation/audio-foundation.sh` pack). The goal:
+      when a compatible interface is opened in its panel for the first time,
+      show a prompt (until the user accepts it) that adds what the interface
+      needs:
+      - udev rule if the control endpoint is vendor-specific (TAG+="uaccess"
+        must be numbered **below 73**; a 99-* rule is silently ignored),
+      - `evo_raw` kernel module + EVO 8 capture rule for EVO,
+      - PipeWire split of the Pro Audio 8-channel sink into stereo loopbacks
+        (`ssl12.pb12` … `pb78`), with `node.passive`, `dont-reconnect` and
+        `target.object` pointing at the card's serial-bearing node name,
+      - WirePlumber `session.suspend-timeout-seconds = 0` for passive loopbacks,
+      - service/daemon install, state and profile directory.
+      Still to do: move the prompt from the dispatcher (launch) into the TUI's
+      device-selection path, persist acceptance per interface, and make the
+      Apply action stream progress instead of blocking on the full installer.
+- [ ] **Mixbay — audio foundation pack** (implemented, needs hardware
+      validation): `foundation/audio-foundation.sh` is applied by default by
+      the installer and by the onboarding prompt. It owns seat udev access,
+      WirePlumber anti-suspend/no-upmix, the EVO 8 stereo split, default
+      sink/source, clock defaults when `pipewire-settings` does not own them,
+      and a rate/mismatch health report. Settings → Audio foundation now lists
+      cards and supports per-card **install/remove with confirmation** and a
+      **default/priority card** (first card set up wins). Remaining:
+      - validate the EVO 8 split and the EVO 4 Levels page on real hardware;
+      - extend the per-card split/profile logic to RME, ESI, SSL 12 and beta
+        cards (the generic anti-suspend/no-upmix rule already covers them);
+      - decide whether `--force-evo4-split` should become the default on
+        systems whose UCM is older than 1.2.16.
+- [ ] **Audio foundation — full test plan** (do after the next hardware
+      session):
+      1. Fresh HOME, no card: `--status --json` valid; `--apply --device
+         evo8` writes udev/WirePlumber/defaults, skips the split with a clear
+         message, records `installed`, sets `default=evo8`.
+      2. EVO 8 in Pro Audio: split file generated from the live node; six
+         virtual nodes appear; `evo8_output_3_4` audio reaches output 3+4;
+         `evo8_mic_1_2` captures; default sink/source set by the service.
+      3. EVO 4: Levels 4 bars (IN1/2 + LP3/4, PC1/2 + LP3/4); meters move;
+         no EVO 8-only path; UCM split-mono case recorded.
+      4. Per-card remove: EVO 8 split/default mapping removed, shared
+         WirePlumber rule kept while SSL 12/another card is installed; udev
+         seat rule removed only when no EVO remains; re-install restores it.
+      5. Default card: first setup becomes default; Settings → Default audio
+         interface changes it; service applies the chosen sink/source at login
+         and after hot-plug (manual `mixbay-audio-defaults` after connect).
+      6. Rate: 48 kHz graph/device match; 96 kHz allowed does not false-flag;
+         a real mismatch is flagged; `pipewire-settings` owns the clock and
+         the foundation writes no `50-mixbay-audio.conf`.
+      7. SSL 12: setup from Mixbay (douze/udev/service/split/plugin), native
+         row online, mixer/volume/mute mapping, Open Omarchy360, remove leaves
+         `~/.config/sslctl` intact.
+      8. Beta: Add an audio interface scans USB, adds Quantum ES 4 as
+         `demo-beta`/`online-beta`, ALSA level 1 works, Restart reverse
+         engineering asks for confirmation, removal removes the beta entry.
+      9. Uninstall Mixbay: foundation files/udev/default service removed,
+         capture helper removed, `pipewire-settings` config untouched.
+- [ ] **Mixbay — architecture review** (whole feature, after the test plan):
+      map every boundary (`drivers.Driver`, `Spec`, `Caps`, beta specs, douze
+      HTTP driver, foundation shell, TUI screens, state files), look for
+      duplication between the foundation and the module installers, verify
+      the "one source of truth" rule for udev/PipeWire/defaults, check
+      idempotence and rollback, and decide whether the reverse-engineering
+      harness belongs in Go, Python or the shell.
+- [ ] **Mixbay — pro-audio protocol reference** (delivered 2026-10-31:
+      `scripts/mosquito/audio-stack/mixbay/docs/AUDIO-PROTOCOLS-LINUX.md`).
+      It covers Dante, ADAT, MADI, AES3/S/PDIF, AES67/RAVENNA, AVB/MILAN,
+      AES50/SuperMAC, Waves SoundGrid, EtherSound/CobraNet, Livewire/Q-LAN,
+      SDI embedded, USB/Thunderbolt/FireWire/PCIe, macOS aggregate devices and
+      drift correction, plus the native-Linux support tiers. Remaining: keep it
+      current when a card is promoted to native, add the hardware-validation
+      column after each test session, and link every new backend to its
+      upstream project and licence.
+- [ ] **Mixbay — aggregate devices + drift correction** (design in
+      `docs/AUDIO-PROTOCOLS-LINUX.md` §6, implementation NOT started). Model a
+      clock domain per card (internal / word clock / ADAT / MADI / AES3 /
+      Dante PTP / USB feedback) and add a Settings → Aggregate screen:
+      member cards, sync source, sample rate, per-member drift correction,
+      latency, channel map, saved profiles, health (ppm, xruns, estimated
+      added latency). Implement with PipeWire `libpipewire-module-combine-stream`,
+      `libpipewire-module-loopback`, `priority.driver`, `clock.name` and the
+      adaptive resampler — do **not** write an audio server. Default drift
+      correction ON for members with no shared hardware clock; OFF when
+      `clock.name` matches. Never claim bit-perfect when resampling. Test with
+      two unsynchronised USB cards, then with a word-clocked pair.
+- [ ] **Mixbay — Dante protocol in the audio foundation** (design in
+      `docs/AUDIO-PROTOCOLS-LINUX.md` §8, implementation NOT started).
+      Explicit upstream: `inferno` <https://github.com/teodly/inferno>
+      (GPL-3.0-or-later / AGPL-3.0, unofficial, user-space) and
+      `network-audio-controller` <https://github.com/chris-ritsen/network-audio-controller>.
+      Put it in `foundation/` (or a sibling `dante/` module), not in the USB
+      driver registry:
+      - detect Dante devices over mDNS (`_netaudio-arc._udp`,
+        `_netaudio-cmc._udp`, `_netaudio-chan._udp`) and the usual UDP ports
+        (4455/8700/4400/8800/5353); inspect `ethtool -T` and `/dev/ptp*`;
+      - first-connection onboarding: explain that Dante is proprietary and
+        that `inferno` is unofficial, then offer Install / Later;
+      - install/build `inferno` + the Statime PTPv1 fork, write the network
+        profile (interface, `DEVICE_ID`, `NAME`, RX/TX channels, latency),
+        open the required ports, create the ALSA `inferno` PCM, split it into
+        PipeWire nodes, optionally save a patchbay preset;
+      - persist the profile per device and never auto-start during a live show;
+      - UI must state the limits: no Dante Domain Manager, no native AES67,
+        PTP/NTP conflicts, latency depends on kernel/NIC, unofficial status.
+      - A Dante PCIe card (Yamaha AIC128-D, RedNet PCIe, etc.) is treated as a
+        network/AES67 device, not as a USB card; do not claim a kernel driver.
+- [ ] **Mixbay — Apollo native driver port** (design in
+      `docs/AUDIO-PROTOCOLS-LINUX.md` §9, implementation NOT started).
+      Explicit upstream: `open-apollo`
+      <https://github.com/rolotrealanis98/open-apollo> (GPL-2.0, experimental).
+      Do **not** reimplement the kernel module in Go. Port the whole stack as
+      an optional backend:
+      - vendor/pin the `ua_apollo` DKMS module, udev rules, firmware extraction
+        path (`oa-assets`) and the mixer daemon (TCP 4710/4720/4721);
+      - add a Mixbay driver that speaks to the daemon, maps `Spec`/`Caps`
+        (preamps, 48 V, PAD, low cut, phase, monitor, DSP mixer, meters) and
+        falls back to ALSA level 1 when the daemon is absent;
+      - model table for every Apollo (x4, x4 Gen 2, x6, x8, x8p, x16, x16D,
+        Twin X, Solo, Arrow, USB Solo/Twin) with a verified/untested column;
+      - refuse Thunderbolt 2 explicitly and explain why (no PCIe enumeration);
+      - handle Secure Boot/MOK, hot-unplug, power-cycle and suspend/resume;
+      - "Open uaconsole" for the full console instead of duplicating it;
+      - test on x4/x8p/Solo USB before calling it supported, and keep the
+        experimental warning in the UI until then.
+- [ ] **Mixbay — Add an audio interface / reverse engineering** (menu added,
+      real harness landed: `harness/mixbay-reverse.py`, deployed as
+      `mixbay-reverse`; Settings → Reverse engineering harness and the beta
+      card shortcut both launch it). The harness captures usbmon text, merges
+      submission/callback by URB, diffs a quiet baseline against one action,
+      labels/stores the session, and replays only captured bytes with
+      GET/acks, `--dry-run` and an explicit `REPLAY` confirmation. Remaining:
+      - map the universal EVO 8 model (strips, gains, 48V, mixer, meters)
+        onto captured controls, and promote a beta card to native only after
+        hardware verification;
+      - add HID multi-byte report reconstruction and timing-accurate replay
+        for cards that need it;
+      - derive the smallest safe write sequence per control from the captured
+        window instead of replaying the whole window;
+      - persist the captured map into the driver spec and keep the "beta"
+        flag until then;
+      - test the harness on the Quantum ES 4 and one SSL 12/EVO capture, and
+        record the exact commands in `harness/README.md`.
+- [ ] **SSL 12 — native Mixbay integration** (first slice landed): native
+      entry via douze (volume/mute/mixer, setup from Mixbay, Open Omarchy360).
+      Remaining: preamps/48V, bus labels (Monitor/Line 3-4/HP A/HP B instead
+      of MIX 1|2), meters from douze, profiles, and the EVO-style full
+      surface. Keep Omarchy360 as the complete SSL 360 surface meanwhile.
+- [x] EVO 4 Levels: the Levels page is now spec-driven (4 bars: IN1/2 +
+      LP3/4, PC1/2 + LP3/4), the USB node is discovered from the live graph,
+      and EVO 4 is no longer kicked out of the screen. Needs a real EVO 4
+      check (the UCM may expose split mono nodes instead of one 4-channel node).
 - [ ] MixBay EVO 8: handle inputs 3/4 (USB capture CH3/4 + loopback CH5/6).
       The channels stay at zero on this firmware; the vendor init
       (EU51/EU58) still has to be decoded from a USB capture of the Audient app.
@@ -85,12 +245,12 @@ and the activation-prompt cases.
       not RGB), the Shift+Capture conflict with Schwung Skipback, and the dim
       notes in the per-pad sequencer (user wants them hidden, and nudging should
       address only the selected note).
-- Historical detail: `scripts/apps/ableton-move-manager/move-bitwig/HISTORY.md`.
+- Historical detail: `scripts/mosquito/move-manager/move-bitwig/HISTORY.md`.
 
 ## System modules
 
 - [ ] mx-master: run `./mosquitomarchy-setup.sh` and pick `mx-master` (or
-      `sudo bash scripts/plugins/mx-master/mx-master.sh`), then verify logiops
+      `sudo bash scripts/Plugins/mx-master/mx-master.sh`), then verify logiops
       and the thumb-gesture button on the real device (pending user sudo/live
       check).
 

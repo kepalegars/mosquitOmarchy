@@ -60,7 +60,7 @@ func TreeValue(prefix, id string) string { return prefix + id }
 
 // isAssetGateNote reports whether a disabled row's info is the backend's
 // asset-gate note ("<module description> — needs <file> in
-// scripts/apps/<dir>/"). Same pattern the mosquitomarchy TUI's uninstall
+// scripts/Apps/<dir>/"). Same pattern the mosquitomarchy TUI's uninstall
 // tree already matches for these rows.
 func isAssetGateNote(info string) bool {
 	// NOTE: len(" — ") is 5, not 3 — the em dash is 3 bytes in UTF-8.
@@ -69,7 +69,7 @@ func isAssetGateNote(info string) bool {
 		return false
 	}
 	note := info[idx+len(" — "):]
-	return strings.HasPrefix(note, "needs ") && strings.Contains(note, "in scripts/apps/")
+	return strings.HasPrefix(note, "needs ") && strings.Contains(note, "in scripts/Apps/")
 }
 
 // TreeSplit returns the prefix and the id behind a tree row's value.
@@ -309,7 +309,7 @@ func BuildFolderTree(folders []TreeFolder, items map[string][]TreeItem, open map
 				row.Disabled = true
 				// Asset-gated rows (installer file missing) render as a bare
 				// greyed name: their info is "<module description> — needs
-				// <file> in scripts/apps/<dir>/", which is noise on the Setup
+				// <file> in scripts/Apps/<dir>/", which is noise on the Setup
 				// page. The full Info is untouched, so Enter and `i` still
 				// say why the row is greyed. Every other disabled row keeps
 				// its sub-line (e.g. "nothing left to do here").

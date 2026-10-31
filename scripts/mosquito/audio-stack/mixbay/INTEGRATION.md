@@ -11,7 +11,7 @@ est là, mais l'intégration n'en dépend plus.
 
 ```bash
 # MODULES+=( … )
-"mixbay:mosquitomixbay — USB audio bay (EVO 8/4 full control, Fireface UCX II / UGM192 / Quantum ES 4 ALSA level 1 + demo)"
+"mixbay:mosquitomixbay — USB audio bay (EVO 8/4 full control, SSL 12 via douze, Fireface UCX II / UGM192 ALSA level 1, beta interfaces + demo)"
 
 # module_state(): ajouter au case
 mixbay) st_mixbay ;;

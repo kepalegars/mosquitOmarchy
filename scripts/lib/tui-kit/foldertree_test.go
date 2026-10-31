@@ -6,18 +6,18 @@ import (
 )
 
 func TestIsAssetGateNote(t *testing.T) {
-	gated := "Guitar Pro 8 — install the thing — needs guitar-pro-8-setup.exe in scripts/apps/guitarpro/"
+	gated := "Guitar Pro 8 — install the thing — needs guitar-pro-8-setup.exe in scripts/Apps/guitarpro/"
 	if !isAssetGateNote(gated) {
 		t.Errorf("isAssetGateNote(%q) = false, want true", gated)
 	}
 	for _, tc := range []string{
 		"",
 		"nothing left to do here",
-		"needs something", // no "in scripts/apps/" tail
-		"something in scripts/apps/ without — ", // separator but no "needs " tail
-		"a — b — needs x in scripts/apps/y/",    // last " — " wins: still gated
+		"needs something", // no "in scripts/Apps/" tail
+		"something in scripts/Apps/ without — ", // separator but no "needs " tail
+		"a — b — needs x in scripts/Apps/y/",    // last " — " wins: still gated
 	} {
-		if tc == "a — b — needs x in scripts/apps/y/" {
+		if tc == "a — b — needs x in scripts/Apps/y/" {
 			if !isAssetGateNote(tc) {
 				t.Errorf("isAssetGateNote(%q) = false, want true (last separator wins)", tc)
 			}
@@ -34,7 +34,7 @@ func TestBuildFolderTreeGatedRowHasNoSub(t *testing.T) {
 	items := map[string][]TreeItem{
 		"apps": {
 			{ID: "apps:guitarpro", Label: "Guitar Pro 8 - v1.0.0",
-				Info:     "Guitar Pro 8 — tablature editor — needs guitar-pro-8-setup.exe in scripts/apps/guitarpro/",
+				Info:     "Guitar Pro 8 — tablature editor — needs guitar-pro-8-setup.exe in scripts/Apps/guitarpro/",
 				Disabled: true},
 			{ID: "apps:reaper", Label: "REAPER - v1.0.0",
 				Info:     "nothing left to do here",

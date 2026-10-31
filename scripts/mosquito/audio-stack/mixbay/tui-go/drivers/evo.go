@@ -51,6 +51,7 @@ var (
 		GainMin: 0, GainMax: 58, GainOffset: 8, VolMin: -127, VolMax: 0,
 		MixerInputs: 10, MixerOutputs: 4,
 		HasMonitor: false, Backend: BackendEvoRaw, NeedsKmod: true,
+		Version:     "v1.0.0",
 		Caps:        Caps{Volume: true, Gain: true, Mute: true, Phantom: true, Monitor: false, Mixer: true},
 		Description: "4 in / 2 out pairs + loopback matrix over 2 mix buses. Monitoring via the matrix.",
 	}
@@ -61,6 +62,7 @@ var (
 		GainMin: -8, GainMax: 50, VolMin: -96, VolMax: 0,
 		MixerInputs: 6, MixerOutputs: 2,
 		HasMonitor: true, Backend: BackendEvoRaw, NeedsKmod: true,
+		Version:     "v1.0.0",
 		Caps:        Caps{Volume: true, Gain: true, Mute: true, Phantom: true, Monitor: true, Mixer: true},
 		Description: "2 in / 1 out pair + loopback. Direct-monitor blend knob.",
 	}

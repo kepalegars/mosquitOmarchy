@@ -11,15 +11,18 @@ duplicated here.
 
 | Entry | What it is |
 |---|---|
-| `apps/` | one folder per app, plus the app / TUI / webapp catalogs — [README](apps/README.md) |
-| `apps/mosquitomarchy/` | the launcher TUI, its backend and the `SUPER` keybinding primitives — [README](apps/mosquitomarchy/README.md) |
-| `plugins/` | Omarchy shell plugins: `live-mode/`, `jamjamjam/`, `battery-management/` |
-| `fixes/` | small idempotent repairs, proposed at startup — [README](fixes/README.md) |
-| `tweaks/` | optional preference changes, never auto-applied — [README](tweaks/README.md) |
+| `Apps/` | one folder per desktop app — [README](Apps/README.md) |
+| `TUIs/` | one `setup-<name>.sh` per terminal tool — [README](TUIs/README.md) |
+| `Plugins/` | Omarchy shell plugins: `battery-management/`, `brightness/`, `touchpad/`, ... |
+| `Fixes/` | small idempotent repairs, proposed at startup — [README](Fixes/README.md) |
+| `Tweaks/` | optional preference changes, never auto-applied — [README](Tweaks/README.md) |
+| `Themes/` | theme creation and wallpapers — [README](Themes/README.md) |
+| `VMs/` | `windows-vm/`, `macos-vm/`, `omarchy-vm/` |
+| `lame/` | local language models (Ollama) |
+| `mosquito/` | mosquito tools: audio-stack, jamjamjam, move-manager, mega-caffeine |
+| `mosquitomarchy tui/` | the launcher TUI, its backend, and `update/` (the watchdog) — [README](mosquitomarchy%20tui/README.md) |
 | `lib/` | shared helpers — `tui-kit/` (the Go component library), `common.bash`, `crash.bash`, `elevate.bash`, `keybindings.bash` |
-| `theme/` `LLM/` `deps/` | theme creation, Ollama, and package lists for things with no module folder |
-| `windows-vm/` `macos-vm/` `omarchy-vm/` | the three VM modules |
-| `mosquitomarchy-update/` | the update watchdog: scripts repo first, then Omarchy |
+| `deps/` | package lists for things with no module folder |
 | `archive-mosquitomarchy.sh` (repo root, next to bootstrap) | builds the project archives — [root README](../README.md#scriptsappsmosquitomarchyarchive-mosquitomarchy-sh) |
 
 Every script resolves its resources from its own directory, so a whole folder can be moved

@@ -243,6 +243,12 @@ Panel {
         Item {
             id: mark
 
+            // BarIconButton centres a component with an implicit size. Without
+            // these two the root was 0x0 and the image anchored to its top-left
+            // corner, which is exactly why the mark looked high and left.
+            implicitWidth: Style.bar.iconCanvas
+            implicitHeight: Style.bar.iconCanvas
+
             // The upstream mark, shipped as the actual file rather than redrawn in
             // QML. Hand-transcribing the SVG is what produced a starburst nobody could
             // read: at icon size the geometry collapses and there is no way to tell it
@@ -259,15 +265,12 @@ Panel {
 
             Image {
                 id: glyph
-                // Style.bar.iconCanvas is the optical box BarIconButton centres
-                // every other glyph in — the same size means the same optical
-                // weight as the battery and the speaker.
+                // Centre in the icon canvas, not at the top-left of a 0x0 item.
                 anchors.centerIn: parent
-                // Below Style.bar.iconCanvas on purpose: at the canvas size this
-                // mark reads heavier than the speaker and battery beside it, and
-                // it is a dense 4-dot cluster where those are sparse strokes.
-                width: Style.bar.iconCanvas * 0.82
-                height: Style.bar.iconCanvas * 0.82
+                // Slightly under the canvas: the dense 4-dot mark reads heavier
+                // than the sparse speaker/battery glyphs at the same size.
+                width: parent.width * 0.78
+                height: parent.height * 0.78
                 source: mark.markFile
                 fillMode: Image.PreserveAspectFit
                 // The file is white on transparent; MultiEffect below replaces the

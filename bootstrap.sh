@@ -156,14 +156,14 @@ collect_installers(){
   # by the time this runs). Mirrors the presence globs the Setup greying uses,
   # so a moved file lights its row back up on the next render.
   local -a map=(
-    'Ableton*.zip|scripts/apps/ableton'
-    'ableton*.zip|scripts/apps/ableton'
-    'install-ableton-*.run|scripts/apps/ableton'
-    'guitar-pro-8-setup.exe|scripts/apps/guitarpro'
-    'bitwig-studio-*.deb|scripts/apps/bitwig'
-    'bitwig.jar|scripts/apps/bitwig/PATCH'
-    '*[Rr]esolve*.zip|scripts/apps/davinci'
-    '[Dd]a[Vv]inci*.zip|scripts/apps/davinci'
+    'Ableton*.zip|scripts/Apps/ableton'
+    'ableton*.zip|scripts/Apps/ableton'
+    'install-ableton-*.run|scripts/Apps/ableton'
+    'guitar-pro-8-setup.exe|scripts/Apps/guitarpro'
+    'bitwig-studio-*.deb|scripts/Apps/bitwig'
+    'bitwig.jar|scripts/Apps/bitwig/PATCH'
+    '*[Rr]esolve*.zip|scripts/Apps/davinci'
+    '[Dd]a[Vv]inci*.zip|scripts/Apps/davinci'
   )
   local moved=0 skipped=0 entry pat dest f base target
   shopt -s nullglob
@@ -189,15 +189,15 @@ collect_installers(){
 
   # Which Setup rows stay greyed out for a still-missing installer.
   local -a greyed=()
-  compgen -G "$SRC/scripts/apps/ableton/Ableton*.zip" >/dev/null \
-    || compgen -G "$SRC/scripts/apps/ableton/ableton*.zip" >/dev/null \
+  compgen -G "$SRC/scripts/Apps/ableton/Ableton*.zip" >/dev/null \
+    || compgen -G "$SRC/scripts/Apps/ableton/ableton*.zip" >/dev/null \
     || greyed+=("ableton")
-  compgen -G "$SRC/scripts/apps/bitwig/bitwig*.deb" >/dev/null \
+  compgen -G "$SRC/scripts/Apps/bitwig/bitwig*.deb" >/dev/null \
     || greyed+=("bitwig")
-  [[ -f "$SRC/scripts/apps/guitarpro/guitar-pro-8-setup.exe" ]] \
+  [[ -f "$SRC/scripts/Apps/guitarpro/guitar-pro-8-setup.exe" ]] \
     || greyed+=("guitarpro")
-  compgen -G "$SRC/scripts/apps/davinci/*[Rr]esolve*.zip" >/dev/null \
-    || compgen -G "$SRC/scripts/apps/davinci/[Dd]a[Vv]inci*.zip" >/dev/null \
+  compgen -G "$SRC/scripts/Apps/davinci/*[Rr]esolve*.zip" >/dev/null \
+    || compgen -G "$SRC/scripts/Apps/davinci/[Dd]a[Vv]inci*.zip" >/dev/null \
     || greyed+=("davinci-resolve")
   hr
   if ((${#greyed[@]})); then
@@ -234,11 +234,11 @@ collect_installers || warn "Could not scan ~/Downloads — continuing; Setup wil
 # else is wanted. Handing the machine to a bare terminal wizard instead was
 # the thing this replaces.
 #
-# The deployer is scripts/apps/mosquitomarchy/install-tui.sh — the same script
+# The deployer is scripts/mosquitomarchy tui/install-tui.sh — the same script
 # the `mosquitomarchy` module runs ("mosquitomarchy-deployer" in the module
 # list). It is idempotent, so re-running is free.
 TUI="$HOME/.local/bin/mosquitomarchy-tui"
-DEPLOYER="scripts/apps/mosquitomarchy/install-tui.sh"
+DEPLOYER="scripts/mosquitomarchy tui/install-tui.sh"
 
 deploy(){
   msg "Deploying mosquitOmarchy — builds the TUI, adds the menu entry, the float rule and the post-boot hook"

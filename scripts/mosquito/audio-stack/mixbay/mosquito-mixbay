@@ -43,6 +43,19 @@ if [[ $# -eq 0 ]]; then
     exit 0
   fi
   printf '%s\n' "$$" > "$MGR_PIDFILE"
+
+  # First-connection onboarding: an interface that needs a one-time system
+  # step (EVO: evo_raw + capture rule) is offered it here, and asked again on
+  # every launch until accepted. The helper is a no-op when the device is not
+  # plugged or already set up. Terminal only: the gum prompt needs one.
+  if [[ -t 0 && -t 1 ]] && command -v mosquito-mixbay-compat >/dev/null 2>&1; then
+    for _dev in evo8 evo4; do
+      if mosquito-mixbay-compat --needs "$_dev" >/dev/null 2>&1; then
+        mosquito-mixbay-compat --prompt "$_dev" || true
+      fi
+    done
+  fi
+
   if [[ ! -x "$MGR_TUI_BIN" ]]; then
     echo "mosquito-mixbay: TUI binary missing ($MGR_TUI_BIN) — re-run setup-mosquitomixbay.sh." >&2
     exit 1

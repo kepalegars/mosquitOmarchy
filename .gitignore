@@ -2,11 +2,11 @@
 # These files are downloaded on demand via apps/download-assets.sh
 # (assets.links catalog). Do NOT commit them: they far exceed the
 # GitHub repository limit (100 MB per file) and bloat the clone.
-scripts/apps/ableton/*.zip
-scripts/apps/davinci/*.zip
-scripts/apps/guitarpro/*.exe
-scripts/apps/**/*.run
-scripts/apps/bitwig/*.deb
+scripts/Apps/ableton/*.zip
+scripts/Apps/davinci/*.zip
+scripts/Apps/guitarpro/*.exe
+scripts/Apps/**/*.run
+scripts/Apps/bitwig/*.deb
 
 # ── Logs & transient install files ──
 *.log
@@ -30,10 +30,10 @@ scripts/mosquito/audio-stack/apm/yabridge-driver.lock
 # All the files (including each app's patches) are recovered via the
 # LATEST RELEASE of the repository (archive from archive-customarchy.sh) —
 # not on the repo.
-scripts/apps/ableton/PATCH/
-scripts/apps/guitarpro/PATCH/
-scripts/apps/davinci/PATCH/
-scripts/apps/bitwig/PATCH/
+scripts/Apps/ableton/PATCH/
+scripts/Apps/guitarpro/PATCH/
+scripts/Apps/davinci/PATCH/
+scripts/Apps/bitwig/PATCH/
 
 # ── Python environments / caches for the patches ──
 __pycache__/
@@ -66,7 +66,7 @@ scripts/mosquito/audio-stack/live-mode/tui-go/live-mode-tui
 # Authorization files (Ableton license), license-workaround tools
 # (DaVinci patch-resolve.sh). Everything touching the patch stays local
 # (and/or in the release archive).
-scripts/apps/guitarpro/guitar-pro-8-licence.md
+scripts/Apps/guitarpro/guitar-pro-8-licence.md
 
 # ── Password files / archives: ultra-safety, NEVER in a repository ──
 # KeePassXC databases and backup archives (the backups live in
@@ -84,8 +84,8 @@ mosquitomarchy-backups/
 # ── User-only notes (see archive-customarchy.sh release) ──
 SECRET-README.md
 # Extracted DaVinci OFX plugin bundle (downloaded/manual)
-scripts/apps/davinci/*.bundle/
-scripts/apps/davinci/*.bundle
+scripts/Apps/davinci/*.bundle/
+scripts/Apps/davinci/*.bundle
 
 # `go test -cpuprofile` leaves the test binary behind in the package dir.
 *.test

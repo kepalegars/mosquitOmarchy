@@ -13,7 +13,7 @@
 # panel backend writes whenever it runs. When the state file is stale, the
 # dispatcher starts the backend standalone in the background (system-audio
 # capture only, no IPC writer) so the neck still shows live analysis without
-# the panel. Managed by scripts/plugins/jamjamjam/setup-jamjamjam-plugin.sh
+# the panel. Managed by scripts/Plugins/jamjamjam/setup-jamjamjam-plugin.sh
 
 set -euo pipefail
 

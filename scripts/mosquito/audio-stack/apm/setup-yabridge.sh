@@ -2,7 +2,7 @@
 # setup-yabridge.sh — Omarchy local wine/yabridge foundation: wine-staging +
 # yabridge + local VST folders (~/Music/Audio Plugins) + per-editor precautions.
 # The Audio Plugin Manager is installed separately by the audio-stack parent.
-# Bitwig and REAPER have their own installers: scripts/apps/{bitwig,reaper}/.
+# Bitwig and REAPER have their own installers: scripts/Apps/{bitwig,reaper}/.
 #
 # Usage :
 #   ./setup-yabridge.sh             # interactive, each step asked
@@ -187,7 +187,7 @@ step_vstdirs(){
   # (Bitwig Studio, REAPER) don't actually honour these variables — Reaper
   # reads its own reaper.ini vstpath instead, and Bitwig reads its own
   # settings.xml. Both of those are handled by their own installers
-  #   (scripts/apps/{reaper,bitwig}/), but the env vars cover every other
+  #   (scripts/Apps/{reaper,bitwig}/), but the env vars cover every other
   # consumer that does pay attention to them.
   local ENV_DIR="$HOME/.config/environment.d"
   mkdir -p "$ENV_DIR"
@@ -438,7 +438,7 @@ step_tweaks(){
 
 recap(){
   hr; msg "Done — reminders"
-  echo " • DAW plugin folders: Bitwig/REAPER scan their own config (see scripts/apps/{bitwig,reaper}/setup-*.sh)."
+  echo " • DAW plugin folders: Bitwig/REAPER scan their own config (see scripts/Apps/{bitwig,reaper}/setup-*.sh)."
   echo " • New Windows plugin: install it via the Audio Plugin Manager (or wine in ~/.wine, dropping the files"
   echo "   into $VST_ROOT), then './setup-yabridge.sh --tweaks' to apply its possible precautions."
   echo " • Realtime group: reconnection required if added earlier."

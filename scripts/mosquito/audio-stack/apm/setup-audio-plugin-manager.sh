@@ -266,7 +266,7 @@ fi
 # (default/hypr/apps/system.lua) matches specific known app-ids
 # (org.omarchy.btop, org.omarchy.terminal, …) verbatim, not a wildcard, so a
 # custom app-id like ours is never covered by it. Same idempotent
-# marked-block pattern as scripts/apps/reaper/setup-reaper.sh and the sibling
+# marked-block pattern as scripts/Apps/reaper/setup-reaper.sh and the sibling
 # setup-ableton-move-manager.sh: strip any previously-injected block first
 # so re-running after an edit actually updates hyprland.lua rather than
 # being a no-op, then append the current one. Size matches Omarchy's own

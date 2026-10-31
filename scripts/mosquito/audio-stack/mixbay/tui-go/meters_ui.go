@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"os/exec"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -10,14 +11,12 @@ import (
 	"mosquitomarchy.local/mosquitomixbay-tui/meters"
 )
 
-// The EVO 8's USB names are stable: 6 capture channels (IN 1-4 + LOOP 5|6)
-// and 6 playback monitor channels (PC 1|2, PC 3|4, LOOP). Never point the
-// playback meter at the analog OUT controls: the USB monitor is the only
-// signal PipeWire can observe.
-const (
-	evo8OutNode = "alsa_output.usb-Audient_EVO8-00.pro-output-0"
-	evo8InNode  = "alsa_input.usb-Audient_EVO8-00.pro-input-0"
-)
+// EVO USB meters. The node names carry the card's serial/model suffix and
+// vary with the ALSA/UCM profile, so discover them from the live PipeWire
+// graph instead of hardcoding one machine's name. The channel count comes
+// from the node's ports; the fallback matches the EVO 8 (6) / EVO 4 (4)
+// UAC2 descriptors.
+const evoMaxMeterChannels = 8
 
 type meterStartedMsg struct{ engine *meters.Engine }
 type meterSnapshotMsg struct {
@@ -26,15 +25,90 @@ type meterSnapshotMsg struct {
 }
 type meterClosedMsg struct{ engine *meters.Engine }
 
-func meterSources() []meters.Source {
+// evoMeterSources builds the two captures for an EVO. Playback is observed on
+// the sink monitor, capture on the source: never on the analog OUT controls,
+// which are not in the USB stream.
+func evoMeterSources(spec drivers.Spec) []meters.Source {
+	outNode, outCh := discoverEvoNode(spec, true)
+	inNode, inCh := discoverEvoNode(spec, false)
+	if outNode == "" || inNode == "" {
+		return nil
+	}
 	return []meters.Source{
-		{Key: meters.KeyPlayback, Node: evo8OutNode, Channels: 6, Monitor: true},
-		{Key: meters.KeyInput, Node: evo8InNode, Channels: 6},
+		{Key: meters.KeyPlayback, Node: outNode, Channels: outCh, Monitor: true},
+		{Key: meters.KeyInput, Node: inNode, Channels: inCh},
 	}
 }
 
-func startMetersCmd() tea.Cmd {
-	return func() tea.Msg { return meterStartedMsg{engine: meters.Start(meterSources())} }
+// discoverEvoNode finds the ALSA node of this EVO in the live graph and its
+// channel count. `playback` selects the sink (pw-link -i, input ports) or the
+// source (pw-link -o, output ports). When several nodes match (UCM stereo +
+// raw pro node), the widest one wins: that is the one carrying every USB
+// channel the meters need.
+func discoverEvoNode(spec drivers.Spec, playback bool) (string, int) {
+	args := []string{"-o"}
+	if playback {
+		args = []string{"-i"}
+	}
+	out, err := exec.Command("pw-link", args...).Output()
+	if err == nil {
+		prefix := "alsa_output.usb-Audient_EVO"
+		if !playback {
+			prefix = "alsa_input.usb-Audient_EVO"
+		}
+		// The EVO 8's USB name contains EVO8; the EVO 4's EVO4. Keep the
+		// model filter so two cards on one machine cannot cross-meter.
+		want := "EVO8"
+		if spec.ID == drivers.DevEVO4 {
+			want = "EVO4"
+		}
+		counts := map[string]int{}
+		for _, line := range strings.Split(string(out), "\n") {
+			line = strings.TrimSpace(line)
+			i := strings.IndexByte(line, ':')
+			if i <= 0 {
+				continue
+			}
+			node := line[:i]
+			if !strings.HasPrefix(node, prefix) || !strings.Contains(node, want) {
+				continue
+			}
+			counts[node]++
+		}
+		best, bestN := "", 0
+		for node, n := range counts {
+			if n > bestN {
+				best, bestN = node, n
+			}
+		}
+		if best != "" && bestN > 0 {
+			if bestN > evoMaxMeterChannels {
+				bestN = evoMaxMeterChannels
+			}
+			return best, bestN
+		}
+	}
+	// Fallback: the stable pro-audio names seen on the reference machines.
+	suffix := "8"
+	channels := 6
+	if spec.ID == drivers.DevEVO4 {
+		suffix = "4"
+		channels = 4
+	}
+	if playback {
+		return "alsa_output.usb-Audient_EVO" + suffix + "-00.pro-output-0", channels
+	}
+	return "alsa_input.usb-Audient_EVO" + suffix + "-00.pro-input-0", channels
+}
+
+func startMetersCmd(spec drivers.Spec) tea.Cmd {
+	return func() tea.Msg {
+		sources := evoMeterSources(spec)
+		if len(sources) == 0 {
+			return meterStartedMsg{engine: nil}
+		}
+		return meterStartedMsg{engine: meters.Start(sources)}
+	}
 }
 
 func waitMetersCmd(e *meters.Engine) tea.Cmd {
@@ -51,7 +125,7 @@ func (m model) wantsMeters() bool {
 	if m.quit || !m.session.live || !m.status.Online {
 		return false
 	}
-	if !m.isEvoDevice() || m.evo.spec.ID != drivers.DevEVO8 {
+	if !m.isEvoDevice() {
 		return false
 	}
 	switch m.top() {
@@ -71,7 +145,7 @@ func (m *model) syncMeters() tea.Cmd {
 	}
 	if m.meter == nil && !m.meterStarting {
 		m.meterStarting = true
-		return startMetersCmd()
+		return startMetersCmd(m.evo.spec)
 	}
 	return nil
 }
@@ -92,7 +166,7 @@ func (m model) meterLevel(key string, ch int) float64 {
 }
 
 func (m model) meterPeak(key string, ch int) float64 {
-	var arr *[6]float64
+	var arr *[evoMaxMeterChannels]float64
 	if key == meters.KeyInput {
 		arr = &m.meterPeakIn
 	} else {
@@ -119,7 +193,7 @@ func (m *model) evoLevelsKey(k string) tea.Cmd {
 		m.meterFrozen = !m.meterFrozen
 		return nil
 	case " ":
-		m.meterPeakIn, m.meterPeakOut = [6]float64{}, [6]float64{}
+		m.meterPeakIn, m.meterPeakOut = [evoMaxMeterChannels]float64{}, [evoMaxMeterChannels]float64{}
 		if m.meter != nil {
 			m.meter.ResetPeaks()
 		}
@@ -176,30 +250,58 @@ type evoMeterBar struct {
 	ch    int
 }
 
-var evoCaptureBars = []evoMeterBar{
-	{label: "IN1", key: meters.KeyInput, ch: 0},
-	{label: "IN2", key: meters.KeyInput, ch: 1},
-	{label: "IN3", key: meters.KeyInput, ch: 2},
-	{label: "IN4", key: meters.KeyInput, ch: 3},
-	{label: "LP5", key: meters.KeyInput, ch: 4},
-	{label: "LP6", key: meters.KeyInput, ch: 5},
+// evoCaptureBarsFor lists the USB capture channels the Levels page shows:
+// the hardware inputs first, then the two loopback-capture channels. The
+// layout follows the device spec, so the EVO 4 gets IN1/IN2 + LP3/LP4 and the
+// EVO 8 IN1-4 + LP5/LP6 instead of a hardcoded six-bar panel.
+func evoCaptureBarsFor(spec drivers.Spec) []evoMeterBar {
+	bars := make([]evoMeterBar, 0, spec.NumInputs+2)
+	for i := 0; i < spec.NumInputs; i++ {
+		bars = append(bars, evoMeterBar{
+			label: fmt.Sprintf("IN%d", i+1),
+			key:   meters.KeyInput,
+			ch:    i,
+		})
+	}
+	for i := 0; i < 2; i++ {
+		bars = append(bars, evoMeterBar{
+			label: fmt.Sprintf("LP%d", spec.NumInputs+i+1),
+			key:   meters.KeyInput,
+			ch:    spec.NumInputs + i,
+		})
+	}
+	return bars
 }
 
-var evoPlaybackBars = []evoMeterBar{
-	{label: "PC1", key: meters.KeyPlayback, ch: 0},
-	{label: "PC2", key: meters.KeyPlayback, ch: 1},
-	{label: "PC3", key: meters.KeyPlayback, ch: 2},
-	{label: "PC4", key: meters.KeyPlayback, ch: 3},
-	{label: "LP5", key: meters.KeyPlayback, ch: 4},
-	{label: "LP6", key: meters.KeyPlayback, ch: 5},
+// evoPlaybackBarsFor lists the USB playback monitor channels: the output
+// pairs the card exposes, then the loopback output pair. EVO 4 = PC1/PC2 +
+// LP3/LP4; EVO 8 = PC1-4 + LP5/LP6.
+func evoPlaybackBarsFor(spec drivers.Spec) []evoMeterBar {
+	pairs := spec.NumOutPairs * 2
+	bars := make([]evoMeterBar, 0, pairs+2)
+	for i := 0; i < pairs; i++ {
+		bars = append(bars, evoMeterBar{
+			label: fmt.Sprintf("PC%d", i+1),
+			key:   meters.KeyPlayback,
+			ch:    i,
+		})
+	}
+	for i := 0; i < 2; i++ {
+		bars = append(bars, evoMeterBar{
+			label: fmt.Sprintf("LP%d", pairs+i+1),
+			key:   meters.KeyPlayback,
+			ch:    pairs + i,
+		})
+	}
+	return bars
 }
 
 func (m model) meterStatus() (string, int) {
-	if !m.isEvoDevice() || m.evo.spec.ID != drivers.DevEVO8 {
-		return "Meters need the live EVO 8 USB streams.", cYellow
+	if !m.isEvoDevice() {
+		return "Meters need the live EVO USB streams.", cYellow
 	}
 	if !m.session.live || !m.status.Online {
-		return "EVO 8 is offline — reconnect to meter.", cYellow
+		return "EVO is offline — reconnect to meter.", cYellow
 	}
 	if m.meterStarting && m.meter == nil {
 		return "Starting USB capture…", cNone
@@ -227,11 +329,20 @@ func (r *evoRender) drawLevelsBody(row, cx, sectionW int) int {
 	const (
 		barW     = 4
 		gap      = 1
-		groupW   = 6*barW + 5*gap
 		scaleW   = 7
 		groupGap = 3
-		totalW   = scaleW + groupW*2 + groupGap
 	)
+	capBars := evoCaptureBarsFor(r.spec)
+	playBars := evoPlaybackBarsFor(r.spec)
+	nbars := len(capBars)
+	if len(playBars) > nbars {
+		nbars = len(playBars)
+	}
+	if nbars < 1 {
+		nbars = 1
+	}
+	groupW := nbars*barW + (nbars-1)*gap
+	totalW := scaleW + groupW*2 + groupGap
 	bodyRow := row
 	x := cx + (sectionW-totalW)/2
 	if x < cx {
@@ -280,8 +391,8 @@ func (r *evoRender) drawLevelsBody(row, cx, sectionW int) int {
 			r.put(bx+(barW-len([]rune(b.label))+1)/2, barBot+1, b.label, evoDim)
 		}
 	}
-	draw(evoCaptureBars, captureX)
-	draw(evoPlaybackBars, playbackX)
+	draw(capBars, captureX)
+	draw(playBars, playbackX)
 
 	return bodyRow + evoControlsBodyH(r.spec)
 }
@@ -332,10 +443,10 @@ func (r *evoRender) drawLevelsStatusBar(row, cx, sectionW int) int {
 // evoMeterChannels maps a control/mixer row key to the USB capture channels
 // that feed it. Playback pairs are the monitor of the USB output; inputs are
 // the hardware capture channels.
-func evoMeterChannels(key string) (string, []int) {
+func evoMeterChannels(spec drivers.Spec, key string) (string, []int) {
 	if strings.HasPrefix(key, "input") {
 		var n int
-		if _, err := fmt.Sscanf(key, "input%d", &n); err == nil && n >= 1 && n <= 6 {
+		if _, err := fmt.Sscanf(key, "input%d", &n); err == nil && n >= 1 && n <= spec.NumInputs {
 			return meters.KeyInput, []int{n - 1}
 		}
 		return "", nil
@@ -379,7 +490,7 @@ func (r *evoRender) drawMiniBar(row, x, width int, level, peak float64, col int)
 }
 
 func (r *evoRender) drawKeyMeter(row, x, width int, key string, col int) {
-	src, chans := evoMeterChannels(key)
+	src, chans := evoMeterChannels(r.spec, key)
 	if src == "" || len(chans) == 0 || width < 4 {
 		if key == "monitor" {
 			r.put(x, row, "no USB meter", evoDim)

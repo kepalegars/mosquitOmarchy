@@ -751,10 +751,10 @@ func TestDevicesPageHasSettingsRow(t *testing.T) {
 func TestOnlineOnlyFilter(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	m := initialModel()
-	m.ui.ShowOnlineOnly = true
+	m.ui.Listed = listedConnected
 	var shown []string
 	for _, it := range m.deviceItems() {
-		if it.Value == "settings" || it.Value == "patchbay" || it.Value == "quit" {
+		if it.Value == "" || it.Value == "settings" || it.Value == "patchbay" || it.Value == "quit" {
 			continue
 		}
 		shown = append(shown, it.Value)
@@ -768,9 +768,65 @@ func TestOnlineOnlyFilter(t *testing.T) {
 	if err := saveUIPrefs(m.ui); err != nil {
 		t.Fatal(err)
 	}
-	if got := loadUIPrefs(); !got.ShowOnlineOnly {
+	if got := loadUIPrefs(); got.Listed != listedConnected {
 		t.Errorf("filter choice did not persist")
 	}
+}
+
+// The nav rows always exist, so an empty interface list must explain itself
+// with a grey, non-selectable first row instead of looking broken.
+func TestDevicesPageSaysWhenNoInterfaceConnected(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := initialModel()
+	m.ui.Listed = listedUsed // empty connection log => no card rows
+	items := m.deviceItems()
+	if len(items) == 0 {
+		t.Fatal("devices page is empty")
+	}
+	if !items[0].Disabled || items[0].Display != "No interfaces connected" {
+		t.Fatalf("first row = %+v, want disabled 'No interfaces connected'", items[0])
+	}
+	if items[1].Value != "patchbay" {
+		t.Fatalf("navigation rows moved: %+v", items[1])
+	}
+}
+
+// The home page is a picker, not a device screen: the selected driver's demo
+// note must not leak into its footer.
+func TestHomeStatusHidesDemoNote(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := initialModel()
+	m.status = drivers.Status{Note: "DEMO — Audient EVO 8 not found. State is simulated and persistent."}
+	if line := m.statusLine(90); strings.Contains(line, "simulated") || strings.Contains(line, "DEMO") {
+		t.Fatalf("home footer leaks the demo note: %q", line)
+	}
+}
+
+// Audio foundation rows pin the integration version to the card name with a
+// dash, in both the card list and the default picker.
+func TestFoundationCardsUseNameDashVersion(t *testing.T) {
+	m := initialModel()
+	m.foundation.Devices = []foundationCard{{ID: "evo8", Name: "Audient EVO 8", Version: "v1.0.0"}}
+	m.foundation.Connections = []foundationCard{{ID: "evo8", Name: "Audient EVO 8", Version: "v1.0.0"}}
+	for _, it := range m.foundationItems() {
+		if it.Value == "card:evo8" {
+			if !strings.Contains(it.Display, "Audient EVO 8 - v1.0.0") {
+				t.Fatalf("foundation row = %q, want name - version", it.Display)
+			}
+			goto defaults
+		}
+	}
+	t.Fatal("evo8 row missing from audio foundation")
+defaults:
+	for _, it := range m.foundationDefaultItems() {
+		if it.Value == "card:evo8" {
+			if !strings.Contains(it.Display, "Audient EVO 8 - v1.0.0") {
+				t.Fatalf("default row = %q, want name - version", it.Display)
+			}
+			return
+		}
+	}
+	t.Fatal("evo8 row missing from default picker")
 }
 
 // Switching EVO 4 -> EVO 8 used to leave the renderer bound to the EVO 4 spec
@@ -1408,7 +1464,7 @@ func TestAllowNativeVolumeSettingPersists(t *testing.T) {
 	levelsGuardEnabled = func() bool { return true }
 	t.Cleanup(func() { levelsGuardEnabled = old })
 	m := initialModel()
-	m.ui.ShowOnlineOnly = true
+	m.ui.Listed = listedConnected
 	m.push(scrSettings)
 	m.syncPicker()
 	m.picker = m.picker.SelectValue("allow_native")
@@ -1418,8 +1474,8 @@ func TestAllowNativeVolumeSettingPersists(t *testing.T) {
 	if !got.AllowNativeVolume {
 		t.Fatal("allow_native_volume must persist")
 	}
-	if !got.ShowOnlineOnly {
-		t.Fatal("toggling native volume must not reset the online filter")
+	if got.Listed != listedConnected {
+		t.Fatal("toggling native volume must not reset the listed-interfaces mode")
 	}
 }
 

@@ -37,6 +37,9 @@ const (
 	scrMixer
 	scrSettings
 	scrPatchbay
+	scrFoundation
+	scrFoundationDefault
+	scrAddInterface
 	scrInput
 	scrInfo
 	scrConfirm
@@ -80,13 +83,21 @@ type model struct {
 	// patchbay is loaded on demand only: no polling, no auto-apply.
 	patchbay patchbayView
 
+	// foundation is the Settings → Audio foundation card list/default.
+	foundation        foundationState
+	foundationLoading bool
+
+	// add-interface scan (Settings → Add an audio interface).
+	scanCards   []scanCard
+	scanLoading bool
+
 	// meter captures the EVO USB streams while an EVO panel is visible, even
 	// when the terminal loses focus. Freezing is a pure UI decision.
 	meter         *meters.Engine
 	meterStarting bool
 	meterSnap     meters.Snapshot
-	meterPeakIn   [6]float64
-	meterPeakOut  [6]float64
+	meterPeakIn   [evoMaxMeterChannels]float64
+	meterPeakOut  [evoMaxMeterChannels]float64
 	meterFrozen   bool
 
 	// focused is the terminal's focus state (DECSET 1004 via WithReportFocus).
@@ -142,12 +153,48 @@ func (m model) contentSize() (int, int) {
 // uiPrefs is the tiny interface-side preferences file (NOT device state):
 // ~/.config/mosquitomixbay/ui.json.
 type uiPrefs struct {
-	ShowOnlineOnly bool `json:"show_online_only"`
+	// ShowOnlineOnly is the old boolean; kept only to migrate an existing
+	// ui.json into Listed. New code writes Listed.
+	ShowOnlineOnly bool `json:"show_online_only,omitempty"`
+	// Listed is "only_connected", "all_supported" or "only_used".
+	Listed string `json:"listed,omitempty"`
 	// ArtistMixOff keeps OUT 1|2 and OUT 3|4 unified (one mirrored mix).
 	ArtistMixOff bool `json:"artist_mix_off"`
 	// AllowNativeVolume lets the Omarchy audio panel and the media keys touch
 	// the EVO's USB hardware volume. Default false: Mixbay owns those values.
 	AllowNativeVolume bool `json:"allow_native_volume"`
+	// LaunchAtStartup and LaunchInScratchpad default to true on a fresh
+	// install (the foundation/startup helper reads the same file).
+	LaunchAtStartup    bool `json:"launch_at_startup"`
+	LaunchInScratchpad bool `json:"launch_in_scratchpad"`
+}
+
+const (
+	listedConnected = "only_connected"
+	listedAll       = "all_supported"
+	listedUsed      = "only_used"
+)
+
+func listedLabel(v string) string {
+	switch v {
+	case listedConnected:
+		return "Only connected"
+	case listedUsed:
+		return "Only used"
+	default:
+		return "All supported"
+	}
+}
+
+func nextListed(v string) string {
+	switch v {
+	case listedConnected:
+		return listedAll
+	case listedUsed:
+		return listedConnected
+	default:
+		return listedUsed
+	}
 }
 
 func uiPrefsFile() string {
@@ -156,14 +203,37 @@ func uiPrefsFile() string {
 }
 
 func loadUIPrefs() uiPrefs {
-	var p uiPrefs
-	if data, err := os.ReadFile(uiPrefsFile()); err == nil {
-		_ = json.Unmarshal(data, &p)
+	p := uiPrefs{Listed: listedAll, LaunchAtStartup: true, LaunchInScratchpad: true}
+	data, err := os.ReadFile(uiPrefsFile())
+	if err != nil {
+		return p
+	}
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal(data, &raw)
+	_ = json.Unmarshal(data, &p)
+	if p.Listed == "" {
+		if v, ok := raw["show_online_only"]; ok {
+			var old bool
+			_ = json.Unmarshal(v, &old)
+			if old {
+				p.Listed = listedConnected
+			}
+		}
+	}
+	if p.Listed != listedConnected && p.Listed != listedAll && p.Listed != listedUsed {
+		p.Listed = listedAll
+	}
+	if _, ok := raw["launch_at_startup"]; !ok {
+		p.LaunchAtStartup = true
+	}
+	if _, ok := raw["launch_in_scratchpad"]; !ok {
+		p.LaunchInScratchpad = true
 	}
 	return p
 }
 
 func saveUIPrefs(p uiPrefs) error {
+	p.ShowOnlineOnly = p.Listed == listedConnected
 	_ = os.MkdirAll(filepath.Dir(uiPrefsFile()), 0o755)
 	data, _ := json.MarshalIndent(p, "", "  ")
 	return os.WriteFile(uiPrefsFile(), data, 0o644)
@@ -278,36 +348,65 @@ func (m *model) syncPicker() {
 		m.picker = tuikit.NewPicker("Settings", m.settingsItems()).SetSize(cw, ch)
 	case scrPatchbay:
 		m.picker = tuikit.NewPicker("PipeWire patchbay", m.patchbayItems()).SetSize(cw, ch)
+	case scrFoundation:
+		m.picker = tuikit.NewPicker("Audio foundation", m.foundationItems()).SetSize(cw, ch)
+	case scrFoundationDefault:
+		m.picker = tuikit.NewPicker("Default audio interface", m.foundationDefaultItems()).SetSize(cw, ch)
+	case scrAddInterface:
+		m.picker = tuikit.NewPicker("Add an audio interface", m.addInterfaceItems()).SetSize(cw, ch)
 	}
 }
 
 func (m model) deviceItems() []tuikit.PickerItem {
 	var items []tuikit.PickerItem
-	for _, spec := range drivers.Registry() {
+	specs := append(append([]drivers.Spec{}, drivers.Registry()...), drivers.BetaSpecs()...)
+	used := map[string]bool{}
+	if m.ui.Listed == listedUsed {
+		used = drivers.UsedIDs()
+	}
+	for _, spec := range specs {
 		online := false
 		if d, err := drivers.Open(spec.ID); err == nil && d.Probe() {
 			online = true
 		}
-		if m.ui.ShowOnlineOnly && !online {
-			continue
+		switch m.ui.Listed {
+		case listedConnected:
+			if !online {
+				continue
+			}
+		case listedUsed:
+			if !used[spec.ID] {
+				continue
+			}
 		}
 		badge := "demo"
+		if spec.Beta {
+			badge = "demo-beta"
+		}
 		if online {
 			badge = "● online"
+			if spec.Beta {
+				badge = "● online-beta"
+			}
 		}
 		items = append(items, tuikit.PickerItem{
 			Display: fmt.Sprintf("%-26s [%s]", spec.Display, badge),
 			Value:   spec.ID,
 		})
 	}
-	pb := tuikit.PickerItem{Display: "PipeWire patchbay…", Value: "patchbay"}
+	// The nav rows below always exist, so an empty card list must say why
+	// instead of looking like a rendering bug. Disabled: grey, skipped.
+	if len(items) == 0 {
+		items = append(items, tuikit.PickerItem{Display: "No interfaces connected", Disabled: true})
+	}
+	pb := tuikit.PickerItem{Display: "PipeWire patchbay", Value: "patchbay"}
 	if !patchbay.Available() {
 		pb.Disabled = true
 		pb.Suffix = "  (needs pw-dump and pw-link)"
 	}
 	items = append(items,
-		tuikit.PickerItem{Display: "Settings", Value: "settings"},
 		pb,
+		tuikit.PickerItem{Display: "Settings", Value: "settings"},
 		tuikit.PickerItem{Display: "Close", Value: "quit"},
 	)
 	return items
@@ -347,8 +446,13 @@ func (m model) settingsItems() []tuikit.PickerItem {
 		native.Suffix = "  (needs mosquito.levels-guard)"
 	}
 	return []tuikit.PickerItem{
-		{Display: "Show only connected interfaces: " + onOff(m.ui.ShowOnlineOnly), Value: "online_only"},
+		{Display: "Listed interfaces: " + listedLabel(m.ui.Listed), Value: "listed"},
 		native,
+		{Display: "Launch Mixbay at startup: " + onOff(m.ui.LaunchAtStartup), Value: "launch_startup"},
+		{Display: "Launch in scratchpad: " + onOff(m.ui.LaunchInScratchpad), Value: "launch_scratchpad"},
+		{Display: "Reverse engineering harness (usbmon)", Value: "reverse_harness"},
+		{Display: "Audio foundation (PipeWire/udev/rate)", Value: "foundation"},
+		{Display: "Add an audio interface", Value: "add_interface"},
 		{Display: "Back", Value: "back"},
 	}
 }
@@ -419,6 +523,18 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 	if caps.Mixer {
 		items = append(items, tuikit.PickerItem{Display: "  Loopback mixer →", Value: "goto:mixer"})
 	}
+	if st.Spec.Beta {
+		items = append(items,
+			tuikit.PickerItem{Display: "BETA", Heading: true},
+			tuikit.PickerItem{Display: "  Restart reverse engineering", Value: "beta:reverse"},
+		)
+	}
+	if st.Spec.ID == drivers.DevSSL12 {
+		items = append(items,
+			tuikit.PickerItem{Display: "  Open Omarchy360 mixer", Value: "ssl12:omarchy360"},
+			tuikit.PickerItem{Display: "  Set up / repair SSL 12 (douze)", Value: "ssl12:setup"},
+		)
+	}
 	items = append(items,
 		tuikit.PickerItem{Display: "  Save state", Value: "save"},
 		tuikit.PickerItem{Display: "  Reload saved state", Value: "load"},
@@ -431,8 +547,8 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 // selector first, then every source route (volume + pan), then back.
 func mixerItems(st drivers.Status, bus int) []tuikit.PickerItem {
 	items := []tuikit.PickerItem{
-		{Display: fmt.Sprintf("MIX bus: %s  (←/→ switch bus)", drivers.BusLabel(bus)), Value: "bus"},
-		{Display: "SOURCES → " + drivers.BusLabel(bus), Heading: true},
+		{Display: fmt.Sprintf("MIX bus: %s  (←/→ switch bus)", drivers.BusLabelFor(st.Spec, bus)), Value: "bus"},
+		{Display: "SOURCES → " + drivers.BusLabelFor(st.Spec, bus), Heading: true},
 	}
 	for _, k := range drivers.MixerSources(st.Spec, bus) {
 		c := st.Mixer[k]
@@ -580,6 +696,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case meterStartedMsg:
+		if msg.engine == nil {
+			m.meterStarting = false
+			m.toast, _ = m.toast.SetWarn("Meters: EVO USB node not found")
+			return m, nil
+		}
 		if !m.wantsMeters() {
 			msg.engine.Stop()
 			m.meterStarting = false
@@ -587,7 +708,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.meter = msg.engine
 		m.meterStarting = false
-		m.meterPeakIn, m.meterPeakOut = [6]float64{}, [6]float64{}
+		m.meterPeakIn, m.meterPeakOut = [evoMaxMeterChannels]float64{}, [evoMaxMeterChannels]float64{}
 		return m, waitMetersCmd(msg.engine)
 
 	case meterSnapshotMsg:
@@ -623,6 +744,85 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(m.evo.evoStatus(msg.what, false), fetchStatus(m.deviceID))
 			}
 			m.toast, _ = m.toast.SetOK(msg.what)
+		}
+		return m, fetchStatus(m.deviceID)
+
+	case foundationMsg:
+		m.foundationLoading = false
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("Foundation: " + msg.err.Error())
+			return m, nil
+		}
+		m.foundation = msg.state
+		if m.top() == scrFoundation || m.top() == scrFoundationDefault {
+			m.syncPicker()
+		}
+		return m, nil
+
+	case foundationActionMsg:
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("Foundation " + msg.action + ": " + msg.err.Error())
+		} else {
+			switch msg.action {
+			case "apply":
+				m.toast, _ = m.toast.SetOK("Foundation installed for " + msg.id)
+			case "remove":
+				m.toast, _ = m.toast.SetOK("Foundation removed for " + msg.id)
+			case "default":
+				m.toast, _ = m.toast.SetOK("Default audio interface: " + msg.id)
+			case "reset":
+				m.toast, _ = m.toast.SetOK("Connection history cleared")
+			}
+		}
+		return m, foundationStatusCmd()
+
+	case scanMsg:
+		m.scanLoading = false
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("Scan: " + msg.err.Error())
+			return m, nil
+		}
+		m.scanCards = msg.cards
+		if m.top() == scrAddInterface {
+			m.syncPicker()
+		}
+		return m, nil
+
+	case betaAddMsg:
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("Add interface: " + msg.err.Error())
+			return m, nil
+		}
+		m.toast, _ = m.toast.SetOK(msg.name + " added as beta")
+		if m.top() == scrAddInterface {
+			m.pop()
+		}
+		m.syncPicker()
+		// Propose the reverse-engineering process immediately, with the
+		// methodology and the current limits. The card row keeps a shortcut.
+		m.info = tuikit.NewInfo(betaReverseText(msg.name)).SetSize(m.contentSize())
+		m.push(scrInfo)
+		return m, nil
+
+	case reverseHarnessMsg:
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("Reverse harness: " + msg.err.Error())
+		} else {
+			m.toast, _ = m.toast.SetOK("Capture saved — review it with mixbay-reverse sessions")
+		}
+		return m, fetchStatus(m.deviceID)
+
+	case startupMsg:
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("Startup: " + msg.err.Error())
+		}
+		return m, nil
+
+	case ssl12SetupMsg:
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("SSL 12 setup: " + msg.err.Error())
+		} else {
+			m.toast, _ = m.toast.SetOK("SSL 12 setup finished")
 		}
 		return m, fetchStatus(m.deviceID)
 
@@ -705,7 +905,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Picker navigation (up/down) on list screens.
-	if m.top() == scrDevices || m.top() == scrControls || m.top() == scrMixer || m.top() == scrSettings || m.top() == scrPatchbay {
+	if m.top() == scrDevices || m.top() == scrControls || m.top() == scrMixer || m.top() == scrSettings || m.top() == scrPatchbay || m.top() == scrFoundation || m.top() == scrFoundationDefault || m.top() == scrAddInterface {
 		var cmd tea.Cmd
 		m.picker, cmd = m.picker.Update(msg)
 		return m, cmd
@@ -944,6 +1144,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pop()
 			return m, nil
 		case "enter", "left", "right":
+			var post tea.Cmd
 			switch m.picker.SelectedValue() {
 			case "back":
 				m.pop()
@@ -954,8 +1155,27 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.ui.AllowNativeVolume = !m.ui.AllowNativeVolume
-			default:
-				m.ui.ShowOnlineOnly = !m.ui.ShowOnlineOnly
+			case "listed":
+				m.ui.Listed = nextListed(m.ui.Listed)
+			case "launch_startup":
+				m.ui.LaunchAtStartup = !m.ui.LaunchAtStartup
+				post = startupApplyCmd()
+			case "launch_scratchpad":
+				m.ui.LaunchInScratchpad = !m.ui.LaunchInScratchpad
+				post = startupApplyCmd()
+			case "reverse_harness":
+				return m, reverseHarnessCmd("", "")
+			case "foundation":
+				m.foundationLoading = true
+				m.push(scrFoundation)
+				m.syncPicker()
+				return m, foundationStatusCmd()
+			case "add_interface":
+				m.scanCards = nil
+				m.scanLoading = true
+				m.push(scrAddInterface)
+				m.syncPicker()
+				return m, scanCardsCmd()
 			}
 			if err := saveUIPrefs(m.ui); err != nil {
 				m.toast, _ = m.toast.SetErr("Could not save settings: " + err.Error())
@@ -963,7 +1183,108 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.syncPicker()
 			m.toast, _ = m.toast.SetOK("Settings saved")
+			return m, post
+		}
+	case scrFoundation:
+		switch k {
+		case "esc", "backspace":
+			m.pop()
 			return m, nil
+		case "r":
+			m.foundationLoading = true
+			return m, foundationStatusCmd()
+		case "d":
+			m.push(scrFoundationDefault)
+			m.syncPicker()
+			return m, nil
+		case "enter":
+			val := m.picker.SelectedValue()
+			switch {
+			case val == "back":
+				m.pop()
+				return m, nil
+			case val == "refresh":
+				m.foundationLoading = true
+				return m, foundationStatusCmd()
+			case val == "reset-history":
+				m.confirm = tuikit.NewConfirm("Forget every interface ever connected? Installed splits/udev rules and the default card are kept; the card/default lists repopulate when interfaces reconnect.", "Cancel", "Reset history")
+				m.confirmAct = func() tea.Cmd { return foundationResetHistoryCmd() }
+				m.push(scrConfirm)
+				return m, nil
+			case val == "default":
+				m.push(scrFoundationDefault)
+				m.syncPicker()
+				return m, nil
+			case strings.HasPrefix(val, "card:"):
+				id := strings.TrimPrefix(val, "card:")
+				c, ok := m.foundationCardByID(id)
+				if !ok {
+					return m, nil
+				}
+				action := "apply"
+				label := "Install"
+				if c.Installed {
+					action, label = "remove", "Remove"
+				}
+				var msg string
+				if action == "apply" {
+					msg = fmt.Sprintf("Install the audio foundation for %s? This writes udev/WirePlumber/PipeWire config and restarts the audio graph briefly.", c.Name)
+				} else if c.ID == "ssl12" {
+					msg = "Remove SSL 12? This uninstalls douze (service, udev rule, PipeWire split and Omarchy360 plugin). Mixer state in ~/.config/sslctl is kept."
+				} else {
+					msg = fmt.Sprintf("Remove the audio foundation for %s? Its split/udev/default mapping is removed; the shared WirePlumber floor stays if another card uses it. Audio restarts briefly.", c.Name)
+				}
+				m.confirm = tuikit.NewConfirm(msg, "Cancel", label)
+				m.confirmAct = func() tea.Cmd { return foundationActionCmd(action, id) }
+				m.push(scrConfirm)
+				return m, nil
+			}
+		}
+	case scrFoundationDefault:
+		switch k {
+		case "esc", "backspace":
+			m.pop()
+			return m, nil
+		case "enter":
+			val := m.picker.SelectedValue()
+			if val == "back" {
+				m.pop()
+				return m, nil
+			}
+			if strings.HasPrefix(val, "card:") {
+				id := strings.TrimPrefix(val, "card:")
+				m.pop()
+				return m, foundationSetDefaultCmd(id)
+			}
+		}
+	case scrAddInterface:
+		switch k {
+		case "esc", "backspace":
+			m.pop()
+			return m, nil
+		case "r":
+			m.scanLoading = true
+			return m, scanCardsCmd()
+		case "enter":
+			val := m.picker.SelectedValue()
+			switch {
+			case val == "back":
+				m.pop()
+				return m, nil
+			case val == "refresh":
+				m.scanLoading = true
+				return m, scanCardsCmd()
+			case strings.HasPrefix(val, "scan:"):
+				var i int
+				if _, err := fmt.Sscanf(strings.TrimPrefix(val, "scan:"), "%d", &i); err != nil || i < 0 || i >= len(m.scanCards) {
+					return m, nil
+				}
+				c := m.scanCards[i]
+				m.confirm = tuikit.NewConfirm("Add "+c.Name+" as a beta interface? It will appear as demo-beta/online-beta, run ALSA level 1 (volume/mute) and offer the reverse-engineering flow.", "Cancel", "Add as beta")
+				m.confirmAct = func() tea.Cmd { return betaAddCmd(c.Name, c.Match) }
+				m.push(scrConfirm)
+				return m, nil
+			}
 		}
 	}
 	// Default: picker navigation.
@@ -1076,6 +1397,28 @@ func (m *model) activateControl(val string) tea.Cmd {
 		m.confirmAct = func() tea.Cmd {
 			return m.applyCmd(m.deviceID, func(d drivers.Driver) error { return d.Load() }, "saved state re-applied")
 		}
+		m.push(scrConfirm)
+		return nil
+	case val == "ssl12:omarchy360":
+		if err := exec.Command("omarchy-shell", "shell", "toggle", "fenrirrhogar.omarchy360").Start(); err != nil {
+			m.toast, _ = m.toast.SetWarn("Omarchy360 is not available — install it from Set up SSL 12")
+		} else {
+			m.toast, _ = m.toast.SetOK("Omarchy360 opened")
+		}
+		return nil
+	case val == "ssl12:setup":
+		m.confirm = tuikit.NewConfirm("Set up SSL 12 (douze): udev access, user service, PipeWire split and Omarchy360 plugin. Audio may restart for a second. Continue?", "Cancel", "Set up")
+		m.confirmAct = func() tea.Cmd { return ssl12SetupCmd() }
+		m.push(scrConfirm)
+		return nil
+	case val == "beta:reverse":
+		name := m.status.Spec.Display
+		match := name
+		if len(m.status.Spec.CardMatch) > 0 {
+			match = m.status.Spec.CardMatch[0]
+		}
+		m.confirm = tuikit.NewConfirm("Start the guided USB reverse-engineering harness for "+name+"? It captures a quiet baseline, then one action you perform, and saves the observed transfers. Nothing on the card is written until you replay and confirm. Capture needs sudo (usbmon).", "Cancel", "Start capture")
+		m.confirmAct = func() tea.Cmd { return reverseHarnessCmd(name, match) }
 		m.push(scrConfirm)
 		return nil
 	case strings.HasPrefix(val, "mute:"):

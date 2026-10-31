@@ -3,13 +3,41 @@
 USB-audio control bay for mosquitOmarchy — one TUI for the interfaces.
 EVO 8 first: the interface mirrors evotui (vanzaho/audient-evo-py).
 
+## Documentation de référence
+
+Le rapport complet protocoles / matériel / reverse engineering est dans
+[`docs/AUDIO-PROTOCOLS-LINUX.md`](docs/AUDIO-PROTOCOLS-LINUX.md) : Dante,
+ADAT, MADI, AES3/S/PDIF, AES67/RAVENNA, AVB, AES50/SuperMAC, SoundGrid,
+EtherSound/CobraNet, Livewire/Q-LAN, SDI, USB/Thunderbolt/FireWire/PCIe,
+la liste des interfaces nativement supportées (support complet vs audio seul),
+et l'étude « Audio MIDI Setup » (aggregate devices + drift correction).
+
+Projets amont explicitement suivis (sourcés, pas copiés) :
+
+- [`rolotrealanis98/open-apollo`](https://github.com/rolotrealanis98/open-apollo)
+  — driver Apollo Thunderbolt/USB, daemon mixer, console (GPL-2.0,
+  expérimental). Port complet en TODO.
+- [`teodly/inferno`](https://github.com/teodly/inferno) — implémentation Dante
+  non officielle, plugin ALSA + PTP (GPL-3.0/AGPL-3.0). À intégrer dans
+  l'audio foundation, pas dans le driver registry USB.
+- [`xenicle/douze`](https://github.com/xenicle/douze) — SSL 12 (déjà utilisé).
+- [`TheOnlyJoey/MixiD`](https://github.com/TheOnlyJoey/MixiD) — Audient iD.
+- [`geoffreybennett/alsa-scarlett-gui`](https://github.com/geoffreybennett/alsa-scarlett-gui)
+  — Focusrite Scarlett/Clarett/Vocaster.
+- [`thomas-nelson23/Openface-Mixer`](https://github.com/thomas-nelson23/Openface-Mixer)
+  — RME Digiface USB / Fireface 802/800 / RayDAT.
+- [`michaelforney/oscmix`](https://github.com/michaelforney/oscmix) — RME
+  Fireface UCX II / UC.
+
 | Interface | Backend | État |
 |---|---|---|
-| Audient EVO 8 | `evo_raw` kmod (`/dev/evo8` ioctl) | **plein contrôle** : volumes, gains 0…58 dB (échelle carte ; FU11/ALSA -8…50), mutes, 48V, loopback mixer 10×4 sur 2 bus (MIX 1\|2, MIX 3\|4) |
-| Audient EVO 4 | même protocole | plein contrôle + monitor blend |
-| RME Fireface UCX II | ALSA niveau 1 | volumes/mutes ; matrice TotalMix en attente support kernel UCX II USB |
-| ESI UGM192 | ALSA | volumes/mutes (pas de DSP) |
-| PreSonus Quantum ES 4 | ALSA | volumes/mutes (pas de DSP) |
+| Audient EVO 8 | `evo_raw` kmod (`/dev/evo8` ioctl) | **plein contrôle** : volumes, gains 0…58 dB (échelle carte ; FU11/ALSA -8…50), mutes, 48V, loopback mixer 10×4 sur 2 bus (MIX 1\|2, MIX 3\|4) — **v1.0.0** |
+| Audient EVO 4 | même protocole | plein contrôle + monitor blend, Levels 4 canaux — **v1.0.0** |
+| Solid State Logic SSL 12 | douze (HTTP local) | volumes masters, mutes, mixer/sends, setup complet depuis Mixbay ; préamps/48V et surface SSL 360 complète via Omarchy360 — **v0.1.0** |
+| RME Fireface UCX II | ALSA niveau 1 | volumes/mutes ; matrice TotalMix via oscmix/Openface à intégrer — **v0.0.1** |
+| ESI UGM192 | ALSA | volumes/mutes (pas de DSP) — **v0.0.1** |
+| PreSonus Quantum ES 4 | ALSA (beta) | **base de test reverse engineering**, pas natif : ajout via Settings → Add an audio interface, flag `beta`, volume/mute seulement |
+| Autres interfaces USB | ALSA niveau 1 (beta) | ajout via Settings → Add an audio interface ; flag `demo-beta`/`online-beta` tant que non supportées nativement |
 
 Sans hardware (ou sans kmod), chaque driver sert un **état DEMO persistant**
 (même JSON) : la TUI, le CLI et les répètes live-mode marchent débranché.
@@ -194,6 +222,172 @@ Trois volumes différents ne doivent pas être confondus :
   `LOOP 3|4`) ; ce ne sont pas des masters de sortie ;
 - le choix `MIX 1|2` / `MIX 3|4` ne change que le bus cible des sends.
 
+## Accueil « première connexion » (compat)
+
+Une interface qui a besoin d'une étape système unique (EVO : module `evo_raw`
+et règle udev de capture) est proposée au lancement de `mosquito-mixbay`, pas
+laissée silencieusement en DEMO :
+
+```bash
+mosquito-mixbay-compat --status evo8   # ok | offline | missing: …
+mosquito-mixbay-compat --needs evo8    # exit 0 + la liste des étapes manquantes
+mosquito-mixbay-compat --prompt evo8   # Set up / Later (gum)
+mosquito-mixbay-compat --apply evo8    # réutilise setup-mosquitomixbay.sh -y
+mosquito-mixbay-compat --accept evo8   # ne plus demander pour cette interface
+```
+
+« Later » n'est **pas** enregistré : le prompt revient au prochain lancement
+jusqu'à acceptation (`~/.config/mosquitomixbay/onboarding.json`). Le prompt
+n'apparaît que si l'interface est réellement branchée.
+
+## Reverse engineering harness (usbmon)
+
+Le harnais réel est `mixbay-reverse` (déployé par l'installateur) :
+
+```bash
+mixbay-reverse list
+mixbay-reverse capture --name "PreSonus Quantum ES 4" --match "Quantum ES"
+mixbay-reverse sessions
+mixbay-reverse show gain:input1
+mixbay-reverse replay --label gain:input1 --dry-run
+mixbay-reverse replay --label gain:input1 --yes
+```
+
+Il capture `usbmon`, compare une baseline silencieuse à **une** action, isole
+les transferts nouveaux ou dont la payload change, puis sauvegarde la session
+dans `~/.config/mosquitomixbay/reverse/<carte>/<timestamp>/` (`meta.json`,
+JSONL, `capture.txt`, `map.json`). Le replay ne renvoie **que** les octets
+capturés, dans l'ordre, avec les GET/acks intermédiaires ; `--dry-run` et une
+confirmation `REPLAY` sont obligatoires. Voir
+[`harness/README.md`](harness/README.md).
+
+TUI : **Settings → Reverse engineering harness (usbmon)**, et sur une carte
+beta **Restart reverse engineering**. La capture demande sudo (usbmon) ; le
+replay utilise `pyusb` et les droits udev. Une carte beta reste beta tant que
+le mapping n'a pas été validé sur matériel.
+
+Le module `compat/interface-onboarding.sh` documente aussi les recettes
+réutilisables pour les futures interfaces : règle udev `TAG+="uaccess"`
+**numérotée sous 73**, découpage PipeWire d'un sink Pro Audio en paires
+stéréo, règle WirePlumber anti-suspend, service utilisateur. La SSL 12
+(douze) est le cas pilote ; voir `scripts/Apps/douze/STUDY.md`.
+
+## Le split, c'est quoi ?
+
+Un boîtier multicanaux (EVO 8 : 6 canaux USB, SSL 12 : 8 en Pro Audio) apparaît
+dans PipeWire comme **un seul périphérique** avec 6/8 canaux. Une application
+stéréo qui joue dessus se retrouve souvent étalée sur les canaux surround, et
+il est impossible de dire « Spotify sur la sortie 3-4, le DAW sur 1-2, le
+click sur le casque A ».
+
+Le **split** découpe ce flux unique en plusieurs **périphériques stéréo
+virtuels** :
+
+- `evo8_main_output` → canaux 1/2 (sortie principale)
+- `evo8_output_3_4` → canaux 3/4 (deuxième sortie)
+- `evo8_loopback_output` → canaux 5/6 (loopback)
+- `evo8_mic_1_2`, `evo8_mic_3_4`, `evo8_loopback_capture` côté capture
+
+Chaque application cible alors la paire qu'elle doit entendre, et le mixer
+matériel de la carte fait le routage final. Sans split, on ne peut pas router
+proprement par application ; avec, on garde le routage dans la carte (pas de
+latence logicielle ajoutée).
+
+Le split n'est **pas** un changement de qualité audio : c'est uniquement une
+vue stéréo des canaux USB. Il ne remplace pas le mixer, il l'alimente.
+
+## Limites
+
+- **Les cartes beta ne sont pas nativement supportées.** Elles tournent en
+  ALSA niveau 1 (volume/mute), avec le flag `demo-beta`/`online-beta`. Le
+  modèle universel EVO 8 (strips, gains, 48V, mixer) n'est appliqué qu'après
+  le reverse engineering et la validation de chaque contrôle. Rien n'est
+  promis tant que la carte n'est pas passée native.
+- **Pas de DSP embarqué / hébergement de plugins dans l'interface.** Mixbay
+  contrôle le routage, les volumes et le mixer côté hôte ; il ne charge pas de
+  VST dans une carte et ne pilote pas les DSP constructeur (type UAD Apollo,
+  Antelope, etc.). Les plugins restent côté DAW/hôte.
+- **Pas de mise à jour firmware, pas d'application constructeur.** Le
+  reverse engineering s'appuie sur ce que la carte expose en USB ; les
+  fonctions purement firmware restent hors de portée jusqu'à preuve du
+  contraire.
+- **SSL 12** : Mixbay expose volumes masters, mutes et mixer via douze. Les
+  préamps, le 48V, le monitoring complet et les boutons USER restent dans
+  Omarchy360 (douze) ; le bouton « Open Omarchy360 mixer » y mène. Le setup
+  complet (udev, service, split, plugin) se fait depuis Mixbay.
+- **Pas de profil/rate forcé.** Le pack audio respecte `pipewire-settings` et
+  signale un mismatch plutôt que de changer une fréquence sous une session
+  live.
+- **ADAT / talkback trim / fonctions non décodées** : expérimental ou absent
+  selon la carte ; voir les notes de protocole de douze pour la SSL 12.
+- **Reverse engineering** : le harnais réel est `mixbay-reverse` (usbmon,
+  diff baseline/action, replay avec GET/acks, `--dry-run`). Les pièges connus
+  restent les séquences read-modify-write, le timing et les rapports HID
+  multi-octets ; une carte beta peut rester beta indéfiniment jusqu'à
+  validation matérielle.
+
+## Audio foundation (pack par défaut)
+
+Mixbay installe un socle audio conservateur pour **toutes les interfaces
+supportées**, en commençant par l'EVO 8. Il ne remplace pas le mixeur : il
+rend le graphe PipeWire prévisible en dessous.
+
+```bash
+mixbay-audio-foundation --status          # état lisible
+mixbay-audio-foundation --status --json   # pour la TUI / scripts
+mixbay-audio-foundation --needs evo8      # ce qui manque pour cette carte
+mixbay-audio-foundation --apply [--restart]
+mixbay-audio-foundation --remove
+```
+
+Ce qu'il pose :
+
+- **udev** : `70-mixbay-evo.rules` avec `TAG+="uaccess"` pour `/dev/evo4` et
+  `/dev/evo8` — accès sans groupe `dialout` ni re-login — plus le helper de
+  capture EVO 8 (EU51) ;
+- **WirePlumber** : `50-mixbay-interfaces.conf`, anti-suspend
+  (`session.suspend-timeout-seconds = 0`), `node.pause-on-idle = false`,
+  `channelmix.upmix = false` pour Audient / RME / ESI / PreSonus / SSL 12 ;
+- **EVO 8** : découpage du nœud USB 6 canaux en stéréo — `evo8_main_output`,
+  `evo8_output_3_4`, `evo8_loopback_output`, `evo8_mic_1_2`,
+  `evo8_mic_3_4`, `evo8_loopback_capture` — construit à partir du nom de nœud
+  réel (série carte), pas d'un nom codé en dur ;
+- **EVO 4** : laissé à l'UCM ALSA ≥ 1.2.16 (sortie stéréo + captures split
+  déjà correctes). Un split 4 canaux existe en opt-in
+  (`--force-evo4-split`) pour les systèmes sans UCM ;
+- **défauts** : sink `evo8_main_output` + source `evo8_mic_1_2` au login via
+  `mixbay-audio-defaults.service` ;
+- **kHz** : si `pipewire-settings` gère déjà l'horloge
+  (`90-mosquitomarchy-pipewire.conf`), le pack ne la touche pas. Sinon il écrit
+  `50-mixbay-audio.conf` (48 kHz par défaut, 44,1–192 kHz autorisés,
+  quantum 1024). `--status` compare la fréquence du graphe à celle du device
+  et signale un **mismatch**.
+
+La TUI expose le même état dans **Settings → Audio foundation** : liste des
+cartes déjà connectées, install/remove par carte avec confirmation, choix de la
+carte par défaut/prioritaire, et reset du journal de connexion. Appliquer ou
+retirer redémarre PipeWire brièvement (avertissement dans la confirmation).
+
+L'EVO 4 et l'EVO 8 partagent désormais le même écran **LEVELS** : les barres
+sont générées depuis le `Spec` (IN1-4 + LP5/6 et PC1-4 + LP5/6 sur EVO 8 ;
+IN1/2 + LP3/4 et PC1/2 + LP3/4 sur EVO 4), et les nœuds USB sont découverts
+dans le graphe vivant.
+
+### Settings
+
+- **Listed interfaces** : `Only connected`, `All supported`, `Only used`
+  (les cartes déjà vues dans le journal de connexion).
+- **Launch Mixbay at startup** et **Launch in scratchpad** : actifs par défaut
+  à l'install. Le premier ajoute la ligne `o.launch_on_start` dans
+  `~/.config/hypr/autostart.lua` ; le second parque la TUI dans
+  `special:scratchpad` (bascule Omarchy habituelle).
+- **Audio foundation** : liste des cartes déjà connectées, install/remove par
+  carte avec confirmation, choix de la carte par défaut/prioritaire, et
+  **Reset connection history** (le journal séparé
+  `~/.config/mosquitomixbay/connected-interfaces.json`).
+- **Add an audio interface** : scan des cartes USB non natives, ajout beta,
+  et harnais `mixbay-reverse` (usbmon) pour capturer/labelliser/rejouer.
+
 ## Patchbay PipeWire
 
 Le mixeur et le patchbay sont deux couches **séparées** : le mixer choisit ce
@@ -217,7 +411,7 @@ change, l'apply est refusé plutôt que de câbler à moitié. Par défaut l'app
 **ajoute** sans jamais couper un lien existant ; `--replace` ne retire que les
 liens matériels absents du preset, jamais les liens purement logiciels.
 
-Dans la TUI : Devices → **PipeWire patchbay…** (lecture à la demande, `r` pour
+Dans la TUI : Devices → **PipeWire patchbay** (lecture à la demande, `r` pour
 rafraîchir ; aucune surveillance en arrière-plan). Le raccourci est grisé si
 `pw-dump` ou `pw-link` manque. `Save current wiring…` (`s`) demande un nom et
 **crée seulement** : nom vide ou déjà pris est refusé, jamais écrasé. Le CLI
@@ -254,6 +448,10 @@ mosquitomixbay/
   mosquito-mixbay            dispatcher (TUI si tty, foot sinon)
   mosquito-mixbay-actions    backend non-interactif (scripts, live-mode)
   setup-mosquitomixbay.sh    installateur (Go build + Hyprland + kmod)
+  compat/                    accueil première connexion (udev/kmod/split)
+  foundation/                pack audio par défaut (udev, WP, split, kHz)
+  harness/                   mixbay-reverse (usbmon capture/diff/replay) + tests
+  docs/                      AUDIO-PROTOCOLS-LINUX.md (rapport de référence)
   tui-go/                    binaire unique (TUI + CLI) sur tui-kit
     drivers/                 Driver iface : evo.go, alsa.go (+ tests)
     meters/                  capture pw-record f32 + ballistiques (+ tests)

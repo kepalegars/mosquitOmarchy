@@ -3,7 +3,7 @@
 #
 # WHAT THIS PRODUCES
 #   One tar.gz in the mosquitomarchy app folder
-#   (scripts/apps/mosquitomarchy/), holding the repo under its own
+#   (scripts/mosquitomarchy tui/), holding the repo under its own
 #   `mosquitomarchy/` folder. It is meant to be taken by hand:
 #
 #       tar xzf mosquitomarchy-<type>-<date>.tar.gz
@@ -40,7 +40,7 @@
 #   ./archive-mosquitomarchy.sh -h
 #
 # Env:
-#   OMARCHY_ARCHIVE_OUT   default output directory (default: scripts/apps/mosquitomarchy/)
+#   OMARCHY_ARCHIVE_OUT   default output directory (default: scripts/mosquitomarchy tui/)
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager — the prompt needs one
 set -euo pipefail
 
@@ -59,7 +59,7 @@ PROJECT_NAME="mosquitomarchy"
 # where the manager lives. Archives can never leak INTO an archive (see the
 # unconditional *.tar.gz exclusion in both collectors plus the final gate),
 # which is what makes an in-repo destination safe.
-OUT_DIR="${OMARCHY_ARCHIVE_OUT:-$ROOT/scripts/apps/mosquitomarchy}"
+OUT_DIR="${OMARCHY_ARCHIVE_OUT:-$ROOT/scripts/mosquitomarchy tui}"
 
 G='\033[1;32m'; B='\033[1;34m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
 msg(){ printf "${B}==>${N} %s\n" "$*"; }

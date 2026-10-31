@@ -15,7 +15,11 @@
 //     (works today, class-compliant). Level 2 = full TotalMix matrix once
 //     snd-fireface-ctl-services supports the UCX II over USB.
 //   - ugm192       : ESI UGM192, class-compliant, no vendor DSP → ALSA only.
-//   - quantum-es4  : PreSonus Quantum ES 4, class-compliant → ALSA only.
+//   - ssl12        : SSL 12 via the douze HTTP daemon (volumes/mutes/mixer;
+//     preamps and the full SSL 360 surface stay in Omarchy360).
+//   - quantum-es4  : PreSonus Quantum ES 4, NOT native: the reverse-engineering
+//     test base. Add it through "Add an audio interface" as a beta card; the
+//     spec stays here for that workflow.
 //
 // With no hardware connected every driver reports Online=false and serves a
 // persistent DEMO state (same JSON shape), so the TUI is fully usable for
@@ -38,6 +42,7 @@ const (
 	DevFireface   = "fireface-ucx2"
 	DevUGM192     = "ugm192"
 	DevQuantumES4 = "quantum-es4"
+	DevSSL12      = "ssl12"
 )
 
 // Backend names a control transport.
@@ -46,6 +51,7 @@ type Backend string
 const (
 	BackendEvoRaw Backend = "evo-raw" // /dev/evo* ioctl (kmod)
 	BackendALSA   Backend = "alsa"    // amixer / ALSA controls
+	BackendDouze  Backend = "douze"   // douze local HTTP API (SSL 12)
 	BackendDemo   Backend = "demo"    // simulated, persistent
 )
 
@@ -82,7 +88,19 @@ type Spec struct {
 	Backend      Backend `json:"backend"`
 	NeedsKmod    bool    `json:"needs_kmod"`
 	Description  string  `json:"description"`
-	Caps         Caps    `json:"caps"`
+	// Version is the Mixbay integration version shown next to the device name
+	// (e.g. "v1.0.0"). Beta interfaces use "beta" until they are native.
+	Version string `json:"version"`
+	// Beta marks a user-added interface that is not natively supported. It
+	// runs through the ALSA level-1 driver until the reverse-engineering
+	// process promotes it.
+	Beta bool `json:"beta"`
+	// CardMatch overrides the ALSA card-name fragments for a beta device.
+	CardMatch []string `json:"card_match,omitempty"`
+	// BusNames overrides the generic MIX 1|2… labels (SSL 12: Monitor,
+	// Line 3-4, HP A, HP B). Empty keeps the hardware-style labels.
+	BusNames []string `json:"bus_names,omitempty"`
+	Caps     Caps     `json:"caps"`
 }
 
 // InputState is one mic/line input.
@@ -148,9 +166,11 @@ type LiveReader interface {
 	Read() (Status, error)
 }
 
-// Registry lists every supported device, EVO 8 first (the owner's hardware).
+// Registry lists every native device. Quantum ES 4 is deliberately NOT here:
+// it is the reverse-engineering test base, added through "Add an audio
+// interface" as a beta device until its protocol is mapped.
 func Registry() []Spec {
-	return []Spec{EVO8Spec, EVO4Spec, FirefaceSpec, UGM192Spec, QuantumES4Spec}
+	return []Spec{EVO8Spec, EVO4Spec, FirefaceSpec, UGM192Spec, SSL12Spec}
 }
 
 // Open returns the driver for id. Unknown ids are an error (fail loud, the
@@ -167,6 +187,11 @@ func Open(id string) (Driver, error) {
 		return newALSA(UGM192Spec), nil
 	case DevQuantumES4:
 		return newALSA(QuantumES4Spec), nil
+	case DevSSL12:
+		return newDouze(SSL12Spec), nil
+	}
+	if spec, ok := betaSpec(id); ok {
+		return newALSA(spec), nil
 	}
 	return nil, fmt.Errorf("unknown device %q", id)
 }
@@ -183,6 +208,8 @@ func OpenLive(id string) (Driver, error) {
 	case *evoDriver:
 		v.allowDemo = false
 	case *alsaDriver:
+		v.allowDemo = false
+	case *douzeDriver:
 		v.allowDemo = false
 	}
 	if !d.Probe() {
@@ -212,6 +239,15 @@ func MixBuses(spec Spec) int {
 // BusLabel names a mix bus the way the hardware prints it.
 func BusLabel(bus int) string {
 	return fmt.Sprintf("MIX %d|%d", bus*2+1, bus*2+2)
+}
+
+// BusLabelFor prefers a per-spec name (SSL 12: MONITOR, LINE 3-4, HP A, HP B)
+// and falls back to the EVO-style MIX pair labels.
+func BusLabelFor(spec Spec, bus int) string {
+	if bus >= 0 && bus < len(spec.BusNames) && spec.BusNames[bus] != "" {
+		return spec.BusNames[bus]
+	}
+	return BusLabel(bus)
 }
 
 // MixerSources lists every loopback source key for one bus, in stable order:

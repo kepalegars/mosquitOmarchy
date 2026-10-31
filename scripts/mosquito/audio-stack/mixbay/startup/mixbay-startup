@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# =============================================================================
+# mixbay-startup — login autostart and scratchpad launch for Mixbay
+# =============================================================================
+# Two independent preferences in ~/.config/mosquitomixbay/ui.json:
+#   launch_at_startup   (default true)  → add/remove the Hyprland autostart line
+#   launch_in_scratchpad(default true)  → park the TUI in special:scratchpad
+#
+# Usage:
+#   mixbay-startup --apply   # sync the autostart line with ui.json
+#   mixbay-startup --run     # launched by Hyprland at login
+# =============================================================================
+set -euo pipefail
+
+HOME_DIR="${HOME}"
+CONF="${XDG_CONFIG_HOME:-$HOME_DIR/.config}"
+UI="$CONF/mosquitomixbay/ui.json"
+AUTOSTART="$CONF/hypr/autostart.lua"
+BIN="$HOME_DIR/.local/bin/mixbay-startup"
+START="-- >>> mosquitOmarchy mixbay autostart"
+END="-- <<< mosquitOmarchy mixbay autostart"
+
+pref(){
+  local key="$1" def="$2"
+  if [[ -f $UI ]] && command -v jq >/dev/null 2>&1; then
+    jq -r --arg k "$key" --arg d "$def" 'if has($k) then (.[$k]|tostring) else $d end' "$UI"
+  else
+    printf '%s\n' "$def"
+  fi
+}
+
+remove_block(){
+  [[ -f $AUTOSTART ]] || return 0
+  local tmp; tmp="$(mktemp)"
+  awk -v start="$START" -v end="$END" '
+    $0 == start { skip=1; next }
+    $0 == end   { skip=0; next }
+    !skip       { print }
+  ' "$AUTOSTART" > "$tmp"
+  mv "$tmp" "$AUTOSTART"
+}
+
+apply(){
+  local on; on="$(pref launch_at_startup true)"
+  mkdir -p "$(dirname "$AUTOSTART")"
+  touch "$AUTOSTART"
+  remove_block
+  if [[ $on == true ]]; then
+    {
+      printf '%s\n' "$START"
+      printf 'o.launch_on_start("%s")\n' "$BIN"
+      printf '%s\n' "$END"
+    } >> "$AUTOSTART"
+    printf 'autostart: on\n'
+  else
+    printf 'autostart: off\n'
+  fi
+}
+
+run(){
+  [[ "$(pref launch_at_startup true)" == true ]] || exit 0
+  local scratch; scratch="$(pref launch_in_scratchpad true)"
+  local term app
+  if command -v foot >/dev/null 2>&1; then term=foot; else term=xterm; fi
+  command -v "$term" >/dev/null 2>&1 || exit 0
+  if [[ $scratch == true ]]; then
+    app="org.omarchy.mosquito-mixbay-scratchpad"
+  else
+    app="org.omarchy.mosquito-mixbay-tui"
+  fi
+  if [[ $term == foot ]]; then
+    "$term" --app-id="$app" -e "$HOME_DIR/.local/bin/mosquito-mixbay-tui" >/dev/null 2>&1 &
+  else
+    "$term" -e "$HOME_DIR/.local/bin/mosquito-mixbay-tui" >/dev/null 2>&1 &
+  fi
+  [[ $scratch == true ]] || exit 0
+  command -v hyprctl >/dev/null 2>&1 || exit 0
+  local addr=""
+  for _ in $(seq 1 20); do
+    addr="$(hyprctl clients -j 2>/dev/null | jq -r --arg c "$app" '.[]|select(.class==$c or .initialClass==$c)|.address' 2>/dev/null | head -1)"
+    [[ -n $addr ]] && break
+    sleep 0.25
+  done
+  [[ -n $addr ]] || exit 0
+  hyprctl dispatch "hl.dsp.window.move({ window = \"address:$addr\", workspace = \"special:scratchpad\" })" >/dev/null 2>&1 \
+    || hyprctl dispatch "movetoworkspacesilent special:scratchpad,address:$addr" >/dev/null 2>&1 \
+    || true
+}
+
+case "${1:-}" in
+  --apply) apply ;;
+  --run) run ;;
+  --remove) remove_block; printf 'autostart: off\n' ;;
+  -h|--help) sed -n '2,16p' "$0" ;;
+  *) printf 'usage: %s --apply|--run|--remove\n' "$0" >&2; exit 2 ;;
+esac

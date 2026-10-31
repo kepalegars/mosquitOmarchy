@@ -3,8 +3,8 @@
 # mosquitOmarchy - "mosquitomixbay" (install / status)
 # =============================================================================
 # USB-audio control bay: Audient EVO 8 (full control via evo_raw kmod),
-# EVO 4 (same protocol), RME Fireface UCX II / ESI UGM192 / PreSonus
-# Quantum ES 4 (ALSA level 1 + persistent demo).
+# EVO 4 (same protocol), SSL 12 via douze, RME Fireface UCX II / ESI UGM192
+# (ALSA level 1) and user-added beta interfaces.
 #
 # Installs:
 #   1. mosquito-mixbay + mosquito-mixbay-actions → ~/.local/bin
@@ -33,11 +33,12 @@ ok()    { echo -e "\033[1;32m ✓\033[0m $*"; }
 warn()  { echo -e "\033[1;33m !\033[0m $*"; }
 die()   { warn "$*"; exit 1; }
 
-YES=0 STATUS_ONLY=0 NO_KMOD=0 UNINSTALL=0
+YES=0 STATUS_ONLY=0 NO_KMOD=0 UNINSTALL=0 NO_FOUNDATION=0
 for a in "$@"; do case "$a" in
   -y|--yes) YES=1 ;;
   --status) STATUS_ONLY=1 ;;
   --no-kmod) NO_KMOD=1 ;;
+  --no-foundation) NO_FOUNDATION=1 ;;
   --uninstall) UNINSTALL=1 ;;
 esac; done
 
@@ -59,6 +60,9 @@ mixbay_status(){
   local miss=""
   grep -qF "mosquito-mixbay-tui-setup" "$HOME/.config/hypr/hyprland.lua" 2>/dev/null || miss="${miss:+$miss, }hyprland float rule"
   [[ -e /dev/evo8 || -e /dev/evo4 ]] || miss="${miss:+$miss, }evo_raw kmod (demo mode only)"
+  [[ -f "$HOME/.config/wireplumber/wireplumber.conf.d/50-mixbay-interfaces.conf" ]] \
+    || miss="${miss:+$miss, }audio foundation (WirePlumber/udev/rate)"
+  [[ -x "$BIN_DIR/mixbay-reverse" ]] || miss="${miss:+$miss, }reverse harness (usbmon)"
   [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
   echo ok
 }
@@ -67,7 +71,12 @@ if ((STATUS_ONLY)); then mixbay_status; exit 0; fi
 
 if ((UNINSTALL)); then
   info "Uninstalling mosquitomixbay (userspace only)"
-  rm -f "$BIN_DIR/mosquito-mixbay" "$BIN_DIR/mosquito-mixbay-actions" "$BIN_DIR/mosquito-mixbay-tui"
+  if [[ -x "$SCRIPT_DIR/foundation/audio-foundation.sh" ]]; then
+    bash "$SCRIPT_DIR/foundation/audio-foundation.sh" --remove \
+      || warn "audio foundation removal reported a problem"
+  fi
+  [[ -x "$BIN_DIR/mixbay-startup" ]] && "$BIN_DIR/mixbay-startup" --remove || true
+  rm -f "$BIN_DIR/mosquito-mixbay" "$BIN_DIR/mosquito-mixbay-actions" "$BIN_DIR/mosquito-mixbay-tui" "$BIN_DIR/mosquito-mixbay-compat" "$BIN_DIR/mixbay-audio-foundation" "$BIN_DIR/mixbay-audio-defaults" "$BIN_DIR/mixbay-setup-ssl12" "$BIN_DIR/mixbay-startup" "$BIN_DIR/mixbay-reverse"
   ok "binaries removed from $BIN_DIR"
   if [[ -f "$HOME/.config/hypr/hyprland.lua" ]]; then
     sed -i '/-- >>> mosquito-mixbay-tui-setup >>>/,/-- <<< mosquito-mixbay-tui-setup <<</d' "$HOME/.config/hypr/hyprland.lua"
@@ -103,6 +112,63 @@ for f in mosquito-mixbay mosquito-mixbay-actions; do
   ok "$f deployed: $BIN_DIR/$f"
 done
 
+# First-connection onboarding helper (called by mosquito-mixbay before the
+# TUI). The repo root is baked in so --apply can reuse the full installer;
+# the script falls back to its own location when run from the checkout.
+if [[ -f "$SCRIPT_DIR/compat/interface-onboarding.sh" ]]; then
+  COMPAT_TMP="$(mktemp "$BIN_DIR/.mosquito-mixbay-compat.XXXXXX")"
+  sed "s|@MIXBAY_ROOT@|$SCRIPT_DIR|g" "$SCRIPT_DIR/compat/interface-onboarding.sh" > "$COMPAT_TMP"
+  chmod +x "$COMPAT_TMP"
+  bash -n "$COMPAT_TMP" || { rm -f "$COMPAT_TMP"; die "Invalid syntax: mosquito-mixbay-compat"; }
+  # mv replaces the inode: safe even when the caller is the running helper.
+  mv -f "$COMPAT_TMP" "$BIN_DIR/mosquito-mixbay-compat"
+  ok "mosquito-mixbay-compat deployed: $BIN_DIR/mosquito-mixbay-compat"
+fi
+
+# Audio foundation helper (status/apply/remove, also used by the TUI and the
+# onboarding prompt). Same @MIXBAY_ROOT@ baking as the compat helper.
+if [[ -f "$SCRIPT_DIR/foundation/audio-foundation.sh" ]]; then
+  FOUNDATION_TMP="$(mktemp "$BIN_DIR/.mixbay-audio-foundation.XXXXXX")"
+  sed "s|@MIXBAY_ROOT@|$SCRIPT_DIR|g" "$SCRIPT_DIR/foundation/audio-foundation.sh" > "$FOUNDATION_TMP"
+  chmod +x "$FOUNDATION_TMP"
+  bash -n "$FOUNDATION_TMP" || { rm -f "$FOUNDATION_TMP"; die "Invalid syntax: mixbay-audio-foundation"; }
+  mv -f "$FOUNDATION_TMP" "$BIN_DIR/mixbay-audio-foundation"
+  ok "mixbay-audio-foundation deployed: $BIN_DIR/mixbay-audio-foundation"
+fi
+
+# Guided USB reverse-engineering harness (usbmon capture + pyusb replay).
+if [[ -f "$SCRIPT_DIR/harness/mixbay-reverse.py" ]]; then
+  cp "$SCRIPT_DIR/harness/mixbay-reverse.py" "$BIN_DIR/mixbay-reverse"
+  chmod +x "$BIN_DIR/mixbay-reverse"
+  python3 -m py_compile "$BIN_DIR/mixbay-reverse" 2>/dev/null \
+    || warn "mixbay-reverse deployed but python syntax check failed"
+  ok "mixbay-reverse deployed: $BIN_DIR/mixbay-reverse"
+fi
+
+# Login autostart / scratchpad helper (both enabled by default at install).
+if [[ -f "$SCRIPT_DIR/startup/mixbay-startup" ]]; then
+  cp "$SCRIPT_DIR/startup/mixbay-startup" "$BIN_DIR/mixbay-startup"
+  chmod +x "$BIN_DIR/mixbay-startup"
+  bash -n "$BIN_DIR/mixbay-startup" || die "Invalid syntax: mixbay-startup"
+  "$BIN_DIR/mixbay-startup" --apply || warn "could not write the Mixbay autostart line"
+  ok "mixbay-startup deployed (login + scratchpad, on by default)"
+fi
+
+# SSL 12 setup wrapper: the TUI action "Set up / repair SSL 12" runs this in
+# the terminal. It delegates to the douze module (one source of truth for
+# clone/service/udev/PipeWire/plugin).
+SSL12_SETUP_SRC="$SCRIPT_DIR/../../../apps/douze/setup-douze.sh"
+if [[ -f "$SSL12_SETUP_SRC" ]]; then
+  SSL12_TMP="$(mktemp "$BIN_DIR/.mixbay-setup-ssl12.XXXXXX")"
+  cat > "$SSL12_TMP" <<EOF
+#!/usr/bin/env bash
+exec bash "$SSL12_SETUP_SRC" -y --update --restart-pipewire "\$@"
+EOF
+  chmod +x "$SSL12_TMP"
+  mv -f "$SSL12_TMP" "$BIN_DIR/mixbay-setup-ssl12"
+  ok "mixbay-setup-ssl12 deployed: $BIN_DIR/mixbay-setup-ssl12"
+fi
+
 # -----------------------------------------------------------------------------
 # 2. Build the Go TUI (build-time-only Go dependency, same as siblings)
 # -----------------------------------------------------------------------------
@@ -131,6 +197,7 @@ sed -i '/-- >>> mosquito-mixbay-tui-setup >>>/,/-- <<< mosquito-mixbay-tui-setup
 cat >>"$HYPR_CONF" <<'EOF'
 -- >>> mosquito-mixbay-tui-setup >>> float mosquito-mixbay-tui
 o.window("org.omarchy.mosquito-mixbay-tui", { float = true, center = true, size = { 1000, 780 } })
+o.window("org.omarchy.mosquito-mixbay-scratchpad", { float = true, center = true, size = { 1000, 780 } })
 -- <<< mosquito-mixbay-tui-setup <<<
 EOF
 hyprctl reload >/dev/null 2>&1 || true
@@ -171,6 +238,27 @@ if mq_sudo bash -c "
   ok "EVO 8 capture helper installed ($CAPTURE_RULE)"
 else
   warn "EVO 8 capture helper not installed — mic capture may stay silent"
+fi
+
+# -----------------------------------------------------------------------------
+# 5b. Audio foundation: udev seat access, WirePlumber rules, EVO 8 split,
+#     rate defaults, default sink/source. Applied by default; this is the
+#     "pro audio pack" that makes the graph reliable under the mixer.
+# -----------------------------------------------------------------------------
+if ((NO_FOUNDATION)); then
+  ok "audio foundation skipped (--no-foundation)"
+elif [[ -x "$SCRIPT_DIR/foundation/audio-foundation.sh" ]]; then
+  FOUNDATION_ARGS=(--apply)
+  if ((YES)) || ask "Apply the audio foundation and restart PipeWire now?" y; then
+    FOUNDATION_ARGS+=(--restart)
+  fi
+  if bash "$SCRIPT_DIR/foundation/audio-foundation.sh" "${FOUNDATION_ARGS[@]}"; then
+    ok "audio foundation applied"
+  else
+    warn "audio foundation reported a problem — run: mixbay-audio-foundation --status"
+  fi
+else
+  warn "foundation/audio-foundation.sh not found — audio foundation skipped"
 fi
 
 # -----------------------------------------------------------------------------

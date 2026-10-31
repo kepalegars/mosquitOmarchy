@@ -522,10 +522,8 @@ func (r *evoRender) panHalf() int   { _, ph := evoSecDim(r.spec); return ph }
 func (r *evoRender) maxPan() int    { return 2 }
 
 func evoMeterRows(spec drivers.Spec) int {
-	if spec.ID == drivers.DevEVO8 {
-		return 1
-	}
-	return 0
+	// EVO 4 and EVO 8 both expose USB monitor/capture streams now.
+	return 1
 }
 
 func (r *evoRender) sectionH() int { return r.maxPan()*2 + 5 + evoMeterRows(r.spec) }
@@ -641,7 +639,7 @@ func (r *evoRender) phantomInd(row, x int, on bool) {
 
 func (r *evoRender) drawTabBar(row, cx, sectionW int) {
 	const ctrlLabel, mixLabel, levLabel = " CONTROLS ", " MIXER ", " LEVELS "
-	levels := r.spec.ID == drivers.DevEVO8
+	levels := true
 	lineAttr := evoStyle{col: cAccent}
 	// Like the mosquito Close buttons: the selected tab is an accent block
 	// with white text. Text stays pure white in both states (no grey).
@@ -665,18 +663,28 @@ func (r *evoRender) drawTabBar(row, cx, sectionW int) {
 		r.put(levX, row, levLabel, levAttr)
 	}
 	// Connection dot + device name, right-aligned. Offline is always accent
-	// (hollow); online pulses accent <-> white.
+	// (hollow); online pulses accent <-> white. The name carries the Mixbay
+	// integration version, and blinks red while the card is offline.
 	name := r.spec.Display
+	if r.spec.Version != "" {
+		name += " - " + r.spec.Version
+	}
 	dot := "● "
 	dotAttr := evoStyle{col: cAccent}
+	nameAttr := evoStyle{col: cAccent, bold: true}
 	if !r.m.status.Online {
 		dot, dotAttr = "○ ", evoStyle{col: cAccent}
+		// Only the hollow connection indicator blinks; the name and its
+		// version stay readable.
+		if r.u.dotLit {
+			dotAttr.col = cRed
+		}
 	} else if !r.u.dotLit {
 		dotAttr = evoVal
 	}
 	rightX := cx + sectionW - len([]rune(name)) - len([]rune(dot))
 	r.put(rightX, row, dot, dotAttr)
-	r.put(rightX+len([]rune(dot)), row, name, evoStyle{col: cAccent, bold: true})
+	r.put(rightX+len([]rune(dot)), row, name, nameAttr)
 	// The panel's top separator is accent; the active tab sits on a gap in it.
 	r.c.repeat(cx, row+1, sectionW, boxH, lineAttr)
 	activeX, activeW := cx+1, len([]rune(ctrlLabel))
@@ -1268,7 +1276,7 @@ func (m model) evoView() string {
 	r.drawTabBar(row, cx, mixerW)
 	row += 2
 	var nav, set []evoHint
-	levels := m.evo.window == evoWinLevels && spec.ID == drivers.DevEVO8
+	levels := m.evo.window == evoWinLevels
 	switch {
 	case levels:
 		row = r.drawLevelsBody(row, cx, mixerW)
@@ -1566,9 +1574,6 @@ func (m *model) evoEnter() {
 // old spec's section list against the new layout was a hard panic.
 func (m *model) evoRebindSpec() {
 	m.evo.spec = m.status.Spec
-	if m.evo.window == evoWinLevels && m.evo.spec.ID != drivers.DevEVO8 {
-		m.evo.window = evoWinControls
-	}
 	if groups := len(evoGroups(m.evo.spec)); m.evo.sub >= groups {
 		m.evo.sub = 0
 	}
@@ -1611,7 +1616,7 @@ func (m *model) evoKey(k string) tea.Cmd {
 	if u.mode != 0 {
 		return m.evoPickerKey(k)
 	}
-	if u.window == evoWinLevels && u.spec.ID == drivers.DevEVO8 {
+	if u.window == evoWinLevels {
 		return m.evoLevelsKey(k)
 	}
 	switch k {
@@ -1661,12 +1666,7 @@ func (m *model) evoKey(k string) tea.Cmd {
 			u.window = evoWinMixer
 			m.push(scrMixer)
 		case evoWinMixer:
-			if u.spec.ID == drivers.DevEVO8 {
-				u.window = evoWinLevels
-			} else {
-				u.window = evoWinControls
-				m.pop()
-			}
+			u.window = evoWinLevels
 		default:
 			u.window = evoWinControls
 			if m.top() == scrMixer {

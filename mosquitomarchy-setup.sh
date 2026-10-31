@@ -772,6 +772,12 @@ st_achraff(){
   [[ "$(omarchy theme current 2>/dev/null || true)" == "Achraff 67" ]] \
     && echo ok || echo partial
 }
+st_reboot_windows(){
+  # System menu entry + helper; no root, no system file.
+  [[ -x "$HOME/.local/bin/reboot-into-windows" ]] || { echo missing; return; }
+  grep -qF '"system.reboot-windows"' "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc" 2>/dev/null \
+    && echo ok || echo partial
+}
 st_touchpad(){
   # Touchpad: generated per-device file + require registered in hyprland.lua.
   # When the generated file asks for kinetic scrolling, the plugin must be loaded.
@@ -991,6 +997,8 @@ st_mixbay(){
   [[ -x "$BIN_DIR/mosquito-mixbay" && -x "$BIN_DIR/mosquito-mixbay-tui" ]] || { echo missing; return; }
   grep -qF "mosquito-mixbay-tui-setup" "$HOME/.config/hypr/hyprland.lua" 2>/dev/null \
     || { echo "partial:missing hyprland float rule"; return; }
+  [[ -f "$HOME/.config/wireplumber/wireplumber.conf.d/50-mixbay-interfaces.conf" ]] \
+    || { echo "partial:missing audio foundation"; return; }
   echo ok
 }
 st_mosquitomarchy(){
@@ -1062,25 +1070,26 @@ st_extracto(){
   [[ -f $h ]] && grep -qF -- "extracto-setup" "$h" \
     && { [[ -f $d ]] && grep -q '^NoDisplay=true' "$d" && grep -q '^Exec=' "$d"; } && echo ok || echo partial
 }
+st_douze(){
+  # douze daemon + Omarchy360 plugin + udev rule. The PipeWire split is
+  # optional (the card must be connected in Pro Audio), so it is not fatal.
+  [[ -f "$HOME/.local/share/douze/tools/douze.py" ]] || { echo missing; return; }
+  python3 -c 'import usb.core' >/dev/null 2>&1 || { echo partial; return; }
+  [[ -f /etc/udev/rules.d/70-douze.rules ]] || { echo partial; return; }
+  systemctl --user is-enabled --quiet douze 2>/dev/null || { echo partial; return; }
+  [[ -d "$HOME/.config/omarchy/plugins/fenrirrhogar.omarchy360" ]] \
+    && echo ok || echo partial
+}
+st_tidal(){ pkg_has tidal-hifi-tidaluna && echo ok || echo missing; }
 st_apps(){
-  # "apps" module: no single binary — reports how many apps/tuis from the
-  # catalogs (per type) are not installed (webapps are tracked by omarchy).
-  local catfiles=("$SCRIPT_DIR/scripts/apps/gui/guis.catalog" "$SCRIPT_DIR/scripts/apps/tui-tools/tuis.catalog")
-  local found=0 f
-  for f in "${catfiles[@]}"; do [[ -f $f ]] && found=1; done
+  # "apps" module: no single binary — reports how many TUIs are not installed.
+  local found=0 f pkg missing=0
+  while IFS= read -r f; do
+    found=1
+    pkg="$(tui_pkg "$f")"
+    [[ -n $pkg ]] && { pkg_has "$pkg" || missing=$((missing+1)); }
+  done < <(tui_scripts)
   ((found)) || { echo missing; return; }
-  local missing=0 kind name line
-  for f in "${catfiles[@]}"; do
-    [[ -f $f ]] || continue
-    while IFS= read -r line || [[ -n $line ]]; do
-      line="${line%%$'\r'}"
-      [[ -z $line || $line == \#* ]] && continue
-      kind="${line%%[ |]*}"
-      [[ $kind == APP || $kind == TUI ]] || continue
-      name="${line#*[ ]}"; name="${name%%|*}"
-      pkg_has "$name" || missing=$((missing+1))
-    done < "$f"
-  done
   ((missing == 0)) && echo ok || echo "partial:$missing"
 }
 
@@ -1101,7 +1110,8 @@ MODULES=(
   "signal:Signal Desktop — official Electron client + autostart minimized to tray, hide menu bar, menu entry Signal, login autostart"
   "betterbird:Betterbird — Thunderbird fork + system tray (close/minimise to tray), starts in the tray at login, main window tiled + popups at the pointer"
   "whatsapp-native:WhatsApp desktop client (self-contained Electron wrapper) — silent visual notifications, tray + close-to-tray, no menu bar, menu entry WhatsApp, login autostart"
-  "apps:Apps, tuis & webapps (catalog per type gui/tui/webapps + backup selection via setup-apps.sh)"
+  "tidal:TIDAL Hi-Fi (TidaLuna) — native Tidal client, menu bar hidden and SUPER+SHIFT+M bound to it"
+  "apps:Apps, tuis (one folder + setup script per entry in scripts/TUIs)"
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
   "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships."
   "battery-management:Battery management — formerly ultra-save, a CPU/power-capping mode; abandoned for a simple script that colors the battery icon by power profile"
@@ -1110,6 +1120,7 @@ MODULES=(
   "taskq:TaskQ — bar-based task list with deadlines"
   "process-killer:Process Killer — inspect and stop running processes"
   "better-pip:Better PiP — picture-in-picture windows as plain floating windows (never pinned, stays on its workspace): aspect ratio kept, grabbable border, idle inhibitor while open"
+  "reboot-into-windows:Reboot into Windows — System menu entry: finds the UEFI Windows Boot Manager, 15 s yes/no countdown, arms BootNext for the next boot only, then reboots"
   "mega-caffeine:Coffee mode (mega-caffeine) — laptop closed without sleeping, red tint, natural-language durations"
   "brightness:Display brightness — Omarchy default step, 0% = screen off, and a silent 1% ramp on held keys for smoother steps (no run-on beyond the current step)"
   "achraff:'Achraff 67' visual theme + unlock/Plymouth logo (lock screen left stock)"
@@ -1121,12 +1132,13 @@ MODULES=(
   "superfile:SuperFile — terminal file manager (menu entry + keybind + Omarchy theme)"
   "flea:Flea — fastest GUI file manager; installs flea (Omarchy) or flea-bin (AUR) and makes it the default explorer/chooser"
   "extracto:Simple custom install script for file-roller — restores Nautilus' Extract Here / Create Archive (file-roller + 7zip + unrar, file-roller prompts for the password itself); no desktop entry, no Nautilus script"
+  "douze:SSL 12 control + Omarchy360 mixer — douze daemon (USB reverse-engineering, local HTTP API), udev access, user service, PipeWire playback-pair split, no-suspend rule, and the Omarchy360 bar/overlay plugin"
   "zen:Zen Browser config — plugins + settings + chrome theme (deployed into the active profile)"
   "pipewire-settings:PipeWire sample rate + buffer size — panel in the bar, force and persist. Installs no package: it only talks to the PipeWire you already have"
   "jamjamjam-plugin:JamJamJam bar plugin — key/BPM/chord detection, chord progression grid, guitar fretboard scale, MIDI chord mode + synth"
   "live-mode:Live mode — performance session mode (stay-awake + thermal guard + routing tool in scratchpad: live-mode / live-mode-watch / live-mode-root + its row in Setup > mosquito + QML overlay)"
   "levels-guard:Levels Guard — native volume panel clone + media-key guard for the EVO (off unless the user opts in)"
-  "mixbay:mosquitomixbay — USB audio bay (EVO 8/4 full control via evo_raw kmod, Fireface UCX II / UGM192 / Quantum ES 4 ALSA level 1 + persistent demo without hardware; live mode parks it in the scratchpad)"
+  "mixbay:mosquitomixbay — USB audio bay (EVO 8/4 full control via evo_raw kmod, SSL 12 via douze, Fireface UCX II / UGM192 ALSA level 1, beta interfaces + persistent demo; live mode parks it in the scratchpad)"
 )
 
 # ───────────────────────── Quick system fixes ─────────────────────────
@@ -1150,7 +1162,7 @@ FIXES=(
 # TWEAKS = preferences: the desktop works, the user just wants it different
 #          (appearance, window behaviour, de-cluttering). Purely optional.
 # Both are idempotent, both use the same multi-select + run machinery; only the
-# catalog and the on-disk folder differ (scripts/fixes/ vs scripts/tweaks/).
+# catalog and the on-disk folder differ (scripts/Fixes/ vs scripts/Tweaks/).
 TWEAKS=(
   "keepassxc-window:KeePassXC window floats/centers in Hyprland instead of misbehaving when tiled next to other windows"
   "tui-theme:Force-adapt the TUIs' theme to the current Omarchy theme (regenerate the palette + rebuild both Go TUIs; the dynamic theme already ships with tui-kit)"
@@ -1193,14 +1205,14 @@ fix_category(){
 run_fix(){ # single fix by id
   local id="$1"
   case $id in
-    omarchy-menu) bash "$SCRIPT_DIR/scripts/fixes/fix-omarchy-menu.sh" ;;
-    hyprland-crash) bash "$SCRIPT_DIR/scripts/fixes/fix-hyprland-crash.sh" ;;
-    ableton-wine-scroll) bash "$SCRIPT_DIR/scripts/fixes/fix-wine-scroll.sh" ;;
-    ableton-fullscreen) bash "$SCRIPT_DIR/scripts/fixes/fix-ableton-fullscreen.sh" ;;
-    1px-seam) bash "$SCRIPT_DIR/scripts/fixes/fix-1px-seam.sh" ;;
-    omarchy-bar) bash "$SCRIPT_DIR/scripts/fixes/fix-omarchy-bar.sh" ;;
-    bar-center-anchor) bash "$SCRIPT_DIR/scripts/fixes/fix-bar-center-anchor.sh" ;;
-    bluetooth) bash "$SCRIPT_DIR/scripts/fixes/fix-bluetooth.sh" ;;
+    omarchy-menu) bash "$SCRIPT_DIR/scripts/Fixes/fix-omarchy-menu.sh" ;;
+    hyprland-crash) bash "$SCRIPT_DIR/scripts/Fixes/fix-hyprland-crash.sh" ;;
+    ableton-wine-scroll) bash "$SCRIPT_DIR/scripts/Fixes/fix-wine-scroll.sh" ;;
+    ableton-fullscreen) bash "$SCRIPT_DIR/scripts/Fixes/fix-ableton-fullscreen.sh" ;;
+    1px-seam) bash "$SCRIPT_DIR/scripts/Fixes/fix-1px-seam.sh" ;;
+    omarchy-bar) bash "$SCRIPT_DIR/scripts/Fixes/fix-omarchy-bar.sh" ;;
+    bar-center-anchor) bash "$SCRIPT_DIR/scripts/Fixes/fix-bar-center-anchor.sh" ;;
+    bluetooth) bash "$SCRIPT_DIR/scripts/Fixes/fix-bluetooth.sh" ;;
     *) err "Unknown fix: $id"; return 1 ;;
   esac
 }
@@ -1208,12 +1220,12 @@ run_fix(){ # single fix by id
 run_tweak(){ # single tweak by id
   local id="$1"
   case $id in
-    keepassxc-window) bash "$SCRIPT_DIR/scripts/tweaks/tweak-keepassxc-window.sh" ;;
-    tui-theme) bash "$SCRIPT_DIR/scripts/tweaks/tweak-tui-theme.sh" ;;
-    wine-menu) bash "$SCRIPT_DIR/scripts/tweaks/tweak-wine-menu.sh" ;;
-    terminal-padding) bash "$SCRIPT_DIR/scripts/tweaks/tweak-terminal-padding.sh" ;;
-    wine-theme) bash "$SCRIPT_DIR/scripts/tweaks/tweak-wine-theme.sh" ;;
-    colors-unifier) bash "$SCRIPT_DIR/scripts/tweaks/tweak-colors-unifier.sh" ;;
+    keepassxc-window) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-keepassxc-window.sh" ;;
+    tui-theme) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-tui-theme.sh" ;;
+    wine-menu) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-wine-menu.sh" ;;
+    terminal-padding) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-terminal-padding.sh" ;;
+    wine-theme) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-wine-theme.sh" ;;
+    colors-unifier) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-colors-unifier.sh" ;;
     *) err "Unknown tweak: $id"; return 1 ;;
   esac
 }
@@ -1223,10 +1235,10 @@ run_tweak(){ # single tweak by id
 run_tweak_remove(){ # single tweak removal by id
   local id="$1"
   case $id in
-    keepassxc-window) bash "$SCRIPT_DIR/scripts/tweaks/tweak-keepassxc-window.sh" --remove ;;
-    terminal-padding) bash "$SCRIPT_DIR/scripts/tweaks/tweak-terminal-padding.sh" --remove ;;
-    wine-theme) bash "$SCRIPT_DIR/scripts/tweaks/tweak-wine-theme.sh" --remove ;;
-    colors-unifier) bash "$SCRIPT_DIR/scripts/tweaks/tweak-colors-unifier.sh" --remove ;;
+    keepassxc-window) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-keepassxc-window.sh" --remove ;;
+    terminal-padding) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-terminal-padding.sh" --remove ;;
+    wine-theme) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-wine-theme.sh" --remove ;;
+    colors-unifier) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-colors-unifier.sh" --remove ;;
     *) return 1 ;;
   esac
 }
@@ -1291,9 +1303,12 @@ handbrake) st_handbrake ;;
     superfile) st_superfile ;;
     flea) st_flea ;;
     extracto) st_extracto ;;
+    douze) st_douze ;;
+    tidal) st_tidal ;;
     zen) st_zen ;;
     jamjamjam-plugin) st_jamjamjam_plugin ;;
     better-pip) st_better_pip ;;
+    reboot-into-windows) st_reboot_windows ;;
     pipewire-settings) st_pipewire_settings ;;
     live-mode) st_live_mode ;;
     levels-guard) st_levels_guard ;;
@@ -1309,63 +1324,50 @@ handbrake) st_handbrake ;;
 # script itself, docs, README…).
 module_of_path(){
   case "$1" in
-    scripts/apps/reaper/*)                                   echo reaper ;;
-    scripts/apps/bitwig/*)                                  echo bitwig ;;
-        scripts/windows-vm/*)                                    echo windows-vm ;;
-    scripts/macos-vm/*)                                      echo macos-vm ;;
-    scripts/omarchy-vm/*)                                    echo omarchy-vm ;;
-    scripts/apps/ableton/*)                                  echo ableton ;;
-    scripts/apps/guitarpro/*)                                echo guitarpro ;;
-    # davinci-resolve, not davinci: that is the id in MODULES/CATEGORIES, and
-    # the caller compares this output against those ids. Returning "davinci"
-    # matched nothing, so a change to any scripts/apps/davinci/* file could
-    # never be attributed to the module and silently never showed up as an
-    # available update.
-    scripts/apps/davinci/*)                                  echo davinci-resolve ;;
-    scripts/mosquitomarchy-update/*)                         echo mosquitomarchy-update ;;
-    scripts/apps/ableton-move-*|scripts/apps/ableton-move/*) echo ableton-move-manager ;;
-    scripts/apps/handbrake/*)                                echo handbrake ;;
-    scripts/apps/signal/*)                                   echo signal ;;
-    scripts/apps/betterbird/*)                               echo betterbird ;;
-    scripts/apps/whatsapp-native/*)                          echo whatsapp-native ;;
-    scripts/apps/extracto/*)                                 echo extracto ;;
-    scripts/apps/gui/setup-flea.sh)                          echo flea ;;
-    scripts/apps/gui/*|scripts/apps/tui-tools/*|scripts/apps/webapps/*|\
-    scripts/apps/setup-apps.sh|scripts/apps/uninstall-apps.sh|scripts/lib/common.bash) echo apps ;;
-    scripts/LLM/*)                                           echo ollama ;;
-    scripts/plugins/battery-management/*)                     echo battery-management ;;
-    scripts/plugins/omaskpinpass/*)                           echo omaskpinpass ;;
-    scripts/plugins/omarchy-downloads/*)                      echo downloads ;;
-    scripts/mosquito/mega-caffeine/*)                        echo mega-caffeine ;;
-    scripts/plugins/brightness/*)                            echo brightness ;;
-    scripts/plugins/better-pip/*)                            echo better-pip ;;
-    scripts/theme/*)                                         echo achraff ;;
-    scripts/plugins/touchpad/*)                             echo touchpad ;;
-    scripts/plugins/mx-master/*)                             echo mx-master ;;
-    scripts/apps/hyprmod/*)                                 echo apps ;;
-    scripts/fixes/fix-ableton-fullscreen.sh)                 echo ableton-fullscreen ;;
-    scripts/fixes/fix-bar-center-anchor.sh)                 echo bar-center-anchor ;;
-    scripts/fixes/fix-bluetooth.sh)                         echo bluetooth ;;
-    scripts/apps/keepassxc/*)                                echo keepassxc ;;
-    scripts/mosquitomarchy-update/*)                            echo mosquitomarchy-update ;;
-    scripts/apps/superfile/*)                                echo superfile ;;
-    scripts/apps/zen/*)                                      echo zen ;;
-    scripts/mosquito/jamjamjam/*)                             echo jamjamjam-plugin ;;
-    scripts/mosquito/audio-stack/apm/*)                        echo audio-plugin-manager ;;
-    scripts/mosquito/audio-stack/mixbay/*)                     echo mixbay ;;
-    scripts/mosquito/audio-stack/levels-guard/*)               echo levels-guard ;;
-    scripts/mosquito/audio-stack/live-mode/*)                  echo live-mode ;;
-    scripts/mosquito/audio-stack/pipewire/*)                   echo pipewire-settings ;;
-    scripts/mosquito/audio-stack/*)                            echo audio ;;
-    # The WHOLE manager tree (deployer, backend, Go TUI, skills): any change
-    # here must offer the mosquitomarchy module for update, otherwise the
-    # installed TUI is never rebuilt. This used to name three files only, so
-    # a change to tui-go/ matched nothing and silently never showed up as an
-    # available update (fresh clones were fine — only updates went stale).
-    scripts/apps/mosquitomarchy/*) echo mosquitomarchy ;;
-    # Shared Go kit + lib: the manager TUI builds against these, so a change
-    # here rebuilds it too. (Must stay AFTER scripts/apps/... and the
-    # scripts/lib/common.bash -> apps rule above: first match wins.)
+    scripts/VMs/windows-vm/*) echo windows-vm ;;
+    scripts/VMs/macos-vm/*)   echo macos-vm ;;
+    scripts/VMs/omarchy-vm/*) echo omarchy-vm ;;
+    scripts/mosquitomarchy\ tui/update/*) echo mosquitomarchy-update ;;
+    scripts/Apps/reaper/*)      echo reaper ;;
+    scripts/Apps/bitwig/*)      echo bitwig ;;
+    scripts/Apps/ableton/*)     echo ableton ;;
+    scripts/Apps/guitarpro/*)   echo guitarpro ;;
+    scripts/Apps/davinci/*)     echo davinci-resolve ;;
+    scripts/Apps/handbrake/*)   echo handbrake ;;
+    scripts/Apps/signal/*)      echo signal ;;
+    scripts/Apps/betterbird/*)  echo betterbird ;;
+    scripts/Apps/whatsapp-native/*) echo whatsapp-native ;;
+    scripts/Apps/extracto/*)    echo extracto ;;
+    scripts/Apps/douze/*)       echo douze ;;
+    scripts/Apps/tidal/*)       echo tidal ;;
+    scripts/Apps/flea/*)        echo flea ;;
+    scripts/Apps/keepassxc/*)   echo keepassxc ;;
+    scripts/Apps/superfile/*)   echo superfile ;;
+    scripts/Apps/zen/*)         echo zen ;;
+    scripts/Apps/*|scripts/TUIs/*) echo apps ;;
+    scripts/lame/*)             echo ollama ;;
+    scripts/Plugins/battery-management/*) echo battery-management ;;
+    scripts/Plugins/omaskpinpass/*)       echo omaskpinpass ;;
+    scripts/Plugins/omarchy-downloads/*)  echo downloads ;;
+    scripts/Plugins/brightness/*)         echo brightness ;;
+    scripts/Plugins/better-pip/*)         echo better-pip ;;
+    scripts/Plugins/reboot-into-windows/*) echo reboot-into-windows ;;
+    scripts/Plugins/touchpad/*)           echo touchpad ;;
+    scripts/Plugins/mx-master/*)          echo mx-master ;;
+    scripts/Themes/*)                     echo achraff ;;
+    scripts/Fixes/fix-ableton-fullscreen.sh) echo ableton-fullscreen ;;
+    scripts/Fixes/fix-bar-center-anchor.sh)  echo bar-center-anchor ;;
+    scripts/Fixes/fix-bluetooth.sh)          echo bluetooth ;;
+    scripts/mosquito/mega-caffeine/*)  echo mega-caffeine ;;
+    scripts/mosquito/move-manager/*)   echo ableton-move-manager ;;
+    scripts/mosquito/jamjamjam/*)      echo jamjamjam-plugin ;;
+    scripts/mosquito/audio-stack/apm/*)          echo audio-plugin-manager ;;
+    scripts/mosquito/audio-stack/mixbay/*)       echo mixbay ;;
+    scripts/mosquito/audio-stack/levels-guard/*) echo levels-guard ;;
+    scripts/mosquito/audio-stack/live-mode/*)    echo live-mode ;;
+    scripts/mosquito/audio-stack/pipewire/*)     echo pipewire-settings ;;
+    scripts/mosquito/audio-stack/*)              echo audio ;;
+    scripts/mosquitomarchy\ tui/*) echo mosquitomarchy ;;
     scripts/lib/*) echo mosquitomarchy ;;
     bootstrap.sh) echo mosquitomarchy ;;
   esac
@@ -1552,46 +1554,21 @@ reaper_portable_root(){
   return 1
 }
 
-# ─── Apps / tuis / webapps ("apps" module) ───
-# Modular catalogs: one per type under apps/gui, apps/tui-tools, apps/webapps.
-# Note: catalog PATHS use CAT_FILE_* — CAT_APP/CAT_TUI/CAT_WEB are the loaded
-# entry ARRAYS (a name collision would clobber the paths).
-CAT_FILE_GUI="$SCRIPT_DIR/scripts/apps/gui/guis.catalog"
-CAT_FILE_TUI="$SCRIPT_DIR/scripts/apps/tui-tools/tuis.catalog"
-CAT_FILE_WEB="$SCRIPT_DIR/scripts/apps/webapps/webapps.catalog"
+# ─── TUIs ("apps" module) ───
+# scripts/TUIs is the list: one setup-<name>.sh per entry, with "# pkg:" and
+# "# desc:" header lines. CAT_TUI keeps the old "pkg|desc" shape for callers.
 
-# Loads the three catalogs into CAT_APP / CAT_TUI / CAT_WEB.
 load_catalog(){
-  CAT_APP=(); CAT_TUI=(); CAT_WEB=()
-  local line kind f
-  for f in "$CAT_FILE_GUI" "$CAT_FILE_TUI" "$CAT_FILE_WEB"; do
-    [[ -f $f ]] || continue
-    while IFS= read -r line || [[ -n $line ]]; do
-      line="${line%%$'\r'}"
-      [[ -z $line || $line == \#* ]] && continue
-      kind="${line%%[ |]*}"
-      case $kind in
-        APP) CAT_APP+=("${line#*[ ]}") ;;
-        TUI) CAT_TUI+=("${line#*[ ]}") ;;
-        WEB) CAT_WEB+=("${line#*[ ]}") ;;
-      esac
-    done < "$f"
-  done
-  [[ -f $CAT_FILE_GUI || -f $CAT_FILE_TUI || -f $CAT_FILE_WEB ]]
+  CAT_APP=(); CAT_TUI=(); CAT_WEB=(); CAT_PLUG=()
+  local f pkg desc
+  while IFS= read -r f; do
+    pkg="$(tui_pkg "$f")"; desc="$(tui_desc "$f")"
+    [[ -n $pkg ]] && CAT_TUI+=("$pkg|$desc")
+  done < <(tui_scripts)
+  return 0
 }
 
-is_webapp_installed(){
-  local name="$1" url="${2:-}"
-  if [[ $url == native:* ]]; then
-    pkg_has "${url#native:}"
-    return
-  fi
-  [[ -f "$HOME/.local/share/applications/$name.desktop" ]] \
-    && grep -qE '^Exec=.*(omarchy-launch-webapp|omarchy-webapp-handler)' "$HOME/.local/share/applications/$name.desktop"
-}
-
-# Loads the apps selection of the most recent backup (if it has one) → PREV_APP /
-# PREV_TUI / PREV_WEB: arrays of NAMES (first field before "|").
+# Loads the TUI selection of the most recent backup (if it has one) → PREV_TUI.
 # Returns 0 if a non-empty selection was found, 1 otherwise.
 load_previous_selection(){
   PREV_APP=(); PREV_TUI=(); PREV_WEB=()
@@ -1605,12 +1582,10 @@ load_previous_selection(){
   for l in "${lines[@]:-}"; do
     kind="${l%% *}"; rest="${l#* }"; name="${rest%%|*}"
     case $kind in
-      APP) PREV_APP+=("$name") ;;
       TUI) PREV_TUI+=("$name") ;;
-      WEB) PREV_WEB+=("$name") ;;
     esac
   done
-  [[ ${#PREV_APP[@]} -gt 0 || ${#PREV_TUI[@]} -gt 0 || ${#PREV_WEB[@]} -gt 0 ]]
+  [[ ${#PREV_TUI[@]} -gt 0 ]]
 }
 
 # The ticked keys of the Backup content screen, as saved by the TUI the moment a
@@ -1645,15 +1620,12 @@ load_saved_selection(){
   return 0
 }
 
-# Detects the catalog entries CURRENTLY installed → INSTALLED_APP / _TUI / _WEB
+# Detects the TUIs CURRENTLY installed → INSTALLED_TUI ("pkg|desc").
 detect_installed_apps(){
+  load_catalog
   INSTALLED_APP=(); INSTALLED_TUI=(); INSTALLED_WEB=()
-  local e name
-  for e in "${CAT_APP[@]:-}"; do name="${e%%|*}"; pkg_has "$name" && INSTALLED_APP+=("$e"); done
-  for e in "${CAT_TUI[@]:-}"; do name="${e%%|*}"; pkg_has "$name" && INSTALLED_TUI+=("$e"); done
-  for e in "${CAT_WEB[@]:-}"; do
-    name="${e%%|*}"; is_webapp_installed "$name" "$(echo "$e" | cut -d'|' -f2)" && INSTALLED_WEB+=("$e")
-  done
+  local e
+  for e in "${CAT_TUI[@]:-}"; do pkg_has "${e%%|*}" && INSTALLED_TUI+=("$e"); done
 }
 
 # Multiple selection (gum multi-select with tab/space) of an array of entries.
@@ -1713,8 +1685,8 @@ multi_select(){
   fi
 }
 
-# Builds apps.selected for the backup: selection (interactive or full-with-y from
-# the installed catalog) of apps + tuis + webapps.
+# Builds apps.selected for the backup: the installed TUIs, interactive or all
+# with -y. Each line is a TUI key the Setup tree already speaks.
 backup_apps_selection(){
   # A pre-made selection (the Go TUI's checkbox tree) takes precedence: copy
   # it verbatim and skip every prompt.
@@ -1723,94 +1695,41 @@ backup_apps_selection(){
     ok "apps.selected saved from the TUI selection ($(grep -vcE '^#|^[[:space:]]*$' "$1/apps.selected" 2>/dev/null || echo 0) entries)"
     return 0
   fi
-  load_catalog || { warn "apps catalogs missing (gui/guis.catalog, tui/tuis.catalog, webapps/webapps.catalog) — apps not backed up."; return 1; }
   detect_installed_apps
-  local total=$(( ${#INSTALLED_APP[@]} + ${#INSTALLED_TUI[@]} + ${#INSTALLED_WEB[@]} ))
-  [[ $total == 0 ]] && { warn "No catalog app/tui/webapp installed — nothing to back up."; return 1; }
+  ((${#INSTALLED_TUI[@]})) || { warn "No TUI installed — nothing to back up."; return 1; }
 
-  # Default pre-checked selection: the previous backup's selection (if it
-  # exists) ∩ still installed, + sone-bin (always). Without a previous backup →
-  # everything detected is pre-checked. Apps also found on the system
-  # (detected but outside this set) stay unchecked.
-  local had_prev=0 name _e
+  # Pre-check the previous backup's TUIs that are still installed; otherwise
+  # everything detected is pre-checked.
+  local had_prev=0 name
   load_previous_selection && had_prev=1
-  local -a pre_app=() pre_tui=() pre_web=()
+  local -a pre_tui=()
   if ((had_prev)); then
-    for name in "${PREV_APP[@]:-}"; do pkg_has "$name" && pre_app+=("$name"); done
     for name in "${PREV_TUI[@]:-}"; do pkg_has "$name" && pre_tui+=("$name"); done
-    for name in "${PREV_WEB[@]:-}"; do
-      local _u=""
-      for _e in "${CAT_WEB[@]:-}"; do
-        [[ ${_e%%|*} == "$name" ]] && { _u="$(echo "$_e" | cut -d'|' -f2)"; break; }
-      done
-      is_webapp_installed "$name" "$_u" && pre_web+=("$name")
-    done
   else
-    for name in "${INSTALLED_APP[@]:-}"; do pre_app+=("${name%%|*}"); done
     for name in "${INSTALLED_TUI[@]:-}"; do pre_tui+=("${name%%|*}"); done
-    for name in "${INSTALLED_WEB[@]:-}"; do pre_web+=("${name%%|*}"); done
-  fi
-  # sone always pre-checked when installed.
-  if pkg_has sone-bin; then
-    local has_sone=0 n2
-    for n2 in "${pre_app[@]:-}"; do [[ $n2 == sone-bin ]] && has_sone=1; done
-    ((has_sone == 0)) && pre_app+=("sone-bin")
   fi
 
-  # No apps catalog? nothing is written.
+  SELECTED_PICK=()
   local sel_file="$1/apps.selected"
-  : > "$sel_file"
-  { echo "# apps.selected — apps/tuis/webapps selection saved by mosquitomarchy-setup.sh (backup)"
-    echo "# readable by apps/setup-apps.sh (all checked by default)."
+  { echo "# apps.selected — TUIs selection saved by mosquitomarchy-setup.sh (backup)"
+    echo "# re-installed by the Setup > TUIs tree."
   } > "$sel_file"
 
+  if ((YES)); then
+    local e; for e in "${INSTALLED_TUI[@]}"; do SELECTED_PICK+=("$e"); done
+  else
+    if ask "Save the installed TUIs (${#INSTALLED_TUI[@]})? (multiple choice — $((${#pre_tui[@]})) pre-checked)" y; then
+      multi_select "TUIs to save (Tab/x = toggle, Enter = confirm):" Tui INSTALLED_TUI "${pre_tui[@]}"
+    fi
+  fi
   local n=0
-  # Apps
-  if ((${#INSTALLED_APP[@]})); then
-    if ((YES)); then
-      local e; for e in "${INSTALLED_APP[@]}"; do SELECTED_PICK+=("$e"); done
-    else
-      if ask "Save the installed APPS (${#INSTALLED_APP[@]})? (multiple choice — $((${#pre_app[@]})) pre-checked)" y; then
-        multi_select "Apps to save (Tab/x = toggle, Enter = confirm):" App INSTALLED_APP "${pre_app[@]}"
-      fi
-    fi
-    for e in "${SELECTED_PICK[@]:-}"; do [[ -z $e ]] && continue; echo "APP ${e%%|*}" >> "$sel_file"; n=$((n+1)); done
-    SELECTED_PICK=()
-  fi
-  # Tuis
-  if ((${#INSTALLED_TUI[@]})); then
-    if ((YES)); then
-      local e2; for e2 in "${INSTALLED_TUI[@]}"; do SELECTED_PICK+=("$e2"); done
-    else
-      if ask "Save the installed TUIS (${#INSTALLED_TUI[@]})? (multiple choice — $((${#pre_tui[@]})) pre-checked)" y; then
-        multi_select "Tuis to save (Tab/x = toggle, Enter = confirm):" Tui INSTALLED_TUI "${pre_tui[@]}"
-      fi
-    fi
-    for e in "${SELECTED_PICK[@]:-}"; do [[ -z $e ]] && continue; echo "TUI ${e%%|*}" >> "$sel_file"; n=$((n+1)); done
-    SELECTED_PICK=()
-  fi
-  # Webapps (always saved if present, multiple choice)
-  if ((${#INSTALLED_WEB[@]})); then
-    if ((YES)); then
-      local e3; for e3 in "${INSTALLED_WEB[@]}"; do SELECTED_PICK+=("$e3"); done
-    else
-      if ask "Save the Omarchy WEBAPPS (${#INSTALLED_WEB[@]})? (multiple choice — $((${#pre_web[@]})) pre-checked)" y; then
-        multi_select "Webapps to save (Tab/x = toggle, Enter = confirm):" Web INSTALLED_WEB "${pre_web[@]}"
-      fi
-    fi
-    for e in "${SELECTED_PICK[@]:-}"; do
-      # WEB name|url|icon
-      [[ -z $e ]] && continue
-      echo "WEB $e" >> "$sel_file"; n=$((n+1))
-    done
-    SELECTED_PICK=()
-  fi
+  for e in "${SELECTED_PICK[@]:-}"; do [[ -z $e ]] && continue; echo "TUI ${e%%|*}" >> "$sel_file"; n=$((n+1)); done
 
   if ((n == 0)); then
-    warn "No app/tui/webapp selected — apps.selected empty (apps module inactive)."
+    warn "No TUI selected — apps.selected empty."
     rm -f "$sel_file"
   else
-    ok "apps.selected ($n entries) — for reinstall via apps/setup-apps.sh"
+    ok "apps.selected ($n TUIs)"
   fi
 }
 
@@ -2305,10 +2224,8 @@ do_backup(){
   pacman -Qqe > "$tmp/pkglist.txt" 2>/dev/null && ok "pkglist.txt ($(wc -l < "$tmp/pkglist.txt") packages)"
   pacman -Qqm > "$tmp/aurlist.txt" 2>/dev/null && ok "aurlist.txt ($(wc -l < "$tmp/aurlist.txt") AUR packages)"
 
-  # --- 3. Apps / tuis / webapps (selection for the "apps" module) ---
-  # Offers to save the list of apps/tuis (catalogs: guis.catalog, tuis.catalog) and of the
-  # installed Omarchy webapps. Fills apps.selected in the backup, which
-  # apps/setup-apps.sh re-reads to reinstall the same selection (all checked).
+  # --- 3. TUIs (selection for the "apps" module) ---
+  # Fills apps.selected in the backup; the Setup > TUIs tree re-reads it.
   backup_apps_selection "$tmp"
 
   # --- 2. Plugin folders (optional, offered only when there is something) ---
@@ -2718,7 +2635,7 @@ restore_flow(){
 # Personal data (VST plugins, Windows VM, Ollama models) is NOT deleted without
 # explicit confirmation (--purge). Uninstalled modules are recorded as excluded.
 BIN_DIR="$HOME/.local/bin"
-MOSQUITOMARCHY_APP_DIR="$SCRIPT_DIR/scripts/apps/mosquitomarchy"
+MOSQUITOMARCHY_APP_DIR="$SCRIPT_DIR/scripts/mosquitomarchy tui"
 APPS_DIR="$HOME/.local/share/applications"
 # Overridable so the TUI's Go tests can exercise menu install/strip against a
 # throwaway directory. Unset in normal use, this is the user's real menu.
@@ -2766,7 +2683,7 @@ remove_menu_blocks(){
 # PNG found in the repo is referenced as the icon asset.
 mosquitomarchy_icon(){
   local f
-  for f in "$SCRIPT_DIR/scripts/apps/ableton-move-manager/move-manager-icon.png" \
+  for f in "$SCRIPT_DIR/scripts/mosquito/move-manager/move-manager-icon.png" \
            "$SCRIPT_DIR/scripts/mosquito/audio-stack/apm/audio-plugin-manager-icon.png"; do
     [[ -f $f ]] && { printf '%s' "$f"; return 0; }
   done
@@ -2835,15 +2752,17 @@ $MENU_MOSQUITO_START
   "setup.mosquito.mixbay": {
     "icon": "\uf1de",
     "label": "Mixbay",
-    "description": "USB audio bay: Audient EVO 8/4 full control, RME Fireface UCX II, ESI UGM192, PreSonus Quantum ES 4, ALSA level 1, demo without hardware",
+    "description": "USB audio bay: Audient EVO 8/4 full control, SSL 12 via douze, RME/ESI ALSA level 1, beta interfaces, demo without hardware",
     "aliases": ["mixbay", "mixer", "evo", "bay", "mmb",
       "audient", "audient evo", "audient evo 8", "evo 8", "evo8",
       "audient evo 4", "evo 4", "evo4",
+      "ssl", "ssl 12", "ssl12", "douze", "omarchy360",
       "rme", "rme fireface", "fireface", "fireface ucx ii", "ucx ii", "ucx2",
-      "esi", "esi ugm192", "ugm192",
-      "presonus", "presonus quantum", "quantum es 4", "quantum es4", "quantum"],
-    "when": "test -x $BIN_DIR/mosquito-mixbay-tui",
-    "action": "omarchy-launch-or-focus-tui mosquito-mixbay-tui"
+      "esi", "esi ugm192", "ugm192", "beta", "add interface", "reverse engineering"],
+    "when": "test -x $BIN_DIR/mosquito-mixbay",
+    // Go through the dispatcher (not the TUI binary directly) so the
+    // first-connection onboarding prompt runs before the panel opens.
+    "action": "omarchy-launch-or-focus-tui --app-id=org.omarchy.mosquito-mixbay-tui mosquito-mixbay"
   },
   "setup.mosquito.jam": {
     "icon": "\uef4e",
@@ -2858,7 +2777,7 @@ MENU_EOF
 }
 
 # ── mosquitOmarchy Go TUI (dispatcher + binary + actions backend) ──
-# The Go/Bubble Tea TUI (scripts/apps/mosquitomarchy/tui-go/) replaced the old
+# The Go/Bubble Tea TUI (scripts/mosquitomarchy tui/tui-go/) replaced the old
 # gum-based launcher_menu; the menu entry now launches the `mosquitomarchy`
 # dispatcher, which opens the TUI in a terminal. Everything the menu entry
 # needs must therefore exist: the compiled TUI, the dispatcher next to it,
@@ -3230,7 +3149,7 @@ un_ableton(){
       # asks the official installer to remove runtime + prefix (--delete-prefix)
       # otherwise runtime only (--keep-prefix keeps Live, licenses and projects)
       local run=""
-      for f in "$HOME"/mosquitOmarchy/scripts/apps/ableton/install-ableton-latest.run; do
+      for f in "$HOME"/mosquitOmarchy/scripts/Apps/ableton/install-ableton-latest.run; do
         [[ -f $f ]] && run=$f
       done
       if [[ -n $run ]]; then
@@ -3501,10 +3420,10 @@ un_davinci(){
     info "Uninstalling DaVinci Resolve"
     if command -v sudo >/dev/null && [[ -d /opt/resolve ]] \
        && [[ $EUID -eq 0 || -n ${SUDO_USER:-} || $(mq_sudo -v 2>/dev/null; echo $?) -eq 0 ]]; then
-      bash "$SCRIPT_DIR/scripts/apps/davinci/uninstall-davinci.sh" -y || warn "uninstall-davinci.sh ran into problems"
+      bash "$SCRIPT_DIR/scripts/Apps/davinci/uninstall-davinci.sh" -y || warn "uninstall-davinci.sh ran into problems"
     else
-      bash "$SCRIPT_DIR/scripts/apps/davinci/uninstall-davinci.sh" -y || true
-      warn "System part (/opt/resolve) not removed: run  sudo bash \"$SCRIPT_DIR/scripts/apps/davinci/uninstall-davinci.sh\""
+      bash "$SCRIPT_DIR/scripts/Apps/davinci/uninstall-davinci.sh" -y || true
+      warn "System part (/opt/resolve) not removed: run  sudo bash \"$SCRIPT_DIR/scripts/Apps/davinci/uninstall-davinci.sh\""
     fi
   else
     ok "DaVinci Resolve not installed — nothing to do"
@@ -3551,6 +3470,19 @@ un_whatsapp_native(){
   bash "$WHATSAPP_NATIVE_DIR/setup-whatsapp-native.sh" --remove
 }
 
+un_douze(){
+  info "Uninstalling douze / Omarchy360"
+  if [[ -x "$DOUZE_DIR/setup-douze.sh" ]]; then
+    # --purge removes the checkout and saved mixer state; without it the
+    # profiles in ~/.config/sslctl survive.
+    bash "$DOUZE_DIR/setup-douze.sh" $([[ $PURGE == 1 ]] && echo --purge || echo --remove)
+  else
+    warn "setup-douze.sh not found — removing the service and udev rule directly."
+    systemctl --user disable --now douze 2>/dev/null || true
+    rm -f "$HOME/.config/systemd/user/douze.service" "$HOME/.config/systemd/user/douze.service.d/omarchy360.conf"
+    mq_sudo rm -f /etc/udev/rules.d/70-douze.rules 2>/dev/null || true
+  fi
+}
 un_extracto(){
   info "Uninstalling extracto (module extracto)"
   # Our own glue first: the script knows the exact markers/paths it wrote.
@@ -3583,17 +3515,11 @@ un_extracto(){
 }
 
 un_apps(){
-  # Delegates to apps/uninstall-apps.sh: removes the apps / tuis / webapps of the
-  # catalogs (per type: gui/ tui/ webapps/) — packages via pacman -Rns +
-  # webapps via omarchy webapp remove.
-  if [[ -f "$SCRIPT_DIR/scripts/apps/gui/guis.catalog" || -f "$SCRIPT_DIR/scripts/apps/tui-tools/tuis.catalog" \
-     || -f "$SCRIPT_DIR/scripts/apps/webapps/webapps.catalog" ]] \
-     && [[ -x "$SCRIPT_DIR/scripts/apps/uninstall-apps.sh" ]]; then
-    info "Uninstalling the apps / tuis / webapps ("apps" module)"
-    bash "$SCRIPT_DIR/scripts/apps/uninstall-apps.sh" --all -y || warn "uninstall-apps.sh ran into problems"
-  else
-    ok "apps module not present — nothing to do"
-  fi
+  # Each TUI entry owns its removal (package + menu/icon finery).
+  local f
+  while IFS= read -r f; do
+    bash "$f" --uninstall || warn "$(basename "$f"): removal reported a problem"
+  done < <(tui_scripts)
 }
 
 un_battery_management(){
@@ -3724,6 +3650,16 @@ un_touchpad(){
     ok "No touchpad block in hyprland.lua."
   fi
   [[ -f "$HYPRLAND" ]] && hyprctl reload >/dev/null 2>&1 || true
+}
+un_reboot_windows(){
+  info "Uninstalling Reboot into Windows"
+  if [[ -x "$REBOOT_WINDOWS_DIR/setup-reboot-into-windows.sh" ]]; then
+    bash "$REBOOT_WINDOWS_DIR/setup-reboot-into-windows.sh" --remove \
+      || warn "setup-reboot-into-windows.sh --remove reported a problem"
+  else
+    warn "setup-reboot-into-windows.sh not found — cleaning up directly."
+    rm -f "$HOME/.local/bin/reboot-into-windows"
+  fi
 }
 un_better_pip(){
   info "Uninstalling Better PiP (mosquito.better-pip)"
@@ -3965,6 +3901,8 @@ handbrake) un_handbrake ;;
       betterbird) un_betterbird ;;
       whatsapp-native) un_whatsapp_native ;;
     extracto) un_extracto ;;
+    douze) un_douze ;;
+    tidal) un_tidal ;;
     apps) un_apps ;;
     ollama) un_ollama ;;
     remove-ai) un_remove_ai ;;
@@ -3976,6 +3914,7 @@ handbrake) un_handbrake ;;
     mega-caffeine) un_mega_caffeine ;;
     brightness) un_brightness ;;
     better-pip) un_better_pip ;;
+    reboot-into-windows) un_reboot_windows ;;
     achraff) un_achraff ;;
     touchpad) un_touchpad ;;
     mx-master) un_mx_master ;;
@@ -4077,18 +4016,19 @@ run_module(){
 }
 
 # Script paths by category (the individual apps and shared stack live in
-# scripts/apps/, one folder per app; the other modules each in scripts/).
+# scripts/Apps/, one folder per app; the other modules each in scripts/).
 SCRIPTS="$SCRIPT_DIR/scripts"
-APPS_DIR="$SCRIPTS/apps"
+APPS_DIR="$SCRIPTS/Apps"
+TUIS_DIR="$SCRIPTS/TUIs"
 AUDIO_STACK_DIR="$SCRIPTS/mosquito/audio-stack"
 AUDIO_PLUGIN_MANAGER_DIR="$AUDIO_STACK_DIR/apm"
 BITWIG_DIR="$APPS_DIR/bitwig"
 REAPER_DIR="$APPS_DIR/reaper"
-LLM_DIR="$SCRIPTS/LLM"
-VM_DIR="$SCRIPTS/windows-vm"
+LLM_DIR="$SCRIPTS/lame"
+VM_DIR="$SCRIPTS/VMs/windows-vm"
 MIXBAY_DIR="$AUDIO_STACK_DIR/mixbay"
-MACOS_VM_DIR="$SCRIPTS/macos-vm"
-OMARCHY_VM_DIR="$SCRIPTS/omarchy-vm"
+MACOS_VM_DIR="$SCRIPTS/VMs/macos-vm"
+OMARCHY_VM_DIR="$SCRIPTS/VMs/omarchy-vm"
 ABLETON_DIR="$APPS_DIR/ableton"
 GUITARPRO_DIR="$APPS_DIR/guitarpro"
 DAVINCI_DIR="$APPS_DIR/davinci"
@@ -4097,22 +4037,42 @@ SIGNAL_DIR="$APPS_DIR/signal"
 BETTERBIRD_DIR="$APPS_DIR/betterbird"
 WHATSAPP_NATIVE_DIR="$APPS_DIR/whatsapp-native"
 EXTRACTO_DIR="$APPS_DIR/extracto"
-MOVE_CONVERTER_DIR="$SCRIPTS/apps/ableton-move-manager"
-BATTERY_DIR="$SCRIPTS/plugins/battery-management"
-BETTER_PIP_DIR="$SCRIPTS/plugins/better-pip"
+DOUZE_DIR="$APPS_DIR/douze"
+TIDAL_DIR="$APPS_DIR/tidal"
+MOVE_CONVERTER_DIR="$SCRIPTS/mosquito/move-manager"
+BATTERY_DIR="$SCRIPTS/Plugins/battery-management"
+BETTER_PIP_DIR="$SCRIPTS/Plugins/better-pip"
+REBOOT_WINDOWS_DIR="$SCRIPTS/Plugins/reboot-into-windows"
 MEGA_CAFFEINE_DIR="$SCRIPTS/mosquito/mega-caffeine"
-BRIGHTNESS_DIR="$SCRIPTS/plugins/brightness"
-TOUCHPAD_DIR="$SCRIPTS/plugins/touchpad"
-MXMASTER_DIR="$SCRIPTS/plugins/mx-master"
-SUPERFILE_DIR="$SCRIPTS/apps/superfile"
-FLEA_DIR="$SCRIPTS/apps/gui"
-THEME_DIR="$SCRIPTS/theme"
-ZEN_DIR="$SCRIPTS/apps/zen"
+BRIGHTNESS_DIR="$SCRIPTS/Plugins/brightness"
+TOUCHPAD_DIR="$SCRIPTS/Plugins/touchpad"
+MXMASTER_DIR="$SCRIPTS/Plugins/mx-master"
+SUPERFILE_DIR="$SCRIPTS/Apps/superfile"
+FLEA_DIR="$SCRIPTS/Apps/flea"
+THEME_DIR="$SCRIPTS/Themes"
+ZEN_DIR="$SCRIPTS/Apps/zen"
 JAMJAMJAM_PLUGIN_DIR="$SCRIPTS/mosquito/jamjamjam"
 PIPEWIRE_SETTINGS_DIR="$AUDIO_STACK_DIR/pipewire"
 LIVE_MODE_DIR="$AUDIO_STACK_DIR/live-mode"
 LEVELS_GUARD_DIR="$AUDIO_STACK_DIR/levels-guard"
 AUDIO_STACK_CHILDREN=(audio-plugin-manager mixbay levels-guard live-mode pipewire-settings)
+
+# ─── TUIs (scripts/TUIs, one setup-<name>.sh per entry) ───
+# No catalog: the folder IS the list. Each script declares two header lines,
+# "# pkg:" and "# desc:", which are the only metadata the tree and backups need.
+tui_scripts(){
+  find "$TUIS_DIR" -maxdepth 1 -type f -name 'setup-*.sh' ! -name 'setup-*-menu.sh' 2>/dev/null | sort
+}
+tui_header(){ sed -n "s/^# $1: //p" "$2" 2>/dev/null | head -n1; }
+tui_pkg(){ tui_header pkg "$1"; }
+tui_desc(){ tui_header desc "$1"; }
+tui_script_for_pkg(){
+  local p="$1" f
+  while IFS= read -r f; do
+    [[ "$(tui_pkg "$f")" == "$p" ]] && { printf '%s\n' "$f"; return 0; }
+  done < <(tui_scripts)
+  return 1
+}
 
 # ─────────────────── Required system libraries (Ableton-linux) ─────────────
 # gstreamer (1.x) + base/good are prerequisites of the Ableton-linux runtime.
@@ -4151,7 +4111,7 @@ run_bitwig(){
   # means the user ran the script directly: say so plainly instead of letting it
   # fail somewhere inside makepkg.
   if ! compgen -G "$BITWIG_DIR"/bitwig*.deb >/dev/null 2>&1; then
-    err "No Bitwig .deb in scripts/apps/bitwig/ — this module needs the installer"
+    err "No Bitwig .deb in scripts/Apps/bitwig/ — this module needs the installer"
     err "supplied by hand. Drop bitwig-studio-*.deb there, then re-run."
     return 1
   fi
@@ -4160,7 +4120,7 @@ run_bitwig(){
 }
 
 un_bitwig(){
-  # There is no scripts/apps/bitwig/uninstall-bitwig.sh, so this removes what
+  # There is no scripts/Apps/bitwig/uninstall-bitwig.sh, so this removes what
   # setup-bitwig.sh put there. The orphan list is read FROM that script rather
   # than copied: a second copy of "what Bitwig leaves on disk" is exactly the
   # thing that goes stale and leaves /opt/bitwig-studio behind.
@@ -4289,6 +4249,27 @@ run_whatsapp_native(){
   bash "$WHATSAPP_NATIVE_DIR/setup-whatsapp-native.sh" $([[ $YES == 1 ]] && echo -y)
 }
 
+run_douze(){
+  # douze + Omarchy360: clone/update, pyusb, udev, user service, PipeWire
+  # split (when the card is present in Pro Audio) and the shell plugin.
+  # From the Update flow, use --update so the plugin is refreshed too and
+  # PipeWire is not restarted behind a live session.
+  local -a args=()
+  if [[ ${MOSQUITOMARCHY_UPDATE_FLOW:-0} == 1 ]]; then
+    args+=(--update)
+  else
+    [[ $YES == 1 ]] && args+=(-y)
+  fi
+  bash "$DOUZE_DIR/setup-douze.sh" "${args[@]}"
+}
+
+run_tidal(){
+  bash "$TIDAL_DIR/setup-tidal.sh" --install
+}
+un_tidal(){
+  bash "$TIDAL_DIR/setup-tidal.sh" --uninstall || true
+}
+
 run_extracto(){
   # Archive Extractor: file-roller (Nautilus "Extract Here" / "Create
   # Archive") + 7zip for password-protected archives, our default mime
@@ -4299,10 +4280,18 @@ run_extracto(){
 }
 
 run_apps(){
-  # Apps / tuis / webapps from a backup selection (apps.selected).
-  # interactive: backup choice + checkbox (all checked by default, can uncheck)
-  # + adding apps from the catalog. With -y: most recent backup selection, everything.
-  bash "$APPS_DIR/setup-apps.sh" $([[ $YES == 1 ]] && echo -y)
+  # The "apps" umbrella now covers the TUIs only: one setup script per entry.
+  local f pkg missing=()
+  while IFS= read -r f; do
+    pkg="$(tui_pkg "$f")"
+    [[ -n $pkg ]] || continue
+    pkg_has "$pkg" || missing+=("$pkg")
+  done < <(tui_scripts)
+  local p
+  for p in "${missing[@]:-}"; do
+    [[ -n $p ]] || continue
+    bash "$(tui_script_for_pkg "$p")" -y || return 1
+  done
 }
 
 PROTECT_OMARCHY_PKGS=(omacut omacalc omawrite)   # Omarchy core utilities, never removed
@@ -4343,19 +4332,12 @@ preinstall_protected(){
   # NOTE: keep starts EMPTY. It used to seed from "$@" (the queried packages
   # themselves), so every package matched itself and the function was always
   # true: nothing was ever removable and every row read "your own app — kept".
-  local -a keep=() catfiles=() catf line kind name
-  catfiles=("$SCRIPT_DIR/scripts/apps/gui/guis.catalog" "$SCRIPT_DIR/scripts/apps/tui-tools/tuis.catalog")
-  for catf in "${catfiles[@]}"; do
-    [[ -f $catf ]] || continue
-    while IFS= read -r line || [[ -n $line ]]; do
-      line="${line%%$'\r'}"
-      [[ -z $line || $line == \#* ]] && continue
-      kind="${line%%[ |]*}"
-      [[ $kind == APP || $kind == TUI ]] || continue
-      name="${line#*[ ]}"; name="${name%%|*}"
-      keep+=("$name")
-    done < "$catf"
-  done
+  local -a keep=() f
+  local name
+  while IFS= read -r f; do
+    name="$(tui_pkg "$f")"
+    [[ -n $name ]] && keep+=("$name")
+  done < <(tui_scripts)
   keep+=("${PROTECT_OMARCHY_PKGS[@]}")
   local p q
   for p in "$@"; do
@@ -4440,6 +4422,7 @@ run_downloads(){ bash "$SCRIPTS/plugins/omarchy-downloads/setup-omarchy-download
 run_taskq(){ ensure_shell_plugin sendaljpt.taskq https://github.com/sendaljpt/taskq.git; }
 run_process_killer(){ ensure_shell_plugin io.github.beresn.process-killer https://github.com/BeresN/omarchy-process-killer.git; }
 run_better_pip(){ bash "$BETTER_PIP_DIR/setup-better-pip.sh"; }
+run_reboot_windows(){ bash "$REBOOT_WINDOWS_DIR/setup-reboot-into-windows.sh"; }
 run_mega_caffeine(){ bash "$MEGA_CAFFEINE_DIR/setup-mega-caffeine.sh"; }
 run_brightness(){ bash "$BRIGHTNESS_DIR/optimized-brightness.sh"; }
 run_achraff(){ bash "$THEME_DIR/create-theme.sh" --apply "$THEME_DIR/Wallpapers/achraf67.png"; }
@@ -4469,7 +4452,7 @@ run_keybindings(){
   ok "Keybindings module ready — manage bindings from the TUI's Keybindings screen."
 }
 run_mosquitomarchy_update(){
-  bash "$SCRIPTS/mosquitomarchy-update/setup-mosquitomarchy-update.sh" $([[ $YES == 1 ]] && echo -y)
+  bash "$SCRIPTS/mosquitomarchy tui/update/setup-mosquitomarchy-update.sh" $([[ $YES == 1 ]] && echo -y)
 }
 st_pipewire_settings(){
   # Backend + panel + a shell.json entry. The panel is what makes it usable, so
@@ -4542,13 +4525,13 @@ run_mosquitomarchy(){
   # The manager TUI (the interface this script drives): build the Go binary,
   # deploy the dispatcher + desktop entry + float rule + post-boot hook.
   # Idempotent, non-interactive; the former standalone install-tui.sh WAS
-  # this (the logic now lives in scripts/apps/mosquitomarchy/install-tui.sh
+  # this (the logic now lives in scripts/mosquitomarchy tui/install-tui.sh
   # and is reused here as a module).
-  bash "$SCRIPT_DIR/scripts/apps/mosquitomarchy/install-tui.sh" -y
+  bash "$SCRIPT_DIR/scripts/mosquitomarchy tui/install-tui.sh" -y
 }
 
 un_mosquitomarchy(){
-  bash "$SCRIPT_DIR/scripts/apps/mosquitomarchy/install-tui.sh" --remove
+  bash "$SCRIPT_DIR/scripts/mosquitomarchy tui/install-tui.sh" --remove
   # The update watchdog ships inside this same row (see run/install-tui.sh),
   # so removing the manager removes it too.
   un_mosquitomarchy_update
@@ -4618,6 +4601,8 @@ exec_modules(){
       betterbird) run_module betterbird run_betterbird ;;
       whatsapp-native) run_module whatsapp-native run_whatsapp_native ;;
       extracto) run_module extracto run_extracto ;;
+      douze) run_module douze run_douze ;;
+      tidal) run_module tidal run_tidal ;;
       apps) run_module apps run_apps ;;
       ollama)  run_module ollama run_ollama ;;
       remove-ai) run_module remove-ai run_restore_ai ;;
@@ -4627,6 +4612,7 @@ exec_modules(){
       taskq) run_module taskq run_taskq ;;
       process-killer) run_module process-killer run_process_killer ;;
       better-pip) run_module better-pip run_better_pip ;;
+      reboot-into-windows) run_module reboot-into-windows run_reboot_windows ;;
       mega-caffeine) run_module mega-caffeine run_mega_caffeine ;;
       brightness) run_module brightness run_brightness ;;
       achraff) run_module achraff run_achraff ;;
@@ -4663,9 +4649,8 @@ exec_modules(){
 
 # Categories of the "setup" action. id|label|modules (space-separated module ids).
 CATEGORIES=(
-  "apps|Apps|reaper bitwig ableton guitarpro davinci-resolve extracto handbrake signal betterbird whatsapp-native superfile flea zen keepassxc hyprmod"
+  "apps|Apps|reaper bitwig ableton guitarpro davinci-resolve extracto douze tidal handbrake signal betterbird whatsapp-native superfile flea zen keepassxc hyprmod"
   "tuis|TUIs|"
-  "webapps|Webapps|"
   # "Plugins" is the project's own layer: the manager itself (the deployer),
   # its update module, and project utilities such as power management and SSH
   # askpass. It was dropped by
@@ -4674,7 +4659,7 @@ CATEGORIES=(
   # including the deployer, i.e. installed and updatable but reachable from
   # neither Setup nor Uninstall. `mega-caffeine` is deliberately absent: it is a
   # mosquito tool and lives in the mosquito row.
-  "plugins|Plugins|battery-management omaskpinpass downloads taskq process-killer better-pip brightness touchpad mx-master"
+  "plugins|Plugins|battery-management omaskpinpass downloads taskq process-killer better-pip reboot-into-windows brightness touchpad mx-master"
   "fixes|Fixes|"
   "tweaks|Tweaks|"
   "mosquito|mosquito|"
@@ -4712,6 +4697,19 @@ launcher_multiselect(){
 # Update: check for a newer repo AND for local changes, then offer — via a
 # multi-select — to re-apply ONLY the installed modules whose scripts changed.
 # Nothing new is installed and nothing is destroyed (idempotent re-run).
+# True when a git checkout has upstream commits the local branch lacks.
+# Best effort and time-boxed: offline/first-run/no-upstream all mean "no".
+git_checkout_behind(){
+  local dir="$1"
+  [[ -d "$dir/.git" ]] || return 1
+  command -v git >/dev/null 2>&1 || return 1
+  timeout 10 git -C "$dir" fetch --quiet origin 2>/dev/null || return 1
+  local head up
+  head="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
+  up="$(git -C "$dir" rev-parse '@{u}' 2>/dev/null || true)"
+  [[ -n $head && -n $up && $head != "$up" ]]
+}
+
 launcher_update(){
   hr; msg "Update — what this does"
   echo "  1. Checks GitHub for a newer version of the scripts (owner mode: update"
@@ -4755,6 +4753,21 @@ launcher_update(){
     id="${row%%:*}"; [[ -n ${cand[$id]:-} ]] && ids+=("$id")
   done
 
+  # douze/Omarchy360 track their OWN upstream (not this repo): propose the
+  # module when its checkout or the shell plugin has new commits. This is what
+  # makes "mosquitomarchy update" also update douze, without waiting for a
+  # change in scripts/Apps/douze/.
+  local douze_state; douze_state="$(module_state douze 2>/dev/null || true)"
+  if [[ $douze_state == ok || $douze_state == partial ]] \
+     && [[ ${ids[*]:-} != *"douze"* ]]; then
+    if git_checkout_behind "$HOME/.local/share/douze" \
+       || git_checkout_behind "$HOME/.config/omarchy/plugins/fenrirrhogar.omarchy360"; then
+      # Keep MODULES order: insert after the last app module, before the
+      # plugin/plugin-manager rows. Simpler and still readable: append.
+      ids+=("douze")
+    fi
+  fi
+
   if ((${#ids[@]} == 0)); then
     ok "Everything is up to date — no applicable update for the installed modules."
     return 0
@@ -4766,6 +4779,7 @@ launcher_update(){
   for pp in "${picked[@]}"; do [[ -n $pp ]] && SELECTED+=("$pp"); done
   ((${#SELECTED[@]})) || { ok "Nothing selected — no update applied."; return 0; }
   hr; ok "Applying ${#SELECTED[@]} update(s)…"
+  local MOSQUITOMARCHY_UPDATE_FLOW=1
   exec_modules
   final_report
 }
@@ -4802,11 +4816,9 @@ module_category(){ # module id -> category id
     # included) rather than Plugins; the mapping is explicit so Status keeps
     # grouping it exactly like Setup does.
     mosquitomarchy|mosquitomarchy-update) echo mosquito; return 0 ;;
-    # `apps` is the umbrella the three catalogs are installed through. It lists no
-    # modules of its own in CATEGORIES — category_items "apps" returns its CHILDREN,
-    # which is why the loop below never found it and `status` reported an empty
-    # category. It is still a real, re-appliable module, so it gets its category
-    # named here rather than staying invisible in every tree.
+    # `apps` is the umbrella over scripts/TUIs and the app modules. It is a
+    # real, re-appliable module, so it gets its category named here rather
+    # than staying invisible in every tree.
     apps) echo apps; return 0 ;;
   esac
   local c
@@ -4881,51 +4893,18 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
   CAND_KEYS=(); CAND_LABELS=()
   local cat="$1" id items e name line kind
   case $cat in
-    tuis|webapps)
-      # Catalog-backed categories: one candidate per catalog entry.
-      if [[ $cat == webapps ]]; then
-        load_catalog || true
-        for e in "${CAT_WEB[@]:-}"; do
-          [[ -n $e ]] || continue
-          # WEB is "name|url|icon" -- the name is its own field, there is no
-          # "label — description" pair to split, so split_name_desc would take
-          # the URL as the name. The URL is the useful thing to keep for `i`.
-          name="${e%%|*}"
-          CAND_NAME="$name"
-          CAND_DESC="${e#*|}"; CAND_DESC="${CAND_DESC%%|*}"
-          CAND_KEYS+=("WEB $e")
-          if [[ -n $CAND_DESC ]]; then CAND_LABELS+=("$CAND_NAME  —  $CAND_DESC"); else CAND_LABELS+=("$CAND_NAME"); fi
-        done
-      elif [[ -f $CAT_FILE_TUI ]]; then
-        while IFS= read -r line || [[ -n $line ]]; do
-          line="${line%%$'\r'}"
-          [[ -z $line || $line == \#* ]] && continue
-          kind="${line%%[ |]*}"
-          case $kind in
-            TUI)
-              name="${line#*[ ]}"; name="${name%%|*}"
-              split_name_desc "$name" "${line#*|}"
-              CAND_KEYS+=("TUI $name")
-              if [[ -n $CAND_DESC ]]; then CAND_LABELS+=("$CAND_NAME  —  $CAND_DESC"); else CAND_LABELS+=("$CAND_NAME"); fi
-              ;;
-            PLUG)
-              # A plugin's catalog label may itself read "Name — what it does"
-              # (downloads -> "Downloads — themed popup for recent files").
-              # Split it so the row shows the name and
-              # only `i` shows the rest; the raw plugin id is the fallback when
-              # the label has no dash.
-              e="${line#*[ ]}"
-              split_name_desc "${e%%|*}" "$(printf '%s' "$e" | cut -d'|' -f3)"
-              CAND_KEYS+=("PLUG $e")
-              if [[ -n $CAND_DESC ]]; then
-                CAND_LABELS+=("$CAND_NAME  —  $CAND_DESC")
-              else
-                CAND_LABELS+=("$CAND_NAME")
-              fi
-              ;;
-          esac
-        done < "$CAT_FILE_TUI"
-      fi
+    tuis)
+      # One row per setup-<name>.sh in scripts/TUIs. The "# desc:" header is
+      # the row text; the "# pkg:" header is the key (and stays the backup
+      # vocabulary).
+      local f pkg desc
+      while IFS= read -r f; do
+        pkg="$(tui_pkg "$f")"; [[ -n $pkg ]] || continue
+        desc="$(tui_desc "$f")"
+        split_name_desc "$pkg" "${desc:-$pkg}"
+        CAND_KEYS+=("TUI $pkg")
+        if [[ -n $CAND_DESC ]]; then CAND_LABELS+=("$CAND_NAME  —  $CAND_DESC"); else CAND_LABELS+=("$CAND_NAME"); fi
+      done < <(tui_scripts)
       ;;
     mosquito)
       # The mosquito tools — each user-visible tool gets its own row, labelled
@@ -4986,19 +4965,16 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
 category_run(){ # catid -> run only the CATEGORY_SELECTED items
   local cat="$1" k
   case $cat in
-    tuis|webapps)
-      # Hand the exact ticked catalog entries to the apps module (--only keeps
-      # the type; -y skips its own multi-select) so nothing else is installed.
-      local tmp; tmp="$(mktemp)"
-      printf '%s\n' "${CATEGORY_SELECTED[@]}" > "$tmp"
-      hr; msg "Apps module — $cat only (${#CATEGORY_SELECTED[@]} entry/ies)"
-      if bash "$APPS_DIR/setup-apps.sh" --from-backup="$tmp" -y --only="$cat"; then
-        ok "Apps module ($cat): done."
-      else
-        MODULE_FAILURES=$((MODULE_FAILURES + 1))
-        err "Apps module ($cat) reported an error (see the messages above)."
-      fi
-      rm -f "$tmp"
+    tuis)
+      local script rc=0
+      for k in "${CATEGORY_SELECTED[@]:-}"; do
+        [[ $k == TUI\ * ]] || continue
+        local pkg="${k#TUI }"; pkg="${pkg%%|*}"
+        script="$(tui_script_for_pkg "$pkg")"
+        [[ -n $script ]] || { err "No setup script for $pkg."; rc=1; continue; }
+        bash "$script" -y || rc=1
+      done
+      ((rc == 0)) || MODULE_FAILURES=$((MODULE_FAILURES + 1))
       ;;
     mosquito)
       load_excluded
@@ -5041,6 +5017,19 @@ category_run(){ # catid -> run only the CATEGORY_SELECTED items
       SELECTED=()
       skipped=0
       for k in "${CATEGORY_SELECTED[@]}"; do
+        # TUI keys can be filed under Apps (septabee): they are not modules,
+        # so run their own setup script instead of handing them to exec_modules.
+        if [[ $k == TUI\ * ]]; then
+          local tpkg="${k#TUI }"; tpkg="${tpkg%%|*}"
+          local tscript; tscript="$(tui_script_for_pkg "$tpkg")"
+          if [[ -n $tscript ]] && bash "$tscript" -y; then
+            ok "TUI '$tpkg' installed."
+          else
+            MODULE_FAILURES=$((MODULE_FAILURES + 1))
+            err "TUI '$tpkg' install failed."
+          fi
+          continue
+        fi
         if skip_excluded "$k"; then
           warn "Module '$k' was uninstalled by you — skipped (re-offer with --include=$k)."
           skipped=$((skipped + 1))

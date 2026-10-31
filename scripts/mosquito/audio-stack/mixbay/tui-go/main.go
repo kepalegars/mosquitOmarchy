@@ -1,6 +1,6 @@
 // Command mosquito-mixbay-tui is the terminal interface for mosquitomixbay,
-// the mosquitOmarchy USB-audio control bay (Audient EVO 8/4 today, RME
-// Fireface UCX II / ESI UGM192 / PreSonus Quantum ES 4 via ALSA next).
+// the mosquitOmarchy USB-audio control bay (Audient EVO 8/4, SSL 12 via douze,
+// RME Fireface UCX II / ESI UGM192 via ALSA, user-added beta interfaces).
 //
 // One Go binary, two faces (same architecture as the sibling manager TUIs):
 //   - no arguments → the interactive Bubble Tea TUI (the ONLY interface),

@@ -15,9 +15,9 @@ if [[ ! -t 0 && ! -t 1 ]] \
    && [[ -z "${GUI_RUN_EXEC:-}${MOSQUITOMARCHY_TUI:-}${MOSQUITOMARCHY_NO_GUI:-}${ABLE_PATCH_HELD:-}" ]]; then
   export GUI_RUN_EXEC=1
   if command -v foot >/dev/null 2>&1; then
-    exec foot bash -c 'bash "$1"; ec=$?; printf "\n[%s] finished (exit %d). Press Enter to close this terminal." "$(basename "$1")" "$ec"; read -r _; exit "$ec"' _ "$0"
+    exec foot bash -c 'script=$1; shift; bash "$script" "$@"; ec=$?; printf "\n[%s] finished (exit %d). Press Enter to close this terminal." "$(basename "$script")" "$ec"; read -r _; exit "$ec"' _ "$0" "$@"
   elif command -v xterm >/dev/null 2>&1; then
-    exec xterm -e bash -c 'bash "$1"; ec=$?; printf "\n[%s] finished (exit %d). Press Enter to close this terminal." "$(basename "$1")" "$ec"; read -r _; exit "$ec"' _ "$0"
+    exec xterm -e bash -c 'script=$1; shift; bash "$script" "$@"; ec=$?; printf "\n[%s] finished (exit %d). Press Enter to close this terminal." "$(basename "$script")" "$ec"; read -r _; exit "$ec"' _ "$0" "$@"
   fi
   printf 'gui-run.bash: no terminal emulator found for a file-manager launch — output silenced.\n' >&2
 fi

@@ -56,8 +56,8 @@ Once installed, `mosquitOmarchy` is the interface for everything here — run it
   highlighted entry, `enter` installs the selection.
 - **Backup / Restore** — a dated archive in `mosquitomarchy-backups/` (next to the repo), optionally
   AES-256 encrypted.
-- **Fixes** — the small idempotent repairs in `scripts/fixes/`, as a multi-select.
-- **Tweaks** — optional preference changes in `scripts/tweaks/` (same multi-select; never
+- **Fixes** — the small idempotent repairs in `scripts/Fixes/`, as a multi-select.
+- **Tweaks** — optional preference changes in `scripts/Tweaks/` (same multi-select; never
   auto-applied by `-y`).
 - **Close** — leave.
 
@@ -77,21 +77,23 @@ Details, options and caveats live in each module's own `README.md`. This table i
 
 | Module | Installs | Doc |
 |---|---|---|
-| `reaper` | REAPER + its Hyprland/Wayland integration | [README](scripts/apps/reaper/README.md) |
-| `bitwig` | Bitwig Studio from the local `.deb`, with its own module and optional patched `bitwig.jar` | [README](scripts/apps/bitwig/README.md) |
-| `ableton` | Ableton Live 12 native on Linux, sharing the same VST root | [README](scripts/apps/ableton/README.md) |
-| `guitarpro` | Guitar Pro 8 in its own Wine prefix | [README](scripts/apps/guitarpro/README.md) |
-| `davinci-resolve` | DaVinci Resolve (free or Studio) + silent DRwrap integration | [README](scripts/apps/davinci/README.md) |
-| `extracto` | Extracto | [README](scripts/apps/extracto/README.md) |
-| `handbrake` | HandBrake GUI + CLI, preset sync, Hyprland rules | [README](scripts/apps/handbrake/README.md) |
-| `signal` | Signal Desktop, tray behavior, menu entry, and login autostart | [setup](scripts/apps/signal/setup-signal.sh) |
-| `betterbird` | Betterbird (Thunderbird fork): install, system-tray close/minimise, login autostart, tiled main window + popups at the pointer | [setup](scripts/apps/betterbird/setup-betterbird.sh) |
-| `whatsapp-native` | WhatsApp desktop client (self-contained Electron wrapper): silent visual notifications, tray + close-to-tray, no menu bar, login autostart | [README](scripts/apps/whatsapp-native/README.md) |
-| `superfile` | SuperFile terminal file manager; the system default file manager is left unchanged | [README](scripts/apps/superfile/README.md) |
-| `zen` | Zen Browser, seeded extensions and theme | [README](scripts/apps/zen/README.md) |
-| `keepassxc` | KeePassXC password manager + browser integration (Leaves Omarchy's keyring intact) | [README](scripts/apps/keepassxc/README.md) |
+| `reaper` | REAPER + its Hyprland/Wayland integration | [README](scripts/Apps/reaper/README.md) |
+| `bitwig` | Bitwig Studio from the local `.deb`, with its own module and optional patched `bitwig.jar` | [README](scripts/Apps/bitwig/README.md) |
+| `ableton` | Ableton Live 12 native on Linux, sharing the same VST root | [README](scripts/Apps/ableton/README.md) |
+| `guitarpro` | Guitar Pro 8 in its own Wine prefix | [README](scripts/Apps/guitarpro/README.md) |
+| `davinci-resolve` | DaVinci Resolve (free or Studio) + silent DRwrap integration | [README](scripts/Apps/davinci/README.md) |
+| `extracto` | Extracto | [README](scripts/Apps/extracto/README.md) |
+| `douze` | SSL 12 control (douze daemon, udev, PipeWire split) + Omarchy360 mixer | [README](scripts/Apps/douze/README.md) · [study](scripts/Apps/douze/STUDY.md) |
+| `tidal` | TIDAL Hi-Fi (TidaLuna): package, hidden menu bar, `SUPER+SHIFT+M` binding | [setup](scripts/Apps/tidal/setup-tidal.sh) |
+| `handbrake` | HandBrake GUI + CLI, preset sync, Hyprland rules | [README](scripts/Apps/handbrake/README.md) |
+| `signal` | Signal Desktop, tray behavior, menu entry, and login autostart | [setup](scripts/Apps/signal/setup-signal.sh) |
+| `betterbird` | Betterbird (Thunderbird fork): install, system-tray close/minimise, login autostart, tiled main window + popups at the pointer | [setup](scripts/Apps/betterbird/setup-betterbird.sh) |
+| `whatsapp-native` | WhatsApp desktop client (self-contained Electron wrapper): silent visual notifications, tray + close-to-tray, no menu bar, login autostart | [README](scripts/Apps/whatsapp-native/README.md) |
+| `superfile` | SuperFile terminal file manager; the system default file manager is left unchanged | [README](scripts/Apps/superfile/README.md) |
+| `zen` | Zen Browser, seeded extensions and theme | [README](scripts/Apps/zen/README.md) |
+| `keepassxc` | KeePassXC password manager + browser integration (Leaves Omarchy's keyring intact) | [README](scripts/Apps/keepassxc/README.md) |
 | `hyprmod` | Hyprmod profile configuration in `~/.config/hypr/hyprmod.d/profiles.conf` | — |
-| `apps` | The app / TUI / webapp catalogs, reinstallable from a backup selection | [README](scripts/apps/README.md) |
+| `apps` | The TUIs of `scripts/TUIs/`, reinstallable from a backup selection | [README](scripts/Apps/README.md) · [TUIs](scripts/TUIs/README.md) |
 
 The tables below follow the TUI's Setup folders: each heading is one of them.
 
@@ -99,15 +101,15 @@ The tables below follow the TUI's Setup folders: each heading is one of them.
 
 | Module | Installs | Doc |
 |---|---|---|
-| `ableton-move-manager` | Ableton Move → Live → Bitwig conversion (MIDI export, native Omarchy prompts) | [README](scripts/apps/ableton-move-manager/README.md) |
+| `ableton-move-manager` | Ableton Move → Live → Bitwig conversion (MIDI export, native Omarchy prompts) | [README](scripts/mosquito/move-manager/README.md) |
 | `audio-stack` (folder) | APM/yabridge, Mixbay, Levels Guard, live mode, PipeWire — Enter installs/removes all five | [stack](scripts/mosquito/audio-stack/README.md) |
 | `audio-plugin-manager` | Audio Plugin Manager (Wine/yabridge plugins) | [README](scripts/mosquito/audio-stack/apm/README.md) |
-| `mixbay` | USB audio bay (EVO 8/4 + ALSA interfaces) | [README](scripts/mosquito/audio-stack/mixbay/README.md) |
+| `mixbay` | USB audio bay (EVO 8/4, SSL 12 via douze, RME/ESI ALSA, beta interfaces) + default audio foundation (PipeWire/udev/rate) | [README](scripts/mosquito/audio-stack/mixbay/README.md) |
 | `levels-guard` | Native audio panel + media-key guard | [stack](scripts/mosquito/audio-stack/README.md) |
 | `mosquito.jamjamjam` | Real-time key/BPM/chord detection with a fretboard and tuner | [README](scripts/mosquito/jamjamjam/README.md) |
 | `live-mode` | A thermal/perf session mode: app closing, gaps, routing, package fence | [README](scripts/mosquito/audio-stack/live-mode/README.md) |
 | `mega-caffeine` | Coffee mode: laptop closed without sleeping, red tint, natural-language durations | [README](scripts/mosquito/mega-caffeine/README.md) |
-| `keybindings` | mosquitOmarchy-managed `SUPER` bindings in a reversible `bindings.lua` block | [README](scripts/apps/mosquitomarchy/README.md#keybindings) |
+| `keybindings` | mosquitOmarchy-managed `SUPER` bindings in a reversible `bindings.lua` block | [README](scripts/mosquitomarchy%20tui/README.md#keybindings) |
 
 ### Plugins
 
@@ -115,22 +117,23 @@ The project's own layer: the manager itself, and the desktop-hardware modules.
 
 | Module | Installs | Doc |
 |---|---|---|
-| `battery-management` | Profile-colored battery icon/panel; the retired ultra-save CPU/power cap is removed | [README](scripts/plugins/battery-management/README.md) |
-| `omaskpinpass` | SSH askpass + GnuPG pinentry plugins and binaries, built per-user; configures SSH askpass and GPG agent | [installer](scripts/plugins/omaskpinpass/setup-omaskpinpass.sh) |
-| `downloads` | Omarchy Downloads popup + `SUPER+ALT+D` binding | [installer](scripts/plugins/omarchy-downloads/setup-omarchy-downloads.sh) |
+| `battery-management` | Profile-colored battery icon/panel; the retired ultra-save CPU/power cap is removed | [README](scripts/Plugins/battery-management/README.md) |
+| `omaskpinpass` | SSH askpass + GnuPG pinentry plugins and binaries, built per-user; configures SSH askpass and GPG agent | [installer](scripts/Plugins/omaskpinpass/setup-omaskpinpass.sh) |
+| `downloads` | Omarchy Downloads popup + `SUPER+ALT+D` binding | [installer](scripts/Plugins/omarchy-downloads/setup-omarchy-downloads.sh) |
 | `taskq` | TaskQ deadline widget | [GitHub](https://github.com/sendaljpt/taskq) |
 | `process-killer` | Omarchy process-killer widget | [GitHub](https://github.com/BeresN/omarchy-process-killer) |
-| `mosquitomarchy` | This TUI (built from the Go sources in the repo), its dispatcher, menu entry, float rule, post-boot hook and the `SUPER+ALT+M` shortcut | [README](scripts/apps/mosquitomarchy/README.md) |
-| `mosquitomarchy-update` | The update watchdog (scripts repo first, then Omarchy) | [README](scripts/mosquitomarchy-update/README.md) |
-| `brightness` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp | [notes](scripts/plugins/brightness/display-fixes.md) |
-| `touchpad` | Touchpad acceleration, sensitivity, scroll factor, and optional kinetic scrolling | [notes](scripts/plugins/touchpad/touchpad.md) |
-| `mx-master` | MX Master thumb button → `SUPER`, smartshift off, scroll direction | [notes](scripts/plugins/mx-master/mx-master.md) |
+| `mosquitomarchy` | This TUI (built from the Go sources in the repo), its dispatcher, menu entry, float rule, post-boot hook and the `SUPER+ALT+M` shortcut | [README](scripts/mosquitomarchy%20tui/README.md) |
+| `mosquitomarchy-update` | The update watchdog (scripts repo first, then Omarchy) | [README](scripts/mosquitomarchy%20tui/update/README.md) |
+| `brightness` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp | [notes](scripts/Plugins/brightness/display-fixes.md) |
+| `touchpad` | Touchpad acceleration, sensitivity, scroll factor, and optional kinetic scrolling | [notes](scripts/Plugins/touchpad/touchpad.md) |
+| `mx-master` | MX Master thumb button → `SUPER`, smartshift off, scroll direction | [notes](scripts/Plugins/mx-master/mx-master.md) |
+| `reboot-into-windows` | System menu entry: find the UEFI Windows Boot Manager, 15 s yes/no countdown, arm BootNext for the next boot only, reboot | [README](scripts/Plugins/reboot-into-windows/README.md) |
 
 ### Themes
 
 | Module | Installs | Doc |
 |---|---|---|
-| `achraff` | An Omarchy theme built from an image in `theme/Wallpapers/` | [README](scripts/theme/README.md) |
+| `achraff` | An Omarchy theme built from an image in `Themes/Wallpapers/` | [README](scripts/Themes/README.md) |
 
 `touchpad` and `mx-master` compose: each ships its own `hl.device` block, handles only its
 own device, and never touches the other.
@@ -139,30 +142,30 @@ own device, and never touches the other.
 
 | Module | Installs | Doc |
 |---|---|---|
-| `ollama` | Ollama + REAPER-oriented models (~14 GB) | [README](scripts/LLM/README.md) |
+| `ollama` | Ollama + REAPER-oriented models (~14 GB) | [README](scripts/lame/README.md) |
 | `remove-ai` | Re-enables (Setup) or removes (Uninstall) Omarchy's own agentic parts | — |
 
 ### VMs
 
 | Module | Installs | Doc |
 |---|---|---|
-| `windows-vm` | Windows 11 in Docker over RDP; installs the VM itself if absent | [README](scripts/windows-vm/README.md) |
-| `macos-vm` | macOS VM | [README](scripts/macos-vm/README.md) |
-| `omarchy-vm` | Omarchy in QEMU/KVM from the official ISO | [README](scripts/omarchy-vm/README.md) |
+| `windows-vm` | Windows 11 in Docker over RDP; installs the VM itself if absent | [README](scripts/VMs/windows-vm/README.md) |
+| `macos-vm` | macOS VM | [README](scripts/VMs/macos-vm/README.md) |
+| `omarchy-vm` | Omarchy in QEMU/KVM from the official ISO | [README](scripts/VMs/omarchy-vm/README.md) |
 
-### Catalogs
+### Entries
 
-`apps`, `tuis`, `webapps` and `fixes` are catalog-backed: each entry in
-`scripts/apps/*/` is its own selectable item rather than a single module. See
-[scripts/apps/README.md](scripts/apps/README.md) and [scripts/fixes/README.md](scripts/fixes/README.md).
+`TUIs` and `Fixes` are entry-backed: each file or folder is its own selectable
+item rather than a single module. See [scripts/TUIs/README.md](scripts/TUIs/README.md)
+and [scripts/Fixes/README.md](scripts/Fixes/README.md).
 
 **audio-stack** is a folder row under *mosquito*, not a module of its own: Enter installs or
 removes all five components, while Left/Right folds the folder and each child stays selectable.
 
 **Creating a theme from an image** is not in the tables either, and not in Setup either: it is a
-row on the [TUI's main menu](scripts/apps/mosquitomarchy/README.md), right after Keybindings,
+row on the [TUI's main menu](scripts/mosquitomarchy%20tui/README.md), right after Keybindings,
 because it creates a theme rather than installing a module. See
-[scripts/theme/README.md](scripts/theme/README.md).
+[scripts/Themes/README.md](scripts/Themes/README.md).
 
 ## Commands
 
@@ -278,16 +281,18 @@ mosquitOmarchy/
 ├── mosquitomarchy-setup.sh   # the orchestrator
 ├── VERSION                   # the single source of the version below
 └── scripts/
-    ├── apps/                 # one folder per app, plus the app/TUI/webapp catalogs
-    │   └── mosquitomarchy/   # the manager TUI + backend + archive-mosquitomarchy.sh
-    ├── mosquito/             # mosquito tools: live-mode, jamjamjam, pipewire-settings, mega-caffeine
-    ├── plugins/              # shell plugins: battery-management, brightness, touchpad, ...
-    ├── fixes/                # small idempotent repairs
-    ├── tweaks/               # optional preference changes (never auto-applied)
+    ├── Apps/                 # one folder per desktop app
+    ├── TUIs/                 # one setup-<name>.sh per terminal tool
+    ├── Plugins/              # shell plugins: battery-management, brightness, touchpad, ...
+    ├── Fixes/                # small idempotent repairs
+    ├── Tweaks/               # optional preference changes (never auto-applied)
+    ├── Themes/               # theme generator + wallpapers
+    ├── VMs/                  # windows-vm/, macos-vm/, omarchy-vm/
+    ├── lame/                 # local language models (ollama)
+    ├── mosquito/             # mosquito tools: audio-stack, jamjamjam, move-manager, ...
+    ├── mosquitomarchy tui/   # the manager TUI + backend + update/
     ├── lib/                  # shared helpers, tui-kit/ (the Go component library)
-    ├── theme/  LLM/  deps/
-    ├── windows-vm/  macos-vm/  omarchy-vm/
-    └── mosquitomarchy-update/
+    └── deps/
 ```
 
 Each script resolves its resources from its own directory, so moving a whole directory does

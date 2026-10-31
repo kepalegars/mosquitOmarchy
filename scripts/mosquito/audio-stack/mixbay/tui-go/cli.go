@@ -128,7 +128,7 @@ func cliHelp() string {
   mixer inputN --volume DB --pan P [--bus 0] [--demo]
   mixer outputX_Y --volume DB [--bus 0]
 
-Devices: evo8 (default) · evo4 · fireface-ucx2 · ugm192 · quantum-es4
+Devices: evo8 (default) · evo4 · ssl12 · fireface-ucx2 · ugm192 · beta (Add an audio interface)
 `
 }
 
@@ -138,7 +138,8 @@ func cliDevices() int {
 		Probed bool `json:"probed"`
 	}
 	var out []row
-	for _, spec := range drivers.Registry() {
+	specs := append(append([]drivers.Spec{}, drivers.Registry()...), drivers.BetaSpecs()...)
+	for _, spec := range specs {
 		d, err := drivers.Open(spec.ID)
 		probed := err == nil && d.Probe()
 		out = append(out, row{spec, probed})

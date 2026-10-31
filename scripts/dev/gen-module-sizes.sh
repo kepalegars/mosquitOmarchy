@@ -10,7 +10,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MANIFEST="$SCRIPT_DIR/../apps/mosquitomarchy/module-sizes.tsv"
+MANIFEST="$SCRIPT_DIR/../mosquitomarchy tui/module-sizes.tsv"
 [[ -f $MANIFEST ]] || { echo "Missing $MANIFEST" >&2; exit 1; }
 
 path_kb() {

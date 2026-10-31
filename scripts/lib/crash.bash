@@ -26,7 +26,7 @@ MOSQUITOMARCHY_CRASH_LIB_SOURCED=1
 _MQ_CRASH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _MQ_REPO_DIR="$(cd "$_MQ_CRASH_LIB_DIR/../.." && pwd)"
 MQ_LOG_DIR="${MOSQUITOMARCHY_LOG_DIR:-$_MQ_REPO_DIR/.local/crash-logs}"
-MQ_AGENT_CRASH="$_MQ_REPO_DIR/scripts/apps/mosquitomarchy/mosquitomarchy-agent-crash"
+MQ_AGENT_CRASH="$_MQ_REPO_DIR/scripts/mosquitomarchy tui/mosquitomarchy-agent-crash"
 
 # nf-md-robot_dead, escaped so this file reads without a Nerd Font.
 MQ_CRASH_GLYPH=$'\U000f16a1'

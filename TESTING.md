@@ -34,6 +34,87 @@ did, with the same user-visible result.
 - [x] The installed `~/.local/share/whatsapp-native/app/main.js` matches the
       repo copy (verified 2026-10-30: identical SHA-256).
 
+## Reboot into Windows / douze
+
+- [x] `scripts/Plugins/reboot-into-windows/test-reboot-into-windows.sh`:
+      fake `efibootmgr`/`sudo`/`pkexec`; list, dry-run, `--yes` arms BootNext,
+      `--clear-next`, and a missing Windows entry is an error (run against the
+      current helper).
+- [ ] Real machine: click **System → Reboot into Windows**, let the 15 s run,
+      answer `y`, confirm the next boot is Windows and the boot after that is
+      Omarchy again (BootNext was consumed).
+- [ ] Real machine: answer `n`/timeout, confirm `efibootmgr` shows no BootNext.
+- [ ] `douze`: `setup-douze.sh --status` reports `ok` (or only the optional
+      PipeWire split when the SSL 12 is not connected); `systemctl --user
+      status douze` active; Omarchy360 bar icon opens the mixer; `--update`
+      pulls and restarts; `--remove` leaves `~/.config/sslctl` intact.
+- [ ] SSL 12 Pro Audio: four `ssl12.pb12/pb34/pb56/pb78` sinks appear; after a
+      replug, the loopbacks are repaired (or `install-pipewire.sh` re-run);
+      no `resync` spam in `journalctl --user -u pipewire`.
+- [ ] Mixbay EVO onboarding: with an EVO connected and `/dev/evo8` absent,
+      `mosquito-mixbay` shows the setup prompt; "Later" asks again next launch;
+      "Set up" installs and records acceptance.
+
+## Mixbay audio foundation / EVO 4
+
+- [x] `mixbay-audio-foundation --status --json` returns valid JSON with
+      `default` + `devices[]`; `--needs evo8` exits 0 while udev/WirePlumber/
+      defaults are missing (compat helper consumes it).
+- [x] `mixbay-audio-foundation --apply --device evo8` without a card writes
+      `50-mixbay-interfaces.conf`, `70-mixbay-evo.rules`, the capture helper
+      and `mixbay-audio-defaults.service`; records `installed`, sets
+      `default=evo8`, and skips the split with a clear message.
+- [x] `go test ./...` in `tui-go`: `TestEVOMeterBarsFollowSpec`,
+      `TestBetaDeviceRoundTrip`, `TestIsNativeCard` pass.
+- [ ] Settings → Audio foundation: list shows every native card with version/
+      installed/online; Install/Remove asks for confirmation + audio restart
+      warning; the row refreshes after the action; the shared floor survives a
+      single-card remove.
+- [ ] Settings → Audio foundation → Default: first card set up is selected;
+      choosing another card updates `foundation.json` and the defaults service
+      sets the right sink/source at next login.
+- [ ] Settings → Add an audio interface: with a Quantum ES 4 (or another USB
+      card) connected, it appears in the scan (not the EVO/SSL/RME/ESI ones);
+      adding it shows `demo-beta`/`online-beta`, opens the reverse-engineering
+      plan, and persists in `beta-devices.json`.
+- [ ] Beta controls: Restart reverse engineering asks for confirmation and
+      shows the capture-harness plan; ALSA level 1 volume/mute works.
+- [ ] SSL 12: native row; "Set up / repair SSL 12" runs the douze installer
+      from the TUI and refreshes the Omarchy360 plugin; after setup the row is
+      online; "Open Omarchy360 mixer" opens the Quickshell overlay;
+      volume/mute/mixer map through douze.
+- [ ] Settings → Listed interfaces: Only connected / All supported / Only used.
+      Check the connection log (`connected-interfaces.json`) filters "Only
+      used" and that a never-connected card is absent from the foundation
+      CARDS and default lists.
+- [ ] Settings → Audio foundation → Default: selected card has a filled ●,
+      others no marker; any ever-connected card is selectable; default line
+      has no "enter to change".
+- [ ] Settings → Audio foundation → Reset connection history: confirmation,
+      log cleared, installed configs kept, currently connected cards
+      repopulate after the next scan.
+- [ ] Settings → Launch Mixbay at startup / Launch in scratchpad: both on by
+      default; toggling startup adds/removes the `o.launch_on_start` line;
+      scratchpad parks the TUI in `special:scratchpad` at login.
+- [ ] PipeWire settings bar icon: centred, slightly smaller, aligned with the
+      other bar icons (shell restart may be needed to reload the QML).
+- [ ] EVO header: `Audient EVO 8 - v1.0.0`; offline blinks only the hollow
+      connection dot, not the name/version; no duplicate card version on the
+      card screen. RME/ESI show v0.0.1; beta shows `beta`.
+- [ ] PreSonus Quantum ES 4 is absent from the native device list and present
+      in the Add-interface scan.
+- [ ] Real EVO 8: `--apply` with the card in Pro Audio writes
+      `50-mixbay-evo.conf`; `evo8_main_output` / `evo8_mic_1_2` exist; default
+      sink/source are set; app audio on `evo8_output_3_4` reaches output 3+4.
+- [ ] Real EVO 4: open LEVELS, bars move (4 channels); if the UCM exposes split
+      mono nodes, record the actual node layout and adjust
+      `discoverEvoNode`/the bar mapping.
+- [ ] Rate: graph and device rate match at 48 kHz; a 96 kHz stream with
+      `allowed-rates` including 96000 does not report a false mismatch; a real
+      mismatch is flagged.
+- [ ] `pipewire-settings` owns the clock: the foundation does not write
+      `50-mixbay-audio.conf` and reports "managed by pipewire-settings".
+
 ## Regression suite (3.x)
 
 - [ ] **3.1 Orchestrator** — `./mosquitomarchy-setup.sh --status`; per-module
@@ -49,15 +130,15 @@ did, with the same user-visible result.
       script is gone): managed list, add a binding, remove one, reset, and
       confirm `bindings.lua` keeps the marker block valid and Hyprland reloads.
 - [ ] **3.5 Update watchdog** —
-      `scripts/mosquitomarchy-update/setup-mosquitomarchy-update.sh` plus
+      `scripts/mosquitomarchy tui/update/setup-mosquitomarchy-update.sh` plus
       `./mosquitomarchy-setup.sh --update-repo`: detects an update without
       pushing and notifies; never pushes without explicit authorization.
 - [ ] **3.6 Archive** — `./archive-mosquitomarchy.sh --list` and
       `--type=source`; `tar tzf` the result; confirm large installers
       (Ableton/DaVinci/Guitar Pro) are filtered and nothing large is committed.
-- [ ] **3.7 Zen / KeePassXC** — `scripts/apps/zen/setup-zen.sh` seeds the active
+- [ ] **3.7 Zen / KeePassXC** — `scripts/Apps/zen/setup-zen.sh` seeds the active
       profile (plugins/settings/chrome); live KeePassXC browser integration via
-      `scripts/apps/keepassxc/setup-keepassxc-integration.sh`; optionally
+      `scripts/Apps/keepassxc/setup-keepassxc-integration.sh`; optionally
       refresh `seed/extension-settings.json` from the live profile. Verify the
       `deps`-by-module restore and the omagrab backup.
 - [ ] **3.10 TUI colors** — switch Omarchy themes (including the lime
@@ -66,7 +147,7 @@ did, with the same user-visible result.
       colors.
 - [ ] **General** — `bash -n` (and `shellcheck` if available) on changed
       scripts; `hyprctl configerrors` empty; `go test ./...` in the TUI modules.
-      Known: the full `scripts/apps/mosquitomarchy/tui-go` suite exceeds 120 s,
+      Known: the full `scripts/mosquitomarchy tui/tui-go` suite exceeds 120 s,
       so use the targeted package tests rather than assuming a failure.
 
 ## VST backup / restore (new coverage)

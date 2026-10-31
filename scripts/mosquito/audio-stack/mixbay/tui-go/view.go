@@ -48,7 +48,11 @@ func (m model) View() string {
 		}
 		titleText := "Controls"
 		if m.status.Spec.Display != "" {
-			titleText = m.status.Spec.Display + " — controls"
+			titleText = m.status.Spec.Display
+			if m.status.Spec.Version != "" {
+				titleText += " - " + m.status.Spec.Version
+			}
+			titleText += " — controls"
 		}
 		title, rows := m.accentBudget(h, titleText)
 		m.picker = m.picker.SetSize(w, rows)
@@ -63,7 +67,11 @@ func (m model) View() string {
 		}
 		titleText := "Loopback mixer"
 		if m.status.Spec.Display != "" {
-			titleText = m.status.Spec.Display + " — " + drivers.BusLabel(m.mixBus)
+			titleText = m.status.Spec.Display
+			if m.status.Spec.Version != "" {
+				titleText += " - " + m.status.Spec.Version
+			}
+			titleText += " — " + drivers.BusLabelFor(m.status.Spec, m.mixBus)
 		}
 		title, rows := m.accentBudget(h, titleText)
 		m.picker = m.picker.SetSize(w, rows)
@@ -82,6 +90,30 @@ func (m model) View() string {
 		b.WriteString(m.legendLine(w))
 	case scrPatchbay:
 		title, rows := m.accentBudget(h, "PipeWire patchbay")
+		m.picker = m.picker.SetSize(w, rows)
+		b.WriteString(centerBlock(title, w))
+		b.WriteString("\n")
+		b.WriteString(m.picker.View())
+		b.WriteString("\n")
+		b.WriteString(m.legendLine(w))
+	case scrFoundation:
+		title, rows := m.accentBudget(h, "Audio foundation")
+		m.picker = m.picker.SetSize(w, rows)
+		b.WriteString(centerBlock(title, w))
+		b.WriteString("\n")
+		b.WriteString(m.picker.View())
+		b.WriteString("\n")
+		b.WriteString(m.legendLine(w))
+	case scrFoundationDefault:
+		title, rows := m.accentBudget(h, "Default audio interface")
+		m.picker = m.picker.SetSize(w, rows)
+		b.WriteString(centerBlock(title, w))
+		b.WriteString("\n")
+		b.WriteString(m.picker.View())
+		b.WriteString("\n")
+		b.WriteString(m.legendLine(w))
+	case scrAddInterface:
+		title, rows := m.accentBudget(h, "Add an audio interface")
 		m.picker = m.picker.SetSize(w, rows)
 		b.WriteString(centerBlock(title, w))
 		b.WriteString("\n")
@@ -114,7 +146,11 @@ func (m model) View() string {
 	// at the same place on every screen, never part of the centred block.
 	// Confirm/info modals own the whole window (no version over a prompt).
 	ver := ""
-	if m.top() == scrDevices || m.top() == scrControls || m.top() == scrMixer || m.top() == scrSettings || m.top() == scrPatchbay {
+	// The card screens already carry the card's own version next to its name;
+	// showing the Mixbay script version there too made two versions appear in
+	// the same interface. Keep the script version on the list/settings chrome
+	// only.
+	if m.top() == scrDevices || m.top() == scrSettings || m.top() == scrPatchbay || m.top() == scrFoundation || m.top() == scrFoundationDefault || m.top() == scrAddInterface {
 		ver = versionRow(w)
 		ch := h - 1
 		if ch < 1 {
@@ -213,6 +249,12 @@ func pickerChromeRows() int { return 2 }
 
 func (m model) statusLine(w int) string {
 	note := m.status.Note
+	// The device list is a picker, not a device page: the selected driver's
+	// DEMO/offline note ("… not found. State is simulated…") belongs on that
+	// driver's screen, never on the home page.
+	if m.top() == scrDevices {
+		note = ""
+	}
 	if note == "" {
 		note = " "
 	}
@@ -233,6 +275,12 @@ func (m model) legendLine(w int) string {
 		hint = "enter toggles · esc back"
 	case scrPatchbay:
 		hint = "enter apply (explicit) · r refresh · esc back"
+	case scrFoundation:
+		hint = "enter install/remove · d default · r refresh · esc back"
+	case scrFoundationDefault:
+		hint = "enter choose · esc back"
+	case scrAddInterface:
+		hint = "enter add as beta · r rescan · esc back"
 	default:
 		hint = "↑/↓ · enter · q quit"
 	}
