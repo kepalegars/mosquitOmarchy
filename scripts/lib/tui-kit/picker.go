@@ -487,11 +487,16 @@ func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, ite
 		}
 	}
 	suffixW := lipgloss.Width(pi.Suffix)
-	titleAvail := avail - suffixW
+	// The title gets what the row leaves after the cursor slot, the badge
+	// column, the suffix and the trailing badge column. Deriving the SAME
+	// budget fitBlock will clip to is what lets the marquee know whether the
+	// text actually overflows — truncating at the full list width first hid
+	// the overflow until fitBlock cut it with no chance to scroll.
+	titleAvail := avail - 3 - d.badgeSlot - suffixW - d.trailSlot
 	if titleAvail < 1 {
 		titleAvail = 1
 	}
-	title := ansi.Truncate(pi.Display, titleAvail, "…")
+	title := MarqueeText(pi.Display, titleAvail, time.Now())
 	suffix := ""
 	if pi.Suffix != "" {
 		// The suffix keeps the row's ordinary style even when the title is an
@@ -528,11 +533,11 @@ func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, ite
 	// center of the option text), no stair-stepping.
 	row := indicator + titleStyled
 	if d.ShowDescription && desc != "" {
-		descAvail := avail - d.badgeSlot
+		descAvail := avail - 3 - d.badgeSlot
 		if descAvail < 1 {
 			descAvail = 1
 		}
-		desc = ansi.Truncate(desc, descAvail, "…")
+		desc = MarqueeText(desc, descAvail, time.Now())
 		descStyled := d.descStyle(index, m.Index()).Render(desc)
 		// The description sits on its own line but belongs to the SAME row, so
 		// it repeats NEITHER the selection cursor NOR the badge. Both used to
@@ -595,11 +600,11 @@ func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem)
 	// "(your own app — kept)" through Suffix, so a disabled row read as a bare
 	// name with no reason attached.
 	suffixW := lipgloss.Width(pi.Suffix)
-	titleAvail := avail - suffixW
+	titleAvail := avail - 3 - d.badgeSlot - suffixW - d.trailSlot
 	if titleAvail < 1 {
 		titleAvail = 1
 	}
-	title := ansi.Truncate(pi.Display, titleAvail, "…")
+	title := MarqueeText(pi.Display, titleAvail, time.Now())
 	suffix := ""
 	if pi.Suffix != "" {
 		suffix = StyleDisabled.Render(pi.Suffix)
@@ -615,11 +620,11 @@ func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem)
 	}
 	row := "   " + d.badgeCell(pi) + titleStyled + suffix + d.trailingCell(pi)
 	if d.ShowDescription && pi.Sub != "" {
-		descAvail := avail - d.badgeSlot
+		descAvail := avail - 3 - d.badgeSlot
 		if descAvail < 1 {
 			descAvail = 1
 		}
-		desc := ansi.Truncate(pi.Sub, descAvail, "…")
+		desc := MarqueeText(pi.Sub, descAvail, time.Now())
 		row += "\n" + "   " + d.badgeCell(pi) + StyleDisabled.Render(desc)
 	}
 	fmt.Fprint(w, fitBlock(row, d.maxRowW, m.Width())) //nolint: errcheck

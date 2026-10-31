@@ -171,12 +171,14 @@ func applyPalette(p map[string]string) {
 // Live theme following
 //
 // Every manager re-reads the ACTIVE Omarchy theme while it's running: a
-// ThemeTickMsg arrives every themePollInterval, the host calls ApplyTheme(),
-// and every package-level Color*/Style* var is re-stamped to the freshly
-// loaded palette. Because all components render THROUGH those vars (or
-// resolve accent colors at render time — see pickerDelegate.titleStyle),
-// a theme switched while a TUI is open takes effect on the next frame
-// without any restart. Hosts wire one case in Update:
+// ThemeTickMsg arrives every frameInterval. The host calls ApplyTheme() (which
+// only re-reads the palette every themePollInterval) and every package-level
+// Color*/Style* var is re-stamped from it. Because all components render
+// THROUGH those vars (or resolve accent colors at render time — see
+// pickerDelegate.titleStyle), a theme switched while a TUI is open takes
+// effect on the next frame without any restart. The same tick drives the
+// marquee (see MarqueeText): a repaint cadence is exactly what scrolling text
+// needs, so no second timer is required. Hosts wire one case in Update:
 //
 //	case tuikit.ThemeTickMsg:
 //	    tuikit.ApplyTheme()
@@ -189,17 +191,26 @@ type ThemeTickMsg time.Time
 
 const themePollInterval = 2 * time.Second
 
-// ThemeWatchCmd schedules the next theme poll. Feed the ThemeTickMsg it
-// produces into ApplyTheme() + ThemeWatchCmd() re-issue (see above).
+// lastThemeApply throttles palette re-reads: ThemeTickMsg is now a frame tick,
+// so ApplyTheme is called many times per second while a marquee scrolls.
+var lastThemeApply time.Time
+
+// ThemeWatchCmd schedules the next frame. Feed the ThemeTickMsg it produces
+// into ApplyTheme() + ThemeWatchCmd() re-issue (see above).
 func ThemeWatchCmd() tea.Cmd {
-	return tea.Tick(themePollInterval, func(t time.Time) tea.Msg {
+	return tea.Tick(frameInterval, func(t time.Time) tea.Msg {
 		return ThemeTickMsg(t)
 	})
 }
 
 // ApplyTheme re-reads the active Omarchy palette and re-assigns every
-// package-level Color*/Style* var. Safe to call repeatedly, cheap enough
-// to call on every tick (a tiny toml scan every 2 s is nothing).
+// package-level Color*/Style* var. Safe to call on every frame: the actual
+// palette scan is throttled to themePollInterval.
 func ApplyTheme() {
+	now := time.Now()
+	if !lastThemeApply.IsZero() && now.Sub(lastThemeApply) < themePollInterval {
+		return
+	}
+	lastThemeApply = now
 	applyPalette(loadOmarchyPalette())
 }
