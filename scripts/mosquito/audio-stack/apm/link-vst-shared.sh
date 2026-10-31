@@ -155,6 +155,12 @@ data_requirement() {
       # what makes smart:chain work at all, and they are ~400 MB -- so a prefix
       # without them does not fail loudly, it just analyses nothing.
       printf '*/*.nn\n' ;;
+    ProgramData/Arturia)
+      # The product tree under ProgramData/Arturia is what the plugin reads:
+      # the VST3 and its resources sit in the same product folder. A copy that
+      # has no product folder with a resources tree is the interrupted-install
+      # shape and must not be kept over the complete one.
+      printf '*/resources/*.xml\n' ;;
     *Valhalla*)
       # The plugin creates the product/Presets/{Factory,User} shell itself, so
       # "the folder exists" proves nothing. Any real preset, at any depth, is
@@ -200,8 +206,7 @@ data_copy_usable() {
 # meaning the only prefix whose copy satisfies the vendor's own requirement.
 data_owner_prefix() {
   local pf rel
-  for rel in "ProgramData/Kilohearts" "Program Files/iZotope" \
-             "Program Files/Common Files/sonible" "ProgramData/Valhalla DSP, LLC"; do
+  for rel in "${DATA_RELS[@]}"; do
     for pf in "$HOME/.wine-vst" "$HOME/.wine" "$HOME/.wine-ableton"; do
       [[ -d "$pf/drive_c" ]] || continue
       if data_copy_usable "$pf/drive_c/$rel" "$rel"; then
@@ -220,7 +225,29 @@ DATA_RELS=(
   "Program Files/iZotope"
   "Program Files (x86)/iZotope"
   "Program Files/Common Files/sonible"
+  # Arturia keeps the plugin AND its resources under ProgramData/Arturia.
+  # Sharing that one root is what makes an external-drive install usable from
+  # every prefix: the plugin reads the path from the registry, not from where
+  # yabridge copied its DLL.
+  "ProgramData/Arturia"
+  "Program Files/Arturia"
+  "Program Files (x86)/Arturia"
 )
+
+# Vendors that install a large library in ProgramData/<Vendor> (the normal
+# shape) are learned at install time by lib-audio-plugin-manager-core.sh and
+# written here. Reading the file is what keeps the linker from needing a new
+# hardcoded row for every vendor.
+_apm_vendor_data_file="${XDG_CONFIG_HOME:-$HOME/.config}/audio-plugin-manager/vendor-data"
+if [[ -f $_apm_vendor_data_file ]]; then
+  while IFS= read -r _rel; do
+    [[ -n $_rel ]] || continue
+    for _known in "${DATA_RELS[@]}"; do
+      [[ $_known == "$_rel" ]] && continue 2
+    done
+    DATA_RELS+=("$_rel")
+  done < "$_apm_vendor_data_file"
+fi
 
 link_vendor_data() {
   local pf="$1" rel src dst bak
@@ -393,8 +420,8 @@ prefix_busy() {
   env_want="$(readlink -f "$pf")"
   for pid in $(pgrep -x wineserver 2>/dev/null); do
     [[ -r /proc/$pid/environ ]] || continue
-    if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null \
-         | grep -qx "WINEPREFIX=$pf" || tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null \
+    if cat "/proc/$pid/environ" 2>/dev/null | tr '\0' '\n' \
+         | grep -qx "WINEPREFIX=$pf" || cat "/proc/$pid/environ" 2>/dev/null | tr '\0' '\n' \
          | grep -qx "WINEPREFIX=$env_want"; then
       return 0
     fi
@@ -405,7 +432,20 @@ prefix_busy() {
 # Vendor registry subtrees worth sharing: <label>|<reg key>
 VENDOR_REGISTRY=(
   "iZotope|HKLM\Software\iZotope"
+  "Arturia|HKLM\Software\Arturia"
+  "Arturia|HKCU\Software\Arturia"
 )
+
+_apm_vendor_registry_file="${XDG_CONFIG_HOME:-$HOME/.config}/audio-plugin-manager/vendor-registry"
+if [[ -f $_apm_vendor_registry_file ]]; then
+  while IFS= read -r _entry; do
+    [[ -n $_entry ]] || continue
+    for _known in "${VENDOR_REGISTRY[@]}"; do
+      [[ $_known == "$_entry" ]] && continue 2
+    done
+    VENDOR_REGISTRY+=("$_entry")
+  done < "$_apm_vendor_registry_file"
+fi
 
 registry_has_state() { # <prefix> <regkey> [owner] -> 0 when the prefix already has every owner product
   local pf="$1" key="$2"
@@ -425,7 +465,50 @@ registry_has_state() { # <prefix> <regkey> [owner] -> 0 when the prefix already 
       [[ -z $missing ]]
       return ;;
   esac
-  return 1
+  # Generic vendor root: the owner has any section under it, and a target that
+  # already has its own subtree keeps it (same rule as the filesystem data).
+  local hive="${key%%\\*}" path="${key#*\\}" f want
+  case "$hive" in
+    HKLM) f="$pf/system.reg" ;;
+    HKCU) f="$pf/user.reg" ;;
+    *) return 1 ;;
+  esac
+  [[ -f $f ]] || return 1
+  want="[${path//\\/\\\\}"
+  grep -Fqi -- "$want" "$f"
+}
+
+# A shared registry export may hold absolute paths. D:\ in the owner prefix is
+# not necessarily D:\ in the target (the same disk is D: in .wine-vst and E: in
+# .wine-ableton). Before importing, make sure every non-C drive the export
+# mentions resolves to the SAME mountpoint in the target; if the letter exists
+# there and points somewhere else, refuse the import rather than write a path
+# that silently means another disk.
+ensure_registry_drive_letters() {
+  local owner="$1" pf="$2" export="$3" letter src cur rc=0
+  local -a letters=()
+  # wine reg export writes UTF-16LE, so strip the interleaved NUL bytes before
+  # looking for drive letters. grep on the raw file sees nothing at all, which
+  # is why the K: mapping was never created.
+  mapfile -t letters < <(tr -d '\000' < "$export" 2>/dev/null | grep -oE '[A-Za-z]:\\' | cut -c1 | tr '[:upper:]' '[:lower:]' | sort -u)
+  for letter in "${letters[@]}"; do
+    case "$letter" in c|z|'') continue ;; esac
+    src="$(readlink -f "$owner/dosdevices/$letter:" 2>/dev/null || true)"
+    [[ -n $src && -e $src ]] || continue
+    if [[ -e "$pf/dosdevices/$letter:" || -L "$pf/dosdevices/$letter:" ]]; then
+      cur="$(readlink -f "$pf/dosdevices/$letter:" 2>/dev/null || true)"
+      [[ $cur == "$src" ]] && continue
+      warn "   cannot share registry: $letter: in $(basename "$pf") points to $cur, not $src"
+      rc=1; continue
+    fi
+    mkdir -p "$pf/dosdevices" 2>/dev/null || { rc=1; continue; }
+    if ln -s "$src" "$pf/dosdevices/$letter:" 2>/dev/null; then
+      ok "   drive $letter: added to $(basename "$pf") for the shared registry path"
+    else
+      rc=1
+    fi
+  done
+  return "$rc"
 }
 
 link_vendor_registry() {
@@ -448,13 +531,18 @@ link_vendor_registry() {
     local pf
     for pf in "$HOME"/.wine "$HOME"/.wine-ableton "$HOME"/.wine-vst; do
       [[ -d $pf/drive_c && $pf != "$owner" ]] || continue
-      registry_has_state "$pf" "$key" "$owner" && continue
       if prefix_busy "$pf"; then
         warn "$(basename "$pf") is running: the $label registry state was NOT shared into it."
         warn "  a registry import into a live prefix is overwritten when wineserver exits."
         warn "  close it and re-run to finish the job."
         rc=1; continue
       fi
+      # Run BEFORE the "already has state" skip: an earlier import may have
+      # succeeded while the drive letter it references was never created. That
+      # is exactly how .wine-ableton ended up with an Arturia K:\ path and no
+      # K: drive.
+      ensure_registry_drive_letters "$owner" "$pf" "$export" || { rc=1; continue; }
+      registry_has_state "$pf" "$key" "$owner" && continue
       root="$(prefix_wine_root "$pf")"
       if WINEPREFIX="$pf" "$root/bin/wine" reg import "$export" >/dev/null 2>&1; then
         ok "   $label registry state shared into $(basename "$pf")"
@@ -601,7 +689,10 @@ for pf in "${PREFIXES[@]}"; do
   [[ -d "$pf/drive_c" ]] || continue
   ensure_izotope_corepaths "$pf"
 done
-link_vendor_registry
+# Registry export needs a working wine for the owner prefix. A live or
+# mismatched prefix is a "try again later", not a reason to abort after the
+# filesystem links have already been made.
+link_vendor_registry || warn "some vendor registry state could not be shared — close the prefix and re-run if it is in use"
 
 if ((changed)); then
   echo

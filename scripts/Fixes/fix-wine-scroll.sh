@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - Wine/Ableton: stop the patched-Wine pointer features from
+# mosquitOmarchy - Wine/Ableton: stop the patched-Wine pointer features from
 # swallowing trackpad scrolling in the rest of the desktop.
 # =============================================================================
 # CAUSE (shibco/ableton-linux, the Wine runtime used by ableton-live)

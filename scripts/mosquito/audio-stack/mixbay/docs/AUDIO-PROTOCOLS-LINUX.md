@@ -1,9 +1,9 @@
 # Mixbay — rapport protocoles audio pro & support Linux natif
 
-**Date :** 2026-10-31
+**Date :** 2026-10-31  
 **Périmètre :** tout ce qui a été investigué, reverse-engineered, testé ou
 supporté par Mixbay et par l'écosystème Linux, pour préparer un outil
-« tout-en-un » qui met à plat les protocoles et les systèmes audio vers Linux.
+« tout-en-un » qui met à plat les protocoles et les systèmes audio vers Linux.  
 **Statut :** document de référence. Les implémentations sont dans les TODO, pas
 dans ce fichier.
 
@@ -328,24 +328,7 @@ point d'entrée ; il faut lui ajouter des backends réseau et des backends
   l'agrégat, pas des interfaces pro. Il faut les afficher avec leurs limites
   (latence, codec, pas de word clock).
 
-### 3.15 Autres transports pro (à ne pas oublier)
-
-| Transport | Ce que c'est | État Linux / conséquence Mixbay |
-|---|---|---|
-| **AES50 / SuperMAC** | 48 canaux sur Cat5e, utilisé par Behringer/Midas (X32, Wing, DL/DP) | Pas de driver Linux générique. L'audio appartient au couple console ↔ stage box ; le PC n'est pas dans le lien. À modéliser comme un lien console, pas comme une carte. |
-| **Waves SoundGrid** | Audio sur Ethernet + DSP (DiGiGrid, eMotion) | Pilote officiel Windows/macOS uniquement ; pas de reverse engineering public stable. À documenter comme non supporté ; Dante/AES67 restent les voies ouvertes. |
-| **EtherSound / CobraNet** | Anciens AoIP propriétaires (install, broadcast legacy) | Pas de support Linux moderne. Legacy : documenter, ne pas promettre. |
-| **Livewire / Q-LAN** | AoIP broadcast (Axia, QSC) | Pas de driver ALSA ; parfois un mode AES67 partiel selon l'appareil. Vérifier appareil par appareil. |
-| **SDI / HDMI embedded** | Audio embarqué dans la vidéo | Capturé par la carte vidéo (DeckLink, Magewell…), pas par une interface audio. Mixbay doit l'afficher comme un flux dérivé, avec extraction explicite. |
-| **USB Audio Class 3** | Évolution d'UAC côté device | Support kernel encore partiel ; UAC2 reste la norme réelle des cartes actuelles. |
-
-**Conséquence :** Mixbay ne doit pas prétendre « tout » supporter. Le modèle
-doit séparer les protocoles qu'il pilote réellement (ALSA, USB vendor, daemon
-constructeur, Dante via `inferno`, AES67) de ceux qui dépendent d'une console
-ou d'un autre OS (AES50, SoundGrid). Ces derniers se documentent, ils ne se
-« branchent » pas.
-
-### 3.16 Agrégats et dérive d'horloge (cross-cutting)
+### 3.15 Agrégats et dérive d'horloge (cross-cutting)
 
 Voir la section 6 pour l'analyse complète d'Audio MIDI Setup et la
 recommandation Mixbay.
@@ -800,6 +783,8 @@ car c'est transverse et utile à tous les utilisateurs.
 `harness/mixbay-reverse.py`, déployé en `~/.local/bin/mixbay-reverse` :
 
 - capture l'API texte usbmon (`/sys/kernel/debug/usb/usbmon/<bus>u`) ;
+- découvre les canaux de la carte (PipeWire/pactl) puis avance contrôle par
+  contrôle en mode `--guided` ;
 - fusionne submission/callback par URB ID ;
 - capture une baseline silencieuse puis une action ;
 - diff : nouveau transfert, ou même requête avec payload différente ; le

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - jamjamjam plugin
+# mosquitOmarchy - jamjamjam plugin
 # =============================================================================
 # Installs the mosquito.jamjamjam bar widget plugin into
 # ~/.config/omarchy/plugins and enables it in the bar layout.

@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Omarchy Custom - Setup Windows VM (all-in-one, auto-detection)
+# mosquitOmarchy - Setup Windows VM (all-in-one, auto-detection)
 # =============================================================================
 # Merges the former setup-windows-vm.sh / setup-winvm-menu.sh /
 # setup-windows-vm-debloat.sh into a single script. One simple run detects what

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - MX Master: thumb gesture button remapped to SUPER (logiops)
+# mosquitOmarchy - MX Master: thumb gesture button remapped to SUPER (logiops)
 # =============================================================================
 # Maps the big gesture button under the thumb of a Logitech MX Master (any
 # model) to the SUPER (Meta) key, momentarily: while held, SUPER is held too.

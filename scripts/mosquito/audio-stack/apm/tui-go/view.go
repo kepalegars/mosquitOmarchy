@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/lipgloss"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
@@ -78,8 +80,21 @@ func (m model) contentSize() (int, int) {
 	if m.top() == scrMain {
 		return contentPolicy.Size(m.w, m.h, m.homeLayout().TitleRows)
 	}
-	return contentPolicy.Size(m.w, m.h, subScreenTitleRows)
+	w, h := contentPolicy.Size(m.w, m.h, subScreenTitleRows)
+	// Searchable lists always reserve the filter zone: the box replaces this
+	// space when opened, so the list never jumps upward.
+	if isSearchScreen(m.top()) {
+		h -= filterZoneRows
+		if h < 6 {
+			h = 6
+		}
+	}
+	return w, h
 }
+
+// filterZoneRows is the height of the framed search box (top border, text,
+// bottom border). The same number of blank rows is reserved while it is shut.
+const filterZoneRows = 3
 
 // subScreenTitleRows: every screen except the home menu uses a single accent
 // line as its title.
@@ -143,16 +158,13 @@ func (m model) View() string {
 		body = m.picker.View()
 		bar = barLine(m.picker.ShortcutsHint())
 	case scrPluginList:
-		sub := "Tab hides/shows · s sort · shift+F search · ←/→ folders · sort: " + sortModeLabel(m.status.SortMode)
-		if line := m.searchStatusLine(); line != "" {
-			sub = line
-		}
-		title = screenTitleWithSub("Installed plugins", sub, m.contentSizeW())
+		title = screenTitleWithSub("Installed plugins",
+			"sort: "+sortModeLabel(m.status.SortMode), m.contentSizeW())
 		if m.loading {
 			body = "loading…"
 		} else {
 			body = m.picker.View()
-			bar = barLine(m.picker.ShortcutsHint())
+			bar = barLine(m.filterBarLine(m.picker.ShortcutsHint()))
 		}
 	case scrFixPluginPick:
 		// The sub-title keeps the sort state and the □/■ symbol legend (which
@@ -160,16 +172,13 @@ func (m model) View() string {
 		// the bottom bar (picker.ShortcutsHint). Two shortcut zones on one page
 		// drift apart -- this one had started claiming "enter choose" while the
 		// bar said something else.
-		sub := "□ = no fixes applied · ■ = fixes applied · shift+F search · sort: " + sortModeLabel(m.status.SortMode)
-		if line := m.searchStatusLine(); line != "" {
-			sub = line
-		}
+		sub := "□ = no fixes applied · ■ = fixes applied · sort: " + sortModeLabel(m.status.SortMode)
 		title = screenTitleWithSub("Plugin fixes", sub, m.contentSizeW())
 		if m.loading {
 			body = "loading…"
 		} else {
 			body = m.picker.View()
-			bar = barLine(m.picker.ShortcutsHint())
+			bar = barLine(m.filterBarLine(m.picker.ShortcutsHint()))
 		}
 	case scrFixChoose:
 		// The title names what the fixes are ABOUT, in the wording the user
@@ -197,16 +206,13 @@ func (m model) View() string {
 			bar = barLine(m.picker.ShortcutsHint())
 		}
 	case scrUninstallPick:
-		sub := "Tab select · s sort · shift+F search · ←/→ folders · x open folder · sort: " + sortModeLabel(m.status.SortMode)
-		if line := m.searchStatusLine(); line != "" {
-			sub = line
-		}
-		title = screenTitleWithSub("Uninstall which plugin(s)?", sub, m.contentSizeW())
+		title = screenTitleWithSub("Uninstall which plugin(s)?",
+			"sort: "+sortModeLabel(m.status.SortMode), m.contentSizeW())
 		if m.loading {
 			body = "loading…"
 		} else {
 			body = m.picker.View()
-			bar = barLine(m.picker.ShortcutsHint())
+			bar = barLine(m.filterBarLine(m.picker.ShortcutsHint()))
 		}
 	case scrPrefixMovePluginPick:
 		title = screenTitle("Manage prefixes — move a plugin", m.contentSizeW())
@@ -225,16 +231,12 @@ func (m model) View() string {
 			bar = barLine(m.picker.ShortcutsHint())
 		}
 	case scrStandalonePick:
-		sub := "shift+F search"
-		if line := m.searchStatusLine(); line != "" {
-			sub = line
-		}
-		title = screenTitleWithSub("Launch a standalone plugin", sub, m.contentSizeW())
+		title = screenTitle("Launch a standalone plugin", m.contentSizeW())
 		if m.loading {
 			body = "loading…"
 		} else {
 			body = m.picker.View()
-			bar = barLine(m.picker.ShortcutsHint())
+			bar = barLine(m.filterBarLine(m.picker.ShortcutsHint()))
 		}
 	case scrExecsToggle:
 		title = screenTitle("Toggle which executables appear in the menu", m.contentSizeW())
@@ -296,7 +298,7 @@ func (m model) View() string {
 		scrSuperfileInstallConfirm, scrPluginListSaveConfirm,
 		scrPluginsRootConfirm, scrRunnerSuccessConfirm, scrQuitConfirm,
 		scrWizardRoot, scrInstallFixesConfirm, scrInstallFixesHow, scrFixApplyConfirm,
-		scrCleanupConfirm, scrQuarantineClearConfirm,
+		scrCleanupConfirm, scrDriveAliasConfirm, scrQuarantineClearConfirm,
 		scrQuarantineClearDone:
 		body = m.confirm.View()
 		bar = barLine(m.confirm.ShortcutsHint())
@@ -322,6 +324,41 @@ func (m model) View() string {
 		return title + "\n" + body + "\n" + bar
 	}
 	return tuikit.FrameScreenVersion(m.w, m.h, title, body, bar, version)
+}
+
+// filterBarLine is the mosquitOmarchy Setup/Uninstall filter zone: when open,
+// a small accent-framed box sits directly above the shortcut bar. The empty
+// state shows the grey word "filter"; typed characters replace it live. It is
+// deliberately NOT in the page title, so the same shortcut/bar shape is used
+// on every searchable list.
+func (m model) filterBarLine(hint string) string {
+	if !m.filterOpen {
+		// Reserve the same three rows the framed box occupies when open. The
+		// list, title and shortcut bar therefore keep their exact positions;
+		// opening the search replaces this blank space instead of pushing the
+		// whole page upward.
+		return strings.Repeat("\n", filterZoneRows) + hint
+	}
+	inner := m.filterText + "▏"
+	if m.filterText == "" {
+		inner = lipgloss.NewStyle().Foreground(tuikit.ColorDisabled).Render("filter")
+	}
+	fieldW := 44
+	if w := m.contentSizeW() - 12; fieldW > w {
+		fieldW = w
+	}
+	if fieldW < 20 {
+		fieldW = 20
+	}
+	inner = lipgloss.NewStyle().Width(fieldW).Align(lipgloss.Center).Render(inner)
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(tuikit.ColorAccent).
+		Foreground(tuikit.ColorAccent).
+		Padding(0, 4).
+		Render(inner)
+	w := m.contentSizeW()
+	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(box) + "\n" + hint
 }
 
 // screenTitle renders a centered accent-colored bold title for the

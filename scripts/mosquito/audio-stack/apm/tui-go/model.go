@@ -163,6 +163,7 @@ const (
 	scrReconcileOrphansTick
 	scrOrphansConfirm // "track these N?" before the checked orphans are registered
 	scrCleanupConfirm
+	scrDriveAliasConfirm      // "Clean up redundant wine drive letters" confirm
 	scrQuarantineClearConfirm // "Empty the quarantine" confirm (destructive)
 	scrQuarantineClearDone    // result prompt: "See log / OK" after emptying
 	scrPluginsRootConfirm     // "move every plugin to X?" before migrating
@@ -447,6 +448,13 @@ func (m *model) pop() {
 	m.toast = m.toast.ClearNonCritical()
 	m.syncPickerToTop()
 	m.picker = m.cursor.Restore(screenKey(m.top()), m.picker)
+	// The VST menu's drive-letter row is driven by Status, and Status can be
+	// refreshed while an Info screen is on top of it (the cleanup result).
+	// Restoring the picker remembered before that refresh would bring the old
+	// count back, so re-render it from the current Status.
+	if m.top() == scrVstMenu {
+		m.rebuildVstPicker()
+	}
 }
 
 func (m model) Init() tea.Cmd { return tea.Batch(fetchStatus(), tuikit.ThemeWatchCmd()) }
@@ -624,6 +632,23 @@ func vstMenuItems(s Status) []tuikit.PickerItem {
 	if s.Hide32Bit {
 		h32 = "On"
 	}
+	// Cleanable and blocked are separate: a prefix held open by a running DAW
+	// must not turn into "already clean" after the other prefixes were
+	// cleaned. The row names the blocked prefix instead.
+	cleanable := s.DriveAliases - s.DriveAliasBlocked
+	driveLabel := "Wine drive letters: clean"
+	driveRow := tuikit.PickerItem{Display: driveLabel, Value: "cleanup_drive_aliases", Disabled: true}
+	switch {
+	case cleanable > 0 && s.DriveAliasBlocked > 0:
+		driveLabel = fmt.Sprintf("Clean up redundant wine drive letters (%d now, %d after closing %s)", cleanable, s.DriveAliasBlocked, s.DriveAliasBlockedNames)
+		driveRow = tuikit.PickerItem{Display: driveLabel, Value: "cleanup_drive_aliases"}
+	case cleanable > 0:
+		driveLabel = fmt.Sprintf("Clean up redundant wine drive letters (%d)", cleanable)
+		driveRow = tuikit.PickerItem{Display: driveLabel, Value: "cleanup_drive_aliases"}
+	case s.DriveAliasBlocked > 0:
+		driveLabel = fmt.Sprintf("Wine drive letters: %d pending — close %s first", s.DriveAliasBlocked, s.DriveAliasBlockedNames)
+		driveRow = tuikit.PickerItem{Display: driveLabel, Value: "cleanup_drive_aliases", Disabled: true}
+	}
 	return []tuikit.PickerItem{
 		{Display: "Manage prefixes", Value: "prefixes"},
 		{Display: "Launch an executable in the default prefix", Value: "launch_exe"},
@@ -634,6 +659,7 @@ func vstMenuItems(s Status) []tuikit.PickerItem {
 		// follows the setting instead of naming a path that goes stale the
 		// moment the default prefix is changed.
 		{Display: "Open prefix folder: " + baseName(defaultPrefixFor(s)), Value: "open_prefix"},
+		driveRow,
 		{Display: "Back", Value: "back"},
 	}
 }
@@ -1299,6 +1325,40 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.info = tuikit.NewInfo(b.String()).SetSize(m.contentSize())
 		m.replace(scrInfo)
 		return m, nil
+
+	case driveCleanupMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr(msg.err.Error())
+			return m, nil
+		}
+		var b strings.Builder
+		if msg.report.Count == 0 && len(msg.report.Skipped) == 0 {
+			m.toast, _ = m.toast.SetOK("wine drive letters are already clean")
+			return m, fetchStatus()
+		}
+		if msg.report.Count > 0 {
+			b.WriteString(fmt.Sprintf("%d redundant wine drive mapping(s) removed:\n\n", msg.report.Count))
+			for _, r := range msg.report.Removed {
+				b.WriteString("  " + r.Prefix + "  " + r.Link + " -> " + r.Target + "  (" + r.Reason + ")\n")
+			}
+		}
+		if len(msg.report.Skipped) > 0 {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString("Not cleaned — these prefixes are in use:\n")
+			for _, s := range msg.report.Skipped {
+				b.WriteString(fmt.Sprintf("  %s: %d mapping(s) — close it and run the cleanup again\n", s.Prefix, s.Pending))
+			}
+		}
+		if b.Len() > 0 {
+			b.WriteString("\nOnly dosdevices symlinks are touched. Registry-referenced letters, c: and z: are kept.\n")
+			b.WriteString("Log: ~/.config/audio-plugin-manager/drive-aliases.log")
+			m.info = tuikit.NewInfo(b.String()).SetSize(m.contentSize())
+			m.push(scrInfo)
+		}
+		return m, fetchStatus()
 
 	case quarantineClearMsg:
 		// "empty-quarantine" ran (destructive): offer the install-style

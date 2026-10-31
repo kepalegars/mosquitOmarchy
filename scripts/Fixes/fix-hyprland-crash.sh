@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom — Hyprland crash recovery
+# mosquitOmarchy — Hyprland crash recovery
 # =============================================================================
 # Self-healing fix for the usual "the desktop came up broken" scenarios.
 # It DETECTS each failure and only modifies a file that is actually broken:

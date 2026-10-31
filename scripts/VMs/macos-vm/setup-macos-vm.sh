@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Omarchy Custom - Setup macOS VM (OSX-For-Omarchy, QEMU/KVM + OpenCore)
+# mosquitOmarchy - Setup macOS VM (OSX-For-Omarchy, QEMU/KVM + OpenCore)
 # =============================================================================
 # Integrates the OSX-For-Omarchy tooling as a proper module:
 #

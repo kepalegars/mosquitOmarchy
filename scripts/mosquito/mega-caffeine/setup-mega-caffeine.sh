@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - Mega caffeine (coffee mode)
+# mosquitOmarchy - Mega caffeine (coffee mode)
 # =============================================================================
 # Coffee mode only: close the laptop, let everything run — red tint, sleep
 # blocked while the lid is closed, natural-language durations.

@@ -94,7 +94,10 @@ case "$cmd" in
       --argjson fix_prompt_on "$([[ $(apm_fix_pref_get FIX_PROMPT) == yes ]] && echo true || echo false)" \
       --arg default_prefix "$(default_prefix)" \
       --arg default_prefix_set "${DEFAULT_PREFIX:-}" \
-      '{file_picker:$file_picker,superfile_installed:$superfile_installed,hide_vst2:$hide_vst2,hide_32bit:$hide_32bit,sort_mode:$sort_mode,plugins_root:$plugins_root,downloads_dir:$downloads_dir,plugin_win_handler:$plugin_win_handler,wizard_done:$wizard_done,quarantine_entries:$quarantine_entries,auto_fix_on:$auto_fix_on,fix_prompt_on:$fix_prompt_on,auto_gui_input:$auto_gui_input,default_prefix:$default_prefix,default_prefix_set:$default_prefix_set}'
+      --argjson drive_aliases "$(apm_drive_aliases_total)" \
+      --argjson drive_alias_blocked "$(apm_drive_aliases_blocked_total)" \
+      --arg drive_alias_blocked_names "$(apm_drive_aliases_blocked_names)" \
+      '{file_picker:$file_picker,superfile_installed:$superfile_installed,hide_vst2:$hide_vst2,hide_32bit:$hide_32bit,sort_mode:$sort_mode,plugins_root:$plugins_root,downloads_dir:$downloads_dir,plugin_win_handler:$plugin_win_handler,wizard_done:$wizard_done,quarantine_entries:$quarantine_entries,auto_fix_on:$auto_fix_on,fix_prompt_on:$fix_prompt_on,auto_gui_input:$auto_gui_input,default_prefix:$default_prefix,default_prefix_set:$default_prefix_set,drive_aliases:$drive_aliases,drive_alias_blocked:$drive_alias_blocked,drive_alias_blocked_names:$drive_alias_blocked_names}'
     ;;
 
   set-plugins-root)
@@ -1434,6 +1437,13 @@ PYWIZARD
     # Deliberately destructive — the Go TUI double-confirms before calling.
     # Only the final JSON report line is echoed.
     empty_quarantine | tail -1
+    ;;
+
+  cleanup-drive-aliases)
+    # Remove duplicate/broken/raw-only dosdevices symlinks from every detected
+    # prefix. Only symlinks are touched; letters referenced by registry state
+    # or the manager's own log are preserved. JSON report for the TUI.
+    apm_cleanup_drive_aliases_json
     ;;
 
   install-native-plugin)

@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Omarchy Custom - Setup Omarchy VM (QEMU/KVM + UEFI/OVMF)
+# mosquitOmarchy - Setup Omarchy VM (QEMU/KVM + UEFI/OVMF)
 # =============================================================================
 # Provisions a virtual machine that boots the official Omarchy ISO, so you can
 # install Omarchy *inside* Omarchy (disposable sandbox, tests, demos…). It

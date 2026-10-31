@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - Touchpad (per-device config, pad only)
+# mosquitOmarchy - Touchpad (per-device config, pad only)
 # =============================================================================
 # Configures ONLY the laptop's touchpad:
 #   • Pointer acceleration: "adaptive" profile (whereas Omarchy's global

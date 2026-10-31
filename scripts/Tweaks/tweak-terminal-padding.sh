@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - terminal padding: kill the thick frame around the text
+# mosquitOmarchy - terminal padding: kill the thick frame around the text
 # =============================================================================
 # Omarchy's four terminal configs all ship a 14px inner padding, painted with
 # the theme background (Omarchy's dark themes are near-black, #0d0d0b), so the

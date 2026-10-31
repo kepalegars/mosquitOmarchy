@@ -478,7 +478,7 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 	caps := st.Spec.Caps
 	var items []tuikit.PickerItem
 	if len(st.Inputs) > 0 && (caps.Gain || caps.Phantom) {
-		items = append(items, tuikit.PickerItem{Display: "INPUTS", Heading: true})
+		items = append(items, tuikit.PickerItem{Display: "Inputs", Heading: true})
 		for _, in := range st.Inputs {
 			if caps.Gain {
 				items = append(items, tuikit.PickerItem{
@@ -499,7 +499,7 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 		}
 	}
 	if len(st.Outputs) > 0 {
-		items = append(items, tuikit.PickerItem{Display: "OUTPUTS", Heading: true})
+		items = append(items, tuikit.PickerItem{Display: "Outputs", Heading: true})
 		for i, o := range st.Outputs {
 			items = append(items, tuikit.PickerItem{
 				Display: fmt.Sprintf("  %-8s vol %s", strings.ToUpper(o.Name), dbFmt(o.VolumeDb)),
@@ -518,14 +518,14 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 		})
 	}
 	items = append(items,
-		tuikit.PickerItem{Display: "ACTIONS", Heading: true},
+		tuikit.PickerItem{Display: "Actions", Heading: true},
 	)
 	if caps.Mixer {
 		items = append(items, tuikit.PickerItem{Display: "  Loopback mixer →", Value: "goto:mixer"})
 	}
 	if st.Spec.Beta {
 		items = append(items,
-			tuikit.PickerItem{Display: "BETA", Heading: true},
+			tuikit.PickerItem{Display: "Beta", Heading: true},
 			tuikit.PickerItem{Display: "  Restart reverse engineering", Value: "beta:reverse"},
 		)
 	}
@@ -548,7 +548,7 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 func mixerItems(st drivers.Status, bus int) []tuikit.PickerItem {
 	items := []tuikit.PickerItem{
 		{Display: fmt.Sprintf("MIX bus: %s  (←/→ switch bus)", drivers.BusLabelFor(st.Spec, bus)), Value: "bus"},
-		{Display: "SOURCES → " + drivers.BusLabelFor(st.Spec, bus), Heading: true},
+		{Display: "Sources → " + drivers.BusLabelFor(st.Spec, bus), Heading: true},
 	}
 	for _, k := range drivers.MixerSources(st.Spec, bus) {
 		c := st.Mixer[k]
@@ -793,22 +793,25 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast, _ = m.toast.SetErr("Add interface: " + msg.err.Error())
 			return m, nil
 		}
-		m.toast, _ = m.toast.SetOK(msg.name + " added as beta")
+		m.toast, _ = m.toast.SetOK(msg.name + " added as beta — starting guided capture")
 		if m.top() == scrAddInterface {
 			m.pop()
 		}
 		m.syncPicker()
-		// Propose the reverse-engineering process immediately, with the
-		// methodology and the current limits. The card row keeps a shortcut.
-		m.info = tuikit.NewInfo(betaReverseText(msg.name)).SetSize(m.contentSize())
-		m.push(scrInfo)
-		return m, nil
+		// Go straight into the guided harness: discover channels, walk the
+		// controls, confirm, then return to the main menu.
+		return m, reverseHarnessCmd(msg.name, msg.match, true)
 
 	case reverseHarnessMsg:
+		// The harness has its own final confirmation. Either way, the user is
+		// back at the main menu, not left on the Add/Settings page.
+		m.nav = []screen{scrDevices}
+		m.deviceID = defaultDevice()
+		m.syncPicker()
 		if msg.err != nil {
 			m.toast, _ = m.toast.SetErr("Reverse harness: " + msg.err.Error())
 		} else {
-			m.toast, _ = m.toast.SetOK("Capture saved — review it with mixbay-reverse sessions")
+			m.toast, _ = m.toast.SetOK("Capture saved — review with mixbay-reverse sessions")
 		}
 		return m, fetchStatus(m.deviceID)
 
@@ -1007,6 +1010,18 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// A deliberate (re)selection starts a fresh session: a device can
 			// be picked in DEMO mode even if it was online earlier.
 			m.session.selectDevice()
+			// Do NOT keep rendering the previous interface while the new one
+			// loads. Selecting Quantum after EVO used to leave the EVO status
+			// (and its OUT levels) on screen until the user restarted Mixbay.
+			m.status = drivers.Status{}
+			if m.meter != nil {
+				m.meter.Stop()
+				m.meter = nil
+			}
+			m.meterStarting = false
+			m.meterSnap = meters.Snapshot{}
+			m.meterPeakIn, m.meterPeakOut = [evoMaxMeterChannels]float64{}, [evoMaxMeterChannels]float64{}
+			m.meterFrozen = false
 			// Unbind the previous device's spec: evoEnter() here would copy
 			// the STALE status.Spec (the interface we just left) into the
 			// renderer. The fresh statusMsg binds the real spec instead.
@@ -1164,7 +1179,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.ui.LaunchInScratchpad = !m.ui.LaunchInScratchpad
 				post = startupApplyCmd()
 			case "reverse_harness":
-				return m, reverseHarnessCmd("", "")
+				return m, reverseHarnessCmd("", "", true)
 			case "foundation":
 				m.foundationLoading = true
 				m.push(scrFoundation)
@@ -1280,7 +1295,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				c := m.scanCards[i]
-				m.confirm = tuikit.NewConfirm("Add "+c.Name+" as a beta interface? It will appear as demo-beta/online-beta, run ALSA level 1 (volume/mute) and offer the reverse-engineering flow.", "Cancel", "Add as beta")
+				m.confirm = tuikit.NewConfirm("Add "+c.Name+" as a beta interface and start the guided capture? Mixbay will discover its channels, walk each control, ask for a final confirmation, then return here. Capture needs sudo (usbmon); nothing is written to the card.", "Cancel", "Add + capture")
 				m.confirmAct = func() tea.Cmd { return betaAddCmd(c.Name, c.Match) }
 				m.push(scrConfirm)
 				return m, nil
@@ -1418,7 +1433,7 @@ func (m *model) activateControl(val string) tea.Cmd {
 			match = m.status.Spec.CardMatch[0]
 		}
 		m.confirm = tuikit.NewConfirm("Start the guided USB reverse-engineering harness for "+name+"? It captures a quiet baseline, then one action you perform, and saves the observed transfers. Nothing on the card is written until you replay and confirm. Capture needs sudo (usbmon).", "Cancel", "Start capture")
-		m.confirmAct = func() tea.Cmd { return reverseHarnessCmd(name, match) }
+		m.confirmAct = func() tea.Cmd { return reverseHarnessCmd(name, match, true) }
 		m.push(scrConfirm)
 		return nil
 	case strings.HasPrefix(val, "mute:"):

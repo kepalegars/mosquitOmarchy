@@ -167,7 +167,7 @@ ensure_power_plugin() {
 }
 
 # -----------------------------------------------------------------------------
-# 1c. Omarchy custom plugins (bar widget + overlay) — same clone/rename pattern
+# 1c. mosquitOmarchy plugins (bar widget + overlay) — same clone/rename pattern
 #     but with QML sources shipped in ./omarchy-plugins/ (the stock clones are
 #     then patched so a fresh machine reproduces this machine's customizations):
 #       • mosquito.power/Panel.qml          : profile-colored battery icon

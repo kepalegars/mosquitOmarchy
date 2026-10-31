@@ -106,6 +106,14 @@ fi
 STATE_FILE="$STATE_DIR/audio-plugin-manager-state.json"
 MACHINE_ID="$(cat /etc/machine-id 2>/dev/null || hostname)"
 
+# Vendor data the manager learned about from a real install (one relative path
+# per line: "ProgramData/Arturia") and the registry roots that go with it
+# ("Arturia|HKLM\Software\Arturia"). link-vst-shared.sh reads both, so a new
+# vendor's support tree reaches every prefix without a hardcoded table entry.
+APM_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/audio-plugin-manager"
+APM_VENDOR_DATA_FILE="$APM_CONFIG_DIR/vendor-data"
+APM_VENDOR_REGISTRY_FILE="$APM_CONFIG_DIR/vendor-registry"
+
 # ── Colors / messages ───────────────────────────────────────────────────────
 G='\033[1;32m'; B='\033[1;34m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
 msg(){ printf "${B}==>${N} %s\n" "$*"; }
@@ -1197,12 +1205,437 @@ list_shared_plugin_files() {
 
 # Every plugin-like file inside the prefix (used to recover plugins an
 # installer dropped into a private folder instead of the shared VST dirs).
+#
+# A vendor whose data lives on another drive usually leaves a symlinked
+# PROGRAMDATA/VENDOR directory behind. A plain `find` never enters it, so the
+# plugin it holds looked absent and the install was reported as having produced
+# no file. The standard data roots are followed ONE level: that reaches
+# ProgramData/Arturia -> external disk without turning the walk into a
+# whole-filesystem scan through any link an installer happened to drop.
 list_prefix_plugin_files() {
-  local prefix="$1"
+  local prefix="$1" base link
   [[ -d $prefix/drive_c ]] || return 0
-  find "$prefix/drive_c" \
-    -type f \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) \
-    -printf '%p\n' 2>/dev/null | sort
+  {
+    find "$prefix/drive_c" \
+      -type f \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) \
+      -printf '%p\n' 2>/dev/null
+    for base in "$prefix/drive_c/ProgramData" \
+                "$prefix/drive_c/Program Files" \
+                "$prefix/drive_c/Program Files (x86)"; do
+      [[ -d $base ]] || continue
+      while IFS= read -r -d '' link; do
+        local target
+        target="$(readlink -f "$link" 2>/dev/null || true)"
+        # Never walk a link back to / or to the prefix root through a vendor
+        # symlink: one bad link would turn an install check into a full-disk
+        # scan. A real vendor root is shallow.
+        [[ -n $target && $target != / && $target != "$prefix/drive_c" ]] || continue
+        find -L "$link" -maxdepth 12 -type f \
+          \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) \
+          -printf '%p\n' 2>/dev/null
+      done < <(find "$base" -mindepth 1 -maxdepth 1 -type l -print0 2>/dev/null)
+    done
+  } | sort -u
+}
+
+# The top-level directories a Windows installer can create for vendor data.
+# Snapshotting them before/after an install is what lets a NEW vendor be
+# recognised without naming it here: "ProgramData/<Vendor>" is the pattern.
+apm_vendor_roots_snapshot() {
+  local prefix="$1" base
+  [[ -d $prefix/drive_c ]] || return 0
+  for base in "ProgramData" "Program Files" "Program Files (x86)"; do
+    [[ -d "$prefix/drive_c/$base" ]] || continue
+    find "$prefix/drive_c/$base" -mindepth 1 -maxdepth 1 \
+      -printf "$base/%f\n" 2>/dev/null
+  done | sort -u
+}
+
+apm_vendor_root_ignored() {
+  case "$1" in
+    ProgramData/Microsoft|ProgramData/Temp|ProgramData/Packages) return 0 ;;
+    ProgramData/Package\ Cache) return 0 ;;
+    "Program Files/Common Files"|"Program Files (x86)/Common Files") return 0 ;;
+    "Program Files/Windows NT"|"Program Files (x86)/Windows NT") return 0 ;;
+    "Program Files/Windows Media Player"|"Program Files (x86)/Windows Media Player") return 0 ;;
+  esac
+  return 1
+}
+
+# The top-level vendor roots that are already redirects to another drive. A
+# user who pre-created C:\ProgramData\<Vendor> -> external before running the
+# installer must still get it shared: that link is the whole point, and waiting
+# for it to be "new" would miss it.
+apm_vendor_symlink_roots() {
+  local prefix="$1" base
+  [[ -d $prefix/drive_c ]] || return 0
+  for base in "ProgramData" "Program Files" "Program Files (x86)"; do
+    [[ -d "$prefix/drive_c/$base" ]] || continue
+    find "$prefix/drive_c/$base" -mindepth 1 -maxdepth 1 -type l \
+      -printf "$base/%f\n" 2>/dev/null
+  done | sort -u
+}
+
+# Installers write .lnk / .desktop shortcuts into the Wine user's Desktop,
+# which Wine maps to ~/ here. The manager owns its own menu entries and does
+# not need a second, unmanaged launcher per plugin on the desktop. Snapshot
+# before/after so only files THIS install created are removed.
+apm_desktop_shortcuts_snapshot() {
+  local prefix="$1" d
+  for d in "$prefix"/drive_c/users/*/Desktop "$HOME/Desktop"; do
+    [[ -d $d ]] || continue
+    find -L "$d" -maxdepth 1 -type f \
+      \( -iname '*.lnk' -o -iname '*.desktop' \) -printf '%p\n' 2>/dev/null
+  done | sort -u
+}
+
+apm_remove_new_desktop_shortcuts() {
+  local before="$1" after="$2" f
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    if rm -f -- "$f"; then
+      ok "installer desktop shortcut removed: $(basename "$f")"
+    else
+      warn "could not remove installer desktop shortcut: $f"
+    fi
+  done < <(comm -13 "$before" "$after" 2>/dev/null)
+}
+
+apm_vendor_data_known() {
+  local rel="$1"
+  [[ -f $APM_VENDOR_DATA_FILE ]] || return 1
+  grep -Fqx -- "$rel" "$APM_VENDOR_DATA_FILE"
+}
+
+apm_record_vendor_data() {
+  local rel="$1"
+  apm_vendor_data_known "$rel" && return 0
+  mkdir -p "$(dirname "$APM_VENDOR_DATA_FILE")" 2>/dev/null || true
+  printf '%s\n' "$rel" >> "$APM_VENDOR_DATA_FILE"
+  ok "vendor data recorded for sharing: $rel"
+}
+
+apm_vendor_registry_known() {
+  local entry="$1"
+  [[ -f $APM_VENDOR_REGISTRY_FILE ]] || return 1
+  grep -Fqx -- "$entry" "$APM_VENDOR_REGISTRY_FILE"
+}
+
+apm_record_vendor_registry() {
+  local label="$1" key="$2" entry
+  entry="$label|$key"
+  apm_vendor_registry_known "$entry" && return 0
+  mkdir -p "$(dirname "$APM_VENDOR_REGISTRY_FILE")" 2>/dev/null || true
+  printf '%s\n' "$entry" >> "$APM_VENDOR_REGISTRY_FILE"
+}
+
+# apm_registry_has_root <prefix> <HKLM|HKCU> <Software\Vendor> — does the
+# prefix already carry any section under that root?
+apm_registry_has_root() {
+  local prefix="$1" hive="$2" path="$3" file want
+  file="$prefix/system.reg"
+  [[ $hive == HKCU ]] && file="$prefix/user.reg"
+  [[ -f $file ]] || return 1
+  want="[${path//\\/\\\\}"
+  grep -Fqi -- "$want" "$file"
+}
+
+# apm_record_vendor_state <prefix> <before-file> <after-file>
+#
+# The new top-level vendor directories from an install become shared data;
+# each vendor name is also checked for a matching registry root, because that
+# is where vendors like Arturia store the path their plugin actually reads.
+apm_record_vendor_state() {
+  local prefix="$1" before="$2" after="$3" rel name
+  local -a names=()
+  while IFS= read -r rel; do
+    [[ -n $rel ]] || continue
+    apm_vendor_root_ignored "$rel" && continue
+    [[ -d "$prefix/drive_c/$rel" ]] || continue
+    apm_record_vendor_data "$rel"
+    name="${rel##*/}"
+    names+=("$name")
+  done < <(comm -13 "$before" "$after" 2>/dev/null)
+  # A vendor root that was pre-created as a symlink to another drive is
+  # already a record worth sharing, even though it is not new this run.
+  while IFS= read -r rel; do
+    [[ -n $rel ]] || continue
+    apm_vendor_root_ignored "$rel" && continue
+    [[ -d "$prefix/drive_c/$rel" ]] || continue
+    apm_record_vendor_data "$rel"
+    name="${rel##*/}"
+    names+=("$name")
+  done < <(apm_vendor_symlink_roots "$prefix")
+  ((${#names[@]})) || return 0
+  local key path hive
+  for name in "${names[@]}"; do
+    for hive in HKLM HKCU; do
+      path="Software\\$name"
+      apm_registry_has_root "$prefix" "$hive" "$path" || continue
+      apm_record_vendor_registry "$name" "$hive\\$path"
+    done
+  done
+}
+
+# ── Redundant wine drive letters ────────────────────────────────────────────
+#
+# Wine keeps one X: symlink per mount and an X:: symlink per block device, and
+# neither is removed when a disk is unplugged or a partition is recreated. An
+# installer then offers D:, H: and K: for the SAME disk, plus blank E:/F:/M:
+# entries that are raw devices with no drive letter at all. The duplicates are
+# harmless in principle, but they confuse every file chooser and make a stored
+# D:\ path depend on which prefix and which boot happened to create it.
+#
+# The cleanup only touches dosdevices symlinks. A letter that any registry
+# value or the manager's own state still references is kept, and c:/z: are
+# never candidates. Every removal is logged, so a surprising result can be
+# read back rather than guessed at.
+apm_drive_alias_log() { printf '%s/drive-aliases.log' "$APM_CONFIG_DIR"; }
+
+apm_drive_mount_source() {
+  local target="$1" real src
+  real="$(readlink -f "$target" 2>/dev/null || true)"
+  [[ -n $real ]] || real="$target"
+  command -v findmnt >/dev/null 2>&1 || return 0
+  src="$(findmnt -n -o SOURCE --target "$real" 2>/dev/null | head -1)"
+  printf '%s\n' "${src%%[*}"
+}
+
+apm_letter_referenced() {
+  local prefix="$1" letter="$2" f
+  local -a files=("$prefix/system.reg" "$prefix/user.reg" "$STATE_FILE")
+  for f in "${files[@]}"; do
+    [[ -f $f ]] || continue
+    # Require a PATH (X:\), not a time format such as "h:mm tt": a bare
+    # "letter:" match kept H: forever because user.reg stores sShortTime="h:mm".
+    grep -qiE "(^|[^[:alnum:]])${letter}:\\\\" "$f" 2>/dev/null && return 0
+  done
+  return 1
+}
+
+# apm_drive_alias_rows <prefix> — one "path|reason" line per symlink the
+# cleanup would remove. Empty when the prefix is already tidy.
+apm_drive_alias_rows() {
+  local prefix="$1" dd
+  dd="$prefix/dosdevices"
+  [[ -d $dd ]] || return 0
+  local -A group=() remove=()
+  local p l t real dev keeper best rank other
+  local -a letters
+  for p in "$dd"/[a-z]:; do
+    [[ -L $p ]] || continue
+    l="${p##*/}"; l="${l%:}"
+    case "$l" in c|z) continue ;; esac
+    if [[ ! -e $p ]]; then
+      remove["$p"]="target is missing"
+      continue
+    fi
+    real="$(readlink -f "$p" 2>/dev/null || true)"
+    [[ -n $real ]] || { remove["$p"]="target is missing"; continue; }
+    group["$real"]+=" $l"
+  done
+  for t in "${!group[@]}"; do
+    read -r -a letters <<< "${group[$t]}"
+    ((${#letters[@]} > 1)) || continue
+    dev="$(apm_drive_mount_source "$t")"
+    keeper=""; best=99
+    for l in "${letters[@]}"; do
+      rank=3
+      [[ -L "$dd/$l::" && -e "$dd/$l::" ]] && rank=2
+      if [[ -n $dev && -L "$dd/$l::" && -e "$dd/$l::" && \
+            "$(readlink -f "$dd/$l::" 2>/dev/null)" == "$dev" ]]; then
+        rank=1
+      fi
+      # A letter an installed app still references is the one that MUST
+      # survive: that is usually the one the vendor installer chose (Arturia
+      # stores K:\). Keeping D: because its raw device is present left two
+      # Crucial X9 entries in the chooser forever.
+      apm_letter_referenced "$prefix" "$l" && rank=0
+      if (( rank < best )) || { (( rank == best )) && [[ $l < $keeper ]]; }; then
+        best=$rank; keeper=$l
+      fi
+    done
+    for l in "${letters[@]}"; do
+      [[ $l == "$keeper" ]] && continue
+      # An installed app may have stored H:\... in its registry. Removing that
+      # letter would turn a cosmetic duplicate into a broken install.
+      apm_letter_referenced "$prefix" "$l" && continue
+      remove["$dd/$l:"]="duplicate of ${keeper^^}:"
+      [[ -L "$dd/$l::" ]] && remove["$dd/$l::"]="duplicate of ${keeper^^}:"
+    done
+  done
+  # Raw-only X:: links are NOT touched. Wine recreates one for every block
+  # device on each start (verified: after removing d::/f::, a single
+  # `wine reg query` brought them back), so they are not a stale alias and
+  # they are not the duplicate Crucial letters either. Counting them made the
+  # dialog offer a cleanup that could never converge.
+  for p in "${!remove[@]}"; do
+    printf '%s|%s\n' "$p" "${remove[$p]}"
+  done | sort
+}
+
+apm_prefix_busy() {
+  local prefix="$1" pid
+  command -v pgrep >/dev/null 2>&1 || return 1
+  for pid in $(pgrep -x wineserver 2>/dev/null); do
+    [[ -r /proc/$pid/environ ]] || continue
+    cat "/proc/$pid/environ" 2>/dev/null | tr '\0' '\n' | grep -qx "WINEPREFIX=$prefix" && return 0
+  done
+  return 1
+}
+
+# A prefix is BLOCKED for cleanup only while something other than wineserver
+# itself is using it. An idle wineserver is left behind by every installer and
+# used to make cleanup report "already clean" while the pending symlinks were
+# in the skipped prefix — the confusing two-run behaviour.
+apm_prefix_clients() {
+  local prefix="$1" pid comm envfile
+  # One grep across all environ files, not a shell loop per PID: the old loop
+  # cost ~1.3 s per call and status-json calls this for every prefix.
+  while IFS= read -r envfile; do
+    [[ -n $envfile ]] || continue
+    pid="${envfile#/proc/}"; pid="${pid%/environ}"
+    [[ $pid == "$$" ]] && continue
+    comm="$(cat "/proc/$pid/comm" 2>/dev/null || true)"
+    # Wine itself keeps these alive for every running prefix. They are not a
+    # user-facing client and must not make the cleanup report "close it first"
+    # forever.
+    case "${comm,,}" in
+      wineserver|services.exe|winedevice.exe|plugplay.exe|svchost.exe|rpcss.exe|explorer.exe|conhost.exe|wineboot.exe) continue ;;
+    esac
+    printf '%s\n' "$pid"
+  done < <(grep -laF "WINEPREFIX=$prefix" /proc/[0-9]*/environ 2>/dev/null)
+}
+
+apm_prefix_blocked() { [[ -n "$(apm_prefix_clients "$1")" ]]; }
+
+# An idle wineserver is safe to stop: it serves no window and no installer.
+# Returns 0 when the prefix is now free (or was already), 1 when clients keep
+# it busy.
+apm_prefix_release_idle() {
+  local prefix="$1" pid n=0
+  apm_prefix_blocked "$prefix" && return 1
+  for pid in $(pgrep -x wineserver 2>/dev/null); do
+    [[ -r /proc/$pid/environ ]] || continue
+    if cat "/proc/$pid/environ" 2>/dev/null | tr '\0' '\n' | grep -qx "WINEPREFIX=$prefix"; then
+      kill -TERM "$pid" 2>/dev/null || true
+      n=$((n + 1))
+    fi
+  done
+  (( n )) || return 0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    apm_prefix_busy "$prefix" || return 0
+    sleep 0.2
+  done
+  return 1
+}
+
+# apm_prune_drive_aliases <prefix> [apply] — count or remove the rows above.
+# Busy prefixes are left alone: a wineserver owns the mapping until it exits.
+apm_prune_drive_aliases() {
+  local prefix="$1" apply="${2:-}" p reason n=0
+  [[ -d $prefix/dosdevices ]] || return 0
+  if apm_prefix_busy "$prefix"; then
+    if apm_prefix_release_idle "$prefix"; then
+      ok "$(basename "$prefix"): stale wineserver closed before cleanup"
+    else
+      warn "$(basename "$prefix") is in use — drive-letter cleanup skipped."
+      return 0
+    fi
+  fi
+  while IFS='|' read -r p reason; do
+    [[ -n $p ]] || continue
+    if [[ $apply != apply ]]; then
+      n=$((n + 1))
+      continue
+    fi
+    local target; target="$(readlink "$p" 2>/dev/null || true)"
+    if ! rm -f -- "$p"; then
+      warn "could not remove $p"
+      continue
+    fi
+    n=$((n + 1))
+    ok "removed redundant drive mapping ${p##*/} (${reason})"
+    mkdir -p "$(dirname "$(apm_drive_alias_log)")" 2>/dev/null || true
+    printf '%s\t%s\t%s -> %s\n' "$(date '+%Y-%m-%d %H:%M')" \
+      "$(basename "$prefix")" "${p##*/}" "$target" \
+      >> "$(apm_drive_alias_log)" 2>/dev/null || true
+  done < <(apm_drive_alias_rows "$prefix")
+  [[ $apply == apply && $n -gt 0 ]] && \
+    msg "$(basename "$prefix"): $n redundant drive mapping(s) removed (log: $(apm_drive_alias_log))"
+  return 0
+}
+
+apm_drive_aliases_total() {
+  local pf n total=0
+  for pf in "${WINE_PREFIXES[@]:-}"; do
+    [[ -d "$pf/dosdevices" ]] || continue
+    n="$(apm_drive_alias_rows "$pf" | wc -l)"
+    total=$((total + n))
+  done
+  printf '%s\n' "$total"
+}
+
+# Pending rows that the cleanup can act on NOW (idle wineservers are
+# releasable, so they do not count as blocked).
+apm_drive_aliases_blocked_total() {
+  local pf n total=0
+  for pf in "${WINE_PREFIXES[@]:-}"; do
+    [[ -d "$pf/dosdevices" ]] || continue
+    apm_prefix_blocked "$pf" || continue
+    n="$(apm_drive_alias_rows "$pf" | wc -l)"
+    total=$((total + n))
+  done
+  printf '%s\n' "$total"
+}
+
+apm_drive_aliases_blocked_names() {
+  local pf n out=""
+  for pf in "${WINE_PREFIXES[@]:-}"; do
+    [[ -d "$pf/dosdevices" ]] || continue
+    apm_prefix_blocked "$pf" || continue
+    n="$(apm_drive_alias_rows "$pf" | wc -l)"
+    (( n > 0 )) || continue
+    out="${out}${out:+, }$(basename "$pf")"
+  done
+  printf '%s\n' "$out"
+}
+
+# JSON report for the TUI's manual cleanup action.
+apm_cleanup_drive_aliases_json() {
+  local pf p reason n=0 pending removed="" skipped="" fragment target
+  for pf in "${WINE_PREFIXES[@]:-}"; do
+    [[ -d "$pf/dosdevices" ]] || continue
+    if apm_prefix_busy "$pf" && ! apm_prefix_release_idle "$pf"; then
+      pending="$(apm_drive_alias_rows "$pf" | wc -l)"
+      if (( pending > 0 )); then
+        fragment="$(printf '{"prefix":"%s","pending":%d,"reason":"in use"}' "$(basename "$pf")" "$pending")"
+        skipped="${skipped}${skipped:+,}$fragment"
+        warn "$(basename "$pf") is in use — $pending drive mapping(s) left for later."
+      fi
+      continue
+    fi
+    while IFS='|' read -r p reason; do
+      [[ -n $p ]] || continue
+      [[ -e $p || -L $p ]] || continue
+      target="$(readlink "$p" 2>/dev/null || true)"
+      if ! rm -f -- "$p"; then
+        warn "could not remove $p"
+        continue
+      fi
+      n=$((n + 1))
+      fragment="$(printf '{"prefix":"%s","link":"%s","target":"%s","reason":"%s"}' \
+        "$(basename "$pf")" "${p##*/}" \
+        "$(printf '%s' "$target" | sed 's/\\/\\\\/g; s/"/\\"/g')" \
+        "$reason")"
+      removed="${removed}${removed:+,}$fragment"
+      mkdir -p "$(dirname "$(apm_drive_alias_log)")" 2>/dev/null || true
+      printf '%s\t%s\t%s -> %s\n' "$(date '+%Y-%m-%d %H:%M')" \
+        "$(basename "$pf")" "${p##*/}" "$target" \
+        >> "$(apm_drive_alias_log)" 2>/dev/null || true
+    done < <(apm_drive_alias_rows "$pf")
+  done
+  printf '{"removed":[%s],"count":%d,"skipped":[%s]}\n' "$removed" "$n" "$skipped"
 }
 
 # is_manager_installer <path> — an installer whose payload is a MANAGER app, not
@@ -1694,6 +2127,26 @@ install_manager_app(){
   return 0
 }
 
+# hypr-kinetic-scroll turns a scroll into synthetic momentum frames. Wine's
+# installers and their file choosers create/destroy windows rapidly while the
+# pointer is over them, and the momentum frames then land on a window that no
+# longer exists — the observed crash when scrolling a Wine file chooser. The
+# plugin has no wildcard class rule for arbitrary <installer>.exe windows, so
+# suspend its default DURING the installer and restore it on exit. Only the
+# plugin's default rule is touched; the user's own per-app rules stay.
+apm_kinetic_scroll_suspend() {
+  command -v hyprctl >/dev/null 2>&1 || return 0
+  hyprctl plugin list 2>/dev/null | grep -q 'hypr-kinetic-scroll' || return 0
+  hyprctl eval 'hl.plugin.kinetic_scroll.disable_default()' >/dev/null 2>&1 || return 0
+  APM_KINETIC_SUSPENDED=1
+  trap 'apm_kinetic_scroll_resume' EXIT
+}
+apm_kinetic_scroll_resume() {
+  [[ ${APM_KINETIC_SUSPENDED:-0} == 1 ]] || return 0
+  hyprctl eval 'hl.plugin.kinetic_scroll.enable_default()' >/dev/null 2>&1 || true
+  APM_KINETIC_SUSPENDED=0
+  trap - EXIT
+}
 
 install_plugin() {
   local file="$1" wine_prefix="${2:-$(default_prefix)}" f dst base
@@ -1709,15 +2162,23 @@ install_plugin() {
     local _mrc=0
     _prefix_before_exes="$(mktemp)" || _prefix_before_exes=/dev/null
     find "$wine_prefix/drive_c" -maxdepth 8 -type f -iname '*.exe' 2>/dev/null | sort > "$_prefix_before_exes" || true
+    apm_kinetic_scroll_suspend
     if install_manager_app "$file" "$wine_prefix"; then
       _mrc=0
     else
       _mrc=1
     fi
+    apm_kinetic_scroll_resume
     rm -f "${_prefix_before_exes:-}" || true
     unset _prefix_before_exes || true
     return "$_mrc"
   fi
+
+  # Cosmetic, but every installer sees it: drop the stale duplicate drive
+  # letters and raw-device aliases BEFORE the wizard opens its file chooser.
+  # Only this prefix is touched, and only symlinks; a letter still referenced
+  # by registry state is preserved.
+  apm_prune_drive_aliases "$wine_prefix" apply || true
 
   # The prefix must point at the shared folders BEFORE the installer runs,
   # otherwise the new files land inside the prefix and detection misses them.
@@ -1727,11 +2188,15 @@ install_plugin() {
   # whole prefix) before the installer runs, then diff the sets after. Using
   # `find -newer <stamp>` missed installers that write files with an OLD mtime
   # (archive timestamps) — exactly the Serum 2 "No new VST file detected" case.
-  local before after before_pfx after_pfx before_state=""
+  local before after before_pfx after_pfx before_state="" vendor_before vendor_after desktop_before desktop_after
   before="$(mktemp)"; after="$(mktemp)"
   before_pfx="$(mktemp)"; after_pfx="$(mktemp)"
+  vendor_before="$(mktemp)"; vendor_after="$(mktemp)"
+  desktop_before="$(mktemp)"; desktop_after="$(mktemp)"
   list_shared_plugin_files > "$before" 2>/dev/null || true
   list_prefix_plugin_files "$wine_prefix" > "$before_pfx" 2>/dev/null || true
+  apm_vendor_roots_snapshot "$wine_prefix" > "$vendor_before" 2>/dev/null || true
+  apm_desktop_shortcuts_snapshot "$wine_prefix" > "$desktop_before" 2>/dev/null || true
 
   # ── PRE-INSTALLATION PATCH (automatic, no prompt) ─────────────────────
   # Sonible / "smart chain" installers are Inno Setup builds using the
@@ -1744,8 +2209,10 @@ install_plugin() {
   fi
 
   msg "Running $file through wine ($(apm_wine_runtime) runtime; prefix: $wine_prefix — the installer shows its own window)…"
+  apm_kinetic_scroll_suspend
   local wine_rc=0 wine_out=""
   wine_out="$(WINEPREFIX="$wine_prefix" "$(apm_wine)" "$file" 2>&1)" || wine_rc=$?
+  apm_kinetic_scroll_resume
   [[ -n $wine_out ]] && printf '%s\n' "$wine_out" >&2
   # A wine that exits non-zero is the FAILURE, and it must be reported as such.
   #
@@ -1775,18 +2242,24 @@ install_plugin() {
       else
         warn "it also failed with $(basename "$other") — this prefix is held by a third build."
         [[ -n $before_state && $before_state != /dev/null ]] && rm -f "$before_state"
-  rm -f "$before" "$after" "$before_pfx" "$after_pfx"
+  rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$vendor_before" "$vendor_after" "$desktop_before" "$desktop_after"
         return 1
       fi
     else
       [[ -n $before_state && $before_state != /dev/null ]] && rm -f "$before_state"
-  rm -f "$before" "$after" "$before_pfx" "$after_pfx"
+  rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$vendor_before" "$vendor_after" "$desktop_before" "$desktop_after"
       return 1
     fi
   fi
 
   list_shared_plugin_files > "$after" 2>/dev/null || true
   list_prefix_plugin_files "$wine_prefix" > "$after_pfx" 2>/dev/null || true
+  apm_vendor_roots_snapshot "$wine_prefix" > "$vendor_after" 2>/dev/null || true
+  # Learn the vendor's support tree BEFORE post_install runs the linker, so a
+  # new ProgramData/<Vendor> reaches every prefix on this very install.
+  apm_record_vendor_state "$wine_prefix" "$vendor_before" "$vendor_after"
+  apm_desktop_shortcuts_snapshot "$wine_prefix" > "$desktop_after" 2>/dev/null || true
+  apm_remove_new_desktop_shortcuts "$desktop_before" "$desktop_after"
 
   # .aux support files = files that appear in the shared folders or the prefix.
   local -a auxfiles=()
@@ -1824,6 +2297,15 @@ install_plugin() {
       case "${b,,}" in
         ntdll.dll|kernel32.dll|user32.dll|gdi32.dll|advapi32.dll|shell32.dll|ole32.dll|oleaut32.dll|combase32.dll|comdlg32.dll|version.dll|setupapi.dll|wininet.dll|ws2_32.dll|winmmbase.dll|winmm.dll|msvcrt.dll|msvcp140.dll|msvcp100.dll|msvcp120.dll|msvcp71.dll|msvcrt90.dll|api-ms-win-*|ucrtbase.dll|vcruntime140*.dll) continue;;
       esac
+      # Vendor data, not a plugin: a DLL under ProgramData that exports no
+      # plugin entry is an engine/resource the vendor's tree provides (Arturia
+      # ships ~70 *Processor.dll files under ProgramData/Arturia). Copying them
+      # flat beside the plugin was the "suite companion" rule applied to a
+      # whole library tree. ProgramData/<Vendor> is shared as a tree instead.
+      if [[ $f == *"/drive_c/ProgramData/"* && ${b,,} == *.dll ]] && \
+         ! dll_exports_plugin_entry "$f"; then
+        continue
+      fi
       # A .vst3/.clap BUNDLE is a directory, and stat on a directory returns the
       # directory size (4096), so a size threshold silently dropped every bundle
       # -- including Serum2, which yabridge itself reports as "bundle". The
@@ -1895,7 +2377,7 @@ install_plugin() {
   fi
 
   [[ -n $before_state && $before_state != /dev/null ]] && rm -f "$before_state"
-  rm -f "$before" "$after" "$before_pfx" "$after_pfx"
+  rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$vendor_before" "$vendor_after" "$desktop_before" "$desktop_after"
 
 
   # What the installer rewrote, as opposed to created.
@@ -2023,6 +2505,12 @@ install_plugin() {
   register_standalones_from_prefix "$wine_prefix"
   post_install
   hide_wine_menu_entries "$wine_prefix"
+  # Re-run after post_install: registry sharing starts Wine again, and any
+  # duplicate letter that appeared meanwhile is removed while nothing runs.
+  # Then close an idle wineserver the installer left behind, so the NEXT
+  # install does not find the prefix "busy" and skip its own cleanup.
+  apm_prune_drive_aliases "$wine_prefix" apply || true
+  apm_prefix_release_idle "$wine_prefix" || true
   # Known per-plugin fixes (e.g. CrispyTuner's editor input) are applied on
   # first install so the GUI works out of the box; state + Lua block are
   # idempotent, so re-installing never duplicates rules.

@@ -222,6 +222,103 @@ def find_device(args: argparse.Namespace, prompt: bool = True) -> UsbDevice:
         die("invalid choice")
 
 
+def pactl_json(*args: str) -> list | dict:
+    """Read PipeWire/Pulse card state as the invoking user, even under sudo."""
+    base = ["pactl", "-f", "json", *args]
+    attempts = [base]
+    sudo_user = os.environ.get("SUDO_USER")
+    if os.geteuid() == 0 and sudo_user:
+        attempts.append(["runuser", "-u", sudo_user, "--", *base])
+    for cmd in attempts:
+        try:
+            out = subprocess.check_output(cmd, text=True,
+                                          stderr=subprocess.DEVNULL, timeout=10)
+            return json.loads(out)
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired,
+                json.JSONDecodeError):
+            continue
+    return []
+
+
+def _channels(spec: str) -> int:
+    m = re.search(r"(\d+)ch", spec or "")
+    return int(m.group(1)) if m else 0
+
+
+def discover_channels(dev: UsbDevice, extra_names: Sequence[str] = ()) -> dict:
+    """Find the ALSA/PipeWire card behind this USB device and its channel counts.
+
+    This is deliberately read-only: it only asks pactl for the current profile,
+    sinks and sources. A card with no PipeWire node returns 0/0 and the guided
+    wizard falls back to two inputs / two outputs with a warning.
+    """
+    cards = pactl_json("list", "cards")
+    sinks = pactl_json("list", "sinks")
+    sources = pactl_json("list", "sources")
+    if not isinstance(cards, list):
+        cards = []
+    if not isinstance(sinks, list):
+        sinks = []
+    if not isinstance(sources, list):
+        sources = []
+    needles = [n.lower() for n in (dev.product, dev.manufacturer, *extra_names) if n]
+
+    def matches(props: dict) -> bool:
+        hay = " ".join(str(props.get(k, "")) for k in
+                       ("alsa.card_name", "device.description", "device.name",
+                        "api.alsa.card.name")).lower()
+        return bool(hay) and any(n in hay for n in needles)
+
+    card = next((c for c in cards if matches(c.get("properties", {}))), None)
+    card_name = ""
+    profile = ""
+    if card:
+        props = card.get("properties", {})
+        card_name = props.get("alsa.card_name") or props.get("device.description") or ""
+        profile = card.get("active_profile") or ""
+        # Prefer the exact alsa.card_name when matching nodes.
+        if card_name:
+            needles = [card_name.lower()]
+
+    def node_channels(nodes: list) -> tuple[int, list[str]]:
+        names, best = [], 0
+        for n in nodes:
+            props = n.get("properties", {})
+            hay = " ".join(str(props.get(k, "")) for k in
+                           ("alsa.card_name", "device.description", "device.name")).lower()
+            if needles and not any(x in hay for x in needles):
+                continue
+            ch = _channels(n.get("sample_specification", ""))
+            if ch:
+                best = max(best, ch)
+                names.append(f"{n.get('description') or n.get('name')} ({ch}ch)")
+        return best, names
+
+    playback, sink_names = node_channels(sinks)
+    capture, source_names = node_channels(sources)
+    if not card_name and not needles:
+        # No name to match: report the global USB ALSA totals rather than lie.
+        pass
+    return {
+        "card": card_name,
+        "profile": profile,
+        "playback": playback,
+        "capture": capture,
+        "sinks": sink_names,
+        "sources": source_names,
+    }
+
+
+def guided_steps(channels: dict) -> list[str]:
+    ins = max(1, min(16, channels.get("capture") or 2))
+    outs = max(1, min(16, channels.get("playback") or 2))
+    steps = [f"gain:input{i}" for i in range(1, ins + 1)]
+    steps += [f"mute:input{i}" for i in range(1, ins + 1)]
+    steps += [f"volume:output{i}" for i in range(1, outs + 1)]
+    steps += [f"mute:output{i}" for i in range(1, outs + 1)]
+    return steps
+
+
 def ensure_usbmon() -> None:
     if DEBUGFS.is_dir():
         return
@@ -694,13 +791,9 @@ def cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_capture(args: argparse.Namespace) -> int:
-    ensure_root(sys.argv[1:])
-    dev = find_device(args)
-    say(f"Device : {dev.label}")
-    say(f"Bus    : {dev.bus}  devnum {dev.dev}")
-    say(f"Config : baseline {args.baseline:.1f}s, action {args.action:.1f}s")
-    say("\nBaseline: leave the card alone (do not touch the vendor app).")
+def capture_one(dev: UsbDevice, label: str, args: argparse.Namespace,
+                *, guided: bool) -> Path | None:
+    say(f"\nBaseline: leave {dev.product or 'the card'} alone (do not touch the vendor app).")
     say("Capturing baseline…")
     baseline = capture(dev, args.baseline)
     say(f"  {len(baseline)} transfer(s).")
@@ -715,25 +808,87 @@ def cmd_capture(args: argparse.Namespace) -> int:
     if not candidates:
         warn("no new/changed transfer found. Nothing was saved.")
         warn("Try a longer --action window, or check that the vendor app is talking to this card.")
-        return 1
+        return None
     say(f"\n{len(candidates)} candidate transfer(s):")
     for i, t in enumerate(candidates, 1):
         say(f"  {i:3d}. {t.summary()}")
-    label = args.label or ask("\nLabel (e.g. gain:input1, volume:output1, phantom:input1): ")
+    if not label:
+        label = ask("\nLabel (e.g. gain:input1, volume:output1, phantom:input1): ")
     if not label:
         die("a label is required to save the session")
-    rng = {
-        "min": args.min if args.min is not None else ask("Min value [0]: ", "0"),
-        "max": args.max if args.max is not None else ask("Max value [255]: ", "255"),
-        "unit": args.unit or ask("Unit (dB, %, bool, raw) [raw]: ", "raw"),
-    }
-    notes = args.notes or ask("Notes (optional): ")
+    if guided:
+        rng = {"min": args.min or "0", "max": args.max or "255",
+               "unit": args.unit or "raw"}
+        notes = args.notes or "guided capture"
+    else:
+        rng = {
+            "min": args.min if args.min is not None else ask("Min value [0]: ", "0"),
+            "max": args.max if args.max is not None else ask("Max value [255]: ", "255"),
+            "unit": args.unit or ask("Unit (dB, %, bool, raw) [raw]: ", "raw"),
+        }
+        notes = args.notes or ask("Notes (optional): ")
     path = save_session(dev, label, baseline, action, candidates, rng, notes)
-    say(f"\nSaved: {path}")
+    say(f"Saved: {path}")
     say(f"Label: {label}")
-    say("Review capture.txt, then replay with:")
-    say(f"  mixbay-reverse replay --label {label} --dry-run")
-    return 0
+    return path
+
+
+def cmd_capture(args: argparse.Namespace) -> int:
+    ensure_root(sys.argv[1:])
+    dev = find_device(args)
+    say(f"Device : {dev.label}")
+    say(f"Bus    : {dev.bus}  devnum {dev.dev}")
+    say(f"Config : baseline {args.baseline:.1f}s, action {args.action:.1f}s")
+
+    if not args.guided:
+        path = capture_one(dev, args.label, args, guided=False)
+        if path is None:
+            return 1
+        say("Review capture.txt, then replay with:")
+        say(f"  mixbay-reverse replay --label {args.label or '<label>'} --dry-run")
+        return 0
+
+    channels = discover_channels(dev, [args.name, args.match])
+    say("\nChannel discovery (read-only, from PipeWire/pactl):")
+    say(f"  ALSA card : {channels['card'] or 'not found'}")
+    say(f"  Profile   : {channels['profile'] or 'unknown'}")
+    say(f"  Playback  : {channels['playback'] or '?'} channel(s)")
+    for name in channels["sinks"]:
+        say(f"    sink   : {name}")
+    say(f"  Capture   : {channels['capture'] or '?'} channel(s)")
+    for name in channels["sources"]:
+        say(f"    source : {name}")
+    if not channels["playback"] and not channels["capture"]:
+        warn("no PipeWire channels found; falling back to 2 in / 2 out")
+
+    steps = [s.strip() for s in (args.steps or "").split(",") if s.strip()]
+    if not steps:
+        steps = guided_steps(channels)
+    say(f"\nGuided capture: {len(steps)} step(s).")
+    say("Each step captures a quiet baseline, then one action you perform.")
+    saved: list[tuple[str, Path]] = []
+    for i, label in enumerate(steps, 1):
+        say(f"\n=== Step {i}/{len(steps)} — {label} ===")
+        choice = ask("Press Enter to capture, 's' to skip, 'q' to stop: ")
+        if choice.lower() == "q":
+            break
+        if choice.lower() == "s":
+            continue
+        path = capture_one(dev, label, args, guided=True)
+        if path is None:
+            again = ask("Nothing captured. Retry this step? [y/N]: ", "n")
+            if again.lower().startswith("y"):
+                path = capture_one(dev, label, args, guided=True)
+        if path is not None:
+            saved.append((label, path))
+
+    say(f"\nGuided capture finished: {len(saved)} label(s) saved.")
+    for label, path in saved:
+        say(f"  {label:24s} {path}")
+    if not saved:
+        warn("No usable capture. The beta card stays unchanged.")
+    ask("\nPress Enter to return to Mixbay…")
+    return 0 if saved else 1
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
@@ -795,6 +950,10 @@ def build_parser() -> argparse.ArgumentParser:
     cap.add_argument("--dev", type=int, default=None)
     cap.add_argument("--baseline", type=float, default=3.0)
     cap.add_argument("--action", type=float, default=6.0)
+    cap.add_argument("--guided", action="store_true",
+                     help="discover channels then walk control by control")
+    cap.add_argument("--steps", default="",
+                     help="comma-separated guided labels (default: discovered channels)")
     cap.add_argument("--label", default="")
     cap.add_argument("--min", default=None)
     cap.add_argument("--max", default=None)

@@ -246,23 +246,24 @@ Le harnais réel est `mixbay-reverse` (déployé par l'installateur) :
 
 ```bash
 mixbay-reverse list
-mixbay-reverse capture --name "PreSonus Quantum ES 4" --match "Quantum ES"
+mixbay-reverse capture --guided --name "PreSonus Quantum ES 4" --match "Quantum ES"
 mixbay-reverse sessions
 mixbay-reverse show gain:input1
 mixbay-reverse replay --label gain:input1 --dry-run
 mixbay-reverse replay --label gain:input1 --yes
 ```
 
-Il capture `usbmon`, compare une baseline silencieuse à **une** action, isole
-les transferts nouveaux ou dont la payload change, puis sauvegarde la session
-dans `~/.config/mosquitomixbay/reverse/<carte>/<timestamp>/` (`meta.json`,
-JSONL, `capture.txt`, `map.json`). Le replay ne renvoie **que** les octets
-capturés, dans l'ordre, avec les GET/acks intermédiaires ; `--dry-run` et une
-confirmation `REPLAY` sont obligatoires. Voir
-[`harness/README.md`](harness/README.md).
+Il capture `usbmon`, découvre les canaux de la carte (PipeWire/pactl), puis
+avance contrôle par contrôle : baseline silencieuse, **une** action, diff,
+sauvegarde. Un résumé final demande confirmation et ramène au menu principal.
+Le replay ne renvoie **que** les octets capturés, dans l'ordre, avec les
+GET/acks intermédiaires ; `--dry-run` et une confirmation `REPLAY` sont
+obligatoires. Voir [`harness/README.md`](harness/README.md).
 
 TUI : **Settings → Reverse engineering harness (usbmon)**, et sur une carte
-beta **Restart reverse engineering**. La capture demande sudo (usbmon) ; le
+beta **Restart reverse engineering**. Surtout, **Add an audio interface** lance
+le mode guidé juste après l'ajout de la carte : découverte des canaux, steps,
+confirmation finale, retour à l'accueil. La capture demande sudo (usbmon) ; le
 replay utilise `pyusb` et les droits udev. Une carte beta reste beta tant que
 le mapping n'a pas été validé sur matériel.
 
@@ -283,10 +284,21 @@ click sur le casque A ».
 Le **split** découpe ce flux unique en plusieurs **périphériques stéréo
 virtuels** :
 
-- `evo8_main_output` → canaux 1/2 (sortie principale)
-- `evo8_output_3_4` → canaux 3/4 (deuxième sortie)
+- `evo8_main_output` → canaux 1/2
+- `evo8_output_3_4` → canaux 3/4
 - `evo8_loopback_output` → canaux 5/6 (loopback)
 - `evo8_mic_1_2`, `evo8_mic_3_4`, `evo8_loopback_capture` côté capture
+
+D'après le manuel Audient EVO 8 :
+
+> Pressing the Volume Control 1 button will adjust the volume of the 1+2 speaker
+> outputs or the first headphone output and pressing the Volume Control 2 will
+> allow you to separately adjust the volume for Speaker Outputs 3+4 or the
+> second headphone output.
+
+> Artist Mix — EVO 8 allows you to have a different mix being sent to Outputs 3+4
+> … using the main speakers (Outputs 1 + 2) and having an artist using headphones
+> (Outputs 3+4) with both listening to separate mixes.
 
 Chaque application cible alors la paire qu'elle doit entendre, et le mixer
 matériel de la carte fait le routage final. Sans split, on ne peut pas router

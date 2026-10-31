@@ -97,6 +97,47 @@ class DiffTests(unittest.TestCase):
         self.assertEqual(len(mr.diff_candidates(base, action)), 1)
 
 
+class DiscoveryTests(unittest.TestCase):
+    def test_channels_and_guided_steps(self):
+        cards = [{
+            "name": "alsa_card.usb-PreSonus_Quantum_ES_4-00",
+            "active_profile": "output:analog-stereo+input:analog-stereo",
+            "properties": {"alsa.card_name": "Quantum ES 4",
+                           "device.description": "PreSonus Quantum ES 4"},
+        }]
+        sinks = [{
+            "name": "alsa_output.usb-PreSonus",
+            "description": "Quantum ES 4 Analog Stereo",
+            "sample_specification": "s32le 2ch 48000Hz",
+            "properties": {"alsa.card_name": "Quantum ES 4"},
+        }]
+        sources = [{
+            "name": "alsa_input.usb-PreSonus",
+            "description": "Quantum ES 4 Analog Stereo",
+            "sample_specification": "s32le 4ch 48000Hz",
+            "properties": {"alsa.card_name": "Quantum ES 4"},
+        }]
+
+        def fake(*args):
+            return {"cards": cards, "sinks": sinks, "sources": sources}.get(args[-1], [])
+
+        old = mr.pactl_json
+        mr.pactl_json = fake
+        try:
+            dev = mr.UsbDevice(bus=1, dev=7, vid=0x194F, pid=0x010D,
+                               manufacturer="PreSonus", product="Quantum ES 4")
+            ch = mr.discover_channels(dev)
+            self.assertEqual(ch["playback"], 2)
+            self.assertEqual(ch["capture"], 4)
+            self.assertIn("Quantum ES 4", ch["card"])
+            steps = mr.guided_steps(ch)
+            self.assertIn("gain:input4", steps)
+            self.assertIn("volume:output2", steps)
+            self.assertNotIn("volume:output3", steps)
+        finally:
+            mr.pactl_json = old
+
+
 class ReplayWindowTests(unittest.TestCase):
     def test_keeps_the_get_between_candidates(self):
         rows = [

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - Zen Browser config (plugins + settings + chrome theme)
+# mosquitOmarchy - Zen Browser config (plugins + settings + chrome theme)
 # =============================================================================
 # Deploys the user's Zen browser configuration into the ACTIVE profile:
 #   - extensions (XPI from seed/extensions/) -> <profile>/extensions/

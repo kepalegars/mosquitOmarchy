@@ -120,8 +120,26 @@ like a broken install:
 - **Sonible** — smartEQ, smart:comp and smart:chain run their analysis against per-product
   neural models under `Common Files/sonible`: ~400 MB of `.nn` files. Without them the plugin
   loads and then analyses nothing.
+- **Arturia** — the plugin and its resources live together under
+  `ProgramData/Arturia/<Product>`, and the path is read back from
+  `HKLM\Software\Arturia`. Both the tree and that registry root are shared.
 
-These are linked into every prefix that runs a DAW.
+These are linked into every prefix that runs a DAW. The table is not closed: after an install,
+the top-level folders a vendor created under `ProgramData` / `Program Files` are recorded in
+`~/.config/audio-plugin-manager/vendor-data`, and a registry root matching the vendor name in
+`~/.config/audio-plugin-manager/vendor-registry`. The next linker run shares that new vendor
+too, so a library pack that installs into `ProgramData/<Vendor>` does not need a code change.
+
+An installer that writes **only** to a drive letter outside the prefix (nothing under
+`ProgramData/<Vendor>`, no symlink) leaves no trace inside the prefix for the manager to learn
+from. Use the vendor's default `ProgramData\<Vendor>` path, or pre-create
+`drive_c/ProgramData/<Vendor>` as a symlink to the external folder, so the install still has a
+stable `C:` path that every prefix can share. A drive-letter path such as `D:\...` is not
+portable: the same disk is `D:` in one prefix and `E:` in another. When a vendor registry key
+that APM shares references a letter (Arturia stores `commoninstalldir=K:\…`), the linker adds
+that letter to the other prefixes pointing at the same mountpoint, and refuses the import if the
+letter already points elsewhere. That is how an external-library install keeps working in
+Ableton as well as REAPER.
 
 ### 3. A plugin's own **dependency DLL**
 
@@ -327,11 +345,15 @@ One unified list, `[origin/format]  name` — `[vst/vst2]`, `[native/lv2]`. Plug
 Windows installer are grouped under their wine-program folder, with the same nesting as the
 Uninstall screen.
 
-- `←` `→` cycles the sort (vendor / name / format / install date) live, btop-style
-- `shift+F` searches the list live — matched plugins keep their vendor row, and
-  the same search works in Uninstall, Launch a standalone plugin and the
-  Plugin-fixes chooser. `Esc` clears the query, then leaves the screen
-- `Tab` hides or shows the highlighted plugin, or a whole folder row
+- `s` cycles the sort (vendor / name / format / install date); the top line only names the
+  current sort mode, all keys live in the bottom shortcut bar
+- `shift+F` opens the live filter zone **above the bottom shortcut bar** (the same shape as
+  mosquitOmarchy's Setup/Uninstall filter). Matching rows are flattened to `Vendor › Plugin`
+  leaves, so a hit inside a closed folder is still visible. `F` or `Esc` closes and restores the
+  full tree. The same search works in Uninstall, Launch a standalone plugin and the
+  Plugin-fixes chooser
+- `Tab` toggles the highlighted plugin, or a whole folder row
+- `←` `→` folds/unfolds the folder the cursor is in
 - `Enter` shows a row's detail
 - leaving with changes prompts Save / Discard
 
@@ -442,6 +464,33 @@ fixes are written for it.
 Each of these was diagnosed on a real machine and cost real time. They are listed because the
 symptom never points at the cause.
 
+**A Wine installer/file chooser crashes when scrolling** — `hypr-kinetic-scroll` emits synthetic
+momentum frames after the pointer leaves; while an installer creates and destroys chooser
+windows, those frames can land on a dead window. The plugin has no wildcard class rule for
+arbitrary `<installer>.exe` windows, so APM calls its Lua `disable_default()` for the duration of
+the installer and `enable_default()` afterwards (also via an EXIT trap, so a killed install does
+not leave it off). User per-app rules are preserved. No scroll workaround is needed once the
+installer has closed.
+
+**`yabridgectl sync` says "Found N leftover files … rerun with --prune"** — that is a warning,
+not a VST2 failure. The listed files are dependency DLLs placed inside suite bundles (iZotope
+`Meter Tap 3.dll`, Sonible's ONNX runtime…) precisely because yabridge would not resolve them
+otherwise. `--prune` would delete them and break those suites, so APM does not use it. Check the
+actual format line in `yabridgectl status`: `Arturia/Analog Lab V.dll :: VST2, 64-bit, synced`
+means the VST2 is fine.
+
+**Desktop shortcuts left by an installer** — Wine maps its Desktop to `$HOME` here, so an
+installer with "create a desktop shortcut" checked leaves e.g. `~/Analog Lab V.lnk` and
+`~/Analog Lab V.desktop`. APM snapshots the desktop before/after an install and removes only the
+`.lnk`/`.desktop` files that install created. AAX copies are likewise deleted after every
+install/uninstall (Pro Tools is not installed).
+
+**A raw `X::` drive link is missing after cleanup** — expected. Wine recreates `X::` for every
+block device on each start; they show as blank drive letters in some installers and cannot be
+permanently removed from `dosdevices`. Cleanup therefore ignores them and only removes real
+duplicate/broken drive letters. An installer that asks for a file may still show blank device
+letters; that is Wine enumeration, not a leftover APM alias.
+
 **"Could not load HeartCore"** — Kilohearts. Not a broken install, not a reinstall problem. The
 `kHs*.vst3` are stubs that load a 74 MB DLL from `ProgramData/Kilohearts`, inside the prefix.
 Running the DAW under a prefix that lacks it produces this. See *Prefixes*.
@@ -487,6 +536,7 @@ it, and verify the result parses before writing it.
 | **Plugins folder** | `PLUGINS_ROOT`, default `~/Music/Audio Plugins`, with `vst`/`vst3`/`clap` subfolders for the Windows bundles and `lv2`/`vst3-native`/`clap-native` staging roots. Changing it **moves every real plugin file** and re-links wine/yabridge, behind a confirmation. An existing install keeps using wherever its plugins already are — no silent migration. |
 | **Default install file directory** | where the install picker starts. A preference only. |
 | **Default wine prefix** | the prefix installs target and *Launch an executable* runs in. **Automatic** by default: a prefix that already owns plugins, else `~/.wine-vst`. Choosing a specific one is **confirmation-gated** with a warning — the manager's defaults keep plugin installs out of the prefix your regular Windows apps use, so pointing it at a shared prefix (`~/.wine`) makes plugin installers write there too. Existing plugins are never moved; only new installs follow. Can be set back to *Automatic*. |
+| **Redundant wine drive letters** | a row on *Windows VST Plugins* shows only what the cleanup can actually fix: **duplicate letters** and **letters whose target is gone**. Raw-only `X::` links are ignored — Wine recreates one for every block device on each start (verified), so counting them made the dialog ask for a cleanup that could never converge. An **idle** wineserver is stopped automatically; a prefix with real clients (a DAW, a running plugin host) is reported as `N pending — close it first` instead of being skipped and then wrongly answered with "already clean". The cleanup also runs on the target prefix before and after every install. `c:`/`z:`, letters referenced by registry state, and all real data are kept. Removals are logged to `~/.config/audio-plugin-manager/drive-aliases.log`. |
 | **File picker** | superfile, or the native/zenity chain. Shared by both install flows. |
 | **Plugin window handler** | `Classic (float + decorations)` or `Hyprland-managed`. Rewrites the **global** wine-editor window rules, so it is confirmation-gated; affects only windows opened from now on, and a per-plugin fix still overrides it. Also on `x` in the plugin list. |
 | **Rewrite applied fixes when installing** | when *On*, a fix **already applied** to that plugin is rewritten silently on each install (so a rule you hand-edited is restored). When *Off*, nothing is applied without being asked. Independent of the row below. |

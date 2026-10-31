@@ -351,8 +351,8 @@ func (r *evoRender) drawLevelsBody(row, cx, sectionW int) int {
 	captureX := x + scaleW
 	playbackX := captureX + groupW + groupGap
 
-	r.put(captureX+(groupW-len([]rune("CAPTURE")))/2, row, "CAPTURE", evoStyle{col: cAccent, bold: true})
-	playbackTitle := "PLAYBACK (USB)"
+	r.put(captureX+(groupW-len([]rune("Capture")))/2, row, "Capture", evoStyle{col: cAccent, bold: true})
+	playbackTitle := "Playback (USB)"
 	r.put(playbackX+(groupW-len([]rune(playbackTitle)))/2, row, playbackTitle, evoStyle{col: cAccent, bold: true})
 	row++
 	readoutRow := row

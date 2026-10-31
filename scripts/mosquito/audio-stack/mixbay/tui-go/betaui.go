@@ -12,9 +12,8 @@ import (
 )
 
 // Add an audio interface — scan connected USB cards, offer the ones Mixbay
-// does not support natively as beta interfaces. The first slice only stores
-// the card and runs it through ALSA level 1; the reverse-engineering harness
-// is the next slice (see betaReverseText).
+// does not support natively as beta interfaces. The real guided usbmon harness
+// is launched right after the card is stored (see reverseHarnessCmd).
 type scanCard struct {
 	Name    string
 	Match   string
@@ -27,8 +26,9 @@ type scanMsg struct {
 }
 
 type betaAddMsg struct {
-	name string
-	err  error
+	name  string
+	match string
+	err   error
 }
 
 func scanCardsCmd() tea.Cmd {
@@ -93,16 +93,16 @@ func isNativeCard(s string) bool {
 func betaAddCmd(name, match string) tea.Cmd {
 	return func() tea.Msg {
 		_, err := drivers.AddBetaDevice(name, match)
-		return betaAddMsg{name: name, err: err}
+		return betaAddMsg{name: name, match: match, err: err}
 	}
 }
 
 // reverseHarnessMsg is the result of the real usbmon capture harness. The
 // harness owns the terminal (sudo prompt, guided prompts), so the TUI only
-// reports the outcome and lets the user inspect the saved session.
+// reports the outcome and returns to the main menu.
 type reverseHarnessMsg struct{ err error }
 
-func reverseHarnessCmd(name, match string) tea.Cmd {
+func reverseHarnessCmd(name, match string, guided bool) tea.Cmd {
 	path, err := exec.LookPath("mixbay-reverse")
 	if err != nil {
 		return func() tea.Msg {
@@ -110,6 +110,9 @@ func reverseHarnessCmd(name, match string) tea.Cmd {
 		}
 	}
 	args := []string{"capture"}
+	if guided {
+		args = append(args, "--guided")
+	}
 	if name != "" {
 		args = append(args, "--name", name)
 	}
@@ -121,7 +124,7 @@ func reverseHarnessCmd(name, match string) tea.Cmd {
 }
 
 func (m model) addInterfaceItems() []tuikit.PickerItem {
-	items := []tuikit.PickerItem{{Display: "CONNECTED, NOT NATIVE", Heading: true}}
+	items := []tuikit.PickerItem{{Display: "Connected, not native", Heading: true}}
 	for i, c := range m.scanCards {
 		items = append(items, tuikit.PickerItem{
 			Display: fmt.Sprintf("  %-32s %s", c.Name, c.Profile),

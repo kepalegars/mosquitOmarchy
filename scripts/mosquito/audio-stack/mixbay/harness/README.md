@@ -34,19 +34,24 @@ Dépendances :
 
 ```bash
 mixbay-reverse list
-mixbay-reverse capture --name "PreSonus Quantum ES 4" --match "Quantum ES"
+mixbay-reverse capture --guided --name "PreSonus Quantum ES 4" --match "Quantum ES"
 ```
 
-1. **Baseline** (3 s par défaut) : ne touchez à rien.
-2. **Action** : faites **un seul** changement (un knob, un switch, un bouton).
-3. **Diff** : le harnais affiche les transferts nouveaux ou dont la payload a
-   changé. Le polling périodique identique est ignoré.
-4. **Label** : `gain:input1`, `volume:output1`, `phantom:input1`, etc.
-5. **Sauvegarde** dans `~/.config/mosquitomixbay/reverse/<carte>/<timestamp>/` :
-   - `meta.json` ;
-   - `baseline.jsonl`, `action.jsonl`, `candidates.jsonl` ;
-   - `capture.txt` (lisible à l'œil) ;
-   - `map.json` (label → dernière session).
+1. **Découverte des canaux** (lecture seule) : carte ALSA/PipeWire, profil
+   actif, nombre de canaux playback/capture, sinks et sources.
+2. **Puis un step par contrôle** : `gain:input1`, `mute:input1`,
+   `volume:output1`, etc. Chaque step capture une baseline silencieuse, puis
+   **une seule** action. On peut passer (`s`) ou arrêter (`q`).
+3. **Diff** : transferts nouveaux ou payload changée ; le polling identique
+   est ignoré.
+4. **Sauvegarde** dans `~/.config/mosquitomixbay/reverse/<carte>/<timestamp>/`.
+5. **Résumé final** et confirmation, puis retour à Mixbay.
+
+Le mode non guidé reste disponible pour capturer un seul contrôle :
+
+```bash
+mixbay-reverse capture --name "…" --label gain:input1
+```
 
 Si l'application constructeur n'existe que sous Windows, lancez-la dans une VM
 Windows avec passthrough USB. L'hôte voit quand même le trafic via usbmon.

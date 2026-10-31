@@ -48,7 +48,7 @@ func TestControlItemsEVO8(t *testing.T) {
 	for _, it := range items {
 		joined += it.Display + "\n"
 	}
-	for _, needle := range []string{"INPUTS", "OUTPUTS", "INPUT3", "OUTPUT2", "48V", "Loopback mixer"} {
+	for _, needle := range []string{"Inputs", "Outputs", "INPUT3", "OUTPUT2", "48V", "Loopback mixer"} {
 		if !strings.Contains(joined, needle) {
 			t.Errorf("control list missing %q", needle)
 		}
@@ -224,7 +224,7 @@ func TestEvoViewRendersEvotuiFrame(t *testing.T) {
 			plain := stripANSI(v)
 			switch window {
 			case 0:
-				for _, needle := range []string{"CONTROLS", "MIXER", "IN 1"} {
+				for _, needle := range []string{"Controls", "Mixer", "IN 1"} {
 					if !strings.Contains(plain, needle) {
 						t.Errorf("%s controls: missing %q", id, needle)
 					}
@@ -234,13 +234,13 @@ func TestEvoViewRendersEvotuiFrame(t *testing.T) {
 				if id == drivers.DevEVO4 {
 					bus = "MIX 3|4"
 				}
-				for _, needle := range []string{"CONTROLS", "MIXER", bus} {
+				for _, needle := range []string{"Controls", "Mixer", bus} {
 					if !strings.Contains(plain, needle) {
 						t.Errorf("%s mixer: missing %q", id, needle)
 					}
 				}
 			default:
-				for _, needle := range []string{"CONTROLS", "MIXER", "LEVELS", "CAPTURE", "PLAYBACK"} {
+				for _, needle := range []string{"Controls", "Mixer", "Levels", "Capture", "Playback"} {
 					if !strings.Contains(plain, needle) {
 						t.Errorf("%s levels: missing %q", id, needle)
 					}
@@ -849,6 +849,28 @@ func TestEvoDeviceSwitchRebindsSpec(t *testing.T) {
 	_ = m.View()
 }
 
+// Changing device must not keep the previous interface's status on screen.
+// Reported: EVO 8 -> Quantum ES 4 still showed the EVO OUT levels until the
+// whole Mixbay process was restarted.
+func TestDeviceSelectionClearsPreviousStatus(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	m.nav = []screen{scrDevices}
+	m.picker = tuikit.NewPicker("interfaces", []tuikit.PickerItem{
+		{Display: "PreSonus Quantum ES 4", Value: "quantum-es4"},
+	}).SetSize(m.contentSize())
+	next, _ := m.update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm := next.(model)
+	if mm.deviceID != "quantum-es4" {
+		t.Fatalf("deviceID = %q, want quantum-es4", mm.deviceID)
+	}
+	if mm.status.Spec.ID != "" {
+		t.Fatalf("previous device status survived the switch: %q", mm.status.Spec.ID)
+	}
+	if mm.top() != scrControls || !mm.loading {
+		t.Fatalf("after switch top=%v loading=%v", mm.top(), mm.loading)
+	}
+}
+
 func TestEvoStaleStatusIgnored(t *testing.T) {
 	m := evoModel(t, drivers.DevEVO8, 0)
 	st4, err := m.driversStatus(drivers.DevEVO4)
@@ -994,7 +1016,7 @@ func TestEvoCardsTouchTopSeparator(t *testing.T) {
 	m := evoModel(t, drivers.DevEVO8, 0)
 	lines := strings.Split(stripANSI(m.View()), "\n")
 	for i, line := range lines {
-		if !strings.Contains(line, "CONTROLS") || !strings.Contains(line, "Audient EVO 8") {
+		if !strings.Contains(line, "Controls") || !strings.Contains(line, "Audient EVO 8") {
 			continue
 		}
 		if i+2 >= len(lines) {
@@ -1309,7 +1331,7 @@ func TestEvoLevelsTabRendersUSBStreams(t *testing.T) {
 	copy(m.meterPeakIn[:], m.meterSnap.Peaks[meters.KeyInput])
 	copy(m.meterPeakOut[:], m.meterSnap.Peaks[meters.KeyPlayback])
 	plain := stripANSI(m.View())
-	for _, needle := range []string{"CAPTURE", "PLAYBACK (USB)", "IN1", "PC1", "LP5"} {
+	for _, needle := range []string{"Capture", "Playback (USB)", "IN1", "PC1", "LP5"} {
 		if !strings.Contains(plain, needle) {
 			t.Errorf("levels view missing %q", needle)
 		}

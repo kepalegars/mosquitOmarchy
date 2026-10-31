@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - "mosquito Audio Plugin Manager" (install / uninstall / status /
+# mosquitOmarchy - "mosquito Audio Plugin Manager" (install / uninstall / status /
 # standalone)
 # =============================================================================
 # Launches / installs the mosquito Audio Plugin Manager:

@@ -252,6 +252,13 @@ type Status struct {
 	// preference. The setting turns it off for anyone who wants nothing applied
 	// automatically.
 	AutoGuiInput bool `json:"auto_gui_input"`
+	// DriveAliases is how many dosdevices symlinks the cleanup would remove
+	// right now (duplicate letters / broken targets). DriveAliasBlocked is
+	// the part of that which sits in a prefix currently in use, so the row
+	// can say "close it first" instead of offering a cleanup that skips it.
+	DriveAliases           int    `json:"drive_aliases"`
+	DriveAliasBlocked      int    `json:"drive_alias_blocked"`
+	DriveAliasBlockedNames string `json:"drive_alias_blocked_names"`
 }
 
 type statusMsg struct {
@@ -637,6 +644,46 @@ func cleanupCmd() tea.Cmd {
 			_ = json.Unmarshal(bytes.TrimSpace(lines[n-1]), &report)
 		}
 		return cleanupMsg{report: report}
+	}
+}
+
+// driveAliasRemoved is one dosdevices symlink removed by `cleanup-drive-aliases`.
+type driveAliasRemoved struct {
+	Prefix string `json:"prefix"`
+	Link   string `json:"link"`
+	Target string `json:"target"`
+	Reason string `json:"reason"`
+}
+
+type driveAliasSkipped struct {
+	Prefix  string `json:"prefix"`
+	Pending int    `json:"pending"`
+	Reason  string `json:"reason"`
+}
+
+type driveCleanupReport struct {
+	Removed []driveAliasRemoved `json:"removed"`
+	Count   int                 `json:"count"`
+	Skipped []driveAliasSkipped `json:"skipped"`
+}
+
+type driveCleanupMsg struct {
+	report driveCleanupReport
+	err    error
+}
+
+func driveCleanupCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("cleanup-drive-aliases")
+		if err != nil {
+			return driveCleanupMsg{err: err}
+		}
+		var report driveCleanupReport
+		lines := bytes.Split(bytes.TrimSpace(out), []byte{'\n'})
+		if n := len(lines); n > 0 {
+			_ = json.Unmarshal(bytes.TrimSpace(lines[n-1]), &report)
+		}
+		return driveCleanupMsg{report: report}
 	}
 }
 

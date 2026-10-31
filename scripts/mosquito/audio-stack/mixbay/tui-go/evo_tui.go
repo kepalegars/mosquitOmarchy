@@ -289,7 +289,7 @@ func evoElements(spec drivers.Spec) []evoElement {
 
 func evoGroups(spec drivers.Spec) []evoGroup {
 	if spec.NumOutPairs == 1 {
-		return []evoGroup{{label: "ALL", elements: evoElements(spec)}}
+		return []evoGroup{{label: "All", elements: evoElements(spec)}}
 	}
 	var inputs, outputs []evoElement
 	for i := 0; i < spec.NumInputs; i++ {
@@ -298,7 +298,7 @@ func evoGroups(spec drivers.Spec) []evoGroup {
 	for i := 0; i < spec.NumOutPairs; i++ {
 		outputs = append(outputs, evoElement{key: fmt.Sprintf("output%d", i+1), sub: "volume", label: fmt.Sprintf("OUT %d|%d", i*2+1, i*2+2), color: cGreen})
 	}
-	return []evoGroup{{label: "INPUTS", elements: inputs}, {label: "OUTPUTS", elements: outputs}}
+	return []evoGroup{{label: "Inputs", elements: inputs}, {label: "Outputs", elements: outputs}}
 }
 
 func evoHasSubsections(spec drivers.Spec) bool { return len(evoGroups(spec)) > 1 }
@@ -638,7 +638,7 @@ func (r *evoRender) phantomInd(row, x int, on bool) {
 }
 
 func (r *evoRender) drawTabBar(row, cx, sectionW int) {
-	const ctrlLabel, mixLabel, levLabel = " CONTROLS ", " MIXER ", " LEVELS "
+	const ctrlLabel, mixLabel, levLabel = " Controls ", " Mixer ", " Levels "
 	levels := true
 	lineAttr := evoStyle{col: cAccent}
 	// Like the mosquito Close buttons: the selected tab is an accent block

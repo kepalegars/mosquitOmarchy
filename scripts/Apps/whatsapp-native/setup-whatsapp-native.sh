@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - WhatsApp (native desktop client, self-contained Electron app)
+# mosquitOmarchy - WhatsApp (native desktop client, self-contained Electron app)
 # =============================================================================
 # Installs WhatsApp Web as a real desktop app that actually behaves like one.
 # It is a tiny Electron wrapper we fully control (source committed next to this

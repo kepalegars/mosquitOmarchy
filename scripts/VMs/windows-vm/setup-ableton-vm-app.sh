@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Omarchy Custom - Ableton Live launcher (Windows VM) in the Omarchy apps
+# mosquitOmarchy - Ableton Live launcher (Windows VM) in the Omarchy apps
 # =============================================================================
 # Once Ableton is installed in the Windows VM, this script creates:
 #   1. The wrapper ~/.local/bin/ableton-vm:

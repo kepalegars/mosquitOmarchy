@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - create-theme.sh (theme creator from an image)
+# mosquitOmarchy - create-theme.sh (theme creator from an image)
 # =============================================================================
 # Generates a complete Omarchy theme from an image chosen in theme/Wallpapers/.
 # The colors are deduced from the image itself (dominant accent + contrasting

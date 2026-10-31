@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - SuperFile (terminal file manager, launched as a regular app)
+# mosquitOmarchy - SuperFile (terminal file manager, launched as a regular app)
 # =============================================================================
 # Installs superfile (`spf`) as an app you simply launch — it does NOT take
 # over the default file-manager role. Concretely it sets up:

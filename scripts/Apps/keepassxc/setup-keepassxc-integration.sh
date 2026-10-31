@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - KeePassXC (password manager + BROWSER INTEGRATION)
+# mosquitOmarchy - KeePassXC (password manager + BROWSER INTEGRATION)
 # =============================================================================
 # This module keeps KeePassXC as your personal password manager and wires the
 # KeePassXC-Browser extension to it. It does NOT touch Omarchy's system keyring:

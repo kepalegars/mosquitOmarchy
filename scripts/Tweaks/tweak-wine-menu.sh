@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - Wine: remove the installer shortcuts Wine republishes into
+# mosquitOmarchy - Wine: remove the installer shortcuts Wine republishes into
 # the Omarchy launcher.
 # =============================================================================
 # THE PROBLEM

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - Better PiP
+# mosquitOmarchy - Better PiP
 # =============================================================================
 # Fork of ricardo-ti.pip-solver (MIT, (c) 2026 Ricardo Franco)
 #   https://github.com/rfranco-ti/pip-solver

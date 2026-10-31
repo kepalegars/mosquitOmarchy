@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom — "mosquito Move Manager" (ableton-move-manager module)
+# mosquitOmarchy — "mosquito Move Manager" (ableton-move-manager module)
 # =============================================================================
 # Central installer for the Ableton Move → Ableton Live → Bitwig Studio
 # workflow. Reproduces on a fresh machine:

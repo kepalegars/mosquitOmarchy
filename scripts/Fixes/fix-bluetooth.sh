@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - Bluetooth: fix MX Master stutter + general BT instability
+# mosquitOmarchy - Bluetooth: fix MX Master stutter + general BT instability
 # =============================================================================
 # CAUSE
 #   1. BLE connection parameters too lazy:

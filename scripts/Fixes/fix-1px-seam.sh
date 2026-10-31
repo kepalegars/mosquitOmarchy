@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - 1px seam: hair-thin transparent line under the bar (no gaps)
+# mosquitOmarchy - 1px seam: hair-thin transparent line under the bar (no gaps)
 # =============================================================================
 # In borderless / no-gaps tiling, Hyprland's optimized blur path can flash a
 # hair-thin transparent line (a "1px seam") between the opaque Omarchy bar and
