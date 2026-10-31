@@ -290,7 +290,7 @@ write_exec_open_wrapper() {
 #   .sh / .bash -> run with `bash` (even when not chmod +x — the point is
 #                  that Enter/Right RUNS shell scripts)
 #   .zsh        -> run with `zsh`
-#   .pdf        -> `tdf --terminal-colors` if installed
+#   .pdf        -> `tdf` if installed
 #   anything else (bare executables, chmod +x'd AppImages) -> executed
 #                  directly, relying on its shebang / exec bit
 #
@@ -303,7 +303,7 @@ foot_app_id=""
 case "${f,,}" in
   *.pdf)
     if command -v tdf >/dev/null 2>&1; then
-      run=(tdf --terminal-colors "$f")
+      run=(tdf "$f")
       foot_app_id=org.mosquitomarchy.superfile-tdf
     else
       exec xdg-open "$f"

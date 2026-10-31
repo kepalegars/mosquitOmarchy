@@ -17,7 +17,7 @@ point it is needed (same convention as this repo's other AUR/app modules).
 | Menu entry | `~/.local/share/applications/superfile.desktop` (launches `spf` in a terminal) |
 | Icon | `~/.local/share/icons/hicolor/256x256/apps/superfile.png` |
 | Script/executable launcher | `~/.local/bin/superfile-open-exec` |
-| PDF viewer | Floating `foot` window running `tdf --terminal-colors` when installed; otherwise existing `xdg-open` |
+| PDF viewer | Floating `foot` window running `tdf` when installed; otherwise existing `xdg-open` |
 | TDF window rule | Managed by `scripts/apps/tui-tools/setup-tdf-menu.sh` when the `tdf-git` TUI is installed |
 | Theme | `~/.config/superfile/theme/omarchy.toml` + `theme` line in `~/.config/superfile/config.toml` |
 | Theme-change hook | `~/.config/omarchy/hooks/theme-set.d/superfile-module.sh` |
@@ -67,7 +67,7 @@ blank, so it falls back to `$EDITOR` (the Omarchy/system default) and then `nano
 
 Limitation: `.sh`/`.bash` files are always run with `bash`, so a non-executable `.sh` still runs
 but one that relies on a different shebang interpreter is run with bash anyway. PDFs use `tdf`
-with `--terminal-colors` in a centered floating terminal when its command is installed; otherwise
+in a centered floating terminal when its command is installed; otherwise
 PDFs, images, video, archives and other file types keep their existing `xdg-open` handling. This
 does not change the system-wide PDF association.
 
