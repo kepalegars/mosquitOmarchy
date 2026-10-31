@@ -328,6 +328,9 @@ Windows installer are grouped under their wine-program folder, with the same nes
 Uninstall screen.
 
 - `←` `→` cycles the sort (vendor / name / format / install date) live, btop-style
+- `shift+F` searches the list live — matched plugins keep their vendor row, and
+  the same search works in Uninstall, Launch a standalone plugin and the
+  Plugin-fixes chooser. `Esc` clears the query, then leaves the screen
 - `Tab` hides or shows the highlighted plugin, or a whole folder row
 - `Enter` shows a row's detail
 - leaving with changes prompts Save / Discard

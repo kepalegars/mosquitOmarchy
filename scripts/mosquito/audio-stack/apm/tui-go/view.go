@@ -143,9 +143,11 @@ func (m model) View() string {
 		body = m.picker.View()
 		bar = barLine(m.picker.ShortcutsHint())
 	case scrPluginList:
-		title = screenTitleWithSub("Installed plugins",
-			"Tab hides/shows · s sort · ←/→ folders · sort: "+sortModeLabel(m.status.SortMode),
-			m.contentSizeW())
+		sub := "Tab hides/shows · s sort · shift+F search · ←/→ folders · sort: " + sortModeLabel(m.status.SortMode)
+		if line := m.searchStatusLine(); line != "" {
+			sub = line
+		}
+		title = screenTitleWithSub("Installed plugins", sub, m.contentSizeW())
 		if m.loading {
 			body = "loading…"
 		} else {
@@ -158,9 +160,11 @@ func (m model) View() string {
 		// the bottom bar (picker.ShortcutsHint). Two shortcut zones on one page
 		// drift apart -- this one had started claiming "enter choose" while the
 		// bar said something else.
-		title = screenTitleWithSub("Plugin fixes",
-			"□ = no fixes applied · ■ = fixes applied · sort: "+sortModeLabel(m.status.SortMode),
-			m.contentSizeW())
+		sub := "□ = no fixes applied · ■ = fixes applied · shift+F search · sort: " + sortModeLabel(m.status.SortMode)
+		if line := m.searchStatusLine(); line != "" {
+			sub = line
+		}
+		title = screenTitleWithSub("Plugin fixes", sub, m.contentSizeW())
 		if m.loading {
 			body = "loading…"
 		} else {
@@ -193,9 +197,11 @@ func (m model) View() string {
 			bar = barLine(m.picker.ShortcutsHint())
 		}
 	case scrUninstallPick:
-		title = screenTitleWithSub("Uninstall which plugin(s)?",
-			"Tab select · s sort · ←/→ folders · x open folder · sort: "+sortModeLabel(m.status.SortMode),
-			m.contentSizeW())
+		sub := "Tab select · s sort · shift+F search · ←/→ folders · x open folder · sort: " + sortModeLabel(m.status.SortMode)
+		if line := m.searchStatusLine(); line != "" {
+			sub = line
+		}
+		title = screenTitleWithSub("Uninstall which plugin(s)?", sub, m.contentSizeW())
 		if m.loading {
 			body = "loading…"
 		} else {
@@ -219,7 +225,11 @@ func (m model) View() string {
 			bar = barLine(m.picker.ShortcutsHint())
 		}
 	case scrStandalonePick:
-		title = screenTitle("Launch a standalone plugin", m.contentSizeW())
+		sub := "shift+F search"
+		if line := m.searchStatusLine(); line != "" {
+			sub = line
+		}
+		title = screenTitleWithSub("Launch a standalone plugin", sub, m.contentSizeW())
 		if m.loading {
 			body = "loading…"
 		} else {

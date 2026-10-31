@@ -243,6 +243,9 @@ type model struct {
 	uninstallCache   []Item
 	uninstallChecked map[string]bool
 	uninstallTargets []string
+	// standaloneCache is the Launch-a-standalone picker's last fetched rows.
+	// It exists so shift+F can rebuild the filtered list without a round trip.
+	standaloneCache []Item
 	// Orphan picker (scrReconcileOrphansTick): the on-disk-but-untracked
 	// plugins grouped in per-format folders, Tab multi-select like
 	// Uninstall, Enter tracking exactly the checked rows. Every visit is a
@@ -426,6 +429,13 @@ func screenKey(s screen) string { return strconv.Itoa(int(s)) }
 
 func (m *model) push(s screen) {
 	m.cursor.Remember(screenKey(m.top()), m.picker)
+	// A search belongs to the list it was typed on. Entering another
+	// searchable picker must not arrive already filtered by a query the user
+	// wrote somewhere else.
+	if s != m.top() && isSearchScreen(s) {
+		m.filterOpen = false
+		m.filterText = ""
+	}
 	m.nav = append(m.nav, s)
 }
 
@@ -977,6 +987,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if km, ok := msg.(tea.KeyMsg); ok && km.String() == "backspace" &&
+		!m.filterOpen &&
 		m.top() != scrInstallPrefixName && m.top() != scrPrefixMoveTargetName {
 		// Those two screens are text inputs; elsewhere Backspace follows Esc.
 		msg = tea.KeyMsg{Type: tea.KeyEsc}

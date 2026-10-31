@@ -128,6 +128,7 @@ func (m *model) enterCmd() tea.Cmd {
 		return nil
 	case scrStandalonePick:
 		m.loading = true
+		m.standaloneCache = nil
 		return fetchItems("standalone", "list-standalones")
 	case scrPrefixPrefPick:
 		// EXISTING prefixes only. Creating one is not offered here on purpose:
@@ -780,17 +781,28 @@ func (m *model) rebuildUninstallPicker() {
 	}
 	// WithTree: same fold gesture as the Installed-plugins list, and the shared
 	// m.folderExpanded, so a folder folded on one screen is folded on the other.
+	tree := uninstallTree(filterItemsForSearch(m.uninstallCache, m.filterText))
+	expanded := m.folderExpanded
+	header := "Uninstall which plugin(s)?"
+	if m.filterText != "" {
+		expanded = searchExpanded(m.folderExpanded, tree)
+		header = "Uninstall — search: " + m.filterText
+	}
+	items := treeItemsToPicker(tree, m.uninstallChecked, expanded)
+	if m.filterText != "" && len(items) == 0 {
+		items = noMatchRows()
+	}
 	m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
-		return tuikit.NewPicker("Uninstall which plugin(s)?",
-			treeItemsToPicker(uninstallTree(m.uninstallCache), m.uninstallChecked, m.folderExpanded)).SetSize(m.contentSize()).
+		return tuikit.NewPicker(header, items).SetSize(m.contentSize()).
 			SetHelpKeys(
 				key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 				key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
+				key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+F", "search")),
 				key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "open folder")),
 				key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
 				key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
 				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "uninstall")),
-			).WithTree(m.folderExpanded)
+			).WithTree(expanded)
 	})
 }
 
@@ -1757,7 +1769,7 @@ func (m *model) rebuildFixPluginPicker() {
 	if m.folderExpanded == nil {
 		m.folderExpanded = map[string]bool{}
 	}
-	tree := uninstallTree(pluginItemsAsItems(m.fixPluginCache))
+	tree := uninstallTree(filterItemsForSearch(pluginItemsAsItems(m.fixPluginCache), m.filterText))
 	// NOTHING is force-opened any more.
 	//
 	// A folder holding an already-applied fix used to open itself on sight, so
@@ -1770,7 +1782,14 @@ func (m *model) rebuildFixPluginPicker() {
 	//
 	// folderFoldedByUser is kept: a folder the user opened stays open across
 	// rebuilds, and one they closed stays closed.
-	items := treeItemsToPicker(tree, m.pluginChecked, m.folderExpanded)
+	expanded := m.folderExpanded
+	if m.filterText != "" {
+		expanded = searchExpanded(m.folderExpanded, tree)
+	}
+	items := treeItemsToPicker(tree, m.pluginChecked, expanded)
+	if m.filterText != "" && len(items) == 0 {
+		items = noMatchRows()
+	}
 	// Accent ■ marker on every plugin row that already has at least one
 	// applied fix, plus its parent folder header. It is a TrailingBadge, so
 	// it renders at the END of the row label ("name  ■") — the leading
@@ -1817,10 +1836,11 @@ func (m *model) rebuildFixPluginPicker() {
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
+			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+F", "search")),
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "choose")),
-		).WithTree(m.folderExpanded)
+		).WithTree(expanded)
 	m.picker = m.picker.SelectIndex(sidx)
 }
 
@@ -1875,6 +1895,7 @@ func pluginListHelpKeys() []key.Binding {
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "hide/show")),
 		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
+		key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+F", "search")),
 		key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
 		key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
 		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "window handler")),
@@ -1896,14 +1917,46 @@ func (m *model) rebuildPluginPicker() {
 	if m.folderExpanded == nil {
 		m.folderExpanded = map[string]bool{}
 	}
-	items := treeItemsToPicker(uninstallTree(pluginItemsAsItems(m.pluginCache)), m.pluginChecked, m.folderExpanded)
-	items = append(items, tuikit.PickerItem{Display: "📖  Readme", Value: readmeSentinel})
+	tree := uninstallTree(filterItemsForSearch(pluginItemsAsItems(m.pluginCache), m.filterText))
+	expanded := m.folderExpanded
+	if m.filterText != "" {
+		expanded = searchExpanded(m.folderExpanded, tree)
+		header = "Installed plugins — search: " + m.filterText
+	}
+	items := treeItemsToPicker(tree, m.pluginChecked, expanded)
+	if m.filterText != "" {
+		if len(items) == 0 {
+			items = noMatchRows()
+		}
+	} else {
+		items = append(items, tuikit.PickerItem{Display: "📖  Readme", Value: readmeSentinel})
+	}
 	// WithTree: ←/→ are the fold gesture here (they are not sort keys on this
 	// screen any more — the sort cycle moved to `s`), resolved by the kit from
 	// the folder the CURSOR IS IN.
 	m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
 		return tuikit.NewPicker(header, items).SetSize(m.contentSize()).
-			SetHelpKeys(pluginListHelpKeys()...).WithTree(m.folderExpanded)
+			SetHelpKeys(pluginListHelpKeys()...).WithTree(expanded)
+	})
+}
+
+// rebuildStandalonePicker renders the Launch-a-standalone list from the last
+// fetched rows, filtered by shift+F when a query is active.
+func (m *model) rebuildStandalonePicker() {
+	items := itemsToPicker(filterItemsForSearch(m.standaloneCache, m.filterText))
+	if m.filterText != "" && len(items) == 0 {
+		items = noMatchRows()
+	}
+	header := "Launch a standalone plugin (via wine)?"
+	if m.filterText != "" {
+		header = "Launch a standalone plugin — search: " + m.filterText
+	}
+	m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
+		return tuikit.NewPicker(header, items).SetSize(m.contentSize()).
+			SetHelpKeys(
+				key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+F", "search")),
+				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "launch")),
+			)
 	})
 }
 
@@ -1934,7 +1987,185 @@ func (m model) pluginDirtyCounts() (toHide, toShow int) {
 	return
 }
 
+// isSearchScreen names the plugin lists that answer shift+F. They are the
+// four the user picks a plugin from: Installed plugins, Uninstall, Launch a
+// standalone plugin and the Plugin-fixes chooser.
+func isSearchScreen(s screen) bool {
+	switch s {
+	case scrPluginList, scrUninstallPick, scrStandalonePick, scrFixPluginPick:
+		return true
+	}
+	return false
+}
+
+// searchStatusLine replaces the ordinary subtitle while a search is open or
+// filtering the list. The body stays the list, so results are visible as the
+// query is typed.
+func (m model) searchStatusLine() string {
+	if !isSearchScreen(m.top()) {
+		return ""
+	}
+	if m.filterOpen {
+		return "search: " + m.filterText + "▏ · enter done · esc clear"
+	}
+	if m.filterText != "" {
+		return "filter: " + m.filterText + " · shift+F edit · esc clear"
+	}
+	return ""
+}
+
+// filterItemsForSearch keeps the plugins whose name or formats match, plus
+// the folder rows above them so the tree never loses its vendor. A folder
+// whose own name matches keeps every plugin under it.
+func filterItemsForSearch(items []Item, query string) []Item {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" {
+		return items
+	}
+	matches := func(s string) bool { return strings.Contains(strings.ToLower(s), q) }
+	folderHit := map[string]bool{}
+	groupHit := map[string]bool{}
+	for _, it := range items {
+		if it.Kind == "folder" {
+			if matches(it.Display) {
+				folderHit[it.Value] = true
+			}
+			continue
+		}
+		if it.Group != "" && matches(it.Group) {
+			groupHit[it.Parent+"\x00"+it.Group] = true
+		}
+	}
+	keep := map[string]bool{}
+	for _, it := range items {
+		if it.Kind == "folder" {
+			continue
+		}
+		if folderHit[it.Parent] || groupHit[it.Parent+"\x00"+it.Group] ||
+			matches(it.Display) || matches(it.Formats) {
+			keep[it.Value] = true
+		}
+	}
+	folderHas := map[string]bool{}
+	for _, it := range items {
+		if it.Kind != "folder" && keep[it.Value] {
+			folderHas[it.Parent] = true
+		}
+	}
+	out := make([]Item, 0, len(items))
+	for _, it := range items {
+		if it.Kind == "folder" {
+			if folderHit[it.Value] || folderHas[it.Value] {
+				out = append(out, it)
+			}
+			continue
+		}
+		if keep[it.Value] {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// searchExpanded returns the fold map a filtered tree must use: every folder
+// shown is open, so a match under a closed vendor is visible. The user's own
+// folds are copied rather than mutated, and come back when the filter goes.
+func searchExpanded(expanded map[string]bool, tree []uninstallTreeItem) map[string]bool {
+	out := make(map[string]bool, len(expanded))
+	for k, v := range expanded {
+		out[k] = v
+	}
+	var walk func([]uninstallTreeItem)
+	walk = func(nodes []uninstallTreeItem) {
+		for _, n := range nodes {
+			if !n.Folder {
+				continue
+			}
+			out[n.Value] = true
+			walk(n.Subgroups)
+		}
+	}
+	walk(tree)
+	return out
+}
+
+// noMatchRows is the one inert row a filtered empty list shows, so the screen
+// says why it is empty instead of looking like nothing installed.
+func noMatchRows() []tuikit.PickerItem {
+	return []tuikit.PickerItem{{Display: "No match — esc clears the search", Value: "__no_match__", Heading: true}}
+}
+
+func trimLastRune(s string) string {
+	r := []rune(s)
+	if len(r) == 0 {
+		return s
+	}
+	return string(r[:len(r)-1])
+}
+
+// rebuildSearchScreen re-renders the filtered list after a keystroke without
+// a backend round trip.
+func (m *model) rebuildSearchScreen() {
+	switch m.top() {
+	case scrPluginList:
+		m.rebuildPluginPicker()
+	case scrUninstallPick:
+		m.rebuildUninstallPicker()
+	case scrStandalonePick:
+		m.rebuildStandalonePicker()
+	case scrFixPluginPick:
+		m.rebuildFixPluginPicker()
+	}
+}
+
 func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if isSearchScreen(m.top()) {
+		if km, ok := msg.(tea.KeyMsg); ok {
+			if m.filterOpen {
+				switch km.String() {
+				case "esc":
+					m.filterOpen = false
+					m.filterText = ""
+					m.rebuildSearchScreen()
+					return m, nil
+				case "enter":
+					// Leave the query in force and the list in charge; list
+					// Enter keeps meaning choose/act.
+					m.filterOpen = false
+					return m, nil
+				case "backspace":
+					m.filterText = trimLastRune(m.filterText)
+					m.rebuildSearchScreen()
+					m.picker = m.picker.SelectIndex(0)
+					return m, nil
+				case "up", "down", "pgup", "pgdown", "home", "end":
+					// Navigate the filtered results while the query stays live.
+				default:
+					if km.Type == tea.KeyRunes && !km.Alt {
+						m.filterText += string(km.Runes)
+						m.rebuildSearchScreen()
+						m.picker = m.picker.SelectIndex(0)
+						return m, nil
+					}
+					if km.Type == tea.KeySpace {
+						m.filterText += " "
+						m.rebuildSearchScreen()
+						m.picker = m.picker.SelectIndex(0)
+						return m, nil
+					}
+					return m, nil
+				}
+			} else if km.String() == "F" {
+				m.filterOpen = true
+				return m, nil
+			} else if m.filterText != "" && km.String() == "esc" {
+				// First Esc drops the filter; the next one leaves the screen.
+				m.filterText = ""
+				m.rebuildSearchScreen()
+				return m, nil
+			}
+		}
+	}
 	switch m.top() {
 
 	case scrMain:
@@ -3010,7 +3241,8 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.replace(scrInfo)
 				return m, nil
 			}
-			m.picker = tuikit.NewPicker("Launch a standalone plugin (via wine)?", itemsToPicker(it.items)).SetSize(m.contentSize())
+			m.standaloneCache = it.items
+			m.rebuildStandalonePicker()
 			return m, nil
 		}
 		if res, ok := msg.(tuikit.PickerResultMsg); ok {
