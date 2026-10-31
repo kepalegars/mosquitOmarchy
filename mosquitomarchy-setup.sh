@@ -735,6 +735,24 @@ st_omaskpinpass(){
     && jq -e '.[] | select(.id == "lbssousa.omapin" and .enabled == true)' <<<"$plugins" >/dev/null \
     && echo ok || echo partial
 }
+st_omarchy_plugin(){
+  local id="$1" plugins
+  plugins="$(omarchy plugin list --json 2>/dev/null || echo '[]')"
+  if ! jq -e --arg id "$id" '.[] | select(.id == $id)' <<<"$plugins" >/dev/null; then
+    echo missing
+  elif jq -e --arg id "$id" '.[] | select(.id == $id and .enabled == true)' <<<"$plugins" >/dev/null; then
+    echo ok
+  else
+    echo partial
+  fi
+}
+st_downloads(){
+  local state
+  state="$(st_omarchy_plugin kirklandgee.downloads)"
+  [[ $state == ok ]] || { echo "$state"; return; }
+  grep -qF 'o.bind("SUPER + ALT + D", "Downloads"' "$HOME/.config/hypr/bindings.lua" \
+    && echo ok || echo partial
+}
 st_mega_caffeine(){
   [[ -x "$HOME/.local/bin/mega-caffeine" ]] || { echo missing; return; }
   bash -n "$HOME/.local/bin/mega-caffeine" 2>/dev/null || { echo partial; return; }
@@ -1088,6 +1106,9 @@ MODULES=(
   "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships."
   "battery-management:Battery management — formerly ultra-save, a CPU/power-capping mode; abandoned for a simple script that colors the battery icon by power profile"
   "omaskpinpass:Omarchy SSH askpass + GnuPG pinentry dialogs, built per-user from source; sets SSH_ASKPASS_REQUIRE=prefer"
+  "downloads:Downloads — themed popup for recent files (SUPER + ALT + D)"
+  "taskq:TaskQ — bar-based task list with deadlines"
+  "process-killer:Process Killer — inspect and stop running processes"
   "better-pip:Better PiP — picture-in-picture windows as plain floating windows (never pinned, stays on its workspace): aspect ratio kept, grabbable border, idle inhibitor while open"
   "mega-caffeine:Coffee mode (mega-caffeine) — laptop closed without sleeping, red tint, natural-language durations"
   "brightness:Display brightness — Omarchy default step, 0% = screen off, and a silent 1% ramp on held keys for smoother steps (no run-on beyond the current step)"
@@ -1250,6 +1271,9 @@ handbrake) st_handbrake ;;
     ollama) st_ollama ;;
     battery-management|battery) st_battery_management ;;
     omaskpinpass) st_omaskpinpass ;;
+    downloads) st_downloads ;;
+    taskq) st_omarchy_plugin sendaljpt.taskq ;;
+    process-killer) st_omarchy_plugin io.github.beresn.process-killer ;;
     mega-caffeine) st_mega_caffeine ;;
     brightness) st_brightness ;;
     touchpad) st_touchpad ;;
@@ -1311,6 +1335,7 @@ module_of_path(){
     scripts/LLM/*)                                           echo ollama ;;
     scripts/plugins/battery-management/*)                     echo battery-management ;;
     scripts/plugins/omaskpinpass/*)                           echo omaskpinpass ;;
+    scripts/plugins/omarchy-downloads/*)                      echo downloads ;;
     scripts/mosquito/mega-caffeine/*)                        echo mega-caffeine ;;
     scripts/plugins/brightness/*)                            echo brightness ;;
     scripts/plugins/better-pip/*)                            echo better-pip ;;
@@ -3644,6 +3669,10 @@ un_omaskpinpass(){
   ok "omaskpass + omapin plugins, binaries and managed per-user config removed"
 }
 
+un_downloads(){ bash "$SCRIPTS/plugins/omarchy-downloads/setup-omarchy-downloads.sh" --remove; }
+un_taskq(){ omarchy plugin disable sendaljpt.taskq 2>/dev/null || true; omarchy plugin remove sendaljpt.taskq --yes 2>/dev/null || true; }
+un_process_killer(){ omarchy plugin disable io.github.beresn.process-killer 2>/dev/null || true; omarchy plugin remove io.github.beresn.process-killer --yes 2>/dev/null || true; }
+
 un_mega_caffeine(){
   info "Uninstalling mega-caffeine (coffee mode)"
   if [[ -f "$MEGA_CAFFEINE_DIR/setup-mega-caffeine.sh" ]]; then
@@ -3941,6 +3970,9 @@ handbrake) un_handbrake ;;
     remove-ai) un_remove_ai ;;
     battery-management|battery) un_battery_management ;;
     omaskpinpass) un_omaskpinpass ;;
+    downloads) un_downloads ;;
+    taskq) un_taskq ;;
+    process-killer) un_process_killer ;;
     mega-caffeine) un_mega_caffeine ;;
     brightness) un_brightness ;;
     better-pip) un_better_pip ;;
@@ -4396,6 +4428,17 @@ run_ollama(){
 
 run_battery_management(){ bash "$BATTERY_DIR/setup-battery-management.sh"; }
 run_omaskpinpass(){ bash "$SCRIPTS/plugins/omaskpinpass/setup-omaskpinpass.sh"; }
+ensure_shell_plugin(){
+  local id="$1" url="$2"
+  if omarchy plugin list --json 2>/dev/null | jq -e --arg id "$id" '.[] | select(.id == $id)' >/dev/null; then
+    omarchy plugin enable "$id" >/dev/null
+  else
+    omarchy plugin add "$url" --enable --yes
+  fi
+}
+run_downloads(){ bash "$SCRIPTS/plugins/omarchy-downloads/setup-omarchy-downloads.sh"; }
+run_taskq(){ ensure_shell_plugin sendaljpt.taskq https://github.com/sendaljpt/taskq.git; }
+run_process_killer(){ ensure_shell_plugin io.github.beresn.process-killer https://github.com/BeresN/omarchy-process-killer.git; }
 run_better_pip(){ bash "$BETTER_PIP_DIR/setup-better-pip.sh"; }
 run_mega_caffeine(){ bash "$MEGA_CAFFEINE_DIR/setup-mega-caffeine.sh"; }
 run_brightness(){ bash "$BRIGHTNESS_DIR/optimized-brightness.sh"; }
@@ -4411,11 +4454,16 @@ run_keepassxc(){
 
 run_keybindings(){
   # The keybindings manager is PART of mosquitOmarchy now (the TUI's
-  # Keybindings screen — there is no external manager anymore). The helper
-  # keeps Downloads installed/bound and removes the retired ultra-save binding.
-  bash "$SCRIPTS/plugins/omarchy-downloads/setup-omarchy-downloads.sh"
+  # Keybindings screen — there is no external manager anymore.
+  local changed=0
+  kb_load_ours
+  if [[ -n ${KB_OURS["SUPER + SHIFT + E"]+x} ]]; then
+    kb_remove "SUPER + SHIFT + E"
+    changed=1
+  fi
   kb_ensure "SUPER + ALT + M" "mosquitOmarchy" "$HOME/.local/bin/mosquitomarchy" cmd
-  if (( KB_CHANGED )); then
+  if (( KB_CHANGED )); then changed=1; fi
+  if (( changed )); then
     kb_reload || true
   fi
   ok "Keybindings module ready — manage bindings from the TUI's Keybindings screen."
@@ -4575,6 +4623,9 @@ exec_modules(){
       remove-ai) run_module remove-ai run_restore_ai ;;
       battery-management|battery) run_module battery-management run_battery_management ;;
       omaskpinpass) run_module omaskpinpass run_omaskpinpass ;;
+      downloads) run_module downloads run_downloads ;;
+      taskq) run_module taskq run_taskq ;;
+      process-killer) run_module process-killer run_process_killer ;;
       better-pip) run_module better-pip run_better_pip ;;
       mega-caffeine) run_module mega-caffeine run_mega_caffeine ;;
       brightness) run_module brightness run_brightness ;;
@@ -4623,7 +4674,7 @@ CATEGORIES=(
   # including the deployer, i.e. installed and updatable but reachable from
   # neither Setup nor Uninstall. `mega-caffeine` is deliberately absent: it is a
   # mosquito tool and lives in the mosquito row.
-  "plugins|Plugins|battery-management omaskpinpass better-pip brightness touchpad mx-master"
+  "plugins|Plugins|battery-management omaskpinpass downloads taskq process-killer better-pip brightness touchpad mx-master"
   "fixes|Fixes|"
   "tweaks|Tweaks|"
   "mosquito|mosquito|"

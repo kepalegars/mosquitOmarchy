@@ -219,8 +219,7 @@ all_catalog_type(){
 
 # Multi-type variants: TYPES=(A B ...) → BASE (entries of every listed type,
 # each still self-tagged "TYPE name|..." so install_one/remove_one/tick_*
-# dispatch correctly per-entry). Used where one script's catalog folder mixes
-# kinds (e.g. tui/tuis.catalog holding both TUI and PLUG entries).
+# dispatch correctly per-entry).
 catalog_contains_id(){ # TUI|PLUG|APP|WEB + catalog line -> 0 if still catalogued
   local type="$1" id="${2%%|*}" entry
   case $type in

@@ -1,12 +1,11 @@
-# tuis.catalog — Terminal tools of the "apps" module (type TUI).
+# tuis.catalog — Terminal packages of the "apps" module (type TUI).
 #
 # One catalog per type (gui / tui / webapps), read by the "apps" module
-# (setup-apps.sh dispatcher + tui/setup-tuis.sh). Each line keeps the
+# (setup-apps.sh dispatcher + tui-tools/setup-tuis.sh). Each line keeps the
 # type prefix so the backup selection format (apps.selected: "APP <pkg>",
 # "TUI <pkg>", "WEB <name>") stays identical whatever the catalog:
 #
-#   TUI <pkg> | <label>            → terminal tool (AUR or official package, via yay)
-#   PLUG <id> | <git-url> | <label> → Omarchy shell plugin (via `omarchy plugin add`)
+#   TUI <pkg> | <label>            → terminal package (AUR or official repo)
 #
 # Blank lines and lines starting with "#" are ignored.
 # The actual selection is saved by the backup (mosquitomarchy-setup.sh --backup) in apps.selected.
@@ -18,11 +17,7 @@
 
 # Label case is part of the convention here: every entry in this catalog starts
 # lower case, because it is a terminal tool and the row reads as part of a list.
-# "Monitor Settings" was the one exception and looked like a GUI app dropped in.
-PLUG kirklandgee.downloads|https://github.com/KirklandGee/omarchy-downloads.git|downloads — themed popup for recent files
-PLUG sendaljpt.taskq|https://github.com/sendaljpt/taskq.git|taskq — bar-based task list with deadlines
-PLUG io.github.beresn.process-killer|https://github.com/BeresN/omarchy-process-killer.git|process killer — inspect and stop running processes
-
+# Omarchy shell plugins live in the top-level Plugins section, not here.
 TUI crunchycleaner-bin|crunchycleaner — lightweight software cache & junk cleaner
 TUI septabee|SEPTABEE — retro studio DAW & music app (terminal, JIT audio)
 TUI caligula-git|caligula — flash ISOs & USB drives (interactive disk imaging, terminal)

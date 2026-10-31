@@ -29,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../lib/common.bash"
 
 GUI_UNINSTALL="$APP_DIR/gui/uninstall-guis.sh"
-TUI_UNINSTALL="$APP_DIR/tui/uninstall-tuis.sh"
+TUI_UNINSTALL="$APP_DIR/tui-tools/uninstall-tuis.sh"
 WEB_UNINSTALL="$APP_DIR/webapps/uninstall-webapps.sh"
 
 YES=0 STATUS_ONLY=0 ALL=0 FROM_BACKUP=""

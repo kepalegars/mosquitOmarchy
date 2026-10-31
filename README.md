@@ -117,6 +117,9 @@ The project's own layer: the manager itself, and the desktop-hardware modules.
 |---|---|---|
 | `battery-management` | Profile-colored battery icon/panel; the retired ultra-save CPU/power cap is removed | [README](scripts/plugins/battery-management/README.md) |
 | `omaskpinpass` | SSH askpass + GnuPG pinentry plugins and binaries, built per-user; configures SSH askpass and GPG agent | [installer](scripts/plugins/omaskpinpass/setup-omaskpinpass.sh) |
+| `downloads` | Omarchy Downloads popup + `SUPER+ALT+D` binding | [installer](scripts/plugins/omarchy-downloads/setup-omarchy-downloads.sh) |
+| `taskq` | TaskQ deadline widget | [GitHub](https://github.com/sendaljpt/taskq) |
+| `process-killer` | Omarchy process-killer widget | [GitHub](https://github.com/BeresN/omarchy-process-killer) |
 | `mosquitomarchy` | This TUI (built from the Go sources in the repo), its dispatcher, menu entry, float rule, post-boot hook and the `SUPER+ALT+M` shortcut | [README](scripts/apps/mosquitomarchy/README.md) |
 | `mosquitomarchy-update` | The update watchdog (scripts repo first, then Omarchy) | [README](scripts/mosquitomarchy-update/README.md) |
 | `brightness` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp | [notes](scripts/plugins/brightness/display-fixes.md) |

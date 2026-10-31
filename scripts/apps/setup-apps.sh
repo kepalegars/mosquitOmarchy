@@ -33,7 +33,7 @@ source "$SCRIPT_DIR/../lib/common.bash"
 
 # Per-type installers (modular module)
 GUI_INSTALL="$APP_DIR/gui/setup-guis.sh"
-TUI_INSTALL="$APP_DIR/tui/setup-tuis.sh"
+TUI_INSTALL="$APP_DIR/tui-tools/setup-tuis.sh"
 WEB_INSTALL="$APP_DIR/webapps/setup-webapps.sh"
 
 YES=0 STATUS_ONLY=0 LIST_ONLY=0 FROM_BACKUP="" ONLY=""
