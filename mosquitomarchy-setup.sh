@@ -717,12 +717,23 @@ st_ollama(){
   systemctl is-enabled ollama &>/dev/null && echo ok || echo partial
 }
 st_battery_management(){
-  [[ -x "$HOME/.local/bin/ultra-save" ]] || { echo missing; return; }
-  [[ -x "$HOME/.local/bin/power-helper" ]] || { echo partial; return; }
+  [[ -x "$HOME/.local/bin/power-helper" ]] || { echo missing; return; }
   # The parent widget is the mosquito.power plugin: if enabled, the module is "ok".
   # custom.power is still accepted: machines that have not re-run the battery
   # module since the rename still carry the legacy clone.
   omarchy plugin list 2>/dev/null | grep -qE '^\s*(mosquito|custom)\.power\s+enabled' && echo ok || echo partial
+}
+st_omaskpinpass(){
+  local plugins
+  plugins="$(omarchy plugin list --json 2>/dev/null || echo '[]')"
+  [[ -x "$HOME/.local/bin/omaskpass" && -x "$HOME/.local/bin/omapin" ]] || { echo missing; return; }
+  [[ -f "$HOME/.config/environment.d/90-ssh-askpass.conf" ]] \
+    && grep -qx "SSH_ASKPASS=$HOME/.local/bin/omaskpass" "$HOME/.config/environment.d/90-ssh-askpass.conf" \
+    && grep -qx 'SSH_ASKPASS_REQUIRE=prefer' "$HOME/.config/environment.d/90-ssh-askpass.conf" \
+    && grep -qF "pinentry-program $HOME/.local/bin/omapin" "${GNUPGHOME:-$HOME/.gnupg}/gpg-agent.conf" \
+    && jq -e '.[] | select(.id == "lbssousa.omaskpass" and .enabled == true)' <<<"$plugins" >/dev/null \
+    && jq -e '.[] | select(.id == "lbssousa.omapin" and .enabled == true)' <<<"$plugins" >/dev/null \
+    && echo ok || echo partial
 }
 st_mega_caffeine(){
   [[ -x "$HOME/.local/bin/mega-caffeine" ]] || { echo missing; return; }
@@ -813,7 +824,7 @@ PY
 st_keybindings(){
   # SUPER keybindings managed by mosquitOmarchy (marker block in bindings.lua)
   [[ -f "$HOME/.config/hypr/bindings.lua" ]] || { echo missing; return; }
-  grep -qF -- "Omarchy_Custom_Scripts_Keys" "$HOME/.config/hypr/bindings.lua" \
+  grep -qE -- "mosquitOmarchy_Keybindings|Omarchy_Custom_Scripts_Keys" "$HOME/.config/hypr/bindings.lua" \
     && echo ok || echo partial
 }
 st_mosquitomarchy_update(){
@@ -955,16 +966,13 @@ st_levels_guard(){
 }
 st_mixbay(){
   # mosquitomixbay: dispatcher + TUI binary deployed, Hyprland float rule in
-  # place. The evo_raw kmod is a bonus (real hardware control), not a
+  # place. The evo_raw kmod is a bonus (real hardware control), NOT a
   # requirement: without it the bay runs in persistent DEMO mode, fully
-  # usable — so a missing /dev/evo* only ever reads as partial, never broken.
+  # usable. Health therefore ignores its absence — a laptop without an EVO
+  # was nagged "partially installed" forever for a working demo install.
   [[ -x "$BIN_DIR/mosquito-mixbay" && -x "$BIN_DIR/mosquito-mixbay-tui" ]] || { echo missing; return; }
-  local miss=""
   grep -qF "mosquito-mixbay-tui-setup" "$HOME/.config/hypr/hyprland.lua" 2>/dev/null \
-    || miss="${miss:+$miss, }hyprland float rule"
-  [[ -e /dev/evo8 || -e /dev/evo4 ]] \
-    || miss="${miss:+$miss, }evo_raw kmod (demo mode only)"
-  [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
+    || { echo "partial:missing hyprland float rule"; return; }
   echo ok
 }
 st_mosquitomarchy(){
@@ -986,9 +994,13 @@ st_guitarpro(){
 }
 
 st_signal(){
-  # Signal Desktop: official Electron client + autostart entry
+  # Signal Desktop: visible manual launches + tray-only login autostart
   [[ -x /usr/bin/signal-desktop ]] || { echo missing; return; }
-  [[ -f "$HOME/.config/Signal/config.json" ]] && echo ok || echo partial
+  [[ -f "$HOME/.config/Signal/config.json" ]] \
+    && jq -e '.minimizeToTray == false and .startMinimized == false and .hideMenuBar == true' "$HOME/.config/Signal/config.json" >/dev/null \
+    && jq -e '."system-tray-setting" == "DoNotUseSystemTray"' "$HOME/.config/Signal/ephemeral.json" >/dev/null \
+    && grep -q '^Exec=signal-desktop --start-in-tray$' "$HOME/.config/autostart/signal-desktop.desktop" \
+    && echo ok || echo partial
 }
 st_betterbird(){
   # Betterbird: Thunderbird fork + tray prefs (user.js) + login autostart
@@ -1058,6 +1070,7 @@ MODULES=(
   "mosquitomarchy:mosquitomarchy-deployer — the manager interface itself (dispatcher + menu entry + float rule + post-boot update hook + mosquitomarchy-update watchdog) — installed automatically by the bootstrap"
   "reaper:REAPER + Hyprland/Wayland integration, and its UI scale is set to the current monitor's DPI on every launch — REAPER cannot do this itself, so the launcher does it before the process starts. No action needed, nothing to remember: launch it from the Omarchy menu, the desktop entry or a shell and the size is right"
   "audio:mosquito audio stack — yabridge/APM, Mixbay, Levels Guard, live mode, PipeWire (folder row installs all five)"
+  "audio-plugin-manager:mosquito Audio Plugin Manager (TUI + actions) + shared audio core"
   "bitwig:Bitwig Studio 6.0 Beta 6 from the local .deb, its own module + optional patched bitwig.jar"
   "windows-vm:VM launcher + winvm (RAM/CPU/disk) + OEM debloat (auto-detected)"
   "macos-vm:macOS VMs in QEMU/KVM (OSX-For-Omarchy) — installer + TUI manager + shared folders + USB passthrough"
@@ -1073,9 +1086,10 @@ MODULES=(
   "apps:Apps, tuis & webapps (catalog per type gui/tui/webapps + backup selection via setup-apps.sh)"
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
   "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships."
-  "battery-management:Battery management — ultra-save low-power mode + mosquito.power bar plugin, which replaces Omarchy's stock battery widget"
+  "battery-management:Battery management — formerly ultra-save, a CPU/power-capping mode; abandoned for a simple script that colors the battery icon by power profile"
+  "omaskpinpass:Omarchy SSH askpass + GnuPG pinentry dialogs, built per-user from source; sets SSH_ASKPASS_REQUIRE=prefer"
   "better-pip:Better PiP — picture-in-picture windows as plain floating windows (never pinned, stays on its workspace): aspect ratio kept, grabbable border, idle inhibitor while open"
-  "mega-caffeine:Coffee mode (mega-caffeine) — laptop closed without sleeping, red tint, natural-language durations; installs battery management first if missing"
+  "mega-caffeine:Coffee mode (mega-caffeine) — laptop closed without sleeping, red tint, natural-language durations"
   "brightness:Display brightness — Omarchy default step, 0% = screen off, and a silent 1% ramp on held keys for smoother steps (no run-on beyond the current step)"
   "achraff:'Achraff 67' visual theme + unlock/Plymouth logo (lock screen left stock)"
   "touchpad:Touchpad (pointer acceleration, sensitivity + kinetic scrolling — external mouse is not affected)"
@@ -1235,6 +1249,7 @@ handbrake) st_handbrake ;;
     apps) s="$(st_apps)"; s="${s%%:*}"; echo "$s" ;;
     ollama) st_ollama ;;
     battery-management|battery) st_battery_management ;;
+    omaskpinpass) st_omaskpinpass ;;
     mega-caffeine) st_mega_caffeine ;;
     brightness) st_brightness ;;
     touchpad) st_touchpad ;;
@@ -1295,6 +1310,7 @@ module_of_path(){
     scripts/apps/setup-apps.sh|scripts/apps/uninstall-apps.sh|scripts/lib/common.bash) echo apps ;;
     scripts/LLM/*)                                           echo ollama ;;
     scripts/plugins/battery-management/*)                     echo battery-management ;;
+    scripts/plugins/omaskpinpass/*)                           echo omaskpinpass ;;
     scripts/mosquito/mega-caffeine/*)                        echo mega-caffeine ;;
     scripts/plugins/brightness/*)                            echo brightness ;;
     scripts/plugins/better-pip/*)                            echo better-pip ;;
@@ -2125,9 +2141,7 @@ do_backup(){
            .config/yabridgectl \
            .local/bin/reaper-launch .local/bin/windows-vm-usb \
            .local/bin/winvm .local/bin/ableton-live \
-           .local/bin/ultra-save \
            .local/bin/power-helper \
-           .local/state/ultra-save \
 .config/systemd/user/yabridge-autosync.path \
             .config/systemd/user/yabridge-autosync.service \
             .local/bin/omagrab .config/omagrab \
@@ -2575,7 +2589,7 @@ restore_backup(){
          && [[ -d "$HOME/.config/omarchy/plugins/mosquito.confirm" ]]; then
         ok "Battery plugins restored as-is (re-adopted)"
       elif [[ -f "$BATTERY_DIR/setup-battery-management.sh" ]] \
-           && ([[ -x "$HOME/.local/bin/ultra-save" ]] || [[ -x "$HOME/.local/bin/power-helper" ]]); then
+         && [[ -x "$HOME/.local/bin/power-helper" ]]; then
         warn "Battery plugins missing from the backup — recreated by the battery-management module."
         bash "$BATTERY_DIR/setup-battery-management.sh" || \
           warn "Rerun 'battery-management' via ./mosquitomarchy-setup.sh to recreate the plugins."
@@ -3558,7 +3572,8 @@ un_apps(){
 }
 
 un_battery_management(){
-  info "Uninstalling battery-management (ultra-save / power-helper / mosquito.power)"
+  info "Uninstalling battery-management (power-helper / mosquito.power)"
+  local legacy_active=0
 
   if [[ -f "$BATTERY_DIR/setup-battery-management.sh" ]]; then
     bash "$BATTERY_DIR/setup-battery-management.sh" --remove || true
@@ -3566,13 +3581,22 @@ un_battery_management(){
     warn "setup-battery-management.sh not found — sudoers/legacy udev not cleaned by it."
   fi
 
-  systemctl --user disable --now mosquito-ultra-save-watch.timer 2>/dev/null || true
-  rm_unit ultra-save-monitor
-  rm -f "$BIN_DIR/ultra-save" "$BIN_DIR/ultra-save-monitor" "$BIN_DIR/power-helper" \
-        "$BIN_DIR/ultra-save-watch" "$BIN_DIR/battery-status" \
-        "$BIN_DIR/ultra-save-setup" "$BIN_DIR/ultra-save.sudoers"
-  rm -rf "$HOME/.local/state/ultra-save"
-  ok "binaries + state removed (ultra-save, power-helper, battery-status, ultra-save-watch)"
+  systemctl --user disable --now mosquito-ultra-save-watch.timer ultra-save-monitor.timer 2>/dev/null || true
+  grep -qx 'on' "$HOME/.local/state/ultra-save/state" 2>/dev/null && legacy_active=1
+  rm -f "$BIN_DIR/power-helper" "$BIN_DIR/battery-status"
+  if (( legacy_active )); then
+    warn "Ultra-save remains active; preserving its executable, state and sudoers so it can be turned off safely."
+  else
+    rm -f "$BIN_DIR/ultra-save" "$BIN_DIR/ultra-save-watch" "$BIN_DIR/ultra-save-monitor" \
+          "$BIN_DIR/ultra-save-setup" "$BIN_DIR/ultra-save.sudoers"
+    rm -rf "$HOME/.local/state/ultra-save"
+    ok "Power helper, battery telemetry and legacy ultra-save artifacts removed"
+  fi
+  rm -f "$HOME/.config/systemd/user/mosquito-ultra-save-watch.service" \
+        "$HOME/.config/systemd/user/mosquito-ultra-save-watch.timer" \
+        "$HOME/.config/systemd/user/ultra-save-monitor.service" \
+        "$HOME/.config/systemd/user/ultra-save-monitor.timer"
+  systemctl --user daemon-reload 2>/dev/null || true
 
   # Mosquito plugins (mosquito.power, mosquito.indicators, mosquito.confirm),
   # plus the legacy custom.power clone when a machine still carries it.
@@ -3590,12 +3614,34 @@ un_battery_management(){
 
   # System (sudo): sudoers, legacy udev rule, /usr/local/bin helper
   if (( YES || PURGE )) && [[ $EUID -eq 0 || -n ${SUDO_USER:-} ]]; then
-    rm -f /etc/sudoers.d/battery-management /etc/udev/rules.d/99-lenovo-charge-threshold.rules /usr/local/bin/power-helper
+    rm -f /etc/udev/rules.d/99-lenovo-charge-threshold.rules /usr/local/bin/power-helper
+    (( legacy_active )) || rm -f /etc/sudoers.d/battery-management
     udevadm control --reload 2>/dev/null || true
-    ok "sudoers + legacy udev rule + /usr/local/bin helper removed"
+    if (( legacy_active )); then
+      warn "Kept /etc/sudoers.d/battery-management until ultra-save is turned off."
+    else
+      ok "sudoers + legacy udev rule + /usr/local/bin helper removed"
+    fi
   else
     warn "System part (sudoers/udev) not removed: run  sudo bash $0"
   fi
+}
+
+un_omaskpinpass(){
+  local conf="${GNUPGHOME:-$HOME/.gnupg}/gpg-agent.conf"
+  omarchy plugin disable lbssousa.omaskpass 2>/dev/null || true
+  omarchy plugin disable lbssousa.omapin 2>/dev/null || true
+  omarchy plugin remove lbssousa.omaskpass --yes 2>/dev/null || true
+  omarchy plugin remove lbssousa.omapin --yes 2>/dev/null || true
+  rm -f "$HOME/.local/bin/omaskpass" "$HOME/.local/bin/omapin" \
+        "$HOME/.config/environment.d/90-ssh-askpass.conf"
+  if [[ -f $conf ]]; then
+    local tmp; tmp=$(mktemp)
+    awk '/^# >>> mosquitOmarchy omaskpinpass >>>$/ {skip=1; next} /^# <<< mosquitOmarchy omaskpinpass <<<$/{skip=0; next} !skip' "$conf" > "$tmp"
+    cat "$tmp" > "$conf"; rm -f "$tmp"
+    gpgconf --reload gpg-agent 2>/dev/null || true
+  fi
+  ok "omaskpass + omapin plugins, binaries and managed per-user config removed"
 }
 
 un_mega_caffeine(){
@@ -3762,16 +3808,16 @@ un_keybindings(){
   # SUPER keybindings managed by mosquitOmarchy: removes the whole marker block
   # (same block format as the brightness module).
   info "Uninstalling the SUPER keybindings (mosquitOmarchy block)"
-  if [[ -f "$BINDINGS" ]] && grep -qF -- 'Omarchy_Custom_Scripts_Keys' "$BINDINGS"; then
+  if [[ -f "$BINDINGS" ]] && grep -qE -- 'mosquitOmarchy_Keybindings|Omarchy_Custom_Scripts_Keys' "$BINDINGS"; then
     local tmp=$(mktemp)
     awk '
-      /-- >>> Omarchy_Custom_Scripts_Keys/ {skip=1; next}
-      /-- <<< Omarchy_Custom_Scripts_Keys/ {skip=0; next}
+      /-- >>> mosquitOmarchy_Keybindings/ || /-- >>> Omarchy_Custom_Scripts_Keys/ {skip=1; next}
+      /-- <<< mosquitOmarchy_Keybindings/ || /-- <<< Omarchy_Custom_Scripts_Keys/ {skip=0; next}
       !skip {print}
     ' "$BINDINGS" > "$tmp" && mv "$tmp" "$BINDINGS"
     ok "Keybindings block removed from bindings.lua (Omarchy defaults back)"
   else
-    ok "No Omarchy_Custom_Scripts keybindings block in bindings.lua"
+    ok "No mosquitOmarchy keybindings block in bindings.lua"
   fi
   [[ -f "$BINDINGS" ]] && hyprctl reload >/dev/null 2>&1 || true
 }
@@ -3894,6 +3940,7 @@ handbrake) un_handbrake ;;
     ollama) un_ollama ;;
     remove-ai) un_remove_ai ;;
     battery-management|battery) un_battery_management ;;
+    omaskpinpass) un_omaskpinpass ;;
     mega-caffeine) un_mega_caffeine ;;
     brightness) un_brightness ;;
     better-pip) un_better_pip ;;
@@ -4348,6 +4395,7 @@ run_ollama(){
 }
 
 run_battery_management(){ bash "$BATTERY_DIR/setup-battery-management.sh"; }
+run_omaskpinpass(){ bash "$SCRIPTS/plugins/omaskpinpass/setup-omaskpinpass.sh"; }
 run_better_pip(){ bash "$BETTER_PIP_DIR/setup-better-pip.sh"; }
 run_mega_caffeine(){ bash "$MEGA_CAFFEINE_DIR/setup-mega-caffeine.sh"; }
 run_brightness(){ bash "$BRIGHTNESS_DIR/optimized-brightness.sh"; }
@@ -4363,9 +4411,9 @@ run_keepassxc(){
 
 run_keybindings(){
   # The keybindings manager is PART of mosquitOmarchy now (the TUI's
-  # Keybindings screen — there is no external script anymore). A batch install
-  # just makes sure the launcher binding exists; the full manager is the TUI
-  # screen (Enter on the keybindings row).
+  # Keybindings screen — there is no external manager anymore). The helper
+  # keeps Downloads installed/bound and removes the retired ultra-save binding.
+  bash "$SCRIPTS/plugins/omarchy-downloads/setup-omarchy-downloads.sh"
   kb_ensure "SUPER + ALT + M" "mosquitOmarchy" "$HOME/.local/bin/mosquitomarchy" cmd
   if (( KB_CHANGED )); then
     kb_reload || true
@@ -4526,6 +4574,7 @@ exec_modules(){
       ollama)  run_module ollama run_ollama ;;
       remove-ai) run_module remove-ai run_restore_ai ;;
       battery-management|battery) run_module battery-management run_battery_management ;;
+      omaskpinpass) run_module omaskpinpass run_omaskpinpass ;;
       better-pip) run_module better-pip run_better_pip ;;
       mega-caffeine) run_module mega-caffeine run_mega_caffeine ;;
       brightness) run_module brightness run_brightness ;;
@@ -4567,13 +4616,14 @@ CATEGORIES=(
   "tuis|TUIs|"
   "webapps|Webapps|"
   # "Plugins" is the project's own layer: the manager itself (the deployer),
-  # its update module, and the desktop-hardware modules. It was dropped by
+  # its update module, and project utilities such as power management and SSH
+  # askpass. It was dropped by
   # mistake in b097c2f (that commit removed the keyboard-backlight MODULE and
   # this whole row in one go), which left six modules with no category at all —
   # including the deployer, i.e. installed and updatable but reachable from
   # neither Setup nor Uninstall. `mega-caffeine` is deliberately absent: it is a
   # mosquito tool and lives in the mosquito row.
-  "plugins|Plugins|battery-management better-pip brightness touchpad mx-master"
+  "plugins|Plugins|battery-management omaskpinpass better-pip brightness touchpad mx-master"
   "fixes|Fixes|"
   "tweaks|Tweaks|"
   "mosquito|mosquito|"
@@ -4755,7 +4805,7 @@ module_desc(){ # module / pseudo id -> short description
 
 # split_name_desc <fallback-name> <text> -> CAND_NAME / CAND_DESC
 # Catalog labels are written by hand and often read "<name> — <what it does>",
-# sometimes repeating the name ("TUI calcure|calcure — terminal calendar").
+# sometimes repeating the name ("TUI aria2|aria2 — downloader").
 # Returns the human name in CAND_NAME and the description in CAND_DESC, with
 # that leading repetition dropped.
 split_name_desc(){
@@ -4769,7 +4819,7 @@ split_name_desc(){
     CAND_DESC=""
   fi
   [[ -n $CAND_NAME ]] || CAND_NAME="$fallback"
-  # "calcure — terminal calendar" under the name "calcure" says it twice.
+  # "aria2 — downloader" under the name "aria2" says it twice.
   if [[ $CAND_DESC == "$CAND_NAME"* && ${#CAND_NAME} -lt ${#CAND_DESC} ]]; then
     CAND_DESC="${CAND_DESC:${#CAND_NAME}}"
     CAND_DESC="${CAND_DESC# — }"
@@ -4809,8 +4859,8 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
               ;;
             PLUG)
               # A plugin's catalog label may itself read "Name — what it does"
-              # (nosignal.monitor-settings -> "Monitor Settings — Hyprland
-              # display/monitor panel"). Split it so the row shows the name and
+              # (downloads -> "Downloads — themed popup for recent files").
+              # Split it so the row shows the name and
               # only `i` shows the rest; the raw plugin id is the fallback when
               # the label has no dash.
               e="${line#*[ ]}"

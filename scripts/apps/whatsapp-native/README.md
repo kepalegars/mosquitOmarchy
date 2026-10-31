@@ -15,6 +15,10 @@ AUR build. It covers everything a real chat client needs on Hyprland/Wayland:
   audio.
 - **Tray + close-to-tray.** Closing the window hides it to the tray; the tray
   menu reopens it or really quits.
+- **No white tray-start window.** Login startup waits for Electron's first rendered
+  frame, flashes it without stealing focus, then hides it. A normal menu launch
+  waits for that rendered frame and stays visible; after Quit, launching again
+  creates a visible window.
 - **No menu bar.** `Menu.setApplicationMenu(null)` + the window menu removed.
 - A **"WhatsApp"** applications-menu entry, its icon in the hicolor theme, and
   **login autostart** (`o.launch_on_start("whatsapp --start-in-tray")` in `~/.config/hypr/autostart.lua`).

@@ -976,6 +976,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if km, ok := msg.(tea.KeyMsg); ok && km.String() == "backspace" &&
+		m.top() != scrInstallPrefixName && m.top() != scrPrefixMoveTargetName {
+		// Those two screens are text inputs; elsewhere Backspace follows Esc.
+		msg = tea.KeyMsg{Type: tea.KeyEsc}
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height

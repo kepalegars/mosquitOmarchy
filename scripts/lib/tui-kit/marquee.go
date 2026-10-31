@@ -12,8 +12,13 @@ import (
 // host, so a marquee needs no extra tick of its own.
 const (
 	frameInterval = 100 * time.Millisecond
-	marqueePause  = 1200 * time.Millisecond
+	marqueePause  = 3500 * time.Millisecond
 )
+
+// The kit has one active picker per TUI; keeping this focus epoch outside the
+// delegate survives the fresh Picker values hosts build on every refresh.
+var selectedMarqueeKey string
+var selectedMarqueeStart time.Time
 
 // MarqueeText fits s into width columns. Text that already fits is returned
 // unchanged. Text that does not scrolls left one column per frame, jumps back
@@ -40,4 +45,16 @@ func MarqueeText(s string, width int, now time.Time) string {
 		}
 	}
 	return ansi.Truncate(ansi.TruncateLeft(s, offset, ""), width, "")
+}
+
+// selectedMarqueeText starts a complete cycle when the picker cursor changes
+// rows. Only the selected row calls this; non-selected rows stay still/clipped.
+func selectedMarqueeText(key, s string, width int, now time.Time) string {
+	if key != selectedMarqueeKey {
+		selectedMarqueeKey, selectedMarqueeStart = key, now
+	}
+	if width <= 0 || ansi.StringWidth(s) <= width {
+		return s
+	}
+	return MarqueeText(s, width, time.Unix(0, now.Sub(selectedMarqueeStart).Nanoseconds()))
 }

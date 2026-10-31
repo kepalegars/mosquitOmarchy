@@ -1,37 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Omarchy Custom - Battery Management
+# Mosquito Power — battery profile icon and panel
 # =============================================================================
-# Battery management: the power tooling behind the mosquito.power panel widget.
-# Reproduces on a fresh machine:
-#
-#   1. ultra-save          (~/.local/bin/ultra-save)          : on/off/status toggle
-#   2. sudoers             (/etc/sudoers.d/battery-management) : NOPASSWD + D-BUS env
-#   3. power-helper        (~/.local/bin + /usr/local/bin)     : plugin back-end helper
-#   4. ultra-save-watch    (~/.local/bin/ultra-save-watch)    : CPU-saturation watchdog
-#                          under ultra-save (systemd --user timer, every 60s)
-#   5. Removes the old "System > Ultra-save mode" block from the Omarchy menu
-#      (now useless: the toggle lives in the mosquito.power plugin).
-#
-# Coffee mode (mega-caffeine) is a SEPARATE module: scripts/mosquito/mega-caffeine.
-# Battery conservation / charge thresholds are not part of this module.
-# The ultra-save-watch watchdog does NOT send profile-change notifications: it
-# warns when ultra-save's CPU cap is being saturated and would freeze the
-# desktop, with a clickable action that disables ultra-save.
+# Installs the power-profile panel and corrected battery telemetry. The former
+# ultra-save mode (CPU/power cap plus watchdog) was abandoned; this module now
+# only changes the battery icon color with the selected power profile.
 #
 # Usage:
-#   ./setup-battery-management.sh            # applies everything (idempotent)
-#   ./setup-battery-management.sh --remove   # removes sudoers (+ legacy udev rule)
+#   ./setup-battery-management.sh            # apply (idempotent)
+#   ./setup-battery-management.sh --remove   # remove the old menu/privileged artifacts
 #   ./setup-battery-management.sh --refresh-plugin power|indicators
-#                                             # rebuild one cloned Omarchy plugin
-#
-# One-stop install/uninstall for the whole battery module:
-#   • install   -> this script (also triggered by the 'battery-management' module)
-#   • uninstall -> this script --remove, or the 'battery-management' module of
-#                  mosquitomarchy-setup.sh --uninstall
-#
-# Prerequisites: power-profiles-daemon, amd-pstate/intel_pstate, Omarchy.
-# =============================================================================
+
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 set -euo pipefail
 
@@ -66,7 +45,6 @@ MENU="$MENU_DIR/omarchy-menu.jsonc"
 BLOCK_START="// >>> Omarchy_Custom_Scripts_UltraSave"
 BLOCK_END="// <<< Omarchy_Custom_Scripts_UltraSave"
 SUDOERS_FILE="/etc/sudoers.d/battery-management"
-STATE_DIR="$REAL_HOME/.local/state/ultra-save"
 UDEV_DST="/etc/udev/rules.d/99-lenovo-charge-threshold.rules"
 
 if [[ ! -d /usr/share/omarchy ]]; then
@@ -108,9 +86,8 @@ deploy_bin() {
 }
 
 if [[ $REMOVE == false ]]; then
-  mkdir -p "$BIN_DIR" "$STATE_DIR"
+  mkdir -p "$BIN_DIR"
 
-  deploy_bin "ultra-save"
   deploy_bin "power-helper"
   # battery-status: corrected battery telemetry. The stock
   # omarchy-battery-status / omarchy-power-present pair reports a USB-C
@@ -126,7 +103,7 @@ if [[ $REMOVE == false ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 1b. Mosquito mosquito.power plugin (bar widget: power profiles + ultra-save)
+# 1b. Mosquito mosquito.power plugin (bar widget: power profiles)
 #     Recreates it if missing: clones omarchy.power then renames to
 #     mosquito.power. The legacy custom.power clone is adopted (renamed) when
 #     found, so no machine keeps the old id.
@@ -193,7 +170,7 @@ ensure_power_plugin() {
 # 1c. Omarchy custom plugins (bar widget + overlay) — same clone/rename pattern
 #     but with QML sources shipped in ./omarchy-plugins/ (the stock clones are
 #     then patched so a fresh machine reproduces this machine's customizations):
-#       • mosquito.power/Panel.qml          : power-profile + ultra-save toggles
+#       • mosquito.power/Panel.qml          : profile-colored battery icon
 #       • mosquito.indicators/            : StayAwake red icon + time tooltip
 #       • mosquito.confirm/               : native Yes/No overlay for prompts
 # -----------------------------------------------------------------------------
@@ -363,98 +340,38 @@ if [[ $REMOVE == false ]]; then
   ensure_confirm_plugin || true
 fi
 
-# -----------------------------------------------------------------------------
-# 2. Sudoers (requires root)
-# -----------------------------------------------------------------------------
-if [[ $REMOVE == true ]]; then
-  if [[ -f "$SUDOERS_FILE" ]]; then
-    rm -f "$SUDOERS_FILE"
-    ok "Sudoers removed ($SUDOERS_FILE)"
-  else
-    ok "Sudoers absent, nothing to do."
-  fi
-else
-  if [[ $EUID -eq 0 ]]; then
-    cat > "$SUDOERS_FILE" <<SUDOEOF
-$REAL_USER ALL=(root) NOPASSWD: $BIN_DIR/ultra-save on, $BIN_DIR/ultra-save off, $BIN_DIR/ultra-save toggle
-Defaults! $BIN_DIR/ultra-save env_keep += "DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS"
-SUDOEOF
-    chmod 440 "$SUDOERS_FILE"
-    if visudo -cf "$SUDOERS_FILE" &>/dev/null; then
-      ok "Sudoers installed (no password + D-BUS env_keep)"
+# Remove privileged artifacts left by the retired ultra-save mode.
+TIMER_DIR="$REAL_HOME/.config/systemd/user"
+LEGACY_STATE="$REAL_HOME/.local/state/ultra-save"
+LEGACY_ACTIVE=0
+if grep -qx 'on' "$LEGACY_STATE/state" 2>/dev/null; then
+  if [[ -x "$BIN_DIR/ultra-save" ]]; then
+    if [[ $EUID -eq 0 ]]; then
+      SUDO_USER="$REAL_USER" HOME="$REAL_HOME" "$BIN_DIR/ultra-save" off >/dev/null 2>&1 || LEGACY_ACTIVE=1
     else
-      rm -f "$SUDOERS_FILE"
-      err "Sudoers invalid — removed."
+      sudo -n "$BIN_DIR/ultra-save" off >/dev/null 2>&1 || LEGACY_ACTIVE=1
     fi
   else
-    warn "Sudoers not installed (requires root). Run: sudo bash $0"
+    LEGACY_ACTIVE=1
   fi
+  (( LEGACY_ACTIVE )) && warn "Ultra-save is active but could not be safely disabled; preserving its binary and state. Run: sudo $BIN_DIR/ultra-save off"
 fi
-
-# -----------------------------------------------------------------------------
-# 3. ultra-save-watch monitor (systemd --user timer).
-#    The old ultra-save-monitor (sent profile-change notifications) stays
-#    removed: notifications are handled by the mosquito.power plugin. The NEW
-#    ultra-save-watch fills a different gap — it watches for CPU saturation
-#    WHILE ultra-save is ON (so the 30% frequency cap freezes the desktop,
-#    e.g. a DAW render) and posts a critical Omarchy notification whose click
-#    disables ultra-save. Installed as mosquito-ultra-save-watch.timer.
-# -----------------------------------------------------------------------------
-TIMER_DIR="$REAL_HOME/.config/systemd/user"
-WATCH_NAME="mosquito-ultra-save-watch"
-WATCH_SV="$TIMER_DIR/$WATCH_NAME.service"
-WATCH_TM="$TIMER_DIR/$WATCH_NAME.timer"
-systemctl --user disable --now ultra-save-monitor.timer 2>/dev/null || true
-rm -f "$TIMER_DIR/ultra-save-monitor.service" "$TIMER_DIR/ultra-save-monitor.timer"
-
-# Forbidden path separator in a systemd unit name; the timer must be unique.
-install_watch_timer() {
-  local svc timer
-  mkdir -p "$TIMER_DIR"
-  svc="$(cat <<EOF
-[Unit]
-Description=mosquito ultra-save CPU-saturation watchdog
-# Only meaningful when ultra-save is ON; the script itself no-ops otherwise.
-
-[Service]
-Type=oneshot
-ExecStart=$BIN_DIR/ultra-save-watch
-EOF
-)"
-  timer="$(cat <<EOF
-[Unit]
-Description=Run the mosquito ultra-save watchdog periodically
-
-[Timer]
-OnBootSec=120
-OnUnitActiveSec=60
-AccuracySec=5s
-
-[Install]
-WantedBy=timers.target
-EOF
-)"
-  printf '%s\n' "$svc" > "$WATCH_SV"
-  printf '%s\n' "$timer" > "$WATCH_TM"
-  chmod 0644 "$WATCH_SV" "$WATCH_TM"
-  systemctl --user daemon-reload 2>/dev/null || true
-  systemctl --user enable --now "$WATCH_NAME.timer" 2>/dev/null || true
-  ok "Ultra-save watchdog enabled ($WATCH_NAME.timer, every 60s; notifies when CPU is saturated under ultra-save)"
-}
-
-remove_watch_timer() {
-  systemctl --user disable --now "$WATCH_NAME.timer" 2>/dev/null || true
-  rm -f "$WATCH_SV" "$WATCH_TM"
-  systemctl --user daemon-reload 2>/dev/null || true
-  ok "Ultra-save watchdog disabled ($WATCH_NAME.timer removed)"
-}
-
-if [[ $REMOVE == true ]]; then
-  remove_watch_timer
+if [[ $EUID -eq 0 && $LEGACY_ACTIVE -eq 0 ]]; then
+  rm -f "$SUDOERS_FILE"
+elif [[ $EUID -eq 0 ]]; then
+  warn "Keeping the legacy sudoers rule so ultra-save can still be turned off."
 else
-  deploy_bin "ultra-save-watch"
-  install_watch_timer
+  [[ ! -e $SUDOERS_FILE ]] || warn "Legacy sudoers remains; rerun as root to remove: sudo bash $0"
 fi
+systemctl --user disable --now mosquito-ultra-save-watch.timer ultra-save-monitor.timer 2>/dev/null || true
+rm -f "$TIMER_DIR/mosquito-ultra-save-watch.service" "$TIMER_DIR/mosquito-ultra-save-watch.timer" \
+      "$TIMER_DIR/ultra-save-monitor.service" "$TIMER_DIR/ultra-save-monitor.timer" \
+      "$BIN_DIR/ultra-save-watch"
+if (( ! LEGACY_ACTIVE )); then
+  rm -f "$BIN_DIR/ultra-save"
+  rm -rf "$LEGACY_STATE"
+fi
+systemctl --user daemon-reload 2>/dev/null || true
 
 # -----------------------------------------------------------------------------
 # 4. power-helper in /usr/local/bin (for the Omarchy shell)
@@ -466,13 +383,13 @@ if [[ $REMOVE == false ]]; then
       && ok "power-helper installed in $USR_BIN_DIR" \
       || warn "Failed to copy helper into /usr/local/bin"
   else
-    warn "Helper /usr/local/bin not copied (requires root). Run: sudo bash $0"
+    sudo -n install -m 0755 "$BIN_DIR/power-helper" "$USR_BIN_DIR/power-helper" \
+      && ok "power-helper updated in $USR_BIN_DIR" \
+      || warn "Root helper was not updated; run: sudo install -m 0755 $BIN_DIR/power-helper $USR_BIN_DIR/power-helper"
   fi
 fi
 
-# -----------------------------------------------------------------------------
-# 4. Legacy charge-control udev rule (battery conservation removed) — drop it
-# -----------------------------------------------------------------------------
+# Legacy charge-control udev rule cleanup.
 if [[ -f "$UDEV_DST" ]]; then
   if [[ $EUID -eq 0 ]]; then
     rm -f "$UDEV_DST"
@@ -481,8 +398,6 @@ if [[ -f "$UDEV_DST" ]]; then
   else
     warn "legacy charge-control udev rule present — rerun as root to remove: sudo bash $0"
   fi
-else
-  ok "No charge-control udev rule (battery conservation removed)."
 fi
 
 # -----------------------------------------------------------------------------
@@ -548,19 +463,20 @@ remove_menu_block
 echo ""
 if [[ $REMOVE == true ]]; then
   info "Uninstall complete: legacy udev + sudoers removed."
-  echo "  Ultra-save watchdog timer removed."
-  echo "  The scripts stay in $BIN_DIR (ultra-save, power-helper, battery-status, ultra-save-watch):"
-  echo "    use the 'battery-management' module of mosquitomarchy-setup.sh --uninstall to remove them too."
+  if (( LEGACY_ACTIVE )); then
+    echo "  Ultra-save is still active; its executable/state/sudoers were preserved. Turn it off, then rerun this script."
+  else
+    echo "  Legacy ultra-save binaries, state, timer and menu entry removed."
+  fi
 else
   info "Setup complete. Summary:"
-  echo "  • ultra-save            -> $BIN_DIR/ultra-save (toggle/status)"
-  echo "  • Watchdog              -> $BIN_DIR/ultra-save-watch (timer every 60s)"
   echo "  • Plugin helper         -> $BIN_DIR/power-helper + /usr/local/bin"
   echo "  • Battery status        -> $BIN_DIR/battery-status (corrected charger/0W detection)"
-  echo "  • Omarchy widget        -> mosquito.power plugin (power profiles + ultra-save)"
+  echo "  • Omarchy widget        -> mosquito.power plugin (power-profile icon colors)"
   echo "  • Omarchy overlay       -> mosquito.confirm plugin (native Yes/No prompts)"
   echo "  • Omarchy indicators    -> mosquito.indicators widget (stay-awake red icon + tooltip)"
-  echo "  • Omarchy menu          -> old 'System > Ultra-save mode' block removed"
+  echo "  • Legacy ultra-save menu entry removed"
+  (( LEGACY_ACTIVE )) && echo "  • Legacy ultra-save is active; executable/state/sudoers preserved until it is safely turned off"
   echo
   # The QML/bar changes only take effect after a shell restart: do it now for
   # the user instead of only asking them to (unless we are root).
@@ -572,6 +488,6 @@ else
     fi
   else
     echo "  Restart the shell if the widget does not show: omarchy restart shell"
-    echo "  (if not run as root, rerun once: sudo bash $0 for sudoers)"
+    echo "  Rerun with sudo only if a legacy sudoers file or charge-control rule remains."
   fi
 fi

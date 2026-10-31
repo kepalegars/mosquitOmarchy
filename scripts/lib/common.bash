@@ -221,14 +221,39 @@ all_catalog_type(){
 # each still self-tagged "TYPE name|..." so install_one/remove_one/tick_*
 # dispatch correctly per-entry). Used where one script's catalog folder mixes
 # kinds (e.g. tui/tuis.catalog holding both TUI and PLUG entries).
+catalog_contains_id(){ # TUI|PLUG|APP|WEB + catalog line -> 0 if still catalogued
+  local type="$1" id="${2%%|*}" entry
+  case $type in
+    TUI)  for entry in "${CAT_TUI[@]:-}"; do [[ ${entry%%|*} == "$id" ]] && return 0; done ;;
+    PLUG) for entry in "${CAT_PLUG[@]:-}"; do [[ ${entry%%|*} == "$id" ]] && return 0; done ;;
+    APP)  for entry in "${CAT_APP[@]:-}"; do [[ ${entry%%|*} == "$id" ]] && return 0; done ;;
+    WEB)  for entry in "${CAT_WEB[@]:-}"; do [[ ${entry%%|*} == "$id" ]] && return 0; done ;;
+  esac
+  return 1
+}
+
+filter_selection_to_catalog(){
+  local -a kept=()
+  local line type
+  for line in "${SELECTED[@]:-}"; do
+    type="${line%% *}"
+    catalog_contains_id "$type" "${line#* }" && kept+=("$line")
+  done
+  SELECTED=("${kept[@]}")
+}
+
 selection_of_types(){
   BASE=()
   [[ -f $SEC_FILE ]] || { err "No selection loaded."; return 1; }
+  load_catalog || return 1
   local line t
   while IFS= read -r line || [[ -n $line ]]; do
     line="${line%%$'\r'}"
     for t in "${TYPES[@]}"; do
-      [[ $line == "$t "* ]] && { BASE+=("$line"); break; }
+      if [[ $line == "$t "* ]] && catalog_contains_id "$t" "${line#"$t "}"; then
+        BASE+=("$line")
+        break
+      fi
     done
   done < "$SEC_FILE"
   return 0

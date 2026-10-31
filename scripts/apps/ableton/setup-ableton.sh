@@ -32,7 +32,7 @@
 # .run at will without losing our adjustments.
 #
 # Power management: by default --power=off (the project does NOT touch the
-# power profile; your mosquito.power/ultra-save manager keeps control). One-off
+# power profile; mosquito.power keeps control). One-off
 # override: POWER=performance|balanced ./setup-ableton.sh -y
 #
 # Audio buffer: by default --audio-buffer=512 (the most stable value for

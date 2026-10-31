@@ -219,13 +219,12 @@ remove_legacy_keybindings() {
 # to interact with it. xdg-open has no useful default for a bare executable
 # (no matching MIME handler), so pressing Enter on one silently does
 # nothing. This routes shell scripts and bare executables to a small wrapper
-# that opens a NEW terminal and holds it open, so a `.sh` is genuinely RUN.
+# that opens a NEW terminal; when installed, PDFs go to tdf in that terminal.
 
 # Extensions routed to $EXEC_WRAPPER: shell scripts plus bare executables
 # (no extension, or the chmod +x'd binaries superfile would otherwise hand to
-# xdg-open with no handler). Anything NOT in this list (images, video, PDFs,
-# archives, text/code, ...) is untouched, still goes to whatever
-# superfile/xdg-open already does for it.
+# xdg-open with no handler). If tdf is installed, PDFs also use the wrapper;
+# other file types keep their existing superfile/xdg-open handling.
 EXEC_OPEN_EXTS=(sh bash zsh)  # plus the bare "" (no extension) key, always added separately below
 
 # superfile's multi-select is the reason the audio plugin manager can take
@@ -291,6 +290,7 @@ write_exec_open_wrapper() {
 #   .sh / .bash -> run with `bash` (even when not chmod +x — the point is
 #                  that Enter/Right RUNS shell scripts)
 #   .zsh        -> run with `zsh`
+#   .pdf        -> `tdf` if installed
 #   anything else (bare executables, chmod +x'd AppImages) -> executed
 #                  directly, relying on its shebang / exec bit
 #
@@ -300,6 +300,9 @@ write_exec_open_wrapper() {
 set -euo pipefail
 f="$1"
 case "${f,,}" in
+  *.pdf)
+    if command -v tdf >/dev/null 2>&1; then run=(tdf "$f"); else exec xdg-open "$f"; fi
+    ;;
   *.sh|*.bash) run=(bash "$f") ;;
   *.zsh)       run=(zsh "$f") ;;
   *)           run=("$f") ;;
@@ -347,14 +350,23 @@ write_open_with_exec_mappings() {
   # invalid and the module owns these names); every other key in [open_with]
   # — and every other table — is preserved untouched.
   sed -i '/# >>> superfile-module-exec-open >>>/,/# <<< superfile-module-exec-open <<</d' "$SUPERFILE_CONFIG"
+  sed -i '/# >>> superfile-module-tdf-open >>>/,/# <<< superfile-module-tdf-open <<</d' "$SUPERFILE_CONFIG"
   local tmp; tmp="$(mktemp)"
-  awk -v wrapper="$EXEC_WRAPPER" -v execexts="${EXEC_OPEN_EXTS[*]}" '
+  local use_tdf=0
+  command -v tdf >/dev/null 2>&1 && use_tdf=1
+  awk -v wrapper="$EXEC_WRAPPER" -v execexts="${EXEC_OPEN_EXTS[*]}" -v use_tdf="$use_tdf" '
     BEGIN {
       managed[""] = 1
+      if (use_tdf) managed["pdf"] = 1
       n = split(execexts, ee, " "); for (i = 1; i <= n; i++) managed[ee[i]] = 1
     }
     /^\[open_with\][ \t]*$/ && !done {
       print
+      if (use_tdf) {
+        print "# >>> superfile-module-tdf-open >>> PDF viewer (only when tdf is installed)"
+        print "pdf = \"" wrapper "\""
+        print "# <<< superfile-module-tdf-open <<<"
+      }
       print "# >>> superfile-module-exec-open >>> shell scripts + executables (setup-superfile.sh)"
       print "\"\" = \"" wrapper "\""
       for (i = 1; i <= n; i++) print ee[i] " = \"" wrapper "\""
@@ -369,12 +381,17 @@ write_open_with_exec_mappings() {
     }
     { print }
   ' "$SUPERFILE_CONFIG" > "$tmp" && mv "$tmp" "$SUPERFILE_CONFIG"
-  ok "superfile [open_with]: .sh (and .bash/.zsh/bare executables) run in a new terminal on Enter/Right"
+  if (( use_tdf )); then
+    ok "superfile PDFs open in tdf; scripts/executables still open in a terminal"
+  else
+    ok "tdf is not installed; superfile keeps the existing PDF handler"
+  fi
 }
 
 remove_open_with_exec_mappings() {
   [[ -f $SUPERFILE_CONFIG ]] || return 0
   sed -i '/# >>> superfile-module-exec-open >>>/,/# <<< superfile-module-exec-open <<</d' "$SUPERFILE_CONFIG"
+  sed -i '/# >>> superfile-module-tdf-open >>>/,/# <<< superfile-module-tdf-open <<</d' "$SUPERFILE_CONFIG"
   ok "superfile [open_with] script/executable mappings removed"
 }
 
@@ -532,6 +549,7 @@ do_status() {
   echo "  • Script/executable launcher: $([[ -x $EXEC_WRAPPER ]] && echo "present ($EXEC_WRAPPER)" || echo absent)"
   echo "  • Editing files: superfile's own editor hotkey, using \${EDITOR:-nano} (Omarchy/system default)"
   echo "  • superfile [open_with] script/exec mappings: $(grep -q 'superfile-module-exec-open' "$SUPERFILE_CONFIG" 2>/dev/null && echo active || echo "not active")"
+  echo "  • PDF viewer: $(command -v tdf >/dev/null 2>&1 && grep -q 'superfile-module-tdf-open' "$SUPERFILE_CONFIG" 2>/dev/null && echo 'tdf (terminal)' || echo 'system xdg-open')"
   echo "  • Omarchy theme sync: $([[ -x $THEME_HOOK_FILE ]] && echo "active (hook: $THEME_HOOK_FILE)" || echo "not active")"
   echo "  • superfile theme: $(sed -n 's/^theme *= *"\(.*\)"/\1/p' "$SUPERFILE_CONFIG" 2>/dev/null | head -1 || echo unknown)"
   if [[ -f $HYPR_BINDINGS ]] && grep -q 'superfile-module-keybindings' "$HYPR_BINDINGS" 2>/dev/null; then

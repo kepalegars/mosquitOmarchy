@@ -487,16 +487,21 @@ func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, ite
 		}
 	}
 	suffixW := lipgloss.Width(pi.Suffix)
+	titleAvail := avail - 3 - d.badgeSlot - suffixW - d.trailSlot
+	if titleAvail < 1 {
+		titleAvail = 1
+	}
 	// The title gets what the row leaves after the cursor slot, the badge
 	// column, the suffix and the trailing badge column. Deriving the SAME
 	// budget fitBlock will clip to is what lets the marquee know whether the
 	// text actually overflows — truncating at the full list width first hid
 	// the overflow until fitBlock cut it with no chance to scroll.
-	titleAvail := avail - 3 - d.badgeSlot - suffixW - d.trailSlot
-	if titleAvail < 1 {
-		titleAvail = 1
+	marqueeKey := pi.Value + "\x00" + pi.Display + "\x00" + pi.Sub
+	now := time.Now()
+	title := ansi.Truncate(pi.Display, titleAvail, "")
+	if index == m.Index() {
+		title = selectedMarqueeText(marqueeKey, pi.Display, titleAvail, now)
 	}
-	title := MarqueeText(pi.Display, titleAvail, time.Now())
 	suffix := ""
 	if pi.Suffix != "" {
 		// The suffix keeps the row's ordinary style even when the title is an
@@ -537,7 +542,11 @@ func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, ite
 		if descAvail < 1 {
 			descAvail = 1
 		}
-		desc = MarqueeText(desc, descAvail, time.Now())
+		if index == m.Index() {
+			desc = selectedMarqueeText(marqueeKey, desc, descAvail, now)
+		} else {
+			desc = ansi.Truncate(desc, descAvail, "")
+		}
 		descStyled := d.descStyle(index, m.Index()).Render(desc)
 		// The description sits on its own line but belongs to the SAME row, so
 		// it repeats NEITHER the selection cursor NOR the badge. Both used to
@@ -604,7 +613,7 @@ func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem)
 	if titleAvail < 1 {
 		titleAvail = 1
 	}
-	title := MarqueeText(pi.Display, titleAvail, time.Now())
+	title := ansi.Truncate(pi.Display, titleAvail, "")
 	suffix := ""
 	if pi.Suffix != "" {
 		suffix = StyleDisabled.Render(pi.Suffix)
@@ -624,7 +633,7 @@ func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem)
 		if descAvail < 1 {
 			descAvail = 1
 		}
-		desc := MarqueeText(pi.Sub, descAvail, time.Now())
+		desc := ansi.Truncate(pi.Sub, descAvail, "")
 		row += "\n" + "   " + d.badgeCell(pi) + StyleDisabled.Render(desc)
 	}
 	fmt.Fprint(w, fitBlock(row, d.maxRowW, m.Width())) //nolint: errcheck
@@ -1109,7 +1118,11 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.KeyMsg:
 		switch {
-		case key.Matches(m, key.NewBinding(key.WithKeys("ctrl+c", "esc"))):
+		case key.Matches(m, key.NewBinding(key.WithKeys("ctrl+c", "esc", "backspace"))):
+			// Backspace means "back" on every picker: it leaves the screen
+			// exactly like Esc. The host keeps Backspace for its own live
+			// filter / text-input screens by handling it before the picker
+			// ever sees the key, so this only affects plain lists.
 			return p, func() tea.Msg { return PickerResultMsg{Canceled: true} }
 		case key.Matches(m, key.NewBinding(key.WithKeys("enter"))):
 			if it, ok := p.list.SelectedItem().(PickerItem); ok {

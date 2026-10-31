@@ -88,22 +88,17 @@ Panel {
   readonly property bool batteryFull: fullyCharged || (!root.discharging && batteryFraction >= 1)
   readonly property bool batteryFlowIdle: batteryFull
 
-  // ---- mosquito.power state (polled via power-helper) ---------------------
-  property bool ultraSaveOn: false
-  property string liveProfile: ""
-
-  // Bar icon color, by power profile:
-  //   eco (power-saver) = green · performance = blue · ultra-save = orange ·
-  //   balanced = the normal icon color (white on dark / adaptive).
-  // Ultra-save forces the power-saver profile, so its orange must win over the
-  // green. The neutral fallback uses bar.barForeground (NOT bar.foreground):
+  // Bar icon color, by power profile; the neutral fallback follows the
+  // wallpaper-adaptive bar foreground.
+  // A critically low battery overrides the profile color.
+  // The fallback uses bar.barForeground (NOT bar.foreground):
   // with a transparent bar that is the wallpaper-adaptive contrast color that
   // all the other Omarchy icons inherit — the fixed theme color would stay
   // light on a light wallpaper (invisible battery icon).
   readonly property color batteryGlyphColor: {
-    if (root.ultraSaveOn) return Qt.rgba(0.95, 0.55, 0.15, 1)
-    if (root.liveProfile === "performance") return Qt.rgba(0.30, 0.60, 0.95, 1)
-    if (root.liveProfile === "power-saver") return Qt.rgba(0.35, 0.85, 0.42, 1)
+    if (root.batteryPresent && Model.isLowBattery(root.batteryFraction)) return Qt.rgba(0.95, 0.20, 0.18, 1)
+    if (root.activeProfile === "performance") return Qt.rgba(0.30, 0.60, 0.95, 1)
+    if (root.activeProfile === "power-saver") return Qt.rgba(0.35, 0.85, 0.42, 1)
     return root.bar ? root.bar.barForeground : Color.foreground
   }
 
@@ -236,31 +231,16 @@ Panel {
   // on "Yes"; answering No leaves the profile exactly where it was.
   //
   // POWER_PROFILE_PROMPT="no" in ~/.config/live-mode/settings turns the
-  // question off (the Live Manager owns that toggle). Ultra-save is NOT part
-  // of this: power-helper refuses it outright, with no way to confirm it,
-  // because it caps the CPU and is the opposite of what the session is for.
+  // question off (the Live Manager owns that toggle).
   //
   // The decision lives in the helper rather than in this QML so it is plain
   // bash, testable, and reachable from the terminal and from any other caller.
   function setProfile(profile) {
     if (!profile || actionProc.running) return
-    // Everything goes through power-helper profile set, including the ultra-save
-    // cleanup. A manually activated plan still wins over ultra-save (it forces
-    // power-saver and CPU caps), so ultra-save is turned off first — and the
-    // helper is the one place that knows live mode is on and that power-saver
-    // itself must be refused, so asking there rather than here is what keeps
-    // the two rules from disagreeing.
-    //
-    // The subcommand is `profile set`, with a SPACE. This used to say
-    // `profile-set` with a hyphen, which the helper does not implement: it fell
-    // through to the default case, printed a usage line to stderr and exited 1.
-    // Nothing in the panel surfaced that, so clicking a profile appeared to do
-    // nothing at all — the machine stayed on power-saver with no error anywhere.
     actionProc.command = [
       "power-helper", "profile", "set",
       root.discharging ? "battery" : "ac",
-      profile,
-      root.ultraSaveOn ? "drop-ultrasave" : "keep-ultrasave"
+      profile
     ]
     actionProc.running = true
   }
@@ -270,31 +250,10 @@ Panel {
     if (root.bar && root.bar.shell) root.bar.shell.updateEntryInline(root.moduleName, root.settings)
   }
 
-  // ---- mosquito.power: ultra-save state ------------------------------------
-
-  function refreshPowerStatus() {
-    if (!ultraStatusProc.running) ultraStatusProc.running = true
-  }
-
-  function updateUltraStatus(raw) {
-    var next = Model.parseKeyValue(raw)
-    if (Object.keys(next).length === 0) return
-    root.ultraSaveOn = next.state === "on"
-    if (next.profile) root.liveProfile = next.profile
-  }
-
-  function toggleUltraSave() {
-    if (ultraActionProc.running) return
-    ultraActionProc.command = ["power-helper", "ultrasave", "toggle"]
-    ultraActionProc.running = true
-  }
-
   // One notification per charger plug-in: a fresh plug (AC) opens the window
   // again, regardless of the current level.
   //
-  // While on wall power ultra-save (dimmed screen + CPU caps + power-saver) is
-  // pointless, so drop it automatically on plug-in. The stock battery service
-  // also leaves its critical "Time to recharge!" toast on screen because
+  // The stock battery service leaves its critical "Time to recharge!" toast on screen because
   // critical popups never auto-expire — dismiss it too, so the plug clears the
   // alert instead of leaving it stuck.
   Connections {
@@ -305,21 +264,20 @@ Panel {
   }
 
   function onAcPlugged() {
-    if (acPowersaveProc.running) return
-    acPowersaveProc.command = [
+    if (acToastProc.running) return
+    acToastProc.command = [
       "bash", "-c",
-      "if power-helper ultrasave status 2>/dev/null | grep -q '^state\ton$'; then power-helper ultrasave off; fi; " +
       // Dismiss now and once more shortly after: the stock service may emit the
       // critical toast a beat after the AC event, and a critical toast ignores
       // its own timeout.
       "omarchy-notification-dismiss 'Time to recharge!'; " +
       "( sleep 2; omarchy-notification-dismiss 'Time to recharge!' ) &"
     ]
-    acPowersaveProc.running = true
+    acToastProc.running = true
   }
 
   Process {
-    id: acPowersaveProc
+    id: acToastProc
     onExited: root.refreshPowerStatus()
   }
 
@@ -441,28 +399,6 @@ Panel {
   }
 
   Timer { interval: 5000; running: root.opened; repeat: true; onTriggered: root.refresh() }
-
-  // mosquito.power status: ultra-save. Runs persistently (even when the panel
-  // is closed) so the bar icon color stays correct.
-  Process {
-    id: ultraStatusProc
-    command: ["power-helper", "ultrasave", "status"]
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateUltraStatus(text) }
-  }
-
-  Process {
-    id: ultraActionProc
-    onExited: root.refreshPowerStatus()
-  }
-
-  Timer {
-    id: powerStatusTimer
-    interval: 4000
-    running: batteryPresent
-    repeat: true
-    triggeredOnStart: true
-    onTriggered: root.refreshPowerStatus()
-  }
 
   // Rotate the status phrase while the panel is open and we're in a
   // rotating state (charging or on battery). The text swap is wrapped in a
@@ -725,10 +661,7 @@ Panel {
                 horizontalPadding: Style.spacing.controlPaddingX
                 verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
                 bordered: true
-                // Ultra-save forces the power-saver profile internally, but it
-                // is its OWN mode: while it is active, no standard power plan is
-                // shown as selected (only the Ultra-save toggle is checked).
-                active: !root.ultraSaveOn && root.activeProfile === modelData
+                active: root.activeProfile === modelData
                 hasCursor: root.cursorActive && root.profileIndex === index
                 onClicked: root.setProfile(modelData)
                 onHovered: function(h) {
@@ -736,10 +669,8 @@ Panel {
                     root.cursorActive = true
                     root.profileIndex = index
                   } else {
-                    // Leaving with the mouse must drop the highlight: otherwise
-                    // the last hovered box keeps a fake "selected" look — very
-                    // visible when ultra-save is on and no plan is actually
-                    // selected. Keyboard navigation re-arms the cursor on move.
+                    // Leaving with the mouse drops the highlight; keyboard
+                    // navigation re-arms the cursor on move.
                     root.cursorActive = false
                   }
                 }
@@ -748,24 +679,6 @@ Panel {
           }
         }
 
-        // ---------- Ultra-save toggle ----------
-        Column {
-          width: parent.width
-          spacing: Style.space(10)
-
-          Toggle {
-            width: parent.width
-            label: "Ultra-save"
-            description: root.ultraSaveOn
-              ? "Low-power mode active (~6-8W)"
-              : "Extreme battery saving, ~6-8W"
-            checked: root.ultraSaveOn
-            foreground: root.bar.foreground
-            accent: Color.accent
-            fontFamily: root.bar.fontFamily
-            onClicked: root.toggleUltraSave()
-          }
-        }
       }
     }
   }

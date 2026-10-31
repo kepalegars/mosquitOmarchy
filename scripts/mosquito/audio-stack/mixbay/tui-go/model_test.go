@@ -820,6 +820,26 @@ func TestEvoEscFromMixerLandsOnControls(t *testing.T) {
 	}
 }
 
+func TestEvoBackspaceNavigatesButStillEditsPresetName(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	m.evo.mode = 1
+	m.evo.fileInput = "Preset"
+	m.evo.caretPos = len(m.evo.fileInput)
+	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = mm.(model)
+	if m.evo.fileInput != "Prese" || m.top() != scrControls {
+		t.Fatalf("backspace edited preset name incorrectly: name=%q top=%v", m.evo.fileInput, m.top())
+	}
+	m.evo.mode = 0
+	m.evo.window = evoWinMixer
+	m.nav = append(m.nav, scrMixer)
+	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = mm.(model)
+	if m.top() != scrControls || m.evo.window != evoWinControls {
+		t.Fatalf("backspace left mixer at top=%v window=%d", m.top(), m.evo.window)
+	}
+}
+
 // Pressing Enter on the device list clears evo.spec while status still holds
 // the previous interface. With a real terminal size, View() used to draw the
 // old spec's groups against an empty activeElements() list and panic with

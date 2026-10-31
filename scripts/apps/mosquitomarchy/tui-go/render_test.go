@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	tuikit "mosquitomarchy.local/tui-kit"
@@ -687,6 +688,39 @@ func TestSetupFilterKeepsTheCursor(t *testing.T) {
 	if got, want := m.setupPicker.SelectedValue(), "item:webcam:tool"; got != want {
 		t.Fatalf("narrowing the filter moved the cursor to %q, want %q", got, want)
 	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyBackspace})
+	if m.top() != scrSetup || m.filterText != "we" {
+		t.Fatalf("backspace in filter left the screen or failed to edit it: top=%v filter=%q", m.top(), m.filterText)
+	}
+	m.filterText = ""
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyBackspace})
+	if m.top() != scrSetup || !m.filterOpen {
+		t.Fatal("backspace in an empty open filter navigated away")
+	}
+}
+
+func TestLongHealthSubtitleScrollsInTheHostView(t *testing.T) {
+	m := initialModel()
+	m.w, m.h = 80, 24
+	items := []HealthRec{{
+		Kind: "plugin", ID: "plugin-power", Label: "Mosquito Power plugin — clone of Omarchy's power panel",
+		Detail: "plugin predates upstream tracking — replace it once to establish a baseline; " + strings.Repeat("upstream drift ", 4),
+	}}
+	m, _ = m.update(healthMsg{items: items})
+	if m.top() != scrHealth {
+		t.Fatalf("health screen not opened: top=%v", m.top())
+	}
+	m.healthPicker = m.healthPicker.SelectValue("plugin-power")
+	first := m.View()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		m, _ = m.update(tuikit.ThemeTickMsg(time.Now()))
+		if m.View() != first {
+			return
+		}
+	}
+	t.Fatalf("over-width Health subtitle did not scroll in the host view:\n%s", first)
 }
 
 // TestMenuEntriesRespondsToKeys is the freeze. The screen rendered rows from a

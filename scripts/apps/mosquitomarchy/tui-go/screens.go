@@ -1614,6 +1614,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					m.filterText = string(r[:len(r)-1])
 					m.setupPicker = m.rebuildSetup()
 					return m, nil
+				case km.String() == "backspace":
+					// Empty filter: consume the key so the picker's
+					// Backspace-is-back rule does not fire while filtering.
+					return m, nil
 				case km.String() == "esc":
 					m.filterOpen = false
 					m.filterText = ""
@@ -1708,7 +1712,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					break
 				}
 				if km.String() == "backspace" && m.filterText == "" {
-					break
+					// Empty filter: consume the key so the picker's
+					// Backspace-is-back rule does not fire while filtering.
+					return m, nil
 				}
 				if km.String() == "backspace" {
 					r := []rune(m.filterText)
@@ -1942,7 +1948,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	case scrInfo:
 		m.info, cmd = m.info.Update(msg)
 	case scrWorking:
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "enter") {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "backspace" || km.String() == "enter") {
 			if m.runner.Done() {
 				// A run launched straight from the main menu leaves the
 				// runner alone on the stack (startWorking replaces), and
@@ -1957,7 +1963,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.pop()
 				return m, nil
 			}
-			if km.String() == "esc" {
+			if km.String() == "esc" || km.String() == "backspace" {
 				m.runner.Cancel()
 			}
 		}

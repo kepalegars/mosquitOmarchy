@@ -1617,7 +1617,11 @@ func (m *model) evoKey(k string) tea.Cmd {
 	switch k {
 	case "q":
 		return m.evoQuitConfirm()
-	case "esc":
+	case "esc", "backspace":
+		if k == "backspace" && u.numBuf != "" {
+			u.numBuf = u.numBuf[:len(u.numBuf)-1]
+			return nil
+		}
 		if u.numBuf != "" {
 			u.numBuf = ""
 			return nil
@@ -1670,11 +1674,6 @@ func (m *model) evoKey(k string) tea.Cmd {
 			}
 		}
 		u.numBuf = ""
-		return nil
-	case "backspace":
-		if u.numBuf != "" {
-			u.numBuf = u.numBuf[:len(u.numBuf)-1]
-		}
 		return nil
 	case "enter":
 		if u.numBuf == "" {
@@ -2101,7 +2100,15 @@ func (m *model) evoPickerKey(k string) tea.Cmd {
 	u := &m.evo
 	moved := false
 	switch k {
-	case "esc":
+	case "esc", "backspace":
+		if k == "backspace" && (u.mode == 1 || u.renaming) && u.pickerEditable() {
+			if u.caretPos > 0 {
+				_, size := utf8.DecodeLastRuneInString(u.fileInput[:u.caretPos])
+				u.fileInput = u.fileInput[:u.caretPos-size] + u.fileInput[u.caretPos:]
+				u.caretPos -= size
+			}
+			return nil
+		}
 		if u.renaming {
 			u.renaming, u.renameFrom = false, ""
 			if u.fileCursor < len(u.fileList) {
@@ -2224,12 +2231,6 @@ func (m *model) evoPickerKey(k string) tea.Cmd {
 		}
 		u.mode = 0
 		return m.evoSaveTo(filepath.Join(m.evoConfigDir(), name+".json"))
-	case "backspace":
-		if (u.mode == 1 || u.renaming) && u.pickerEditable() && u.caretPos > 0 {
-			_, size := utf8.DecodeLastRuneInString(u.fileInput[:u.caretPos])
-			u.fileInput = u.fileInput[:u.caretPos-size] + u.fileInput[u.caretPos:]
-			u.caretPos -= size
-		}
 	default:
 		if (u.mode == 1 || u.renaming) && u.pickerEditable() && len(k) == 1 {
 			c := k[0]

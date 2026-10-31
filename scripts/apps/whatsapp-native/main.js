@@ -44,6 +44,7 @@ let mainWindow = null;
 let tray = null;
 let isQuitting = false;
 let lastRecovery = 0;
+let userRequestedShow = false;
 
 // Single instance: a second launch just focuses the existing window.
 if (!app.requestSingleInstanceLock()) {
@@ -56,6 +57,7 @@ if (!app.requestSingleInstanceLock()) {
 
 function showWindow() {
   if (!mainWindow) return;
+  userRequestedShow = true;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
@@ -107,9 +109,10 @@ function createTray() {
 
 function createWindow(startHidden) {
   startHidden = !!startHidden;
-  let needsFirstShowReload = startHidden;
   mainWindow = new BrowserWindow({
-    show: !startHidden,
+    // Wait for Electron's first rendered frame. Showing the hidden autostart
+    // window before that frame caused a blank white surface on Wayland.
+    show: false,
     width: 1100,
     height: 780,
     icon: ICON_PATH,
@@ -176,20 +179,19 @@ function createWindow(startHidden) {
   mainWindow.on('hide', () => {
     if (mainWindow) mainWindow.webContents.setAudioMuted(true);
   });
-  // Starting in the tray loads WhatsApp Web while the Wayland surface is
-  // unmapped. The page is ready (title set) but never paints; showing the
-  // window later leaves it white, and invalidate() is not enough. Reload once
-  // on the first show so the UI is painted, then keep normal hide/show cheap.
-  mainWindow.on('show', () => {
-    if (!mainWindow) return;
-    mainWindow.webContents.invalidate();
-    if (!needsFirstShowReload) return;
-    needsFirstShowReload = false;
-    const reload = () => recoverWindow('first show after tray start', true);
-    if (mainWindow.webContents.isLoading()) {
-      mainWindow.webContents.once('did-finish-load', reload);
+  // Paint once before hiding an autostarted window to the tray. Menu launches
+  // stay visible; a second-instance launch during startup cancels auto-hide.
+  mainWindow.once('ready-to-show', () => {
+    if (!mainWindow || mainWindow.isDestroyed() || isQuitting) return;
+    if (startHidden && !userRequestedShow) {
+      mainWindow.showInactive();
+      setTimeout(() => {
+        if (!isQuitting && mainWindow && !mainWindow.isDestroyed() && !userRequestedShow) {
+          mainWindow.hide();
+        }
+      }, 250);
     } else {
-      reload();
+      mainWindow.show();
     }
   });
 
@@ -237,9 +239,6 @@ app.whenReady().then(() => {
   const startInTray = process.argv.some((a) => a === '--start-in-tray');
   createWindow(startInTray);
   createTray();
-  if (startInTray && mainWindow) {
-    mainWindow.hide();
-  }
 
   powerMonitor.on('resume', () => {
     setTimeout(() => recoverWindow('resumed from sleep'), 2000);

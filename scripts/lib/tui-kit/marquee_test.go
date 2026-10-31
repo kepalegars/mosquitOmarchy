@@ -42,3 +42,26 @@ func TestMarqueeText(t *testing.T) {
 		t.Fatalf("loop = %q, want the start again", got)
 	}
 }
+
+func TestSelectedMarqueeStartsAndCompletesEachFocusCycle(t *testing.T) {
+	const text = "abcdefghij"
+	const width = 5
+	base := time.Unix(100, 0)
+	key := "selected-marquee-test"
+	period := marqueePause + 5*frameInterval
+
+	if got := selectedMarqueeText(key, text, width, base); got != "abcde" {
+		t.Fatalf("focus start = %q, want beginning", got)
+	}
+	if got := selectedMarqueeText(key, text, width, base.Add(marqueePause)); got != "bcdef" {
+		t.Fatalf("scroll start = %q, want bcdef", got)
+	}
+	if got := selectedMarqueeText(key, text, width, base.Add(period)); got != "abcde" {
+		t.Fatalf("completed cycle = %q, want beginning", got)
+	}
+	// Moving the selection to another row starts its own complete trip, rather
+	// than inheriting the previous row's global scroll offset.
+	if got := selectedMarqueeText(key+"-next", text, width, base.Add(period+3*frameInterval)); got != "abcde" {
+		t.Fatalf("new focus inherited the previous offset: %q", got)
+	}
+}

@@ -725,7 +725,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if m.top() == scrInfo {
-		if k, ok := msg.(tea.KeyMsg); ok && (k.String() == "esc" || k.String() == "enter" || k.String() == "q") {
+		if k, ok := msg.(tea.KeyMsg); ok && (k.String() == "esc" || k.String() == "backspace" || k.String() == "enter" || k.String() == "q") {
 			m.pop()
 			return m, nil
 		}
@@ -759,7 +759,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if m.top() == scrInfo {
-		if k == "esc" || k == "enter" || k == "q" {
+		if k == "esc" || k == "backspace" || k == "enter" || k == "q" {
 			m.pop()
 			return m, nil
 		}
@@ -815,7 +815,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.push(scrControls)
 			m.syncPicker()
 			return m, fetchStatus(m.deviceID)
-		case "q", "esc":
+		case "q", "esc", "backspace":
 			m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")
 			m.confirmAct = func() tea.Cmd {
 				m.quit = true
@@ -826,9 +826,13 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case scrControls:
 		switch k {
-		case "esc":
+		case "esc", "backspace":
 			if m.numBuf != "" {
-				m.cancelNumeric()
+				if k == "backspace" {
+					m.numBuf = m.numBuf[:len(m.numBuf)-1]
+				} else {
+					m.cancelNumeric()
+				}
 				return m, nil
 			}
 			m.pop()
@@ -891,9 +895,13 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case scrMixer:
 		switch k {
-		case "esc":
+		case "esc", "backspace":
 			if m.numBuf != "" {
-				m.cancelNumeric()
+				if k == "backspace" {
+					m.numBuf = m.numBuf[:len(m.numBuf)-1]
+				} else {
+					m.cancelNumeric()
+				}
 				return m, nil
 			}
 			m.pop()
@@ -932,7 +940,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case scrSettings:
 		switch k {
-		case "esc":
+		case "esc", "backspace":
 			m.pop()
 			return m, nil
 		case "enter", "left", "right":

@@ -2,8 +2,8 @@
 # setup-tuis.sh — Installs the terminal tools of the "apps" module (tuis.catalog).
 #
 # Part of the modular apps module: one script per type (gui/ tui/ webapps/),
-# each with its own catalog and helpers from lib/common.bash. This script only
-# handles the TUI entries (AUR/official packages via yay).
+# each with its own catalog and helpers from lib/common.bash. This script handles
+# TUI packages and the external Omarchy plugins listed alongside them.
 #
 # The selection sources:
 #   --all                 → the whole tuis.catalog
@@ -28,8 +28,8 @@ TYPE_ARR=CAT_TUI
 ARRNAME=CAT_TUI
 TYPE_PLURAL="TUIs"
 TYPE_TAG=tuis
-# tuis.catalog also holds PLUG entries (Omarchy shell plugins, e.g.
-# Monitor-TUI-Omarchy) — proposed by default alongside plain TUIs here.
+# tuis.catalog also holds PLUG entries (Omarchy shell plugins); these are
+# presented in their own Plugins category, separate from TUI packages.
 TYPES=(TUI PLUG)
 
 YES=0 STATUS_ONLY=0 LIST_ONLY=0 ALL=0 FROM=""

@@ -1666,6 +1666,12 @@ cmd_health(){
     # `apps` is an umbrella over the catalogs and is almost always "partial"
     # by design (you never install every catalog entry): not drift.
     [[ $id == apps ]] && continue
+    # `audio` is a folder over five children (APM, mixbay, levels-guard,
+    # live-mode, pipewire-settings), each a module of its own below. The
+    # folder only reads "partial" while a child is missing, so reporting it
+    # alongside the child made a deliberately partial stack nag twice. The
+    # children carry the real detail.
+    [[ $id == audio ]] && continue
     # `st_*` may answer "partial:<what is missing>". That detail is the whole
     # point of the Health screen: "some files went missing" told the user
     # nothing about which files, or that one of them needs root.
@@ -1810,6 +1816,7 @@ cmd_heal(){
   for row in "${MODULES[@]}"; do
     id="${row%%:*}"; is_excluded "$id" && continue
     [[ $id == apps ]] && continue   # umbrella, not a single install (see cmd_health)
+    [[ $id == audio ]] && continue  # folder over the five audio children (see cmd_health)
     if ! in_want "$id"; then
       continue
     fi

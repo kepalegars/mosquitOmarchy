@@ -149,11 +149,6 @@ reassert_state() {
       powerprofilesctl set performance 2>/dev/null || true
     fi
   fi
-  # Ultra-save off
-  if [[ -f "$REAL_HOME/.local/state/ultra-save/state" ]] && grep -q "^on$" "$REAL_HOME/.local/state/ultra-save/state" 2>/dev/null; then
-    sudo -n "$HOME/.local/bin/ultra-save" off >/dev/null 2>&1 || true
-  fi
-
   # Stay-awake forced on (the lid inhibitor may be killed by external
   # cleanup; relaunch it if it died).
   if ! pgrep -f "[s]ystemd-inhibit --what=handle-lid-switch:sleep" >/dev/null 2>&1; then

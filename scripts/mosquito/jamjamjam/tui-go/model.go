@@ -72,7 +72,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.settings {
 			switch msg.String() {
-			case "esc", "q", "s":
+			case "esc", "backspace", "q", "s":
 				m.settings = false
 			case "n":
 				if m.config.NoteNaming == "flats" {
@@ -87,13 +87,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.help {
 			switch msg.String() {
-			case "q", "esc", "?":
+			case "q", "esc", "backspace", "?":
 				m.help = false
 			}
 			return m, nil
 		}
 		switch msg.String() {
-		case "ctrl+c", "q", "esc":
+		case "ctrl+c", "q", "esc", "backspace":
 			m.releaseHold()
 			m.quit = true
 			return m, tea.Quit

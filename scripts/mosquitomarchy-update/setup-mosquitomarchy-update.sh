@@ -225,7 +225,7 @@ qui personnalise des fichiers maintenant susceptibles d'évoluer avec cette mise
 - ~/.config/omarchy/extensions/omarchy-menu.jsonc  (blocs // >>> Omarchy_Custom_Scripts)
 - ~/.config/omarchy/plugins/                        (mosquito.power, clones custom.lock/<user>.lock)
 - ~/.config/hypr/touchpad.lua
-- ~/.local/bin/                                     (backlight, ultra-save, power-helper,
+- ~/.local/bin/                                     (backlight, power-helper,
                                                      mega-caffeine, guitarpro, …)
 - système : /etc/sudoers.d/battery-management,
             /etc/udev/rules.d/99-lenovo-charge-threshold.rules,

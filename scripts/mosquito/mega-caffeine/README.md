@@ -10,9 +10,7 @@ thresholds).
 - **uninstall** → `setup-mega-caffeine.sh --remove`, or the `mega-caffeine` module of `mosquitomarchy-setup.sh --uninstall`
 
 The installer deploys the binary and the `Trigger > Toggle > Mega caffeine` menu
-entry. If battery management (`ultra-save` + `power-helper`) is not installed
-yet, it runs [the battery-management installer](../../plugins/battery-management/setup-battery-management.sh)
-first; a failure there does not block coffee mode.
+entry. Mega caffeine does not depend on battery-management.
 
 ```bash
 scripts/mosquito/mega-caffeine/setup-mega-caffeine.sh          # install (idempotent)
@@ -32,7 +30,6 @@ mega-caffeine probe                           # diagnostic (temp, battery, tint)
 Native Omarchy UI (no `gum`):
 
 - **Duration prompt** — a native menu input appears when no `--duration` is given;
-- **Ultra-save confirmation** — a native square overlay (Yes/No) is shown instead of a terminal prompt;
 - **stay-awake integration** — while active, the idle-service stay-awake is forced on and restored on exit (the indicator shows a **red icon** with the remaining time / "unlimited" in its tooltip, click = stop).
 
 Full stop (`on`/`off`/expiry/threshold) disables the `systemd-inhibit`, restores the tint to daylight, and cleans its state files.

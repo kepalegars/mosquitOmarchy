@@ -18,7 +18,7 @@
 #   ./setup-apps.sh                 # interactive: choose backup then tick the selection (gum multi-select)
 #   ./setup-apps.sh -y              # non-interactive: most recent backup selection, EVERYTHING installed
 #   ./setup-apps.sh --from-backup=F      # uses the dated backup F (or an apps.selected file)
-#   ./setup-apps.sh --only=<gui|tui|webapps>  # restrict to one catalog type (used by the
+#   ./setup-apps.sh --only=<gui|tui|tuis|webapps>  # restrict to one catalog type (used by the
 #                                             # launcher categories TUIs / Webapps; falls
 #                                             # back to the full catalog when the backup
 #                                             # has nothing for that type)
@@ -46,6 +46,9 @@ for a in "$@"; do case "$a" in
   -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
   *) echo "Unknown option: $a (see -h)" >&2; exit 1 ;;
 esac; done
+# The setup category is named "TUIs" while this dispatcher historically used
+# the singular catalog type. Accept both spellings for launcher callers.
+[[ $ONLY == tuis ]] && ONLY=tui
 case $ONLY in gui|tui|webapps|"") : ;; *) echo "Unknown --only value: $ONLY (gui|tui|webapps)" >&2; exit 1 ;; esac
 
 # ─────────────────────────── State (--status) ───────────────────────────
@@ -230,6 +233,7 @@ main(){
   fi
   extract_selection "$src" || exit 1
   load_selection || exit 1
+  filter_selection_to_catalog
   trap 'rm -f "$SEC_FILE"' EXIT
 
   # --only=<gui|tui|webapps>: keep only that type's entries; if the backup has

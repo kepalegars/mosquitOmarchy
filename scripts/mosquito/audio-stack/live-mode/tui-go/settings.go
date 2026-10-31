@@ -32,7 +32,7 @@ type Settings struct {
 	SwitchTheme   bool // switch to the Live theme on activation
 	// ProfilePrompt gates the power panel: with it on, choosing a power
 	// profile during a live session asks first, because the watchdog reverts it
-	// seconds later and silently. power-saver and ultra-save are refused either
+	// seconds later and silently. power-saver is refused either
 	// way, and that refusal is not a setting.
 	ProfilePrompt bool
 	// FencePackages pins the machine by holding pacman's database lock for the

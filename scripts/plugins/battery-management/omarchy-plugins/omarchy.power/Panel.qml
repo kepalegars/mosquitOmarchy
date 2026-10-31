@@ -165,9 +165,8 @@ Panel {
 
   function setProfile(profile) {
     if (!profile || actionProc.running) return
-    // Same rule as our custom.power panel, through the same helper: Live Mode
-    // holds the power profile for the session, so switching asks first and
-    // power-saver/ultra-save are refused outright. Omarchy's own panel called
+    // Live Mode holds the power profile for the session, so switching asks
+    // first and power-saver is refused. Omarchy's own panel called
     // omarchy-powerprofiles-set directly, so on a machine where THIS panel is
     // the one in the bar the guard was simply absent — the change would appear
     // to work and the watchdog would revert it seconds later.
@@ -175,10 +174,9 @@ Panel {
     // This is an overlay of Omarchy's file, not an edit of it: Omarchy updates
     // replace the original, and setup copies this over it on install.
     actionProc.command = [
-      "power-helper", "profile-set",
+      "power-helper", "profile", "set",
       root.discharging ? "battery" : "ac",
-      profile,
-      "keep-ultrasave"
+      profile
     ]
     actionProc.running = true
   }

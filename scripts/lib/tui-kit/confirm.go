@@ -179,7 +179,7 @@ func (c Confirm) Update(msg tea.Msg) (Confirm, tea.Cmd) {
 		return c, func() tea.Msg { return ConfirmResultMsg{Extra: true} }
 	}
 	switch km.String() {
-	case "ctrl+c", "esc":
+	case "ctrl+c", "esc", "backspace":
 		return c, func() tea.Msg { return ConfirmResultMsg{Canceled: true} }
 	case "n", "N":
 		return c, func() tea.Msg { return ConfirmResultMsg{Yes: false} }

@@ -4,9 +4,9 @@
 # PART of mosquitOmarchy (the TUI's Keybindings screen + these primitives).
 # Everything managed lives in ONE marker block of ~/.config/hypr/bindings.lua:
 #
-#   -- >>> Omarchy_Custom_Scripts_Keys
+#   -- >>> mosquitOmarchy_Keybindings
 #   ...
-#   -- <<< Omarchy_Custom_Scripts_Keys
+#   -- <<< mosquitOmarchy_Keybindings
 #
 # Primitives (all non-interactive, reload is the CALLER's decision):
 #   kb_load_ours                     parse the marker block into KB_OURS/KB_OWN_ORDER
@@ -19,8 +19,10 @@
 
 KB_CONF="${KB_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua}"
 KB_DEF_DIR="/usr/share/omarchy/default/hypr/bindings"
-KB_BEGIN='-- >>> Omarchy_Custom_Scripts_Keys'
-KB_END='-- <<< Omarchy_Custom_Scripts_Keys'
+KB_BEGIN='-- >>> mosquitOmarchy_Keybindings'
+KB_END='-- <<< mosquitOmarchy_Keybindings'
+KB_LEGACY_BEGIN='-- >>> Omarchy_Custom_Scripts_Keys'
+KB_LEGACY_END='-- <<< Omarchy_Custom_Scripts_Keys'
 KB_CHANGED=0
 declare -A KB_OURS=()   # combo → "label|cmd|type"
 KB_OWN_ORDER=()         # combos in insertion order
@@ -31,7 +33,11 @@ kb_load_ours(){
   KB_CHANGED=0
   [[ -f "$KB_CONF" ]] || return 0
   local block line key label body type cmd
-  block="$(awk -v b="$KB_BEGIN" -v e="$KB_END" '$0~b{f=1;next} $0~e{f=0} f' "$KB_CONF" 2>/dev/null || true)"
+  local begin="$KB_BEGIN" end="$KB_END"
+  if ! grep -qF -- "$begin" "$KB_CONF" && grep -qF -- "$KB_LEGACY_BEGIN" "$KB_CONF"; then
+    begin="$KB_LEGACY_BEGIN"; end="$KB_LEGACY_END"
+  fi
+  block="$(awk -v b="$begin" -v e="$end" '$0~b{f=1;next} $0~e{f=0} f' "$KB_CONF" 2>/dev/null || true)"
   [[ -z "$block" ]] && return 0
   while IFS= read -r line; do
     key="$(printf '%s' "$line" | sed -n 's/^ *o\.bind("\([^"]*\)", *"\([^"]*\)", *\(.*\)$/\1/;T;p')"
@@ -88,10 +94,14 @@ kb_write_block(){
 --   omarchy menu keybindings --print
 EOF
   fi
-  if rg -q -e "$KB_BEGIN" "$KB_CONF" 2>/dev/null; then
-    awk -v b="$KB_BEGIN" -v e="$KB_END" -v body="$body" '
-      $0 ~ b { inb=1; print; print body; next }
-      $0 ~ e { inb=0; print; next }
+  local begin="$KB_BEGIN" end="$KB_END"
+  if ! rg -q -e "$begin" "$KB_CONF" 2>/dev/null && rg -q -e "$KB_LEGACY_BEGIN" "$KB_CONF" 2>/dev/null; then
+    begin="$KB_LEGACY_BEGIN"; end="$KB_LEGACY_END"
+  fi
+  if rg -q -e "$begin" "$KB_CONF" 2>/dev/null; then
+    awk -v b="$begin" -v e="$end" -v nb="$KB_BEGIN" -v ne="$KB_END" -v body="$body" '
+      $0 ~ b { inb=1; print nb; print body; next }
+      $0 ~ e { inb=0; print ne; next }
       !inb { print }
     ' "$KB_CONF" > "$KB_CONF.tmp"
   else
@@ -152,12 +162,12 @@ kb_remove(){ # combo…
 
 kb_reset(){
   [[ -f "$KB_CONF" ]] || return 0
-  rg -q -e "$KB_BEGIN" "$KB_CONF" 2>/dev/null || return 0
+  { rg -q -e "$KB_BEGIN" "$KB_CONF" 2>/dev/null || rg -q -e "$KB_LEGACY_BEGIN" "$KB_CONF" 2>/dev/null; } || return 0
   local tmp
   tmp="$(mktemp)"
-  awk -v b="$KB_BEGIN" -v e="$KB_END" '
-    $0 ~ b { inb=1; next }
-    $0 ~ e { inb=0; next }
+  awk -v b="$KB_BEGIN" -v e="$KB_END" -v ob="$KB_LEGACY_BEGIN" -v oe="$KB_LEGACY_END" '
+    $0 ~ b || $0 ~ ob { inb=1; next }
+    $0 ~ e || $0 ~ oe { inb=0; next }
     !inb { print }
   ' "$KB_CONF" > "$tmp" && mv "$tmp" "$KB_CONF"
   KB_CHANGED=1
@@ -177,7 +187,7 @@ kb_reload(){
 kb_free_keys(){
   local taken
   taken="$( {
-    [[ -f "$KB_CONF" ]] && sed "/$KB_BEGIN/,/$KB_END/d" "$KB_CONF" 2>/dev/null \
+    [[ -f "$KB_CONF" ]] && sed -e "/$KB_BEGIN/,/$KB_END/d" -e "/$KB_LEGACY_BEGIN/,/$KB_LEGACY_END/d" "$KB_CONF" 2>/dev/null \
       | rg -o 'o\.bind\("[^"]+"' -N --no-filename 2>/dev/null | sed 's/o\.bind("//; s/"$//'
     rg -o 'o\.bind\("[^"]+"' -N --no-filename "$KB_DEF_DIR"/*.lua 2>/dev/null \
       | sed 's/o\.bind("//; s/"$//'

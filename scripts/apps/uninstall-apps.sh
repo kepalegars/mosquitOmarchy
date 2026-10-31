@@ -142,6 +142,13 @@ main(){
 
   if [[ -n $FROM_BACKUP ]]; then
     load_backup_target "$FROM_BACKUP" || exit 1
+    local -a kept=()
+    local entry type
+    for entry in "${TARGET[@]:-}"; do
+      type="${entry%% *}"
+      catalog_contains_id "$type" "${entry#* }" && kept+=("$entry")
+    done
+    TARGET=("${kept[@]}")
   elif ((ALL)); then
     all_catalog_entries
   elif ((YES)); then

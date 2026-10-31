@@ -419,6 +419,10 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if msg.String() == "backspace" && m.top() != scrAddress {
+			// TextInput owns Backspace on the address screen; elsewhere it is back.
+			msg = tea.KeyMsg{Type: tea.KeyEsc}
+		}
 		if msg.String() == "ctrl+c" {
 			// Top level: quit immediately, no confirm needed — same as
 			// esc there. Any deeper screen: ctrl+c backs out one level,

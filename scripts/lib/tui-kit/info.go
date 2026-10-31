@@ -69,7 +69,7 @@ func (i Info) Init() tea.Cmd { return nil }
 func (i Info) Update(msg tea.Msg) (Info, tea.Cmd) {
 	if km, ok := msg.(tea.KeyMsg); ok {
 		switch km.String() {
-		case "esc", "enter", "q", "ctrl+c":
+		case "esc", "enter", "q", "ctrl+c", "backspace":
 			return i, func() tea.Msg { return InfoDismissedMsg{} }
 		case "c":
 			// Copy the WHOLE body, not what the viewport happens to show: the

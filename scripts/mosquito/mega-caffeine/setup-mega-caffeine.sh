@@ -6,9 +6,7 @@
 # blocked while the lid is closed, natural-language durations.
 #
 # It deploys mega-caffeine and its "Trigger > Toggle > Mega caffeine" menu
-# entry. Battery management (ultra-save, power-helper, mosquito.power) is a
-# SEPARATE module (scripts/plugins/battery-management) and is installed first
-# automatically when it is not present yet.
+# entry. Mega caffeine is independent of battery-management.
 #
 # Usage:
 #   ./setup-mega-caffeine.sh            # install (idempotent)
@@ -19,7 +17,6 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BATTERY_SETUP="$SCRIPT_DIR/../../plugins/battery-management/setup-battery-management.sh"
 
 info() { echo -e "\033[1;34m==>\033[0m $*"; }
 ok()   { echo -e "\033[1;32m  ✓\033[0m $*"; }
@@ -104,23 +101,7 @@ if [[ $REMOVE == true ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 1. Battery management first, when the machine does not have it yet.
-# -----------------------------------------------------------------------------
-if [[ -x "$BIN_DIR/ultra-save" && -x "$BIN_DIR/power-helper" ]]; then
-  ok "Battery management already installed"
-elif [[ -f $BATTERY_SETUP ]]; then
-  info "Battery management is not installed — installing it first"
-  if bash "$BATTERY_SETUP"; then
-    ok "Battery management installed"
-  else
-    warn "Battery management install failed — continuing with mega-caffeine only."
-  fi
-else
-  warn "Battery management installer not found ($BATTERY_SETUP) — continuing without it."
-fi
-
-# -----------------------------------------------------------------------------
-# 2. Deploy the binary.
+# Deploy the binary.
 # -----------------------------------------------------------------------------
 mkdir -p "$BIN_DIR"
 if [[ -f "$BIN_DIR/mega-caffeine" ]] && cmp -s "$SCRIPT_DIR/mega-caffeine" "$BIN_DIR/mega-caffeine" 2>/dev/null; then

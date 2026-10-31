@@ -1,29 +1,11 @@
 #!/usr/bin/env bash
-# power-helper — Backend helper for the mosquito.power Omarchy plugin.
-#
-# Ultra-save low-power mode + power-profile selection (delegates to
-# ~/.local/bin/ultra-save and powerprofilesctl).
-#
-# Usage:
-#   power-helper profile set <ac|battery> <profile> [drop-ultrasave|keep-ultrasave]
-#   power-helper profile state
-#   power-helper ultrasave status
-#   power-helper ultrasave on|off|toggle
-#
-# All output is plain key\tvalue per line (like omarchy-battery-status --shell)
-# so the QML process can parse it with Model.parseKeyValue.
-
+# Power-profile helper for the mosquito.power Omarchy plugin.
+# Output is plain key\tvalue per line for Model.parseKeyValue.
 set -euo pipefail
 
-# Crash reporting (mosquitOmarchy): a failure stores a dated log and offers a
-# clickable AI diagnosis. Install scripts are deliberately exempt.
-_mq_crash_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/lib/crash.bash"
-[[ -f $_mq_crash_lib ]] && { source "$_mq_crash_lib"; mq_crash_guard "power-helper"; }
+_crash_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/lib/crash.bash"
+[[ -f $_crash_lib ]] && { source "$_crash_lib"; mq_crash_guard "power-helper"; }
 
-# The real user's home. The panel runs this as the user, but the file has also
-# been invoked through sudo by the watchdog, where $HOME is root's — and then
-# the live-mode settings file would be looked up in the wrong place and the
-# prompt would ignore a "no" the user actually set.
 REAL_HOME="${HOME:-}"
 if [[ -z $REAL_HOME ]]; then
   REAL_USER="${SUDO_USER:-${LOGNAME:-$USER}}"
@@ -32,190 +14,66 @@ fi
 LIVE_ACTIVE="$REAL_HOME/.local/state/live-mode/active"
 LIVE_SETTINGS="$REAL_HOME/.config/live-mode/settings"
 
-ULTRASAVE="$HOME/.local/bin/ultra-save"
-ULTRASAVE_STATE="$HOME/.local/state/ultra-save/state"
-
-# ---------------------------------------------------------------------------
-# ultrasave — machine-readable status + delegate toggle
-# ---------------------------------------------------------------------------
-ultrasave_status() {
-  local state="off"
-  [[ -f "$ULTRASAVE_STATE" ]] && grep -q '^on$' "$ULTRASAVE_STATE" && state="on"
-
-  local bat_pct="" power_w="" profile="" 
-  bat_pct=$(cat /sys/class/power_supply/BAT*/capacity 2>/dev/null | head -1 || true)
-  profile=$(powerprofilesctl get 2>/dev/null || true)
-
-  local pn
-  pn=$(cat /sys/class/power_supply/BAT*/power_now 2>/dev/null | head -1 || echo 0)
-  [[ "$pn" != "0" && -n "$pn" ]] && power_w=$(awk "BEGIN {printf \"%.1f\", $pn / 1000000}")
-
-  printf 'state\t%s\n' "$state"
-  printf 'power\t%s\n' "${power_w:-}W"
-  printf 'battery\t%s\n' "${bat_pct:-?}%"
-  printf 'profile\t%s\n' "$profile"
+profile_status() {
+  printf 'profile\t%s\n' "$(powerprofilesctl get 2>/dev/null || echo unknown)"
+  printf 'live\t%s\n' "$( [[ -f $LIVE_ACTIVE ]] && echo on || echo off )"
 }
 
-# profile_set <ac|battery> <profile> [drop-ultrasave|keep-ultrasave]
-#
-# The one place a power profile is changed from this panel, so it is the one
-# place the Live Mode rules can live.
-#
-#   * power-saver is REFUSED during a live session. It is what ultra-save forces
-#     and it is the opposite of what the session is for; there is no "yes" that
-#     should be allowed.
-#   * anything else ASKS first. Live mode holds `performance` and the watchdog
-#     re-asserts it every few seconds, so switching used to appear to work and
-#     then silently revert — which reads as a broken panel, not as a session
-#     holding the setting. POWER_PROFILE_PROMPT=no in the live-mode settings
-#     turns the question off (the Live Manager owns that toggle).
-#
-# Answering "no", or the overlay never answering, leaves the profile alone.
+confirm() {
+  local message="$1" dir="${XDG_RUNTIME_DIR:-/tmp}/mosquito-power-helper.$$"
+  local sel donef payload ans=""
+  sel="$dir/answer"; donef="$dir/done"
+  mkdir -p "$dir" || return 1
+  rm -f "$sel" "$donef"
+  payload=$(jq -cn --arg message "$message" --arg selectionFile "$sel" --arg doneFile "$donef" \
+    '{message:$message,selectionFile:$selectionFile,doneFile:$doneFile}') || { rm -rf "$dir"; return 1; }
+  omarchy-shell shell summon mosquito.confirm "$payload" >/dev/null 2>&1 || true
+  local i
+  for i in $(seq 1 60); do [[ -f $donef ]] && break; sleep 0.5; done
+  [[ -f $donef ]] && ans=$(cat "$sel" 2>/dev/null || true)
+  rm -rf "$dir"
+  [[ $ans == yes ]]
+}
+
 profile_set() {
-  local source="${1:-ac}" want="${2:-}" ultrasave="${3:-keep-ultrasave}"
-  [[ -n $want ]] || { echo "error\tprofile-set needs a profile" >&2; exit 1; }
-
-  local live=off
-  [[ -f $LIVE_ACTIVE ]] && live=on
-
-  if [[ $live == on && $want == power-saver ]]; then
-    echo "error\tPower-saver is not available while Live Mode is on." >&2
-    echo "error\tIt is the profile ultra-save forces, and the opposite of a live session." >&2
-    echo "error\tEnd the session first:  live-mode off" >&2
+  local source="${1:-ac}" want="${2:-}"
+  [[ -n $want ]] || { printf 'error\tprofile-set needs a profile\n' >&2; exit 1; }
+  if [[ -f $LIVE_ACTIVE && $want == power-saver ]]; then
+    printf 'error\tPower-saver is unavailable while Live Mode is on.\nerror\tEnd the session first: live-mode off\n' >&2
     profile_status
     return 1
   fi
-
-  # Ultra-save caps the CPU, so a manual plan still wins over it: turn it off
-  # first. `ultrasave off` is allowed during a session (that is cleanup); only
-  # turning it ON is refused.
-  if [[ $ultrasave == drop-ultrasave || $ultrasave == keep-ultrasave ]]; then
-    if [[ $ultrasave == drop-ultrasave ]] && [[ -f "$ULTRASAVE_STATE" ]] && grep -q '^on$' "$ULTRASAVE_STATE" 2>/dev/null; then
-      sudo -n "$ULTRASAVE" off >/dev/null 2>&1 || true
-      sleep 0.2
-    fi
-  fi
-
-  if [[ $live == on ]]; then
-    local prompt=yes
+  if [[ -f $LIVE_ACTIVE ]]; then
+    local prompt=yes current
     if [[ -f $LIVE_SETTINGS ]]; then
-      # shellcheck disable=SC1091
+      # shellcheck source=/dev/null
       source "$LIVE_SETTINGS" 2>/dev/null || true
       [[ ${POWER_PROFILE_PROMPT:-yes} == no ]] && prompt=no
     fi
-    if [[ $prompt != no ]]; then
-      local current; current=$(powerprofilesctl get 2>/dev/null || echo unknown)
-      # No change, no question: clicking the already-active profile during a
-      # session used to ask "Switch to 'performance' (currently
-      # 'performance') anyway?" — the prompt getting its own values wrong.
-      if [[ $want != "$current" ]]; then
-        local question="Live Mode is ON and holds the machine at the performance profile."
-        if [[ -n $current && $current != unknown ]]; then
-          question+=$'\n\n'"Switch to '$want' (currently '$current') anyway?"
-        else
-          question+=$'\n\n'"Switch to '$want' anyway?"
-        fi
-        if ! confirm "$question"; then
-          echo "profile\t$current"
-          echo "note\tLeft the power profile alone."
-          return 0
-        fi
+    current=$(powerprofilesctl get 2>/dev/null || echo unknown)
+    if [[ $prompt != no && $want != "$current" ]]; then
+      local question="Live Mode is ON and holds the machine at the performance profile."
+      question+=$'\n\n'"Switch to '$want' (currently '$current') anyway?"
+      if ! confirm "$question"; then
+        printf 'profile\t%s\nnote\tLeft the power profile alone.\n' "$current"
+        return 0
       fi
     fi
   fi
-
-  omarchy-powerprofiles-set "$source" "$want" >/dev/null 2>&1 \
-    || { echo "error\tcould not set the power profile to $want" >&2; return 1; }
+  omarchy-powerprofiles-set "$source" "$want" >/dev/null 2>&1 || {
+    echo "error\tcould not set power profile to $want" >&2; return 1;
+  }
   sleep 0.2
   profile_status
 }
 
-# confirm <message> — the mosquito.confirm overlay, same contract live-mode
-# uses: the answer lands in a file, then a done file. Missing, failing or
-# unanswered all mean "no", because a prompt nobody answered must not change a
-# setting.
-confirm() {
-  local message="$1"
-  local dir="${XDG_RUNTIME_DIR:-/tmp}/mosquito-power-helper.$$"
-  local sel="$dir/answer" donef="$dir/done" payload
-  mkdir -p "$dir" 2>/dev/null || return 1
-  rm -f "$sel" "$donef"
-  payload=$(jq -cn --arg message "$message" \
-    --arg selectionFile "$sel" --arg doneFile "$donef" \
-    '{message:$message, selectionFile:$selectionFile, doneFile:$doneFile}') || { rm -rf "$dir"; return 1; }
-  omarchy-shell shell summon mosquito.confirm "$payload" >/dev/null 2>&1 || true
-  local i
-  for i in $(seq 1 60); do
-    [[ -f $donef ]] && break
-    sleep 0.5
-  done
-  local ans=""
-  [[ -f $donef ]] && ans=$(cat "$sel" 2>/dev/null || echo "")
-  rm -rf "$dir" 2>/dev/null || true
-  [[ "$ans" == "yes" ]]
-}
-
-profile_status() {
-  printf 'profile\t%s\n' "$(powerprofilesctl get 2>/dev/null || echo unknown)"
-  printf 'live\t%s\n' "$([[ -f $LIVE_ACTIVE ]] && echo on || echo off)"
-}
-
-ultrasave_set() {
-  local act="$1"
-
-  # Ultra-save is unreachable while a Live Mode session is running.
-  #
-  # It forces power-saver and caps the CPU — the exact opposite of what a live
-  # session is — and the Live Mode watchdog re-asserts performance seconds
-  # later, so the toggle appeared to work and then undid itself. This is where
-  # the bar panel's ultra-save switch lands (power-helper ultrasave toggle), so
-  # the guard belongs here rather than in the QML: every caller goes through
-  # this function. Turning it OFF stays allowed — that is cleanup, not
-  # activation, and the watchdog needs it.
-  if [[ -f $LIVE_ACTIVE && $act != off ]]; then
-    echo "error\tUltra-save is not available while Live Mode is on. End the session first: live-mode off" >&2
-    ultrasave_status
-    exit 1
-  fi
-  if ! [[ -x "$ULTRASAVE" ]]; then
-    echo "error	ultra-save helper not found at $ULTRASAVE" >&2
-    exit 1
-  fi
-  sudo -n "$ULTRASAVE" "$act" >/dev/null 2>&1 || {
-    echo "error	could not run ultra-save $act (NOPASSWD sudo needed)" >&2
-    exit 1
-  }
-  sleep 0.2
-  ultrasave_status
-}
-
-# ---------------------------------------------------------------------------
-# Main dispatch
-# ---------------------------------------------------------------------------
 case "${1:-}" in
   profile)
     case "${2:-}" in
-      set)   profile_set "${3:-ac}" "${4:-}" "${5:-keep-ultrasave}" ;;
+      set) profile_set "${3:-ac}" "${4:-}" ;;
       state) profile_status ;;
-      *)     echo "Usage: $0 profile set <ac|battery> <profile> [drop-ultrasave|keep-ultrasave] | profile state" >&2; exit 1 ;;
+      *) echo "Usage: $0 profile set <ac|battery> <profile> | profile state" >&2; exit 1 ;;
     esac
     ;;
-  ultrasave)
-    case "${2:-}" in
-      status)          ultrasave_status ;;
-      on|off|toggle)   ultrasave_set "$2" ;;
-      *)               echo "Usage: power-helper ultrasave {status|on|off|toggle}" >&2; exit 1 ;;
-    esac
-    ;;
-  *)
-    # The full list matters here: a caller using the wrong subcommand gets this
-    # line on stderr and nothing else, and the panel that ran it does not show
-    # stderr — so the failure looked like the click did nothing.
-    cat >&2 <<'EOF'
-Usage: power-helper profile  set <ac|battery> <profile> [drop-ultrasave|keep-ultrasave]
-       power-helper profile  state
-       power-helper ultrasave {status|on|off|toggle}
-EOF
-    exit 1
-    ;;
+  *) echo "Usage: $0 profile {set <ac|battery> <profile>|state}" >&2; exit 1 ;;
 esac

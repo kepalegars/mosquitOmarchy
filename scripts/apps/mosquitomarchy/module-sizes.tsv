@@ -15,7 +15,8 @@ ableton|~/.wine-ableton||8204448|0|Wine prefix kept by default
 ollama|~/.ollama||16|0|Models kept by default
 audio|~/Music/Audio Plugins;~/VST|~/.local/bin/mosquito-audio-plugin-manager;~/.local/bin/mosquito-audio-plugin-manager-tui;~/.local/bin/mosquito-audio-plugin-manager-actions;~/.local/bin/lib-audio-plugin-manager-core.sh;~/.local/bin/vst-install;~/.local/bin/vst-manager;~/.local/bin/vst-manager-native;~/.local/bin/vst-manager-tui;~/.local/bin/mosquito-vst-manager;~/.local/bin/mosquito-vst-manager-native;~/.local/bin/mosquito-vst-manager-tui;~/.local/share/icons/hicolor/256x256/apps/mosquito-audio-plugin-manager.png;~/.config/systemd/user/yabridge-autosync.service|1938972|8660|Plugins and audio packages kept by default
 ableton-move-manager|~/.local/share/mosquito-move-manager||768|0|User data kept by default
-battery-management||~/.local/state/ultra-save;~/.config/omarchy/plugins/mosquito.power;~/.config/omarchy/plugins/mosquito.indicators;~/.config/omarchy/plugins/mosquito.confirm|0|120|State and plugins removed
+battery-management||~/.config/omarchy/plugins/mosquito.power;~/.config/omarchy/plugins/mosquito.indicators;~/.config/omarchy/plugins/mosquito.confirm|0|120|State and plugins removed
+omaskpinpass||~/.local/bin/omaskpass;~/.local/bin/omapin;~/.config/omarchy/plugins/lbssousa.omaskpass;~/.config/omarchy/plugins/lbssousa.omapin;~/.config/environment.d/90-ssh-askpass.conf|0|0|GPG agent setting and SSH environment removed; existing GPG keys stay
 better-pip|~/.config/omarchy/plugins/mosquito.better-pip|~/.config/omarchy/plugins/mosquito.better-pip|4|4|Service plugin removed
 mega-caffeine||~/.local/bin/mega-caffeine;~/.local/state/caffeine|0|8|Binary, state and menu entry removed
 whatsapp-native|~/.local/share/whatsapp-native|~/.local/share/whatsapp-native/app;~/.local/bin/whatsapp;~/.local/share/applications/whatsapp.desktop;~/.local/share/icons/hicolor/256x256/apps/whatsapp.png|144|280|Login data kept

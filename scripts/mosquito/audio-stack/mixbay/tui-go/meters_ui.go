@@ -108,7 +108,7 @@ func (m model) meterPeak(key string, ch int) float64 {
 // number-entry state can never leak into a meter-only screen.
 func (m *model) evoLevelsKey(k string) tea.Cmd {
 	switch k {
-	case "tab", "esc":
+	case "tab", "esc", "backspace":
 		m.evo.window = evoWinControls
 		if m.top() == scrMixer {
 			m.pop()

@@ -17,11 +17,9 @@
 #   - the usage duration of the mode (natural-language text field, empty input
 #     or "skip"/"unlimited" = unlimited, bounded by battery and CPU)
 #   - whether to force the battery limit when starting below 30 % (run to the end)
-#   - whether to enable the ultra power save mode (ultra-save) during the session
 #
 # Usage:
 #   mega-caffeine on                    # activate (with prompts)
-#   mega-caffeine on --no-ultrasave     # without the ultra-save question
 #   mega-caffeine on --override-battery # force the battery limit without asking
 #   mega-caffeine off                   # deactivate
 #   mega-caffeine toggle                # invert
@@ -30,7 +28,6 @@
 #   mega-caffeine probe                 # diagnostic (temp, battery, tint)
 #
 # Options of `on`/`toggle`:
-#   --ultrasave | --no-ultrasave    force/skip the ultra power save mode
 #   --override-battery | --no-override-battery
 #   --temp-limit <°C>               CPU threshold (default 85)
 #   --tint <K>                      screen temperature (default 1500 = red)
@@ -60,7 +57,6 @@ STATE_FILE="$STATE_DIR/state"             # on|off
 INHIBIT_PID_FILE="$STATE_DIR/inhibit.pid"
 TINT_PREV_FILE="$STATE_DIR/tint_prev"
 TINT_HYPRSUNSET_FILE="$STATE_DIR/hyprsunset_was_running"
-ULTRASAVE_WAS_FILE="$STATE_DIR/ultrasave_was"
 BATTERY_OVERRIDE_FILE="$STATE_DIR/battery_override"
 MAX_END_FILE="$STATE_DIR/max_end"
 STAYAWAKE_FILE="${CAFFEINE_STAYAWAKE_FILE:-$HOME/.local/state/omarchy/indicators/stay-awake}"
@@ -75,8 +71,6 @@ MAX_MINUTES="${CAFFEINE_MAX_MINUTES:-0}"
 LOW_BATTERY_PROMPT_AT=30            # on demande l'override en dessous de ce seuil
 IDENTITY_TEMP=6000
 
-ULTRASAVE_CMD="$HOME/.local/bin/ultra-save"
-ULTRASAVE_ASK="ask"
 OVERRIDE_ASK="ask"
 DURATION_RESOLVED=""
 [[ -n ${CAFFEINE_MAX_MINUTES:-} ]] && DURATION_RESOLVED=yes
@@ -175,7 +169,7 @@ clear_stale_state() {
   warn "Mega caffeine was left on by a reboot — the session was gone, clearing the stale state."
   stop_lid_block
   restore_tint
-  rm -f "$ULTRASAVE_WAS_FILE" "$MAX_END_FILE" "$BATTERY_OVERRIDE_FILE" "$INHIBIT_PID_FILE"
+  rm -f "$MAX_END_FILE" "$BATTERY_OVERRIDE_FILE" "$INHIBIT_PID_FILE"
   # The previous stay-awake value is meaningless now (the session that
   # recorded it is gone), so just make sure the forced "on" is not left
   # behind, without inventing a restore target.
@@ -369,7 +363,7 @@ current_tint() { hyprctl hyprsunset temperature 2>/dev/null | grep -oE '[0-9]+' 
 hyprsunset_running() { pgrep -x hyprsunset >/dev/null; }
 
 # ---------------------------------------------------------------------------
-# Tint + ultra-save + sleep locking
+# Tint + sleep locking
 # ---------------------------------------------------------------------------
 
 apply_tint() {
@@ -433,55 +427,6 @@ restore_tint() {
     pkill -x hyprsunset >/dev/null 2>&1 || true
   fi
   rm -f "$TINT_PREV_FILE" "$TINT_HYPRSUNSET_FILE"
-}
-
-apply_ultrasave() {
-  # Not installed → not proposed, not touched: the question only makes sense
-  # for a power plan the user can actually switch to.
-  if [[ ! -x $ULTRASAVE_CMD ]]; then
-    echo "off" > "$ULTRASAVE_WAS_FILE"
-    return 0
-  fi
-  # Already on (enabled outside this session, or by a previous run) —
-  # nothing to ask and nothing to change: asking "enable it?" when it's
-  # already enabled is a moot question, and answering "no" used to force it
-  # off at session end even though nobody asked mega-caffeine to touch a
-  # pre-existing setting. Leave it alone; restore_ultrasave() correctly
-  # keeps it on afterward too (was=on).
-  local was=off
-  # Source of truth is ultra-save's own state file; `ultra-save status` is a
-  # human box ("Mode: on"), so the old `grep -q '^on$'` never matched and the
-  # already-on question was asked every time. Fall back to parsing the box.
-  if [[ -f "$HOME/.local/state/ultra-save/state" ]] \
-     && grep -q '^on$' "$HOME/.local/state/ultra-save/state" 2>/dev/null; then
-    was=on
-  elif "$ULTRASAVE_CMD" status 2>/dev/null | grep -qiE 'Mode:[[:space:]]*on'; then
-    was=on
-  fi
-  if [[ $was == "on" ]]; then
-    echo "on" > "$ULTRASAVE_WAS_FILE"
-    return 0
-  fi
-  if [[ $ULTRASAVE_ASK == "ask" ]]; then
-    if ! ask_yes "Enable ultra power save mode during this session?"; then
-      echo "off" > "$ULTRASAVE_WAS_FILE"
-      return 0
-    fi
-  elif [[ $ULTRASAVE_ASK == "no" ]]; then
-    echo "off" > "$ULTRASAVE_WAS_FILE"
-    return 0
-  fi
-  echo "off" > "$ULTRASAVE_WAS_FILE"
-  sudo -n "$ULTRASAVE_CMD" on >/dev/null 2>&1 || warn "ultra-save on failed (sudoers?)"
-}
-
-restore_ultrasave() {
-  local was
-  was=$(cat "$ULTRASAVE_WAS_FILE" 2>/dev/null || echo on)
-  if [[ $was != "on" ]]; then
-    sudo -n "$ULTRASAVE_CMD" off >/dev/null 2>&1 || true
-  fi
-  rm -f "$ULTRASAVE_WAS_FILE"
 }
 
 # ---------------------------------------------------------------------------
@@ -567,14 +512,13 @@ start_caffeine() {
 
   mkdir -p "$STATE_DIR"
 
-  # Live mode: force unlimited no-prompt activation, never ask about
-  # ultra-save or the battery override. The red tint is applied as normal
+  # Live mode: force unlimited no-prompt activation and skip the battery
+  # override question. The red tint is applied as normal
   # (RED_TEMP stays at its default/CAFFEINE_TINT value) so the live-mode
   # activation gets the same warm screen as a regular caffeine session.
   if is_live_mode; then
     DURATION_RESOLVED=yes
     MAX_MINUTES=0
-    ULTRASAVE_ASK=no
     OVERRIDE_ASK=no
   fi
 
@@ -617,7 +561,6 @@ start_caffeine() {
   # activation (that is exactly the "stops right after the timer prompt"
   # failure — apply_tint now always returns 0 itself).
   apply_tint || warn "tint skipped — continuing without it."
-  apply_ultrasave
   start_lid_block || { err "systemd-inhibit unavailable."; restore_tint; return 1; }
   start_stayawake
 
@@ -642,15 +585,13 @@ stop_caffeine() {
   local reason="${1:-}" self="${2:-}"
 
   # While live mode is active, mega caffeine is locked on: refuse to disable
-  # (except when the live-mode script itself ends the session, signalled via
-  # CAFFEINE_LIVE_FORCE_OFF=1, in which case we skip restore_ultrasave so it
-  # doesn't fight the live-mode shutdown).
+  # except when live-mode itself ends the session.
   if is_live_mode && [[ ${CAFFEINE_LIVE_FORCE_OFF:-0} != 1 ]]; then
     notify "Mega caffeine" "Live mode active — it can't be disabled." normal
     return 1
   fi
 
-  # Always clean up the leftovers (inhibitor, monitor, tint, ultra-save),
+  # Always clean up the leftovers (inhibitor, monitor, tint),
   # even if the state is already "off" (e.g. off interrupted by a kill).
   local was_running=false
   is_running && was_running=true
@@ -661,11 +602,6 @@ stop_caffeine() {
   fi
   stop_lid_block
   restore_tint
-  if [[ ${CAFFEINE_LIVE_FORCE_OFF:-0} != 1 ]]; then
-    restore_ultrasave
-  else
-    rm -f "$ULTRASAVE_WAS_FILE"
-  fi
   stop_stayawake
   rm -f "$BATTERY_OVERRIDE_FILE" "$MAX_END_FILE"
   refresh_widgets
@@ -778,8 +714,6 @@ status_json() {
 parse_on_options() {
   while (($#)); do
     case "$1" in
-      --ultrasave) ULTRASAVE_ASK=yes ;;
-      --no-ultrasave) ULTRASAVE_ASK=no ;;
       --override-battery) OVERRIDE_ASK=yes ;;
       --no-override-battery) OVERRIDE_ASK=no ;;
       --temp-limit) TEMP_LIMIT="${2?--temp-limit <°C>}"; shift ;;

@@ -49,6 +49,10 @@ function batteryFraction(device) {
   return device && device.isPresent ? Math.max(0, Math.min(1, device.percentage)) : 0
 }
 
+function isLowBattery(fraction) {
+  return fraction >= 0 && fraction < 0.10
+}
+
 function batteryIcon(device, onBattery, states) {
   var d = device || {}
   if (!d.isPresent) return ""
@@ -88,6 +92,7 @@ if (typeof module !== "undefined") {
     parseProfiles: parseProfiles,
     profileIcon: profileIcon,
     batteryFraction: batteryFraction,
+    isLowBattery: isLowBattery,
     batteryIcon: batteryIcon,
     modeLabel: modeLabel
   }

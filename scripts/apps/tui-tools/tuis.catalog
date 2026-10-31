@@ -19,15 +19,14 @@
 # Label case is part of the convention here: every entry in this catalog starts
 # lower case, because it is a terminal tool and the row reads as part of a list.
 # "Monitor Settings" was the one exception and looked like a GUI app dropped in.
-PLUG nosignal.monitor-settings|https://github.com/28allday/Monitor-TUI-Omarchy.git|monitor settings — Hyprland display/monitor panel (28allday)
+PLUG kirklandgee.downloads|https://github.com/KirklandGee/omarchy-downloads.git|downloads — themed popup for recent files
+PLUG sendaljpt.taskq|https://github.com/sendaljpt/taskq.git|taskq — bar-based task list with deadlines
+PLUG io.github.beresn.process-killer|https://github.com/BeresN/omarchy-process-killer.git|process killer — inspect and stop running processes
 
-TUI calcure|calcure — terminal calendar/planner
 TUI crunchycleaner-bin|crunchycleaner — lightweight software cache & junk cleaner
 TUI septabee|SEPTABEE — retro studio DAW & music app (terminal, JIT audio)
 TUI caligula-git|caligula — flash ISOs & USB drives (interactive disk imaging, terminal)
-TUI mutt|mutt — small, powerful text-based mail client
 TUI tdf|tdf — TUI-based PDF viewer
-TUI nsnake|nsnake — customizable Snake game with ncurses
 TUI basalt|basalt — TUI application to manage Obsidian notes
 TUI bagels|bagels — terminal expense tracker
 TUI aria2|aria2 — downloader for HTTP(S), FTP, BitTorrent and Metalink
