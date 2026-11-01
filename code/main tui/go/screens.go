@@ -233,12 +233,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.addonsSel[a.Name] = a.Installed
 			}
 		}
-		cats, _ := m.addonCategories()
-		for _, cat := range cats {
-			if _, seen := m.addonsOpen[cat]; !seen {
-				m.addonsOpen[cat] = true
-			}
-		}
 		if m.top() == scrAddons {
 			m.addonsPicker = m.rebuildAddons()
 		}
@@ -1861,7 +1855,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// search input that echoes every pressed key in real time.
 		if km, ok := msg.(tea.KeyMsg); ok {
 			switch km.String() {
-			case "F", "shift+F":
+			case "F", "shift+F", "/":
 				if m.filterOpen {
 					// Closing also clears the filter (list resets full).
 					m.filterOpen = false
@@ -1968,7 +1962,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// refines this category's rows; esc closes the zone.
 		if km, ok := msg.(tea.KeyMsg); ok {
 			switch km.String() {
-			case "F", "shift+F": // SHIFT+F toggles the filter zone (esc also closes)
+			case "F", "shift+F", "/": // SHIFT+F (or /) toggles the filter zone (esc also closes)
 				if m.filterOpen {
 					m.filterOpen = false
 					m.filterText = ""
@@ -3107,6 +3101,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.push(scrAddons)
 			m.filterOpen = false
 			m.filterText = ""
+			m.addonsOpen = map[string]bool{} // everything folded by default
 			m.addonsLoaded = false
 			m.addonsPicker = m.rebuildAddons()
 			return m, fetchAddonsCmd()
@@ -4174,10 +4169,9 @@ func (m model) rebuildSetup() navPicker {
 		SetContentWidth(pinned).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "fold")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
-			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
-			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "open")),
-			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "close")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		).
 		KeepCursor(m.setupPicker.SelectedValue()).
@@ -4666,10 +4660,9 @@ func (m model) rebuildSetupCat() navPicker {
 	p := newNavPicker("", pickerTreeItems(folders, items, m.selected, m.folderOpen, m.blinkOn, m.treeMode, m.aiRemovalLogged())).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "fold")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
-			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
-			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
-			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		)
 	return p.SelectIndex(idx)

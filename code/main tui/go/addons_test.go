@@ -97,6 +97,9 @@ func TestAddonsSearchShortcutAndFilter(t *testing.T) {
 	if !m.filterOpen {
 		t.Fatal("shift+F did not open the addon filter")
 	}
+	if !strings.Contains(m.filterBarLine(""), "filter") {
+		t.Fatal("filter input zone is not visible")
+	}
 	next, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
 	m = next
 	if m.filterText != "e" {

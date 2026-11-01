@@ -79,7 +79,7 @@ func (m model) rebuildAddons() navPicker {
 		return newNavPicker("Addons:", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).
 			SetSize(m.contentSize())
 	}
-	if m.filterText != "" {
+	if m.filterOpen {
 		return m.rebuildFilteredAddons()
 	}
 	cats, byCat := m.addonCategories()
