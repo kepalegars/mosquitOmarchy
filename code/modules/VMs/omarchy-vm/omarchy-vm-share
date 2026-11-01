@@ -11,7 +11,7 @@
 # a broken setup rather than a half-finished one. Three things were left to the
 # user, and all three are easy to get wrong:
 #
-#   1. the kernel module. `virtio_9p` is not built into the kernel and is not
+#   1. the kernel module. `9pnet_virtio` is not built into the kernel and is not
 #      loaded on a fresh install, so the mount fails with "unknown filesystem
 #      type" or "no such device" before any of the rest matters;
 #   2. the version. Since Linux 5.x the 9p2000.L protocol is the default on the
@@ -55,16 +55,31 @@ wait_for_device(){
   return 1
 }
 
+has_9p_support(){
+  grep -qw 9p /proc/filesystems 2>/dev/null
+}
+
 load_module(){
-  if compgen -G "/sys/module/virtio_9p" >/dev/null 2>&1; then
-    ok "virtio_9p already loaded"
+  # There is no module named virtio_9p. The transport is 9pnet_virtio (it pulls
+  # 9pnet and the 9p filesystem). Checking /sys/module/virtio_9p therefore said
+  # "NOT loaded" on a guest where the 9p device was already present, and the
+  # install command aborted before trying the mount.
+  if has_9p_support; then
+    ok "9p filesystem already available"
     return 0
   fi
-  if modprobe virtio_9p 2>/dev/null; then
-    ok "virtio_9p loaded"
+  if modprobe 9pnet_virtio 2>/dev/null && has_9p_support; then
+    ok "9p support loaded (9pnet_virtio)"
     return 0
   fi
-  err "could not load virtio_9p — is the shared folder enabled for this VM?"
+  local m
+  for m in 9pnet 9p; do
+    if modprobe "$m" 2>/dev/null && has_9p_support; then
+      ok "9p support loaded ($m)"
+      return 0
+    fi
+  done
+  err "9p kernel support is missing in this guest (9pnet_virtio / 9p)."
   err "  The host must pass:  -virtfs local,path=<dir>,mount_tag=$TAG"
   return 1
 }
@@ -223,10 +238,10 @@ do_status(){
   on_guest || { do_status_host; return 0; }
   printf 'tag       : %s\n' "$TAG"
   printf 'mountpoint: %s\n' "$MOUNTPOINT"
-  if compgen -G "/sys/module/virtio_9p" >/dev/null 2>&1; then
-    printf 'virtio_9p : loaded\n'
+  if has_9p_support; then
+    printf '9p support: yes\n'
   else
-    printf 'virtio_9p : NOT loaded\n'
+    printf '9p support: NO (9pnet_virtio / 9p missing)\n'
   fi
   if wait_for_device_quiet; then
     printf '9p device : present\n'

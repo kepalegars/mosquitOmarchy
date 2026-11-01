@@ -115,7 +115,7 @@ qemu-system-x86_64 -name omarchy-<name> -machine q35,accel=kvm:tcg -cpu host
   the README"), with a link to <https://github.com/kepalegars/mosquitOmarchy>.
 
   The export is all QEMU can do from here — it hands over a tag and stops. Inside
-  the guest, something still has to load `virtio_9p` (not built into the kernel,
+  the guest, something still has to load `9pnet_virtio` (not built into the kernel,
   not loaded on a fresh install) and mount it, so without that step the folder
   never appears and the feature looks broken rather than half-finished.
 
@@ -129,7 +129,7 @@ qemu-system-x86_64 -name omarchy-<name> -machine q35,accel=kvm:tcg -cpu host
   curl -sf --retry 3 http://10.0.2.2:7789/share -o ~/omarchy-vm-share && sudo bash ~/omarchy-vm-share --install
   ```
 
-  That one command loads `virtio_9p`, mounts at `/mnt/host`, adds the boot unit
+  That one command loads `9pnet_virtio`, mounts at `/mnt/host`, adds the boot unit
   and installs the clipboard agent as a user service (it also survives reboots).
   After that:
 
