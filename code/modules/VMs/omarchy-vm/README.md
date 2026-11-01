@@ -1,12 +1,27 @@
 # Omarchy VM
 
-Run Omarchy in QEMU/KVM. Install the module on the host, then create a VM from
-**Omarchy menu → Setup → Omarchy VM** (or run `omarchy-vm-tui`). New VMs use
-VirGL 3D acceleration by default; toggle it in the manager if needed.
+Run Omarchy in QEMU/KVM.
 
-## Setup inside the VM (once)
+## Create a VM (host)
 
-After the VM boots, open a terminal **inside the guest** and run:
+```bash
+mosquitomarchy-setup.sh omarchy-vm                  # install the manager
+code/modules/VMs/omarchy-vm/setup-omarchy-vm.sh     # create the default VM
+omarchy-vm-tui                                      # create or manage VMs
+```
+
+The module install only deploys the manager. The setup script downloads and
+verifies the latest Omarchy ISO, then creates a sparse 64 GB disk and launcher.
+Defaults: half the host RAM (rounded down to GB, min. 4/max. 32 GB), half the
+physical CPU cores (min. 2/max. 8), and VirGL 3D enabled. Adjust resources or
+toggle VirGL in `omarchy-vm-tui`.
+
+The host shared folder is `~/VMs/<name>/shared`; the script exports it to the
+guest as `/mnt/host`.
+
+## First launch: setup inside the VM
+
+Boot the VM from the host. In a terminal **inside the guest**, run once:
 
 ```bash
 mkdir -p ~/VMs
@@ -14,28 +29,16 @@ curl -sf --retry 3 http://10.0.2.2:7789/share -o ~/VMs/omarchy-vm-share
 sudo bash ~/VMs/omarchy-vm-share --install
 ```
 
-This creates `~/VMs`, downloads the helper there, mounts the host folder at
-`/mnt/host`, and installs the mount and clipboard services for future boots.
-The helper is copied to `/usr/local/bin`; delete `~/VMs/omarchy-vm-share`
-after setup. Verify with `omarchy-vm-share --status`.
+This mounts the shared folder, installs the mount and clipboard services for
+future boots, then opens the folder in the guest's default file manager. The
+guest path is `/mnt/host`; on the host, it is `~/VMs/<name>/shared`. The setup
+prints the path and reminds you to add it to your bookmarks. The downloaded
+helper is copied to `/usr/local/bin`, so you can delete `~/VMs/omarchy-vm-share`
+afterwards. Check with `omarchy-vm-share --status`.
 
-Each VM has its own host folder: `~/VMs/<name>/shared`. The clipboard bridge
-works while the VM is running.
-
-## Host commands
-
-```bash
-mosquitomarchy-setup.sh omarchy-vm  # install/update the manager
-omarchy-vm-tui                      # create, start, stop or configure VMs
-omarchy-vm [name]                   # start the default or named VM
-```
-
-The module install does not create a VM. On first boot, install Omarchy from
-the ISO; the VM boots from its disk automatically after installation.
-Shut down from inside the guest rather than force-stopping it.
-
-VM disks, config and shared folders live under `~/VMs/<name>`; the ISO cache is
-`~/.cache/omarchy-vm/`. Use `MOSQUITO_VM_ROOT` to change the VM root.
+On first boot, install Omarchy from the ISO; later boots use the installed disk.
+Start or manage VMs with `omarchy-vm [name]` or `omarchy-vm-tui`. Shut down
+from inside the guest rather than force-stopping it.
 
 ## Remove
 

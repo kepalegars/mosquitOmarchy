@@ -185,6 +185,32 @@ install_clipboard_agent(){
   return 0
 }
 
+open_shared_folder(){
+  local user="${SUDO_USER:-}" uid home runtime wayland
+  printf '\nShared folder: %s (host: ~/VMs/<name>/shared)\n' "$MOUNTPOINT"
+  printf 'you should add it to your bookmarks!\n'
+  if [[ -z $user ]] || ! command -v runuser >/dev/null 2>&1 || ! command -v xdg-open >/dev/null 2>&1; then
+    warn "Open $MOUNTPOINT manually in your file manager."
+    return 0
+  fi
+  uid="$(id -u "$user" 2>/dev/null)" || { warn "Could not resolve desktop user $user."; return 0; }
+  home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)" || true
+  runtime="/run/user/$uid"
+  wayland="$(find "$runtime" -maxdepth 1 -type s -name 'wayland-*' -printf '%f\n' 2>/dev/null | head -1)"
+  if [[ -z $home || -z $wayland ]]; then
+    warn "Could not find $user's desktop session; open $MOUNTPOINT manually."
+    return 0
+  fi
+  if runuser -u "$user" -- env \
+       HOME="$home" XDG_RUNTIME_DIR="$runtime" \
+       DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" WAYLAND_DISPLAY="$wayland" \
+       xdg-open "$MOUNTPOINT" >/dev/null 2>&1; then
+    ok "Opened shared folder in the default file manager."
+  else
+    warn "Could not open the file manager; open $MOUNTPOINT manually."
+  fi
+}
+
 do_uninstall(){
   need_root
   if systemctl is-enabled --quiet "$UNIT_NAME" 2>/dev/null; then
@@ -295,6 +321,7 @@ main(){
       if mountpoint -q "$MOUNTPOINT"; then
         printf 'shared=1\nclipboard=1\n' > "$MOUNTPOINT/.mosquitomarchy-vm-setup" 2>/dev/null || true
         chmod 644 "$MOUNTPOINT/.mosquitomarchy-vm-setup" 2>/dev/null || true
+        open_shared_folder
       fi
       ;;
     --mount|--mount-nodep) do_mount ;;
