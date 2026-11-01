@@ -236,18 +236,21 @@ memory, so the next `./bootstrap.sh` starts from zero.
 
 ### `archive-mosquitomarchy.sh`
 
-Builds an archive in `code/main tui/`, in one of two types chosen from a menu
-(or `--type=`): `complete` (tracked, untracked and ignored files, with logs
-optional) or `source` (tracked source only). Both exclude `.local`, `PATCH`,
+Builds an archive in `code/main tui/` by default. The first menu option lets you
+enter a destination folder, then choose `complete` (tracked, untracked and ignored
+files) or `source` (tracked source only). When you start a complete archive,
+you can include the Ableton, Bitwig, DaVinci and Guitar Pro installer files
+(excluded by default), then choose whether to include logs. Both types exclude `.local`, `PATCH`,
 password databases, generated machine lists and nested archives. The script
-shows a progress bar, verifies the finished archive and refuses to start when
-the destination lacks a 128 MB free-space margin beyond the input size.
+shows a progress bar, verifies the result and checks free space before writing.
 
 ```bash
 ./archive-mosquitomarchy.sh              # menu: choose a type, then build
 ./archive-mosquitomarchy.sh --list       # what would go in, writes nothing
 ./archive-mosquitomarchy.sh --type=source
 ./archive-mosquitomarchy.sh --out=DIR
+./archive-mosquitomarchy.sh --type=complete --installers --logs
+./archive-mosquitomarchy.sh --type=complete --no-installers --no-logs
 ```
 
 The output name includes the time, so another archive made the same day will

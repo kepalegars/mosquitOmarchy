@@ -6,11 +6,11 @@
 #   (code/main tui/), holding the repo under its own
 #   `mosquitomarchy/` folder. It is meant to be taken by hand:
 #
-#       tar xzf mosquitomarchy-<type>-<date>.tar.gz
+#       tar xzf mosquitomarchy-<type>-<timestamp>.tar.gz
 #       cd mosquitomarchy
 #       ./bootstrap.sh              # or ./mosquitomarchy-setup.sh
 #
-#   With logs asked in, the name reads mosquitomarchy-complete-<date>+logs:
+#   With logs asked in, the name reads mosquitomarchy-complete-<timestamp>+logs:
 #   the "+logs" is an addition to the full content, not the content itself.
 #
 #   No mosquitomarchy code is involved in the extraction, and nothing in the
@@ -18,8 +18,8 @@
 #
 # TWO ARCHIVE TYPES (the menu below explains each before you pick it)
 #   complete   tracked, untracked and ignored working-tree files; logs are
-#              asked about at build time. Sensitive machine state, PATCH/.local,
-#              passwords and nested archives are always excluded.
+#              and application installers are asked about after Start. Sensitive
+#              machine state, PATCH/.local, passwords and nested archives are excluded.
 #   source     the tracked code only: no logs, no install files, no backups
 #
 # BUILT FROM GIT WHERE IT MATTERS
@@ -34,6 +34,7 @@
 #   ./archive-mosquitomarchy.sh --out=DIR    # write DIR/ instead of the mosquitomarchy folder
 #   ./archive-mosquitomarchy.sh --type=TYPE  # complete | source (skip the menu)
 #   ./archive-mosquitomarchy.sh --logs / --no-logs   # complete type: log files in or out
+#   ./archive-mosquitomarchy.sh --installers / --no-installers # complete: app installers in or out
 #   ./archive-mosquitomarchy.sh -y           # take the defaults (source type)
 #   ./archive-mosquitomarchy.sh -h
 #
@@ -69,6 +70,7 @@ hr(){ printf '%.0s─' {1..72}; echo; }
 LIST_ONLY=0 YES=0
 # "" = not asked yet. The prompts are the only interactive thing this script has.
 LOGS=""
+ARCHIVE_INSTALLERS=""
 ARCHIVE_TYPE=""
 for a in "$@"; do case "$a" in
   -y|--yes) YES=1 ;;                # -y takes the defaults (source type)
@@ -77,8 +79,10 @@ for a in "$@"; do case "$a" in
   --type=*) ARCHIVE_TYPE="${a#*=}" ;;
   --logs) LOGS=1 ;;
   --no-logs) LOGS=0 ;;
+  --installers) ARCHIVE_INSTALLERS=1 ;;
+  --no-installers) ARCHIVE_INSTALLERS=0 ;;
   -h|--help) sed -n '2,70p' "$0"; exit 0 ;;
-  *) err "Unknown option: $a (supported: -y --list --out=DIR --type=TYPE --logs --no-logs)"; exit 1 ;;
+  *) err "Unknown option: $a (supported: -y --list --out=DIR --type=TYPE --logs --no-logs --installers --no-installers)"; exit 1 ;;
 esac; done
 case "$ARCHIVE_TYPE" in
   ""|complete|source) ;;
@@ -160,10 +164,31 @@ collect_complete(){
   # passwords, generated lists, nested archives and (unless requested) logs.
   local exclude='(^|/)\.git(/|$)|(^|/)PATCH(/|$)|(^|/)\.local(/|$)|(^|/)(Passwords\.kdbx|pkglist\.txt|aurlist\.txt|apps\.selected)$|\.tar\.gz(\.gpg)?$'
   (( ${LOGS:-0} )) || exclude+='|\.log$'
+  (( ${ARCHIVE_INSTALLERS:-0} )) || exclude+='|^code/modules/Apps/(ableton/[^/]+\.(run|zip)|bitwig/[^/]+\.deb|davinci/[^/]+\.zip|guitarpro/[^/]+\.exe)$'
   {
     git -C "$ROOT" ls-files -z
     git -C "$ROOT" ls-files --others -z
   } | grep -zvE "$exclude"
+}
+
+installer_files(){
+  local f
+  for f in "$ROOT"/code/modules/Apps/ableton/*.{run,zip} \
+           "$ROOT"/code/modules/Apps/bitwig/*.deb \
+           "$ROOT"/code/modules/Apps/davinci/*.zip \
+           "$ROOT"/code/modules/Apps/guitarpro/*.exe; do
+    [[ -f $f ]] && printf '%s\0' "${f#"$ROOT"/}"
+  done
+}
+
+installer_names(){
+  local f first=1
+  (( $# )) || { printf 'none found'; return; }
+  for f in "$@"; do
+    (( first )) || printf ', '
+    printf '%s' "$f"
+    first=0
+  done
 }
 
 # ───────────────────────── Archive type menu ─────────────────────────
@@ -176,8 +201,7 @@ type_menu(){
     printf '\n'
     printf '  complete:\n'
     printf '    • tracked, untracked and ignored files (except sensitive state)\n'
-    printf '    • code, untracked files, ignored files\n'
-    printf '    • the logs are asked about when it is built\n'
+    printf '    • after Start, choose whether installers and logs are included\n'
     printf '    • excludes .local, PATCH, passwords, generated lists and nested archives\n'
     printf '\n'
     printf '  source:\n'
@@ -203,18 +227,63 @@ main_menu(){
   while true; do
     hr
     msg "mosquitOmarchy archive (type: $ARCHIVE_TYPE, out: $OUT_DIR)"
-    printf '  1) choose archive type\n'
-    printf '  2) start archiving\n'
-    printf '  3) quit\n'
+    printf '  1) set archive destination folder\n'
+    printf '  2) choose archive type\n'
+    printf '  3) start archiving\n'
+    printf '  4) quit\n'
     local c
-    read -rp "  Choice [1/2/3] " c || c=3
+    read -rp "  Choice [1/2/3/4] " c || c=4
     case "${c:-3}" in
-      1) type_menu ;;
-      2) return 0 ;;
-      3) ok "Nothing written."; exit 0 ;;
-      *) warn "Choose 1, 2 or 3." ;;
+      1) output_folder_menu ;;
+      2) type_menu ;;
+      3) return 0 ;;
+      4) ok "Nothing written."; exit 0 ;;
+      *) warn "Choose 1, 2, 3 or 4." ;;
     esac
   done
+}
+
+output_folder_menu(){
+  local dest
+  printf '\nCurrent archive folder: %s\n' "$OUT_DIR"
+  read -r -p 'Enter a folder path (Enter keeps the current folder): ' dest || return 0
+  [[ -n $dest ]] || return 0
+  case "$dest" in
+    '~') dest="$HOME" ;;
+    '~/'*) dest="$HOME/${dest#\~/}" ;;
+  esac
+  [[ $dest == /* ]] || dest="$ROOT/$dest"
+  OUT_DIR="${dest%/}"
+  [[ -n $OUT_DIR ]] || OUT_DIR=/
+  ok "Archive folder set to: $OUT_DIR"
+}
+
+ask_installers(){
+  [[ ${ARCHIVE_TYPE:-source} == complete ]] || return 0
+  local -a files=()
+  mapfile -d '' -t files < <(installer_files)
+  if (( ${#files[@]} == 0 )); then
+    ARCHIVE_INSTALLERS=0
+    msg 'No Ableton, Bitwig, DaVinci or Guitar Pro installer files found.'
+    return 0
+  fi
+  local names answer
+  names="$(installer_names "${files[@]}")"
+  if [[ -n $ARCHIVE_INSTALLERS ]]; then
+    if (( ARCHIVE_INSTALLERS )); then ok "Installers included: ($names)"; else msg "Installers excluded: ($names)"; fi
+    return 0
+  fi
+  if (( YES )) || [[ ! -t 0 ]]; then
+    ARCHIVE_INSTALLERS=0
+    msg "Installers excluded by default: ($names)"
+    return 0
+  fi
+  printf '\nInstaller files (Ableton, Bitwig, DaVinci, Guitar Pro): (%s)\n' "$names"
+  read -r -p 'Include these files in the complete archive? [y/N] ' answer || answer=n
+  case "${answer:-n}" in
+    [yY]) ARCHIVE_INSTALLERS=1; ok "Installers included: ($names)" ;;
+    *) ARCHIVE_INSTALLERS=0; msg "Installers excluded: ($names)" ;;
+  esac
 }
 
 # The one question the complete type asks. Default keeps the logs OUT: they
@@ -254,6 +323,13 @@ do_list(){
     printf '  total                : ~%s\n' "$(human "$code")"
     printf '  free at destination : %s\n' "$(human "$(space_available)")"
     if (( LOGS )); then printf '  logs                 : included\n'; else printf '  logs                 : excluded (default)\n'; fi
+    local -a installers=()
+    mapfile -d '' -t installers < <(installer_files)
+    if (( ARCHIVE_INSTALLERS )); then
+      printf '  app installers       : included (%s)\n' "$(installer_names "${installers[@]}")"
+    else
+      printf '  app installers       : excluded by default (%s)\n' "$(installer_names "${installers[@]}")"
+    fi
     if (( LIST_ONLY )); then return 0; fi
     hr
     return 0
@@ -362,6 +438,7 @@ build(){
 
 build_complete(){
   preflight
+  ask_installers
   ask_logs
   mapfile -d '' -t FILES < <(collect_complete)
   (( ${#FILES[@]} )) || { err "Nothing to archive."; exit 1; }
