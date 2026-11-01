@@ -1,4 +1,8 @@
-# MX Master — thumb gesture button → SUPER (logiops)
+# MX Master — thumb gesture button → SUPER (logiops) — v0.0.2 (MEGA BETA)
+
+> ⚠️ **v0.0.2 — MEGA BETA.** The wheel/logiops handling still needs a lot of
+> adjustment (ratchet vs hi-res, Wine scroll, per-device factors, horizontal
+> thumbwheel). Treat it as experimental and re-run the script after updates.
 
 Maps the big gesture button under the thumb of a **Logitech MX Master** (any
 model: Master, 2S, 3, 3S, For Mac) to the **SUPER (Meta)** key, **momentarily**:

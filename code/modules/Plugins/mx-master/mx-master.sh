@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
+# version: 0.0.2 — MEGA BETA (still many adjustments)
 # mosquitOmarchy - MX Master: thumb gesture button remapped to SUPER (logiops)
 # =============================================================================
 # Maps the big gesture button under the thumb of a Logitech MX Master (any

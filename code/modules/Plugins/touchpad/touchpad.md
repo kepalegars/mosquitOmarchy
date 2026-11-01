@@ -1,4 +1,9 @@
-# Touchpad-only configuration — Omarchy module
+# Touchpad-only configuration — v0.0.2 (MEGA BETA)
+
+> ⚠️ **v0.0.2 — MEGA BETA.** This module still needs a lot of adjustment
+> (scroll constants, kinetic-plugin interaction, per-app opt-outs, Wine/Wayland
+> edge cases). Treat it as experimental: expect the generated `touchpad.lua`
+> to change and re-run the script after updates.
 
 Configures the **touchpad only** (per-device `hl.device` config) without touching the mouse/trackpoint: `adaptive` acceleration (Omarchy global = `flat`), `sensitivity 0.0` (the mouse keeps the separate global `input.lua` pointer settings), and a base `scroll_factor 0.5` (native apps get their 1.8 gesture from the non-browser `scroll_touchpad` rule in `input.lua`). Detects the device (`hyprctl devices`, names `*-touchpad`), regenerates `~/.config/hypr/touchpad.lua` (idempotent) and registers `require("hypr.touchpad")` in `hyprland.lua`.
 
@@ -37,12 +42,9 @@ the BASE (0.5) that the plugin reads for its synthetic momentum events.
 
 Browsers GET kinetic momentum now (they are no longer opted out). Their gesture
 speed is the base 0.5; native apps get 1.8 from the non-browser
-`scroll_touchpad` rule in `input.lua`. App-specific opt-outs belong to the
-app's own installer (the Ableton installer disables momentum for
-`ableton live 12 suite.exe`/standard/intro); the touchpad module keeps
-`KINETIC_DISABLED_CLASSES` empty by default. Override it with
-`KINETIC_DISABLED_CLASSES="class1,class2"` if another app needs it. Set
-`KINETIC_SCROLL_ENABLED=0`
+`scroll_touchpad` rule in `input.lua`. DAWs (`ableton live 12 suite.exe`,
+`REAPER`) are opted out of momentum by default; override the list with
+`KINETIC_DISABLED_CLASSES="class1,class2"`. Set `KINETIC_SCROLL_ENABLED=0`
 before running the script to keep the classic touchpad configuration without
 the kinetic plugin.
 
