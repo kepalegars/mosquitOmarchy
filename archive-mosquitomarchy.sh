@@ -2,8 +2,8 @@
 # archive-mosquitomarchy.sh — build an archive of the mosquitOmarchy repo.
 #
 # WHAT THIS PRODUCES
-#   One tar.gz in the mosquitomarchy app folder
-#   (code/main tui/), holding the repo under its own
+#   One tar.gz in the user's home folder by default (or the chosen output
+#   folder), holding the repo under its own
 #   `mosquitomarchy/` folder. It is meant to be taken by hand:
 #
 #       tar xzf mosquitomarchy-<type>-<timestamp>.tar.gz
@@ -39,7 +39,7 @@
 #   ./archive-mosquitomarchy.sh -h
 #
 # Env:
-#   OMARCHY_ARCHIVE_OUT   default output directory (default: code/main tui/)
+#   OMARCHY_ARCHIVE_OUT   default output directory (default: $HOME)
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/code/lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager — the prompt needs one
 set -euo pipefail
 
@@ -54,11 +54,9 @@ ROOT="$SCRIPT_DIR"
 # name of whoever's checkout produced it: the same commit must give the same
 # archive whatever the directory is called locally (here it is 'mosquitOmarchy').
 PROJECT_NAME="mosquitomarchy"
-# The archive always lands in the mosquitomarchy app folder, so it is found
-# where the manager lives. Archives can never leak INTO an archive (see the
-# unconditional *.tar.gz exclusion in both collectors plus the final gate),
-# which is what makes an in-repo destination safe.
-OUT_DIR="${OMARCHY_ARCHIVE_OUT:-$ROOT/code/main tui}"
+# Archives can never leak into a later archive: both collectors and the final
+# verification exclude nested tarballs.
+OUT_DIR="${OMARCHY_ARCHIVE_OUT:-$HOME}"
 
 G='\033[1;32m'; B='\033[1;34m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
 msg(){ printf "${B}==>${N} %s\n" "$*"; }
@@ -279,7 +277,7 @@ ask_installers(){
     return 0
   fi
   printf '\nInstaller files (Ableton, Bitwig, DaVinci, Guitar Pro): (%s)\n' "$names"
-  read -r -p 'Include these files in the complete archive? [y/N] ' answer || answer=n
+  read -r -p 'Include these files in the archive? [y/N] ' answer || answer=n
   case "${answer:-n}" in
     [yY]) ARCHIVE_INSTALLERS=1; ok "Installers included: ($names)" ;;
     *) ARCHIVE_INSTALLERS=0; msg "Installers excluded: ($names)" ;;
@@ -389,7 +387,7 @@ create_archive(){
     msg "  Compression: gzip"
   fi
   trap 'rm -f -- "$tmp" "$listing"' EXIT
-  hr; msg "Creating archive (progress is uncompressed input)..."
+  hr; msg "Creating archive..."
   if ! (cd "$ROOT" && tar -c "${tf[@]}" -- "$@") \
       | progress_stream "$input_bytes" \
       | "${compressor[@]}" > "$tmp"; then

@@ -236,7 +236,7 @@ memory, so the next `./bootstrap.sh` starts from zero.
 
 ### `archive-mosquitomarchy.sh`
 
-Builds an archive in `code/main tui/` by default. The first menu option lets you
+Builds an archive in your home folder by default. The first menu option lets you
 enter a destination folder, then choose `complete` (tracked, untracked and ignored
 files) or `source` (tracked source only). When you start a complete archive,
 you can include the Ableton, Bitwig, DaVinci and Guitar Pro installer files
