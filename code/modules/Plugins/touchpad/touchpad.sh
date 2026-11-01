@@ -7,9 +7,10 @@
 #     setting is "flat", which disables all acceleration).
 #   • Pointer sensitivity: 0.0 (the mouse keeps the separate global
 #     input.lua pointer settings).
-#   • Touch scroll sensitivity: 1.8 by default (same as the global touchpad
-#     scroll_factor now used in input.lua; the old -0.5 value was a negative,
-#     inverted hack that also broke Hyprland's mouse/touchpad classification).
+#   • Touch scroll sensitivity: base 0.5 (browser + kinetic momentum).
+#     Native apps get the 1.8 gesture from the scroll_touchpad rule in
+#     input.lua; the old -0.5 value was a negative, inverted hack that also
+#     broke Hyprland's mouse/touchpad classification.
 #   • Kinetic deceleration: 0.96 (longer inertial glide).
 # The EXTERNAL MOUSE is NOT modified: the block is passed as per-device
 # configuration (hl.device <name>) and only affects the detected touchpad.
@@ -33,10 +34,13 @@
 #   TOUCHPAD_NAME            device name (detected otherwise: *-touchpad)
 #   TOUCHPAD_ACCEL           accel_profile by default  "adaptive"
 #   TOUCHPAD_SENSITIVITY     sensitivity (pointer)     0.0
-#   TOUCHPAD_SCROLL_FACTOR   scroll_factor (scroll)     1.8
+#   TOUCHPAD_SCROLL_FACTOR   base scroll_factor         0.5
+#                            (browser + kinetic momentum; native apps get
+#                            1.8 from the scroll_touchpad rule in input.lua)
 #   KINETIC_SCROLL_ENABLED   kinetic scroll plugin     1 (set to 0 to disable)
 #   KINETIC_DECEL            momentum deceleration     0.96 (closer to 1 = longer glide)
-#   KINETIC_DISABLED_CLASSES comma-separated classes    "" (zen is always excluded)
+#   KINETIC_DISABLED_CLASSES comma-separated classes    "ableton live 12 suite.exe,REAPER"
+#                            (kinetic off in DAWs; browsers ARE kinetic)
 #
 # Hyprland NOTE: SCROLL acceleration (scroll_points curve) is only exposed
 # with accel_profile = "custom" and remains ambiguous for a touchpad; this
@@ -76,15 +80,16 @@ BLOCK_END="-- <<< Omarchy_Custom_Scripts_Touchpad"
 
 ACCEL="${TOUCHPAD_ACCEL:-adaptive}"
 SENS="${TOUCHPAD_SENSITIVITY:-0.0}"
-SCROLL="${TOUCHPAD_SCROLL_FACTOR:-1.8}"
+SCROLL="${TOUCHPAD_SCROLL_FACTOR:-0.5}"
 # Kinetic scroll (hypr-kinetic-scroll plugin) — optional.
 # shortcut: pinned to upstream PR #23 (Hyprland 0.56 config lifetime fix)
 # until it is merged; switch back to savonovv/hypr-kinetic-scroll then.
 KINETIC_ENABLED="${KINETIC_SCROLL_ENABLED:-1}"
 KINETIC_DECEL="${KINETIC_DECEL:-0.96}"
-# The browser is always opted out of kinetic momentum and pinned to the stock
-# touchpad speed; this list only adds more apps.
-KINETIC_DISABLED_CLASSES="${KINETIC_DISABLED_CLASSES:-}"
+# Exact Hyprland classes that keep native (no-momentum) touchpad scrolling.
+# Browsers are deliberately NOT in this list anymore: kinetic momentum now
+# applies everywhere except these apps (Ableton/Wine is the known-bad one).
+KINETIC_DISABLED_CLASSES="${KINETIC_DISABLED_CLASSES:-ableton live 12 suite.exe,REAPER}"
 KINETIC_REPO="${KINETIC_REPO:-https://github.com/oliverlukschander/hypr-kinetic-scroll}"
 KINETIC_REV="${KINETIC_REV:-f533b6cd24447a9b4191bf5c798a267f64026f0b}"
 KINETIC_OK=0
@@ -147,7 +152,7 @@ gen_touchpad_lua() {
     echo "    accel_profile = \"$ACCEL\","
     echo "    -- Pointer sensitivity: $SENS (the mouse keeps the global input.lua pointer settings)"
     echo "    sensitivity = $SENS,"
-    echo "    -- Touch scroll sensitivity: $SCROLL (same as the global touchpad scroll_factor)"
+    echo "    -- Touch scroll sensitivity: $SCROLL (base; native 1.8 via input.lua)"
     echo "    scroll_factor = $SCROLL,"
     echo "})"
     # Kinetic scroll (hypr-kinetic-scroll). Hyprland 0.56 rejects hyphenated
@@ -155,13 +160,18 @@ gen_touchpad_lua() {
     # deceleration, and the per-app opt-outs use its rule functions.
     if [[ $KINETIC_ENABLED -eq 1 && $KINETIC_OK -eq 1 ]]; then
       echo "-- Kinetic (inertial) scrolling via the hypr-kinetic-scroll plugin (hyprpm)."
+      echo "-- disable_in_browser = 0: browsers GET momentum too (the old default"
+      echo "-- and the zen opt-out were why the browser stopped dead on release)."
       echo "-- Deceleration: $KINETIC_DECEL (closer to 1 = longer momentum)."
-      echo "hl.config({ plugin = { kinetic_scroll = { decel = $KINETIC_DECEL } } })"
-      local cls seen=" "
+      echo "hl.config({ plugin = { kinetic_scroll = { decel = $KINETIC_DECEL, disable_in_browser = 0 } } })"
+      local cls
+      local -a classes=()
+      IFS=',' read -ra classes <<< "$KINETIC_DISABLED_CLASSES"
       echo "if hl.plugin.kinetic_scroll then"
-      for cls in zen ${KINETIC_DISABLED_CLASSES//,/ }; do
-        [[ $seen == *" $cls "* ]] && continue
-        seen+="$cls "
+      for cls in "${classes[@]}"; do
+        cls="${cls#"${cls%%[![:space:]]*}"}"
+        cls="${cls%"${cls##*[![:space:]]}"}"
+        [[ -n $cls ]] || continue
         cls=${cls//\\/\\\\}
         cls=${cls//\"/\\\"}
         echo "  hl.plugin.kinetic_scroll.disable(\"$cls\")"
@@ -174,10 +184,6 @@ gen_touchpad_lua() {
     elif [[ $KINETIC_ENABLED -eq 1 ]]; then
       echo "-- Kinetic scrolling requested, but hypr-kinetic-scroll is not loaded."
     fi
-    echo "-- The browser is not part of the kinetic experiment: no momentum and"
-    echo "-- the stock scroll speed. scroll_touchpad REPLACES the factor; the"
-    echo "-- browser keeps the speed it already feels right at (input.lua)."
-    echo "o.window(\"zen\", { scroll_touchpad = 0.5 })"
     echo "$BLOCK_END"
   } > "$tmp"
   mv "$tmp" "$TOUCHPAD_LUA"

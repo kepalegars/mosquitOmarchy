@@ -21,6 +21,11 @@ if [[ "$(basename "$0")" != "brightness-0" ]]; then
   BIN="$BIN_DIR/brightness-0"
   HYPR_DIR="$REAL_HOME/.config/hypr"
   BINDINGS="$HYPR_DIR/bindings.lua"
+  # The managed keybindings primitives (kb_ensure/kb_remove/kb_reload): the
+  # brightness shortcuts now live in the SAME mosquitOmarchy_Keybindings block
+  # as the launcher, so there is no separate "custom script" block to rot.
+  # shellcheck source=../../../lib/keybindings.bash
+  source "$SCRIPT_DIR/../../../lib/keybindings.bash"
   BLOCK_START="-- >>> Omarchy_Custom_Scripts_Brightness"
   BLOCK_END="-- <<< Omarchy_Custom_Scripts_Brightness"
 
@@ -55,9 +60,9 @@ if [[ "$(basename "$0")" != "brightness-0" ]]; then
     ok "Helper deployed ($BIN)"
   fi
 
-  remove_block(){ # remove delimited block from bindings
+  legacy_remove(){ # remove the pre-mosquitOmarchy standalone block, if any
     [[ -f $BINDINGS ]] || return 0
-    grep -qF -- "$BLOCK_START" "$BINDINGS" || return 0
+    grep -qF -- "$BLOCK_START" "$BINDINGS" || return 1
     local s e tmp
     s=$(grep -nF -- "$BLOCK_START" "$BINDINGS" | cut -d: -f1 | head -1)
     e=$(grep -nF -- "$BLOCK_END" "$BINDINGS" | cut -d: -f1 | head -1)
@@ -68,45 +73,23 @@ if [[ "$(basename "$0")" != "brightness-0" ]]; then
     return 1
   }
 
+  if legacy_remove; then
+    ok "Legacy brightness block removed from $BINDINGS"
+  fi
+
   if [[ $REMOVE == true ]]; then
-    remove_block && ok "Brightness block removed from $BINDINGS" || ok "No Brightness block"
-    [[ -f $BINDINGS ]] && hyprctl reload >/dev/null 2>&1 || true
+    kb_remove "XF86MonBrightnessUp" "XF86MonBrightnessDown" "SHIFT + XF86MonBrightnessDown" || true
+    ok "Brightness keybindings released (Omarchy defaults restored)"
+    kb_reload
     exit 0
   fi
 
-  info "Integrating brightness bindings"
+  info "Integrating brightness bindings (managed mosquitOmarchy block)"
   mkdir -p "$HYPR_DIR"
-  remove_block || true
-  bt=$(mktemp)
-  cat > "$bt" <<BLOCK
-$BLOCK_START
--- Omarchy's default display brightness, plus 0% = screen off.
--- (wrapper: brightness-0 adds the 0% step and a short 1% ramp.)
-hl.unbind("XF86MonBrightnessUp")
-o.bind("XF86MonBrightnessUp", "Brightness up", "$BIN up", { locked = true, repeating = true })
-hl.unbind("XF86MonBrightnessDown")
-o.bind("XF86MonBrightnessDown", "Brightness down", "$BIN down", { locked = true, repeating = true })
-hl.unbind("SHIFT + XF86MonBrightnessDown")
-o.bind("SHIFT + XF86MonBrightnessDown", "Brightness 0% (screen off)", "omarchy-brightness-display off", { locked = true, repeating = true })
-$BLOCK_END
-BLOCK
-  if [[ -s $BINDINGS ]]; then
-    { echo ""; cat "$bt"; echo ""; } >> "$BINDINGS"
-  else
-    echo "-- Brightness block installed" > "$BINDINGS"
-    cat "$bt" >> "$BINDINGS"
-  fi
-  rm -f "$bt"
-  ok "Brightness block written to $BINDINGS"
-
-  if command -v hyprctl >/dev/null 2>&1; then
-    if hyprctl reload >/dev/null 2>&1; then
-      errs="$(hyprctl configerrors 2>/dev/null || true)"
-      [[ -n "$errs" ]] && { warn "Reloaded with warnings:"; printf '%s\n' "$errs" | sed 's/^/    /'; } || ok "Hyprland reloaded, config valid"
-    else
-      warn "hyprctl reload failed — check manually"
-    fi
-  fi
+  kb_ensure "XF86MonBrightnessUp" "Brightness up" "$BIN up" cmd
+  kb_ensure "XF86MonBrightnessDown" "Brightness down" "$BIN down" cmd
+  kb_ensure "SHIFT + XF86MonBrightnessDown" "Brightness 0% (screen off)" "omarchy-brightness-display off" cmd
+  kb_reload
   exit 0
 fi
 

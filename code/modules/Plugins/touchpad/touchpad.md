@@ -1,6 +1,6 @@
 # Touchpad-only configuration — Omarchy module
 
-Configures the **touchpad only** (per-device `hl.device` config) without touching the mouse/trackpoint: `adaptive` acceleration (Omarchy global = `flat`), `sensitivity 0.0` (the mouse keeps the separate global `input.lua` pointer settings), and `scroll_factor 1.8` by default. Detects the device (`hyprctl devices`, names `*-touchpad`), regenerates `~/.config/hypr/touchpad.lua` (idempotent) and registers `require("hypr.touchpad")` in `hyprland.lua`.
+Configures the **touchpad only** (per-device `hl.device` config) without touching the mouse/trackpoint: `adaptive` acceleration (Omarchy global = `flat`), `sensitivity 0.0` (the mouse keeps the separate global `input.lua` pointer settings), and a base `scroll_factor 0.5` (native apps get their 1.8 gesture from the non-browser `scroll_touchpad` rule in `input.lua`). Detects the device (`hyprctl devices`, names `*-touchpad`), regenerates `~/.config/hypr/touchpad.lua` (idempotent) and registers `require("hypr.touchpad")` in `hyprland.lua`.
 
 ## Usage
 
@@ -30,23 +30,23 @@ of upstream PR #23 until it is merged: upstream `master` is not yet safe on
 Hyprland 0.56 (its config values abort the compositor on load/unload).
 
 Hyprland 0.56 rejects hyphenated plugin keys in `hl.config`. The generated
-`touchpad.lua` therefore sets the deceleration through the plugin's Lua
-namespace (`hl.config({ plugin = { kinetic_scroll = { decel = 0.96 } } })`) and
-applies per-app opt-outs through `hl.plugin.kinetic_scroll.disable(...)`. The global
-touchpad scroll factor is aligned with the touchpad's own scroll factor, so
-momentum follows the same scrolling direction.
+`touchpad.lua` therefore sets the deceleration and `disable_in_browser = 0`
+through the plugin's Lua namespace, and applies per-app opt-outs through
+`hl.plugin.kinetic_scroll.disable(...)`. The global touchpad scroll factor is
+the BASE (0.5) that the plugin reads for its synthetic momentum events.
 
-Override the deceleration with `KINETIC_DECEL` (closer to 1 = longer glide)
-before re-running the script.
+Browsers GET kinetic momentum now (they are no longer opted out). Their gesture
+speed is the base 0.5; native apps get 1.8 from the non-browser
+`scroll_touchpad` rule in `input.lua`. DAWs (`ableton live 12 suite.exe`,
+`REAPER`) are opted out of momentum by default; override the list with
+`KINETIC_DISABLED_CLASSES="class1,class2"`. Set `KINETIC_SCROLL_ENABLED=0`
+before running the script to keep the classic touchpad configuration without
+the kinetic plugin.
 
-Zen is always opted out of kinetic momentum and its touchpad speed is pinned to
-the stock magnitude (`0.5`), so the kinetic settings never change browser
-scrolling (not even the speed). `scroll_touchpad` replaces the factor outright
-and Hyprland rejects negative rule values, so the stock sign (`-0.5`) cannot be
-reproduced per window: the browser follows the system's scroll direction. Set
-`KINETIC_DISABLED_CLASSES="org.telegram.desktop steam"` to opt additional apps
-out. Set `KINETIC_SCROLL_ENABLED=0` before running the script to keep the
-classic touchpad configuration without the kinetic plugin.
+Note: the plugin's momentum always uses the global `input:touchpad:scroll_factor`
+(window rules do not apply to synthetic events), so keep the BASE low (0.5) and
+use the `scroll_touchpad` window rule for native apps. Raising the global to
+1.8 makes browser momentum much faster than its gesture.
 
 Verify the plugin after applying:
 
@@ -74,7 +74,7 @@ Both modules compose without conflict — each writes its OWN marker block in
 `hyprland.lua` and its OWN device file, applied in any order:
 
 - the **touchpad** module writes `~/.config/hypr/touchpad.lua` with
-  `hl.device({ name = <touchpad>, … })` (adaptive / 0.0 / 1.8 by default),
+  `hl.device({ name = <touchpad>, … })` (adaptive / 0.0 / base 0.5; native 1.8 via `input.lua`),
 - the **MX Master** module (or any mouse that picks its own settings) writes
   `~/.config/hypr/mx-master.lua` with `hl.device({ name = <mouse>, … })`
   (flat / 1.0 / same as the global mouse block in `input.lua`).
