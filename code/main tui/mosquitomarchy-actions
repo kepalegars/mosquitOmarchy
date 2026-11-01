@@ -1625,7 +1625,14 @@ cmd_backup_options(){
   printf '{"opts":true,"keepass":%s,"zen":%s,"reaper":%s}\n' "$keepass" "$zen" "$reaper"
 
   local line key folder chk k tree
-  tree="$(mq_cached uninstall-tree 600 cmd_uninstall_tree | grep -vE '"folder":"(patches|fixes|preinstalls)"')"
+  # The running manager is required to open this screen and restore a backup.
+  tree="$(mq_cached uninstall-tree 600 cmd_uninstall_tree \
+    | grep -vE '"folder":"(patches|fixes|preinstalls)"' \
+    | sed '/"key":"mosquitomarchy"/d')"
+  if ! grep -q '"folder":"mosquito","key":' <<<"$tree" \
+      && ! grep -q '"parent":"mosquito"' <<<"$tree"; then
+    tree="$(sed '/"folder":"mosquito"/d' <<<"$tree")"
+  fi
   BK_HAS_USER=0
   grep -q '"folder":"user","key"' <<<"$tree" && BK_HAS_USER=1
 

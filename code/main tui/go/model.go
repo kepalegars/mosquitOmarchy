@@ -881,13 +881,7 @@ func (m *model) pushKeepassxcConsent(v string) {
 // were all marked already (one keystroke always flips to an extreme, exactly
 // like the audio-plugin-manager's folder select-all).
 func (m *model) toggleFolder(folder string) {
-	folders := []string{folder}
-	for _, f := range m.setupFolders {
-		if f.Parent == folder {
-			folders = append(folders, f.Folder)
-		}
-	}
-	toggleTreeFolders(m.setupItems, m.selected, folders)
+	toggleTreeFolder(m.setupItems, m.selected, m.setupFolders, folder)
 }
 
 // treeFolderChecked reports whether every tickable row of a folder is
@@ -909,8 +903,54 @@ func treeFolderChecked(items []SetupItemRec, checked map[string]bool, folder str
 // toggleTreeFolder is the shared folder select-all/none used by the Setup and
 // backup-content trees. Greyed (Disabled) rows are never ticked: selecting
 // what cannot run would only produce a failed install.
-func toggleTreeFolder(items []SetupItemRec, checked map[string]bool, folder string) {
-	toggleTreeFolders(items, checked, []string{folder})
+func toggleTreeFolder(items []SetupItemRec, checked map[string]bool, tree []FolderRec, folder string) {
+	folders := []string{folder}
+	seen := map[string]bool{folder: true}
+	for i := 0; i < len(folders); i++ {
+		for _, f := range tree {
+			if f.Parent == folders[i] && !seen[f.Folder] {
+				seen[f.Folder] = true
+				folders = append(folders, f.Folder)
+			}
+		}
+	}
+	toggleTreeFolders(items, checked, folders)
+}
+
+func (m model) backupAppSelected(id string) bool {
+	for _, it := range m.backupItems {
+		if !m.backupChecked[setupValue(it.Folder, it.Key)] {
+			continue
+		}
+		key := it.Key
+		if strings.HasPrefix(key, "APP ") {
+			key = strings.TrimPrefix(key, "APP ")
+			if i := strings.LastIndex(key, "|"); i >= 0 {
+				key = key[i+1:]
+			}
+		}
+		if strings.EqualFold(key, id) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m model) effectiveBackupOpts() BackupOpts {
+	opts := m.backupOpts
+	if !m.backupOpts.HasKeep || !m.backupAppSelected("keepassxc") {
+		opts.Keepass, opts.KeepassSettings = false, false
+	}
+	if !m.backupOpts.HasZen || !m.backupAppSelected("zen") {
+		opts.Zen = false
+	}
+	if !m.backupOpts.HasReaper || !m.backupAppSelected("reaper") {
+		opts.Reaper = "none"
+	}
+	if !m.backupAppSelected("audio-plugin-manager") && opts.VST == "full" {
+		opts.VST = "list"
+	}
+	return opts
 }
 
 func toggleTreeFolders(items []SetupItemRec, checked map[string]bool, folders []string) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -256,6 +257,74 @@ func TestKeybindingsAndHyprlandAreDirectBackupRows(t *testing.T) {
 	for _, it := range m.rebuildBackupAppSettings().items {
 		if it.Value == "keybindings" || it.Value == "hyprland" {
 			t.Fatalf("%s must not be in App specific settings", it.Value)
+		}
+	}
+}
+
+func TestBackupAppSettingsFollowSelectedApps(t *testing.T) {
+	m := initialModel()
+	m.backupOpts = BackupOpts{VST: "full", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "full", HasKeep: true, HasZen: true, HasReaper: true}
+	m.backupItems = []SetupItemRec{
+		{Folder: "apps", Key: "APP REAPER|reaper"},
+		{Folder: "apps", Key: "APP KeePassXC|keepassxc"},
+		{Folder: "apps", Key: "APP Zen|zen"},
+		{Folder: "audio-stack", Key: "audio-plugin-manager"},
+	}
+	m.backupChecked = map[string]bool{}
+	for _, it := range m.backupItems {
+		m.backupChecked[setupValue(it.Folder, it.Key)] = true
+	}
+
+	settings := func() map[string]bool {
+		rows := map[string]bool{}
+		for _, it := range m.rebuildBackupAppSettings().items {
+			rows[it.Value] = true
+		}
+		return rows
+	}
+	for _, row := range []string{"reaper", "keepass", "keepass-settings", "zen", "vst"} {
+		if !settings()[row] {
+			t.Fatalf("selected app's backup setting %q is missing", row)
+		}
+	}
+
+	delete(m.backupChecked, setupValue("apps", "APP REAPER|reaper"))
+	if settings()["reaper"] {
+		t.Fatal("REAPER settings remained after unselecting REAPER")
+	}
+	delete(m.backupChecked, setupValue("apps", "APP KeePassXC|keepassxc"))
+	if rows := settings(); rows["keepass"] || rows["keepass-settings"] {
+		t.Fatalf("KeePassXC settings remained after unselecting KeePassXC: %v", rows)
+	}
+	delete(m.backupChecked, setupValue("apps", "APP Zen|zen"))
+	if settings()["zen"] {
+		t.Fatal("Zen settings remained after unselecting Zen")
+	}
+
+	delete(m.backupChecked, setupValue("audio-stack", "audio-plugin-manager"))
+	if got := m.effectiveBackupOpts().VST; got != "list" {
+		t.Fatalf("full VST files should fall back to list-only without the audio plugin manager, got %q", got)
+	}
+	if got := m.cycleBackupVST(1); got != "none" {
+		t.Fatalf("VST should cycle list-only to no backup without the audio plugin manager, got %q", got)
+	}
+}
+
+func TestBeginBackupGatesAppSettingsBySelection(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrBackup, scrBackupOptions}
+	m.backupOpts = BackupOpts{VST: "full", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "full", HasKeep: true, HasZen: true, HasReaper: true}
+	m.backupItems = []SetupItemRec{{Folder: "audio-stack", Key: "audio-plugin-manager"}}
+	var cmd tea.Cmd
+	m, cmd = m.beginBackup()
+	if cmd != nil {
+		t.Fatal("unencrypted backup should not prompt for a passphrase")
+	}
+	defer os.Remove(m.backupSelFile)
+	got := strings.Join(m.pendingArgs, " ")
+	for _, want := range []string{"--vst=list", "--keepass=no", "--keepass-settings=no", "--zen=no", "--reaper=none"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("unselected app settings were not excluded (%s): %s", want, got)
 		}
 	}
 }

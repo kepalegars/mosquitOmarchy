@@ -901,7 +901,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case scrBackupApps:
 			v := msg.Value
 			if strings.HasPrefix(v, "cat:") {
-				toggleTreeFolder(m.backupItems, m.backupChecked, strings.TrimPrefix(v, "cat:"))
+				toggleTreeFolder(m.backupItems, m.backupChecked, m.backupFolders, strings.TrimPrefix(v, "cat:"))
 			} else if strings.HasPrefix(v, "item:") {
 				if m.backupChecked[v] {
 					delete(m.backupChecked, v)
@@ -1042,7 +1042,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case scrBackupAppSettings:
 			switch m.backupAppPicker.SelectedValue() {
 			case "vst":
-				m.backupOpts.VST = cycleVST(m.backupOpts.VST, msg.Dir)
+				m.backupOpts.VST = m.cycleBackupVST(msg.Dir)
 			case "keepass":
 				m.backupOpts.Keepass = !m.backupOpts.Keepass
 			case "keepass-settings":
@@ -3208,7 +3208,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 	case scrBackupAppSettings:
 		switch res.Value {
 		case "vst":
-			m.backupOpts.VST = cycleVST(m.backupOpts.VST, 1)
+			m.backupOpts.VST = m.cycleBackupVST(1)
 		case "keepass":
 			m.backupOpts.Keepass = !m.backupOpts.Keepass
 		case "keepass-settings":
@@ -4813,6 +4813,7 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 			Accent:  f.Accent && blinkOn,
 			Fold:    fold,
 			Folder:  true,
+			Filled:  total > 0 && marked == total,
 		}
 		if nested {
 			// Same look as the nested audio-stack row: a bundle row that reads
@@ -5165,8 +5166,9 @@ func (m model) rebuildBackupOptions() navPicker {
 // REAPER are settings of individual apps, not top-level backup actions.
 func (m model) rebuildBackupAppSettings() navPicker {
 	idx := m.backupAppPicker.Index()
+	opts := m.effectiveBackupOpts()
 	vst := "list only"
-	switch m.backupOpts.VST {
+	switch opts.VST {
 	case "full":
 		vst = "full files (~hundreds of MB)"
 	case "none":
@@ -5175,16 +5177,16 @@ func (m model) rebuildBackupAppSettings() navPicker {
 	items := []tuikit.PickerItem{
 		{Display: "VST plugins: " + vst, Value: "vst"},
 	}
-	if m.backupOpts.HasKeep {
+	if m.backupOpts.HasKeep && m.backupAppSelected("keepassxc") {
 		items = append(items,
 			tuikit.PickerItem{Display: "KeePassXC passwords: " + yesno(m.backupOpts.Keepass), Value: "keepass"},
 			tuikit.PickerItem{Display: "KeePassXC settings: " + yesno(m.backupOpts.KeepassSettings), Value: "keepass-settings"},
 		)
 	}
-	if m.backupOpts.HasZen {
+	if m.backupOpts.HasZen && m.backupAppSelected("zen") {
 		items = append(items, tuikit.PickerItem{Display: "Zen browser settings: " + yesno(m.backupOpts.Zen), Value: "zen"})
 	}
-	if m.backupOpts.HasReaper {
+	if m.backupOpts.HasReaper && m.backupAppSelected("reaper") {
 		items = append(items, tuikit.PickerItem{Display: "REAPER: " + reaperDepthLabel(m.backupOpts.Reaper), Value: "reaper"})
 	}
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
@@ -5238,6 +5240,17 @@ func cycleVST(cur string, dir int) string {
 		idx = (idx - 1 + len(order)) % len(order)
 	}
 	return order[idx]
+}
+
+func (m model) cycleBackupVST(dir int) string {
+	cur := m.effectiveBackupOpts().VST
+	if !m.backupAppSelected("audio-plugin-manager") {
+		if cur == "list" {
+			return "none"
+		}
+		return "list"
+	}
+	return cycleVST(cur, dir)
 }
 
 func cycleReaper(cur string, dir int) string {
@@ -5399,6 +5412,7 @@ func yesno(b bool) string {
 // passphrase first when encrypting). The backend stores this file in the
 // archive as install.list: the readable instruction a restore replays.
 func (m model) beginBackup() (model, tea.Cmd) {
+	opts := m.effectiveBackupOpts()
 	f, err := os.CreateTemp("", "mosquitomarchy-apps-selected-")
 	if err != nil {
 		m.toast, _ = m.toast.SetErr(err.Error())
@@ -5424,20 +5438,20 @@ func (m model) beginBackup() (model, tea.Cmd) {
 	f.Close()
 	m.backupSelFile = f.Name()
 	m.pendingArgs = []string{
-		"--vst=" + m.backupOpts.VST,
-		"--keepass=" + yesno(m.backupOpts.Keepass),
-		"--keepass-settings=" + yesno(m.backupOpts.KeepassSettings),
-		"--zen=" + yesno(m.backupOpts.Zen),
-		"--reaper=" + m.backupOpts.Reaper,
-		"--keybindings=" + m.backupOpts.Keybindings,
-		"--hyprland=" + yesno(m.backupOpts.Hyprland),
+		"--vst=" + opts.VST,
+		"--keepass=" + yesno(opts.Keepass),
+		"--keepass-settings=" + yesno(opts.KeepassSettings),
+		"--zen=" + yesno(opts.Zen),
+		"--reaper=" + opts.Reaper,
+		"--keybindings=" + opts.Keybindings,
+		"--hyprland=" + yesno(opts.Hyprland),
 		"--selection=" + m.backupSelFile,
 		// Always sent, empty or not: the backend treats an empty name as "use
 		// the dated name", and omitting the flag entirely would make an edit
 		// that cleared the name impossible to express.
 		"--name=" + m.backupOpts.Name,
 	}
-	if m.backupOpts.Encrypt {
+	if opts.Encrypt {
 		m.pendingAction = "backup-encrypted"
 		m.push(scrPassphrase)
 		m.passInput = tuikit.NewPasswordInput("Backup passphrase (AES-256):", "")
@@ -5445,11 +5459,11 @@ func (m model) beginBackup() (model, tea.Cmd) {
 	}
 	m.pendingAction = "backup"
 	label := "named by its date"
-	if m.backupOpts.Name != "" {
-		label = "named \"" + m.backupOpts.Name + "\""
+	if opts.Name != "" {
+		label = "named \"" + opts.Name + "\""
 	}
 	m.pendingMsg = fmt.Sprintf("Create a backup now?\n\nPackages: %d selected · VST: %s · KeePassXC: %s/%s · Zen: %s · REAPER: %s · Keybindings: %s · Hyprland: %s\nArchive: %s",
-		len(m.backupChecked), m.backupOpts.VST, yesno(m.backupOpts.Keepass), yesno(m.backupOpts.KeepassSettings), yesno(m.backupOpts.Zen), reaperDepthLabel(m.backupOpts.Reaper), keybindingsBackupLabel(m.backupOpts.Keybindings), yesno(m.backupOpts.Hyprland), label)
+		len(m.backupChecked), opts.VST, yesno(opts.Keepass), yesno(opts.KeepassSettings), yesno(opts.Zen), reaperDepthLabel(opts.Reaper), keybindingsBackupLabel(opts.Keybindings), yesno(opts.Hyprland), label)
 	m.pendingNo = "Cancel"
 	m.pendingYes = "Backup"
 	m.push(scrConfirm)

@@ -1622,3 +1622,39 @@ func TestBackupThemesNestedBranches(t *testing.T) {
 		t.Fatalf("defaults children must stop at the corner: %q", defaultsChild)
 	}
 }
+
+func TestBackupFolderSquareAndParentToggleIncludeChildren(t *testing.T) {
+	folders := []FolderRec{
+		{Folder: "mosquito", Label: "mosquito"},
+		{Folder: "audio-stack", Label: "audio-stack", Parent: "mosquito"},
+	}
+	items := []SetupItemRec{
+		{Folder: "mosquito", Key: "manager", Label: "manager"},
+		{Folder: "audio-stack", Key: "mixbay", Label: "mixbay"},
+	}
+	checked := map[string]bool{
+		setupValue("mosquito", "manager"):   true,
+		setupValue("audio-stack", "mixbay"): true,
+	}
+	m := initialModel()
+	m.backupFolders, m.backupItems, m.backupChecked = folders, items, checked
+	m.backupOpen["mosquito"] = true
+
+	var parentFilled, childFilled bool
+	for _, row := range m.backupTreeItems() {
+		switch row.Value {
+		case folderValue("mosquito"):
+			parentFilled = row.Filled
+		case folderValue("audio-stack"):
+			childFilled = strings.Contains(row.Display, "■ audio-stack")
+		}
+	}
+	if !parentFilled || !childFilled {
+		t.Fatalf("fully selected folders should show filled squares: parent=%v child=%v", parentFilled, childFilled)
+	}
+
+	toggleTreeFolder(items, checked, folders, "mosquito")
+	if checked[setupValue("mosquito", "manager")] || checked[setupValue("audio-stack", "mixbay")] {
+		t.Fatalf("deselecting mosquito left a child selected: %v", checked)
+	}
+}

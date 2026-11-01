@@ -30,6 +30,8 @@ func TestBackupOptionsArrows(t *testing.T) {
 	m.nav = []screen{scrMain, scrBackup, scrBackupOptions}
 	m.w, m.h = 120, 40
 	m.backupOpts = BackupOpts{VST: "list", Keepass: true, HasKeep: true}
+	m.backupItems = []SetupItemRec{{Folder: "audio-stack", Key: "audio-plugin-manager"}}
+	m.backupChecked = map[string]bool{setupValue("audio-stack", "audio-plugin-manager"): true}
 	m.backupOptPicker = m.rebuildBackupOptions()
 	// Select BY VALUE, not by index: the rows have been reordered before and
 	// the index form breaks silently.

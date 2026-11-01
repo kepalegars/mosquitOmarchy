@@ -207,6 +207,12 @@ archives it only if you agree. `-y` records the cheap inventory instead of sever
 files; use `--vst-backup=full` to include them. On restore, a folder that moved since the
 backup is deployed into the location the manager points at now, after asking.
 
+In the interactive backup, KeePassXC, Zen and REAPER settings are included only when the
+corresponding app is selected in *Packages, Themes & tweaks*; deselecting an app removes its
+settings from that backup, and reselecting it restores its saved setting choice. VST *full files*
+is available only while the Audio Plugin Manager is selected; otherwise VST offers list-only or
+no backup.
+
 **Uninstall** removes wrappers, menu entries, `omarchy-menu.jsonc` blocks, user units, custom
 plugins, Hyprland bindings and the theme. Personal data (`~/VST`, `~/.config/windows`,
 `~/.ollama`) is **kept** unless you add `--purge`. Uninstalled modules are remembered so they

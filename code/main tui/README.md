@@ -137,10 +137,14 @@ subcommands of `mosquitomarchy-actions`, in `code/lib/keybindings.bash`.
 The backup writes dated archives of `~/.config` — hypr, terminal, Omarchy extensions and
 plugins, app preferences — to `mosquitomarchy-backups/` next to the repo. Before building it
 asks the content questions: a checkbox tree of every installed package/theme/tweak (pre-checked
-from the saved selection), app-specific settings (VST plugins *list only* / *full files* / *no*,
-KeePassXC passwords and settings, Zen, REAPER), keybindings (*all* / *custom only* / *no*),
-Hyprland configs (*yes* / *no*), and encryption. The passphrase is asked twice, passed through
-`OMARCHY_BACKUP_PASSPHRASE` rather than argv, and asked again on restore.
+from the saved selection), app-specific settings, keybindings (*all* / *custom only* / *no*),
+Hyprland configs (*yes* / *no*), and encryption. In *App specific settings*, KeePassXC passwords
+and settings, Zen settings and REAPER settings are shown and included only while that app is
+selected in *Packages, Themes & tweaks*. Unselecting an app excludes its settings from the next
+backup; its saved choice is retained if you select it again. VST plugins are always listed, but
+*full files* is available only while the Audio Plugin Manager is selected; otherwise VST can be
+*list only* or *no*. The passphrase is asked twice, passed through `OMARCHY_BACKUP_PASSPHRASE`
+rather than argv, and asked again on restore.
 
 **Keybindings** and **Hyprland configs** are direct rows on *Backup options*, not buried in
 the app-settings sub-menu. The whole `~/.config/hypr` tree is archived except `bindings.lua`
