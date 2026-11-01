@@ -5,9 +5,10 @@ Run this INSIDE the Omarchy VM, while its launcher runs on the host (the
 bridge lives and dies with the VM — a closed VM means connection refused).
 One command installs and starts it:
 
-    curl -sf --retry 3 http://10.0.2.2:7789/agent -o ~/vm-clipboard.py && \
-      test -s ~/vm-clipboard.py && \
-      nohup python3 ~/vm-clipboard.py >/tmp/vm-clipboard.log 2>&1 &
+    curl -sf --retry 3 http://10.0.2.2:7789/agent \
+      -o ~/.local/bin/omarchy-vm-clipboard-agent && \
+      chmod +x ~/.local/bin/omarchy-vm-clipboard-agent && \
+      ~/.local/bin/omarchy-vm-clipboard-agent --install
 
 If it fails, check `curl -s http://10.0.2.2:7789/ping` prints `ok` first.
 
@@ -20,7 +21,11 @@ text last seen from the other side is remembered, so an observation equal to it
 is by definition not a new event. Publishing updates the remembered text BEFORE
 touching the real clipboard, so the echo of our own write is recognised.
 
-To stop it: pkill -f vm-clipboard.py
+Install it as a user service (persists across reboots):
+
+    ~/.local/bin/omarchy-vm-clipboard-agent --install
+
+To stop it: systemctl --user disable --now omarchy-vm-clipboard-agent
 """
 
 import json
@@ -197,5 +202,58 @@ def main():
     return 0
 
 
+UNIT_PATH = os.path.expanduser("~/.config/systemd/user/omarchy-vm-clipboard-agent.service")
+
+
+def install_unit():
+    """Install and start the agent as a user service (run INSIDE the guest).
+
+    Without this the bridge is only alive for the shell that started it; the
+    next reboot silently loses the clipboard again.
+    """
+    os.makedirs(os.path.dirname(UNIT_PATH), exist_ok=True)
+    unit = """[Unit]
+Description=Omarchy VM clipboard bridge agent
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env python3 %s
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+""" % os.path.abspath(__file__)
+    with open(UNIT_PATH, "w", encoding="utf-8") as fh:
+        fh.write(unit)
+    if subprocess.run(["systemctl", "--user", "daemon-reload"]).returncode != 0:
+        log("systemctl --user daemon-reload failed")
+        return 1
+    if subprocess.run(["systemctl", "--user", "enable", "--now",
+                       "omarchy-vm-clipboard-agent.service"]).returncode != 0:
+        log("could not enable the user service")
+        return 1
+    print("omarchy-vm-clipboard-agent installed and running")
+    return 0
+
+
+def uninstall_unit():
+    subprocess.run(["systemctl", "--user", "disable", "--now",
+                    "omarchy-vm-clipboard-agent.service"], check=False)
+    try:
+        os.remove(UNIT_PATH)
+    except FileNotFoundError:
+        pass
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+    print("omarchy-vm-clipboard-agent removed")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--install" in sys.argv[1:]:
+        sys.exit(install_unit())
+    if "--uninstall" in sys.argv[1:]:
+        sys.exit(uninstall_unit())
     sys.exit(main())

@@ -816,6 +816,29 @@ EOF
   fi
 }
 
+# Ableton fullscreen: Wine's own fullscreen normalisation (enabled for Live's
+# window class by the launcher) swallows Hyprland's SUPER+F request, so Live
+# tiles but never becomes a compositor fullscreen window. "off" is the value the
+# upstream troubleshooting page recommends; keep it in the user environment so
+# it survives launcher/desktop-entry regeneration and applies to every launch.
+step_fullscreen_env(){
+  msg "Ableton fullscreen: disable Wine fullscreen normalisation"
+  local dir="${XDG_CONFIG_HOME:-$HOME/.config}/environment.d"
+  mkdir -p "$dir"
+  cat > "$dir/90-ableton-fullscreen.conf" <<'EOF'
+# Hyprland SUPER+F is ignored while Wine normalises Live's "fullscreen" window.
+# "off" is the upstream cure (also fixes Live's shifted internal fullscreen).
+WINE_WIN32_FULLSCREEN_CLASS=off
+EOF
+  ok "environment.d rule written: $dir/90-ableton-fullscreen.conf"
+  # environment.d only applies at the next login; mirror it into the current
+  # systemd user session so the next launch from the app menu already works.
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user set-environment WINE_WIN32_FULLSCREEN_CLASS=off >/dev/null 2>&1 || true
+    dbus-update-activation-environment --systemd WINE_WIN32_FULLSCREEN_CLASS >/dev/null 2>&1 || true
+  fi
+}
+
 # ───────────────────────── Shared VST linking ─────────────────────────
 step_links(){
   msg "Linking the shared VST plugins (all DAWs)"
@@ -1529,6 +1552,7 @@ main(){
   step_install;  echo
   step_block_updates; echo
   step_hypr_rules; echo
+  step_fullscreen_env; echo
   step_links;    echo
   step_menu_entries; echo
   step_patch;     echo

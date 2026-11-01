@@ -3559,7 +3559,7 @@ cleanup_lists_cache(){
   find "$HOME/.cache/mosquito-audio-plugin-manager" -maxdepth 1 -type f \
     \( -name 'groups-*.tsv' -o -name 'parents-*.tsv' \) -delete 2>/dev/null || true
   find "${TMPDIR:-/tmp}" -maxdepth 1 -user "$(id -u)" -type f -name 'apm-groups-body.*' -delete 2>/dev/null || true
-  ok "all mosquito TUIs fast cache: setup/uninstall trees, status and APM plugin lists cleared."
+  ok "TUI query cache: setup/uninstall trees, status and APM plugin lists cleared."
 }
 
 cleanup_apm_inconsistencies(){

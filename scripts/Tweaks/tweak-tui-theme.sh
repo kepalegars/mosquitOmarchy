@@ -7,6 +7,7 @@
 echo "=== Fix TUI theme ==="
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/go-build-env.bash" ]] && source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/go-build-env.bash"  # contained Go caches (no ~/go)
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BIN_DIR="$HOME/.local/bin"
 

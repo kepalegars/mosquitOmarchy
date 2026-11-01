@@ -21,7 +21,7 @@
 #
 # Usage:
 #   ./omarchy-vm-share              # mount now
-#   ./omarchy-vm-share --install    # mount now + a unit that mounts on every boot
+#   ./omarchy-vm-share --install    # mount now + a boot unit + the clipboard agent
 #   ./omarchy-vm-share --uninstall  # remove the unit and unmount
 #   ./omarchy-vm-share --status     # is it mounted, and is the module there
 #
@@ -42,13 +42,14 @@ err(){ printf "${R}✗${N} %s\n" "$*" >&2; }
 
 need_root(){ [[ $EUID -eq 0 ]] || { err "run this as root, or with sudo"; exit 1; }; }
 
-# The 9p port only appears once the machine has enumerated the virtio device.
-# Waiting for it is the difference between a unit that works and one that fires
-# too early, fails, and never runs again until the next reboot.
-wait_for_port(){
+# 9p is a virtio DEVICE, not a virtio-serial port: it never appears under
+# /sys/class/virtio-ports (that path is for virtio-console/guest-agent ports),
+# so waiting on it always timed out and the mount never even ran. Wait for the
+# 9pnet_virtio driver to bind a device instead.
+wait_for_device(){
   local i
   for i in $(seq 1 50); do
-    compgen -G "/sys/class/virtio-ports/*${TAG}*" >/dev/null 2>&1 && return 0
+    compgen -G "/sys/bus/virtio/drivers/9pnet_virtio/virtio*" >/dev/null 2>&1 && return 0
     sleep 0.2
   done
   return 1
@@ -75,23 +76,27 @@ do_mount(){
     return 0
   fi
   load_module || return 1
-  if ! wait_for_port; then
-    err "the '$TAG' 9p port never appeared."
+  if ! wait_for_device; then
+    err "the '$TAG' 9p device never appeared."
     err "  On the host: the VM's .vm-config must have SHARED_FOLDER=\"on\","
     err "  and the launcher has to be regenerated after that change."
     return 1
   fi
   mkdir -p "$MOUNTPOINT"
   # version=9p2000.L: the modern protocol, and the reason a mount copied from an
-  # old tutorial fails on a current kernel. msize raises throughput; it is
-  # advisory and safe to omit.
-  if mount -t 9p -o trans=virtio,version=9p2000.L,msize=104857600 "$TAG" "$MOUNTPOINT"; then
-    ok "host folder mounted at $MOUNTPOINT"
-  else
-    err "mount failed."
-    err "  Try manually:  mount -t 9p -o trans=virtio,version=9p2000.L $TAG $MOUNTPOINT"
-    return 1
-  fi
+  # old tutorial fails on a current kernel. The first attempt can race the
+  # device probe even after the driver appears, so retry briefly.
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if mount -t 9p -o trans=virtio,version=9p2000.L,msize=104857600 "$TAG" "$MOUNTPOINT" 2>/dev/null; then
+      ok "host folder mounted at $MOUNTPOINT"
+      return 0
+    fi
+    sleep 0.3
+  done
+  err "mount failed."
+  err "  Try manually:  mount -t 9p -o trans=virtio,version=9p2000.L $TAG $MOUNTPOINT"
+  return 1
 }
 
 write_unit(){
@@ -121,6 +126,42 @@ EOF
   ok "boot unit installed: $UNIT_PATH"
 }
 
+# The clipboard bridge is the other half of the guest setup. The host serves
+# the agent next to this script, so installing both is one sudo command inside
+# the VM instead of two manual steps that are easy to half-do.
+install_clipboard_agent(){
+  local port="${OMARCHY_VM_CLIPBOARD_PORT:-7789}"
+  local user="${SUDO_USER:-}" home
+  command -v curl >/dev/null 2>&1 || { warn "curl missing — clipboard agent not installed"; return 0; }
+  if ! curl -sf --max-time 3 "http://10.0.2.2:${port}/ping" >/dev/null 2>&1; then
+    warn "clipboard bridge unreachable — skipping the clipboard agent"
+    warn "  relaunch the VM from the host, then re-run: sudo omarchy-vm-share --install"
+    return 0
+  fi
+  if [[ -z $user ]]; then
+    user="${USER:-$(id -un)}"
+  fi
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  [[ -n $home ]] || { warn "could not resolve $user's home — clipboard agent not installed"; return 0; }
+  if [[ $EUID -eq 0 && $user != root ]] && command -v runuser >/dev/null 2>&1; then
+    if runuser -u "$user" -- bash -c 'mkdir -p "$HOME/.local/bin" && curl -sf --retry 3 "http://10.0.2.2:'"$port"'/agent" -o "$HOME/.local/bin/omarchy-vm-clipboard-agent" && chmod +x "$HOME/.local/bin/omarchy-vm-clipboard-agent" && "$HOME/.local/bin/omarchy-vm-clipboard-agent" --install'; then
+      ok "clipboard agent installed for $user"
+    else
+      warn "clipboard agent install failed — run it manually as $user"
+    fi
+  else
+    mkdir -p "$home/.local/bin"
+    if curl -sf --retry 3 "http://10.0.2.2:${port}/agent" -o "$home/.local/bin/omarchy-vm-clipboard-agent" \
+      && chmod +x "$home/.local/bin/omarchy-vm-clipboard-agent" \
+      && HOME="$home" "$home/.local/bin/omarchy-vm-clipboard-agent" --install; then
+      ok "clipboard agent installed for $user"
+    else
+      warn "clipboard agent install failed — run it manually as $user"
+    fi
+  fi
+  return 0
+}
+
 do_uninstall(){
   need_root
   if systemctl is-enabled --quiet "$UNIT_NAME" 2>/dev/null; then
@@ -134,12 +175,20 @@ do_uninstall(){
   return 0
 }
 
-# Guest or host? Inside the VM the virtio_9p module exists; on the host it
-# does not. This one script serves both sides: the guest mounts, the host
-# reports readiness AND prints the exact commands to run inside the VM (the
-# VM window has no terminal output, so the launch-time print is invisible
-# when started from the app entry — this is the discoverable copy).
-on_guest(){ [[ -d /sys/module/virtio_9p ]]; }
+# Guest or host? This one script serves both sides: the guest mounts, the host
+# reports readiness AND prints the exact commands to run inside the VM (the VM
+# window has no terminal output, so the launch-time print is invisible when
+# started from the app entry — this is the discoverable copy).
+#
+# Do NOT detect the guest by /sys/module/virtio_9p: on a fresh install the
+# module is not loaded yet, so that check rejected the very command whose job
+# was to load it ("runs INSIDE the VM"). Detect the virtual machine instead.
+on_guest(){
+  if command -v systemd-detect-virt >/dev/null 2>&1; then
+    systemd-detect-virt --vm --quiet 2>/dev/null && return 0
+  fi
+  grep -qiE 'qemu|kvm' /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name 2>/dev/null
+}
 
 do_status_host(){
   local _bport="${OMARCHY_VM_CLIPBOARD_PORT:-7789}"
@@ -160,9 +209,8 @@ do_status_host(){
   local _run=0 _d
   for _d in "$_vms"/*/; do [[ -f "${_d}vm.pid" ]] && _run=$((_run+1)); done 2>/dev/null
   printf 'running   : %d VM(s)\n' "$_run"
-  printf '\nInside the VM, run these two lines (once for share, each boot for the agent):\n'
+  printf '\nInside the VM, run this once (shared folder + clipboard, both persistent):\n'
   printf '  curl -sf --retry 3 http://10.0.2.2:%s/share -o ~/omarchy-vm-share && sudo bash ~/omarchy-vm-share --install\n' "$_bport"
-  printf '  curl -sf --retry 3 http://10.0.2.2:%s/agent -o ~/vm-clipboard.py && test -s ~/vm-clipboard.py && nohup python3 ~/vm-clipboard.py >/tmp/vm-clipboard.log 2>&1 &\n' "$_bport"
 }
 
 do_status(){
@@ -174,10 +222,10 @@ do_status(){
   else
     printf 'virtio_9p : NOT loaded\n'
   fi
-  if wait_for_port_quiet; then
-    printf '9p port   : present\n'
+  if wait_for_device_quiet; then
+    printf '9p device : present\n'
   else
-    printf '9p port   : absent (is SHARED_FOLDER=on on the host?)\n'
+    printf '9p device : absent (is SHARED_FOLDER=on on the host?)\n'
   fi
   # The host clipboard bridge serves this script and the agent download: if
   # /ping is unreachable, the VM was launched without the bridge (old
@@ -199,8 +247,8 @@ do_status(){
     && printf 'boot unit : enabled\n' || printf 'boot unit : not installed\n'
 }
 
-wait_for_port_quiet(){
-  compgen -G "/sys/class/virtio-ports/*${TAG}*" >/dev/null 2>&1
+wait_for_device_quiet(){
+  compgen -G "/sys/bus/virtio/drivers/9pnet_virtio/virtio*" >/dev/null 2>&1
 }
 
 main(){
@@ -210,7 +258,7 @@ main(){
       on_guest || { err "$action runs INSIDE the VM — on the host only --status makes sense."; return 1; } ;;
   esac
   case "$action" in
-    --install)          do_mount && write_unit ;;
+    --install)          do_mount && write_unit && install_clipboard_agent ;;
     --mount|--mount-nodep) do_mount ;;
     --uninstall)        do_uninstall ;;
     --status)           do_status ;;

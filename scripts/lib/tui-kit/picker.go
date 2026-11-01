@@ -437,9 +437,10 @@ func (d pickerDelegate) titleStyleFor(pi PickerItem, index, selected int) lipglo
 		return terminalRowStyle(false, index == selected)
 	}
 	if pi.Engage {
-		// Selected: a plain accent, no pulse. Unselected: alternate the TEXT
-		// colour accent ↔ white at a calm pace; the row never gets a block.
-		if index == selected || (time.Now().UnixNano()/int64(engagePulseInterval))%2 == 0 {
+		// Always pulse, focused or not: the engagement buttons are the rows
+		// that should pull the eye. Alternate the TEXT colour accent ↔ white;
+		// the row never gets a block.
+		if (time.Now().UnixNano()/int64(engagePulseInterval))%2 == 0 {
 			return StyleAccent
 		}
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Bold(true)

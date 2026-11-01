@@ -814,7 +814,7 @@ OVMF_VARS="OVMF_VARS.fd"
 # the ISO first. Default "c" means: install once, and every reboot boots the
 # installed Omarchy automatically.
 BOOT_ORDER="c"
-SHARED_FOLDER="off"
+SHARED_FOLDER="on"
 SHARED_DIR="$SHARED_DIR"
 SSH_PORT=$port
 DISPLAY_BACKEND="gtk"
@@ -860,7 +860,7 @@ OVMF_VARS="${OVMF_VARS:-OVMF_VARS.fd}"
 BOOT_ORDER="${BOOT_ORDER:-c}"
 ISO_PATH="${ISO_PATH:-}"
 SHARED_DIR="${SHARED_DIR:-${MOSQUITO_VM_ROOT:-$HOME/VMs}/shared}"
-SHARED_FOLDER="${SHARED_FOLDER:-off}"
+SHARED_FOLDER="${SHARED_FOLDER:-on}"
 SSH_PORT="${SSH_PORT:-2222}"
 DISPLAY_BACKEND="${DISPLAY_BACKEND:-gtk}"
 GPU_ACCEL="${GPU_ACCEL:-off}"
@@ -1071,18 +1071,16 @@ if [[ "$CLIPBOARD" == "on" ]] && command -v python3 >/dev/null 2>&1; then
     echo "  Clipboard bridge: no bridge script found — guest clipboard unavailable." >&2
   fi
   if [[ "$CLIPBOARD" == "on" ]]; then
-    printf '\n  Guest clipboard + shared folder, inside the VM:\n'
+    printf '\n  Guest clipboard + shared folder, inside the VM (one command):\n'
     printf '    curl -sf --retry 3 http://10.0.2.2:%s/share -o ~/omarchy-vm-share && sudo bash ~/omarchy-vm-share --install\n' "$CLIPBOARD_PORT"
-    printf '    curl -sf --retry 3 http://10.0.2.2:%s/agent -o ~/vm-clipboard.py && test -s ~/vm-clipboard.py && nohup python3 ~/vm-clipboard.py >/tmp/vm-clipboard.log 2>&1 &\n' "$CLIPBOARD_PORT"
+    printf '    (it mounts the shared folder, installs the boot unit and the clipboard agent)\n'
     # The lines above go to stdout, which nobody sees when the VM is started
     # from the app entry. Mirror them into a file so they are retrievable on
     # the host (and `omarchy-vm-share --status` prints them too).
     {
       printf 'Guest setup for __VM_NAME__ — run INSIDE the VM.\n'
-      printf 'Share (once; persists via a boot unit):\n'
+      printf 'Shared folder + clipboard (once; both persist via user/system units):\n'
       printf '  curl -sf --retry 3 http://10.0.2.2:%s/share -o ~/omarchy-vm-share && sudo bash ~/omarchy-vm-share --install\n' "$CLIPBOARD_PORT"
-      printf 'Clipboard agent (each boot):\n'
-      printf '  curl -sf --retry 3 http://10.0.2.2:%s/agent -o ~/vm-clipboard.py && test -s ~/vm-clipboard.py && nohup python3 ~/vm-clipboard.py >/tmp/vm-clipboard.log 2>&1 &\n' "$CLIPBOARD_PORT"
     } >"$VM_DIR/guest-setup.txt" 2>/dev/null || true
   fi
 fi

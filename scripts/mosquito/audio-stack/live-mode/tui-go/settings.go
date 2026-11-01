@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -12,8 +13,9 @@ import (
 // next activation applies. The file is shell-sourceable (KEY="value"), the
 // exact format live-mode and its watchdog read back via source.
 
-// knownApps is the fixed background-app set the close-at-start list draws
-// from (the same names live-mode detects while running).
+// knownApps is the historical default close-at-start set. The chooser itself
+// lists what is actually installed (installedApps); these names only seed the
+// default selection and keep settings written by older versions meaningful.
 var knownApps = []string{"kDrive", "qBittorrent", "Steam", "Discord", "Slack", "Spotify"}
 
 type Settings struct {
@@ -82,16 +84,11 @@ func loadSettings() Settings {
 		s.CloseApps = v != "no"
 	}
 	if v, ok := kv["CLOSE_APPS_LIST"]; ok {
-		var list []string
-		for _, name := range splitFields(v) {
-			for _, k := range knownApps {
-				if stringsEqualFold(name, k) {
-					list = append(list, k)
-					break
-				}
-			}
-		}
-		s.CloseAppsList = list
+		// Keep every saved name, including apps that are not installed right
+		// now: they stay silent in the chooser and come back ticked when the
+		// app is reinstalled. Filtering against a hardcoded list used to erase
+		// them for good.
+		s.CloseAppsList = parseAppList(v)
 	}
 	if v, ok := kv["ROUTING_TOOL"]; ok {
 		s.RoutingTool = v != "no"
@@ -221,18 +218,109 @@ func nextPatchbayApp(cur string) string {
 	return patchbayApps[0]
 }
 
-func splitFields(s string) []string {
-	var out []string
-	for _, f := range strings.Fields(s) {
-		out = append(out, f)
+// parseAppList accepts both settings formats: the old space-separated list and
+// the current "|"-separated one, which allows app names containing spaces.
+func parseAppList(v string) []string {
+	raw := strings.Fields(v)
+	if strings.Contains(v, "|") {
+		raw = strings.Split(v, "|")
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(raw))
+	for _, name := range raw {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
 	}
 	return out
 }
 
+// joinFields writes names with a "|" delimiter so "Visual Studio Code" stays
+// one entry. Commas/colons occur in real app names; "|" does not.
 func joinFields(list []string) string {
-	return strings.Join(list, " ")
+	return strings.Join(list, "|")
 }
 
-func stringsEqualFold(a, b string) bool {
-	return strings.EqualFold(a, b)
+// installedApps lists the applications shown in the Omarchy app menu: every
+// visible [Desktop Entry] of Type=Application in the XDG application dirs.
+// Hidden/NoDisplay entries are skipped, which is exactly what the menu does.
+func installedApps() []string {
+	dirs := []string{}
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, filepath.Join(home, ".local", "share", "applications"))
+	}
+	if data := os.Getenv("XDG_DATA_HOME"); data != "" {
+		dirs = append(dirs, filepath.Join(data, "applications"))
+	}
+	dataDirs := os.Getenv("XDG_DATA_DIRS")
+	if dataDirs == "" {
+		dataDirs = "/usr/local/share:/usr/share"
+	}
+	for _, d := range strings.Split(dataDirs, ":") {
+		if d != "" {
+			dirs = append(dirs, filepath.Join(d, "applications"))
+		}
+	}
+	seen := map[string]bool{}
+	var apps []string
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, ent := range entries {
+			if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".desktop") {
+				continue
+			}
+			if name, ok := desktopAppName(filepath.Join(dir, ent.Name())); ok && !seen[name] {
+				seen[name] = true
+				apps = append(apps, name)
+			}
+		}
+	}
+	sort.Slice(apps, func(i, j int) bool { return strings.ToLower(apps[i]) < strings.ToLower(apps[j]) })
+	return apps
+}
+
+// desktopAppName returns an app's menu name when the entry is a visible
+// application. Only the [Desktop Entry] section counts; the localized Name[xx]
+// keys are ignored on purpose so the stored name does not change with locale.
+func desktopAppName(path string) (string, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	section, name, kind := "", "", ""
+	hidden := false
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = line
+			continue
+		}
+		if section != "[Desktop Entry]" || line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		val = strings.TrimSpace(val)
+		switch key {
+		case "Name":
+			if name == "" {
+				name = val
+			}
+		case "Type":
+			kind = val
+		case "NoDisplay", "Hidden":
+			if val == "true" {
+				hidden = true
+			}
+		}
+	}
+	return name, name != "" && kind == "Application" && !hidden
 }

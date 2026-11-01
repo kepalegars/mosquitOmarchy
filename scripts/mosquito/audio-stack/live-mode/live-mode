@@ -55,7 +55,7 @@ EOF
 
 THERMAL_LIMIT_C=85
 CLOSE_APPS=yes
-CLOSE_APPS_LIST="kDrive qBittorrent Steam Discord Slack Spotify"
+CLOSE_APPS_LIST="kDrive|qBittorrent|Steam|Discord|Slack|Spotify"
 ROUTING_TOOL=yes
 PATCHBAY_APP=mixbay+qpwgraph
 NO_GAPS=yes
@@ -89,16 +89,10 @@ load_settings() {
 
   case $THERMAL_LIMIT_C in 95|90|85|80|75) ;; *) THERMAL_LIMIT_C=85 ;; esac
   [[ $CLOSE_APPS == no ]] || CLOSE_APPS=yes
-  # Normalize the configured app list: keep only known app names, in fixed
-  # order, as a space-separated string.
-  local known
-  local filtered=""
-  for known in kDrive qBittorrent Steam Discord Slack Spotify; do
-    case " $CLOSE_APPS_LIST " in
-      *" $known "*) filtered+="$known " ;;
-    esac
-  done
-  CLOSE_APPS_LIST="${filtered% }"
+  # Keep every saved name, installed or not. The Live Manager only lists
+  # installed apps, but a name whose app is temporarily gone must survive here
+  # so it is still selected when the app comes back. Never filter it against a
+  # hardcoded list.
   # The remaining four: only an explicit "no" turns them off, so a settings file
   # written by an older version keeps the behaviour it had.
   [[ $ROUTING_TOOL == no ]] || ROUTING_TOOL=yes
@@ -228,25 +222,95 @@ manager_single_instance_gate() {
   printf '%s\n' "$$" > "$MANAGER_PIDFILE"
 }
 
-detect_background_apps() {
-  # Intersects the running apps with the configured close-at-start list
-  # (Live Manager). Names only (no pid), so the kill prompt reads cleanly.
-  local entries=() pid cmd name
-  while read -r pid cmd rest; do
-    [[ -n "$pid" && -n "$cmd" ]] || continue
-    name=$(basename "$cmd")
-    case " $CLOSE_APPS_LIST " in
-      *" kDrive "*) [[ "$name" == kDrive || "$name" == kDrive ]] && entries+=("kDrive") ;;
-    esac
-    case "$name" in
-      qbittorrent) [[ " $CLOSE_APPS_LIST " == *" qBittorrent "* ]] && entries+=("qBittorrent") ;;
-      steam)       [[ " $CLOSE_APPS_LIST " == *" Steam "* ]] && entries+=("Steam") ;;
-      discord)     [[ " $CLOSE_APPS_LIST " == *" Discord "* ]] && entries+=("Discord") ;;
-      slack)       [[ " $CLOSE_APPS_LIST " == *" Slack "* ]] && entries+=("Slack") ;;
-      spotify)     [[ " $CLOSE_APPS_LIST " == *" Spotify "* ]] && entries+=("Spotify") ;;
-    esac
+# One entry per installed app in the Omarchy app menu, as
+#   Name<TAB>match1 match2
+# where the matches are the Exec basename and StartupWMClass, lowercased. The
+# fixed process-name table this replaces missed every app installed outside it.
+app_catalog() {
+  local dirs=() d f
+  dirs+=("${XDG_DATA_HOME:-$HOME/.local/share}/applications")
+  IFS=: read -r -a _xdg_dirs <<< "${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  for d in "${_xdg_dirs[@]}"; do
+    [[ -n $d ]] && dirs+=("$d/applications")
+  done
+  for d in "${dirs[@]}"; do
+    for f in "$d"/*.desktop; do
+      [[ -f $f ]] || continue
+      awk -F= '
+        /^\[/ { inentry = ($0 == "[Desktop Entry]"); next }
+        !inentry { next }
+        /^Name=/ { if (name == "") name = substr($0, 6) }
+        /^Exec=/ { if (exec == "") exec = substr($0, 6) }
+        /^StartupWMClass=/ { wm = substr($0, 16) }
+        /^Type=/ { type = substr($0, 6) }
+        /^(NoDisplay|Hidden)=true/ { hidden = 1 }
+        END {
+          if (name == "" || type != "Application" || hidden) exit
+          n = split(exec, part, /[ \t]+/)
+          exe = ""
+          for (i = 1; i <= n; i++) {
+            t = part[i]
+            gsub(/^["\047]|["\047]$/, "", t)
+            if (t ~ /^[A-Za-z_][A-Za-z0-9_]*=/) continue
+            if (t == "env" || t ~ /^-/) continue
+            sub(/.*\//, "", t)
+            exe = t
+            break
+          }
+          casefold = tolower(exe)
+          if (casefold ~ /^(sh|bash|python|python3|flatpak|env|xdg-terminal-exec|omarchy-launch-or-focus-tui|uwsm|gio|gtk4-launch)$/) casefold = ""
+          matches = casefold
+          if (wm != "") matches = matches " " tolower(wm)
+          gsub(/^ +/, "", matches)
+          if (matches != "") print name "\t" matches
+        }' "$f"
+    done
+  done | sort -u
+}
+
+# Saved list: current "|" format (names may contain spaces), falling back to the
+# old space-separated one.
+app_selected() {
+  local name="$1"
+  case "$CLOSE_APPS_LIST" in
+    *"|"*) [[ "|$CLOSE_APPS_LIST|" == *"|$name|"* ]] ;;
+    *)     [[ " $CLOSE_APPS_LIST " == *" $name "* ]] ;;
+  esac
+}
+
+# Print "pid<TAB>app name" for each running menu app whose executable or WM
+# class matches the catalog entry. The process is identified by /proc/<pid>/comm
+# too, because pgrep -a prints the full argv (wrappers change argv[0]).
+_running_menu_apps() {
+  local catalog pid rest base comm name matches m
+  catalog="$(app_catalog)"
+  [[ -n $catalog ]] || return 0
+  while read -r pid rest; do
+    [[ -n $pid && -n $rest ]] || continue
+    base="$(basename -- "${rest%% *}")"; base="${base,,}"
+    comm="$(cat "/proc/$pid/comm" 2>/dev/null || true)"; comm="${comm,,}"
+    while IFS=$'\t' read -r name matches; do
+      [[ -n $name ]] || continue
+      for m in $matches; do
+        if [[ $base == "${m,,}" || $comm == "${m,,}" ]]; then
+          printf '%s\t%s\n' "$pid" "$name"
+          break
+        fi
+      done
+    done <<< "$catalog"
   done < <(pgrep -a -u "$REAL_USER" 2>/dev/null || true)
-  printf '%s\n' "${entries[@]}" | sort -u
+}
+
+detect_background_apps() {
+  # Names only (no pid), so the kill prompt reads cleanly.
+  local selected pid name
+  declare -A seen=()
+  while IFS=$'\t' read -r pid name; do
+    [[ -n $name ]] || continue
+    app_selected "$name" || continue
+    seen["$name"]=1
+  done < <(_running_menu_apps)
+  printf '%s\n' "${!seen[@]}" | sort
 }
 
 close_background_apps() {
@@ -257,25 +321,19 @@ close_background_apps() {
   local apps_text
   apps_text=$(echo "$list" | sed 's/^/  • /')
   if confirm $'Close these background apps?\n'"$apps_text"; then
-    local pid cmd name
-    while read -r pid cmd rest; do
-      [[ -n "$pid" && -n "$cmd" ]] || continue
-      name=$(basename "$cmd")
-      case "$name" in
-        kDrive|kDrive)
-          [[ " $CLOSE_APPS_LIST " == *" kDrive "* ]] && { kill "$pid" 2>/dev/null && ok "Closed kDrive" || warn "Could not close kDrive"; } ;;
-        qbittorrent)
-          [[ " $CLOSE_APPS_LIST " == *" qBittorrent "* ]] && { kill "$pid" 2>/dev/null && ok "Closed qBittorrent" || warn "Could not close qBittorrent"; } ;;
-        steam)
-          [[ " $CLOSE_APPS_LIST " == *" Steam "* ]] && { kill "$pid" 2>/dev/null && ok "Closed Steam" || warn "Could not close Steam"; } ;;
-        discord)
-          [[ " $CLOSE_APPS_LIST " == *" Discord "* ]] && { kill "$pid" 2>/dev/null && ok "Closed Discord" || warn "Could not close Discord"; } ;;
-        slack)
-          [[ " $CLOSE_APPS_LIST " == *" Slack "* ]] && { kill "$pid" 2>/dev/null && ok "Closed Slack" || warn "Could not close Slack"; } ;;
-        spotify)
-          [[ " $CLOSE_APPS_LIST " == *" Spotify "* ]] && { kill "$pid" 2>/dev/null && ok "Closed Spotify" || warn "Could not close Spotify"; } ;;
-      esac
-    done < <(pgrep -a -u "$REAL_USER" 2>/dev/null || true)
+    local pid name
+    declare -A closed=()
+    while IFS=$'\t' read -r pid name; do
+      [[ -n $pid && -n $name ]] || continue
+      app_selected "$name" || continue
+      [[ -n ${closed[$name]+x} ]] && continue
+      if kill "$pid" 2>/dev/null; then
+        closed["$name"]=1
+        ok "Closed $name"
+      else
+        warn "Could not close $name"
+      fi
+    done < <(_running_menu_apps)
     sleep 1
   else
     ok "Background apps kept running."

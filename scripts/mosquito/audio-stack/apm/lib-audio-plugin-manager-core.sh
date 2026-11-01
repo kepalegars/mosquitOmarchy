@@ -1989,6 +1989,30 @@ fingerprint_of(){
 }
 
 
+# Wine/Inno Setup maps a blank window titled exactly "Setup" next to the real
+# "Setup - <product>" wizard. It is the immovable black rectangle that sits in
+# a corner for the whole install; Hyprland window rules cannot catch it because
+# the title is set after the window maps. This watcher polls the one session it
+# runs in, and moves ONLY a "Setup" window whose class also owns a titled
+# "Setup - ..." sibling — so an installer whose actual wizard is titled
+# "Setup" is never hidden.
+apm_installer_bg_watch_start(){
+  # Small standalone polling helper: the title of the blank "Setup" window is
+  # set after the window maps, so a Hyprland window rule cannot catch it. The
+  # helper moves only a "Setup" window that has a "Setup - ..." / language
+  # dialog sibling; the real wizard is never hidden.
+  local helper="$HOME/.local/bin/mosquito-wine-installer-bg"
+  [[ -x $helper ]] || return 0
+  _apm_bg_stop="$(mktemp 2>/dev/null)" || return 0
+  setsid "$helper" "$_apm_bg_stop" >/dev/null 2>&1 &
+  _apm_bg_pid=$!
+}
+apm_installer_bg_watch_stop(){
+  [[ -n ${_apm_bg_stop:-} ]] && rm -f "$_apm_bg_stop" 2>/dev/null || true
+  [[ -n ${_apm_bg_pid:-} ]] && kill "$_apm_bg_pid" 2>/dev/null || true
+  _apm_bg_pid=""; _apm_bg_stop=""
+}
+
 install_manager_app(){
   local file="$1" prefix="$2" exe name stem slug cand icon
   msg "This installer ships a manager, not a plugin — installing the manager."
@@ -2029,6 +2053,7 @@ install_manager_app(){
   # waited on, and its exit code is not consulted: what the user closing the
   # window means is that it is DONE.
   local -a _pids=()
+  apm_installer_bg_watch_start
   WINEPREFIX="$prefix" "$(apm_wine)" "$file" &
   local _pid=$!
   _pids+=("$_pid")
@@ -2039,6 +2064,7 @@ install_manager_app(){
   for _p in "${_pids[@]}"; do
     wait "$_p" 2>/dev/null || true
   done
+  apm_installer_bg_watch_stop
   # For Kilohearts the installer IS the manager, so the thing being watched is
   # the very file that was launched — not anything discovered afterwards.
   msg "Open it, install what you want, then close it. Nothing is touched before you close it."
@@ -2210,7 +2236,9 @@ install_plugin() {
   msg "Running $file through wine ($(apm_wine_runtime) runtime; prefix: $wine_prefix — the installer shows its own window)…"
   apm_kinetic_scroll_suspend
   local wine_rc=0 wine_out=""
+  apm_installer_bg_watch_start
   wine_out="$(WINEPREFIX="$wine_prefix" "$(apm_wine)" "$file" 2>&1)" || wine_rc=$?
+  apm_installer_bg_watch_stop
   apm_kinetic_scroll_resume
   [[ -n $wine_out ]] && printf '%s\n' "$wine_out" >&2
   # A wine that exits non-zero is the FAILURE, and it must be reported as such.

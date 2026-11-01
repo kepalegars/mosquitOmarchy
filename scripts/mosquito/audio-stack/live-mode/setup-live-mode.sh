@@ -18,6 +18,7 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/marker-strip.bash"  # marker_strip: safe managed-block removal
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/elevate.bash"  # mq_sudo: themed prompt, one question per run
 set -euo pipefail
+[[ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/go-build-env.bash" ]] && source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/go-build-env.bash"  # contained Go caches (no ~/go)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REAL_USER="${SUDO_USER:-${LOGNAME:-$USER}}"

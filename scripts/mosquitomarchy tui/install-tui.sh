@@ -26,6 +26,7 @@
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/lib/elevate.bash"   # mq_sudo: native pkexec prompt when not root
 set -euo pipefail
+[[ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/go-build-env.bash" ]] && source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/go-build-env.bash"  # contained Go caches (no ~/go)
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TUI_GO="$REPO/scripts/mosquitomarchy tui/tui-go"

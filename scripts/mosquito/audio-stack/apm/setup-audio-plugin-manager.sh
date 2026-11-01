@@ -34,6 +34,7 @@
 #   ./setup-audio-plugin-manager.sh --uninstall
 # =============================================================================
 set -euo pipefail
+[[ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/go-build-env.bash" ]] && source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/go-build-env.bash"  # contained Go caches (no ~/go)
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/elevate.bash"  # mq_sudo: native pkexec prompt when not root
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/wine-menu.bash"  # wine-menu: drop the Start-Menu shortcuts Wine republishes
 
@@ -67,6 +68,7 @@ if ((UNINSTALL)); then
         "$BIN_DIR/mosquito-audio-plugin-manager-actions" \
         "$BIN_DIR/mosquito-audio-plugin-manager-tui" \
         "$BIN_DIR/lib-audio-plugin-manager-core.sh" \
+        "$BIN_DIR/mosquito-wine-installer-bg" \
         "$BIN_DIR/known-plugins.tsv"
   rm -f "$APPS_DIR/mosquito-audio-plugin-manager.desktop" \
         "$HOME/.local/share/icons/hicolor/256x256/apps/mosquito-audio-plugin-manager.png"
@@ -133,6 +135,9 @@ deploy_one "mosquito-audio-plugin-manager-actions"
 # The core/actions call the linker next to themselves first, so a stale copy in
 # ~/.local/bin silently overrides the repo version. Deploy it like the rest.
 deploy_one "link-vst-shared.sh"
+install -m 0755 "$SCRIPT_DIR/../../../lib/wine-installer-bg.sh" "$BIN_DIR/mosquito-wine-installer-bg" \
+  && ok "mosquito-wine-installer-bg deployed: $BIN_DIR/mosquito-wine-installer-bg" \
+  || warn "wine-installer-bg helper not found — the blank Wine Setup window will stay visible"
 
 # known-plugins.tsv is DATA, not code: it must ship next to the library or every
 # installer silently reports "unknown plugin" again, with no error to notice.
@@ -306,6 +311,7 @@ o.window({ class = "(?i)^explorer\\.exe$" }, { workspace = "special:wine-tray", 
 EOF
 hyprctl reload >/dev/null 2>&1 || true
 ok "Hyprland rule hiding Wine's System Tray window installed/updated ($HYPR_CONF)"
+
 
 # -----------------------------------------------------------------------------
 # 2. Menu entry

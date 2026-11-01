@@ -27,7 +27,7 @@ set -euo pipefail
 
 APPS="$HOME/.local/share/applications"
 LIVE="$HOME/.local/bin/ableton-live"
-WRAPPER="$HOME/.local/bin/ableton-live-fs-fixed"
+WRAPPER="$HOME/.local/bin/ableton-live-fx"
 
 usage() { sed -n '2,26p' "$0"; exit 0; }
 

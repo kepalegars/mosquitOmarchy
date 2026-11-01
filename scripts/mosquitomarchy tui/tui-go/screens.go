@@ -5624,7 +5624,7 @@ var cleanupOrder = []string{
 
 var cleanupLabels = map[string]string{
 	"setup-cache":         "mosquitOmarchy setup cache (interrupted installs, stray build file)",
-	"lists-cache":         "all mosquito TUIs fast cache (lists, trees, plugin groups)",
+	"lists-cache":         "TUI query cache (setup/uninstall, status, plugin lists)",
 	"apm-quarantine":      "APM: quarantine (parked uninstalled files)",
 	"apm-inconsistencies": "APM: inconsistencies (plugin log / orphan fixes)",
 	"apm-drives":          "APM: redundant Wine drive letters",

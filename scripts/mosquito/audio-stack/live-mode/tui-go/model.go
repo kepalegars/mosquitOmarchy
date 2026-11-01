@@ -123,14 +123,16 @@ func (m model) mainItems() []tuikit.PickerItem {
 	}
 }
 
-// appsItems renders the known background apps with a ✓/○ marker for the
-// configured close-at-start set (same shape as the managers' toggle lists).
+// appItems renders every installed app with the kit's ○/● check mark. Apps
+// that are selected but currently uninstalled are not shown (and their names
+// stay in CloseAppsList, so they come back ticked if reinstalled).
 func (s Settings) appItems() []tuikit.PickerItem {
-	items := make([]tuikit.PickerItem, len(knownApps))
-	for i, name := range knownApps {
+	apps := installedApps()
+	items := make([]tuikit.PickerItem, len(apps))
+	for i, name := range apps {
 		mark := "○"
 		if hasApp(s.CloseAppsList, name) {
-			mark = "✓"
+			mark = "●"
 		}
 		items[i] = tuikit.PickerItem{Display: mark + " " + name, Value: name}
 	}

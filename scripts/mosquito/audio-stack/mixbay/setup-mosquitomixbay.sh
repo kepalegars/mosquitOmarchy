@@ -26,6 +26,7 @@
 # sibling levels-guard module. Installing Mixbay alone never touches them.
 # =============================================================================
 set -euo pipefail
+[[ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/go-build-env.bash" ]] && source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/go-build-env.bash"  # contained Go caches (no ~/go)
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/elevate.bash"  # mq_sudo
 
 info()  { echo -e "\033[1;34m==>\033[0m $*"; }
