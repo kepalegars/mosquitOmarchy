@@ -37,9 +37,12 @@ the BASE (0.5) that the plugin reads for its synthetic momentum events.
 
 Browsers GET kinetic momentum now (they are no longer opted out). Their gesture
 speed is the base 0.5; native apps get 1.8 from the non-browser
-`scroll_touchpad` rule in `input.lua`. DAWs (`ableton live 12 suite.exe`,
-`REAPER`) are opted out of momentum by default; override the list with
-`KINETIC_DISABLED_CLASSES="class1,class2"`. Set `KINETIC_SCROLL_ENABLED=0`
+`scroll_touchpad` rule in `input.lua`. App-specific opt-outs belong to the
+app's own installer (the Ableton installer disables momentum for
+`ableton live 12 suite.exe`/standard/intro); the touchpad module keeps
+`KINETIC_DISABLED_CLASSES` empty by default. Override it with
+`KINETIC_DISABLED_CLASSES="class1,class2"` if another app needs it. Set
+`KINETIC_SCROLL_ENABLED=0`
 before running the script to keep the classic touchpad configuration without
 the kinetic plugin.
 

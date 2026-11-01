@@ -39,8 +39,9 @@
 #                            1.8 from the scroll_touchpad rule in input.lua)
 #   KINETIC_SCROLL_ENABLED   kinetic scroll plugin     1 (set to 0 to disable)
 #   KINETIC_DECEL            momentum deceleration     0.96 (closer to 1 = longer glide)
-#   KINETIC_DISABLED_CLASSES comma-separated classes    "ableton live 12 suite.exe,REAPER"
-#                            (kinetic off in DAWs; browsers ARE kinetic)
+#   KINETIC_DISABLED_CLASSES comma-separated classes    ""
+#                            (app-specific opt-outs; Ableton is handled by
+#                            the Ableton installer, not here)
 #
 # Hyprland NOTE: SCROLL acceleration (scroll_points curve) is only exposed
 # with accel_profile = "custom" and remains ambiguous for a touchpad; this
@@ -87,9 +88,9 @@ SCROLL="${TOUCHPAD_SCROLL_FACTOR:-0.5}"
 KINETIC_ENABLED="${KINETIC_SCROLL_ENABLED:-1}"
 KINETIC_DECEL="${KINETIC_DECEL:-0.96}"
 # Exact Hyprland classes that keep native (no-momentum) touchpad scrolling.
-# Browsers are deliberately NOT in this list anymore: kinetic momentum now
-# applies everywhere except these apps (Ableton/Wine is the known-bad one).
-KINETIC_DISABLED_CLASSES="${KINETIC_DISABLED_CLASSES:-ableton live 12 suite.exe,REAPER}"
+# Empty by default: browsers ARE kinetic, and app-specific opt-outs belong to
+# the app module (e.g. the Ableton installer disables it for Ableton only).
+KINETIC_DISABLED_CLASSES="${KINETIC_DISABLED_CLASSES:-}"
 KINETIC_REPO="${KINETIC_REPO:-https://github.com/oliverlukschander/hypr-kinetic-scroll}"
 KINETIC_REV="${KINETIC_REV:-f533b6cd24447a9b4191bf5c798a267f64026f0b}"
 KINETIC_OK=0

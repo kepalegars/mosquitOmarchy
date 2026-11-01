@@ -236,8 +236,6 @@ fix_applied(){
   case "$1" in
     hyprland-crash)
       [[ -f "$HOME/.config/omarchy/hooks/post-boot.d/zzz-fix-hyprland-crash" ]] ;;
-    ableton-wine-scroll)
-      [[ -f "$HOME/.local/state/omarchy-ableton-scroll/backup.tsv" ]] ;;
     1px-seam)
       grep -q -- "mosquitomarchy-1px-seam" "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/looknfeel.lua" 2>/dev/null ;;
     hyprland-autofocus)
@@ -1205,7 +1203,7 @@ uninstall_state_signature(){
     _patch_applied "$APPS_DIR/$spec" && sig+="patch:$mid|"
   done
   # Applied quick fixes and tweaks.
-  for f in hyprland-crash ableton-wine-scroll 1px-seam; do
+  for f in hyprland-crash 1px-seam; do
     fix_applied "$f" && sig+="fix:$f|"
   done
   for t in keepassxc-window terminal-padding wine-theme; do
@@ -1389,7 +1387,7 @@ _uninstall_tree(){
   # never applied them, with nothing meaningful for removal to do.
   local -a applied_fixes=()
   local fid
-  for fid in hyprland-crash ableton-wine-scroll 1px-seam hyprland-autofocus; do
+  for fid in hyprland-crash 1px-seam hyprland-autofocus; do
     fix_applied "$fid" && applied_fixes+=("$fid")
   done
   if ((${#applied_fixes[@]})); then
@@ -2689,7 +2687,6 @@ cmd_uninstall(){
     for fid in "${fixids[@]}"; do
       case $fid in
         hyprland-crash)      flag=--remove;    script=code/modules/Fixes/fix-hyprland-crash.sh ;;
-        ableton-wine-scroll) flag=--uninstall; script=code/modules/Fixes/fix-wine-scroll.sh ;;
         1px-seam)            flag=--remove;    script=code/modules/Fixes/fix-1px-seam.sh ;;
         hyprland-autofocus)  flag=--remove;    script=code/modules/Fixes/fix-hyprland-autofocus.sh ;;
         *) warn "Fix '$fid' is not removable — skipped."; continue ;;

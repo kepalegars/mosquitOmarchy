@@ -779,7 +779,7 @@ step_hypr_rules(){
   cat >> "$HYPR_FILE" <<'EOF'
 -- >>> ableton-setup >>> Ableton Live window handling.
 --
--- Five concerns:
+-- Six concerns:
 --   1. the Windows installer (wine / XWayland) floats — it is a small
 --      wizard with its own sizing and it crashes the tiled layout otherwise;
 --   2. every Ableton window is fully opaque, because Omarchy's default
@@ -801,6 +801,15 @@ o.window({ class = "^ableton live 12 .*install.*$" }, { float = true, no_initial
 o.window({ class = "^ableton.*$" }, { tag = "-default-opacity", opaque = true, no_initial_focus = true, focus_on_activate = false })
 o.window({ class = "^ableton live 12 (suite|standard|intro)\\.exe$" }, { float = true, no_blur = true })
 o.window({ class = "^ableton live 12 (suite|standard|intro)\\.exe$", title = ".* - Ableton Live 12 (Suite|Standard|Intro)$" }, { float = false })
+-- 6. Ableton ONLY: no compositor kinetic momentum on the touchpad. The
+--    touchpad module keeps momentum for every other app; a DAW that keeps
+--    coasting after the fingers leave the pad is jarring. The plugin is
+--    optional, hence the guard.
+if hl.plugin.kinetic_scroll then
+  hl.plugin.kinetic_scroll.disable("ableton live 12 suite.exe")
+  hl.plugin.kinetic_scroll.disable("ableton live 12 standard.exe")
+  hl.plugin.kinetic_scroll.disable("ableton live 12 intro.exe")
+end
 -- <<< ableton-setup <<<
 EOF
   added=1
@@ -836,6 +845,36 @@ EOF
   if command -v systemctl >/dev/null 2>&1; then
     systemctl --user set-environment WINE_WIN32_FULLSCREEN_CLASS=off >/dev/null 2>&1 || true
     dbus-update-activation-environment --systemd WINE_WIN32_FULLSCREEN_CLASS >/dev/null 2>&1 || true
+  fi
+}
+
+# ───────────────────────── Wine pointer: no artificial inertia ─────────────────────────
+# The patched Wine's TouchpadInertia coasts after a quick scroll (the
+# "artificial momentum" Live shows) and waits for a 90 ms pause to detect the
+# end of a gesture (the odd delay and lost wheel inputs). Live must feel 1:1,
+# so write the persistent registry value; Wine reads it when its X11 driver
+# starts, i.e. on the next Live launch. This replaces the old
+# old workaround, which disabled the whole pointer feature set and broke the
+# touchpad in Live.
+step_wine_pointer(){
+  msg "Ableton/Wine pointer: disable scroll inertia (no artificial momentum)"
+  local prefix="$HOME/.wine-ableton" wine_bin
+  if [[ ! -d "$prefix/drive_c" ]]; then
+    warn "Wine prefix missing ($prefix) — skipping pointer setting."
+    return 0
+  fi
+  wine_bin="$(find "$HOME/.local/opt" -maxdepth 3 -type f -path '*/bin/wine' 2>/dev/null \
+    | grep -vE 'rollback|transaction' | sort -Vr | head -1)"
+  [[ -x "$wine_bin" ]] || wine_bin="$(command -v wine || true)"
+  if [[ ! -x "$wine_bin" ]]; then
+    warn "patched Wine binary not found — cannot set TouchpadInertia."
+    return 0
+  fi
+  if WINEPREFIX="$prefix" "$wine_bin" reg add 'HKCU\Software\Wine\X11 Driver' \
+      /v TouchpadInertia /d disabled /f >/dev/null 2>&1; then
+    ok "TouchpadInertia=disabled in $prefix"
+  else
+    warn "Could not write TouchpadInertia (Live may keep its artificial scroll momentum)."
   fi
 }
 
@@ -1553,6 +1592,7 @@ main(){
   step_block_updates; echo
   step_hypr_rules; echo
   step_fullscreen_env; echo
+  step_wine_pointer; echo
   step_links;    echo
   step_menu_entries; echo
   step_patch;     echo
