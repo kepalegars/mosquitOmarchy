@@ -98,6 +98,9 @@ if [[ $REMOVE == false ]]; then
   # status and only reports "-" instead of inventing a 0.0W. Tests:
   # code/modules/Plugins/battery-management/battery-status-test
   deploy_bin "battery-status"
+# CPU/GPU temperatures for the power panel (CPU always, GPU only on a
+# discrete card; APU-only machines get one compact CPU field).
+deploy_bin "battery-temps"
 
   [[ -d "$BIN_DIR" ]] && PATH="$BIN_DIR:$PATH"
 fi

@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# battery-temps — one compact line for the power panel:
+#   CPU 56°C            (no discrete GPU)
+#   CPU 56°C  GPU 54°C  (discrete GPU present)
+#
+# Reads hwmon directly: no lm_sensors dependency, no root. A missing sensor
+# prints "--" rather than hiding the field, so the layout never jumps.
+set -u
+
+read_temp() { # <hwmon dir> <input name>
+  local f="$1/$2"
+  [[ -r $f ]] || return 1
+  local raw
+  read -r raw < "$f" 2>/dev/null || return 1
+  [[ $raw =~ ^[0-9]+$ ]] || return 1
+  printf '%d' "$(( (raw + 500) / 1000 ))"
+}
+
+cpu_temp() {
+  local h name t
+  for h in /sys/class/hwmon/hwmon*; do
+    [[ -r "$h/name" ]] || continue
+    read -r name < "$h/name" 2>/dev/null || continue
+    case "$name" in
+      k10temp|coretemp|zenpower|cpu_thermal|acpitz)
+        t="$(read_temp "$h" temp1_input)" && { printf '%s' "$t"; return 0; }
+        ;;
+    esac
+  done
+  return 1
+}
+
+# A discrete GPU is a second display controller. On an APU-only laptop there is
+# exactly one, so no GPU field is printed (and the iGPU's temp is not mistaken
+# for a dGPU). NVIDIA is detected through nvidia-smi even when lspci is absent.
+has_discrete_gpu() {
+  local n=0
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    return 0
+  fi
+  command -v lspci >/dev/null 2>&1 || return 1
+  n="$(lspci -d ::0300 -mm 2>/dev/null | wc -l)"
+  n=$((n + $(lspci -d ::0302 -mm 2>/dev/null | wc -l)))
+  ((n > 1))
+}
+
+gpu_temp() {
+  local t h name boot
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    t="$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -n1 | tr -dc '0-9')"
+    [[ -n $t ]] && { printf '%s' "$t"; return 0; }
+  fi
+  for h in /sys/class/hwmon/hwmon*; do
+    [[ -r "$h/name" ]] || continue
+    read -r name < "$h/name" 2>/dev/null || continue
+    [[ $name == amdgpu ]] || continue
+    # boot_vga=0 is the dGPU; the iGPU is the boot VGA on an APU.
+    if [[ -r "$h/device/boot_vga" ]]; then
+      read -r boot < "$h/device/boot_vga" 2>/dev/null || boot=1
+      [[ $boot == 0 ]] || continue
+    fi
+    t="$(read_temp "$h" temp1_input)" && { printf '%s' "$t"; return 0; }
+  done
+  return 1
+}
+
+cpu="$(cpu_temp || true)"
+gpu=""
+if has_discrete_gpu; then
+  gpu="$(gpu_temp || true)"
+fi
+
+printf 'CPU %s°C' "${cpu:---}"
+[[ -n $gpu ]] && printf '  GPU %s°C' "$gpu"
+printf '\n'

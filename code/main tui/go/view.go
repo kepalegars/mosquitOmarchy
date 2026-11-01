@@ -39,34 +39,15 @@ func (m *model) homeBannerReserve() int {
 	return m.homeLayout().TitleRows
 }
 
-// filterBarLine composes the filter zone for the Setup/Uninstall screens:
-// when open ('f'), a small ACCENT-framed box (slightly taller than a plain
-// row) sits right above the shortcut hint bar. The empty state shows ONLY
-// the grey word "filter" — in the SAME grey the unusable picker rows use
-// (ColorDisabled, not ColorMuted), so a placeholder that is not a real
-// control does not read as a brighter, more actionable one. It is replaced
-// by the typed text the moment you start typing. No extra help text inside —
-// the shortcuts bar already documents the keys.
-func (m model) filterBarLine(hint string) string {
-	if !m.filterOpen {
-		return hint
-	}
+// filterInputLine is the one-line search field. It is drawn in the
+// notification slot BottomBar already reserves, so it replaces empty space
+// instead of growing the bar and pushing the list around.
+func (m model) filterInputLine() string {
 	inner := m.filterText + "▏"
 	if m.filterText == "" {
-		inner = lipgloss.NewStyle().Foreground(tuikit.ColorDisabled).Render("filter")
+		inner = "filter"
 	}
-	// Fixed 44-col field, centered: the box NEVER grows with the text, so
-	// there is no alternating left/right widening (a plain Align(Center)
-	// flipped the growth side every other keystroke).
-	inner = lipgloss.NewStyle().Width(44).Align(lipgloss.Center).Render(inner)
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(tuikit.ColorAccent).
-		Foreground(tuikit.ColorAccent).
-		Padding(0, 4).
-		Render(inner)
-	w := m.contentSizeW()
-	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(box) + "\n" + hint
+	return lipgloss.NewStyle().Foreground(tuikit.ColorAccent).Render("┃ " + inner)
 }
 
 func (m model) View() string {
@@ -83,6 +64,12 @@ func (m model) View() string {
 	// frame is enough.
 	cw := w
 	barLine := func(hint string) string {
+		if m.filterOpen {
+			// The filter replaces the notification row, which is blank when
+			// there is no toast. That row is already reserved by BottomBar, so
+			// opening the filter never adds height nor moves the interface.
+			return tuikit.BottomBar(m.filterInputLine(), hint, cw)
+		}
 		return tuikit.BottomBar(m.toast.View(), hint, cw)
 	}
 
@@ -163,7 +150,7 @@ func (m model) View() string {
 			title = screenTitle("Setup", w)
 		}
 		body = m.setupPicker.View()
-		bar = barLine(m.filterBarLine(m.setupPicker.ShortcutsHint()))
+		bar = barLine(m.setupPicker.ShortcutsHint())
 	case scrSetupCat:
 		if m.treeMode == "uninstall" {
 			title = screenTitle("Uninstall — "+m.setupCatLabel(), w)
@@ -171,7 +158,7 @@ func (m model) View() string {
 			title = screenTitle("Setup — "+m.setupCatLabel(), w)
 		}
 		body = m.setupCatPicker.View()
-		bar = barLine(m.filterBarLine(m.setupCatPicker.ShortcutsHint()))
+		bar = barLine(m.setupCatPicker.ShortcutsHint())
 	case scrUpdate:
 		title = screenTitle("Update", w)
 		body = m.updateBody()
@@ -211,7 +198,7 @@ func (m model) View() string {
 	case scrAddons:
 		title = screenTitle("Addons", w)
 		body = m.addonsPicker.View()
-		bar = barLine(m.filterBarLine(m.addonsPicker.ShortcutsHint()))
+		bar = barLine(m.addonsPicker.ShortcutsHint())
 	case scrCleanup:
 		title = screenTitle("Cleanup temporary files", w)
 		body = m.cleanupPicker.View()

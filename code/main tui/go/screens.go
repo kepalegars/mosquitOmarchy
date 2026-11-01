@@ -4168,9 +4168,7 @@ func (m model) rebuildSetup() navPicker {
 	np := newNavPicker("", out).SetSize(m.contentSize()).
 		SetContentWidth(pinned).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
-			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "fold")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		).
@@ -4659,9 +4657,7 @@ func (m model) rebuildSetupCat() navPicker {
 	}
 	p := newNavPicker("", pickerTreeItems(folders, items, m.selected, m.folderOpen, m.blinkOn, m.treeMode, m.aiRemovalLogged())).SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
-			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "fold")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		)

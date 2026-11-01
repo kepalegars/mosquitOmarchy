@@ -97,7 +97,7 @@ func TestAddonsSearchShortcutAndFilter(t *testing.T) {
 	if !m.filterOpen {
 		t.Fatal("shift+F did not open the addon filter")
 	}
-	if !strings.Contains(m.filterBarLine(""), "filter") {
+	if !strings.Contains(m.filterInputLine(), "filter") {
 		t.Fatal("filter input zone is not visible")
 	}
 	next, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
@@ -147,5 +147,28 @@ func TestAddonShortcutsFit(t *testing.T) {
 		if !strings.Contains(hint, want) {
 			t.Fatalf("shortcut %q missing from %q", want, hint)
 		}
+	}
+}
+
+func TestAddonsStartFolded(t *testing.T) {
+	m := addonTestModel()
+	m.addonsOpen = map[string]bool{}
+	for _, it := range m.rebuildAddons().items {
+		if strings.HasPrefix(it.Value, tuikit.TreeItemPrefix) {
+			t.Fatalf("child %q is visible while folders are folded", it.Value)
+		}
+	}
+}
+
+func TestAddonFilterDoesNotGrowTheScreen(t *testing.T) {
+	m := addonTestModel()
+	m.w, m.h = 100, 40
+	m.addonsPicker = m.rebuildAddons()
+	closed := strings.Count(m.View(), "\n")
+	m.filterOpen = true
+	m.addonsPicker = m.rebuildAddons()
+	opened := strings.Count(m.View(), "\n")
+	if opened != closed {
+		t.Fatalf("filter changed the screen height: closed=%d open=%d", closed, opened)
 	}
 }
