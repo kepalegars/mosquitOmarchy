@@ -1,13 +1,12 @@
 package tuikit
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
 
 func TestLoadingGlyph(t *testing.T) {
-	want := []string{"▘", "▝", "▗", "▖"} // clockwise
+	want := []string{"■", " "} // solid square on, then off
 	if len(LoadingFrames) != len(want) {
 		t.Fatalf("frames = %q, want %q", LoadingFrames, want)
 	}
@@ -16,33 +15,30 @@ func TestLoadingGlyph(t *testing.T) {
 			t.Fatalf("frame %d = %q, want %q", i, got, w)
 		}
 	}
-	if got := LoadingGlyph(5); got != "▝" {
-		t.Fatalf("wrapped frame = %q, want ▝", got)
+	if got := LoadingGlyph(2); got != "■" {
+		t.Fatalf("wrapped frame = %q, want ■", got)
 	}
-	if got := LoadingGlyph(-1); got != "▖" {
-		t.Fatalf("negative frame = %q, want ▖", got)
+	if got := LoadingGlyph(-1); got != " " {
+		t.Fatalf("negative frame = %q, want the off frame", got)
 	}
-	// The old ◰ family drew a large outline square; the shared spinner must
-	// draw only the moving block.
-	for _, f := range LoadingFrames {
-		if strings.ContainsAny(f, "◰◳◲◱■□") {
-			t.Fatalf("frame %q still contains an outer square", f)
-		}
+	// The off frame keeps a cell of width so the trailing badge cannot shift.
+	if len(LoadingFrames[1]) != 1 {
+		t.Fatalf("off frame width = %d, want 1", len(LoadingFrames[1]))
 	}
 }
 
 func TestLoadingGlyphAt(t *testing.T) {
 	base := time.Unix(100, 0)
 	first := LoadingGlyphAt(base)
-	for i := 0; i < len(LoadingFrames)*4; i++ {
-		got := LoadingGlyphAt(base.Add(time.Duration(i) * frameInterval))
-		if got == "" {
-			t.Fatalf("frame at %d is empty", i)
-		}
+	if first != "■" && first != " " {
+		t.Fatalf("unexpected frame %q", first)
 	}
-	// A full lap returns to the same frame.
-	lap := time.Duration(len(LoadingFrames)) * frameInterval
-	if got := LoadingGlyphAt(base.Add(lap)); got != first {
-		t.Fatalf("one lap = %q, want %q", got, first)
+	// One blink period later the phase is back where it started.
+	if got := LoadingGlyphAt(base.Add(loadingBlinkInterval * time.Duration(len(LoadingFrames)))); got != first {
+		t.Fatalf("one full blink = %q, want %q", got, first)
+	}
+	// The two phases must differ.
+	if got := LoadingGlyphAt(base.Add(loadingBlinkInterval)); got == first {
+		t.Fatalf("blink did not toggle: %q", got)
 	}
 }

@@ -116,7 +116,16 @@ install_hook(){
 # Installed by mosquitOmarchy (tweak-colors-unifier.sh): keep GTK apps on the
 # active Omarchy theme after every theme change. \$1 = the theme's snake-cased
 # name; unused — the engine always re-reads the CURRENT theme.
-exec "$SCRIPT_DIR/tweak-colors-unifier.sh" --quiet
+script="$SCRIPT_DIR/tweak-colors-unifier.sh"
+# A repo rename used to leave this hook pointing at a path that no longer
+# existed, so every theme switch silently kept the old palette. Follow the
+# deployed actions symlink into the checkout when that happens.
+if [[ ! -x \$script ]]; then
+  actions="\$(command -v mosquitomarchy-actions 2>/dev/null || echo "\$HOME/.local/bin/mosquitomarchy-actions")"
+  script="\$(dirname "\$(readlink -f "\$actions")")/../../scripts/Tweaks/tweak-colors-unifier.sh"
+fi
+[[ -x \$script ]] || exit 0
+exec "\$script" --quiet
 EOF
   chmod +x "$HOOK_FILE"
   ok "theme-set hook installed ($HOOK_FILE)"

@@ -22,6 +22,9 @@ func TestUpdateSquareFollowsChecks(t *testing.T) {
 	m := initialModel()
 	m.nav = []screen{scrMain, scrUpdate}
 	m.w, m.h = 100, 34
+	// The loading blink uses the same ■ glyph; the checks are off here so the
+	// assertion is about the pending-update square, not a loading frame.
+	m.updateChecking, m.healthChecking = false, false
 	m.mainPicker = m.rebuildMainMenu()
 	if updateSquareOnMainRow(m) {
 		t.Fatalf("square present before any check")

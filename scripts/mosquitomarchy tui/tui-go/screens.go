@@ -101,7 +101,7 @@ func blinkCmd() tea.Cmd {
 type loadingTickMsg struct{}
 
 func loadingTickCmd() tea.Cmd {
-	return tea.Tick(140*time.Millisecond, func(time.Time) tea.Msg { return loadingTickMsg{} })
+	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg { return loadingTickMsg{} })
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -161,6 +161,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	// reconciled against the setting that is REALLY in place, so a refused
 	// write puts the row back instead of leaving the menu lying.
 	case tuikit.PickerToggleOptionMsg:
+		if m.top() == scrCleanup && strings.HasPrefix(msg.Value, "cleanup:") {
+			id := strings.TrimPrefix(msg.Value, "cleanup:")
+			if m.cleanupOpts == nil {
+				m.cleanupOpts = defaultCleanupOpts()
+			}
+			m.cleanupOpts[id] = msg.Next
+			m.cleanupPicker = m.rebuildCleanup().KeepCursor(msg.Value)
+			return m, nil
+		}
 		if msg.Value != crashNotifyValue {
 			return m, nil
 		}
@@ -1965,6 +1974,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.kbInput, cmd = m.kbInput.Update(msg)
 	case scrSettings:
 		m.pickPicker, cmd = m.pickPicker.Update(msg)
+	case scrCleanup:
+		m.cleanupPicker, cmd = m.cleanupPicker.Update(msg)
 	case scrBackup:
 		m.backupPicker, cmd = m.backupPicker.Update(msg)
 	case scrMenuEntries:
@@ -2891,11 +2902,29 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 
 	case scrSettings:
 		// A ToggleSpec row never arrives here: the kit emits
-		// PickerToggleOptionMsg for it, handled below. Only Back does.
-		if res.Value == "back" {
+		// PickerToggleOptionMsg for it, handled below. Back and Cleanup do.
+		switch res.Value {
+		case "back":
 			m.pop()
-			return m, nil
+		case "cleanup":
+			m.push(scrCleanup)
+			m.cleanupPicker = m.rebuildCleanup()
 		}
+		return m, nil
+
+	case scrCleanup:
+		switch res.Value {
+		case "back":
+			m.pop()
+		case "run":
+			ids := m.selectedCleanupIDs()
+			if len(ids) == 0 {
+				m.toast, _ = m.toast.SetWarn("Nothing selected — tick at least one item.")
+				return m, nil
+			}
+			return m.startWorking("Cleaning temporary files", workingArgs("cleanup", []string{strings.Join(ids, ",")})...)
+		}
+		return m, nil
 	case scrBackup:
 		switch res.Value {
 		case "backup":
@@ -5531,6 +5560,91 @@ func crashNotifyLabel(on bool) string {
 // by shelling out to the backend — the write ran first, synchronously, and the
 // new label only appeared once the subprocess was done, so flipping it froze
 // the whole TUI for the duration and looked like nothing had happened.
+// ── Extras → Cleanup temporary files ───────────────────────────────────────
+// The order is deliberate: mosquitOmarchy's own leftovers first (its cache and
+// list caches), then the biggest APM clean (quarantine), then APM log/fix
+// repairs, then the opt-in drive-letter cleanup, then the other apps. The
+// backend receives the ids in this same order and reports them top-down.
+var cleanupOrder = []string{
+	"setup-cache",
+	"lists-cache",
+	"apm-quarantine",
+	"apm-inconsistencies",
+	"apm-drives",
+	"vm-cache",
+	"move-als",
+	"mixbay-history",
+}
+
+var cleanupLabels = map[string]string{
+	"setup-cache":         "mosquitOmarchy setup cache (interrupted installs, stray build file)",
+	"lists-cache":         "mosquito lists cache (setup/uninstall, status, plugin lists)",
+	"apm-quarantine":      "APM: quarantine (parked uninstalled files)",
+	"apm-inconsistencies": "APM: inconsistencies (plugin log / orphan fixes)",
+	"apm-drives":          "APM: redundant Wine drive letters",
+	"vm-cache":            "VM cache (incomplete ISO / temp files)",
+	"move-als":            "Move Manager: ALS working folder",
+	"mixbay-history":      "Mixbay: connection history",
+}
+
+// cleanupDriveWarning is the persistent orange line under the Cleanup list,
+// same role as the Full-restore notice: the one option here can invalidate a
+// registry reference.
+const cleanupDriveWarning = "! Wine drive letters: only duplicate mappings are removed; a plugin that hard-codes a removed letter may need its preset folder re-selected."
+
+func defaultCleanupOpts() map[string]bool {
+	opts := make(map[string]bool, len(cleanupOrder))
+	for _, id := range cleanupOrder {
+		opts[id] = true
+	}
+	// Off by default: the only option that can break a stored reference.
+	opts["apm-drives"] = false
+	return opts
+}
+
+func cleanupDisplay(id string, on bool) string {
+	state := "off"
+	if on {
+		state = "on"
+	}
+	return cleanupLabels[id] + " : " + state
+}
+
+func (m model) rebuildCleanup() navPicker {
+	if m.cleanupOpts == nil {
+		m.cleanupOpts = defaultCleanupOpts()
+	}
+	items := make([]tuikit.PickerItem, 0, len(cleanupOrder)+2)
+	for _, id := range cleanupOrder {
+		on := m.cleanupOpts[id]
+		label := cleanupLabels[id]
+		items = append(items, tuikit.PickerItem{
+			Value:   "cleanup:" + id,
+			Display: cleanupDisplay(id, on),
+			Toggle: &tuikit.ToggleSpec{
+				On:    label + " : on",
+				Off:   label + " : off",
+				Value: on,
+			},
+		})
+	}
+	items = append(items,
+		tuikit.PickerItem{Display: "Cleanup now!", Value: "run"},
+		tuikit.PickerItem{Display: "Back", Value: "back"},
+	)
+	return newNavPicker("Cleanup:", items).SetSize(m.contentSize())
+}
+
+func (m model) selectedCleanupIDs() []string {
+	ids := make([]string, 0, len(cleanupOrder))
+	for _, id := range cleanupOrder {
+		if m.cleanupOpts[id] {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 func (m model) settingsItems2() []tuikit.PickerItem {
 	return []tuikit.PickerItem{
 		{
@@ -5542,6 +5656,7 @@ func (m model) settingsItems2() []tuikit.PickerItem {
 				Value: m.crashNotify,
 			},
 		},
+		{Display: "Cleanup temporary files…", Value: "cleanup"},
 		{Display: "Back", Value: "back"},
 	}
 }

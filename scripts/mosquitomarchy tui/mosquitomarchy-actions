@@ -3499,6 +3499,202 @@ mq_cached(){
   return 1
 }
 
+# ── Extras → Cleanup temporary files ───────────────────────────────────────
+# One pass over the temp/install debris the apps leave behind. Every option
+# is independent (the TUI's Cleanup screen owns the toggles); the list passed
+# here is already in the logical order, so the report reads biggest first.
+
+cleanup_apm_bin(){
+  local c
+  for c in "$HOME/.local/bin/mosquito-audio-plugin-manager-actions" \
+           "$REPO_DIR/scripts/mosquito/audio-stack/apm/mosquito-audio-plugin-manager-actions"; do
+    [[ -x $c ]] && { printf '%s\n' "$c"; return 0; }
+  done
+  command -v mosquito-audio-plugin-manager-actions 2>/dev/null
+}
+cleanup_move_bin(){
+  local c
+  for c in "$HOME/.local/bin/mosquito-move-manager-actions" \
+           "$REPO_DIR/scripts/mosquito/move-manager/mosquito-move-manager-actions"; do
+    [[ -x $c ]] && { printf '%s\n' "$c"; return 0; }
+  done
+  command -v mosquito-move-manager-actions 2>/dev/null
+}
+cleanup_mixbay_bin(){
+  local c
+  for c in "$HOME/.local/bin/mixbay-audio-foundation" \
+           "$REPO_DIR/scripts/mosquito/audio-stack/mixbay/foundation/audio-foundation.sh"; do
+    [[ -x $c ]] && { printf '%s\n' "$c"; return 0; }
+  done
+  command -v mixbay-audio-foundation 2>/dev/null
+}
+
+# Leftovers from installs that were interrupted: the TUI scratch selections,
+# the Ableton staging dirs, aborted restore dirs. Nothing here is read back.
+cleanup_setup_cache(){
+  local n=0 p
+  while IFS= read -r -d '' p; do
+    [[ -e $p ]] || continue
+    rm -rf -- "$p" 2>/dev/null && n=$((n + 1))
+  done < <(find "${TMPDIR:-/tmp}" -maxdepth 1 -user "$(id -u)" -name 'mosquitomarchy-*' -print0 2>/dev/null || true)
+  while IFS= read -r -d '' p; do
+    rm -rf -- "$p" 2>/dev/null && n=$((n + 1))
+  done < <(find "$HOME" -maxdepth 6 -type d -name '.mosquitomarchy-restore.*' -print0 2>/dev/null || true)
+  # A stray TUI build dropped in ~/.cache by an interrupted build. It is a
+  # 20 MB ELF, never read by anything.
+  if [[ -f "$HOME/.cache/mosquitomarchy-tui" ]]; then
+    rm -f -- "$HOME/.cache/mosquitomarchy-tui" 2>/dev/null && n=$((n + 1))
+  fi
+  find "$HOME/.cache/mosquitomarchy" -maxdepth 1 -type f -name '*.tmp' -delete 2>/dev/null || true
+  ok "mosquitOmarchy setup cache: $n leftover item(s) removed."
+}
+
+# Caches that only exist to draw a list faster. All are regenerated on the
+# next screen, none is an input to an install.
+cleanup_lists_cache(){
+  rm -rf -- "$HOME/.cache/mosquitomarchy/query-cache" 2>/dev/null || true
+  find "$HOME/.cache/mosquitomarchy" -maxdepth 1 -type f -name 'tree-*' -delete 2>/dev/null || true
+  find "$HOME/.cache/mosquito-audio-plugin-manager" -maxdepth 1 -type f \
+    \( -name 'groups-*.tsv' -o -name 'parents-*.tsv' \) -delete 2>/dev/null || true
+  find "${TMPDIR:-/tmp}" -maxdepth 1 -user "$(id -u)" -type f -name 'apm-groups-body.*' -delete 2>/dev/null || true
+  ok "Mosquito lists cache: setup/uninstall trees, status and APM plugin lists cleared."
+}
+
+cleanup_apm_inconsistencies(){
+  local bin out summary
+  bin="$(cleanup_apm_bin)" || { warn "APM not installed — inconsistencies skipped."; return 0; }
+  out="$("$bin" cleanup 2>/dev/null | tail -1)" || out=""
+  if [[ -z $out ]]; then
+    warn "APM inconsistencies: the cleanup reported nothing (run the APM once to check)."
+    return 0
+  fi
+  summary="$(printf '%s' "$out" | jq -r \
+    '"kept \(.kept|length), registered \(.registered|length), duplicate refs \(.deduped|length), dangling launchers removed \(.desktops|length)"' \
+    2>/dev/null || true)"
+  ok "APM inconsistencies: ${summary:-done}."
+}
+
+cleanup_apm_quarantine(){
+  local bin out removed bytes
+  bin="$(cleanup_apm_bin)" || { warn "APM not installed — quarantine skipped."; return 0; }
+  out="$("$bin" empty-quarantine 2>/dev/null | tail -1)" || out=""
+  if [[ -z $out ]]; then
+    warn "APM quarantine: nothing reported."
+    return 0
+  fi
+  removed="$(printf '%s' "$out" | jq -r '[.dirs[].removed]|add // 0' 2>/dev/null || echo 0)"
+  bytes="$(printf '%s' "$out" | jq -r '[.dirs[].bytes]|add // 0' 2>/dev/null || echo 0)"
+  ok "APM quarantine: $removed parked entr(y/ies) permanently deleted ($(awk -v b="$bytes" 'BEGIN{printf "%.1f", b/1048576}') MB)."
+}
+
+cleanup_apm_drives(){
+  local bin out removed skipped
+  bin="$(cleanup_apm_bin)" || { warn "APM not installed — drive letters skipped."; return 0; }
+  out="$("$bin" cleanup-drive-aliases 2>/dev/null | tail -1)" || out=""
+  if [[ -z $out ]]; then
+    warn "APM drive letters: nothing reported."
+    return 0
+  fi
+  removed="$(printf '%s' "$out" | jq -r '.removed|length' 2>/dev/null || echo 0)"
+  skipped="$(printf '%s' "$out" | jq -r '.skipped|length' 2>/dev/null || echo 0)"
+  ok "APM Wine drive letters: $removed redundant mapping(s) removed, $skipped skipped (prefix in use or letter referenced)."
+}
+
+# Incomplete/interrupted VM downloads and stale temp files. Complete ISOs and
+# every VM disk/config are kept; only files no VM references are removed.
+cleanup_vm_cache(){
+  local root="${OMARCHY_VM_ROOT:-${MOSQUITO_VM_ROOT:-$HOME/VMs}}"
+  local dir="${OMARCHY_VM_ISO_CACHE:-$HOME/.cache/omarchy-vm}"
+  local before=0 after=0 freed=0 f v need size p
+  local -A refs=()
+  [[ -d $dir ]] && before="$(du -sb "$dir" 2>/dev/null | awk '{print $1}')"
+  for p in "$root"/*/.vm-config; do
+    [[ -f $p ]] || continue
+    v="$(sed -n 's/^ISO_PATH="\(.*\)"$/\1/p' "$p" | head -1)"
+    [[ -n $v ]] && refs[$v]=1
+  done
+  if [[ -d $dir ]]; then
+    while IFS= read -r f; do
+      case $f in
+        *.part|*.tmp) rm -f -- "$f" 2>/dev/null || true; continue ;;
+      esac
+      [[ -n ${refs[$f]+x} ]] && continue
+      v="$(basename "$f" | sed -n 's/^omarchy-\([0-9][0-9A-Za-z._-]*\)\.iso$/\1/p')"
+      [[ -n $v ]] || continue
+      need="$(cat "$dir/size-$v" 2>/dev/null || true)"
+      if [[ -z $need ]] && command -v curl >/dev/null 2>&1; then
+        need="$(curl -sIL --max-time 8 "https://iso.omarchy.org/omarchy-$v.iso" 2>/dev/null | tr -d '\r' \
+                | awk 'tolower($1)=="content-length:"{v=$2} END{print v}')"
+      fi
+      size="$(stat -c %s "$f" 2>/dev/null || echo 0)"
+      if [[ -n $need && $size != "$need" ]]; then
+        rm -f -- "$f" 2>/dev/null || true
+      fi
+    done < <(find "$dir" -maxdepth 1 -type f \( -name 'omarchy-*.iso' -o -name '*.part' -o -name '*.tmp' \) -print 2>/dev/null || true)
+    rm -f -- "$dir"/size-* "$dir"/latest-version 2>/dev/null || true
+    find "$dir" -maxdepth 1 -type f -name 'omarchy-*.iso.sha256' -delete 2>/dev/null || true
+    after="$(du -sb "$dir" 2>/dev/null | awk '{print $1}')"
+  fi
+  find "$root" -maxdepth 2 -type f \( -name '*.part' -o -name '*.tmp' \) -delete 2>/dev/null || true
+  for p in "$root"/*/vm.pid; do
+    [[ -f $p ]] || continue
+    kill -0 "$(cat "$p" 2>/dev/null)" 2>/dev/null || rm -f -- "$p" 2>/dev/null || true
+  done
+  freed=$(( ${before:-0} - ${after:-0} ))
+  (( freed < 0 )) && freed=0
+  ok "VM cache: incomplete/temp ISO files cleared ($(awk -v b="$freed" 'BEGIN{printf "%.1f", b/1048576}') MB freed); VM disks and complete referenced ISOs kept."
+}
+
+cleanup_move_als(){
+  local bin
+  bin="$(cleanup_move_bin)" || { warn "Move Manager not installed — ALS folder skipped."; return 0; }
+  if "$bin" clear-als >/dev/null 2>&1; then
+    ok "Move Manager: als working folder cleared (converted .als files removed; ablbundle/bwproject/Presets kept)."
+  else
+    warn "Move Manager: could not clear the als working folder."
+  fi
+}
+
+cleanup_mixbay_history(){
+  local bin
+  bin="$(cleanup_mixbay_bin)" || { warn "Mixbay not installed — connection history skipped."; return 0; }
+  if "$bin" --reset-history >/dev/null 2>&1; then
+    ok "Mixbay: connection history reset (default interface and installed configs kept)."
+  else
+    warn "Mixbay: could not reset the connection history."
+  fi
+}
+
+cmd_cleanup(){
+  local list="${1:-}" id apm_busy=0
+  local -a ids=()
+  IFS=, read -r -a ids <<< "$list"
+  ((${#ids[@]})) || { warn "Cleanup: nothing selected."; return 0; }
+  pgrep -f 'mosquito-audio-plugin-manager-actions install ' >/dev/null 2>&1 && apm_busy=1
+  for id in "${ids[@]}"; do
+    case $id in
+      apm-*)
+        if ((apm_busy)); then
+          warn "Cleanup: an APM install is running — '$id' skipped."
+          continue
+        fi
+        ;;
+    esac
+    case $id in
+      setup-cache)         cleanup_setup_cache ;;
+      lists-cache)         cleanup_lists_cache ;;
+      apm-quarantine)      cleanup_apm_quarantine ;;
+      apm-inconsistencies) cleanup_apm_inconsistencies ;;
+      apm-drives)          cleanup_apm_drives ;;
+      vm-cache)            cleanup_vm_cache ;;
+      move-als)            cleanup_move_als ;;
+      mixbay-history)      cleanup_mixbay_history ;;
+      *) warn "Cleanup: unknown option '$id' — skipped." ;;
+    esac
+  done
+  ok "Cleanup finished."
+}
+
 case "$sub" in
   space)                    cmd_space "${1:-}" "${@:2}" ;;
   status)                   mq_cached status 300 cmd_status ;;
@@ -3507,6 +3703,7 @@ case "$sub" in
   missing-assets)           cmd_missing_assets "${1:-}" "${@:2}" ;;
   patches)                  cmd_patches "${1:-}" "${@:2}" ;;
   health)                   mq_cached health 20 cmd_health ;;
+  cleanup)                  cmd_cleanup "${1:-}" ;;
   heal) mq_cache_clear; cmd_heal "$@" ;;
   kb-list)                  cmd_kb_list ;;
   kb-free)                  cmd_kb_free ;;

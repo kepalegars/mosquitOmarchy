@@ -199,7 +199,7 @@ func TestStatusScroll(t *testing.T) {
 func TestViewRenders(t *testing.T) {
 	screens := []screen{scrMain, scrStatus, scrSetup, scrSetupCat, scrUpdate, scrBackup,
 		scrBackupRestore, scrBackupOptions, scrBackupAppSettings, scrRestoreOptions,
-		scrBackupApps, scrConfirm, scrWorking, scrPassphrase, scrInfo}
+		scrBackupApps, scrConfirm, scrWorking, scrPassphrase, scrInfo, scrCleanup}
 	for _, s := range screens {
 		m := initialModel()
 		m.nav = []screen{s}
@@ -256,6 +256,9 @@ func TestViewRenders(t *testing.T) {
 			m.passInput = tuikit.NewPasswordInput("Passphrase", "")
 		case scrInfo:
 			m.info = tuikit.NewInfo("Some info about the highlighted item.").SetSize(m.contentSize())
+		case scrCleanup:
+			m.cleanupOpts = defaultCleanupOpts()
+			m.cleanupPicker = m.rebuildCleanup()
 		case scrWorking:
 			m.runner = tuikit.NewRunner().SetSize(m.contentSize())
 		}
@@ -897,6 +900,10 @@ func TestUpdateIsVisibleFromTheMainMenu(t *testing.T) {
 	m := initialModel()
 	m.nav = []screen{scrMain}
 	m.w, m.h = 120, 40
+	// The startup loading indicator is itself a blinking square now: turn the
+	// two checks off to ask the actual question (nothing pending yet).
+	m.updateChecking, m.healthChecking = false, false
+	m.mainPicker = m.rebuildMainMenu()
 	if v := m.View(); strings.Contains(v, "■") {
 		t.Fatalf("a square is shown before anything is known:\n%s", v)
 	}

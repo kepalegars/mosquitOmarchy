@@ -2,16 +2,20 @@ package tuikit
 
 import "time"
 
-// LoadingFrames is the shared loading spinner: one small filled square that
-// moves clockwise through the four corners of the cell. The outer square of
-// the ◰ family is deliberately absent — only the moving block is drawn, in the
-// host's accent colour. Clockwise order: upper-left, upper-right, lower-right,
-// lower-left.
-var LoadingFrames = []string{"▘", "▝", "▗", "▖"}
+// LoadingFrames is the shared loading indicator: the solid square blinks on
+// and off. It is the same square the pending-update marker uses, so every TUI
+// has one identical footprint; the off frame is a space (not an empty string)
+// so a PickerItem's trailing badge never shifts the row.
+var LoadingFrames = []string{"■", " "}
 
-// LoadingGlyph returns frame n of the shared spinner. A host that already
-// keeps an animation counter (mosquitomarchy's 140 ms loading tick) calls this
-// with its own frame index.
+// loadingBlinkInterval is the on/off period for hosts that use the time-based
+// helper. Slower than the marquee frame on purpose: a blink is a state, not an
+// animation.
+const loadingBlinkInterval = 500 * time.Millisecond
+
+// LoadingGlyph returns frame n of the shared blink. A host that already keeps
+// an animation counter (mosquitomarchy's loading tick) calls this with its own
+// frame index.
 func LoadingGlyph(frame int) string {
 	n := len(LoadingFrames)
 	if n == 0 {
@@ -24,7 +28,7 @@ func LoadingGlyph(frame int) string {
 	return LoadingFrames[frame]
 }
 
-// LoadingGlyphAt returns the spinner frame for a point in time. Hosts that
+// LoadingGlyphAt returns the blink frame for a point in time. Hosts that
 // repaint on a tick but keep no counter can just call this on every render;
 // nothing to initialise or reset.
 func LoadingGlyphAt(now time.Time) string {
@@ -32,7 +36,7 @@ func LoadingGlyphAt(now time.Time) string {
 	if n == 0 {
 		return ""
 	}
-	ticks := now.UnixNano() / int64(frameInterval)
+	ticks := now.UnixNano() / int64(loadingBlinkInterval)
 	if ticks < 0 {
 		ticks = -ticks
 	}

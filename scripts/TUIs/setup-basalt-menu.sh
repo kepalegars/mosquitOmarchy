@@ -130,7 +130,7 @@ read_block() {
 $BLOCK_START
   "trigger.system.basalt": {
     "icon": "\uf0f6",
-    "label": "Basalt — Obsidian notes",
+    "label": "Basalt",
     "description": "Manage Obsidian vaults and notes (terminal TUI)",
     "aliases": ["basalt", "obsidian", "notes", "vault"],
     "when": "test -x $BIN",

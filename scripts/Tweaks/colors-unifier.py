@@ -301,6 +301,29 @@ def load_theme(theme_dir: Path):
     }, None
 
 
+# GNOME's allowed accent-color values (gsettings enum). libadwaita/GTK4 uses
+# this for widgets that ignore the per-theme CSS names; map the theme's exact
+# accent to the closest one so Nautilus and other libadwaita apps at least get
+# the same family of accent instead of always 'blue'.
+GNOME_ACCENTS = {
+    "blue": "#3584e4", "teal": "#2190a4", "green": "#3a944a",
+    "yellow": "#c88800", "orange": "#ed5b00", "red": "#e62d42",
+    "pink": "#d56199", "purple": "#9141ac", "slate": "#6f8396",
+}
+
+
+def _rgb(value: str):
+    h = value.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def named_accent(value: str) -> str:
+    r, g, b = _rgb(value)
+    return min(GNOME_ACCENTS,
+               key=lambda name: sum((x - y) ** 2
+                                    for x, y in zip((r, g, b), _rgb(GNOME_ACCENTS[name]))))
+
+
 def build_palette(t):
     dark = t["mode"] == "dark"
     if dark:
@@ -699,10 +722,18 @@ def apply(no_restart: bool, quiet: bool) -> int:
     prev = load_state()
     gsettings = {"applied": False,
                  "saved": prev.get("gsettings", {}).get("saved")}
-    if not NO_GSETTINGS and not usable_saved(gsettings["saved"]):
-        captured = {"color-scheme": gsettings_get("color-scheme"),
-                    "gtk-theme": gsettings_get("gtk-theme")}
-        gsettings["saved"] = captured if usable_saved(captured) else None
+    if not NO_GSETTINGS:
+        # Merge into an existing saved dict: a state file written before the
+        # accent-colour support existed must still gain the current accent, or
+        # --revert would leave the theme's accent behind.
+        saved = gsettings["saved"] if isinstance(gsettings["saved"], dict) else {}
+        if "color-scheme" not in saved:
+            saved["color-scheme"] = gsettings_get("color-scheme")
+        if "gtk-theme" not in saved:
+            saved["gtk-theme"] = gsettings_get("gtk-theme")
+        if "accent-color" not in saved:
+            saved["accent-color"] = gsettings_get("accent-color")
+        gsettings["saved"] = saved if usable_saved(saved) else None
         if gsettings["saved"]:
             early = dict(prev) if prev else {"schemaVersion": 1}
             early["gsettings"] = {"applied": False, "saved": gsettings["saved"]}
@@ -716,13 +747,29 @@ def apply(no_restart: bool, quiet: bool) -> int:
         gtk_theme = "Adwaita" if p["mode"] == "light" else "Adwaita-dark"
         ok1 = gsettings_set("color-scheme", scheme)
         ok2 = gsettings_set("gtk-theme", gtk_theme)
+        # libadwaita/GTK4 widgets that do not read our CSS names still follow
+        # the portal's accent enum. Keep it in the theme's family instead of
+        # leaving GNOME's default blue.
+        accent = named_accent(p["accent"]) if gsettings_get("accent-color") is not None else None
+        ok3 = True
+        if accent:
+            ok3 = gsettings_set("accent-color", accent)
         gsettings.update({"applied": ok1 and ok2,
-                          "color_scheme": scheme, "gtk_theme": gtk_theme})
+                          "color_scheme": scheme, "gtk_theme": gtk_theme,
+                          "accent_color": accent, "accent_applied": ok3})
 
     changed = s4 in ("created", "updated", "merged") or s3 in ("created", "updated", "merged")
     restarted, pending, prompted = ([], [], False)
     if not no_restart and changed:
         restarted, pending, prompted = refresh_apps()
+        if "nautilus" in pending and not prompted and shutil.which("notify-send"):
+            try:
+                subprocess.Popen(
+                    ["notify-send", "-a", "colors-unifier", "Theme applied",
+                     "Reopen Nautilus to use the new GTK theme."],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError:
+                pass
 
     state = {
         "schemaVersion": 1,

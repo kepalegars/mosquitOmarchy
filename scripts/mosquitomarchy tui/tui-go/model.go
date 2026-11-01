@@ -30,6 +30,9 @@ const (
 	scrBackupRestore
 	scrMenuEntries
 	scrSettings
+	// scrCleanup is Extras → Cleanup temporary files: toggles for each
+	// independent clean, then "Cleanup now!" and Back.
+	scrCleanup
 	scrConfirm
 	scrWorking
 	scrPassphrase
@@ -295,7 +298,11 @@ type model struct {
 	// only the checked ones are re-applied.
 	healthPicker navPicker
 	// pickPicker backs the TOP-LEVEL "Extras" screen (plugin toggles).
-	pickPicker   navPicker
+	pickPicker    navPicker
+	cleanupPicker navPicker
+	// cleanupOpts is the Cleanup screen's working set: id → will-clean. All
+	// on by default except the Wine drive letters (potential reference risk).
+	cleanupOpts  map[string]bool
 	backupPicker navPicker
 	// backupOptPicker drives the Backup options screen; backupAppsPicker is
 	// the installed TUIs content tree.
@@ -604,6 +611,7 @@ func initialModel() model {
 		backupChecked:    map[string]bool{},
 		backupOpen:       map[string]bool{},
 		backupOpts:       loadBackupOpts(),
+		cleanupOpts:      defaultCleanupOpts(),
 		treeMode:         "install",
 	}
 	m.mainPicker = newNavPicker("", m.mainMenuItems()).
@@ -616,6 +624,7 @@ func initialModel() model {
 	m.backupAppsPicker = newNavPicker("", nil)
 	m.backupAppPicker = newNavPicker("", nil)
 	m.restorePicker = newNavPicker("", nil)
+	m.cleanupPicker = newNavPicker("", nil)
 	m.runner = tuikit.NewRunner()
 	return m
 }

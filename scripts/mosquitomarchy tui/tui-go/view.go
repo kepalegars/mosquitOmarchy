@@ -208,6 +208,13 @@ func (m model) View() string {
 		title = screenTitle("Extras", w)
 		body = m.pickPicker.View()
 		bar = barLine(m.pickPicker.ShortcutsHint())
+	case scrCleanup:
+		title = screenTitle("Cleanup temporary files", w)
+		body = m.cleanupPicker.View()
+		// Persistent, like the Full-restore notice: the drive-letter option is
+		// the one row here that can invalidate a stored path.
+		bar = tuikit.BottomBar(tuikit.StyleWarn.Render(cleanupDriveWarning),
+			m.cleanupPicker.ShortcutsHint(), cw)
 	case scrThemeFolder:
 		title = screenTitle("Create a theme from an image", w)
 		body = m.themeFolderPicker.View()
