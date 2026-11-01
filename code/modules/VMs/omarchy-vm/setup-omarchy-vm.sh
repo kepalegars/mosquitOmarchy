@@ -1117,10 +1117,10 @@ if ((${#VM_SETUP_MISSING[@]})); then
   vm_missing="$(IFS=', '; echo "${VM_SETUP_MISSING[*]}")"
   vm_body="VM setup incomplete: $vm_missing. README: https://github.com/kepalegars/mosquitOmarchy"
   if command -v omarchy-notification-send >/dev/null 2>&1; then
-    omarchy-notification-send --app-name "Omarchy VM" --urgency normal --expire-time 8000 \
+    omarchy-notification-send --app-name "Omarchy VM" --urgency critical --expire-time 0 \
       "Omarchy VM setup incomplete" "$vm_body" >/dev/null 2>&1 &
   elif command -v notify-send >/dev/null 2>&1; then
-    notify-send --app-name="Omarchy VM" --urgency=normal --expire-time=8000 \
+    notify-send --app-name="Omarchy VM" --urgency=critical --expire-time=0 \
       "Omarchy VM setup incomplete" "$vm_body" >/dev/null 2>&1 &
   fi
 fi

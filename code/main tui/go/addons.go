@@ -114,11 +114,9 @@ func (m model) rebuildAddons() navPicker {
 	return newNavPicker("", out).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
-			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
-			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
-			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
-			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply selection")),
+			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "fold")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
 		).KeepCursor(m.addonsPicker.SelectedValue())
 }
 
@@ -151,8 +149,8 @@ func (m model) rebuildFilteredAddons() navPicker {
 	p := newNavPicker(header, items).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
-			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply selection")),
+			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
 		)
 	return p.KeepCursor(m.addonsPicker.SelectedValue())
 }

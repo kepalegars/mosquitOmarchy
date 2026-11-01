@@ -374,7 +374,16 @@ cmd_addons_apply(){
       addon_record "$addname" add
       changed=1
     else
-      err "addon '$addname' failed."
+      err "addon '$addname' failed — rolling it back."
+      # A failure must leave a NEW addon uninstalled, not half-applied. The
+      # addon's own remove.sh is the only code that knows what it wrote. Do not
+      # roll back a re-install of an addon that was already installed: its
+      # previous files are the user's working state.
+      if [[ -z ${have[$addname]:-} && -x "$dir/$addname/remove.sh" ]]; then
+        MQ_REPO="$APP_DIR" MQ_ADDON_DIR="$dir/$addname" MQ_ADDON_NAME="$addname" \
+          bash "$dir/$addname/remove.sh" >/dev/null 2>&1 || true
+      fi
+      addon_record "$addname" remove
       failed=1
     fi
   done

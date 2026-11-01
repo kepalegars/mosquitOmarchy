@@ -3,6 +3,10 @@ package main
 import (
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	tuikit "mosquitomarchy.local/tui-kit"
 )
 
 func addonTestModel() model {
@@ -82,5 +86,63 @@ func TestSearchMatchesHyphenAsSpace(t *testing.T) {
 	}
 	if !searchMatch("Focus options", "focus") {
 		t.Fatal("plain search no longer works")
+	}
+}
+
+func TestAddonsSearchShortcutAndFilter(t *testing.T) {
+	m := addonTestModel()
+	m.addonsPicker = m.rebuildAddons()
+	next, _ := m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	m = next
+	if !m.filterOpen {
+		t.Fatal("shift+F did not open the addon filter")
+	}
+	next, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	m = next
+	if m.filterText != "e" {
+		t.Fatalf("filter text = %q", m.filterText)
+	}
+	if len(m.addonsPicker.items) == 0 {
+		t.Fatal("filtered addon list is empty")
+	}
+}
+
+func TestAddonsFoldWithLeftArrow(t *testing.T) {
+	m := addonTestModel()
+	m.addonsPicker = m.rebuildAddons()
+	m.addonsPicker = m.addonsPicker.SelectValue(tuikit.TreeValue(tuikit.TreeFolderPrefix, "Themes"))
+	next, _ := m.update(tuikit.PickerSortMsg{Dir: -1})
+	m = next
+	if m.addonsOpen["Themes"] {
+		t.Fatal("left arrow did not collapse the Themes folder")
+	}
+}
+
+func TestSetupSearchFindsQuickFixes(t *testing.T) {
+	m := model{
+		nav:          []screen{scrMain, scrSetup},
+		w:            100,
+		h:            40,
+		filterText:   "hyprland autofocus",
+		selected:     map[string]bool{},
+		setupFolders: []FolderRec{{Folder: "fixes", Label: "fixes"}},
+		setupItems: []SetupItemRec{{
+			Folder: "fixes", Key: "hyprland-autofocus", Label: "hyprland-autofocus",
+		}},
+	}
+	p := m.rebuildFilteredSetup()
+	if len(p.items) != 1 || p.items[0].Value != setupValue("fixes", "hyprland-autofocus") {
+		t.Fatalf("quick fix missing from search: %#v", p.items)
+	}
+}
+
+func TestAddonShortcutsFit(t *testing.T) {
+	m := addonTestModel()
+	m.w, m.h = 100, 40
+	hint := m.rebuildAddons().ShortcutsHint()
+	for _, want := range []string{"tab", "search", "fold", "apply"} {
+		if !strings.Contains(hint, want) {
+			t.Fatalf("shortcut %q missing from %q", want, hint)
+		}
 	}
 }

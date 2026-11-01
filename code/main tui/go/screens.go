@@ -1010,6 +1010,22 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.setupPicker = m.rebuildSetup()
 				m.setupPicker = m.setupPicker.KeepCursor(keep)
 			}
+		case scrAddons:
+			// Left/Right collapse/expand the category the cursor is in, exactly
+			// like Setup. Without this the arrows reached the picker's sort
+			// message and did nothing on a tree.
+			if id, inTree := tuikit.TreeParentOf(m.addonsPicker.items, m.addonsPicker.SelectedValue()); inTree {
+				if msg.Dir > 0 {
+					m.addonsOpen[id] = true
+				} else {
+					delete(m.addonsOpen, id)
+				}
+				keep := m.addonsPicker.SelectedValue()
+				if msg.Dir < 0 {
+					keep = tuikit.TreeValue(tuikit.TreeFolderPrefix, id)
+				}
+				m.addonsPicker = m.rebuildAddons().KeepCursor(keep)
+			}
 		case scrBackupOptions:
 			// Left/Right toggles the focused option. Per-app choices live in
 			// their own sub-menu; keybindings and Hyprland are direct rows.
@@ -2092,7 +2108,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// typing refines, esc clears. Enter still applies the ticked set.
 		if km, ok := msg.(tea.KeyMsg); ok {
 			switch km.String() {
-			case "F", "shift+F":
+			case "F", "shift+F", "/":
 				if m.filterOpen {
 					m.filterOpen = false
 					m.filterText = ""
@@ -3916,18 +3932,10 @@ func (m model) rebuildFilteredSetup() navPicker {
 	if m.treeMode == "uninstall" {
 		enterDesc = "uninstall selection"
 	}
-	// Hide quick-fixes folder entries (they are a separate quick-fix
-	// category in Setup, not part of the module tree).
-	filtered := make([]tuikit.PickerItem, 0, len(items))
-	for _, it := range items {
-		v := it.Value
-		// Item values start with "item:<folder>:<key>" — skip the "fixes" folder.
-		if strings.HasPrefix(v, "item:fixes:") {
-			continue
-		}
-		filtered = append(filtered, it)
-	}
-	p := newNavPicker(header, filtered).SetSize(m.contentSize()).
+	// Quick fixes are part of the Setup tree, so they MUST participate in the
+	// search: filtering "item:fixes:" out was why searching for a fix by name
+	// (e.g. "hyprland autofocus") returned nothing even though the row exists.
+	p := newNavPicker(header, items).SetSize(m.contentSize()).
 		SetHelpKeys(key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterDesc)))

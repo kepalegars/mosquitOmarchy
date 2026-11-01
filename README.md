@@ -363,5 +363,5 @@ their installers, and the only real comparison is against the version on GitHub.
 
 See [`LICENSE`](LICENSE).
 
-> **Réservé à l’admin** — [cloud d’archives mosquitOmarchy](https://kdrive.infomaniak.com/app/share/1099475/377fc533-3661-4242-88ef-be2343e88a0a) (accès direct depuis le repo GitHub ; ne pas partager).
+> **Admin only** — [mosquitOmarchy archive cloud](https://kdrive.infomaniak.com/app/share/1099475/377fc533-3661-4242-88ef-be2343e88a0a) (direct access from the GitHub repo).
 

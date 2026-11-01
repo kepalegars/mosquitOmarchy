@@ -76,26 +76,24 @@ do_mount(){
     return 0
   fi
   load_module || return 1
-  if ! wait_for_device; then
-    err "the '$TAG' 9p device never appeared."
-    err "  On the host: the VM's .vm-config must have SHARED_FOLDER=\"on\","
-    err "  and the launcher has to be regenerated after that change."
-    return 1
-  fi
   mkdir -p "$MOUNTPOINT"
-  # version=9p2000.L: the modern protocol, and the reason a mount copied from an
-  # old tutorial fails on a current kernel. The first attempt can race the
-  # device probe even after the driver appears, so retry briefly.
+  # Do NOT gate the mount on a sysfs path. The 9p device is a virtio device,
+  # but its driver directory and naming differ across kernels/distros; the
+  # previous /sys/bus/virtio/drivers/9pnet_virtio check reported "shared folder
+  # not enabled" on fresh VMs where it WAS enabled. Just retry the real mount:
+  # success is the only proof that matters, and it covers a device that appears
+  # a moment after the module loads.
   local attempt
-  for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    if mount -t 9p -o trans=virtio,version=9p2000.L,msize=104857600 "$TAG" "$MOUNTPOINT" 2>/dev/null; then
+  for attempt in $(seq 1 40); do
+    if mount -t 9p -o trans=virtio,version=9p2000.L "$TAG" "$MOUNTPOINT" 2>/dev/null; then
       ok "host folder mounted at $MOUNTPOINT"
       return 0
     fi
-    sleep 0.3
+    sleep 0.25
   done
-  err "mount failed."
-  err "  Try manually:  mount -t 9p -o trans=virtio,version=9p2000.L $TAG $MOUNTPOINT"
+  err "mount failed: the host did not expose the 9p tag '$TAG'."
+  err "  Check on the host: grep virtfs ~/VMs/*/start-omarchy.sh"
+  err "  Try manually: mount -t 9p -o trans=virtio,version=9p2000.L $TAG $MOUNTPOINT"
   return 1
 }
 
