@@ -1276,8 +1276,7 @@ run_fixes(){ # loop over FIXES_SELECTED, log results
 # Re-apply the addons recorded before an update. Kept as one helper so the
 # bootstrap, the TUI update and the terminal update all run the same script.
 run_addons(){
-  local mode="${1:---reinstall}"
-  bash "$SCRIPT_DIR/code/modules/addons/setup-addons.sh" "$mode" || true
+  bash "$SCRIPT_DIR/code/main tui/mosquitomarchy-actions" addons-reinstall || true
 }
 
 run_tweaks(){ # loop over TWEAKS_SELECTED, log results

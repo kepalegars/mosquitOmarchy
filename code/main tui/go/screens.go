@@ -170,6 +170,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.cleanupPicker = m.rebuildCleanup().KeepCursor(msg.Value)
 			return m, nil
 		}
+		if m.top() == scrAddons && strings.HasPrefix(msg.Value, "addon:") {
+			name := strings.TrimPrefix(msg.Value, "addon:")
+			m.addonsSel[name] = msg.Next
+			m.addonsPicker = m.rebuildAddons().KeepCursor(msg.Value)
+			return m, nil
+		}
 		if msg.Value != crashNotifyValue {
 			return m, nil
 		}
@@ -207,6 +213,21 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// to the entries screen, the result was dropped and the folder stayed
 		// empty.
 		return m.applyMenuEntries(msg), nil
+	case addonsMsg:
+		m.addonsLoaded = true
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("could not list addons: " + msg.err.Error())
+		} else {
+			m.addons = msg.rows
+			m.addonsSel = map[string]bool{}
+			for _, a := range msg.rows {
+				m.addonsSel[a.Name] = a.Installed
+			}
+		}
+		if m.top() == scrAddons {
+			m.addonsPicker = m.rebuildAddons()
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		m.mainPicker = m.mainPicker.SetSize(m.mainContentSize())
@@ -216,6 +237,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.backupPicker = m.backupPicker.SetSize(m.contentSize())
 		m.backupOptPicker = m.backupOptPicker.SetSize(m.contentSize())
 		m.backupAppsPicker = m.backupAppsPicker.SetSize(m.contentSize())
+		m.addonsPicker = m.addonsPicker.SetSize(m.contentSize())
 		m.info = m.info.SetSize(m.contentSize())
 		m.runner = m.runner.SetSize(m.contentSize())
 		return m, nil
@@ -309,7 +331,27 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			out := m.runner.Output()
 			m.lastOutput = out
 			hadErr := m.runner.Err() != nil
+			wasAddons := m.pendingAction == "addons"
+			var addonArgs []string
+			if wasAddons {
+				addonArgs = append([]string{}, m.pendingArgs...)
+			}
 			m.pop()
+			if wasAddons && !hadErr {
+				m.pendingAction = ""
+				m.addonsSel = map[string]bool{}
+				for _, name := range addonArgs {
+					m.addonsSel[name] = true
+				}
+				for i := range m.addons {
+					m.addons[i].Installed = m.addonsSel[m.addons[i].Name]
+				}
+				m.push(scrAddons)
+				m.addonsPicker = m.rebuildAddons()
+				m.toast, _ = m.toast.SetOK("Addons updated")
+				m.deferCmd(fetchAddonsCmd())
+				return m, nil
+			}
 			if hadErr {
 				// A failed stage stops the ordered install; the remaining
 				// special apps are not started behind the failure.
@@ -821,6 +863,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 
 	case tuikit.PickerToggleMsg:
 		switch m.top() {
+		case scrAddons:
+			if strings.HasPrefix(msg.Value, "addon:") {
+				name := strings.TrimPrefix(msg.Value, "addon:")
+				m.addonsSel[name] = !m.addonsSel[name]
+				m.addonsPicker = m.rebuildAddons().KeepCursor(msg.Value)
+			}
+			return m, nil
 		case scrSetupCat:
 			v := msg.Value
 			if strings.HasPrefix(v, "cat:") {
@@ -1241,6 +1290,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// Continue the DaVinci stage that was interrupted by this question.
 			return m.resumeInstallStageAfterPrompt()
 
+		case "addons":
+			args := append([]string{}, m.pendingArgs...)
+			return m.startWorking("Applying addons", workingArgs("addons-apply", args)...)
 		case "kb-add":
 			return m.startWorking("Binding the key", workingArgs("kb-add", m.pendingArgs)...)
 		case "kb-remove":
@@ -2016,6 +2068,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.kbInput, cmd = m.kbInput.Update(msg)
 	case scrSettings:
 		m.pickPicker, cmd = m.pickPicker.Update(msg)
+	case scrAddons:
+		m.addonsPicker, cmd = m.addonsPicker.Update(msg)
 	case scrCleanup:
 		m.cleanupPicker, cmd = m.cleanupPicker.Update(msg)
 	case scrBackup:
@@ -2951,9 +3005,33 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		case "cleanup":
 			m.push(scrCleanup)
 			m.cleanupPicker = m.rebuildCleanup()
+		case "addons":
+			m.push(scrAddons)
+			m.addonsLoaded = false
+			m.addonsPicker = m.rebuildAddons()
+			return m, fetchAddonsCmd()
 		}
 		return m, nil
 
+	case scrAddons:
+		switch res.Value {
+		case "back":
+			m.pop()
+		case "apply":
+			added, removed := m.addonChanges()
+			if len(added) == 0 && len(removed) == 0 {
+				m.toast, _ = m.toast.SetWarn("No addon change — tick or untick one first.")
+				return m, nil
+			}
+			m.pendingAction = "addons"
+			m.pendingArgs = m.addonSelectedNames()
+			m.pendingMsg = addonChangesText(added, removed)
+			m.pendingNo = "Cancel"
+			m.pendingYes = "Apply"
+			m.push(scrConfirm)
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+			return m, nil
+		}
 	case scrCleanup:
 		switch res.Value {
 		case "back":
@@ -5719,6 +5797,7 @@ func (m model) settingsItems2() []tuikit.PickerItem {
 			},
 		},
 		{Display: "Cleanup temporary files", Value: "cleanup"},
+		{Display: "Addons", Value: "addons", Engage: true},
 		{Display: "Back", Value: "back"},
 	}
 }

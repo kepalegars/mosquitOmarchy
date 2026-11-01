@@ -33,6 +33,9 @@ const (
 	// scrCleanup is Extras → Cleanup temporary files: toggles for each
 	// independent clean, then "Cleanup now!" and Back.
 	scrCleanup
+	// scrAddons is Extras → Addons: category-grouped addon toggles, then
+	// Apply changes and Back.
+	scrAddons
 	scrConfirm
 	scrWorking
 	scrPassphrase
@@ -303,6 +306,11 @@ type model struct {
 	// cleanupOpts is the Cleanup screen's working set: id → will-clean. All
 	// on by default except the Wine drive letters (potential reference risk).
 	cleanupOpts  map[string]bool
+	addonsPicker navPicker
+	// addons is the last backend listing; addonsSel is what Enter will apply.
+	addons       []addonRec
+	addonsSel    map[string]bool
+	addonsLoaded bool
 	backupPicker navPicker
 	// backupOptPicker drives the Backup options screen; backupAppsPicker is
 	// the installed TUIs content tree.
@@ -602,6 +610,7 @@ func initialModel() model {
 		updateChecking:   true,
 		healthChecking:   true,
 		selected:         map[string]bool{},
+		addonsSel:        map[string]bool{},
 		updateSelected:   map[string]bool{},
 		healthChecked:    map[string]bool{},
 		kbSel:            map[string]bool{},
@@ -625,6 +634,7 @@ func initialModel() model {
 	m.backupAppPicker = newNavPicker("", nil)
 	m.restorePicker = newNavPicker("", nil)
 	m.cleanupPicker = newNavPicker("", nil)
+	m.addonsPicker = newNavPicker("", nil)
 	m.runner = tuikit.NewRunner()
 	return m
 }

@@ -196,6 +196,39 @@ Every non-install script sources `code/lib/crash.bash` and calls `mq_crash_guard
 `setup-*.sh` installers are exempt because the orchestrator reports their failures itself. The
 skill is symlinked into `~/.agents/skills/`, so any agent that reads skills finds it.
 
+## Addons
+
+Addons are lightweight, user-owned extensions listed in **Extras → Addons**.
+They live in `code/main tui/addons/` and are **gitignored** (`code/main tui/addons/*`):
+they never enter the repo, and a fresh clone simply starts with an empty folder.
+
+An addon is only a folder with three things:
+
+```text
+my-addon/
+├── addon.conf   # NAME="my-addon"
+│                # CATEGORY="Themes"   (or Apps, System, ...)
+│                # DESCRIPTION="one line"
+│                # ENABLED="yes"
+├── install.sh   # idempotent; uses $MQ_REPO, $MQ_ADDON_DIR, $MQ_ADDON_NAME
+└── remove.sh    # optional; what unticking the addon runs
+```
+
+The Addons screen groups rows by `CATEGORY`, hides empty categories, and shows a
+filled circle for installed addons and an empty one for the rest. Toggle with
+Enter/Tab, then **Apply changes** → Yes/No confirmation listing exactly which
+addons will be added and removed. Install state is kept in
+`~/.local/state/mosquitomarchy/addons-installed`; an update re-applies that same
+set at the end, using the embedded backend (`addons-reinstall`), so a
+`mosquitOmarchy` update never loses the user's addons.
+
+The first addon, **emoticon**, sits directly under `Themes` (there is no “user”
+subcategory: every theme addon is user-owned). Put its wallpapers in
+`code/main tui/addons/emoticon/images/` — or import a folder once with
+`EMOTICON_SRC=/path` — and it builds the `Emoticon` Omarchy theme with every
+image as a background. It does not apply the theme; use `omarchy theme set Emoticon`.
+`remove.sh` removes the generated theme and keeps the images.
+
 ## Backend
 
 `mosquitomarchy-actions` prints JSON-Lines for queries and prose for actions, which the TUI
@@ -222,7 +255,8 @@ floating and centered. It runs from the menu category and from every normal inst
 
 | File | Role |
 |---|---|
-| `go/` | the program: `model.go`, the screens, `view.go`, `actions.go`. Widgets and palette come from `code/lib/tui-kit` — no component is copied here. |
+| `go/` | the program: `model.go`, the screens, `view.go`, `actions.go`, `addons.go`. Widgets and palette come from `code/lib/tui-kit` — no component is copied here. |
+| `addons/` | user-owned addon folders (gitignored): `addon.conf`, `install.sh`, optional `remove.sh` |
 | `mosquitomarchy` | dispatcher: a tty execs the TUI, otherwise `foot -e`, falling back to `xterm` |
 | `mosquitomarchy-actions` | the non-interactive backend |
 | `mosquitomarchy-agent-crash` | opens the agent on one crash log |

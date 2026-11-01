@@ -208,6 +208,10 @@ func (m model) View() string {
 		title = screenTitle("Extras", w)
 		body = m.pickPicker.View()
 		bar = barLine(m.pickPicker.ShortcutsHint())
+	case scrAddons:
+		title = screenTitle("Addons", w)
+		body = m.addonsPicker.View()
+		bar = barLine(m.addonsPicker.ShortcutsHint())
 	case scrCleanup:
 		title = screenTitle("Cleanup temporary files", w)
 		body = m.cleanupPicker.View()

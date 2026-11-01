@@ -96,3 +96,6 @@ code/main tui/go/mosquitomarchy-tui
 code/main tui/go/*.test
 code/modules/**/tui-go/*-tui
 code/modules/**/tui-go/*.test
+
+# Addons are user-owned data, never committed (scripts + images).
+code/main tui/addons/*

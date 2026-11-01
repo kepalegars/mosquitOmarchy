@@ -78,12 +78,18 @@ did, with the same user-visible result.
 
 ## Addons / Hyprland autofocus
 
-- [ ] `code/tests/test-addons.sh` — creates a throwaway HOME, runs the shipped
-      `emoticon` addon and a demo user addon, then `--reinstall`. It must
-      re-run only the recorded addons and leave `addons-installed` correct.
-- [ ] Real bootstrap: add a folder under `~/.config/mosquitomarchy/addons/`
-      with `addon.conf` + `install.sh`, rerun `./bootstrap.sh`, confirm it ran.
-      Then run an update and confirm it ran again.
+- [ ] **Extras → Addons**: `emoticon` is listed under `Themes`, with no empty
+      categories and no `user/` subcategory. Its circle is empty (not installed).
+      Enter toggles it to `●`, then **Apply changes** → a Yes/No confirmation
+      listing `+ emoticon`. Yes runs `install.sh`; the list comes back with it
+      installed. Untick, Apply, confirm `- emoticon` and `remove.sh` runs.
+- [ ] Add a temporary addon folder in `code/main tui/addons/` with
+      `addon.conf` + `install.sh` and no `remove.sh`; it appears under its
+      category, installs, and unticking it reports “kept installed” instead of
+      pretending it was removed.
+- [ ] Run an update after installing an addon; it must be re-applied at the end
+      (`addons-reinstall`), and a removed addon folder must be dropped from
+      `~/.local/state/mosquitomarchy/addons-installed`.
 - [ ] `fix-hyprland-autofocus.sh --status` reports the block absent. Apply it,
       reload Hyprland, and check that moving the pointer over another window
       does not focus it; `SUPER+F` and `hyprctl getoption input:follow_mouse`

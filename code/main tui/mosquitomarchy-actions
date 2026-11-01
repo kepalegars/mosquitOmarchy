@@ -289,6 +289,137 @@ cmd_tweaks(){
   done
 }
 
+# ─── Addons ────────────────────────────────────────────────────────────────
+# Addons live beside this script in code/main tui/addons/ and are intentionally
+# NOT tracked by git: they are the user's own small extensions. An addon is a
+# folder with addon.conf (NAME, CATEGORY, DESCRIPTION, ENABLED) and install.sh;
+# remove.sh is optional and is what "untick + apply" runs.
+addons_dir(){ printf '%s/addons' "$ACTIONS_DIR"; }
+addons_state_file(){ printf '%s/mosquitomarchy/addons-installed' "${XDG_STATE_HOME:-$HOME/.local/state}"; }
+
+addon_field_row(){ # <addon-dir> -> "name<TAB>category<TAB>description<TAB>enabled"
+  local d="${1%/}"
+  bash -c 'source "$1/addon.conf" 2>/dev/null; printf "%s\t%s\t%s\t%s\n" "${NAME:-}" "${CATEGORY:-Other}" "${DESCRIPTION:-}" "${ENABLED:-yes}"' _ "$d"
+}
+
+addons_rows(){ # name<TAB>dir<TAB>category<TAB>description, categories/names sorted
+  local d name cat desc en
+  for d in "$(addons_dir)"/*/; do
+    [[ -f "$d/addon.conf" && -f "$d/install.sh" ]] || continue
+    IFS=$'\t' read -r name cat desc en < <(addon_field_row "$d")
+    [[ -n $name ]] || continue
+    [[ $en == no ]] && continue
+    printf '%s\t%s\t%s\t%s\n' "$name" "${d%/}" "${cat:-Other}" "${desc:-}"
+  done | sort -t$'\t' -k3,3 -k1,1
+}
+
+addon_installed(){ # <name>
+  local f; f="$(addons_state_file)"
+  [[ -f $f ]] && grep -Fxq -- "$1" "$f"
+}
+
+addon_record(){ # add or remove one name in the state file
+  local name="$1" op="$2" f tmp
+  f="$(addons_state_file)"; mkdir -p "$(dirname "$f")"
+  tmp="$(mktemp "$f.XXXXXX")"
+  touch "$f"
+  if [[ $op == add ]]; then
+    { cat "$f"; printf '%s\n' "$name"; } | sort -u > "$tmp"
+  else
+    grep -Fxv -- "$name" "$f" > "$tmp" || true
+  fi
+  mv -f "$tmp" "$f"
+}
+
+cmd_addons_list(){
+  local name dir cat desc installed
+  while IFS=$'\t' read -r name dir cat desc; do
+    installed=false
+    addon_installed "$name" && installed=true
+    printf '{"name":%s,"category":%s,"description":%s,"installed":%s}\n' \
+      "$(json_str "$name")" "$(json_str "$cat")" "$(json_str "$desc")" "$installed"
+  done < <(addons_rows)
+}
+
+cmd_addons_apply(){
+  local dir name
+  dir="$(addons_dir)"
+  local -a selected=()
+  local arg
+  for arg in "$@"; do
+    local -a parts=()
+    IFS=, read -r -a parts <<< "$arg"
+    selected+=("${parts[@]}")
+  done
+  local -a current=()
+  [[ -f "$(addons_state_file)" ]] && mapfile -t current < "$(addons_state_file)"
+  local -A want=() have=()
+  for name in "${selected[@]:-}"; do [[ -n $name ]] && want["$name"]=1; done
+  for name in "${current[@]:-}"; do [[ -n $name ]] && have["$name"]=1; done
+
+  local addname removed=0 changed=0 failed=0
+  for addname in "${!want[@]}"; do
+    [[ -n ${have[$addname]:-} ]] && continue
+    if [[ ! -x "$dir/$addname/install.sh" ]]; then
+      warn "addon '$addname' not found — skipped."
+      failed=1; continue
+    fi
+    msg "Installing addon: $addname"
+    if MQ_REPO="$APP_DIR" MQ_ADDON_DIR="$dir/$addname" MQ_ADDON_NAME="$addname" \
+         bash "$dir/$addname/install.sh"; then
+      addon_record "$addname" add
+      changed=1
+    else
+      err "addon '$addname' failed."
+      failed=1
+    fi
+  done
+  for addname in "${!have[@]}"; do
+    [[ -n ${want[$addname]:-} ]] && continue
+    removed=1
+    if [[ -x "$dir/$addname/remove.sh" ]]; then
+      msg "Removing addon: $addname"
+      if MQ_REPO="$APP_DIR" MQ_ADDON_DIR="$dir/$addname" MQ_ADDON_NAME="$addname" \
+           bash "$dir/$addname/remove.sh"; then
+        addon_record "$addname" remove
+        changed=1
+      else
+        err "addon '$addname' removal failed."
+        failed=1
+      fi
+    else
+      warn "addon '$addname' has no remove.sh — kept installed."
+      failed=1
+    fi
+  done
+  ((changed)) || ok "No addon change."
+  ((removed)) && ok "Addon selection applied."
+  return "$failed"
+}
+
+cmd_addons_reinstall(){
+  local f name dir failed=0
+  f="$(addons_state_file)"
+  [[ -f $f ]] || { ok "No addon recorded — nothing to reinstall."; return 0; }
+  dir="$(addons_dir)"
+  mapfile -t names < "$f"
+  for name in "${names[@]:-}"; do
+    [[ -n $name ]] || continue
+    if [[ -x "$dir/$name/install.sh" ]]; then
+      if MQ_REPO="$APP_DIR" MQ_ADDON_DIR="$dir/$name" MQ_ADDON_NAME="$name" \
+           bash "$dir/$name/install.sh"; then
+        ok "addon re-applied: $name"
+      else
+        err "addon failed: $name"; failed=1
+      fi
+    else
+      warn "addon '$name' is no longer present — dropped from the list."
+      addon_record "$name" remove
+    fi
+  done
+  return "$failed"
+}
+
 # -----------------------------------------------------------------------------
 # Create a theme from an image — the 4-step flow on the TUI's main menu
 # -----------------------------------------------------------------------------
@@ -2385,7 +2516,7 @@ cmd_update_repo(){
   update_repo_ff || return 1
   # An update must leave the user's addons in place, re-applied from the new
   # checkout. Recorded addons that no longer exist are pruned by the script.
-  bash "$REPO_DIR/code/modules/addons/setup-addons.sh" --reinstall || warn "Addon reinstall failed."
+  cmd_addons_reinstall || warn "Addon reinstall failed."
   after="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
   if [[ -z $before || -z $after || $before == "$after" ]]; then
     ok "Repo already current — nothing to re-apply."
@@ -3839,6 +3970,9 @@ case "$sub" in
   apply) mq_cache_clear; cmd_apply "$@" ;;
   run-patch) mq_cache_clear; cmd_run_patch "$@" ;;
   remove-patch) mq_cache_clear; cmd_remove_patch "$@" ;;
+  addons-list)              cmd_addons_list ;;
+  addons-apply) mq_cache_clear; cmd_addons_apply "$@" ;;
+  addons-reinstall)         cmd_addons_reinstall ;;
   fixes-run) mq_cache_clear; cmd_fixes_run "$@" ;;
   tweaks-run) mq_cache_clear; cmd_tweaks_run "$@" ;;
   theme-images)              cmd_theme_images "${1:-}" ;;

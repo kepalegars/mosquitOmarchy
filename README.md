@@ -299,9 +299,8 @@ mosquitOmarchy/
     │   ├── Themes/           # theme generator + wallpapers
     │   ├── VMs/              # windows-vm/, macos-vm/, omarchy-vm/
     │   ├── lame/             # local language models (ollama)
-    │   ├── mosquito/         # mosquito tools: audio-stack, jamjamjam, move-manager, ...
-    │   └── addons/           # small re-applied extensions (emoticon, ...)
-    ├── main tui/             # the manager TUI + backend + update/ + go/
+    │   └── mosquito/         # mosquito tools: audio-stack, jamjamjam, move-manager, ...
+    ├── main tui/             # the manager TUI + backend + update/ + go/ + addons/ (gitignored)
     ├── lib/                  # shared helpers, tui-kit/ (the Go component library)
     ├── tests/                # standalone regression tests (Wine window matcher, ...)
     └── dev/                  # development helpers (module size manifest)
@@ -312,13 +311,12 @@ not break its paths.
 
 ## Addons
 
-`code/modules/addons/` holds small, re-applied extensions. An addon is only a folder
-with `addon.conf` (`NAME`, `DESCRIPTION`, `ENABLED`) and an idempotent `install.sh`;
-your own addons use the same format in `~/.config/mosquitomarchy/addons/`. The
-bootstrap runs `code/modules/addons/setup-addons.sh` automatically, and every
-mosquitOmarchy update re-applies the addons that were installed before it. Installed
-names live in `~/.local/state/mosquitomarchy/addons-installed`. See
-[`code/modules/addons/README.md`](code/modules/addons/README.md).
+Addons live in `code/main tui/addons/` (gitignored, user-owned) and are managed from
+**Extras → Addons** in the TUI: category groups, tick/untick, then a Yes/No confirmation
+listing the additions and removals. An addon is a folder with `addon.conf`
+(`NAME`, `CATEGORY`, `DESCRIPTION`, `ENABLED`), `install.sh` and an optional
+`remove.sh`. Every mosquitOmarchy update re-applies the addons installed before it.
+See [`code/main tui/README.md`](code/main%20tui/README.md#addons).
 
 ## Versions
 

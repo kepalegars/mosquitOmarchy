@@ -1,0 +1,136 @@
+package main
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	tuikit "mosquitomarchy.local/tui-kit"
+)
+
+// addonRec is one addon folder under code/main tui/addons/.
+type addonRec struct {
+	Name        string `json:"name"`
+	Category    string `json:"category"`
+	Description string `json:"description"`
+	Installed   bool   `json:"installed"`
+}
+
+type addonsMsg struct {
+	rows []addonRec
+	err  error
+}
+
+func fetchAddonsCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("addons-list")
+		if err != nil {
+			return addonsMsg{err: err}
+		}
+		rows, err := decodeJSONLines[addonRec](out)
+		return addonsMsg{rows: rows, err: err}
+	}
+}
+
+func (m model) rebuildAddons() navPicker {
+	items := make([]tuikit.PickerItem, 0, len(m.addons)+4)
+	if !m.addonsLoaded {
+		items = append(items, tuikit.PickerItem{Display: "loading…", Value: "", Disabled: true})
+		return newNavPicker("Addons:", items).SetSize(m.contentSize())
+	}
+	byCat := map[string][]addonRec{}
+	for _, a := range m.addons {
+		cat := a.Category
+		if cat == "" {
+			cat = "Other"
+		}
+		byCat[cat] = append(byCat[cat], a)
+	}
+	cats := make([]string, 0, len(byCat))
+	for cat := range byCat {
+		cats = append(cats, cat)
+	}
+	sort.Strings(cats)
+	for _, cat := range cats {
+		items = append(items, tuikit.PickerItem{Display: cat, Heading: true})
+		rows := byCat[cat]
+		sort.Slice(rows, func(i, j int) bool { return strings.ToLower(rows[i].Name) < strings.ToLower(rows[j].Name) })
+		for _, a := range rows {
+			on := m.addonsSel[a.Name]
+			mark := "○"
+			if on {
+				mark = "●"
+			}
+			items = append(items, tuikit.PickerItem{
+				Value:   "addon:" + a.Name,
+				Display: mark + " " + a.Name,
+				Toggle: &tuikit.ToggleSpec{
+					On:    "● " + a.Name,
+					Off:   "○ " + a.Name,
+					Value: on,
+				},
+			})
+		}
+	}
+	if len(m.addons) == 0 {
+		items = append(items, tuikit.PickerItem{
+			Display: "No addons in code/main tui/addons/", Value: "", Disabled: true,
+		})
+	} else {
+		items = append(items, tuikit.PickerItem{Display: "Apply changes", Value: "apply", Engage: true})
+	}
+	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
+	return newNavPicker("Addons:", items).SetSize(m.contentSize())
+}
+
+func (m model) addonSelectedNames() []string {
+	names := make([]string, 0, len(m.addonsSel))
+	for _, a := range m.addons {
+		if m.addonsSel[a.Name] {
+			names = append(names, a.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (m model) addonChanges() (added, removed []string) {
+	for _, a := range m.addons {
+		want := m.addonsSel[a.Name]
+		switch {
+		case want && !a.Installed:
+			added = append(added, a.Name)
+		case !want && a.Installed:
+			removed = append(removed, a.Name)
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	return added, removed
+}
+
+func addonChangesText(added, removed []string) string {
+	var b strings.Builder
+	b.WriteString("Apply these addon changes?\n\n")
+	if len(added) == 0 && len(removed) == 0 {
+		b.WriteString("No change.")
+		return b.String()
+	}
+	if len(added) > 0 {
+		b.WriteString("Added:\n")
+		for _, n := range added {
+			fmt.Fprintf(&b, "  + %s\n", n)
+		}
+	}
+	if len(removed) > 0 {
+		if len(added) > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("Removed:\n")
+		for _, n := range removed {
+			fmt.Fprintf(&b, "  - %s\n", n)
+		}
+	}
+	return b.String()
+}
