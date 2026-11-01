@@ -76,6 +76,19 @@ did, with the same user-visible result.
       (`pgrep -f mosquito-wine-installer-bg` empty), and no window may remain on
       `special:wine-bg`.
 
+## Addons / Hyprland autofocus
+
+- [ ] `code/tests/test-addons.sh` — creates a throwaway HOME, runs the shipped
+      `emoticon` addon and a demo user addon, then `--reinstall`. It must
+      re-run only the recorded addons and leave `addons-installed` correct.
+- [ ] Real bootstrap: add a folder under `~/.config/mosquitomarchy/addons/`
+      with `addon.conf` + `install.sh`, rerun `./bootstrap.sh`, confirm it ran.
+      Then run an update and confirm it ran again.
+- [ ] `fix-hyprland-autofocus.sh --status` reports the block absent. Apply it,
+      reload Hyprland, and check that moving the pointer over another window
+      does not focus it; `SUPER+F` and `hyprctl getoption input:follow_mouse`
+      show `0`. `--remove` restores the old behaviour.
+
 ## Mixbay audio foundation / EVO 4
 
 - [x] `mixbay-audio-foundation --status --json` returns valid JSON with

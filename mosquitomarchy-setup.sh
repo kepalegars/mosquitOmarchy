@@ -1165,6 +1165,7 @@ FIXES=(
   "omarchy-bar:The Omarchy toolbar disappeared (toggled off / slid off-screen) — clear the bar-off toggle and re-sync the shell (also repairs the centre anchor below)"
   "bar-center-anchor:The bar's centre modules shuffle and the clock slides sideways when the hidden indicators (night light, stay-awake, DND…) are revealed — shell.json's bar.centerAnchor names a widget that is not in the centre layout, so the section reflows as a whole; point it back at a real centre module (omarchy.clock, the default)"
   "bluetooth:Fix Bluetooth stutter/instability — MX Master freezing every second (BLE params Latency=0 / 6-7 ms + USB autosuspend off) and audio glitches (stop BlueZ AVDTP polling of paired speakers)"
+  "hyprland-autofocus:Disable every automatic Hyprland focus change — pointer follow, client activation, monitor move and new-window focus; only a click or a bind changes focus"
 )
 
 # ── Two families, one mechanism ──────────────────────────────────────────────
@@ -1212,6 +1213,7 @@ fix_category(){
     1px-seam)           echo "Appearance" ;;
     bar-center-anchor)  echo "Omarchy" ;;
     bluetooth)          echo "Hardware" ;;
+    hyprland-autofocus) echo "Windows & input" ;;
     *)                echo "Other" ;;
   esac
 }
@@ -1227,6 +1229,7 @@ run_fix(){ # single fix by id
     omarchy-bar) bash "$SCRIPT_DIR/code/modules/Fixes/fix-omarchy-bar.sh" ;;
     bar-center-anchor) bash "$SCRIPT_DIR/code/modules/Fixes/fix-bar-center-anchor.sh" ;;
     bluetooth) bash "$SCRIPT_DIR/code/modules/Fixes/fix-bluetooth.sh" ;;
+    hyprland-autofocus) bash "$SCRIPT_DIR/code/modules/Fixes/fix-hyprland-autofocus.sh" ;;
     *) err "Unknown fix: $id"; return 1 ;;
   esac
 }
@@ -1268,6 +1271,13 @@ run_fixes(){ # loop over FIXES_SELECTED, log results
     else RESULTS+=("quick-fix/$id:fail"); MODULE_FAILURES=$((MODULE_FAILURES + 1)); fi
   done
   hr
+}
+
+# Re-apply the addons recorded before an update. Kept as one helper so the
+# bootstrap, the TUI update and the terminal update all run the same script.
+run_addons(){
+  local mode="${1:---reinstall}"
+  bash "$SCRIPT_DIR/code/modules/addons/setup-addons.sh" "$mode" || true
 }
 
 run_tweaks(){ # loop over TWEAKS_SELECTED, log results
@@ -5048,6 +5058,11 @@ exec_modules(){
         ;;
     esac
   done
+  # Updates reinstall the addons that were present before the update, after
+  # every module has settled.
+  if [[ ${MOSQUITOMARCHY_UPDATE_FLOW:-0} == 1 || ${MOSQUITOMARCHY_UPDATE:-0} == 1 ]]; then
+    run_addons --reinstall
+  fi
 }
 
 # ───────────────────────── Launcher menu (interactive) ─────────────────────────
@@ -5527,7 +5542,7 @@ main(){
     restore) restore_flow; exit $? ;;
     update-repo)
       if [[ -d "$REPO_DIR/.git" ]] && command -v git >/dev/null 2>&1; then
-        update_repo_ff
+        update_repo_ff && run_addons --reinstall
       else
         err "No git repo at $REPO_DIR (or git missing) — nothing to update."
         exit 1
@@ -5621,6 +5636,7 @@ main(){
   echo ""
 
   # Sequential execution
+  ((UPDATE_OK)) && export MOSQUITOMARCHY_UPDATE=1
   exec_modules
 
   # Theme creation at the END. Interactive offers are gone with the wizard;

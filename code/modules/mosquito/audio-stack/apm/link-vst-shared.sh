@@ -86,6 +86,8 @@ declare -A LINKS=(
   ["Program Files (x86)/Common Files/CLAP"]="$VST_SRC_CLAP"
   ["Program Files/Steinberg/VSTPlugins"]="$VST_SRC_VST2"
   ["Program Files (x86)/Steinberg/VSTPlugins"]="$VST_SRC_VST2"
+  ["Program Files/VSTPlugins"]="$VST_SRC_VST2"
+  ["Program Files (x86)/VSTPlugins"]="$VST_SRC_VST2"
 )
 
 echo

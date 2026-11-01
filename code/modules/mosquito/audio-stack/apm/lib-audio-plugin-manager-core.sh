@@ -989,6 +989,8 @@ link_prefix_to_vst() {
     "Program Files (x86)/Common Files/CLAP:$VST_CLAP"
     "Program Files/Steinberg/VSTPlugins:$VST_VST2"
     "Program Files (x86)/Steinberg/VSTPlugins:$VST_VST2"
+    "Program Files/VSTPlugins:$VST_VST2"
+    "Program Files (x86)/VSTPlugins:$VST_VST2"
   )
   for pair in "${pairs[@]}"; do
     rel="${pair%%:*}"; target="${pair#*:}"
@@ -2868,6 +2870,10 @@ purge_aax() {
       [[ -d $root ]] || continue
       if rm -rf "$root" 2>/dev/null; then
         n=$((n + 1))
+        # Inno leaves the empty Avid/Audio parents behind; an empty "AAX" tree
+        # still reads as "AAX is installed" to some uninstallers. rmdir only
+        # removes them when they are really empty, so nothing else is touched.
+        rmdir "$(dirname "$root")" "$(dirname "$(dirname "$root")")" 2>/dev/null || true
       else
         warn "could not remove AAX folder: $root"
       fi

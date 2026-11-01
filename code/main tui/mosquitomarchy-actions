@@ -240,6 +240,8 @@ fix_applied(){
       [[ -f "$HOME/.local/state/omarchy-ableton-scroll/backup.tsv" ]] ;;
     1px-seam)
       grep -q -- "mosquitomarchy-1px-seam" "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/looknfeel.lua" 2>/dev/null ;;
+    hyprland-autofocus)
+      grep -qF -- "mosquito-no-autofocus" "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua" 2>/dev/null ;;
     *) return 1 ;;
   esac
 }
@@ -2381,6 +2383,9 @@ cmd_update_repo(){
   local before="" after=""
   before="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
   update_repo_ff || return 1
+  # An update must leave the user's addons in place, re-applied from the new
+  # checkout. Recorded addons that no longer exist are pruned by the script.
+  bash "$REPO_DIR/code/modules/addons/setup-addons.sh" --reinstall || warn "Addon reinstall failed."
   after="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
   if [[ -z $before || -z $after || $before == "$after" ]]; then
     ok "Repo already current — nothing to re-apply."
@@ -2541,6 +2546,7 @@ cmd_uninstall(){
         hyprland-crash)      flag=--remove;    script=code/modules/Fixes/fix-hyprland-crash.sh ;;
         ableton-wine-scroll) flag=--uninstall; script=code/modules/Fixes/fix-wine-scroll.sh ;;
         1px-seam)            flag=--remove;    script=code/modules/Fixes/fix-1px-seam.sh ;;
+        hyprland-autofocus)  flag=--remove;    script=code/modules/Fixes/fix-hyprland-autofocus.sh ;;
         *) warn "Fix '$fid' is not removable — skipped."; continue ;;
       esac
       if [[ -f "$SCRIPT_DIR/$script" ]] && bash "$SCRIPT_DIR/$script" "$flag" -y; then

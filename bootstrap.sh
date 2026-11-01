@@ -270,6 +270,15 @@ else
   fi
 fi
 
+# ───────────────────────── Addons ─────────────────────────
+# Addons are lightweight extensions in code/modules/addons (and the user's
+# ~/.config/mosquitomarchy/addons). They are re-applied on every bootstrap and
+# recorded so an update can reinstall the same set afterwards.
+if [[ -x "$SRC/code/modules/addons/setup-addons.sh" ]]; then
+  msg "Addons — installing the enabled extensions"
+  bash "$SRC/code/modules/addons/setup-addons.sh" || warn "One or more addons failed — see above."
+fi
+
 # ───────────────────────── Hand over to the TUI ─────────────────────────
 # The TUI is the interface; there is no second wizard to fall back to. If it
 # cannot be started the bootstrap says so plainly instead of dropping the user

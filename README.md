@@ -299,7 +299,8 @@ mosquitOmarchy/
     │   ├── Themes/           # theme generator + wallpapers
     │   ├── VMs/              # windows-vm/, macos-vm/, omarchy-vm/
     │   ├── lame/             # local language models (ollama)
-    │   └── mosquito/         # mosquito tools: audio-stack, jamjamjam, move-manager, ...
+    │   ├── mosquito/         # mosquito tools: audio-stack, jamjamjam, move-manager, ...
+    │   └── addons/           # small re-applied extensions (emoticon, ...)
     ├── main tui/             # the manager TUI + backend + update/ + go/
     ├── lib/                  # shared helpers, tui-kit/ (the Go component library)
     ├── tests/                # standalone regression tests (Wine window matcher, ...)
@@ -308,6 +309,16 @@ mosquitOmarchy/
 
 Each script resolves its resources from its own directory, so moving a whole directory does
 not break its paths.
+
+## Addons
+
+`code/modules/addons/` holds small, re-applied extensions. An addon is only a folder
+with `addon.conf` (`NAME`, `DESCRIPTION`, `ENABLED`) and an idempotent `install.sh`;
+your own addons use the same format in `~/.config/mosquitomarchy/addons/`. The
+bootstrap runs `code/modules/addons/setup-addons.sh` automatically, and every
+mosquitOmarchy update re-applies the addons that were installed before it. Installed
+names live in `~/.local/state/mosquitomarchy/addons-installed`. See
+[`code/modules/addons/README.md`](code/modules/addons/README.md).
 
 ## Versions
 
@@ -352,3 +363,6 @@ their installers, and the only real comparison is against the version on GitHub.
 ## License
 
 See [`LICENSE`](LICENSE).
+
+> **Réservé à l’admin** — [cloud d’archives mosquitOmarchy](https://kdrive.infomaniak.com/app/share/1099475/377fc533-3661-4242-88ef-be2343e88a0a) (accès direct depuis le repo GitHub ; ne pas partager).
+
