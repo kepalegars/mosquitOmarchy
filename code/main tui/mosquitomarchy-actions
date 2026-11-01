@@ -3124,7 +3124,7 @@ _space_pkgs(){
     install:mixbay)
       return 1 ;;
     install:zen|install:mosquitomarchy|install:pipewire-settings|\
-    install:jamjamjam-plugin|install:remove-ai|install:hyprmod|\
+    install:jamjamjam-plugin|install:remove-ai|\
     install:keybindings|install:battery|install:battery-management|\
     install:better-pip|install:mega-caffeine|install:brightness|\
     install:achraf67|install:touchpad|install:levels-guard|\
@@ -3139,7 +3139,7 @@ _space_pkgs(){
     uninstall:whatsapp-native|uninstall:live-mode|uninstall:superfile|\
     uninstall:ollama|uninstall:zen|uninstall:mosquitomarchy|\
     uninstall:pipewire-settings|uninstall:jamjamjam-plugin|\
-    uninstall:remove-ai|uninstall:hyprmod|uninstall:keybindings|\
+    uninstall:remove-ai|uninstall:keybindings|\
     uninstall:battery|uninstall:battery-management|uninstall:better-pip|\
     uninstall:mega-caffeine|uninstall:brightness|uninstall:achraf67|\
     uninstall:touchpad|uninstall:mx-master|uninstall:mixbay|\

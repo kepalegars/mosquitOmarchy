@@ -17,18 +17,16 @@
 #   archive is a backup: a restore is done by the user, with tar.
 #
 # TWO ARCHIVE TYPES (the menu below explains each before you pick it)
-#   complete   absolutely everything in the working tree — code, untracked
-#              files, ignored files; logs are asked about at build time.
-#              NEVER any archive (*.tar.gz of any kind, backups included),
-#              whatever the type: the archives land inside the repo, so
-#              letting one in would swallow all the previous ones.
+#   complete   tracked, untracked and ignored working-tree files; logs are
+#              asked about at build time. Sensitive machine state, PATCH/.local,
+#              passwords and nested archives are always excluded.
 #   source     the tracked code only: no logs, no install files, no backups
 #
 # BUILT FROM GIT WHERE IT MATTERS
 #   The source list is `git ls-files`, not a `tar --exclude=` guess list:
 #   the same commit gives the same content, and leftovers cannot leak in.
 #   The complete list is the working tree as it stands (tracked plus
-#   everything else on disk), because that type exists to hold it all.
+#   untracked/ignored files), except for the safety exclusions above.
 #
 # Usage:
 #   ./archive-mosquitomarchy.sh              # menu: choose a type, then build
@@ -89,55 +87,83 @@ esac
 
 human(){ numfmt --to=iec --suffix=B "${1:-0}" 2>/dev/null || printf '%sB' "${1:-0}"; }
 
-# Files that must never appear in an archive, checked on the FINISHED file
-# rather than trusted from the exclude list. This is the last gate before
-# the file leaves the machine.
+file_bytes(){
+  (( $# )) || { echo 0; return; }
+  printf '%s\0' "$@" | xargs -0 -r stat -c%s -- | awk '{s+=$1} END {print s+0}'
+}
+
+space_available(){
+  local target="$OUT_DIR"
+  while [[ ! -d $target && $target != / ]]; do target="$(dirname "$target")"; done
+  df -Pk -- "$target" | awk 'NR==2 {print $4 * 1024}'
+}
+
+# Stream the uncompressed tar through a tiny stdlib progress renderer before
+# gzip/pigz. This works without an extra `pv` dependency and reports real bytes.
+progress_stream(){
+  python3 -c '
+import sys
+total = int(sys.argv[1])
+done = 0
+tty = sys.stderr.isatty()
+width = 32
+def draw(pct):
+    filled = width * pct // 100
+    sys.stderr.write("\rArchive: [%s%s] %3d%%" % ("#" * filled, "-" * (width - filled), pct))
+    sys.stderr.flush()
+try:
+    while True:
+        chunk = sys.stdin.buffer.read(1024 * 1024)
+        if not chunk:
+            break
+        sys.stdout.buffer.write(chunk)
+        done += len(chunk)
+        if tty:
+            draw(min(99, done * 100 // max(total, 1)))
+    sys.stdout.buffer.flush()
+except BrokenPipeError:
+    sys.exit(1)
+if tty:
+    draw(100)
+    sys.stderr.write("\n")
+' "$1"
+}
+
+# Sensitive or recursive content is excluded in both modes and checked again
+# in the finished archive. Logs are added to this list unless explicitly kept.
 FORBIDDEN_PATTERNS=(
   '*/PATCH/*'
   '*/PATCH'
   '*/.local/*'
-  '*.log'
-  'last_crash.log'
-  '*omarchy-backup-*.tar.gz'
+  '*/.local'
   '*Passwords.kdbx'
-  'pkglist.txt'
-  'aurlist.txt'
-  'apps.selected'
+  '*/pkglist.txt'
+  '*/aurlist.txt'
+  '*/apps.selected'
   '*.tar.gz'
+  '*.tar.gz.gpg'
 )
 
 # ───────────────────────── Collecting the file lists ─────────────────────────
 collect_tracked(){
-  # Prints, one per line, the repo-relative paths for the source type:
+  # Prints NUL-separated repo-relative paths for the source type:
   # every tracked file, minus the ones an archive must not ship.
   git -C "$ROOT" ls-files -z \
-    | tr '\0' '\n' \
-    | grep -v -E '(^|/)PATCH/' \
-    | grep -v -E '(^|/)\.local/' \
-    | grep -v -E '(^|/)last_crash\.log$' \
-    | grep -v -E '\.log$'
+     | grep -zvE '(^|/)PATCH(/|$)|(^|/)\.local(/|$)|(^|/)(Passwords\.kdbx|pkglist\.txt|aurlist\.txt|apps\.selected)$|\.tar\.gz(\.gpg)?$|\.log$'
 }
 collect(){
   collect_tracked
 }
 
 collect_complete(){
-  # Prints the working tree as it stands: the tracked files plus everything
-  # else on disk (untracked AND ignored — the --exclude-standard flag is
-  # deliberately absent), minus the things that must never ship: EVERY
-  # archive (*.tar.gz anywhere, backups included — the archives land inside
-  # the repo, so one nested archive would swallow all the previous ones),
-  # passwords, machine-generated lists, and the logs unless asked for.
+  # Includes ignored files too, except sensitive machine state, PATCH/.local,
+  # passwords, generated lists, nested archives and (unless requested) logs.
+  local exclude='(^|/)\.git(/|$)|(^|/)PATCH(/|$)|(^|/)\.local(/|$)|(^|/)(Passwords\.kdbx|pkglist\.txt|aurlist\.txt|apps\.selected)$|\.tar\.gz(\.gpg)?$'
+  (( ${LOGS:-0} )) || exclude+='|\.log$'
   {
-    git -C "$ROOT" ls-files -z | tr '\0' '\n'
-    git -C "$ROOT" ls-files --others -z | tr '\0' '\n'
-  } | grep -v -E '(^|/)\.git/' \
-    | grep -v -E '\.tar\.gz(\.gpg)?$' \
-    | grep -v -E '(^|/)Passwords\.kdbx$' \
-    | grep -v -E '(^|/)(pkglist|aurlist)\.txt$' \
-    | grep -v -E '(^|/)apps\.selected$' \
-    | { if (( ${LOGS:-0} )); then cat; else grep -v -E '(^|/)last_crash\.log$' | grep -v -E '\.log$'; fi; } \
-    | awk 'NF && !seen[$0]++'
+    git -C "$ROOT" ls-files -z
+    git -C "$ROOT" ls-files --others -z
+  } | grep -zvE "$exclude"
 }
 
 # ───────────────────────── Archive type menu ─────────────────────────
@@ -149,10 +175,10 @@ type_menu(){
     msg "Archive type (current: ${ARCHIVE_TYPE:-source})"
     printf '\n'
     printf '  complete:\n'
-    printf '    • absolutely everything in the working tree\n'
+    printf '    • tracked, untracked and ignored files (except sensitive state)\n'
     printf '    • code, untracked files, ignored files\n'
     printf '    • the logs are asked about when it is built\n'
-    printf '    • never any archive (*.tar.gz anywhere, backups included)\n'
+    printf '    • excludes .local, PATCH, passwords, generated lists and nested archives\n'
     printf '\n'
     printf '  source:\n'
     printf '    • the tracked code only\n'
@@ -220,165 +246,136 @@ do_list(){
   preflight
   local type="${ARCHIVE_TYPE:-source}"
   if [[ $type == complete ]]; then
-    mapfile -t FILES < <(collect_complete)
+    mapfile -d '' -t FILES < <(collect_complete)
     local code
-    code="$(cd "$ROOT" && printf '%s\n' "${FILES[@]}" | xargs -d '\n' stat -c%s 2>/dev/null | awk '{s+=$1} END {print s+0}')"
+    code="$(file_bytes "${FILES[@]}")"
     msg "Complete archive contents ( $PROJECT_NAME/ )"
     printf '  %s files from the working tree\n' "${#FILES[@]}"
     printf '  total                : ~%s\n' "$(human "$code")"
+    printf '  free at destination : %s\n' "$(human "$(space_available)")"
+    if (( LOGS )); then printf '  logs                 : included\n'; else printf '  logs                 : excluded (default)\n'; fi
     if (( LIST_ONLY )); then return 0; fi
     hr
     return 0
   fi
-  mapfile -t TRACKED < <(collect)
+  mapfile -d '' -t TRACKED < <(collect)
   local code
   msg "Source archive contents ( $PROJECT_NAME/ )"
   printf '  %s tracked files from the repo\n' "${#TRACKED[@]}"
-  code="$(cd "$ROOT" && printf '%s\n' "${TRACKED[@]}" | xargs -d '\n' stat -c%s 2>/dev/null | awk '{s+=$1} END {print s+0}')"
+  code="$(file_bytes "${TRACKED[@]}")"
   printf '  code only          : ~%s\n' "$(human "$code")"
+  printf '  free at destination : %s\n' "$(human "$(space_available)")"
   if (( LIST_ONLY )); then return 0; fi
   hr
 }
 
 # ───────────────────────── Building ─────────────────────────
+verify_archive(){
+  local archive="$1" allow_logs="$2" listing="$3" f bad="" pat
+  local -a forbidden=("${FORBIDDEN_PATTERNS[@]}")
+  (( allow_logs )) || forbidden+=( '*.log' )
+  tar tzf "$archive" > "$listing" 2>/dev/null \
+    || { err "Archive verification failed (truncated or corrupt)."; return 1; }
+  while IFS= read -r f; do
+    [[ -z $f ]] && continue
+    for pat in "${forbidden[@]}"; do
+      if [[ $f == $pat ]]; then bad+="$f"$'\n'; break; fi
+    done
+  done < "$listing"
+  if [[ -n $bad ]]; then
+    err "Forbidden content found in the archive:"
+    printf '     %s' "$bad" >&2
+    return 1
+  fi
+}
+
+check_space(){
+  local input_bytes="$1" available required
+  mkdir -p "$OUT_DIR"
+  available="$(space_available)"
+  required=$((input_bytes + 128 * 1024 * 1024))
+  printf '  Input size          : ~%s\n' "$(human "$input_bytes")"
+  printf '  Free at destination : %s\n' "$(human "$available")"
+  (( available >= required )) || {
+    err "Not enough space; need at least $(human "$required") including a 128 MB safety margin."
+    return 1
+  }
+}
+
+create_archive(){
+  local tmp="$1" input_bytes="$2" listing="$3" out="$4"; shift 4
+  local -a tf=(--transform="s|^|${PROJECT_NAME}/|") compressor=(gzip -c)
+  command -v python3 >/dev/null 2>&1 || { err "python3 is required for the progress bar."; return 1; }
+  if command -v pigz >/dev/null 2>&1; then
+    compressor=(pigz -c)
+    msg "  Compression: pigz (parallel)"
+  else
+    msg "  Compression: gzip"
+  fi
+  trap 'rm -f -- "$tmp" "$listing"' EXIT
+  hr; msg "Creating archive (progress is uncompressed input)..."
+  if ! (cd "$ROOT" && tar -c "${tf[@]}" -- "$@") \
+      | progress_stream "$input_bytes" \
+      | "${compressor[@]}" > "$tmp"; then
+    err "Archive creation failed; the incomplete file was discarded."
+    return 1
+  fi
+  msg "Verifying archive contents and compression..."
+  verify_archive "$tmp" "${LOGS:-0}" "$listing" || return 1
+  local bytes entries
+  bytes="$(stat -c%s "$tmp")"
+  entries="$(wc -l < "$listing")"
+  mv -- "$tmp" "$out"
+  rm -f -- "$listing"
+  trap - EXIT
+  ok "verified archive: $out ($(human "$bytes"), $entries entries)"
+  echo "  Extract by hand:  tar xzf $(basename "$out") && cd $PROJECT_NAME && ./bootstrap.sh"
+  hr
+}
+
+archive_path(){
+  local type="$1" logs="$2" stamp suffix=""
+  stamp="$(date +%Y-%m-%d-%H%M%S-%N)"
+  (( logs )) && suffix="+logs"
+  printf '%s/mosquitomarchy-%s-%s%s.tar.gz' "$OUT_DIR" "$type" "$stamp" "$suffix"
+}
+
 build(){
   preflight
   local type="${ARCHIVE_TYPE:-source}"
-  if [[ $type == complete ]]; then build_complete; return; fi
-  mapfile -t TRACKED < <(collect)
-
-  msg "$type archive of ' $PROJECT_NAME '"
+  [[ $type == complete ]] && { build_complete; return; }
+  mapfile -d '' -t TRACKED < <(collect)
+  msg "source archive of ' $PROJECT_NAME '"
   msg "  Source : $ROOT @ $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
-  # The FILE LIST comes from git; the CONTENT comes from the working tree (tar
-  # reads the disk). So uncommitted work would silently ship. Say so.
   if [[ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]]; then
-    warn "Working tree has uncommitted changes — the archive ships the files ON DISK, not the commit."
-    warn "  Commit first if the archive must match $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo 'the commit')."
+    warn "Working tree has uncommitted changes — the archive uses files on disk, not the commit."
   fi
-  printf '  Content: %s tracked files — code only, no install file\n' "${#TRACKED[@]}"
-  msg "  Excluded: machine state, logs, backups, every non-tracked file"
-
-  mkdir -p "$OUT_DIR"
-  local -a tf=(--transform="s|^|${PROJECT_NAME}/|")
-  local stamp out tmp
-  stamp="$(date +%Y-%m-%d)"
-  out="$OUT_DIR/mosquitomarchy-$type-$stamp.tar.gz"
-  tmp="$out.tmp.$$"
-  trap 'rm -f "$tmp"' EXIT
-
-  # pigz = parallel gzip (much faster, less memory pressure)
-  local -a compress=()
-  if command -v pigz >/dev/null 2>&1; then
-    compress=("-I" "pigz"); msg "  Compression: pigz (parallel)"
-  else
-    msg "  Compression: gzip (install pigz to speed it up)"
-  fi
-
-  hr; msg "Creating the archive..."
-  # ONE tar invocation for everything: appending to a finished .tar.gz would
-  # mean decompressing and recompressing the whole thing once per addition.
-  # --transform puts all of it under one <project>/ folder: extracting by
-  # hand then yields a single directory.
-  if ! ( cd "$ROOT" && tar cz "${compress[@]}" -f "$tmp" \
-      "${tf[@]}" -- "${TRACKED[@]}" ); then
-    err "tar failed — nothing was written."
-    exit 1
-  fi
-
-  trap - EXIT
-
-  local bytes; bytes="$(stat -c%s "$tmp")"
-  mv -f "$tmp" "$out"
-
-  # Final gate: verify what was actually written, not what we intended.
-  msg "Verifying the archive..."
-  local bad f
-  bad=""
-  while IFS= read -r f; do
-    [[ -z $f ]] && continue
-    for pat in "${FORBIDDEN_PATTERNS[@]}"; do
-      if [[ $f == $pat ]] || [[ $f == *"$pat" ]]; then bad+="$f"$'\n'; break; fi
-    done
-  done < <(tar tzf "$out" 2>/dev/null)
-  if [[ -n $bad ]]; then
-    err "Unexpected content found in the archive — file removed:"
-    printf '     %s' "$bad" >&2
-    rm -f "$out"
-    exit 1
-  fi
-  ok "verified: no logs, no backups, no passwords, no personal files"
-
-  ok "$type archive: $out ($(human "$bytes"), $(tar tzf "$out" 2>/dev/null | wc -l) entries)"
-  echo "  Extract by hand:  tar xzf $(basename "$out") && cd $PROJECT_NAME && ./bootstrap.sh"
-  hr
+  printf '  Content: %s tracked source files\n' "${#TRACKED[@]}"
+  msg "  Excluded: machine state, logs, backups, passwords and non-tracked files"
+  local input_bytes out tmp listing
+  input_bytes="$(file_bytes "${TRACKED[@]}")"
+  check_space "$input_bytes" || exit 1
+  out="$(archive_path source 0)"
+  tmp="$out.tmp.$$"; listing="$tmp.list"
+  create_archive "$tmp" "$input_bytes" "$listing" "$out" "${TRACKED[@]}"
 }
 
 build_complete(){
   preflight
   ask_logs
-  mapfile -t FILES < <(collect_complete)
+  mapfile -d '' -t FILES < <(collect_complete)
   (( ${#FILES[@]} )) || { err "Nothing to archive."; exit 1; }
-
   msg "complete archive of ' $PROJECT_NAME '"
-  msg "  Source : $ROOT @ $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?') (plus the working tree as it stands)"
-  if (( LOGS )); then
-    msg "  Logs   : included (asked for)"
-  else
-    msg "  Logs   : excluded"
-  fi
-
-  mkdir -p "$OUT_DIR"
-  local -a tf=(--transform="s|^|${PROJECT_NAME}/|")
-  local stamp out tmp suffix=""
-  stamp="$(date +%Y-%m-%d)"
-  # "+logs" reads as an addition to the full content. The old "-logs" read
-  # as if the logs WERE the content.
-  (( LOGS )) && suffix="+logs"
-  out="$OUT_DIR/mosquitomarchy-complete-$stamp$suffix.tar.gz"
-  tmp="$out.tmp.$$"
-  trap 'rm -f "$tmp"' EXIT
-
-  local -a compress=()
-  if command -v pigz >/dev/null 2>&1; then
-    compress=("-I" "pigz"); msg "  Compression: pigz (parallel)"
-  else
-    msg "  Compression: gzip (install pigz to speed it up)"
-  fi
-
-  hr; msg "Creating the archive..."
-  if ! ( cd "$ROOT" && tar cz "${compress[@]}" -f "$tmp" \
-      "${tf[@]}" -- "${FILES[@]}" ); then
-    err "tar failed — nothing was written."
-    exit 1
-  fi
-  trap - EXIT
-
-  local bytes; bytes="$(stat -c%s "$tmp")"
-  mv -f "$tmp" "$out"
-
-  msg "Verifying the archive..."
-  local bad f
-  bad=""
-  while IFS= read -r f; do
-    [[ -z $f ]] && continue
-    # No exception anywhere, backups included: any nested archive or any
-    # password fails the build. Entries carry the transformed
-    # mosquitomarchy/ prefix here.
-    for pat in '*.tar.gz' '*Passwords.kdbx'; do
-      if [[ $f == $pat ]] || [[ $f == *"$pat" ]]; then bad+="$f"$'\n'; break; fi
-    done
-  done < <(tar tzf "$out" 2>/dev/null)
-  if [[ -n $bad ]]; then
-    err "Unexpected content found in the archive — file removed:"
-    printf '     %s' "$bad" >&2
-    rm -f "$out"
-    exit 1
-  fi
-  ok "verified: no nested archives of any kind, no passwords"
-
-  ok "complete archive: $out ($(human "$bytes"), $(tar tzf "$out" 2>/dev/null | wc -l) entries)"
-  echo "  Extract by hand:  tar xzf $(basename "$out") && cd $PROJECT_NAME && ./bootstrap.sh"
-  hr
+  msg "  Source : $ROOT @ $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?') plus working-tree files"
+  if (( LOGS )); then msg "  Logs   : included (as requested)"; else msg "  Logs   : excluded"; fi
+  printf '  Content: %s files, ~%s uncompressed\n' "${#FILES[@]}" "$(human "$(file_bytes "${FILES[@]}")")"
+  msg "  Safety exclusions: .local, PATCH, passwords, generated lists and nested archives"
+  local input_bytes out tmp listing
+  input_bytes="$(file_bytes "${FILES[@]}")"
+  check_space "$input_bytes" || exit 1
+  out="$(archive_path complete "$LOGS")"
+  tmp="$out.tmp.$$"; listing="$tmp.list"
+  create_archive "$tmp" "$input_bytes" "$listing" "$out" "${FILES[@]}"
 }
 
 # ───────────────────────── Dispatch ─────────────────────────

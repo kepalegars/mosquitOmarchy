@@ -101,7 +101,6 @@ Details, options and caveats live in each module's own `README.md`. This table i
 | `superfile` | SuperFile terminal file manager; the system default file manager is left unchanged | [README](code/modules/Apps/superfile/README.md) |
 | `zen` | Zen Browser, seeded extensions and theme | [README](code/modules/Apps/zen/README.md) |
 | `keepassxc` | KeePassXC password manager + browser integration (Leaves Omarchy's keyring intact) | [README](code/modules/Apps/keepassxc/README.md) |
-| `hyprmod` | Hyprmod profile configuration in `~/.config/hypr/hyprmod.d/profiles.conf` | — |
 | `apps` | The TUIs of `code/modules/TUIs/`, reinstallable from a backup selection | [README](code/modules/Apps/README.md) · [TUIs](code/modules/TUIs/README.md) |
 
 The tables below follow the TUI's Setup folders: each heading is one of them.
@@ -237,12 +236,12 @@ memory, so the next `./bootstrap.sh` starts from zero.
 
 ### `archive-mosquitomarchy.sh`
 
-Builds an archive of the repo into the directory next to it, in one of two
-types chosen from a menu (or `--type=`): `complete` (the whole working tree
-including the backups folder, logs asked about) or `source` (tracked code
-only: no logs, no install files, no backups). The source list comes from
-`git ls-files`, and every build re-reads its own output and refuses to keep
-it if a log, `Passwords.kdbx` or backup slipped in where it should not be.
+Builds an archive in `code/main tui/`, in one of two types chosen from a menu
+(or `--type=`): `complete` (tracked, untracked and ignored files, with logs
+optional) or `source` (tracked source only). Both exclude `.local`, `PATCH`,
+password databases, generated machine lists and nested archives. The script
+shows a progress bar, verifies the finished archive and refuses to start when
+the destination lacks a 128 MB free-space margin beyond the input size.
 
 ```bash
 ./archive-mosquitomarchy.sh              # menu: choose a type, then build
@@ -250,6 +249,10 @@ it if a log, `Passwords.kdbx` or backup slipped in where it should not be.
 ./archive-mosquitomarchy.sh --type=source
 ./archive-mosquitomarchy.sh --out=DIR
 ```
+
+The output name includes the time, so another archive made the same day will
+not overwrite it. `complete` includes large ignored installers; check its size
+and available disk space with `--type=complete --list` first.
 
 A release replaces the bootstrap pipe — extract it, `./bootstrap.sh --init-git` to make
 self-update work, then `./bootstrap.sh`.
@@ -322,10 +325,8 @@ listing the additions and removals. An addon is a folder with `addon.conf`
 ## Versions
 
 Every version shown in a TUI is the version of the **script**, never of the application it
-installs. So `hyprmod - v1.0.0` does not mean hyprmod 1.0.0 — hyprmod ships its own versioning
-and this says nothing about it. It means *the mosquitOmarchy script that sets hyprmod up* is
-at 1.0.0, which is what "check for updates" acts on. Nothing in the list is the application's
-own version, so there is nothing there to compare against a vendor release.
+installs. For example, a module version identifies the mosquitOmarchy installer, not the
+application it installs; it is what "check for updates" acts on.
 
 There is one source: the root [`VERSION`](VERSION) file, currently **1.0.0**, which
 `module_version()` reads and the installers inject into `mosquitomarchy-tui` and
