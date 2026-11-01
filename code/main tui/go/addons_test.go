@@ -57,3 +57,15 @@ func TestAddonChangesTrackInstalledState(t *testing.T) {
 		t.Fatalf("confirmation does not list both changes:\n%s", text)
 	}
 }
+
+func TestExtrasOffersBlinkingAddonsRow(t *testing.T) {
+	for _, it := range addonTestModel().settingsItems2() {
+		if it.Value == "addons" {
+			if !it.Engage {
+				t.Fatal("Addons row is not an engagement row")
+			}
+			return
+		}
+	}
+	t.Fatal("Extras has no Addons row")
+}
