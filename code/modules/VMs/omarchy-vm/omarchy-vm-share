@@ -143,8 +143,14 @@ install_clipboard_agent(){
   fi
   home="$(getent passwd "$user" | cut -d: -f6)"
   [[ -n $home ]] || { warn "could not resolve $user's home — clipboard agent not installed"; return 0; }
+  local uid
+  uid="$(id -u "$user")"
   if [[ $EUID -eq 0 && $user != root ]] && command -v runuser >/dev/null 2>&1; then
-    if runuser -u "$user" -- bash -c 'mkdir -p "$HOME/.local/bin" && curl -sf --retry 3 "http://10.0.2.2:'"$port"'/agent" -o "$HOME/.local/bin/omarchy-vm-clipboard-agent" && chmod +x "$HOME/.local/bin/omarchy-vm-clipboard-agent" && "$HOME/.local/bin/omarchy-vm-clipboard-agent" --install'; then
+    if runuser -u "$user" -- env \
+         HOME="$home" \
+         XDG_RUNTIME_DIR="/run/user/$uid" \
+         DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+         bash -c 'mkdir -p "$HOME/.local/bin" && curl -sf --retry 3 "http://10.0.2.2:'"$port"'/agent" -o "$HOME/.local/bin/omarchy-vm-clipboard-agent" && chmod +x "$HOME/.local/bin/omarchy-vm-clipboard-agent" && "$HOME/.local/bin/omarchy-vm-clipboard-agent" --install'; then
       ok "clipboard agent installed for $user"
     else
       warn "clipboard agent install failed — run it manually as $user"
@@ -153,7 +159,9 @@ install_clipboard_agent(){
     mkdir -p "$home/.local/bin"
     if curl -sf --retry 3 "http://10.0.2.2:${port}/agent" -o "$home/.local/bin/omarchy-vm-clipboard-agent" \
       && chmod +x "$home/.local/bin/omarchy-vm-clipboard-agent" \
-      && HOME="$home" "$home/.local/bin/omarchy-vm-clipboard-agent" --install; then
+      && HOME="$home" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}" \
+         DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$uid/bus}" \
+         "$home/.local/bin/omarchy-vm-clipboard-agent" --install; then
       ok "clipboard agent installed for $user"
     else
       warn "clipboard agent install failed — run it manually as $user"
