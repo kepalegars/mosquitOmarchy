@@ -34,9 +34,11 @@
 # The same check runs at each boot via the mosquitomarchy-update module: the
 # scripts update is checked FIRST, and only if there is none do we notify
 # about the pending Omarchy updates.
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/./scripts/lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/lib/elevate.bash"  # mq_sudo: native pkexec prompt when not root
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/lib/keybindings.bash"  # kb_*: SUPER keybindings managed block in bindings.lua
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/./code/lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/code/lib/elevate.bash"  # mq_sudo: native pkexec prompt when not root
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/code/lib/keybindings.bash"  # kb_*: SUPER keybindings managed block in bindings.lua
+# Keep Go module/build caches in mosquitOmarchy's own cache (no ~/go).
+[[ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/code/lib/go-build-env.bash" ]] && source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/code/lib/go-build-env.bash"
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -440,7 +442,7 @@ update_file_kind(){
 }
 
 # One-line changelog entry for one changed path, e.g.
-# "M scripts/... — installer/setup script edited (+12/−3 lines)".
+# "M code/... — installer/setup script edited (+12/−3 lines)".
 update_path_change_summary(){
   local p="$1" f="$REPO_DIR/$1" st change status rest kind line
   local src dst stats add del cur old
@@ -985,7 +987,7 @@ st_live_mode(){
   # setup-live-mode.sh writes a user-readable marker once the file is written
   # AND validated by visudo, and that is what is read here.
   [[ -f "$HOME/.local/state/mosquitomarchy/live-mode-sudoers" ]] \
-    || miss="${miss:+$miss, }the live-mode sudoers grant (rerun: sudo bash scripts/mosquito/audio-stack/live-mode/setup-live-mode.sh)"
+    || miss="${miss:+$miss, }the live-mode sudoers grant (rerun: sudo bash code/modules/mosquito/audio-stack/live-mode/setup-live-mode.sh)"
   [[ -d "$HOME/.config/omarchy/plugins/mosquito.livemode" ]] || miss="${miss:+$miss, }the mosquito.livemode plugin"
   [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
   echo ok
@@ -1121,7 +1123,7 @@ MODULES=(
   "betterbird:Betterbird — Thunderbird fork + system tray (close/minimise to tray), starts in the tray at login, main window tiled + popups at the pointer"
   "whatsapp-native:WhatsApp Web as a Chromium web app — tray supervisor (login starts hidden in the tray, menu opens directly), silent visuals, close-to-tray, no menu bar, login autostart"
   "tidal:TIDAL Hi-Fi (TidaLuna) — native Tidal client, menu bar hidden and SUPER+SHIFT+M bound to it"
-  "apps:Apps, tuis (one folder + setup script per entry in scripts/TUIs)"
+  "apps:Apps, tuis (one folder + setup script per entry in code/modules/TUIs)"
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
   "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships."
   "battery-management:Battery management — formerly ultra-save, a CPU/power-capping mode; abandoned for a simple script that colors the battery icon by power profile"
@@ -1172,7 +1174,7 @@ FIXES=(
 # TWEAKS = preferences: the desktop works, the user just wants it different
 #          (appearance, window behaviour, de-cluttering). Purely optional.
 # Both are idempotent, both use the same multi-select + run machinery; only the
-# catalog and the on-disk folder differ (scripts/Fixes/ vs scripts/Tweaks/).
+# catalog and the on-disk folder differ (code/modules/Fixes/ vs code/modules/Tweaks/).
 TWEAKS=(
   "keepassxc-window:KeePassXC window floats/centers in Hyprland instead of misbehaving when tiled next to other windows"
   "tui-theme:Force-adapt the TUIs' theme to the current Omarchy theme (regenerate the palette + rebuild both Go TUIs; the dynamic theme already ships with tui-kit)"
@@ -1217,14 +1219,14 @@ fix_category(){
 run_fix(){ # single fix by id
   local id="$1"
   case $id in
-    omarchy-menu) bash "$SCRIPT_DIR/scripts/Fixes/fix-omarchy-menu.sh" ;;
-    hyprland-crash) bash "$SCRIPT_DIR/scripts/Fixes/fix-hyprland-crash.sh" ;;
-    ableton-wine-scroll) bash "$SCRIPT_DIR/scripts/Fixes/fix-wine-scroll.sh" ;;
-    ableton-fullscreen) bash "$SCRIPT_DIR/scripts/Fixes/fix-ableton-fullscreen.sh" ;;
-    1px-seam) bash "$SCRIPT_DIR/scripts/Fixes/fix-1px-seam.sh" ;;
-    omarchy-bar) bash "$SCRIPT_DIR/scripts/Fixes/fix-omarchy-bar.sh" ;;
-    bar-center-anchor) bash "$SCRIPT_DIR/scripts/Fixes/fix-bar-center-anchor.sh" ;;
-    bluetooth) bash "$SCRIPT_DIR/scripts/Fixes/fix-bluetooth.sh" ;;
+    omarchy-menu) bash "$SCRIPT_DIR/code/modules/Fixes/fix-omarchy-menu.sh" ;;
+    hyprland-crash) bash "$SCRIPT_DIR/code/modules/Fixes/fix-hyprland-crash.sh" ;;
+    ableton-wine-scroll) bash "$SCRIPT_DIR/code/modules/Fixes/fix-wine-scroll.sh" ;;
+    ableton-fullscreen) bash "$SCRIPT_DIR/code/modules/Fixes/fix-ableton-fullscreen.sh" ;;
+    1px-seam) bash "$SCRIPT_DIR/code/modules/Fixes/fix-1px-seam.sh" ;;
+    omarchy-bar) bash "$SCRIPT_DIR/code/modules/Fixes/fix-omarchy-bar.sh" ;;
+    bar-center-anchor) bash "$SCRIPT_DIR/code/modules/Fixes/fix-bar-center-anchor.sh" ;;
+    bluetooth) bash "$SCRIPT_DIR/code/modules/Fixes/fix-bluetooth.sh" ;;
     *) err "Unknown fix: $id"; return 1 ;;
   esac
 }
@@ -1232,13 +1234,13 @@ run_fix(){ # single fix by id
 run_tweak(){ # single tweak by id
   local id="$1"
   case $id in
-    keepassxc-window) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-keepassxc-window.sh" ;;
-    tui-theme) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-tui-theme.sh" ;;
-    wine-menu) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-wine-menu.sh" ;;
-    wine-apps) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-wine-apps.sh" ;;
-    terminal-padding) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-terminal-padding.sh" ;;
-    wine-theme) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-wine-theme.sh" ;;
-    colors-unifier) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-colors-unifier.sh" ;;
+    keepassxc-window) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-keepassxc-window.sh" ;;
+    tui-theme) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-tui-theme.sh" ;;
+    wine-menu) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-wine-menu.sh" ;;
+    wine-apps) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-wine-apps.sh" ;;
+    terminal-padding) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-terminal-padding.sh" ;;
+    wine-theme) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-wine-theme.sh" ;;
+    colors-unifier) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-colors-unifier.sh" ;;
     *) err "Unknown tweak: $id"; return 1 ;;
   esac
 }
@@ -1248,11 +1250,11 @@ run_tweak(){ # single tweak by id
 run_tweak_remove(){ # single tweak removal by id
   local id="$1"
   case $id in
-    keepassxc-window) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-keepassxc-window.sh" --remove ;;
-    terminal-padding) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-terminal-padding.sh" --remove ;;
-    wine-apps) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-wine-apps.sh" --remove ;;
-    wine-theme) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-wine-theme.sh" --remove ;;
-    colors-unifier) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-colors-unifier.sh" --remove ;;
+    keepassxc-window) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-keepassxc-window.sh" --remove ;;
+    terminal-padding) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-terminal-padding.sh" --remove ;;
+    wine-apps) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-wine-apps.sh" --remove ;;
+    wine-theme) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-wine-theme.sh" --remove ;;
+    colors-unifier) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-colors-unifier.sh" --remove ;;
     *) return 1 ;;
   esac
 }
@@ -1338,51 +1340,51 @@ handbrake) st_handbrake ;;
 # script itself, docs, README…).
 module_of_path(){
   case "$1" in
-    scripts/VMs/windows-vm/*) echo windows-vm ;;
-    scripts/VMs/macos-vm/*)   echo macos-vm ;;
-    scripts/VMs/omarchy-vm/*) echo omarchy-vm ;;
-    scripts/mosquitomarchy\ tui/update/*) echo mosquitomarchy-update ;;
-    scripts/Apps/reaper/*)      echo reaper ;;
-    scripts/Apps/bitwig/*)      echo bitwig ;;
-    scripts/Apps/ableton/*)     echo ableton ;;
-    scripts/Apps/guitarpro/*)   echo guitarpro ;;
-    scripts/Apps/davinci/*)     echo davinci-resolve ;;
-    scripts/Apps/handbrake/*)   echo handbrake ;;
-    scripts/Apps/signal/*)      echo signal ;;
-    scripts/Apps/betterbird/*)  echo betterbird ;;
-    scripts/Apps/whatsapp-native/*) echo whatsapp-native ;;
-    scripts/Apps/extracto/*)    echo extracto ;;
-    scripts/Apps/douze/*)       echo douze ;;
-    scripts/Apps/tidal/*)       echo tidal ;;
-    scripts/Apps/flea/*)        echo flea ;;
-    scripts/Apps/keepassxc/*)   echo keepassxc ;;
-    scripts/Apps/superfile/*)   echo superfile ;;
-    scripts/Apps/zen/*)         echo zen ;;
-    scripts/Apps/*|scripts/TUIs/*) echo apps ;;
-    scripts/lame/*)             echo ollama ;;
-    scripts/Plugins/battery-management/*) echo battery-management ;;
-    scripts/Plugins/omaskpinpass/*)       echo omaskpinpass ;;
-    scripts/Plugins/omarchy-downloads/*)  echo downloads ;;
-    scripts/Plugins/brightness/*)         echo brightness ;;
-    scripts/Plugins/better-pip/*)         echo better-pip ;;
-    scripts/Plugins/reboot-into-windows/*) echo reboot-into-windows ;;
-    scripts/Plugins/touchpad/*)           echo touchpad ;;
-    scripts/Plugins/mx-master/*)          echo mx-master ;;
-    scripts/Themes/*)                     echo achraf67 ;;
-    scripts/Fixes/fix-ableton-fullscreen.sh) echo ableton-fullscreen ;;
-    scripts/Fixes/fix-bar-center-anchor.sh)  echo bar-center-anchor ;;
-    scripts/Fixes/fix-bluetooth.sh)          echo bluetooth ;;
-    scripts/mosquito/mega-caffeine/*)  echo mega-caffeine ;;
-    scripts/mosquito/move-manager/*)   echo ableton-move-manager ;;
-    scripts/mosquito/jamjamjam/*)      echo jamjamjam-plugin ;;
-    scripts/mosquito/audio-stack/apm/*)          echo audio-plugin-manager ;;
-    scripts/mosquito/audio-stack/mixbay/*)       echo mixbay ;;
-    scripts/mosquito/audio-stack/levels-guard/*) echo levels-guard ;;
-    scripts/mosquito/audio-stack/live-mode/*)    echo live-mode ;;
-    scripts/mosquito/audio-stack/pipewire/*)     echo pipewire-settings ;;
-    scripts/mosquito/audio-stack/*)              echo audio ;;
-    scripts/mosquitomarchy\ tui/*) echo mosquitomarchy ;;
-    scripts/lib/*) echo mosquitomarchy ;;
+    code/modules/VMs/windows-vm/*) echo windows-vm ;;
+    code/modules/VMs/macos-vm/*)   echo macos-vm ;;
+    code/modules/VMs/omarchy-vm/*) echo omarchy-vm ;;
+    code/modules/mosquitomarchy\ tui/update/*) echo mosquitomarchy-update ;;
+    code/modules/Apps/reaper/*)      echo reaper ;;
+    code/modules/Apps/bitwig/*)      echo bitwig ;;
+    code/modules/Apps/ableton/*)     echo ableton ;;
+    code/modules/Apps/guitarpro/*)   echo guitarpro ;;
+    code/modules/Apps/davinci/*)     echo davinci-resolve ;;
+    code/modules/Apps/handbrake/*)   echo handbrake ;;
+    code/modules/Apps/signal/*)      echo signal ;;
+    code/modules/Apps/betterbird/*)  echo betterbird ;;
+    code/modules/Apps/whatsapp-native/*) echo whatsapp-native ;;
+    code/modules/Apps/extracto/*)    echo extracto ;;
+    code/modules/Apps/douze/*)       echo douze ;;
+    code/modules/Apps/tidal/*)       echo tidal ;;
+    code/modules/Apps/flea/*)        echo flea ;;
+    code/modules/Apps/keepassxc/*)   echo keepassxc ;;
+    code/modules/Apps/superfile/*)   echo superfile ;;
+    code/modules/Apps/zen/*)         echo zen ;;
+    code/modules/Apps/*|code/modules/TUIs/*) echo apps ;;
+    code/modules/lame/*)             echo ollama ;;
+    code/modules/Plugins/battery-management/*) echo battery-management ;;
+    code/modules/Plugins/omaskpinpass/*)       echo omaskpinpass ;;
+    code/modules/Plugins/omarchy-downloads/*)  echo downloads ;;
+    code/modules/Plugins/brightness/*)         echo brightness ;;
+    code/modules/Plugins/better-pip/*)         echo better-pip ;;
+    code/modules/Plugins/reboot-into-windows/*) echo reboot-into-windows ;;
+    code/modules/Plugins/touchpad/*)           echo touchpad ;;
+    code/modules/Plugins/mx-master/*)          echo mx-master ;;
+    code/modules/Themes/*)                     echo achraf67 ;;
+    code/modules/Fixes/fix-ableton-fullscreen.sh) echo ableton-fullscreen ;;
+    code/modules/Fixes/fix-bar-center-anchor.sh)  echo bar-center-anchor ;;
+    code/modules/Fixes/fix-bluetooth.sh)          echo bluetooth ;;
+    code/modules/mosquito/mega-caffeine/*)  echo mega-caffeine ;;
+    code/modules/mosquito/move-manager/*)   echo ableton-move-manager ;;
+    code/modules/mosquito/jamjamjam/*)      echo jamjamjam-plugin ;;
+    code/modules/mosquito/audio-stack/apm/*)          echo audio-plugin-manager ;;
+    code/modules/mosquito/audio-stack/mixbay/*)       echo mixbay ;;
+    code/modules/mosquito/audio-stack/levels-guard/*) echo levels-guard ;;
+    code/modules/mosquito/audio-stack/live-mode/*)    echo live-mode ;;
+    code/modules/mosquito/audio-stack/pipewire/*)     echo pipewire-settings ;;
+    code/modules/mosquito/audio-stack/*)              echo audio ;;
+    code/modules/mosquitomarchy\ tui/*) echo mosquitomarchy ;;
+    code/lib/*) echo mosquitomarchy ;;
     bootstrap.sh) echo mosquitomarchy ;;
   esac
 }
@@ -1475,8 +1477,8 @@ apm_plugins_root(){
 apm_state_file(){
   local c
   for c in "$HOME/.local/bin/audio-plugin-manager-state.json" \
-           "$SCRIPT_DIR/scripts/mosquito/audio-stack/apm/audio-plugin-manager-state.json" \
-           "$HOME/mosquitOmarchy/scripts/mosquito/audio-stack/apm/audio-plugin-manager-state.json"; do
+           "$SCRIPT_DIR/code/modules/mosquito/audio-stack/apm/audio-plugin-manager-state.json" \
+           "$HOME/mosquitOmarchy/code/modules/mosquito/audio-stack/apm/audio-plugin-manager-state.json"; do
     [[ -f $c ]] && { printf '%s\n' "$c"; return 0; }
   done
   return 1
@@ -1554,13 +1556,13 @@ mq_vst_init(){
 # must NOT be swept into an archive with their multi-GB program folder.
 # XWayland apps whose DIALOG windows must float while their main window stays
 # tiled. Hyprland cannot tell the two apart (same class), so the shared helper
-# matches the known dialog titles — see scripts/lib/hypr-dialogs.sh. Betterbird
+# matches the known dialog titles — see code/lib/hypr-dialogs.sh. Betterbird
 # lives here rather than in an app script because it comes from the apps
 # catalog and has no installer of its own.
 XWAYLAND_DIALOG_APPS=()
 
 ensure_dialog_rules(){
-  local lib="$SCRIPT_DIR/scripts/lib/hypr-dialogs.sh" a
+  local lib="$SCRIPT_DIR/code/lib/hypr-dialogs.sh" a
   [[ -x $lib || -f $lib ]] || return 0
   for a in "${XWAYLAND_DIALOG_APPS[@]:-}"; do
     [[ -n $a ]] || continue
@@ -1577,7 +1579,7 @@ reaper_portable_root(){
 }
 
 # ─── TUIs ("apps" module) ───
-# scripts/TUIs is the list: one setup-<name>.sh per entry, with "# pkg:" and
+# code/modules/TUIs is the list: one setup-<name>.sh per entry, with "# pkg:" and
 # "# desc:" header lines. CAT_TUI keeps the old "pkg|desc" shape for callers.
 
 load_catalog(){
@@ -2327,14 +2329,12 @@ do_backup(){
            .local/bin/power-helper \
 .config/systemd/user/yabridge-autosync.path \
             .config/systemd/user/yabridge-autosync.service \
-            .local/bin/omagrab .config/omagrab \
             .local/bin/osx-kvm-installer.sh .local/bin/macos-vm-tui.sh \
             .local/bin/launch-macos-tui.sh \
             .local/bin/omarchy-vm .local/bin/setup-omarchy-vm.sh \
             .local/bin/omarchy-vm-tui.sh .local/bin/launch-omarchy-tui.sh \
             .local/share/icons/hicolor \
-            .local/share/applications \
-            .local/share/applications/omagrab.desktop; do
+            .local/share/applications; do
     [[ -e "$HOME/$p" ]] && paths+=("$p")
   done
   # Zen browser — the ACTIVE profile's settings + what the zen module deploys.
@@ -2473,7 +2473,7 @@ do_backup(){
     # only" really does contain nothing else from that file.
     ( cd "$HOME" && tar czf "$tmp/config-backup.tar.gz" --ignore-failed-read \
         --exclude='.config/hypr/bindings.lua' "${paths[@]}" )
-    ok "config-backup.tar.gz (${#paths[@]} items: config + bar + menus + yabridgectl + REAPER + Zen settings + omagrab + keepassxc)"
+    ok "config-backup.tar.gz (${#paths[@]} items: config + bar + menus + yabridgectl + REAPER + Zen settings + keepassxc)"
   fi
 
   pacman -Qqe > "$tmp/pkglist.txt" 2>/dev/null && ok "pkglist.txt ($(wc -l < "$tmp/pkglist.txt") packages)"
@@ -3007,12 +3007,6 @@ restore_backup(){
     fi
   fi
 
-  # --- 4. Module dependencies (auto-installed from deps manifests in scripts/) ---
-  # Reads every scripts/*/deps file, checks which packages are missing, and
-  # installs them. Covers external scripts (omagrab: yt-dlp / ffmpeg / wl-clipboard),
-  # browser configs (zen: zen-browser-bin) and anything future.
-  install_module_deps
-
   # Hyprland LAST: a module install or a theme hook must not overwrite the
   # restored config afterwards. The helper also reloads Hyprland.
   if [[ $dep_hyprland == yes ]]; then
@@ -3024,44 +3018,6 @@ restore_backup(){
   rm -rf "$tmp"
   msg "Restore finished."
   echo "  Rerun ./mosquitomarchy-setup.sh --status to see what remains to install/complete."
-}
-
-# Restore-time deps manifest mechanism: every module/script may declare a
-# `deps` file (one package per line, '#' = comment) listing the official
-# packages it needs. On restore these are installed automatically (missing
-# ones only), so scripts — e.g. omagrab (yt-dlp/ffmpeg/wl-clipboard), the zen
-# module (zen-browser-bin) — always find their runtime requirements present.
-collect_deps(){
-  MODULE_DEPS=()
-  local f line
-  while IFS= read -r -d '' f; do
-    while IFS= read -r line || [[ -n $line ]]; do
-      line="${line%%$'\r'}"
-      [[ -z $line || $line == \#* ]] && continue
-      pkg_has "$line" || MODULE_DEPS+=("$line")
-    done < "$f"
-  done < <(find "$SCRIPT_DIR/scripts" -name deps -type f -print0 2>/dev/null)
-}
-
-install_module_deps(){
-  collect_deps
-  ((${#MODULE_DEPS[@]})) || { ok "Module deps: all present (manifest mechanism)."; return 0; }
-  local uniq=() p found
-  for p in "${MODULE_DEPS[@]}"; do
-    found=0
-    local q
-    for q in "${uniq[@]:-}"; do [[ $q == "$p" ]] && found=1 && break; done
-    ((found)) || uniq+=("$p")
-  done
-  if ((YES)); then
-    mq_sudo pacman -S --needed --noconfirm "${uniq[@]}" \
-      && ok "Module deps installed: ${uniq[*]}" || err "Module deps failed: ${uniq[*]}"
-  else
-    if ask "Install the missing module dependencies (${uniq[*]})?" y; then
-      mq_sudo pacman -S --needed --noconfirm "${uniq[@]}" \
-        && ok "Module deps installed: ${uniq[*]}" || err "Module deps failed: ${uniq[*]}"
-    fi
-  fi
 }
 
 restore_flow(){
@@ -3082,7 +3038,7 @@ restore_flow(){
 # Personal data (VST plugins, Windows VM, Ollama models) is NOT deleted without
 # explicit confirmation (--purge). Uninstalled modules are recorded as excluded.
 BIN_DIR="$HOME/.local/bin"
-MOSQUITOMARCHY_APP_DIR="$SCRIPT_DIR/scripts/mosquitomarchy tui"
+MOSQUITOMARCHY_APP_DIR="$SCRIPT_DIR/code/main tui"
 APPS_DIR="$HOME/.local/share/applications"
 # Overridable so the TUI's Go tests can exercise menu install/strip against a
 # throwaway directory. Unset in normal use, this is the user's real menu.
@@ -3130,8 +3086,8 @@ remove_menu_blocks(){
 # PNG found in the repo is referenced as the icon asset.
 mosquitomarchy_icon(){
   local f
-  for f in "$SCRIPT_DIR/scripts/mosquito/move-manager/move-manager-icon.png" \
-           "$SCRIPT_DIR/scripts/mosquito/audio-stack/apm/audio-plugin-manager-icon.png"; do
+  for f in "$SCRIPT_DIR/code/modules/mosquito/move-manager/move-manager-icon.png" \
+           "$SCRIPT_DIR/code/modules/mosquito/audio-stack/apm/audio-plugin-manager-icon.png"; do
     [[ -f $f ]] && { printf '%s' "$f"; return 0; }
   done
   return 1
@@ -3224,12 +3180,12 @@ MENU_EOF
 }
 
 # ── mosquitOmarchy Go TUI (dispatcher + binary + actions backend) ──
-# The Go/Bubble Tea TUI (scripts/mosquitomarchy tui/tui-go/) replaced the old
+# The Go/Bubble Tea TUI (code/main tui/go/) replaced the old
 # gum-based launcher_menu; the menu entry now launches the `mosquitomarchy`
 # dispatcher, which opens the TUI in a terminal. Everything the menu entry
 # needs must therefore exist: the compiled TUI, the dispatcher next to it,
 # and the mosquitomarchy-actions backend beside them (the TUI resolves the
-# backend from its own directory — see tui-go/actions.go).
+# backend from its own directory — see go/actions.go).
 #
 # The backend is SYMLINKED, never copied: it computes the path to
 # mosquitomarchy-setup.sh relative to itself (../../../), so a copy in
@@ -3244,7 +3200,7 @@ ensure_mosquitomarchy_tui(){
     # clobber a destination that isn't a Go build output — see the same
     # pattern in setup-ableton-move-manager.sh).
     tmp_out="$(mktemp "$BIN_DIR/.mosquitomarchy-tui.XXXXXX")"
-    if (cd "$MOSQUITOMARCHY_APP_DIR/tui-go" && go build -ldflags "-X main.appVersion=$REPO_VERSION" -o "$tmp_out" .); then
+    if (cd "$MOSQUITOMARCHY_APP_DIR/go" && go build -ldflags "-X main.appVersion=$REPO_VERSION" -o "$tmp_out" .); then
       chmod +x "$tmp_out"
       mv -f "$tmp_out" "$BIN_DIR/mosquitomarchy-tui"
       ok "mosquitomarchy-tui built and deployed ($BIN_DIR/mosquitomarchy-tui)"
@@ -3596,7 +3552,7 @@ un_ableton(){
       # asks the official installer to remove runtime + prefix (--delete-prefix)
       # otherwise runtime only (--keep-prefix keeps Live, licenses and projects)
       local run=""
-      for f in "$HOME"/mosquitOmarchy/scripts/Apps/ableton/install-ableton-latest.run; do
+      for f in "$HOME"/mosquitOmarchy/code/modules/Apps/ableton/install-ableton-latest.run; do
         [[ -f $f ]] && run=$f
       done
       if [[ -n $run ]]; then
@@ -3768,7 +3724,7 @@ AGENTLAYOUT_PY
   #    lib/crash.bash, so every TUI and every install script that sources it
   #    goes quiet at once -- this is the "crash notifications of all the
   #    mosquito TUIs" the module is expected to take down with it.
-  if "$SCRIPTS/apps/mosquitomarchy/mosquitomarchy-actions" crash-notify off >/dev/null; then
+  if "$SCRIPT_DIR/code/main tui/mosquitomarchy-actions" crash-notify off >/dev/null; then
     ok "AI-diagnosis crash toasts: OFF (all mosquitomarchy tools)"
   else
     warn "Could not turn the AI-diagnosis crash toasts off -- run: mosquitomarchy-actions crash-notify off"
@@ -3787,7 +3743,7 @@ AGENTLAYOUT_PY
 run_restore_ai() {
   info "Re-enabling the agentic surface Omarchy ships"
   rm -f "$HOME/.local/state/mosquitomarchy/remove-all-ai"
-  if "$SCRIPTS/apps/mosquitomarchy/mosquitomarchy-actions" crash-notify on; then
+  if "$SCRIPT_DIR/code/main tui/mosquitomarchy-actions" crash-notify on; then
     ok "Crash notifications with AI diagnosis: RE-ENABLED"
   else
     warn "Could not re-enable the AI-diagnosis crash toasts"
@@ -3867,10 +3823,10 @@ un_davinci(){
     info "Uninstalling DaVinci Resolve"
     if command -v sudo >/dev/null && [[ -d /opt/resolve ]] \
        && [[ $EUID -eq 0 || -n ${SUDO_USER:-} || $(mq_sudo -v 2>/dev/null; echo $?) -eq 0 ]]; then
-      bash "$SCRIPT_DIR/scripts/Apps/davinci/uninstall-davinci.sh" -y || warn "uninstall-davinci.sh ran into problems"
+      bash "$SCRIPT_DIR/code/modules/Apps/davinci/uninstall-davinci.sh" -y || warn "uninstall-davinci.sh ran into problems"
     else
-      bash "$SCRIPT_DIR/scripts/Apps/davinci/uninstall-davinci.sh" -y || true
-      warn "System part (/opt/resolve) not removed: run  sudo bash \"$SCRIPT_DIR/scripts/Apps/davinci/uninstall-davinci.sh\""
+      bash "$SCRIPT_DIR/code/modules/Apps/davinci/uninstall-davinci.sh" -y || true
+      warn "System part (/opt/resolve) not removed: run  sudo bash \"$SCRIPT_DIR/code/modules/Apps/davinci/uninstall-davinci.sh\""
     fi
   else
     ok "DaVinci Resolve not installed — nothing to do"
@@ -4042,7 +3998,7 @@ un_omaskpinpass(){
   ok "omaskpass + omapin plugins, binaries and managed per-user config removed"
 }
 
-un_downloads(){ bash "$SCRIPTS/plugins/omarchy-downloads/setup-omarchy-downloads.sh" --remove; }
+un_downloads(){ bash "$SCRIPTS/Plugins/omarchy-downloads/setup-omarchy-downloads.sh" --remove; }
 un_taskq(){ omarchy plugin disable sendaljpt.taskq 2>/dev/null || true; omarchy plugin remove sendaljpt.taskq --yes 2>/dev/null || true; }
 un_process_killer(){ omarchy plugin disable io.github.beresn.process-killer 2>/dev/null || true; omarchy plugin remove io.github.beresn.process-killer --yes 2>/dev/null || true; }
 
@@ -4213,7 +4169,7 @@ un_keepassxc(){
   # package if the user had asked setup to uninstall it — `sudo pacman -S
   # gnome-keyring` restores the package (its settings were kept on disk).
   info "Uninstalling the KeePassXC secret service (restores gnome-keyring)"
-  bash "$SCRIPTS/apps/keepassxc/setup-keepassxc-integration.sh" --remove
+  bash "$SCRIPTS/Apps/keepassxc/setup-keepassxc-integration.sh" --remove
 }
 
 un_keybindings(){
@@ -4467,8 +4423,9 @@ run_module(){
 }
 
 # Script paths by category (the individual apps and shared stack live in
-# scripts/Apps/, one folder per app; the other modules each in scripts/).
-SCRIPTS="$SCRIPT_DIR/scripts"
+# code/modules/Apps/, one folder per app; the other modules each in
+# code/modules/).
+SCRIPTS="$SCRIPT_DIR/code/modules"
 APPS_DIR="$SCRIPTS/Apps"
 TUIS_DIR="$SCRIPTS/TUIs"
 AUDIO_STACK_DIR="$SCRIPTS/mosquito/audio-stack"
@@ -4510,7 +4467,7 @@ LIVE_MODE_DIR="$AUDIO_STACK_DIR/live-mode"
 LEVELS_GUARD_DIR="$AUDIO_STACK_DIR/levels-guard"
 AUDIO_STACK_CHILDREN=(audio-plugin-manager mixbay levels-guard live-mode pipewire-settings)
 
-# ─── TUIs (scripts/TUIs, one setup-<name>.sh per entry) ───
+# ─── TUIs (code/modules/TUIs, one setup-<name>.sh per entry) ───
 # No catalog: the folder IS the list. Each script declares two header lines,
 # "# pkg:" and "# desc:", which are the only metadata the tree and backups need.
 tui_scripts(){
@@ -4564,7 +4521,7 @@ run_bitwig(){
   # means the user ran the script directly: say so plainly instead of letting it
   # fail somewhere inside makepkg.
   if ! compgen -G "$BITWIG_DIR"/bitwig*.deb >/dev/null 2>&1; then
-    err "No Bitwig .deb in scripts/Apps/bitwig/ — this module needs the installer"
+    err "No Bitwig .deb in code/modules/Apps/bitwig/ — this module needs the installer"
     err "supplied by hand. Drop bitwig-studio-*.deb there, then re-run."
     return 1
   fi
@@ -4573,7 +4530,7 @@ run_bitwig(){
 }
 
 un_bitwig(){
-  # There is no scripts/Apps/bitwig/uninstall-bitwig.sh, so this removes what
+  # There is no code/modules/Apps/bitwig/uninstall-bitwig.sh, so this removes what
   # setup-bitwig.sh put there. The orphan list is read FROM that script rather
   # than copied: a second copy of "what Bitwig leaves on disk" is exactly the
   # thing that goes stale and leaves /opt/bitwig-studio behind.
@@ -4862,7 +4819,7 @@ run_ollama(){
 }
 
 run_battery_management(){ bash "$BATTERY_DIR/setup-battery-management.sh"; }
-run_omaskpinpass(){ bash "$SCRIPTS/plugins/omaskpinpass/setup-omaskpinpass.sh"; }
+run_omaskpinpass(){ bash "$SCRIPTS/Plugins/omaskpinpass/setup-omaskpinpass.sh"; }
 ensure_shell_plugin(){
   local id="$1" url="$2"
   if omarchy plugin list --json 2>/dev/null | jq -e --arg id "$id" '.[] | select(.id == $id)' >/dev/null; then
@@ -4871,7 +4828,7 @@ ensure_shell_plugin(){
     omarchy plugin add "$url" --enable --yes
   fi
 }
-run_downloads(){ bash "$SCRIPTS/plugins/omarchy-downloads/setup-omarchy-downloads.sh"; }
+run_downloads(){ bash "$SCRIPTS/Plugins/omarchy-downloads/setup-omarchy-downloads.sh"; }
 run_taskq(){ ensure_shell_plugin sendaljpt.taskq https://github.com/sendaljpt/taskq.git; }
 run_process_killer(){ ensure_shell_plugin io.github.beresn.process-killer https://github.com/BeresN/omarchy-process-killer.git; }
 run_better_pip(){ bash "$BETTER_PIP_DIR/setup-better-pip.sh"; }
@@ -4885,7 +4842,7 @@ run_flea(){ bash "$FLEA_DIR/setup-flea.sh" $([[ $YES == 1 ]] && echo -y); }
 run_zen(){ bash "$ZEN_DIR/setup-zen.sh" $([[ $YES == 1 ]] && echo -y); }
 run_mx_master(){ bash "$MXMASTER_DIR/mx-master.sh" $([[ $YES == 1 ]] && echo -y); }
 run_keepassxc(){
-  bash "$SCRIPTS/apps/keepassxc/setup-keepassxc-integration.sh" $([[ $YES == 1 ]] && echo -y)
+  bash "$SCRIPTS/Apps/keepassxc/setup-keepassxc-integration.sh" $([[ $YES == 1 ]] && echo -y)
 }
 
 run_keybindings(){
@@ -4978,13 +4935,13 @@ run_mosquitomarchy(){
   # The manager TUI (the interface this script drives): build the Go binary,
   # deploy the dispatcher + desktop entry + float rule + post-boot hook.
   # Idempotent, non-interactive; the former standalone install-tui.sh WAS
-  # this (the logic now lives in scripts/mosquitomarchy tui/install-tui.sh
+  # this (the logic now lives in code/main tui/install-tui.sh
   # and is reused here as a module).
-  bash "$SCRIPT_DIR/scripts/mosquitomarchy tui/install-tui.sh" -y
+  bash "$SCRIPT_DIR/code/main tui/install-tui.sh" -y
 }
 
 un_mosquitomarchy(){
-  bash "$SCRIPT_DIR/scripts/mosquitomarchy tui/install-tui.sh" --remove
+  bash "$SCRIPT_DIR/code/main tui/install-tui.sh" --remove
   # The update watchdog ships inside this same row (see run/install-tui.sh),
   # so removing the manager removes it too.
   un_mosquitomarchy_update
@@ -5017,7 +4974,7 @@ final_report(){
   echo " • The Windows VM itself: omarchy-windows-vm install (long download)."
   echo " • The Omarchy VM itself: install Omarchy from the ISO, then mark the install done (omarchy-vm-tui)."
   echo " • iLok-type plugin licenses: separate Wine (Linux) / VM activation."
-  echo " • Rerun './scripts/mosquito/audio-stack/apm/setup-yabridge.sh --tweaks' after each new VST plugin."
+  echo " • Rerun './code/modules/mosquito/audio-stack/apm/setup-yabridge.sh --tweaks' after each new VST plugin."
   echo " • Re-login required if the realtime group was just joined."
   echo " • Ableton Linux: first setup in Live — Settings > Audio > Device PipeASIO."
   echo " • Bitwig 6.0 Beta 6: license via the app at first launch."
@@ -5209,7 +5166,7 @@ launcher_update(){
   # douze/Omarchy360 track their OWN upstream (not this repo): propose the
   # module when its checkout or the shell plugin has new commits. This is what
   # makes "mosquitomarchy update" also update douze, without waiting for a
-  # change in scripts/Apps/douze/.
+  # change in code/modules/Apps/douze/.
   local douze_state; douze_state="$(module_state douze 2>/dev/null || true)"
   if [[ $douze_state == ok || $douze_state == partial ]] \
      && [[ ${ids[*]:-} != *"douze"* ]]; then
@@ -5271,7 +5228,7 @@ module_category(){ # module id -> category id
     # included) rather than Plugins; the mapping is explicit so Status keeps
     # grouping it exactly like Setup does.
     mosquitomarchy|mosquitomarchy-update) echo mosquito; return 0 ;;
-    # `apps` is the umbrella over scripts/TUIs and the app modules. It is a
+    # `apps` is the umbrella over code/modules/TUIs and the app modules. It is a
     # real, re-appliable module, so it gets its category named here rather
     # than staying invisible in every tree.
     apps) echo apps; return 0 ;;
@@ -5349,7 +5306,7 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
   local cat="$1" id items e name line kind
   case $cat in
     tuis)
-      # One row per setup-<name>.sh in scripts/TUIs. The "# desc:" header is
+      # One row per setup-<name>.sh in code/modules/TUIs. The "# desc:" header is
       # the row text; the "# pkg:" header is the key (and stays the backup
       # vocabulary).
       local f pkg desc

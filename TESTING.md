@@ -36,7 +36,7 @@ did, with the same user-visible result.
 
 ## Reboot into Windows / douze
 
-- [x] `scripts/Plugins/reboot-into-windows/test-reboot-into-windows.sh`:
+- [x] `code/modules/Plugins/reboot-into-windows/test-reboot-into-windows.sh`:
       fake `efibootmgr`/`sudo`/`pkexec`; list, dry-run, `--yes` arms BootNext,
       `--clear-next`, and a missing Windows entry is an error (run against the
       current helper).
@@ -54,6 +54,27 @@ did, with the same user-visible result.
 - [ ] Mixbay EVO onboarding: with an EVO connected and `/dev/evo8` absent,
       `mosquito-mixbay` shows the setup prompt; "Later" asks again next launch;
       "Set up" installs and records acceptance.
+
+## Wine installer window (APM)
+
+- [ ] **Automated matcher test** — run
+      `code/tests/test-wine-installer-bg.sh`. It fakes `hyprctl` and must move
+      only the blank English ("Setup") and Italian ("Installazione") background
+      windows, never the real wizard nor an unrelated Wine window.
+- [ ] **Real APM install** — install an Inno Setup-based plugin through APM
+      (e.g. Arturia Tape MELLO-FI). While the wizard is open:
+      `hyprctl clients -j | jq -r '.[] | select(.title|test("Setup|Installazione")) | [.title,.workspace.name] | @tsv'`
+      The blank window must be on `special:wine-bg`; the real `... - <product>`
+      wizard must stay on the current workspace.
+- [ ] **Process-risk check** — before and after the install, capture
+      `pgrep -af 'wine|wineserver'` and `hyprctl clients -j`. Confirm the helper
+      did not terminate a Wine process, did not move a DAW/plugin editor, and
+      that an already-running Ableton still tiles and fullscreens (`SUPER+F`)
+      after the install. This is the test that catches a helper matching a
+      shared Wine class too broadly.
+- [ ] Close the wizard normally; APM must exit, the watcher must disappear
+      (`pgrep -f mosquito-wine-installer-bg` empty), and no window may remain on
+      `special:wine-bg`.
 
 ## Mixbay audio foundation / EVO 4
 
@@ -123,31 +144,32 @@ did, with the same user-visible result.
 - [ ] **3.2 Backup/restore** — `./mosquitomarchy-setup.sh --backup` to `/tmp`,
       then `--restore`; verify config, package lists, apps selection, and the
       VST archive/restore.
-- [ ] **3.3 Bootstrap** — `scripts/bootstrap.sh` against a real GitHub
+- [ ] **3.3 Bootstrap** — `./bootstrap.sh` against a real GitHub
       connection (`curl … | bash -s -- --status`) without triggering a full
       install at `$HOME`; check `--zips` demo/status-only.
 - [ ] **3.4 Keybindings** — the TUI Keybindings screen (the old standalone
       script is gone): managed list, add a binding, remove one, reset, and
       confirm `bindings.lua` keeps the marker block valid and Hyprland reloads.
 - [ ] **3.5 Update watchdog** —
-      `scripts/mosquitomarchy tui/update/setup-mosquitomarchy-update.sh` plus
+      `code/main tui/update/setup-mosquitomarchy-update.sh` plus
       `./mosquitomarchy-setup.sh --update-repo`: detects an update without
       pushing and notifies; never pushes without explicit authorization.
 - [ ] **3.6 Archive** — `./archive-mosquitomarchy.sh --list` and
       `--type=source`; `tar tzf` the result; confirm large installers
       (Ableton/DaVinci/Guitar Pro) are filtered and nothing large is committed.
-- [ ] **3.7 Zen / KeePassXC** — `scripts/Apps/zen/setup-zen.sh` seeds the active
+- [ ] **3.7 Zen / KeePassXC** — `code/modules/Apps/zen/setup-zen.sh` seeds the active
       profile (plugins/settings/chrome); live KeePassXC browser integration via
-      `scripts/Apps/keepassxc/setup-keepassxc-integration.sh`; optionally
+      `code/modules/Apps/keepassxc/setup-keepassxc-integration.sh`; optionally
       refresh `seed/extension-settings.json` from the live profile. Verify the
-      `deps`-by-module restore and the omagrab backup.
+      module scripts install their own missing runtime packages; the backup
+      excludes external tools that have no module folder.
 - [ ] **3.10 TUI colors** — switch Omarchy themes (including the lime
       achraf67 reference); every TUI (mosquitomarchy, APM, live-mode, move,
       mixbay, jamjamjam) must follow the active palette, with no hardcoded
       colors.
 - [ ] **General** — `bash -n` (and `shellcheck` if available) on changed
       scripts; `hyprctl configerrors` empty; `go test ./...` in the TUI modules.
-      Known: the full `scripts/mosquitomarchy tui/tui-go` suite exceeds 120 s,
+      Known: the full `code/main tui/go` suite exceeds 120 s,
       so use the targeted package tests rather than assuming a failure.
 
 ## VST backup / restore (new coverage)

@@ -2,18 +2,18 @@
 # These files are downloaded on demand via apps/download-assets.sh
 # (assets.links catalog). Do NOT commit them: they far exceed the
 # GitHub repository limit (100 MB per file) and bloat the clone.
-scripts/Apps/ableton/*.zip
-scripts/Apps/davinci/*.zip
-scripts/Apps/guitarpro/*.exe
-scripts/Apps/**/*.run
-scripts/Apps/bitwig/*.deb
+code/modules/Apps/ableton/*.zip
+code/modules/Apps/davinci/*.zip
+code/modules/Apps/guitarpro/*.exe
+code/modules/Apps/**/*.run
+code/modules/Apps/bitwig/*.deb
 
 # ── Logs & transient install files ──
 *.log
 *.part
 
 # ── Crash logs: local-only, one dated log per failed mosquitOmarchy run ──
-# Written by scripts/lib/crash.bash into .local/crash-logs/. NEVER pushed and
+# Written by code/lib/crash.bash into .local/crash-logs/. NEVER pushed and
 # NEVER archived (archive-customarchy.sh excludes .local/ too).
 .local/
 
@@ -22,18 +22,18 @@ scripts/Apps/bitwig/*.deb
 # yabridge-driver.* pair is the same thing for the yabridge build/install
 # bookkeeping the core writes next to itself (YABRIDGE_STATE / YABRIDGE_LOCK).
 # All three describe THIS machine, and differ on every other one.
-scripts/mosquito/audio-stack/apm/audio-plugin-manager-state.json
-scripts/mosquito/audio-stack/apm/yabridge-driver.json
-scripts/mosquito/audio-stack/apm/yabridge-driver.lock
+code/modules/mosquito/audio-stack/apm/audio-plugin-manager-state.json
+code/modules/mosquito/audio-stack/apm/yabridge-driver.json
+code/modules/mosquito/audio-stack/apm/yabridge-driver.lock
 
 # ── Patches (whole folders): provided separately, never on GitHub ──
 # All the files (including each app's patches) are recovered via the
 # LATEST RELEASE of the repository (archive from archive-customarchy.sh) —
 # not on the repo.
-scripts/Apps/ableton/PATCH/
-scripts/Apps/guitarpro/PATCH/
-scripts/Apps/davinci/PATCH/
-scripts/Apps/bitwig/PATCH/
+code/modules/Apps/ableton/PATCH/
+code/modules/Apps/guitarpro/PATCH/
+code/modules/Apps/davinci/PATCH/
+code/modules/Apps/bitwig/PATCH/
 
 # ── Python environments / caches for the patches ──
 __pycache__/
@@ -56,17 +56,17 @@ __pycache__/
 # the name of the directory, and a redirection that loses its target lands here.
 # Keep it out of history rather than trying to remember which command does it.
 /0
-scripts/mosquito/jamjamjam/tui-go/jamjamjam-tui
+code/modules/mosquito/jamjamjam/tui-go/jamjamjam-tui
 # A bare `go build .` in a directory whose main package is "live-mode-tui" also
 # drops a binary with the PACKAGE name next to the real one. Only the
 # mosquito-live-mode-tui name is deployed and tracked.
-scripts/mosquito/audio-stack/live-mode/tui-go/live-mode-tui
+code/modules/mosquito/audio-stack/live-mode/tui-go/live-mode-tui
 
 # ── Sensitive / never on a repository (even private) ──
 # Authorization files (Ableton license), license-workaround tools
 # (DaVinci patch-resolve.sh). Everything touching the patch stays local
 # (and/or in the release archive).
-scripts/Apps/guitarpro/guitar-pro-8-licence.md
+code/modules/Apps/guitarpro/guitar-pro-8-licence.md
 
 # ── Password files / archives: ultra-safety, NEVER in a repository ──
 # KeePassXC databases and backup archives (the backups live in
@@ -84,8 +84,15 @@ mosquitomarchy-backups/
 # ── User-only notes (see archive-customarchy.sh release) ──
 SECRET-README.md
 # Extracted DaVinci OFX plugin bundle (downloaded/manual)
-scripts/Apps/davinci/*.bundle/
-scripts/Apps/davinci/*.bundle
+code/modules/Apps/davinci/*.bundle/
+code/modules/Apps/davinci/*.bundle
 
 # `go test -cpuprofile` leaves the test binary behind in the package dir.
 *.test
+
+# Go build outputs: never tracked. The installers build these; a committed
+# 27 MB binary goes stale and bloats every clone.
+code/main tui/go/mosquitomarchy-tui
+code/main tui/go/*.test
+code/modules/**/tui-go/*-tui
+code/modules/**/tui-go/*.test

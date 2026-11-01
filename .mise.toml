@@ -2,8 +2,8 @@
 _.path = "{{ cwd }}/bin"
 
 [tools]
-# Needed to build the Go/Bubble Tea TUIs under scripts/*/tui-go/ and the
-# shared scripts/lib/tui-kit/ component library (mosquito-move-manager-tui /
+# Needed to build the Go/Bubble Tea TUIs under code/modules/*/tui-go/ and `code/main tui/go/`, and the
+# shared code/lib/tui-kit/ component library (mosquito-move-manager-tui /
 # mosquito-vst-manager-tui). Build-time only -- the deployed binaries don't
 # need Go at runtime, and the install scripts fall back to native-only if
 # it's missing.

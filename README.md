@@ -65,8 +65,8 @@ Once installed, `mosquitOmarchy` is the interface for everything here — run it
   **Hyprland configs** are a separate yes/no choice: the whole `~/.config/hypr`
   tree is archived (bindings excluded) and restored last. Third-party Omarchy
   shell plugins installed by the user appear under the *Plugins* folder.
-- **Fixes** — the small idempotent repairs in `scripts/Fixes/`, as a multi-select.
-- **Tweaks** — optional preference changes in `scripts/Tweaks/` (same multi-select; never
+- **Fixes** — the small idempotent repairs in `code/modules/Fixes/`, as a multi-select.
+- **Tweaks** — optional preference changes in `code/modules/Tweaks/` (same multi-select; never
   auto-applied by `-y`).
 - **Close** — leave.
 
@@ -76,7 +76,7 @@ there is rarely a reason to call it by hand.
 A failed run writes one dated crash log per session to the repo-local `.local/` and, when the
 crash-toast switch is on (off by default; Extras toggles it), sends a clickable notification
 that opens the default AI on the `mosquitomarchy-crash` skill, pointed at that log, to
-**propose** a fix. See [`scripts/lib/crash.bash`](scripts/lib/crash.bash).
+**propose** a fix. See [`code/lib/crash.bash`](code/lib/crash.bash).
 
 ## Modules
 
@@ -86,23 +86,23 @@ Details, options and caveats live in each module's own `README.md`. This table i
 
 | Module | Installs | Doc |
 |---|---|---|
-| `reaper` | REAPER + its Hyprland/Wayland integration | [README](scripts/Apps/reaper/README.md) |
-| `bitwig` | Bitwig Studio from the local `.deb`, with its own module and optional patched `bitwig.jar` | [README](scripts/Apps/bitwig/README.md) |
-| `ableton` | Ableton Live 12 native on Linux, sharing the same VST root | [README](scripts/Apps/ableton/README.md) |
-| `guitarpro` | Guitar Pro 8 in its own Wine prefix | [README](scripts/Apps/guitarpro/README.md) |
-| `davinci-resolve` | DaVinci Resolve (free or Studio) + silent DRwrap integration | [README](scripts/Apps/davinci/README.md) |
-| `extracto` | Extracto | [README](scripts/Apps/extracto/README.md) |
-| `douze` | SSL 12 control (douze daemon, udev, PipeWire split) + Omarchy360 mixer | [README](scripts/Apps/douze/README.md) · [study](scripts/Apps/douze/STUDY.md) |
-| `tidal` | TIDAL Hi-Fi (TidaLuna): package, hidden menu bar, `SUPER+SHIFT+M` binding | [setup](scripts/Apps/tidal/setup-tidal.sh) |
-| `handbrake` | HandBrake GUI + CLI, preset sync, Hyprland rules | [README](scripts/Apps/handbrake/README.md) |
-| `signal` | Signal Desktop, tray behavior, menu entry, and login autostart | [setup](scripts/Apps/signal/setup-signal.sh) |
-| `betterbird` | Betterbird (Thunderbird fork): install, system-tray close/minimise, login autostart, tiled main window + popups at the pointer | [setup](scripts/Apps/betterbird/setup-betterbird.sh) |
-| `whatsapp-native` | WhatsApp Web as a Chromium web app: tray supervisor (login starts hidden in the tray, menu opens directly), silent notifications, close-to-tray, no menu bar, no shortcut, login autostart | [README](scripts/Apps/whatsapp-native/README.md) |
-| `superfile` | SuperFile terminal file manager; the system default file manager is left unchanged | [README](scripts/Apps/superfile/README.md) |
-| `zen` | Zen Browser, seeded extensions and theme | [README](scripts/Apps/zen/README.md) |
-| `keepassxc` | KeePassXC password manager + browser integration (Leaves Omarchy's keyring intact) | [README](scripts/Apps/keepassxc/README.md) |
+| `reaper` | REAPER + its Hyprland/Wayland integration | [README](code/modules/Apps/reaper/README.md) |
+| `bitwig` | Bitwig Studio from the local `.deb`, with its own module and optional patched `bitwig.jar` | [README](code/modules/Apps/bitwig/README.md) |
+| `ableton` | Ableton Live 12 native on Linux, sharing the same VST root | [README](code/modules/Apps/ableton/README.md) |
+| `guitarpro` | Guitar Pro 8 in its own Wine prefix | [README](code/modules/Apps/guitarpro/README.md) |
+| `davinci-resolve` | DaVinci Resolve (free or Studio) + silent DRwrap integration | [README](code/modules/Apps/davinci/README.md) |
+| `extracto` | Extracto | [README](code/modules/Apps/extracto/README.md) |
+| `douze` | SSL 12 control (douze daemon, udev, PipeWire split) + Omarchy360 mixer | [README](code/modules/Apps/douze/README.md) · [study](code/modules/Apps/douze/STUDY.md) |
+| `tidal` | TIDAL Hi-Fi (TidaLuna): package, hidden menu bar, `SUPER+SHIFT+M` binding | [setup](code/modules/Apps/tidal/setup-tidal.sh) |
+| `handbrake` | HandBrake GUI + CLI, preset sync, Hyprland rules | [README](code/modules/Apps/handbrake/README.md) |
+| `signal` | Signal Desktop, tray behavior, menu entry, and login autostart | [setup](code/modules/Apps/signal/setup-signal.sh) |
+| `betterbird` | Betterbird (Thunderbird fork): install, system-tray close/minimise, login autostart, tiled main window + popups at the pointer | [setup](code/modules/Apps/betterbird/setup-betterbird.sh) |
+| `whatsapp-native` | WhatsApp Web as a Chromium web app: tray supervisor (login starts hidden in the tray, menu opens directly), silent notifications, close-to-tray, no menu bar, no shortcut, login autostart | [README](code/modules/Apps/whatsapp-native/README.md) |
+| `superfile` | SuperFile terminal file manager; the system default file manager is left unchanged | [README](code/modules/Apps/superfile/README.md) |
+| `zen` | Zen Browser, seeded extensions and theme | [README](code/modules/Apps/zen/README.md) |
+| `keepassxc` | KeePassXC password manager + browser integration (Leaves Omarchy's keyring intact) | [README](code/modules/Apps/keepassxc/README.md) |
 | `hyprmod` | Hyprmod profile configuration in `~/.config/hypr/hyprmod.d/profiles.conf` | — |
-| `apps` | The TUIs of `scripts/TUIs/`, reinstallable from a backup selection | [README](scripts/Apps/README.md) · [TUIs](scripts/TUIs/README.md) |
+| `apps` | The TUIs of `code/modules/TUIs/`, reinstallable from a backup selection | [README](code/modules/Apps/README.md) · [TUIs](code/modules/TUIs/README.md) |
 
 The tables below follow the TUI's Setup folders: each heading is one of them.
 
@@ -110,15 +110,15 @@ The tables below follow the TUI's Setup folders: each heading is one of them.
 
 | Module | Installs | Doc |
 |---|---|---|
-| `ableton-move-manager` | Ableton Move → Live → Bitwig conversion (MIDI export, native Omarchy prompts) | [README](scripts/mosquito/move-manager/README.md) |
-| `audio-stack` (folder) | APM/yabridge, Mixbay, Levels Guard, live mode, PipeWire — Enter installs/removes all five | [stack](scripts/mosquito/audio-stack/README.md) |
-| `audio-plugin-manager` | Audio Plugin Manager (Wine/yabridge plugins) | [README](scripts/mosquito/audio-stack/apm/README.md) |
-| `mixbay` | USB audio bay (EVO 8/4, SSL 12 via douze, RME/ESI ALSA, beta interfaces) + default audio foundation (PipeWire/udev/rate) | [README](scripts/mosquito/audio-stack/mixbay/README.md) |
-| `levels-guard` | Native audio panel + media-key guard | [stack](scripts/mosquito/audio-stack/README.md) |
-| `mosquito.jamjamjam` | Real-time key/BPM/chord detection with a fretboard and tuner | [README](scripts/mosquito/jamjamjam/README.md) |
-| `live-mode` | A thermal/perf session mode: app closing, gaps, routing, package fence | [README](scripts/mosquito/audio-stack/live-mode/README.md) |
-| `mega-caffeine` | Coffee mode: laptop closed without sleeping, red tint, natural-language durations | [README](scripts/mosquito/mega-caffeine/README.md) |
-| `keybindings` | mosquitOmarchy-managed `SUPER` bindings in a reversible `bindings.lua` block | [README](scripts/mosquitomarchy%20tui/README.md#keybindings) |
+| `ableton-move-manager` | Ableton Move → Live → Bitwig conversion (MIDI export, native Omarchy prompts) | [README](code/modules/mosquito/move-manager/README.md) |
+| `audio-stack` (folder) | APM/yabridge, Mixbay, Levels Guard, live mode, PipeWire — Enter installs/removes all five | [stack](code/modules/mosquito/audio-stack/README.md) |
+| `audio-plugin-manager` | Audio Plugin Manager (Wine/yabridge plugins) | [README](code/modules/mosquito/audio-stack/apm/README.md) |
+| `mixbay` | USB audio bay (EVO 8/4, SSL 12 via douze, RME/ESI ALSA, beta interfaces) + default audio foundation (PipeWire/udev/rate) | [README](code/modules/mosquito/audio-stack/mixbay/README.md) |
+| `levels-guard` | Native audio panel + media-key guard | [stack](code/modules/mosquito/audio-stack/README.md) |
+| `mosquito.jamjamjam` | Real-time key/BPM/chord detection with a fretboard and tuner | [README](code/modules/mosquito/jamjamjam/README.md) |
+| `live-mode` | A thermal/perf session mode: app closing, gaps, routing, package fence | [README](code/modules/mosquito/audio-stack/live-mode/README.md) |
+| `mega-caffeine` | Coffee mode: laptop closed without sleeping, red tint, natural-language durations | [README](code/modules/mosquito/mega-caffeine/README.md) |
+| `keybindings` | mosquitOmarchy-managed `SUPER` bindings in a reversible `bindings.lua` block | [README](code/main%20tui/README.md#keybindings) |
 
 ### Plugins
 
@@ -126,23 +126,23 @@ The project's own layer: the manager itself, and the desktop-hardware modules.
 
 | Module | Installs | Doc |
 |---|---|---|
-| `battery-management` | Profile-colored battery icon/panel; the retired ultra-save CPU/power cap is removed | [README](scripts/Plugins/battery-management/README.md) |
-| `omaskpinpass` | SSH askpass + GnuPG pinentry plugins and binaries, built per-user; configures SSH askpass and GPG agent | [installer](scripts/Plugins/omaskpinpass/setup-omaskpinpass.sh) |
-| `downloads` | Omarchy Downloads popup + `SUPER+ALT+D` binding | [installer](scripts/Plugins/omarchy-downloads/setup-omarchy-downloads.sh) |
+| `battery-management` | Profile-colored battery icon/panel; the retired ultra-save CPU/power cap is removed | [README](code/modules/Plugins/battery-management/README.md) |
+| `omaskpinpass` | SSH askpass + GnuPG pinentry plugins and binaries, built per-user; configures SSH askpass and GPG agent | [installer](code/modules/Plugins/omaskpinpass/setup-omaskpinpass.sh) |
+| `downloads` | Omarchy Downloads popup + `SUPER+ALT+D` binding | [installer](code/modules/Plugins/omarchy-downloads/setup-omarchy-downloads.sh) |
 | `taskq` | TaskQ deadline widget | [GitHub](https://github.com/sendaljpt/taskq) |
 | `process-killer` | Omarchy process-killer widget | [GitHub](https://github.com/BeresN/omarchy-process-killer) |
-| `mosquitomarchy` | This TUI (built from the Go sources in the repo), its dispatcher, menu entry, float rule, post-boot hook and the `SUPER+ALT+M` shortcut | [README](scripts/mosquitomarchy%20tui/README.md) |
-| `mosquitomarchy-update` | The update watchdog (scripts repo first, then Omarchy) | [README](scripts/mosquitomarchy%20tui/update/README.md) |
-| `brightness` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp | [notes](scripts/Plugins/brightness/display-fixes.md) |
-| `touchpad` | Touchpad acceleration, sensitivity, scroll factor, and optional kinetic scrolling | [notes](scripts/Plugins/touchpad/touchpad.md) |
-| `mx-master` | MX Master thumb button → `SUPER`, smartshift off, scroll direction | [notes](scripts/Plugins/mx-master/mx-master.md) |
-| `reboot-into-windows` | System menu entry: find the UEFI Windows Boot Manager, 15 s yes/no countdown, arm BootNext for the next boot only, reboot | [README](scripts/Plugins/reboot-into-windows/README.md) |
+| `mosquitomarchy` | This TUI (built from the Go sources in the repo), its dispatcher, menu entry, float rule, post-boot hook and the `SUPER+ALT+M` shortcut | [README](code/main%20tui/README.md) |
+| `mosquitomarchy-update` | The update watchdog (scripts repo first, then Omarchy) | [README](code/main%20tui/update/README.md) |
+| `brightness` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp | [notes](code/modules/Plugins/brightness/display-fixes.md) |
+| `touchpad` | Touchpad acceleration, sensitivity, scroll factor, and optional kinetic scrolling | [notes](code/modules/Plugins/touchpad/touchpad.md) |
+| `mx-master` | MX Master thumb button → `SUPER`, smartshift off, scroll direction | [notes](code/modules/Plugins/mx-master/mx-master.md) |
+| `reboot-into-windows` | System menu entry: find the UEFI Windows Boot Manager, 15 s yes/no countdown, arm BootNext for the next boot only, reboot | [README](code/modules/Plugins/reboot-into-windows/README.md) |
 
 ### Themes
 
 | Module | Installs | Doc |
 |---|---|---|
-| `achraf67` | An Omarchy theme built from an image in `Themes/Wallpapers/` | [README](scripts/Themes/README.md) |
+| `achraf67` | An Omarchy theme built from an image in `Themes/Wallpapers/` | [README](code/modules/Themes/README.md) |
 
 `touchpad` and `mx-master` compose: each ships its own `hl.device` block, handles only its
 own device, and never touches the other.
@@ -151,30 +151,30 @@ own device, and never touches the other.
 
 | Module | Installs | Doc |
 |---|---|---|
-| `ollama` | Ollama + REAPER-oriented models (~14 GB) | [README](scripts/lame/README.md) |
+| `ollama` | Ollama + REAPER-oriented models (~14 GB) | [README](code/modules/lame/README.md) |
 | `remove-ai` | Re-enables (Setup) or removes (Uninstall) Omarchy's own agentic parts | — |
 
 ### VMs
 
 | Module | Installs | Doc |
 |---|---|---|
-| `windows-vm` | Windows 11 in Docker over RDP; installs the VM itself if absent | [README](scripts/VMs/windows-vm/README.md) |
-| `macos-vm` | macOS VM | [README](scripts/VMs/macos-vm/README.md) |
-| `omarchy-vm` | Omarchy in QEMU/KVM from the official ISO | [README](scripts/VMs/omarchy-vm/README.md) |
+| `windows-vm` | Windows 11 in Docker over RDP; installs the VM itself if absent | [README](code/modules/VMs/windows-vm/README.md) |
+| `macos-vm` | macOS VM | [README](code/modules/VMs/macos-vm/README.md) |
+| `omarchy-vm` | Omarchy in QEMU/KVM from the official ISO | [README](code/modules/VMs/omarchy-vm/README.md) |
 
 ### Entries
 
 `TUIs` and `Fixes` are entry-backed: each file or folder is its own selectable
-item rather than a single module. See [scripts/TUIs/README.md](scripts/TUIs/README.md)
-and [scripts/Fixes/README.md](scripts/Fixes/README.md).
+item rather than a single module. See [code/modules/TUIs/README.md](code/modules/TUIs/README.md)
+and [code/modules/Fixes/README.md](code/modules/Fixes/README.md).
 
 **audio-stack** is a folder row under *mosquito*, not a module of its own: Enter installs or
 removes all five components, while Left/Right folds the folder and each child stays selectable.
 
 **Creating a theme from an image** is not in the tables either, and not in Setup either: it is a
-row on the [TUI's main menu](scripts/mosquitomarchy%20tui/README.md), right after Keybindings,
+row on the [TUI's main menu](code/main%20tui/README.md), right after Keybindings,
 because it creates a theme rather than installing a module. See
-[scripts/Themes/README.md](scripts/Themes/README.md).
+[code/modules/Themes/README.md](code/modules/Themes/README.md).
 
 ## Commands
 
@@ -199,8 +199,8 @@ The orchestrator. It offers backup/restore, then installs modules, then reports.
 app configs, the Zen profile (extensions, theme and the browser's own settings — browsing
 data is deliberately excluded), package lists, the app selection, and a `RESTORE.md`. With
 `--backup` the archive is then encrypted in place with AES-256 (gpg, file level, no sudo)
-and the passphrase is asked through a hidden prompt. Any `deps` file under `scripts/` is
-read on restore and its packages reinstalled.
+and the passphrase is asked through a hidden prompt. Module scripts install their own
+missing runtime packages when they run; there is no global dependency manifest.
 
 Plugin folders are **offered, never automatic**: the audio plugin manager owns that path, so
 the backup asks the manager where the folder is, shows the folder, file count and size, and
@@ -289,19 +289,21 @@ mosquitOmarchy/
 ├── bootstrap.sh              # clone + setup entry point
 ├── mosquitomarchy-setup.sh   # the orchestrator
 ├── VERSION                   # the single source of the version below
-└── scripts/
-    ├── Apps/                 # one folder per desktop app
-    ├── TUIs/                 # one setup-<name>.sh per terminal tool
-    ├── Plugins/              # shell plugins: battery-management, brightness, touchpad, ...
-    ├── Fixes/                # small idempotent repairs
-    ├── Tweaks/               # optional preference changes (never auto-applied)
-    ├── Themes/               # theme generator + wallpapers
-    ├── VMs/                  # windows-vm/, macos-vm/, omarchy-vm/
-    ├── lame/                 # local language models (ollama)
-    ├── mosquito/             # mosquito tools: audio-stack, jamjamjam, move-manager, ...
-    ├── mosquitomarchy tui/   # the manager TUI + backend + update/
+└── code/
+    ├── modules/
+    │   ├── Apps/             # one folder per desktop app
+    │   ├── TUIs/             # one setup-<name>.sh per terminal tool
+    │   ├── Plugins/          # shell plugins: battery-management, brightness, touchpad, ...
+    │   ├── Fixes/            # small idempotent repairs
+    │   ├── Tweaks/           # optional preference changes (never auto-applied)
+    │   ├── Themes/           # theme generator + wallpapers
+    │   ├── VMs/              # windows-vm/, macos-vm/, omarchy-vm/
+    │   ├── lame/             # local language models (ollama)
+    │   └── mosquito/         # mosquito tools: audio-stack, jamjamjam, move-manager, ...
+    ├── main tui/             # the manager TUI + backend + update/ + go/
     ├── lib/                  # shared helpers, tui-kit/ (the Go component library)
-    └── deps/
+    ├── tests/                # standalone regression tests (Wine window matcher, ...)
+    └── dev/                  # development helpers (module size manifest)
 ```
 
 Each script resolves its resources from its own directory, so moving a whole directory does
@@ -326,13 +328,26 @@ their installers, and the only real comparison is against the version on GitHub.
 
 ## After the install
 
-1. **Windows VM** — inside the guest, open `\\host.lan\Data` and run `install.bat` once.
+1. **Omarchy VM** — create it from **Omarchy menu → Setup → Omarchy VM**. The
+   host shared folder is **`~/VMs/shared`**, mounted in the guest at
+   **`/mnt/host`**. Finish the guest side once, inside the VM:
+
+   ```bash
+   curl -sf --retry 3 http://10.0.2.2:7789/share -o ~/omarchy-vm-share && sudo bash ~/omarchy-vm-share --install
+   ```
+
+   This mounts the shared folder, installs its boot unit and the clipboard
+   agent. Until it has run, the launcher shows a notification and a link to
+   <https://github.com/kepalegars/mosquitOmarchy>; the exact commands are in
+   [`code/modules/VMs/omarchy-vm/README.md`](code/modules/VMs/omarchy-vm/README.md).
+
+2. **Windows VM** — inside the guest, open `\\host.lan\Data` and run `install.bat` once.
    The module does the host side itself.
-2. **Windows plugins** — install them into the shared VST root so every DAW sees them, or
+3. **Windows plugins** — install them into the shared VST root so every DAW sees them, or
    into a Wine prefix. One install in the shared root is visible everywhere.
-3. `./scripts/mosquito/audio-stack/apm/setup-yabridge.sh --tweaks` after each new plugin.
-4. iLok licenses are activated per Wine prefix; reconnect if you just joined `realtime`.
-5. Ableton Live: first-time ASIO / PipeASIO configuration under *Settings → Audio*.
+4. `./code/modules/mosquito/audio-stack/apm/setup-yabridge.sh --tweaks` after each new plugin.
+5. iLok licenses are activated per Wine prefix; reconnect if you just joined `realtime`.
+6. Ableton Live: first-time ASIO / PipeASIO configuration under *Settings → Audio*.
 
 ## License
 

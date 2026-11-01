@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# mosquitomarchy — the single, stable entry point for the mosquitOmarchy
+# setup launcher.
+#
+# The Go/Bubble Tea TUI (mosquitomarchy-tui, see go/) is the ONLY
+# interface: it replaced the old gum-based `launcher_menu` in
+# mosquitomarchy-setup.sh. Every launch goes through this dispatcher — the
+# Omarchy Install menu entry's action, a keybinding, or running
+# `mosquitomarchy` by hand all point here.
+#
+# The TUI needs a real terminal to render into: if this dispatcher is
+# already inside one (stdin+stdout both a tty), it execs the TUI binary
+# directly; otherwise (the Omarchy menu, a fully detached launch) it opens a
+# terminal itself, directly with foot (falling back to xterm).
+#
+# This is deliberately NOT routed through `xdg-terminal-exec`: on the real
+# desktop that extra process hop reliably corrupted interactive/alt-screen
+# rendering (partial frames, then blank) — the same finding that made
+# mosquito-move-manager use a plain, direct, single-hop `foot -e …`.
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUI="$DIR/mosquitomarchy-tui"
+
+# Resolve the checkout WITHOUT assuming where this dispatcher runs from: the
+# repo copy lives in <repo>/code/main tui (../.. = repo), but the
+# deployed copy lives in ~/.local/bin. Prefer the repo layout,
+# else follow the mosquitomarchy-actions symlink into the repo. Never abort when
+# neither matches: under `set -e` a failing `cd` in a command substitution would
+# kill the whole launch.
+_REPO=""
+if [[ -f "$DIR/../../mosquitomarchy-setup.sh" ]]; then
+  _REPO="$(cd "$DIR/../.." && pwd)"
+elif [[ -L "$DIR/mosquitomarchy-actions" ]]; then
+  _cand="$(cd "$(dirname "$(readlink -f "$DIR/mosquitomarchy-actions")")/../.." 2>/dev/null && pwd || true)"
+  [[ -n $_cand && -f "$_cand/mosquitomarchy-setup.sh" ]] && _REPO="$_cand"
+fi
+[[ -n $_REPO ]] && export MOSQUITOMARCHY_REPO="$_REPO"
+
+# Crash reporting: a failed launch stores a dated log and offers the clickable
+# AI diagnosis (see code/lib/crash.bash). Only when the checkout is known.
+if [[ -n $_REPO && -f "$_REPO/code/lib/crash.bash" ]]; then
+  source "$_REPO/code/lib/crash.bash"
+  mq_crash_guard "mosquitomarchy"
+fi
+
+if [[ ! -x $TUI ]]; then
+  echo "mosquitomarchy: $TUI not found — re-run the mosquitOmarchy installer to build it." >&2
+  exit 1
+fi
+
+# A repo update defers the manager rebuild to launch time (rebuilding inline
+# froze the running TUI mid-run): when an update left a rebuild pending, do
+# it now — before the UI starts — so this launch already runs the new code.
+# Headless queries (--status) never rebuild: the boot hook calls those, and a
+# toolchain hiccup must not slow boot down.
+REBUILD_FLAG="$HOME/.local/state/mosquitomarchy/rebuild-pending"
+if [[ ${1:-} != "--status" && ${1:-} != "status" && -f $REBUILD_FLAG && -n $_REPO ]]; then
+  if GUI_RUN_EXEC=1 bash "$_REPO/code/main tui/install-tui.sh" -y >/dev/null 2>&1; then
+    rm -f "$REBUILD_FLAG"
+  else
+    echo "mosquitomarchy: pending rebuild failed — launching the previous build." >&2
+  fi
+fi
+
+if [[ -t 0 && -t 1 ]]; then
+  # Inside a terminal the TUI runs in place — WITH its arguments, so
+  # `mosquitomarchy --update` opens straight on the Update page instead of
+  # dropping them and landing on the main menu.
+  exec "$TUI" "$@"
+fi
+
+# Headless subcommands never open a window: they print to stdout and exit
+# (the boot-time update-check watchdog calls --status; doing this WITHOUT
+# the tty check used to popup a Foot window on the desktop at every boot).
+if (( $# )); then
+  case "$1" in
+    --status|status) exec "$TUI" "$@" ;;
+  esac
+fi
+
+if command -v foot >/dev/null 2>&1; then
+  # Shared compact default: every mosquito TUI opens at the same size;
+    # title ladders degrade and lists paginate below it.
+  exec foot -W 100x40 --app-id=org.omarchy.mosquitomarchy-tui -e "$TUI" "$@"
+fi
+if command -v xterm >/dev/null 2>&1; then
+  exec xterm -e "$TUI" "$@"
+fi
+
+echo "mosquitomarchy: no terminal emulator found (foot/xterm) to open the TUI in." >&2
+exit 1

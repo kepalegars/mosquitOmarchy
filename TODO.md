@@ -117,7 +117,7 @@ Last reviewed: 2026-10-30.
       idempotence and rollback, and decide whether the reverse-engineering
       harness belongs in Go, Python or the shell.
 - [ ] **Mixbay — pro-audio protocol reference** (delivered 2026-10-31:
-      `scripts/mosquito/audio-stack/mixbay/docs/AUDIO-PROTOCOLS-LINUX.md`).
+      `code/modules/mosquito/audio-stack/mixbay/docs/AUDIO-PROTOCOLS-LINUX.md`).
       It covers Dante, ADAT, MADI, AES3/S/PDIF, AES67/RAVENNA, AVB/MILAN,
       AES50/SuperMAC, Waves SoundGrid, EtherSound/CobraNet, Livewire/Q-LAN,
       SDI embedded, USB/Thunderbolt/FireWire/PCIe, macOS aggregate devices and
@@ -248,12 +248,12 @@ and the activation-prompt cases.
       not RGB), the Shift+Capture conflict with Schwung Skipback, and the dim
       notes in the per-pad sequencer (user wants them hidden, and nudging should
       address only the selected note).
-- Historical detail: `scripts/mosquito/move-manager/move-bitwig/HISTORY.md`.
+- Historical detail: `code/modules/mosquito/move-manager/move-bitwig/HISTORY.md`.
 
 ## System modules
 
 - [ ] mx-master: run `./mosquitomarchy-setup.sh` and pick `mx-master` (or
-      `sudo bash scripts/Plugins/mx-master/mx-master.sh`), then verify logiops
+      `sudo bash code/modules/Plugins/mx-master/mx-master.sh`), then verify logiops
       and the thumb-gesture button on the real device (pending user sudo/live
       check).
 
@@ -261,7 +261,7 @@ and the activation-prompt cases.
 
 - [ ] **Create the remote per-module repos** (monorepo canonical + generated
       mirrors): add `modules.json` (module id → path → remote → tag prefix),
-      `scripts/lib/modules-sync.sh` (`git subtree split -P <path> -b
+      `code/lib/modules-sync.sh` (`git subtree split -P <path> -b
       sync/<id>` then push), and a GitHub Actions workflow on tags. Create the
       `mosquitOmarchy-<module>` repositories with `gh repo create`, push the
       mirrors, and document that the monorepo is the source of truth. Do not
