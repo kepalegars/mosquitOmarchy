@@ -125,7 +125,9 @@ migrate_flat_layout(){
 }
 DEFAULT_VM="omarchy"
 DISK_SIZE="64G"
-SHARED_DIR="${MOSQUITO_VM_ROOT}/shared"
+# Legacy single shared folder, kept only for migrating old VMs: new VMs get
+# their own <vm-dir>/shared so two VMs never share one directory.
+LEGACY_SHARED_DIR="${MOSQUITO_VM_ROOT}/shared"
 # NVRAM file name inside each VM dir (written to .vm-config, read back by the
 # generated launcher). Defined here so ensure_vm can reference it.
 OVMF_VARS="OVMF_VARS.fd"
@@ -826,13 +828,12 @@ OVMF_VARS="OVMF_VARS.fd"
 # installed Omarchy automatically.
 BOOT_ORDER="c"
 SHARED_FOLDER="on"
-SHARED_DIR="$SHARED_DIR"
+SHARED_DIR="$dir/shared"
 SSH_PORT=$port
 DISPLAY_BACKEND="gtk"
-# "off" (default) = std VGA at XRESxYRES, high fixed resolution, tileable;
-# "on" = virtio-vga-gl (virgl 3D) — resolution then driven by the guest, which
-# is low on a Wayland guest that does not follow the window. Toggle in the TUI.
-GPU_ACCEL="off"
+# "on" (default) = virtio-vga-gl (virgl 3D); toggle off in the TUI to use
+# std VGA at XRESxYRES, with a fixed resolution that tiles reliably.
+GPU_ACCEL="on"
 # Guest display resolution for the std-VGA path (see write_launcher): a high
 # fixed mode keeps the guest crisp; the GTK window tiles freely and scales.
 XRES=1920
@@ -870,11 +871,11 @@ OVMF_CODE="${OVMF_CODE:-/usr/share/edk2/x64/OVMF_CODE.4m.fd}"
 OVMF_VARS="${OVMF_VARS:-OVMF_VARS.fd}"
 BOOT_ORDER="${BOOT_ORDER:-c}"
 ISO_PATH="${ISO_PATH:-}"
-SHARED_DIR="${SHARED_DIR:-${MOSQUITO_VM_ROOT:-$HOME/VMs}/shared}"
+SHARED_DIR="${SHARED_DIR:-$VM_DIR/shared}"
 SHARED_FOLDER="${SHARED_FOLDER:-on}"
 SSH_PORT="${SSH_PORT:-2222}"
 DISPLAY_BACKEND="${DISPLAY_BACKEND:-gtk}"
-GPU_ACCEL="${GPU_ACCEL:-off}"
+GPU_ACCEL="${GPU_ACCEL:-on}"
 SPICE_PORT="${SPICE_PORT:-5930}"
 CLIPBOARD="${CLIPBOARD:-on}"
 CLIPBOARD_PORT="${CLIPBOARD_PORT:-7789}"
@@ -1011,7 +1012,7 @@ if [[ "$SHARED_FOLDER" == "on" ]]; then
   printf '\n  Shared folder: %s\n' "$SHARED_DIR"
   printf '    exported to the guest as the 9p tag "hostshare". To see it from inside\n'
   printf '    the VM, run there:\n\n'
-  printf '      sudo omarchy-vm-share --install\n\n'
+  printf '      mkdir -p ~/VMs && curl -sf --retry 3 http://10.0.2.2:%s/share -o ~/VMs/omarchy-vm-share && sudo bash ~/VMs/omarchy-vm-share --install\n\n' "$CLIPBOARD_PORT"
   printf '    It loads virtio_9p, mounts at /mnt/host and installs a unit so it is\n'
   printf '    there on every boot. Without it the folder stays invisible — the host\n'
   printf '    side of this is already done.\n\n'
@@ -1083,7 +1084,7 @@ if [[ "$CLIPBOARD" == "on" ]] && command -v python3 >/dev/null 2>&1; then
   fi
   if [[ "$CLIPBOARD" == "on" ]]; then
     printf '\n  Guest clipboard + shared folder, inside the VM (one command):\n'
-    printf '    curl -sf --retry 3 http://10.0.2.2:%s/share -o ~/omarchy-vm-share && sudo bash ~/omarchy-vm-share --install\n' "$CLIPBOARD_PORT"
+    printf '    mkdir -p ~/VMs && curl -sf --retry 3 http://10.0.2.2:%s/share -o ~/VMs/omarchy-vm-share && sudo bash ~/VMs/omarchy-vm-share --install\n' "$CLIPBOARD_PORT"
     printf '    (it mounts the shared folder, installs the boot unit and the clipboard agent)\n'
     # The lines above go to stdout, which nobody sees when the VM is started
     # from the app entry. Mirror them into a file so they are retrievable on
@@ -1091,7 +1092,7 @@ if [[ "$CLIPBOARD" == "on" ]] && command -v python3 >/dev/null 2>&1; then
     {
       printf 'Guest setup for __VM_NAME__ — run INSIDE the VM.\n'
       printf 'Shared folder + clipboard (once; both persist via user/system units):\n'
-      printf '  curl -sf --retry 3 http://10.0.2.2:%s/share -o ~/omarchy-vm-share && sudo bash ~/omarchy-vm-share --install\n' "$CLIPBOARD_PORT"
+      printf '  mkdir -p ~/VMs && curl -sf --retry 3 http://10.0.2.2:%s/share -o ~/VMs/omarchy-vm-share && sudo bash ~/VMs/omarchy-vm-share --install\n' "$CLIPBOARD_PORT"
     } >"$VM_DIR/guest-setup.txt" 2>/dev/null || true
   fi
 fi
@@ -1166,9 +1167,9 @@ ensure_vm() {
   mkdir -p "$dir"
   # Shared folder + clipboard are prepared at install time so every launch
   # finds them ready: the export dir exists and the bridge script is deployed.
-  mkdir -p "$SHARED_DIR" 2>/dev/null \
-    && ok "Shared folder ready: $SHARED_DIR" \
-    || warn "Could not create $SHARED_DIR."
+  mkdir -p "$dir/shared" 2>/dev/null \
+    && ok "Shared folder ready: $dir/shared" \
+    || warn "Could not create $dir/shared."
   if [[ -x "$BIN_DIR/omarchy-vm-clipboard" ]]; then
     ok "Clipboard bridge deployed."
   else
@@ -1198,6 +1199,32 @@ ensure_vm() {
   write_desktop "$VM_NAME"
   ok "Desktop entry: omarchy-vm-$VM_NAME.desktop"
 }
+
+# The old layout had ONE shared folder for every VM (~/VMs/shared). It is now
+# per VM (<vm-dir>/shared), so two VMs never write into the same directory.
+# Migrate existing configs in place; the first VM that still points at the old
+# folder inherits its contents.
+migrate_shared_dirs(){
+  local d cur new moved=0
+  for d in "$VMS_DIR"/*/; do
+    [[ -f "$d/.vm-config" ]] || continue
+    new="${d%/}/shared"
+    cur="$(sed -n 's/^SHARED_DIR="\(.*\)"/\1/p' "$d/.vm-config" | head -1)"
+    [[ -n $cur ]] || cur="$LEGACY_SHARED_DIR"
+    [[ $cur == "$new" ]] && { mkdir -p "$new"; continue; }
+    if [[ $cur == "$LEGACY_SHARED_DIR" && -d $cur && ! -e $new && $moved == 0 ]]; then
+      mv "$cur" "$new" && moved=1 && ok "Shared folder moved: $cur -> $new"
+    else
+      mkdir -p "$new"
+    fi
+    sed -i "s|^SHARED_DIR=.*|SHARED_DIR=\"$new\"|" "$d/.vm-config"
+    VM_NAME="$(basename "${d%/}")" write_launcher "$d"
+    ok "Shared folder is per-VM now: $new"
+  done
+  rmdir "$LEGACY_SHARED_DIR" 2>/dev/null || true
+}
+
+migrate_shared_dirs
 
 if [[ $SETUP_ONLY == false ]]; then
   ensure_vm

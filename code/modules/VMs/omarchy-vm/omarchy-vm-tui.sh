@@ -10,8 +10,8 @@ _mq_crash_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/lib/crash.
 # Omarchy VM Manager TUI (QEMU/KVM)
 # =============================================================================
 
-# Flat layout: VMs live directly in $MOSQUITO_VM_ROOT (<name>/), shared/
-# beside them. An explicit OMARCHY_VM_ROOT still wins outright. (The old
+# Flat layout: VMs live directly in $MOSQUITO_VM_ROOT (<name>/), each with its
+# own shared/ folder inside. An explicit OMARCHY_VM_ROOT still wins outright. (The old
 # nested omarchy/vms/<name> tree is moved up by setup-omarchy-vm.sh, which
 # owns the migration; the TUI only ever reads the flat result.)
 VMS_DIR="${OMARCHY_VM_ROOT:-${MOSQUITO_VM_ROOT:-$HOME/VMs}}"

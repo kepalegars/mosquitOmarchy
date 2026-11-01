@@ -1546,6 +1546,7 @@ setup_folder_for(){
 MOSQ_INSTALLED_PLUGINS=(
   kirklandgee.downloads
   sendaljpt.taskq
+  jrmmhm.pocket
   io.github.beresn.process-killer
   lbssousa.omaskpass
   lbssousa.omapin

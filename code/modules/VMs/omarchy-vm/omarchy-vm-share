@@ -2,8 +2,8 @@
 # omarchy-vm-share — mount the host's 9p folder inside the Omarchy VM guest.
 #
 # Run THIS INSIDE THE GUEST. It is useless on the host, which is the side that
-# already works: the launcher creates ~/VMs/shared and exports it as the 9p tag
-# `hostshare`, and that part needs nothing.
+# already works: the launcher creates ~/VMs/<vm>/shared and exports it as the
+# 9p tag `hostshare`, and that part needs nothing.
 #
 # The guest side is what was missing. The host script's only instruction was a
 # comment — "guest: mount -t 9p -o trans=virtio hostshare /mnt" — so the export
@@ -26,7 +26,9 @@
 #   ./omarchy-vm-share --status     # is it mounted, and is the module there
 #
 # Fetch it from the host bridge (no copy needed while the VM launcher runs):
-#   curl -sf --retry 3 http://10.0.2.2:7789/share -o ~/omarchy-vm-share
+#   mkdir -p ~/VMs
+#   curl -sf --retry 3 http://10.0.2.2:7789/share -o ~/VMs/omarchy-vm-share
+# After --install it is copied to /usr/local/bin; the download can be removed.
 set -euo pipefail
 
 TAG="${OMARCHY_VM_SHARE_TAG:-hostshare}"
@@ -214,13 +216,19 @@ on_guest(){
 do_status_host(){
   local _bport="${OMARCHY_VM_CLIPBOARD_PORT:-7789}"
   local _vms="${OMARCHY_VM_ROOT:-${MOSQUITO_VM_ROOT:-$HOME/VMs}}"
-  local _shared="$_vms/shared"
+  local _d _shared _any=0
   printf 'side      : host\n'
-  if [[ -d $_shared ]]; then
-    printf 'shared    : %s (%d entries)\n' "$_shared" "$(ls -A "$_shared" 2>/dev/null | wc -l)"
-  else
-    printf 'shared    : MISSING %s (run setup-omarchy-vm.sh)\n' "$_shared"
-  fi
+  for _d in "$_vms"/*/; do
+    [[ -f "${_d}.vm-config" ]] || continue
+    _shared="${_d}shared"
+    _any=1
+    if [[ -d $_shared ]]; then
+      printf 'shared    : %s (%d entries)\n' "$_shared" "$(ls -A "$_shared" 2>/dev/null | wc -l)"
+    else
+      printf 'shared    : MISSING %s (run setup-omarchy-vm.sh)\n' "$_shared"
+    fi
+  done
+  ((_any)) || printf 'shared    : no VM yet (run setup-omarchy-vm.sh)\n'
   if command -v curl >/dev/null 2>&1 \
       && curl -sf --max-time 2 "http://127.0.0.1:${_bport}/ping" >/dev/null 2>&1; then
     printf 'bridge    : listening on 127.0.0.1:%s (launch a VM to use it)\n' "$_bport"
@@ -231,7 +239,7 @@ do_status_host(){
   for _d in "$_vms"/*/; do [[ -f "${_d}vm.pid" ]] && _run=$((_run+1)); done 2>/dev/null
   printf 'running   : %d VM(s)\n' "$_run"
   printf '\nInside the VM, run this once (shared folder + clipboard, both persistent):\n'
-  printf '  curl -sf --retry 3 http://10.0.2.2:%s/share -o ~/omarchy-vm-share && sudo bash ~/omarchy-vm-share --install\n' "$_bport"
+  printf '  mkdir -p ~/VMs && curl -sf --retry 3 http://10.0.2.2:%s/share -o ~/VMs/omarchy-vm-share && sudo bash ~/VMs/omarchy-vm-share --install\n' "$_bport"
 }
 
 do_status(){

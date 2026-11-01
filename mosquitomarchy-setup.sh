@@ -1131,6 +1131,7 @@ MODULES=(
   "downloads:Downloads — themed popup for recent files (SUPER + ALT + D)"
   "taskq:TaskQ — bar-based task list with deadlines"
   "process-killer:Process Killer — inspect and stop running processes"
+  "pocket:Pocket — hide rarely-used bar widgets behind one mark and reveal them on hover; widgets stay in the bar with their settings"
   "better-pip:Better PiP — picture-in-picture windows as plain floating windows (never pinned, stays on its workspace): aspect ratio kept, grabbable border, idle inhibitor while open"
   "reboot-into-windows:Reboot into Windows — System menu entry: finds the UEFI Windows Boot Manager, 15 s yes/no countdown, arms BootNext for the next boot only, then reboots"
   "mega-caffeine:Coffee mode (mega-caffeine) — laptop closed without sleeping, red tint, natural-language durations"
@@ -1311,6 +1312,7 @@ handbrake) st_handbrake ;;
     downloads) st_downloads ;;
     taskq) st_omarchy_plugin sendaljpt.taskq ;;
     process-killer) st_omarchy_plugin io.github.beresn.process-killer ;;
+    pocket) st_omarchy_plugin jrmmhm.pocket ;;
     mega-caffeine) st_mega_caffeine ;;
     brightness) st_brightness ;;
     touchpad) st_touchpad ;;
@@ -1379,6 +1381,7 @@ module_of_path(){
     code/modules/Plugins/reboot-into-windows/*) echo reboot-into-windows ;;
     code/modules/Plugins/touchpad/*)           echo touchpad ;;
     code/modules/Plugins/mx-master/*)          echo mx-master ;;
+    code/modules/Plugins/pocket/*)             echo pocket ;;
     code/modules/Themes/*)                     echo achraf67 ;;
     code/modules/Fixes/fix-ableton-fullscreen.sh) echo ableton-fullscreen ;;
     code/modules/Fixes/fix-bar-center-anchor.sh)  echo bar-center-anchor ;;
@@ -3990,6 +3993,7 @@ un_battery_management(){
   fi
 }
 
+un_pocket(){ bash "$SCRIPTS/Plugins/pocket/setup-omarchy-pocket.sh" --remove; }
 un_omaskpinpass(){
   local conf="${GNUPGHOME:-$HOME/.gnupg}/gpg-agent.conf"
   omarchy plugin disable lbssousa.omaskpass 2>/dev/null || true
@@ -4327,6 +4331,7 @@ handbrake) un_handbrake ;;
     downloads) un_downloads ;;
     taskq) un_taskq ;;
     process-killer) un_process_killer ;;
+    pocket) un_pocket ;;
     mega-caffeine) un_mega_caffeine ;;
     brightness) un_brightness ;;
     better-pip) un_better_pip ;;
@@ -4840,6 +4845,7 @@ ensure_shell_plugin(){
 run_downloads(){ bash "$SCRIPTS/Plugins/omarchy-downloads/setup-omarchy-downloads.sh"; }
 run_taskq(){ ensure_shell_plugin sendaljpt.taskq https://github.com/sendaljpt/taskq.git; }
 run_process_killer(){ ensure_shell_plugin io.github.beresn.process-killer https://github.com/BeresN/omarchy-process-killer.git; }
+run_pocket(){ bash "$SCRIPTS/Plugins/pocket/setup-omarchy-pocket.sh"; }
 run_better_pip(){ bash "$BETTER_PIP_DIR/setup-better-pip.sh"; }
 run_reboot_windows(){ bash "$REBOOT_WINDOWS_DIR/setup-reboot-into-windows.sh"; }
 run_mega_caffeine(){ bash "$MEGA_CAFFEINE_DIR/setup-mega-caffeine.sh"; }
@@ -5030,6 +5036,7 @@ exec_modules(){
       downloads) run_module downloads run_downloads ;;
       taskq) run_module taskq run_taskq ;;
       process-killer) run_module process-killer run_process_killer ;;
+      pocket) run_module pocket run_pocket ;;
       better-pip) run_module better-pip run_better_pip ;;
       reboot-into-windows) run_module reboot-into-windows run_reboot_windows ;;
       mega-caffeine) run_module mega-caffeine run_mega_caffeine ;;
@@ -5083,7 +5090,7 @@ CATEGORIES=(
   # including the deployer, i.e. installed and updatable but reachable from
   # neither Setup nor Uninstall. `mega-caffeine` is deliberately absent: it is a
   # mosquito tool and lives in the mosquito row.
-  "plugins|Plugins|battery-management omaskpinpass downloads taskq process-killer better-pip reboot-into-windows brightness touchpad mx-master"
+  "plugins|Plugins|battery-management omaskpinpass downloads taskq process-killer pocket better-pip reboot-into-windows brightness touchpad mx-master"
   "fixes|Fixes|"
   "tweaks|Tweaks|"
   "mosquito|mosquito|"

@@ -79,7 +79,10 @@ func (m model) rebuildAddons() navPicker {
 		return newNavPicker("Addons:", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).
 			SetSize(m.contentSize())
 	}
-	if m.filterOpen {
+	// Same rule as Setup/Uninstall: the filter only replaces the tree once
+	// there is text. Opening it (shift+F) just shows the one-line field in the
+	// bottom bar, so the list does not jump before the first keystroke.
+	if m.filterText != "" {
 		return m.rebuildFilteredAddons()
 	}
 	cats, byCat := m.addonCategories()
@@ -145,8 +148,7 @@ func (m model) rebuildFilteredAddons() navPicker {
 			Badge:   mark,
 		})
 	}
-	header := "  filter: ┃ " + m.filterText + " ▏  (type to refine · esc clear · tab select · enter apply)"
-	p := newNavPicker(header, items).SetSize(m.contentSize()).
+	p := newNavPicker("", items).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),

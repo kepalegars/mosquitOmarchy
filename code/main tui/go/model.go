@@ -748,7 +748,16 @@ func (m *model) contentSize() (int, int) {
 // height of the DAMAGE, and every downstream subtraction inherited it.
 func (m *model) contentSizeFor(isMain bool) (int, int) {
 	if !isMain {
-		return contentPolicy.Size(m.w, m.h, subScreenTitleRows)
+		w, h := contentPolicy.Size(m.w, m.h, subScreenTitleRows)
+		// Searchable lists always reserve the filter zone: the box replaces
+		// this space when opened, so the list never jumps upward.
+		if isSearchScreen(m.top()) {
+			h -= filterZoneRows
+			if h < 6 {
+				h = 6
+			}
+		}
+		return w, h
 	}
 	l := m.homeLayout()
 	return contentPolicy.Size(m.w, m.h, l.TitleRows)

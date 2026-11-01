@@ -97,8 +97,21 @@ func TestAddonsSearchShortcutAndFilter(t *testing.T) {
 	if !m.filterOpen {
 		t.Fatal("shift+F did not open the addon filter")
 	}
-	if !strings.Contains(m.filterInputLine(), "filter") {
+	if !strings.Contains(m.filterBarLine(), "search") {
 		t.Fatal("filter input zone is not visible")
+	}
+	if got := strings.Count(m.filterBarLine(), "\n"); got != filterZoneRows-1 {
+		t.Fatalf("search frame has %d rows, want %d", got+1, filterZoneRows)
+	}
+	// Like Setup/Uninstall: opening the field alone must not flatten the tree.
+	folders := 0
+	for _, it := range m.addonsPicker.items {
+		if it.Folder {
+			folders++
+		}
+	}
+	if folders == 0 {
+		t.Fatal("shift+F flattened the tree before any text was typed")
 	}
 	next, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
 	m = next
@@ -170,5 +183,21 @@ func TestAddonFilterDoesNotGrowTheScreen(t *testing.T) {
 	opened := strings.Count(m.View(), "\n")
 	if opened != closed {
 		t.Fatalf("filter changed the screen height: closed=%d open=%d", closed, opened)
+	}
+}
+
+func TestSearchFrameKeepsNotificationsBelowIt(t *testing.T) {
+	m := addonTestModel()
+	m.filterOpen = true
+	m.toast, _ = m.toast.SetOK("Addon installed")
+	bar := m.searchBar("enter apply")
+	searchAt := strings.Index(bar, "search")
+	toastAt := strings.Index(bar, "Addon installed")
+	hintAt := strings.Index(bar, "enter apply")
+	if searchAt < 0 || toastAt < 0 || hintAt < 0 || !(searchAt < toastAt && toastAt < hintAt) {
+		t.Fatalf("search frame, notification and shortcuts are not in order:\n%s", bar)
+	}
+	if got, want := strings.Count(bar, "\n")+1, filterZoneRows+2; got != want {
+		t.Fatalf("search bar height = %d rows, want %d", got, want)
 	}
 }

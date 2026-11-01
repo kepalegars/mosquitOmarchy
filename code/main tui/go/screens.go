@@ -3887,7 +3887,6 @@ func (m model) resumeUninstall() (model, tea.Cmd) {
 // their full item values ("item:<folder>:<key>"), so tab-ticking and the
 // install/uninstall flows work on them unchanged.
 func (m model) rebuildFilteredSetup() navPicker {
-	uninstall := m.treeMode == "uninstall"
 	items := make([]tuikit.PickerItem, 0, 32)
 	ft := strings.ToLower(m.filterText)
 	// A query matching a CATEGORY name shows the whole category: typing
@@ -3913,16 +3912,6 @@ func (m model) rebuildFilteredSetup() navPicker {
 			items = append(items, tuikit.PickerItem{Display: fl + " › " + it.Label, Value: v, Badge: mark})
 		}
 	}
-	// Box-drawn filter input zone (small framed area) + the header already
-	// shows the typed query — keeps the filter visible above the bottom
-	// shortcut hint row (the picker body itself sits above the hint).
-	header := "  filter: ┃ " + m.filterText + " ▏  (type to refine · esc clear · tab select · enter "
-	if uninstall {
-		header += "uninstall"
-	} else {
-		header += "install"
-	}
-	header += ")"
 	enterDesc := "install selection"
 	if m.treeMode == "uninstall" {
 		enterDesc = "uninstall selection"
@@ -3930,7 +3919,7 @@ func (m model) rebuildFilteredSetup() navPicker {
 	// Quick fixes are part of the Setup tree, so they MUST participate in the
 	// search: filtering "item:fixes:" out was why searching for a fix by name
 	// (e.g. "hyprland autofocus") returned nothing even though the row exists.
-	p := newNavPicker(header, items).SetSize(m.contentSize()).
+	p := newNavPicker("", items).SetSize(m.contentSize()).
 		SetHelpKeys(key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterDesc)))

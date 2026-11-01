@@ -338,16 +338,20 @@ their installers, and the only real comparison is against the version on GitHub.
 
 ## After the install
 
-1. **Omarchy VM** — create it from **Omarchy menu → Setup → Omarchy VM**. The
-   host shared folder is **`~/VMs/shared`**, mounted in the guest at
-   **`/mnt/host`**. Finish the guest side once, inside the VM:
+1. **Omarchy VM** — create it from **Omarchy menu → Setup → Omarchy VM** (new
+   VMs enable VirGL 3D by default). Each
+   VM gets its own host folder, **`~/VMs/<name>/shared`**, mounted in the guest
+   at **`/mnt/host`**. Finish the guest side once, inside the VM:
 
    ```bash
-   curl -sf --retry 3 http://10.0.2.2:7789/share -o ~/omarchy-vm-share && sudo bash ~/omarchy-vm-share --install
+   mkdir -p ~/VMs
+   curl -sf --retry 3 http://10.0.2.2:7789/share -o ~/VMs/omarchy-vm-share
+   sudo bash ~/VMs/omarchy-vm-share --install
    ```
 
    This mounts the shared folder, installs its boot unit and the clipboard
-   agent. Until it has run, the launcher shows a notification and a link to
+   agent. The downloaded helper is copied to `/usr/local/bin` and can be
+   deleted. Until it has run, the launcher shows a notification and a link to
    <https://github.com/kepalegars/mosquitOmarchy>; the exact commands are in
    [`code/modules/VMs/omarchy-vm/README.md`](code/modules/VMs/omarchy-vm/README.md).
 
@@ -364,4 +368,3 @@ their installers, and the only real comparison is against the version on GitHub.
 See [`LICENSE`](LICENSE).
 
 > **Admin only** — [mosquitOmarchy archive cloud](https://kdrive.infomaniak.com/app/share/1099475/377fc533-3661-4242-88ef-be2343e88a0a) (direct access from the GitHub repo).
-
