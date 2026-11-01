@@ -80,9 +80,10 @@ did, with the same user-visible result.
 
 - [ ] **Extras → Addons**: `emoticon` is listed under `Themes`, with no empty
       categories and no `user/` subcategory. Its circle is empty (not installed).
-      Enter toggles it to `●`, then **Apply changes** → a Yes/No confirmation
-      listing `+ emoticon`. Yes runs `install.sh`; the list comes back with it
-      installed. Untick, Apply, confirm `- emoticon` and `remove.sh` runs.
+      Tab toggles it to `●`, then **Enter** shows a Yes/No confirmation listing
+      `+ emoticon`. Yes runs `install.sh`; the tree comes back with it installed.
+      Untick, Enter, confirm `- emoticon` and `remove.sh` runs. Right/Left fold
+      the category; Shift+F searches (hyphen and space are equivalent).
 - [ ] Add a temporary addon folder in `code/main tui/addons/` with
       `addon.conf` + `install.sh` and no `remove.sh`; it appears under its
       category, installs, and unticking it reports “kept installed” instead of

@@ -33,8 +33,8 @@ const (
 	// scrCleanup is Extras → Cleanup temporary files: toggles for each
 	// independent clean, then "Cleanup now!" and Back.
 	scrCleanup
-	// scrAddons is Extras → Addons: category-grouped addon toggles, then
-	// Apply changes and Back.
+	// scrAddons is Extras → Addons: the same expandable folder tree as Setup,
+	// with category folders and addon toggles; Enter applies the selection.
 	scrAddons
 	scrConfirm
 	scrWorking
@@ -310,6 +310,7 @@ type model struct {
 	// addons is the last backend listing; addonsSel is what Enter will apply.
 	addons       []addonRec
 	addonsSel    map[string]bool
+	addonsOpen   map[string]bool
 	addonsLoaded bool
 	backupPicker navPicker
 	// backupOptPicker drives the Backup options screen; backupAppsPicker is
@@ -611,6 +612,7 @@ func initialModel() model {
 		healthChecking:   true,
 		selected:         map[string]bool{},
 		addonsSel:        map[string]bool{},
+		addonsOpen:       map[string]bool{},
 		updateSelected:   map[string]bool{},
 		healthChecked:    map[string]bool{},
 		kbSel:            map[string]bool{},

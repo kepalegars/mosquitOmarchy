@@ -12,6 +12,7 @@ func addonTestModel() model {
 		h:            40,
 		addonsLoaded: true,
 		addonsSel:    map[string]bool{"emoticon": true},
+		addonsOpen:   map[string]bool{"Themes": true, "System": true},
 		addons: []addonRec{
 			{Name: "emoticon", Category: "Themes", Installed: true},
 			{Name: "backup-helper", Category: "System", Installed: false},
@@ -22,10 +23,10 @@ func addonTestModel() model {
 
 func TestAddonsAreGroupedAndEmptyCategoriesHidden(t *testing.T) {
 	p := addonTestModel().rebuildAddons()
-	var headings, themes, system int
+	var folders, themes, system int
 	for _, it := range p.items {
-		if it.Heading {
-			headings++
+		if it.Folder {
+			folders++
 			switch it.Display {
 			case "Themes":
 				themes++
@@ -36,8 +37,13 @@ func TestAddonsAreGroupedAndEmptyCategoriesHidden(t *testing.T) {
 			}
 		}
 	}
-	if headings != 2 || themes != 1 || system != 1 {
-		t.Fatalf("headings=%d themes=%d system=%d", headings, themes, system)
+	if folders != 2 || themes != 1 || system != 1 {
+		t.Fatalf("folders=%d themes=%d system=%d", folders, themes, system)
+	}
+	for _, it := range p.items {
+		if it.Value == "apply" {
+			t.Fatal("an Apply changes row is still rendered")
+		}
 	}
 }
 
@@ -68,4 +74,13 @@ func TestExtrasOffersBlinkingAddonsRow(t *testing.T) {
 		}
 	}
 	t.Fatal("Extras has no Addons row")
+}
+
+func TestSearchMatchesHyphenAsSpace(t *testing.T) {
+	if !searchMatch("hyprland-autofocus", "hyprland autofocus") {
+		t.Fatal("the Setup search does not find a hyphenated row from two words")
+	}
+	if !searchMatch("Focus options", "focus") {
+		t.Fatal("plain search no longer works")
+	}
 }

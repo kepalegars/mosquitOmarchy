@@ -300,7 +300,7 @@ mosquitOmarchy/
     │   ├── VMs/              # windows-vm/, macos-vm/, omarchy-vm/
     │   ├── lame/             # local language models (ollama)
     │   └── mosquito/         # mosquito tools: audio-stack, jamjamjam, move-manager, ...
-    ├── main tui/             # the manager TUI + backend + update/ + go/ + addons/ (gitignored)
+    ├── main tui/             # the manager TUI + backend + update/ + go/ + addons/ (emoticon is the tracked example)
     ├── lib/                  # shared helpers, tui-kit/ (the Go component library)
     ├── tests/                # standalone regression tests (Wine window matcher, ...)
     └── dev/                  # development helpers (module size manifest)
@@ -311,12 +311,13 @@ not break its paths.
 
 ## Addons
 
-Addons live in `code/main tui/addons/` (gitignored, user-owned) and are managed from
+Addons live in `code/main tui/addons/` (user-owned; `emoticon` is the tracked example, all others are gitignored) and are managed from
 **Extras → Addons** in the TUI: category groups, tick/untick, then a Yes/No confirmation
 listing the additions and removals. An addon is a folder with `addon.conf`
 (`NAME`, `CATEGORY`, `DESCRIPTION`, `ENABLED`), `install.sh` and an optional
 `remove.sh`. Every mosquitOmarchy update re-applies the addons installed before it.
-See [`code/main tui/README.md`](code/main%20tui/README.md#addons).
+`emoticon` is the tracked example (`Themes`): see
+[`code/main tui/README.md`](code/main%20tui/README.md#addons).
 
 ## Versions
 

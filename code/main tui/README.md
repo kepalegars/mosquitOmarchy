@@ -216,18 +216,19 @@ my-addon/
 
 The Addons screen groups rows by `CATEGORY`, hides empty categories, and shows a
 filled circle for installed addons and an empty one for the rest. Toggle with
-Enter/Tab, then **Apply changes** → Yes/No confirmation listing exactly which
-addons will be added and removed. Install state is kept in
+Enter/Tab, then press **Enter** on the tree — a Yes/No confirmation lists exactly
+which addons will be added and removed. There is no separate Apply row. Install state is kept in
 `~/.local/state/mosquitomarchy/addons-installed`; an update re-applies that same
 set at the end, using the embedded backend (`addons-reinstall`), so a
 `mosquitOmarchy` update never loses the user's addons.
 
-The first addon, **emoticon**, sits directly under `Themes` (there is no “user”
-subcategory: every theme addon is user-owned). Put its wallpapers in
-`code/main tui/addons/emoticon/images/` — or import a folder once with
-`EMOTICON_SRC=/path` — and it builds the `Emoticon` Omarchy theme with every
-image as a background. It does not apply the theme; use `omarchy theme set Emoticon`.
-`remove.sh` removes the generated theme and keeps the images.
+The shipped example is **emoticon**, tracked in the repo directly under the
+`Themes` folder (there is no “user” subcategory: theme addons are user-owned).
+Its wallpapers are in `code/main tui/addons/emoticon/images/` — import another
+folder once with `EMOTICON_SRC=/path`, which copies the pictures into that
+dedicated folder. It builds the `Emoticon` Omarchy theme with every image as a
+background, does not apply it (`omarchy theme set Emoticon`), and `remove.sh`
+drops the generated theme while keeping the images.
 
 ## Backend
 

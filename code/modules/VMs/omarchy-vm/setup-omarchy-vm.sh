@@ -225,6 +225,11 @@ pkg_present() {
   case "$1" in
     qemu) command -v qemu-system-x86_64 >/dev/null 2>&1 && command -v qemu-img >/dev/null 2>&1 ;;
     ovmf) [[ -n ${OVMF_CODE:-} && -n ${OVMF_VARS_SRC:-} ]] ;;
+    # Package names are not always binary names. wl-clipboard ships wl-copy /
+    # wl-paste; testing `command -v wl-clipboard` always said "missing", then
+    # pacman answered "up to date -- skipping" on every run.
+    wl-clipboard) command -v wl-copy >/dev/null 2>&1 && command -v wl-paste >/dev/null 2>&1 ;;
+    python) command -v python3 >/dev/null 2>&1 ;;
     *) command -v "$1" >/dev/null 2>&1 ;;
   esac
 }
@@ -652,7 +657,11 @@ ensure_iso() {
         LOCAL_ISO="$found"
       fi
     elif ! version_is_newer "$OMARCHY_VERSION" "$lver"; then
-      info "Local Omarchy $lver ISO is the latest (or newer) release — using it."
+      if [[ $lver == "$OMARCHY_VERSION" ]]; then
+        info "Local Omarchy $lver ISO matches the latest release — using it."
+      else
+        info "Local Omarchy $lver ISO is newer than the latest release ($OMARCHY_VERSION) — using it."
+      fi
       LOCAL_ISO="$found"
     elif [[ $YES == 1 ]]; then
       info "Local ISO $lver is older than the latest $OMARCHY_VERSION — downloading the latest."
@@ -1106,11 +1115,13 @@ if [[ "$CLIPBOARD" == "on" && ! -f "$VM_DIR/clipboard/agent-ready" ]]; then
 fi
 if ((${#VM_SETUP_MISSING[@]})); then
   vm_missing="$(IFS=', '; echo "${VM_SETUP_MISSING[*]}")"
-  vm_body="Setup incomplete: $vm_missing. Read the README: https://github.com/kepalegars/mosquitOmarchy (code/modules/VMs/omarchy-vm/README.md)"
+  vm_body="VM setup incomplete: $vm_missing. README: https://github.com/kepalegars/mosquitOmarchy"
   if command -v omarchy-notification-send >/dev/null 2>&1; then
-    omarchy-notification-send "Omarchy VM setup incomplete" "$vm_body" >/dev/null 2>&1 &
+    omarchy-notification-send --app-name "Omarchy VM" --urgency normal --expire-time 8000 \
+      "Omarchy VM setup incomplete" "$vm_body" >/dev/null 2>&1 &
   elif command -v notify-send >/dev/null 2>&1; then
-    notify-send --app-name="Omarchy VM" "Omarchy VM setup incomplete" "$vm_body" >/dev/null 2>&1 &
+    notify-send --app-name="Omarchy VM" --urgency=normal --expire-time=8000 \
+      "Omarchy VM setup incomplete" "$vm_body" >/dev/null 2>&1 &
   fi
 fi
 

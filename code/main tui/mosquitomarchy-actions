@@ -294,7 +294,11 @@ cmd_tweaks(){
 # NOT tracked by git: they are the user's own small extensions. An addon is a
 # folder with addon.conf (NAME, CATEGORY, DESCRIPTION, ENABLED) and install.sh;
 # remove.sh is optional and is what "untick + apply" runs.
-addons_dir(){ printf '%s/addons' "$ACTIONS_DIR"; }
+addons_dir(){
+  local d="$ACTIONS_DIR/addons"
+  [[ -d $d ]] || d="$APP_DIR/code/main tui/addons"
+  printf '%s' "$d"
+}
 addons_state_file(){ printf '%s/mosquitomarchy/addons-installed' "${XDG_STATE_HOME:-$HOME/.local/state}"; }
 
 addon_field_row(){ # <addon-dir> -> "name<TAB>category<TAB>description<TAB>enabled"
@@ -1376,7 +1380,7 @@ _uninstall_tree(){
   # never applied them, with nothing meaningful for removal to do.
   local -a applied_fixes=()
   local fid
-  for fid in hyprland-crash ableton-wine-scroll 1px-seam; do
+  for fid in hyprland-crash ableton-wine-scroll 1px-seam hyprland-autofocus; do
     fix_applied "$fid" && applied_fixes+=("$fid")
   done
   if ((${#applied_fixes[@]})); then

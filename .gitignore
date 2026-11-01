@@ -97,5 +97,8 @@ code/main tui/go/*.test
 code/modules/**/tui-go/*-tui
 code/modules/**/tui-go/*.test
 
-# Addons are user-owned data, never committed (scripts + images).
+# Addons are user-owned data. The shipped example emoticon is tracked; all
+# other addons (scripts + images) stay local.
 code/main tui/addons/*
+!code/main tui/addons/emoticon/
+!code/main tui/addons/emoticon/**

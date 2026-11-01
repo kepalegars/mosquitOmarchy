@@ -17,6 +17,21 @@ import (
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
+// searchNorm makes the live filter tolerant to the way names are written:
+// "hyprland autofocus" must find "hyprland-autofocus" (and vice versa), and
+// case/extra spaces must not matter.
+func searchNorm(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, "-", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func searchMatch(text, query string) bool {
+	q := searchNorm(query)
+	return q == "" || strings.Contains(searchNorm(text), q)
+}
+
 // firstRunMsg is delivered once, at startup, when the "add a shortcut?" question
 // has never been answered (marker file absent).
 type firstRunMsg struct{}
@@ -170,12 +185,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.cleanupPicker = m.rebuildCleanup().KeepCursor(msg.Value)
 			return m, nil
 		}
-		if m.top() == scrAddons && strings.HasPrefix(msg.Value, "addon:") {
-			name := strings.TrimPrefix(msg.Value, "addon:")
-			m.addonsSel[name] = msg.Next
-			m.addonsPicker = m.rebuildAddons().KeepCursor(msg.Value)
-			return m, nil
-		}
 		if msg.Value != crashNotifyValue {
 			return m, nil
 		}
@@ -222,6 +231,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.addonsSel = map[string]bool{}
 			for _, a := range msg.rows {
 				m.addonsSel[a.Name] = a.Installed
+			}
+		}
+		cats, _ := m.addonCategories()
+		for _, cat := range cats {
+			if _, seen := m.addonsOpen[cat]; !seen {
+				m.addonsOpen[cat] = true
 			}
 		}
 		if m.top() == scrAddons {
@@ -864,11 +879,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	case tuikit.PickerToggleMsg:
 		switch m.top() {
 		case scrAddons:
-			if strings.HasPrefix(msg.Value, "addon:") {
-				name := strings.TrimPrefix(msg.Value, "addon:")
+			v := msg.Value
+			if strings.HasPrefix(v, tuikit.TreeFolderPrefix) {
+				cat := strings.TrimPrefix(v, tuikit.TreeFolderPrefix)
+				m.addonsOpen[cat] = !m.addonsOpen[cat]
+			} else if strings.HasPrefix(v, tuikit.TreeItemPrefix) {
+				name := strings.TrimPrefix(v, tuikit.TreeItemPrefix)
 				m.addonsSel[name] = !m.addonsSel[name]
-				m.addonsPicker = m.rebuildAddons().KeepCursor(msg.Value)
 			}
+			m.addonsPicker = m.rebuildAddons().KeepCursor(v)
 			return m, nil
 		case scrSetupCat:
 			v := msg.Value
@@ -2069,6 +2088,69 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	case scrSettings:
 		m.pickPicker, cmd = m.pickPicker.Update(msg)
 	case scrAddons:
+		// Same live filter convention as Setup: SHIFT+F opens the filter zone,
+		// typing refines, esc clears. Enter still applies the ticked set.
+		if km, ok := msg.(tea.KeyMsg); ok {
+			switch km.String() {
+			case "F", "shift+F":
+				if m.filterOpen {
+					m.filterOpen = false
+					m.filterText = ""
+				} else {
+					m.filterOpen = true
+				}
+				m.addonsPicker = m.rebuildAddons()
+				return m, nil
+			case "esc":
+				if m.filterOpen {
+					m.filterOpen = false
+					m.filterText = ""
+					m.addonsPicker = m.rebuildAddons()
+					return m, nil
+				}
+			case "backspace":
+				if m.filterOpen {
+					if m.filterText == "" {
+						return m, nil
+					}
+					r := []rune(m.filterText)
+					m.filterText = string(r[:len(r)-1])
+					m.addonsPicker = m.rebuildAddons()
+					return m, nil
+				}
+			case "i":
+				v := m.addonsPicker.SelectedValue()
+				if strings.HasPrefix(v, tuikit.TreeItemPrefix) {
+					name := strings.TrimPrefix(v, tuikit.TreeItemPrefix)
+					for _, a := range m.addons {
+						if a.Name == name {
+							m.info = tuikit.NewInfo(name + "\n\n" + a.Description).SetSize(m.contentSize())
+							m.push(scrInfo)
+							return m, nil
+						}
+					}
+				}
+				if strings.HasPrefix(v, tuikit.TreeFolderPrefix) {
+					cat := strings.TrimPrefix(v, tuikit.TreeFolderPrefix)
+					names := []string{}
+					for _, a := range m.addons {
+						if a.Category == cat || (a.Category == "" && cat == "Other") {
+							names = append(names, a.Name)
+						}
+					}
+					m.info = tuikit.NewInfo(cat + "\n\n" + strings.Join(names, ", ")).SetSize(m.contentSize())
+					m.push(scrInfo)
+					return m, nil
+				}
+			}
+			if m.filterOpen {
+				if runes := km.Runes; len(runes) == 1 && unicode.IsPrint(runes[0]) {
+					m.filterText += string(runes[0])
+					m.addonsPicker = m.rebuildAddons()
+					return m, nil
+				}
+			}
+		}
 		m.addonsPicker, cmd = m.addonsPicker.Update(msg)
 	case scrCleanup:
 		m.cleanupPicker, cmd = m.cleanupPicker.Update(msg)
@@ -3007,6 +3089,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.cleanupPicker = m.rebuildCleanup()
 		case "addons":
 			m.push(scrAddons)
+			m.filterOpen = false
+			m.filterText = ""
 			m.addonsLoaded = false
 			m.addonsPicker = m.rebuildAddons()
 			return m, fetchAddonsCmd()
@@ -3014,24 +3098,27 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		return m, nil
 
 	case scrAddons:
-		switch res.Value {
-		case "back":
+		if res.Canceled || res.Value == "back" {
+			m.filterOpen = false
+			m.filterText = ""
 			m.pop()
-		case "apply":
-			added, removed := m.addonChanges()
-			if len(added) == 0 && len(removed) == 0 {
-				m.toast, _ = m.toast.SetWarn("No addon change — tick or untick one first.")
-				return m, nil
-			}
-			m.pendingAction = "addons"
-			m.pendingArgs = m.addonSelectedNames()
-			m.pendingMsg = addonChangesText(added, removed)
-			m.pendingNo = "Cancel"
-			m.pendingYes = "Apply"
-			m.push(scrConfirm)
-			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 			return m, nil
 		}
+		// Enter on a row or a folder applies the whole ticked set, exactly
+		// like Setup. There is no separate "Apply changes" row.
+		added, removed := m.addonChanges()
+		if len(added) == 0 && len(removed) == 0 {
+			m.toast, _ = m.toast.SetWarn("No addon change — tick or untick one first.")
+			return m, nil
+		}
+		m.pendingAction = "addons"
+		m.pendingArgs = m.addonSelectedNames()
+		m.pendingMsg = addonChangesText(added, removed)
+		m.pendingNo = "Cancel"
+		m.pendingYes = "Apply"
+		m.push(scrConfirm)
+		m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+		return m, nil
 	case scrCleanup:
 		switch res.Value {
 		case "back":
@@ -3796,13 +3883,13 @@ func (m model) rebuildFilteredSetup() navPicker {
 	// "apps" lists every app, not just the rows with "apps" in their label.
 	folderHit := map[string]bool{}
 	for _, f := range m.setupFolders {
-		if strings.Contains(strings.ToLower(f.Label), ft) {
+		if searchMatch(f.Label, ft) {
 			folderHit[f.Folder] = true
 		}
 	}
 	for _, f := range m.setupFolders {
 		for _, it := range m.setupItemsOf(f.Folder) {
-			if !folderHit[f.Folder] && !strings.Contains(strings.ToLower(it.Label), ft) {
+			if !folderHit[f.Folder] && !searchMatch(it.Label, ft) && !searchMatch(it.Info, ft) {
 				continue
 			}
 			v := setupValue(f.Folder, it.Key)
@@ -4558,7 +4645,7 @@ func (m model) rebuildSetupCat() navPicker {
 	ft := strings.ToLower(m.filterText)
 	for _, it := range m.setupItems {
 		if it.Folder == m.setupCat {
-			if ft != "" && !strings.Contains(strings.ToLower(it.Label), ft) {
+			if !searchMatch(it.Label, ft) && !searchMatch(it.Info, ft) {
 				continue
 			}
 			items = append(items, it)

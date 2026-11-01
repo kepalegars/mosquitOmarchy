@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	key "github.com/charmbracelet/bubbles/key"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
@@ -33,12 +35,10 @@ func fetchAddonsCmd() tea.Cmd {
 	}
 }
 
-func (m model) rebuildAddons() navPicker {
-	items := make([]tuikit.PickerItem, 0, len(m.addons)+4)
-	if !m.addonsLoaded {
-		items = append(items, tuikit.PickerItem{Display: "loading…", Value: "", Disabled: true})
-		return newNavPicker("Addons:", items).SetSize(m.contentSize())
-	}
+// addonCategories groups the rows in the same logical order the TUI uses for
+// Setup, then alphabetically for custom families. Empty families never enter
+// the map, so no empty folder is rendered.
+func (m model) addonCategories() ([]string, map[string][]addonRec) {
 	byCat := map[string][]addonRec{}
 	for _, a := range m.addons {
 		cat := a.Category
@@ -51,8 +51,6 @@ func (m model) rebuildAddons() navPicker {
 	for cat := range byCat {
 		cats = append(cats, cat)
 	}
-	// Logical order for the known families; anything custom follows
-	// alphabetically. Empty categories never enter byCat at all.
 	priority := map[string]int{"Themes": 0, "Apps": 1, "System": 2, "Integration": 3}
 	sort.Slice(cats, func(i, j int) bool {
 		pi, iok := priority[cats[i]]
@@ -65,36 +63,98 @@ func (m model) rebuildAddons() navPicker {
 		}
 		return strings.ToLower(cats[i]) < strings.ToLower(cats[j])
 	})
+	for cat := range byCat {
+		sort.Slice(byCat[cat], func(i, j int) bool {
+			return strings.ToLower(byCat[cat][i].Name) < strings.ToLower(byCat[cat][j].Name)
+		})
+	}
+	return cats, byCat
+}
+
+// rebuildAddons is the same folder tree as Setup/Uninstall: category folders
+// with counts, fold glyphs, ├─/└─ child lines and ○/● marks. There is no
+// "Apply" row: Enter applies the whole ticked set, exactly like Setup.
+func (m model) rebuildAddons() navPicker {
+	if !m.addonsLoaded {
+		return newNavPicker("Addons:", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).
+			SetSize(m.contentSize())
+	}
+	if m.filterText != "" {
+		return m.rebuildFilteredAddons()
+	}
+	cats, byCat := m.addonCategories()
+	folders := make([]tuikit.TreeFolder, 0, len(cats))
+	items := make(map[string][]tuikit.TreeItem, len(cats))
 	for _, cat := range cats {
-		items = append(items, tuikit.PickerItem{Display: cat, Heading: true})
 		rows := byCat[cat]
-		sort.Slice(rows, func(i, j int) bool { return strings.ToLower(rows[i].Name) < strings.ToLower(rows[j].Name) })
+		children := make([]tuikit.TreeItem, 0, len(rows))
+		marked := 0
 		for _, a := range rows {
 			on := m.addonsSel[a.Name]
-			mark := "○"
 			if on {
-				mark = "●"
+				marked++
 			}
-			items = append(items, tuikit.PickerItem{
-				Value:   "addon:" + a.Name,
-				Display: mark + " " + a.Name,
-				Toggle: &tuikit.ToggleSpec{
-					On:    "● " + a.Name,
-					Off:   "○ " + a.Name,
-					Value: on,
-				},
+			children = append(children, tuikit.TreeItem{
+				ID:      a.Name,
+				Label:   a.Name,
+				Checked: on,
+				Info:    a.Description,
 			})
 		}
-	}
-	if len(m.addons) == 0 {
-		items = append(items, tuikit.PickerItem{
-			Display: "No addons in code/main tui/addons/", Value: "", Disabled: true,
+		folders = append(folders, tuikit.TreeFolder{
+			ID: cat, Label: cat, Total: len(rows), Marked: marked,
 		})
-	} else {
-		items = append(items, tuikit.PickerItem{Display: "Apply changes", Value: "apply", Engage: true})
+		items[cat] = children
 	}
-	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
-	return newNavPicker("Addons:", items).SetSize(m.contentSize())
+	out := tuikit.BuildFolderTree(folders, items, m.addonsOpen, false)
+	if len(out) == 0 {
+		out = append(out, tuikit.PickerItem{Display: "No addons in code/main tui/addons/", Value: "", Disabled: true})
+	}
+	out = append(out, tuikit.PickerItem{Display: "Back", Value: "back"})
+	return newNavPicker("", out).SetSize(m.contentSize()).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
+			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
+			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
+			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply selection")),
+		).KeepCursor(m.addonsPicker.SelectedValue())
+}
+
+// rebuildFilteredAddons is the typing-filter view: matching leaf rows only,
+// carrying their category so the answer reads without the folder tree.
+func (m model) rebuildFilteredAddons() navPicker {
+	ft := strings.ToLower(m.filterText)
+	items := make([]tuikit.PickerItem, 0, len(m.addons)+1)
+	for _, a := range m.addons {
+		cat := a.Category
+		if cat == "" {
+			cat = "Other"
+		}
+		if !searchMatch(cat, ft) &&
+			!searchMatch(a.Name, ft) &&
+			!searchMatch(a.Description, ft) {
+			continue
+		}
+		mark := "○"
+		if m.addonsSel[a.Name] {
+			mark = "●"
+		}
+		items = append(items, tuikit.PickerItem{
+			Display: cat + " › " + a.Name,
+			Value:   tuikit.TreeValue(tuikit.TreeItemPrefix, a.Name),
+			Badge:   mark,
+		})
+	}
+	header := "  filter: ┃ " + m.filterText + " ▏  (type to refine · esc clear · tab select · enter apply)"
+	p := newNavPicker(header, items).SetSize(m.contentSize()).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply selection")),
+		)
+	return p.KeepCursor(m.addonsPicker.SelectedValue())
 }
 
 func (m model) addonSelectedNames() []string {
