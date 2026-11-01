@@ -135,31 +135,44 @@ subcommands of `mosquitomarchy-actions`, in `scripts/lib/keybindings.bash`.
 ## Backup encryption
 
 The backup writes dated archives of `~/.config` — hypr, terminal, Omarchy extensions and
-plugins, app preferences — to `~/omarchy-backups`, and asks the content questions before
-building: a checkbox tree of installed catalog entries (pre-checked from the last backup, saved
-as `apps.selected`), VST plugins as *list only* / *full files* / *skip*, KeePassXC passwords
-include/skip, and encryption. The passphrase is asked twice, passed through
-`OMARCHY_BACKUP_PASSPHRASE` rather than argv, and asked again on restore. See the
-[root README](../../../README.md#mosquitomarchy-setupsh) for what the plugin-folder option
-does and why it is never automatic.
+plugins, app preferences — to `mosquitomarchy-backups/` next to the repo. Before building it
+asks the content questions: a checkbox tree of every installed package/theme/tweak (pre-checked
+from the saved selection), app-specific settings (VST plugins *list only* / *full files* / *no*,
+KeePassXC passwords and settings, Zen, REAPER), keybindings (*all* / *custom only* / *no*),
+Hyprland configs (*yes* / *no*), and encryption. The passphrase is asked twice, passed through
+`OMARCHY_BACKUP_PASSPHRASE` rather than argv, and asked again on restore.
+
+**Keybindings** and **Hyprland configs** are direct rows on *Backup options*, not buried in
+the app-settings sub-menu. The whole `~/.config/hypr` tree is archived except `bindings.lua`
+(which the keybindings choice owns); on restore it is extracted **last** and Hyprland is
+reloaded, after every module install has finished.
+
+**Third-party Omarchy shell plugins** (installed by the user, not by Omarchy or a
+mosquitOmarchy module) appear under the *Plugins* folder in the Packages tree. Their
+directories are archived as `omarchy-plugins/plugins.tar.gz`; their settings live in
+`shell.json`, which the config archive already carries.
+
+**Keybindings.** `custom only` is the default: it archives *only* the
+`mosquitOmarchy_Keybindings` block, never the rest of `~/.config/hypr/bindings.lua`. `all`
+archives the whole file; `no` archives none. On restore, `all` is offered again when the
+archive has it (default); `custom only` merges just the managed block back and leaves the
+rest of the live file alone. See the [root README](../../../README.md#mosquitomarchy-setupsh).
 
 ### Naming a backup, and remembering the options
 
 **Archive name.** The first row of *Backup options* takes an optional name. It is
 sanitised into a filename slug (`Avant upgrade REAPER` → `avant-upgrade-reaper`,
-`../../etc/passwd` → `etc-passwd`) and inserted **after** the timestamp:
-`omarchy-backup-20261004-152233-avant-upgrade-reaper.tar.gz`. Never before it —
-five places glob `omarchy-backup-*.tar.gz*` and `backup_desc()` reads the date from
-fixed offsets right after the prefix, so a name in front would make every listed
-backup show a broken date. Empty is a valid answer: the archive is then named by
-its date, as before.
+`../../etc/passwd` → `etc-passwd`) and inserted **after** the timestamp and the
+version/channel:
+`mosquitomarchy-backup-20261004-152233-v1.0.0-stable-avant-upgrade-reaper.tar.gz`.
+The version comes from `VERSION`; the channel is `stable` on master/main, `rc`/`beta`
+on a matching branch, or the sanitised branch name. Empty is a valid answer: the
+archive is simply auto-named by its date and version.
 
-**Persisted options.** VST mode, KeePassXC, Zen, encryption and the name are
-written to `~/.config/mosquitomarchy/backup-options.json` (the same place, and for
-the same reason, as `theme-default-dir`: these describe this machine and nothing
-else reads them). They are saved **on every change**, not when leaving the page —
-a save-on-leave only covers the exit that happened to be coded, and the request
-was that the choices survive closing the app without ever starting a backup.
+**Persisted options.** VST mode, KeePassXC (passwords and settings), Zen, REAPER,
+keybindings, Hyprland, encryption and the name are written to
+`~/.config/mosquitomarchy/backup-options.json`. They are saved **on every change**,
+not when leaving the page.
 
 The two *detection* flags (does this machine have KeePassXC / a Zen profile) are
 deliberately **not** persisted: they are re-derived on every visit, and a stored
@@ -170,9 +183,10 @@ back to the defaults, so a corrupt file can never stop the screen from opening.
 ## Crash reporting
 
 A failed run stores **one dated log per session** in `.local/crash-logs/` (repo-local: never
-committed, never archived) and raises a critical, clickable notification. Clicking it opens the
-default coding agent on the **mosquitomarchy-crash** skill, pointed at that log; the agent
-diagnoses and **proposes** a fix without applying anything.
+committed, never archived) and, when the crash-toast switch is ON, raises a critical, clickable
+notification. The switch is **off by default on a fresh install** (Extras toggles it). Clicking
+it opens the default coding agent on the **mosquitomarchy-crash** skill, pointed at that log;
+the agent diagnoses and **proposes** a fix without applying anything.
 
 ```bash
 mosquitomarchy-crash <logfile> [tool]   # what the notification clicks

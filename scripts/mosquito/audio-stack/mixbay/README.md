@@ -99,7 +99,7 @@ Ce que **mixbay ajoute** :
   crosspoint ouvert ;
 - chrome en **texte blanc** : cadres arrondis, libellés PAN / VOL / gains et
   ligne de bus utilisent le `bright_foreground` du thème, plus jamais `muted`
-  (vert sur achraff-67) ni `dark_foreground` (gris chaud) ;
+  (vert sur achraf67) ni `dark_foreground` (gris chaud) ;
 - onglets CONTROLS / MIXER / LEVELS (EVO 8) : texte blanc dans les deux états,
   l'actif sur un bloc accent (comme les boutons Close) ; les deux lignes de cadre
   (sous les onglets, au-dessus des raccourcis) sont accent ; devant

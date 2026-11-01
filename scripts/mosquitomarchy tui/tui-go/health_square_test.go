@@ -47,3 +47,18 @@ func TestHealthSquareFollowsLatestCheck(t *testing.T) {
 		t.Fatalf("stale square survived opening Health")
 	}
 }
+
+// TestHealthResultDoesNotOpenThePage pins the startup rule: a finding only
+// lights the square on the main menu; it must never navigate to Health.
+func TestHealthResultDoesNotOpenThePage(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain}
+	m.w, m.h = 100, 34
+	m, _ = m.update(healthMsg{items: []HealthRec{{ID: "hook", Label: "hook"}}})
+	if m.top() != scrMain {
+		t.Fatalf("health result opened screen %v instead of staying on the menu", m.top())
+	}
+	if !healthSquareOnMainRow(m) {
+		t.Fatal("health finding should still show the square")
+	}
+}

@@ -272,7 +272,7 @@ and the activation-prompt cases.
 - [ ] 3.7 Zen config follow-up: live KeePassXC browser integration; optionally
       refresh `seed/extension-settings.json` from the live profile.
 - [ ] 3.10 TUI colors auto-adapt to the active Omarchy theme (e.g. lime
-      achraff-67) instead of hardcoded `tui-kit` constants.
+      achraf67) instead of hardcoded `tui-kit` constants.
 - [ ] End-of-session review: list commit candidates, ask before any `git push`,
       tidy the README, confirm remaining `sudo` steps (udev rule + Chromium
       policy for the Move module).

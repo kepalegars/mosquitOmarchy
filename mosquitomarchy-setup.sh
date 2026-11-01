@@ -154,6 +154,7 @@ load_excluded(){
     [[ -z $m ]] && continue
     [[ $m == keys ]] && m=keybindings                # renamed module id (old state files)
     [[ $m == davinci ]] && m=davinci-resolve       # renamed module id (old state files)
+    [[ $m == achraff ]] && m=achraf67              # renamed module id (old state files)
     EXCLUDED+=("$m")
   done < "$EXCLUDED_FILE"
 }
@@ -765,12 +766,20 @@ st_brightness(){
     && grep -qF -- "Omarchy_Custom_Scripts_Brightness" "$HOME/.config/hypr/bindings.lua" \
     && echo ok || echo partial
 }
-st_achraff(){
-  # achraff-67 theme: files present + applied
-  local tdir="$HOME/.config/omarchy/themes/achraff-67"
+st_achraf67(){
+  # achraf67 theme: files present + applied. The old 'achraff-67' slug is
+  # still accepted so a machine installed before the rename keeps reporting
+  # installed instead of offering a reinstall.
+  local tdir="$HOME/.config/omarchy/themes/achraf67"
+  local legacy="$HOME/.config/omarchy/themes/achraff-67"
+  if [[ ! -f "$tdir/colors.toml" && -f "$legacy/colors.toml" ]]; then
+    tdir="$legacy"
+  fi
   [[ -f "$tdir/colors.toml" && -f "$tdir/unlock.png" ]] || { echo missing; return; }
-  [[ "$(omarchy theme current 2>/dev/null || true)" == "Achraff 67" ]] \
-    && echo ok || echo partial
+  case "$(omarchy theme current 2>/dev/null || true)" in
+    "Achraf67"|"Achraff 67") echo ok ;;
+    *) echo partial ;;
+  esac
 }
 st_reboot_windows(){
   # System menu entry + helper; no root, no system file.
@@ -1048,15 +1057,16 @@ st_handbrake(){
     && echo ok || echo partial
 }
 st_whatsapp_native(){
-  # Native WhatsApp (self-contained Electron wrapper): launcher + app files +
-  # "WhatsApp" menu entry + login autostart line all present.
-  [[ -e "$HOME/.local/share/whatsapp-native" || -e "$HOME/.local/bin/whatsapp" ]] \
+  # WhatsApp Chromium web app: launcher + tray supervisor + extension + menu
+  # entry + login autostart line all present.
+  [[ -e "$HOME/.local/share/whatsapp-web" || -e "$HOME/.local/bin/whatsapp" ]] \
     || { echo missing; return; }
   local a="$HOME/.config/hypr/autostart.lua"
   [[ -x "$HOME/.local/bin/whatsapp" ]] \
-    && [[ -f "$HOME/.local/share/whatsapp-native/app/main.js" ]] \
-    && [[ -f "$HOME/.local/share/applications/whatsapp.desktop" ]] \
-    && { [[ -f $a ]] && grep -qxF -- 'o.launch_on_start("whatsapp --start-in-tray")' "$a"; } \
+    && [[ -f "$HOME/.local/share/whatsapp-web/tray/tray.js" ]] \
+    && [[ -f "$HOME/.local/share/whatsapp-web/extension/manifest.json" ]] \
+    && [[ -f "$HOME/.local/share/applications/WhatsApp.desktop" ]] \
+    && { [[ -f $a ]] && grep -qF -- 'mosquitOmarchy whatsapp autostart' "$a"; } \
     && echo ok || echo partial
 }
 st_extracto(){
@@ -1109,7 +1119,7 @@ MODULES=(
   "handbrake:HandBrake (Qt GUI + CLI) + H.264/H.265 encoders + preset sync + Hyprland rules"
   "signal:Signal Desktop — official Electron client + autostart minimized to tray, hide menu bar, menu entry Signal, login autostart"
   "betterbird:Betterbird — Thunderbird fork + system tray (close/minimise to tray), starts in the tray at login, main window tiled + popups at the pointer"
-  "whatsapp-native:WhatsApp desktop client (self-contained Electron wrapper) — silent visual notifications, tray + close-to-tray, no menu bar, menu entry WhatsApp, login autostart"
+  "whatsapp-native:WhatsApp Web as a Chromium web app — tray supervisor (login starts hidden in the tray, menu opens directly), silent visuals, close-to-tray, no menu bar, login autostart"
   "tidal:TIDAL Hi-Fi (TidaLuna) — native Tidal client, menu bar hidden and SUPER+SHIFT+M bound to it"
   "apps:Apps, tuis (one folder + setup script per entry in scripts/TUIs)"
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
@@ -1123,7 +1133,7 @@ MODULES=(
   "reboot-into-windows:Reboot into Windows — System menu entry: finds the UEFI Windows Boot Manager, 15 s yes/no countdown, arms BootNext for the next boot only, then reboots"
   "mega-caffeine:Coffee mode (mega-caffeine) — laptop closed without sleeping, red tint, natural-language durations"
   "brightness:Display brightness — Omarchy default step, 0% = screen off, and a silent 1% ramp on held keys for smoother steps (no run-on beyond the current step)"
-  "achraff:'Achraff 67' visual theme + unlock/Plymouth logo (lock screen left stock)"
+  "achraf67:'Achraf67' visual theme + unlock/Plymouth logo (lock screen left stock)"
   "touchpad:Touchpad (pointer acceleration, sensitivity + kinetic scrolling — external mouse is not affected)"
   "mx-master:MX Master (any model) — thumb gesture button → SUPER (logiops daemon, system service)"
   "hyprmod:Hyprmod — save/switch Hyprland profiles from one menu (list · apply · next · previous), so a config change is one step away from a working desktop"
@@ -1293,13 +1303,13 @@ handbrake) st_handbrake ;;
     keybindings) st_keybindings ;;
     keepassxc) st_keepassxc ;; mosquitomarchy-update) st_mosquitomarchy_update ;;
     hyprmod) st_hyprmod ;;
-    # st_achraff() has existed for a long time and was never called from here,
+    # st_achraf67() has existed for a long time and was never called from here,
     # so module_state fell through the case with no answer. Uninstalled-tree keeps
-    # only modules whose state is ok or partial, so achraff was excluded from the
+    # only modules whose state is ok or partial, so achraf67 was excluded from the
     # Uninstall tree and — with Themes holding nothing else — the whole FOLDER
     # never appeared. The theme was installed and still offered no way to remove
     # it.
-    achraff) st_achraff ;;
+    achraf67) st_achraf67 ;;
     superfile) st_superfile ;;
     flea) st_flea ;;
     extracto) st_extracto ;;
@@ -1354,7 +1364,7 @@ module_of_path(){
     scripts/Plugins/reboot-into-windows/*) echo reboot-into-windows ;;
     scripts/Plugins/touchpad/*)           echo touchpad ;;
     scripts/Plugins/mx-master/*)          echo mx-master ;;
-    scripts/Themes/*)                     echo achraff ;;
+    scripts/Themes/*)                     echo achraf67 ;;
     scripts/Fixes/fix-ableton-fullscreen.sh) echo ableton-fullscreen ;;
     scripts/Fixes/fix-bar-center-anchor.sh)  echo bar-center-anchor ;;
     scripts/Fixes/fix-bluetooth.sh)          echo bluetooth ;;
@@ -1397,24 +1407,32 @@ status_report(){
 
 # ───────────────────────── Backup / Restore (integrated) ─────────────────────────
 # Each backup is stored as a dated FILE in a dedicated folder next to the repo:
-#   <repo>/mosquitomarchy-backups/omarchy-backup-<YYYYMMDD-HHMMSS>.tar.gz
+#   <repo>/mosquitomarchy-backups/mosquitomarchy-backup-<YYYYMMDD-HHMMSS>.tar.gz
 # The archive is optionally encrypted in place with a passphrase (AES-256,
 # gpg --symmetric --cipher-algo AES256 — same cipher LUKS/Omarchy uses, file
 # level, no sudo needed). An encrypted backup keeps the same dated name plus a
-# .gpg suffix: omarchy-backup-<YYYYMMDD-HHMMSS>.tar.gz.gpg. The restore
+# .gpg suffix: mosquitomarchy-backup-<YYYYMMDD-HHMMSS>.tar.gz.gpg. The restore
 # prompts for that passphrase to decrypt it first. The passphrase can also be
 # provided non-interactively via OMARCHY_BACKUP_PASSPHRASE (see do_backup).
+# Older archives named omarchy-backup-* are still listed and restorable.
 # Contents: config-backup.tar.gz (config + Omarchy bar + menus + wrappers +
-# yabridgectl + autosync units + REAPER), pkglist.txt, aurlist.txt, RESTORE.md,
-# and optionally plugins/manifest.txt (inventory) and plugins/plugins-vst.tar.gz
-# (full VST archive). All paths are relative to $HOME: a restore puts them
-# back exactly in the same place.
+# yabridgectl + autosync units), install.list (the packages a restore
+# re-installs), pkglist.txt, aurlist.txt, RESTORE.md, and optionally
+# plugins/manifest.txt (inventory), plugins/plugins.tar.gz (full VST archive),
+# reaper/reaper.tar.gz (every REAPER-created folder — full mode only).
+# All paths are relative to $HOME: a restore puts them back in the same place.
 BACKUP_DIR="${OMARCHY_BACKUP_DIR:-$SCRIPT_DIR/mosquitomarchy-backups}"
-BACKUP_GLOB="$BACKUP_DIR/omarchy-backup-*.tar.gz*"
+BACKUP_GLOB="$BACKUP_DIR/mosquitomarchy-backup-*.tar.gz*"
 BACKUP_DECRYPTED_RE='.*\.tar\.gz(\.gpg)?$'
-# Most recent available backup (path based on $BACKUP_DIR, so testable).
+# Most recent available backup (path based on $BACKUP_DIR, so testable). The
+# old omarchy-backup-* prefix stays in the glob so archives made before the
+# rename keep working.
 latest_backup_file(){
-  ls -t "$BACKUP_DIR"/omarchy-backup-*.tar.gz* 2>/dev/null | head -1
+  local f
+  for f in "$BACKUP_DIR"/mosquitomarchy-backup-*.tar.gz* \
+           "$BACKUP_DIR"/omarchy-backup-*.tar.gz*; do
+    [[ -f $f ]] && printf '%s\t%s\n' "$(backup_sort_key "$f")" "$f"
+  done | sort -r | head -1 | cut -f2-
 }
 
 # ─── VST / plugin folder detection, driven by the audio plugin manager ──────
@@ -1687,12 +1705,38 @@ multi_select(){
 
 # Builds apps.selected for the backup: the installed TUIs, interactive or all
 # with -y. Each line is a TUI key the Setup tree already speaks.
+#
+# The Go TUI sends its whole Packages tree instead, one line per folder:
+#   folder<TAB>key<TAB>key…
+# install.list is the restore INSTRUCTION: the packages to install. Theme keys
+# are data (themes/themes.tar.gz), so they are filtered out here; the original
+# selection file is still used by backup_themes_archive. TUI lines are also
+# copied to apps.selected for older readers.
 backup_apps_selection(){
-  # A pre-made selection (the Go TUI's checkbox tree) takes precedence: copy
-  # it verbatim and skip every prompt.
   if [[ -n ${BACKUP_APPS_SELECTION_FILE:-} && -f $BACKUP_APPS_SELECTION_FILE ]]; then
-    cp "$BACKUP_APPS_SELECTION_FILE" "$1/apps.selected"
-    ok "apps.selected saved from the TUI selection ($(grep -vcE '^#|^[[:space:]]*$' "$1/apps.selected" 2>/dev/null || echo 0) entries)"
+    local src="$BACKUP_APPS_SELECTION_FILE"
+    { echo "# install.list — packages selected in the mosquitOmarchy TUI"
+    } > "$1/install.list"
+    : > "$1/apps.selected"
+    local folder key rest line n=0
+    while IFS=$'\t' read -r folder rest; do
+      [[ -z $folder || $folder == \#* ]] && continue
+      # rest is key<TAB>key…; split it back out.
+      local -a keys=() keep=()
+      IFS=$'\t' read -r -a keys <<<"$rest"
+      for key in "${keys[@]:-}"; do
+        [[ -n $key ]] || continue
+        case $key in
+          theme:*|stocktheme:*|omarchyplugin:*) continue ;;
+        esac
+        keep+=("$key")
+        [[ $key == TUI\ * ]] && { printf '%s\n' "$key" >> "$1/apps.selected"; n=$((n+1)); }
+      done
+      ((${#keep[@]})) || continue
+      local IFS=$'\t'
+      printf '%s\t%s\n' "$folder" "${keep[*]}" >> "$1/install.list"
+    done < "$src"
+    ok "install.list saved from the TUI selection ($(grep -vcE '^#|^[[:space:]]*$' "$1/install.list" 2>/dev/null || echo 0) folders, $n TUIs)"
     return 0
   fi
   detect_installed_apps
@@ -1730,6 +1774,16 @@ backup_apps_selection(){
     rm -f "$sel_file"
   else
     ok "apps.selected ($n TUIs)"
+    # The same selection, in the folder<TAB>keys shape the restore reads.
+    local -a tkeys=()
+    while IFS= read -r line; do
+      [[ $line == TUI\ * ]] && tkeys+=("$line")
+    done < "$sel_file"
+    if ((${#tkeys[@]})); then
+      { echo "# install.list — generated by the interactive backup"
+        local IFS=$'\t'; printf 'tuis\t%s\n' "${tkeys[*]}"
+      } > "$1/install.list"
+    fi
   fi
 }
 
@@ -1873,7 +1927,7 @@ backup_plugins_archive(){
   for sub in "${VST_DIRS[@]}"; do
     tar_targets+=("$relbase/${sub#"$VST_SRC_BASE/"}")
   done
-  ( cd "$parent" && tar czf "$tmp/plugins/plugins.tar.gz" "${tar_targets[@]}" 2>/dev/null )
+  ( cd "$parent" && tar czf "$tmp/plugins/plugins.tar.gz" --ignore-failed-read "${tar_targets[@]}" 2>/dev/null )
   if [[ -f "$tmp/plugins/plugins.tar.gz" ]]; then
     ok "plugins/plugins.tar.gz ($(du -h "$tmp/plugins/plugins.tar.gz" | cut -f1)) — plugin folders archived"
   else
@@ -2032,20 +2086,201 @@ backup_name_slug(){
   printf '%s' "$slug"
 }
 
+# The release channel the checkout belongs to. "stable" for the shipped
+# master/main branches, the branch name for rc/beta/experimental checkouts, so
+# an archive says exactly what it came from.
+mosquitomarchy_channel(){
+  local b
+  b="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  case $b in
+    ""|HEAD|master|main) printf 'stable' ;;
+    *rc*)                printf 'rc' ;;
+    *beta*)              printf 'beta' ;;
+    *)                   printf '%s' "$(printf '%s' "$b" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/-+/-/g; s/^[-.]+//; s/[-.]+$//')" ;;
+  esac
+}
+
+# Save the keybindings selection next to the config, without touching the live
+# file:
+#   all     the whole bindings.lua
+#   custom  only the mosquitOmarchy marker block
+#   no      nothing
+backup_keybindings_archive(){
+  local tmp="$1" mode="${BACKUP_KEYBINDINGS:-custom}"
+  [[ $mode == no ]] && { info "Keybindings: not backed up (--keybindings=no)."; return 0; }
+  [[ -f $KB_CONF ]] || { warn "Keybindings: no $KB_CONF to back up."; return 0; }
+  mkdir -p "$tmp/keybindings"
+  case $mode in
+    all)
+      cp "$KB_CONF" "$tmp/keybindings/all.lua"
+      ok "Keybindings: whole bindings.lua archived"
+      ;;
+    *)
+      awk -v b="$KB_BEGIN" -v e="$KB_END" \
+          -v lb="$KB_LEGACY_BEGIN" -v le="$KB_LEGACY_END" '
+        $0 ~ b || $0 ~ lb { inb=1; print; next }
+        $0 ~ e || $0 ~ le { print; inb=0; next }
+        inb { print }
+      ' "$KB_CONF" > "$tmp/keybindings/custom.lua"
+      if [[ -s "$tmp/keybindings/custom.lua" ]]; then
+        ok "Keybindings: mosquitOmarchy-managed block archived (custom only)"
+      else
+        rm -f "$tmp/keybindings/custom.lua"
+        rmdir "$tmp/keybindings" 2>/dev/null || true
+        warn "Keybindings: no mosquitOmarchy block found — nothing to back up."
+      fi
+      ;;
+  esac
+}
+
+# Save every theme mosquitOmarchy created (achraf67 + themes made by Theming),
+# as selected on the Packages page. The tar is rooted at $HOME so restore is a
+# plain extraction.
+backup_themes_archive(){
+  local tmp="$1" sel="${BACKUP_APPS_SELECTION_FILE:-}"
+  [[ -n $sel && -f $sel ]] || return 0
+  local -a names=()
+  local folder key rest n
+  while IFS=$'\t' read -r folder rest; do
+    [[ $folder == themes || $folder == user ]] || continue
+    local -a keys=()
+    IFS=$'\t' read -r -a keys <<<"$rest"
+    for key in "${keys[@]:-}"; do
+      case $key in
+        theme:*) names+=("${key#theme:}") ;;
+        achraf67|achraff-67) names+=("$key") ;;
+      esac
+    done
+  done < "$sel"
+  ((${#names[@]})) || return 0
+  local -a present=()
+  for n in "${names[@]}"; do
+    if [[ -d "$HOME/.config/omarchy/themes/$n" ]]; then
+      present+=(".config/omarchy/themes/$n")
+    elif [[ $n == achraf67 && -d "$HOME/.config/omarchy/themes/achraff-67" ]]; then
+      present+=(".config/omarchy/themes/achraff-67")
+    fi
+  done
+  ((${#present[@]})) || { warn "Themes: selected theme folders not found — nothing to archive."; return 0; }
+  mkdir -p "$tmp/themes"
+  if ( cd "$HOME" && tar czf "$tmp/themes/themes.tar.gz" --ignore-failed-read "${present[@]}" ); then
+    printf '%s\n' "${present[@]}" > "$tmp/themes/manifest.txt"
+    ok "themes/themes.tar.gz (${#present[@]} theme(s): ${present[*]})"
+  else
+    warn "Themes: could not create themes.tar.gz"
+  fi
+}
+
+# Save the third-party Omarchy shell plugins selected in the Packages tree.
+# Their settings live in shell.json (already in the config archive); this
+# archives the plugin DIRECTORIES so the plugin itself comes back.
+backup_omarchy_plugins_archive(){
+  local tmp="$1" sel="${BACKUP_APPS_SELECTION_FILE:-}"
+  [[ -n $sel && -f $sel ]] || return 0
+  local folder key rest n
+  local -a names=() dirs=()
+  while IFS=$'\t' read -r folder rest; do
+    [[ $folder == plugins ]] || continue
+    local -a keys=()
+    IFS=$'\t' read -r -a keys <<<"$rest"
+    for key in "${keys[@]:-}"; do
+      [[ $key == omarchyplugin:* ]] && names+=("${key#omarchyplugin:}")
+    done
+  done < "$sel"
+  ((${#names[@]})) || return 0
+  for n in "${names[@]}"; do
+    [[ -d "$HOME/.config/omarchy/plugins/$n" ]] && dirs+=(".config/omarchy/plugins/$n")
+  done
+  ((${#dirs[@]})) || { warn "Omarchy plugins: selected plugins not found — nothing to archive."; return 0; }
+  mkdir -p "$tmp/omarchy-plugins"
+  if ( cd "$HOME" && tar czf "$tmp/omarchy-plugins/plugins.tar.gz" --ignore-failed-read "${dirs[@]}" ); then
+    printf '%s\n' "${dirs[@]}" > "$tmp/omarchy-plugins/manifest.txt"
+    ok "omarchy-plugins/plugins.tar.gz (${#dirs[@]} third-party plugin(s))"
+  else
+    warn "Omarchy plugins: could not create plugins.tar.gz"
+  fi
+}
+
+# Save the whole ~/.config/hypr tree (bindings.lua excluded: keybindings have
+# their own all/custom-only/no archive). Deployed at the END of a restore.
+backup_hyprland_archive(){
+  local tmp="$1"
+  [[ -z ${BACKUP_SKIP_HYPR:-} ]] || { info "Hyprland configs: not backed up (--hyprland=no)."; return 0; }
+  [[ -d "$HOME/.config/hypr" ]] || return 0
+  mkdir -p "$tmp/hyprland"
+  if ( cd "$HOME" && tar czf "$tmp/hyprland/hyprland.tar.gz" --ignore-failed-read \
+        --exclude='.config/hypr/bindings.lua' .config/hypr ); then
+    ok "hyprland/hyprland.tar.gz (whole ~/.config/hypr, keybindings excluded)"
+  else
+    warn "Hyprland configs: could not create hyprland.tar.gz"
+  fi
+}
+
+# Restore the whole Hyprland config tree, then reload it. Called LAST by
+# restore_backup so a module install cannot overwrite it afterwards.
+restore_hyprland(){
+  local tmp="$1" mode="$2"
+  [[ -f "$tmp/hyprland/hyprland.tar.gz" ]] || return 0
+  local -a x=()
+  [[ $mode == safe ]] && x+=(--skip-old-files)
+  if tar xzf "$tmp/hyprland/hyprland.tar.gz" -C "$HOME" "${x[@]}"; then
+    ok "Hyprland configs restored"
+    command -v hyprctl >/dev/null 2>&1 && hyprctl reload >/dev/null 2>&1 || true
+  else
+    warn "Could not restore the Hyprland configs."
+  fi
+}
+
+# Restore the archived keybindings. "all" replaces the live file (a .bak of the
+# current one is kept); "custom" merges the managed block back, leaving the rest
+# of the user's bindings alone.
+restore_keybindings(){
+  local tmp="$1" mode="$2" src=""
+  [[ $mode == none || -z $mode ]] && { info "Keybindings: skipped (restore option)."; return 0; }
+  if [[ $mode == all && -f "$tmp/keybindings/all.lua" ]]; then
+    mkdir -p "$(dirname "$KB_CONF")" 2>/dev/null || true
+    cp -f "$KB_CONF" "$KB_CONF.mosquitomarchy-restore-backup" 2>/dev/null || true
+    cp -f "$tmp/keybindings/all.lua" "$KB_CONF"
+    ok "Keybindings restored (all) — previous file kept as $(basename "$KB_CONF").mosquitomarchy-restore-backup"
+    kb_reload || true
+    return 0
+  fi
+  if [[ -f "$tmp/keybindings/custom.lua" ]]; then
+    src="$tmp/keybindings/custom.lua"
+  elif [[ -f "$tmp/keybindings/all.lua" ]]; then
+    src="$tmp/keybindings/all.lua"
+  else
+    warn "Keybindings: archive has no keybindings to restore."
+    return 0
+  fi
+  local live="$KB_CONF"
+  KB_CONF="$src"
+  kb_load_ours
+  KB_CONF="$live"
+  kb_write_block
+  ok "Keybindings restored (custom only: the mosquitOmarchy block)"
+  kb_reload || true
+}
+
 do_backup(){
   msg "Backup mosquitOmarchy (dated file in $BACKUP_DIR)"
   mkdir -p "$BACKUP_DIR"
   local ts dest tmp slug
   ts="$(date +%Y%m%d-%H%M%S)"
   # The name goes AFTER the timestamp, never before it and never inside it.
-  # Five places glob omarchy-backup-*.tar.gz* and backup_desc() reads the date
-  # from fixed offsets 0-13 of what follows the prefix, so anything inserted
-  # ahead of the timestamp would make every listed backup show a broken date.
+  # Five places glob mosquitomarchy-backup-*.tar.gz* (plus the legacy
+  # omarchy-backup-*) and backup_desc() reads the date from fixed offsets
+  # 0-13 of what follows the prefix, so anything inserted ahead of the
+  # timestamp would make every listed backup show a broken date.
   slug="$(backup_name_slug "${BACKUP_NAME:-}")"
+  local ver channel base
+  ver="$(printf '%s' "${REPO_VERSION:-0}" | sed -E 's/[^a-zA-Z0-9._-]+/-/g')"
+  channel="$(mosquitomarchy_channel)"
+  base="mosquitomarchy-backup-$ts-v$ver-$channel"
   if [[ -n $slug ]]; then
-    dest="$BACKUP_DIR/omarchy-backup-$ts-$slug.tar.gz"
+    dest="$BACKUP_DIR/$base-$slug.tar.gz"
   else
-    dest="$BACKUP_DIR/omarchy-backup-$ts.tar.gz"
+    dest="$BACKUP_DIR/$base.tar.gz"
   fi
   tmp="$(mktemp -d)"
 
@@ -2076,9 +2311,9 @@ do_backup(){
   # --- 1. Core config files (paths relative to $HOME) ---
   local -a paths=()
   local p
-  for p in .config/hypr .config/REAPER .config/windows .config/opencode \
+  for p in .config/windows .config/opencode \
            .config/omarchy/extensions .config/omarchy/shell.json .config/omarchy/menu \
-           .config/omarchy/themes/achraff-67 .config/omarchy/plugins/mosquito.power .config/omarchy/plugins/custom.power \
+           .config/omarchy/themes/achraf67 .config/omarchy/plugins/mosquito.power .config/omarchy/plugins/custom.power \
            .config/omarchy/plugins/mosquito.indicators .config/omarchy/plugins/mosquito.confirm \
            .config/omarchy/plugins/mosquito.better-pip \
            .config/omarchy/plugins/mosquito.jamjamjam .config/omarchy/plugins/jamjamjam-plugin .local/share/mosquito.jamjamjam .local/share/jamjamjam-plugin \
@@ -2183,41 +2418,57 @@ do_backup(){
         ok "REAPER settings included (preferences, keymaps, themes, FX chains)"
         ;;
       full)
-        [[ -d "$HOME/.config/REAPER" ]] && paths+=(".config/REAPER")
-        local rport
-        if rport="$(reaper_portable_root)"; then
-          paths+=("${rport#"$HOME/"}")
-          ok "REAPER full: ~/.config/REAPER + the portable install ($rport)"
+        # "Everything" means everything REAPER CREATED, in every place it keeps
+        # its own files — not the program folder. A portable install is a copy
+        # of REAPER itself and is reinstalled by the mosquito module; sweeping
+        # it into the archive only makes the backup huge and stale.
+        #
+        # It goes into its own reaper/reaper.tar.gz rather than
+        # config-backup.tar.gz so a restore can install REAPER first and then
+        # deploy these folders with a plain extraction (see restore_backup).
+        local -a rdirs=() rr
+        for rr in .config/REAPER .local/share/REAPER .reaper; do
+          [[ -d "$HOME/$rr" ]] && rdirs+=("$rr")
+        done
+        if ((${#rdirs[@]})); then
+          mkdir -p "$tmp/reaper"
+          ( cd "$HOME" && tar czf "$tmp/reaper/reaper.tar.gz" --ignore-failed-read "${rdirs[@]}" )
+          ok "REAPER full: every REAPER folder archived (${rdirs[*]})"
         else
-          ok "REAPER full: ~/.config/REAPER (no portable install found)"
+          warn "REAPER full: no REAPER folder found — nothing to archive."
         fi
         ;;
     esac
   fi
-  # KeePassXC passwords + settings — ONLY if the app is installed, and the
-  # tar archive goes to $BACKUP_DIR (next to the repo, mosquitomarchy-backups/):
-  # password files must NEVER enter the repository. BACKUP_SKIP_KEEPASS=1
-  # (the TUI's "KeePassXC: skip") leaves them out.
-  if [[ -z ${BACKUP_SKIP_KEEPASS:-} ]] && pkg_has keepassxc; then
-    # Report what was ACTUALLY added: the old message claimed "passwords +
-    # settings included" even on a machine with neither the config folder nor
-    # the database, which is exactly the case where the user needs to be told
-    # the backup is empty rather than assume it holds their passwords.
-    local kp=0
-    if [[ -d "$HOME/.config/keepassxc" ]]; then
-      paths+=(".config/keepassxc"); kp=1
+  # KeePassXC is split in two on purpose:
+  #   passwords  Documents/Passwords.kdbx          (the database)
+  #   settings   .config/keepassxc                 (prefs, browser integration…)
+  # Each has its own toggle; the archive still goes to $BACKUP_DIR (next to the
+  # repo), never the repository.
+  if pkg_has keepassxc; then
+    local kp_db=0 kp_set=0
+    if [[ -z ${BACKUP_SKIP_KEEPASS:-} && -f "$HOME/Documents/Passwords.kdbx" ]]; then
+      paths+=("Documents/Passwords.kdbx"); kp_db=1
     fi
-    if [[ -f "$HOME/Documents/Passwords.kdbx" ]]; then
-      paths+=("Documents/Passwords.kdbx"); kp=1
+    if [[ -z ${BACKUP_SKIP_KEEPASS_SETTINGS:-} && -d "$HOME/.config/keepassxc" ]]; then
+      paths+=(".config/keepassxc"); kp_set=1
     fi
-    if (( kp )); then
-      ok "keepassxc passwords + settings included (writes only to $BACKUP_DIR, never the repo)"
+    if (( kp_db || kp_set )); then
+      ok "keepassxc included (passwords: $([[ $kp_db == 1 ]] && echo yes || echo no), settings: $([[ $kp_set == 1 ]] && echo yes || echo no))"
     else
-      warn "keepassxc installed but neither ~/.config/keepassxc nor ~/Documents/Passwords.kdbx found — nothing to back up."
+      warn "keepassxc installed but neither the database nor ~/.config/keepassxc was requested/found — nothing to back up."
     fi
   fi
   if ((${#paths[@]})); then
-    ( cd "$HOME" && tar czf "$tmp/config-backup.tar.gz" "${paths[@]}" )
+    # --ignore-failed-read: a root-owned file inside the user's config (a
+    # stale .save, a plugin cache) must not kill the whole backup. tar warns
+    # and skips it; every readable file still lands.
+    #
+    # bindings.lua is NOT part of the generic config: it is archived under
+    # keybindings/ according to the all / custom only / no choice, so "custom
+    # only" really does contain nothing else from that file.
+    ( cd "$HOME" && tar czf "$tmp/config-backup.tar.gz" --ignore-failed-read \
+        --exclude='.config/hypr/bindings.lua' "${paths[@]}" )
     ok "config-backup.tar.gz (${#paths[@]} items: config + bar + menus + yabridgectl + REAPER + Zen settings + omagrab + keepassxc)"
   fi
 
@@ -2227,6 +2478,13 @@ do_backup(){
   # --- 3. TUIs (selection for the "apps" module) ---
   # Fills apps.selected in the backup; the Setup > TUIs tree re-reads it.
   backup_apps_selection "$tmp"
+
+  # Themes created by mosquitOmarchy (selected on the Packages page) and the
+  # keybindings choice (all / custom only / none).
+  backup_themes_archive "$tmp"
+  backup_omarchy_plugins_archive "$tmp"
+  backup_keybindings_archive "$tmp"
+  backup_hyprland_archive "$tmp"
 
   # --- 2. Plugin folders (optional, offered only when there is something) ---
   #
@@ -2301,7 +2559,7 @@ Dated backup: $(basename "$dest")
 Created on: $(date '+%d/%m/%Y %H:%M:%S')
 
 > This backup store is encrypted (AES-256, gpg --symmetric — see
-> omarchy-backup-...tar.gz.gpg). Restoring asks for the passphrase you
+> mosquitomarchy-backup-...tar.gz.gpg). Restoring asks for the passphrase you
 > chose when creating the backup, and decrypts it before applying.
 
 Recommended method:
@@ -2403,27 +2661,39 @@ backup_desc(){
   else
     date="${name%.tar.gz}"
   fi
+  date="${date#mosquitomarchy-backup-}"
   date="${date#omarchy-backup-}"
   date="${date:0:4}-${date:4:2}-${date:6:2} ${date:9:2}:${date:11:2}"
   printf '%s%s' "$date" "$enc"
 }
 
+# Sort key: the YYYYMMDD-HHMMSS timestamp right after the prefix. Used to list
+# newest-first independently of mtime (copying/renaming a file must not move it
+# to the top) and across the new/legacy prefixes.
+backup_sort_key(){
+  local n; n="$(basename "$1")"
+  n="${n#mosquitomarchy-backup-}"
+  n="${n#omarchy-backup-}"
+  printf '%s' "${n:0:15}"
+}
+
 list_backups(){
   local -a files=()
-  local f
-  # lexicographically-sorted glob == chronological order (dated names)
-  for f in "$BACKUP_DIR"/omarchy-backup-*.tar.gz*; do
-    [[ -f $f ]] && files+=("$f")
-  done
+  # Newest first by the timestamp in the NAME, not mtime: copying an archive
+  # must not reorder the list.
+  mapfile -t files < <(
+    for f in "$BACKUP_DIR"/mosquitomarchy-backup-*.tar.gz* \
+             "$BACKUP_DIR"/omarchy-backup-*.tar.gz*; do
+      [[ -f $f ]] && printf '%s\t%s\n' "$(backup_sort_key "$f")" "$f"
+    done | sort -r | cut -f2-
+  )
   if ((${#files[@]} == 0)); then
     warn "No backup in $BACKUP_DIR (./mosquitomarchy-setup.sh --backup to create one)."
     return 0
   fi
   msg "Dated backups in $BACKUP_DIR (most recent first):"
-  local i
-  for ((i=${#files[@]}-1; i>=0; i--)); do
-    f="${files[$i]}"
-    local name sz
+  local f name sz
+  for f in "${files[@]}"; do
     name="$(basename "$f")"
     sz=$(du -h "$f" | cut -f1)
     printf "  %s  %6s  %s\n" "$(backup_desc "$name")" "$sz" "$name"
@@ -2436,16 +2706,19 @@ list_backups(){
 pick_backup(){
   # Returns the full path of the chosen file (interactive, chronological)
   local -a files=()
-  local f
-  for f in "$BACKUP_DIR"/omarchy-backup-*.tar.gz*; do
-    [[ -f $f ]] && files+=("$f")
-  done
+  # Newest first by the timestamp in the NAME.
+  mapfile -t files < <(
+    for f in "$BACKUP_DIR"/mosquitomarchy-backup-*.tar.gz* \
+             "$BACKUP_DIR"/omarchy-backup-*.tar.gz*; do
+      [[ -f $f ]] && printf '%s\t%s\n' "$(backup_sort_key "$f")" "$f"
+    done | sort -r | cut -f2-
+  )
   ((${#files[@]})) || { err "No backup found in $BACKUP_DIR."; return 1; }
   if command -v gum >/dev/null; then
     local -a display=()
     local name
-    for ((i=${#files[@]}-1; i>=0; i--)); do
-      name="$(basename "${files[$i]}")"
+    for f in "${files[@]}"; do
+      name="$(basename "$f")"
       [[ $name == *.gpg ]] && name="$name (encrypted)"
       display+=("$name")
     done
@@ -2456,16 +2729,73 @@ pick_backup(){
   else
     echo "Available backups:"
     local i
-    for ((i=${#files[@]}-1; i>=0; i--)); do
+    for ((i=0; i<${#files[@]}; i++)); do
       f="${files[$i]}"
-      printf "  %2d) %s\n" $(( ${#files[@]} - i )) "$(basename "$f")"
+      printf "  %2d) %s\n" $(( i + 1 )) "$(basename "$f")"
     done
     local n
     read -rp "Backup number [default 1 = the most recent]: " n
     n="${n:-1}"
-    local idx=$(( ${#files[@]} - n ))
-    echo "${files[$idx]}"
+    echo "${files[$((n - 1))]}"
   fi
+}
+
+# restore_install_list <file> <mode> — replay the archive's install.list.
+#
+# Each line is "folder<TAB>key<TAB>key…", the same groups the Setup tree hands
+# to cmd_apply. In safe mode an app that is already installed is dropped before
+# the group runs, so safe never reinstalls what is on the machine.
+restore_install_list(){
+  local list="$1" mode="$2" line folder k st pkg
+  [[ -f $list ]] || return 0
+  local -a arr=() keys=() sel=()
+  MODULE_FAILURES=0
+  RESULTS=()
+  while IFS= read -r line; do
+    [[ -z $line || $line == \#* ]] && continue
+    IFS=$'\t' read -r -a arr <<<"$line"
+    folder="${arr[0]:-}"
+    [[ -n $folder ]] || continue
+    keys=("${arr[@]:1}")
+    sel=()
+    for k in "${keys[@]:-}"; do
+      [[ -n $k ]] || continue
+      # Themes travel in themes/themes.tar.gz, not through the package
+      # installer. Stock themes are not part of a restore.
+      case $k in theme:*|stocktheme:*|omarchyplugin:*) continue ;; esac
+      if [[ $mode == safe ]]; then
+        case $k in
+          TUI\ *)
+            pkg="${k#TUI }"; pkg="${pkg%%|*}"
+            pkg_has "$pkg" && continue ;;
+          *)
+            st="$(module_state "$k" 2>/dev/null || true)"; st="${st%%:*}"
+            if [[ $st == ok || $st == partial ]]; then continue; fi
+            if [[ $folder == tweaks ]] && declare -F tweak_applied >/dev/null && tweak_applied "$k"; then continue; fi
+            if [[ $folder == fixes ]] && declare -F fix_applied >/dev/null && fix_applied "$k"; then continue; fi
+            ;;
+        esac
+      fi
+      sel+=("$k")
+    done
+    ((${#sel[@]})) || continue
+    # remove-ai is the one "package" whose restore action is a removal: it
+    # records that the user stripped Omarchy's agentic surface, so replaying it
+    # must strip it again instead of running the module's "bring back" path.
+    if [[ $folder == lame ]]; then
+      local -a rest=()
+      for k in "${sel[@]}"; do
+        if [[ $k == remove-ai ]]; then un_remove_ai || true; else rest+=("$k"); fi
+      done
+      sel=("${rest[@]}")
+      ((${#sel[@]})) || continue
+    fi
+    case $folder in
+      fixes)  FIXES_SELECTED=("${sel[@]}"); run_fixes ;;
+      tweaks) TWEAKS_SELECTED=("${sel[@]}"); run_tweaks ;;
+      *)      CATEGORY_SELECTED=("${sel[@]}"); category_run "$folder" ;;
+    esac
+  done < "$list"
 }
 
 restore_backup(){
@@ -2498,7 +2828,7 @@ restore_backup(){
       err "Encrypted backup and no OMARCHY_BACKUP_PASSPHRASE set — nothing to restore."
       rm -rf "$tmp"; return 1
     fi
-    arc="$tmp/omarchy-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+    arc="$tmp/mosquitomarchy-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
     if ! printf '%s' "$pass" | gpg --batch --yes --decrypt --cipher-algo AES256 \
         --passphrase-fd 0 -o "$arc" "$file" 2>/dev/null; then
       err "Decryption failed (wrong passphrase?) — nothing was restored."
@@ -2509,14 +2839,63 @@ restore_backup(){
 
   tar xzf "$arc" -C "$tmp"
 
+  # Restore decisions. The TUI passes them as flags; the plain CLI leaves them
+  # unset and gets the historical behaviour (full, everything deployed).
+  local mode="${RESTORE_MODE:-full}"
+  local dep_vst="${RESTORE_DEPLOY_VST:-yes}"
+  local dep_reaper="${RESTORE_DEPLOY_REAPER:-yes}"
+  local dep_zen="${RESTORE_DEPLOY_ZEN:-yes}"
+  local dep_keepass="${RESTORE_DEPLOY_KEEPASS:-yes}"
+  local dep_keepass_settings="${RESTORE_DEPLOY_KEEPASS_SETTINGS:-yes}"
+  local dep_themes="${RESTORE_DEPLOY_THEMES:-yes}"
+  local dep_omarchy_plugins="${RESTORE_DEPLOY_OMARCHY_PLUGINS:-yes}"
+  local dep_hyprland="${RESTORE_DEPLOY_HYPRLAND:-yes}"
+  local dep_keybindings="${RESTORE_KEYBINDINGS:-custom}"
+  local safe=0; [[ $mode == safe ]] && safe=1
+
+  # --- 0. The instruction file: packages to install, exactly as if they had
+  # been ticked in Setup. Safe mode drops whatever is already installed. ---
+  if [[ -f "$tmp/install.list" ]]; then
+    if ((YES == 0)) && ! ask "Install the packages listed in the backup (install.list)?" y; then
+      info "Packages: skipped."
+    else
+      msg "Installing the packages listed in the backup"
+      restore_install_list "$tmp/install.list" "$mode"
+    fi
+  fi
+
   # --- Configuration ---
   if [[ -f "$tmp/config-backup.tar.gz" ]]; then
     if ask "Restore the configuration (~/.config, ~/.local/bin wrappers, Omarchy bar)?" y; then
+      # Safe mode never replaces a file that is already there: tar's
+      # --skip-old-files extracts only what is missing, which is exactly
+      # "merge into the current setup".
+      local -a tex=()
+      ((safe)) && tex+=(--skip-old-files)
+      # A section the user unticked is not deployed at all.
+      [[ $dep_zen == no ]] && tex+=(--exclude=.config/zen --exclude='.config/zen/*')
+      [[ $dep_keepass == no ]] && tex+=(--exclude='Documents/Passwords.kdbx')
+      [[ $dep_keepass_settings == no ]] && tex+=(--exclude=.config/keepassxc --exclude='.config/keepassxc/*')
+      # REAPER full data travels in reaper/reaper.tar.gz; keep it out of the
+      # generic config extraction so it is deployed once, after the install.
+      if [[ $dep_reaper == no || -f "$tmp/reaper/reaper.tar.gz" ]]; then
+        tex+=(--exclude=.config/REAPER --exclude='.config/REAPER/*' \
+              --exclude=.local/share/REAPER --exclude='.local/share/REAPER/*')
+      fi
+      # Hyprland has its own archive and is deployed LAST; keep it out of the
+      # generic config extraction. Old archives (no hyprland tar) still carry
+      # it in config-backup.tar.gz, so only exclude it when the toggle is off.
+      if [[ $dep_hyprland == no || -f "$tmp/hyprland/hyprland.tar.gz" ]]; then
+        tex+=(--exclude=.config/hypr --exclude='.config/hypr/*')
+      fi
       # The battery plugins (mosquito.power, mosquito.indicators, mosquito.confirm) are recreated by the
       # battery-management module (setup-battery-management.sh): they are excluded
       # here to avoid restoring frozen copies, then the module reinstalls them.
       # custom.power is excluded too: the legacy clone some machines still carry.
-      tar xzf "$tmp/config-backup.tar.gz" -C "$HOME" \
+      if [[ -d "$tmp/keybindings" ]]; then
+        tex+=(--exclude='.config/hypr/bindings.lua')
+      fi
+      tar xzf "$tmp/config-backup.tar.gz" -C "$HOME" "${tex[@]}" \
         --exclude='.config/omarchy/plugins/mosquito.power' \
         --exclude='.config/omarchy/plugins/custom.power' \
         --exclude='.config/omarchy/plugins/mosquito.indicators' \
@@ -2542,15 +2921,71 @@ restore_backup(){
     fi
   fi
 
+  # --- REAPER full data: install REAPER from the mosquito module, then put the
+  # archived folders back with a plain extraction. Safe mode skips the install
+  # when REAPER is already there and never overwrites an existing file.
+  if [[ $dep_reaper != no && -f "$tmp/reaper/reaper.tar.gz" ]]; then
+    local rstate; rstate="$(module_state reaper 2>/dev/null || true)"; rstate="${rstate%%:*}"
+    if ((safe)) && [[ $rstate == ok || $rstate == partial ]]; then
+      info "REAPER already installed — safe mode skips the install."
+    else
+      msg "Installing REAPER (mosquitOmarchy module)"
+      run_reaper || warn "REAPER install reported an error — deploying the archived folders anyway."
+    fi
+    local -a rex=()
+    ((safe)) && rex+=(--skip-old-files)
+    if tar xzf "$tmp/reaper/reaper.tar.gz" -C "$HOME" "${rex[@]}"; then
+      if ((safe)); then
+        ok "REAPER folders deployed (safe: existing files kept)"
+      else
+        ok "REAPER folders deployed"
+      fi
+    else
+      warn "Could not deploy every REAPER folder."
+    fi
+  fi
+
+  # --- Themes created by mosquitOmarchy (achraf67 + Theming themes) ---
+  if [[ $dep_themes == no ]]; then
+    info "Themes: skipped (restore option)."
+  elif [[ -f "$tmp/themes/themes.tar.gz" ]]; then
+    local -a thx=()
+    ((safe)) && thx+=(--skip-old-files)
+    if tar xzf "$tmp/themes/themes.tar.gz" -C "$HOME" "${thx[@]}"; then
+      ok "Themes restored"
+    else
+      warn "Could not restore every theme."
+    fi
+  fi
+
+  # --- Keybindings (all = whole file, custom = managed block only) ---
+  restore_keybindings "$tmp" "$dep_keybindings"
+
   # --- Plugin folders ---
   # restore_plugins puts them back where the manager points NOW, and says so
   # when that is not where they came from.
-  if [[ -f "$tmp/plugins/plugins.tar.gz" || -f "$tmp/plugins/plugins-vst.tar.gz" ]]; then
+  if [[ $dep_vst == no ]]; then
+    info "VST plugins: skipped (restore option)."
+  elif [[ -f "$tmp/plugins/plugins.tar.gz" || -f "$tmp/plugins/plugins-vst.tar.gz" ]]; then
     restore_plugins "$tmp"
   elif [[ -f "$tmp/plugins/manifest.txt" ]]; then
     mq_vst_init
     warn "Plugin inventory kept in the archive (plugins/manifest.txt) —"
     warn "reinstall the plugins from their sources ($VST_SRC_BASE)."
+  fi
+
+  # --- Third-party Omarchy shell plugins ---
+  if [[ $dep_omarchy_plugins == no ]]; then
+    info "Omarchy plugins: skipped (restore option)."
+  elif [[ -f "$tmp/omarchy-plugins/plugins.tar.gz" ]]; then
+    local -a opx=()
+    ((safe)) && opx+=(--skip-old-files)
+    if tar xzf "$tmp/omarchy-plugins/plugins.tar.gz" -C "$HOME" "${opx[@]}"; then
+      ok "Third-party Omarchy plugins restored"
+      omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+    else
+      warn "Could not restore every Omarchy plugin."
+    fi
   fi
 
   # --- Packages (interactive only; not in -y mode) ---
@@ -2573,6 +3008,14 @@ restore_backup(){
   # installs them. Covers external scripts (omagrab: yt-dlp / ffmpeg / wl-clipboard),
   # browser configs (zen: zen-browser-bin) and anything future.
   install_module_deps
+
+  # Hyprland LAST: a module install or a theme hook must not overwrite the
+  # restored config afterwards. The helper also reloads Hyprland.
+  if [[ $dep_hyprland == yes ]]; then
+    restore_hyprland "$tmp" "$mode"
+  else
+    info "Hyprland configs: skipped (restore option)."
+  fi
 
   rm -rf "$tmp"
   msg "Restore finished."
@@ -3800,8 +4243,8 @@ un_mosquitomarchy_update(){
   rm -rf "$HOME/.local/state/omarchy-update-check" 2>/dev/null || true
 }
 
-un_achraff(){
-  info "Uninstalling the Achraff 67 theme (theme / unlock logo / plymouth)"
+un_achraf67(){
+  info "Uninstalling the Achraf67 theme (theme / unlock logo / plymouth)"
   drop_locktitle   # leftovers of the old lock/theme sync (if present)
   if mq_sudo -n true 2>/dev/null; then
     omarchy-plymouth-set-by-theme default 2>/dev/null || true
@@ -3815,6 +4258,10 @@ un_achraff(){
   rm -rf "$PLUG/custom.lock" "$PLUG/$USER.lock"
   # Restores the default Omarchy theme
   omarchy theme set "Default" >/dev/null 2>&1 || true
+  # Remove the theme files themselves (new slug + the pre-rename one).
+  omarchy-theme-remove achraf67 >/dev/null 2>&1 || true
+  omarchy-theme-remove achraff-67 >/dev/null 2>&1 || true
+  rm -rf "$HOME/.config/omarchy/themes/achraf67" "$HOME/.config/omarchy/themes/achraff-67"
   ok "theme + unlock logo + plymouth restored (default theme)"
 }
 
@@ -3915,7 +4362,7 @@ handbrake) un_handbrake ;;
     brightness) un_brightness ;;
     better-pip) un_better_pip ;;
     reboot-into-windows) un_reboot_windows ;;
-    achraff) un_achraff ;;
+    achraf67) un_achraf67 ;;
     touchpad) un_touchpad ;;
     mx-master) un_mx_master ;;
     keepassxc) un_keepassxc ;;
@@ -4050,6 +4497,8 @@ MXMASTER_DIR="$SCRIPTS/Plugins/mx-master"
 SUPERFILE_DIR="$SCRIPTS/Apps/superfile"
 FLEA_DIR="$SCRIPTS/Apps/flea"
 THEME_DIR="$SCRIPTS/Themes"
+THEME_USER_DIR="$HOME/.config/omarchy/themes"
+THEME_STOCK_DIR="/usr/share/omarchy/themes"
 ZEN_DIR="$SCRIPTS/Apps/zen"
 JAMJAMJAM_PLUGIN_DIR="$SCRIPTS/mosquito/jamjamjam"
 PIPEWIRE_SETTINGS_DIR="$AUDIO_STACK_DIR/pipewire"
@@ -4425,7 +4874,7 @@ run_better_pip(){ bash "$BETTER_PIP_DIR/setup-better-pip.sh"; }
 run_reboot_windows(){ bash "$REBOOT_WINDOWS_DIR/setup-reboot-into-windows.sh"; }
 run_mega_caffeine(){ bash "$MEGA_CAFFEINE_DIR/setup-mega-caffeine.sh"; }
 run_brightness(){ bash "$BRIGHTNESS_DIR/optimized-brightness.sh"; }
-run_achraff(){ bash "$THEME_DIR/create-theme.sh" --apply "$THEME_DIR/Wallpapers/achraf67.png"; }
+run_achraf67(){ bash "$THEME_DIR/create-theme.sh" --apply "$THEME_DIR/Wallpapers/achraf67.png"; }
 run_touchpad(){ bash "$TOUCHPAD_DIR/touchpad.sh" $([[ $YES == 1 ]] && echo -y); }
 run_superfile(){ bash "$SUPERFILE_DIR/setup-superfile.sh" $([[ $YES == 1 ]] && echo -y); }
 run_flea(){ bash "$FLEA_DIR/setup-flea.sh" $([[ $YES == 1 ]] && echo -y); }
@@ -4570,8 +5019,8 @@ final_report(){
   echo " • Bitwig 6.0 Beta 6: license via the app at first launch."
   echo " • DaVinci Resolve: Studio activation at first launch (file/dongle);"
   echo "     free version → H.264/H.265/AAC are not native: transcode to DNxHR/PCM."
-  echo " • Achraff (achraff module): the Plymouth BOOT screen to apply by hand:"
-  echo "     omarchy-plymouth-set-by-theme \"achraff-67\"   (asks for the password)"
+  echo " • Achraf67 (achraf67 module): the Plymouth BOOT screen to apply by hand:"
+  echo "     omarchy-plymouth-set-by-theme \"achraf67\"   (asks for the password)"
   hr
 }
 
@@ -4615,7 +5064,7 @@ exec_modules(){
       reboot-into-windows) run_module reboot-into-windows run_reboot_windows ;;
       mega-caffeine) run_module mega-caffeine run_mega_caffeine ;;
       brightness) run_module brightness run_brightness ;;
-      achraff) run_module achraff run_achraff ;;
+      achraf67) run_module achraf67 run_achraf67 ;;
       touchpad) run_module touchpad run_touchpad ;;
       mx-master) run_module mx-master run_mx_master ;;
       keepassxc) run_module keepassxc run_keepassxc ;;
@@ -4664,7 +5113,7 @@ CATEGORIES=(
   "tweaks|Tweaks|"
   "mosquito|mosquito|"
   "lame|lame language models (ai..)|ollama remove-ai"
-  "themes|Themes|achraff"
+  "themes|Themes|achraf67"
   "vms|VMs|windows-vm macos-vm omarchy-vm"
 )
 
@@ -4807,6 +5256,8 @@ category_items(){ # catid -> echo the space-separated module ids of that categor
 # so they are matched explicitly.
 module_category(){ # module id -> category id
   case "$1" in
+    # Themes are split into the user/defaults folders in the trees.
+    achraf67) echo user; return 0 ;;
     # The mosquito category's module list is hardcoded in category_candidates()
     # AND here. Two copies of the same fact: adding a module to one leaves the
     # other calling it category-less, which is how pipewire-settings showed up in
@@ -4965,6 +5416,25 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
 category_run(){ # catid -> run only the CATEGORY_SELECTED items
   local cat="$1" k
   case $cat in
+    defaults)
+      local rc=0 n src dest
+      for k in "${CATEGORY_SELECTED[@]:-}"; do
+        n="${k#stocktheme:}"
+        src="$THEME_STOCK_DIR/$n"
+        dest="$THEME_USER_DIR/$n"
+        if [[ ! -d $src ]]; then
+          err "Stock theme '$n' not found in $THEME_STOCK_DIR"; rc=1; continue
+        fi
+        if [[ -e $dest || -L $dest ]]; then
+          ok "Stock theme '$n' already present."
+          continue
+        fi
+        if cp -r "$src" "$dest"; then ok "Stock theme '$n' restored."; else
+          MODULE_FAILURES=$((MODULE_FAILURES + 1)); err "Could not restore stock theme '$n'."; rc=1
+        fi
+      done
+      ((rc == 0)) || MODULE_FAILURES=$((MODULE_FAILURES + 1))
+      ;;
     tuis)
       local script rc=0
       for k in "${CATEGORY_SELECTED[@]:-}"; do
@@ -5193,7 +5663,7 @@ main(){
   exec_modules
 
   # Theme creation at the END. Interactive offers are gone with the wizard;
-  # the achraff module (forced achraf67.png image) is what installs a theme
+  # the achraf67 module (forced achraf67.png image) is what installs a theme
   # unattended.
 
   ensure_dialog_rules

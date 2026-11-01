@@ -35,13 +35,20 @@ for app in omaskpass omapin; do
 done
 
 mkdir -p "$env_dir"
-if [[ -e $env_file ]] && ! cmp -s "$env_file" <(printf 'SSH_ASKPASS=%s\nSSH_ASKPASS_REQUIRE=prefer\n' "$bin_dir/omaskpass"); then
+if [[ -e $env_file ]] && ! cmp -s "$env_file" <(printf 'SSH_ASKPASS=%s\nSSH_ASKPASS_REQUIRE=prefer\nSUDO_ASKPASS=%s\n' "$bin_dir/omaskpass" "$bin_dir/omaskpass"); then
   cp -n "$env_file" "$env_file.bak.$(date +%Y%m%d%H%M%S)"
 fi
 tmp=$(mktemp "$env_dir/.90-ssh-askpass.XXXXXX")
-printf 'SSH_ASKPASS=%s\nSSH_ASKPASS_REQUIRE=prefer\n' "$bin_dir/omaskpass" > "$tmp"
+printf 'SSH_ASKPASS=%s\nSSH_ASKPASS_REQUIRE=prefer\nSUDO_ASKPASS=%s\n' "$bin_dir/omaskpass" "$bin_dir/omaskpass" > "$tmp"
 chmod 0644 "$tmp"
 mv "$tmp" "$env_file"
+
+# Make the native Omaskpass overlay the sudo prompt immediately, without a
+# re-login. mq_sudo_askpass reads this marker and uses it only while its
+# service socket exists; otherwise it falls back to the themed zenity prompt.
+state_dir="$HOME/.local/state/mosquitomarchy"
+mkdir -p "$state_dir"
+printf '%s\n' "$bin_dir/omaskpass" > "$state_dir/sudo-askpass"
 
 mkdir -p "$gnupg_dir"
 chmod 0700 "$gnupg_dir"

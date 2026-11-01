@@ -58,9 +58,9 @@ The Plymouth boot splash needs sudo, which the TUI's runner cannot prompt for, s
 from there it is skipped with the command to run by hand. **It never fails the
 run** — the theme itself is already built and Plymouth is only the boot screen.
 
-## "Achraff 67" mode
+## "Achraf67" mode
 
-`achraf67.png` produces the frozen reference theme `achraff-67`: lime
-`#b5e61d`/red palette, `Yaru-olive` icons, the `achraff_67` unlock logo, Plymouth
+`achraf67.png` produces the frozen reference theme `achraf67`: lime
+`#b5e61d`/red palette, `Yaru-olive` icons, the `achraf67` unlock logo, Plymouth
 in the theme colours. The name and logo are locked and do not vary. This is what
-the `achraff` module of `mosquitomarchy-setup.sh` runs (forced image, `--apply`).
+the `achraf67` module of `mosquitomarchy-setup.sh` runs (forced image, `--apply`).

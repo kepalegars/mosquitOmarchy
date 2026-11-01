@@ -24,19 +24,22 @@ func TestEscAtMainConfirms(t *testing.T) {
 }
 
 // TestBackupOptionsArrows checks Left/Right cycles/toggles the focused Backup
-// option.
+// option. VST lives in the "App specific settings" sub-menu now.
 func TestBackupOptionsArrows(t *testing.T) {
 	m := initialModel()
 	m.nav = []screen{scrMain, scrBackup, scrBackupOptions}
 	m.w, m.h = 120, 40
 	m.backupOpts = BackupOpts{VST: "list", Keepass: true, HasKeep: true}
 	m.backupOptPicker = m.rebuildBackupOptions()
-	// Select the VST row BY VALUE, not by index. The rows have been reordered
-	// before (the archive-name row was added above it) and the index form broke
-	// silently: the test still ran, it just drove a different row, so a change
-	// to this list could break what the test was checking without failing it.
-	m.backupOptPicker = m.backupOptPicker.SelectValue("vst")
-	if got := m.backupOptPicker.SelectedValue(); got != "vst" {
+	// Select BY VALUE, not by index: the rows have been reordered before and
+	// the index form breaks silently.
+	m.backupOptPicker = m.backupOptPicker.SelectValue("app-settings")
+	m, _ = m.update(tuikit.PickerResultMsg{Value: "app-settings"})
+	if m.top() != scrBackupAppSettings {
+		t.Fatalf("the app-settings sub-menu did not open, top is %v", m.top())
+	}
+	m.backupAppPicker = m.backupAppPicker.SelectValue("vst")
+	if got := m.backupAppPicker.SelectedValue(); got != "vst" {
 		t.Fatalf("could not select the VST row, cursor is on %q", got)
 	}
 	m, _ = m.update(tuikit.PickerSortMsg{Dir: 1})
@@ -195,7 +198,8 @@ func TestStatusScroll(t *testing.T) {
 // this headless test — the screens must still render).
 func TestViewRenders(t *testing.T) {
 	screens := []screen{scrMain, scrStatus, scrSetup, scrSetupCat, scrUpdate, scrBackup,
-		scrBackupRestore, scrBackupOptions, scrBackupApps, scrConfirm, scrWorking, scrPassphrase, scrInfo}
+		scrBackupRestore, scrBackupOptions, scrBackupAppSettings, scrRestoreOptions,
+		scrBackupApps, scrConfirm, scrWorking, scrPassphrase, scrInfo}
 	for _, s := range screens {
 		m := initialModel()
 		m.nav = []screen{s}
@@ -232,6 +236,14 @@ func TestViewRenders(t *testing.T) {
 		case scrBackupOptions:
 			m.backupOpts.HasKeep = true
 			m.backupOptPicker = m.rebuildBackupOptions()
+		case scrBackupAppSettings:
+			m.backupOpts.HasKeep, m.backupOpts.HasZen, m.backupOpts.HasReaper = true, true, true
+			m.backupAppPicker = m.rebuildBackupAppSettings()
+		case scrRestoreOptions:
+			m.restoreManifest = BackupManifest{VST: true, Reaper: true, Zen: true, Keepass: true, KeepassSettings: true, Themes: true, OmarchyPlugins: true, Hyprland: true, Keybindings: "all"}
+			m.restoreOpts = restoreOptsFor(m.restoreManifest)
+			m.restoreNotice = restoreModeNotice(m.restoreOpts.Mode)
+			m.restorePicker = m.rebuildRestoreOptions()
 		case scrBackupApps:
 			m.backupFolders = []FolderRec{{Folder: "apps", Label: "Apps"}}
 			m.backupItems = []SetupItemRec{{Folder: "apps", Key: "APP reaper", Label: "reaper", Checked: true}}
@@ -537,6 +549,7 @@ func TestMenuEntriesBackendFailure(t *testing.T) {
 func TestHealthScreenIsReadable(t *testing.T) {
 	m := initialModel()
 	m.nav = []screen{scrMain}
+	m.push(scrHealth)
 	m.w, m.h = 120, 40
 	items := []HealthRec{
 		{Kind: "module", ID: "live-mode",
@@ -701,6 +714,7 @@ func TestSetupFilterKeepsTheCursor(t *testing.T) {
 
 func TestLongHealthSubtitleScrollsInTheHostView(t *testing.T) {
 	m := initialModel()
+	m.push(scrHealth)
 	m.w, m.h = 80, 24
 	items := []HealthRec{{
 		Kind: "plugin", ID: "plugin-power", Label: "Mosquito Power plugin — clone of Omarchy's power panel",

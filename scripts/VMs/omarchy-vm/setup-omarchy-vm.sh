@@ -6,8 +6,9 @@
 # install Omarchy *inside* Omarchy (disposable sandbox, tests, demos…). It
 # mirrors the windows-vm / macos-vm modules:
 #
-#   1. Downloads the official Omarchy ISO into a cache dir and verifies its
-#      SHA-256 (iso.omarchy.org, pinned version + checksum below).
+#   1. Downloads the latest official Omarchy ISO into a cache dir and verifies
+#      its SHA-256 (iso.omarchy.org; the version is resolved from the latest
+#      GitHub release, with a local ISO used only when it is current).
 #   2. Creates a QEMU/KVM VM: q35 + UEFI/OVMF, virtio-blk disk, virtio-net
 #      (SSH port-forward), virtio-vga (3D accel via virgl), HDA audio,
 #      optional 9p shared folder, optional USB / GPU (vfio) passthrough.
@@ -31,11 +32,30 @@
 # =============================================================================
 # gui-run: reopen in a terminal when launched from a file manager. Optional, so
 # the self-deployed copy in ~/.local/bin works without the repo tree.
-GUI_RUN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$HERE/../../lib"
+# Deployed copy in ~/.local/bin: follow the mosquitomarchy-actions symlink back
+# into the checkout so mq_sudo/kb_* are still available. Without this, the copy
+# ran with undefined helpers (only --remove/deps use them, but that is exactly
+# when it broke).
+if [[ ! -d $LIB_DIR ]]; then
+  _actions="$(command -v mosquitomarchy-actions 2>/dev/null || echo "$HOME/.local/bin/mosquitomarchy-actions")"
+  _repo="$(dirname "$(readlink -f "$_actions" 2>/dev/null)")/../.."
+  [[ -d "$_repo/scripts/lib" ]] && LIB_DIR="$_repo/scripts/lib"
+fi
+GUI_RUN="$LIB_DIR/gui-run.bash"
 # shellcheck disable=SC1090
 [[ -f $GUI_RUN ]] && source "$GUI_RUN"
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/elevate.bash"  # mq_sudo: native pkexec prompt when not root
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/keybindings.bash"  # kb_*: managed SUPER bindings
+if [[ -f "$LIB_DIR/elevate.bash" ]]; then
+  source "$LIB_DIR/elevate.bash"  # mq_sudo: native pkexec prompt when not root
+else
+  mq_sudo() { sudo "$@"; }
+fi
+if [[ -f "$LIB_DIR/keybindings.bash" ]]; then
+  source "$LIB_DIR/keybindings.bash"  # kb_*: managed SUPER bindings
+else
+  kb_remove() { :; }
+fi
 set -euo pipefail
 
 info()  { echo -e "\033[1;34m==>\033[0m $*"; }
@@ -53,12 +73,17 @@ MENU="$MENU_DIR/omarchy-menu.jsonc"
 HYPR_DIR="$HOME/.config/hypr"
 HYPRLAND="$HYPR_DIR/hyprland.lua"
 
-# ─── Official Omarchy ISO (pinned; verify at https://omarchy.org/install) ───
-OMARCHY_VERSION="4.0.4"
-OMARCHY_ISO_URL="https://iso.omarchy.org/omarchy-${OMARCHY_VERSION}.iso"
-OMARCHY_ISO_SIG_URL="${OMARCHY_ISO_URL}.sig"
-OMARCHY_ISO_SHA256="ddeded2758c48318d201dfdac905ecb28f570441883f0c052ea3cd5d05acf92d"
+# ─── Official Omarchy ISO (latest release, resolved at runtime) ─────────────
+# There is deliberately no pinned version/checksum: the latest non-prerelease
+# GitHub release is the source of truth, and the server publishes a matching
+# <iso>.sha256 which is verified when reachable.
+OMARCHY_RELEASES_API="https://api.github.com/repos/basecamp/omarchy/releases/latest"
+ISO_BASE_URL="https://iso.omarchy.org"
 ISO_CACHE="${OMARCHY_VM_ISO_CACHE:-$HOME/.cache/omarchy-vm}"
+OMARCHY_VERSION=""
+OMARCHY_ISO_URL=""
+OMARCHY_ISO_SIG_URL=""
+ISO_PATH=""
 
 # ─── VM layout ─────────────────────────────────────────────────────────────
 # Flat: VMs live directly in $MOSQUITO_VM_ROOT (<name>/), shared/ beside them.
@@ -185,7 +210,6 @@ while (( $# )); do
   shift
 done
 [[ -n $VM_NAME ]] || VM_NAME="$DEFAULT_VM"
-ISO_PATH="$ISO_CACHE/omarchy-${OMARCHY_VERSION}.iso"
 
 confirm() {
   local q="$1" r
@@ -290,19 +314,155 @@ next_ssh_port() {
   done
 }
 
+iso_version_from_name() {
+  local b
+  b="$(basename "$1")"
+  [[ $b =~ ^omarchy-([0-9][0-9A-Za-z._-]*)\.iso$ ]] || return 1
+  printf '%s' "${BASH_REMATCH[1]}"
+}
+
+# version_is_newer A B — true when A is a newer version than B.
+version_is_newer() {
+  [[ $1 != "$2" ]] && [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" == "$1" ]]
+}
+
+# latest_omarchy_version — the latest non-prerelease release tag, cached for an
+# hour so listing/creating VMs does not hammer the GitHub API. Falls back to the
+# last good cache when offline.
+latest_omarchy_version() {
+  local cache="$ISO_CACHE/latest-version" now ts v=""
+  now="$(date +%s)"
+  if [[ -f $cache ]]; then
+    ts="$(stat -c %Y "$cache" 2>/dev/null || echo 0)"
+    if (( now - ts >= 0 && now - ts < 3600 )); then
+      cat "$cache"
+      return 0
+    fi
+  fi
+  if command -v curl >/dev/null 2>&1; then
+    if command -v jq >/dev/null 2>&1; then
+      v="$(curl -fsSL --max-time 15 "$OMARCHY_RELEASES_API" 2>/dev/null | jq -r '.tag_name // empty' 2>/dev/null)"
+    else
+      v="$(curl -fsSL --max-time 15 "$OMARCHY_RELEASES_API" 2>/dev/null \
+            | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    fi
+    v="${v#v}"; v="${v#V}"
+    if [[ $v =~ ^[0-9][0-9A-Za-z._-]*$ ]]; then
+      mkdir -p "$ISO_CACHE" 2>/dev/null || true
+      printf '%s\n' "$v" > "$cache" 2>/dev/null || true
+      printf '%s\n' "$v"
+      return 0
+    fi
+  fi
+  [[ -f $cache ]] && { cat "$cache"; return 0; }
+  return 1
+}
+
+# configure_latest_iso resolves the version + URLs for this run. No pinned
+# version: the latest release is the default, and a local ISO is only a fallback.
+configure_latest_iso() {
+  local v found
+  if v="$(latest_omarchy_version)"; then
+    OMARCHY_VERSION="$v"
+  elif found="$(find_latest_local_iso)"; then
+    OMARCHY_VERSION="$(iso_version_from_name "$found" || true)"
+    [[ -n $OMARCHY_VERSION ]] || die "Could not read the version of the local ISO: $found"
+    LOCAL_ISO="$found"
+    warn "GitHub unreachable — using the newest local ISO ($found, Omarchy $OMARCHY_VERSION)."
+  else
+    die "Could not determine the latest Omarchy release (GitHub unreachable and no local ISO). Pass --iso FILE."
+  fi
+  OMARCHY_ISO_URL="$ISO_BASE_URL/omarchy-${OMARCHY_VERSION}.iso"
+  OMARCHY_ISO_SIG_URL="${OMARCHY_ISO_URL}.sig"
+  ISO_PATH="$ISO_CACHE/omarchy-${OMARCHY_VERSION}.iso"
+}
+
+# iso_checksum_ok <iso> [version] — verify against the server's <iso>.sha256.
+# The published checksum is downloaded once and cached next to the ISO. When it
+# cannot be fetched (offline/first run), verification is skipped rather than
+# failing the whole install; the file is still a release ISO chosen by version.
+iso_checksum_ok() {
+  local iso="$1" ver="${2:-}" sumfile sum want got
+  [[ -f $iso ]] || return 1
+  [[ -n $ver ]] || ver="$(iso_version_from_name "$iso" || true)"
+  [[ -n $ver ]] || return 0
+  sumfile="$ISO_CACHE/omarchy-$ver.iso.sha256"
+  if [[ -s $sumfile ]]; then
+    sum="$(cat "$sumfile")"
+  else
+    command -v curl >/dev/null 2>&1 || return 0
+    sum="$(curl -fsSL --max-time 20 "$ISO_BASE_URL/omarchy-$ver.iso.sha256" 2>/dev/null || true)"
+    if [[ -n $sum ]]; then
+      mkdir -p "$ISO_CACHE" 2>/dev/null || true
+      printf '%s\n' "$sum" > "$sumfile" 2>/dev/null || true
+    fi
+  fi
+  [[ -n $sum ]] || return 0
+  want="${sum%% *}"
+  [[ $want =~ ^[0-9a-fA-F]{64}$ ]] || return 0
+  got="$(sha256sum "$iso" | awk '{print $1}')"
+  [[ $got == "$want" ]]
+}
+
+verify_iso_file() { iso_checksum_ok "$1" "${2:-}"; }
+
 verify_iso() {
-  [[ -f $ISO_PATH ]] || return 1
-  echo "$OMARCHY_ISO_SHA256  $ISO_PATH" | sha256sum -c --status - 2>/dev/null
+  [[ -n $ISO_PATH ]] || return 1
+  verify_iso_file "$ISO_PATH" "${OMARCHY_VERSION:-$(iso_version_from_name "$ISO_PATH" || true)}"
+}
+
+# iso_remote_size <version> — Content-Length of that release ISO, cached for an
+# hour. Used to reject a truncated local download before hashing 6 GB of it.
+iso_remote_size() {
+  local ver="$1" cache now ts sz
+  cache="$ISO_CACHE/size-$ver"
+  now="$(date +%s)"
+  if [[ -s $cache ]]; then
+    ts="$(stat -c %Y "$cache" 2>/dev/null || echo 0)"
+    if (( now - ts >= 0 && now - ts < 3600 )); then
+      cat "$cache"
+      return 0
+    fi
+  fi
+  command -v curl >/dev/null 2>&1 || return 1
+  sz="$(curl -sIL --max-time 15 "$ISO_BASE_URL/omarchy-$ver.iso" 2>/dev/null | tr -d '\r' \
+        | awk 'tolower($1)=="content-length:"{v=$2} END{print v}')"
+  [[ $sz =~ ^[0-9]+$ ]] || return 1
+  mkdir -p "$ISO_CACHE" 2>/dev/null || true
+  printf '%s\n' "$sz" > "$cache" 2>/dev/null || true
+  printf '%s\n' "$sz"
+}
+
+# iso_file_complete <iso> <version> — false when the server knows a size and the
+# local file is shorter (an interrupted 4 GB download). Offline, it returns true
+# and the checksum decides.
+iso_file_complete() {
+  local iso="$1" ver="$2" want got
+  [[ -f $iso ]] || return 1
+  want="$(iso_remote_size "$ver" 2>/dev/null || true)"
+  [[ -n $want ]] || return 0
+  got="$(stat -c %s "$iso" 2>/dev/null || echo 0)"
+  [[ $got == "$want" ]]
 }
 
 show_status() {
+  local latest cached
+  latest="$(latest_omarchy_version 2>/dev/null || true)"
+  cached=""
+  [[ -n $latest ]] && cached="$ISO_CACHE/omarchy-$latest.iso"
   echo "── Omarchy VM module ───────────────────────────────────────"
-  echo " ISO version : $OMARCHY_VERSION"
-  echo " ISO URL     : $OMARCHY_ISO_URL"
-  if [[ -f $ISO_PATH ]]; then
-    if verify_iso; then echo " ISO cache   : $ISO_PATH  (sha256 OK)"; else echo " ISO cache   : $ISO_PATH  (sha256 MISMATCH)"; fi
+  echo " ISO latest  : ${latest:-unknown (GitHub unreachable)}"
+  if [[ -n $cached && -f $cached ]]; then
+    local sz want
+    sz="$(stat -c %s "$cached" 2>/dev/null || echo 0)"
+    want="$(iso_remote_size "$latest" 2>/dev/null || true)"
+    if [[ -n $want && $sz != "$want" ]]; then
+      echo " ISO cache   : $cached  (INCOMPLETE ${sz}/${want} bytes — a download resumes)"
+    else
+      echo " ISO cache   : $cached  (complete)"
+    fi
   else
-    echo " ISO cache   : not downloaded ($ISO_PATH)"
+    echo " ISO cache   : not downloaded${cached:+ ($cached)}"
   fi
   echo " VM root     : $VMS_ROOT"
   [[ -n ${OVMF_CODE:-} ]] && echo " OVMF code   : $OVMF_CODE" || echo " OVMF code   : missing (install edk2-ovmf)"
@@ -312,12 +472,13 @@ show_status() {
     [[ -x "$BIN_DIR/$f" ]] && echo "                ✓ $f" || echo "                ✗ $f"
   done
   echo " Menu block  : $( [[ -f $MENU ]] && grep -qF "$BLOCK_BEGIN" "$MENU" && echo present || echo absent )"
-  echo " Window rule : $( [[ -f $HYPRLAND ]] && grep -qF "$HYPR_BEGIN" "$HYPRLAND" && echo present || echo absent )"
+  echo " Window rule : $( [[ -f $HYPRLAND ]] && grep -qF -- "$HYPR_BEGIN" "$HYPRLAND" && echo present || echo absent )"
   echo " VMs         :"
   local dir found=0
   if [[ -d $VMS_DIR ]]; then
     for dir in "$VMS_DIR"/*/; do
       [[ -d $dir ]] || continue
+      [[ -f "$dir/.vm-config" ]] || continue
       found=1
       local name; name="$(basename "$dir")"
       local pid="stopped"
@@ -423,17 +584,22 @@ fi
 # -----------------------------------------------------------------------------
 # 2. ISO download + verification (cache dir)
 # -----------------------------------------------------------------------------
-# Searches the usual places for a locally-downloaded Omarchy ISO (e.g. the
-# latest release already fetched by hand) and returns the highest-version one,
-# or nothing. The pinned cache path is excluded — ensure_iso handles it.
+# Searches the usual places for a locally-downloaded Omarchy ISO and returns
+# the highest-version one that is COMPLETE, or nothing. The resolved cache path
+# is excluded — ensure_iso handles it separately.
 find_latest_local_iso() {
-  local d f
+  local d f ver
   local -a cands=()
   for d in "$ISO_CACHE" "$HOME/Downloads" "$HOME/Documents" "$HOME" "$PWD"; do
     [[ -d $d ]] || continue
     while IFS= read -r f; do
       [[ -f $f ]] || continue
-      [[ "$(readlink -f "$f")" == "$(readlink -f "$ISO_PATH" 2>/dev/null || echo __none__)" ]] && continue
+      [[ -n $ISO_PATH ]] && [[ "$(readlink -f "$f")" == "$(readlink -f "$ISO_PATH" 2>/dev/null || echo __none__)" ]] && continue
+      ver="$(iso_version_from_name "$f" || true)"
+      if [[ -n $ver ]] && ! iso_file_complete "$f" "$ver"; then
+        printf ' ! Local Omarchy ISO is incomplete, ignoring it: %s\n' "$f" >&2
+        continue
+      fi
       cands+=("$f")
     done < <(find "$d" -maxdepth 2 -type f -iname 'omarchy-*.iso' 2>/dev/null)
   done
@@ -442,62 +608,104 @@ find_latest_local_iso() {
   printf '%s\n' "${cands[@]}" | awk -F/ '{print $NF"\t"$0}' | sort -Vr | cut -f2- | head -1
 }
 
+use_local_iso() {
+  local iso="$1" ver
+  [[ -f $iso ]] || die "Local ISO not found: $iso"
+  ISO_PATH="$(readlink -f "$iso")"
+  ver="$(iso_version_from_name "$ISO_PATH" || true)"
+  ok "Using local ISO: $ISO_PATH${ver:+ (Omarchy $ver)}"
+  if [[ -n $ver && $ver != "$OMARCHY_VERSION" ]]; then
+    warn "This local ISO is $ver; the latest release is $OMARCHY_VERSION."
+  fi
+  if [[ $NO_VERIFY == false ]]; then
+    verify_iso_file "$ISO_PATH" "${ver:-$OMARCHY_VERSION}" \
+      || die "SHA-256 mismatch for $ISO_PATH (use --no-verify to override)."
+    ok "SHA-256 verified (or no checksum published for this version)."
+  else
+    warn "SHA-256 verification skipped (--no-verify)."
+  fi
+}
+
 ensure_iso() {
   mkdir -p "$ISO_CACHE"
 
-  # Offer a locally-found Omarchy ISO before downloading the pinned one.
-  if [[ -z $LOCAL_ISO ]]; then
-    local found base
-    if found="$(find_latest_local_iso)"; then
-      base="$(basename "$found")"
-      if [[ $YES == 1 ]]; then
-        info "Found a local Omarchy ISO: $found"
-        LOCAL_ISO="$found"
+  # An explicit --iso always wins, no prompt.
+  if [[ -n $LOCAL_ISO ]]; then
+    use_local_iso "$LOCAL_ISO"
+    return 0
+  fi
+
+  # A local ISO is only preferred when it IS the latest release (or newer).
+  # An older one is reported for what it is, and the default is to download
+  # the latest; -y always downloads the latest.
+  local found lver
+  if found="$(find_latest_local_iso)"; then
+    lver="$(iso_version_from_name "$found" || true)"
+    if [[ -z $lver ]]; then
+      warn "A local Omarchy ISO was found but its version could not be read: $found"
+      warn "The latest release is $OMARCHY_VERSION."
+      if [[ $YES == 1 ]] || ! confirm "Use this unknown-version ISO anyway?"; then
+        info "Downloading the latest $OMARCHY_VERSION ISO."
       else
-        warn "A local Omarchy ISO was found: $found"
-        if confirm "Use it ($base) to install the VM instead of downloading the pinned $OMARCHY_VERSION ISO?"; then
-          LOCAL_ISO="$found"
-        else
-          info "Keeping the pinned $OMARCHY_VERSION ISO (download/cache)."
-        fi
+        LOCAL_ISO="$found"
+      fi
+    elif ! version_is_newer "$OMARCHY_VERSION" "$lver"; then
+      info "Local Omarchy $lver ISO is the latest (or newer) release — using it."
+      LOCAL_ISO="$found"
+    elif [[ $YES == 1 ]]; then
+      info "Local ISO $lver is older than the latest $OMARCHY_VERSION — downloading the latest."
+    else
+      warn "A local Omarchy ISO was found: $found (version $lver)."
+      warn "The latest release is $OMARCHY_VERSION — this local ISO is older."
+      if confirm "Download the latest $OMARCHY_VERSION ISO instead of using the older local $lver?"; then
+        info "Downloading the latest $OMARCHY_VERSION ISO."
+      else
+        LOCAL_ISO="$found"
       fi
     fi
   fi
 
   if [[ -n $LOCAL_ISO ]]; then
-    [[ -f $LOCAL_ISO ]] || die "Local ISO not found: $LOCAL_ISO"
-    ISO_PATH="$(readlink -f "$LOCAL_ISO")"
-    ok "Using local ISO: $ISO_PATH"
-    # A local ISO of another version can't match the pinned checksum.
-    if [[ $(basename "$ISO_PATH") != "omarchy-${OMARCHY_VERSION}.iso" ]]; then
-      warn "Not the pinned $OMARCHY_VERSION ISO — skipping the pinned SHA-256 check."
-      NO_VERIFY=true
-    fi
-    if [[ $NO_VERIFY == false ]]; then
-      echo "$OMARCHY_ISO_SHA256  $ISO_PATH" | sha256sum -c --status - \
-        || die "SHA-256 mismatch for $ISO_PATH (use --no-verify to override)."
-      ok "SHA-256 verified."
-    fi
-    return 0
-  fi
-
-  if [[ -f $ISO_PATH ]] && verify_iso; then
-    ok "ISO already cached and verified: $ISO_PATH"
+    use_local_iso "$LOCAL_ISO"
     return 0
   fi
 
   if [[ -f $ISO_PATH ]]; then
-    warn "Cached ISO failed verification — re-downloading."
-    rm -f "$ISO_PATH"
+    if ! iso_file_complete "$ISO_PATH" "$OMARCHY_VERSION"; then
+      local have need
+      have="$(stat -c %s "$ISO_PATH" 2>/dev/null || echo 0)"
+      need="$(iso_remote_size "$OMARCHY_VERSION" 2>/dev/null || true)"
+      warn "Cached ISO is incomplete (${have}${need:+ / $need} bytes) — the download will resume, not restart."
+    elif verify_iso; then
+      ok "ISO already cached and verified: $ISO_PATH"
+      return 0
+    else
+      warn "Cached ISO failed verification (complete size, wrong checksum) — re-downloading."
+      rm -f "$ISO_PATH"
+    fi
   fi
 
-  info "Downloading the official Omarchy $OMARCHY_VERSION ISO (~5.8 GB)"
+  # Refuse to start/resume a download that cannot fit, instead of filling the
+  # disk and failing halfway (the usual interrupted-ISO story).
+  local need_bytes have_bytes missing avail
+  need_bytes="$(iso_remote_size "$OMARCHY_VERSION" 2>/dev/null || true)"
+  if [[ -n $need_bytes ]]; then
+    have_bytes="$(stat -c %s "$ISO_PATH" 2>/dev/null || echo 0)"
+    missing=$((need_bytes - have_bytes))
+    avail="$(df --output=avail -B1 "$ISO_CACHE" 2>/dev/null | tail -1 | tr -d ' ')"
+    if [[ $avail =~ ^[0-9]+$ ]] && (( missing > avail )); then
+      die "Not enough free space in $ISO_CACHE: need $(awk -v b="$missing" 'BEGIN{printf "%.1f", b/1073741824}') GB more, have $(awk -v b="$avail" 'BEGIN{printf "%.1f", b/1073741824}') GB. Free space, or pass --iso with a COMPLETE local ISO."
+    fi
+  fi
+
+  info "Downloading the latest official Omarchy $OMARCHY_VERSION ISO (~6.4 GB)"
   echo "     $OMARCHY_ISO_URL"
   echo "     -> $ISO_PATH"
   curl -L --fail --retry 3 --continue-at - --progress-bar -o "$ISO_PATH" "$OMARCHY_ISO_URL" \
     || die "ISO download failed."
   if [[ $NO_VERIFY == false ]]; then
-    verify_iso || die "SHA-256 mismatch — refusing to use the downloaded ISO."
+    verify_iso_file "$ISO_PATH" "$OMARCHY_VERSION" \
+      || die "SHA-256 mismatch — refusing to use the downloaded ISO."
     ok "ISO downloaded and SHA-256 verified."
     info "Detached PGP signature available at $OMARCHY_ISO_SIG_URL"
   else
@@ -506,6 +714,7 @@ ensure_iso() {
 }
 # VM creation is deferred to the manager when only the setup is requested.
 if [[ $SETUP_ONLY == false ]]; then
+  configure_latest_iso
   ensure_iso
 fi
 
@@ -686,7 +895,7 @@ else
 fi
 
 args=(
-  -name "omarchy-${VM_NAME}"
+  -name "${VM_NAME} (Omarchy VM)"
   -machine q35,accel=kvm:tcg
   -cpu "$CPU"
   -smp "$CORES",cores="$CORES",sockets="$SOCKETS"
@@ -904,7 +1113,7 @@ write_desktop() {
   local name="$1"
   cat > "$APPS_DIR/omarchy-vm-$name.desktop" <<EOF
 [Desktop Entry]
-Name=Omarchy VM ($name)
+Name=$name (Omarchy VM)
 Comment=Run Omarchy in QEMU/KVM ($name)
 Exec=uwsm app -- omarchy-vm $name
 Icon=omarchy
@@ -914,7 +1123,7 @@ Categories=System;Emulator;
 EOF
   if [[ $name == "$DEFAULT_VM" ]]; then
     cp -f "$APPS_DIR/omarchy-vm-$name.desktop" "$APPS_DIR/omarchy-vm.desktop"
-    sed -i 's/^Name=.*/Name=Omarchy VM/' "$APPS_DIR/omarchy-vm.desktop"
+    sed -i "s/^Name=.*/Name=$name (Omarchy VM)/" "$APPS_DIR/omarchy-vm.desktop"
     sed -i 's/^Comment=.*/Comment=Run Omarchy in QEMU\/KVM/' "$APPS_DIR/omarchy-vm.desktop"
     sed -i 's/^Exec=.*/Exec=uwsm app -- omarchy-vm/' "$APPS_DIR/omarchy-vm.desktop"
   fi

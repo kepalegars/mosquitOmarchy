@@ -500,7 +500,7 @@ func evoPalette() [9]lipgloss.Color {
 	p[cCyan] = tuikit.ColorCyan
 	p[cYellow] = tuikit.ColorYellow
 	// Body text and structural lines are the theme's own foreground
-	// (bright_foreground), not ColorBorder/ColorSubtle: on achraff-67 the
+	// (bright_foreground), not ColorBorder/ColorSubtle: on achraf67 the
 	// former is muted green (#4e9237) and the latter a warm grey, which is
 	// exactly the "green lines / grey text" the EVO panel must not show.
 	p[cWhite] = tuikit.ColorOnSurface

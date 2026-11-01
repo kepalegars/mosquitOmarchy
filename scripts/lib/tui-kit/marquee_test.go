@@ -1,17 +1,19 @@
 package tuikit
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
 
-// TestMarqueeText drives one full cycle: hold at the start, scroll to the
-// tail, jump back to the start, hold, repeat. Time is explicit so the
-// assertion never depends on the wall clock.
+// TestMarqueeText drives one full cycle: hold at the start, scroll the title
+// and its next copy together (one blank column between them), stop when the
+// second copy's first character reaches position 1, then hold and repeat.
 func TestMarqueeText(t *testing.T) {
 	const text = "abcdefghij"
 	const width = 5
 	base := time.Unix(0, 0)
+	period := marqueePause + time.Duration(len(text)+1)*frameInterval
 
 	if got := MarqueeText("abcde", width, base); got != "abcde" {
 		t.Fatalf("text that fits = %q, want unchanged", got)
@@ -31,15 +33,33 @@ func TestMarqueeText(t *testing.T) {
 	if got := MarqueeText(text, width, base.Add(marqueePause)); got != "bcdef" {
 		t.Fatalf("first scroll frame = %q, want bcdef", got)
 	}
-	// Last window before the wrap: the tail fills the width.
-	if got := MarqueeText(text, width, base.Add(marqueePause+4*frameInterval)); got != "fghij" {
-		t.Fatalf("tail = %q, want fghij", got)
+	// Last frame where the first copy's last character is still visible.
+	if got := MarqueeText(text, width, base.Add(marqueePause+8*frameInterval)); got != "j abc" {
+		t.Fatalf("before the last character leaves = %q, want j abc", got)
 	}
-
+	// The LAST character is hidden through the left edge, and the title is
+	// already coming back after exactly one blank column.
+	if got := MarqueeText(text, width, base.Add(marqueePause+9*frameInterval)); got != " abcd" {
+		t.Fatalf("last character left = %q, want one space then the new copy", got)
+	}
+	if strings.Contains(MarqueeText(text, width, base.Add(marqueePause+9*frameInterval)), "j") {
+		t.Fatal("the last character must be gone through the left edge")
+	}
+	// The second copy's first character reaches position 1: end of the cycle.
+	if got := MarqueeText(text, width, base.Add(marqueePause+10*frameInterval)); got != "abcde" {
+		t.Fatalf("completed re-entry = %q, want the start again", got)
+	}
 	// A full period later the window is back at the held start.
-	period := marqueePause + 5*frameInterval
 	if got := MarqueeText(text, width, base.Add(period)); got != "abcde" {
 		t.Fatalf("loop = %q, want the start again", got)
+	}
+	// A narrow window must never show a fully blank frame: the gap is one
+	// column, and the next copy follows immediately.
+	for i := 0; i <= len(text)+1; i++ {
+		got := MarqueeText(text, width, base.Add(marqueePause+time.Duration(i)*frameInterval))
+		if strings.TrimSpace(got) == "" && width > 1 {
+			t.Fatalf("frame %d is blank: %q", i, got)
+		}
 	}
 }
 
@@ -48,7 +68,7 @@ func TestSelectedMarqueeStartsAndCompletesEachFocusCycle(t *testing.T) {
 	const width = 5
 	base := time.Unix(100, 0)
 	key := "selected-marquee-test"
-	period := marqueePause + 5*frameInterval
+	period := marqueePause + time.Duration(len(text)+1)*frameInterval
 
 	if got := selectedMarqueeText(key, text, width, base); got != "abcde" {
 		t.Fatalf("focus start = %q, want beginning", got)

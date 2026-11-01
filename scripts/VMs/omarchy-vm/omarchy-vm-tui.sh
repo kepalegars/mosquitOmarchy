@@ -94,7 +94,7 @@ create_vm() {
     local name
     name=$(prompt_name) || return
     clear
-    echo "Creating VM '$name' (downloads the ISO on first run)…"
+    echo "Creating VM '$name (Omarchy VM)' (downloads the latest ISO on first run)…"
     echo
     # Run as a CHILD (not exec): the manager must come back here to show
     # success and return to the menu, instead of the terminal closing.
@@ -109,7 +109,7 @@ create_vm() {
     fi
     echo
     gum style --faint --align center --width 60 "Press Enter to return to the menu" | center_output 60
-    read -r
+    read -r _ || true
 }
 
 select_vm() {
@@ -180,7 +180,7 @@ view_vm() {
     size="n/a"; [[ -f "$dir/disk.qcow2" ]] && size=$(du -h "$dir/disk.qcow2" 2>/dev/null | cut -f1)
     state="stopped"; vm_running "$name" && state="running"
     show_header
-    gum style --foreground "$ACCENT_COLOR" --border normal --align center --width 60 --padding "1 2" "$name" | center_output 64
+    gum style --foreground "$ACCENT_COLOR" --border normal --align center --width 60 --padding "1 2" "$name (Omarchy VM)" | center_output 64
     echo ""
     gum style --align left --width 54 \
         "State:        $state" \
@@ -195,7 +195,7 @@ view_vm() {
         "Location:     $dir" | center_output 54
     echo ""
     gum style --faint --align center --width 60 "Press Enter to go back" | center_output 60
-    read -r
+    read -r _ || true
 }
 
 edit_ram() {

@@ -142,7 +142,7 @@ did, with the same user-visible result.
       refresh `seed/extension-settings.json` from the live profile. Verify the
       `deps`-by-module restore and the omagrab backup.
 - [ ] **3.10 TUI colors** — switch Omarchy themes (including the lime
-      achraff-67 reference); every TUI (mosquitomarchy, APM, live-mode, move,
+      achraf67 reference); every TUI (mosquitomarchy, APM, live-mode, move,
       mixbay, jamjamjam) must follow the active palette, with no hardcoded
       colors.
 - [ ] **General** — `bash -n` (and `shellcheck` if available) on changed

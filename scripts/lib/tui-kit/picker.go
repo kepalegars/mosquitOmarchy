@@ -367,7 +367,7 @@ var BusyFrames = []string{"⠋ ", "⠙ ", "⠹ ", "⠸ ", "⠼ ", "⠴ ", "⠦ "
 //
 // A folder draws the SAME square open or closed; the only second state is
 // selected, where the square fills in. The muted/bright+bold contrast stays
-// on top, and still not the accent: on achraff-67 the accent is a lime, and
+// on top, and still not the accent: on achraf67 the accent is a lime, and
 // an unselected folder glowing green read as a status rather than a shape.
 func (d pickerDelegate) leadCell(pi PickerItem, selected bool) string {
 	if d.badgeSlot <= 0 {

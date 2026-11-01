@@ -172,7 +172,7 @@ Panel {
   // with "Unable to assign [undefined] to QColor" and then paints black on
   // a near-black card. Color.urgent is the supported error token and is fed
   // straight from the theme's `red`/`color1` key by Color.loadColors(), so
-  // on achraff-67 it is #ed1c24; themes without either key still get the
+  // on achraf67 it is #ed1c24; themes without either key still get the
   // built-in #a55555 red rather than nothing at all.
   readonly property color micAlert: Color.urgent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family

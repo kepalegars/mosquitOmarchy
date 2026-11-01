@@ -7,9 +7,9 @@
 #     setting is "flat", which disables all acceleration).
 #   • Pointer sensitivity: 0.0 (the mouse keeps the separate global
 #     input.lua pointer settings).
-#   • Touch scroll sensitivity: 1.8 by default (the global touchpad
-#     scroll_factor is -0.5; natural_scroll stays false, defined globally in
-#     input.lua).
+#   • Touch scroll sensitivity: 1.8 by default (same as the global touchpad
+#     scroll_factor now used in input.lua; the old -0.5 value was a negative,
+#     inverted hack that also broke Hyprland's mouse/touchpad classification).
 #   • Kinetic deceleration: 0.96 (longer inertial glide).
 # The EXTERNAL MOUSE is NOT modified: the block is passed as per-device
 # configuration (hl.device <name>) and only affects the detected touchpad.
@@ -147,7 +147,7 @@ gen_touchpad_lua() {
     echo "    accel_profile = \"$ACCEL\","
     echo "    -- Pointer sensitivity: $SENS (the mouse keeps the global input.lua pointer settings)"
     echo "    sensitivity = $SENS,"
-    echo "    -- Touch scroll sensitivity: $SCROLL (global touchpad scroll_factor: -0.5)"
+    echo "    -- Touch scroll sensitivity: $SCROLL (same as the global touchpad scroll_factor)"
     echo "    scroll_factor = $SCROLL,"
     echo "})"
     # Kinetic scroll (hypr-kinetic-scroll). Hyprland 0.56 rejects hyphenated
@@ -175,9 +175,8 @@ gen_touchpad_lua() {
       echo "-- Kinetic scrolling requested, but hypr-kinetic-scroll is not loaded."
     fi
     echo "-- The browser is not part of the kinetic experiment: no momentum and"
-    echo "-- the stock scroll speed. scroll_touchpad REPLACES the factor, and"
-    echo "-- Hyprland rejects negative rule values, so use the stock magnitude"
-    echo "-- (input.lua's -0.5); the sign follows the rest of the system."
+    echo "-- the stock scroll speed. scroll_touchpad REPLACES the factor; the"
+    echo "-- browser keeps the speed it already feels right at (input.lua)."
     echo "o.window(\"zen\", { scroll_touchpad = 0.5 })"
     echo "$BLOCK_END"
   } > "$tmp"

@@ -278,9 +278,10 @@ type ItemRec struct {
 
 // BackupRec is one dated archive in the backup dir.
 type BackupRec struct {
-	File string `json:"file"`
-	Size string `json:"size"`
-	Date string `json:"date"`
+	File      string `json:"file"`
+	Size      string `json:"size"`
+	Date      string `json:"date"`
+	BackupDir string `json:"backup_dir"`
 }
 
 // UpdateRec is the update zone's check result: whether the repo's remote
@@ -324,6 +325,50 @@ type backupOptionsMsg struct {
 	zen     bool
 	reaper  bool
 	err     error
+}
+
+// backupManifestMsg carries what a chosen archive actually contains.
+type backupManifestMsg struct {
+	manifest BackupManifest
+	err      error
+}
+
+func fetchBackupManifestCmd(file string) tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("backup-manifest", file)
+		if err != nil {
+			return backupManifestMsg{err: err}
+		}
+		var mf BackupManifest
+		if err := json.Unmarshal(bytes.TrimSpace(out), &mf); err != nil {
+			return backupManifestMsg{err: err}
+		}
+		return backupManifestMsg{manifest: mf}
+	}
+}
+
+// restoreUpdateCheckMsg answers "is it worth updating before restoring?".
+type restoreUpdateCheckMsg struct {
+	Repo    bool `json:"repo_update"`
+	Omarchy bool `json:"omarchy_update"`
+	Err     error
+}
+
+func fetchRestoreUpdateCheckCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("restore-update-check")
+		if err != nil {
+			return restoreUpdateCheckMsg{Err: err}
+		}
+		var v struct {
+			Repo    bool `json:"repo_update"`
+			Omarchy bool `json:"omarchy_update"`
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(out), &v); err != nil {
+			return restoreUpdateCheckMsg{Err: err}
+		}
+		return restoreUpdateCheckMsg{Repo: v.Repo, Omarchy: v.Omarchy}
+	}
 }
 
 // fetchBackupOptionsCmd loads the installed TUIs (as a tree,
@@ -381,6 +426,19 @@ func fetchBackupOptionsCmd() tea.Cmd {
 			return backupOptionsMsg{err: err}
 		}
 		return backupOptionsMsg{folders: folders, items: items, keepass: keepass, zen: zen, reaper: reaper}
+	}
+}
+
+// warmCacheCmd fills the backend's disk caches for the two screens that are
+// expensive on their first visit (Uninstall detection and the Backup packages
+// tree). It runs after the startup checks, in the background, so opening them
+// later is instant without slowing the first frame.
+func warmCacheCmd() tea.Cmd {
+	return func() tea.Msg {
+		time.Sleep(1500 * time.Millisecond)
+		_, _ = runQuick("uninstall-tree")
+		_, _ = runQuick("backup-options")
+		return nil
 	}
 }
 

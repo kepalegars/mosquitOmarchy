@@ -55,7 +55,16 @@ Once installed, `mosquitOmarchy` is the interface for everything here — run it
 - **Setup** — the module tree. `tab` selects, `←/→` expand a folder, `i` explains the
   highlighted entry, `enter` installs the selection.
 - **Backup / Restore** — a dated archive in `mosquitomarchy-backups/` (next to the repo), optionally
-  AES-256 encrypted.
+  AES-256 encrypted. The filename carries the mosquitOmarchy version and channel
+  (`-v1.0.0-stable`, `-rc`, …) so an archive says exactly what made it.
+  **Keybindings** are backed up as `custom only` by default: only the
+  `mosquitOmarchy_Keybindings` block is archived, never the rest of
+  `~/.config/hypr/bindings.lua`. Choosing `all` archives the whole file; `no`
+  archives none. On restore, `all` is offered again when the archive has it
+  (default), and `custom only` merges just the managed block back.
+  **Hyprland configs** are a separate yes/no choice: the whole `~/.config/hypr`
+  tree is archived (bindings excluded) and restored last. Third-party Omarchy
+  shell plugins installed by the user appear under the *Plugins* folder.
 - **Fixes** — the small idempotent repairs in `scripts/Fixes/`, as a multi-select.
 - **Tweaks** — optional preference changes in `scripts/Tweaks/` (same multi-select; never
   auto-applied by `-y`).
@@ -64,10 +73,10 @@ Once installed, `mosquitOmarchy` is the interface for everything here — run it
 `mosquitomarchy-setup.sh` is the engine underneath: every TUI action shells out to it, so
 there is rarely a reason to call it by hand.
 
-A failed run writes one dated crash log per session to the repo-local `.local/` and sends a
-clickable notification that opens the default AI on the `mosquitomarchy-crash` skill,
-pointed at that log, to **propose** a fix. See
-[`scripts/lib/crash.bash`](scripts/lib/crash.bash).
+A failed run writes one dated crash log per session to the repo-local `.local/` and, when the
+crash-toast switch is on (off by default; Extras toggles it), sends a clickable notification
+that opens the default AI on the `mosquitomarchy-crash` skill, pointed at that log, to
+**propose** a fix. See [`scripts/lib/crash.bash`](scripts/lib/crash.bash).
 
 ## Modules
 
@@ -88,7 +97,7 @@ Details, options and caveats live in each module's own `README.md`. This table i
 | `handbrake` | HandBrake GUI + CLI, preset sync, Hyprland rules | [README](scripts/Apps/handbrake/README.md) |
 | `signal` | Signal Desktop, tray behavior, menu entry, and login autostart | [setup](scripts/Apps/signal/setup-signal.sh) |
 | `betterbird` | Betterbird (Thunderbird fork): install, system-tray close/minimise, login autostart, tiled main window + popups at the pointer | [setup](scripts/Apps/betterbird/setup-betterbird.sh) |
-| `whatsapp-native` | WhatsApp desktop client (self-contained Electron wrapper): silent visual notifications, tray + close-to-tray, no menu bar, login autostart | [README](scripts/Apps/whatsapp-native/README.md) |
+| `whatsapp-native` | WhatsApp Web as a Chromium web app: tray supervisor (login starts hidden in the tray, menu opens directly), silent notifications, close-to-tray, no menu bar, no shortcut, login autostart | [README](scripts/Apps/whatsapp-native/README.md) |
 | `superfile` | SuperFile terminal file manager; the system default file manager is left unchanged | [README](scripts/Apps/superfile/README.md) |
 | `zen` | Zen Browser, seeded extensions and theme | [README](scripts/Apps/zen/README.md) |
 | `keepassxc` | KeePassXC password manager + browser integration (Leaves Omarchy's keyring intact) | [README](scripts/Apps/keepassxc/README.md) |
@@ -133,7 +142,7 @@ The project's own layer: the manager itself, and the desktop-hardware modules.
 
 | Module | Installs | Doc |
 |---|---|---|
-| `achraff` | An Omarchy theme built from an image in `Themes/Wallpapers/` | [README](scripts/Themes/README.md) |
+| `achraf67` | An Omarchy theme built from an image in `Themes/Wallpapers/` | [README](scripts/Themes/README.md) |
 
 `touchpad` and `mx-master` compose: each ships its own `hl.device` block, handles only its
 own device, and never touches the other.

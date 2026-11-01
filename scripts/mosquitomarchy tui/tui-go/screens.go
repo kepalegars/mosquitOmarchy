@@ -96,6 +96,14 @@ func blinkCmd() tea.Cmd {
 	return tea.Tick(blinkInterval, func(time.Time) tea.Msg { return blinkMsg{} })
 }
 
+// loadingTickMsg animates the startup check spinners on the main menu. It
+// stops itself as soon as both checks are done; nothing else is redrawn.
+type loadingTickMsg struct{}
+
+func loadingTickCmd() tea.Cmd {
+	return tea.Tick(140*time.Millisecond, func(time.Time) tea.Msg { return loadingTickMsg{} })
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if em, ok := msg.(tuikit.ToastExpireMsg); ok {
 		m.toast = m.toast.Expire(em.Gen)
@@ -217,6 +225,16 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		tuikit.ApplyTheme()
 		return m, tuikit.ThemeWatchCmd()
 
+	case loadingTickMsg:
+		if !m.updateChecking && !m.healthChecking {
+			return m, nil
+		}
+		m.loadingFrame++
+		if m.top() == scrMain {
+			m.mainPicker = m.rebuildMainMenu()
+		}
+		return m, loadingTickCmd()
+
 	case blinkMsg:
 		// Blink the "mosquito" row while a Setup screen is open; stop as soon
 		// as Setup is left (no re-arm).
@@ -284,6 +302,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			hadErr := m.runner.Err() != nil
 			m.pop()
 			if hadErr {
+				// A failed stage stops the ordered install; the remaining
+				// special apps are not started behind the failure.
+				m.installStageQueue = nil
+				m.installStagePendingPlan = nil
 				// One dated log per failed run + clickable AI diagnosis; the
 				// exit code goes in the header so a success-looking log with
 				// a non-zero exit is diagnosable on sight.
@@ -302,6 +324,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				return m, nil
 			}
 			m.toast, _ = m.toast.SetOK("done")
+			// More special stages queued (DaVinci → Guitar Pro → Ableton):
+			// run the next one instead of showing the success prompt now.
+			if len(m.installStageQueue) > 0 {
+				return m.runNextInstallStage()
+			}
 			// The selection is consumed FIRST, while pendingAction still names
 			// the action: overwriting it below would make this test never match.
 			wasApplyOrUninstall := m.pendingAction == "apply" || m.pendingAction == "uninstall"
@@ -518,13 +545,17 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.pop()
 			return m, nil
 		}
+		firstBackupLoad := len(m.backupFolders) == 0
 		m.backupFolders = msg.folders
 		m.backupItems = msg.items
-		m.backupOpen = map[string]bool{}
-		m.backupChecked = map[string]bool{}
-		for _, f := range msg.folders {
-			m.backupOpen[f.Folder] = true
+		// All folders start folded on the FIRST load of the session. The open
+		// state then lives in the model, so leaving and re-entering the page
+		// keeps it; a new launch starts clean and folded. Only the selection is
+		// persisted across launches.
+		if firstBackupLoad {
+			m.backupOpen = map[string]bool{}
 		}
+		m.backupChecked = map[string]bool{}
 		for _, it := range msg.items {
 			if it.Checked {
 				m.backupChecked[setupValue(it.Folder, it.Key)] = true
@@ -533,11 +564,59 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.backupOpts.HasKeep = msg.keepass
 		m.backupOpts.HasZen = msg.zen
 		m.backupOpts.HasReaper = msg.reaper
-		m.backupOpts.HasReaper = msg.reaper
 		if m.top() == scrBackupOptions {
 			m.backupOptPicker = m.rebuildBackupOptions()
 		}
 		return m, nil
+
+	case backupManifestMsg:
+		if m.top() != scrPassphrase && m.top() != scrBackupRestore {
+			// The user left the restore flow while the archive was being read.
+			return m, nil
+		}
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("could not read the backup: " + msg.err.Error())
+			if m.top() == scrPassphrase {
+				// Wrong passphrase (or a damaged archive): keep the field so a
+				// second attempt is one keystroke, not a trip back to the list.
+				m.passInput = tuikit.NewPasswordInput("Passphrase for "+m.pendingFile+":", "")
+				return m, m.passInput.Init()
+			}
+			return m, nil
+		}
+		m.restoreManifest = msg.manifest
+		m.restoreManifestReady = true
+		if m.top() == scrPassphrase {
+			m.pop()
+		}
+		m.toast, _ = m.toast.SetOK("archive read — checking for updates…")
+		m.restoreCheckPending = true
+		return m, fetchRestoreUpdateCheckCmd()
+
+	case restoreUpdateCheckMsg:
+		m.restoreCheckPending = false
+		if m.top() != scrBackupRestore {
+			// The user navigated away while the update check was running.
+			return m, nil
+		}
+		if msg.Err == nil && (msg.Repo || msg.Omarchy) {
+			m.pendingAction = "restore-update-ask"
+			var what []string
+			if msg.Omarchy {
+				what = append(what, "Omarchy")
+			}
+			if msg.Repo {
+				what = append(what, "mosquitomarchy")
+			}
+			m.pendingMsg = "It is strongly recommended to update " + strings.Join(what, " & ") +
+				" to the latest version before restoring.\n\nContinue anyway, or open the Update page first?"
+			m.pendingNo = "Continue"
+			m.pendingYes = "Update"
+			m.push(scrConfirm)
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+			return m, nil
+		}
+		return m.openRestoreOptions()
 
 	case queryMsg:
 		switch msg.kind {
@@ -623,13 +702,24 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.pop()
 				return m, nil
 			}
-			m.backupRecs = msg.backups
+			m.backupRecs = m.backupRecs[:0]
+			for _, b := range msg.backups {
+				if b.BackupDir != "" {
+					m.backupPath = b.BackupDir
+				}
+				if b.File != "" {
+					m.backupRecs = append(m.backupRecs, b)
+				}
+			}
 			if m.top() == scrBackupRestore {
 				m.backupPicker = newNavPicker("", m.backupsList()).SetSize(m.contentSize())
 			}
 		case "update":
+			m.updateChecking = false
+			m.updateLoaded = msg.err == nil
 			if msg.err != nil {
 				m.toast, _ = m.toast.SetErr(msg.err.Error())
+				m.mainPicker = m.rebuildMainMenu()
 				m.pop()
 				return m, nil
 			}
@@ -844,35 +934,75 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.setupPicker = m.setupPicker.KeepCursor(keep)
 			}
 		case scrBackupOptions:
-			// Left/Right cycles/toggles the focused option (the "on/off /
-			// short list" convention): ← previous · → next.
+			// Left/Right toggles the focused option. Per-app choices live in
+			// their own sub-menu; keybindings and Hyprland are direct rows.
 			switch m.backupOptPicker.SelectedValue() {
-			case "vst":
-				order := []string{"list", "full", "none"}
-				idx := 0
-				for i, v := range order {
-					if v == m.backupOpts.VST {
-						idx = i
-					}
-				}
-				if msg.Dir > 0 {
-					idx = (idx + 1) % len(order)
-				} else {
-					idx = (idx - 1 + len(order)) % len(order)
-				}
-				m.backupOpts.VST = order[idx]
-			case "keepass":
-				m.backupOpts.Keepass = !m.backupOpts.Keepass
-			case "zen":
-				m.backupOpts.Zen = !m.backupOpts.Zen
 			case "encrypt":
 				m.backupOpts.Encrypt = !m.backupOpts.Encrypt
+			case "keybindings":
+				m.backupOpts.Keybindings = cycleKeybindings(m.backupOpts.Keybindings, msg.Dir)
+			case "hyprland":
+				m.backupOpts.Hyprland = !m.backupOpts.Hyprland
+			default:
+				return m, nil
 			}
 			// Saved on every change, not on the way out: "retained when leaving
 			// the page" also has to cover closing the TUI by any route, and a
 			// save-on-leave only fires for the leave that happens to be coded.
 			saveBackupOpts(m.backupOpts)
 			m.backupOptPicker = m.rebuildBackupOptions()
+			return m, nil
+		case scrBackupAppSettings:
+			switch m.backupAppPicker.SelectedValue() {
+			case "vst":
+				m.backupOpts.VST = cycleVST(m.backupOpts.VST, msg.Dir)
+			case "keepass":
+				m.backupOpts.Keepass = !m.backupOpts.Keepass
+			case "keepass-settings":
+				m.backupOpts.KeepassSettings = !m.backupOpts.KeepassSettings
+			case "zen":
+				m.backupOpts.Zen = !m.backupOpts.Zen
+			case "reaper":
+				m.backupOpts.Reaper = cycleReaper(m.backupOpts.Reaper, msg.Dir)
+			case "keybindings":
+				m.backupOpts.Keybindings = cycleKeybindings(m.backupOpts.Keybindings, msg.Dir)
+			default:
+				return m, nil
+			}
+			saveBackupOpts(m.backupOpts)
+			m.backupAppPicker = m.rebuildBackupAppSettings()
+			return m, nil
+		case scrRestoreOptions:
+			switch m.restorePicker.SelectedValue() {
+			case "vst":
+				m.restoreOpts.VST = !m.restoreOpts.VST
+			case "reaper":
+				m.restoreOpts.Reaper = !m.restoreOpts.Reaper
+			case "zen":
+				m.restoreOpts.Zen = !m.restoreOpts.Zen
+			case "keepass":
+				m.restoreOpts.Keepass = !m.restoreOpts.Keepass
+			case "keepass-settings":
+				m.restoreOpts.KeepassSettings = !m.restoreOpts.KeepassSettings
+			case "themes":
+				m.restoreOpts.Themes = !m.restoreOpts.Themes
+			case "omarchy-plugins":
+				m.restoreOpts.OmarchyPlugins = !m.restoreOpts.OmarchyPlugins
+			case "hyprland":
+				m.restoreOpts.Hyprland = !m.restoreOpts.Hyprland
+			case "keybindings":
+				m.restoreOpts.Keybindings = cycleRestoreKeybindings(m.restoreOpts.Keybindings, m.restoreManifest.Keybindings, msg.Dir)
+			case "mode":
+				if m.restoreOpts.Mode == "safe" {
+					m.restoreOpts.Mode = "full"
+				} else {
+					m.restoreOpts.Mode = "safe"
+				}
+				m.restoreNotice = restoreModeNotice(m.restoreOpts.Mode)
+			default:
+				return m, nil
+			}
+			m.restorePicker = m.rebuildRestoreOptions()
 			return m, nil
 		case scrBackupApps:
 			folder := folderOfValue(m.backupAppsPicker.SelectedValue())
@@ -898,6 +1028,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.pop()
 		if msg.Canceled || !msg.Yes {
+			if m.pendingAction == "restore-update-ask" {
+				// Continue (the default) skips the recommendation and goes
+				// straight to the restore options.
+				return m.openRestoreOptions()
+			}
 			if m.pendingAction == "update-reboot" {
 				if msg.Canceled {
 					// Esc: back to the Update screen, no log, no restart.
@@ -947,7 +1082,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				// legitimate answer, not a cancel: continue the apply.
 				m.dvcSpektra = 2
 				os.Setenv("MOSQUITOMARCHY_DAVINCI_SPEKTRAFILM", "0")
-				return m, fetchMissingAssetsCmd(m.pendingArgs)
+				return m.resumeInstallStageAfterPrompt()
 			}
 			if m.pendingAction == "keepassxc-gnomerm" {
 				// Declined = KEEP the gnome-keyring package. This is a
@@ -970,6 +1105,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		switch m.pendingAction {
 		case "add-shortcut":
 			return m.startWorking("Adding the shortcut", workingArgs("add-shortcut", nil)...)
+		case "restore-update-ask":
+			// The user chose Update: open the Update page. This is an explicit
+			// request, so a fresh check is allowed here.
+			m.push(scrUpdate)
+			m.updateSelected = map[string]bool{}
+			m.reinstallMode, m.reinstallPending, m.reinstallMods = false, false, nil
+			m.updateLoaded = false
+			m.updatePicker = newNavPicker("", []tuikit.PickerItem{{Display: "checking…", Value: "", Disabled: true}}).SetSize(m.contentSize())
+			return m, fetchUpdateCheckCmd()
 		case "theme-remove-any":
 			names := append([]string{}, m.pendingArgs...)
 			m.pendingArgs = nil
@@ -1043,8 +1187,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.dvcSpektra = 2
 				os.Setenv("MOSQUITOMARCHY_DAVINCI_SPEKTRAFILM", "0")
 			}
-			// Continue the apply that was interrupted by this question.
-			return m, fetchMissingAssetsCmd(m.pendingArgs)
+			// Continue the DaVinci stage that was interrupted by this question.
+			return m.resumeInstallStageAfterPrompt()
 
 		case "kb-add":
 			return m.startWorking("Binding the key", workingArgs("kb-add", m.pendingArgs)...)
@@ -1064,22 +1208,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.pendingNo = "Keep it"
 				m.pendingYes = "Remove it"
 				m.push(scrConfirm)
-				m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
-				return m, nil
-			}
-			// DaVinci ships an optional free OFX plugin. setup-davinci.sh only
-			// offers it under `((YES == 0)) && ask`, and the TUI applies with
-			// YES=1, so it was never proposed from here. Ask now, where the
-			// answer can still be a real question, and hand the decision to
-			// the script as --with-spektrafilm.
-			if planHasDavinci(m.pendingArgs) && m.dvcSpektra == 0 {
-				m.pendingAction = "davinci-spektra"
-				m.pendingMsg = "Install the free spektrFilm OFX too?\n\nPhotochemical film simulation for Resolve (SpektraFilm 114c.de, free). Installed into Resolve's OFX folder, removable later from the DaVinci uninstall."
-				m.pendingNo = "Resolve only"
-				m.pendingYes = "Add spektrFilm"
-				m.push(scrConfirm)
-				// Focus "Resolve only": the plugin is optional, so the plain
-				// Enter answer should be the one that does not change the plan.
 				m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 				return m, nil
 			}
@@ -1245,6 +1373,17 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, nil
 		}
 		switch m.pendingAction {
+		case "restore-inspect":
+			if pass == "" {
+				m.pop()
+				m.toast, _ = m.toast.SetWarn("empty passphrase — canceled")
+				return m, nil
+			}
+			os.Setenv("OMARCHY_BACKUP_PASSPHRASE", pass)
+			m.passphraseSet = true
+			// Stay on the passphrase screen until the archive answers; a wrong
+			// passphrase then keeps the field available for a second try.
+			return m, fetchBackupManifestCmd(m.pendingFile)
 		case "backup-encrypted":
 			if pass == "" {
 				m.pop()
@@ -1278,7 +1417,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			os.Setenv("OMARCHY_BACKUP_PASSPHRASE", pass)
 			m.passphraseSet = true
-			return m.startWorking("Restoring", workingArgs("restore", []string{m.pendingFile})...)
+			return m.startWorking("Restoring", workingArgs("restore", m.pendingArgs)...)
 		}
 		m.pop()
 		return m, nil
@@ -1351,10 +1490,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			if len(msg.plan) == 0 {
 				return m, nil
 			}
-			if planHasAbleton(msg.plan) {
-				return m.startAbletonInstall(msg.plan)
-			}
-			return m.startWorking("Applying the selection", workingArgs("apply", msg.plan)...)
+			return m.stagedInstall(msg.plan)
 		}
 		var b strings.Builder
 		b.WriteString("Cannot install — missing installer file(s).\n\n")
@@ -1402,8 +1538,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		return m, nil
 
 	case healthMsg:
+		m.healthChecking = false
 		if msg.err != nil {
 			m.toast, _ = m.toast.SetErr("health check failed")
+			m.mainPicker = m.rebuildMainMenu()
 			// If we're on the loading health screen, pop it
 			if m.top() == scrHealth && m.healthItems == nil {
 				m.pop()
@@ -1415,6 +1553,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// toast: the screen's own headline already says everything is
 			// in place, and a second copy of the sentence is noise.
 			m.healthItems = nil
+			m.healthLoaded = true
 			m.healthPicker = m.rebuildHealth()
 			m.mainPicker = m.rebuildMainMenu()
 			return m, nil
@@ -1424,22 +1563,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// re-applies only the kept rows — same multi-select convention as the
 		// Setup/Update lists.
 		m.healthItems = msg.items
+		m.healthLoaded = true
 		m.healthChecked = map[string]bool{}
 		for _, it := range msg.items {
 			if !it.Manual {
 				m.healthChecked[it.ID] = true
 			}
 		}
-		// The screen is normally already pushed (with a loading row) by the
-		// selection handler; push it when it is not (slow fetch the user
-		// backed out of, or a bare message in tests) so results always land
-		// somewhere visible.
-		if m.top() != scrHealth {
-			m.push(scrHealth)
-		}
-		// The main menu is rebuilt too: its square follows the LATEST
-		// check, so a finding fixed since (or found while elsewhere)
-		// cannot stick around.
+		// The square on the main menu is the notification. Never navigate to
+		// Health on a result: a startup check must not steal the screen.
 		m.healthPicker = m.rebuildHealth()
 		m.mainPicker = m.rebuildMainMenu()
 		return m, nil
@@ -1886,8 +2018,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.backupPicker, cmd = m.backupPicker.Update(msg)
 	case scrBackupOptions:
 		m.backupOptPicker, cmd = m.backupOptPicker.Update(msg)
-	case scrBackupReaper:
-		m.backupReaperPicker, cmd = m.backupReaperPicker.Update(msg)
+	case scrBackupAppSettings:
+		m.backupAppPicker, cmd = m.backupAppPicker.Update(msg)
+	case scrRestoreOptions:
+		m.restorePicker, cmd = m.restorePicker.Update(msg)
 	case scrBackupApps:
 		m.backupAppsPicker, cmd = m.backupAppsPicker.Update(msg)
 	case scrThemeFolder:
@@ -2009,6 +2143,100 @@ func planHasAbleton(plan []string) bool {
 		}
 	}
 	return false
+}
+
+// installStage is one special app install that must run after everything else:
+// prompt, install, next. Ableton is always the last stage.
+type installStage struct {
+	kind string // "davinci" | "guitarpro" | "ableton"
+	plan []string
+}
+
+func splitInstallStages(plan []string) (first []string, stages []installStage) {
+	special := map[string]string{
+		"davinci":         "davinci",
+		"davinci-resolve": "davinci",
+		"guitarpro":       "guitarpro",
+		"ableton":         "ableton",
+	}
+	byKind := map[string][]string{}
+	for _, group := range plan {
+		parts := strings.Split(group, "\t")
+		if len(parts) == 0 {
+			continue
+		}
+		folder := parts[0]
+		var keep []string
+		for _, k := range parts[1:] {
+			if kind, ok := special[k]; ok {
+				byKind[kind] = append(byKind[kind], folder+"\t"+k)
+				continue
+			}
+			keep = append(keep, k)
+		}
+		if len(keep) > 0 {
+			first = append(first, folder+"\t"+strings.Join(keep, "\t"))
+		}
+	}
+	for _, kind := range []string{"davinci", "guitarpro", "ableton"} {
+		if len(byKind[kind]) > 0 {
+			stages = append(stages, installStage{kind: kind, plan: byKind[kind]})
+		}
+	}
+	return first, stages
+}
+
+// stagedInstall runs the ordinary modules first, then the special prompt+install
+// stages. This is what puts DaVinci, Guitar Pro and finally Ableton in order.
+func (m model) stagedInstall(plan []string) (model, tea.Cmd) {
+	first, stages := splitInstallStages(plan)
+	m.installStageQueue = stages
+	if len(first) > 0 {
+		m.pendingAction = "apply"
+		return m.startWorking("Applying the selection", workingArgs("apply", first)...)
+	}
+	return m.runNextInstallStage()
+}
+
+// resumeInstallStageAfterPrompt continues the DaVinci stage once its optional
+// OFX question is answered. The legacy whole-plan path is kept for a prompt
+// that arrives from somewhere other than the staged queue.
+func (m model) resumeInstallStageAfterPrompt() (model, tea.Cmd) {
+	plan := m.installStagePendingPlan
+	m.installStagePendingPlan = nil
+	if len(plan) > 0 {
+		m.pendingAction = "apply"
+		return m.startWorking("Installing DaVinci Resolve", workingArgs("apply", plan)...)
+	}
+	return m, fetchMissingAssetsCmd(m.pendingArgs)
+}
+
+func (m model) runNextInstallStage() (model, tea.Cmd) {
+	if len(m.installStageQueue) == 0 {
+		return m, nil
+	}
+	stage := m.installStageQueue[0]
+	m.installStageQueue = m.installStageQueue[1:]
+	switch stage.kind {
+	case "davinci":
+		if m.dvcSpektra == 0 {
+			m.installStagePendingPlan = stage.plan
+			m.pendingAction = "davinci-spektra"
+			m.pendingMsg = "Install the free spektrFilm OFX too?\n\nPhotochemical film simulation for Resolve (SpektraFilm 114c.de, free). Installed into Resolve's OFX folder, removable later from the DaVinci uninstall."
+			m.pendingNo = "Resolve only"
+			m.pendingYes = "Add spektrFilm"
+			m.push(scrConfirm)
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+			return m, nil
+		}
+		m.pendingAction = "apply"
+		return m.startWorking("Installing DaVinci Resolve", workingArgs("apply", stage.plan)...)
+	case "ableton":
+		return m.startAbletonInstall(stage.plan)
+	default:
+		m.pendingAction = "apply"
+		return m.startWorking("Installing Guitar Pro", workingArgs("apply", stage.plan)...)
+	}
 }
 
 // folderOfValue returns the folder id encoded in a tree row's value (a
@@ -2190,6 +2418,14 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		switch m.top() {
 		case scrSetup:
 			m.setupPicker = m.rebuildSetup()
+		case scrBackup:
+			// Esc on the archive list lands back on the Backup / Restore page.
+			// Its picker still held the archive rows, so the page title changed
+			// but the body stayed the restore list — the reported "esc changes
+			// the title but not the page" bug.
+			was := m.backupPicker.SelectedValue()
+			m.backupPicker = newNavPicker("", backupActions()).SetSize(m.contentSize())
+			m.backupPicker = m.backupPicker.KeepCursor(was)
 		case scrBackupOptions:
 			m.backupOptPicker = m.rebuildBackupOptions()
 		}
@@ -2207,6 +2443,13 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.push(scrUpdate)
 			m.updateSelected = map[string]bool{}
 			m.reinstallMode, m.reinstallPending, m.reinstallMods = false, false, nil
+			if m.updateLoaded {
+				// The startup check already answered; do not run it again until
+				// the app is restarted (the main-menu spinner honours the same
+				// rule).
+				m.updatePicker = m.rebuildUpdate()
+				return m, nil
+			}
 			m.updatePicker = newNavPicker("", []tuikit.PickerItem{{Display: "checking…", Value: "", Disabled: true}}).SetSize(m.contentSize())
 			return m, fetchUpdateCheckCmd()
 		case "setup":
@@ -2226,7 +2469,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			// Auto-check for updates (mosquitomarchy scripts/repo + changed
 			// apps/tuis/modules) when Setup opens, so its first screen can
 			// advertise them.
-			return m, tea.Batch(fetchTreeCmd("setup"), blinkCmd(), fetchUpdateCheckCmd(), fetchMenuEntriesCmd(), fetchAIRemovedCmd())
+			return m, tea.Batch(fetchTreeCmd("setup"), blinkCmd(), fetchMenuEntriesCmd(), fetchAIRemovedCmd())
 		case "uninstall":
 			// Same category/folder tree as Setup, but only the INSTALLED
 			// entries, and Enter uninstalls instead of installing.
@@ -2252,14 +2495,16 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.push(scrThemeFolder)
 			return m, nil
 		case "health":
-			// Push the health screen immediately with a loading indicator, then fetch.
-			// Stale findings are dropped first (with the square): otherwise a
-			// fixed issue keeps its square until the new results land.
-			m.healthItems = nil
-			m.healthChecked = map[string]bool{}
 			m.push(scrHealth)
 			m.healthPicker = m.rebuildHealth()
 			m.mainPicker = m.rebuildMainMenu()
+			if m.healthLoaded {
+				return m, nil
+			}
+			// First visit and startup is still in flight: show the loading state.
+			m.healthItems = nil
+			m.healthChecked = map[string]bool{}
+			m.healthChecking = true
 			return m, fetchHealthCmd()
 		case "backup":
 			m.push(scrBackup)
@@ -2679,34 +2924,19 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.push(scrBackupApps)
 			m.backupAppsPicker = m.rebuildBackupApps()
 			return m, nil
-		case "vst":
-			switch m.backupOpts.VST {
-			case "list":
-				m.backupOpts.VST = "full"
-			case "full":
-				m.backupOpts.VST = "none"
-			default:
-				m.backupOpts.VST = "list"
-			}
+		case "app-settings":
+			m.push(scrBackupAppSettings)
+			m.backupAppPicker = m.rebuildBackupAppSettings()
+			return m, nil
+		case "keybindings":
+			m.backupOpts.Keybindings = cycleKeybindings(m.backupOpts.Keybindings, 1)
 			saveBackupOpts(m.backupOpts)
 			m.backupOptPicker = m.rebuildBackupOptions()
 			return m, nil
-		case "keepass":
-			m.backupOpts.Keepass = !m.backupOpts.Keepass
+		case "hyprland":
+			m.backupOpts.Hyprland = !m.backupOpts.Hyprland
 			saveBackupOpts(m.backupOpts)
 			m.backupOptPicker = m.rebuildBackupOptions()
-			return m, nil
-		case "zen":
-			// Enter toggles it too. It used to be ←/→ only, so a row that
-			// answered every other key silently did nothing on the most natural
-			// one — the bug that made the option look broken.
-			m.backupOpts.Zen = !m.backupOpts.Zen
-			saveBackupOpts(m.backupOpts)
-			m.backupOptPicker = m.rebuildBackupOptions()
-			return m, nil
-		case "reaper":
-			m.backupReaperPicker = m.rebuildBackupReaper()
-			m.push(scrBackupReaper)
 			return m, nil
 		case "encrypt":
 			m.backupOpts.Encrypt = !m.backupOpts.Encrypt
@@ -2726,16 +2956,27 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		m.backupOptPicker = m.rebuildBackupOptions()
 		return m, nil
 
-	case scrBackupReaper:
-		if !res.Canceled && res.Value != "back" {
-			switch res.Value {
-			case "none", "settings", "full":
-				m.backupOpts.Reaper = res.Value
-				saveBackupOpts(m.backupOpts)
-			}
+	case scrBackupAppSettings:
+		switch res.Value {
+		case "vst":
+			m.backupOpts.VST = cycleVST(m.backupOpts.VST, 1)
+		case "keepass":
+			m.backupOpts.Keepass = !m.backupOpts.Keepass
+		case "keepass-settings":
+			m.backupOpts.KeepassSettings = !m.backupOpts.KeepassSettings
+		case "zen":
+			m.backupOpts.Zen = !m.backupOpts.Zen
+		case "reaper":
+			m.backupOpts.Reaper = cycleReaper(m.backupOpts.Reaper, 1)
+		case "keybindings":
+			m.backupOpts.Keybindings = cycleKeybindings(m.backupOpts.Keybindings, 1)
+		default:
+			m.pop()
+			m.backupOptPicker = m.rebuildBackupOptions()
+			return m, nil
 		}
-		m.pop()
-		m.backupOptPicker = m.rebuildBackupOptions()
+		saveBackupOpts(m.backupOpts)
+		m.backupAppPicker = m.rebuildBackupAppSettings()
 		return m, nil
 
 	case scrBackupRestore:
@@ -2750,24 +2991,77 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			return m, nil
 		}
 		m.pendingFile = res.Value
+		m.restoreManifest = BackupManifest{}
+		m.restoreManifestReady = false
+		m.restoreCheckPending = false
+		m.toast, _ = m.toast.SetOK("reading the archive…")
 		if strings.HasSuffix(res.Value, ".gpg") {
-			m.pendingAction = "restore-encrypted"
+			// An encrypted archive has to be opened before the page can know
+			// which sections it contains. The passphrase is kept in the
+			// environment for the manifest query and the later restore.
+			m.pendingAction = "restore-inspect"
 			m.push(scrPassphrase)
 			m.passInput = tuikit.NewPasswordInput("Passphrase for "+res.Value+":", "")
 			return m, m.passInput.Init()
 		}
-		m.pendingAction = "restore"
-		label := res.Value
-		for _, b := range m.backupRecs {
-			if b.File == res.Value {
-				label = b.File + " (" + b.Size + ", " + b.Date + ")"
+		return m, fetchBackupManifestCmd(res.Value)
+
+	case scrRestoreOptions:
+		switch res.Value {
+		case "vst":
+			m.restoreOpts.VST = !m.restoreOpts.VST
+		case "reaper":
+			m.restoreOpts.Reaper = !m.restoreOpts.Reaper
+		case "zen":
+			m.restoreOpts.Zen = !m.restoreOpts.Zen
+		case "keepass":
+			m.restoreOpts.Keepass = !m.restoreOpts.Keepass
+		case "keepass-settings":
+			m.restoreOpts.KeepassSettings = !m.restoreOpts.KeepassSettings
+		case "themes":
+			m.restoreOpts.Themes = !m.restoreOpts.Themes
+		case "omarchy-plugins":
+			m.restoreOpts.OmarchyPlugins = !m.restoreOpts.OmarchyPlugins
+		case "hyprland":
+			m.restoreOpts.Hyprland = !m.restoreOpts.Hyprland
+		case "keybindings":
+			m.restoreOpts.Keybindings = cycleRestoreKeybindings(m.restoreOpts.Keybindings, m.restoreManifest.Keybindings, 1)
+		case "mode":
+			if m.restoreOpts.Mode == "safe" {
+				m.restoreOpts.Mode = "full"
+			} else {
+				m.restoreOpts.Mode = "safe"
 			}
+			m.restoreNotice = restoreModeNotice(m.restoreOpts.Mode)
+		case "restore":
+			args := []string{
+				m.pendingFile,
+				"--mode=" + m.restoreOpts.Mode,
+				"--vst=" + yesno(m.restoreOpts.VST),
+				"--reaper=" + yesno(m.restoreOpts.Reaper),
+				"--zen=" + yesno(m.restoreOpts.Zen),
+				"--keepass=" + yesno(m.restoreOpts.Keepass),
+				"--keepass-settings=" + yesno(m.restoreOpts.KeepassSettings),
+				"--themes=" + yesno(m.restoreOpts.Themes),
+				"--omarchy-plugins=" + yesno(m.restoreOpts.OmarchyPlugins),
+				"--keybindings=" + m.restoreOpts.Keybindings,
+				"--hyprland=" + yesno(m.restoreOpts.Hyprland),
+			}
+			if strings.HasSuffix(m.pendingFile, ".gpg") && !m.passphraseSet {
+				m.pendingAction = "restore-encrypted"
+				m.pendingArgs = args
+				m.push(scrPassphrase)
+				m.passInput = tuikit.NewPasswordInput("Passphrase for "+m.pendingFile+":", "")
+				return m, m.passInput.Init()
+			}
+			m.pendingAction = "restore"
+			m.pendingArgs = args
+			return m.startWorking("Restoring", workingArgs("restore", args)...)
+		case "back":
+			m.pop()
+			return m, nil
 		}
-		m.pendingMsg = "Restore the backup " + label + "?\n\nOverwrites the files it contains with the archived versions."
-		m.pendingNo = "Cancel"
-		m.pendingYes = "Restore"
-		m.push(scrConfirm)
-		m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+		m.restorePicker = m.rebuildRestoreOptions()
 		return m, nil
 
 	case scrThemeFolder, scrThemeImage, scrThemeDone, scrThemeUnlock:
@@ -3474,18 +3768,19 @@ func homePageInfoFor(page string) string {
 
 	case "backup":
 		return "Backup / Restore — DATED ARCHIVES of your configuration, written to\n" +
-			"mosquitomarchy-backups/ (next to the repo) as omarchy-backup-<date>.tar.gz.\n\n" +
-			"  Back up now  — walks three pages: what to include (TUIs, VST\n" +
-			"                 plugins, KeePassXC passwords, Zen\n" +
-			"                 settings), an optional name for the archive, and\n" +
-			"                 encryption. It ASKS for a passphrase rather than\n" +
-			"                 storing one. The options are remembered, including\n" +
-			"                 when you leave the page without making a backup.\n" +
-			"  Restore      — RESTORING OVERWRITES the files an archive contains.\n" +
-			"                 It restores FILES, not packages: the pkglist.txt and\n" +
-			"                 aurlist.txt inside the archive list what to reinstall\n" +
-			"                 with pacman afterwards. RESTORE.md inside the\n" +
-			"                 archive is the step-by-step version."
+			"mosquitomarchy-backups/ (next to the repo) as mosquitomarchy-backup-<date>.tar.gz.\n\n" +
+			"  Backup  — Packages, Themes & tweaks (everything mosquitomarchy\n" +
+			"            installed, grouped like Setup), App specific settings\n" +
+			"            (VST, KeePassXC, Zen, REAPER), an optional name, and\n" +
+			"            encryption. Encryption ASKS for a passphrase rather than\n" +
+			"            storing one. The options are remembered, including when\n" +
+			"            you leave the page without making a backup.\n" +
+			"  Restore — pick an archive, then choose the sections to deploy and a\n" +
+			"            mode. FULL (default) is for a fresh install: it OVERWRITES\n" +
+			"            what the archive contains. SAFE adds to the current setup:\n" +
+			"            existing files are kept and already-installed apps are\n" +
+			"            skipped. The archive also carries install.list, the exact\n" +
+			"            packages a restore re-installs."
 
 	case "settings":
 		return "Extras — the smaller switches: crash notifications, live mode, and\n" +
@@ -3854,32 +4149,42 @@ func (m model) setupFolderByID(id string) *FolderRec {
 // look: its □/■ mark sits in the same column as the parent's ○/● checkboxes,
 // and its children stay indented one level down.
 func (m model) nestedSetupRows(parent string, open map[string]bool, idx map[string]*setupCategory) []tuikit.PickerItem {
-	af := m.setupFolderByID("audio-stack")
-	if af == nil || af.Parent != parent {
-		return nil
-	}
-	c := idx[af.Folder]
-	if c == nil {
-		return nil
-	}
-	mark := "□"
-	if c.total > 0 && c.marked == c.total {
-		mark = "■"
-	}
-	rows := tuikit.BuildFolderTree(
-		[]tuikit.TreeFolder{{ID: af.Folder, Label: af.Label, Total: c.total, Marked: c.marked}},
-		map[string][]tuikit.TreeItem{af.Folder: c.rows}, open, m.blinkOn)
-	for i := range rows {
-		rows[i].Parent = parent
-		if rows[i].Folder {
-			rows[i].Flat = true
-			rows[i].Suffix = ""
-			rows[i].Display = "    └─ " + mark + " " + af.Label
-			continue
+	var kids []FolderRec
+	for _, f := range m.setupFolders {
+		if f.Parent == parent && idx[f.Folder] != nil {
+			kids = append(kids, f)
 		}
-		rows[i].Display = "    " + rows[i].Display
 	}
-	return rows
+	if len(kids) == 0 {
+		return nil
+	}
+	var out []tuikit.PickerItem
+	for i, af := range kids {
+		c := idx[af.Folder]
+		mark := "□"
+		if c.total > 0 && c.marked == c.total {
+			mark = "■"
+		}
+		branch := "├─ "
+		if i == len(kids)-1 {
+			branch = "└─ "
+		}
+		rows := tuikit.BuildFolderTree(
+			[]tuikit.TreeFolder{{ID: af.Folder, Label: af.Label, Total: c.total, Marked: c.marked}},
+			map[string][]tuikit.TreeItem{af.Folder: c.rows}, open, m.blinkOn)
+		for j := range rows {
+			rows[j].Parent = parent
+			if rows[j].Folder {
+				rows[j].Flat = true
+				rows[j].Suffix = ""
+				rows[j].Display = "    " + branch + mark + " " + af.Label
+				continue
+			}
+			rows[j].Display = "    " + rows[j].Display
+		}
+		out = append(out, rows...)
+	}
+	return out
 }
 
 func (m model) buildSetupRows(uninstall bool, open map[string]bool, idx map[string]*setupCategory) []tuikit.PickerItem {
@@ -3905,28 +4210,44 @@ func (m model) buildSetupRows(uninstall bool, open map[string]bool, idx map[stri
 			continue
 		}
 		c := idx[f.Folder]
+		if c == nil {
+			continue
+		}
+		// Aggregate child folders so a parent (Themes over user/defaults)
+		// shows the real count and fills its square when everything below is
+		// ticked.
+		total, marked := c.total, c.marked
+		for _, cf := range m.setupFolders {
+			if cf.Parent != f.Folder {
+				continue
+			}
+			if cc := idx[cf.Folder]; cc != nil {
+				total += cc.total
+				marked += cc.marked
+			}
+		}
 		tf := tuikit.TreeFolder{
 			ID:     f.Folder,
 			Label:  f.Label,
-			Total:  c.total,
-			Marked: c.marked,
+			Total:  total,
+			Marked: marked,
 			Accent: f.Accent,
 		}
 		if f.Folder == "keybindings" {
 			tf.Total, tf.Marked = 0, 0
 		}
+		kids := m.nestedSetupRows(f.Folder, open, idx)
 		out = append(out, tuikit.BuildFolderTree([]tuikit.TreeFolder{tf}, seen, open, m.blinkOn)...)
-		if f.Folder == "mosquito" {
-			// audio-stack is the last child, so the normal last row must end in
-			// ├─ and the nested folder row supplies the closing └─. Otherwise
-			// the tree showed a └─ followed by a second branch.
+		if len(kids) > 0 {
+			// The nested folder rows supply the closing └─, so the parent's
+			// last direct row must end in ├─ instead.
 			for i := len(out) - 1; i >= 0; i-- {
 				if strings.HasPrefix(out[i].Display, "    └─ ") {
 					out[i].Display = "    ├─ " + strings.TrimPrefix(out[i].Display, "    └─ ")
 					break
 				}
 			}
-			out = append(out, m.nestedSetupRows(f.Folder, open, idx)...)
+			out = append(out, kids...)
 		}
 	}
 
@@ -4170,93 +4491,157 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 		}
 		return out
 	}
+	childFolders := func(parent string) []FolderRec {
+		out := make([]FolderRec, 0, 2)
+		for _, f := range folders {
+			if f.Parent == parent {
+				out = append(out, f)
+			}
+		}
+		return out
+	}
 	out := make([]tuikit.PickerItem, 0, len(items)+len(folders)+1)
-	for _, f := range folders {
-		children := itemsOf(f.Folder)
-		marked := 0
-		for _, it := range children {
-			if checked[setupValue(f.Folder, it.Key)] {
+
+	markFor := func(folder string, it SetupItemRec) string {
+		if checked[setupValue(folder, it.Key)] {
+			return "●"
+		}
+		return "○"
+	}
+
+	// folderStats counts a folder AND its descendant folders, so a parent row
+	// (Themes over user/defaults) shows the real total instead of 0/0.
+	var folderStats func(string) (int, int)
+	folderStats = func(folder string) (int, int) {
+		total, marked := 0, 0
+		for _, it := range items {
+			if it.Folder != folder || it.Disabled {
+				continue
+			}
+			total++
+			if checked[setupValue(folder, it.Key)] {
 				marked++
 			}
 		}
+		for _, cf := range childFolders(folder) {
+			t, m := folderStats(cf.Folder)
+			total += t
+			marked += m
+		}
+		return total, marked
+	}
+
+	renderItem := func(f FolderRec, it SetupItemRec, indent string, last bool) {
+		branch := "├─ "
+		if last {
+			branch = "└─ "
+		}
+		pmark := markFor(f.Folder, it)
+		entry := tuikit.PickerItem{
+			Display: indent + branch + pmark + " " + it.Label,
+			Value:   setupValue(f.Folder, it.Key),
+		}
+		// The backend greys a row that has nothing left to do, and it stays
+		// listed so the option does not silently vanish. When the backend
+		// explains itself in `info`, show that as the sub-line rather than
+		// leaving a dead-looking row with no reason — EXCEPT asset-gated apps,
+		// whose info is "long description — needs <file> in scripts/Apps/<dir>/":
+		// the description is noise there, so the row carries "(missing
+		// installation files)" in its own label and no sub-line at all.
+		if it.Disabled {
+			entry.Disabled = true
+			if it.Info != "" {
+				if idx := strings.LastIndex(it.Info, " — "); idx >= 0 {
+					if note := it.Info[idx+len(" — "):]; strings.HasPrefix(note, "needs ") && strings.Contains(note, "in scripts/Apps/") {
+						entry.Display += " (missing installation files)"
+					} else {
+						entry.Sub = it.Info
+					}
+				} else {
+					entry.Sub = it.Info
+				}
+			}
+		}
+		// "remove-ai" means the OPPOSITE thing in each tree, so the grey-out
+		// rule has to follow the mode. Setup offers "bring back omarchy's
+		// agentic stuff": nothing to bring back if no removal was ever logged,
+		// hence greyed. Uninstall offers "remove omarchy's agentic stuff":
+		// that is exactly what the user wants precisely when the agentic parts
+		// are still present, i.e. when NO removal was logged.
+		if it.Key == "remove-ai" && mode != "uninstall" && !aiRemoved {
+			entry.Disabled = true
+		}
+		out = append(out, entry)
+	}
+
+	var renderFolder func(f FolderRec, indent, branch string, nested bool)
+	renderFolder = func(f FolderRec, indent, branch string, nested bool) {
+		children := itemsOf(f.Folder)
+		kids := childFolders(f.Folder)
+		total, marked := folderStats(f.Folder)
 		fold := tuikit.FoldCollapsed
 		if open[f.Folder] {
 			fold = tuikit.FoldExpanded
 		}
-		// Folder: a folder glyph in the leading slot + a bold label, with the
-		// "all of them ticked" mark moved to the trailing count. The leading
-		// column now only says what KIND of row this is, so a folder can be
-		// told from a leaf without reading the name.
 		folder := tuikit.PickerItem{
-			Display: f.Label,
+			Display: indent + f.Label,
 			Value:   folderValue(f.Folder),
 			Accent:  f.Accent && blinkOn,
 			Fold:    fold,
 			Folder:  true,
 		}
-		if total := len(children); total > 0 {
+		if nested {
+			// Same look as the nested audio-stack row: a bundle row that reads
+			// like a child of its parent while still folding/selecting as one.
+			// The □/■ is explicit because Flat suppresses the leading glyph.
+			mark := "□"
+			if total > 0 && marked == total {
+				mark = "■"
+			}
+			folder.Flat = true
+			folder.Display = indent + branch + mark + " " + f.Label
+		}
+		if total > 0 {
 			folder.Suffix = fmt.Sprintf("  (%d/%d)", marked, total)
 		}
 		out = append(out, folder)
-		if open[f.Folder] {
-			last := len(children) - 1
-			for i, it := range children {
-				pmark := "○"
-				if checked[setupValue(f.Folder, it.Key)] {
-					pmark = "●"
-				}
-				branch := "├─ "
-				if i == last {
-					branch = "└─ "
-				}
-				// Same rule as everywhere: the mark belongs in
-				// Badge. Rows are centered, so a mark inside Display made
-				// every line a different width and none of them shared a
-				// starting column.
-				entry := tuikit.PickerItem{
-					Display: "    " + branch + it.Label,
-					Badge:   pmark,
-					Value:   setupValue(f.Folder, it.Key),
-				}
-				// The backend greys a row that has nothing left to do, and it
-				// stays listed so the option does not silently vanish. When the
-				// backend explains itself in `info`, show that as the sub-line
-				// rather than leaving a dead-looking row with no reason —
-				// EXCEPT asset-gated apps, whose info is "long description —
-				// needs <file> in scripts/Apps/<dir>/": the description is
-				// noise there, so the row carries "(missing installation
-				// files)" in its own label and no sub-line at all.
-				if it.Disabled {
-					entry.Disabled = true
-					if it.Info != "" {
-						// NOTE: len(" — ") is 5, not 3 — the em dash is 3
-						// bytes in UTF-8, and idx+3 leaves its last byte
-						// glued to the note so the "needs " prefix never
-						// matches.
-						if idx := strings.LastIndex(it.Info, " — "); idx >= 0 {
-							if note := it.Info[idx+len(" — "):]; strings.HasPrefix(note, "needs ") && strings.Contains(note, "in scripts/Apps/") {
-								entry.Display += " (missing installation files)"
-							} else {
-								entry.Sub = it.Info
-							}
-						} else {
-							entry.Sub = it.Info
-						}
-					}
-				}
-				// "remove-ai" means the OPPOSITE thing in each tree, so the
-				// grey-out rule has to follow the mode. Setup offers "bring back
-				// omarchy's agentic stuff": nothing to bring back if no removal
-				// was ever logged, hence greyed. Uninstall offers "remove
-				// omarchy's agentic stuff": that is exactly what the user wants
-				// precisely when the agentic parts are still present, i.e. when
-				// NO removal was logged -- greying it there made the option
-				// permanently unselectable, which is what it was reported as.
-				if it.Key == "remove-ai" && mode != "uninstall" && !aiRemoved {
-					entry.Disabled = true
-				}
-				out = append(out, entry)
+		if !open[f.Folder] {
+			return
+		}
+		// When nested folders follow the items, the last item must end in ├─
+		// and the nested folder row supplies the closing └─.
+		last := len(children) - 1
+		for i, it := range children {
+			renderItem(f, it, indent+"    ", i == last && len(kids) == 0)
+		}
+		for i, cf := range kids {
+			cb := "├─ "
+			if i == len(kids)-1 {
+				cb = "└─ "
 			}
+			renderFolder(cf, indent+"    ", cb, true)
+		}
+	}
+
+	for _, f := range folders {
+		if f.Parent == "" {
+			renderFolder(f, "", "", false)
+		}
+	}
+	// A folder whose parent is not in the list would otherwise vanish.
+	for _, f := range folders {
+		if f.Parent == "" {
+			continue
+		}
+		found := false
+		for _, p := range folders {
+			if p.Folder == f.Parent {
+				found = true
+				break
+			}
+		}
+		if !found {
+			renderFolder(f, "", "", false)
 		}
 	}
 	out = append(out, tuikit.PickerItem{Display: "Back", Value: "back"})
@@ -4514,7 +4899,7 @@ func categoryItems(cats []CatRec) []tuikit.PickerItem {
 
 func backupActions() []tuikit.PickerItem {
 	return []tuikit.PickerItem{
-		{Display: "Back up now…", Value: "backup"},
+		{Display: "Backup", Value: "backup"},
 		{Display: "Restore from a backup", Value: "restore"},
 		{Display: "Back", Value: "back"},
 	}
@@ -4524,33 +4909,16 @@ func backupActions() []tuikit.PickerItem {
 // on a row changes it (cycles/toggles) or navigates.
 func (m model) rebuildBackupOptions() navPicker {
 	idx := m.backupOptPicker.Index()
-	vst := "list only"
-	switch m.backupOpts.VST {
-	case "full":
-		vst = "full files (~hundreds of MB)"
-	case "none":
-		vst = "skip"
-	}
-	nameRow := "(none — the date names it)"
+	nameRow := "(auto-named)"
 	if m.backupOpts.Name != "" {
 		nameRow = m.backupOpts.Name
 	}
 	items := []tuikit.PickerItem{
 		{Display: "Archive name: " + nameRow, Value: "name"},
-		{Display: fmt.Sprintf("TUIs: %d selected", len(m.backupChecked)), Value: "apps"},
-		{Display: "VST plugins: " + vst, Value: "vst"},
-	}
-	if m.backupOpts.HasKeep {
-		items = append(items, tuikit.PickerItem{Display: "KeePassXC passwords: " + yesno(m.backupOpts.Keepass), Value: "keepass"})
-	}
-	if m.backupOpts.HasZen {
-		items = append(items, tuikit.PickerItem{Display: "Zen browser settings: " + yesno(m.backupOpts.Zen), Value: "zen"})
-	}
-	if m.backupOpts.HasReaper {
-		items = append(items, tuikit.PickerItem{Display: "REAPER backup: " + reaperDepthLabel(m.backupOpts.Reaper), Value: "reaper"})
-	}
-	if m.backupOpts.HasReaper {
-		items = append(items, tuikit.PickerItem{Display: "REAPER backup: " + reaperDepthLabel(m.backupOpts.Reaper), Value: "reaper"})
+		{Display: fmt.Sprintf("Packages, Themes & tweaks: %d selected", len(m.backupChecked)), Value: "apps"},
+		{Display: "App specific settings", Value: "app-settings"},
+		{Display: "Keybindings: " + keybindingsBackupLabel(m.backupOpts.Keybindings), Value: "keybindings"},
+		{Display: "Hyprland configs: " + yesno(m.backupOpts.Hyprland), Value: "hyprland"},
 	}
 	enc := "no"
 	if m.backupOpts.Encrypt {
@@ -4558,7 +4926,7 @@ func (m model) rebuildBackupOptions() navPicker {
 	}
 	items = append(items,
 		tuikit.PickerItem{Display: "Encrypt: " + enc, Value: "encrypt"},
-		tuikit.PickerItem{Display: "Start the backup", Value: "start"},
+		tuikit.PickerItem{Display: "Backup now…", Value: "start"},
 		tuikit.PickerItem{Display: "Back", Value: "back"},
 	)
 	p := newNavPicker("", items).SetSize(m.contentSize()).
@@ -4566,30 +4934,39 @@ func (m model) rebuildBackupOptions() navPicker {
 	return p.SelectIndex(idx)
 }
 
-// rebuildBackupReaper renders the REAPER depth chooser. Enter picks the row
-// under the cursor and returns to the options; Esc does the same as Back.
-func (m model) rebuildBackupReaper() navPicker {
-	idx := m.backupReaperPicker.Index()
-	cur := ""
+// rebuildBackupAppSettings is the sub-menu holding the per-app content choices.
+// It exists so the main Backup options page stays short: VST, KeePassXC, Zen and
+// REAPER are settings of individual apps, not top-level backup actions.
+func (m model) rebuildBackupAppSettings() navPicker {
+	idx := m.backupAppPicker.Index()
+	vst := "list only"
+	switch m.backupOpts.VST {
+	case "full":
+		vst = "full files (~hundreds of MB)"
+	case "none":
+		vst = "no"
+	}
 	items := []tuikit.PickerItem{
-		{Display: "Settings only — preferences, keymaps, themes, FX chains", Value: "settings"},
-		{Display: "Everything — the whole config folder + the portable install", Value: "full"},
-		{Display: "Nothing", Value: "none"},
-		{Display: "Back", Value: "back"},
+		{Display: "VST plugins: " + vst, Value: "vst"},
 	}
-	for _, it := range items {
-		if it.Value == m.backupOpts.Reaper {
-			cur = it.Display
-		}
+	if m.backupOpts.HasKeep {
+		items = append(items,
+			tuikit.PickerItem{Display: "KeePassXC passwords: " + yesno(m.backupOpts.Keepass), Value: "keepass"},
+			tuikit.PickerItem{Display: "KeePassXC settings: " + yesno(m.backupOpts.KeepassSettings), Value: "keepass-settings"},
+		)
 	}
-	if cur == "" {
-		cur = items[0].Display
+	if m.backupOpts.HasZen {
+		items = append(items, tuikit.PickerItem{Display: "Zen browser settings: " + yesno(m.backupOpts.Zen), Value: "zen"})
 	}
-	items = append(items, tuikit.PickerItem{Display: "", Disabled: true})
-	items = append(items, tuikit.PickerItem{Display: "now: " + cur, Value: "", Disabled: true})
-	p := newNavPicker("REAPER backup — how much to include", items).SetSize(m.contentSize()).
-		SetHelpKeys(key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "pick")),
-			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")))
+	if m.backupOpts.HasReaper {
+		items = append(items, tuikit.PickerItem{Display: "REAPER: " + reaperDepthLabel(m.backupOpts.Reaper), Value: "reaper"})
+	}
+	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
+	p := newNavPicker("", items).SetSize(m.contentSize()).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "change")),
+			key.NewBinding(key.WithKeys("left"), key.WithHelp("←/→", "cycle")),
+		)
 	return p.SelectIndex(idx)
 }
 
@@ -4606,16 +4983,182 @@ func (m model) rebuildBackupApps() navPicker {
 	return p.SelectIndex(idx)
 }
 
-// reaperDepthLabel is the backup-options row text for the REAPER depth.
+// reaperDepthLabel is the app-settings row text for the REAPER depth.
 func reaperDepthLabel(mode string) string {
 	switch mode {
 	case "none":
 		return "no"
 	case "full":
-		return "everything (config + portable install)"
+		return "everything (all REAPER folders)"
 	default:
 		return "settings only"
 	}
+}
+
+// cycleVST / cycleReaper turn the left/right and Enter gestures into one
+// implementation each: the two call sites (screenPicked and the arrow handler)
+// used to carry their own copy of the order.
+func cycleVST(cur string, dir int) string {
+	order := []string{"list", "full", "none"}
+	idx := 0
+	for i, v := range order {
+		if v == cur {
+			idx = i
+		}
+	}
+	if dir > 0 {
+		idx = (idx + 1) % len(order)
+	} else {
+		idx = (idx - 1 + len(order)) % len(order)
+	}
+	return order[idx]
+}
+
+func cycleReaper(cur string, dir int) string {
+	order := []string{"settings", "full", "none"}
+	idx := 0
+	for i, v := range order {
+		if v == cur {
+			idx = i
+		}
+	}
+	if dir > 0 {
+		idx = (idx + 1) % len(order)
+	} else {
+		idx = (idx - 1 + len(order)) % len(order)
+	}
+	return order[idx]
+}
+
+func keybindingsBackupLabel(mode string) string {
+	switch mode {
+	case "all":
+		return "all"
+	case "no":
+		return "no"
+	default:
+		return "custom only"
+	}
+}
+
+func cycleKeybindings(cur string, dir int) string {
+	order := []string{"custom", "all", "no"}
+	idx := 0
+	for i, v := range order {
+		if v == cur {
+			idx = i
+		}
+	}
+	if dir > 0 {
+		idx = (idx + 1) % len(order)
+	} else {
+		idx = (idx - 1 + len(order)) % len(order)
+	}
+	return order[idx]
+}
+
+// restoreModeNotice is the orange line that stays in the notification row while
+// the restore-options page is open. Full is the default and carries the fresh-
+// install warning; switching to safe swaps in what safe actually does.
+func restoreModeNotice(mode string) string {
+	if mode == "safe" {
+		return "! Safe: merges into the current setup — nothing is overwritten and installed apps are skipped; only the ticked sections are added."
+	}
+	return "! Full: recommended on a fresh install only — it overwrites the settings and content the backup contains."
+}
+
+// rebuildRestoreOptions builds the per-archive restore page: only the sections
+// present in the archive, then the red mode row (last, immediately before the
+// action).
+func (m model) rebuildRestoreOptions() navPicker {
+	idx := m.restorePicker.Index()
+	items := []tuikit.PickerItem{}
+	if m.restoreManifest.VST {
+		items = append(items, tuikit.PickerItem{Display: "VST plugins: " + yesno(m.restoreOpts.VST), Value: "vst"})
+	}
+	if m.restoreManifest.Reaper {
+		items = append(items, tuikit.PickerItem{Display: "REAPER settings: " + yesno(m.restoreOpts.Reaper), Value: "reaper"})
+	}
+	if m.restoreManifest.Zen {
+		items = append(items, tuikit.PickerItem{Display: "Zen settings: " + yesno(m.restoreOpts.Zen), Value: "zen"})
+	}
+	if m.restoreManifest.Keepass {
+		items = append(items, tuikit.PickerItem{Display: "KeePassXC passwords: " + yesno(m.restoreOpts.Keepass), Value: "keepass"})
+	}
+	if m.restoreManifest.KeepassSettings {
+		items = append(items, tuikit.PickerItem{Display: "KeePassXC settings: " + yesno(m.restoreOpts.KeepassSettings), Value: "keepass-settings"})
+	}
+	if m.restoreManifest.Themes {
+		items = append(items, tuikit.PickerItem{Display: "Themes: " + yesno(m.restoreOpts.Themes), Value: "themes"})
+	}
+	if m.restoreManifest.OmarchyPlugins {
+		items = append(items, tuikit.PickerItem{Display: "Omarchy plugins: " + yesno(m.restoreOpts.OmarchyPlugins), Value: "omarchy-plugins"})
+	}
+	if m.restoreManifest.Keybindings != "" && m.restoreManifest.Keybindings != "none" {
+		items = append(items, tuikit.PickerItem{Display: "Keybindings: " + restoreKeybindingsLabel(m.restoreOpts.Keybindings), Value: "keybindings"})
+	}
+	if m.restoreManifest.Hyprland {
+		items = append(items, tuikit.PickerItem{Display: "Hyprland configs: " + yesno(m.restoreOpts.Hyprland), Value: "hyprland"})
+	}
+	modeValue := "Safe"
+	if m.restoreOpts.Mode != "safe" {
+		// Only the word "Full" is red; "Restore mode:" stays in the row's
+		// ordinary colour.
+		modeValue = tuikit.StyleErr.Render("Full")
+	}
+	items = append(items,
+		tuikit.PickerItem{Display: "Restore mode: " + modeValue, Value: "mode"},
+		tuikit.PickerItem{Display: "Restore now…", Value: "restore"},
+		tuikit.PickerItem{Display: "Back", Value: "back"},
+	)
+	p := newNavPicker("", items).SetSize(m.contentSize()).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "change/restore")),
+			key.NewBinding(key.WithKeys("left"), key.WithHelp("←/→", "cycle")),
+		)
+	return p.SelectIndex(idx)
+}
+
+// openRestoreOptions is the single entry point for the page: it initialises the
+// section flags from the archive manifest (so only what exists is offered) and
+// resets the mode to the Full default.
+func (m model) openRestoreOptions() (model, tea.Cmd) {
+	m.pendingAction = ""
+	m.restoreOpts = restoreOptsFor(m.restoreManifest)
+	m.restoreNotice = restoreModeNotice(m.restoreOpts.Mode)
+	m.push(scrRestoreOptions)
+	m.restorePicker = m.rebuildRestoreOptions()
+	return m, nil
+}
+
+func restoreKeybindingsLabel(mode string) string {
+	switch mode {
+	case "all":
+		return "all"
+	case "custom":
+		return "custom only"
+	default:
+		return "no"
+	}
+}
+
+func cycleRestoreKeybindings(cur string, manifest string, dir int) string {
+	order := []string{"custom", "none"}
+	if manifest == "all" {
+		order = []string{"all", "custom", "none"}
+	}
+	idx := 0
+	for i, v := range order {
+		if v == cur {
+			idx = i
+		}
+	}
+	if dir > 0 {
+		idx = (idx + 1) % len(order)
+	} else {
+		idx = (idx - 1 + len(order)) % len(order)
+	}
+	return order[idx]
 }
 
 func yesno(b bool) string {
@@ -4625,28 +5168,43 @@ func yesno(b bool) string {
 	return "no"
 }
 
-// beginBackup writes the apps.selected content the user checked to a temp
-// file, then starts the backup (asking for a passphrase first when encrypting).
+// beginBackup writes the checked packages to a temp file, grouped by Setup
+// folder ("folder<TAB>key<TAB>key…"), then starts the backup (asking for a
+// passphrase first when encrypting). The backend stores this file in the
+// archive as install.list: the readable instruction a restore replays.
 func (m model) beginBackup() (model, tea.Cmd) {
 	f, err := os.CreateTemp("", "mosquitomarchy-apps-selected-")
 	if err != nil {
 		m.toast, _ = m.toast.SetErr(err.Error())
 		return m, nil
 	}
-	fmt.Fprintln(f, "# apps.selected — written by the mosquitOmarchy TUI (backup)")
+	fmt.Fprintln(f, "# install.list — written by the mosquitOmarchy TUI (backup)")
+	// Folder order follows backupItems, so the file is deterministic and reads
+	// in the same order the tree was shown.
+	var order []string
+	byFolder := map[string][]string{}
 	for _, it := range m.backupItems {
-		if m.backupChecked[setupValue(it.Folder, it.Key)] {
-			fmt.Fprintln(f, it.Key)
+		if !m.backupChecked[setupValue(it.Folder, it.Key)] {
+			continue
 		}
+		if _, seen := byFolder[it.Folder]; !seen {
+			order = append(order, it.Folder)
+		}
+		byFolder[it.Folder] = append(byFolder[it.Folder], it.Key)
+	}
+	for _, folder := range order {
+		fmt.Fprintf(f, "%s\t%s\n", folder, strings.Join(byFolder[folder], "\t"))
 	}
 	f.Close()
 	m.backupSelFile = f.Name()
 	m.pendingArgs = []string{
 		"--vst=" + m.backupOpts.VST,
 		"--keepass=" + yesno(m.backupOpts.Keepass),
+		"--keepass-settings=" + yesno(m.backupOpts.KeepassSettings),
 		"--zen=" + yesno(m.backupOpts.Zen),
 		"--reaper=" + m.backupOpts.Reaper,
-		"--reaper=" + m.backupOpts.Reaper,
+		"--keybindings=" + m.backupOpts.Keybindings,
+		"--hyprland=" + yesno(m.backupOpts.Hyprland),
 		"--selection=" + m.backupSelFile,
 		// Always sent, empty or not: the backend treats an empty name as "use
 		// the dated name", and omitting the flag entirely would make an edit
@@ -4664,8 +5222,8 @@ func (m model) beginBackup() (model, tea.Cmd) {
 	if m.backupOpts.Name != "" {
 		label = "named \"" + m.backupOpts.Name + "\""
 	}
-	m.pendingMsg = fmt.Sprintf("Create a backup now?\n\nTUIs: %d selected · VST: %s · KeePassXC: %s · Zen: %s\nArchive: %s",
-		len(m.backupChecked), m.backupOpts.VST, yesno(m.backupOpts.Keepass), yesno(m.backupOpts.Zen), label)
+	m.pendingMsg = fmt.Sprintf("Create a backup now?\n\nPackages: %d selected · VST: %s · KeePassXC: %s/%s · Zen: %s · REAPER: %s · Keybindings: %s · Hyprland: %s\nArchive: %s",
+		len(m.backupChecked), m.backupOpts.VST, yesno(m.backupOpts.Keepass), yesno(m.backupOpts.KeepassSettings), yesno(m.backupOpts.Zen), reaperDepthLabel(m.backupOpts.Reaper), keybindingsBackupLabel(m.backupOpts.Keybindings), yesno(m.backupOpts.Hyprland), label)
 	m.pendingNo = "Cancel"
 	m.pendingYes = "Backup"
 	m.push(scrConfirm)
@@ -4675,9 +5233,26 @@ func (m model) beginBackup() (model, tea.Cmd) {
 
 func (m model) backupsList() []tuikit.PickerItem {
 	items := make([]tuikit.PickerItem, 0, len(m.backupRecs)+1)
-	for _, b := range m.backupRecs {
+	// The filename is the TITLE and the "(size, date)" block is the SUFFIX.
+	// Only the title is marqueed/truncated when a name is too long, so the
+	// parenthetical stays fully visible. Padding the name to one width and the
+	// suffix to one width keeps every "(" on the same column.
+	maxName := 0
+	maxSuffix := 0
+	suffixes := make([]string, len(m.backupRecs))
+	for i, b := range m.backupRecs {
+		if len(b.File) > maxName {
+			maxName = len(b.File)
+		}
+		suffixes[i] = fmt.Sprintf("(%s, %s)", b.Size, b.Date)
+		if len(suffixes[i]) > maxSuffix {
+			maxSuffix = len(suffixes[i])
+		}
+	}
+	for i, b := range m.backupRecs {
 		items = append(items, tuikit.PickerItem{
-			Display: b.File + "  (" + b.Size + ", " + b.Date + ")",
+			Display: fmt.Sprintf("%-*s", maxName, b.File),
+			Suffix:  "  " + fmt.Sprintf("%-*s", maxSuffix, suffixes[i]),
 			Value:   b.File,
 		})
 	}

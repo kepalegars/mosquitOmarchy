@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "WhatsApp silent notifications",
+  "version": "1.0",
+  "description": "Forces WhatsApp Web notifications to be silent.",
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["silent.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
+}

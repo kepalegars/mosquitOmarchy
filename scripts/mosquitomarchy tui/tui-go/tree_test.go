@@ -1528,3 +1528,97 @@ func TestAudioChildrenInstallThroughMosquitoGroup(t *testing.T) {
 		t.Fatalf("audio children plan = %q", got)
 	}
 }
+
+// TestUninstallThemesAreNestedAndFolded pins the Themes > user/defaults
+// structure: the parent is one row, the two children stay folded until the
+// parent is opened, and the child bundle rows carry their □/■ square.
+func TestUninstallThemesAreNestedAndFolded(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrSetup}
+	m.treeMode = "uninstall"
+	m.w, m.h = 120, 40
+	m.setupFolders = []FolderRec{
+		{Folder: "themes", Label: "Themes"},
+		{Folder: "user", Label: "user", Parent: "themes"},
+		{Folder: "defaults", Label: "defaults", Parent: "themes"},
+	}
+	m.setupItems = []SetupItemRec{
+		{Folder: "user", Key: "achraf67", Label: "achraf67"},
+		{Folder: "defaults", Key: "stocktheme:nord", Label: "nord"},
+	}
+	m.folderOpen = map[string]bool{}
+	m.selected = map[string]bool{}
+
+	visible, _ := m.setupRows(true)
+	if len(visible) != 2 || visible[0].Display != "Themes" || visible[1].Value != "back" {
+		t.Fatalf("collapsed tree should only show Themes + Back, got %+v", visible)
+	}
+
+	m.folderOpen["themes"] = true
+	visible, _ = m.setupRows(true)
+	var userRow, defaultsRow *tuikit.PickerItem
+	for i := range visible {
+		switch {
+		case strings.Contains(visible[i].Value, "user"):
+			userRow = &visible[i]
+		case strings.Contains(visible[i].Value, "defaults"):
+			defaultsRow = &visible[i]
+		}
+	}
+	if userRow == nil || defaultsRow == nil {
+		t.Fatalf("user/defaults should appear under Themes: %+v", visible)
+	}
+	if !strings.Contains(userRow.Display, "□") || !strings.Contains(defaultsRow.Display, "□") {
+		t.Fatalf("nested bundle rows need their square: user=%q defaults=%q", userRow.Display, defaultsRow.Display)
+	}
+
+	m.folderOpen["user"] = true
+	m.selected[setupValue("user", "achraf67")] = true
+	visible, _ = m.setupRows(true)
+	for _, r := range visible {
+		if strings.Contains(r.Value, "user:") && !strings.Contains(r.Value, "achraf67") && !strings.Contains(r.Display, "■") {
+			t.Fatalf("checked user bundle should show a filled square: %q", r.Display)
+		}
+		if strings.Contains(r.Value, "achraf67") && (!strings.Contains(r.Display, "●") || strings.Index(r.Display, "●") > strings.Index(r.Display, "achraf67")) {
+			t.Fatalf("leaf selection mark should come before its text like Setup, got %q", r.Display)
+		}
+	}
+}
+
+// TestBackupThemesNestedBranches pins the backup tree's Themes branches: user
+// is the non-last child (├─), defaults is last (└─), and defaults' children
+// stop at the corner instead of drawing a continuing vertical line.
+func TestBackupThemesNestedBranches(t *testing.T) {
+	m := initialModel()
+	m.backupFolders = []FolderRec{
+		{Folder: "themes", Label: "Themes"},
+		{Folder: "user", Label: "user", Parent: "themes"},
+		{Folder: "defaults", Label: "defaults", Parent: "themes"},
+	}
+	m.backupItems = []SetupItemRec{
+		{Folder: "user", Key: "theme:achraf67", Label: "achraf67"},
+		{Folder: "defaults", Key: "stocktheme:nord", Label: "nord"},
+	}
+	m.backupChecked = map[string]bool{}
+	m.backupOpen = map[string]bool{"themes": true, "user": true, "defaults": true}
+	var userRow, defaultsRow, defaultsChild string
+	for _, r := range m.backupTreeItems() {
+		switch {
+		case strings.Contains(r.Display, "user"):
+			userRow = r.Display
+		case strings.Contains(r.Display, "defaults"):
+			defaultsRow = r.Display
+		case strings.Contains(r.Display, "nord"):
+			defaultsChild = r.Display
+		}
+	}
+	if !strings.Contains(userRow, "├─ □ user") {
+		t.Fatalf("user should be the non-last child: %q", userRow)
+	}
+	if !strings.Contains(defaultsRow, "└─ □ defaults") {
+		t.Fatalf("defaults should be the last child: %q", defaultsRow)
+	}
+	if strings.Contains(defaultsChild, "│") {
+		t.Fatalf("defaults children must stop at the corner: %q", defaultsChild)
+	}
+}

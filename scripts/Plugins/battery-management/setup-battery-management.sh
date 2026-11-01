@@ -167,6 +167,61 @@ ensure_power_plugin() {
 }
 
 # -----------------------------------------------------------------------------
+# 1b-bis. Mosquito battery SERVICE (false-AC guard)
+# -----------------------------------------------------------------------------
+# Omarchy's battery service switches the power profile from UPower.onBattery.
+# UPower marks a bus-powered USB-C disk/hub as external power for a moment, so
+# plugging an external HDD switched the machine to the AC profile while the
+# battery kept discharging. The clone keeps the service's low-battery warning
+# and changes only the source decision: battery-status --external.
+ensure_battery_service() {
+  local PLUG="$REAL_HOME/.config/omarchy/plugins"
+  local PLUGIN_ID="mosquito.battery"
+  local PLUGIN_DIR="$PLUG/$PLUGIN_ID"
+  local cloned=""
+
+  [[ -f "$REAL_HOME/.config/omarchy/shell.json" ]] || return 0
+
+  if [[ ! -d $PLUGIN_DIR ]]; then
+    if ! omarchy plugin clone omarchy.battery >/dev/null 2>&1; then
+      warn "Could not clone omarchy.battery — copying the stock service directory"
+      mkdir -p "$PLUGIN_DIR" 2>/dev/null || true
+      cp -r /usr/share/omarchy/shell/plugins/services/battery/. "$PLUGIN_DIR/" 2>/dev/null || true
+    fi
+    for cloned in "$PLUG/$REAL_USER.battery" "$PLUG"/*.battery; do
+      [[ -d $cloned && $cloned != "$PLUGIN_DIR" ]] || continue
+      mv "$cloned" "$PLUGIN_DIR" 2>/dev/null && break
+    done
+    [[ -d $PLUGIN_DIR ]] || { warn "Clone of omarchy.battery not found"; return 1; }
+  fi
+
+  # Our patched QML + the model it imports. The model is taken from the clone
+  # (upstream's) when present; the QML is always ours.
+  if [[ -f "$PLUG_SRC/mosquito.battery/Service.qml" ]]; then
+    cp -f "$PLUG_SRC/mosquito.battery/Service.qml" "$PLUGIN_DIR/Service.qml" 2>/dev/null \
+      || { warn "Could not install mosquito.battery Service.qml"; return 1; }
+  fi
+  if [[ ! -f "$PLUGIN_DIR/BatteryModel.js" && -f /usr/share/omarchy/shell/plugins/services/battery/BatteryModel.js ]]; then
+    cp -f /usr/share/omarchy/shell/plugins/services/battery/BatteryModel.js "$PLUGIN_DIR/BatteryModel.js" 2>/dev/null || true
+  fi
+
+  local mf="$PLUGIN_DIR/manifest.json"
+  if command -v jq >/dev/null 2>&1 && [[ -f $mf ]]; then
+    jq --arg id "$PLUGIN_ID" '.id=$id | .name="Mosquito Battery" | .author="Mosquito"' "$mf" >"$mf.tmp" && mv "$mf.tmp" "$mf"
+  else
+    sed -i -E "s/\"id\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/\"id\": \"$PLUGIN_ID\"/" "$mf"
+  fi
+
+  # One battery service only: ours replaces the first-party one.
+  omarchy plugin disable omarchy.battery >/dev/null 2>&1 || true
+  if omarchy plugin enable "$PLUGIN_ID" >/dev/null 2>&1; then
+    ok "Battery service: mosquito.battery (external-power guard active)"
+  else
+    warn "Battery service installed but not enabled — run: omarchy plugin enable $PLUGIN_ID"
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # 1c. mosquitOmarchy plugins (bar widget + overlay) — same clone/rename pattern
 #     but with QML sources shipped in ./omarchy-plugins/ (the stock clones are
 #     then patched so a fresh machine reproduces this machine's customizations):
@@ -212,15 +267,18 @@ ensure_indicators_plugin() {
         return 1
       fi
     fi
-    local mf="$PLUG_DIR/mosquito.indicators/manifest.json"
-    if command -v jq >/dev/null 2>&1 && [[ -f $mf ]]; then
-      jq --arg id "mosquito.indicators" '.id=$id' "$mf" >"$mf.tmp" && mv "$mf.tmp" "$mf"
-    else
-      sed -i -E "s/\"id\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/\"id\": \"mosquito.indicators\"/" "$mf"
-    fi
     sed -i "s|\"$REAL_USER\\.indicators\"|\"mosquito.indicators\"|g" "$REAL_HOME/.config/omarchy/shell.json"
     omarchy plugin enable mosquito.indicators >/dev/null 2>&1 || true
     ok "Omarchy plugin mosquito.indicators cloned and enabled (bar widget)"
+  fi
+  # The clone carries Omarchy's "My Indicators" display name. Patch it on
+  # EVERY run, not only on the first clone: an existing clone kept the stock
+  # name for ever otherwise.
+  local mf="$PLUG_DIR/mosquito.indicators/manifest.json"
+  if command -v jq >/dev/null 2>&1 && [[ -f $mf ]]; then
+    jq --arg id "mosquito.indicators" '.id=$id | .name="Mosquito Indicators" | .author="Mosquito" | if has("barWidget") then .barWidget.displayName="Mosquito Indicators" else . end' "$mf" >"$mf.tmp" && mv "$mf.tmp" "$mf"
+  else
+    sed -i -E "s/\"id\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/\"id\": \"mosquito.indicators\"/" "$mf"
   fi
   overlay_plugin_files "mosquito.indicators" "Indicators.qml" "indicators/StayAwake.qml"
 }
@@ -320,6 +378,7 @@ fi
 
 if [[ $REMOVE == false ]]; then
   ensure_power_plugin || true
+  ensure_battery_service || true
   overlay_plugin_files "mosquito.power" "Panel.qml" "Model.js"
   record_clone_stamp "mosquito.power" "omarchy.power" "$POWER_CLONED"
 
@@ -462,6 +521,9 @@ remove_menu_block
 # -----------------------------------------------------------------------------
 echo ""
 if [[ $REMOVE == true ]]; then
+  omarchy plugin disable mosquito.battery >/dev/null 2>&1 || true
+  omarchy plugin remove mosquito.battery --yes >/dev/null 2>&1 || true
+  omarchy plugin enable omarchy.battery >/dev/null 2>&1 || true
   info "Uninstall complete: legacy udev + sudoers removed."
   if (( LEGACY_ACTIVE )); then
     echo "  Ultra-save is still active; its executable/state/sudoers were preserved. Turn it off, then rerun this script."
@@ -472,6 +534,7 @@ else
   info "Setup complete. Summary:"
   echo "  • Plugin helper         -> $BIN_DIR/power-helper + /usr/local/bin"
   echo "  • Battery status        -> $BIN_DIR/battery-status (corrected charger/0W detection)"
+  echo "  • Battery service       -> mosquito.battery (real charger only, external disks ignored)"
   echo "  • Omarchy widget        -> mosquito.power plugin (power-profile icon colors)"
   echo "  • Omarchy overlay       -> mosquito.confirm plugin (native Yes/No prompts)"
   echo "  • Omarchy indicators    -> mosquito.indicators widget (stay-awake red icon + tooltip)"

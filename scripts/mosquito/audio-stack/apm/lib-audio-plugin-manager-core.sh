@@ -2174,11 +2174,10 @@ install_plugin() {
     return "$_mrc"
   fi
 
-  # Cosmetic, but every installer sees it: drop the stale duplicate drive
-  # letters and raw-device aliases BEFORE the wizard opens its file chooser.
-  # Only this prefix is touched, and only symlinks; a letter still referenced
-  # by registry state is preserved.
-  apm_prune_drive_aliases "$wine_prefix" apply || true
+  # Wine's drive letters are re-discovered from the mounted devices every time
+  # a wineserver starts, so "cleaning" them just before an installer only
+  # removes the letter the installer media is on and lets Wine recreate it.
+  # The cleanup is a manual action (TUI), never part of an install.
 
   # The prefix must point at the shared folders BEFORE the installer runs,
   # otherwise the new files land inside the prefix and detection misses them.
@@ -2505,11 +2504,11 @@ install_plugin() {
   register_standalones_from_prefix "$wine_prefix"
   post_install
   hide_wine_menu_entries "$wine_prefix"
-  # Re-run after post_install: registry sharing starts Wine again, and any
-  # duplicate letter that appeared meanwhile is removed while nothing runs.
-  # Then close an idle wineserver the installer left behind, so the NEXT
-  # install does not find the prefix "busy" and skip its own cleanup.
-  apm_prune_drive_aliases "$wine_prefix" apply || true
+  # Close an idle wineserver the installer left behind, so the NEXT install
+  # does not find the prefix "busy". Drive aliases are left alone: Wine
+  # re-discovers them from the mounted devices on every start, and removing the
+  # one that points at the installer media mid-install is worse than the
+  # cosmetic duplicate. The cleanup is a manual action instead.
   apm_prefix_release_idle "$wine_prefix" || true
   # Known per-plugin fixes (e.g. CrispyTuner's editor input) are applied on
   # first install so the GUI works out of the box; state + Lua block are

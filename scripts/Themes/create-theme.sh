@@ -15,16 +15,16 @@
 # The lock screen is NOT touched: it remains the stock Omarchy lock
 # (password bar only, no theme name).
 #
-# Special case achraf67.png → the reference theme ' Achraff 67 ': frozen
-# lime/red palette and red unlock logo + ' achraff_67 ' (frozen name, does not
+# Special case achraf67.png → the reference theme ' Achraf67 ': frozen
+# lime/red palette and red unlock logo + ' achraf67 ' (frozen name, does not
 # change from theme to theme) — the equivalent of the former
-# setup-achraff-theme.sh, merged here.
+# setup-achraf67-theme.sh, merged here.
 #
 # Interactive selection:
 #   1. Choose an image in theme/Wallpapers/ (gum or numbered).
 #   2. Validate the theme name (proposed from the file name) -> it becomes
 #      the slug, and the unlock logo for generic themes.
-#      (achraf67.png: locked name ' Achraff 67 ', unlock logo ' achraff_67 '.)
+#      (achraf67.png: locked name ' Achraf67 ', unlock logo ' achraf67 '.)
 #
 # Usage:
 #   create-theme.sh                       # interactive: image -> name -> theme
@@ -45,7 +45,7 @@
 # is also the one step that needs a password, so --no-unlock-style skips it
 # entirely rather than asking for one.
 #
-# NOTE: the 'achraff' module of mosquitomarchy-setup.sh delegates here (the
+# NOTE: the 'achraf67' module of mosquitomarchy-setup.sh delegates here (the
 # achraf67.png image is forced), but this script remains usable standalone to
 # create any theme from an image in any folder.
 # =============================================================================
@@ -149,17 +149,17 @@ IMG_BASE="$(basename "${SRC_IMG%.*}")"
 PROPOSED="$(printf '%s\n' "$IMG_BASE" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/ /g; s/^ +| +$//g; s/ (.)/\U\1/g' | sed -E 's/^(.)/\U\1/')"
 [[ -n $PROPOSED ]] || PROPOSED="$IMG_BASE"
 
-# The reference theme ' Achraff 67 ' = achraf67.png image (former
-# setup-achraff-theme.sh, merged into this script): frozen name/palette/render.
-ACHRAFF=false
-[[ "${IMG_BASE,,}" == "achraf67" ]] && ACHRAFF=true
+# The reference theme ' Achraf67 ' = achraf67.png image (former
+# setup-achraf67-theme.sh, merged into this script): frozen name/palette/render.
+ACHRAF67=false
+[[ "${IMG_BASE,,}" == "achraf67" ]] && ACHRAF67=true
 
 # -----------------------------------------------------------------------------
 # 1. Theme name (proposed from the file) — this is also the unlock title
 # -----------------------------------------------------------------------------
 msg "Image: $(basename "$SRC_IMG")"
-if [[ $ACHRAFF == true ]]; then
-  THEME_NAME="Achraff 67"
+if [[ $ACHRAF67 == true ]]; then
+  THEME_NAME="Achraf67"
   ok "Reference image (achraf67.png) — name locked ' $THEME_NAME '"
 elif [[ -n $THEME_NAME_ARG ]]; then
   THEME_NAME="$THEME_NAME_ARG"
@@ -181,9 +181,9 @@ THEME_SLUG="$(slugify "$THEME_NAME")"
 
 THEME_DIR="$HOME/.config/omarchy/themes/$THEME_SLUG"
 # Unlock logo text (Plymouth): theme name, but achraf67.png keeps the
-# historical render ' achraff_67 ' — frozen, it does not change theme to theme.
+# historical render ' achraf67 ' — frozen, it does not change theme to theme.
 TITLE_TEXT="$THEME_NAME"
-[[ $ACHRAFF == true ]] && TITLE_TEXT="achraff_67"
+[[ $ACHRAF67 == true ]] && TITLE_TEXT="achraf67"
 
 ok "Theme ' $THEME_NAME ' (slug: $THEME_SLUG, unlock title: ' $TITLE_TEXT ')"
 
@@ -294,8 +294,8 @@ PY
 }
 
 declare -A C
-# Frozen palette of the reference theme (lime/red) — mirrors the former achraff-67
-achraff_palette(){
+# Frozen palette of the reference theme (lime/red) — mirrors the former achraf67
+achraf67_palette(){
   cat << 'EOF'
 accent=#b5e61d
 selection=#3c4822
@@ -329,11 +329,11 @@ parse_palette(){
   while IFS= read -r line; do
     key="${line%%=*}" ; val="${line#*=}"
     C["$key"]="$val"
-  done < <(if [[ $ACHRAFF == true ]]; then achraff_palette; else derive_palette; fi)
+  done < <(if [[ $ACHRAF67 == true ]]; then achraf67_palette; else derive_palette; fi)
 }
 parse_palette
-if [[ $ACHRAFF == true ]]; then
-  ok "Frozen achraff palette — accent ${C[accent]}, background ${C[background]}, text ${C[foreground]}"
+if [[ $ACHRAF67 == true ]]; then
+  ok "Frozen achraf67 palette — accent ${C[accent]}, background ${C[background]}, text ${C[foreground]}"
 else
   ok "Derived palette — accent ${C[accent]}, background ${C[background]}, text ${C[foreground]}"
 fi
@@ -389,7 +389,7 @@ TOMLEOF
   ok "colors.toml created"
 fi
 
-if [[ $ACHRAFF == true ]]; then
+if [[ $ACHRAF67 == true ]]; then
   [[ -f "$THEME_DIR/icons.theme" ]] || { echo "Yaru-olive" > "$THEME_DIR/icons.theme"; ok "icons.theme = Yaru-olive"; }
   [[ -f "$THEME_DIR/keyboard.rgb" ]] || { echo "b5e61d" > "$THEME_DIR/keyboard.rgb"; ok "keyboard.rgb = b5e61d"; }
 else
@@ -414,9 +414,9 @@ gen_unlock_png(){
   # Logo 800x188: UNI background + text = TITLE_TEXT, no outline. For achraf67.png
   # frozen red background + lime text; otherwise accent + auto contrast.
   local mode=generic
-  [[ $ACHRAFF == true ]] && mode=achraff
+  [[ $ACHRAF67 == true ]] && mode=achraf67
   local unlock_bg="${C[accent]}"
-  [[ $ACHRAFF == true ]] && unlock_bg="#ec1f25"
+  [[ $ACHRAF67 == true ]] && unlock_bg="#ec1f25"
   python3 - "$THEME_DIR/unlock.png" "$unlock_bg" "$TITLE_TEXT" "$mode" << 'PY'
 import sys
 from PIL import Image, ImageDraw, ImageFont
@@ -426,7 +426,7 @@ W, H = 800, 188
 bg_hex = bg_hex.lstrip("#")
 bg = tuple(int(bg_hex[i:i+2], 16) for i in (0, 2, 4)) + (255,)   # 100% opacity
 
-if mode == "achraff":
+if mode == "achraf67":
     # achraf67.png: frozen lime text on a red background
     fill = (181, 230, 29, 255)
     desc = "lime"
@@ -545,6 +545,15 @@ if ((APPLY)); then
 else
   ok "Theme ' $THEME_NAME ' created — NOT applied"
   ok "Apply it when you are ready:  omarchy theme set '$THEME_NAME'"
+fi
+
+# The old slug of the reference theme was 'achraff-67'. Once the new
+# 'achraf67' is built AND active, drop the old copy so there is one theme, not
+# two. Without an apply, leave it: it may be the theme the desktop is using.
+if [[ $ACHRAF67 == true && $THEME_SLUG == achraf67 ]]; then
+  if ((APPLY)) || [[ "$(omarchy theme current 2>/dev/null || true)" == "Achraf67" ]]; then
+    rm -rf "$HOME/.config/omarchy/themes/achraff-67"
+  fi
 fi
 
 # -----------------------------------------------------------------------------

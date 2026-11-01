@@ -80,6 +80,16 @@ mq_pkexec() {
 # the active Omarchy palette, else systemd-ask-password.
 mq_sudo_askpass() {
   local f="${XDG_RUNTIME_DIR:-/tmp}/mq-askpass-$UID"
+  # If the omaskpinpass module installed the native Omaskpass overlay, use it
+  # as sudo's askpass: it is the same Omarchy-styled dialog as the SSH/GPG
+  # prompts, instead of a separate zenity style. Only while its service socket
+  # is actually there, so an uninstalled/broken plugin falls back cleanly.
+  local native
+  native="$(cat "$HOME/.local/state/mosquitomarchy/sudo-askpass" 2>/dev/null || true)"
+  if [[ -n $native && -x $native && -S "${XDG_RUNTIME_DIR:-/run/user/$UID}/omaskpass.sock" ]]; then
+    printf '%s' "$native"
+    return 0
+  fi
   # Regenerate when the theme changed since the last write, so a theme switch
   # repaints the next prompt. The stamp is the theme's own mtime: no polling,
   # no extra state, and it is exactly the thing the colours come from.

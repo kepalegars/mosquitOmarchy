@@ -155,25 +155,32 @@ json_str_array(){
 cmd_status(){
   load_excluded
   apply_includes
-  local row id state detail label excl cat
+  local row id state detail label excl cat out ver
+  # REPO_VERSION is exactly what module_version prints; reading it once avoids
+  # one command substitution per row.
+  ver="$REPO_VERSION"
   for row in "${MODULES[@]}"; do
     id="${row%%:*}" label="${row#*:}"
     # module_state may append ":detail" (e.g. "partial:missing foo bar"). The
     # State screen's `i` shows that detail, so both halves travel in the JSON
-    # instead of the detail being dropped here.
-    state="$(module_state "$id")"
+    # instead of the detail being dropped here. module_state_cached shares the
+    # answer with Setup/Uninstall (module-states cache) instead of running the
+    # same detection a second time.
+    module_state_cached_into "$id" state
     detail=""
     if [[ $state == *:* ]]; then detail="${state#*:}"; state="${state%%:*}"; fi
     cat="$(module_category "$id")"
     excl=false
     is_excluded "$id" && excl=true
-    # Every string field goes through json_str. `excluded` is the one that was
-    # missed: a bare $excl emitted "excluded":"false" (a STRING), and the Go
-    # StatusRec has Excluded bool — so the whole Status screen died on
-    # "json: cannot unmarshal string into Go struct field StatusRec.excluded".
-    printf '{"id":%s,"label":%s,"state":%s,"detail":%s,"category":%s,"excluded":%s}\n' \
-      "$(json_str "$id")" "$(json_str "$label - v$(module_version "$id")")" \
-      "$(json_str "$state")" "$(json_str "$detail")" "$(json_str "$cat")" "$(json_bool "$excl")"
+    # Build the row inline: 45 rows x six `$(json_str ...)` calls were ~270
+    # subshells, which is most of what made the first Status visit slow.
+    json_str_into "$id"; out="{\"id\":$JS"
+    json_str_into "$label - v$ver"; out+=",\"label\":$JS"
+    json_str_into "$state"; out+=",\"state\":$JS"
+    json_str_into "$detail"; out+=",\"detail\":$JS"
+    json_str_into "$cat"; out+=",\"category\":$JS"
+    out+=",\"excluded\":$excl}"
+    printf '%s\n' "$out"
   done
 }
 
@@ -490,8 +497,8 @@ cmd_theme_create(){
 cmd_theme_list(){
   local dir="$HOME/.config/omarchy/themes" n
   [[ -d $dir ]] || exit 0
-  # omarchy-theme-current answers the DISPLAY name ("Achraff 67"), not the
-  # directory slug ("achraff-67"), so comparing the two directly marks nothing
+  # omarchy-theme-current answers the DISPLAY name ("Achraf67"), not the
+  # directory slug ("achraf67"), so comparing the two directly marks nothing
   # as current. Normalise both to a comparable form: lower case, no spaces,
   # underscores and dashes equivalent.
   local cur norm n
@@ -503,6 +510,10 @@ cmd_theme_list(){
     # A symlink is a clone pointing into the stock tree: removing it would
     # delete nothing and break the link, and it is not really "the user's".
     [[ -L "$dir/$n" ]] && continue
+    # Stock Omarchy themes and achraf67 are managed by the defaults/user
+    # folders in Uninstall, not by the Theming screen.
+    [[ $n == achraf67 || $n == achraff-67 ]] && continue
+    theme_is_stock "$n" && continue
     jq -nc --arg name "$n" --argjson current "$([[ "$(norm "$n")" == "$want" ]] && echo true || echo false)" \
       '{name:$name, current:$current}'
   done < <(find "$dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -f)
@@ -646,7 +657,7 @@ TREE_CACHE_TTL_MIN=30 # minutes before a stale fingerprint's file is reaped
 # the key: setup and uninstall produced the same fingerprint for a machine with
 # nothing extra installed, and sharing one file meant whichever ran last
 # overwrote the other and the TUI decoded the wrong tree.
-cache_file(){ printf '%s/tree-%s.%s' "$TREE_CACHE_DIR" "$1" "$2"; }
+cache_file(){ printf '%s/tree-%s.%s' "$TREE_CACHE_DIR" "$1" "$(cache_key_digest "$2")"; }
 
 # cache_key_digest shortens an arbitrary string to a usable filename fragment.
 # cksum is one cheap fork and gives 32 bits, which is plenty for "same input as
@@ -680,7 +691,9 @@ cache_store(){
 cmd_setup(){
   TREE_MODE=setup
   local fp
-  fp="$(tree_fingerprint)"
+  # Theme folders are part of the Setup tree now (defaults appears only when a
+  # stock theme is missing), so their state belongs in the cache key.
+  fp="$(tree_fingerprint)$(cache_key_digest "$(stock_themes_missing)$(achraf67_theme_present && echo 1 || echo 0)")"
   if cache_read setup "$fp"; then return 0; fi
   # Build once, write once. `tee` looked right — stdout and the cache both get
   # the tree — but with a consumer on each end the run that POPSULATED the cache
@@ -696,6 +709,42 @@ cmd_setup(){
   cache_store setup "$fp" "$tree"
   printf '%s\n' "$tree"
 }
+
+# ─── Themes: user (created here) vs defaults (stock Omarchy) ────────────────
+# The theme tree is split the way the user asked:
+#   user     achraf67 + every theme Theming created
+#   defaults stock Omarchy themes, removable and reinstallable
+# A theme is "stock" when its name exists under /usr/share/omarchy/themes.
+THEME_USER_DIR="$HOME/.config/omarchy/themes"
+THEME_STOCK_DIR="/usr/share/omarchy/themes"
+
+theme_name_list(){ # <dir> -> entry names (dirs and symlinks)
+  find "$1" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -printf '%f\n' 2>/dev/null | sort -f
+}
+stock_theme_names(){ theme_name_list "$THEME_STOCK_DIR"; }
+theme_is_stock(){
+  local n
+  while IFS= read -r n; do [[ $n == "$1" ]] && return 0; done < <(stock_theme_names)
+  return 1
+}
+theme_present(){ [[ -e "$THEME_USER_DIR/$1" || -L "$THEME_USER_DIR/$1" ]]; }
+theming_created_themes(){
+  local n
+  while IFS= read -r n; do
+    [[ $n == achraf67 || $n == achraff-67 ]] && continue
+    theme_is_stock "$n" && continue
+    printf '%s\n' "$n"
+  done < <(theme_name_list "$THEME_USER_DIR")
+}
+stock_themes_present(){
+  local n
+  while IFS= read -r n; do theme_present "$n" && printf '%s\n' "$n"; done < <(stock_theme_names)
+}
+stock_themes_missing(){
+  local n
+  while IFS= read -r n; do theme_present "$n" || printf '%s\n' "$n"; done < <(stock_theme_names)
+}
+achraf67_theme_present(){ [[ -e "$THEME_USER_DIR/achraf67" || -L "$THEME_USER_DIR/achraf67" || -e "$THEME_USER_DIR/achraff-67" ]]; }
 
 _setup_tree(){
   local c id label accent i e name info gate disabled
@@ -717,6 +766,8 @@ _setup_tree(){
     # The Omarchy menu registration is shown INSIDE the mosquito folder (see
     # the mosquito case below), never as its own top-level Setup folder.
     [[ $id == menu ]] && continue
+    # Themes are split into the user/defaults folders added after this loop.
+    [[ $id == themes ]] && continue
     accent=false
     [[ $id == mosquito ]] && accent=true
     json_str_into "$id";    local j_folder=$JS
@@ -805,6 +856,31 @@ _setup_tree(){
         ;;
     esac
   done
+  # ── Themes: user (created here) and defaults (stock Omarchy) ──
+  # Both live under a single Themes folder, exactly like audio-stack under
+  # mosquito. Setup always has user/achraf67; defaults appears only when a
+  # stock theme is missing.
+  local -a _missing_themes=()
+  local _tn
+  while IFS= read -r _tn; do [[ -n $_tn ]] && _missing_themes+=("$_tn"); done < <(stock_themes_missing)
+  folders+=("Themes"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+    "$(json_str themes)" "$(json_str "Themes")" false)")
+  folders+=("user"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s,"parent":%s}' \
+    "$(json_str user)" "$(json_str user)" false "$(json_str themes)")")
+  items+=("user/achraf67"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+    "$(json_str user)" "$(json_str achraf67)" \
+    "$(json_str "achraf67 - v$ver")" \
+    "$(json_str "Omarchy theme created by mosquitOmarchy (Achraf67) — colors, icons, unlock logo and Plymouth")")")
+  if ((${#_missing_themes[@]})); then
+    folders+=("defaults"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s,"parent":%s}' \
+      "$(json_str defaults)" "$(json_str defaults)" false "$(json_str themes)")")
+    for _tn in "${_missing_themes[@]}"; do
+      items+=("defaults/$_tn"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+        "$(json_str defaults)" "$(json_str "stocktheme:$_tn")" \
+        "$(json_str "$_tn - v$ver")" \
+        "$(json_str "Omarchy default theme missing from ~/.config/omarchy/themes — install to restore it")")")
+    done
+  fi
   # The audio-stack folder is nested under mosquito: one row to install the
   # whole stack, with the five components as its children.
   folders+=("audio-stack"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s,"parent":%s,"bundle":%s}' \
@@ -858,13 +934,90 @@ _installed_state(){ # module id -> 0 when installed (ok/partial) and not exclude
     return
   fi
   if is_excluded "$id" 2>/dev/null; then _INSTALLED_STATE_MEMO[$id]=0; return 1; fi
-  st="$(module_state "$id" 2>/dev/null)"; st="${st%%:*}"
+  st="$(module_state_cached "$id" 2>/dev/null)"; st="${st%%:*}"
   if [[ $st == ok || $st == partial ]]; then
     _INSTALLED_STATE_MEMO[$id]=1
     return 0
   fi
   _INSTALLED_STATE_MEMO[$id]=0
   return 1
+}
+
+# ── Shared module-state cache ───────────────────────────────────────────────
+# Status, Setup and Uninstall all ask the same question ("is module X
+# installed?") through module_state(), whose st_* detectors stat binaries,
+# Wine prefixes and plugins. Each screen used to run every detector again in
+# its own process: Status took ~3 s on the first visit, even right after the
+# Uninstall tree had just answered the same question.
+#
+# One TSV file now holds the answer per module (id \t state \t epoch), shared
+# by every mosquitomarchy-actions process. A miss runs the detector and
+# appends; a hit inside MS_CACHE_TTL skips it. Any mutating action clears the
+# whole query cache (mq_cache_clear), so an install/uninstall never leaves a
+# stale answer behind; the TTL only covers changes made outside the manager.
+MS_CACHE_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/mosquitomarchy/query-cache/module-states"
+MS_CACHE_TTL="${MS_CACHE_TTL:-300}"
+declare -A _MODULE_STATE_MEMO=()
+_MS_LOADED=0
+
+_ms_rewrite(){
+  local d tmp id
+  d="$(dirname "$MS_CACHE_FILE")"
+  mkdir -p "$d" 2>/dev/null || return 0
+  tmp="$d/.module-states.$$"
+  for id in "${!_MODULE_STATE_MEMO[@]}"; do
+    printf '%s\t%s\n' "$id" "${_MODULE_STATE_MEMO[$id]}"
+  done > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 0; }
+  mv -f "$tmp" "$MS_CACHE_FILE" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+}
+
+_ms_load(){
+  [[ ${_MS_LOADED:-0} == 1 ]] && return 0
+  _MS_LOADED=1
+  [[ -r $MS_CACHE_FILE ]] || return 0
+  local id val ts lines=0
+  while IFS=$'\t' read -r id val ts; do
+    lines=$((lines + 1))
+    [[ -n $id && -n ${ts:-} ]] || continue
+    _MODULE_STATE_MEMO[$id]="$val"$'\t'"$ts"
+  done < "$MS_CACHE_FILE"
+  # Collapse duplicate appends once the file has grown past the point where
+  # rereading it is cheaper than rewriting it.
+  if (( lines > 200 && lines > ${#_MODULE_STATE_MEMO[@]} * 2 )); then
+    _ms_rewrite
+  fi
+  return 0
+}
+
+# module_state_cached <id>: module_state(), memoised on disk and in-process.
+# module_state_cached_into <id> <varname> is the fork-free form used by Status
+# (45 rows would otherwise be 45 command substitutions).
+module_state_cached(){
+  module_state_cached_into "$1" MS_STATE
+  printf '%s\n' "$MS_STATE"
+}
+module_state_cached_into(){
+  local id="$1" outvar="$2" now entry val ts
+  _ms_load
+  now="${_MS_NOW:-$(date +%s)}"
+  _MS_NOW="$now"
+  entry="${_MODULE_STATE_MEMO[$id]:-}"
+  if [[ -n $entry ]]; then
+    val="${entry%$'\t'*}"
+    ts="${entry##*$'\t'}"
+    if [[ $ts =~ ^[0-9]+$ ]] && (( now - ts >= 0 && now - ts <= MS_CACHE_TTL )); then
+      printf -v "$outvar" '%s' "$val"
+      return 0
+    fi
+  fi
+  # A detector that fails is NOT cached: an empty answer from a transient
+  # error must not hide the module for the whole TTL.
+  if val="$(module_state "$id" 2>/dev/null)"; then
+    _MODULE_STATE_MEMO[$id]="$val"$'\t'"$now"
+    mkdir -p "$(dirname "$MS_CACHE_FILE")" 2>/dev/null || true
+    printf '%s\t%s\t%s\n' "$id" "$val" "$now" >> "$MS_CACHE_FILE" 2>/dev/null || true
+  fi
+  printf -v "$outvar" '%s' "$val"
 }
 # ── Uninstall cache key: the DETECTED STATE the tree is built from ─────────
 # tree_fingerprint covers the catalog, the repo version, the fixes/tweaks count
@@ -915,6 +1068,10 @@ uninstall_state_signature(){
     [[ -n $pp ]] || continue
     pkg_has "$pp" && sig+="pre:$pp|"
   done < <(stock_preinstalls)
+  # Theme folders, so deleting/creating a theme invalidates the cached tree.
+  while IFS= read -r mid; do [[ -n $mid ]] && sig+="utheme:$mid|"; done < <(theming_created_themes)
+  achraf67_theme_present && sig+="utheme:achraf67|"
+  while IFS= read -r mid; do [[ -n $mid ]] && sig+="dtheme:$mid|"; done < <(stock_themes_present)
   printf '%s' "$sig"
 }
 
@@ -959,6 +1116,7 @@ _uninstall_tree(){
     # `menu`, `fixes` and `tweaks` are not modules: nothing to uninstall there
     # (fixes/tweaks get their own applied-only blocks further down).
     [[ $id == menu || $id == fixes || $id == tweaks ]] && continue
+    [[ $id == themes ]] && continue
     local -a keys=()
     case $id in
       tuis)
@@ -1006,6 +1164,42 @@ _uninstall_tree(){
         "$(json_str "$(setup_folder_for "$id" "$e")")" "$(json_str "$e")" "$(json_str "$name")" "$(json_str "$info")")")
     done
   done
+  # ── Themes: user (created here) and defaults (stock Omarchy) ──
+  # Both are nested under a single "Themes" folder, exactly like audio-stack
+  # under mosquito. The parent is only emitted when at least one child exists,
+  # so Uninstall never shows an empty Themes folder.
+  local -a _ukeys=() _dkeys=()
+  local _tn
+  achraf67_theme_present && _ukeys+=("achraf67")
+  while IFS= read -r _tn; do [[ -n $_tn ]] && _ukeys+=("theme:$_tn"); done < <(theming_created_themes)
+  while IFS= read -r _tn; do [[ -n $_tn ]] && _dkeys+=("$_tn"); done < <(stock_themes_present)
+  if ((${#_ukeys[@]} || ${#_dkeys[@]})); then
+    folders+=("Themes"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+      "$(json_str themes)" "$(json_str "Themes")" false)")
+  fi
+  if ((${#_ukeys[@]})); then
+    folders+=("user"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s,"parent":%s}' \
+      "$(json_str user)" "$(json_str user)" false "$(json_str themes)")")
+    local _k _lab _info
+    for _k in "${_ukeys[@]}"; do
+      case $_k in
+        achraf67) _lab="achraf67 - v$(module_version achraf67)"; _info="$(module_desc achraf67)" ;;
+        theme:*)  _lab="${_k#theme:}"; _info="theme created with Theming" ;;
+      esac
+      items+=("user/$_lab"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+        "$(json_str user)" "$(json_str "$_k")" "$(json_str "$_lab")" "$(json_str "$_info")")")
+    done
+  fi
+  if ((${#_dkeys[@]})); then
+    folders+=("defaults"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s,"parent":%s}' \
+      "$(json_str defaults)" "$(json_str defaults)" false "$(json_str themes)")")
+    for _tn in "${_dkeys[@]}"; do
+      items+=("defaults/$_tn"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+        "$(json_str defaults)" "$(json_str "stocktheme:$_tn")" \
+        "$(json_str "$_tn - v$(module_version "$_tn")")" \
+        "$(json_str "Omarchy default theme — remove from your theme directory")")")
+    done
+  fi
   # The nested audio-stack folder: only the installed children are listed, and
   # Enter on the folder removes the whole bundle.
   local -a akeys=()
@@ -1112,9 +1306,16 @@ _uninstall_tree(){
 cmd_backups(){
   local -a files=()
   local f sz name date
-  for f in "$BACKUP_DIR"/omarchy-backup-*.tar.gz*; do [[ -f $f ]] && files+=("$f"); done
-  for ((i=${#files[@]}-1; i>=0; i--)); do
-    f="${files[$i]}"; name="$(basename "$f")"
+  printf '{"backup_dir":%s}\n' "$(json_str "$BACKUP_DIR")"
+  # Newest first by the timestamp in the NAME, not mtime.
+  mapfile -t files < <(
+    for f in "$BACKUP_DIR"/mosquitomarchy-backup-*.tar.gz* \
+             "$BACKUP_DIR"/omarchy-backup-*.tar.gz*; do
+      [[ -f $f ]] && printf '%s\t%s\n' "$(backup_sort_key "$f")" "$f"
+    done | sort -r | cut -f2-
+  )
+  for f in "${files[@]}"; do
+    name="$(basename "$f")"
     sz=$(du -h "$f" | cut -f1)
     date="$(backup_desc "$name")"
     printf '{"file":%s,"size":%s,"date":%s}\n' \
@@ -1178,89 +1379,162 @@ setup_folder_for(){
   printf '%s' "$cat"
 }
 
-# ─── Backup content options (installed TUIs + facts) ──────────────────────
-# Emits the same content tree the old interactive backup asked about, so the
-# TUI can offer it. Each item's key IS the exact "apps.selected" line
-# ("APP pkg" / "TUI pkg" / "WEB name|url|icon"); the TUI writes back the
-# checked keys and passes the file to `backup --selection=`.
+# ─── Backup content options (installed packages + facts) ──────────────────
+# Emits the installed-only tree the "Packages, Themes & tweaks" page shows:
+# every app, mosquito tool, plugin, theme, TUI, tweak and VM mosquitomarchy
+# installed, grouped exactly like Setup. Each item's key is an installable
+# Setup key, so the selection can be replayed by a restore. Items carry
+# "checked" (the saved selection, or everything on a first run).
+# Rewrite one tree JSON line for the backup page:
+#   - drop the stock-themes folder entirely
+#   - call the created-theme folder "Themes"
+#   - use theme:<name> keys for themes (including achraf67)
+#   - strip the tweak: prefix
+# Sets BK_SKIP / BK_LINE / BK_FOLDER / BK_KEY.
+# Third-party Omarchy shell plugins installed by the user (NOT first-party
+# Omarchy, NOT mosquitOmarchy's own mosquito.* plugins, and NOT the plugins a
+# mosquitOmarchy module installed — those already have their own module row).
+# They live in ~/.config/omarchy/plugins; each has a manifest.
+MOSQ_INSTALLED_PLUGINS=(
+  kirklandgee.downloads
+  sendaljpt.taskq
+  io.github.beresn.process-killer
+  lbssousa.omaskpass
+  lbssousa.omapin
+  fenrirrhogar.omarchy360
+)
+third_party_plugins(){
+  local dir="$HOME/.config/omarchy/plugins" d n id
+  [[ -d $dir ]] || return 0
+  local -a builtin=()
+  while IFS= read -r d; do
+    id="$(jq -r '.id // empty' "$d" 2>/dev/null)"
+    [[ -n $id ]] && builtin+=("$id")
+  done < <(find /usr/share/omarchy/shell/plugins -name manifest.json -print 2>/dev/null)
+  for d in "$dir"/*/; do
+    [[ -d $d ]] || continue
+    n="$(basename "$d")"
+    [[ $n == .* ]] && continue
+    [[ $n == mosquito.* || $n == omarchy.* ]] && continue
+    [[ -f "$d/manifest.json" ]] || continue
+    for id in "${builtin[@]:-}"; do [[ $id == "$n" ]] && continue 2; done
+    for id in "${MOSQ_INSTALLED_PLUGINS[@]}"; do [[ $id == "$n" ]] && continue 2; done
+    printf '%s\n' "$n"
+  done
+}
+plugin_label(){ # <id> -> display name
+  local id="$1" mf="$HOME/.config/omarchy/plugins/$1/manifest.json" n
+  n="$(jq -r '.barWidget.displayName // .name // empty' "$mf" 2>/dev/null | head -1)"
+  printf '%s' "${n:-$id}"
+}
+
+_bp_prepare_line(){
+  BK_SKIP=0; BK_LINE="$1"; BK_FOLDER=""; BK_KEY=""
+  [[ $BK_LINE == *'"folder":"defaults"'* ]] && { BK_SKIP=1; return; }
+  if [[ $BK_LINE == *'"folder":"user"'* ]]; then
+    # The parent Themes folder is the backup row; the user child folder itself
+    # is not emitted. Its ITEMS are reparented to themes.
+    if [[ $BK_LINE != *'"key":'* ]]; then BK_SKIP=1; return; fi
+    BK_LINE="${BK_LINE/\"folder\":\"user\"/\"folder\":\"themes\"}"
+  fi
+  # If nothing under user survived, the uninstall tree's Themes parent has
+  # nothing to offer the backup (defaults are not backed up).
+  if [[ $BK_LINE == *'"folder":"themes"'* && $BK_LINE != *'"key":'* && ${BK_HAS_USER:-0} == 0 ]]; then
+    BK_SKIP=1; return
+  fi
+  BK_FOLDER="$(sed -n 's/.*"folder":"\([^"]*\)".*/\1/p' <<<"$BK_LINE")"
+  [[ $BK_LINE == *'"key":'* ]] || return
+  BK_KEY="$(sed -n 's/.*"key":"\([^"]*\)".*/\1/p' <<<"$BK_LINE")"
+  if [[ $BK_FOLDER == themes && $BK_KEY == achraf67 ]]; then
+    BK_KEY="theme:achraf67"
+    BK_LINE="${BK_LINE/\"key\":\"achraf67\"/\"key\":\"theme:achraf67\"}"
+  fi
+  if [[ $BK_KEY == tweak:* ]]; then
+    BK_KEY="${BK_KEY#tweak:}"
+    BK_LINE="${BK_LINE/\"key\":\"tweak:/\"key\":\"}"
+  fi
+}
+
 cmd_backup_options(){
-  load_catalog || true
-  detect_installed_apps
-  local had_prev=0
-  load_previous_selection 2>/dev/null && had_prev=1
-  # The ticks the user last touched on this screen. Stronger than had_prev: an
-  # archive is a record of a backup that RAN, while this is a record of an edit
-  # that may never have been applied — and it is the newer of the two whenever
-  # both exist, because saving happens on every toggle.
+  TREE_MODE=uninstall
   local -a SAVED_SEL=()
   local has_saved=0
   load_saved_selection && has_saved=1
+  # Older saves held bare keys ("TUI foo"); the current format is
+  # "@folder key". Ignoring the old shape is what re-defaults a machine to
+  # "everything" instead of opening on a page with nothing ticked.
+  if ((has_saved)); then
+    local old=1 sk
+    for sk in "${SAVED_SEL[@]:-}"; do
+      [[ $sk == @* ]] && { old=0; break; }
+    done
+    ((old)) && { SAVED_SEL=(); has_saved=0; }
+  fi
 
-  # true/false for one row. Three sources, most recent first: what the user just
-  # ticked, then the last archive, then "everything" on a first run.
-  #
-  #   $1  the item KEY      — "APP vlc", "TUI septabee", "WEB WhatsApp|…|icon"
-  #   $2  the bare package/web name, what PREV_* holds
-  #   $3  the NAME of the PREV_* array to walk (${!3[@]} walks an array by name,
-  #       which is how one helper serves the APP/TUI/WEB lists)
-  #
-  # The key and the bare name are both arguments rather than one derived from the
-  # other on purpose: the saved selection stores KEYS, and the previous-archive
-  # lists store NAMES. Deriving one from the other silently compared "TUI
-  # septabee" against "septabee" and reported every row unticked.
-  backup_checked(){
-    local key="$1" name="$2" listname="$3" p
-    if ((has_saved)); then
-      for p in "${SAVED_SEL[@]:-}"; do [[ $p == "$key" ]] && { printf true; return; }; done
-      printf false; return
-    fi
-    if ((had_prev)); then
-      for p in "${!listname[@]}"; do [[ $p == "$name" ]] && { printf true; return; }; done
-      printf false; return
-    fi
-    printf true
-  }
   local keepass=false zen=false reaper=false
-  # The screen only shows a row for what the backup can actually take, and the
-  # backup's own conditions are the reference (see do_backup): KeePassXC needs
-  # the package AND its config folder, Zen needs the app AND a live profile.
-  # A machine without either shows neither row, instead of offering a toggle
-  # that silently does nothing.
   if pkg_has keepassxc && [[ -d "$HOME/.config/keepassxc" ]]; then keepass=true; fi
   if pkg_has zen-browser-bin && [[ -f "$HOME/.config/zen/profiles.ini" ]] && [[ -d "$HOME/.config/zen" ]]; then zen=true; fi
-  # REAPER: present when it is installed or its config folder is there. The
-  # screen only offers the row for what a backup can actually take.
   if command -v reaper >/dev/null 2>&1 || [[ -d "$HOME/.config/REAPER" ]]; then reaper=true; fi
   printf '{"opts":true,"keepass":%s,"zen":%s,"reaper":%s}\n' "$keepass" "$zen" "$reaper"
 
-  local e name label checked p
-  # Split the installed TUIs into the ones filed under Apps and the ones that
-  # stay in the TUIs folder, so neither folder is emitted empty.
-  local -a tui_apps=() tui_tuis=()
-  for e in "${INSTALLED_TUI[@]:-}"; do
-    if _filed_under_apps "${e%%|*}"; then tui_apps+=("$e"); else tui_tuis+=("$e"); fi
-  done
+  local line key folder chk k tree
+  tree="$(mq_cached uninstall-tree 600 cmd_uninstall_tree | grep -vE '"folder":"(patches|fixes|preinstalls)"')"
+  BK_HAS_USER=0
+  grep -q '"folder":"user","key"' <<<"$tree" && BK_HAS_USER=1
 
-  if ((${#tui_apps[@]})); then
-    printf '{"folder":"apps","label":"Apps"}\n'
-    # A TUI filed under Apps (septabee). Its previous-selection check reads
-    # PREV_TUI, because that is the list its key belongs to.
-    for e in "${tui_apps[@]}"; do
-      name="${e%%|*}"; label="${e#*|}"
-      checked="$(backup_checked "TUI $name" "$name" PREV_TUI)"
-      printf '{"folder":"apps","key":%s,"label":%s,"checked":%s}\n' \
-        "$(json_str "TUI $name")" "$(json_str "$label")" "$checked"
+  # Third-party shell plugins go under the existing Plugins folder. They are
+  # data, not modules: backed up as their plugin directories and restored by
+  # extraction, not through the package installer.
+  local -a _thirdparty=()
+  while IFS= read -r line; do [[ -n $line ]] && _thirdparty+=("$line"); done < <(third_party_plugins)
+  if ((${#_thirdparty[@]})); then
+    grep -q '"folder":"plugins"' <<<"$tree" \
+      || tree+=$'\n'"$(printf '{"folder":%s,"label":%s,"accent":%s}' "$(json_str plugins)" "$(json_str Plugins)" false)"
+    local _pid _plabel
+    for _pid in "${_thirdparty[@]}"; do
+      _plabel="$(plugin_label "$_pid")"
+      tree+=$'\n'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+        "$(json_str plugins)" "$(json_str "omarchyplugin:$_pid")" \
+        "$(json_str "$_plabel")" \
+        "$(json_str "third-party Omarchy shell plugin (not installed by mosquitomarchy)")")"
     done
   fi
-  if ((${#tui_tuis[@]})); then
-    printf '{"folder":"tuis","label":"TUIs"}\n'
-    for e in "${tui_tuis[@]}"; do
-      name="${e%%|*}"; label="${e#*|}"
-      checked="$(backup_checked "TUI $name" "$name" PREV_TUI)"
-      printf '{"folder":"tuis","key":%s,"label":%s,"checked":%s}\n' \
-        "$(json_str "TUI $name")" "$(json_str "$label")" "$checked"
-    done
+  # A saved selection made against an older tree (before modules moved into
+  # this screen) must not open the page with everything UNticked: if none of
+  # its keys exist here any more, treat it as "no saved selection" and start
+  # from everything.
+  if ((has_saved)); then
+    local matched=0
+    while IFS= read -r line; do
+      _bp_prepare_line "$line"
+      ((BK_SKIP)) && continue
+      [[ -n $BK_KEY ]] || continue
+      for k in "${SAVED_SEL[@]:-}"; do
+        [[ $k == "@$BK_FOLDER $BK_KEY" ]] && { matched=1; break; }
+      done
+    done <<<"$tree"
+    ((matched)) || { SAVED_SEL=(); has_saved=0; }
   fi
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    _bp_prepare_line "$line"
+    ((BK_SKIP)) && continue
+    line="$BK_LINE"
+    # Folder rows have no key: print them as they are.
+    if [[ -z $BK_KEY ]]; then
+      printf '%s\n' "$line"
+      continue
+    fi
+    folder="$BK_FOLDER"; key="$BK_KEY"
+    chk=true
+    if ((has_saved)); then
+      chk=false
+      for k in "${SAVED_SEL[@]:-}"; do
+        [[ $k == "@$folder $key" ]] && { chk=true; break; }
+      done
+    fi
+    printf '%s\n' "${line%\}},\"checked\":$chk}"
+  done <<<"$tree"
 }
 
 # DaVinci Resolve state written by setup-davinci.sh. Lets the update check
@@ -1826,6 +2100,7 @@ _verify_selection_installed(){ # cat keys...
       WEB\ *)  : ;;  # legacy backup line: webapps are no longer managed
       PLUG\ *) : ;;  # Omarchy shell plugin: no simple id check
       theme)   : ;;  # theme build is verified by the script's own output
+      theme:*|stocktheme:*) : ;; # theme install/uninstall has its own path
       *)
                # The FINAL STATE decides (ultra-optimized check: one
                # module_state call per module, direct disk probes). `ok` =
@@ -1897,7 +2172,7 @@ cmd_install(){
       local -a notok=()
       local nk
       for nk in "${CATEGORY_SELECTED[@]:-}"; do
-        [[ -n $nk && $nk != TUI\ * && $nk != WEB\ * && $nk != PLUG\ * && $nk != theme ]] || continue
+        [[ -n $nk && $nk != TUI\ * && $nk != WEB\ * && $nk != PLUG\ * && $nk != theme && $nk != theme:* && $nk != stocktheme:* ]] || continue
         local nst; nst="$(module_state "$nk" 2>/dev/null || true)"; nst="${nst%%:*}"
         [[ -z $nst || $nst == ok ]] || notok+=("$nk ($nst)")
       done
@@ -2034,10 +2309,18 @@ cmd_apply(){
     local -a keys=("${arr[@]:1}")
     case $folder in
       fixes)
-        ((${#keys[@]})) && cmd_fixes_run "${keys[@]}"
+        # Restore instructions carry the uninstall tree's "fix:" prefix; the
+        # runner wants bare ids.
+        local -a fk=()
+        local k
+        for k in "${keys[@]:-}"; do [[ -n $k ]] && fk+=("${k#fix:}"); done
+        ((${#fk[@]})) && cmd_fixes_run "${fk[@]}"
         ;;
       tweaks)
-        ((${#keys[@]})) && cmd_tweaks_run "${keys[@]}"
+        local -a tk=()
+        local k
+        for k in "${keys[@]:-}"; do [[ -n $k ]] && tk+=("${k#tweak:}"); done
+        ((${#tk[@]})) && cmd_tweaks_run "${tk[@]}"
         ;;
       menu)
         cmd_menu_entry
@@ -2204,6 +2487,7 @@ cmd_update_modules(){
 # uninstall tree (APP/TUI/WEB …) are routed to the apps module's uninstaller.
 cmd_uninstall(){
   local -a modules=() catalog=() patches=() fixids=() tweakids=() menuops=() prestock=()
+  local -a themekeys=() stockthemes=()
   local id
   # Orientation first: elevation prompts (sudo password dialog) open on the
   # DESKTOP, not inside the TUI, so a user staring at the spinner never sees
@@ -2227,6 +2511,8 @@ cmd_uninstall(){
       patch:*) patches+=("${id#patch:}") ;;
       fix:*)   fixids+=("${id#fix:}") ;;
       tweak:*) tweakids+=("${id#tweak:}") ;;
+      theme:*) themekeys+=("${id#theme:}") ;;
+      stocktheme:*) stockthemes+=("${id#stocktheme:}") ;;
       menu:*|shortcut) menuops+=("$id") ;;
       preinstall:*) prestock+=("${id#preinstall:}") ;;
       *) modules+=("$id") ;;
@@ -2287,6 +2573,12 @@ cmd_uninstall(){
       esac
     done
   fi
+  if ((${#themekeys[@]})); then
+    cmd_theme_remove_any "${themekeys[@]}" || MODULE_FAILURES=$((MODULE_FAILURES + 1))
+  fi
+  if ((${#stockthemes[@]})); then
+    cmd_theme_remove_any "${stockthemes[@]}" || MODULE_FAILURES=$((MODULE_FAILURES + 1))
+  fi
   if ((${#catalog[@]})); then
     local entry pkg script
     for entry in "${catalog[@]}"; do
@@ -2323,13 +2615,17 @@ cmd_menu_entry(){
 #   --selection=FILE       apps.selected content (the TUI's checkbox tree)
 #   --name=TEXT            label for the archive; sanitised into the filename
 cmd_backup(){
-  local vst="list" keepass="yes" zen="yes" reaper="settings" sel="" name="" a
+  local vst="list" keepass="yes" keepass_settings="yes" zen="yes" reaper="settings"
+  local keybindings="custom" sel="" name="" a hyprland="yes"
   for a in "$@"; do
     case $a in
       --vst=*) vst="${a#*=}" ;;
       --keepass=*) keepass="${a#*=}" ;;
+      --keepass-settings=*) keepass_settings="${a#*=}" ;;
       --zen=*) zen="${a#*=}" ;;
       --reaper=*) reaper="${a#*=}" ;;
+      --keybindings=*) keybindings="${a#*=}" ;;
+      --hyprland=*) hyprland="${a#*=}" ;;
       --selection=*) sel="${a#*=}" ;;
       --name=*) name="${a#*=}" ;;
     esac
@@ -2340,12 +2636,18 @@ cmd_backup(){
   # makes the whole && list return 1, which is a landmine that moves as soon
   # as the caller stops swallowing the status.
   if [[ $keepass == no ]]; then export BACKUP_SKIP_KEEPASS=1; fi
+  if [[ $keepass_settings == no ]]; then export BACKUP_SKIP_KEEPASS_SETTINGS=1; fi
   if [[ $zen == no ]]; then export BACKUP_SKIP_ZEN=1; fi
+  if [[ $hyprland == no ]]; then export BACKUP_SKIP_HYPR=1; fi
   # REAPER depth: none | settings | full. An unknown value is the default
   # rather than an error: a malformed preference must not kill a backup.
   case "$reaper" in
     none|full) export BACKUP_REAPER_MODE="$reaper" ;;
     *)         export BACKUP_REAPER_MODE="settings" ;;
+  esac
+  case "$keybindings" in
+    all|custom|no) export BACKUP_KEYBINDINGS="$keybindings" ;;
+    *)             export BACKUP_KEYBINDINGS="custom" ;;
   esac
   if [[ -n $sel && -f $sel ]]; then export BACKUP_APPS_SELECTION_FILE="$sel"; fi
   # Empty is meaningful here (an unnamed backup falls back to the dated name),
@@ -2354,10 +2656,115 @@ cmd_backup(){
   do_backup || true
 }
 
+# What a backup archive actually contains. Used before the restore-options
+# page, so sections that were never backed up are not offered at all. Encrypted
+# archives are opened with OMARCHY_BACKUP_PASSPHRASE (the TUI asked for it).
+cmd_backup_manifest(){
+  local file="${1:-}" arc tmp outer cfg_list
+  [[ -n $file ]] || { err "backup-manifest: missing backup name"; return 1; }
+  arc="$file"
+  [[ -f $arc ]] || arc="$BACKUP_DIR/$file"
+  [[ -f $arc ]] || { err "backup-manifest: $file not found"; return 1; }
+  tmp="$(mktemp -d)"
+  # EXIT, not RETURN: RETURN would fire on every nested function return and
+  # delete the temp dir while the manifest is still being built.
+  trap "rm -rf '$tmp'" EXIT
+  if [[ $arc == *.gpg ]]; then
+    [[ -n ${OMARCHY_BACKUP_PASSPHRASE:-} ]] || { err "backup-manifest: encrypted archive needs a passphrase"; return 1; }
+    local plain="$tmp/archive.tar.gz"
+    if ! printf '%s' "$OMARCHY_BACKUP_PASSPHRASE" | gpg --batch --yes --decrypt \
+        --passphrase-fd 0 -o "$plain" "$arc" 2>/dev/null; then
+      err "backup-manifest: decryption failed (wrong passphrase?)"
+      return 1
+    fi
+    arc="$plain"
+  fi
+  outer="$tmp/outer.list"
+  cfg_list="$tmp/config.list"
+  tar tzf "$arc" > "$outer" 2>/dev/null || { err "backup-manifest: unreadable archive"; return 1; }
+  : > "$cfg_list"
+  tar xOf "$arc" --wildcards '*config-backup.tar.gz' 2>/dev/null \
+    | tar tzf - > "$cfg_list" 2>/dev/null || true
+
+  local vst=false reaper=false zen=false keepass=false keepass_settings=false themes=false config=false
+  local omarchy_plugins=false hyprland=false
+  local keybindings=none
+  grep -qE '(^|/)config-backup\.tar\.gz$' "$outer" && config=true
+  grep -qE '(^|/)plugins(/(plugins|plugins-vst)\.tar\.gz)$' "$outer" && vst=true
+  grep -qE '(^|/)reaper/reaper\.tar\.gz$' "$outer" && reaper=true
+  grep -qE '(^|/)\.config/REAPER(/|$)' "$cfg_list" && reaper=true
+  grep -qE '(^|/)\.config/zen(/|$)' "$cfg_list" && zen=true
+  grep -qE '(^|/)Documents/Passwords\.kdbx$' "$cfg_list" && keepass=true
+  grep -qE '(^|/)\.config/keepassxc(/|$)' "$cfg_list" && keepass_settings=true
+  grep -qE '(^|/)themes/themes\.tar\.gz$' "$outer" && themes=true
+  grep -qE '(^|/)omarchy-plugins/plugins\.tar\.gz$' "$outer" && omarchy_plugins=true
+  grep -qE '(^|/)hyprland/hyprland\.tar\.gz$' "$outer" && hyprland=true
+  grep -qE '(^|/)\.config/hypr(/|$)' "$cfg_list" && hyprland=true
+  grep -qE '(^|/)keybindings/all\.lua$' "$outer" && keybindings=all
+  if [[ $keybindings == none ]] && grep -qE '(^|/)keybindings/custom\.lua$' "$outer"; then
+    keybindings=custom
+  fi
+
+  printf '{"config":%s,"vst":%s,"reaper":%s,"zen":%s,"keepass":%s,"keepass_settings":%s,"themes":%s,"omarchy_plugins":%s,"hyprland":%s,"keybindings":%s}\n' \
+    "$config" "$vst" "$reaper" "$zen" "$keepass" "$keepass_settings" "$themes" "$omarchy_plugins" "$hyprland" "$(json_str "$keybindings")"
+}
+
+# Is it worth updating before a restore? Two independent answers:
+#   repo_update    — the mosquitomarchy scripts have a newer HEAD
+#   omarchy_update — Omarchy itself has an update, but only when the machine is
+#                    on the packaged/stable branch. A dev checkout on another
+#                    branch is deliberately not checked.
+cmd_restore_update_check(){
+  local repo=false omarchy=false branch=""
+  repo_update_avail && repo=true
+  branch="$(omarchy-version-branch 2>/dev/null || true)"
+  if [[ -z $branch ]]; then
+    timeout 25 omarchy-update-available >/dev/null 2>&1 && omarchy=true
+  fi
+  printf '{"repo_update":%s,"omarchy_update":%s}\n' "$repo" "$omarchy"
+}
+
 # Restore a backup file by name (from cmd_backups).
+# Options (all optional):
+#   --mode=safe|full     full overwrites; safe only adds missing files and
+#                        skips already-installed apps (default: full)
+#   --vst=yes|no         deploy the archived plugin folders
+#   --reaper=yes|no      deploy REAPER (installing it first in full mode)
+#   --zen=yes|no         deploy the Zen settings
+#   --keepass=yes|no     deploy KeePassXC settings + database
 cmd_restore(){
-  local file="${1:-}"
+  local file="" mode="full" vst="yes" reaper="yes" zen="yes" keepass="yes"
+  local keepass_settings="yes" themes="yes" omarchy_plugins="yes" hyprland="yes"
+  local keybindings="custom" a
+  for a in "$@"; do
+    case $a in
+      --mode=*) mode="${a#*=}" ;;
+      --vst=*) vst="${a#*=}" ;;
+      --reaper=*) reaper="${a#*=}" ;;
+      --zen=*) zen="${a#*=}" ;;
+      --keepass=*) keepass="${a#*=}" ;;
+      --keepass-settings=*) keepass_settings="${a#*=}" ;;
+      --themes=*) themes="${a#*=}" ;;
+      --omarchy-plugins=*) omarchy_plugins="${a#*=}" ;;
+      --hyprland=*) hyprland="${a#*=}" ;;
+      --keybindings=*) keybindings="${a#*=}" ;;
+      -*) continue ;;
+      *) [[ -z $file ]] && file="$a" ;;
+    esac
+  done
   [[ -n $file ]] || { err "mosquitomarchy-actions restore: missing backup name."; exit 1; }
+  [[ $mode == safe ]] || mode=full
+  case $keybindings in all|custom|none) ;; *) keybindings=custom ;; esac
+  RESTORE_MODE="$mode"
+  RESTORE_DEPLOY_VST="$vst"
+  RESTORE_DEPLOY_REAPER="$reaper"
+  RESTORE_DEPLOY_ZEN="$zen"
+  RESTORE_DEPLOY_KEEPASS="$keepass"
+  RESTORE_DEPLOY_KEEPASS_SETTINGS="$keepass_settings"
+  RESTORE_DEPLOY_THEMES="$themes"
+  RESTORE_DEPLOY_OMARCHY_PLUGINS="$omarchy_plugins"
+  RESTORE_DEPLOY_HYPRLAND="$hyprland"
+  RESTORE_KEYBINDINGS="$keybindings"
   YES=1
   RESTORE_FILE="$file"
   restore_flow || true
@@ -2567,7 +2974,7 @@ _space_pkgs(){
     install:jamjamjam-plugin|install:remove-ai|install:hyprmod|\
     install:keybindings|install:battery|install:battery-management|\
     install:better-pip|install:mega-caffeine|install:brightness|\
-    install:achraff|install:touchpad|install:levels-guard|\
+    install:achraf67|install:touchpad|install:levels-guard|\
     install:mosquitomarchy-update)
       return 3 ;;
     uninstall:signal)    printf '%s\n' signal-desktop ;;
@@ -2581,7 +2988,7 @@ _space_pkgs(){
     uninstall:pipewire-settings|uninstall:jamjamjam-plugin|\
     uninstall:remove-ai|uninstall:hyprmod|uninstall:keybindings|\
     uninstall:battery|uninstall:battery-management|uninstall:better-pip|\
-    uninstall:mega-caffeine|uninstall:brightness|uninstall:achraff|\
+    uninstall:mega-caffeine|uninstall:brightness|uninstall:achraf67|\
     uninstall:touchpad|uninstall:mx-master|uninstall:mixbay|\
     uninstall:ableton|uninstall:ableton-move-manager|\
     uninstall:windows-vm|uninstall:macos-vm|uninstall:omarchy-vm|\
@@ -2765,16 +3172,18 @@ shift || true
 # ─── Crash-notification AI-diag toggle ─────────────────────────────────────
 # Read or set the "crash notifications with AI diagnosis" switch: the log
 # file is ALWAYS written; only the desktop TOAST is off-able. State file:
-# ~/.local/state/mosquitomarchy/crash-notify ("off" = no toasts, "on"/absent
-# default = clickable toast "diagnose with AI"). The mosquitomarchy TUI's
-# Setup screen toggles the flag through this action.
+# ~/.local/state/mosquitomarchy/crash-notify ("on" = clickable toast
+# "diagnose with AI"; absent or "off" = no toast, the default). The mosquitomarchy
+# TUI's Extras screen toggles the flag through this action.
 cmd_crash_notify() {
   local flag="$HOME/.local/state/mosquitomarchy/crash-notify"
   mkdir -p "$(dirname "$flag")" 2>/dev/null || true
   local how="${1:-get}"
   case "$how" in
+    # Off by default on a fresh install: only an explicit "on" enables the
+    # toast. The dated crash log is always written regardless.
     get|"")
-      [[ -f $flag && "$(cat "$flag" 2>/dev/null)" == off ]] && val=false || val=true ;;
+      [[ -f $flag && "$(cat "$flag" 2>/dev/null)" == on ]] && val=true || val=false ;;
     on|enable) printf 'on\n' > "$flag"; val=true ;;
     off|disable) printf 'off\n' > "$flag"; val=false ;;
     *) err "crash-notify <get|on|off>"; return 1 ;;
@@ -2806,10 +3215,9 @@ cmd_ai_removed() {
   if ! omarchy plugin list 2>/dev/null | grep -qiE '^omarchy\.agents\b.*\benabled\b'; then
     removed=true
   fi
-  # 2) the AI-diagnosis crash toasts.
-  if [[ $("$0" crash-notify 2>/dev/null | grep -c '"crashNotify": true') -eq 0 ]]; then
-    removed=true
-  fi
+  # 2) the AI-diagnosis crash toasts are a USER PREFERENCE now (off by
+  # default), not evidence that the agentic surface was removed. Counting them
+  # here made a fresh install look like a completed removal.
 
   # The remove-all-ai marker is deliberately NOT consulted: it records that the
   # removal RAN, not that anything is still missing. Keeping it in the answer
@@ -3066,67 +3474,96 @@ cmd_theme_remove_any(){
 }
 
 
+# ─── Read-only query cache ──────────────────────────────────────────────────
+# The repeated screens (Status, Health, Update, Backup options, backups) were
+# rebuilt by a fresh backend subprocess every time, and detection dominates
+# their cost. APM solved the same problem with a disk cache; the same idea
+# applies here. Entries are short-lived and every mutating action clears the
+# directory, so a cached answer can never survive an install/uninstall.
+MQ_QUERY_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/mosquitomarchy/query-cache"
+mq_cache_clear(){ rm -rf "$MQ_QUERY_CACHE" 2>/dev/null || true; }
+mq_cached(){
+  local key="$1" ttl="$2"; shift 2
+  local f="$MQ_QUERY_CACHE/$key" out
+  if [[ -f $f ]]; then
+    local age=$(( $(date +%s) - $(stat -c %Y "$f" 2>/dev/null || echo 0) ))
+    if (( age >= 0 && age <= ttl )); then cat "$f"; return 0; fi
+  fi
+  if out="$("$@")"; then
+    mkdir -p "$MQ_QUERY_CACHE" 2>/dev/null || true
+    printf '%s\n' "$out" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f" 2>/dev/null || rm -f "$f.tmp" 2>/dev/null
+    printf '%s\n' "$out"
+    return 0
+  fi
+  printf '%s\n' "$out"
+  return 1
+}
+
 case "$sub" in
   space)                    cmd_space "${1:-}" "${@:2}" ;;
-  status)                   cmd_status ;;
+  status)                   mq_cached status 300 cmd_status ;;
   categories)               cmd_categories ;;
   candidates)               cmd_candidates "${1:-}" ;;
   missing-assets)           cmd_missing_assets "${1:-}" "${@:2}" ;;
   patches)                  cmd_patches "${1:-}" "${@:2}" ;;
-  health)                   cmd_health ;;
-  heal)                     cmd_heal "$@" ;;
+  health)                   mq_cached health 20 cmd_health ;;
+  heal) mq_cache_clear; cmd_heal "$@" ;;
   kb-list)                  cmd_kb_list ;;
   kb-free)                  cmd_kb_free ;;
-  kb-add)                   cmd_kb_add "$@" ;;
-  kb-remove)                cmd_kb_remove "$@" ;;
-  kb-reset)                 cmd_kb_reset ;;
-  kb-reload)                cmd_kb_reload ;;
+  kb-add) mq_cache_clear; cmd_kb_add "$@" ;;
+  kb-remove) mq_cache_clear; cmd_kb_remove "$@" ;;
+  kb-reset) mq_cache_clear; cmd_kb_reset ;;
+  kb-reload) mq_cache_clear; cmd_kb_reload ;;
   fixes)                    cmd_fixes ;;
   tweaks)                   cmd_tweaks ;;
-  setup)                    cmd_setup ;;
-  uninstall-tree)           cmd_uninstall_tree ;;
+  setup)                    mq_cached setup-tree 600 cmd_setup ;;
+  uninstall-tree)           mq_cached uninstall-tree 600 cmd_uninstall_tree ;;
   preinstalls)              cmd_preinstalls ;;
-  preinstalls-remove)       cmd_preinstalls_remove "$@" ;;
-  backup-options)           cmd_backup_options ;;
+  preinstalls-remove) mq_cache_clear; cmd_preinstalls_remove "$@" ;;
+  backup-options)
+    _bp_sel_key="$(stat -c %y "$(backup_sel_file)" 2>/dev/null | tr -d ' :+-' || echo 0)"
+    mq_cached "backup-options-$_bp_sel_key" 600 cmd_backup_options ;;
   backup-opts)              cmd_backup_opts "${1:-get}" "${2:-}" ;;
   backup-sel)               cmd_backup_sel "${1:-get}" "${2:-}" ;;
-  backups)                  cmd_backups ;;
-  update-check)             cmd_update_check ;;
-  install)                  cmd_install "${1:-}" "${@:2}" ;;
-  ableton-install)          cmd_ableton_install ;;
-  apply)                    cmd_apply "$@" ;;
-  run-patch)                cmd_run_patch "$@" ;;
-  remove-patch)             cmd_remove_patch "$@" ;;
-  fixes-run)                cmd_fixes_run "$@" ;;
-  tweaks-run)               cmd_tweaks_run "$@" ;;
+  backups)                  mq_cached backups 10 cmd_backups ;;
+  backup-manifest)           cmd_backup_manifest "${1:-}" ;;
+  restore-update-check)     mq_cached restore-update 30 cmd_restore_update_check ;;
+  update-check)             mq_cached update-check 60 cmd_update_check ;;
+  install) mq_cache_clear; cmd_install "${1:-}" "${@:2}" ;;
+  ableton-install) mq_cache_clear; cmd_ableton_install ;;
+  apply) mq_cache_clear; cmd_apply "$@" ;;
+  run-patch) mq_cache_clear; cmd_run_patch "$@" ;;
+  remove-patch) mq_cache_clear; cmd_remove_patch "$@" ;;
+  fixes-run) mq_cache_clear; cmd_fixes_run "$@" ;;
+  tweaks-run) mq_cache_clear; cmd_tweaks_run "$@" ;;
   theme-images)              cmd_theme_images "${1:-}" ;;
   theme-default-dir)         cmd_theme_default_dir "${1:-get}" "${2:-}" ;;
   theme-pick)                cmd_theme_pick "${1:-file}" "${2:-}" ;;
-  theme-create)              cmd_theme_create "$@" ;;
+  theme-create) mq_cache_clear; cmd_theme_create "$@" ;;
   theme-list)                cmd_theme_list ;;
-  theme-remove)              cmd_theme_remove "$@" ;;
-  theme-restore-stock)       cmd_theme_restore_stock ;;
+  theme-remove) mq_cache_clear; cmd_theme_remove "$@" ;;
+  theme-restore-stock) mq_cache_clear; cmd_theme_restore_stock ;;
   theme-list-any)            cmd_theme_list_any ;;
-  theme-remove-any)          cmd_theme_remove_any "$@" ;;
-  theme-apply)               cmd_theme_apply "${1:-}" ;;
-  update)                   cmd_update "$@" ;;
-  update-modules)           cmd_update_modules "$@" ;;
-  update-repo)              cmd_update_repo ;;
-  uninstall)                cmd_uninstall "$@" ;;
-  menu-entry)               cmd_menu_entry ;;
-  add-shortcut)             cmd_add_shortcut ;;
+  theme-remove-any) mq_cache_clear; cmd_theme_remove_any "$@" ;;
+  theme-apply) mq_cache_clear; cmd_theme_apply "${1:-}" ;;
+  update) mq_cache_clear; cmd_update "$@" ;;
+  update-modules) mq_cache_clear; cmd_update_modules "$@" ;;
+  update-repo) mq_cache_clear; cmd_update_repo ;;
+  uninstall) mq_cache_clear; cmd_uninstall "$@" ;;
+  menu-entry) mq_cache_clear; cmd_menu_entry ;;
+  add-shortcut) mq_cache_clear; cmd_add_shortcut ;;
   # "$@" or the backup silently ignores EVERY option it is given: --vst=,
   # --keepass=, --zen= and --selection= were all dropped on the floor, so the
   # TUI's toggles (and the apps.selected tree it writes) never reached
   # do_backup, which fell back to its own defaults.
-  backup)                   cmd_backup "$@" ;;
+  backup) mq_cache_clear; cmd_backup "$@" ;;
   # No argument means "tell me", not "turn it on". The default was ${1:-on},
   # so `crash-notify` READ as if the toasts were on even when the flag file
   # said off -- which is how the agentic row kept claiming there was something
   # to bring back after it had been taken away.
   crash-notify)             cmd_crash_notify "${1:-get}" ;;
-  ai-removed)               cmd_ai_removed ;;
-  menu-entries)             cmd_menu_entries "$@" ;;
-  restore)                  cmd_restore "${1:-}" ;;
+  ai-removed)               mq_cached ai-removed 30 cmd_ai_removed ;;
+  menu-entries)             mq_cache_clear; cmd_menu_entries "$@" ;;
+  restore) mq_cache_clear; cmd_restore "$@" ;;
   *) echo "mosquitomarchy-actions: unknown subcommand '$sub'." >&2; exit 2 ;;
 esac

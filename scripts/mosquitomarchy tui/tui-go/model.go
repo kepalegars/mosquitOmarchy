@@ -28,7 +28,6 @@ const (
 	scrKBInput
 	scrBackup
 	scrBackupRestore
-	scrBackupReaper
 	scrMenuEntries
 	scrSettings
 	scrConfirm
@@ -37,6 +36,12 @@ const (
 	scrInfo
 	scrBackupOptions
 	scrBackupApps
+	// scrBackupAppSettings is the VST/KeePassXC/Zen/REAPER sub-menu, kept out
+	// of the main options page so that page stays a short list.
+	scrBackupAppSettings
+	// scrRestoreOptions is the restore-side mirror: mode (safe/full) plus the
+	// granular sections to deploy, shown after picking an archive.
+	scrRestoreOptions
 	scrPreinstalls
 	// scrQuickFixes is the Quick fixes list, reached from its folder row in
 	// Setup. It existed in the shell launcher (launcher_run_category -> fixes)
@@ -67,8 +72,9 @@ const (
 // BackupOpts are the Backup screen's content choices.
 //
 // Name is the user's label for the archive. It goes into the filename AFTER
-// the timestamp, never before it: five places glob omarchy-backup-*.tar.gz* and
-// backup_desc() reads the date from fixed offsets in what follows the prefix, so
+// the timestamp, never before it: five places glob mosquitomarchy-backup-*.tar.gz*
+// (plus the legacy omarchy-backup-*) and backup_desc() reads the date from
+// fixed offsets in what follows the prefix, so
 // a name inserted ahead of the timestamp would make every listed backup show a
 // broken date. The backend sanitises it into a slug.
 //
@@ -77,27 +83,92 @@ const (
 // they are re-detected on every visit, and a stale "true" for a program that has
 // since been uninstalled would put a row on screen that cannot work.
 type BackupOpts struct {
-	VST       string // "list" | "full" | "none"
-	Keepass   bool   // include KeePassXC passwords (only when installed)
-	Zen       bool   // include the Zen browser settings (prefs.js/user.js/containers.json + extensions)
-	Reaper    string // "none" | "settings" | "full" (full = whole config + portable install)
-	Encrypt   bool   // AES-256 with a passphrase
-	Name      string // optional label for the archive, "" = the dated default
-	HasKeep   bool   // the machine has keepassxc + its config/db
-	HasZen    bool   // the machine has a Zen profile
-	HasReaper bool   // the machine has REAPER (or its config folder)
+	VST             string // "list" | "full" | "none"
+	Keepass         bool   // include KeePassXC passwords (only when installed)
+	KeepassSettings bool   // include the KeePassXC settings (.config/keepassxc)
+	Zen             bool   // include the Zen browser settings (prefs.js/user.js/containers.json + extensions)
+	Reaper          string // "none" | "settings" | "full" (full = every dir REAPER created)
+	Keybindings     string // "all" | "custom" | "no"
+	Hyprland        bool   // include the whole ~/.config/hypr tree
+	Encrypt         bool   // AES-256 with a passphrase
+	Name            string // optional label for the archive, "" = the dated default
+	HasKeep         bool   // the machine has keepassxc + its config/db
+	HasZen          bool   // the machine has a Zen profile
+	HasReaper       bool   // the machine has REAPER (or its config folder)
 }
 
 // storedBackupOpts is the on-disk shape. Deliberately NOT the BackupOpts
 // struct: persisting a struct means adding a field silently starts persisting
 // it, and the two detection flags must never be written.
 type storedBackupOpts struct {
-	VST     string `json:"vst"`
-	Keepass bool   `json:"keepass"`
-	Zen     bool   `json:"zen"`
-	Reaper  string `json:"reaper"`
-	Encrypt bool   `json:"encrypt"`
-	Name    string `json:"name"`
+	Version         int    `json:"v,omitempty"`
+	VST             string `json:"vst"`
+	Keepass         bool   `json:"keepass"`
+	KeepassSettings bool   `json:"keepassSettings"`
+	Zen             bool   `json:"zen"`
+	Reaper          string `json:"reaper"`
+	Keybindings     string `json:"keybindings"`
+	Hyprland        bool   `json:"hyprland"`
+	Encrypt         bool   `json:"encrypt"`
+	Name            string `json:"name"`
+}
+
+// RestoreOpts are the choices made on the restore-options page.
+//
+// Mode is "full" (the archive wins, overwriting what is there) or "safe"
+// (existing files and installed apps are left alone, the archive only fills
+// the gaps). The section flags decide what gets deployed at all; they are
+// initialised from what the archive actually contains.
+type RestoreOpts struct {
+	Mode            string // "full" | "safe"
+	VST             bool
+	Reaper          bool
+	Zen             bool
+	Keepass         bool
+	KeepassSettings bool
+	Themes          bool
+	OmarchyPlugins  bool
+	Hyprland        bool
+	Keybindings     string // "none" | "custom" | "all"
+}
+
+// BackupManifest is what a backup archive contains, as reported by the backend
+// before the restore-options page is drawn. It keeps rows for sections that are
+// not in the archive off the screen.
+type BackupManifest struct {
+	Config          bool   `json:"config"`
+	VST             bool   `json:"vst"`
+	Reaper          bool   `json:"reaper"`
+	Zen             bool   `json:"zen"`
+	Keepass         bool   `json:"keepass"`
+	KeepassSettings bool   `json:"keepass_settings"`
+	Themes          bool   `json:"themes"`
+	OmarchyPlugins  bool   `json:"omarchy_plugins"`
+	Hyprland        bool   `json:"hyprland"`
+	Keybindings     string `json:"keybindings"` // "all" | "custom" | "none"
+}
+
+func restoreOptsFor(mf BackupManifest) RestoreOpts {
+	o := RestoreOpts{
+		Mode:            "full",
+		VST:             mf.VST,
+		Reaper:          mf.Reaper,
+		Zen:             mf.Zen,
+		Keepass:         mf.Keepass,
+		KeepassSettings: mf.KeepassSettings,
+		Themes:          mf.Themes,
+		OmarchyPlugins:  mf.OmarchyPlugins,
+		Hyprland:        mf.Hyprland,
+	}
+	switch mf.Keybindings {
+	case "all":
+		o.Keybindings = "all"
+	case "custom":
+		o.Keybindings = "custom"
+	default:
+		o.Keybindings = "none"
+	}
+	return o
 }
 
 // loadBackupOpts reads the saved choices. A missing file, unreadable file or
@@ -105,7 +176,7 @@ type storedBackupOpts struct {
 // the defaults instead of an error: a corrupt preference file must never be
 // able to stop the Backup screen from opening.
 func loadBackupOpts() BackupOpts {
-	def := BackupOpts{VST: "list", Keepass: true, Zen: true, Reaper: "settings"}
+	def := BackupOpts{VST: "list", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "settings", Keybindings: "custom", Hyprland: true}
 	out, err := runQuick("backup-opts", "get")
 	if err != nil {
 		return def
@@ -129,12 +200,23 @@ func loadBackupOpts() BackupOpts {
 	// saveBackupOpts, which always writes all five, so a decode that produced a
 	// zero value anywhere means the file was not written by us.
 	if st.VST == "" {
-		return BackupOpts{VST: "list", Keepass: true, Zen: true, Reaper: "settings"}
+		return BackupOpts{VST: "list", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "settings", Keybindings: "custom", Hyprland: true}
 	}
 	def.Keepass = st.Keepass
 	def.Zen = st.Zen
 	def.Encrypt = st.Encrypt
 	def.Name = st.Name
+	// The Keybindings/KeePass-settings fields are newer than the rest. A file
+	// written before them has v absent (0): keep their defaults rather than
+	// reading the zero value as "off".
+	if st.Version >= 2 {
+		def.Keybindings = st.Keybindings
+		def.KeepassSettings = st.KeepassSettings
+	}
+	// Hyprland arrived in v3: older files keep the ON default.
+	if st.Version >= 3 {
+		def.Hyprland = st.Hyprland
+	}
 	return def
 }
 
@@ -143,12 +225,16 @@ func loadBackupOpts() BackupOpts {
 // as an error on the run that triggered it.
 func saveBackupOpts(o BackupOpts) {
 	payload, err := json.Marshal(storedBackupOpts{
-		VST:     o.VST,
-		Keepass: o.Keepass,
-		Zen:     o.Zen,
-		Reaper:  o.Reaper,
-		Encrypt: o.Encrypt,
-		Name:    o.Name,
+		Version:         3,
+		VST:             o.VST,
+		Keepass:         o.Keepass,
+		KeepassSettings: o.KeepassSettings,
+		Zen:             o.Zen,
+		Reaper:          o.Reaper,
+		Keybindings:     o.Keybindings,
+		Hyprland:        o.Hyprland,
+		Encrypt:         o.Encrypt,
+		Name:            o.Name,
 	})
 	if err != nil {
 		return
@@ -173,7 +259,10 @@ func saveBackupSelection(items []SetupItemRec, checked map[string]bool) {
 	keys := make([]string, 0, len(checked))
 	for _, it := range items {
 		if checked[setupValue(it.Folder, it.Key)] {
-			keys = append(keys, it.Key)
+			// Folder-qualified: the installed tree may carry the same key in
+			// two folders, and a bare key cannot tell them apart. The "@folder "
+			// prefix is also the format marker (JSON would escape a tab).
+			keys = append(keys, "@"+it.Folder+" "+it.Key)
 		}
 	}
 	payload, err := json.Marshal(struct {
@@ -210,9 +299,30 @@ type model struct {
 	backupPicker navPicker
 	// backupOptPicker drives the Backup options screen; backupAppsPicker is
 	// the installed TUIs content tree.
-	backupOptPicker    navPicker
-	backupAppsPicker   navPicker
-	backupReaperPicker navPicker
+	backupOptPicker  navPicker
+	backupAppsPicker navPicker
+	backupAppPicker  navPicker
+	restorePicker    navPicker
+	restoreOpts      RestoreOpts
+	restoreManifest  BackupManifest
+	// restoreManifestReady means the archive has been read and the page's rows
+	// can be built from what it actually contains.
+	restoreManifestReady bool
+	// restoreCheckPending is the update check started when an archive was
+	// picked; its answer decides whether the "update first?" prompt appears.
+	restoreCheckPending bool
+	backupPath          string
+	// restoreNotice is the persistent orange line on the restore-options page.
+	// The Toast clears itself after ten seconds; this one has to stay until the
+	// user acts, so it is rendered straight into the notification row.
+	restoreNotice string
+	// Startup checks: a spinner shows while they run, a square once something
+	// is found, nothing when clean. They run once per launch.
+	updateChecking bool
+	healthChecking bool
+	updateLoaded   bool
+	healthLoaded   bool
+	loadingFrame   int
 
 	confirm   tuikit.Confirm
 	runner    tuikit.Runner
@@ -304,6 +414,11 @@ type model struct {
 	// pendingInstallPlan holds an install plan waiting behind a preinstall
 	// removal confirm (mixed selection). Empty = no install pending.
 	pendingInstallPlan []string
+	// installStageQueue holds the special app stages (DaVinci, Guitar Pro,
+	// Ableton) that run AFTER everything else, one prompt+install at a time.
+	// Ableton is last by construction.
+	installStageQueue       []installStage
+	installStagePendingPlan []string
 	// abletonInstallWait holds the rest of an install plan while Ableton runs
 	// in its own interactive flow (the module needs a real TTY for its
 	// archive/disk prompts). Empty = no continuation pending.
@@ -477,6 +592,8 @@ func initialModel() model {
 		// complete Omarchy theme rather than a wallpaper. The toggle in the flow
 		// turns it off for the ones who do not want it.
 		themeUnlockStyle: true,
+		updateChecking:   true,
+		healthChecking:   true,
 		selected:         map[string]bool{},
 		updateSelected:   map[string]bool{},
 		healthChecked:    map[string]bool{},
@@ -496,19 +613,21 @@ func initialModel() model {
 	m.updatePicker = newNavPicker("", nil)
 	m.backupPicker = newNavPicker("", nil)
 	m.backupOptPicker = newNavPicker("", nil)
-	m.backupReaperPicker = newNavPicker("", nil)
 	m.backupAppsPicker = newNavPicker("", nil)
+	m.backupAppPicker = newNavPicker("", nil)
+	m.restorePicker = newNavPicker("", nil)
 	m.runner = tuikit.NewRunner()
 	return m
 }
 
 func (m model) Init() tea.Cmd {
-	// The update check runs at STARTUP, not only when Setup is opened. A
-	// pending repo fast-forward used to be invisible until you went looking
-	// for it: the main menu was built once before any check had run, and the
-	// Setup tree — the only place the row appeared — is not where people
-	// start when they just want the thing current.
-	return tea.Batch(tuikit.ThemeWatchCmd(), firstRunCmd(), fetchUpdateCheckCmd())
+	// The update and health checks run at STARTUP, once per launch. A pending
+	// repo fast-forward used to be invisible until you went looking for it, and
+	// the health check only ran when its page was opened. Both now announce
+	// themselves with a spinner on the main menu and settle into a square (or
+	// nothing) when they finish; neither is re-run until the app is quit.
+	return tea.Batch(tuikit.ThemeWatchCmd(), firstRunCmd(), fetchUpdateCheckCmd(),
+		fetchHealthCmd(), loadingTickCmd(), warmCacheCmd())
 }
 
 // top, contentSize and their friends take a POINTER receiver. The model holds
@@ -549,8 +668,18 @@ func (m *model) replace(s screen) { m.nav[len(m.nav)-1] = s }
 // takes the model rather than being a package-level list.
 func (m model) mainMenuItems() []tuikit.PickerItem {
 	upd := tuikit.PickerItem{Display: "Update", Value: "update"}
-	if m.updatePending() {
+	switch {
+	case m.updateChecking:
+		upd.TrailingBadge = m.loadingGlyph()
+	case m.updatePending():
 		upd.TrailingBadge = "■"
+	}
+	health := tuikit.PickerItem{Display: "Health check", Value: "health"}
+	switch {
+	case m.healthChecking:
+		health.TrailingBadge = m.loadingGlyph()
+	case m.healthPending():
+		health.TrailingBadge = "■"
 	}
 	return []tuikit.PickerItem{
 		{Display: "Status", Value: "status"},
@@ -559,11 +688,19 @@ func (m model) mainMenuItems() []tuikit.PickerItem {
 		{Display: "Uninstall", Value: "uninstall"},
 		{Display: "Keybindings", Value: "keybindings"},
 		{Display: "Theming", Value: "theme"},
-		{Display: "Health check", Value: "health", TrailingBadge: conditionalBadge(m.healthPending())},
+		health,
 		{Display: "Backup / Restore", Value: "backup"},
 		{Display: "Extras", Value: "settings"},
 		{Display: "Close", Value: "close"},
 	}
+}
+
+// loadingGlyph is the shared tui-kit spinner (a small filled square moving
+// clockwise, no outer square). Kept as a model method so the existing
+// loadingTickMsg counter drives it; any other TUI can use
+// tuikit.LoadingGlyphAt(time.Now()) directly.
+func (m model) loadingGlyph() string {
+	return tuikit.LoadingGlyph(m.loadingFrame)
 }
 
 // rebuildMainMenu refreshes the root list, keeping the cursor on the same row.

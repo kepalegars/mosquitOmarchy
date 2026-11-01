@@ -126,6 +126,10 @@ func (m model) View() string {
 		m.backupPicker = m.backupPicker.SetSize(m.contentSize())
 	case scrBackupOptions:
 		m.backupOptPicker = m.backupOptPicker.SetSize(m.contentSize())
+	case scrBackupAppSettings:
+		m.backupAppPicker = m.backupAppPicker.SetSize(m.contentSize())
+	case scrRestoreOptions:
+		m.restorePicker = m.restorePicker.SetSize(m.contentSize())
 	case scrBackupApps:
 		m.backupAppsPicker = m.backupAppsPicker.SetSize(m.contentSize())
 	case scrMenuEntries:
@@ -275,17 +279,32 @@ func (m model) View() string {
 	case scrBackupRestore:
 		title = screenTitle("Restore a backup", w)
 		body = m.backupPicker.View()
+		if m.backupPath != "" {
+			// Folder is informational only: grey, left-aligned above the list.
+			body = lipgloss.NewStyle().Width(cw).Align(lipgloss.Left).
+				Render(tuikit.StyleMuted.Render(m.backupPath)) + "\n" + body
+		}
 		bar = barLine(m.backupPicker.ShortcutsHint())
 	case scrBackupOptions:
 		title = screenTitle("Backup options", w)
 		body = m.backupOptPicker.View()
 		bar = barLine(m.backupOptPicker.ShortcutsHint())
-	case scrBackupReaper:
-		title = screenTitle("REAPER backup", w)
-		body = m.backupReaperPicker.View()
-		bar = barLine(m.backupReaperPicker.ShortcutsHint())
+	case scrBackupAppSettings:
+		title = screenTitle("Backup options — app specific settings", w)
+		body = m.backupAppPicker.View()
+		bar = barLine(m.backupAppPicker.ShortcutsHint())
+	case scrRestoreOptions:
+		title = screenTitle("Restore options", w)
+		body = m.restorePicker.View()
+		// The mode notice must stay put (the toast would expire), so it is
+		// rendered into the notification row itself.
+		notify := m.toast.View()
+		if m.restoreNotice != "" {
+			notify = tuikit.StyleWarn.Render(m.restoreNotice)
+		}
+		bar = tuikit.BottomBar(notify, m.restorePicker.ShortcutsHint(), cw)
 	case scrBackupApps:
-		title = screenTitle("Backup content — TUIs", w)
+		title = screenTitle("Backup content — packages, themes & tweaks", w)
 		body = m.backupAppsPicker.View()
 		bar = barLine(m.backupAppsPicker.ShortcutsHint())
 	case scrPassphrase:

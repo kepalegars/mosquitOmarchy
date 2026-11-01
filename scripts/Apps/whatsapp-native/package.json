@@ -1,9 +1,6 @@
 {
-  "name": "whatsapp-native",
-  "productName": "WhatsApp",
+  "name": "whatsapp-tray",
   "version": "1.0.0",
-  "description": "WhatsApp Web desktop wrapper — tray, close-to-tray, silent visual notifications, no menu bar",
-  "main": "main.js",
-  "license": "MIT",
-  "private": true
+  "private": true,
+  "main": "tray.js"
 }

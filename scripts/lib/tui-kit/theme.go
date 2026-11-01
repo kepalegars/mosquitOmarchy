@@ -40,7 +40,7 @@ var (
 	ColorYellow lipgloss.Color
 	// ColorSubtle is the NEUTRAL tone for interface text — shortcut hints,
 	// legends, sub-titles, sub-lines. It is deliberately NOT the theme's
-	// "muted": achraff-67 defines muted as a saturated green (#4e9237), so
+	// "muted": achraf67 defines muted as a saturated green (#4e9237), so
 	// every caption came out green, and a caption is not a status. dark_
 	// foreground is the theme's own neutral (a warm grey there, and a dim
 	// white in a light theme), so the same code reads correctly on both.
@@ -48,7 +48,7 @@ var (
 	// ColorOnSurface is the high-contrast neutral for a structural glyph that
 	// sits on the panel (the folder icon): the theme's own foreground, so it is
 	// light on a dark theme and dark on a light one, and NEVER the theme's
-	// accent — on achraff-67 that is a lime, which made an unselected folder
+	// accent — on achraf67 that is a lime, which made an unselected folder
 	// glow green.
 	ColorOnSurface lipgloss.Color
 

@@ -952,7 +952,7 @@ switch_to_live_theme() {
 restore_previous_theme() {
   local prev
   prev=$(cat "$PRE_THEME_FILE" 2>/dev/null || true)
-  [[ -z "$prev" || "$prev" == "$LIVE_THEME_NAME" ]] && prev="achraff-67"
+  [[ -z "$prev" || "$prev" == "$LIVE_THEME_NAME" ]] && prev="achraf67"
 
   local current
   current=$(theme_current)

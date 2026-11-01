@@ -72,6 +72,8 @@ if ((UNINSTALL)); then
         "$HOME/.local/share/icons/hicolor/256x256/apps/mosquito-audio-plugin-manager.png"
   sed -i '/-- >>> mosquito-audio-plugin-manager-tui-setup >>>/,/-- <<< mosquito-audio-plugin-manager-tui-setup <<</d' \
     "$HOME/.config/hypr/hyprland.lua" 2>/dev/null || true
+  sed -i '/-- >>> mosquito-wine-tray-setup >>>/,/-- <<< mosquito-wine-tray-setup <<</d' \
+    "$HOME/.config/hypr/hyprland.lua" 2>/dev/null || true
   hyprctl reload >/dev/null 2>&1 || true
   ok "manager removed (plugin state and install history kept)"
   exit 0
@@ -289,6 +291,21 @@ o.window("org.omarchy.mosquito-audio-plugin-manager-tui", { float = true, center
 EOF
 hyprctl reload >/dev/null 2>&1 || true
 ok "Hyprland float rule for the TUI window installed/updated ($HYPR_CONF)"
+
+# Wine's explorer.exe creates a "Wine System Tray" window for every tray icon a
+# Windows installer/app registers. Hyprland has no XEmbed tray host, so that
+# window is mapped as a tiny floating black square in the corner of the screen
+# (seen during every wine install wizard). Park it on a hidden special
+# workspace: Wine keeps its tray logic, the user never sees the square. Scoped
+# to explorer.exe only — installers and apps have their own window classes.
+sed -i '/-- >>> mosquito-wine-tray-setup >>>/,/-- <<< mosquito-wine-tray-setup <<</d' "$HYPR_CONF"
+cat >>"$HYPR_CONF" <<'EOF'
+-- >>> mosquito-wine-tray-setup >>> hide Wine's standalone "System Tray" window
+o.window({ class = "(?i)^explorer\\.exe$" }, { workspace = "special:wine-tray", no_focus = true, no_anim = true, no_blur = true })
+-- <<< mosquito-wine-tray-setup <<<
+EOF
+hyprctl reload >/dev/null 2>&1 || true
+ok "Hyprland rule hiding Wine's System Tray window installed/updated ($HYPR_CONF)"
 
 # -----------------------------------------------------------------------------
 # 2. Menu entry

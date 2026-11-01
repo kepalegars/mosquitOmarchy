@@ -21,8 +21,9 @@ fix automatically (`-y`).
   plug in, its thumb button is remapped.
 - `cid 0xc3` is the gesture button; the `Keypress` action makes it momentary
   (press = `KEY_LEFTMETA` down, release = up).
-- No other button/scroll setting is touched: pointing and scrolling keep their
-  defaults.
+- No other button is touched. The wheel is pinned to ratchet + low-resolution
+  mode (see **Wheel** below) because free-spin/hi-res is what makes Wine, X11
+  apps and Hyprland emit irregular, delayed scroll events.
 
 ## Install / usage
 
@@ -41,7 +42,8 @@ Overrides (environment variables):
 |------------------|------------------|----------------------------------|
 | `MX_MASTER_BUTTON` | `0xc3`         | CID of the button to remap       |
 | `MX_MASTER_KEY`    | `KEY_LEFTMETA` | key sent (SUPER)                 |
-| `MX_MASTER_NAME`   | (auto)          | exact device name → single block |
+| `MX_MASTER_NAME`   | (auto)          | exact logid device name          |
+| `MX_MASTER_SCROLL_FACTOR` | (inherit `input:scroll_factor`) | per-device wheel factor; keep it an integer for Wine |
 
 ## Files
 
@@ -58,6 +60,27 @@ sudo bash mx-master.sh --remove
 ```
 
 or, manually: `sudo systemctl disable --now logid` and restore `/etc/logid.cfg`.
+## Wheel
+
+The wheel is configured in `/etc/logid.cfg` as:
+
+- **ratchet** (`smartshift.on = false`) — no accidental free-spin / mode flips;
+- **low-resolution** (`hiresscroll.hires = false`) — one detent = one 120-unit
+  event, instead of a stream of sub-notch hi-res events.
+
+That matters most under XWayland: Wine/Ableton only understands discrete wheel
+clicks. Hi-res events arrive faster than Wine can coalesce them, which is the
+"vertical scroll has a delay" behaviour; the free-spin/hi-res stream is also
+what Hyprland's `emulate_discrete_scroll` accumulator turns into irregular
+jumps in native apps.
+
+The Hyprland device block deliberately does **not** set `scroll_factor`: the
+mouse inherits `input:scroll_factor` (and the per-window `scroll_mouse` rules)
+like every other pointer. A fractional per-device factor (the old 1.35) makes
+XWayland accumulate `120 * factor` units per notch, emitting irregular 0/1/2
+click bursts. Keep the global factor an integer if you rely on Wine.
+`MX_MASTER_SCROLL_FACTOR` is only an opt-in per-device override.
+
 ## Mouse pointer block (combinable with the touchpad module)
 
 Besides the gesture button, applying this module also writes a per-device
@@ -79,7 +102,7 @@ Both modules compose without conflict — each writes its OWN marker block in
   `hl.device({ name = <touchpad>, … })` (adaptive / 0.0 / 1.8, kinetic decel 0.96),
 - the **MX Master** module (or any mouse that picks its own settings) writes
   `~/.config/hypr/mx-master.lua` with `hl.device({ name = <mouse>, … })`
-  (flat / 1.0 / same as the global mouse block in `input.lua`).
+  (flat / -0.05 / scroll inherited from `input.lua`).
 
 Device blocks are the most specific Hyprland match, so the touchpad always
 gets its settings and the mouse always gets its own — apply either, both, or

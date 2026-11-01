@@ -531,7 +531,16 @@ write_theme_hook() {
 # not this argument, so it stays correct even if invoked out of order).
 # GUI_RUN_EXEC=1 keeps setup-superfile.sh from reopening itself in a terminal
 # (there is none in a desktop hook).
-GUI_RUN_EXEC=1 "$SELF_SCRIPT" --apply-theme >/dev/null 2>&1 || true
+script="$SELF_SCRIPT"
+# A repo rename/checkout move used to leave this hook pointing at a path that
+# no longer existed, so every theme switch silently kept the old palette.
+# Follow the deployed actions symlink into the checkout when that happens.
+if [[ ! -x \$script ]]; then
+  actions="\$(command -v mosquitomarchy-actions 2>/dev/null || echo "\$HOME/.local/bin/mosquitomarchy-actions")"
+  script="\$(dirname "\$(readlink -f "\$actions")")/../../scripts/Apps/superfile/setup-superfile.sh"
+fi
+[[ -x \$script ]] || exit 0
+GUI_RUN_EXEC=1 "\$script" --apply-theme >/dev/null 2>&1 || true
 EOF
   chmod +x "$THEME_HOOK_FILE"
   ok "Omarchy theme-change hook registered ($THEME_HOOK_FILE)"
