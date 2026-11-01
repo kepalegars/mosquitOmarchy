@@ -51,7 +51,20 @@ func (m model) rebuildAddons() navPicker {
 	for cat := range byCat {
 		cats = append(cats, cat)
 	}
-	sort.Strings(cats)
+	// Logical order for the known families; anything custom follows
+	// alphabetically. Empty categories never enter byCat at all.
+	priority := map[string]int{"Themes": 0, "Apps": 1, "System": 2, "Integration": 3}
+	sort.Slice(cats, func(i, j int) bool {
+		pi, iok := priority[cats[i]]
+		pj, jok := priority[cats[j]]
+		if iok != jok {
+			return iok
+		}
+		if iok && pi != pj {
+			return pi < pj
+		}
+		return strings.ToLower(cats[i]) < strings.ToLower(cats[j])
+	})
 	for _, cat := range cats {
 		items = append(items, tuikit.PickerItem{Display: cat, Heading: true})
 		rows := byCat[cat]
