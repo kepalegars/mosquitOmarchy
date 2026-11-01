@@ -236,11 +236,17 @@ def darken(c, f):
     return tuple(max(0, int(v * f)) for v in c)
 def lighten(c, f):
     return tuple(min(255, int(255 - (255 - v) * f)) for v in c)
+def toward_white(c, f):
+    # mix a small amount of white INTO c; unlike lighten(c, f), f is the
+    # amount of white added (0.12 = 12%), which is what a "slightly lighter
+    # surface" means. lighten(c, .18) produced #d3d2d3 from a near-black bg
+    # and painted GTK cards/menus white — that was the rarity bug.
+    return tuple(min(255, int(v + (255 - v) * f)) for v in c)
 
 accent = tuple(accent)
 bg = tuple(bg)
 fg = tuple(light)
-lighter_bg = lighten(bg, 0.18)
+lighter_bg = toward_white(bg, 0.12)
 darker_bg = darken(bg, 0.55)
 darker2_bg = darken(bg, 0.25)
 light_fg = lighten(fg, 0.25)

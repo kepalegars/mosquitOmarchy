@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	tuikit "mosquitomarchy.local/tui-kit"
@@ -54,5 +55,38 @@ func TestCleanupDefaultsOrderAndToggle(t *testing.T) {
 
 	if got := m.selectedCleanupIDs(); len(got) != len(cleanupOrder) {
 		t.Fatalf("selected ids = %d, want all %d after toggling the last one on", len(got), len(cleanupOrder))
+	}
+}
+
+// The "Cleanup now!" row must open a confirmation with the measured size, the
+// free space and the Yes button focused, before anything is deleted.
+func TestCleanupPreviewOpensConfirmWithSizes(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrSettings, scrCleanup}
+	m.cleanupOpts = defaultCleanupOpts()
+	m, _ = m.update(cleanupPreviewMsg{
+		ids: []string{"setup-cache", "lists-cache"},
+		preview: cleanupPreview{
+			Bytes: 2 << 30,
+			Free:  6 << 30,
+			Items: []cleanupPreviewItem{
+				{ID: "setup-cache", Bytes: 1 << 30},
+				{ID: "lists-cache", Bytes: 1 << 30},
+			},
+		},
+	})
+	if m.top() != scrConfirm {
+		t.Fatalf("top = %v, want the confirmation screen", m.top())
+	}
+	if m.pendingAction != "cleanup" || len(m.pendingArgs) != 2 {
+		t.Fatalf("pending cleanup = %q / %v", m.pendingAction, m.pendingArgs)
+	}
+	for _, want := range []string{"2.0 GB", "6.0 GB", "8.0 GB"} {
+		if !strings.Contains(m.confirm.Message, want) {
+			t.Fatalf("confirmation missing %q:\n%s", want, m.confirm.Message)
+		}
+	}
+	if len(m.confirm.List) != 2 {
+		t.Fatalf("confirmation list = %v, want the two selected cleanups", m.confirm.List)
 	}
 }

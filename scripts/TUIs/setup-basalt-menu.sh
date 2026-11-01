@@ -42,6 +42,17 @@ if [[ $REMOVE == true ]]; then
   ok "Launcher removed (the basalt package itself is untouched)."
 else
   mkdir -p "$(dirname "$DESKTOP_DST")"
+  # Use the real Basalt icon when the package/user installed one; the generic
+  # terminal icon is only a last resort. Icon name (not a path) so the icon
+  # theme can resolve a 256px or scalable variant normally.
+  ICON_NAME=utilities-terminal
+  for _icon in \
+    "$HOME/.local/share/icons/hicolor/256x256/apps/basalt.png" \
+    "$HOME/.local/share/icons/hicolor/scalable/apps/basalt.svg" \
+    /usr/share/icons/hicolor/256x256/apps/basalt.png \
+    /usr/share/icons/hicolor/scalable/apps/basalt.svg; do
+    [[ -f $_icon ]] && { ICON_NAME=basalt; break; }
+  done
   cat > "$DESKTOP_DST" <<EOF
 [Desktop Entry]
 Type=Application
@@ -49,10 +60,10 @@ Name=Basalt
 Comment=Manage Obsidian vaults and notes (terminal TUI) — installed via mosquitOmarchy
 Exec=omarchy-launch-or-focus-tui basalt
 Terminal=false
-Icon=utilities-terminal
+Icon=$ICON_NAME
 Categories=Utility;Office;
 EOF
-  ok "Launcher installed ($DESKTOP_DST)"
+  ok "Launcher installed ($DESKTOP_DST, icon: $ICON_NAME)"
 fi
 
 command -v update-desktop-database >/dev/null 2>&1 \

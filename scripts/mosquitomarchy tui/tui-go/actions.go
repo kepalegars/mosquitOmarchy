@@ -442,6 +442,40 @@ func warmCacheCmd() tea.Cmd {
 	}
 }
 
+// ── Cleanup preview ─────────────────────────────────────────────────────────
+// cleanup-preview returns one JSON object: how many bytes the selected cleans
+// would free, how much space is available now, and the per-option breakdown.
+type cleanupPreviewItem struct {
+	ID    string `json:"id"`
+	Bytes int64  `json:"bytes"`
+}
+
+type cleanupPreview struct {
+	Bytes int64                `json:"bytes"`
+	Free  int64                `json:"free"`
+	Items []cleanupPreviewItem `json:"items"`
+}
+
+type cleanupPreviewMsg struct {
+	preview cleanupPreview
+	ids     []string
+	err     error
+}
+
+func fetchCleanupPreviewCmd(ids []string) tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("cleanup-preview", strings.Join(ids, ","))
+		if err != nil {
+			return cleanupPreviewMsg{ids: ids, err: err}
+		}
+		var p cleanupPreview
+		if err := json.Unmarshal(bytes.TrimSpace(out), &p); err != nil {
+			return cleanupPreviewMsg{ids: ids, err: err}
+		}
+		return cleanupPreviewMsg{preview: p, ids: ids}
+	}
+}
+
 // setupMsg carries the decoded Setup tree.
 type setupMsg struct {
 	folders []FolderRec

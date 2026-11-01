@@ -259,6 +259,8 @@ tweak_applied(){
         "${XDG_CONFIG_HOME:-$HOME/.config}/ghostty" 2>/dev/null ;;
     wine-theme)
       [[ -f "$HOME/.local/state/mosquitomarchy/wine-theme/mode" ]] ;;
+    wine-apps)
+      [[ -f "$HOME/.config/systemd/user/mosquitomarchy-wine-apps.path" ]] ;;
     *) return 1 ;;
   esac
 }
@@ -3557,7 +3559,7 @@ cleanup_lists_cache(){
   find "$HOME/.cache/mosquito-audio-plugin-manager" -maxdepth 1 -type f \
     \( -name 'groups-*.tsv' -o -name 'parents-*.tsv' \) -delete 2>/dev/null || true
   find "${TMPDIR:-/tmp}" -maxdepth 1 -user "$(id -u)" -type f -name 'apm-groups-body.*' -delete 2>/dev/null || true
-  ok "Mosquito lists cache: setup/uninstall trees, status and APM plugin lists cleared."
+  ok "all mosquito TUIs fast cache: setup/uninstall trees, status and APM plugin lists cleared."
 }
 
 cleanup_apm_inconsistencies(){
@@ -3600,14 +3602,14 @@ cleanup_apm_drives(){
   ok "APM Wine drive letters: $removed redundant mapping(s) removed, $skipped skipped (prefix in use or letter referenced)."
 }
 
-# Incomplete/interrupted VM downloads and stale temp files. Complete ISOs and
-# every VM disk/config are kept; only files no VM references are removed.
-cleanup_vm_cache(){
+# cleanup_vm_removable — one "path<TAB>size" line per file the VM cache clean
+# would remove. Complete ISOs referenced by a VM are never listed; VM disks and
+# configs are never touched.
+cleanup_vm_removable(){
   local root="${OMARCHY_VM_ROOT:-${MOSQUITO_VM_ROOT:-$HOME/VMs}}"
   local dir="${OMARCHY_VM_ISO_CACHE:-$HOME/.cache/omarchy-vm}"
-  local before=0 after=0 freed=0 f v need size p
+  local p v f need size
   local -A refs=()
-  [[ -d $dir ]] && before="$(du -sb "$dir" 2>/dev/null | awk '{print $1}')"
   for p in "$root"/*/.vm-config; do
     [[ -f $p ]] || continue
     v="$(sed -n 's/^ISO_PATH="\(.*\)"$/\1/p' "$p" | head -1)"
@@ -3616,30 +3618,49 @@ cleanup_vm_cache(){
   if [[ -d $dir ]]; then
     while IFS= read -r f; do
       case $f in
-        *.part|*.tmp) rm -f -- "$f" 2>/dev/null || true; continue ;;
+        *.part|*.tmp)
+          printf '%s\t%s\n' "$f" "$(stat -c %s "$f" 2>/dev/null || echo 0)"
+          continue
+          ;;
       esac
       [[ -n ${refs[$f]+x} ]] && continue
       v="$(basename "$f" | sed -n 's/^omarchy-\([0-9][0-9A-Za-z._-]*\)\.iso$/\1/p')"
       [[ -n $v ]] || continue
       need="$(cat "$dir/size-$v" 2>/dev/null || true)"
       if [[ -z $need ]] && command -v curl >/dev/null 2>&1; then
-        need="$(curl -sIL --max-time 8 "https://iso.omarchy.org/omarchy-$v.iso" 2>/dev/null | tr -d '\r' \
+        need="$(curl -sIL --max-time 3 "https://iso.omarchy.org/omarchy-$v.iso" 2>/dev/null | tr -d '\r' \
                 | awk 'tolower($1)=="content-length:"{v=$2} END{print v}')"
       fi
       size="$(stat -c %s "$f" 2>/dev/null || echo 0)"
       if [[ -n $need && $size != "$need" ]]; then
-        rm -f -- "$f" 2>/dev/null || true
+        printf '%s\t%s\n' "$f" "$size"
       fi
     done < <(find "$dir" -maxdepth 1 -type f \( -name 'omarchy-*.iso' -o -name '*.part' -o -name '*.tmp' \) -print 2>/dev/null || true)
-    rm -f -- "$dir"/size-* "$dir"/latest-version 2>/dev/null || true
-    find "$dir" -maxdepth 1 -type f -name 'omarchy-*.iso.sha256' -delete 2>/dev/null || true
-    after="$(du -sb "$dir" 2>/dev/null | awk '{print $1}')"
+    for f in "$dir"/size-* "$dir"/latest-version "$dir"/*.sha256; do
+      [[ -f $f ]] && printf '%s\t%s\n' "$f" "$(stat -c %s "$f" 2>/dev/null || echo 0)"
+    done
   fi
-  find "$root" -maxdepth 2 -type f \( -name '*.part' -o -name '*.tmp' \) -delete 2>/dev/null || true
+  while IFS= read -r f; do
+    printf '%s\t%s\n' "$f" "$(stat -c %s "$f" 2>/dev/null || echo 0)"
+  done < <(find "$root" -maxdepth 2 -type f \( -name '*.part' -o -name '*.tmp' \) -print 2>/dev/null || true)
   for p in "$root"/*/vm.pid; do
     [[ -f $p ]] || continue
-    kill -0 "$(cat "$p" 2>/dev/null)" 2>/dev/null || rm -f -- "$p" 2>/dev/null || true
+    kill -0 "$(cat "$p" 2>/dev/null)" 2>/dev/null || printf '%s\t0\n' "$p"
   done
+}
+
+cleanup_vm_bytes(){ cleanup_vm_removable 2>/dev/null | awk -F'\t' '{s+=$2} END{print s+0}'; }
+
+# Incomplete/interrupted VM downloads and stale temp files. Complete ISOs and
+# every VM disk/config are kept.
+cleanup_vm_cache(){
+  local dir="${OMARCHY_VM_ISO_CACHE:-$HOME/.cache/omarchy-vm}"
+  local before=0 after=0 freed=0 p _s
+  [[ -d $dir ]] && before="$(du -sb "$dir" 2>/dev/null | awk '{print $1}')"
+  while IFS=$'\t' read -r p _s; do
+    [[ -e $p || -L $p ]] && rm -rf -- "$p" 2>/dev/null || true
+  done < <(cleanup_vm_removable)
+  [[ -d $dir ]] && after="$(du -sb "$dir" 2>/dev/null | awk '{print $1}')"
   freed=$(( ${before:-0} - ${after:-0} ))
   (( freed < 0 )) && freed=0
   ok "VM cache: incomplete/temp ISO files cleared ($(awk -v b="$freed" 'BEGIN{printf "%.1f", b/1048576}') MB freed); VM disks and complete referenced ISOs kept."
@@ -3663,6 +3684,86 @@ cleanup_mixbay_history(){
   else
     warn "Mixbay: could not reset the connection history."
   fi
+}
+
+# ── Cleanup preview: how much the selected pass would free ────────────────────
+cleanup_sum_paths(){
+  local t=0 p s
+  for p in "$@"; do
+    [[ -e $p ]] || continue
+    s="$(du -sb -- "$p" 2>/dev/null | awk '{print $1}')"
+    [[ $s =~ ^[0-9]+$ ]] && t=$((t + s))
+  done
+  printf '%s' "$t"
+}
+
+cleanup_setup_cache_bytes(){
+  local t=0 s
+  s="$(find "${TMPDIR:-/tmp}" -maxdepth 1 -user "$(id -u)" -name 'mosquitomarchy-*' \
+        -exec du -sb -- {} + 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+  t=$((t + ${s:-0}))
+  s="$(find "$HOME" -maxdepth 6 -type d -name '.mosquitomarchy-restore.*' \
+        -exec du -sb -- {} + 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+  t=$((t + ${s:-0}))
+  if [[ -f "$HOME/.cache/mosquitomarchy-tui" ]]; then
+    s="$(stat -c %s "$HOME/.cache/mosquitomarchy-tui" 2>/dev/null || echo 0)"
+    t=$((t + ${s:-0}))
+  fi
+  s="$(find "$HOME/.cache/mosquitomarchy" -maxdepth 1 -type f -name '*.tmp' \
+        -exec du -sb -- {} + 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+  t=$((t + ${s:-0}))
+  printf '%s' "$t"
+}
+
+cleanup_lists_cache_bytes(){
+  local t=0 s
+  t="$(cleanup_sum_paths "$HOME/.cache/mosquitomarchy/query-cache" \
+        "$HOME/.cache/mosquitomarchy"/tree-* \
+        "$HOME/.cache/mosquito-audio-plugin-manager"/groups-*.tsv \
+        "$HOME/.cache/mosquito-audio-plugin-manager"/parents-*.tsv)"
+  s="$(find "${TMPDIR:-/tmp}" -maxdepth 1 -user "$(id -u)" -type f -name 'apm-groups-body.*' \
+        -exec du -sb -- {} + 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+  t=$((t + ${s:-0}))
+  printf '%s' "$t"
+}
+
+cleanup_move_als_dir(){
+  local dir="$HOME/Music/Ableton Move Projects"
+  if [[ -f "$HOME/.config/move-session/prefs" ]]; then
+    dir="$(set +u; source "$HOME/.config/move-session/prefs" >/dev/null 2>&1; \
+      printf '%s' "${MOVE_PROJECTS_DIR:-$dir}")"
+  fi
+  printf '%s/als' "$dir"
+}
+
+cleanup_free_bytes(){
+  local f
+  f="$(df --output=avail -B1 "$HOME" 2>/dev/null | tail -1 | tr -d ' ')"
+  [[ $f =~ ^[0-9]+$ ]] && printf '%s' "$f" || printf '0'
+}
+
+cmd_cleanup_preview(){
+  local list="${1:-}" id s total=0 free items=""
+  local -a ids=()
+  IFS=, read -r -a ids <<< "$list"
+  ((${#ids[@]})) || { printf '{"bytes":0,"free":%s,"items":[]}\n' "$(cleanup_free_bytes)"; return 0; }
+  for id in "${ids[@]}"; do
+    case $id in
+      setup-cache)         s="$(cleanup_setup_cache_bytes)" ;;
+      lists-cache)         s="$(cleanup_lists_cache_bytes)" ;;
+      apm-quarantine)      s="$(cleanup_sum_paths "$HOME/.cache/vst-quarantine" "$HOME/.cache/audio-plugin-manager-quarantine")" ;;
+      apm-inconsistencies|apm-drives) s=0 ;;
+      vm-cache)            s="$(cleanup_vm_bytes)" ;;
+      move-als)            s="$(cleanup_sum_paths "$(cleanup_move_als_dir)")" ;;
+      mixbay-history)      s="$(cleanup_sum_paths "$HOME/.config/mosquitomixbay/connected-interfaces.json")" ;;
+      *)                   s=0 ;;
+    esac
+    [[ $s =~ ^[0-9]+$ ]] || s=0
+    total=$((total + s))
+    items+="${items:+,}{\"id\":\"$id\",\"bytes\":$s}"
+  done
+  free="$(cleanup_free_bytes)"
+  printf '{"bytes":%d,"free":%d,"items":[%s]}\n' "$total" "$free" "$items"
 }
 
 cmd_cleanup(){
@@ -3704,6 +3805,7 @@ case "$sub" in
   patches)                  cmd_patches "${1:-}" "${@:2}" ;;
   health)                   mq_cached health 20 cmd_health ;;
   cleanup)                  cmd_cleanup "${1:-}" ;;
+  cleanup-preview)          cmd_cleanup_preview "${1:-}" ;;
   heal) mq_cache_clear; cmd_heal "$@" ;;
   kb-list)                  cmd_kb_list ;;
   kb-free)                  cmd_kb_free ;;

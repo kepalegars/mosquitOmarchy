@@ -149,6 +149,12 @@ func NewConfirm(message, noLabel, yesLabel string) Confirm {
 	return Confirm{Message: message, NoLabel: noLabel, YesLabel: yesLabel}
 }
 
+// FocusYes starts the dialog with the Yes button focused, for prompts whose
+// recommended/default answer is yes (cleanup confirmations, for example).
+func (c Confirm) FocusYes() Confirm {
+	return c.SetFocus(c.buttonCount() - 1)
+}
+
 // WithExtra returns a copy of the Confirm with an optional third button,
 // rendered between No and Yes and reported via ConfirmResultMsg.Extra.
 // An empty label leaves the Confirm unchanged (classic two-button dialog).

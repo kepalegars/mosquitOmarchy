@@ -317,6 +317,21 @@ def _rgb(value: str):
     return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
 
 
+def _luminance(value: str) -> float:
+    """Relative luminance (0 = black, 1 = white), sRGB-corrected."""
+    def chan(v):
+        v = v / 255.0
+        return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+    r, g, b = _rgb(value)
+    return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b)
+
+
+def _lighten(value: str, amount: float) -> str:
+    """Move a colour toward white by `amount` (0..1), keeping it a hex string."""
+    return "#%02x%02x%02x" % tuple(
+        min(255, int(round(v + (255 - v) * amount))) for v in _rgb(value))
+
+
 def named_accent(value: str) -> str:
     r, g, b = _rgb(value)
     return min(GNOME_ACCENTS,
@@ -330,14 +345,31 @@ def build_palette(t):
         window_bg = t["background"]
         view_bg = t["dark_background"]
         headerbar_bg = t["darker_background"]
-        surface_bg = t["lighter_background"]
         sidebar_bg = t["dark_background"]
+        # `lighter_background` is a SURFACE, not a free-floating "light" colour.
+        # An imported/edited dark theme can carry #d3d2d3 there (rarity did),
+        # and using it for cards/dialogs/popovers is exactly what painted
+        # white menus over a black window. Keep a dark surface; derive a very
+        # slightly lighter one from the window when the theme's value is light.
+        surface_bg = (t["lighter_background"]
+                      if _luminance(t["lighter_background"]) < 0.32
+                      else _lighten(window_bg, 0.10))
     else:
-        window_bg = t["dark_background"]
-        view_bg = t["background"]
-        headerbar_bg = t["darker_background"]
-        surface_bg = t["background"]
-        sidebar_bg = t["dark_background"]
+        # Light mode: never take a dark value for a window/card. The old code
+        # used dark_background for the window, which could invert the page.
+        window_bg = t["background"]
+        view_bg = (t["lighter_background"]
+                   if _luminance(t["lighter_background"]) > 0.62
+                   else _lighten(window_bg, 0.03))
+        headerbar_bg = (t["dark_background"]
+                        if _luminance(t["dark_background"]) > 0.55
+                        else _lighten(window_bg, 0.01))
+        surface_bg = (t["lighter_background"]
+                      if _luminance(t["lighter_background"]) > 0.62
+                      else _lighten(window_bg, 0.04))
+        sidebar_bg = (t["dark_background"]
+                      if _luminance(t["dark_background"]) > 0.55
+                      else window_bg)
 
     fg = t["foreground"]
     surfaces = [window_bg, view_bg, headerbar_bg, surface_bg, sidebar_bg]

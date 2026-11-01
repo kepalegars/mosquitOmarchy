@@ -1178,6 +1178,7 @@ TWEAKS=(
   "tui-theme:Force-adapt the TUIs' theme to the current Omarchy theme (regenerate the palette + rebuild both Go TUIs; the dynamic theme already ships with tui-kit)"
   "terminal-padding:Omarchy pads every terminal by 14px and paints that padding with the theme background (near-black on the dark themes), so the text block reads as a dark slab floating inside a light window with a heavy frame between the two — keep the padding, make it take the terminal's own background"
   "wine-menu:'Uninstall'/'Manual' entries cluttering the launcher: a Windows installer (smartEQ, FabFilter, CrispyTuner, Guitar Pro…) published its Start-Menu shortcuts and Wine turned each one into an app-menu entry — drop the ones belonging to the prefixes mosquitomarchy manages (idempotent; the file associations are kept)"
+  "wine-apps:Promote the real apps a Windows/Wine installer publishes into the Omarchy Apps menu: read each Wine .desktop, copy its icon, write a clean entry and move the original to the trash. A path-unit watcher runs only while a Wine process is alive; APM installs are left alone (APM removes its own entries)"
   "wine-theme:Make every native Windows (Wine/XWayland) window follow the Omarchy theme — dark title bars and controls on a dark theme, light on a light one (per-prefix registry + a theme-watch hook that re-applies on every theme change)"
   "colors-unifier:Make GTK4/GTK3 (and Qt via qgtk3) apps follow the active Omarchy theme with guaranteed-readable text, and offer to refresh Nautilus immediately (hardened fork of Accord; replaces its plugin)"
 )
@@ -1203,6 +1204,7 @@ fix_category(){
     ableton-wine-scroll) echo "Windows & input" ;;
     ableton-fullscreen) echo "Windows & input" ;;
     wine-menu)          echo "Windows & input" ;;
+    wine-apps)          echo "Windows & input" ;;
     wine-theme)         echo "Appearance" ;;
     colors-unifier)     echo "Appearance" ;;
     1px-seam)           echo "Appearance" ;;
@@ -1233,6 +1235,7 @@ run_tweak(){ # single tweak by id
     keepassxc-window) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-keepassxc-window.sh" ;;
     tui-theme) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-tui-theme.sh" ;;
     wine-menu) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-wine-menu.sh" ;;
+    wine-apps) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-wine-apps.sh" ;;
     terminal-padding) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-terminal-padding.sh" ;;
     wine-theme) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-wine-theme.sh" ;;
     colors-unifier) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-colors-unifier.sh" ;;
@@ -1247,6 +1250,7 @@ run_tweak_remove(){ # single tweak removal by id
   case $id in
     keepassxc-window) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-keepassxc-window.sh" --remove ;;
     terminal-padding) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-terminal-padding.sh" --remove ;;
+    wine-apps) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-wine-apps.sh" --remove ;;
     wine-theme) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-wine-theme.sh" --remove ;;
     colors-unifier) bash "$SCRIPT_DIR/scripts/Tweaks/tweak-colors-unifier.sh" --remove ;;
     *) return 1 ;;

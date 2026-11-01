@@ -99,6 +99,12 @@ type PickerItem struct {
 	// before. Only Display is accented; Suffix is rendered in the ordinary
 	// row style, so a trailing count does not blink with it.
 	Accent bool
+	// Engage marks a primary action button ("Cleanup now!", "Backup now…").
+	// Unfocused, its TEXT pulses between the theme accent and white; focused,
+	// it stops on plain accent. No background block: this is the text-only
+	// counterpart of Accent, so a button reads as active without looking like
+	// a selected category.
+	Engage bool
 	// Suffix is optional text appended right after the title in the row's
 	// ordinary style (not the Accent block), e.g. a "  (6)" count that must
 	// stay in the normal colour next to an accented title.
@@ -419,12 +425,24 @@ func (d pickerDelegate) trailingCell(pi PickerItem) string {
 	return strings.Repeat(" ", trailingBadgeGap) + StyleAccent.Render(pi.TrailingBadge)
 }
 
+// engagePulseInterval is the accent ↔ white period for PickerItem.Engage rows.
+// Same cadence as the loading square: visible, but not a flicker.
+const engagePulseInterval = 500 * time.Millisecond
+
 // titleStyleFor picks the terminal accent box for an exit row and the
 // ordinary per-row title style otherwise, so the box treatment applies in
 // both the normal and the disabled renderer.
 func (d pickerDelegate) titleStyleFor(pi PickerItem, index, selected int) lipgloss.Style {
 	if isTerminalValue(pi.Value) {
 		return terminalRowStyle(false, index == selected)
+	}
+	if pi.Engage {
+		// Selected: a plain accent, no pulse. Unselected: alternate the TEXT
+		// colour accent ↔ white at a calm pace; the row never gets a block.
+		if index == selected || (time.Now().UnixNano()/int64(engagePulseInterval))%2 == 0 {
+			return StyleAccent
+		}
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Bold(true)
 	}
 	if pi.Accent {
 		// A solid accent block, applied regardless of focus, so a host can

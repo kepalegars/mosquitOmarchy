@@ -1027,6 +1027,43 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		return m, nil
 
+	case cleanupPreviewMsg:
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetWarn("could not measure the cleanup: " + msg.err.Error())
+			return m, nil
+		}
+		m.pendingAction = "cleanup"
+		m.pendingArgs = append([]string{}, msg.ids...)
+		lines := make([]string, 0, len(msg.preview.Items))
+		for _, it := range msg.preview.Items {
+			size := humanBytes(it.Bytes)
+			if it.Bytes == 0 {
+				size = "repair only"
+			}
+			label := cleanupLabels[it.ID]
+			if label == "" {
+				label = it.ID
+			}
+			lines = append(lines, fmt.Sprintf("%s — %s", label, size))
+		}
+		after := msg.preview.Free + msg.preview.Bytes
+		if msg.preview.Bytes > 0 {
+			m.pendingMsg = fmt.Sprintf(
+				"Clean up about %s?\n\nFree space: %s now → about %s after.\n\nNothing in a VM disk, plugin folder or backup is deleted.",
+				humanBytes(msg.preview.Bytes), humanBytes(msg.preview.Free), humanBytes(after))
+		} else {
+			m.pendingMsg = fmt.Sprintf(
+				"Run the selected repairs?\n\nNo files would be deleted. Free space: %s.",
+				humanBytes(msg.preview.Free))
+		}
+		m.pendingNo, m.pendingYes = "No", "Yes"
+		m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).FocusYes()
+		if len(lines) > 0 {
+			m.confirm = m.confirm.SetList("Selected cleanups", lines, 8)
+		}
+		m.push(scrConfirm)
+		return m, nil
+
 	case tuikit.ConfirmResultMsg:
 		if m.top() != scrConfirm {
 			return m, nil
@@ -1164,6 +1201,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			ids := m.pendingFixIDs
 			m.pendingFixIDs = nil
 			return m, quickCatalogRunCmd("fixes", ids)
+		case "cleanup":
+			ids := append([]string{}, m.pendingArgs...)
+			m.pendingArgs = nil
+			return m.startWorking("Cleaning temporary files",
+				workingArgs("cleanup", []string{strings.Join(ids, ",")})...)
 		case "quick-tweaks":
 			// Same shape as quick-fixes, over the Tweaks (preferences) catalog:
 			// run_tweaks() in one backend call.
@@ -2922,7 +2964,9 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 				m.toast, _ = m.toast.SetWarn("Nothing selected — tick at least one item.")
 				return m, nil
 			}
-			return m.startWorking("Cleaning temporary files", workingArgs("cleanup", []string{strings.Join(ids, ",")})...)
+			// Measure first: the confirmation shows what will be freed and the
+			// space available, like the install confirmation.
+			return m, fetchCleanupPreviewCmd(ids)
 		}
 		return m, nil
 	case scrBackup:
@@ -4753,6 +4797,7 @@ func (m model) rebuildUpdate() navPicker {
 			// Trailing, like every other square in the app, so the marker
 			// always sits after the label and never shifts the text column.
 			TrailingBadge: "■",
+			Engage:        true,
 		})
 	}
 	// Nothing pending and not reinstalling: offer the re-apply screen
@@ -4772,13 +4817,14 @@ func (m model) rebuildUpdate() navPicker {
 			items = append(items, tuikit.PickerItem{
 				Display: "Update mosquitOmarchy (repo + scripts)",
 				Value:   "update-repo",
+				Engage:  true,
 			})
 		}
 		applyLabel := "Update modules"
 		if m.reinstallMode {
 			applyLabel = "Re-apply modules"
 		}
-		upd := tuikit.PickerItem{Display: applyLabel, Value: "update-modules"}
+		upd := tuikit.PickerItem{Display: applyLabel, Value: "update-modules", Engage: true}
 		if len(mods) == 0 {
 			// Only the repo changed, so the apply row had nothing to do and
 			// ran a no-op fast-forward that looked like the update had been
@@ -4955,7 +5001,7 @@ func (m model) rebuildBackupOptions() navPicker {
 	}
 	items = append(items,
 		tuikit.PickerItem{Display: "Encrypt: " + enc, Value: "encrypt"},
-		tuikit.PickerItem{Display: "Backup now…", Value: "start"},
+		tuikit.PickerItem{Display: "Backup now…", Value: "start", Engage: true},
 		tuikit.PickerItem{Display: "Back", Value: "back"},
 	)
 	p := newNavPicker("", items).SetSize(m.contentSize()).
@@ -5137,7 +5183,7 @@ func (m model) rebuildRestoreOptions() navPicker {
 	}
 	items = append(items,
 		tuikit.PickerItem{Display: "Restore mode: " + modeValue, Value: "mode"},
-		tuikit.PickerItem{Display: "Restore now…", Value: "restore"},
+		tuikit.PickerItem{Display: "Restore now…", Value: "restore", Engage: true},
 		tuikit.PickerItem{Display: "Back", Value: "back"},
 	)
 	p := newNavPicker("", items).SetSize(m.contentSize()).
@@ -5578,7 +5624,7 @@ var cleanupOrder = []string{
 
 var cleanupLabels = map[string]string{
 	"setup-cache":         "mosquitOmarchy setup cache (interrupted installs, stray build file)",
-	"lists-cache":         "mosquito lists cache (setup/uninstall, status, plugin lists)",
+	"lists-cache":         "all mosquito TUIs fast cache (lists, trees, plugin groups)",
 	"apm-quarantine":      "APM: quarantine (parked uninstalled files)",
 	"apm-inconsistencies": "APM: inconsistencies (plugin log / orphan fixes)",
 	"apm-drives":          "APM: redundant Wine drive letters",
@@ -5610,6 +5656,22 @@ func cleanupDisplay(id string, on bool) string {
 	return cleanupLabels[id] + " : " + state
 }
 
+func humanBytes(n int64) string {
+	if n < 0 {
+		n = 0
+	}
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1024:
+		return fmt.Sprintf("%.0f KB", float64(n)/1024)
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
+
 func (m model) rebuildCleanup() navPicker {
 	if m.cleanupOpts == nil {
 		m.cleanupOpts = defaultCleanupOpts()
@@ -5629,7 +5691,7 @@ func (m model) rebuildCleanup() navPicker {
 		})
 	}
 	items = append(items,
-		tuikit.PickerItem{Display: "Cleanup now!", Value: "run"},
+		tuikit.PickerItem{Display: "Cleanup now!", Value: "run", Engage: true},
 		tuikit.PickerItem{Display: "Back", Value: "back"},
 	)
 	return newNavPicker("Cleanup:", items).SetSize(m.contentSize())
@@ -5656,7 +5718,7 @@ func (m model) settingsItems2() []tuikit.PickerItem {
 				Value: m.crashNotify,
 			},
 		},
-		{Display: "Cleanup temporary files…", Value: "cleanup"},
+		{Display: "Cleanup temporary files", Value: "cleanup"},
 		{Display: "Back", Value: "back"},
 	}
 }
