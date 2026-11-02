@@ -130,16 +130,33 @@ do_remove() {
   [[ -n $prof ]] || { warn "Active profile not found — nothing removed."; return 0; }
   info "Removing the module's deployed files from profile '$prof'"
   $YES || if ! ask "Remove the seed extensions + settings + chrome from $prof?"; then ok "Cancelled."; return 0; fi
-  local removed=0 f
+  local removed=0 f seed rel target
+  remove_seed_copy(){
+    local source="$1" dest="$2" label="$3"
+    [[ -f $dest ]] || return 0
+    if cmp -s "$source" "$dest"; then
+      rm -f "$dest"
+      echo "  - removed $label (unchanged seed copy)"
+      removed=$((removed+1))
+    else
+      warn "Kept modified $label"
+    fi
+  }
   for f in "$SEED_DIR"/extensions/*.xpi; do
-    [[ -f "$ZEN_CFG/$prof/extensions/${f##*/}" ]] && { rm -f "$ZEN_CFG/$prof/extensions/${f##*/}"; echo "  - removed extensions/${f##*/}"; removed=$((removed+1)); }
+    [[ -f $f ]] || continue
+    remove_seed_copy "$f" "$ZEN_CFG/$prof/extensions/${f##*/}" "extensions/${f##*/}"
   done
-  for f in extension-preferences.json extension-settings.json; do
-    [[ -f "$ZEN_CFG/$prof/$f" ]] && { rm -f "$ZEN_CFG/$prof/$f"; echo "  - removed $f"; removed=$((removed+1)); }
+  for seed in "$SEED_DIR/extension-preferences.json" "$SEED_DIR/extension-settings.json"; do
+    [[ -f $seed ]] || continue
+    remove_seed_copy "$seed" "$ZEN_CFG/$prof/${seed##*/}" "${seed##*/}"
   done
-  for f in "$SEED_DIR"/chrome/*; do
-    [[ -e "$ZEN_CFG/$prof/chrome/${f##*/}" ]] && { rm -rf "$ZEN_CFG/$prof/chrome/${f##*/}"; echo "  - removed chrome/${f##*/}"; removed=$((removed+1)); }
+  while IFS= read -r -d '' seed; do
+    rel="${seed#"$SEED_DIR/chrome/"}"
+    target="$ZEN_CFG/$prof/chrome/$rel"
+    remove_seed_copy "$seed" "$target" "chrome/$rel"
   done
+  while IFS= read -r -d '' f; do rmdir "$f" 2>/dev/null || true; done \
+    < <(find "$ZEN_CFG/$prof/chrome" -depth -type d -print0 2>/dev/null)
   ((removed > 0)) && ok "Removed $removed item(s). Zen re-installs the stock defaults." || ok "Nothing deployed — nothing to remove."
   warn "zen-browser-bin itself stays installed (uninstall via the apps module or: sudo pacman -Rns zen-browser-bin)"
 }

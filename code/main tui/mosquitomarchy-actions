@@ -1792,6 +1792,23 @@ cmd_update_check(){
       fi
     fi
   fi
+
+  # The official Ableton .run installer is never stored in git (a 100 MB+
+  # binary), so a fresh clone has none and the Ableton module cannot install
+  # or update without it. When Ableton IS installed but its .run is missing,
+  # offer it: selecting Update re-applies the module, which downloads the
+  # installer instead of starting the whole Live install flow.
+  if ! ableton_installer_present "$APPS_DIR/ableton"; then
+    local ableton_listed=0 ableton_state
+    for row in "${ids[@]}"; do [[ ${row%%:*} == ableton ]] && ableton_listed=1; done
+    ableton_state="$(module_state ableton 2>/dev/null || true)"; ableton_state="${ableton_state%%:*}"
+    if ((ableton_listed == 0)) && [[ $ableton_state == ok || $ableton_state == partial ]]; then
+      ((i)) && printf ','
+      printf '{"key":"ableton","label":"Ableton Live","reason":%s,"base":"","applied":"","files":[],"changes":[%s]}' \
+        "$(json_str "The official install-ableton-latest.run is missing — update downloads it")" \
+        "$(json_str "Fetch the official Ableton Linux installer into code/modules/Apps/ableton/")"
+    fi
+  fi
   printf ']}\n'
 }
 

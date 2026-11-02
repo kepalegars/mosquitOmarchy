@@ -23,6 +23,11 @@ What it sets up:
 - **Launch at login** — the selected KeePassXC settings include the app's
   `~/.config/autostart/org.keepassxc.KeePassXC.desktop` entry when enabled.
 
+> **Known limitation:** KeePassXC-Browser integration is not working yet in
+> this setup. The module writes native-messaging manifests and enables the
+> browser setting, but that has not produced a working browser connection.
+> This integration is explicitly not fixed by the current module.
+
 > **Why not the takeover?** An earlier version of this module *replaced*
 > gnome-keyring with KeePassXC (D-Bus override + gnome-keyring masked +
 > `[FdoSecrets] Enabled=true`). That makes KeePassXC answer every web app's
@@ -47,19 +52,10 @@ every KeePassXC launch:
 
 `--status` shows what is pinned, `--clear` restores the stock behaviour.
 
-## Browser extension — the first connect is a handshake
+## Browser integration — not working yet
 
-The transport (native-messaging manifest + keepassxc-proxy) works as soon as the
-extension is installed. But `"database not connected"` on a greyed in-field icon
-is NOT a setup defect: no database is associated with that site yet, and the
-association lives INSIDE the encrypted database, so only you can make it:
-
-1. KeePassXC → Settings → Browser Integration: tick the browsers you use and
-   *Connect to database on startup*.
-2. Unlock the database in KeePassXC.
-3. On the site, click the KeePassXC TOOLBAR icon (not the in-field one) →
-   Connect, then approve the KeePassXC desktop popup for that URL.
-4. From then on the in-field icon fills. One handshake per site.
+The steps to connect the extension are intentionally omitted until the
+browser-to-KeePassXC integration is fixed and verified.
 
 ## What stays manual by design
 

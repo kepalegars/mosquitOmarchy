@@ -146,12 +146,20 @@ step_update_check(){
   else
     warn "No install-ableton-*.run in $SCRIPT_DIR — we can download one."
   fi
-  out="$(curl -fsSL --max-time 25 "https://api.github.com/repos/shibco/ableton-linux/releases/latest" 2>/dev/null)" \
-    || { warn "GitHub unreachable — local installer kept."; return 0; }
+  if ! out="$(curl -fsSL --max-time 25 "https://api.github.com/repos/shibco/ableton-linux/releases/latest" 2>/dev/null)"; then
+    if [[ -n $RUN_INSTALLER ]]; then
+      warn "GitHub unreachable — local installer kept."
+      return 0
+    fi
+    err "GitHub unreachable and no local .run exists; cannot prepare the Ableton installer."
+    return 1
+  fi
   rv="$(printf '%s' "$out" | python3 -c 'import json,sys;print(json.load(sys.stdin)["tag_name"].lstrip("v"))' 2>/dev/null)"
   if [[ ! "$rv" =~ ^[0-9]+(\.[0-9]+){2,}$ ]]; then
     warn "Unreadable GitHub response ($rv) — local installer kept."
-    return 0
+    [[ -n $RUN_INSTALLER ]] && return 0
+    err "No local .run exists and GitHub did not provide a valid release."
+    return 1
   fi
   if [[ -n "$lv" ]] && ver_ge "$lv" "$rv"; then
     ok "Installer up to date ($lv) — nothing to do."
@@ -159,7 +167,12 @@ step_update_check(){
   fi
   url="$(printf '%s' "$out" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(next((a["browser_download_url"] for a in d["assets"] if a["name"]=="install-ableton-latest.run"),""))' 2>/dev/null)"
   digest="$(printf '%s' "$out" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(next((a["digest"] for a in d["assets"] if a["name"]=="install-ableton-latest.run"),""))' 2>/dev/null)"
-  [[ -n "$url" ]] || { warn "Download link not found on GitHub."; return 0; }
+  if [[ -z $url ]]; then
+    warn "Download link not found on GitHub."
+    [[ -n $RUN_INSTALLER ]] && return 0
+    err "No local .run exists and the GitHub release has no installer asset."
+    return 1
+  fi
   msg "Version $rv available — downloading the official installer…"
   if (( ! YES )) && ! ask "Download and replace the installer with version $rv ?" y; then
     warn "Download cancelled — the local installer ($lv) is kept."

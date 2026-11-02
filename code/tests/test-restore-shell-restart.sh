@@ -22,10 +22,20 @@ tar czf "$TMP/restore.tar.gz" -C "$TMP/archive" config-backup.tar.gz themes/them
 source "$ROOT/mosquitomarchy-setup.sh"
 systemctl(){ :; }
 omarchy(){
-  [[ ${1:-} == restart && ${2:-} == shell ]] || return 2
-  [[ -f "$HOME/.config/omarchy/shell.json" ]] || return 1
-  [[ -f "$HOME/.config/omarchy/themes/restored-theme/wallpaper" ]] || return 1
-  printf 'shell-and-theme-present\n' >> "$TMP/restarts"
+  case "${1:-} ${2:-}" in
+    "shell shell")
+      # The liveness probe the restore uses to prove the shell came back.
+      [[ -f "$TMP/restarts" ]] && { printf 'ok\n'; return 0; }
+      return 1
+      ;;
+    "restart shell")
+      [[ -f "$HOME/.config/omarchy/shell.json" ]] || return 1
+      [[ -f "$HOME/.config/omarchy/themes/restored-theme/wallpaper" ]] || return 1
+      printf 'shell-and-theme-present\n' >> "$TMP/restarts"
+      return 0
+      ;;
+  esac
+  return 2
 }
 
 YES=1 RESTORE_DEPLOY_HYPRLAND=no RESTORE_DEPLOY_VST=no RESTORE_DEPLOY_REAPER=no \

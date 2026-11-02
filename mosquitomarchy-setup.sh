@@ -3132,7 +3132,12 @@ restore_backup(){
       if [[ -d "$tmp/keybindings" ]]; then
         tex+=(--exclude='.config/hypr/bindings.lua')
       fi
+      # shell.json is handled separately: it names the plugins of the SOURCE
+      # machine, and a bar widget that does not exist here takes the shell down
+      # with it (a dead shell = no bar, no tray, a black wallpaper).
+      tex+=(--exclude=.config/omarchy/shell.json)
       tar xzf "$tmp/config-backup.tar.gz" -C "$HOME" "${tex[@]}"
+      restore_shell_json "$tmp/config-backup.tar.gz" "$mode"
       # In safe mode the KeePassXC module may just have created a default ini.
       # That is not pre-existing user data: restore the archived settings over
       # those defaults when the target had no KeePassXC settings before restore.
@@ -3142,21 +3147,13 @@ restore_backup(){
               | grep -E '(^|/)\.config/keepassxc(/|$)' >/dev/null; then
         tar xzf "$tmp/config-backup.tar.gz" -C "$HOME" .config/keepassxc
       fi
-      # Safe mode preserves the target's profiles.ini. When it names a
-      # different active Zen profile, merge the backup's active-profile files
-      # (including chrome/zen-themes Mods) into that profile without replacing
-      # files already present there.
-      if ((safe)) && [[ $dep_zen == yes && -n $zen_target_profile ]]; then
-        local zen_source_profile
-        zen_source_profile="$(tar tzf "$tmp/config-backup.tar.gz" \
-          | awk -F/ '$1 == ".config" && $2 == "zen" && NF >= 4 && !found { print $3; found=1 }')"
-        if [[ -n $zen_source_profile && $zen_source_profile != "$zen_target_profile" \
-           && -d "$HOME/.config/zen/$zen_source_profile" ]]; then
-          mkdir -p "$HOME/.config/zen/$zen_target_profile"
-          cp -an "$HOME/.config/zen/$zen_source_profile/." \
-            "$HOME/.config/zen/$zen_target_profile/" \
-            || { warn "Could not merge the backed-up Zen profile into the active profile."; restore_failed=1; }
-        fi
+      # Zen Mods live in the profile's chrome/zen-themes folder. The archive
+      # carries the SOURCE machine's profile directory, but Zen names a profile
+      # after its own installation and rewrites profiles.ini on every start, so
+      # the backed-up Mods must be copied into the profile THIS machine uses.
+      if [[ $dep_zen == yes ]]; then
+        restore_zen_profile "$tmp/config-backup.tar.gz" "$mode" \
+          || { warn "The Zen profile was not fully restored."; restore_failed=1; }
       fi
       restart_shell_after=1
       systemctl --user daemon-reload 2>/dev/null || true
@@ -3296,6 +3293,19 @@ restore_backup(){
   if ((restart_shell_after)); then
     if command -v omarchy >/dev/null 2>&1 && omarchy restart shell >/dev/null 2>&1; then
       ok "Omarchy shell restarted after restore."
+      # The shell draws the bar, the system tray and the wallpaper: a shell that
+      # does not come back is a black desktop with no tray. Say so instead of
+      # leaving the user in front of a dead session.
+      local shell_alive=0 i
+      for i in {1..15}; do
+        if omarchy shell shell ping >/dev/null 2>&1; then shell_alive=1; break; fi
+        sleep 1
+      done
+      if ((shell_alive == 0)); then
+        err "The Omarchy shell did not come back after the restore — the desktop has no bar, no tray and no wallpaper."
+        warn "  Fix it with: omarchy restart shell   (a plugin in the restored shell.json may be missing)"
+        restore_failed=1
+      fi
     else
       warn "Could not restart the Omarchy shell after restore; run: omarchy restart shell"
       restore_failed=1
@@ -3317,6 +3327,9 @@ restore_backup(){
   if [[ ( $dep_keepass == yes || $dep_keepass_settings == yes ) \
         && -f "$HOME/Documents/Passwords.kdbx" ]]; then
     if command -v keepassxc >/dev/null 2>&1; then
+      # The tray settings live in keepassxc.ini, which the archive carries;
+      # the module's own setup writes them too. Both are in place before the
+      # app starts, so closing its window hides it to the tray.
       if command -v uwsm >/dev/null 2>&1; then
         uwsm app -- keepassxc "$HOME/Documents/Passwords.kdbx" </dev/null >/dev/null 2>&1 &
       else
@@ -3757,10 +3770,12 @@ un_reaper(){
   rm -f "$BIN_DIR/reaper-launch"
   rm_desktops cockos-reaper.desktop reaper.desktop
   [[ -f "$APPS_DIR/cockos-reaper.desktop" ]] || ok "REAPER wrapper + entry removed"
-  if (( YES || PURGE )); then
-    mq_sudo pacman -Rns --noconfirm reaper 2>/dev/null \
-      && ok "reaper package removed" || warn "package not removed (sudo required or already absent)"
-    mq_sudo pacman -Rns --noconfirm xwayland-satellite 2>/dev/null || true  # leftover from older installs, best-effort
+  if pkg_has reaper; then
+    mq_sudo pacman -Rns --noconfirm reaper \
+      && ok "reaper package removed" \
+      || { err "Could not remove the reaper package."; return 1; }
+  else
+    ok "reaper package already absent"
   fi
 }
 
@@ -4428,17 +4443,22 @@ un_flea(){
   fi
 }
 un_zen(){
-  # Removes ONLY what the zen module deployed (seed extensions + settings +
-  # chrome). The browser and its profile stay — the browser itself is managed
-  # by the "apps" module (zen-browser-bin).
-  info "Uninstalling the Zen config module (seed plugins + settings + chrome)"
+  # Remove the module-owned profile files and browser package, but keep the
+  # user's remaining Zen profile data.
+  info "Uninstalling Zen (module files + browser package; profile data kept)"
   if [[ -f "$ZEN_DIR/setup-zen.sh" ]]; then
     bash "$ZEN_DIR/setup-zen.sh" --remove ${YES:+-y} \
       || { warn "setup-zen.sh --remove reported a problem"; return 1; }
   else
     warn "$ZEN_DIR/setup-zen.sh not found — nothing to revert."
   fi
-  warn "zen-browser-bin itself stays: uninstall it via the 'apps' module (sudo pacman -Rns zen-browser-bin)."
+  if pkg_has zen-browser-bin; then
+    mq_sudo pacman -Rns --noconfirm zen-browser-bin \
+      && ok "zen-browser-bin removed (profile data kept)" \
+      || { err "Could not remove the zen-browser-bin package."; return 1; }
+  else
+    ok "zen-browser-bin package already absent"
+  fi
 }
 un_jamjamjam_plugin(){
   info "Uninstalling the JamJamJam plugin (mosquito.jamjamjam)"
@@ -4500,14 +4520,19 @@ un_mx_master(){
 }
 
 un_keepassxc(){
-  # KeePassXC secret service uninstall: hand the D-Bus Secret Service name
-  # back to gnome-keyring (the omarchy default). The keepassxc DATABASE and
-  # settings are NEVER touched, and this does NOT reinstall the gnome-keyring
-  # package if the user had asked setup to uninstall it — `sudo pacman -S
-  # gnome-keyring` restores the package (its settings were kept on disk).
-  info "Uninstalling the KeePassXC secret service (restores gnome-keyring)"
+  # Restore Omarchy's keyring integration and remove KeePassXC itself, while
+  # keeping the user's encrypted database and settings on disk.
+  info "Uninstalling KeePassXC (database and settings kept)"
   bash "$SCRIPTS/Apps/keepassxc/setup-keepassxc-integration.sh" --remove \
     || { warn "setup-keepassxc-integration.sh --remove reported a problem"; return 1; }
+  rm -f "$HOME/.config/autostart/org.keepassxc.KeePassXC.desktop"
+  if pkg_has keepassxc; then
+    mq_sudo pacman -Rns --noconfirm keepassxc \
+      && ok "keepassxc package removed (database and settings kept)" \
+      || { err "Could not remove the keepassxc package."; return 1; }
+  else
+    ok "keepassxc package already absent"
+  fi
 }
 
 un_keybindings(){
@@ -4571,6 +4596,123 @@ drop_locktitle(){
   rm -rf "$HOME/.config/omarchy/lock-title"
   rm -f "$HOME/.config/omarchy/lock-title-daemon.sh" "$HOME/.config/omarchy/lock-title.sh"
   systemctl --user daemon-reload 2>/dev/null || true
+}
+
+# Restore the source machine's shell.json, minus everything this machine does
+# not have.
+#
+# shell.json names the plugins of the machine the archive came from: bar
+# widgets, panels, services. On a fresh machine most of them are absent, and a
+# bar layout that points at a widget that does not exist takes the Omarchy
+# shell down with it — no bar, no system tray (so KeePassXC cannot show its
+# tray icon), and a black wallpaper. The shell is what draws the desktop, so
+# this is the difference between a restored desktop and a dead one.
+restore_shell_json(){
+  local arc="$1" mode="${2:-full}" tmp="" src=""
+  [[ -f $arc ]] || return 0
+  tmp="$(mktemp -d)"
+  # The archive may store the path as ".config/omarchy/shell.json" or as
+  # "./.config/omarchy/shell.json": the exact member name is read from the
+  # listing, then extracted.
+  local member
+  member="$(tar tzf "$arc" 2>/dev/null | grep -E '(^|/)(\./)?\.config/omarchy/shell\.json$' | head -1 || true)"
+  if [[ -z $member ]]; then
+    rm -rf "$tmp"
+    return 0
+  fi
+  if ! tar xzf "$arc" -C "$tmp" "$member" 2>/dev/null \
+     || [[ ! -f "$tmp/.config/omarchy/shell.json" ]]; then
+    rm -rf "$tmp"
+    return 0
+  fi
+  src="$tmp/.config/omarchy/shell.json"
+  # Safe mode keeps what the machine already has.
+  if [[ $mode == safe && -f $SHELL ]]; then
+    rm -rf "$tmp"
+    return 0
+  fi
+  local known
+  known="$(shell_json_known_plugins)"
+  if [[ -n $known ]] && command -v jq >/dev/null 2>&1; then
+    if jq --argjson known "$known" '
+        def known: (.id // "") as $id | ($known | index($id)) != null;
+        .plugins = ((.plugins // []) | map(select(known)))
+        | .bar = ((.bar // {}) | .layout = ((.layout // {}) | with_entries(
+            .value = ((.value // []) | map(select(known))))))
+        | (if (.bar.id // "") != "" and ((.bar.id) as $id | ($known | index($id)) == null)
+             then .bar |= del(.id) else . end)
+      ' "$src" > "$tmp/shell.json" 2>/dev/null; then
+      src="$tmp/shell.json"
+    else
+      warn "shell.json could not be pruned — restoring it as it was."
+    fi
+  fi
+  mkdir -p "$(dirname "$SHELL")"
+  if cp -f "$src" "$SHELL"; then
+    ok "shell.json restored (plugins this machine does not have were dropped)."
+  else
+    warn "Could not restore shell.json."
+  fi
+  rm -rf "$tmp"
+}
+
+# The plugin ids this machine can actually load: Omarchy's own plugins and
+# widgets, plus the user's installed plugins. Emitted as a JSON array.
+shell_json_known_plugins(){
+  local -a ids=()
+  local f id
+  while IFS= read -r f; do
+    [[ -f $f ]] || continue
+    id="$(jq -r '.id // empty' "$f" 2>/dev/null)"
+    [[ -n $id ]] && ids+=("$id")
+  done < <(find /usr/share/omarchy/shell/plugins -maxdepth 3 \
+             \( -name 'manifest.json' -o -name '*.manifest.json' \) -type f 2>/dev/null)
+  while IFS= read -r f; do
+    [[ -f $f ]] || continue
+    id="$(jq -r '.id // empty' "$f" 2>/dev/null)"
+    [[ -n $id ]] && ids+=("$id")
+  done < <(find "$HOME/.config/omarchy/plugins" -maxdepth 2 -name 'manifest.json' -type f 2>/dev/null)
+  ((${#ids[@]})) || return 0
+  printf '%s\n' "${ids[@]}" | jq -R . | jq -s 'unique' 2>/dev/null
+}
+
+# Copy the backed-up Zen profile into the profile THIS machine uses.
+#
+# The archive carries the source machine's profile directory
+# (.config/zen/<name>/...), but Zen names a profile after its own installation
+# and rewrites profiles.ini on every start. Left alone, the backed-up Mods
+# (chrome/zen-themes) sit in a directory Zen never opens, so they look like
+# they were never restored. Copying them into the profile this machine
+# actually uses is what makes them come back.
+restore_zen_profile(){
+  local arc="$1" mode="${2:-full}" src_name="" tmp="" target
+  [[ -f $arc ]] || return 0
+  src_name="$(tar tzf "$arc" \
+    | awk -F/ '$1 == ".config" && $2 == "zen" && NF >= 4 && !found { print $3; found=1 }')"
+  [[ -n $src_name ]] || return 0
+  tmp="$(mktemp -d)"
+  if ! tar xzf "$arc" -C "$tmp" ".config/zen/$src_name" 2>/dev/null \
+     || [[ ! -d "$tmp/.config/zen/$src_name" ]]; then
+    rm -rf "$tmp"
+    return 0
+  fi
+  target="$(zen_active_profile 2>/dev/null || true)"
+  [[ -n $target ]] || target="$src_name"
+  mkdir -p "$HOME/.config/zen/$target"
+  local copied=1
+  if [[ $mode == safe ]]; then
+    cp -an "$tmp/.config/zen/$src_name/." "$HOME/.config/zen/$target/" 2>/dev/null || copied=0
+  else
+    cp -a "$tmp/.config/zen/$src_name/." "$HOME/.config/zen/$target/" 2>/dev/null || copied=0
+  fi
+  rm -rf "$tmp"
+  if ((copied)); then
+    ok "Zen profile content (extensions, Mods, settings) restored into '$target'."
+  else
+    warn "Could not restore the Zen profile into '$target'."
+    return 1
+  fi
+  return 0
 }
 
 clean_plugins(){
@@ -4915,7 +5057,23 @@ run_omarchy_vm(){
 }
 
 run_ableton(){
+  # The official .run installer is not tracked in git. During an update it is
+  # missing on a fresh clone, and the module cannot do anything without it:
+  # fetch it instead of starting the whole Live install flow.
+  if [[ ${MOSQUITOMARCHY_UPDATE:-0} == 1 || ${MOSQUITOMARCHY_UPDATE_FLOW:-0} == 1 ]] \
+     && ! ableton_installer_present "$ABLETON_DIR"; then
+    bash "$ABLETON_DIR/setup-ableton.sh" -y --check-update
+    return
+  fi
   bash "$ABLETON_DIR/setup-ableton.sh" $([[ $YES == 1 ]] && echo -y)
+}
+
+# The upstream native installer is not tracked in the repo. Update offers the
+# Ableton module when its local .run is absent so the module can clone it.
+ableton_installer_present(){
+  local dir="${1:-$ABLETON_DIR}" f
+  for f in "$dir"/install-ableton-*.run; do [[ -f $f ]] && return 0; done
+  return 1
 }
 
 run_guitarpro(){
