@@ -2321,8 +2321,7 @@ do_backup(){
             .local/bin/launch-macos-tui.sh \
             .local/bin/omarchy-vm .local/bin/setup-omarchy-vm.sh \
             .local/bin/omarchy-vm-tui.sh .local/bin/launch-omarchy-tui.sh \
-            .local/share/icons/hicolor \
-            .local/share/applications; do
+            .local/share/icons/hicolor; do
     [[ -e "$HOME/$p" ]] && paths+=("$p")
   done
   # Zen browser — the ACTIVE profile's settings + what the zen module deploys.
@@ -3117,12 +3116,32 @@ restore_backup(){
       if [[ $dep_hyprland == no || -f "$tmp/hyprland/hyprland.tar.gz" ]]; then
         tex+=(--exclude=.config/hypr --exclude='.config/hypr/*')
       fi
-      # Launcher files are included in the generic config archive. Do not
-      # create a dead Ableton entry when the module was not selected.
-      if ! restore_install_has "$tmp/install.list" apps ableton; then
-        tex+=(--exclude=.local/bin/ableton-live \
-              --exclude=.local/share/applications/ableton-live.desktop)
-      fi
+      # Application menu entries are DERIVED state: every package and every
+      # module recreates its own on install. Copying another machine's
+      # ~/.local/share/applications only plants dead icons (an old VM launcher,
+      # a Wine game whose prefix is gone, TUIs from an older module set), so
+      # never restore that directory — not even from an old archive.
+      tex+=(--exclude=.local/share/applications --exclude='.local/share/applications/*')
+      # Launcher files are included in the generic config archive. A wrapper
+      # whose module was not selected is dead weight too: gate each one on the
+      # backup's own install.list (a missing list restores no wrappers).
+      restore_install_has "$tmp/install.list" apps ableton \
+        || tex+=(--exclude=.local/bin/ableton-live)
+      restore_install_has "$tmp/install.list" apps reaper \
+        || tex+=(--exclude=.local/bin/reaper-launch)
+      restore_install_has "$tmp/install.list" apps windows-vm \
+        || tex+=(--exclude=.local/bin/winvm --exclude=.local/bin/windows-vm-usb)
+      restore_install_has "$tmp/install.list" apps macos-vm \
+        || tex+=(--exclude=.local/bin/osx-kvm-installer.sh \
+                 --exclude=.local/bin/macos-vm-tui.sh \
+                 --exclude=.local/bin/launch-macos-tui.sh)
+      restore_install_has "$tmp/install.list" apps omarchy-vm \
+        || tex+=(--exclude=.local/bin/omarchy-vm \
+                 --exclude=.local/bin/setup-omarchy-vm.sh \
+                 --exclude=.local/bin/omarchy-vm-tui.sh \
+                 --exclude=.local/bin/launch-omarchy-tui.sh)
+      restore_install_has "$tmp/install.list" plugins battery-management \
+        || tex+=(--exclude=.local/bin/power-helper)
       # The battery plugins (mosquito.power, mosquito.indicators, mosquito.confirm) are recreated by the
       # battery-management module (setup-battery-management.sh): they are excluded
       # here to avoid restoring frozen copies, then the module reinstalls them.
@@ -3155,10 +3174,10 @@ restore_backup(){
       if [[ $dep_keepass == yes && -f "$HOME/Documents/Passwords.kdbx" ]] \
          && command -v keepassxc >/dev/null 2>&1; then
         local keepass_pin="$SCRIPT_DIR/code/modules/Apps/keepassxc/keepassxc-default-database.sh"
-        if pgrep -x keepassxc >/dev/null 2>&1; then
-          warn "KeePassXC is open; close it and pin the restored database with: $keepass_pin '$HOME/Documents/Passwords.kdbx'"
-          restore_failed=1
-        elif bash "$keepass_pin" "$HOME/Documents/Passwords.kdbx"; then
+        # The helper closes a running KeePassXC before editing its ini (the app
+        # rewrites the file on exit). An already-open app is normal, not a
+        # restore failure; only a pin that really cannot be applied is.
+        if bash "$keepass_pin" "$HOME/Documents/Passwords.kdbx"; then
           ok "Restored KeePassXC database pinned as the default."
         else
           warn "Could not pin the restored KeePassXC database."

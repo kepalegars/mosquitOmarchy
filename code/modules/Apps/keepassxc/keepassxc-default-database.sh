@@ -71,7 +71,16 @@ info "Pinning the DEFAULT database: $TARGET"
 if pgrep -x keepassxc >/dev/null 2>&1; then
   info "keepassxc is running — closing it so the ini can be edited safely…"
   pkill -x keepassxc 2>/dev/null || true
-  sleep 1
+  # Wait for the real exit: the app rewrites its ini on shutdown, so editing
+  # before it is gone would be silently overwritten.
+  for _ in {1..25}; do
+    pgrep -x keepassxc >/dev/null 2>&1 || break
+    sleep 0.2
+  done
+  if pgrep -x keepassxc >/dev/null 2>&1; then
+    pkill -9 -x keepassxc 2>/dev/null || true
+    sleep 0.5
+  fi
 fi
 
 #[[ -f $GLOBALS.pre-keepassxc ]] || cp "$GLOBALS" "$GLOBALS.pre-keepassxc"
