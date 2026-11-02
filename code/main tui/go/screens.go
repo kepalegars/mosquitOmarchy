@@ -674,6 +674,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// The user navigated away while the update check was running.
 			return m, nil
 		}
+		// The archive is fully read now. If the user opens Update and comes
+		// back, or backs out of Restore options, show the archive list again.
+		m.backupPicker = newNavPicker("", m.backupsList()).SetSize(m.contentSize())
 		if msg.Err == nil && (msg.Repo || msg.Omarchy) {
 			m.pendingAction = "restore-update-ask"
 			var what []string

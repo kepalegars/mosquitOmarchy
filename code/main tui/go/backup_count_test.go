@@ -95,6 +95,9 @@ func TestRestoreOptionsRouting(t *testing.T) {
 	if m.top() != scrRestoreOptions {
 		t.Fatalf("the restore options should open after the archive is read, top is %v", m.top())
 	}
+	if len(m.backupPicker.items) < 2 || strings.Contains(m.backupPicker.items[0].Display, "Reading") {
+		t.Fatalf("the archive list should be restored beneath Restore options: %v", m.backupPicker.items)
+	}
 	if m.restoreOpts.Mode != "full" || !strings.Contains(m.restoreNotice, "Full") {
 		t.Fatalf("full should be the default with its warning, mode=%q notice=%q", m.restoreOpts.Mode, m.restoreNotice)
 	}
