@@ -896,13 +896,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.toggleFolder(strings.TrimPrefix(v, "cat:"))
 			} else if strings.HasPrefix(v, "item:") {
 				m.toggle(v)
-				// KeePassXC REPLACES gnome-keyring completely: ticking its row
-				// in the SETUP tree triggers an explicit consent prompt —
-				// declining un-ticks it. The Uninstall tree never asks again.
-				if m.treeMode == "install" && strings.HasSuffix(v, ":keepassxc") && m.selected[v] {
-					m.pushKeepassxcConsent(v)
-					return m, nil
-				}
 			}
 			m.setupCatPicker = m.rebuildSetupCat()
 		case scrBackupApps:
@@ -1197,16 +1190,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			if m.pendingAction == "kb-reload-ask" {
 				return m, fetchKbCmd() // declined reload: refresh the list anyway
 			}
-			if m.pendingAction == "keepassxc-consent" {
-				// Declined: un-tick the module back so it is never installed
-				// without this explicit consent.
-				if len(m.pendingArgs) > 0 {
-					delete(m.selected, m.pendingArgs[0])
-					m.setupCatPicker = m.rebuildSetupCat()
-				}
-				m.toast, _ = m.toast.SetWarn("keepassxc un-ticked")
-				return m, nil
-			}
 			if m.pendingAction == "preinstalls-remove" {
 				// "Keep them" (or Cancel): the stock apps stay. Whatever was
 				// waiting behind the removal — an uninstall or an install
@@ -1230,22 +1213,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				os.Setenv("MOSQUITOMARCHY_DAVINCI_SPEKTRAFILM", "0")
 				return m.resumeInstallStageAfterPrompt()
 			}
-			if m.pendingAction == "keepassxc-gnomerm" {
-				// Declined = KEEP the gnome-keyring package. This is a
-				// legitimate answer, not a cancel: continue the apply.
-				m.kpxGnomeRm = 2
-				os.Setenv("MOSQUITOMARCHY_KEEPASSXC_REMOVE_GNOME_KEYRING", "0")
-				return m, fetchMissingAssetsCmd(m.pendingArgs)
-			}
-			return m, nil
-		}
-		if m.pendingAction == "keepassxc-consent" {
-			// Accepted: keep the selection; the module is in the plan only
-			// when the user installs it with Enter as usual.
-			m.toast, _ = m.toast.SetOK("keepassxc selected — the gnome-keyring questions come during the install")
-			// Refresh the visible tree immediately so the tick reads
-			// without having to leave the Plugins screen.
-			m.setupCatPicker = m.rebuildSetupCat()
 			return m, nil
 		}
 		switch m.pendingAction {
@@ -1314,17 +1281,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			ids := m.pendingFixIDs
 			m.pendingFixIDs = nil
 			return m, quickCatalogRunCmd("tweaks", ids)
-		case "keepassxc-gnomerm":
-			if msg.Yes {
-				m.kpxGnomeRm = 1
-				os.Setenv("MOSQUITOMARCHY_KEEPASSXC_REMOVE_GNOME_KEYRING", "1")
-			} else {
-				m.kpxGnomeRm = 2
-				os.Setenv("MOSQUITOMARCHY_KEEPASSXC_REMOVE_GNOME_KEYRING", "0")
-			}
-			// Continue the apply that was interrupted by this question.
-			return m, fetchMissingAssetsCmd(m.pendingArgs)
-
 		case "preinstalls-remove":
 			// The only path that ever reaches `pacman -Rns`: an explicit "Remove
 			// them". Reached from Enter AND from back, both through the same
@@ -1355,18 +1311,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case "kb-reload-ask":
 			return m.startWorking("Reloading Hyprland", workingArgs("kb-reload", nil)...)
 		case "apply":
-			// KeePassXC's SECOND question (remove the gnome-keyring package?)
-			// belongs to the INSTALL moment: ask once, then forward the
-			// decision to the script through the environment. Cancel = keep.
-			if planHasKeepassxc(m.pendingArgs) && m.kpxGnomeRm == 0 {
-				m.pendingAction = "keepassxc-gnomerm"
-				m.pendingMsg = "Remove the gnome-keyring package during the install?\n\nIts settings stay on the disk — reinstalling gnome-keyring (pacman -S gnome-keyring) recovers them. Refusing keeps the package; only its session daemon is shadowed."
-				m.pendingNo = "Keep it"
-				m.pendingYes = "Remove it"
-				m.push(scrConfirm)
-				m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
-				return m, nil
-			}
 			// Pre-flight: some apps need a manually-downloaded installer. Check
 			// BEFORE running so a missing file becomes a clear prompt naming it,
 			// instead of a failure buried in the run log.
@@ -2349,19 +2293,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.runner, cmd = m.runner.Update(msg)
 	}
 	return m, cmd
-}
-
-// planHasKeepassxc reports whether an install plan (TAB-separated folder key
-// groups) contains the keepassxc module (the gnome-keyring question applies).
-func planHasKeepassxc(plan []string) bool {
-	for _, group := range plan {
-		for _, k := range strings.Split(group, "\t") {
-			if k == "keepassxc" {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // planHasDavinci reports whether an install plan contains the davinci module
@@ -3840,7 +3771,6 @@ func (m model) confirmInstallSelection() (model, tea.Cmd) {
 	}
 	m.pendingAction = "apply"
 	m.pendingArgs = plan
-	m.kpxGnomeRm = 0
 	var cmd tea.Cmd
 	m.pendingMsg, cmd = m.withSpace(fmt.Sprintf("Install %d selected item(s)?\n\n%s", len(keys), strings.Join(keys, "\n")), "install", planKeys(plan))
 	m.pendingNo = "Cancel"
@@ -3857,7 +3787,6 @@ func (m model) confirmUninstallSelection() (model, tea.Cmd) {
 		m.toast, _ = m.toast.SetWarn("nothing selected — press tab to select items")
 		return m, nil
 	}
-	m.kpxGnomeRm = 0
 	return m.startUninstall(keys, fmt.Sprintf("Uninstall %d selected item(s)?\n\n%s",
 		len(keys), strings.Join(keys, "\n")))
 }
@@ -3888,7 +3817,6 @@ func (m model) resumeInstallPlan() (model, tea.Cmd) {
 	}
 	m.pendingAction = "apply"
 	m.pendingArgs = plan
-	m.kpxGnomeRm = 0
 	var cmd tea.Cmd
 	m.pendingMsg, cmd = m.withSpace(fmt.Sprintf("Install %d selected item(s)?\n\n%s", n, strings.Join(names, "\n")), "install", planKeys(plan))
 	m.pendingNo = "Cancel"

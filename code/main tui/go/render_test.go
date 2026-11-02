@@ -317,6 +317,35 @@ func TestSetupTreeToggles(t *testing.T) {
 	}
 }
 
+func TestSelectingKeePassXCDoesNotAskToReplaceOmarchyKeyring(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrSetup, scrSetupCat}
+	m.treeMode = "install"
+	m.setupFolders = []FolderRec{{Folder: "apps", Label: "Apps"}}
+	it := SetupItemRec{Folder: "apps", Key: "keepassxc", Label: "KeePassXC"}
+	m.setupItems = []SetupItemRec{it}
+	m.setupByValue = map[string]SetupItemRec{setupValue("apps", "keepassxc"): it}
+	m.setupCat = "apps"
+	m.folderOpen["apps"] = true
+	m.setupCatPicker = m.rebuildSetupCat()
+
+	m, _ = m.update(tuikit.PickerToggleMsg{Value: setupValue("apps", "keepassxc")})
+	if !m.selected[setupValue("apps", "keepassxc")] {
+		t.Fatal("KeePassXC selection was not retained")
+	}
+	if m.top() != scrSetupCat || m.pendingAction != "" {
+		t.Fatalf("selecting KeePassXC prompted for a keyring change: screen=%v action=%q", m.top(), m.pendingAction)
+	}
+	m, _ = m.update(tuikit.PickerResultMsg{Value: setupValue("apps", "keepassxc")})
+	if m.top() != scrConfirm || m.pendingAction != "apply" {
+		t.Fatalf("KeePassXC install confirmation: screen=%v action=%q", m.top(), m.pendingAction)
+	}
+	m, _ = m.update(tuikit.ConfirmResultMsg{Yes: true})
+	if m.top() == scrConfirm || m.pendingAction == "keepassxc-gnomerm" {
+		t.Fatalf("install still asks about removing gnome-keyring: screen=%v action=%q", m.top(), m.pendingAction)
+	}
+}
+
 // TestBackupPassphraseTwice checks the encrypted-backup flow asks the
 // passphrase a second time and only starts on a match.
 func TestBackupPassphraseTwice(t *testing.T) {

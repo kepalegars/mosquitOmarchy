@@ -3046,6 +3046,11 @@ restore_backup(){
   local dep_keybindings="${RESTORE_KEYBINDINGS:-custom}"
   local restore_failed=0
   local restart_shell_after=0
+  local keepass_settings_preexisting=0
+  if [[ -d "$HOME/.config/keepassxc" ]] \
+     && find "$HOME/.config/keepassxc" -type f -print -quit 2>/dev/null | grep -q .; then
+    keepass_settings_preexisting=1
+  fi
   local safe=0; [[ $mode == safe ]] && safe=1
   local install_list_selected=0 reaper_install=0
 
@@ -3111,6 +3116,15 @@ restore_backup(){
         tex+=(--exclude='.config/hypr/bindings.lua')
       fi
       tar xzf "$tmp/config-backup.tar.gz" -C "$HOME" "${tex[@]}"
+      # In safe mode the KeePassXC module may just have created a default ini.
+      # That is not pre-existing user data: restore the archived settings over
+      # those defaults when the target had no KeePassXC settings before restore.
+      if ((safe && keepass_settings_preexisting == 0)) \
+         && [[ $dep_keepass_settings == yes ]] \
+         && tar tzf "$tmp/config-backup.tar.gz" \
+              | grep -E '(^|/)\.config/keepassxc(/|$)' >/dev/null; then
+        tar xzf "$tmp/config-backup.tar.gz" -C "$HOME" .config/keepassxc
+      fi
       restart_shell_after=1
       systemctl --user daemon-reload 2>/dev/null || true
       if [[ $dep_keepass == yes && -f "$HOME/Documents/Passwords.kdbx" ]] \
@@ -3233,6 +3247,12 @@ restore_backup(){
   # restored config afterwards. The helper also reloads Hyprland.
   if [[ $dep_hyprland == yes ]]; then
     restore_hyprland "$tmp" "$mode"
+    # Hyprland is restored after module setup, so its archived Lua can replace
+    # the KeepassXC rule installed earlier. Reapply the module-owned rule last.
+    if command -v keepassxc >/dev/null 2>&1; then
+      bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-keepassxc-window.sh" \
+        || { warn "Could not reapply the KeePassXC floating-window rule."; restore_failed=1; }
+    fi
   else
     info "Hyprland configs: skipped (restore option)."
   fi

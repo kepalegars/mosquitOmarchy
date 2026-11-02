@@ -27,10 +27,8 @@
 #      removes the gnome-keyring autostart shadow, unmasks gnome-keyring-daemon,
 #      sets [FdoSecrets] Enabled=false) and starts gnome-keyring.
 #   3. Installs the KeePassXC-Browser native-messaging manifests for both
-#      Firefox/Zen and Chromium (the Chromium one was missing, which is why the
-#      browser link "never worked").
-#   4. Enables tray-on-close so KeePassXC survives closing its window.
-#   5. Pins the default .kdbx so KeePassXC opens your database instead of
+#      Firefox/Zen and Chromium, and enables tray-on-close.
+#   4. Pins the default .kdbx so KeePassXC opens your database instead of
 #      offering "create a new database" on every launch.
 #
 # Usage:
@@ -78,49 +76,15 @@ KPXC_PROXY="/usr/bin/keepassxc-proxy"
 KPXC_CHROME_ID="oboonakemofpalcgghocfoadofidjkkk"
 KPXC_EDGE_ID="pdffhmdngciaglkoonimfcmckehcpafo"
 
-YES=0 WANT_SECRET_SERVICE=0
+WANT_SECRET_SERVICE=0
 for a in "$@"; do case "$a" in
-  -y|--yes) YES=1 ;;
+  -y|--yes) : ;;
   --secret-service|--replace-keyring) WANT_SECRET_SERVICE=1 ;;
-  --remove-gnome-keyring) export MOSQUITOMARCHY_KEEPASSXC_REMOVE_GNOME_KEYRING=1 ;;
-  --keep-gnome-keyring) export MOSQUITOMARCHY_KEEPASSXC_REMOVE_GNOME_KEYRING=0 ;;
   --status) MODE=status ;;
   --remove|--uninstall) MODE=remove ;;
   -h|--help) sed -n '2,58p' "$0"; exit 0 ;;
 esac; done
 MODE="${MODE:-apply}"
-
-ask_yes(){
-  # $1 = question text. 0 = yes. GNOME QML confirm → zenity → tty read.
-  # NOTE: with -y we NEVER auto-yes a DESTRUCTIVE question — the caller checks
-  # ${YES} itself before asking anything that removes a package.
-  local q="$1" r sel done waited=0
-  if [[ -t 0 ]] && [[ -n ${TERM:-} ]]; then
-    read -r -p "$q [y/N] " r || return 1
-    [[ $r =~ ^[yYoO]$ ]]
-    return
-  fi
-  if command -v omarchy-shell >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-    sel=$(mktemp); done=$(mktemp); rm -f "$done"
-    omarchy-shell shell summon mosquito.confirm "$(jq -cn \
-      --arg message "$q" --arg selectionFile "$sel" --arg doneFile "$done" \
-      '{message:$message, selectionFile:$selectionFile, doneFile:$done}')" >/dev/null 2>&1 || true
-    while [[ ! -e $done ]]; do
-      ((waited++ > 300)) && break
-      sleep 0.2
-    done
-    local ret=1
-    [[ $(cat "$sel" 2>/dev/null) == yes ]] && ret=0
-    rm -f "$sel" "$done"
-    return $ret
-  fi
-  if command -v zenity >/dev/null 2>&1; then
-    zenity --question --title="KeePassXC integration" --text="$q" 2>/dev/null && return 0
-    return 1
-  fi
-  warn "No GUI to ask — assuming 'no'."
-  return 1
-}
 
 # ─── low-level: keepassxc.ini [FdoSecrets] flag ──────────────────────────────
 set_fdo_enabled(){
@@ -399,42 +363,6 @@ start_keepassxc(){
   ok "KeePassXC started — it now owns org.freedesktop.secrets."
 }
 
-offer_gnome_keyring_removal(){
-  # Second, independent prompt (the module replacement prompt lives in the
-  # TUI): the PACKAGE removal is optional and does NOT delete the user
-  # settings — they remain on the disk, and a plain reinstall recovers them.
-  # When the mosquitOmarchy TUI runs the install, the QUESTION IS ASKED THERE
-  # (a real confirm prompt) and forwarded via
-  # MOSQUITOMARCHY_KEEPASSXC_REMOVE_GNOME_KEYRING=1|0 — so this script never
-  # silently skips the question in the TUI's -y flow.
-  local mode="${MOSQUITOMARCHY_KEEPASSXC_REMOVE_GNOME_KEYRING:-}"
-  if [[ $mode == 1 ]]; then
-    mq_sudo -v || { warn "Password required → gnome-keyring package KEPT."; return 0; }
-    if mq_sudo pacman -Rns --noconfirm gnome-keyring; then
-      ok "gnome-keyring package removed (settings kept on disk)."
-    else
-      warn "pacman kept gnome-keyring (another package may depend on it)."
-    fi
-    return 0
-  elif [[ $mode == 0 ]]; then
-    ok "gnome-keyring package KEPT (decided in the TUI)."
-    return 0
-  elif (( ${YES:-0} )); then
-    ok "(auto-kept) gnome-keyring package not uninstalled in non-interactive mode."
-    return 0
-  fi
-  if ask_yes "Remove the gnome-keyring package itself? (Its settings stay on the disk — reinstalling gnome-keyring recovers them.)"; then
-    mq_sudo -v || { warn "Password required → gnome-keyring package KEPT."; return 0; }
-    if mq_sudo pacman -Rns --noconfirm gnome-keyring; then
-      ok "gnome-keyring package removed (settings kept on disk)."
-    else
-      warn "pacman kept gnome-keyring (another package may depend on it)."
-    fi
-  else
-    ok "gnome-keyring package KEPT — only its session daemon is shadowed."
-  fi
-}
-
 takeover_secret_service(){
   info "Opt-in: making KeePassXC the system Secret Service (REPLACES gnome-keyring)."
   info "Existing gnome-keyring secrets must be MIGRATED MANUALLY to KeePassXC."
@@ -443,7 +371,6 @@ takeover_secret_service(){
   ok "keepassxc.ini: [FdoSecrets] Enabled=true (backup: $KPXC_INI_BAK)"
   write_autostart_shade
   mask_daemon_service
-  offer_gnome_keyring_removal
   start_keepassxc
   info "Still to do in the KeePassXC UI: Settings → Secret Service Integration →"
   info "confirm enabled; Database → Database Settings → expose a group."

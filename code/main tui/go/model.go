@@ -497,13 +497,8 @@ type model struct {
 	// above the shortcut bar (Setup/Uninstall + their subcategories). The
 	// zone echoes every pressed key in real time while filtering.
 	filterOpen bool
-	// kpxGnomeRm tracks the per-install-plan answer to "remove the
-	// gnome-keyring package?": 0 = not asked yet, 1 = yes, 2 = no.
-	kpxGnomeRm int
 	// dvcSpektra tracks the per-install-plan answer to "install the free
-	// spektrFilm OFX too?". 0 = not asked yet. Kept separate from kpxGnomeRm
-	// because the two questions belong to different modules, and a plan can
-	// contain both.
+	// spektrFilm OFX too?". 0 = not asked yet.
 	dvcSpektra   int
 	kbCatPicker  navPicker
 	kbItemPicker navPicker
@@ -870,22 +865,6 @@ func (m *model) toggle(value string) {
 	} else {
 		m.selected[value] = true
 	}
-}
-
-// pushKeepassxcConsent raises the secret-service consent prompt for a newly
-// ticked KeePassXC row (installing without consent is not an option).
-func (m *model) pushKeepassxcConsent(v string) {
-	// Rebuild FIRST so the ticked row shows up even while the
-	// consent prompt is on screen (the prompt pops over it).
-	m.setupCatPicker = m.rebuildSetupCat()
-	m.pendingAction = "keepassxc-consent"
-	m.pendingArgs = []string{v}
-	m.pendingMsg = "Select KeePassXC secret service?\n\nIt REPLACES gnome-keyring completely:\n• your existing gnome-keyring secrets must be migrated to KeePassXC MANUALLY (password/settings transfer comes later);\n• a second prompt during the install asks whether to also remove the gnome-keyring package — its settings stay on disk either way, reinstalling it recovers them;\n• uninstalling this module restores the Omarchy default (gnome-keyring)."
-	m.pendingNo = "Cancel"
-	m.pendingYes = "Select it"
-	m.push(scrConfirm)
-	// Focus Yes: plain Enter = "Select it" (the common answer).
-	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).SetFocus(1)
 }
 
 // toggleFolder marks every child of a folder, or unmarks them all when they

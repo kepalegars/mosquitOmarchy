@@ -2,8 +2,9 @@
 # tweak-keepassxc-window.sh — legacy re-apply of KeePassXC's float rule.
 #
 # The keepassxc module now installs this rule itself, so the tweak is no
-# longer offered in the Tweaks catalog. This script remains for old backups
-# that still carry "tweaks/keepassxc-window", and to remove the rule by hand.
+# longer offered in the Tweaks catalog. Restore also reapplies this marked
+# block after restoring Hyprland, which otherwise overwrites the module rule.
+# This script remains for old backups and to remove the rule by hand.
 # It uses the same marker as the module (the module replaces the old broken
 # "tag = +floating-window" block).
 #

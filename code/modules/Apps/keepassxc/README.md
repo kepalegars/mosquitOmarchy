@@ -28,9 +28,10 @@ What it sets up:
 > Storage"* prompt on **every** launch (even after "allow all & future"), and it
 > cannot read secrets already stored by gnome-keyring — so apps like kDrive
 > asked to log in again on every boot. KeePassXC FdoSecrets and gnome-keyring do
-> not mix for app secrets. If you really want the takeover, opt in with
-> `setup-keepassxc-integration.sh --secret-service` (existing gnome-keyring
-> secrets must then be migrated manually).
+> not mix for app secrets. The `gnome-keyring` package is never removed by this
+> module. If you really want KeePassXC to take over the Secret Service, opt in
+> manually with `setup-keepassxc-integration.sh --secret-service` (existing
+> gnome-keyring secrets must then be migrated manually).
 
 ## Default database — pin yours
 
