@@ -106,7 +106,8 @@ mkdir -p "$MENU_DIR"
 [[ -s $MENU ]] || printf '{\n}\n' > "$MENU"
 
 # Back up before the first edit of this run; keep it simple and dated.
-cp -f "$MENU" "$MENU.bak.reboot-windows-$(date +%s)" 2>/dev/null || true
+menu_backup="$MENU.bak.reboot-windows-$(date +%s)"
+cp -f "$MENU" "$menu_backup" || { err "Could not back up $MENU; refusing to edit it."; exit 1; }
 
 remove_block
 
@@ -134,11 +135,19 @@ awk -v blockfile="$blockfile" '
   { print }
 ' "$MENU" > "$tmp"
 
-# Validate the JSONC after removing line comments. A broken menu would take
-# the whole Omarchy menu down, so restore the backup rather than write it.
+# Normalize JSONC comments/trailing commas for jq validation. A broken menu
+# would take the whole Omarchy menu down, so restore the backup rather than write it.
 if command -v jq >/dev/null 2>&1; then
-  if ! grep -v '^[[:space:]]*//' "$tmp" | jq empty 2>/dev/null; then
+  if ! grep -v '^[[:space:]]*//' "$tmp" \
+      | python3 -c 'import re,sys; sys.stdout.write(re.sub(r",(\s*[}\]])", r"\1", sys.stdin.read()))' \
+      | jq empty 2>/dev/null; then
     rm -f "$tmp" "$blockfile"
+    if ! cp -f "$menu_backup" "$MENU"; then
+      err "Generated menu is invalid and the previous menu could not be restored from $menu_backup."
+    fi
+    if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+      chown "$REAL_USER:$REAL_USER" "$MENU" 2>/dev/null || true
+    fi
     err "Generated menu is not valid JSONC — the previous menu was kept."
     exit 1
   fi

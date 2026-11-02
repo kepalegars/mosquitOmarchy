@@ -3045,6 +3045,7 @@ restore_backup(){
   local dep_hyprland="${RESTORE_DEPLOY_HYPRLAND:-yes}"
   local dep_keybindings="${RESTORE_KEYBINDINGS:-custom}"
   local restore_failed=0
+  local restart_shell_after=0
   local safe=0; [[ $mode == safe ]] && safe=1
   local install_list_selected=0 reaper_install=0
 
@@ -3110,6 +3111,7 @@ restore_backup(){
         tex+=(--exclude='.config/hypr/bindings.lua')
       fi
       tar xzf "$tmp/config-backup.tar.gz" -C "$HOME" "${tex[@]}"
+      restart_shell_after=1
       systemctl --user daemon-reload 2>/dev/null || true
       if [[ $dep_keepass == yes && -f "$HOME/Documents/Passwords.kdbx" ]] \
          && command -v keepassxc >/dev/null 2>&1; then
@@ -3168,6 +3170,7 @@ restore_backup(){
     ((safe)) && thx+=(--skip-old-files)
     if tar xzf "$tmp/themes/themes.tar.gz" -C "$HOME" "${thx[@]}"; then
       ok "Themes restored"
+      restart_shell_after=1
     else
       warn "Could not restore every theme."
     fi
@@ -3232,6 +3235,18 @@ restore_backup(){
     restore_hyprland "$tmp" "$mode"
   else
     info "Hyprland configs: skipped (restore option)."
+  fi
+
+  # Modules can restart the Omarchy shell while installing, but config and
+  # theme archives are restored afterward. Reload once at the end so the
+  # running shell sees the restored settings and theme assets.
+  if ((restart_shell_after)); then
+    if command -v omarchy >/dev/null 2>&1 && omarchy restart shell >/dev/null 2>&1; then
+      ok "Omarchy shell restarted after restore."
+    else
+      warn "Could not restart the Omarchy shell after restore; run: omarchy restart shell"
+      restore_failed=1
+    fi
   fi
 
   rm -rf "$tmp"
