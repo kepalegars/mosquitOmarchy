@@ -78,8 +78,8 @@ if pgrep -x keepassxc >/dev/null 2>&1; then
     sleep 0.2
   done
   if pgrep -x keepassxc >/dev/null 2>&1; then
-    pkill -9 -x keepassxc 2>/dev/null || true
-    sleep 0.5
+    err "keepassxc did not close; database settings were not changed. Close it and rerun this helper."
+    exit 1
   fi
 fi
 

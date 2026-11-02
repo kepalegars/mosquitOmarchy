@@ -1401,8 +1401,8 @@ status_report(){
 # prompts for that passphrase to decrypt it first. The passphrase can also be
 # provided non-interactively via OMARCHY_BACKUP_PASSPHRASE (see do_backup).
 # Older archives named omarchy-backup-* are still listed and restorable.
-# Contents: config-backup.tar.gz (config + Omarchy bar + menus + wrappers +
-# yabridgectl + autosync units), install.list (the packages a restore
+# Contents: config-backup.tar.gz (user config + Omarchy bar + yabridgectl +
+# autosync units + selected module wrappers), install.list (the packages a restore
 # re-installs), pkglist.txt, aurlist.txt, RESTORE.md, and optionally
 # plugins/manifest.txt (file inventory), plugins/installed-list.tsv (APM vendor,
 # plugin names and formats), plugins/plugins.tar.gz (full VST archive), and
@@ -2306,7 +2306,7 @@ do_backup(){
   local -a paths=()
   local p
   for p in .config/windows .config/opencode \
-           .config/omarchy/extensions .config/omarchy/shell.json .config/omarchy/menu \
+           .config/omarchy/shell.json .config/omarchy/menu \
            .config/omarchy/themes/achraf67 .config/omarchy/plugins/mosquito.power .config/omarchy/plugins/custom.power \
            .config/omarchy/plugins/mosquito.indicators .config/omarchy/plugins/mosquito.confirm \
            .config/omarchy/plugins/mosquito.better-pip \
@@ -2320,8 +2320,7 @@ do_backup(){
             .local/bin/osx-kvm-installer.sh .local/bin/macos-vm-tui.sh \
             .local/bin/launch-macos-tui.sh \
             .local/bin/omarchy-vm .local/bin/setup-omarchy-vm.sh \
-            .local/bin/omarchy-vm-tui.sh .local/bin/launch-omarchy-tui.sh \
-            .local/share/icons/hicolor; do
+            .local/bin/omarchy-vm-tui.sh .local/bin/launch-omarchy-tui.sh; do
     [[ -e "$HOME/$p" ]] && paths+=("$p")
   done
   # Zen browser — the ACTIVE profile's settings + what the zen module deploys.
@@ -2568,14 +2567,20 @@ If the backup file ends in .tar.gz.gpg, decrypt it first:
 
 ## 1. Configuration
 
-    tar xzf config-backup.tar.gz -C \$HOME
-    systemctl --user daemon-reload
-    systemctl --user enable yabridge-autosync.path
+Use `./mosquitomarchy-setup.sh --restore` to restore configuration. It filters
+generated application entries and restores module wrappers only when that
+module is selected in `install.list`.
 
-> Includes: Omarchy bar (shell.json), extensions menus, hypr, REAPER, windows,
-> yabridgectl (registered VST folders), autosync units, ~/.local/bin wrappers,
-> Zen config, and — when KeePassXC is installed — its settings + the
-> Passwords.kdbx database (restored to their original places).
+> Do not extract `config-backup.tar.gz` directly from older backups: those
+> archives may contain every desktop entry, icon, and Omarchy menu extension
+> from the source machine, including apps and VM launchers not selected for
+> restore.
+
+> Includes user settings, Omarchy bar (`shell.json`), Hyprland, REAPER,
+> yabridgectl (registered VST folders), autosync units, Zen config, and — when
+> selected — KeePassXC settings + `Passwords.kdbx`. Module wrappers are restored
+> only for their selected modules; generated app-menu entries are recreated by
+> the module setup scripts.
 
 ## 2. Official packages
 
@@ -3094,7 +3099,7 @@ restore_backup(){
 
   # --- Configuration ---
   if [[ -f "$tmp/config-backup.tar.gz" ]]; then
-    if ask "Restore the configuration (~/.config, ~/.local/bin wrappers, Omarchy bar)?" y; then
+    if ask "Restore the configuration (user settings, Omarchy bar, selected module wrappers)?" y; then
       # Safe mode never replaces a file that is already there: tar's
       # --skip-old-files extracts only what is missing, which is exactly
       # "merge into the current setup".
@@ -3121,7 +3126,9 @@ restore_backup(){
       # ~/.local/share/applications only plants dead icons (an old VM launcher,
       # a Wine game whose prefix is gone, TUIs from an older module set), so
       # never restore that directory — not even from an old archive.
-      tex+=(--exclude=.local/share/applications --exclude='.local/share/applications/*')
+      tex+=(--exclude=.local/share/applications --exclude='.local/share/applications/*' \
+            --exclude=.local/share/icons/hicolor --exclude='.local/share/icons/hicolor/*' \
+            --exclude=.config/omarchy/extensions --exclude='.config/omarchy/extensions/*')
       # Launcher files are included in the generic config archive. A wrapper
       # whose module was not selected is dead weight too: gate each one on the
       # backup's own install.list (a missing list restores no wrappers).
@@ -3129,13 +3136,13 @@ restore_backup(){
         || tex+=(--exclude=.local/bin/ableton-live)
       restore_install_has "$tmp/install.list" apps reaper \
         || tex+=(--exclude=.local/bin/reaper-launch)
-      restore_install_has "$tmp/install.list" apps windows-vm \
+      restore_install_has "$tmp/install.list" vms windows-vm \
         || tex+=(--exclude=.local/bin/winvm --exclude=.local/bin/windows-vm-usb)
-      restore_install_has "$tmp/install.list" apps macos-vm \
+      restore_install_has "$tmp/install.list" vms macos-vm \
         || tex+=(--exclude=.local/bin/osx-kvm-installer.sh \
                  --exclude=.local/bin/macos-vm-tui.sh \
                  --exclude=.local/bin/launch-macos-tui.sh)
-      restore_install_has "$tmp/install.list" apps omarchy-vm \
+      restore_install_has "$tmp/install.list" vms omarchy-vm \
         || tex+=(--exclude=.local/bin/omarchy-vm \
                  --exclude=.local/bin/setup-omarchy-vm.sh \
                  --exclude=.local/bin/omarchy-vm-tui.sh \
