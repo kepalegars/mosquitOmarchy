@@ -12,6 +12,38 @@ export GUI_RUN_EXEC=1
 # shellcheck source=../../mosquitomarchy-setup.sh
 source "$ROOT/mosquitomarchy-setup.sh"
 
+PACMAN_TEST_DB="$TMP/pacman"
+pacman-conf(){
+  case ${1:-} in
+    DBPath) printf '%s\n' "$PACMAN_TEST_DB" ;;
+    --repo-list) printf 'core\nextra\n' ;;
+  esac
+}
+pacman(){ :; }
+sync_calls=0
+sync_fails=0
+mq_sudo(){
+  sync_calls=$((sync_calls + 1))
+  ((sync_fails == 0)) || return 1
+  mkdir -p "$PACMAN_TEST_DB/sync"
+  touch "$PACMAN_TEST_DB/sync/core.db" "$PACMAN_TEST_DB/sync/extra.db"
+}
+if ! restore_sync_pacman_databases; then
+  echo 'FAIL: restore did not initialize missing pacman databases' >&2
+  exit 1
+fi
+restore_sync_pacman_databases
+[[ $sync_calls == 1 ]]
+rm -f "$PACMAN_TEST_DB/sync/extra.db"
+sync_fails=1
+if restore_sync_pacman_databases; then
+  echo 'FAIL: restore ignored a failed pacman database sync' >&2
+  exit 1
+fi
+
+package_sync_calls=0
+restore_sync_pacman_databases(){ package_sync_calls=$((package_sync_calls + 1)); }
+
 LIST="$TMP/install.list"
 printf 'apps\tdouze\textracto\tkeepassxc\treaper\tzen\nplugins\ttaskq\n' > "$LIST"
 seen=()
@@ -19,6 +51,7 @@ category_run(){ seen+=("$1:${CATEGORY_SELECTED[*]}"); }
 restore_install_list "$LIST" full
 [[ ${seen[0]} == 'apps:douze extracto keepassxc reaper zen' ]]
 [[ ${seen[1]} == 'plugins:taskq' ]]
+[[ $package_sync_calls == 1 ]]
 ! restore_install_has "$LIST" apps ableton
 printf 'apps\tdouze\tableton\n' > "$LIST"
 restore_install_has "$LIST" apps ableton

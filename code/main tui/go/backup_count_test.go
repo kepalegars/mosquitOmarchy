@@ -116,7 +116,15 @@ func TestRestoreOptionsRouting(t *testing.T) {
 			t.Fatalf("restore args missing %s: %v", want, m.pendingArgs)
 		}
 	}
-	m, _ = m.update(tuikit.ConfirmResultMsg{Yes: true})
+	m, cmd := m.update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Enter did not activate the default Restore button")
+	}
+	answer, ok := cmd().(tuikit.ConfirmResultMsg)
+	if !ok || !answer.Yes {
+		t.Fatalf("default confirmation answer = %#v, want Restore/Yes", answer)
+	}
+	m, _ = m.update(answer)
 	if m.top() != scrWorking {
 		t.Fatalf("confirming the review should start restore, top is %v", m.top())
 	}
@@ -358,6 +366,18 @@ func TestBackupContentInfoKey(t *testing.T) {
 	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
 	if m.top() != scrInfo || !strings.Contains(m.info.View(), "DAW integration details") {
 		t.Fatalf("module info missing: %q", m.info.View())
+	}
+}
+
+func TestBackupOptionsShowsInfoShortcut(t *testing.T) {
+	m := backupCountModel()
+	if hint := m.backupOptPicker.ShortcutsHint(); !strings.Contains(hint, "i") || !strings.Contains(hint, "info") {
+		t.Fatalf("backup legend omits i/info: %q", hint)
+	}
+	m.backupOptPicker = m.backupOptPicker.SelectValue("apps")
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	if m.top() != scrInfo || !strings.Contains(m.info.View(), "install.list") {
+		t.Fatalf("i on Packages did not show its info: top=%d info=%q", m.top(), m.info.View())
 	}
 }
 

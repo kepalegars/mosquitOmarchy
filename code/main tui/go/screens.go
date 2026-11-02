@@ -58,7 +58,7 @@ func firstRunCmd() tea.Cmd {
 		// over an existing desktop): asking would offer to create what
 		// exists. Record and stay silent.
 		if launcherShortcutPresent() && launcherMenuEntryPresent() {
-			markShortcutPrompted()
+			markShortcutPrompted("present")
 			return nil
 		}
 		return firstRunMsg{}
@@ -95,9 +95,9 @@ func launcherMenuEntryPresent() bool {
 
 // markShortcutPrompted records that the first-run shortcut question was asked,
 // so it is never asked again.
-func markShortcutPrompted() {
+func markShortcutPrompted(state string) {
 	_ = os.MkdirAll(filepath.Dir(shortcutMarkerPath()), 0o755)
-	_ = os.WriteFile(shortcutMarkerPath(), []byte("1\n"), 0o644)
+	_ = os.WriteFile(shortcutMarkerPath(), []byte(state+"\n"), 0o644)
 }
 
 // blinkMsg drives the "mosquito" row's blink while the Setup tree is open.
@@ -389,7 +389,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				// user choosing between a log and a back path through the runner.
 				m.pendingAction = ""
 				m.replace(scrMain)
-				return m, fetchStatusCmd()
+				return m, tea.Batch(fetchStatusCmd(), fetchHealthCmd())
 			}
 			// More special stages queued (DaVinci → Guitar Pro → Ableton):
 			// run the next one instead of showing the success prompt now.
@@ -1154,8 +1154,14 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, nil
 		}
 		if m.pendingAction == "add-shortcut" {
-			// Answered either way: never ask again.
-			markShortcutPrompted()
+			// Answered either way: never ask again. Preserve the choice so
+			// Health and module updates respect an intentional skip.
+			state := "skipped"
+			if !msg.Canceled && msg.Yes {
+				state = "accepted"
+			}
+			m.shortcutSkipped = state == "skipped"
+			markShortcutPrompted(state)
 		}
 		m.pop()
 		if msg.Canceled || !msg.Yes {
@@ -1163,6 +1169,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.pendingAction = ""
 				m.pendingArgs = nil
 				return m, nil
+			}
+			if m.pendingAction == "add-shortcut" {
+				m.pendingAction = ""
+				return m, fetchHealthCmd()
 			}
 			if m.pendingAction == "restore-update-ask" {
 				// Continue (the default) skips the recommendation and goes
@@ -1693,6 +1703,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.pop()
 			}
 			return m, nil
+		}
+		if m.shortcutSkipped {
+			items := msg.items[:0]
+			for _, it := range msg.items {
+				if it.ID != "shortcut" {
+					items = append(items, it)
+				}
+			}
+			msg.items = items
 		}
 		if len(msg.items) == 0 {
 			// Stay on the health screen instead of popping to main. No
@@ -2240,6 +2259,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	case scrBackupRestore:
 		m.backupPicker, cmd = m.backupPicker.Update(msg)
 	case scrBackupOptions:
+		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
+			m.info = tuikit.NewInfo(backupOptionInfo(m.backupOptPicker.SelectedValue())).SetSize(m.contentSize())
+			m.push(scrInfo)
+			return m, nil
+		}
 		m.backupOptPicker, cmd = m.backupOptPicker.Update(msg)
 	case scrBackupAppSettings:
 		m.backupAppPicker, cmd = m.backupAppPicker.Update(msg)
@@ -3329,11 +3353,11 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			if maxRows < 2 {
 				maxRows = 2
 			}
-			m.pendingMsg = "Review the complete restore plan below. Only listed packages are considered; Safe mode skips installed modules. Confirm to proceed."
+			m.pendingMsg = "It is highly recommended to do a quick Omarchy update before starting the restore process!\n\nReview the complete restore plan below. Only listed packages are considered; Safe mode skips installed modules. Confirm to proceed."
 			m.pendingNo, m.pendingYes = "Back", "Restore"
 			m.push(scrConfirm)
-			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).
-				SetList("Restore plan (↑/↓ to scroll)", lines, maxRows)
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).FocusYes().
+				SetList("", lines, maxRows)
 			return m, nil
 		case "back":
 			m.pop()
@@ -5208,8 +5232,34 @@ func (m model) rebuildBackupOptions() navPicker {
 		tuikit.PickerItem{Display: "Back", Value: "back"},
 	)
 	p := newNavPicker("", items).SetSize(m.contentSize()).
-		SetHelpKeys(key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "change/start")))
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "change/start")),
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
+		)
 	return p.SelectIndex(idx)
+}
+
+func backupOptionInfo(value string) string {
+	switch value {
+	case "name":
+		return "Archive name\n\nSet a label for this dated backup. Leave it automatic to use the timestamp."
+	case "apps":
+		return "Packages, themes and tweaks\n\nChoose which modules to include in install.list. Restore will show this list before installing anything."
+	case "app-settings":
+		return "App-specific settings\n\nChoose VST inventory or full plugin files, KeePassXC data, Zen settings and REAPER resources."
+	case "keybindings":
+		return "Keybindings\n\nSave all bindings, only the mosquitOmarchy-managed bindings, or none."
+	case "hyprland":
+		return "Hyprland configs\n\nInclude the Hyprland configuration tree in the archive."
+	case "encrypt":
+		return "Encryption\n\nEncrypt the archive with AES-256. The passphrase will be required to inspect and restore it."
+	case "start":
+		return "Backup now\n\nBuild the archive from the selected packages, settings and optional data."
+	case "back":
+		return "Return to Backup / Restore."
+	default:
+		return "Backup options"
+	}
 }
 
 // rebuildBackupAppSettings is the sub-menu holding the per-app content choices.
@@ -5446,6 +5496,7 @@ func (m model) restorePlanLines() []string {
 				lines = append(lines, "    • "+restoreItemLabel(item))
 			}
 		}
+		lines = append(lines, "  • Sync missing Pacman databases if needed (no system upgrade)")
 	}
 	if m.restoreManifest.PkgList || m.restoreManifest.AURList {
 		lines = append(lines, "", "System package snapshots", "  • pkglist.txt / aurlist.txt are not installed by this TUI restore")
@@ -5469,11 +5520,11 @@ func (m model) restorePlanLines() []string {
 		case !m.restoreOpts.VST:
 			lines = append(lines, "  • VST plugins: skipped")
 		case m.restoreManifest.VSTFiles && m.restoreManifest.VSTList:
-			lines = append(lines, "  • Restore VST files and inventory; save the list under ~/Music/Audio Plugins and open it in Omawrite at the end")
+			lines = append(lines, "  • Restore VST files and inventory list", "    Save under ~/Music/Audio Plugins; open in Omawrite at the end")
 		case m.restoreManifest.VSTFiles:
 			lines = append(lines, "  • Restore VST files (this archive has no inventory list)")
 		case m.restoreManifest.VSTList:
-			lines = append(lines, "  • Restore the VST inventory only (no plugin files); save it under ~/Music/Audio Plugins and open it in Omawrite at the end")
+			lines = append(lines, "  • Restore the VST inventory only (no plugin files)", "    Save under ~/Music/Audio Plugins; open in Omawrite at the end")
 		}
 	}
 	if m.restoreManifest.Reaper {

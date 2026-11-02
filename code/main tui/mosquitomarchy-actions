@@ -2055,6 +2055,22 @@ _hypr_config_health(){
   fi
 }
 
+shortcut_prompt_state(){
+  cat "$HOME/.local/state/mosquitomarchy/shortcut-prompted" 2>/dev/null || true
+}
+
+shortcut_was_accepted(){
+  [[ -f "$HOME/.local/state/mosquitomarchy/shortcut-prompted" ]] || return 1
+  case "$(shortcut_prompt_state)" in skipped|1) return 1 ;; *) return 0 ;; esac
+}
+
+health_cache_variant(){
+  {
+    shortcut_prompt_state
+    grep -F 'mosquitOmarchy' "$HYPR_DIR/bindings.lua" 2>/dev/null || true
+  } | cksum | awk '{print $1}'
+}
+
 cmd_health(){
   load_excluded
   local row id state raw detail
@@ -2098,9 +2114,11 @@ cmd_health(){
     printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
       "$(json_str menu)" "$(json_str "Omarchy menu entry")" \
       "$(json_str "the mosquitOmarchy row is missing from the Omarchy menu")"
-  [[ -f $HYPR_DIR/bindings.lua ]] && ! grep -q 'mosquitOmarchy' "$HYPR_DIR/bindings.lua" && \
+  if ! grep -q 'mosquitOmarchy' "$HYPR_DIR/bindings.lua" 2>/dev/null \
+     && { [[ ! -f "$HOME/.local/state/mosquitomarchy/shortcut-prompted" ]] || shortcut_was_accepted; }; then
     printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
       "$(json_str shortcut)" "$(json_str "Keyboard shortcut")" "$(json_str "SUPER + ALT + M missing")"
+  fi
   [[ -x "$HOME/.config/omarchy/hooks/post-boot.d/zzz-mosquitomarchy-update-check" ]] || \
     printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
       "$(json_str hook)" "$(json_str "Update-check hook")" "$(json_str "post-boot hook missing")"
@@ -2164,7 +2182,7 @@ cmd_heal(){
     grep -qE "^[[:space:]]*\"$(menu_entries_marker mosquitomarchy)\"[[:space:]]*:" "$MENU" 2>/dev/null || install_menu_entry || true
   fi
   # 3. Shortcut — only when the user had accepted the prompt.
-  if in_want shortcut && [[ -f "$HOME/.local/state/mosquitomarchy/shortcut-prompted" ]]; then
+  if in_want shortcut && shortcut_was_accepted; then
     kb_ensure "SUPER + ALT + M" "mosquitOmarchy" "$HOME/.local/bin/mosquitomarchy" cmd \
       || warn "Shortcut re-add reported an issue."
     if (( KB_CHANGED )); then
@@ -3021,7 +3039,7 @@ cmd_kb_reload(){
 cmd_add_shortcut(){
   YES=1
   mkdir -p "$HOME/.local/state/mosquitomarchy" 2>/dev/null || true
-  : > "$HOME/.local/state/mosquitomarchy/shortcut-prompted" 2>/dev/null || true
+  printf 'accepted\n' > "$HOME/.local/state/mosquitomarchy/shortcut-prompted" 2>/dev/null || true
   kb_ensure "SUPER + ALT + M" "mosquitOmarchy" "$HOME/.local/bin/mosquitomarchy" cmd
   if (( KB_CHANGED )); then
     kb_reload || warn "Hyprland reload reported an issue."
@@ -3992,7 +4010,7 @@ case "$sub" in
   candidates)               cmd_candidates "${1:-}" ;;
   missing-assets)           cmd_missing_assets "${1:-}" "${@:2}" ;;
   patches)                  cmd_patches "${1:-}" "${@:2}" ;;
-  health)                   mq_cached health 20 cmd_health ;;
+  health)                   mq_cached "health-$(health_cache_variant)" 20 cmd_health ;;
   cleanup)                  cmd_cleanup "${1:-}" ;;
   cleanup-preview)          cmd_cleanup_preview "${1:-}" ;;
   heal) mq_cache_clear; cmd_heal "$@" ;;

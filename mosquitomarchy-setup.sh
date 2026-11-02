@@ -2732,6 +2732,36 @@ pick_backup(){
 # Each line is "folder<TAB>key<TAB>key…", the same groups the Setup tree hands
 # to cmd_apply. In safe mode an app that is already installed is dropped before
 # the group runs, so safe never reinstalls what is on the machine.
+restore_pacman_databases_ready(){
+  command -v pacman >/dev/null 2>&1 || return 0
+  local dbpath repo db found=0 missing=0
+  dbpath="$(pacman-conf DBPath 2>/dev/null || echo /var/lib/pacman)"
+  dbpath="${dbpath%/}"
+  local -a repos=()
+  if command -v pacman-conf >/dev/null 2>&1; then
+    mapfile -t repos < <(pacman-conf --repo-list 2>/dev/null || true)
+  fi
+  if ((${#repos[@]})); then
+    for repo in "${repos[@]}"; do
+      [[ -f "$dbpath/sync/$repo.db" ]] || missing=1
+    done
+    ((missing == 0))
+    return
+  fi
+  for db in "$dbpath"/sync/*.db; do
+    [[ -f $db ]] && found=1
+  done
+  ((found))
+}
+
+restore_sync_pacman_databases(){
+  restore_pacman_databases_ready && return 0
+  command -v pacman >/dev/null 2>&1 || return 0
+  msg "Pacman repository databases are missing; syncing them before module installs (no system upgrade)."
+  mq_sudo pacman -Sy --noconfirm || return 1
+  restore_pacman_databases_ready
+}
+
 restore_install_list(){
   local list="$1" mode="$2" line folder k st pkg
   [[ -f $list ]] || return 0
@@ -2739,6 +2769,7 @@ restore_install_list(){
   mapfile -t lines < "$list"
   MODULE_FAILURES=0
   local restore_failed=0
+  local pacman_ready=0
   RESULTS=()
   for line in "${lines[@]}"; do
     [[ -z $line || $line == \#* ]] && continue
@@ -2778,6 +2809,15 @@ restore_install_list(){
       done
       sel=("${rest[@]}")
       ((${#sel[@]})) || continue
+    fi
+    if ((pacman_ready == 0)); then
+      if restore_sync_pacman_databases; then
+        pacman_ready=1
+      else
+        err "Could not prepare Pacman databases; no backed-up modules were started."
+        restore_failed=1
+        break
+      fi
     fi
     CATEGORY_SELECTED=("${sel[@]}")
     case $folder in

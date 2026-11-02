@@ -39,7 +39,21 @@ func TestFirstRunSilentWhenReady(t *testing.T) {
 	if _, err := os.Stat(shortcutMarkerPath()); err != nil {
 		t.Fatalf("marker not recorded: %v", err)
 	}
+	if b, _ := os.ReadFile(shortcutMarkerPath()); string(b) != "present\n" {
+		t.Fatalf("existing shortcut state = %q, want present", b)
+	}
 	if msg := firstRunCmd()(); msg != nil {
 		t.Fatalf("asks twice: %v", msg)
+	}
+}
+
+func TestSkippedShortcutPreferenceIsRemembered(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	markShortcutPrompted("skipped")
+	if msg := firstRunCmd()(); msg != nil {
+		t.Fatalf("a skipped shortcut should not be offered again: %v", msg)
+	}
+	if b, err := os.ReadFile(shortcutMarkerPath()); err != nil || string(b) != "skipped\n" {
+		t.Fatalf("skipped state = %q, %v", b, err)
 	}
 }

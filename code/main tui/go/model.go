@@ -395,8 +395,9 @@ type model struct {
 	healthChecked map[string]bool
 	// healthItems keeps the FULL health records (id + label + detail) so the
 	// "i" popup can describe the highlighted row.
-	healthItems []HealthRec
-	blinkOn     bool
+	healthItems     []HealthRec
+	shortcutSkipped bool
+	blinkOn         bool
 
 	// aiRemoved caches the backend's "is omarchy's agentic stuff gone?" answer
 	// and aiRemovedKnown says whether that answer has arrived yet.

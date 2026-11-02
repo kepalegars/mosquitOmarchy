@@ -132,6 +132,45 @@ func TestBackupManifestIncludesRestorePlan(t *testing.T) {
 	}
 }
 
+func TestHealthRespectsShortcutChoice(t *testing.T) {
+	setUpBackend(t)
+	home := os.Getenv("HOME")
+	bindings := filepath.Join(home, ".config", "hypr", "bindings.lua")
+	marker := filepath.Join(home, ".local", "state", "mosquitomarchy", "shortcut-prompted")
+	if err := os.MkdirAll(filepath.Dir(bindings), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bindings, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check := func(want bool) {
+		t.Helper()
+		out, err := runQuick("health")
+		if err != nil {
+			t.Fatalf("health query failed: %v", err)
+		}
+		got := bytes.Contains(out, []byte(`"id":"shortcut"`))
+		if got != want {
+			t.Fatalf("shortcut health row = %v, want %v; output: %s", got, want, out)
+		}
+	}
+	if err := os.WriteFile(marker, []byte("skipped\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check(false)
+	if err := os.WriteFile(marker, []byte("accepted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check(true)
+	if err := os.WriteFile(bindings, []byte(`o.bind("SUPER + ALT + M", "mosquitOmarchy")`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check(false)
+}
+
 func TestAddShortcutReturnsToHome(t *testing.T) {
 	m := initialModel()
 	m.w, m.h = 120, 40

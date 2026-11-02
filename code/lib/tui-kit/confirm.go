@@ -283,7 +283,21 @@ func (c Confirm) View() string {
 		body = lipgloss.JoinVertical(lipgloss.Left, body, "", strings.Join(rows, "\n"))
 	}
 	body = lipgloss.JoinVertical(lipgloss.Left, body, "", buttons)
-	return StyleModal.Render(body)
+	if len(c.List) == 0 {
+		return StyleModal.Render(body)
+	}
+	// Size from the WHOLE list, not only the visible window: scrolling past a
+	// longer hidden row must not resize the confirmation prompt.
+	width := lipgloss.Width(body)
+	if c.ListTitle != "" && lipgloss.Width("  "+c.ListTitle) > width {
+		width = lipgloss.Width("  " + c.ListTitle)
+	}
+	for _, line := range c.List {
+		if rowWidth := lipgloss.Width("  " + line); rowWidth > width {
+			width = rowWidth
+		}
+	}
+	return StyleModal.Width(width).Render(body)
 }
 
 // wrapLines word-wraps the message text (left-aligned) so long lines can

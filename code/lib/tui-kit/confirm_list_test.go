@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func names(n int) []string {
@@ -65,6 +66,19 @@ func TestConfirmListScrolls(t *testing.T) {
 	}
 	if !strings.Contains(c.View(), "16–21 of 21") {
 		t.Errorf("scrolling down past the end should stay at the end:\n%s", c.View())
+	}
+}
+
+func TestConfirmListWidthIncludesHiddenRows(t *testing.T) {
+	c := NewConfirm("Review the plan?", "Back", "Restore").
+		SetList("", []string{"short", strings.Repeat("long text ", 8), "end"}, 1)
+	initialWidth := lipgloss.Width(c.View())
+	c, _ = c.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if got := lipgloss.Width(c.View()); got != initialWidth {
+		t.Fatalf("scrolling resized the prompt: before=%d after=%d", initialWidth, got)
+	}
+	if !strings.Contains(c.View(), "long text") {
+		t.Fatalf("did not scroll to the long hidden row: %s", c.View())
 	}
 }
 
