@@ -3792,7 +3792,8 @@ un_windows_vm(){
 
 un_macos_vm(){
   info "Uninstalling macOS VM (helpers / menu / keybinding / window rule)"
-  bash "$MACOS_VM_DIR/setup-macos-vm.sh" --remove || warn "setup-macos-vm.sh --remove reported a problem"
+  bash "$MACOS_VM_DIR/setup-macos-vm.sh" --remove \
+    || { warn "setup-macos-vm.sh --remove reported a problem"; return 1; }
   ok "macOS VM helpers + menu + keybinding removed"
   if (( PURGE )) && [[ -d "$HOME/OSX-KVM" ]]; then
     rm -rf "$HOME/OSX-KVM" && ok "VMs (~/OSX-KVM) deleted"
@@ -3802,9 +3803,11 @@ un_macos_vm(){
 un_omarchy_vm(){
   info "Uninstalling Omarchy VM (helpers / menu / keybinding / window rule)"
   if (( PURGE )); then
-    bash "$OMARCHY_VM_DIR/setup-omarchy-vm.sh" --remove --purge || warn "setup-omarchy-vm.sh --remove reported a problem"
+    bash "$OMARCHY_VM_DIR/setup-omarchy-vm.sh" --remove --purge \
+      || { warn "setup-omarchy-vm.sh --remove reported a problem"; return 1; }
   else
-    bash "$OMARCHY_VM_DIR/setup-omarchy-vm.sh" --remove || warn "setup-omarchy-vm.sh --remove reported a problem"
+    bash "$OMARCHY_VM_DIR/setup-omarchy-vm.sh" --remove \
+      || { warn "setup-omarchy-vm.sh --remove reported a problem"; return 1; }
   fi
   ok "Omarchy VM helpers + menu + keybinding removed"
 }
@@ -4141,7 +4144,7 @@ un_whatsapp_native(){
 
 un_douze(){
   info "Uninstalling douze / Omarchy360"
-  if [[ -x "$DOUZE_DIR/setup-douze.sh" ]]; then
+  if [[ -f "$DOUZE_DIR/setup-douze.sh" ]]; then
     # --purge removes the checkout and saved mixer state; without it the
     # profiles in ~/.config/sslctl survive.
     bash "$DOUZE_DIR/setup-douze.sh" $([[ $PURGE == 1 ]] && echo --purge || echo --remove)
@@ -4155,7 +4158,7 @@ un_douze(){
 un_extracto(){
   info "Uninstalling extracto (module extracto)"
   # Our own glue first: the script knows the exact markers/paths it wrote.
-  if [[ -x "$EXTRACTO_DIR/setup-extracto.sh" ]]; then
+  if [[ -f "$EXTRACTO_DIR/setup-extracto.sh" ]]; then
     bash "$EXTRACTO_DIR/setup-extracto.sh" --remove
   else
     # Fall back to removing the markers by hand if the script is gone.
@@ -4193,10 +4196,11 @@ un_apps(){
 
 un_battery_management(){
   info "Uninstalling battery-management (power-helper / mosquito.power)"
-  local legacy_active=0
+  local legacy_active=0 module_failed=0
 
   if [[ -f "$BATTERY_DIR/setup-battery-management.sh" ]]; then
-    bash "$BATTERY_DIR/setup-battery-management.sh" --remove || true
+    bash "$BATTERY_DIR/setup-battery-management.sh" --remove \
+      || { warn "setup-battery-management.sh --remove reported a problem"; module_failed=1; }
   else
     warn "setup-battery-management.sh not found — sudoers/legacy udev not cleaned by it."
   fi
@@ -4232,19 +4236,33 @@ un_battery_management(){
   # module that owns the plugins), never in un_shared_menu on every uninstall.
   clean_plugins
 
-  # System (sudo): sudoers, legacy udev rule, /usr/local/bin helper
-  if (( YES || PURGE )) && [[ $EUID -eq 0 || -n ${SUDO_USER:-} ]]; then
-    rm -f /etc/udev/rules.d/99-lenovo-charge-threshold.rules /usr/local/bin/power-helper
-    (( legacy_active )) || rm -f /etc/sudoers.d/battery-management
-    udevadm control --reload 2>/dev/null || true
-    if (( legacy_active )); then
-      warn "Kept /etc/sudoers.d/battery-management until ultra-save is turned off."
+  # System (sudo): sudoers, legacy udev rule, /usr/local/bin helper. Elevate
+  # per file instead of requiring the whole uninstall to run as root.
+  if (( YES || PURGE )); then
+    if [[ $EUID -eq 0 ]]; then
+      rm -f /etc/udev/rules.d/99-lenovo-charge-threshold.rules /usr/local/bin/power-helper
+      (( legacy_active )) || rm -f /etc/sudoers.d/battery-management
+      udevadm control --reload 2>/dev/null || true
+      if (( legacy_active )); then
+        warn "Kept /etc/sudoers.d/battery-management until ultra-save is turned off."
+      else
+        ok "sudoers + legacy udev rule + /usr/local/bin helper removed"
+      fi
+    elif mq_sudo rm -f /etc/udev/rules.d/99-lenovo-charge-threshold.rules /usr/local/bin/power-helper; then
+      if (( ! legacy_active )); then
+        mq_sudo rm -f /etc/sudoers.d/battery-management || true
+      fi
+      mq_sudo udevadm control --reload 2>/dev/null || true
+      if (( legacy_active )); then
+        warn "Kept /etc/sudoers.d/battery-management until ultra-save is turned off."
+      else
+        ok "sudoers + legacy udev rule + /usr/local/bin helper removed"
+      fi
     else
-      ok "sudoers + legacy udev rule + /usr/local/bin helper removed"
+      warn "System part (sudoers/udev) not removed — the password prompt was declined or failed."
     fi
-  else
-    warn "System part (sudoers/udev) not removed: run  sudo bash $0"
   fi
+  return "$module_failed"
 }
 
 un_pocket(){ bash "$SCRIPTS/Plugins/pocket/setup-omarchy-pocket.sh" --remove; }
@@ -4323,7 +4341,7 @@ un_touchpad(){
 }
 un_reboot_windows(){
   info "Uninstalling Reboot into Windows"
-  if [[ -x "$REBOOT_WINDOWS_DIR/setup-reboot-into-windows.sh" ]]; then
+  if [[ -f "$REBOOT_WINDOWS_DIR/setup-reboot-into-windows.sh" ]]; then
     bash "$REBOOT_WINDOWS_DIR/setup-reboot-into-windows.sh" --remove \
       || warn "setup-reboot-into-windows.sh --remove reported a problem"
   else
@@ -4333,7 +4351,7 @@ un_reboot_windows(){
 }
 un_better_pip(){
   info "Uninstalling Better PiP (mosquito.better-pip)"
-  if [[ -x "$BETTER_PIP_DIR/setup-better-pip.sh" ]]; then
+  if [[ -f "$BETTER_PIP_DIR/setup-better-pip.sh" ]]; then
     bash "$BETTER_PIP_DIR/setup-better-pip.sh" --remove \
       || warn "setup-better-pip.sh --remove reported a problem"
   else
@@ -4344,7 +4362,7 @@ un_better_pip(){
 }
 un_superfile(){
   info "Uninstalling SuperFile default-file-manager wiring"
-  if [[ -x "$SUPERFILE_DIR/setup-superfile.sh" ]]; then
+  if [[ -f "$SUPERFILE_DIR/setup-superfile.sh" ]]; then
     bash "$SUPERFILE_DIR/setup-superfile.sh" --remove
   else
     warn "$SUPERFILE_DIR/setup-superfile.sh not found — nothing to revert."
@@ -4352,7 +4370,7 @@ un_superfile(){
 }
 un_flea(){
   info "Uninstalling Flea (defaults + package)"
-  if [[ -x "$FLEA_DIR/setup-flea.sh" ]]; then
+  if [[ -f "$FLEA_DIR/setup-flea.sh" ]]; then
     bash "$FLEA_DIR/setup-flea.sh" --uninstall || warn "setup-flea.sh --uninstall reported a problem"
   else
     warn "$FLEA_DIR/setup-flea.sh not found — nothing to remove."
@@ -4363,8 +4381,9 @@ un_zen(){
   # chrome). The browser and its profile stay — the browser itself is managed
   # by the "apps" module (zen-browser-bin).
   info "Uninstalling the Zen config module (seed plugins + settings + chrome)"
-  if [[ -x "$ZEN_DIR/setup-zen.sh" ]]; then
-    bash "$ZEN_DIR/setup-zen.sh" --remove ${YES:+-y}
+  if [[ -f "$ZEN_DIR/setup-zen.sh" ]]; then
+    bash "$ZEN_DIR/setup-zen.sh" --remove ${YES:+-y} \
+      || { warn "setup-zen.sh --remove reported a problem"; return 1; }
   else
     warn "$ZEN_DIR/setup-zen.sh not found — nothing to revert."
   fi
@@ -4372,7 +4391,7 @@ un_zen(){
 }
 un_jamjamjam_plugin(){
   info "Uninstalling the JamJamJam plugin (mosquito.jamjamjam)"
-  if [[ -x "$JAMJAMJAM_PLUGIN_DIR/setup-jamjamjam-plugin.sh" ]]; then
+  if [[ -f "$JAMJAMJAM_PLUGIN_DIR/setup-jamjamjam-plugin.sh" ]]; then
     bash "$JAMJAMJAM_PLUGIN_DIR/setup-jamjamjam-plugin.sh" --remove \
       || warn "setup-jamjamjam-plugin.sh --remove reported a problem"
   else
@@ -4394,7 +4413,7 @@ un_levels_guard(){
 }
 un_live_mode(){
   info "Uninstalling the live mode (live-mode)"
-  if [[ -x "$LIVE_MODE_DIR/setup-live-mode.sh" ]]; then
+  if [[ -f "$LIVE_MODE_DIR/setup-live-mode.sh" ]]; then
     bash "$LIVE_MODE_DIR/setup-live-mode.sh" --uninstall \
       || warn "setup-live-mode.sh --uninstall reported a problem"
   else
@@ -4404,7 +4423,7 @@ un_live_mode(){
 }
 un_mixbay(){
   info "Uninstalling mosquitomixbay (USB audio bay)"
-  if [[ -x "$MIXBAY_DIR/setup-mosquitomixbay.sh" ]]; then
+  if [[ -f "$MIXBAY_DIR/setup-mosquitomixbay.sh" ]]; then
     bash "$MIXBAY_DIR/setup-mosquitomixbay.sh" --uninstall \
       || warn "setup-mosquitomixbay.sh --uninstall reported a problem"
   else
@@ -4436,7 +4455,8 @@ un_keepassxc(){
   # package if the user had asked setup to uninstall it — `sudo pacman -S
   # gnome-keyring` restores the package (its settings were kept on disk).
   info "Uninstalling the KeePassXC secret service (restores gnome-keyring)"
-  bash "$SCRIPTS/Apps/keepassxc/setup-keepassxc-integration.sh" --remove
+  bash "$SCRIPTS/Apps/keepassxc/setup-keepassxc-integration.sh" --remove \
+    || { warn "setup-keepassxc-integration.sh --remove reported a problem"; return 1; }
 }
 
 un_keybindings(){
@@ -4946,7 +4966,7 @@ run_extracto(){
   # Archive Extractor: file-roller (Nautilus "Extract Here" / "Create
   # Archive") + 7zip for password-protected archives, our default mime
   # associations, the menu entry and the floating Hyprland rule.
-  [[ -x "$EXTRACTO_DIR/setup-extracto.sh" ]] \
+  [[ -f "$EXTRACTO_DIR/setup-extracto.sh" ]] \
     && bash "$EXTRACTO_DIR/setup-extracto.sh" $([[ $YES == 1 ]] && echo -y) \
     || { warn "$EXTRACTO_DIR/setup-extracto.sh not found"; return 1; }
 }
@@ -5142,7 +5162,7 @@ st_pipewire_settings(){
   fi
 }
 run_pipewire_settings(){
-  if [[ -x "$PIPEWIRE_SETTINGS_DIR/setup-pipewire-settings.sh" ]]; then
+  if [[ -f "$PIPEWIRE_SETTINGS_DIR/setup-pipewire-settings.sh" ]]; then
     bash "$PIPEWIRE_SETTINGS_DIR/setup-pipewire-settings.sh" -y
   else
     err "setup-pipewire-settings.sh not found in $PIPEWIRE_SETTINGS_DIR"
@@ -5151,7 +5171,7 @@ run_pipewire_settings(){
 }
 un_pipewire_settings(){
   info "Uninstalling the PipeWire settings plugin"
-  if [[ -x "$PIPEWIRE_SETTINGS_DIR/setup-pipewire-settings.sh" ]]; then
+  if [[ -f "$PIPEWIRE_SETTINGS_DIR/setup-pipewire-settings.sh" ]]; then
     # --remove leaves ~/.config/pipewire/pipewire.conf.d/90-mosquitomarchy-pipewire.conf
     # in place on purpose: that is the user's audio setting, not ours. The script
     # prints where it is.

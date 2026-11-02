@@ -469,7 +469,7 @@ do_apply(){
     info "Default database pin deferred until the backup database is restored."
   elif command -v keepassxc >/dev/null 2>&1; then
     info "Pin the default database, keyed to the one KeePassXC opens at its first run…"
-    "$(dirname "${BASH_SOURCE[0]}")/keepassxc-default-database.sh" >/dev/null 2>&1 \
+    bash "$(dirname "${BASH_SOURCE[0]}")/keepassxc-default-database.sh" >/dev/null 2>&1 \
       && ok "Default database pinned into keepassxc.ini (RememberLast + LastOpened)". \
       || warn "Database pin NOT set — run 'code/modules/Apps/keepassxc/keepassxc-default-database.sh FILE.kdbx' manually once your DB exists (see the README in this folder)."
   else
@@ -501,7 +501,7 @@ do_remove(){
   # Remember* / LastOpened* block is dropped from keepassxc.ini; the backup
   # .pre-keepassxc stays untouched.
   if [[ -f "$(dirname "${BASH_SOURCE[0]}")/keepassxc-default-database.sh" ]]; then
-    "$(dirname "${BASH_SOURCE[0]}")/keepassxc-default-database.sh" --clear \
+    bash "$(dirname "${BASH_SOURCE[0]}")/keepassxc-default-database.sh" --clear \
       && ok "Default-database pin cleared (stock behaviour — no remembered .kdbx)." \
       || warn "database pin could not be cleared."
   fi

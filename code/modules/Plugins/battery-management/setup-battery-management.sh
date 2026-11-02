@@ -17,6 +17,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../../lib/plugin-clone.bash
 source "$SCRIPT_DIR/../../../lib/plugin-clone.bash"
+# mq_sudo: the root cleanup must not require the whole script to run as root
+# (root-owned files in $HOME, and the uninstaller cannot re-exec itself).
+if [[ -f "$SCRIPT_DIR/../../../lib/elevate.bash" ]]; then
+  # shellcheck source=../../../lib/elevate.bash
+  source "$SCRIPT_DIR/../../../lib/elevate.bash"
+else
+  mq_sudo() { sudo "$@"; }
+fi
 
 info() { echo -e "\033[1;34m==>\033[0m $*"; }
 ok()   { echo -e "\033[1;32m  ✓\033[0m $*"; }
@@ -418,12 +426,13 @@ if grep -qx 'on' "$LEGACY_STATE/state" 2>/dev/null; then
   fi
   (( LEGACY_ACTIVE )) && warn "Ultra-save is active but could not be safely disabled; preserving its binary and state. Run: sudo $BIN_DIR/ultra-save off"
 fi
-if [[ $EUID -eq 0 && $LEGACY_ACTIVE -eq 0 ]]; then
-  rm -f "$SUDOERS_FILE"
-elif [[ $EUID -eq 0 ]]; then
+if (( LEGACY_ACTIVE )); then
   warn "Keeping the legacy sudoers rule so ultra-save can still be turned off."
-else
-  [[ ! -e $SUDOERS_FILE ]] || warn "Legacy sudoers remains; rerun as root to remove: sudo bash $0"
+elif [[ $EUID -eq 0 ]]; then
+  rm -f "$SUDOERS_FILE"
+elif [[ -e $SUDOERS_FILE ]]; then
+  mq_sudo rm -f "$SUDOERS_FILE" && ok "Legacy sudoers rule removed" \
+    || warn "Legacy sudoers remains; run: sudo rm -f $SUDOERS_FILE"
 fi
 systemctl --user disable --now mosquito-ultra-save-watch.timer ultra-save-monitor.timer 2>/dev/null || true
 rm -f "$TIMER_DIR/mosquito-ultra-save-watch.service" "$TIMER_DIR/mosquito-ultra-save-watch.timer" \
@@ -457,8 +466,11 @@ if [[ -f "$UDEV_DST" ]]; then
     rm -f "$UDEV_DST"
     udevadm control --reload 2>/dev/null || true
     ok "legacy charge-control udev rule removed"
+  elif mq_sudo rm -f "$UDEV_DST"; then
+    mq_sudo udevadm control --reload 2>/dev/null || true
+    ok "legacy charge-control udev rule removed"
   else
-    warn "legacy charge-control udev rule present — rerun as root to remove: sudo bash $0"
+    warn "legacy charge-control udev rule remains; run: sudo rm -f $UDEV_DST"
   fi
 fi
 
@@ -527,7 +539,7 @@ if [[ $REMOVE == true ]]; then
   omarchy plugin disable mosquito.battery >/dev/null 2>&1 || true
   omarchy plugin remove mosquito.battery --yes >/dev/null 2>&1 || true
   omarchy plugin enable omarchy.battery >/dev/null 2>&1 || true
-  info "Uninstall complete: legacy udev + sudoers removed."
+  info "Uninstall complete."
   if (( LEGACY_ACTIVE )); then
     echo "  Ultra-save is still active; its executable/state/sudoers were preserved. Turn it off, then rerun this script."
   else

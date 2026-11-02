@@ -20,6 +20,15 @@ func TestUninstallKeyKeepsCatalogLines(t *testing.T) {
 		{"item:apps:APP GIMP|gimp", "APP GIMP|gimp"},
 		{"mosquitomarchy", "mosquitomarchy"},
 		{"plugins:mosquitomarchy", "mosquitomarchy"},
+		// Routing keys must keep their prefix: the backend dispatch is on it.
+		{"theme:rarity", "theme:rarity"},
+		{"stocktheme:nord", "stocktheme:nord"},
+		{"patch:reaper", "patch:reaper"},
+		{"fix:hyprland-crash", "fix:hyprland-crash"},
+		{"tweak:keepassxc-window", "tweak:keepassxc-window"},
+		{"menu:entry", "menu:entry"},
+		{"user:theme:rarity", "theme:rarity"},
+		{"themes:achraf67", "achraf67"},
 	}
 	for _, c := range cases {
 		if got := uninstallKey(c.in); got != c.want {

@@ -3748,11 +3748,15 @@ func uninstallKey(k string) string {
 			return k[i:]
 		}
 	}
-	// Stock preinstall rows keep their whole key: the backend removes them
-	// by package name, and stripping the prefix would hand it a bare module
-	// id it knows nothing about.
-	if strings.HasPrefix(k, "preinstall:") {
-		return k
+	// These prefixes are routing keys, not "<folder>:<module>" pairs: the
+	// backend's cmd_uninstall dispatches on them. Stripping one handed it a
+	// bare theme/fix/tweak name, which it answered with "Unknown module".
+	for _, p := range []string{
+		"preinstall:", "patch:", "fix:", "tweak:", "theme:", "stocktheme:", "menu:",
+	} {
+		if strings.HasPrefix(k, p) {
+			return k
+		}
 	}
 	if i := strings.IndexByte(k, ':'); i >= 0 {
 		return k[i+1:]

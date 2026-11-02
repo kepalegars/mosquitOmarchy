@@ -250,6 +250,10 @@ detect_ovmf() {
            /usr/share/OVMF/OVMF_VARS.fd; do
     [[ -f $f ]] && { OVMF_VARS_SRC="$f"; break; }
   done
+  # Explicit: when nothing is found the loop's last test is false, and the
+  # caller runs under `set -e`. That silently aborted --remove/--status on a
+  # machine that no longer has edk2-ovmf installed.
+  return 0
 }
 
 total_ram_mb() { awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo; }
@@ -500,7 +504,11 @@ show_status() {
 # -----------------------------------------------------------------------------
 # 0. Prerequisites / dependencies
 # -----------------------------------------------------------------------------
-[[ -d /usr/share/omarchy ]] || die "This script is meant for Omarchy."
+# Removal must work anywhere: it only deletes our own helpers/menu/binding, so
+# an Omarchy install or edk2-ovmf is not a prerequisite for cleaning up.
+if [[ $REMOVE == false ]]; then
+  [[ -d /usr/share/omarchy ]] || die "This script is meant for Omarchy."
+fi
 
 detect_ovmf
 MISSING=()
