@@ -28,9 +28,10 @@ curl -fsSL https://raw.githubusercontent.com/kepalegars/mosquitOmarchy/master/bo
 
 That clones the repo, reports which large installers this machine is still missing,
 builds and deploys the manager, then opens it in its floating window. Bootstrap
-does not install the other modules or add the optional keyboard shortcut. On first
-launch, mosquitOmarchy asks whether to add `SUPER + ALT + M`. From an existing
-clone, `./bootstrap.sh -y` does the same without the pipe.
+tries to install Zenity if it is missing (the GTK sudo prompt dependency), but
+does not install the other modules or add the optional keyboard shortcut. On
+first launch, mosquitOmarchy asks whether to add `SUPER + ALT + M`. From an
+existing clone, `./bootstrap.sh -y` does the same without the pipe.
 
 Every bootstrap run rebuilds the Go TUI from the current sources, even when a
 binary is already deployed — there is no "already built" shortcut, so the

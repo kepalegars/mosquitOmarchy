@@ -155,6 +155,39 @@ ensure_go() {
   return 1
 }
 
+# Zenity is the GTK askpass used by mosquitOmarchy's one-sudo helper. Install it
+# before building/installing anything that may need a GUI password prompt.
+ensure_zenity() {
+  command -v zenity >/dev/null 2>&1 && { ok "zenity present (GTK sudo prompt)"; return 0; }
+  command -v pacman >/dev/null 2>&1 || { warn "zenity missing; no pacman to install the GTK sudo prompt."; return 1; }
+
+  local dbpath repo found=0 missing=0 mode=-S
+  local -a repos=()
+  dbpath="$(pacman-conf DBPath 2>/dev/null || echo /var/lib/pacman)"
+  [[ -n $dbpath ]] || dbpath=/var/lib/pacman
+  dbpath="${dbpath%/}"
+  if command -v pacman-conf >/dev/null 2>&1; then
+    mapfile -t repos < <(pacman-conf --repo-list 2>/dev/null || true)
+  fi
+  if ((${#repos[@]})); then
+    for repo in "${repos[@]}"; do
+      [[ -f "$dbpath/sync/$repo.db" ]] || missing=1
+    done
+  else
+    for repo in "$dbpath"/sync/*.db; do [[ -f $repo ]] && found=1; done
+    ((found)) || missing=1
+  fi
+  ((missing)) && mode=-Sy
+
+  info "Installing zenity for GTK sudo prompts (asks for authorization once)."
+  if mq_pkexec pacman "$mode" --needed --noconfirm zenity && command -v zenity >/dev/null 2>&1; then
+    ok "zenity installed (GTK sudo prompt)"
+    return 0
+  fi
+  warn "Could not install zenity; sudo will use the available askpass fallback."
+  return 1
+}
+
 ensure_repo_source() {
   [[ -f $TUI_GO/main.go ]] || { err "TUI source not found at $TUI_GO"; return 1; }
   [[ -f $DISPATCHER   ]] || { err "Dispatcher not found at $DISPATCHER";   return 1; }
@@ -393,6 +426,7 @@ case "$REBUILD" in
   true)  build_tui; return 0 ;;
 esac
 
+ensure_zenity || true
 build_tui
 install_backend_links
 install_float_rule
@@ -409,5 +443,7 @@ install_shell_plugin
 ok "mosquitOmarchy TUI installed. Launch with: mosquitomarchy"
 }
 
-# Run only when EXECUTED directly (not sourced by mosquitomarchy-setup.sh).
-main_tui
+# Run only when EXECUTED directly (not sourced by tests or callers).
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main_tui
+fi
