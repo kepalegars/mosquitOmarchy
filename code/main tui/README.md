@@ -168,9 +168,10 @@ rest of the live file alone. See the [root README](../../README.md#mosquitomarch
 sanitised into a filename slug (`Avant upgrade REAPER` → `avant-upgrade-reaper`,
 `../../etc/passwd` → `etc-passwd`) and inserted **after** the timestamp and the
 version/channel:
-`mosquitomarchy-backup-20261004-152233-v1.0.0-stable-avant-upgrade-reaper.tar.gz`.
-The version comes from `VERSION`; the channel is `stable` on master/main, `rc`/`beta`
-on a matching branch, or the sanitised branch name. Empty is a valid answer: the
+`mosquitomarchy-backup-20261004-152233-v4.0.6-1-stable-avant-upgrade-reaper.tar.gz`.
+The version comes from the installed Omarchy system (`omarchy version`); the
+channel is `stable` on master/main, `rc`/`beta` on a matching branch, or the
+sanitised branch name. Empty is a valid answer: the
 archive is simply auto-named by its date and version.
 
 **Persisted options.** VST mode, KeePassXC (passwords and settings), Zen, REAPER,

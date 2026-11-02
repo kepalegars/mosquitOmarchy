@@ -168,9 +168,8 @@ def poll_clipboard():
 def poll_host():
     """Pull guest changes of the host clipboard.
 
-    Runs until the host goes away, which is what happens when the VM is shut
-    down: the agent then has nothing to bridge to and exits quietly instead of
-    logging a connection error four times a second.
+    A transient host restart must not permanently stop the guest clipboard
+    service; keep polling until the bridge returns.
     """
     while True:
         try:
@@ -179,7 +178,8 @@ def poll_host():
             rev = int(data.get("rev", 0))
             text = str(data.get("text", ""))
         except (urllib.error.URLError, OSError, ValueError):
-            return
+            time.sleep(POLL_SECONDS)
+            continue
         if rev != AGENT.rev:
             AGENT.rev = rev
             AGENT.adopt(text)

@@ -1945,11 +1945,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			if strings.HasPrefix(v, "item:") {
 				if it, ok := m.setupByValue[v]; ok {
-					txt := it.Label
-					if it.Info != "" {
-						txt += "\n\n" + it.Info
-					}
-					m.info = tuikit.NewInfo(txt).SetSize(m.contentSize())
+					m.info = tuikit.NewInfo(moduleInfo(it)).SetSize(m.contentSize())
 					m.push(scrInfo)
 					return m, nil
 				}
@@ -2006,11 +2002,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			if v := m.setupCatPicker.SelectedValue(); v != "" {
 				if it, ok := m.setupByValue[v]; ok {
-					txt := it.Label
-					if it.Info != "" {
-						txt += "\n\n" + it.Info
-					}
-					m.info = tuikit.NewInfo(txt).SetSize(m.contentSize())
+					m.info = tuikit.NewInfo(moduleInfo(it)).SetSize(m.contentSize())
 					m.push(scrInfo)
 					return m, nil
 				}
@@ -2030,6 +2022,24 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, fetchPatchSecretCmd(m.treeMode == "uninstall", keys)
 		}
 		m.setupCatPicker, cmd = m.setupCatPicker.Update(msg)
+	case scrBackupApps:
+		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
+			v := m.backupAppsPicker.SelectedValue()
+			if strings.HasPrefix(v, "cat:") {
+				m.info = tuikit.NewInfo(categoryInfoFor(strings.TrimPrefix(v, "cat:"), m.backupFolders, m.backupItems, m.backupChecked)).SetSize(m.contentSize())
+				m.push(scrInfo)
+				return m, nil
+			}
+			folder, key := splitSetupValue(v)
+			for _, it := range m.backupItems {
+				if it.Folder == folder && it.Key == key {
+					m.info = tuikit.NewInfo(moduleInfo(it)).SetSize(m.contentSize())
+					m.push(scrInfo)
+					return m, nil
+				}
+			}
+		}
+		m.backupAppsPicker, cmd = m.backupAppsPicker.Update(msg)
 	case scrUpdate:
 		// 'i' shows the highlighted module's own changelog when the cursor
 		// is on a proposed module row; otherwise it shows exactly which
@@ -2221,8 +2231,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.backupAppPicker, cmd = m.backupAppPicker.Update(msg)
 	case scrRestoreOptions:
 		m.restorePicker, cmd = m.restorePicker.Update(msg)
-	case scrBackupApps:
-		m.backupAppsPicker, cmd = m.backupAppsPicker.Update(msg)
 	case scrThemeFolder:
 		// Needed: without a case here the picker never receives the KeyMsg, so
 		// the screen draws its rows but arrows and Enter go nowhere — which
@@ -3998,7 +4006,7 @@ func homePageInfoFor(page string) string {
 
 	case "backup":
 		return "Backup / Restore — DATED ARCHIVES of your configuration, written to\n" +
-			"mosquitomarchy-backups/ (next to the repo) as mosquitomarchy-backup-<date>.tar.gz.\n\n" +
+			"mosquitomarchy-backups/ (next to the repo) as mosquitomarchy-backup-<date>-v<Omarchy version>-<channel>.tar.gz.\n\n" +
 			"  Backup  — Packages, Themes & tweaks (everything mosquitomarchy\n" +
 			"            installed, grouped like Setup), App specific settings\n" +
 			"            (VST, KeePassXC, Zen, REAPER), an optional name, and\n" +
@@ -4052,37 +4060,59 @@ var categoryPurpose = map[string]string{
 }
 
 func (m model) categoryInfo(folder string) string {
+	return categoryInfoFor(folder, m.setupFolders, m.setupItems, m.selected)
+}
+
+func moduleInfo(it SetupItemRec) string {
+	if it.Info == "" {
+		return it.Label
+	}
+	return it.Label + "\n\n" + it.Info
+}
+
+func categoryInfoFor(folder string, folders []FolderRec, items []SetupItemRec, checked map[string]bool) string {
 	if folder == "audio-stack" {
 		return "audio-stack\n\n" + audioBundleInfo
 	}
 	label := folder
-	for _, f := range m.setupFolders {
+	for _, f := range folders {
 		if f.Folder == folder {
 			label = f.Label
 			break
 		}
 	}
-	items := m.setupItemsOf(folder)
+	var children []SetupItemRec
+	for _, it := range items {
+		if it.Folder == folder {
+			children = append(children, it)
+		}
+	}
 	var b strings.Builder
 	b.WriteString(label)
 	if purpose := categoryPurpose[folder]; purpose != "" {
 		b.WriteString("\n\n" + purpose)
 	}
 	b.WriteString("\n\n")
-	if n := len(items); n == 1 {
+	if n := len(children); n == 1 {
 		b.WriteString("1 item")
 	} else {
-		fmt.Fprintf(&b, "%d items", n)
+		fmt.Fprintf(&b, "%d items", len(children))
 	}
-	if n := m.categorySelectedCount(folder); n > 0 {
-		fmt.Fprintf(&b, " — %d ticked", n)
+	selected := 0
+	for _, it := range children {
+		if checked[setupValue(folder, it.Key)] {
+			selected++
+		}
 	}
-	if len(items) == 0 {
+	if selected > 0 {
+		fmt.Fprintf(&b, " — %d ticked", selected)
+	}
+	if len(children) == 0 {
 		b.WriteString(". Nothing to do here right now.")
 		return b.String()
 	}
 	b.WriteString(":")
-	for _, it := range items {
+	for _, it := range children {
 		b.WriteString("\n• " + it.Label)
 		if it.Info != "" && it.Info != it.Label {
 			b.WriteString(" — " + it.Info)
@@ -5187,7 +5217,7 @@ func (m model) rebuildBackupAppSettings() navPicker {
 		items = append(items, tuikit.PickerItem{Display: "Zen browser settings: " + yesno(m.backupOpts.Zen), Value: "zen"})
 	}
 	if m.backupOpts.HasReaper && m.backupAppSelected("reaper") {
-		items = append(items, tuikit.PickerItem{Display: "REAPER: " + reaperDepthLabel(m.backupOpts.Reaper), Value: "reaper"})
+		items = append(items, tuikit.PickerItem{Display: "Reaper ressources: " + reaperDepthLabel(m.backupOpts.Reaper), Value: "reaper"})
 	}
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
 	p := newNavPicker("", items).SetSize(m.contentSize()).
@@ -5206,6 +5236,7 @@ func (m model) rebuildBackupApps() navPicker {
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
 		)
 	return p.SelectIndex(idx)

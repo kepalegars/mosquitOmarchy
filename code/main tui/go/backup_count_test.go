@@ -310,6 +310,58 @@ func TestBackupAppSettingsFollowSelectedApps(t *testing.T) {
 	}
 }
 
+func TestBackupContentInfoKey(t *testing.T) {
+	newModel := func() model {
+		m := initialModel()
+		m.nav = []screen{scrMain, scrBackup, scrBackupOptions, scrBackupApps}
+		m.w, m.h = 120, 40
+		m.backupFolders = []FolderRec{{Folder: "apps", Label: "Apps"}}
+		m.backupItems = []SetupItemRec{{Folder: "apps", Key: "reaper", Label: "REAPER", Info: "DAW integration details"}}
+		m.backupChecked = map[string]bool{setupValue("apps", "reaper"): true}
+		m.backupOpen = map[string]bool{"apps": true}
+		m.backupAppsPicker = m.rebuildBackupApps()
+		return m
+	}
+
+	m := newModel()
+	idx := indexOfValue(m.backupAppsPicker, folderValue("apps"))
+	if idx < 0 {
+		t.Fatal("backup category row missing")
+	}
+	m.backupAppsPicker = m.backupAppsPicker.SelectIndex(idx)
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	if m.top() != scrInfo || !strings.Contains(m.info.View(), "Full desktop applications") || !strings.Contains(m.info.View(), "DAW integration details") {
+		t.Fatalf("category info did not reuse Setup details: %q", m.info.View())
+	}
+
+	m = newModel()
+	idx = indexOfValue(m.backupAppsPicker, setupValue("apps", "reaper"))
+	if idx < 0 {
+		t.Fatal("backup module row missing")
+	}
+	m.backupAppsPicker = m.backupAppsPicker.SelectIndex(idx)
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("i")})
+	if m.top() != scrInfo || !strings.Contains(m.info.View(), "DAW integration details") {
+		t.Fatalf("module info missing: %q", m.info.View())
+	}
+}
+
+func TestBackupReaperSettingsLabel(t *testing.T) {
+	m := initialModel()
+	m.backupOpts = BackupOpts{HasReaper: true, Reaper: "settings"}
+	m.backupItems = []SetupItemRec{{Folder: "apps", Key: "reaper"}}
+	m.backupChecked = map[string]bool{setupValue("apps", "reaper"): true}
+	for _, row := range m.rebuildBackupAppSettings().items {
+		if row.Value == "reaper" {
+			if !strings.HasPrefix(row.Display, "Reaper ressources:") {
+				t.Fatalf("unexpected Reaper backup label: %q", row.Display)
+			}
+			return
+		}
+	}
+	t.Fatal("Reaper resources option missing")
+}
+
 func TestBeginBackupGatesAppSettingsBySelection(t *testing.T) {
 	m := initialModel()
 	m.nav = []screen{scrMain, scrBackup, scrBackupOptions}

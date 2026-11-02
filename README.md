@@ -55,8 +55,8 @@ Once installed, `mosquitOmarchy` is the interface for everything here — run it
 - **Setup** — the module tree. `tab` selects, `←/→` expand a folder, `i` explains the
   highlighted entry, `enter` installs the selection.
 - **Backup / Restore** — a dated archive in `mosquitomarchy-backups/` (next to the repo), optionally
-  AES-256 encrypted. The filename carries the mosquitOmarchy version and channel
-  (`-v1.0.0-stable`, `-rc`, …) so an archive says exactly what made it.
+  AES-256 encrypted. The filename carries the installed Omarchy version and the
+  mosquitOmarchy channel (`-v4.0.6-1-stable`, `-rc`, …).
   **Keybindings** are backed up as `custom only` by default: only the
   `mosquitOmarchy_Keybindings` block is archived, never the rest of
   `~/.config/hypr/bindings.lua`. Choosing `all` archives the whole file; `no`

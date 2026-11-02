@@ -48,6 +48,7 @@ MOSQ_APP_DIR="$REPO/code/main tui"
 ACTIONS_SRC="$MOSQ_APP_DIR/mosquitomarchy-actions"
 AGENT_CRASH_SRC="$MOSQ_APP_DIR/mosquitomarchy-agent-crash"
 SKILL_SRC="$MOSQ_APP_DIR/skills/mosquitomarchy-crash"
+GO_BIN=""
 
 ok()  { echo -e "\033[32m ●\033[0m $*"; }
 info(){ echo -e "\033[34m==>\033[0m $*"; }
@@ -65,13 +66,31 @@ for a in "$@"; do case $a in
   *) usage 1 ;;
 esac; done
 
+# Resolve mise's real executable from a neutral directory: invoking its shim in
+# this repo makes mise parse the repo's .mise.toml and can fail before Go runs.
+resolve_go() {
+  local go_cmd
+  go_cmd="$(command -v go 2>/dev/null || true)"
+  if [[ -z $go_cmd || $go_cmd == *"/mise/shims/go"* ]]; then
+    if command -v mise >/dev/null 2>&1; then
+      GO_BIN="$(cd "${HOME:-/tmp}" && mise which go 2>/dev/null || true)"
+    fi
+    [[ -x $GO_BIN ]] || GO_BIN="/usr/bin/go"
+  else
+    GO_BIN="$go_cmd"
+  fi
+  [[ -x $GO_BIN ]] && "$GO_BIN" version >/dev/null 2>&1 && return 0
+  GO_BIN="/usr/bin/go"
+  [[ -x $GO_BIN ]] && "$GO_BIN" version >/dev/null 2>&1
+}
+
 # Go is a BUILD dependency, and a machine without it cannot even reach the point
 # where the user is told which modules are missing. So it gets installed rather
 # than reported: mise first (no sudo, and it is how this workstation already has
 # it), then pacman. Both keep their own password prompts — the bootstrap's rule
 # is "no SILENT sudo", not "no sudo".
 ensure_go() {
-  if command -v go >/dev/null 2>&1; then ok "go present ($(go version | awk '{print $3}'))"; return 0; fi
+  if resolve_go; then ok "go present ($("$GO_BIN" version | awk '{print $3}'))"; return 0; fi
 
   info "Go is not installed — installing it now (needed to build the TUI)."
 
@@ -86,11 +105,13 @@ ensure_go() {
     # .mise.toml. That turned every fresh machine into "mise failed: Config files
     # are not trusted", straight past a perfectly good installation path.
     if (cd "${HOME:-/tmp}" && mise use -g go@latest) >"$mise_log" 2>&1; then
-      # mise has to be told to put its shims on PATH for this shell; without it
-      # the install succeeded and the check below still says "missing".
-      export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
-      command -v go >/dev/null 2>&1 && { ok "go installed via mise ($(go version | awk '{print $3}'))"; rm -f "$mise_log"; return 0; }
-      warn "mise installed go but no 'go' command is on PATH; is the shims dir still $HOME/.local/share/mise/shims?"
+      if resolve_go; then
+        ok "go installed via mise ($("$GO_BIN" version | awk '{print $3}'))"
+        rm -f "$mise_log"
+        return 0
+      fi
+      warn "mise did not produce a usable go:"
+      sed 's/^/    /' "$mise_log"
     else
       warn "mise failed:"
       sed 's/^/    /' "$mise_log"
@@ -118,7 +139,7 @@ ensure_go() {
         info "sudo pacman -S --needed go"
       fi
       if sudo pacman "$pac" --needed go; then
-        command -v go >/dev/null 2>&1 && { ok "go installed via pacman ($(go version | awk '{print $3}'))"; return 0; }
+        if resolve_go; then ok "go installed via pacman ($("$GO_BIN" version | awk '{print $3}'))"; return 0; fi
       fi
       # Only a "no such target" style failure is worth a resync; anything else
       # (a declined password, a full disk) would just be retried for nothing.
@@ -129,7 +150,7 @@ ensure_go() {
   err "Could not install Go automatically."
   err "  Arch:  sudo pacman -Sy --needed go   (-Sy syncs first, needed on a"
   err "        machine whose package databases were never populated)"
-  err "  mise:  mise use -g go@latest"
+  err "  mise:  (cd \"\$HOME\" && mise use -g go@latest)"
   err "Then re-run this script."
   return 1
 }
@@ -145,7 +166,7 @@ build_tui() {
   info "Building the TUI (Go/Bubble Tea)…"
   local version
   version="$(cat "$REPO/VERSION" 2>/dev/null || echo dev)"
-  (cd "$TUI_GO" && go build -ldflags "-X main.appVersion=$version" -o "$TUI_BIN" .) || { err "TUI build failed."; return 1; }
+  (cd "$TUI_GO" && "$GO_BIN" build -ldflags "-X main.appVersion=$version" -o "$TUI_BIN" .) || { err "TUI build failed."; return 1; }
   ok "TUI built and deployed: $TUI_BIN"
   install -m 0755 "$DISPATCHER" "$DISPATCHER_DST"
   ok "Dispatcher deployed: $DISPATCHER_DST"

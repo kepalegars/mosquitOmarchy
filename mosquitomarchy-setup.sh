@@ -2262,7 +2262,8 @@ do_backup(){
   # timestamp would make every listed backup show a broken date.
   slug="$(backup_name_slug "${BACKUP_NAME:-}")"
   local ver channel base
-  ver="$(printf '%s' "${REPO_VERSION:-0}" | sed -E 's/[^a-zA-Z0-9._-]+/-/g')"
+  ver="$(omarchy version 2>/dev/null || printf 'unknown')"
+  ver="$(printf '%s' "$ver" | sed -E 's/[^a-zA-Z0-9._-]+/-/g')"
   channel="$(mosquitomarchy_channel)"
   base="mosquitomarchy-backup-$ts-v$ver-$channel"
   if [[ -n $slug ]]; then
