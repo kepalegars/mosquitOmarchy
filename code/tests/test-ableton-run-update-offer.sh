@@ -26,5 +26,16 @@ bash(){ printf '%s\n' "$*" >> "$TMP/ableton-command"; }
 rm -f "$ABLETON_DIR/install-ableton-latest.run"
 run_ableton
 grep -qF "$ABLETON_DIR/setup-ableton.sh -y --check-update" "$TMP/ableton-command"
+# Update must ONLY download: no full install run after the download.
+[[ $(wc -l < "$TMP/ableton-command") -eq 1 ]]
 
-echo 'ok: Update offers the Ableton installer download when its .run is absent'
+# A restore/install with no .run downloads it first, THEN runs the module.
+: > "$TMP/ableton-command"
+unset MOSQUITOMARCHY_UPDATE
+run_ableton
+grep -qF "$ABLETON_DIR/setup-ableton.sh -y --check-update" "$TMP/ableton-command"
+grep -qF "$ABLETON_DIR/setup-ableton.sh -y" "$TMP/ableton-command"
+[[ $(grep -n -- "$ABLETON_DIR/setup-ableton.sh -y --check-update" "$TMP/ableton-command" | cut -d: -f1) \
+   -lt $(grep -n -- "$ABLETON_DIR/setup-ableton.sh -y$" "$TMP/ableton-command" | cut -d: -f1) ]]
+
+echo 'ok: Update only downloads the Ableton installer; restore downloads it first, then installs'

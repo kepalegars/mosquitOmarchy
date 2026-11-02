@@ -5057,13 +5057,17 @@ run_omarchy_vm(){
 }
 
 run_ableton(){
-  # The official .run installer is not tracked in git. During an update it is
-  # missing on a fresh clone, and the module cannot do anything without it:
-  # fetch it instead of starting the whole Live install flow.
-  if [[ ${MOSQUITOMARCHY_UPDATE:-0} == 1 || ${MOSQUITOMARCHY_UPDATE_FLOW:-0} == 1 ]] \
-     && ! ableton_installer_present "$ABLETON_DIR"; then
-    bash "$ABLETON_DIR/setup-ableton.sh" -y --check-update
-    return
+  # The official .run installer is not tracked in git, so a fresh clone has
+  # none. Update only downloads it; a restore/install downloads it first, then
+  # runs the module that installs Live from it.
+  if ! ableton_installer_present "$ABLETON_DIR"; then
+    if ! bash "$ABLETON_DIR/setup-ableton.sh" -y --check-update; then
+      err "Could not download the Ableton installer; the module was not started."
+      return 1
+    fi
+    if [[ ${MOSQUITOMARCHY_UPDATE:-0} == 1 || ${MOSQUITOMARCHY_UPDATE_FLOW:-0} == 1 ]]; then
+      return 0
+    fi
   fi
   bash "$ABLETON_DIR/setup-ableton.sh" $([[ $YES == 1 ]] && echo -y)
 }

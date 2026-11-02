@@ -3,6 +3,11 @@
 Deploys the user's Zen browser configuration (plugins + settings + chrome
 theme) into the **active** Zen profile.
 
+> **Known limitation:** restoring Zen Mods from a mosquitOmarchy backup does not
+> work yet. The backup does contain `chrome/zen-themes`, but the restore does
+> not bring the Mods back in the browser. This is not fixed by the current
+> restore logic.
+
 ## What
 
 - **Extensions (XPI)** — `seed/extensions/` → `<profile>/extensions/`
