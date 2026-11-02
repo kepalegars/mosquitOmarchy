@@ -3261,13 +3261,15 @@ restore_backup(){
   # The user backed up a KeePassXC database with passwords: open it in the
   # GUI now, not only in the tray. Pinning killed any running instance, so
   # this is also the first launch that shows the restored database.
-  if ((restore_failed == 0)) && [[ $dep_keepass == yes ]] \
-     && [[ -f "$HOME/Documents/Passwords.kdbx" ]] \
-     && command -v keepassxc >/dev/null 2>&1 \
-     && [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
-    setsid --fork keepassxc "$HOME/Documents/Passwords.kdbx" </dev/null >/dev/null 2>&1 &
-    disown 2>/dev/null || true
-    ok "Opening the restored KeePassXC database."
+  if [[ $dep_keepass == yes && -f "$HOME/Documents/Passwords.kdbx" ]]; then
+    if command -v keepassxc >/dev/null 2>&1; then
+      setsid --fork keepassxc "$HOME/Documents/Passwords.kdbx" </dev/null >/dev/null 2>&1 &
+      disown 2>/dev/null || true
+      ok "Opening the restored KeePassXC database."
+    else
+      warn "KeePassXC database restored, but KeePassXC is not installed; select the keepassxc module to open it."
+      restore_failed=1
+    fi
   fi
   if ((restore_failed)); then
     err "Restore completed with errors."
