@@ -433,7 +433,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.pendingNo = "See log"
 				m.pendingYes = "Restart"
 				m.push(scrConfirm)
-				m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+				m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).FocusYes()
 				return m, nil
 			}
 			// A SUCCESSFUL run used to get a bare toast and drop straight back
@@ -2854,6 +2854,13 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		// whole fixes screen for one row is a hop too many. The screen stays
 		// for multi-select (tick several with Tab, Enter applies the set).
 		if _, key := splitSetupValue(res.Value); key != "" && (m.isQuickFixKey(key) || m.isTweakKey(key)) {
+			// In the Uninstall tree these rows are removals, never "apply this
+			// fix/tweak". Falling into the apply branch below was the bug: a
+			// multi-selection with the cursor on a tweak offered to install
+			// that tweak instead of uninstalling the ticked set.
+			if m.treeMode == "uninstall" {
+				return m.confirmUninstallSelection()
+			}
 			label := key
 			if it, ok := m.setupByValue[res.Value]; ok && it.Label != "" {
 				label = it.Label
@@ -2873,15 +2880,19 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			return m, nil
 		}
 		if strings.HasPrefix(res.Value, tuikit.TreeFolderPrefix) {
+			// Uninstall mode: a folder is a batch selector, exactly like a
+			// module folder. This must come BEFORE the fixes/tweaks "folder
+			// does nothing" rule, or Enter on the tweaks folder ignored the
+			// ticked set.
+			if m.treeMode == "uninstall" {
+				return m.confirmUninstallSelection()
+			}
 			// Fixes and tweaks are not modules: their rows run repairs or
 			// preference changes, never an install plan. Keep folder Enter
 			// inert for them, exactly like the old catalog-folder rule.
 			folder := strings.TrimPrefix(res.Value, tuikit.TreeFolderPrefix)
 			if folder == quickFixesFolder || folder == quickTweaksFolder {
 				return m, nil
-			}
-			if m.treeMode == "uninstall" {
-				return m.confirmUninstallSelection()
 			}
 			return m.confirmInstallSelection()
 		}

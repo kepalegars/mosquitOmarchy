@@ -80,13 +80,20 @@ mq_pkexec() {
 # the active Omarchy palette, else systemd-ask-password.
 mq_sudo_askpass() {
   local f="${XDG_RUNTIME_DIR:-/tmp}/mq-askpass-$UID"
-  # If the omaskpinpass module installed the native Omaskpass overlay, use it
-  # as sudo's askpass: it is the same Omarchy-styled dialog as the SSH/GPG
-  # prompts, instead of a separate zenity style. Only while its service socket
-  # is actually there, so an uninstalled/broken plugin falls back cleanly.
+  # If omaskpinpass is installed, prefer its native Omaskpass overlay over the
+  # zenity fallback: it is the same Omarchy-styled dialog as the SSH/GPG
+  # prompts. The state marker is written by the module; the binary itself is
+  # also detected so a restored ~/.local/bin keeps working before the module
+  # has run again. The plugin's service socket is deliberately NOT required:
+  # a missing socket must fall through to the helper, not silently downgrade
+  # the user to a different password dialog.
   local native
   native="$(cat "$HOME/.local/state/mosquitomarchy/sudo-askpass" 2>/dev/null || true)"
-  if [[ -n $native && -x $native && -S "${XDG_RUNTIME_DIR:-/run/user/$UID}/omaskpass.sock" ]]; then
+  [[ -n $native && -x $native ]] || native="$HOME/.local/bin/omaskpass"
+  if [[ -n ${SUDO_ASKPASS:-} && -x ${SUDO_ASKPASS:-} && ${SUDO_ASKPASS##*/} == omaskpass ]]; then
+    native="$SUDO_ASKPASS"
+  fi
+  if [[ -n $native && -x $native ]]; then
     printf '%s' "$native"
     return 0
   fi

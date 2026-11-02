@@ -97,6 +97,16 @@ grep -q '^## FabFilter$' "$canonical"
 grep -q 'Pro-Q 4 — VST2, VST3' "$canonical"
 ! grep -q 'bytes' "$canonical"
 
+mkdir -p "$(dirname "$EXCLUDED_FILE")"
+printf 'reaper\nreboot-into-windows\n' > "$EXCLUDED_FILE"
+seen=()
+category_run(){ seen+=("$1:${CATEGORY_SELECTED[*]}"); }
+printf 'apps\tzen\treaper\nplugins\treboot-into-windows\n' > "$LIST"
+restore_install_list "$LIST" full
+[[ ${seen[0]} == 'apps:zen reaper' ]]
+[[ ${seen[1]} == 'plugins:reboot-into-windows' ]]
+[[ ! -s $EXCLUDED_FILE ]] || ! grep -qxE 'reaper|reboot-into-windows' "$EXCLUDED_FILE"
+
 mkdir -p "$TMP/restore-input"
 printf 'apps\tdouze\textracto\treaper\n' > "$TMP/restore-input/install.list"
 mkdir -p "$TMP/reaper-input/.config/REAPER" "$TMP/restore-input/reaper"

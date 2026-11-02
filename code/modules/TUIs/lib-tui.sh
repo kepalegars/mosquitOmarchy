@@ -11,6 +11,17 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/elevate.bash"
 
 pkg_has(){ pacman -Q "$1" &>/dev/null; }
 
+# AUR Python packages are built with the system Python, and some of them
+# (python-plotext, pulled in by bagels) forget to declare setuptools, which
+# Python no longer bundles. Without it the yay build dies with
+# "ModuleNotFoundError: No module named 'setuptools'".
+aur_build_deps(){
+  command -v python >/dev/null 2>&1 || return 0
+  python -c 'import setuptools' >/dev/null 2>&1 && return 0
+  mq_sudo pacman -S --needed --noconfirm python-setuptools \
+    || { echo "python-setuptools: install failed" >&2; return 1; }
+}
+
 tui_main(){
   local pkg="$1" stem="$2"; shift 2
   local yes=0 uninstall=0 status=0 menu="$SCRIPT_DIR/setup-$stem-menu.sh"
@@ -43,6 +54,7 @@ tui_main(){
       echo "yay is required to install $pkg" >&2
       return 1
     }
+    aur_build_deps || return 1
     yay -S --needed --noconfirm "$pkg" || { echo "$pkg: install failed" >&2; return 1; }
   fi
   # The companion owns the launcher/icon/menu finery; re-running it is idempotent.

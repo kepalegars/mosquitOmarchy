@@ -1149,7 +1149,6 @@ FIXES=(
 # Both are idempotent, both use the same multi-select + run machinery; only the
 # catalog and the on-disk folder differ (code/modules/Fixes/ vs code/modules/Tweaks/).
 TWEAKS=(
-  "keepassxc-window:KeePassXC window floats/centers in Hyprland instead of misbehaving when tiled next to other windows"
   "tui-theme:Force-adapt the TUIs' theme to the current Omarchy theme (regenerate the palette + rebuild both Go TUIs; the dynamic theme already ships with tui-kit)"
   "terminal-padding:Omarchy pads every terminal by 14px and paints that padding with the theme background (near-black on the dark themes), so the text block reads as a dark slab floating inside a light window with a heavy frame between the two — keep the padding, make it take the terminal's own background"
   "wine-menu:'Uninstall'/'Manual' entries cluttering the launcher: a Windows installer (smartEQ, FabFilter, CrispyTuner, Guitar Pro…) published its Start-Menu shortcuts and Wine turned each one into an app-menu entry — drop the ones belonging to the prefixes mosquitomarchy manages (idempotent; the file associations are kept)"
@@ -1170,7 +1169,6 @@ fix_desc(){ # id -> description (searches both catalogs)
 # picked alone or its whole category in one keystroke.
 fix_category(){
   case $1 in
-    keepassxc-window) echo "Windows & input" ;;
     tui-theme)        echo "Appearance" ;;
     terminal-padding) echo "Appearance" ;;
     omarchy-menu)     echo "Omarchy" ;;
@@ -2781,6 +2779,7 @@ restore_install_list(){
   local restore_failed=0
   local pacman_ready=0
   RESULTS=()
+  load_excluded
   for line in "${lines[@]}"; do
     [[ -z $line || $line == \#* ]] && continue
     IFS=$'\t' read -r -a arr <<<"$line"
@@ -2793,6 +2792,13 @@ restore_install_list(){
       # Themes travel in themes/themes.tar.gz, not through the package
       # installer. Stock themes are not part of a restore.
       case $k in theme:*|stocktheme:*|omarchyplugin:*) continue ;; esac
+      # A backup's install.list is an explicit "put this back", so it wins
+      # over an earlier "uninstalled by you" marker. Without this, a restore
+      # silently skipped reaper/reboot-into-windows and still deployed their
+      # folders (a REAPER that could not launch).
+      if is_excluded "$k"; then
+        unexclude "$k"
+      fi
       if [[ $mode == safe ]]; then
         case $k in
           TUI\ *)
@@ -3277,6 +3283,17 @@ restore_backup(){
     else
       warn "VST inventory is saved, but omawrite is not installed: $RESTORED_VST_LIST"
     fi
+  fi
+  # The user backed up a KeePassXC database with passwords: open it in the
+  # GUI now, not only in the tray. Pinning killed any running instance, so
+  # this is also the first launch that shows the restored database.
+  if ((restore_failed == 0)) && [[ $dep_keepass == yes ]] \
+     && [[ -f "$HOME/Documents/Passwords.kdbx" ]] \
+     && command -v keepassxc >/dev/null 2>&1 \
+     && [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
+    setsid --fork keepassxc "$HOME/Documents/Passwords.kdbx" </dev/null >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+    ok "Opening the restored KeePassXC database."
   fi
   if ((restore_failed)); then
     err "Restore completed with errors."

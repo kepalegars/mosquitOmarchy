@@ -201,6 +201,35 @@ print("yes" if ok else "no")
 PY
 }
 
+# ─── Hyprland window rule ────────────────────────────────────────────────────
+# KeePassXC's fixed-size dialogs do not cope with tiling next to other windows,
+# so the module owns the float/center rule itself. The marker is the old tweak's
+# one, so re-running also repairs machines that still carry that (broken) block.
+KPXC_HYPR="$HOME/.config/hypr/hyprland.lua"
+ensure_window_rule(){
+  mkdir -p "$(dirname "$KPXC_HYPR")"
+  touch "$KPXC_HYPR"
+  sed -i '/-- >>> keepassxc-window-setup >>>/,/-- <<< keepassxc-window-setup <<</d' "$KPXC_HYPR"
+  cat >> "$KPXC_HYPR" <<'EOF'
+-- >>> keepassxc-window-setup >>> KeePassXC is a fixed-size password window:
+-- float and center it instead of tiling it. Matches the native Wayland app-id
+-- and the XWayland class (StartupWMClass=keepassxc). Managed by the
+-- keepassxc module — no separate tweak to apply.
+o.window("org.keepassxc.KeePassXC", { float = true, center = true, size = { 1000, 700 } })
+o.window({ class = "^keepassxc$" }, { float = true, center = true, size = { 1000, 700 } })
+-- <<< keepassxc-window-setup <<<
+EOF
+  hyprctl reload >/dev/null 2>&1 || true
+  ok "Hyprland float/center rule installed/updated ($KPXC_HYPR)"
+}
+
+remove_window_rule(){
+  [[ -f $KPXC_HYPR ]] || return 0
+  sed -i '/-- >>> keepassxc-window-setup >>>/,/-- <<< keepassxc-window-setup <<</d' "$KPXC_HYPR"
+  hyprctl reload >/dev/null 2>&1 || true
+  ok "Hyprland float/center rule removed."
+}
+
 # ─── browser integration (§3) ────────────────────────────────────────────────
 # KeePassXC-Browser talks to keepassxc-proxy over the browser's native-messaging
 # channel. Each browser reads a JSON manifest from its own directory; KeePassXC
@@ -457,9 +486,11 @@ do_apply(){
     restore_omarchy_keyring
   fi
 
-  # Step 2: browser integration (both manifests) + tray-on-close.
+  # Step 2: browser integration (both manifests) + tray-on-close + the
+  # Hyprland float rule (the window is useless tiled next to other windows).
   install_browser_manifests
   set_tray_on_close
+  ensure_window_rule
 
   # Step 3: DEFAULT DATABASE — at the KeePassXC FIRST launch the user chooses
   # (creates or opens) the ONE .kdbx that everything else should use; this
@@ -496,6 +527,7 @@ do_remove(){
   info "Undoing the KeePassXC module (Omarchy defaults restored)"
   restore_omarchy_keyring
   remove_browser_manifests
+  remove_window_rule
   ok "KeePassXC database and settings were NEVER touched — they stay installed."
   # Un-pin the remembered default database (the user's own). The whole
   # Remember* / LastOpened* block is dropped from keepassxc.ini; the backup

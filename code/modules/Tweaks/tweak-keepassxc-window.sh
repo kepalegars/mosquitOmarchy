@@ -1,20 +1,11 @@
 #!/usr/bin/env bash
-# tweak-keepassxc-window.sh — keep KeePassXC's window floating in Hyprland.
+# tweak-keepassxc-window.sh — legacy re-apply of KeePassXC's float rule.
 #
-# KeePassXC doesn't adapt well when it is tiled next to other Hyprland
-# windows (templates/dialogs/styling are made for a fixed-size window).
-# This injects an idempotent marked block into ~/.config/hypr/hyprland.lua
-# (same pattern as setup-ableton-move-manager.sh / setup-vst-manager.sh)
-# that floats + centers KeePassXC's main window instead of tiling it,
-# reusing Omarchy's own "floating-window" tag so size matches the rest of
-# the desktop's floating popups. Matches both the native Wayland app-id
-# (org.keepassxc.KeePassXC) and the XWayland class (keepassxc, per its
-# StartupWMClass) — one or the other depending on the platform the app
-# actually runs under.
-#
-# A preference, not a repair: KeePassXC works tiled, this only makes it behave
-# the way its fixed-size UI expects. Safe to re-run (it strips the previous
-# block first).
+# The keepassxc module now installs this rule itself, so the tweak is no
+# longer offered in the Tweaks catalog. This script remains for old backups
+# that still carry "tweaks/keepassxc-window", and to remove the rule by hand.
+# It uses the same marker as the module (the module replaces the old broken
+# "tag = +floating-window" block).
 #
 # Usage:
 #   ./tweak-keepassxc-window.sh            # apply (idempotent)
@@ -49,11 +40,12 @@ apply(){
   touch "$CONF"
   remove_block
   cat >> "$CONF" <<'EOF'
--- >>> keepassxc-window-setup >>> float KeePassXC (tiled next to other
--- windows it doesn't adapt well) instead of the tiled default. Matches the
--- native Wayland app-id and the XWayland class (StartupWMClass=keepassxc).
-o.window("org.keepassxc.KeePassXC", { tag = "+floating-window" })
-o.window({ class = "^keepassxc$" }, { tag = "+floating-window" })
+-- >>> keepassxc-window-setup >>> KeePassXC is a fixed-size password window:
+-- float and center it instead of tiling it. Matches the native Wayland app-id
+-- and the XWayland class (StartupWMClass=keepassxc). Managed by the
+-- keepassxc module — no separate tweak to apply.
+o.window("org.keepassxc.KeePassXC", { float = true, center = true, size = { 1000, 700 } })
+o.window({ class = "^keepassxc$" }, { float = true, center = true, size = { 1000, 700 } })
 -- <<< keepassxc-window-setup <<<
 EOF
   command -v hyprctl >/dev/null 2>&1 && hyprctl reload >/dev/null 2>&1 || true

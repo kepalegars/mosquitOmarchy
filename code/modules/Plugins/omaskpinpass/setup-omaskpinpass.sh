@@ -51,8 +51,8 @@ chmod 0644 "$tmp"
 mv "$tmp" "$env_file"
 
 # Make the native Omaskpass overlay the sudo prompt immediately, without a
-# re-login. mq_sudo_askpass reads this marker and uses it only while its
-# service socket exists; otherwise it falls back to the themed zenity prompt.
+# re-login. mq_sudo_askpass reads this marker and prefers omaskpass; only when
+# the binary is absent does it fall back to the themed zenity prompt.
 state_dir="$HOME/.local/state/mosquitomarchy"
 mkdir -p "$state_dir"
 printf '%s\n' "$bin_dir/omaskpass" > "$state_dir/sudo-askpass"

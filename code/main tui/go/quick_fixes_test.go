@@ -209,3 +209,55 @@ func TestEnterOnATweakRowQueuesTheTweaksCatalog(t *testing.T) {
 		t.Fatalf("pendingFixIDs = %v, want [wine-theme]", next.pendingFixIDs)
 	}
 }
+
+// uninstallTweaksSetup is flatSetup plus a tickable tweak row, in the tree the
+// Uninstall screen shows.
+func uninstallTweaksSetup() model {
+	m := flatSetup()
+	m.treeMode = "uninstall"
+	m.setupFolders = append(m.setupFolders, FolderRec{Folder: "tweaks", Label: "Tweaks"})
+	// The Uninstall tree prefixes routing keys, exactly as the backend emits
+	// them; a bare key would take the generic module path and hide the bug.
+	it := SetupItemRec{Folder: "tweaks", Key: "tweak:wine-theme", Label: "wine-theme", Info: "dark/light"}
+	m.setupItems = append(m.setupItems, it)
+	m.setupByValue[setupValue("tweaks", "tweak:wine-theme")] = it
+	return m
+}
+
+// In the Uninstall tree a tweak row is a REMOVAL, never "apply this tweak".
+// Enter used to fall into the apply branch: with a set ticked it offered to
+// apply the row under the cursor and ignored the selection.
+func TestEnterOnATweakRowInUninstallModeUninstallsTheSelection(t *testing.T) {
+	m := uninstallTweaksSetup()
+	m.selected[setupValue("tweaks", "tweak:wine-theme")] = true
+	m.selected[setupValue("apps", "reaper")] = true
+	m.setupPicker = m.rebuildSetup()
+
+	next, _ := m.update(tuikit.PickerResultMsg{Value: "item:tweaks:tweak:wine-theme"})
+	if next.top() != scrConfirm {
+		t.Fatalf("Enter on a tweak row went to screen %d, want the confirmation", next.top())
+	}
+	if next.pendingAction != "uninstall" {
+		t.Fatalf("pendingAction = %q, want uninstall", next.pendingAction)
+	}
+	got := strings.Join(next.pendingArgs, ",")
+	if !strings.Contains(got, "tweak:wine-theme") || !strings.Contains(got, "reaper") {
+		t.Fatalf("pendingArgs = %v, want the whole ticked set", next.pendingArgs)
+	}
+}
+
+// Enter on the tweaks FOLDER in Uninstall mode must confirm the ticked set.
+// The fixes/tweaks "folder does nothing" rule used to run first, so Enter on
+// the folder with items ticked did nothing at all.
+func TestEnterOnTheTweaksFolderInUninstallModeUninstallsTheSelection(t *testing.T) {
+	m := uninstallTweaksSetup()
+	m.selected[setupValue("tweaks", "tweak:wine-theme")] = true
+
+	next, _ := m.update(tuikit.PickerResultMsg{Value: folderValue("tweaks")})
+	if next.top() != scrConfirm || next.pendingAction != "uninstall" {
+		t.Fatalf("tweaks folder Enter: top=%d action=%q, want the uninstall confirmation", next.top(), next.pendingAction)
+	}
+	if len(next.pendingArgs) != 1 || next.pendingArgs[0] != "tweak:wine-theme" {
+		t.Fatalf("pendingArgs = %v, want [tweak:wine-theme]", next.pendingArgs)
+	}
+}
