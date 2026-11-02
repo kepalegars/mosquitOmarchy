@@ -857,20 +857,18 @@ func writeRunLog(tool, output string) string {
 // successful action raised a critical "<tool> failed" notification, a crash log
 // full of green ticks, and an AI diagnosis offer for a run that worked. The
 // success path now calls writeRunLog directly.
-// crashToastOff reports whether the user disabled the crash toasts (same
-// flag file the Settings toggle and lib/crash.bash use). reportCrash must
-// honor it: it used to notify on every failed run even with the switch off,
-// which is exactly the "I disabled them but they keep coming" report.
+// crashToastOff reports whether crash toasts are disabled. Missing state means
+// off, matching the Settings toggle and lib/crash.bash on a clean install.
 func crashToastOff() bool {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return false
+		return true
 	}
 	b, err := os.ReadFile(filepath.Join(home, ".local", "state", "mosquitomarchy", "crash-notify"))
 	if err != nil {
-		return false
+		return true
 	}
-	return strings.TrimSpace(string(b)) == "off"
+	return strings.TrimSpace(string(b)) != "on"
 }
 
 func reportCrash(tool, output string) {

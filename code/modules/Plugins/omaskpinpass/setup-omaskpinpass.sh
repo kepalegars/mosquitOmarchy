@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # Install both Omarchy credential dialogs from source without `just`:
 # omaskpass speaks SSH_ASKPASS; omapin speaks GnuPG's pinentry Assuan protocol.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/elevate.bash"
 set -euo pipefail
 
 [[ $EUID -ne 0 ]] || { echo "Run this as the desktop user, not with sudo." >&2; exit 1; }
 command -v omarchy >/dev/null || { echo "omarchy is required" >&2; exit 1; }
-command -v cargo >/dev/null || { echo "cargo is required to build the two binaries" >&2; exit 1; }
+if ! command -v cargo >/dev/null 2>&1; then
+  command -v pacman >/dev/null || { echo "cargo is required to build the two binaries" >&2; exit 1; }
+  echo "cargo is missing; installing the Rust toolchain (package: rust)."
+  mq_sudo pacman -S --needed --noconfirm rust \
+    || { echo "Could not install Rust/cargo; omaskpinpass was not installed." >&2; exit 1; }
+fi
+command -v cargo >/dev/null || { echo "Rust package installed but cargo is still unavailable" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq is required by omarchy plugin management" >&2; exit 1; }
 
 plugins_dir="$HOME/.config/omarchy/plugins"

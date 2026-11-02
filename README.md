@@ -129,7 +129,7 @@ The project's own layer: the manager itself, and the desktop-hardware modules.
 | Module | Installs | Doc |
 |---|---|---|
 | `battery-management` | Profile-colored battery icon/panel; the retired ultra-save CPU/power cap is removed | [README](code/modules/Plugins/battery-management/README.md) |
-| `omaskpinpass` | SSH askpass + GnuPG pinentry plugins and binaries, built per-user; configures SSH askpass and GPG agent | [installer](code/modules/Plugins/omaskpinpass/setup-omaskpinpass.sh) |
+| `omaskpinpass` | SSH askpass + GnuPG pinentry plugins and binaries, built per-user (installs Rust/Cargo if missing); configures SSH askpass and GPG agent | [installer](code/modules/Plugins/omaskpinpass/setup-omaskpinpass.sh) |
 | `downloads` | Omarchy Downloads popup + `SUPER+ALT+D` binding | [installer](code/modules/Plugins/omarchy-downloads/setup-omarchy-downloads.sh) |
 | `taskq` | TaskQ deadline widget | [GitHub](https://github.com/sendaljpt/taskq) |
 | `process-killer` | Omarchy process-killer widget | [GitHub](https://github.com/BeresN/omarchy-process-killer) |

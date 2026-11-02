@@ -6,20 +6,26 @@ import (
 	"testing"
 )
 
-// TestCrashToastOffFollowsTheSwitch: the same flag file the Settings toggle
-// writes gates the TUI's own crash toast. Missing file (or anything but
-// "off") means notify; only an explicit "off" silences.
+// TestCrashToastOffFollowsTheSwitch: missing state is off on a clean install;
+// only an explicit "on" enables the toast.
 func TestCrashToastOffFollowsTheSwitch(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
-	if crashToastOff() {
-		t.Fatalf("no flag file, yet toast suppressed")
+	if !crashToastOff() {
+		t.Fatalf("no flag file should default to off")
 	}
 	flagDir := filepath.Join(dir, ".local", "state", "mosquitomarchy")
 	if err := os.MkdirAll(flagDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(flagDir, "crash-notify"), []byte("off\n"), 0o644); err != nil {
+	flag := filepath.Join(flagDir, "crash-notify")
+	if err := os.WriteFile(flag, []byte("on\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if crashToastOff() {
+		t.Fatalf("flag file says on, yet toast suppressed")
+	}
+	if err := os.WriteFile(flag, []byte("off\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if !crashToastOff() {

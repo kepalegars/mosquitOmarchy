@@ -1099,7 +1099,7 @@ MODULES=(
   "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
   "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships."
   "battery-management:Battery management — formerly ultra-save, a CPU/power-capping mode; abandoned for a simple script that colors the battery icon by power profile"
-  "omaskpinpass:Omarchy SSH askpass + GnuPG pinentry dialogs, built per-user from source; sets SSH_ASKPASS_REQUIRE=prefer"
+  "omaskpinpass:Omarchy SSH askpass + GnuPG pinentry dialogs, built per-user from source (installs Rust/Cargo if missing); sets SSH_ASKPASS_REQUIRE=prefer"
   "downloads:Downloads — themed popup for recent files (SUPER + ALT + D)"
   "taskq:TaskQ — bar-based task list with deadlines"
   "process-killer:Process Killer — inspect and stop running processes"
@@ -1406,7 +1406,8 @@ status_report(){
 # Contents: config-backup.tar.gz (config + Omarchy bar + menus + wrappers +
 # yabridgectl + autosync units), install.list (the packages a restore
 # re-installs), pkglist.txt, aurlist.txt, RESTORE.md, and optionally
-# plugins/manifest.txt (inventory), plugins/plugins.tar.gz (full VST archive),
+# plugins/manifest.txt (file inventory), plugins/installed-list.tsv (APM vendor,
+# plugin names and formats), plugins/plugins.tar.gz (full VST archive), and
 # reaper/reaper.tar.gz (every REAPER-created folder — full mode only).
 # All paths are relative to $HOME: a restore puts them back in the same place.
 BACKUP_DIR="${OMARCHY_BACKUP_DIR:-$SCRIPT_DIR/mosquitomarchy-backups}"
@@ -1868,12 +1869,9 @@ plugins_tree_bytes_mb(){
   printf '%s' "$(( b / 1048576 ))"
 }
 
-# backup_plugins_inventory <tmp> — writes plugins/manifest.txt: every plugin
-# file with its size and mtime, the folder the files came from, and the
-# yabridgectl configuration, so an inventory-only backup is still actionable
-# by hand. Also records the folder the manager was pointing at, which is what
-# lets a restore notice a mismatch instead of silently extracting somewhere
-# the manager does not look.
+# backup_plugins_inventory <tmp> — writes the APM-style plugin list plus the
+# file-level manifest and yabridgectl configuration. The latter lets an
+# inventory-only backup stay actionable and a restore notice root mismatches.
 backup_plugins_inventory(){
   mq_vst_init
   local tmp="$1" sub
@@ -1893,6 +1891,15 @@ backup_plugins_inventory(){
     [[ -f "$HOME/.config/yabridgectl/config.toml" ]] && cat "$HOME/.config/yabridgectl/config.toml"
   } | cat - "$tmp/plugins/manifest.txt" > "$tmp/plugins/manifest.txt.tmp" 2>/dev/null \
     && mv "$tmp/plugins/manifest.txt.tmp" "$tmp/plugins/manifest.txt" || true
+  if apm_installed && "$APM_ACTIONS" page plugins list-plugin-folders 2>/dev/null \
+      | jq -r 'select(.kind == "plugin") | [(.vendor // "Other"), (if (.group // "") == "" then "-" else .group end), .display, (.formats // "")] | @tsv' \
+      > "$tmp/plugins/installed-list.tsv"; then
+    [[ -s "$tmp/plugins/installed-list.tsv" ]] \
+      && ok "plugins/installed-list.tsv (APM vendor/name/format list)" \
+      || rm -f "$tmp/plugins/installed-list.tsv"
+  else
+    rm -f "$tmp/plugins/installed-list.tsv"
+  fi
   ok "plugins/manifest.txt ($total_files files, ~${total_bytes} MB)"
 }
 
@@ -2599,6 +2606,9 @@ the folder's parent restores the whole layout.
 >
 > The DAW config files (REAPER reaper-vstplugins*.ini) are in
 > config-backup.tar.gz. Open the DAW and rerun the plugin scan.
+
+The backup also contains the APM vendor/name/format list. Restore writes it as a
+Markdown file in the current APM plugin folder and opens it in Omawrite at the end.
 EOF
   elif [[ -f "$tmp/plugins/manifest.txt" ]]; then
     mq_vst_init
@@ -2606,10 +2616,10 @@ EOF
 
 ## 4. Plugin folders (inventory only)
 
-    # Inventory kept in plugins/manifest.txt — reinstall the plugins
-    # from their official sites or re-copy the license archives into
-    # the folder the audio plugin manager points at
-    # ($(apm_plugins_root || echo "$VST_SRC_BASE")'s vst/vst3/clap).
+The plugin names, vendors and installed formats are in
+plugins/installed-list.tsv. Restore writes them as Markdown into the current
+APM plugin folder and opens the file in Omawrite at the end. This is an inventory
+only: plugin binaries are not in this backup; reinstall them from their sources.
 EOF
   else
     echo "" >> "$tmp/RESTORE.md"
@@ -2836,10 +2846,85 @@ restore_install_has(){
     '$1 == folder { for (i = 2; i <= NF; i++) if ($i == key) found = 1 } END { exit !found }' "$list"
 }
 
+restore_vst_manifest_rows(){
+  local manifest="$1" root="$2" out="$3"
+  local size mtime path rel format ext plugin vendor group name lower
+  : > "$out"
+  while IFS=$'\t' read -r size mtime path || [[ -n $size || -n $mtime || -n $path ]]; do
+    [[ $size =~ ^[0-9]+$ && -n $path ]] || continue
+    rel="$path"
+    [[ $rel == "$root/"* ]] && rel="${rel#"$root/"}"
+    rel="${rel%.hidden}"
+    case $rel in
+      vst/*|VST2/*)  format=VST2; ext=.dll; rel="${rel#*/}" ;;
+      vst3/*|VST3/*) format=VST3; ext=.vst3; rel="${rel#*/}" ;;
+      clap/*|CLAP/*) format=CLAP; ext=.clap; rel="${rel#*/}" ;;
+      vst3-native/*) format="VST3 native"; ext=.vst3; rel="${rel#*/}" ;;
+      clap-native/*) format="CLAP native"; ext=.clap; rel="${rel#*/}" ;;
+      lv2/*)         format=LV2; ext=.lv2; rel="${rel#*/}" ;;
+      *) continue ;;
+    esac
+    if [[ $ext == .dll ]]; then
+      [[ $rel == *.dll ]] || continue
+      lower="${rel##*/}"; lower="${lower,,}"
+      case $lower in
+        sonible_*.dll|*onnx*.dll|*openxr*.dll|*openal32.dll|*msvcp*.dll|*vcruntime*.dll|\
+        *vc_redist*.dll|*api-ms-win-*.dll|*ucrtbase.dll|*crashpad*.dll|*libmmd.dll|\
+        *mfc*.dll|*concrt*.dll|*vcomp*.dll|*firewall*.dll) continue ;;
+      esac
+      plugin="${rel%.dll}"
+    elif [[ $rel == *"$ext/"* ]]; then
+      plugin="${rel%%"$ext/"*}$ext"
+      plugin="${plugin%$ext}"
+    elif [[ $rel == *"$ext" ]]; then
+      plugin="${rel%$ext}"
+    else
+      continue
+    fi
+    if [[ $plugin == */* ]]; then
+      vendor="${plugin%%/*}"
+      rel="${plugin#*/}"
+      if [[ $rel == */* ]]; then
+        group="${rel%/*}"
+        name="${rel##*/}"
+      else
+        group=""
+        name="$rel"
+      fi
+    else
+      vendor=Other group="" name="$plugin"
+    fi
+    [[ -n $group ]] || group="-"
+    [[ -n $name ]] && printf '%s\t%s\t%s\t%s\n' "$vendor" "$group" "$name" "$format" >> "$out"
+  done < "$manifest"
+}
+
+restore_vst_format_names(){
+  local IFS=, format label out=""
+  local -a formats=()
+  read -r -a formats <<< "$1"
+  for format in "${formats[@]}"; do
+    case $format in
+      vst2) label=VST2 ;;
+      vst3) label=VST3 ;;
+      clap) label=CLAP ;;
+      lv2) label=LV2 ;;
+      vst3-native) label="VST3 native" ;;
+      clap-native) label="CLAP native" ;;
+      "VST3 native") label="VST3 native" ;;
+      "CLAP native") label="CLAP native" ;;
+      *) label="${format^^}" ;;
+    esac
+    [[ -n $out ]] && out+=", "
+    out+="$label"
+  done
+  printf '%s' "$out"
+}
+
 restore_vst_inventory(){
   local tmp="$1" backup="$2" manifest="$1/plugins/manifest.txt"
   [[ -f $manifest ]] || return 1
-  local root archived_root backup_id dest tmpfile size mtime path rel count=0 n=2
+  local root archived_root backup_id dest tmpfile rows merged vendor group name formats count=0 n=2
   root="$(apm_plugins_root || true)"
   [[ -n $root ]] || root="$HOME/Music/Audio Plugins"
   mkdir -p "$root" || return 1
@@ -2855,27 +2940,58 @@ restore_vst_inventory(){
     n=$((n + 1))
   done
   tmpfile="$(mktemp "$root/.vst-list.XXXXXX")" || return 1
+  rows="$tmp/plugins/restore-list.tsv"
+  if [[ -s "$tmp/plugins/installed-list.tsv" ]]; then
+    cp "$tmp/plugins/installed-list.tsv" "$rows" || { rm -f "$tmpfile"; return 1; }
+  else
+    restore_vst_manifest_rows "$manifest" "$archived_root" "$rows" || { rm -f "$tmpfile"; return 1; }
+  fi
+  merged="$rows.merged"
+  LC_ALL=C sort -u -t $'\t' -k1,1 -k2,2 -k3,3 -k4,4 "$rows" | awk -F '\t' '
+    function emit() { if (name != "") print vendor "\t" group "\t" name "\t" formats }
+    {
+      if ($1 != vendor || $2 != group || $3 != name) {
+        emit(); vendor=$1; group=$2; name=$3; formats=""
+      }
+      n=split($4, types, ",")
+      for (i=1; i<=n; i++) if (types[i] != "" && index("," formats ",", "," types[i] ",") == 0) {
+        formats = formats (formats == "" ? "" : ",") types[i]
+      }
+    }
+    END { emit() }
+  ' > "$merged"
   {
-    printf '# VST inventory from %s\n\n' "$(basename "$backup")"
-    printf -- '- Original folder: `%s`\n' "${archived_root:-unknown}"
+    printf '# Installed plugins from %s\n\n' "$(basename "$backup")"
+    printf -- '- Plugin folder: `%s`\n' "$root"
     if [[ -f "$tmp/plugins/plugins.tar.gz" || -f "$tmp/plugins/plugins-vst.tar.gz" ]]; then
-      printf -- '- Plugin files: included in the backup and restored\n\n'
+      printf -- '- Plugin files: included in the backup\n\n'
     else
-      printf -- '- Plugin files: inventory only; binaries are not in this backup\n\n'
+      printf -- '- Inventory only; plugin files are not in this backup\n\n'
     fi
-    printf '## Files\n\n'
-    while IFS=$'\t' read -r size mtime path || [[ -n $size || -n $mtime || -n $path ]]; do
-      [[ $size =~ ^[0-9]+$ && -n $path ]] || continue
-      rel="$path"
-      [[ -n $archived_root && $rel == "$archived_root/"* ]] && rel="${rel#"$archived_root/"}"
-      printf -- '- `%q` — %s bytes\n' "$root/$rel" "$size"
+    printf '\n'
+    local shown_vendor="" shown_group=""
+    while IFS=$'\t' read -r vendor group name formats; do
+      [[ -n $name ]] || continue
+      [[ $group == - ]] && group=""
+      if [[ $vendor != "$shown_vendor" ]]; then
+        printf '\n## %s\n' "$vendor"
+        shown_vendor="$vendor"
+        shown_group=""
+      fi
+      if [[ -n $group && $group != "$shown_group" ]]; then
+        printf '\n### %s\n' "$group"
+        shown_group="$group"
+      elif [[ -z $group ]]; then
+        shown_group=""
+      fi
+      printf -- '- %s — %s\n' "$name" "$(restore_vst_format_names "$formats")"
       count=$((count + 1))
-    done < "$manifest"
-    ((count)) || printf -- '- No file entries were recorded.\n'
+    done < "$merged"
+    ((count)) || printf 'No plugin entries were recorded.\n'
   } > "$tmpfile" || { rm -f "$tmpfile"; return 1; }
   chmod 644 "$tmpfile" && mv -- "$tmpfile" "$dest" || { rm -f "$tmpfile"; return 1; }
   RESTORED_VST_LIST="$dest"
-  ok "VST inventory saved: $dest ($count file entries)"
+  ok "VST inventory saved: $dest ($count plugins)"
 }
 
 restore_backup(){
@@ -2919,6 +3035,7 @@ restore_backup(){
   fi
 
   tar xzf "$arc" -C "$tmp"
+  export MOSQUITOMARCHY_RESTORE=1
 
   # Restore decisions. The TUI passes them as flags; the plain CLI leaves them
   # unset and gets the historical behaviour (full, everything deployed).
@@ -2943,7 +3060,8 @@ restore_backup(){
       install_list_selected=1
     fi
   fi
-  if [[ $dep_reaper != no && -f "$tmp/reaper/reaper.tar.gz" ]]; then
+  if [[ $dep_reaper != no && -f "$tmp/reaper/reaper.tar.gz" ]] \
+     && ! restore_install_has "$tmp/install.list" apps reaper; then
     local reaper_state
     reaper_state="$(module_state reaper 2>/dev/null || true)"; reaper_state="${reaper_state%%:*}"
     if ! ((safe)) || [[ $reaper_state != ok && $reaper_state != partial ]]; then
@@ -3028,17 +3146,35 @@ restore_backup(){
       else
         warn "Battery plugins not restored — rerun the 'battery-management' module."
       fi
+      if [[ $dep_keepass == yes && -f "$HOME/Documents/Passwords.kdbx" ]] \
+         && command -v keepassxc >/dev/null 2>&1; then
+        local keepass_pin="$SCRIPT_DIR/code/modules/Apps/keepassxc/keepassxc-default-database.sh"
+        if pgrep -x keepassxc >/dev/null 2>&1; then
+          warn "KeePassXC is open; close it and pin the restored database with: $keepass_pin '$HOME/Documents/Passwords.kdbx'"
+          restore_failed=1
+        elif bash "$keepass_pin" "$HOME/Documents/Passwords.kdbx"; then
+          ok "Restored KeePassXC database pinned as the default."
+        else
+          warn "Could not pin the restored KeePassXC database."
+          restore_failed=1
+        fi
+      fi
       ok "Configuration restored"
     fi
   fi
 
-  # --- REAPER full data: install REAPER from the mosquito module, then put the
-  # archived folders back with a plain extraction. Safe mode skips the install
-  # when REAPER is already there and never overwrites an existing file.
+  # --- REAPER full data: install REAPER once, then deploy its folders. The
+  # install.list already ran it when selected, so do not run the module twice.
   if [[ $dep_reaper != no && -f "$tmp/reaper/reaper.tar.gz" ]]; then
     local rstate; rstate="$(module_state reaper 2>/dev/null || true)"; rstate="${rstate%%:*}"
     if ((safe)) && [[ $rstate == ok || $rstate == partial ]]; then
       info "REAPER already installed — safe mode skips the install."
+    elif restore_install_has "$tmp/install.list" apps reaper; then
+      if ((install_list_selected)); then
+        info "REAPER install already processed from install.list."
+      else
+        info "REAPER install skipped with install.list."
+      fi
     else
       msg "Installing REAPER (mosquitOmarchy module)"
       run_reaper || {

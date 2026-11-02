@@ -465,8 +465,10 @@ do_apply(){
   # (creates or opens) the ONE .kdbx that everything else should use; this
   # module records it into keepassxc.ini (pin step) so every FUTURE launch opens
   # THAT database instead of offering "create a new database" every time.
-  info "Pin the default database, keyed to the one KeePassXC opens at its first run…"
-  if command -v keepassxc >/dev/null 2>&1; then
+  if [[ ${MOSQUITOMARCHY_RESTORE:-0} == 1 ]]; then
+    info "Default database pin deferred until the backup database is restored."
+  elif command -v keepassxc >/dev/null 2>&1; then
+    info "Pin the default database, keyed to the one KeePassXC opens at its first run…"
     "$(dirname "${BASH_SOURCE[0]}")/keepassxc-default-database.sh" >/dev/null 2>&1 \
       && ok "Default database pinned into keepassxc.ini (RememberLast + LastOpened)". \
       || warn "Database pin NOT set — run 'code/modules/Apps/keepassxc/keepassxc-default-database.sh FILE.kdbx' manually once your DB exists (see the README in this folder)."

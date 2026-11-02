@@ -63,12 +63,14 @@ if restore_install_list "$LIST" full; then
 fi
 
 mkdir -p "$TMP/archive/plugins"
-printf '# plugin folder at backup time: %s/Music/Audio Plugins\n123\t1.0\t%s/Music/Audio Plugins/vst3/example.vst3/file.so\n' \
+printf '# plugin folder at backup time: %s/Music/Audio Plugins\n123\t1.0\t%s/Music/Audio Plugins/vst3/Vendor/Example.vst3/Contents/x86_64/Example.vst3\n' \
   "$HOME" "$HOME" > "$TMP/archive/plugins/manifest.txt"
 restore_vst_inventory "$TMP/archive" "mosquitomarchy-backup-20261102-013933.tar.gz"
 [[ -f $RESTORED_VST_LIST ]]
-grep -q 'inventory only' "$RESTORED_VST_LIST"
-grep -q 'example.vst3/file.so' "$RESTORED_VST_LIST"
+grep -qi 'inventory only' "$RESTORED_VST_LIST"
+grep -q '^## Vendor$' "$RESTORED_VST_LIST"
+grep -q 'Example — VST3' "$RESTORED_VST_LIST"
+! grep -q 'bytes' "$RESTORED_VST_LIST"
 
 export AUDIOSTACK_VST_ROOT="$TMP/source/Music/Audio Plugins"
 mkdir -p "$AUDIOSTACK_VST_ROOT/vst3/example.vst3" "$TMP/full-backup/plugins"
@@ -76,20 +78,48 @@ printf 'plugin' > "$AUDIOSTACK_VST_ROOT/vst3/example.vst3/plugin.so"
 backup_plugins_inventory "$TMP/full-backup"
 grep -q "$AUDIOSTACK_VST_ROOT/vst3/example.vst3/plugin.so" "$TMP/full-backup/plugins/manifest.txt"
 
+mkdir -p "$HOME/.local/bin"
+cat > "$HOME/.local/bin/mosquito-audio-plugin-manager-actions" <<'FAKE_APM'
+#!/usr/bin/env bash
+case ${1:-} in
+  status-json) printf '{"plugins_root":"%s"}\n' "$AUDIOSTACK_VST_ROOT" ;;
+  page) printf '%s\n' '{"kind":"folder","display":"FabFilter"}' \
+    '{"kind":"plugin","vendor":"FabFilter","group":"","display":"Pro-Q 4","formats":"vst2,vst3"}' ;;
+esac
+FAKE_APM
+chmod +x "$HOME/.local/bin/mosquito-audio-plugin-manager-actions"
+backup_plugins_inventory "$TMP/full-backup"
+grep -q $'FabFilter\t-\tPro-Q 4\tvst2,vst3' "$TMP/full-backup/plugins/installed-list.tsv"
+printf 'FabFilter\t-\tPro-Q 4\tvst2,vst3\n' > "$TMP/archive/plugins/installed-list.tsv"
+restore_vst_inventory "$TMP/archive" "mosquitomarchy-backup-20261102-013933.tar.gz"
+canonical="$AUDIOSTACK_VST_ROOT/VST list - 20261102-013933.md"
+grep -q '^## FabFilter$' "$canonical"
+grep -q 'Pro-Q 4 — VST2, VST3' "$canonical"
+! grep -q 'bytes' "$canonical"
+
 mkdir -p "$TMP/restore-input"
-printf 'apps\tdouze\napps\textracto\n' > "$TMP/restore-input/install.list"
-tar -czf "$TMP/restore.tar.gz" -C "$TMP/restore-input" install.list
-sudo_primes=0 module_runs=0
+printf 'apps\tdouze\textracto\treaper\n' > "$TMP/restore-input/install.list"
+mkdir -p "$TMP/reaper-input/.config/REAPER" "$TMP/restore-input/reaper"
+printf 'test' > "$TMP/reaper-input/.config/REAPER/reaper.ini"
+tar -czf "$TMP/restore-input/reaper/reaper.tar.gz" -C "$TMP/reaper-input" .config/REAPER
+tar -czf "$TMP/restore.tar.gz" -C "$TMP/restore-input" install.list reaper/reaper.tar.gz
+sudo_primes=0 module_runs=0 reaper_runs=0
 mq_sudo_prime(){
   [[ -n ${MQ_SUDO_PRIMED:-} ]] && return 0
   sudo_primes=$((sudo_primes + 1))
   export MQ_SUDO_PRIMED=1
 }
+module_state(){ printf 'missing\n'; }
+run_reaper(){ reaper_runs=$((reaper_runs + 1)); }
 restore_sync_pacman_databases(){ mq_sudo_prime; }
-category_run(){ mq_sudo_prime; module_runs=$((module_runs + 1)); }
-YES=1 RESTORE_DEPLOY_HYPRLAND=no RESTORE_DEPLOY_VST=no RESTORE_DEPLOY_REAPER=no \
+category_run(){
+  mq_sudo_prime
+  module_runs=$((module_runs + 1))
+  for k in "${CATEGORY_SELECTED[@]}"; do [[ $k == reaper ]] && run_reaper; done
+}
+YES=1 RESTORE_DEPLOY_HYPRLAND=no RESTORE_DEPLOY_VST=no RESTORE_DEPLOY_REAPER=yes \
   RESTORE_DEPLOY_ZEN=no RESTORE_DEPLOY_KEEPASS=no RESTORE_DEPLOY_KEEPASS_SETTINGS=no \
   RESTORE_DEPLOY_THEMES=no RESTORE_DEPLOY_OMARCHY_PLUGINS=no RESTORE_KEYBINDINGS=none \
   restore_backup "$TMP/restore.tar.gz"
-[[ $sudo_primes == 1 && $module_runs == 2 ]]
+[[ $sudo_primes == 1 && $module_runs == 1 && $reaper_runs == 1 ]]
 echo 'ok: restore replays every package row and reports failures'
