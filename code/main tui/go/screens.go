@@ -324,8 +324,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.passphraseSet = false
 		}
 		if m.backupSelFile != "" {
-			os.Remove(m.backupSelFile)
-			m.backupSelFile = ""
+			m.cleanupBackupSelection()
 		}
 		// Runner finished: report, pop off the working screen and refresh
 		// whatever screen we land back on. A success toast is shown ONLY when
@@ -1158,6 +1157,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.pop()
 		if msg.Canceled || !msg.Yes {
+			if m.pendingAction == "backup" {
+				m.cleanupBackupSelection()
+			}
 			if m.pendingAction == "restore-review" {
 				m.pendingAction = ""
 				m.pendingArgs = nil
@@ -1348,9 +1350,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case "update-repo":
 			return m.startWorking("Updating the repo", workingArgs("update-repo", nil)...)
 		case "backup":
+			if m.backupOpts.Encrypt {
+				m.pendingAction = "backup-encrypted"
+				m.push(scrPassphrase)
+				m.passInput = tuikit.NewPasswordInput("Backup passphrase (AES-256):", "")
+				return m, m.passInput.Init()
+			}
 			return m.startWorking("Backing up", workingArgs("backup", m.pendingArgs)...)
-		case "backup-encrypted":
-			return m.startWorking("Backing up (encrypted)", workingArgs("backup", m.pendingArgs)...)
 		case "restore":
 			return m.startWorking("Restoring", workingArgs("restore", []string{m.pendingFile})...)
 		case "apply-patches":
@@ -1470,6 +1476,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if msg.Canceled {
 			m.pop()
 			m.pendingPass = ""
+			if m.pendingAction == "backup-encrypted" || m.pendingAction == "backup-encrypted-confirm" {
+				m.cleanupBackupSelection()
+			}
 			return m, nil
 		}
 		switch m.pendingAction {
@@ -1487,6 +1496,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case "backup-encrypted":
 			if pass == "" {
 				m.pop()
+				m.cleanupBackupSelection()
 				m.toast, _ = m.toast.SetWarn("empty passphrase — canceled")
 				return m, nil
 			}
@@ -1499,6 +1509,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.pop()
 			if pass != m.pendingPass {
 				m.pendingPass = ""
+				m.cleanupBackupSelection()
 				m.toast, _ = m.toast.SetWarn("passphrases don't match — backup canceled")
 				return m, nil
 			}
@@ -5227,8 +5238,8 @@ func (m model) rebuildBackupAppSettings() navPicker {
 			tuikit.PickerItem{Display: "KeePassXC settings: " + yesno(m.backupOpts.KeepassSettings), Value: "keepass-settings"},
 		)
 	}
-	if m.backupOpts.HasZen && m.backupAppSelected("zen") {
-		items = append(items, tuikit.PickerItem{Display: "Zen browser settings: " + yesno(m.backupOpts.Zen), Value: "zen"})
+	if m.backupOpts.HasZen {
+		items = append(items, tuikit.PickerItem{Display: "Zen settings + Mods: " + yesno(m.backupOpts.Zen), Value: "zen"})
 	}
 	if m.backupOpts.HasReaper && m.backupAppSelected("reaper") {
 		items = append(items, tuikit.PickerItem{Display: "Reaper ressources: " + reaperDepthLabel(m.backupOpts.Reaper), Value: "reaper"})
@@ -5569,10 +5580,15 @@ func yesno(b bool) string {
 	return "no"
 }
 
-// beginBackup writes the checked packages to a temp file, grouped by Setup
-// folder ("folder<TAB>key<TAB>key…"), then starts the backup (asking for a
-// passphrase first when encrypting). The backend stores this file in the
-// archive as install.list: the readable instruction a restore replays.
+func (m *model) cleanupBackupSelection() {
+	if m.backupSelFile != "" {
+		_ = os.Remove(m.backupSelFile)
+		m.backupSelFile = ""
+	}
+}
+
+// beginBackup writes the checked packages to install.list, then shows the
+// summary before requesting an encryption passphrase or starting the backup.
 func (m model) beginBackup() (model, tea.Cmd) {
 	opts := m.effectiveBackupOpts()
 	f, err := os.CreateTemp("", "mosquitomarchy-apps-selected-")
@@ -5613,19 +5629,17 @@ func (m model) beginBackup() (model, tea.Cmd) {
 		// that cleared the name impossible to express.
 		"--name=" + m.backupOpts.Name,
 	}
-	if opts.Encrypt {
-		m.pendingAction = "backup-encrypted"
-		m.push(scrPassphrase)
-		m.passInput = tuikit.NewPasswordInput("Backup passphrase (AES-256):", "")
-		return m, m.passInput.Init()
-	}
 	m.pendingAction = "backup"
 	label := "named by its date"
 	if opts.Name != "" {
 		label = "named \"" + opts.Name + "\""
 	}
-	m.pendingMsg = fmt.Sprintf("Create a backup now?\n\nPackages: %d selected · VST: %s · KeePassXC: %s/%s · Zen: %s · REAPER: %s · Keybindings: %s · Hyprland: %s\nArchive: %s",
-		len(m.backupChecked), opts.VST, yesno(opts.Keepass), yesno(opts.KeepassSettings), yesno(opts.Zen), reaperDepthLabel(opts.Reaper), keybindingsBackupLabel(opts.Keybindings), yesno(opts.Hyprland), label)
+	encryption := "no"
+	if opts.Encrypt {
+		encryption = "yes (AES-256)"
+	}
+	m.pendingMsg = fmt.Sprintf("Create a backup now?\n\nPackages: %d selected · VST: %s · KeePassXC: %s/%s · Zen: %s · REAPER: %s · Keybindings: %s · Hyprland: %s · Encryption: %s\nArchive: %s",
+		len(m.backupChecked), opts.VST, yesno(opts.Keepass), yesno(opts.KeepassSettings), yesno(opts.Zen), reaperDepthLabel(opts.Reaper), keybindingsBackupLabel(opts.Keybindings), yesno(opts.Hyprland), encryption, label)
 	m.pendingNo = "Cancel"
 	m.pendingYes = "Backup"
 	m.push(scrConfirm)

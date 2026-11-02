@@ -92,7 +92,7 @@ type BackupOpts struct {
 	VST             string // "list" | "full" | "none"
 	Keepass         bool   // include KeePassXC passwords (only when installed)
 	KeepassSettings bool   // include the KeePassXC settings (.config/keepassxc)
-	Zen             bool   // include the Zen browser settings (prefs.js/user.js/containers.json + extensions)
+	Zen             bool   // include the active Zen profile, extensions, settings, and chrome mods
 	Reaper          string // "none" | "settings" | "full" (full = every dir REAPER created)
 	Keybindings     string // "all" | "custom" | "no"
 	Hyprland        bool   // include the whole ~/.config/hypr tree
@@ -931,7 +931,7 @@ func (m model) effectiveBackupOpts() BackupOpts {
 	if !m.backupOpts.HasKeep || !m.backupAppSelected("keepassxc") {
 		opts.Keepass, opts.KeepassSettings = false, false
 	}
-	if !m.backupOpts.HasZen || !m.backupAppSelected("zen") {
+	if !m.backupOpts.HasZen {
 		opts.Zen = false
 	}
 	if !m.backupOpts.HasReaper || !m.backupAppSelected("reaper") {

@@ -320,8 +320,8 @@ func TestBackupAppSettingsFollowSelectedApps(t *testing.T) {
 		t.Fatalf("KeePassXC settings remained after unselecting KeePassXC: %v", rows)
 	}
 	delete(m.backupChecked, setupValue("apps", "APP Zen|zen"))
-	if settings()["zen"] {
-		t.Fatal("Zen settings remained after unselecting Zen")
+	if !settings()["zen"] {
+		t.Fatal("Zen settings should remain selectable even when Zen is not being reinstalled")
 	}
 
 	delete(m.backupChecked, setupValue("audio-stack", "audio-plugin-manager"))
@@ -397,7 +397,7 @@ func TestBackupReaperSettingsLabel(t *testing.T) {
 	t.Fatal("Reaper resources option missing")
 }
 
-func TestBeginBackupGatesAppSettingsBySelection(t *testing.T) {
+func TestBeginBackupKeepsZenSettingsIndependentOfInstallSelection(t *testing.T) {
 	m := initialModel()
 	m.nav = []screen{scrMain, scrBackup, scrBackupOptions}
 	m.backupOpts = BackupOpts{VST: "full", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "full", HasKeep: true, HasZen: true, HasReaper: true}
@@ -409,9 +409,9 @@ func TestBeginBackupGatesAppSettingsBySelection(t *testing.T) {
 	}
 	defer os.Remove(m.backupSelFile)
 	got := strings.Join(m.pendingArgs, " ")
-	for _, want := range []string{"--vst=list", "--keepass=no", "--keepass-settings=no", "--zen=no", "--reaper=none"} {
+	for _, want := range []string{"--vst=list", "--keepass=no", "--keepass-settings=no", "--zen=yes", "--reaper=none"} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("unselected app settings were not excluded (%s): %s", want, got)
+			t.Fatalf("backup option missing or incorrectly gated (%s): %s", want, got)
 		}
 	}
 }

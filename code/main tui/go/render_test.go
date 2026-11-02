@@ -376,6 +376,51 @@ func TestBackupPassphraseTwice(t *testing.T) {
 	os.Unsetenv("OMARCHY_BACKUP_PASSPHRASE")
 }
 
+func TestBackupRecapPrecedesEncryptionPassphrase(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrBackup, scrBackupOptions}
+	m.w, m.h = 120, 40
+	m.backupOpts = BackupOpts{VST: "none", Keepass: true, HasKeep: true, Encrypt: true}
+	m.backupItems = []SetupItemRec{{Folder: "apps", Key: "keepassxc", Label: "KeePassXC"}}
+	m.backupChecked = map[string]bool{setupValue("apps", "keepassxc"): true}
+
+	m, _ = m.beginBackup()
+	selection := m.backupSelFile
+	defer os.Remove(selection)
+	if m.top() != scrConfirm || m.pendingAction != "backup" {
+		t.Fatalf("encrypted backup must show recap first: screen=%v action=%q", m.top(), m.pendingAction)
+	}
+	if !strings.Contains(m.pendingMsg, "Create a backup now?") || !strings.Contains(m.pendingMsg, "Encryption: yes (AES-256)") {
+		t.Fatalf("recap omits the action or encryption choice: %q", m.pendingMsg)
+	}
+
+	m, _ = m.update(tuikit.ConfirmResultMsg{Yes: true})
+	if m.top() != scrPassphrase || m.pendingAction != "backup-encrypted" {
+		t.Fatalf("accepting recap should then ask for the passphrase: screen=%v action=%q", m.top(), m.pendingAction)
+	}
+}
+
+func TestZenSettingsBackupDoesNotRequireReinstallSelection(t *testing.T) {
+	m := initialModel()
+	m.backupOpts = BackupOpts{Zen: true, HasZen: true}
+	m.backupItems = []SetupItemRec{{Folder: "apps", Key: "keepassxc", Label: "KeePassXC"}}
+	m.backupChecked = map[string]bool{setupValue("apps", "keepassxc"): true}
+	m.backupAppPicker = newNavPicker("", nil)
+
+	if !m.effectiveBackupOpts().Zen {
+		t.Fatal("Zen settings were disabled because Zen was not selected for reinstall")
+	}
+	for _, item := range m.rebuildBackupAppSettings().Items() {
+		if item.Value == "zen" {
+			if !strings.Contains(item.Display, "Mods") {
+				t.Fatalf("Zen backup option doesn't mention Mods: %q", item.Display)
+			}
+			return
+		}
+	}
+	t.Fatal("Zen settings toggle was hidden when Zen was not selected for reinstall")
+}
+
 func TestSetupInfoKey(t *testing.T) {
 	m := initialModel()
 	m.nav = []screen{scrMain, scrSetup, scrSetupCat}
@@ -1142,8 +1187,8 @@ func TestBackupNameReachesTheBackendArgs(t *testing.T) {
 	m.backupOpts.HasKeep, m.backupOpts.HasZen = false, false
 
 	m, _ = m.beginBackup()
-	// Encrypting detours through the passphrase screen and comes back to the
-	// same pendingArgs, so assert on the state the run will actually use.
+	// The passphrase comes after the recap, and the name must already be in the
+	// pending args that the later encrypted run will use.
 	found := false
 	for _, a := range m.pendingArgs {
 		if a == "--name=Avant upgrade REAPER" {
@@ -1153,8 +1198,11 @@ func TestBackupNameReachesTheBackendArgs(t *testing.T) {
 	if !found {
 		t.Fatalf("--name missing from %v", m.pendingArgs)
 	}
-	if m.pendingAction != "backup-encrypted" {
-		t.Fatalf("expected the encrypted path, got %q", m.pendingAction)
+	if m.pendingAction != "backup" || m.top() != scrConfirm {
+		t.Fatalf("expected backup recap before encryption, action=%q screen=%v", m.pendingAction, m.top())
+	}
+	if !strings.Contains(m.pendingMsg, "Encryption: yes (AES-256)") {
+		t.Fatalf("recap omitted encryption state: %q", m.pendingMsg)
 	}
 }
 

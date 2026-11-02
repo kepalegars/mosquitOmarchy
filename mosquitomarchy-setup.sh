@@ -2327,6 +2327,8 @@ do_backup(){
       paths+=(".config/zen/$zen_prof/extensions")
       paths+=(".config/zen/$zen_prof/extension-preferences.json")
       paths+=(".config/zen/$zen_prof/extension-settings.json")
+      # Zen Mods live under chrome/zen-themes; back up the complete chrome
+      # directory so both installed mods and their user settings survive.
       [[ -e "$HOME/.config/zen/$zen_prof/chrome" ]] && paths+=(".config/zen/$zen_prof/chrome")
       # The SETTINGS — what the user actually configured. These are NOT
       # covered by the zen module's seed: it deploys the extensions and the
@@ -2562,7 +2564,8 @@ If the backup file ends in .tar.gz.gpg, decrypt it first:
     systemctl --user daemon-reload
 
 > Includes personal settings, Omarchy bar (\`shell.json\`), Hyprland, REAPER,
-> yabridgectl (registered VST folders), Zen config, and — when selected —
+> yabridgectl (registered VST folders), Zen profile/settings/extensions/Mods,
+> and — when selected —
 > KeePassXC settings + \`Passwords.kdbx\`. Application menus, icons, Omarchy menu
 > extensions, module plugin payloads, and launch wrappers are recreated by the
 > selected modules and are not part of this configuration archive.

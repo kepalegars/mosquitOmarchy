@@ -11,9 +11,15 @@ export OMARCHY_BACKUP_DIR="$TMP/backups"
 export MOSQUITOMARCHY_LIB_ONLY=1 GUI_RUN_EXEC=1
 mkdir -p "$HOME/.config/windows" "$HOME/.config/omarchy/extensions" \
   "$HOME/.config/omarchy/plugins/mosquito.better-pip" \
+  "$HOME/.config/zen/profile.release/chrome/zen-themes/custom-mod" \
+  "$HOME/.config/zen/profile.release/extensions" \
   "$HOME/.local/share/applications" "$HOME/.local/share/icons/hicolor/256x256/apps" \
   "$HOME/.local/bin" "$HOME/Documents"
 printf 'personal setting\n' > "$HOME/.config/windows/user.conf"
+printf '[Install42]\nDefault=profile.release\n' > "$HOME/.config/zen/profiles.ini"
+printf 'user_pref("zen.restore.test", true);\n' > "$HOME/.config/zen/profile.release/prefs.js"
+printf 'custom Zen mod\n' > "$HOME/.config/zen/profile.release/chrome/zen-themes/custom-mod/chrome.css"
+printf 'custom extension\n' > "$HOME/.config/zen/profile.release/extensions/custom-addon.xpi"
 printf '{"name":"stale menu"}\n' > "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
 printf 'plugin payload\n' > "$HOME/.config/omarchy/plugins/mosquito.better-pip/Service.qml"
 printf '[Desktop Entry]\nName=Never selected\n' > "$HOME/.local/share/applications/stale.desktop"
@@ -37,7 +43,6 @@ pkg_has(){ return 1; }
 pacman(){ :; }
 omarchy(){ printf 'test\n'; }
 mosquitomarchy_channel(){ printf 'stable\n'; }
-zen_active_profile(){ return 1; }
 betterbird_active_profile(){ return 1; }
 apm_installed(){ return 1; }
 apm_installed_plugin_count(){ printf '0\n'; }
@@ -73,6 +78,23 @@ for forbidden in \
     exit 1
   fi
 done
+grep -qF '.config/zen/profile.release/chrome/zen-themes/custom-mod/chrome.css' "$TMP/config-paths"
+grep -qF '.config/zen/profile.release/extensions/custom-addon.xpi' "$TMP/config-paths"
+
+# Restoring those files does not require selecting Zen for module reinstall.
+export HOME="$TMP/restore-home"
+mkdir -p "$HOME"
+mq_sudo_prime(){ :; }
+restore_sync_pacman_databases(){ :; }
+category_run(){ :; }
+systemctl(){ :; }
+omarchy(){ :; }
+YES=1 RESTORE_DEPLOY_ZEN=yes RESTORE_DEPLOY_KEEPASS=no RESTORE_DEPLOY_KEEPASS_SETTINGS=no \
+  RESTORE_DEPLOY_HYPRLAND=no RESTORE_DEPLOY_VST=no RESTORE_DEPLOY_REAPER=no \
+  RESTORE_DEPLOY_THEMES=no RESTORE_DEPLOY_OMARCHY_PLUGINS=no RESTORE_KEYBINDINGS=none \
+  restore_backup "$archive" >/dev/null
+[[ -f "$HOME/.config/zen/profile.release/chrome/zen-themes/custom-mod/chrome.css" ]]
+[[ -f "$HOME/.config/zen/profile.release/extensions/custom-addon.xpi" ]]
 
 # The restore now extracts the new config archive directly; no old-archive
 # cleanup or compatibility path is needed.
