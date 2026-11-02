@@ -34,11 +34,11 @@ Hyprland plugin, installed with `hyprpm`. The script installs a pinned revision
 of upstream PR #23 until it is merged: upstream `master` is not yet safe on
 Hyprland 0.56 (its config values abort the compositor on load/unload).
 
-Hyprland 0.56 rejects hyphenated plugin keys in `hl.config`. The generated
-`touchpad.lua` therefore sets the deceleration and `disable_in_browser = 0`
-through the plugin's Lua namespace, and applies per-app opt-outs through
-`hl.plugin.kinetic_scroll.disable(...)`. The global touchpad scroll factor is
-the BASE (0.5) that the plugin reads for its synthetic momentum events.
+The generated `touchpad.lua` only applies plugin config (`decel` and
+`disable_in_browser = 0`) and per-app opt-outs inside
+`if hl.plugin.kinetic_scroll`; otherwise Hyprland reports the plugin keys as
+unknown. The global touchpad scroll factor is the BASE (0.5) that the plugin
+reads for its synthetic momentum events.
 
 Browsers GET kinetic momentum now (they are no longer opted out). Their gesture
 speed is the base 0.5; native apps get 1.8 from the non-browser
