@@ -2874,7 +2874,9 @@ cmd_backup_manifest(){
   grep -qE '(^|/)\.config/REAPER(/|$)' "$cfg_list" && reaper=true
   grep -qE '(^|/)\.config/zen(/|$)' "$cfg_list" && zen=true
   grep -qE '(^|/)Documents/Passwords\.kdbx$' "$cfg_list" && keepass=true
-  grep -qE '(^|/)\.config/keepassxc(/|$)' "$cfg_list" && keepass_settings=true
+  if grep -qE '(^|/)\.config/keepassxc(/|$)|(^|/)\.config/autostart/org\.keepassxc\.KeePassXC\.desktop$' "$cfg_list"; then
+    keepass_settings=true
+  fi
   grep -qE '(^|/)themes/themes\.tar\.gz$' "$outer" && themes=true
   grep -qE '(^|/)omarchy-plugins/plugins\.tar\.gz$' "$outer" && omarchy_plugins=true
   grep -qE '(^|/)hyprland/hyprland\.tar\.gz$' "$outer" && hyprland=true

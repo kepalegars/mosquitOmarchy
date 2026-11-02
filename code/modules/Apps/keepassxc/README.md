@@ -20,6 +20,8 @@ What it sets up:
 - **Tray on close** — `[GUI] ShowTrayIcon/MinimizeToTray/MinimizeOnClose = true`:
   closing the window hides KeePassXC to the tray instead of quitting.
 - **Default database pin** — see below.
+- **Launch at login** — the selected KeePassXC settings include the app's
+  `~/.config/autostart/org.keepassxc.KeePassXC.desktop` entry when enabled.
 
 > **Why not the takeover?** An earlier version of this module *replaced*
 > gnome-keyring with KeePassXC (D-Bus override + gnome-keyring masked +

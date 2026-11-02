@@ -20,14 +20,18 @@ cat > "$TMP/bin/keepassxc" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
-chmod +x "$TMP/bin/pgrep" "$TMP/bin/keepassxc"
+cat > "$TMP/bin/uwsm" <<EOF
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> '$TMP/launched'
+EOF
+chmod +x "$TMP/bin/pgrep" "$TMP/bin/keepassxc" "$TMP/bin/uwsm"
+export PATH="$TMP/bin:$PATH"
 tar czf "$TMP/archive/config-backup.tar.gz" -C "$TMP/source" Documents/Passwords.kdbx .config/keepassxc
 tar czf "$TMP/restore.tar.gz" -C "$TMP/archive" config-backup.tar.gz
 
 source "$ROOT/mosquitomarchy-setup.sh"
 systemctl(){ :; }
 omarchy(){ :; }
-setsid(){ printf '%s\n' "$*" >> "$TMP/launched"; }
 unset DISPLAY WAYLAND_DISPLAY
 
 YES=1 RESTORE_DEPLOY_HYPRLAND=no RESTORE_DEPLOY_VST=no RESTORE_DEPLOY_REAPER=no \
@@ -35,7 +39,7 @@ YES=1 RESTORE_DEPLOY_HYPRLAND=no RESTORE_DEPLOY_VST=no RESTORE_DEPLOY_REAPER=no 
   RESTORE_DEPLOY_THEMES=no RESTORE_DEPLOY_OMARCHY_PLUGINS=no RESTORE_KEYBINDINGS=none \
   restore_backup "$TMP/restore.tar.gz" >/dev/null
 for _ in {1..50}; do [[ -f $TMP/launched ]] && break; sleep 0.01; done
-grep -qF -- "--fork keepassxc $HOME/Documents/Passwords.kdbx" "$TMP/launched"
+grep -qF -- "app -- keepassxc $HOME/Documents/Passwords.kdbx" "$TMP/launched"
 
 # Selecting no for the password database must not launch KeePassXC, even when
 # a copy of the file happens to remain on disk.

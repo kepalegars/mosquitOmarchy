@@ -2425,7 +2425,8 @@ do_backup(){
   fi
   # KeePassXC is split in two on purpose:
   #   passwords  Documents/Passwords.kdbx          (the database)
-  #   settings   .config/keepassxc                 (prefs, browser integration…)
+  #   settings   .config/keepassxc + KeePassXC's autostart entry
+  #              (prefs, browser integration, launch-at-login choice…)
   # Each has its own toggle; the archive still goes to $BACKUP_DIR (next to the
   # repo), never the repository.
   if pkg_has keepassxc; then
@@ -2435,6 +2436,9 @@ do_backup(){
     fi
     if [[ -z ${BACKUP_SKIP_KEEPASS_SETTINGS:-} && -d "$HOME/.config/keepassxc" ]]; then
       paths+=(".config/keepassxc"); kp_set=1
+    fi
+    if [[ -z ${BACKUP_SKIP_KEEPASS_SETTINGS:-} && -f "$HOME/.config/autostart/org.keepassxc.KeePassXC.desktop" ]]; then
+      paths+=(".config/autostart/org.keepassxc.KeePassXC.desktop"); kp_set=1
     fi
     if (( kp_db || kp_set )); then
       ok "keepassxc included (passwords: $([[ $kp_db == 1 ]] && echo yes || echo no), settings: $([[ $kp_set == 1 ]] && echo yes || echo no))"
@@ -2566,7 +2570,7 @@ If the backup file ends in .tar.gz.gpg, decrypt it first:
 > Includes personal settings, Omarchy bar (\`shell.json\`), Hyprland, REAPER,
 > yabridgectl (registered VST folders), Zen profile/settings/extensions/Mods,
 > and — when selected —
-> KeePassXC settings + \`Passwords.kdbx\`. Application menus, icons, Omarchy menu
+> KeePassXC settings/startup preference + \`Passwords.kdbx\`. Application menus, icons, Omarchy menu
 > extensions, module plugin payloads, and launch wrappers are recreated by the
 > selected modules and are not part of this configuration archive.
 
@@ -3102,7 +3106,10 @@ restore_backup(){
       # A section the user unticked is not deployed at all.
       [[ $dep_zen == no ]] && tex+=(--exclude=.config/zen --exclude='.config/zen/*')
       [[ $dep_keepass == no ]] && tex+=(--exclude='Documents/Passwords.kdbx')
-      [[ $dep_keepass_settings == no ]] && tex+=(--exclude=.config/keepassxc --exclude='.config/keepassxc/*')
+      if [[ $dep_keepass_settings == no ]]; then
+        tex+=(--exclude=.config/keepassxc --exclude='.config/keepassxc/*' \
+              --exclude=.config/autostart/org.keepassxc.KeePassXC.desktop)
+      fi
       # REAPER full data travels in reaper/reaper.tar.gz; keep it out of the
       # generic config extraction so it is deployed once, after the install.
       if [[ $dep_reaper == no || -f "$tmp/reaper/reaper.tar.gz" ]]; then
@@ -3284,9 +3291,14 @@ restore_backup(){
   # The user backed up a KeePassXC database with passwords: open it in the
   # GUI now, not only in the tray. Pinning killed any running instance, so
   # this is also the first launch that shows the restored database.
-  if [[ $dep_keepass == yes && -f "$HOME/Documents/Passwords.kdbx" ]]; then
+  if [[ ( $dep_keepass == yes || $dep_keepass_settings == yes ) \
+        && -f "$HOME/Documents/Passwords.kdbx" ]]; then
     if command -v keepassxc >/dev/null 2>&1; then
-      setsid --fork keepassxc "$HOME/Documents/Passwords.kdbx" </dev/null >/dev/null 2>&1 &
+      if command -v uwsm >/dev/null 2>&1; then
+        uwsm app -- keepassxc "$HOME/Documents/Passwords.kdbx" </dev/null >/dev/null 2>&1 &
+      else
+        setsid --fork keepassxc "$HOME/Documents/Passwords.kdbx" </dev/null >/dev/null 2>&1 &
+      fi
       disown 2>/dev/null || true
       ok "Opening the restored KeePassXC database."
     else

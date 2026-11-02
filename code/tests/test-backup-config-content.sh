@@ -13,6 +13,7 @@ mkdir -p "$HOME/.config/windows" "$HOME/.config/omarchy/extensions" \
   "$HOME/.config/omarchy/plugins/mosquito.better-pip" \
   "$HOME/.config/zen/profile.release/chrome/zen-themes/custom-mod" \
   "$HOME/.config/zen/profile.release/extensions" \
+  "$HOME/.config/keepassxc" "$HOME/.config/autostart" \
   "$HOME/.local/share/applications" "$HOME/.local/share/icons/hicolor/256x256/apps" \
   "$HOME/.local/bin" "$HOME/Documents"
 printf 'personal setting\n' > "$HOME/.config/windows/user.conf"
@@ -20,6 +21,9 @@ printf '[Install42]\nDefault=profile.release\n' > "$HOME/.config/zen/profiles.in
 printf 'user_pref("zen.restore.test", true);\n' > "$HOME/.config/zen/profile.release/prefs.js"
 printf 'custom Zen mod\n' > "$HOME/.config/zen/profile.release/chrome/zen-themes/custom-mod/chrome.css"
 printf 'custom extension\n' > "$HOME/.config/zen/profile.release/extensions/custom-addon.xpi"
+printf '[GUI]\nLaunchAtStartup=true\n' > "$HOME/.config/keepassxc/keepassxc.ini"
+printf '[Desktop Entry]\nName=KeePassXC\nExec=keepassxc\n' \
+  > "$HOME/.config/autostart/org.keepassxc.KeePassXC.desktop"
 printf '{"name":"stale menu"}\n' > "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
 printf 'plugin payload\n' > "$HOME/.config/omarchy/plugins/mosquito.better-pip/Service.qml"
 printf '[Desktop Entry]\nName=Never selected\n' > "$HOME/.local/share/applications/stale.desktop"
@@ -30,6 +34,7 @@ chmod +x "$HOME/.local/bin/omarchy-vm" "$HOME/.local/bin/reaper-launch"
 
 cat > "$TMP/selection.tsv" <<'EOF'
 apps	reaper
+apps	keepassxc
 plugins	battery-management	better-pip
 EOF
 export BACKUP_APPS_SELECTION_FILE="$TMP/selection.tsv"
@@ -39,7 +44,7 @@ export BACKUP_APPS_SELECTION_FILE="$TMP/selection.tsv"
 source "$ROOT/mosquitomarchy-setup.sh"
 YES=1
 VST_MODE=none
-pkg_has(){ return 1; }
+pkg_has(){ [[ ${1:-} == keepassxc ]]; }
 pacman(){ :; }
 omarchy(){ printf 'test\n'; }
 mosquitomarchy_channel(){ printf 'stable\n'; }
@@ -62,7 +67,7 @@ archive="$(find "$OMARCHY_BACKUP_DIR" -maxdepth 1 -name '*.tar.gz' -print -quit)
 [[ -n $archive ]]
 mkdir "$TMP/unpacked"
 tar xzf "$archive" -C "$TMP/unpacked"
-[[ "$(cat "$TMP/unpacked/install.list")" == $'# install.list — packages selected in the mosquitOmarchy TUI\napps\treaper\nplugins\tbattery-management\tbetter-pip' ]]
+[[ "$(cat "$TMP/unpacked/install.list")" == $'# install.list — packages selected in the mosquitOmarchy TUI\napps\treaper\napps\tkeepassxc\nplugins\tbattery-management\tbetter-pip' ]]
 
 tar tzf "$TMP/unpacked/config-backup.tar.gz" > "$TMP/config-paths"
 grep -q '^\.config/windows/user.conf$' "$TMP/config-paths"
@@ -80,6 +85,7 @@ for forbidden in \
 done
 grep -qF '.config/zen/profile.release/chrome/zen-themes/custom-mod/chrome.css' "$TMP/config-paths"
 grep -qF '.config/zen/profile.release/extensions/custom-addon.xpi' "$TMP/config-paths"
+grep -qF '.config/autostart/org.keepassxc.KeePassXC.desktop' "$TMP/config-paths"
 
 # Restoring those files does not require selecting Zen for module reinstall.
 export HOME="$TMP/restore-home"
@@ -89,12 +95,13 @@ restore_sync_pacman_databases(){ :; }
 category_run(){ :; }
 systemctl(){ :; }
 omarchy(){ :; }
-YES=1 RESTORE_DEPLOY_ZEN=yes RESTORE_DEPLOY_KEEPASS=no RESTORE_DEPLOY_KEEPASS_SETTINGS=no \
+YES=1 RESTORE_DEPLOY_ZEN=yes RESTORE_DEPLOY_KEEPASS=no RESTORE_DEPLOY_KEEPASS_SETTINGS=yes \
   RESTORE_DEPLOY_HYPRLAND=no RESTORE_DEPLOY_VST=no RESTORE_DEPLOY_REAPER=no \
   RESTORE_DEPLOY_THEMES=no RESTORE_DEPLOY_OMARCHY_PLUGINS=no RESTORE_KEYBINDINGS=none \
   restore_backup "$archive" >/dev/null
 [[ -f "$HOME/.config/zen/profile.release/chrome/zen-themes/custom-mod/chrome.css" ]]
 [[ -f "$HOME/.config/zen/profile.release/extensions/custom-addon.xpi" ]]
+[[ -f "$HOME/.config/autostart/org.keepassxc.KeePassXC.desktop" ]]
 
 # The restore now extracts the new config archive directly; no old-archive
 # cleanup or compatibility path is needed.
