@@ -75,4 +75,21 @@ mkdir -p "$AUDIOSTACK_VST_ROOT/vst3/example.vst3" "$TMP/full-backup/plugins"
 printf 'plugin' > "$AUDIOSTACK_VST_ROOT/vst3/example.vst3/plugin.so"
 backup_plugins_inventory "$TMP/full-backup"
 grep -q "$AUDIOSTACK_VST_ROOT/vst3/example.vst3/plugin.so" "$TMP/full-backup/plugins/manifest.txt"
+
+mkdir -p "$TMP/restore-input"
+printf 'apps\tdouze\napps\textracto\n' > "$TMP/restore-input/install.list"
+tar -czf "$TMP/restore.tar.gz" -C "$TMP/restore-input" install.list
+sudo_primes=0 module_runs=0
+mq_sudo_prime(){
+  [[ -n ${MQ_SUDO_PRIMED:-} ]] && return 0
+  sudo_primes=$((sudo_primes + 1))
+  export MQ_SUDO_PRIMED=1
+}
+restore_sync_pacman_databases(){ mq_sudo_prime; }
+category_run(){ mq_sudo_prime; module_runs=$((module_runs + 1)); }
+YES=1 RESTORE_DEPLOY_HYPRLAND=no RESTORE_DEPLOY_VST=no RESTORE_DEPLOY_REAPER=no \
+  RESTORE_DEPLOY_ZEN=no RESTORE_DEPLOY_KEEPASS=no RESTORE_DEPLOY_KEEPASS_SETTINGS=no \
+  RESTORE_DEPLOY_THEMES=no RESTORE_DEPLOY_OMARCHY_PLUGINS=no RESTORE_KEYBINDINGS=none \
+  restore_backup "$TMP/restore.tar.gz"
+[[ $sudo_primes == 1 && $module_runs == 2 ]]
 echo 'ok: restore replays every package row and reports failures'

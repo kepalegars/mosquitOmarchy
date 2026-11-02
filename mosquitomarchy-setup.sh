@@ -2934,18 +2934,38 @@ restore_backup(){
   local dep_keybindings="${RESTORE_KEYBINDINGS:-custom}"
   local restore_failed=0
   local safe=0; [[ $mode == safe ]] && safe=1
+  local install_list_selected=0 reaper_install=0
 
-  # --- 0. The instruction file: packages to install, exactly as if they had
-  # been ticked in Setup. Safe mode drops whatever is already installed. ---
   if [[ -f "$tmp/install.list" ]]; then
     if ((YES == 0)) && ! ask "Install the packages listed in the backup (install.list)?" y; then
       info "Packages: skipped."
     else
-      msg "Installing the packages listed in the backup"
-      if ! restore_install_list "$tmp/install.list" "$mode"; then
-        warn "Some packages from the backup could not be installed."
-        restore_failed=1
-      fi
+      install_list_selected=1
+    fi
+  fi
+  if [[ $dep_reaper != no && -f "$tmp/reaper/reaper.tar.gz" ]]; then
+    local reaper_state
+    reaper_state="$(module_state reaper 2>/dev/null || true)"; reaper_state="${reaper_state%%:*}"
+    if ! ((safe)) || [[ $reaper_state != ok && $reaper_state != partial ]]; then
+      reaper_install=1
+    fi
+  fi
+  if ((install_list_selected || reaper_install)); then
+    msg "Authorizing one sudo session for the restore installs"
+    if ! mq_sudo_prime; then
+      err "Could not authorize package installation; nothing in the backup has been restored."
+      rm -rf "$tmp"
+      return 1
+    fi
+  fi
+
+  # --- 0. The instruction file: packages to install, exactly as if they had
+  # been ticked in Setup. Safe mode drops whatever is already installed. ---
+  if ((install_list_selected)); then
+    msg "Installing the packages listed in the backup"
+    if ! restore_install_list "$tmp/install.list" "$mode"; then
+      warn "Some packages from the backup could not be installed."
+      restore_failed=1
     fi
   fi
 
