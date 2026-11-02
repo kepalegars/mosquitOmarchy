@@ -648,6 +648,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.passInput = tuikit.NewPasswordInput("Passphrase for "+m.pendingFile+":", "")
 				return m, m.passInput.Init()
 			}
+			m.backupPicker = newNavPicker("", m.backupsList()).SetSize(m.contentSize())
+			if strings.HasSuffix(m.pendingFile, ".gpg") {
+				os.Unsetenv("OMARCHY_BACKUP_PASSPHRASE")
+				m.passphraseSet = false
+				m.pendingAction = "restore-inspect"
+				m.push(scrPassphrase)
+				m.passInput = tuikit.NewPasswordInput("Passphrase for "+m.pendingFile+":", "")
+				return m, m.passInput.Init()
+			}
 			return m, nil
 		}
 		m.restoreManifest = msg.manifest
@@ -1476,6 +1485,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if msg.Canceled {
 			m.pop()
 			m.pendingPass = ""
+			if m.pendingAction == "restore-inspect" {
+				os.Unsetenv("OMARCHY_BACKUP_PASSPHRASE")
+				m.passphraseSet = false
+				m.pendingAction = ""
+				m.backupPicker = newNavPicker("", m.backupsList()).SetSize(m.contentSize())
+			}
 			if m.pendingAction == "backup-encrypted" || m.pendingAction == "backup-encrypted-confirm" {
 				m.cleanupBackupSelection()
 			}
@@ -1485,13 +1500,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case "restore-inspect":
 			if pass == "" {
 				m.pop()
+				m.pendingAction = ""
+				m.backupPicker = newNavPicker("", m.backupsList()).SetSize(m.contentSize())
 				m.toast, _ = m.toast.SetWarn("empty passphrase — canceled")
 				return m, nil
 			}
 			os.Setenv("OMARCHY_BACKUP_PASSPHRASE", pass)
 			m.passphraseSet = true
-			// Stay on the passphrase screen until the archive answers; a wrong
-			// passphrase then keeps the field available for a second try.
+			m.pop()
+			m.backupPicker = newNavPicker("", []tuikit.PickerItem{{Display: "Decrypting and reading archive…", Value: "", Disabled: true}}).SetSize(m.contentSize())
 			return m, fetchBackupManifestCmd(m.pendingFile)
 		case "backup-encrypted":
 			if pass == "" {
@@ -3239,10 +3256,11 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			return m, nil
 		}
 		m.pendingFile = res.Value
+		m.pendingAction = ""
 		m.restoreManifest = BackupManifest{}
 		m.restoreManifestReady = false
 		m.restoreCheckPending = false
-		m.toast, _ = m.toast.SetOK("reading the archive…")
+		m.backupPicker = newNavPicker("", []tuikit.PickerItem{{Display: "Reading archive…", Value: "", Disabled: true}}).SetSize(m.contentSize())
 		if strings.HasSuffix(res.Value, ".gpg") {
 			// An encrypted archive has to be opened before the page can know
 			// which sections it contains. The passphrase is kept in the

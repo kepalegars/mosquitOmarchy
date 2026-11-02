@@ -76,6 +76,9 @@ func TestRestoreOptionsRouting(t *testing.T) {
 		t.Fatalf("an encrypted archive should ask for the passphrase first, top is %v", m.top())
 	}
 	m, _ = m.update(tuikit.InputResultMsg{Value: "secret"})
+	if m.top() != scrBackupRestore || len(m.backupPicker.items) != 1 || !strings.Contains(m.backupPicker.items[0].Display, "Decrypting") {
+		t.Fatalf("submitting the passphrase should show a loading row, top=%v items=%v", m.top(), m.backupPicker.items)
+	}
 	m, _ = m.update(backupManifestMsg{manifest: BackupManifest{
 		Config: true, VST: true, Reaper: true, Zen: true, Keepass: true,
 		VSTFiles: true, VSTList: true,
@@ -84,6 +87,9 @@ func TestRestoreOptionsRouting(t *testing.T) {
 	}})
 	if m.restoreManifest.Keybindings != "all" {
 		t.Fatalf("manifest was not stored: %+v", m.restoreManifest)
+	}
+	if m.top() != scrBackupRestore || !m.restoreCheckPending {
+		t.Fatalf("update check should remain on the loading list: top=%v pending=%v", m.top(), m.restoreCheckPending)
 	}
 	m, _ = m.update(restoreUpdateCheckMsg{})
 	if m.top() != scrRestoreOptions {
@@ -127,6 +133,18 @@ func TestRestoreOptionsRouting(t *testing.T) {
 	m, _ = m.update(answer)
 	if m.top() != scrWorking {
 		t.Fatalf("confirming the review should start restore, top is %v", m.top())
+	}
+}
+
+func TestClickingUnencryptedArchiveShowsLoading(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrBackup, scrBackupRestore}
+	m.backupRecs = []BackupRec{{File: "backup.tar.gz", Size: "1M", Date: "2026-01-01 10:00"}}
+	m.backupPicker = newNavPicker("", m.backupsList()).SetSize(m.contentSize())
+
+	m, _ = m.update(tuikit.PickerResultMsg{Value: "backup.tar.gz"})
+	if m.top() != scrBackupRestore || len(m.backupPicker.items) != 1 || !strings.Contains(m.backupPicker.items[0].Display, "Reading") {
+		t.Fatalf("archive selection should show loading instead of the archive list: top=%v items=%v", m.top(), m.backupPicker.items)
 	}
 }
 

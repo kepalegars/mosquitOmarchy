@@ -24,7 +24,11 @@ cat > "$TMP/bin/uwsm" <<EOF
 #!/usr/bin/env bash
 printf '%s\\n' "\$*" >> '$TMP/launched'
 EOF
-chmod +x "$TMP/bin/pgrep" "$TMP/bin/keepassxc" "$TMP/bin/uwsm"
+cat > "$TMP/bin/hyprctl" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$TMP/bin/pgrep" "$TMP/bin/keepassxc" "$TMP/bin/uwsm" "$TMP/bin/hyprctl"
 export PATH="$TMP/bin:$PATH"
 tar czf "$TMP/archive/config-backup.tar.gz" -C "$TMP/source" Documents/Passwords.kdbx .config/keepassxc
 tar czf "$TMP/restore.tar.gz" -C "$TMP/archive" config-backup.tar.gz

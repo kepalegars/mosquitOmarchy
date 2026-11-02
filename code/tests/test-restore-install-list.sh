@@ -6,7 +6,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home"
-mkdir -p "$HOME"
+mkdir -p "$HOME" "$TMP/bin"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/keepassxc"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/hyprctl"
+chmod +x "$TMP/bin/keepassxc" "$TMP/bin/hyprctl"
+export PATH="$TMP/bin:$PATH"
 export MOSQUITOMARCHY_LIB_ONLY=1
 export GUI_RUN_EXEC=1
 # shellcheck source=../../mosquitomarchy-setup.sh

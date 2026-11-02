@@ -2795,7 +2795,10 @@ restore_install_list(){
       if is_excluded "$k"; then
         unexclude "$k"
       fi
-      if [[ $mode == safe ]]; then
+      # KeePassXC's module state only checks its package/browser manifest; it
+      # does not report missing tray or window preferences. Re-run this
+      # idempotent config module on safe restores so those settings are applied.
+      if [[ $mode == safe && $k != keepassxc ]]; then
         case $k in
           TUI\ *)
             pkg="${k#TUI }"; pkg="${pkg%%|*}"
@@ -3053,6 +3056,10 @@ restore_backup(){
   local dep_keybindings="${RESTORE_KEYBINDINGS:-custom}"
   local restore_failed=0
   local restart_shell_after=0
+  local zen_target_profile=""
+  if [[ $mode == safe && $dep_zen == yes ]]; then
+    zen_target_profile="$(zen_active_profile 2>/dev/null || true)"
+  fi
   local keepass_settings_preexisting=0
   if [[ -d "$HOME/.config/keepassxc" ]] \
      && find "$HOME/.config/keepassxc" -type f -print -quit 2>/dev/null | grep -q .; then
@@ -3134,6 +3141,22 @@ restore_backup(){
          && tar tzf "$tmp/config-backup.tar.gz" \
               | grep -E '(^|/)\.config/keepassxc(/|$)' >/dev/null; then
         tar xzf "$tmp/config-backup.tar.gz" -C "$HOME" .config/keepassxc
+      fi
+      # Safe mode preserves the target's profiles.ini. When it names a
+      # different active Zen profile, merge the backup's active-profile files
+      # (including chrome/zen-themes Mods) into that profile without replacing
+      # files already present there.
+      if ((safe)) && [[ $dep_zen == yes && -n $zen_target_profile ]]; then
+        local zen_source_profile
+        zen_source_profile="$(tar tzf "$tmp/config-backup.tar.gz" \
+          | awk -F/ '$1 == ".config" && $2 == "zen" && NF >= 4 && !found { print $3; found=1 }')"
+        if [[ -n $zen_source_profile && $zen_source_profile != "$zen_target_profile" \
+           && -d "$HOME/.config/zen/$zen_source_profile" ]]; then
+          mkdir -p "$HOME/.config/zen/$zen_target_profile"
+          cp -an "$HOME/.config/zen/$zen_source_profile/." \
+            "$HOME/.config/zen/$zen_target_profile/" \
+            || { warn "Could not merge the backed-up Zen profile into the active profile."; restore_failed=1; }
+        fi
       fi
       restart_shell_after=1
       systemctl --user daemon-reload 2>/dev/null || true
@@ -3257,14 +3280,14 @@ restore_backup(){
   # restored config afterwards. The helper also reloads Hyprland.
   if [[ $dep_hyprland == yes ]]; then
     restore_hyprland "$tmp" "$mode"
-    # Hyprland is restored after module setup, so its archived Lua can replace
-    # the KeepassXC rule installed earlier. Reapply the module-owned rule last.
-    if command -v keepassxc >/dev/null 2>&1; then
-      bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-keepassxc-window.sh" \
-        || { warn "Could not reapply the KeePassXC floating-window rule."; restore_failed=1; }
-    fi
   else
     info "Hyprland configs: skipped (restore option)."
+  fi
+  # Hyprland is restored after module setup when selected, and an install may
+  # have been skipped. Reapply the KeePassXC module-owned rule last either way.
+  if command -v keepassxc >/dev/null 2>&1; then
+    bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-keepassxc-window.sh" \
+      || { warn "Could not reapply the KeePassXC floating-window rule."; restore_failed=1; }
   fi
 
   # Modules can restart the Omarchy shell while installing, but config and

@@ -7,8 +7,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home" MOSQUITOMARCHY_LIB_ONLY=1 GUI_RUN_EXEC=1
-mkdir -p "$HOME" "$TMP/config/.config/omarchy" \
+mkdir -p "$HOME" "$TMP/bin" "$TMP/config/.config/omarchy" \
   "$TMP/theme/.config/omarchy/themes/restored-theme" "$TMP/archive/themes"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/keepassxc"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/hyprctl"
+chmod +x "$TMP/bin/keepassxc" "$TMP/bin/hyprctl"
+export PATH="$TMP/bin:$PATH"
 printf '{"restored":true}\n' > "$TMP/config/.config/omarchy/shell.json"
 printf 'wallpaper\n' > "$TMP/theme/.config/omarchy/themes/restored-theme/wallpaper"
 tar czf "$TMP/archive/config-backup.tar.gz" -C "$TMP/config" .

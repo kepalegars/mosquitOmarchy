@@ -41,10 +41,13 @@ mq_sudo_prime(){ :; }
 restore_sync_pacman_databases(){ :; }
 systemctl(){ :; }
 omarchy(){ :; }
-module_state(){ [[ ${MODULE_ALREADY_INSTALLED:-0} == 1 ]] && echo ok || echo missing; }
+module_runs=0
+module_state(){ echo ok; }
 category_run(){
+  module_runs=$((module_runs + 1))
   mkdir -p "$HOME/.config/keepassxc"
-  printf '[GUI]\nModuleDefault=true\n' > "$HOME/.config/keepassxc/keepassxc.ini"
+  [[ -f "$HOME/.config/keepassxc/keepassxc.ini" ]] \
+    || printf '[GUI]\nModuleDefault=true\n' > "$HOME/.config/keepassxc/keepassxc.ini"
 }
 
 # Fresh target: module setup creates defaults first, but safe restore must still
@@ -56,15 +59,17 @@ YES=1 RESTORE_DEPLOY_HYPRLAND=yes RESTORE_DEPLOY_VST=no RESTORE_DEPLOY_REAPER=no
 grep -q '^RestorePreference=from-backup$' "$HOME/.config/keepassxc/keepassxc.ini"
 [[ -f "$HOME/.config/keepassxc/custom-settings.json" ]]
 grep -q 'float = true, center = true' "$HOME/.config/hypr/hyprland.lua"
+grep -qF 'class = "(?i)^keepassxc$"' "$HOME/.config/hypr/hyprland.lua"
 ! grep -q 'tag = "+floating-window"' "$HOME/.config/hypr/hyprland.lua"
+[[ $module_runs == 1 ]]
 
 # Existing settings on a safe restore are user data and stay untouched.
 printf '[GUI]\nRestorePreference=keep-target\n' > "$HOME/.config/keepassxc/keepassxc.ini"
-export MODULE_ALREADY_INSTALLED=1
 YES=1 RESTORE_DEPLOY_HYPRLAND=yes RESTORE_DEPLOY_VST=no RESTORE_DEPLOY_REAPER=no \
   RESTORE_DEPLOY_ZEN=no RESTORE_DEPLOY_KEEPASS=no RESTORE_DEPLOY_KEEPASS_SETTINGS=yes \
   RESTORE_DEPLOY_THEMES=no RESTORE_DEPLOY_OMARCHY_PLUGINS=no RESTORE_KEYBINDINGS=none \
   restore_backup "$TMP/restore.tar.gz" >/dev/null
 grep -q '^RestorePreference=keep-target$' "$HOME/.config/keepassxc/keepassxc.ini"
+[[ $module_runs == 2 ]]
 
 echo 'ok: safe restore restores fresh KeePassXC settings and reapplies its float rule'

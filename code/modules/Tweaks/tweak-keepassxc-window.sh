@@ -46,7 +46,7 @@ apply(){
 -- and the XWayland class (StartupWMClass=keepassxc). Managed by the
 -- keepassxc module — no separate tweak to apply.
 o.window("org.keepassxc.KeePassXC", { float = true, center = true, size = { 1000, 700 } })
-o.window({ class = "^keepassxc$" }, { float = true, center = true, size = { 1000, 700 } })
+o.window({ class = "(?i)^keepassxc$" }, { float = true, center = true, size = { 1000, 700 } })
 -- <<< keepassxc-window-setup <<<
 EOF
   command -v hyprctl >/dev/null 2>&1 && hyprctl reload >/dev/null 2>&1 || true

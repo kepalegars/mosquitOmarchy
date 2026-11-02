@@ -9,6 +9,11 @@ trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home"
 export OMARCHY_BACKUP_DIR="$TMP/backups"
 export MOSQUITOMARCHY_LIB_ONLY=1 GUI_RUN_EXEC=1
+mkdir -p "$TMP/bin"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/keepassxc"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/hyprctl"
+chmod +x "$TMP/bin/keepassxc" "$TMP/bin/hyprctl"
+export PATH="$TMP/bin:$PATH"
 mkdir -p "$HOME/.config/windows" "$HOME/.config/omarchy/extensions" \
   "$HOME/.config/omarchy/plugins/mosquito.better-pip" \
   "$HOME/.config/zen/profile.release/chrome/zen-themes/custom-mod" \
@@ -89,18 +94,20 @@ grep -qF '.config/autostart/org.keepassxc.KeePassXC.desktop' "$TMP/config-paths"
 
 # Restoring those files does not require selecting Zen for module reinstall.
 export HOME="$TMP/restore-home"
-mkdir -p "$HOME"
+mkdir -p "$HOME/.config/zen/target.profile"
+printf '[InstallTarget]\nDefault=target.profile\n' > "$HOME/.config/zen/profiles.ini"
 mq_sudo_prime(){ :; }
 restore_sync_pacman_databases(){ :; }
 category_run(){ :; }
 systemctl(){ :; }
 omarchy(){ :; }
-YES=1 RESTORE_DEPLOY_ZEN=yes RESTORE_DEPLOY_KEEPASS=no RESTORE_DEPLOY_KEEPASS_SETTINGS=yes \
+YES=1 RESTORE_MODE=safe RESTORE_DEPLOY_ZEN=yes RESTORE_DEPLOY_KEEPASS=no RESTORE_DEPLOY_KEEPASS_SETTINGS=yes \
   RESTORE_DEPLOY_HYPRLAND=no RESTORE_DEPLOY_VST=no RESTORE_DEPLOY_REAPER=no \
   RESTORE_DEPLOY_THEMES=no RESTORE_DEPLOY_OMARCHY_PLUGINS=no RESTORE_KEYBINDINGS=none \
   restore_backup "$archive" >/dev/null
-[[ -f "$HOME/.config/zen/profile.release/chrome/zen-themes/custom-mod/chrome.css" ]]
-[[ -f "$HOME/.config/zen/profile.release/extensions/custom-addon.xpi" ]]
+[[ -f "$HOME/.config/zen/target.profile/chrome/zen-themes/custom-mod/chrome.css" ]]
+[[ -f "$HOME/.config/zen/target.profile/extensions/custom-addon.xpi" ]]
+grep -q '^Default=target.profile$' "$HOME/.config/zen/profiles.ini"
 [[ -f "$HOME/.config/autostart/org.keepassxc.KeePassXC.desktop" ]]
 
 # The restore now extracts the new config archive directly; no old-archive
