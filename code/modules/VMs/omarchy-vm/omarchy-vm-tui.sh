@@ -11,11 +11,12 @@ _mq_crash_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/lib/crash.
 # =============================================================================
 
 # Flat layout: VMs live directly in $MOSQUITO_VM_ROOT (<name>/), each with its
-# own shared/ folder inside. An explicit OMARCHY_VM_ROOT still wins outright. (The old
+# own `shared folder` inside. An explicit OMARCHY_VM_ROOT still wins outright. (The old
 # nested omarchy/vms/<name> tree is moved up by setup-omarchy-vm.sh, which
 # owns the migration; the TUI only ever reads the flat result.)
 VMS_DIR="${OMARCHY_VM_ROOT:-${MOSQUITO_VM_ROOT:-$HOME/VMs}}"
 SETUP_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/setup-omarchy-vm.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/backup-vm-shared.bash"
 
 detect_theme_colors() {
     local ghostty_conf="$HOME/.config/omarchy/current/theme/ghostty.conf"
@@ -160,12 +161,27 @@ stop_vm() {
 delete_vm() {
     local name
     name=$(select_vm "Delete which VM?") || return
-    gum confirm "Delete '$name' and its disk? This cannot be undone!" || return
+    if vm_running "$name"; then
+        gum style --foreground "$ERROR_COLOR" "Stop VM '$name' before deleting it so its shared files can be saved safely." | center_output 60
+        sleep 2
+        return 1
+    fi
+    local vm_dir="$VMS_DIR/$name" backup_dir="$VMS_DIR/shared folder backup"
+    gum confirm "Delete '$name' and its disk? Its shared files will be saved to '$backup_dir' first." || return
+    if ! backup_vm_shared_folder "$vm_dir" "$backup_dir"; then
+        gum style --foreground "$ERROR_COLOR" "Shared-folder backup failed; VM '$name' was kept." | center_output 60
+        sleep 2
+        return 1
+    fi
+    if ! rm -rf "${VMS_DIR:?}/${name:?}"; then
+        gum style --foreground "$ERROR_COLOR" "Could not fully remove VM '$name'; its shared files were saved to '$backup_dir'." | center_output 60
+        sleep 2
+        return 1
+    fi
     rm -f "$HOME/.local/share/applications/omarchy-vm-$name.desktop"
     [[ $name == omarchy ]] && rm -f "$HOME/.local/share/applications/omarchy-vm.desktop"
-    rm -rf "${VMS_DIR:?}/${name:?}"
     command -v update-desktop-database >/dev/null && update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
-    gum style --foreground "$SUCCESS_COLOR" "VM '$name' deleted." | center_output 60; sleep 1
+    gum style --foreground "$SUCCESS_COLOR" "VM '$name' deleted; shared files saved to '$backup_dir'." | center_output 60; sleep 1
 }
 
 view_vm() {

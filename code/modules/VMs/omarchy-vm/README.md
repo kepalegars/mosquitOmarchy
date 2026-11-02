@@ -16,8 +16,12 @@ Defaults: half the host RAM (rounded down to GB, min. 4/max. 32 GB), half the
 physical CPU cores (min. 2/max. 8), and VirGL 3D enabled. Adjust resources or
 toggle VirGL in `omarchy-vm-tui`.
 
-The host shared folder is `~/VMs/<name>/shared`; the script exports it to the
+The host shared folder is `~/VMs/<name>/shared folder`; the script exports it to the
 guest as `/mnt/host`.
+
+Deleting a stopped VM moves its complete shared folder to
+`~/VMs/shared folder backup`. If that backup already exists, files are merged;
+same-name files from earlier backups are retained with numbered suffixes.
 
 ## First launch: setup inside the VM
 
@@ -31,7 +35,7 @@ sudo bash ~/VMs/omarchy-vm-share --install
 
 This mounts the shared folder, installs the mount and clipboard services for
 future boots, then opens the folder in the guest's default file manager. The
-guest path is `/mnt/host`; on the host, it is `~/VMs/<name>/shared`. The setup
+guest path is `/mnt/host`; on the host, it is `~/VMs/<name>/shared folder`. The setup
 prints the path and reminds you to add it to your bookmarks. The downloaded
 helper is copied to `/usr/local/bin`, so you can delete `~/VMs/omarchy-vm-share`
 afterwards. Check with `omarchy-vm-share --status`.

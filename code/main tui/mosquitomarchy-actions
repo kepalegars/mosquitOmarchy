@@ -2843,11 +2843,17 @@ cmd_backup_manifest(){
   tar xOf "$arc" --wildcards '*config-backup.tar.gz' 2>/dev/null \
     | tar tzf - > "$cfg_list" 2>/dev/null || true
 
-  local vst=false reaper=false zen=false keepass=false keepass_settings=false themes=false config=false
+  local vst=false vst_files=false vst_list=false reaper=false zen=false keepass=false keepass_settings=false themes=false config=false
   local omarchy_plugins=false hyprland=false
   local keybindings=none
+  local pkglist=false aurlist=false
   grep -qE '(^|/)config-backup\.tar\.gz$' "$outer" && config=true
-  grep -qE '(^|/)plugins(/(plugins|plugins-vst)\.tar\.gz)$' "$outer" && vst=true
+  if grep -qE '(^|/)plugins(/(plugins|plugins-vst)\.tar\.gz)$' "$outer"; then
+    vst=true; vst_files=true
+  fi
+  if grep -qE '(^|/)plugins/manifest\.txt$' "$outer"; then
+    vst=true; vst_list=true
+  fi
   grep -qE '(^|/)reaper/reaper\.tar\.gz$' "$outer" && reaper=true
   grep -qE '(^|/)\.config/REAPER(/|$)' "$cfg_list" && reaper=true
   grep -qE '(^|/)\.config/zen(/|$)' "$cfg_list" && zen=true
@@ -2861,9 +2867,37 @@ cmd_backup_manifest(){
   if [[ $keybindings == none ]] && grep -qE '(^|/)keybindings/custom\.lua$' "$outer"; then
     keybindings=custom
   fi
+  grep -qE '(^|/)pkglist\.txt$' "$outer" && pkglist=true
+  grep -qE '(^|/)aurlist\.txt$' "$outer" && aurlist=true
 
-  printf '{"config":%s,"vst":%s,"reaper":%s,"zen":%s,"keepass":%s,"keepass_settings":%s,"themes":%s,"omarchy_plugins":%s,"hyprland":%s,"keybindings":%s}\n' \
-    "$config" "$vst" "$reaper" "$zen" "$keepass" "$keepass_settings" "$themes" "$omarchy_plugins" "$hyprland" "$(json_str "$keybindings")"
+  local install_file="$tmp/install.list" install_groups='[]'
+  if tar xOf "$arc" --wildcards '*install.list' > "$install_file" 2>/dev/null; then
+    local folder rest item first_item
+    local -a keys=() groups=()
+    while IFS=$'\t' read -r folder rest || [[ -n $folder || -n $rest ]]; do
+      [[ -n $folder && $folder != \#* ]] || continue
+      IFS=$'\t' read -r -a keys <<<"$rest"
+      local items='['
+      first_item=1
+      for item in "${keys[@]:-}"; do
+        [[ -n $item ]] || continue
+        case $item in theme:*|stocktheme:*|omarchyplugin:*) continue ;; esac
+        ((first_item)) || items+=','
+        first_item=0
+        items+="$(json_str "$item")"
+      done
+      items+=']'
+      [[ $items != '[]' ]] || continue
+      groups+=("$(json_obj folder "$(json_str "$folder")" items "$items")")
+    done < "$install_file"
+    if ((${#groups[@]})); then
+      local IFS=,
+      install_groups="[${groups[*]}]"
+    fi
+  fi
+
+  printf '{"config":%s,"vst":%s,"vst_files":%s,"vst_list":%s,"reaper":%s,"zen":%s,"keepass":%s,"keepass_settings":%s,"themes":%s,"omarchy_plugins":%s,"hyprland":%s,"keybindings":%s,"install_groups":%s,"pkglist":%s,"aurlist":%s}\n' \
+    "$config" "$vst" "$vst_files" "$vst_list" "$reaper" "$zen" "$keepass" "$keepass_settings" "$themes" "$omarchy_plugins" "$hyprland" "$(json_str "$keybindings")" "$install_groups" "$pkglist" "$aurlist"
 }
 
 # Is it worth updating before a restore? Two independent answers:
@@ -2924,7 +2958,7 @@ cmd_restore(){
   RESTORE_KEYBINDINGS="$keybindings"
   YES=1
   RESTORE_FILE="$file"
-  restore_flow || true
+  restore_flow
 }
 
 # ─── Keybindings (mosquitOmarchy-managed SUPER bindings) ───────────────────

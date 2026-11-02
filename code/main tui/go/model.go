@@ -142,16 +142,26 @@ type RestoreOpts struct {
 // before the restore-options page is drawn. It keeps rows for sections that are
 // not in the archive off the screen.
 type BackupManifest struct {
-	Config          bool   `json:"config"`
-	VST             bool   `json:"vst"`
-	Reaper          bool   `json:"reaper"`
-	Zen             bool   `json:"zen"`
-	Keepass         bool   `json:"keepass"`
-	KeepassSettings bool   `json:"keepass_settings"`
-	Themes          bool   `json:"themes"`
-	OmarchyPlugins  bool   `json:"omarchy_plugins"`
-	Hyprland        bool   `json:"hyprland"`
-	Keybindings     string `json:"keybindings"` // "all" | "custom" | "none"
+	Config          bool                 `json:"config"`
+	VST             bool                 `json:"vst"`
+	VSTFiles        bool                 `json:"vst_files"`
+	VSTList         bool                 `json:"vst_list"`
+	Reaper          bool                 `json:"reaper"`
+	Zen             bool                 `json:"zen"`
+	Keepass         bool                 `json:"keepass"`
+	KeepassSettings bool                 `json:"keepass_settings"`
+	Themes          bool                 `json:"themes"`
+	OmarchyPlugins  bool                 `json:"omarchy_plugins"`
+	Hyprland        bool                 `json:"hyprland"`
+	Keybindings     string               `json:"keybindings"` // "all" | "custom" | "none"
+	InstallGroups   []BackupInstallGroup `json:"install_groups"`
+	PkgList         bool                 `json:"pkglist"`
+	AURList         bool                 `json:"aurlist"`
+}
+
+type BackupInstallGroup struct {
+	Folder string   `json:"folder"`
+	Items  []string `json:"items"`
 }
 
 func restoreOptsFor(mf BackupManifest) RestoreOpts {

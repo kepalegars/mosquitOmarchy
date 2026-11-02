@@ -78,7 +78,9 @@ func TestRestoreOptionsRouting(t *testing.T) {
 	m, _ = m.update(tuikit.InputResultMsg{Value: "secret"})
 	m, _ = m.update(backupManifestMsg{manifest: BackupManifest{
 		Config: true, VST: true, Reaper: true, Zen: true, Keepass: true,
+		VSTFiles: true, VSTList: true,
 		Themes: true, OmarchyPlugins: true, Hyprland: true, Keybindings: "all",
+		InstallGroups: []BackupInstallGroup{{Folder: "apps", Items: []string{"douze", "reaper"}}},
 	}})
 	if m.restoreManifest.Keybindings != "all" {
 		t.Fatalf("manifest was not stored: %+v", m.restoreManifest)
@@ -96,14 +98,27 @@ func TestRestoreOptionsRouting(t *testing.T) {
 		t.Fatalf("switching mode should swap the notice, mode=%q notice=%q", m.restoreOpts.Mode, m.restoreNotice)
 	}
 	m, _ = m.update(tuikit.PickerResultMsg{Value: "restore"})
-	if m.top() != scrWorking {
-		t.Fatalf("restore now should start the run (passphrase already known), top is %v", m.top())
+	if m.top() != scrConfirm {
+		t.Fatalf("restore now should show its review prompt first, top is %v", m.top())
+	}
+	if len(m.confirm.List) < 4 || !strings.Contains(m.confirm.List[0], "PACKAGES") || !strings.Contains(m.confirm.List[1], "Apps") {
+		t.Fatalf("restore review must start with the expanded package list: %v", m.confirm.List)
+	}
+	if len(m.confirm.List) <= m.confirm.ListMaxRows {
+		t.Fatalf("long restore plan should be scrollable: %d rows, window %d", len(m.confirm.List), m.confirm.ListMaxRows)
+	}
+	if !strings.Contains(strings.Join(m.confirm.List, "\n"), "Omawrite at the end") {
+		t.Fatalf("restore review omitted the VST list action: %v", m.confirm.List)
 	}
 	joined := strings.Join(m.pendingArgs, " ")
 	for _, want := range []string{"--mode=safe", "--vst=yes", "--reaper=yes", "--zen=yes", "--keepass=yes", "--themes=yes", "--omarchy-plugins=yes", "--hyprland=yes", "--keybindings=all"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("restore args missing %s: %v", want, m.pendingArgs)
 		}
+	}
+	m, _ = m.update(tuikit.ConfirmResultMsg{Yes: true})
+	if m.top() != scrWorking {
+		t.Fatalf("confirming the review should start restore, top is %v", m.top())
 	}
 }
 

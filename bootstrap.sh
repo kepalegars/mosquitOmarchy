@@ -237,7 +237,8 @@ collect_installers || warn "Could not scan ~/Downloads — continuing; Setup wil
 # The deployer is code/main tui/install-tui.sh — the same script
 # the `mosquitomarchy` module runs ("mosquitomarchy-deployer" in the module
 # list). It is idempotent, so re-running is free.
-TUI="$HOME/.local/bin/mosquitomarchy-tui"
+BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
+TUI="$BIN_DIR/mosquitomarchy-tui"
 DEPLOYER="code/main tui/install-tui.sh"
 
 deploy(){
@@ -270,18 +271,20 @@ else
   fi
 fi
 
-# ───────────────────────── Hand over to the TUI ─────────────────────────
-# The TUI is the interface; there is no second wizard to fall back to. If it
-# cannot be started the bootstrap says so plainly instead of dropping the user
-# into an obsolete prompt sequence.
+# ───────────────────────── Launch the TUI ─────────────────────────────────
+# Use the dispatcher without a TTY so it opens the normal floating Foot window,
+# rather than taking over the terminal that ran the bootstrap.
 if [[ ! -x $TUI ]]; then
   err "The mosquitOmarchy TUI is not available, so there is nothing to start."
   err "Build it with:  ./$DEPLOYER -y"
   exit 1
 fi
 
-msg "Starting the mosquitOmarchy TUI"
-if [[ -t 0 && -t 1 ]]; then
-  exec "$TUI"
+DISPATCHER="$BIN_DIR/mosquitomarchy"
+if [[ ! -x $DISPATCHER ]]; then
+  err "The mosquitOmarchy dispatcher is not available: $DISPATCHER"
+  exit 1
 fi
-ok "Deployed. Start the TUI with:  $TUI    (or just: mosquitomarchy)"
+msg "Opening mosquitOmarchy in its floating window"
+nohup "$DISPATCHER" </dev/null >/dev/null 2>&1 &
+ok "mosquitOmarchy launched."

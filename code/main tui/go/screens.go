@@ -384,6 +384,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				return m, nil
 			}
 			m.toast, _ = m.toast.SetOK("done")
+			if m.pendingAction == "add-shortcut" {
+				// First-run setup should return to the home screen, not leave the
+				// user choosing between a log and a back path through the runner.
+				m.pendingAction = ""
+				m.replace(scrMain)
+				return m, fetchStatusCmd()
+			}
 			// More special stages queued (DaVinci → Guitar Pro → Ableton):
 			// run the next one instead of showing the success prompt now.
 			if len(m.installStageQueue) > 0 {
@@ -1152,6 +1159,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.pop()
 		if msg.Canceled || !msg.Yes {
+			if m.pendingAction == "restore-review" {
+				m.pendingAction = ""
+				m.pendingArgs = nil
+				return m, nil
+			}
 			if m.pendingAction == "restore-update-ask" {
 				// Continue (the default) skips the recommendation and goes
 				// straight to the restore options.
@@ -1229,6 +1241,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		switch m.pendingAction {
 		case "add-shortcut":
 			return m.startWorking("Adding the shortcut", workingArgs("add-shortcut", nil)...)
+		case "restore-review":
+			return m.startRestore(append([]string(nil), m.pendingArgs...))
 		case "restore-update-ask":
 			// The user chose Update: open the Update page. This is an explicit
 			// request, so a fresh check is allowed here.
@@ -3304,16 +3318,23 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 				"--keybindings=" + m.restoreOpts.Keybindings,
 				"--hyprland=" + yesno(m.restoreOpts.Hyprland),
 			}
-			if strings.HasSuffix(m.pendingFile, ".gpg") && !m.passphraseSet {
-				m.pendingAction = "restore-encrypted"
-				m.pendingArgs = args
-				m.push(scrPassphrase)
-				m.passInput = tuikit.NewPasswordInput("Passphrase for "+m.pendingFile+":", "")
-				return m, m.passInput.Init()
-			}
-			m.pendingAction = "restore"
+			m.pendingAction = "restore-review"
 			m.pendingArgs = args
-			return m.startWorking("Restoring", workingArgs("restore", args)...)
+			lines := m.restorePlanLines()
+			_, h := m.contentSize()
+			maxRows := h - 10
+			if maxRows > 14 {
+				maxRows = 14
+			}
+			if maxRows < 2 {
+				maxRows = 2
+			}
+			m.pendingMsg = "Review the complete restore plan below. Only listed packages are considered; Safe mode skips installed modules. Confirm to proceed."
+			m.pendingNo, m.pendingYes = "Back", "Restore"
+			m.push(scrConfirm)
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).
+				SetList("Restore plan (↑/↓ to scroll)", lines, maxRows)
+			return m, nil
 		case "back":
 			m.pop()
 			return m, nil
@@ -5399,6 +5420,122 @@ func (m model) openRestoreOptions() (model, tea.Cmd) {
 	m.push(scrRestoreOptions)
 	m.restorePicker = m.rebuildRestoreOptions()
 	return m, nil
+}
+
+func (m model) startRestore(args []string) (model, tea.Cmd) {
+	if strings.HasSuffix(m.pendingFile, ".gpg") && !m.passphraseSet {
+		m.pendingAction = "restore-encrypted"
+		m.pendingArgs = args
+		m.push(scrPassphrase)
+		m.passInput = tuikit.NewPasswordInput("Passphrase for "+m.pendingFile+":", "")
+		return m, m.passInput.Init()
+	}
+	m.pendingAction = "restore"
+	m.pendingArgs = args
+	return m.startWorking("Restoring", workingArgs("restore", args)...)
+}
+
+func (m model) restorePlanLines() []string {
+	lines := []string{"PACKAGES from install.list"}
+	if len(m.restoreManifest.InstallGroups) == 0 {
+		lines = append(lines, "  • No module packages selected")
+	} else {
+		for _, group := range m.restoreManifest.InstallGroups {
+			lines = append(lines, "  "+restoreGroupLabel(group.Folder))
+			for _, item := range group.Items {
+				lines = append(lines, "    • "+restoreItemLabel(item))
+			}
+		}
+	}
+	if m.restoreManifest.PkgList || m.restoreManifest.AURList {
+		lines = append(lines, "", "System package snapshots", "  • pkglist.txt / aurlist.txt are not installed by this TUI restore")
+	}
+
+	lines = append(lines, "", "RESTORE ACTIONS")
+	if m.restoreOpts.Mode == "safe" {
+		lines = append(lines, "  • Mode: Safe — keep existing files and skip installed modules")
+	} else {
+		lines = append(lines, "  • Mode: Full — overwrite the files included in the backup")
+	}
+	if m.restoreManifest.Config {
+		if m.restoreOpts.Mode == "safe" {
+			lines = append(lines, "  • Merge config-backup.tar.gz; keep files that already exist")
+		} else {
+			lines = append(lines, "  • Restore config-backup.tar.gz; overwrite archived files")
+		}
+	}
+	if m.restoreManifest.VST {
+		switch {
+		case !m.restoreOpts.VST:
+			lines = append(lines, "  • VST plugins: skipped")
+		case m.restoreManifest.VSTFiles && m.restoreManifest.VSTList:
+			lines = append(lines, "  • Restore VST files and inventory; save the list under ~/Music/Audio Plugins and open it in Omawrite at the end")
+		case m.restoreManifest.VSTFiles:
+			lines = append(lines, "  • Restore VST files (this archive has no inventory list)")
+		case m.restoreManifest.VSTList:
+			lines = append(lines, "  • Restore the VST inventory only (no plugin files); save it under ~/Music/Audio Plugins and open it in Omawrite at the end")
+		}
+	}
+	if m.restoreManifest.Reaper {
+		if m.restoreOpts.Reaper {
+			lines = append(lines, "  • Restore REAPER settings and any full-data archive")
+		} else {
+			lines = append(lines, "  • REAPER: skipped")
+		}
+	}
+	if m.restoreManifest.Zen {
+		lines = append(lines, "  • Zen settings: "+yesno(m.restoreOpts.Zen))
+	}
+	if m.restoreManifest.Keepass {
+		lines = append(lines, "  • KeePassXC password database: "+yesno(m.restoreOpts.Keepass))
+	}
+	if m.restoreManifest.KeepassSettings {
+		lines = append(lines, "  • KeePassXC settings: "+yesno(m.restoreOpts.KeepassSettings))
+	}
+	if m.restoreManifest.Themes {
+		lines = append(lines, "  • Themes: "+yesno(m.restoreOpts.Themes))
+	}
+	if m.restoreManifest.OmarchyPlugins {
+		lines = append(lines, "  • Omarchy plugins: "+yesno(m.restoreOpts.OmarchyPlugins))
+	}
+	if m.restoreManifest.Keybindings != "" && m.restoreManifest.Keybindings != "none" {
+		lines = append(lines, "  • Keybindings: "+restoreKeybindingsLabel(m.restoreOpts.Keybindings))
+	}
+	if m.restoreManifest.Hyprland {
+		lines = append(lines, "  • Hyprland configs: "+yesno(m.restoreOpts.Hyprland))
+	}
+	return lines
+}
+
+func restoreGroupLabel(folder string) string {
+	switch folder {
+	case "apps":
+		return "Apps"
+	case "plugins":
+		return "Plugins"
+	case "tuis":
+		return "TUIs"
+	case "vms":
+		return "VMs"
+	case "mosquito":
+		return "mosquitOmarchy tools"
+	default:
+		if folder == "" {
+			return "Other"
+		}
+		return strings.ToUpper(folder[:1]) + folder[1:]
+	}
+}
+
+func restoreItemLabel(item string) string {
+	if item == "" {
+		return item
+	}
+	if strings.HasPrefix(item, "TUI ") {
+		return item
+	}
+	item = strings.ReplaceAll(item, "-", " ")
+	return strings.ToUpper(item[:1]) + item[1:]
 }
 
 func restoreKeybindingsLabel(mode string) string {

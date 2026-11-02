@@ -2735,10 +2735,12 @@ pick_backup(){
 restore_install_list(){
   local list="$1" mode="$2" line folder k st pkg
   [[ -f $list ]] || return 0
-  local -a arr=() keys=() sel=()
+  local -a lines=() arr=() keys=() sel=()
+  mapfile -t lines < "$list"
   MODULE_FAILURES=0
+  local restore_failed=0
   RESULTS=()
-  while IFS= read -r line; do
+  for line in "${lines[@]}"; do
     [[ -z $line || $line == \#* ]] && continue
     IFS=$'\t' read -r -a arr <<<"$line"
     folder="${arr[0]:-}"
@@ -2777,16 +2779,68 @@ restore_install_list(){
       sel=("${rest[@]}")
       ((${#sel[@]})) || continue
     fi
+    CATEGORY_SELECTED=("${sel[@]}")
     case $folder in
-      fixes)  FIXES_SELECTED=("${sel[@]}"); run_fixes ;;
-      tweaks) TWEAKS_SELECTED=("${sel[@]}"); run_tweaks ;;
-      *)      CATEGORY_SELECTED=("${sel[@]}"); category_run "$folder" ;;
+      fixes)  FIXES_SELECTED=("${sel[@]}"); run_fixes || restore_failed=1 ;;
+      tweaks) TWEAKS_SELECTED=("${sel[@]}"); run_tweaks || restore_failed=1 ;;
+      *)      CATEGORY_SELECTED=("${sel[@]}"); category_run "$folder" || restore_failed=1 ;;
     esac
-  done < "$list"
+    ((MODULE_FAILURES == 0)) || restore_failed=1
+  done
+  return "$restore_failed"
+}
+
+restore_install_has(){
+  local list="$1" folder="$2" key="$3"
+  [[ -f $list ]] && awk -F '\t' -v folder="$folder" -v key="$key" \
+    '$1 == folder { for (i = 2; i <= NF; i++) if ($i == key) found = 1 } END { exit !found }' "$list"
+}
+
+restore_vst_inventory(){
+  local tmp="$1" backup="$2" manifest="$1/plugins/manifest.txt"
+  [[ -f $manifest ]] || return 1
+  local root archived_root backup_id dest tmpfile size mtime path rel count=0 n=2
+  root="$(apm_plugins_root || true)"
+  [[ -n $root ]] || root="$HOME/Music/Audio Plugins"
+  mkdir -p "$root" || return 1
+  archived_root="$(sed -n 's/^# plugin folder at backup time: //p' "$manifest" | head -1)"
+  backup_id="$(basename "$backup")"
+  backup_id="${backup_id#mosquitomarchy-backup-}"
+  backup_id="${backup_id%.tar.gz.gpg}"
+  backup_id="${backup_id%.tar.gz}"
+  backup_id="$(printf '%s' "$backup_id" | sed 's/[^[:alnum:]_.-]/-/g' | cut -c1-80)"
+  dest="$root/VST list - $backup_id.md"
+  while [[ -e $dest ]]; do
+    dest="$root/VST list - $backup_id ($n).md"
+    n=$((n + 1))
+  done
+  tmpfile="$(mktemp "$root/.vst-list.XXXXXX")" || return 1
+  {
+    printf '# VST inventory from %s\n\n' "$(basename "$backup")"
+    printf -- '- Original folder: `%s`\n' "${archived_root:-unknown}"
+    if [[ -f "$tmp/plugins/plugins.tar.gz" || -f "$tmp/plugins/plugins-vst.tar.gz" ]]; then
+      printf -- '- Plugin files: included in the backup and restored\n\n'
+    else
+      printf -- '- Plugin files: inventory only; binaries are not in this backup\n\n'
+    fi
+    printf '## Files\n\n'
+    while IFS=$'\t' read -r size mtime path || [[ -n $size || -n $mtime || -n $path ]]; do
+      [[ $size =~ ^[0-9]+$ && -n $path ]] || continue
+      rel="$path"
+      [[ -n $archived_root && $rel == "$archived_root/"* ]] && rel="${rel#"$archived_root/"}"
+      printf -- '- `%q` — %s bytes\n' "$root/$rel" "$size"
+      count=$((count + 1))
+    done < "$manifest"
+    ((count)) || printf -- '- No file entries were recorded.\n'
+  } > "$tmpfile" || { rm -f "$tmpfile"; return 1; }
+  chmod 644 "$tmpfile" && mv -- "$tmpfile" "$dest" || { rm -f "$tmpfile"; return 1; }
+  RESTORED_VST_LIST="$dest"
+  ok "VST inventory saved: $dest ($count file entries)"
 }
 
 restore_backup(){
   local file="$1"
+  local RESTORED_VST_LIST=""
   [[ -f $file ]] || { err "Backup file not found: $file"; return 1; }
   msg "Restoring from $(basename "$file")"
   local tmp
@@ -2838,6 +2892,7 @@ restore_backup(){
   local dep_omarchy_plugins="${RESTORE_DEPLOY_OMARCHY_PLUGINS:-yes}"
   local dep_hyprland="${RESTORE_DEPLOY_HYPRLAND:-yes}"
   local dep_keybindings="${RESTORE_KEYBINDINGS:-custom}"
+  local restore_failed=0
   local safe=0; [[ $mode == safe ]] && safe=1
 
   # --- 0. The instruction file: packages to install, exactly as if they had
@@ -2847,7 +2902,10 @@ restore_backup(){
       info "Packages: skipped."
     else
       msg "Installing the packages listed in the backup"
-      restore_install_list "$tmp/install.list" "$mode"
+      if ! restore_install_list "$tmp/install.list" "$mode"; then
+        warn "Some packages from the backup could not be installed."
+        restore_failed=1
+      fi
     fi
   fi
 
@@ -2874,6 +2932,12 @@ restore_backup(){
       # it in config-backup.tar.gz, so only exclude it when the toggle is off.
       if [[ $dep_hyprland == no || -f "$tmp/hyprland/hyprland.tar.gz" ]]; then
         tex+=(--exclude=.config/hypr --exclude='.config/hypr/*')
+      fi
+      # Launcher files are included in the generic config archive. Do not
+      # create a dead Ableton entry when the module was not selected.
+      if ! restore_install_has "$tmp/install.list" apps ableton; then
+        tex+=(--exclude=.local/bin/ableton-live \
+              --exclude=.local/share/applications/ableton-live.desktop)
       fi
       # The battery plugins (mosquito.power, mosquito.indicators, mosquito.confirm) are recreated by the
       # battery-management module (setup-battery-management.sh): they are excluded
@@ -2917,7 +2981,10 @@ restore_backup(){
       info "REAPER already installed — safe mode skips the install."
     else
       msg "Installing REAPER (mosquitOmarchy module)"
-      run_reaper || warn "REAPER install reported an error — deploying the archived folders anyway."
+      run_reaper || {
+        warn "REAPER install reported an error — deploying the archived folders anyway."
+        restore_failed=1
+      }
     fi
     local -a rex=()
     ((safe)) && rex+=(--skip-old-files)
@@ -2954,11 +3021,19 @@ restore_backup(){
   if [[ $dep_vst == no ]]; then
     info "VST plugins: skipped (restore option)."
   elif [[ -f "$tmp/plugins/plugins.tar.gz" || -f "$tmp/plugins/plugins-vst.tar.gz" ]]; then
-    restore_plugins "$tmp"
+    restore_plugins "$tmp" || restore_failed=1
+    if [[ -f "$tmp/plugins/manifest.txt" ]]; then
+      restore_vst_inventory "$tmp" "$file" || restore_failed=1
+    else
+      warn "VST files were restored, but this older backup has no inventory list."
+    fi
   elif [[ -f "$tmp/plugins/manifest.txt" ]]; then
-    mq_vst_init
-    warn "Plugin inventory kept in the archive (plugins/manifest.txt) —"
-    warn "reinstall the plugins from their sources ($VST_SRC_BASE)."
+    if restore_vst_inventory "$tmp" "$file"; then
+      warn "Inventory only: the backup contains no VST plugin files to install."
+    else
+      err "Could not restore the VST inventory list."
+      restore_failed=1
+    fi
   fi
 
   # --- Third-party Omarchy shell plugins ---
@@ -2999,6 +3074,18 @@ restore_backup(){
   fi
 
   rm -rf "$tmp"
+  if [[ -n $RESTORED_VST_LIST ]]; then
+    if command -v omawrite >/dev/null 2>&1; then
+      nohup omawrite "$RESTORED_VST_LIST" </dev/null >/dev/null 2>&1 &
+      ok "Opening the VST inventory in Omawrite."
+    else
+      warn "VST inventory is saved, but omawrite is not installed: $RESTORED_VST_LIST"
+    fi
+  fi
+  if ((restore_failed)); then
+    err "Restore completed with errors."
+    return 1
+  fi
   msg "Restore finished."
   echo "  Rerun ./mosquitomarchy-setup.sh --status to see what remains to install/complete."
 }

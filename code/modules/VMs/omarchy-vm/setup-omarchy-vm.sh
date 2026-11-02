@@ -125,8 +125,7 @@ migrate_flat_layout(){
 }
 DEFAULT_VM="omarchy"
 DISK_SIZE="64G"
-# Legacy single shared folder, kept only for migrating old VMs: new VMs get
-# their own <vm-dir>/shared so two VMs never share one directory.
+# Legacy shared-folder paths, kept only for migrating existing VMs.
 LEGACY_SHARED_DIR="${MOSQUITO_VM_ROOT}/shared"
 # NVRAM file name inside each VM dir (written to .vm-config, read back by the
 # generated launcher). Defined here so ensure_vm can reference it.
@@ -570,7 +569,7 @@ drop_block_from_file() {
 if [[ $REMOVE == true ]]; then
   info "Removing the Omarchy VM module (helpers / menus)"
   rm -f "$BIN_DIR/omarchy-vm" "$BIN_DIR/setup-omarchy-vm.sh" \
-        "$BIN_DIR/omarchy-vm-tui" "$BIN_DIR/omarchy-vm-tui.sh" "$BIN_DIR/launch-omarchy-tui.sh" \
+        "$BIN_DIR/omarchy-vm-tui" "$BIN_DIR/omarchy-vm-tui.sh" "$BIN_DIR/backup-vm-shared.bash" "$BIN_DIR/launch-omarchy-tui.sh" \
         "$BIN_DIR/omarchy-vm-focus" "$BIN_DIR/omarchy-vm-share"
   rm -f "$APPS_DIR"/omarchy-vm*.desktop
   command -v update-desktop-database >/dev/null && update-desktop-database "$APPS_DIR" 2>/dev/null || true
@@ -759,7 +758,7 @@ mkdir -p "$BIN_DIR"
 # like omarchy-vm-clipboard-agent is the guest half of the clipboard. It was the one
 # helper left out, so a fresh machine kept the shared-folder command in the repo
 # only and "sudo omarchy-vm-share --install" answered "command not found" in the VM.
-for s in setup-omarchy-vm.sh omarchy-vm-tui.sh launch-omarchy-tui.sh omarchy-vm-focus omarchy-vm-share; do
+for s in setup-omarchy-vm.sh omarchy-vm-tui.sh backup-vm-shared.bash launch-omarchy-tui.sh omarchy-vm-focus omarchy-vm-share; do
   deploy_file "$SCRIPT_DIR/$s" "$BIN_DIR/$s"
   ok "$s deployed"
 done
@@ -828,7 +827,7 @@ OVMF_VARS="OVMF_VARS.fd"
 # installed Omarchy automatically.
 BOOT_ORDER="c"
 SHARED_FOLDER="on"
-SHARED_DIR="$dir/shared"
+SHARED_DIR="$dir/shared folder"
 SSH_PORT=$port
 DISPLAY_BACKEND="gtk"
 # "on" (default) = virtio-vga-gl (virgl 3D); toggle off in the TUI to use
@@ -871,7 +870,7 @@ OVMF_CODE="${OVMF_CODE:-/usr/share/edk2/x64/OVMF_CODE.4m.fd}"
 OVMF_VARS="${OVMF_VARS:-OVMF_VARS.fd}"
 BOOT_ORDER="${BOOT_ORDER:-c}"
 ISO_PATH="${ISO_PATH:-}"
-SHARED_DIR="${SHARED_DIR:-$VM_DIR/shared}"
+SHARED_DIR="${SHARED_DIR:-$VM_DIR/shared folder}"
 SHARED_FOLDER="${SHARED_FOLDER:-on}"
 SSH_PORT="${SSH_PORT:-2222}"
 DISPLAY_BACKEND="${DISPLAY_BACKEND:-gtk}"
@@ -1167,9 +1166,9 @@ ensure_vm() {
   mkdir -p "$dir"
   # Shared folder + clipboard are prepared at install time so every launch
   # finds them ready: the export dir exists and the bridge script is deployed.
-  mkdir -p "$dir/shared" 2>/dev/null \
-    && ok "Shared folder ready: $dir/shared" \
-    || warn "Could not create $dir/shared."
+  mkdir -p "$dir/shared folder" 2>/dev/null \
+    && ok "Shared folder ready: $dir/shared folder" \
+    || warn "Could not create $dir/shared folder."
   if [[ -x "$BIN_DIR/omarchy-vm-clipboard" ]]; then
     ok "Clipboard bridge deployed."
   else
@@ -1200,20 +1199,23 @@ ensure_vm() {
   ok "Desktop entry: omarchy-vm-$VM_NAME.desktop"
 }
 
-# The old layout had ONE shared folder for every VM (~/VMs/shared). It is now
-# per VM (<vm-dir>/shared), so two VMs never write into the same directory.
-# Migrate existing configs in place; the first VM that still points at the old
-# folder inherits its contents.
+# Migrate old global and per-VM `shared` folders. Existing files move only when
+# the new destination does not exist; if both exist, keep the configured path.
 migrate_shared_dirs(){
   local d cur new moved=0
   for d in "$VMS_DIR"/*/; do
     [[ -f "$d/.vm-config" ]] || continue
-    new="${d%/}/shared"
+    new="${d%/}/shared folder"
     cur="$(sed -n 's/^SHARED_DIR="\(.*\)"/\1/p' "$d/.vm-config" | head -1)"
     [[ -n $cur ]] || cur="$LEGACY_SHARED_DIR"
     [[ $cur == "$new" ]] && { mkdir -p "$new"; continue; }
-    if [[ $cur == "$LEGACY_SHARED_DIR" && -d $cur && ! -e $new && $moved == 0 ]]; then
-      mv "$cur" "$new" && moved=1 && ok "Shared folder moved: $cur -> $new"
+    if [[ -d $cur && -e $new ]]; then
+      warn "Both shared folders exist; keeping configured path: $cur"
+      continue
+    elif [[ -d $cur && ( $cur != "$LEGACY_SHARED_DIR" || $moved == 0 ) ]]; then
+      mv "$cur" "$new" && { [[ $cur != "$LEGACY_SHARED_DIR" ]] || moved=1; } \
+        && ok "Shared folder moved: $cur -> $new" \
+        || { warn "Could not migrate $cur; keeping its configured path."; continue; }
     else
       mkdir -p "$new"
     fi

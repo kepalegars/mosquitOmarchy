@@ -1,6 +1,10 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,6 +80,71 @@ func TestBackendStatus(t *testing.T) {
 	m = feedStreamedRun(t, m, out, nil)
 	if v := m.toast.View(); !strings.Contains(v, "✓") {
 		t.Fatalf("expected OK toast, got %q", v)
+	}
+}
+
+func TestBackupManifestIncludesRestorePlan(t *testing.T) {
+	setUpBackend(t)
+	archive := filepath.Join(t.TempDir(), "inventory-only.tar.gz")
+	f, err := os.Create(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := gzip.NewWriter(f)
+	tw := tar.NewWriter(zw)
+	entries := map[string]string{
+		"./install.list":         "apps\tdouze\textracto\nplugins\ttaskq\n",
+		"./plugins/manifest.txt": "# plugin folder at backup time: /home/old/Music/Audio Plugins\n123\t1.0\t/home/old/Music/Audio Plugins/vst3/example.vst3/file.so\n",
+		"./pkglist.txt":          "bash\n",
+		"./aurlist.txt":          "example-aur\n",
+	}
+	for name, body := range entries {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runQuick("backup-manifest", archive)
+	if err != nil {
+		t.Fatalf("backup manifest query failed: %v", err)
+	}
+	var mf BackupManifest
+	if err := json.Unmarshal(bytes.TrimSpace(out), &mf); err != nil {
+		t.Fatal(err)
+	}
+	if !mf.VST || !mf.VSTList || mf.VSTFiles {
+		t.Fatalf("inventory-only VST archive misclassified: %+v", mf)
+	}
+	if !mf.PkgList || !mf.AURList || len(mf.InstallGroups) != 2 || mf.InstallGroups[0].Folder != "apps" {
+		t.Fatalf("restore plan missing package groups: %+v", mf)
+	}
+}
+
+func TestAddShortcutReturnsToHome(t *testing.T) {
+	m := initialModel()
+	m.w, m.h = 120, 40
+	m.pendingAction = "add-shortcut"
+	m.replace(scrWorking)
+	m.runner = tuikit.NewRunner().SetSize(m.contentSize())
+
+	m, _ = m.update(tuikit.RunnerDoneMsg{})
+	if m.top() != scrMain {
+		t.Fatalf("after adding the shortcut, top = %d, want home (%d)", m.top(), scrMain)
+	}
+	if m.pendingAction != "" {
+		t.Fatalf("pending action was not cleared: %q", m.pendingAction)
 	}
 }
 

@@ -27,8 +27,10 @@ curl -fsSL https://raw.githubusercontent.com/kepalegars/mosquitOmarchy/master/bo
 ```
 
 That clones the repo, reports which large installers this machine is still missing,
-installs the missing modules, builds the TUI, and registers a menu entry. From an
-existing clone, `./bootstrap.sh -y` does the same without the pipe.
+builds and deploys the manager, then opens it in its floating window. Bootstrap
+does not install the other modules or add the optional keyboard shortcut. On first
+launch, mosquitOmarchy asks whether to add `SUPER + ALT + M`. From an existing
+clone, `./bootstrap.sh -y` does the same without the pipe.
 
 Every bootstrap run rebuilds the Go TUI from the current sources, even when a
 binary is already deployed — there is no "already built" shortcut, so the
@@ -130,7 +132,7 @@ The project's own layer: the manager itself, and the desktop-hardware modules.
 | `downloads` | Omarchy Downloads popup + `SUPER+ALT+D` binding | [installer](code/modules/Plugins/omarchy-downloads/setup-omarchy-downloads.sh) |
 | `taskq` | TaskQ deadline widget | [GitHub](https://github.com/sendaljpt/taskq) |
 | `process-killer` | Omarchy process-killer widget | [GitHub](https://github.com/BeresN/omarchy-process-killer) |
-| `mosquitomarchy` | This TUI (built from the Go sources in the repo), its dispatcher, menu entry, float rule, post-boot hook and the `SUPER+ALT+M` shortcut | [README](code/main%20tui/README.md) |
+| `mosquitomarchy` | This TUI (built from the Go sources in the repo), its dispatcher, menu entry, float rule and post-boot hook; first launch offers the optional `SUPER+ALT+M` shortcut | [README](code/main%20tui/README.md) |
 | `mosquitomarchy-update` | The update watchdog (scripts repo first, then Omarchy) | [README](code/main%20tui/update/README.md) |
 | `brightness` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp | [notes](code/modules/Plugins/brightness/display-fixes.md) |
 | `touchpad` | Touchpad acceleration, sensitivity, scroll factor, and optional kinetic scrolling | [notes](code/modules/Plugins/touchpad/touchpad.md) |
@@ -350,7 +352,7 @@ their installers, and the only real comparison is against the version on GitHub.
 
 1. **Omarchy VM** — create it from **Omarchy menu → Setup → Omarchy VM** (new
    VMs enable VirGL 3D by default). Each
-   VM gets its own host folder, **`~/VMs/<name>/shared`**, mounted in the guest
+   VM gets its own host folder, **`~/VMs/<name>/shared folder`**, mounted in the guest
    at **`/mnt/host`**. Finish the guest side once, inside the VM:
 
    ```bash
