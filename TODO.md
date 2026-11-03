@@ -3,7 +3,7 @@
 Single source of truth for open work. Historical detail stays in `JOURNAL.md`
 and module docs; tests still owed are in `TESTING.md`.
 
-Last reviewed: 2026-10-30.
+Last reviewed: 2026-11-03.
 
 ## Now
 
@@ -40,6 +40,36 @@ Last reviewed: 2026-10-30.
 - [ ] Test the new backup/restore in a temp HOME: plugin binaries + presets +
       settings + licenses, changed plugin root, `yabridgectl sync`, large-library
       opt-in, encrypted archive.
+- [ ] **APM — snapshot/restore the whole wine prefix** (idea from OmaVST, not
+      started). Today the only undo is the plugin quarantine
+      (`~/.cache/vst-quarantine/`), which does not cover what a Windows
+      installer or uninstaller changes *inside* the prefix: registry,
+      `ProgramData`, `Common Files`, vendor DLLs. Add:
+      - a **Back up the wine prefix now** row on the
+        `Windows VST Plugins (Wine)` menu (next to *Manage prefixes*), plus a
+        **Manage wine prefix backups** screen to list, restore and delete;
+      - `tar --zstd` archive + JSON sidecar (prefix, date, label, source size),
+        in `~/.local/state/audio-plugin-manager/prefix-backups/` (or a
+        Settings folder), archive 0600 and folder 0700;
+      - refuse while a DAW or a `yabridge-host` is running; stop the prefix's
+        background services (`wineserver -k` / `wineserver -w`) only when the
+        user confirms, as `backend/wine_tools.py` does in OmaVST;
+      - check free space before writing, restore by renaming the current prefix
+        to `<prefix>.before-restore-<time>` (never delete it), and validate that
+        every tar member stays under the prefix folder;
+      - one operation at a time, progress in the existing TUI runner.
+      Reference: OmaVST `backend/wine_tools.py` (297 lines).
+- [ ] **APM — auto prefix snapshot toggle, off by default** (depends on the
+      item above). Settings row **Back up the wine prefix before
+      install/uninstall: Off**. When on, take a snapshot before
+      `install_flow()` runs the installer and before `uninstall_target()` runs
+      the vendor uninstaller — that step is the destructive one; the plugin
+      quarantine alone does not cover registry/`ProgramData`. Skip silently if
+      the same prefix was already snapshotted in the last N minutes (a suite is
+      many plugins in one batch, not one archive per plugin) and name the
+      archive after the operation + plugin so the list stays readable. Keep it
+      off by default: a prefix is many GB. The manual menu row above must work
+      with the toggle off.
 
 ## Audio stack
 
@@ -216,6 +246,56 @@ Last reviewed: 2026-10-30.
 - [ ] `ScaleFinder.vst3`: decide whether to restore it from
       `~/.cache/vst-quarantine/` or remove it (lost via the old CrispyTuner
       uninstaller; awaiting the user's word).
+- [ ] **APM — crash watch: name the bridged plugin that killed its Wine host**
+      (idea from OmaVST, not started). APM already owns the DAW launchers
+      (`code/lib/wine-runtime-daw.bash` generates both the REAPER and Bitwig
+      wrappers), so export
+      `YABRIDGE_DEBUG_FILE=$HOME/.local/state/audio-plugin-manager/yabridge.log`
+      there — this covers both DAWs, whereas OmaVST only patches REAPER's
+      desktop entry.
+      - new core function + actions `crash-status-json` / `crash-clear-log`:
+        read the newest 8 MB, keep lines containing *"The Wine host process has
+        exited unexpectedly"*, take the `[<plugin>-<id>]` tag and strip the
+        instance id after the last `-` (plugin names contain `-`), count per
+        plugin;
+      - show the count in the plugin list/detail, and add a Settings row to
+        turn the log on/off and clear it;
+      - document that it only works for DAWs started through the generated
+        wrappers; a hand-edited launcher loses the variable.
+      Reference: OmaVST `backend/crash_watch.py` (128 lines). Tests: tag with
+      hyphens, missing/unknown tag, truncated log, log absent.
+- [ ] **APM — real plugin details: version, vendor, size** (idea from OmaVST,
+      not started). `plugin-detail` currently returns only `basename` + path.
+      Add to the `Enter` popup:
+      - size on disk + mtime (`du`/`stat`, no full rescan);
+      - VST3: `Contents/Resources/moduleinfo.json` → `Version` and
+        `Factory Info.Vendor` (`jq`; tolerate JSON5 trailing commas);
+      - Windows VST2/VST3: PE `VERSIONINFO` → `ProductVersion`/`FileVersion`,
+        `CompanyName`, `ProductName`. Prefer a small Go helper over bash: port
+        `_pe_strings` / `_windows_binary` from OmaVST
+        `backend/plugin_manager.py`, which handles the `Contents/x86_64-win`
+        bundle layout, 32-bit-aligned UTF-16LE, and skips the
+        `PACE Anti-Piracy` block so an iLok-wrapped plugin reports *no*
+        version instead of PACE's;
+      - fall back to the vendor already recorded in `known-plugins.tsv`.
+      Do not promise a version for iLok/PACE-wrapped plugins; OmaVST documents
+      the same limit. Tests: loose `.dll` vs `.vst3` bundle, PACE-only binary,
+      moduleinfo with trailing commas, missing file.
+- [ ] **APM — drop disabled/removed plugins from REAPER's cache** (idea from
+      OmaVST, not started). APM writes `reaper.ini` paths but leaves stale
+      entries in `~/.config/REAPER/reaper-vstplugins64.ini` (and
+      `reaper-clap-linux-x86_64.ini`), so REAPER keeps listing a hidden or
+      removed plugin.
+      - new `reaper_forget_json` action called after uninstall, hide
+        (`toggle_vst_plugin_hidden`) and native disable/remove; key = file name
+        with spaces turned into underscores;
+      - guard: while REAPER is running, change nothing and return *"press F5 in
+        the FX browser"* (REAPER rewrites the cache on exit). Detect the real
+        DAW, not Steam's `reaper` (`pgrep -x reaper`, then the
+        `/proc/<pid>/exe` parent must be `REAPER`);
+      - keep the cache file's mode when rewriting it.
+      Reference: OmaVST `backend/reaper.py` (119 lines). Tests: key mapping,
+      no-op while running, missing cache file, unrelated lines preserved.
 
 ## Live mode
 
@@ -286,3 +366,8 @@ and the activation-prompt cases.
 
 - `install-many` — abandoned (2026-10-28). The parked action and its README
   section were removed; do not revive it.
+- OmaVST-style **bar widget + local HTTP API** — not planned. The API only
+  exists so OmaVST's QML panel can talk to its Python daemon; the APM already
+  has a TUI and a non-interactive `-actions` backend, so it would add a daemon
+  and a network surface (token, Origin checks, loopback binding) for no
+  feature. Revisit only if an Omarchy bar widget is explicitly wanted.
