@@ -126,6 +126,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	before := m.toast.Gen()
 	var cmd tea.Cmd
+	wasMain := m.top() == scrMain
 	m, cmd = m.update(msg)
 	if m.toast.Gen() != before {
 		cmd = tea.Batch(cmd, m.toast.ExpireCmd())
@@ -135,6 +136,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.deferred != nil {
 		cmd = tea.Batch(cmd, m.deferred.Cmd)
 		m.deferred = nil
+	}
+	// Every return to the home screen re-asks the backend for pending updates
+	// and health findings. The Update row and the status badge are only as
+	// fresh as the last check, and a machine can drift while the user sits in
+	// a sub-screen (repo moved, module broken, Omarchy update appeared).
+	if wasMain != (m.top() == scrMain) && m.top() == scrMain {
+		cmd = tea.Batch(cmd, fetchUpdateCheckCmd(), fetchHealthCmd())
 	}
 	return m, cmd
 }
@@ -4841,8 +4849,9 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 		// agentic stuff": nothing to bring back if no removal was ever logged,
 		// hence greyed. Uninstall offers "remove omarchy's agentic stuff":
 		// that is exactly what the user wants precisely when the agentic parts
-		// are still present, i.e. when NO removal was logged.
-		if it.Key == "remove-ai" && mode != "uninstall" && !aiRemoved {
+		// are still present, i.e. when NO removal was logged. Backup uses it as
+		// a restore-time removal, so it is always selectable there.
+		if it.Key == "remove-ai" && mode == "install" && !aiRemoved {
 			entry.Disabled = true
 		}
 		out = append(out, entry)
@@ -5623,7 +5632,15 @@ func (m model) beginBackup() (model, tea.Cmd) {
 	var order []string
 	byFolder := map[string][]string{}
 	for _, it := range m.backupItems {
-		if !m.backupChecked[setupValue(it.Folder, it.Key)] {
+		checked := m.backupChecked[setupValue(it.Folder, it.Key)]
+		// Preinstalls are the one inverted folder: they are backed up as an
+		// exclusion list, so a tick means "keep it" and an unticked stock
+		// package is what the restore removes.
+		if it.Folder == "preinstalls" {
+			if checked {
+				continue
+			}
+		} else if !checked {
 			continue
 		}
 		if _, seen := byFolder[it.Folder]; !seen {

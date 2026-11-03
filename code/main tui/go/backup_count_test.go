@@ -418,6 +418,37 @@ func TestBackupReaperSettingsLabel(t *testing.T) {
 	t.Fatal("Reaper resources option missing")
 }
 
+func TestBeginBackupWritesUncheckedPreinstalls(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrBackup, scrBackupOptions}
+	m.backupItems = []SetupItemRec{
+		{Folder: "apps", Key: "reaper"},
+		{Folder: "preinstalls", Key: "preinstall:aether"},
+		{Folder: "preinstalls", Key: "preinstall:pinta"},
+	}
+	m.backupChecked = map[string]bool{
+		setupValue("apps", "reaper"):                   true,
+		setupValue("preinstalls", "preinstall:aether"): true,
+		// pinta stays unticked, so a restore removes it.
+	}
+	m, _ = m.beginBackup()
+	if m.backupSelFile == "" {
+		t.Fatal("beginBackup wrote no selection file")
+	}
+	defer os.Remove(m.backupSelFile)
+	data, err := os.ReadFile(m.backupSelFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "preinstalls\tpreinstall:pinta") {
+		t.Fatalf("unchecked preinstall missing from install.list:\n%s", got)
+	}
+	if strings.Contains(got, "preinstall:aether") {
+		t.Fatalf("checked preinstall leaked into the removal list:\n%s", got)
+	}
+}
+
 func TestBeginBackupKeepsZenSettingsIndependentOfInstallSelection(t *testing.T) {
 	m := initialModel()
 	m.nav = []screen{scrMain, scrBackup, scrBackupOptions}

@@ -136,4 +136,15 @@ YES=1 RESTORE_DEPLOY_HYPRLAND=no RESTORE_DEPLOY_VST=no RESTORE_DEPLOY_REAPER=yes
   RESTORE_DEPLOY_THEMES=no RESTORE_DEPLOY_OMARCHY_PLUGINS=no RESTORE_KEYBINDINGS=none \
   restore_backup "$TMP/restore.tar.gz"
 [[ $sudo_primes == 1 && $module_runs == 1 && $reaper_runs == 1 ]]
+
+# Preinstalls are recorded as the stock packages the user UNchecked; a restore
+# removes exactly those, in one call, without a package install or a pacman
+# database sync (a removal does not need the sync DB).
+dropped=()
+run_remove_preinstalls(){ dropped+=("$*"); }
+sync_before=$package_sync_calls
+printf 'preinstalls\tpreinstall:aether\tpreinstall:obsidian\n' > "$LIST"
+restore_install_list "$LIST" full
+[[ ${dropped[0]} == 'aether obsidian' ]]
+[[ $package_sync_calls == $sync_before ]]
 echo 'ok: restore replays every package row and reports failures'

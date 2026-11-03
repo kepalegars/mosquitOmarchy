@@ -459,8 +459,8 @@ func TestSetupFoldingDoesNotReflowThePage(t *testing.T) {
 	m := flatSetup()
 	m.setupFolders = append(m.setupFolders, FolderRec{Folder: "lame", Label: "lame language models"})
 	m.setupItems = append(m.setupItems,
-		SetupItemRec{Folder: "lame", Key: "ollama", Label: "Ollama — local models, no cloud"},
-		SetupItemRec{Folder: "lame", Key: "cpp", Label: "llama.cpp"})
+		SetupItemRec{Folder: "lame", Key: "remove-ai", Label: "remove omarchy's agentic stuff — agents and AI toasts"},
+		SetupItemRec{Folder: "lame", Key: "more", Label: "another long row that widens the block"})
 	for _, it := range m.setupItems {
 		m.setupByValue[setupValue(it.Folder, it.Key)] = it
 	}

@@ -12,7 +12,6 @@ davinci-resolve|/opt/resolve|/opt/resolve|17546212|17546212|Resolve payload; pro
 bitwig|/opt/bitwig-studio|/opt/bitwig-studio|680692|680692|Deb payload; user projects stay
 guitarpro|~/.wine-guitarpro8||2802032|0|Wine prefix kept by default
 ableton|~/.wine-ableton||8204448|0|Wine prefix kept by default
-ollama|~/.ollama||16|0|Models kept by default
 audio|~/Music/Audio Plugins;~/VST|~/.local/bin/mosquito-audio-plugin-manager;~/.local/bin/mosquito-audio-plugin-manager-tui;~/.local/bin/mosquito-audio-plugin-manager-actions;~/.local/bin/lib-audio-plugin-manager-core.sh;~/.local/bin/vst-install;~/.local/bin/vst-manager;~/.local/bin/vst-manager-native;~/.local/bin/vst-manager-tui;~/.local/bin/mosquito-vst-manager;~/.local/bin/mosquito-vst-manager-native;~/.local/bin/mosquito-vst-manager-tui;~/.local/share/icons/hicolor/256x256/apps/mosquito-audio-plugin-manager.png;~/.config/systemd/user/yabridge-autosync.service|1938972|8660|Plugins and audio packages kept by default
 ableton-move-manager|~/.local/share/mosquito-move-manager||768|0|User data kept by default
 battery-management||~/.config/omarchy/plugins/mosquito.power;~/.config/omarchy/plugins/mosquito.indicators;~/.config/omarchy/plugins/mosquito.confirm|0|120|State and plugins removed

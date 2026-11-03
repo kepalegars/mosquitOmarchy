@@ -76,7 +76,7 @@ func TestTreeParentOf(t *testing.T) {
 		{Value: TreeValue(TreeItemPrefix, "apps:reaper")},
 		{Value: TreeValue(TreeItemPrefix, "apps:extracto")},
 		{Value: TreeValue(TreeFolderPrefix, "lame")},
-		{Value: TreeValue(TreeItemPrefix, "lame:ollama")},
+		{Value: TreeValue(TreeItemPrefix, "lame:remove-ai")},
 		{Value: "back"},
 	}
 	cases := []struct {
@@ -88,7 +88,7 @@ func TestTreeParentOf(t *testing.T) {
 		{value: TreeValue(TreeItemPrefix, "apps:reaper"), folder: "apps", ok: true},
 		{value: TreeValue(TreeItemPrefix, "apps:extracto"), folder: "apps", ok: true},
 		{value: TreeValue(TreeFolderPrefix, "lame"), folder: "lame", ok: true},
-		{value: TreeValue(TreeItemPrefix, "lame:ollama"), folder: "lame", ok: true},
+		{value: TreeValue(TreeItemPrefix, "lame:remove-ai"), folder: "lame", ok: true},
 		{value: "", ok: false},
 	}
 	for _, c := range cases {

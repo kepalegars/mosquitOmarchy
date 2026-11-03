@@ -1624,8 +1624,11 @@ cmd_backup_options(){
 
   local line key folder chk k tree
   # The running manager is required to open this screen and restore a backup.
+  # Fixes, tweaks, the agentic switch and preinstalls are appended below from
+  # the Setup catalog: the Uninstall tree only carries what is applied/present,
+  # and Backup content must offer the same names as Setup.
   tree="$(mq_cached uninstall-tree 600 cmd_uninstall_tree \
-    | grep -vE '"folder":"(patches|fixes|preinstalls)"' \
+    | grep -vE '"folder":"(patches|fixes|preinstalls|tweaks|lame)"' \
     | sed '/"key":"mosquitomarchy"/d')"
   if ! grep -q '"folder":"mosquito","key":' <<<"$tree" \
       && ! grep -q '"parent":"mosquito"' <<<"$tree"; then
@@ -1651,6 +1654,52 @@ cmd_backup_options(){
         "$(json_str "third-party Omarchy shell plugin (not installed by mosquitomarchy)")")"
     done
   fi
+  # Setup references the Uninstall tree cannot supply: fixes and tweaks are not
+  # "installed modules", preinstalls are listed only when present, and remove-ai
+  # is listed only after a removal. Backup content offers all of them, with the
+  # Setup wording — except remove-ai, which keeps the "remove…" label because
+  # ticking it in a backup means "strip that at restore".
+  tree+=$'\n'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+    "$(json_str fixes)" "$(json_str "Fixes")" false)"
+  local fe
+  for fe in "${FIXES[@]:-}"; do
+    [[ -n $fe ]] || continue
+    tree+=$'\n'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+      "$(json_str fixes)" "$(json_str "${fe%%:*}")" \
+      "$(json_str "${fe%%:*}")" "$(json_str "${fe#*:}")")"
+  done
+  tree+=$'\n'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+    "$(json_str tweaks)" "$(json_str "Tweaks")" false)"
+  local te
+  for te in "${TWEAKS[@]:-}"; do
+    [[ -n $te ]] || continue
+    tree+=$'\n'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+      "$(json_str tweaks)" "$(json_str "${te%%:*}")" \
+      "$(json_str "${te%%:*}")" "$(json_str "${te#*:}")")"
+  done
+  local lame_label="lame language models (ai..)" _cl _cid
+  for _cl in "${CATEGORIES[@]}"; do
+    _cid="${_cl%%|*}"
+    [[ $_cid == lame ]] || continue
+    lame_label="${_cl#*|}"; lame_label="${lame_label%%|*}"
+  done
+  tree+=$'\n'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+    "$(json_str lame)" "$(json_str "$lame_label")" false)"
+  tree+=$'\n'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+    "$(json_str lame)" "$(json_str remove-ai)" \
+    "$(json_str "remove omarchy's agentic stuff")" "$(json_str "")")"
+  tree+=$'\n'"$(printf '{"folder":%s,"label":%s,"accent":%s}' \
+    "$(json_str preinstalls)" \
+    "$(json_str "Preinstalls (uncheck what you don't want)")" false)"
+  local pp pl
+  while read -r pp; do
+    [[ -n $pp ]] || continue
+    pl="$(preinstall_label "$pp")"
+    tree+=$'\n'"$(printf '{"folder":%s,"key":%s,"label":%s}' \
+      "$(json_str preinstalls)" "$(json_str "preinstall:$pp")" \
+      "$(json_str "$pl")")"
+  done < <(stock_preinstalls)
+
   # A saved selection made against an older tree (before modules moved into
   # this screen) must not open the page with everything UNticked: if none of
   # its keys exist here any more, treat it as "no saved selection" and start
@@ -1678,12 +1727,25 @@ cmd_backup_options(){
       continue
     fi
     folder="$BK_FOLDER"; key="$BK_KEY"
-    chk=true
+    # Default content: everything is backed up except the opt-in odd jobs.
+    case $folder in
+      fixes|tweaks|lame|vms) chk=false ;;
+      *)                     chk=true ;;
+    esac
     if ((has_saved)); then
-      chk=false
+      # Only a folder that the saved selection actually knows about can
+      # override its default. A folder added to this page later (preinstalls)
+      # has no saved keys and must not open empty.
+      local folder_saved=0
       for k in "${SAVED_SEL[@]:-}"; do
-        [[ $k == "@$folder $key" ]] && { chk=true; break; }
+        [[ $k == "@$folder "* ]] && { folder_saved=1; break; }
       done
+      if ((folder_saved)); then
+        chk=false
+        for k in "${SAVED_SEL[@]:-}"; do
+          [[ $k == "@$folder $key" ]] && { chk=true; break; }
+        done
+      fi
     fi
     printf '%s\n' "${line%\}},\"checked\":$chk}"
   done <<<"$tree"
@@ -2804,8 +2866,8 @@ cmd_menu_entry(){
 #   --selection=FILE       apps.selected content (the TUI's checkbox tree)
 #   --name=TEXT            label for the archive; sanitised into the filename
 cmd_backup(){
-  local vst="list" keepass="yes" keepass_settings="yes" zen="yes" reaper="settings"
-  local keybindings="custom" sel="" name="" a hyprland="yes"
+  local vst="list" keepass="yes" keepass_settings="yes" zen="yes" reaper="full"
+  local keybindings="no" sel="" name="" a hyprland="no"
   for a in "$@"; do
     case $a in
       --vst=*) vst="${a#*=}" ;;
@@ -2831,12 +2893,12 @@ cmd_backup(){
   # REAPER depth: none | settings | full. An unknown value is the default
   # rather than an error: a malformed preference must not kill a backup.
   case "$reaper" in
-    none|full) export BACKUP_REAPER_MODE="$reaper" ;;
-    *)         export BACKUP_REAPER_MODE="settings" ;;
+    none|settings|full) export BACKUP_REAPER_MODE="$reaper" ;;
+    *)                  export BACKUP_REAPER_MODE="full" ;;
   esac
   case "$keybindings" in
     all|custom|no) export BACKUP_KEYBINDINGS="$keybindings" ;;
-    *)             export BACKUP_KEYBINDINGS="custom" ;;
+    *)             export BACKUP_KEYBINDINGS="no" ;;
   esac
   if [[ -n $sel && -f $sel ]]; then export BACKUP_APPS_SELECTION_FILE="$sel"; fi
   # Empty is meaningful here (an unnamed backup falls back to the dated name),
@@ -3176,7 +3238,6 @@ _space_pkgs(){
     install:whatsapp-native) printf '%s\n' electron43 ;;
     install:live-mode)   printf '%s\n' qpwgraph ;;
     install:bitwig)      printf '%s\n' bitwig-studio ;;
-    install:ollama)      printf '%s\n' ollama ;;
     install:mx-master)   printf '%s\n' logiops ;;
     install:davinci|install:davinci-resolve)
       # Base dependencies plus the GPU-specific OpenCL runtime the installer
@@ -3209,7 +3270,7 @@ _space_pkgs(){
     uninstall:handbrake|uninstall:extracto|uninstall:keepassxc|\
     uninstall:reaper|uninstall:audio|uninstall:guitarpro|\
     uninstall:whatsapp-native|uninstall:live-mode|uninstall:superfile|\
-    uninstall:ollama|uninstall:zen|uninstall:mosquitomarchy|\
+    uninstall:zen|uninstall:mosquitomarchy|\
     uninstall:pipewire-settings|uninstall:jamjamjam-plugin|\
     uninstall:remove-ai|uninstall:keybindings|\
     uninstall:battery|uninstall:battery-management|uninstall:better-pip|\
@@ -3432,9 +3493,9 @@ cmd_ai_removed() {
 
   # What counts as "the agentic stuff" is EXACTLY what Omarchy ships: the
   # omarchy.agents bar widget, the AI-diagnosis crash toasts, and the menu
-  # entries that offer to install an agent. Not ollama and not Claude Code --
-  # those are tools a user adds on top, they are not part of the default
-  # install, and this module must not install more than Omarchy does.
+  # entries that offer to install an agent. Not third-party AI tools and not
+  # Claude Code -- those are tools a user adds on top, they are not part of the
+  # default install, and this module must not install more than Omarchy does.
   #
   # 1) the Agents plugin, read from omarchy's own state.
   if ! omarchy plugin list 2>/dev/null | grep -qiE '^omarchy\.agents\b.*\benabled\b'; then

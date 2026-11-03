@@ -153,7 +153,6 @@ own device, and never touches the other.
 
 | Module | Installs | Doc |
 |---|---|---|
-| `ollama` | Ollama + REAPER-oriented models (~14 GB) | [README](code/modules/lame/README.md) |
 | `remove-ai` | Re-enables (Setup) or removes (Uninstall) Omarchy's own agentic parts | — |
 
 ### VMs
@@ -214,11 +213,13 @@ In the interactive backup, KeePassXC, Zen and REAPER settings are included only 
 corresponding app is selected in *Packages, Themes & tweaks*; deselecting an app removes its
 settings from that backup, and reselecting it restores its saved setting choice. VST *full files*
 is available only while the Audio Plugin Manager is selected; otherwise VST offers list-only or
-no backup.
+no backup. *Preinstalls* are listed as an exclusion list: untick a stock package and a restore
+removes it (already-absent ones are skipped). The *remove omarchy's agentic stuff* row strips
+Omarchy's agents and AI-diagnosis toasts when the backup is restored.
 
 **Uninstall** removes wrappers, menu entries, `omarchy-menu.jsonc` blocks, user units, custom
-plugins, Hyprland bindings and the theme. Personal data (`~/VST`, `~/.config/windows`,
-`~/.ollama`) is **kept** unless you add `--purge`. Uninstalled modules are remembered so they
+plugins, Hyprland bindings and the theme. Personal data (`~/VST`, `~/.config/windows`)
+is **kept** unless you add `--purge`. Uninstalled modules are remembered so they
 are not re-proposed; `--include=MODULE` brings one back. System parts (packages, udev,
 sudoers) need `sudo bash ./mosquitomarchy-setup.sh --uninstall -y`.
 
@@ -313,7 +314,6 @@ mosquitOmarchy/
     │   ├── Tweaks/           # optional preference changes (never auto-applied)
     │   ├── Themes/           # theme generator + wallpapers
     │   ├── VMs/              # windows-vm/, macos-vm/, omarchy-vm/
-    │   ├── lame/             # local language models (ollama)
     │   └── mosquito/         # mosquito tools: audio-stack, jamjamjam, move-manager, ...
     ├── main tui/             # the manager TUI + backend + update/ + go/ + addons/ (emoticon is the tracked example)
     ├── lib/                  # shared helpers, tui-kit/ (the Go component library)

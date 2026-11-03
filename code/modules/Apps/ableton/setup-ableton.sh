@@ -57,7 +57,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Launched from a file manager (double-click): no terminal →
 # we relaunch in foot so gum/read have a real TTY. --hold keeps the
 # window open once the script has finished (otherwise it closes immediately).
-if [[ ! -t 0 ]] && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] && command -v foot >/dev/null; then
+if [[ ! -t 0 ]] && [[ -z "${MOSQUITOMARCHY_TUI:-}${MOSQUITOMARCHY_NO_GUI:-}" ]] \
+   && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] && command -v foot >/dev/null; then
   exec foot --hold --title "install-ableton" -- "$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")" "$@"
 fi
 
@@ -180,7 +181,11 @@ step_update_check(){
   fi
   tmp="$SCRIPT_DIR/.install-ableton-latest.run.part"
   rm -f -- "$tmp"
-  if ! curl -fL --max-time 600 -o "$tmp" "$url" 2>/dev/null; then
+  # --progress-bar + tr: curl updates its bar with \r, which the TUI runner's
+  # line scanner would otherwise collapse into one invisible line. Each update
+  # becomes its own progress line inside the mosquitOmarchy window.
+  if ! curl -fL --max-time 600 --progress-bar -o "$tmp" "$url" 2>&1 \
+       | tr '\r' '\n'; then
     rm -f -- "$tmp"; warn "Download failed — local installer kept."; return 1
   fi
   if [[ -n "$digest" ]]; then

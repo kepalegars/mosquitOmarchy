@@ -715,10 +715,6 @@ st_ableton_move_converter(){
   [[ -x "$HOME/.local/bin/move-manager-webapp" ]] || { echo partial; return; }
   echo ok
 }
-st_ollama(){
-  command -v ollama >/dev/null || { echo missing; return; }
-  systemctl is-enabled ollama &>/dev/null && echo ok || echo partial
-}
 st_battery_management(){
   [[ -x "$HOME/.local/bin/power-helper" ]] || { echo missing; return; }
   # The parent widget is the mosquito.power plugin: if enabled, the module is "ok".
@@ -1096,7 +1092,6 @@ MODULES=(
   "whatsapp-native:WhatsApp Web as a Chromium web app — tray supervisor (login starts hidden in the tray, menu opens directly), silent visuals, close-to-tray, no menu bar, login autostart"
   "tidal:TIDAL Hi-Fi (TidaLuna) — native Tidal client, menu bar hidden and SUPER+SHIFT+M bound to it"
   "apps:Apps, tuis (one folder + setup script per entry in code/modules/TUIs)"
-  "ollama:Local AI Ollama + REAPER models (~14 GB of downloads)"
   "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships."
   "battery-management:Battery management — formerly ultra-save, a CPU/power-capping mode; abandoned for a simple script that colors the battery icon by power profile"
   "omaskpinpass:Omarchy SSH askpass + GnuPG pinentry dialogs, built per-user from source (installs Rust/Cargo if missing); sets SSH_ASKPASS_REQUIRE=prefer"
@@ -1275,7 +1270,6 @@ handbrake) st_handbrake ;;
       betterbird) st_betterbird ;;
       whatsapp-native) st_whatsapp_native ;;
     apps) s="$(st_apps)"; s="${s%%:*}"; echo "$s" ;;
-    ollama) st_ollama ;;
     battery-management|battery) st_battery_management ;;
     omaskpinpass) st_omaskpinpass ;;
     downloads) st_downloads ;;
@@ -1340,7 +1334,6 @@ module_of_path(){
     code/modules/Apps/superfile/*)   echo superfile ;;
     code/modules/Apps/zen/*)         echo zen ;;
     code/modules/Apps/*|code/modules/TUIs/*) echo apps ;;
-    code/modules/lame/*)             echo ollama ;;
     code/modules/Plugins/battery-management/*) echo battery-management ;;
     code/modules/Plugins/omaskpinpass/*)       echo omaskpinpass ;;
     code/modules/Plugins/omarchy-downloads/*)  echo downloads ;;
@@ -2788,6 +2781,9 @@ restore_install_list(){
       # Themes travel in themes/themes.tar.gz, not through the package
       # installer. Stock themes are not part of a restore.
       case $k in theme:*|stocktheme:*|omarchyplugin:*) continue ;; esac
+      # Preinstall keys are an exclusion list, not a module id; they bypass the
+      # module-state safe check below, which would not know them.
+      case $k in preinstall:*) sel+=("$k"); continue ;; esac
       # A backup's install.list is an explicit "put this back", so it wins
       # over an earlier "uninstalled by you" marker. Without this, a restore
       # silently skipped reaper/reboot-into-windows and still deployed their
@@ -2814,6 +2810,15 @@ restore_install_list(){
       sel+=("$k")
     done
     ((${#sel[@]})) || continue
+    # Preinstalls: the backup recorded the stock packages the user wanted gone,
+    # so a restore removes exactly those (already-absent ones are skipped by
+    # the remover itself).
+    if [[ $folder == preinstalls ]]; then
+      local -a drop=()
+      for k in "${sel[@]}"; do drop+=("${k#preinstall:}"); done
+      run_remove_preinstalls "${drop[@]}" || restore_failed=1
+      continue
+    fi
     # remove-ai is the one "package" whose restore action is a removal: it
     # records that the user stripped Omarchy's agentic surface, so replaying it
     # must strip it again instead of running the module's "bring back" path.
@@ -3365,7 +3370,7 @@ restore_flow(){
 
 # ───────────────────────── Per-module UNINSTALL (integrated) ─────────────────────────
 # Cleanly removes what a module installed, with an INDIVIDUAL choice per module.
-# Personal data (VST plugins, Windows VM, Ollama models) is NOT deleted without
+# Personal data (VST plugins, Windows VM, REAPER settings) is NOT deleted without
 # explicit confirmation (--purge). Uninstalled modules are recorded as excluded.
 BIN_DIR="$HOME/.local/bin"
 MOSQUITOMARCHY_APP_DIR="$SCRIPT_DIR/code/main tui"
@@ -3932,32 +3937,17 @@ un_ableton_move_converter(){
   fi
 }
 
-un_ollama(){
-  info "Uninstalling Ollama / REAPER helpers / OpenCode commands"
-  rm -f "$BIN_DIR"/ollama-{load-small,load-big,unload,status}
-  rm -rf "$HOME/.config/opencode/commands"
-  systemctl disable ollama 2>/dev/null || true
-  if (( PURGE )); then
-    mq_sudo systemctl stop ollama 2>/dev/null || true
-    mq_sudo pacman -Rns --noconfirm ollama 2>/dev/null || true
-    rm -rf "$HOME/.ollama" && ok "~/.ollama (models) deleted (purge)"
-  else
-    warn "Data kept: ~/.ollama (models) and the ollama package. --purge to remove everything."
-  fi
-  ok "helpers + OpenCode commands removed"
-}
-
 # ─── remove-all-ai (a REVERSABLE uninstall entry) ────────────────────────
 # Exactly what Omarchy ships as its agentic surface, and nothing else:
 #   * the omarchy.agents bar widget (icon + panel + the menu entry that offers
 #     to install an agent),
 #   * the mosquito AI-diagnosis crash toasts.
 #
-# It deliberately does NOT touch ollama or Claude Code. Neither is part of a
-# default Omarchy install - they are tools a user adds on top - so removing
-# them here meant this module deleted things it had never installed, and
-# restoring it re-pinned Claude and then told the user to re-run the ollama
-# module. A "bring back what Omarchy ships" toggle must be exactly reversible.
+# It deliberately does NOT touch third-party AI tools or Claude Code. Neither
+# is part of a default Omarchy install - they are tools a user adds on top - so
+# removing them here meant this module deleted things it had never installed,
+# and restoring it re-pinned Claude and then told the user to re-run a module.
+# A "bring back what Omarchy ships" toggle must be exactly reversible.
 ai_state_on(){
   [[ -f "$HOME/.local/state/mosquitomarchy/remove-all-ai" ]]
 }
@@ -4791,7 +4781,6 @@ handbrake) un_handbrake ;;
     douze) un_douze ;;
     tidal) un_tidal ;;
     apps) un_apps ;;
-    ollama) un_ollama ;;
     remove-ai) un_remove_ai ;;
     battery-management|battery) un_battery_management ;;
     omaskpinpass) un_omaskpinpass ;;
@@ -4869,7 +4858,7 @@ uninstall_chooser(){
 
 uninstall_all(){
   info "Uninstalling ALL modules"
-  if (( ! PURGE )); then warn "Data (VST/VM/Ollama/prefixes) kept. Add --purge to delete everything."; fi
+  if (( ! PURGE )); then warn "Data (VST/VM/prefixes) kept. Add --purge to delete everything."; fi
   local row
   for row in "${MODULES[@]}"; do uninstall_module "${row%%:*}"; done
   un_shared_menu
@@ -4907,7 +4896,6 @@ AUDIO_STACK_DIR="$SCRIPTS/mosquito/audio-stack"
 AUDIO_PLUGIN_MANAGER_DIR="$AUDIO_STACK_DIR/apm"
 BITWIG_DIR="$APPS_DIR/bitwig"
 REAPER_DIR="$APPS_DIR/reaper"
-LLM_DIR="$SCRIPTS/lame"
 VM_DIR="$SCRIPTS/VMs/windows-vm"
 MIXBAY_DIR="$AUDIO_STACK_DIR/mixbay"
 MACOS_VM_DIR="$SCRIPTS/VMs/macos-vm"
@@ -5308,11 +5296,6 @@ run_remove_preinstalls(){
     || { err "Failed to remove preinstalls."; return 1; }
 }
 
-run_ollama(){
-  warn "Heavy downloads (~14 GB of models) — let it run."
-  mq_sudo bash "$LLM_DIR/setup-ollama-audio-expert.sh"
-}
-
 run_battery_management(){ bash "$BATTERY_DIR/setup-battery-management.sh"; }
 run_omaskpinpass(){ bash "$SCRIPTS/Plugins/omaskpinpass/setup-omaskpinpass.sh"; }
 ensure_shell_plugin(){
@@ -5510,7 +5493,6 @@ exec_modules(){
       douze) run_module douze run_douze ;;
       tidal) run_module tidal run_tidal ;;
       apps) run_module apps run_apps ;;
-      ollama)  run_module ollama run_ollama ;;
       remove-ai) run_module remove-ai run_restore_ai ;;
       battery-management|battery) run_module battery-management run_battery_management ;;
       omaskpinpass) run_module omaskpinpass run_omaskpinpass ;;
@@ -5574,7 +5556,7 @@ CATEGORIES=(
   "fixes|Fixes|"
   "tweaks|Tweaks|"
   "mosquito|mosquito|"
-  "lame|lame language models (ai..)|ollama remove-ai"
+  "lame|lame language models (ai..)|remove-ai"
   "themes|Themes|achraf67"
   "vms|VMs|windows-vm macos-vm omarchy-vm"
 )
@@ -5748,7 +5730,7 @@ module_category(){ # module id -> category id
 module_desc_into(){
   local row
   if [[ "$1" == remove-ai ]]; then
-    if [[ ${TREE_MODE:-setup} == uninstall ]]; then MODULE_DESC="remove omarchy's agentic stuff (agents, AI-diag toasts, ollama loaders; Setup restores)"; else MODULE_DESC="bring back omarchy's agentic stuff (re-enable the Agents plugin, the AI-diagnosis toasts, ollama loaders)"; fi
+    if [[ ${TREE_MODE:-setup} == uninstall ]]; then MODULE_DESC="remove omarchy's agentic stuff (agents, AI-diag toasts; Setup restores)"; else MODULE_DESC="bring back omarchy's agentic stuff (re-enable the Agents plugin, the AI-diagnosis toasts)"; fi
     return 0
   fi
   MODULE_DESC=""
@@ -5767,7 +5749,7 @@ module_desc(){ # module / pseudo id -> short description
   # remove-ai gets a MODE-AWARE label: Setup says "bring back…", Uninstall
   # says "remove…" (the exact phrasings the user asked for).
   if [[ "$1" == remove-ai ]]; then
-    if [[ ${TREE_MODE:-setup} == uninstall ]]; then printf "remove omarchy's agentic stuff (agents, AI-diag toasts, ollama loaders; Setup restores)"; else printf "bring back omarchy's agentic stuff (re-enable the Agents plugin, the AI-diagnosis toasts, ollama loaders)"; fi
+    if [[ ${TREE_MODE:-setup} == uninstall ]]; then printf "remove omarchy's agentic stuff (agents, AI-diag toasts; Setup restores)"; else printf "bring back omarchy's agentic stuff (re-enable the Agents plugin, the AI-diagnosis toasts)"; fi
     return 0
   fi
   for row in "${MODULES[@]}"; do
@@ -5856,7 +5838,7 @@ category_candidates(){ # catid -> CAND_KEYS (to run) + CAND_LABELS (to display)
         # stuff" — the uninstall one is the 'remove omarchy's…' phrasing and
         # the tree branches below route it correctly.
         if [[ $id == remove-ai ]]; then
-          CAND_LABELS+=("$id  —  bring back omarchy's agentic stuff (re-enables omarchy.agents, AI-diag toasts, ollama loaders)")
+          CAND_LABELS+=("$id  —  bring back omarchy's agentic stuff (re-enables omarchy.agents and the AI-diag toasts)")
         else
           # module_desc_into instead of `$(module_desc "$id")`: this loop runs
           # for every module in apps/plugins/vms/lame, and a command

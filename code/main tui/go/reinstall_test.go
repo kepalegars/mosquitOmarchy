@@ -49,7 +49,7 @@ func TestReinstallListsInstalled(t *testing.T) {
 	}
 	m, _ = m.update(queryMsg{kind: "status", status: []StatusRec{
 		{Id: "reaper", Label: "REAPER + integration", State: "ok"},
-		{Id: "ollama", Label: "Local AI", State: "missing"},
+		{Id: "remove-ai", Label: "Agentic opt-out", State: "missing"},
 		{Id: "weird entry", Label: "not a module", State: "ok"},
 		{Id: "apps", Label: "umbrella", State: "ok"},
 	}})
@@ -59,7 +59,7 @@ func TestReinstallListsInstalled(t *testing.T) {
 	if !m.updateSelected["reaper"] {
 		t.Fatalf("installed module not preselected")
 	}
-	if m.updateSelected["ollama"] || m.updateSelected["weird entry"] || m.updateSelected["apps"] {
+	if m.updateSelected["remove-ai"] || m.updateSelected["weird entry"] || m.updateSelected["apps"] {
 		t.Fatalf("non-installed/non-module rows leaked into the selection")
 	}
 	if keys := m.updateKeys(); len(keys) != 1 || keys[0] != "reaper" {

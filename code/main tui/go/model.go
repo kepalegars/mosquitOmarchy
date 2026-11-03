@@ -192,7 +192,7 @@ func restoreOptsFor(mf BackupManifest) RestoreOpts {
 // the defaults instead of an error: a corrupt preference file must never be
 // able to stop the Backup screen from opening.
 func loadBackupOpts() BackupOpts {
-	def := BackupOpts{VST: "list", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "settings", Keybindings: "custom", Hyprland: true}
+	def := BackupOpts{VST: "list", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "full", Keybindings: "no", Hyprland: false}
 	out, err := runQuick("backup-opts", "get")
 	if err != nil {
 		return def
@@ -216,7 +216,7 @@ func loadBackupOpts() BackupOpts {
 	// saveBackupOpts, which always writes all five, so a decode that produced a
 	// zero value anywhere means the file was not written by us.
 	if st.VST == "" {
-		return BackupOpts{VST: "list", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "settings", Keybindings: "custom", Hyprland: true}
+		return BackupOpts{VST: "list", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "full", Keybindings: "no", Hyprland: false}
 	}
 	def.Keepass = st.Keepass
 	def.Zen = st.Zen
@@ -229,7 +229,7 @@ func loadBackupOpts() BackupOpts {
 		def.Keybindings = st.Keybindings
 		def.KeepassSettings = st.KeepassSettings
 	}
-	// Hyprland arrived in v3: older files keep the ON default.
+	// Hyprland arrived in v3: older files keep the current OFF default.
 	if st.Version >= 3 {
 		def.Hyprland = st.Hyprland
 	}
