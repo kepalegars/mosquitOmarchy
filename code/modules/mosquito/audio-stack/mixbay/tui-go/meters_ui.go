@@ -394,7 +394,7 @@ func (r *evoRender) drawLevelsBody(row, cx, sectionW int) int {
 	draw(capBars, captureX)
 	draw(playBars, playbackX)
 
-	return bodyRow + evoControlsBodyH(r.spec)
+	return bodyRow + evoControlsBodyH(r.u.groups())
 }
 
 func (r *evoRender) drawVerticalBar(x, top, bot, width int, level, peak float64) {
@@ -445,6 +445,10 @@ func (r *evoRender) drawLevelsStatusBar(row, cx, sectionW int) int {
 // the hardware capture channels.
 func evoMeterChannels(spec drivers.Spec, key string) (string, []int) {
 	if strings.HasPrefix(key, "input") {
+		var l, r int
+		if _, err := fmt.Sscanf(key, "input%d_%d", &l, &r); err == nil && l >= 1 && r == l+1 && r <= spec.NumInputs {
+			return meters.KeyInput, []int{l - 1, r - 1}
+		}
 		var n int
 		if _, err := fmt.Sscanf(key, "input%d", &n); err == nil && n >= 1 && n <= spec.NumInputs {
 			return meters.KeyInput, []int{n - 1}
@@ -452,6 +456,10 @@ func evoMeterChannels(spec drivers.Spec, key string) (string, []int) {
 		return "", nil
 	}
 	if strings.HasPrefix(key, "output") {
+		var ch int
+		if _, err := fmt.Sscanf(key, "outputch%d", &ch); err == nil && ch >= 1 {
+			return meters.KeyPlayback, []int{ch - 1}
+		}
 		var l, r int
 		if _, err := fmt.Sscanf(key, "output%d_%d", &l, &r); err == nil && l >= 1 && r == l+1 {
 			pair := (l - 1) / 2
@@ -498,7 +506,10 @@ func (r *evoRender) drawKeyMeter(row, x, width int, key string, col int) {
 		return
 	}
 	if len(chans) == 2 {
-		const label = "USB "
+		label := "USB "
+		if src == meters.KeyInput {
+			label = "IN  "
+		}
 		r.put(x, row, label, evoDim)
 		x += len([]rune(label))
 		avail := width - len([]rune(label)) - 1

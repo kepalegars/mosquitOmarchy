@@ -131,14 +131,17 @@ type MixerCell struct {
 
 // Status is the full readable state of one device.
 type Status struct {
-	Spec    Spec                 `json:"spec"`
-	Online  bool                 `json:"online"`
-	Backend Backend              `json:"backend_in_use"`
-	Inputs  []InputState         `json:"inputs"`
-	Outputs []OutputState        `json:"outputs"`
-	Monitor *int                 `json:"monitor,omitempty"` // EVO4 blend 0..100
-	Mixer   map[string]MixerCell `json:"mixer"`
-	Note    string               `json:"note,omitempty"`
+	Spec    Spec          `json:"spec"`
+	Online  bool          `json:"online"`
+	Backend Backend       `json:"backend_in_use"`
+	Inputs  []InputState  `json:"inputs"`
+	Outputs []OutputState `json:"outputs"`
+	// OutputChannels holds the individual output channels when the device can
+	// address them (EVO mono output mode). Empty means only pair control.
+	OutputChannels []OutputState        `json:"output_channels,omitempty"`
+	Monitor        *int                 `json:"monitor,omitempty"` // EVO4 blend 0..100
+	Mixer          map[string]MixerCell `json:"mixer"`
+	Note           string               `json:"note,omitempty"`
 }
 
 // Driver is the single interface the UI and CLI use.
@@ -157,6 +160,14 @@ type Driver interface {
 	SetMixerOutput(srcPair int, volDb, panL, panR float64, mixOut int) error
 	Save() error
 	Load() error
+}
+
+// OutputChannelDriver optionally exposes each output channel on its own
+// (EVO mono mode). Channel indexes are 1-based and run across every pair:
+// 1/2 = OUT 1|2, 3/4 = OUT 3|4.
+type OutputChannelDriver interface {
+	SetOutputChannel(ch int, db float64) error
+	SetOutputChannelMute(ch int, muted bool) error
 }
 
 // LiveReader is a driver that can separate a real hardware read from the DEMO

@@ -290,9 +290,12 @@ func TestEvoReadRequiresHardware(t *testing.T) {
 	}
 }
 
-// Every bus must default to silence, otherwise an untouched second bus renders
+// Every bus must default to silence except the factory PC 1|2 → OUT 1|2
+// route, which is open at 0 dB. Otherwise an untouched second bus renders
 // as 0 dB and a pan tweak opens crosspoints at unity.
 func TestEvoDefaultMixerCoversEveryBus(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
 	d := newEvo(EVO8Spec)
 	st := d.demoStatus()
 	for bus := 0; bus < MixBuses(EVO8Spec); bus++ {
@@ -301,10 +304,17 @@ func TestEvoDefaultMixerCoversEveryBus(t *testing.T) {
 			if !ok {
 				t.Fatalf("missing default cell %q (bus %d)", src, bus)
 			}
-			if c.VolumeDb != -128 {
-				t.Errorf("%q default volume = %v, want -128", src, c.VolumeDb)
+			want := -128.0
+			if bus == 0 && src == "output1_2" {
+				want = 0
+			}
+			if c.VolumeDb != want {
+				t.Errorf("%q default volume = %v, want %v", src, c.VolumeDb, want)
 			}
 		}
+	}
+	if c := st.Mixer["output1_2"]; c.PanL != -100 || c.PanR != 100 {
+		t.Errorf("factory route lost stereo width: %+v", c)
 	}
 }
 
@@ -356,5 +366,143 @@ func TestALSALiveOnlyWritesRefuseOffline(t *testing.T) {
 	}
 	if _, err := os.Stat(d.demoFile()); !os.IsNotExist(err) {
 		t.Fatalf("strict ALSA write created demo state: %v", err)
+	}
+}
+
+// A stereo loopback source must keep its channels apart: pan_l = -100 and
+// pan_r = +100 send source L only to bus L and source R only to bus R. The
+// old code folded both into both sides (the "everything is mono" bug).
+func TestStereoSourceKeepsChannelsSeparate(t *testing.T) {
+	ll, lr, rl, rr := stereoSourceGains(0, -100, 100)
+	if ll != 0 || rr != 0 {
+		t.Errorf("direct channels = %v/%v, want 0/0", ll, rr)
+	}
+	if lr != mixDbMin || rl != mixDbMin {
+		t.Errorf("cross channels = %v/%v, want silence", lr, rl)
+	}
+	// Centred pans keep both source channels on both sides, each at -3 dB.
+	ll, lr, rl, rr = stereoSourceGains(0, 0, 0)
+	for _, db := range []float64{ll, lr, rl, rr} {
+		if math.Abs(db+3.0103) > 0.01 {
+			t.Errorf("centred stereo gain = %v, want -3.01", db)
+		}
+	}
+}
+
+// An old shadow without pan_l/pan_r must not collapse the stereo source to
+// mono: the factory spread is kept for the missing fields.
+func TestEvoShadowKeepsStereoPans(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
+	d := newEvo(EVO8Spec)
+	if err := os.MkdirAll(d.shadowDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"output1_2":{"volume_db":-6,"pan":0}}`
+	if err := os.WriteFile(d.shadowFile(), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := d.loadShadow()["output1_2"]
+	if c.VolumeDb != -6 || c.PanL != -100 || c.PanR != 100 {
+		t.Errorf("old shadow folded to mono: %+v", c)
+	}
+}
+
+func TestEvoResetMixerBusDefaultsOnlyThatBus(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
+	d := newEvo(EVO8Spec)
+	if err := d.SetMixerOutput(0, -20, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMixerInput(1, -6, 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ResetMixerBus(1); err != nil {
+		t.Fatal(err)
+	}
+	st := d.demoStatus()
+	if c := st.Mixer["output1_2"]; c.VolumeDb != -20 {
+		t.Errorf("bus 0 was touched: %+v", c)
+	}
+	if c := st.Mixer["input1@1"]; c.VolumeDb != -128 {
+		t.Errorf("bus 1 input not cleared: %+v", c)
+	}
+	if c := st.Mixer["output1_2@1"]; c.VolumeDb != -128 {
+		t.Errorf("bus 1 default route = %+v, want silence at -128 dB", c)
+	}
+	if c := st.Mixer["output3_4@1"]; c.VolumeDb != -128 {
+		t.Errorf("other source not cleared: %+v", c)
+	}
+}
+
+// Bus 0 keeps the factory playback route on reset; the Artist Mix bus stays
+// silent so a reset cannot leak PC 1|2 into OUT 3|4.
+func TestEvoResetMixerBus0KeepsFactoryRoute(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
+	d := newEvo(EVO8Spec)
+	if err := d.SetMixerOutput(0, -20, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ResetMixerBus(0); err != nil {
+		t.Fatal(err)
+	}
+	st := d.demoStatus()
+	if c := st.Mixer["output1_2"]; c.VolumeDb != 0 || c.PanL != -100 || c.PanR != 100 {
+		t.Errorf("bus 0 route = %+v, want PC 1|2 at 0 dB full width", c)
+	}
+	if c := st.Mixer["output3_4"]; c.VolumeDb != -128 {
+		t.Errorf("bus 0 non-factory source = %+v, want -128", c)
+	}
+}
+
+// Mono channel levels become a ganged FU10 base plus a ≤ 0 dB PipeWire trim,
+// so moving OUT 1 never moves OUT 2.
+func TestEvoOutputPairSplit(t *testing.T) {
+	base, trims := outputPairSplit(-6, -20)
+	if base != -6 {
+		t.Errorf("base = %v, want -6 (louder channel)", base)
+	}
+	if trims[0] != 0 || trims[1] != -14 {
+		t.Errorf("trims = %v, want [0 -14]", trims)
+	}
+
+	applied := outputPairApplied(0, trims, map[string]float64{"ch2": -20})
+	if applied[0] != 0 || applied[1] != mixDbMin {
+		t.Errorf("muted trims = %v, want [0 -128]", applied)
+	}
+
+	// The louder channel moving below the other swaps the base and keeps the
+	// quieter one at its level.
+	base, trims = outputPairSplit(-110, -107)
+	if base != -107 || trims[0] != -3 || trims[1] != 0 {
+		t.Errorf("swap = %v %v, want -107 [-3 0]", base, trims)
+	}
+}
+
+func TestDbToPactl(t *testing.T) {
+	cases := map[float64]int{0: 65536, -6: 32846, -128: 0}
+	for db, want := range cases {
+		if got := dbToPactl(db); got != want {
+			t.Errorf("dbToPactl(%v) = %d, want %d", db, got, want)
+		}
+	}
+}
+
+// ResetControls must leave the loopback matrix exactly as it was.
+func TestEvoResetControlsLeavesMixer(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
+	d := newEvo(EVO8Spec)
+	if err := d.SetMixerOutput(0, -12, 25, -25, 0); err != nil {
+		t.Fatal(err)
+	}
+	before := d.demoStatus().Mixer["output1_2"]
+	if err := d.ResetControls(); err != nil {
+		t.Fatal(err)
+	}
+	if after := d.demoStatus().Mixer["output1_2"]; after != before {
+		t.Errorf("controls reset changed the mixer: %+v -> %+v", before, after)
 	}
 }

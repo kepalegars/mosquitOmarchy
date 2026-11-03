@@ -216,7 +216,16 @@ type evoUI struct {
 	mxSection int
 	mxParam   int
 	mixBus    int
-	artistMix bool // false = OUT 1|2 and OUT 3|4 share one mirrored mix
+	artistMix bool    // false = OUT 1|2 and OUT 3|4 share one mirrored mix
+	inStereo  [2]bool // input pairs 1|2, 3|4 linked in one block
+	outMono   [2]bool // output pairs split into one block per channel
+	// Each layout keeps its own values so switching mono/stereo restores
+	// what the user set in that mode instead of overwriting it.
+	inMono    [4]evoInputSetting
+	inStereoV [2]evoInputSetting
+	outMonoV  [4]evoOutputSetting
+	outStereo [2]evoOutputSetting
+	modesSet  bool // snapshots have been seeded for this session
 	dotLit    bool // online connection dot alternates accent/white
 	caretOn   bool // rename/name caret blink state
 
@@ -260,11 +269,25 @@ type evoElement struct {
 	sub   string // "volume" | "gain" | ""
 	label string
 	color int
+	link  string // second channel of a linked input pair (inputN+1)
+	// chanOut marks one physical output channel (mono mode) instead of a
+	// stereo pair; key is then "outputN" with N across all channels.
+	chanOut bool
 }
 
 type evoGroup struct {
 	label    string
 	elements []evoElement
+}
+
+type evoInputSetting struct {
+	gain  float64
+	muted bool
+}
+
+type evoOutputSetting struct {
+	vol   float64
+	muted bool
 }
 
 type evoMxSection struct {
@@ -303,8 +326,54 @@ func evoGroups(spec drivers.Spec) []evoGroup {
 
 func evoHasSubsections(spec drivers.Spec) bool { return len(evoGroups(spec)) > 1 }
 
+// groups is the Controls layout for the current mono/stereo choices. Inputs
+// default to individual blocks and can be linked 1|2 / 3|4; outputs default
+// to one block per stereo pair and can be split into individual channels.
+func (u *evoUI) groups() []evoGroup {
+	spec := u.spec
+	var inputs []evoElement
+	for i := 0; i < spec.NumInputs; i++ {
+		pair := i / 2
+		if i%2 == 0 && pair < len(u.inStereo) && u.inStereo[pair] && i+1 < spec.NumInputs {
+			inputs = append(inputs, evoElement{
+				key: fmt.Sprintf("input%d", i+1), link: fmt.Sprintf("input%d", i+2),
+				sub: "gain", label: fmt.Sprintf("IN %d|%d", i+1, i+2), color: cBlue,
+			})
+			i++
+			continue
+		}
+		inputs = append(inputs, evoElement{key: fmt.Sprintf("input%d", i+1), sub: "gain", label: fmt.Sprintf("IN %d", i+1), color: cBlue})
+	}
+	var outputs []evoElement
+	for pair := 0; pair < spec.NumOutPairs; pair++ {
+		if pair < len(u.outMono) && u.outMono[pair] {
+			for ch := pair * 2; ch < pair*2+2; ch++ {
+				outputs = append(outputs, evoElement{
+					key: fmt.Sprintf("output%d", ch+1), sub: "volume",
+					label: fmt.Sprintf("OUT %d", ch+1), color: cGreen, chanOut: true,
+				})
+			}
+			continue
+		}
+		key := fmt.Sprintf("output%d", pair+1)
+		label := fmt.Sprintf("OUT %d|%d", pair*2+1, pair*2+2)
+		if spec.NumOutPairs == 1 {
+			key, label = "output", "OUT"
+		}
+		outputs = append(outputs, evoElement{key: key, sub: "volume", label: label, color: cGreen})
+	}
+	if spec.NumOutPairs == 1 {
+		all := append(outputs, inputs...)
+		if spec.HasMonitor {
+			all = append(all, evoElement{key: "monitor", label: "MONITOR", color: cCyan})
+		}
+		return []evoGroup{{label: "All", elements: all}}
+	}
+	return []evoGroup{{label: "Inputs", elements: inputs}, {label: "Outputs", elements: outputs}}
+}
+
 func (u *evoUI) activeElements() []evoElement {
-	groups := evoGroups(u.spec)
+	groups := u.groups()
 	if evoHasSubsections(u.spec) {
 		if u.sub < len(groups) {
 			return groups[u.sub].elements
@@ -312,6 +381,48 @@ func (u *evoUI) activeElements() []evoElement {
 		return groups[0].elements
 	}
 	return groups[0].elements
+}
+
+// keys lists the channels one Controls element edits (two for a linked input).
+func (e evoElement) keys() []string {
+	if e.link != "" {
+		return []string{e.key, e.link}
+	}
+	return []string{e.key}
+}
+
+// pair is the input/output pair owning this element (0 = 1|2, 1 = 3|4).
+func (e evoElement) pair() int {
+	var n int
+	if _, err := fmt.Sscanf(e.key, "input%d", &n); err == nil {
+		return (n - 1) / 2
+	}
+	if e.key == "output" {
+		return 0
+	}
+	if _, err := fmt.Sscanf(e.key, "output%d", &n); err == nil {
+		if e.chanOut {
+			return (n - 1) / 2
+		}
+		return n - 1
+	}
+	return 0
+}
+
+// meterKey selects the USB channels drawn under a block. A linked input block
+// shows both capture channels, exactly like a stereo output pair.
+func (e evoElement) meterKey() string {
+	if e.link != "" {
+		var n int
+		fmt.Sscanf(e.key, "input%d", &n)
+		return fmt.Sprintf("input%d_%d", n, n+1)
+	}
+	if !e.chanOut {
+		return e.key
+	}
+	var n int
+	fmt.Sscanf(e.key, "output%d", &n)
+	return fmt.Sprintf("outputch%d", n)
 }
 
 // evoMixerRows returns the two mixer rows (inputs, stereo sources) in evotui's
@@ -354,6 +465,13 @@ func (u *evoUI) flatMx() []evoMxSection {
 // --- value access -----------------------------------------------------------
 
 func evoElemValueIn(st drivers.Status, e evoElement) float64 {
+	if e.chanOut {
+		var n int
+		fmt.Sscanf(e.key, "output%d", &n)
+		if n >= 1 && n <= len(st.OutputChannels) {
+			return st.OutputChannels[n-1].VolumeDb
+		}
+	}
 	switch {
 	case e.key == "monitor":
 		if st.Monitor != nil {
@@ -385,22 +503,51 @@ func evoElemValueIn(st drivers.Status, e evoElement) float64 {
 func (m model) evoElemValue(e evoElement) float64 { return evoElemValueIn(m.status, e) }
 
 func (m model) evoDisplayElem(e evoElement) float64 {
-	if a, ok := m.evo.anims[e.key]; ok {
-		return a.cur
+	if !e.chanOut {
+		if a, ok := m.evo.anims[e.key]; ok {
+			return a.cur
+		}
 	}
 	return m.evoElemValue(e)
+}
+
+func evoInputMuted(st drivers.Status, key string) bool {
+	var n int
+	fmt.Sscanf(key, "input%d", &n)
+	for _, in := range st.Inputs {
+		if in.Name == fmt.Sprintf("input%d", n) {
+			return in.Muted
+		}
+	}
+	return false
+}
+
+func evoInputPhantom(st drivers.Status, key string) bool {
+	var n int
+	fmt.Sscanf(key, "input%d", &n)
+	for _, in := range st.Inputs {
+		if in.Name == fmt.Sprintf("input%d", n) {
+			return in.Phantom
+		}
+	}
+	return false
 }
 
 func (m model) evoElemMuted(e evoElement) bool {
 	if e.key == "monitor" {
 		return false
 	}
-	if strings.HasPrefix(e.key, "input") {
+	if e.chanOut {
 		var n int
-		fmt.Sscanf(e.key, "input%d", &n)
-		for _, in := range m.status.Inputs {
-			if in.Name == fmt.Sprintf("input%d", n) {
-				return in.Muted
+		fmt.Sscanf(e.key, "output%d", &n)
+		if n >= 1 && n <= len(m.status.OutputChannels) {
+			return m.status.OutputChannels[n-1].Muted
+		}
+	}
+	if strings.HasPrefix(e.key, "input") {
+		for _, k := range e.keys() {
+			if evoInputMuted(m.status, k) {
+				return true
 			}
 		}
 		return false
@@ -422,11 +569,9 @@ func (m model) evoElemPhantom(e evoElement) bool {
 	if !strings.HasPrefix(e.key, "input") {
 		return false
 	}
-	var n int
-	fmt.Sscanf(e.key, "input%d", &n)
-	for _, in := range m.status.Inputs {
-		if in.Name == fmt.Sprintf("input%d", n) {
-			return in.Phantom
+	for _, k := range e.keys() {
+		if evoInputPhantom(m.status, k) {
+			return true
 		}
 	}
 	return false
@@ -753,7 +898,7 @@ func (r *evoRender) drawSection(row, cx, idx, sw, bw int, forceInactive bool) in
 	row++
 	if evoMeterRows(r.spec) == 1 {
 		r.boxSide(row, cx, bw)
-		r.drawKeyMeter(row, cx+2, bw-2, e.key, e.color)
+		r.drawKeyMeter(row, cx+2, bw-2, e.meterKey(), e.color)
 		row++
 	}
 	r.boxBot(row, cx, bw)
@@ -781,7 +926,7 @@ func (r *evoRender) drawControlsTwoCol(row, cx, mixerW int) int {
 	colBw := colW - 2
 	colSw := colBw - evoSliderOff
 	saved := r.u.sub
-	groups := evoGroups(r.spec)
+	groups := r.u.groups()
 	drawCol := func(sub, colX int) int {
 		r.u.sub = sub
 		rrow := row
@@ -1128,6 +1273,7 @@ func (r *evoRender) controlsHelp() ([]evoHint, []evoHint) {
 		e := els[r.u.cursor]
 		if e.key != "monitor" {
 			nav = append(nav, evoHint{key: "m", desc: " mute"})
+			nav = append(nav, evoHint{key: "O", desc: " mono/stereo"})
 		}
 		if strings.HasPrefix(e.key, "input") {
 			nav = append(nav, evoHint{key: "P", desc: " 48V"})
@@ -1184,9 +1330,8 @@ func (r *evoRender) drawHelpFooter(row, cx int, nav, set []evoHint) int {
 	return row + 2
 }
 
-func evoControlsBodyH(spec drivers.Spec) int {
-	groups := evoGroups(spec)
-	secH := 4 + evoMeterRows(spec)
+func evoControlsBodyH(groups []evoGroup) int {
+	secH := 4 + evoMeterRows(drivers.EVO8Spec)
 	if len(groups) > 1 {
 		h := 0
 		for _, g := range groups {
@@ -1261,7 +1406,7 @@ func (m model) evoView() string {
 	if cx < 0 {
 		cx = 0
 	}
-	totalH := evoControlsTop + evoControlsBodyH(spec) + evoControlsTail
+	totalH := evoControlsTop + evoControlsBodyH(m.evo.groups()) + evoControlsTail
 	c := newEvoCanvas(w, h)
 	if h < totalH || w < mixerW {
 		msg := fmt.Sprintf("Terminal too small (%dx%d, need %dx%d)", w, h, mixerW, totalH)
@@ -1561,6 +1706,13 @@ func (m *model) evoEnter() {
 	m.evo.mxParam = 1
 	m.evo.mixBus = 0
 	m.evo.artistMix = !m.ui.ArtistMixOff
+	m.evo.inStereo = [2]bool{}
+	m.evo.outMono = [2]bool{}
+	m.evo.inMono = [4]evoInputSetting{}
+	m.evo.inStereoV = [2]evoInputSetting{}
+	m.evo.outMonoV = [4]evoOutputSetting{}
+	m.evo.outStereo = [2]evoOutputSetting{}
+	m.evo.modesSet = false
 	m.evo.numBuf = ""
 	m.evo.mode = 0
 	m.evo.caretOn = true
@@ -1750,6 +1902,13 @@ func (m *model) evoControlsKey(k string) tea.Cmd {
 		return m.evoToggleMute()
 	case "P":
 		return m.evoTogglePhantom()
+	case "O":
+		return m.evoToggleMonoStereo()
+	case "R":
+		m.confirm = tuikit.NewConfirm("Reset the Controls page to defaults?", "Cancel", "Reset")
+		m.confirmAct = func() tea.Cmd { return m.evoResetControls() }
+		m.push(scrConfirm)
+		return nil
 	}
 	return nil
 }
@@ -1779,6 +1938,15 @@ func (m *model) evoSetVal(val float64) tea.Cmd {
 	switch {
 	case e.key == "monitor":
 		return m.applyCmd(dev, func(d drivers.Driver) error { return d.SetMonitor(int(math.Round(val))) }, "")
+	case e.chanOut:
+		var n int
+		fmt.Sscanf(e.key, "output%d", &n)
+		return m.applyCmd(dev, func(d drivers.Driver) error {
+			if oc, ok := d.(drivers.OutputChannelDriver); ok {
+				return oc.SetOutputChannel(n, val)
+			}
+			return d.SetVolume((n-1)/2, val)
+		}, "")
 	case e.key == "output":
 		return m.applyCmd(dev, func(d drivers.Driver) error { return d.SetVolume(0, val) }, "")
 	case strings.HasPrefix(e.key, "output"):
@@ -1786,9 +1954,17 @@ func (m *model) evoSetVal(val float64) tea.Cmd {
 		fmt.Sscanf(e.key, "output%d", &n)
 		return m.applyCmd(dev, func(d drivers.Driver) error { return d.SetVolume(n-1, val) }, "")
 	case strings.HasPrefix(e.key, "input"):
-		var n int
-		fmt.Sscanf(e.key, "input%d", &n)
-		return m.applyCmd(dev, func(d drivers.Driver) error { return d.SetGain(n, val) }, "")
+		keys := e.keys()
+		return m.applyCmd(dev, func(d drivers.Driver) error {
+			for _, k := range keys {
+				var n int
+				fmt.Sscanf(k, "input%d", &n)
+				if err := d.SetGain(n, val); err != nil {
+					return err
+				}
+			}
+			return nil
+		}, "")
 	}
 	return nil
 }
@@ -1806,7 +1982,33 @@ func (m *model) evoToggleMute() tea.Cmd {
 		return nil
 	}
 	on := !m.evoElemMuted(e)
-	return m.applyCmd(m.deviceID, func(d drivers.Driver) error { return d.SetMute(e.key, on) }, "")
+	dev := m.deviceID
+	if e.chanOut {
+		var n int
+		fmt.Sscanf(e.key, "output%d", &n)
+		return m.applyCmd(dev, func(d drivers.Driver) error {
+			if oc, ok := d.(drivers.OutputChannelDriver); ok {
+				return oc.SetOutputChannelMute(n, on)
+			}
+			name := "output"
+			if m.evo.spec.NumOutPairs > 1 {
+				name = fmt.Sprintf("output%d", (n-1)/2+1)
+			}
+			return d.SetMute(name, on)
+		}, "")
+	}
+	if strings.HasPrefix(e.key, "input") {
+		keys := e.keys()
+		return m.applyCmd(dev, func(d drivers.Driver) error {
+			for _, k := range keys {
+				if err := d.SetMute(k, on); err != nil {
+					return err
+				}
+			}
+			return nil
+		}, "")
+	}
+	return m.applyCmd(dev, func(d drivers.Driver) error { return d.SetMute(e.key, on) }, "")
 }
 
 func (m *model) evoTogglePhantom() tea.Cmd {
@@ -1821,10 +2023,18 @@ func (m *model) evoTogglePhantom() tea.Cmd {
 	if !strings.HasPrefix(e.key, "input") {
 		return nil
 	}
-	var n int
-	fmt.Sscanf(e.key, "input%d", &n)
 	on := !m.evoElemPhantom(e)
-	return m.applyCmd(m.deviceID, func(d drivers.Driver) error { return d.SetPhantom(n, on) }, "")
+	keys := e.keys()
+	return m.applyCmd(m.deviceID, func(d drivers.Driver) error {
+		for _, k := range keys {
+			var n int
+			fmt.Sscanf(k, "input%d", &n)
+			if err := d.SetPhantom(n, on); err != nil {
+				return err
+			}
+		}
+		return nil
+	}, "")
 }
 
 func evoColOffset(row int, rows [][]evoMxSection) int {
@@ -1933,7 +2143,11 @@ func (m *model) evoMixerKey(k string) tea.Cmd {
 	case "r":
 		return m.evoResetMxParam()
 	case "R":
-		m.confirm = tuikit.NewConfirm("Reset every mixer crosspoint on all buses?", "Cancel", "Reset all")
+		scope := "the linked mixer"
+		if m.evo.artistMix {
+			scope = drivers.BusLabelFor(m.evo.spec, m.evo.mixBus)
+		}
+		m.confirm = tuikit.NewConfirm("Reset "+scope+" to defaults?", "Cancel", "Reset")
 		m.confirmAct = func() tea.Cmd { return m.evoResetMixer() }
 		m.push(scrConfirm)
 		return nil
@@ -2046,18 +2260,33 @@ func (m *model) evoResetMxParam() tea.Cmd {
 	return m.evoMxSetValTo(s.key, param, evoMxDefault(param))
 }
 
-// evoResetMixer clears every crosspoint on every bus (silent, centred).
+// evoResetMixer resets the active mixer only: the selected Artist Mix bus
+// when it is on, or both linked buses when it is off.
 func (m *model) evoResetMixer() tea.Cmd {
 	if m.evoOffline() {
 		return m.evo.evoStatus("interface offline — reconnecting", true)
 	}
 	dev := m.deviceID
 	spec := m.evo.spec
-	return m.applyCmd(dev, func(d drivers.Driver) error {
-		if r, ok := d.(interface{ ResetMixer() error }); ok {
-			return r.ResetMixer()
-		}
+	buses := []int{m.evo.mixBus}
+	if !m.evo.artistMix {
+		buses = buses[:0]
 		for bus := 0; bus < drivers.MixBuses(spec); bus++ {
+			buses = append(buses, bus)
+		}
+	}
+	what := "mixer reset"
+	if m.evo.artistMix {
+		what = "mixer reset: " + drivers.BusLabelFor(spec, m.evo.mixBus)
+	}
+	return m.applyCmd(dev, func(d drivers.Driver) error {
+		for _, bus := range buses {
+			if r, ok := d.(interface{ ResetMixerBus(int) error }); ok {
+				if err := r.ResetMixerBus(bus); err != nil {
+					return err
+				}
+				continue
+			}
 			for i := 0; i < spec.NumInputs; i++ {
 				if err := d.SetMixerInput(i+1, evoMixDbMin, 0, bus); err != nil {
 					return err
@@ -2068,9 +2297,208 @@ func (m *model) evoResetMixer() tea.Cmd {
 					return err
 				}
 			}
+			if srcs := evoNumMixerSources(spec); srcs > 0 {
+				if err := d.SetMixerOutput(0, 0, evoPanMin, evoPanMax, bus); err != nil {
+					return err
+				}
+			}
 		}
 		return nil
-	}, "mixer reset")
+	}, what)
+}
+
+// evoResetControls resets only the Controls page and leaves the mixer alone.
+func (m *model) evoResetControls() tea.Cmd {
+	if m.evoOffline() {
+		return m.evo.evoStatus("interface offline — reconnecting", true)
+	}
+	m.evo.inStereo = [2]bool{}
+	m.evo.outMono = [2]bool{}
+	m.evo.modesSet = false
+	m.evoClampCursor()
+	dev := m.deviceID
+	return m.applyCmd(dev, func(d drivers.Driver) error {
+		if r, ok := d.(interface{ ResetControls() error }); ok {
+			return r.ResetControls()
+		}
+		return fmt.Errorf("controls reset unavailable for this device")
+	}, "controls reset")
+}
+
+// evoToggleMonoStereo links or splits the input/output pair under the cursor.
+// Only 1|2 and 3|4 are legal: no cross-pair combinations exist.
+func (m *model) evoToggleMonoStereo() tea.Cmd {
+	els := m.evo.activeElements()
+	if m.evo.cursor >= len(els) {
+		return nil
+	}
+	e := els[m.evo.cursor]
+	if e.key == "monitor" {
+		return nil
+	}
+	pair := e.pair()
+	isInput := strings.HasPrefix(e.key, "input")
+	if isInput && pair < len(m.evo.inStereo) {
+		if pair*2+1 >= m.evo.spec.NumInputs {
+			return m.evo.evoStatus("that input has no pair", true)
+		}
+	} else if !isInput && pair < len(m.evo.outMono) {
+	} else {
+		return nil
+	}
+	// Keep the value set of the mode we are leaving, then restore the one we
+	// are entering: neither layout may overwrite the other.
+	if m.evo.modesSet {
+		if isInput {
+			m.evoCaptureInputPair(pair)
+		} else {
+			m.evoCaptureOutputPair(pair)
+		}
+	} else {
+		m.evoSeedModeValues()
+	}
+	if isInput {
+		m.evo.inStereo[pair] = !m.evo.inStereo[pair]
+	} else {
+		m.evo.outMono[pair] = !m.evo.outMono[pair]
+	}
+	for i, ne := range m.evo.activeElements() {
+		if ne.pair() == pair {
+			m.evo.cursor = i
+			break
+		}
+	}
+	m.evoClampCursor()
+	a, b := pair*2+1, pair*2+2
+	if isInput {
+		state := "mono"
+		if m.evo.inStereo[pair] {
+			state = "linked (stereo)"
+		}
+		return m.evoApplyModePair(pair, true, fmt.Sprintf("IN %d|%d: %s", a, b, state))
+	}
+	state := "stereo"
+	if m.evo.outMono[pair] {
+		state = "split (mono)"
+	}
+	return m.evoApplyModePair(pair, false, fmt.Sprintf("OUT %d|%d: %s", a, b, state))
+}
+
+// evoSeedModeValues snapshots the current hardware levels into both layouts.
+// Called once, so a first split/link never discards either mode's settings.
+func (m *model) evoSeedModeValues() {
+	st := m.status
+	for p := 0; p < st.Spec.NumOutPairs; p++ {
+		pv := evoOutputSetting{vol: st.Outputs[p].VolumeDb, muted: st.Outputs[p].Muted}
+		m.evo.outStereo[p] = pv
+		for k := 0; k < 2; k++ {
+			ch := p*2 + k
+			c := pv
+			if ch < len(st.OutputChannels) {
+				c = evoOutputSetting{vol: st.OutputChannels[ch].VolumeDb, muted: st.OutputChannels[ch].Muted}
+			}
+			m.evo.outMonoV[ch] = c
+		}
+	}
+	for i := 0; i < st.Spec.NumInputs; i++ {
+		v := evoInputSetting{gain: st.Inputs[i].GainDb, muted: st.Inputs[i].Muted}
+		m.evo.inMono[i] = v
+		if i%2 == 0 {
+			m.evo.inStereoV[i/2] = v
+		}
+	}
+	m.evo.modesSet = true
+}
+
+// evoCaptureInputPair stores the current gain/mute of one input pair in the
+// layout it is currently using. The other layout keeps its snapshot.
+func (m *model) evoCaptureInputPair(pair int) {
+	st := m.status
+	if m.evo.inStereo[pair] {
+		if i := pair * 2; i < len(st.Inputs) {
+			m.evo.inStereoV[pair] = evoInputSetting{gain: st.Inputs[i].GainDb, muted: st.Inputs[i].Muted}
+		}
+		return
+	}
+	for k := 0; k < 2; k++ {
+		if i := pair*2 + k; i < len(st.Inputs) {
+			m.evo.inMono[i] = evoInputSetting{gain: st.Inputs[i].GainDb, muted: st.Inputs[i].Muted}
+		}
+	}
+}
+
+// evoCaptureOutputPair is the same for one output pair.
+func (m *model) evoCaptureOutputPair(pair int) {
+	st := m.status
+	if m.evo.outMono[pair] {
+		for k := 0; k < 2; k++ {
+			if ch := pair*2 + k; ch < len(st.OutputChannels) {
+				m.evo.outMonoV[ch] = evoOutputSetting{vol: st.OutputChannels[ch].VolumeDb, muted: st.OutputChannels[ch].Muted}
+			}
+		}
+		return
+	}
+	if pair < len(st.Outputs) {
+		m.evo.outStereo[pair] = evoOutputSetting{vol: st.Outputs[pair].VolumeDb, muted: st.Outputs[pair].Muted}
+	}
+}
+
+// evoApplyModePair pushes the newly selected layout of one pair to hardware.
+func (m *model) evoApplyModePair(pair int, isInput bool, what string) tea.Cmd {
+	u := &m.evo
+	spec := m.evo.spec
+	return m.applyCmd(m.deviceID, func(d drivers.Driver) error {
+		if isInput {
+			for k := 0; k < 2; k++ {
+				i := pair*2 + k
+				if i >= spec.NumInputs {
+					break
+				}
+				v := u.inMono[i]
+				if u.inStereo[pair] {
+					v = u.inStereoV[pair]
+				}
+				if err := d.SetGain(i+1, v.gain); err != nil {
+					return err
+				}
+				if err := d.SetMute(fmt.Sprintf("input%d", i+1), v.muted); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		name := "output"
+		if spec.NumOutPairs > 1 {
+			name = fmt.Sprintf("output%d", pair+1)
+		}
+		if u.outMono[pair] {
+			for k := 0; k < 2; k++ {
+				ch := pair*2 + k
+				v := u.outMonoV[ch]
+				if oc, ok := d.(drivers.OutputChannelDriver); ok {
+					if err := oc.SetOutputChannelMute(ch+1, v.muted); err != nil {
+						return err
+					}
+					if err := oc.SetOutputChannel(ch+1, v.vol); err != nil {
+						return err
+					}
+					continue
+				}
+				if err := d.SetMute(name, v.muted); err != nil {
+					return err
+				}
+				if err := d.SetVolume(pair, v.vol); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		v := u.outStereo[pair]
+		if err := d.SetMute(name, v.muted); err != nil {
+			return err
+		}
+		return d.SetVolume(pair, v.vol)
+	}, what)
 }
 
 func (u *evoUI) pickerMove(delta int, wrap bool) {

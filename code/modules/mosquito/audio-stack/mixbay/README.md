@@ -91,12 +91,23 @@ Ce que **mixbay ajoute** :
   sous ce nom est refusé et force un nouveau nom ;
 - `A` Artist Mix : OFF lie OUT 1|2 et OUT 3|4 (même mix, volumes de sortie
   indépendants) ;
-- `r` remet le paramètre sélectionné au défaut, `R` (rename « reset all ») vide
-  tout le mixer après confirmation ;
+- `O` bascule mono/stéréo sur la paire sous le curseur : les entrées se lient
+  seulement 1|2 et 3|4 (un seul gain/mute, **deux mètres séparés**), les
+  sorties se séparent en un bloc par canal avec volume et mute indépendants.
+  FU10 ne sait pas bouger une moitié de paire sans l'autre : le volume par
+  canal passe donc par le gain du sink PipeWire, sur la base FU10 du canal le
+  plus fort. Chaque disposition garde ses propres valeurs : repasser en
+  mono/stéréo restaure les réglages de cette disposition ;
+- `r` remet le paramètre sélectionné au défaut ; `R` remet la page active au
+  défaut après confirmation : CONTROLS ne touche jamais au mixer, MIXER remet
+  le bus Artist Mix sélectionné (les deux bus liés quand Artist Mix est OFF).
+  Seul MIX 1|2 rouvre `PC 1|2 → OUT 1|2` à **0 dB** ; MIX 3|4 revient au
+  **silence (-128 dB)** pour ne pas recopier le programme dans OUT 3|4 ;
 - défauts neutres : gains d'entrée 0 dB, **volume de sortie au minimum**
   (`VolMin` : charger `default` ne peut pas envoyer un niveau fort aux
-  monitors), pans d'entrée centrés, sources stéréo -100/+100, aucun
-  crosspoint ouvert ;
+  monitors), pans d'entrée centrés, sources stéréo -100/+100, et la route
+  d'usine `PC 1|2 → OUT 1|2` ouverte à **0 dB** ; les autres crosspoints sont
+  fermés ;
 - chrome en **texte blanc** : cadres arrondis, libellés PAN / VOL / gains et
   ligne de bus utilisent le `bright_foreground` du thème, plus jamais `muted`
   (vert sur achraf67) ni `dark_foreground` (gris chaud) ;
@@ -181,10 +192,11 @@ seules déplacent, les modificateurs règlent la valeur sélectionnée :
   pans **±25** ;
 - `Ctrl+Shift` + `←` / `→` : volume, gain et monitor **±1**, pans **±5** ;
 - chiffres puis `Enter` pour saisir une valeur ;
-- `m` mute (controls) ou choisit le bus (mixer), `P` 48V, `Space` paramètre
-  suivant dans le mixer ;
-- `r` remet le paramètre au défaut, `R` (reset all) vide tout le mixer après
-  confirmation, `A` Artist Mix ;
+- `m` mute (controls) ou choisit le bus (mixer), `P` 48V, `O` mono/stéréo,
+  `Space` paramètre suivant dans le mixer ;
+- `r` remet le paramètre au défaut, `R` remet la page active au défaut
+  (CONTROLS : contrôles seuls ; MIXER : bus Artist Mix actif, ou les deux bus
+  liés quand Artist Mix est OFF), `A` Artist Mix ;
 - `Tab` cycle CONTROLS → MIXER → LEVELS (EVO 8) → CONTROLS ; sur LEVELS,
   `Space` remet les crêtes à zéro, `p` fige l'affichage, `Esc`/`Tab` retour ;
 - `s` sauve (`+ new preset` pour un nouveau nom, `r` pour renommer), `o` charge

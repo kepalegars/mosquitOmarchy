@@ -1530,3 +1530,178 @@ func TestAllowNativeVolumeNeedsLevelsGuard(t *testing.T) {
 	}
 	t.Fatal("allow_native row missing")
 }
+
+// R on Controls resets the controls only and never touches the mixer.
+func TestEvoControlsResetLeavesMixer(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	if cmd := m.evoMxSetValTo("input1", "volume", -6); cmd != nil {
+		cmd()
+	}
+	if cmd := m.evoControlsKey("R"); cmd != nil {
+		t.Fatal("R must open a confirmation first")
+	}
+	if m.top() != scrConfirm || m.confirmAct == nil {
+		t.Fatalf("R should push the confirm screen, top=%v", m.top())
+	}
+	if cmd := m.confirmAct(); cmd != nil {
+		cmd()
+	}
+	d, _ := drivers.Open(drivers.DevEVO8)
+	st, _ := d.Status()
+	if c := st.Mixer["input1"]; c.VolumeDb != -6 {
+		t.Errorf("controls reset cleared the mixer: %+v", c)
+	}
+}
+
+// R on Mixer resumes only the Artist Mix bus when it is on, and both linked
+// buses when it is off.
+func TestEvoMixerResetScopeFollowsArtistMix(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 1)
+	if cmd := m.evoMxSetValTo("input1", "volume", -6); cmd != nil {
+		cmd()
+	}
+	m.evo.mixBus = 1
+	if cmd := m.evoMxSetValTo("input1", "volume", -9); cmd != nil {
+		cmd()
+	}
+	m.evo.artistMix = true
+	if cmd := m.evoResetMixer(); cmd != nil {
+		cmd()
+	}
+	d, _ := drivers.Open(drivers.DevEVO8)
+	st, _ := d.Status()
+	if c := st.Mixer["input1@1"]; c.VolumeDb != -128 {
+		t.Errorf("active bus not reset: %+v", c)
+	}
+	if c := st.Mixer["input1"]; c.VolumeDb != -6 {
+		t.Errorf("inactive bus was reset: %+v", c)
+	}
+	if c := st.Mixer["output1_2@1"]; c.VolumeDb != -128 {
+		t.Errorf("active bus default route = %+v, want silence", c)
+	}
+
+	m.evo.artistMix = false
+	if cmd := m.evoResetMixer(); cmd != nil {
+		cmd()
+	}
+	d, _ = drivers.Open(drivers.DevEVO8)
+	st, _ = d.Status()
+	if c := st.Mixer["input1"]; c.VolumeDb != -128 {
+		t.Errorf("linked reset left bus 0 alone: %+v", c)
+	}
+}
+
+// O links inputs 1|2 (only that pair) into one block and splits OUT 1|2 into
+// two independent channel blocks.
+func TestEvoToggleMonoStereo(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	if got := m.evo.activeElements()[0].label; got != "IN 1" {
+		t.Fatalf("start label = %q", got)
+	}
+	if cmd := m.evoControlsKey("O"); cmd != nil {
+		_ = cmd // status toast tick
+	}
+	if !m.evo.inStereo[0] {
+		t.Fatal("IN 1|2 not linked")
+	}
+	if got := m.evo.activeElements()[0].label; got != "IN 1|2" {
+		t.Fatalf("linked label = %q", got)
+	}
+	if cmd := m.evoSetVal(6); cmd != nil {
+		cmd()
+	}
+	d, _ := drivers.Open(drivers.DevEVO8)
+	st, _ := d.Status()
+	if st.Inputs[0].GainDb != 6 || st.Inputs[1].GainDb != 6 {
+		t.Errorf("linked inputs = %v/%v, want both 6", st.Inputs[0].GainDb, st.Inputs[1].GainDb)
+	}
+	if st.Inputs[2].GainDb != 0 {
+		t.Errorf("O touched the other pair: %v", st.Inputs[2].GainDb)
+	}
+
+	m.evoControlsKey("l")
+	if got := m.evo.activeElements()[0].label; got != "OUT 1|2" {
+		t.Fatalf("output label = %q", got)
+	}
+	m.evoControlsKey("O")
+	if !m.evo.outMono[0] {
+		t.Fatal("OUT 1|2 not split")
+	}
+	els := m.evo.activeElements()
+	if els[0].label != "OUT 1" || els[1].label != "OUT 2" || !els[0].chanOut {
+		t.Fatalf("split outputs = %q, %q", els[0].label, els[1].label)
+	}
+	if cmd := m.evoSetVal(-10); cmd != nil {
+		cmd()
+	}
+	d, _ = drivers.Open(drivers.DevEVO8)
+	st, _ = d.Status()
+	if st.OutputChannels[0].VolumeDb != -10 {
+		t.Errorf("OUT 1 = %v, want -10", st.OutputChannels[0].VolumeDb)
+	}
+	if st.OutputChannels[1].VolumeDb != 0 {
+		t.Errorf("OUT 2 moved with OUT 1: %v", st.OutputChannels[1].VolumeDb)
+	}
+}
+
+// Each layout keeps its own values: linking a pair must not destroy the mono
+// gains, and splitting must not destroy the stereo volume.
+func TestEvoMonoStereoSettingsAreIndependent(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	read := func() drivers.Status {
+		d, _ := drivers.Open(drivers.DevEVO8)
+		st, _ := d.Status()
+		return st
+	}
+	run := func(cmd tea.Cmd) {
+		if cmd != nil {
+			cmd()
+		}
+		m.status = read()
+	}
+	set := func(sub, cursor int, val float64) {
+		m.evo.sub, m.evo.cursor = sub, cursor
+		run(m.evoSetVal(val))
+	}
+	set(0, 0, 10)  // IN 1
+	set(0, 1, 20)  // IN 2
+	set(1, 0, -12) // OUT 1|2 stereo
+
+	m.evo.sub, m.evo.cursor = 0, 0
+	run(m.evoControlsKey("O")) // link IN 1|2, shared gain = IN 1
+	run(m.evoSetVal(15))
+	if st := read(); st.Inputs[0].GainDb != 15 || st.Inputs[1].GainDb != 15 {
+		t.Fatalf("stereo inputs = %v/%v, want 15/15", st.Inputs[0].GainDb, st.Inputs[1].GainDb)
+	}
+	run(m.evoControlsKey("O")) // back to mono: restore per-channel gains
+	if st := read(); st.Inputs[0].GainDb != 10 || st.Inputs[1].GainDb != 20 {
+		t.Errorf("mono inputs restored = %v/%v, want 10/20", st.Inputs[0].GainDb, st.Inputs[1].GainDb)
+	}
+
+	m.evo.sub, m.evo.cursor = 1, 0
+	run(m.evoControlsKey("O")) // split OUT 1|2
+	run(m.evoSetVal(-6))
+	m.evo.cursor = 1
+	run(m.evoSetVal(-3))
+	run(m.evoControlsKey("O")) // back to stereo: restore the pair volume
+	if st := read(); st.Outputs[0].VolumeDb != -12 {
+		t.Errorf("stereo volume restored = %v, want -12", st.Outputs[0].VolumeDb)
+	}
+	run(m.evoControlsKey("O")) // split again: per-channel values are back
+	st := read()
+	if st.OutputChannels[0].VolumeDb != -6 || st.OutputChannels[1].VolumeDb != -3 {
+		t.Errorf("mono channels restored = %v/%v, want -6/-3", st.OutputChannels[0].VolumeDb, st.OutputChannels[1].VolumeDb)
+	}
+}
+
+// A linked input block draws both capture channels, like a stereo output pair.
+func TestEvoLinkedInputShowsTwoMeters(t *testing.T) {
+	src, chans := evoMeterChannels(drivers.EVO8Spec, "input1_2")
+	if src != meters.KeyInput || len(chans) != 2 || chans[0] != 0 || chans[1] != 1 {
+		t.Fatalf("linked input meters = %q %v", src, chans)
+	}
+	e := evoElement{key: "input1", link: "input2"}
+	if got := e.meterKey(); got != "input1_2" {
+		t.Errorf("meterKey = %q", got)
+	}
+}

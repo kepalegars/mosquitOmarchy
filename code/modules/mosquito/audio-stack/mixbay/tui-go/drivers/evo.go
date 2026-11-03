@@ -30,8 +30,10 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -113,6 +115,16 @@ func panToLRDb(volDb, pan float64) (float64, float64) {
 		rDb = volDb + 20*math.Log10(rLin)
 	}
 	return math.Max(mixDbMin, lDb), math.Max(mixDbMin, rDb)
+}
+
+// stereoSourceGains expands one stereo loopback pair to its four MU60
+// crosspoints: (source L→bus L, source L→bus R, source R→bus L, source R→bus R).
+// PanL and PanR are separate positions, so the factory -100/+100 keeps the
+// channels apart instead of folding both sources into both bus sides.
+func stereoSourceGains(volDb, panL, panR float64) (ll, lr, rl, rr float64) {
+	ll, lr = panToLRDb(volDb, panL)
+	rl, rr = panToLRDb(volDb, panR)
+	return ll, lr, rl, rr
 }
 
 func bool4(b bool) []byte {
@@ -335,12 +347,13 @@ func (d *evoDriver) muteTarget(target string) (uint16, uint16, error) {
 // and live-mode rehearsals work without the interface plugged in.
 
 type demoState struct {
-	Volumes []float64            `json:"volumes"`
-	Gains   []float64            `json:"gains"`
-	Mutes   map[string]bool      `json:"mutes"`
-	Phantom map[string]bool      `json:"phantom"`
-	Monitor int                  `json:"monitor"`
-	Mixer   map[string]MixerCell `json:"mixer"`
+	Volumes  []float64            `json:"volumes"`
+	Channels []float64            `json:"channels,omitempty"`
+	Gains    []float64            `json:"gains"`
+	Mutes    map[string]bool      `json:"mutes"`
+	Phantom  map[string]bool      `json:"phantom"`
+	Monitor  int                  `json:"monitor"`
+	Mixer    map[string]MixerCell `json:"mixer"`
 }
 
 func defaultMixerCells(spec Spec) map[string]MixerCell {
@@ -355,6 +368,11 @@ func defaultMixerCells(spec Spec) map[string]MixerCell {
 			}
 		}
 	}
+	// Factory route: PC 1|2 into OUT 1|2 at 0 dB, full stereo width.
+	if c, ok := m["output1_2"]; ok {
+		c.VolumeDb = 0
+		m["output1_2"] = c
+	}
 	return m
 }
 
@@ -368,15 +386,19 @@ func (d *evoDriver) ensureDemo() *demoState {
 		return d.demo
 	}
 	st := &demoState{
-		Volumes: make([]float64, d.spec.NumOutPairs),
-		Gains:   make([]float64, d.spec.NumInputs),
-		Mutes:   map[string]bool{},
-		Phantom: map[string]bool{},
-		Monitor: 50,
-		Mixer:   defaultMixerCells(d.spec),
+		Volumes:  make([]float64, d.spec.NumOutPairs),
+		Channels: make([]float64, d.spec.NumOutPairs*2),
+		Gains:    make([]float64, d.spec.NumInputs),
+		Mutes:    map[string]bool{},
+		Phantom:  map[string]bool{},
+		Monitor:  50,
+		Mixer:    defaultMixerCells(d.spec),
 	}
 	for i := range st.Volumes {
 		st.Volumes[i] = 0
+	}
+	for i := range st.Channels {
+		st.Channels[i] = 0
 	}
 	for i := range st.Gains {
 		// Neutral unity default (not GainMin, which confused users).
@@ -384,6 +406,14 @@ func (d *evoDriver) ensureDemo() *demoState {
 	}
 	if data, err := os.ReadFile(d.demoFile()); err == nil {
 		_ = json.Unmarshal(data, st)
+	}
+	// Older demo files only carry the pair level: seed both channels from it.
+	if len(st.Channels) != d.spec.NumOutPairs*2 {
+		st.Channels = make([]float64, d.spec.NumOutPairs*2)
+		for pair := 0; pair < d.spec.NumOutPairs && pair < len(st.Volumes); pair++ {
+			st.Channels[pair*2] = st.Volumes[pair]
+			st.Channels[pair*2+1] = st.Volumes[pair]
+		}
 	}
 	d.demo = st
 	return st
@@ -436,6 +466,10 @@ func (d *evoDriver) demoStatus() Status {
 		}
 		st.Outputs = append(st.Outputs, OutputState{Name: name, VolumeDb: demo.Volumes[i], Muted: demo.Mutes[name]})
 	}
+	for i := 0; i < d.spec.NumOutPairs*2; i++ {
+		name := fmt.Sprintf("outputch%d", i+1)
+		st.OutputChannels = append(st.OutputChannels, OutputState{Name: name, VolumeDb: demo.Channels[i], Muted: demo.Mutes[outputChannelKey(i+1)]})
+	}
 	if d.spec.HasMonitor {
 		m := demo.Monitor
 		st.Monitor = &m
@@ -457,11 +491,13 @@ func (d *evoDriver) readHardware() (Status, error) {
 	}
 	defer d.end()
 	d.enableCapture()
+	d.resetMonoOutputChannelsOnce()
 	// Volumes (CH1 of each pair; pairs are ganged on write).
 	var outMutes map[string]float64
 	if !d.supportsNativeOutputMute() {
 		outMutes = d.loadOutputMutes()
 	}
+	pairVol := make([]float64, d.spec.NumOutPairs)
 	for i := 0; i < d.spec.NumOutPairs; i++ {
 		raw, err := d.getFU(fu10, i*2+1)
 		if err != nil {
@@ -469,6 +505,7 @@ func (d *evoDriver) readHardware() (Status, error) {
 		}
 		name := d.outputName(i)
 		vol := usbToDb(raw)
+		pairVol[i] = vol
 		muted := false
 		if outMutes != nil {
 			if saved, ok := outMutes[name]; ok {
@@ -480,6 +517,20 @@ func (d *evoDriver) readHardware() (Status, error) {
 			}
 		}
 		st.Outputs = append(st.Outputs, OutputState{Name: name, VolumeDb: vol, Muted: muted})
+	}
+	channelMutes := d.loadOutputMutes()
+	channelLevels := d.loadOutputChannels()
+	for ch := 1; ch <= d.spec.NumOutPairs*2; ch++ {
+		name := fmt.Sprintf("outputch%d", ch)
+		vol := pairVol[(ch-1)/2]
+		if trim, ok := channelLevels[outputChannelKey(ch)]; ok {
+			vol += trim
+		}
+		muted := false
+		if saved, ok := channelMutes[outputChannelKey(ch)]; ok {
+			muted, vol = true, saved
+		}
+		st.OutputChannels = append(st.OutputChannels, OutputState{Name: name, VolumeDb: vol, Muted: muted})
 	}
 	for i := 0; i < d.spec.NumInputs; i++ {
 		name := fmt.Sprintf("input%d", i+1)
@@ -523,12 +574,16 @@ func (d *evoDriver) SetVolume(pair int, db float64) error {
 		if pair < 0 {
 			for i := range demo.Volumes {
 				demo.Volumes[i] = db
+				demo.Channels[i*2] = db
+				demo.Channels[i*2+1] = db
 			}
 		} else {
 			if pair >= len(demo.Volumes) {
 				return fmt.Errorf("output pair %d out of range (0..%d)", pair, len(demo.Volumes)-1)
 			}
 			demo.Volumes[pair] = db
+			demo.Channels[pair*2] = db
+			demo.Channels[pair*2+1] = db
 		}
 		d.saveDemo()
 		return nil
@@ -570,6 +625,27 @@ func (d *evoDriver) SetVolume(pair int, db float64) error {
 			if err := d.setFU(fu10, cn, dbToUSB(writeDb)); err != nil {
 				return err
 			}
+		}
+	}
+	// A stereo pair has one level: drop any mono split trims for it.
+	chans := d.loadOutputChannels()
+	trims := map[int]float64{}
+	for _, p := range pairs {
+		for k := 0; k < 2; k++ {
+			key := outputChannelKey(p*2 + k + 1)
+			if _, ok := chans[key]; !ok {
+				continue
+			}
+			delete(chans, key)
+			trims[p*2+k] = 0
+		}
+	}
+	if len(trims) > 0 {
+		if err := d.pwSetTrims(trims); err != nil {
+			return err
+		}
+		if err := d.saveOutputChannels(chans); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -712,6 +788,308 @@ func (d *evoDriver) setOutputMuteEmulated(target string, muted bool) error {
 	return d.SetVolume(pair, d.spec.VolMin)
 }
 
+func outputChannelKey(ch int) string { return fmt.Sprintf("ch%d", ch) }
+
+// outputChannelFile persists each mono channel's trim (dB below the pair's
+// FU10 base): the app opens a fresh driver per write, so the TUI cannot keep
+// it in memory.
+func (d *evoDriver) outputChannelFile() string {
+	return filepath.Join(d.shadowDir(), ".output-channels.json")
+}
+
+func (d *evoDriver) loadOutputChannels() map[string]float64 {
+	m := map[string]float64{}
+	if data, err := os.ReadFile(d.outputChannelFile()); err == nil {
+		_ = json.Unmarshal(data, &m)
+	}
+	return m
+}
+
+func (d *evoDriver) saveOutputChannels(m map[string]float64) error {
+	_ = os.MkdirAll(d.shadowDir(), 0o755)
+	data, _ := json.MarshalIndent(m, "", "  ")
+	return os.WriteFile(d.outputChannelFile(), data, 0o644)
+}
+
+// pwOutputSink finds the device's Pro Audio playback sink. PipeWire applies
+// per-channel volume on it, which FU10 cannot: writing either channel of an
+// EVO output pair moves both.
+type pwOutputSink struct {
+	name     string
+	channels []string
+	values   []int
+}
+
+func (d *evoDriver) pwOutputSink() (*pwOutputSink, error) {
+	out, err := exec.Command("pactl", "-f", "json", "list", "sinks").Output()
+	if err != nil {
+		return nil, err
+	}
+	var sinks []struct {
+		Name       string `json:"name"`
+		ChannelMap string `json:"channel_map"`
+		Volume     map[string]struct {
+			Value int `json:"value"`
+		} `json:"volume"`
+		Properties map[string]string `json:"properties"`
+	}
+	if err := json.Unmarshal(out, &sinks); err != nil {
+		return nil, err
+	}
+	for _, s := range sinks {
+		p := s.Properties
+		if !strings.EqualFold(p["device.vendor.id"], "0x"+d.spec.USBVID) ||
+			!strings.EqualFold(p["device.product.id"], "0x"+d.spec.USBPID) ||
+			p["device.profile.name"] != "pro-output-0" {
+			continue
+		}
+		st := &pwOutputSink{name: s.Name, channels: strings.Split(s.ChannelMap, ",")}
+		st.values = make([]int, len(st.channels))
+		for i, c := range st.channels {
+			st.values[i] = s.Volume[c].Value
+		}
+		return st, nil
+	}
+	return nil, fmt.Errorf("no PipeWire pro-output sink for %s", d.spec.ID)
+}
+
+// pwSetTrims sets absolute per-channel levels (dB) on that sink; channels
+// absent from trims keep their current value.
+func (d *evoDriver) pwSetTrims(trims map[int]float64) error {
+	st, err := d.pwOutputSink()
+	if err != nil {
+		return err
+	}
+	args := []string{"set-sink-volume", st.name}
+	for i := range st.values {
+		v := st.values[i]
+		if db, ok := trims[i]; ok {
+			v = dbToPactl(db)
+		}
+		args = append(args, strconv.Itoa(v))
+	}
+	return exec.Command("pactl", args...).Run()
+}
+
+func dbToPactl(db float64) int {
+	if db <= mixDbMin {
+		return 0
+	}
+	v := int(math.Round(65536 * math.Pow(10, db/20)))
+	if v < 0 {
+		return 0
+	}
+	if v > 65536 {
+		return 65536
+	}
+	return v
+}
+
+// Mono layout is session state: a leftover trim from a crashed session must
+// not survive the next start, which always opens in stereo.
+var (
+	evoChannelResetMu sync.Mutex
+	evoChannelReset   = map[string]bool{}
+)
+
+func (d *evoDriver) claimMonoReset() bool {
+	evoChannelResetMu.Lock()
+	defer evoChannelResetMu.Unlock()
+	if evoChannelReset[d.spec.ID] {
+		return false
+	}
+	evoChannelReset[d.spec.ID] = true
+	return true
+}
+
+func (d *evoDriver) resetMonoOutputChannelsOnce() {
+	if !d.claimMonoReset() {
+		return
+	}
+	if len(d.loadOutputChannels()) == 0 {
+		return
+	}
+	trims := map[int]float64{}
+	for ch := 0; ch < d.spec.NumOutPairs*2; ch++ {
+		trims[ch] = 0
+	}
+	_ = d.pwSetTrims(trims)
+	_ = d.saveOutputChannels(map[string]float64{})
+}
+
+// outputPairSplit turns the two absolute channel levels into the shared FU10
+// base (the louder channel) and the per-channel trims (≤ 0 dB).
+func outputPairSplit(l1, l2 float64) (float64, [2]float64) {
+	base := l1
+	if l2 > base {
+		base = l2
+	}
+	return base, [2]float64{l1 - base, l2 - base}
+}
+
+// outputPairApplied is what PipeWire receives: the logical trims, except a
+// muted channel is dropped to silence without forgetting its level.
+func outputPairApplied(pair int, trims [2]float64, mutes map[string]float64) map[int]float64 {
+	applied := map[int]float64{}
+	for k := 0; k < 2; k++ {
+		if _, muted := mutes[outputChannelKey(pair*2+k+1)]; muted {
+			applied[pair*2+k] = mixDbMin
+			continue
+		}
+		applied[pair*2+k] = trims[k]
+	}
+	return applied
+}
+
+// applyOutputPair makes FU10 the louder of the two channel levels and pushes
+// the difference to PipeWire, so each half follows its own level even though
+// the hardware gangs the pair.
+func (d *evoDriver) applyOutputPair(pair int, base float64, trims [2]float64, mutes map[string]float64) error {
+	for _, cn := range []int{pair*2 + 1, pair*2 + 2} {
+		if err := d.setFU(fu10, cn, dbToUSB(base)); err != nil {
+			return err
+		}
+	}
+	return d.pwSetTrims(outputPairApplied(pair, trims, mutes))
+}
+
+// outputPairLevels resolves the pair's two absolute levels from the FU10
+// base, the stored trims and any muted channel's remembered level.
+func outputPairLevels(pair int, base float64, trims, mutes map[string]float64) (float64, float64) {
+	l1 := base + trims[outputChannelKey(pair*2+1)]
+	l2 := base + trims[outputChannelKey(pair*2+2)]
+	if db, ok := mutes[outputChannelKey(pair*2+1)]; ok {
+		l1 = db
+	}
+	if db, ok := mutes[outputChannelKey(pair*2+2)]; ok {
+		l2 = db
+	}
+	return l1, l2
+}
+
+func (d *evoDriver) outputPairBase(pair int) (float64, error) {
+	raw, err := d.getFU(fu10, pair*2+1)
+	if err != nil {
+		return 0, err
+	}
+	return usbToDb(raw), nil
+}
+
+// SetOutputChannel sets one physical output channel (mono mode).
+func (d *evoDriver) SetOutputChannel(ch int, db float64) error {
+	if ch < 1 || ch > d.spec.NumOutPairs*2 {
+		return fmt.Errorf("output channel must be 1..%d", d.spec.NumOutPairs*2)
+	}
+	db = clamp(db, d.spec.VolMin, d.spec.VolMax)
+	if !d.hasDevice() {
+		if !d.allowDemo {
+			return ErrOffline
+		}
+		demo := d.ensureDemo()
+		demo.Channels[ch-1] = db
+		d.saveDemo()
+		return nil
+	}
+	pair := (ch - 1) / 2
+	if err := d.begin(); err != nil {
+		return err
+	}
+	defer d.end()
+	d.claimMonoReset()
+	trims := d.loadOutputChannels()
+	mutes := d.loadOutputMutes()
+	base, err := d.outputPairBase(pair)
+	if err != nil {
+		return err
+	}
+	l1, l2 := outputPairLevels(pair, base, trims, mutes)
+	if ch == pair*2+1 {
+		l1 = db
+	} else {
+		l2 = db
+	}
+	base, lt := outputPairSplit(l1, l2)
+	trims[outputChannelKey(pair*2+1)] = lt[0]
+	trims[outputChannelKey(pair*2+2)] = lt[1]
+	key := outputChannelKey(ch)
+	if _, ok := mutes[key]; ok {
+		mutes[key] = db
+		if err := d.saveOutputMutes(mutes); err != nil {
+			return err
+		}
+	}
+	if err := d.saveOutputChannels(trims); err != nil {
+		return err
+	}
+	return d.applyOutputPair(pair, base, lt, mutes)
+}
+
+// SetOutputChannelMute silences one channel through its PipeWire trim: the
+// EVO has no per-channel mute, and FU10 drops both halves at once.
+func (d *evoDriver) SetOutputChannelMute(ch int, muted bool) error {
+	if ch < 1 || ch > d.spec.NumOutPairs*2 {
+		return fmt.Errorf("output channel must be 1..%d", d.spec.NumOutPairs*2)
+	}
+	key := outputChannelKey(ch)
+	if !d.hasDevice() {
+		if !d.allowDemo {
+			return ErrOffline
+		}
+		demo := d.ensureDemo()
+		demo.Mutes[key] = muted
+		d.saveDemo()
+		return nil
+	}
+	pair := (ch - 1) / 2
+	if err := d.begin(); err != nil {
+		return err
+	}
+	defer d.end()
+	d.claimMonoReset()
+	trims := d.loadOutputChannels()
+	mutes := d.loadOutputMutes()
+	base, err := d.outputPairBase(pair)
+	if err != nil {
+		return err
+	}
+	l1, l2 := outputPairLevels(pair, base, trims, mutes)
+	if !muted {
+		db, ok := mutes[key]
+		if !ok {
+			return nil
+		}
+		delete(mutes, key)
+		if err := d.saveOutputMutes(mutes); err != nil {
+			return err
+		}
+		if ch == pair*2+1 {
+			l1 = db
+		} else {
+			l2 = db
+		}
+		base, lt := outputPairSplit(l1, l2)
+		trims[outputChannelKey(pair*2+1)] = lt[0]
+		trims[outputChannelKey(pair*2+2)] = lt[1]
+		if err := d.saveOutputChannels(trims); err != nil {
+			return err
+		}
+		return d.applyOutputPair(pair, base, lt, mutes)
+	}
+	if _, ok := mutes[key]; ok {
+		return nil
+	}
+	// Remember the absolute level before silencing only this channel.
+	if ch == pair*2+1 {
+		mutes[key] = l1
+	} else {
+		mutes[key] = l2
+	}
+	if err := d.saveOutputMutes(mutes); err != nil {
+		return err
+	}
+	return d.applyOutputPair(pair, base, [2]float64{trims[outputChannelKey(pair*2+1)], trims[outputChannelKey(pair*2+2)]}, mutes)
+}
+
 func (d *evoDriver) SetPhantom(input int, on bool) error {
 	if input < 1 || input > d.spec.NumInputs {
 		return fmt.Errorf("input must be 1..%d", d.spec.NumInputs)
@@ -788,16 +1166,21 @@ func (d *evoDriver) writeMixerCell(src string, c MixerCell, bus int) error {
 	if _, err := fmt.Sscanf(src, "output%d_%d", &l, &r); err != nil || r != l+1 || l%2 != 1 {
 		return fmt.Errorf("unknown mixer source %q", src)
 	}
-	// A loopback pair fans out to both channels of the mix bus.
+	// L and R of the stereo source have their own pan position, so each bus
+	// side gets only its matching source channel (factory pans -100/+100).
 	inL := d.spec.NumInputs + (l-1)/2*2
 	inR := inL + 1
-	for cn, db := range map[int]float64{
-		inL*d.spec.MixerOutputs + off:     lDb,
-		inL*d.spec.MixerOutputs + off + 1: rDb,
-		inR*d.spec.MixerOutputs + off:     lDb,
-		inR*d.spec.MixerOutputs + off + 1: rDb,
+	ll, lr, rl, rr := stereoSourceGains(c.VolumeDb, c.PanL, c.PanR)
+	for _, x := range []struct {
+		cn int
+		db float64
+	}{
+		{inL*d.spec.MixerOutputs + off, ll},
+		{inL*d.spec.MixerOutputs + off + 1, lr},
+		{inR*d.spec.MixerOutputs + off, rl},
+		{inR*d.spec.MixerOutputs + off + 1, rr},
 	} {
-		if err := d.setCrosspoint(cn, db); err != nil {
+		if err := d.setCrosspoint(x.cn, x.db); err != nil {
 			return err
 		}
 	}
@@ -881,8 +1264,21 @@ func (d *evoDriver) shadowFile() string {
 
 func (d *evoDriver) loadShadow() map[string]MixerCell {
 	m := defaultMixerCells(d.spec)
-	if data, err := os.ReadFile(d.shadowFile()); err == nil {
-		_ = json.Unmarshal(data, &m)
+	data, err := os.ReadFile(d.shadowFile())
+	if err != nil {
+		return m
+	}
+	// Decode per key over the factory cell so an older shadow that predates
+	// pan_l/pan_r keeps the factory stereo spread instead of collapsing the
+	// source to a centred mono image.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return m
+	}
+	for k, v := range raw {
+		c := m[k]
+		_ = json.Unmarshal(v, &c)
+		m[k] = c
 	}
 	return m
 }
@@ -952,11 +1348,11 @@ func (d *evoDriver) SaveTo(path string) error {
 // ProtectedConfigName is the built-in preset that cannot be overwritten.
 const ProtectedConfigName = "default"
 
-// ResetToDefaults restores the neutral factory default: unity input gains,
-// output volume at the minimum (so loading the default never blasts the
-// monitors), nothing muted, phantom off, centred input pans, full-width
-// stereo sources and a silent loopback matrix (no route open).
-func (d *evoDriver) ResetToDefaults() error {
+// ResetControls restores the neutral control defaults without touching the
+// loopback matrix: unity input gains, output volume at the minimum (so a
+// reset never blasts the monitors), nothing muted, phantom off, monitor
+// centred.
+func (d *evoDriver) ResetControls() error {
 	if !d.allowDemo && !d.hasDevice() {
 		return ErrOffline
 	}
@@ -970,6 +1366,11 @@ func (d *evoDriver) ResetToDefaults() error {
 	// level, which the volume reset below must then overwrite.
 	for i := 0; i < d.spec.NumOutPairs; i++ {
 		if err := d.SetMute(d.outputName(i), false); err != nil {
+			return err
+		}
+	}
+	for ch := 1; ch <= d.spec.NumOutPairs*2; ch++ {
+		if err := d.SetOutputChannelMute(ch, false); err != nil {
 			return err
 		}
 	}
@@ -992,6 +1393,15 @@ func (d *evoDriver) ResetToDefaults() error {
 		if err := d.SetMonitor(50); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// ResetToDefaults restores the neutral factory default: ResetControls plus a
+// mixer reset that reopens PC 1|2 → OUT 1|2 at 0 dB on every bus.
+func (d *evoDriver) ResetToDefaults() error {
+	if err := d.ResetControls(); err != nil {
+		return err
 	}
 	return d.ResetMixer()
 }
@@ -1113,8 +1523,22 @@ func (d *evoDriver) LoadFrom(path string) error {
 	return nil
 }
 
-// ResetMixer clears the loopback matrix on every bus (silent, centred).
+// ResetMixer resets every bus to the factory routing.
 func (d *evoDriver) ResetMixer() error {
+	for bus := 0; bus < MixBuses(d.spec); bus++ {
+		if err := d.ResetMixerBus(bus); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ResetMixerBus clears one bus. Only bus 0 reopens the factory route
+// PC 1|2 → OUT 1|2 at 0 dB; the Artist Mix bus stays silent at -128 dB.
+func (d *evoDriver) ResetMixerBus(bus int) error {
+	if bus < 0 || bus >= MixBuses(d.spec) {
+		return fmt.Errorf("mix bus must be 0..%d", MixBuses(d.spec)-1)
+	}
 	if d.hasDevice() {
 		if err := d.begin(); err != nil {
 			return err
@@ -1122,17 +1546,18 @@ func (d *evoDriver) ResetMixer() error {
 		defer d.end()
 	}
 	sources := (d.spec.MixerInputs - d.spec.NumInputs) / 2
-	for bus := 0; bus < MixBuses(d.spec); bus++ {
-		for i := 0; i < d.spec.NumInputs; i++ {
-			if err := d.SetMixerInput(i+1, mixDbMin, 0, bus); err != nil {
-				return err
-			}
+	for i := 0; i < d.spec.NumInputs; i++ {
+		if err := d.SetMixerInput(i+1, mixDbMin, 0, bus); err != nil {
+			return err
 		}
-		for i := 0; i < sources; i++ {
-			if err := d.SetMixerOutput(i, mixDbMin, -100, 100, bus); err != nil {
-				return err
-			}
+	}
+	for i := 0; i < sources; i++ {
+		if err := d.SetMixerOutput(i, mixDbMin, -100, 100, bus); err != nil {
+			return err
 		}
+	}
+	if bus == 0 && sources > 0 {
+		return d.SetMixerOutput(0, 0, -100, 100, bus)
 	}
 	return nil
 }
