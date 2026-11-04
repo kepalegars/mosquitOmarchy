@@ -27,6 +27,39 @@ func TestRunnerShortcutsHint(t *testing.T) {
 	}
 }
 
+// TestRunnerProgressMarkers pins the streamed-download channel: \001progress
+// lines feed Progress() and never pollute the visible log, values are capped
+// at 100, and \001progress -1 clears the bar.
+func TestRunnerProgressMarkers(t *testing.T) {
+	r := NewRunner()
+	if _, ok := r.Progress(); ok {
+		t.Fatal("fresh runner must not show a progress bar")
+	}
+
+	r, _ = r.Update(RunnerLineMsg{Text: "\x01progress 42"})
+	if pct, ok := r.Progress(); !ok || pct != 42 {
+		t.Fatalf("Progress() = %d, %v; want 42, true", pct, ok)
+	}
+	if got := r.Output(); strings.Contains(got, "progress") {
+		t.Fatalf("control marker leaked into the log: %q", got)
+	}
+
+	r, _ = r.Update(RunnerLineMsg{Text: "\x01progress 150"})
+	if pct, ok := r.Progress(); !ok || pct != 100 {
+		t.Fatalf("Progress() = %d, %v after 150; want 100, true", pct, ok)
+	}
+
+	r, _ = r.Update(RunnerLineMsg{Text: "\x01progress -1"})
+	if _, ok := r.Progress(); ok {
+		t.Fatal("-1 must clear the progress bar")
+	}
+
+	r, _ = r.Update(RunnerLineMsg{Text: "real log line"})
+	if got := r.Output(); !strings.Contains(got, "real log line") {
+		t.Fatalf("normal output was dropped: %q", got)
+	}
+}
+
 // TestWaitErrCleanExitWithWaitDelay pins the false-failure fix: a command that
 // exits 0 while a background child keeps its stdout open makes Wait return
 // exec.ErrWaitDelay, which must not be reported as a failed module.

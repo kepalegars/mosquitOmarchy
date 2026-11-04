@@ -136,8 +136,36 @@ run_version(){ # version of the native installer, read in the .run header
   printf '%s\n' "$vmax"
 }
 
+# download_run <url> <tmp> [<size>]
+# Streamed by the TUI Runner (MOSQUITOMARCHY_TUI_STREAM=1): the download runs
+# in the background and the byte count becomes `\001progress <pct>` lines, which
+# the Runner consumes for its bar instead of filling the log. Anywhere else,
+# curl draws its own in-place bar.
+download_run(){
+  local url="$1" tmp="$2" size="${3:-}" got pct last=-1 pid rc=0
+  if [[ ${MOSQUITOMARCHY_TUI_STREAM:-0} != 1 || ! $size =~ ^[0-9]+$ || $size -le 0 ]]; then
+    curl -fL --max-time 600 --progress-bar -o "$tmp" "$url"
+    return $?
+  fi
+  curl -fsSL --max-time 600 --no-progress-meter -o "$tmp" "$url" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    got="$(stat -c %s "$tmp" 2>/dev/null || echo 0)"
+    pct=$(( got * 100 / size ))
+    ((pct > 100)) && pct=100
+    if (( pct != last )); then
+      printf '\001progress %d\n' "$pct"
+      last=$pct
+    fi
+    sleep 0.25
+  done
+  wait "$pid" || rc=$?
+  printf '\001progress -1\n'
+  return "$rc"
+}
+
 step_update_check(){
-  local out="" lv="" rv url digest tmp got target
+  local out="" lv="" rv url digest size tmp got target
   msg "Update of the native installer (github.com/shibco/ableton-linux)"
   lv="$(run_version)"
   if [[ -n "$lv" ]]; then
@@ -168,6 +196,7 @@ step_update_check(){
   fi
   url="$(printf '%s' "$out" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(next((a["browser_download_url"] for a in d["assets"] if a["name"]=="install-ableton-latest.run"),""))' 2>/dev/null)"
   digest="$(printf '%s' "$out" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(next((a["digest"] for a in d["assets"] if a["name"]=="install-ableton-latest.run"),""))' 2>/dev/null)"
+  size="$(printf '%s' "$out" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(next((a["size"] for a in d["assets"] if a["name"]=="install-ableton-latest.run"),""))' 2>/dev/null)"
   if [[ -z $url ]]; then
     warn "Download link not found on GitHub."
     [[ -n $RUN_INSTALLER ]] && return 0
@@ -181,11 +210,7 @@ step_update_check(){
   fi
   tmp="$SCRIPT_DIR/.install-ableton-latest.run.part"
   rm -f -- "$tmp"
-  # --progress-bar + tr: curl updates its bar with \r, which the TUI runner's
-  # line scanner would otherwise collapse into one invisible line. Each update
-  # becomes its own progress line inside the mosquitOmarchy window.
-  if ! curl -fL --max-time 600 --progress-bar -o "$tmp" "$url" 2>&1 \
-       | tr '\r' '\n'; then
+  if ! download_run "$url" "$tmp" "$size"; then
     rm -f -- "$tmp"; warn "Download failed — local installer kept."; return 1
   fi
   if [[ -n "$digest" ]]; then

@@ -372,7 +372,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				// A failed stage stops the ordered install; the remaining
 				// special apps are not started behind the failure.
 				m.installStageQueue = nil
-				m.installStagePendingPlan = nil
 				// One dated log per failed run + clickable AI diagnosis; the
 				// exit code goes in the header so a success-looking log with
 				// a non-zero exit is diagnosable on sight.
@@ -1228,13 +1227,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				// Ableton flow (refresh the tree, resume batched work).
 				return m.finishAbleton(m.pendingAction)
 			}
-			if m.pendingAction == "davinci-spektra" {
-				// Declined = install Resolve without the optional OFX. That is a
-				// legitimate answer, not a cancel: continue the apply.
-				m.dvcSpektra = 2
-				os.Setenv("MOSQUITOMARCHY_DAVINCI_SPEKTRAFILM", "0")
-				return m.resumeInstallStageAfterPrompt()
-			}
 			return m, nil
 		}
 		switch m.pendingAction {
@@ -1308,18 +1300,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// them". Reached from Enter AND from back, both through the same
 			// confirmation.
 			return m, preinstallsRemoveCmd(m.pendingArgs)
-
-		case "davinci-spektra":
-			if msg.Yes {
-				m.dvcSpektra = 1
-				os.Setenv("MOSQUITOMARCHY_DAVINCI_SPEKTRAFILM", "1")
-				m.toast, _ = m.toast.SetOK("spektrFilm OFX will be installed with Resolve")
-			} else {
-				m.dvcSpektra = 2
-				os.Setenv("MOSQUITOMARCHY_DAVINCI_SPEKTRAFILM", "0")
-			}
-			// Continue the DaVinci stage that was interrupted by this question.
-			return m.resumeInstallStageAfterPrompt()
 
 		case "addons":
 			args := append([]string{}, m.pendingArgs...)
@@ -2039,6 +2019,45 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.setupCatPicker, cmd = m.setupCatPicker.Update(msg)
 	case scrBackupApps:
+		// Same live search as Setup: SHIFT+F (or /) opens the framed filter
+		// zone, printable keys refine the tree, Backspace trims, Esc closes.
+		if km, ok := msg.(tea.KeyMsg); ok {
+			switch km.String() {
+			case "F", "shift+F", "/":
+				if m.filterOpen {
+					m.filterOpen = false
+					m.filterText = ""
+				} else {
+					m.filterOpen = true
+				}
+				m.backupAppsPicker = m.rebuildBackupApps()
+				return m, nil
+			case "esc":
+				if m.filterOpen {
+					m.filterOpen = false
+					m.filterText = ""
+					m.backupAppsPicker = m.rebuildBackupApps()
+					return m, nil
+				}
+			case "backspace":
+				if m.filterOpen {
+					if m.filterText == "" {
+						return m, nil
+					}
+					r := []rune(m.filterText)
+					m.filterText = string(r[:len(r)-1])
+					m.backupAppsPicker = m.rebuildBackupApps()
+					return m, nil
+				}
+			}
+			if m.filterOpen {
+				if runes := km.Runes; len(runes) == 1 && unicode.IsPrint(runes[0]) {
+					m.filterText += string(runes[0])
+					m.backupAppsPicker = m.rebuildBackupApps()
+					return m, nil
+				}
+			}
+		}
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
 			v := m.backupAppsPicker.SelectedValue()
 			if strings.HasPrefix(v, "cat:") {
@@ -2413,19 +2432,6 @@ func (m model) stagedInstall(plan []string) (model, tea.Cmd) {
 	return m.runNextInstallStage()
 }
 
-// resumeInstallStageAfterPrompt continues the DaVinci stage once its optional
-// OFX question is answered. The legacy whole-plan path is kept for a prompt
-// that arrives from somewhere other than the staged queue.
-func (m model) resumeInstallStageAfterPrompt() (model, tea.Cmd) {
-	plan := m.installStagePendingPlan
-	m.installStagePendingPlan = nil
-	if len(plan) > 0 {
-		m.pendingAction = "apply"
-		return m.startWorking("Installing DaVinci Resolve", workingArgs("apply", plan)...)
-	}
-	return m, fetchMissingAssetsCmd(m.pendingArgs)
-}
-
 func (m model) runNextInstallStage() (model, tea.Cmd) {
 	if len(m.installStageQueue) == 0 {
 		return m, nil
@@ -2434,16 +2440,6 @@ func (m model) runNextInstallStage() (model, tea.Cmd) {
 	m.installStageQueue = m.installStageQueue[1:]
 	switch stage.kind {
 	case "davinci":
-		if m.dvcSpektra == 0 {
-			m.installStagePendingPlan = stage.plan
-			m.pendingAction = "davinci-spektra"
-			m.pendingMsg = "Install the free spektrFilm OFX too?\n\nPhotochemical film simulation for Resolve (SpektraFilm 114c.de, free). Installed into Resolve's OFX folder, removable later from the DaVinci uninstall."
-			m.pendingNo = "Resolve only"
-			m.pendingYes = "Add spektrFilm"
-			m.push(scrConfirm)
-			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
-			return m, nil
-		}
 		m.pendingAction = "apply"
 		return m.startWorking("Installing DaVinci Resolve", workingArgs("apply", stage.plan)...)
 	case "ableton":
@@ -3198,6 +3194,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			return m, m.backupNameInput.Init()
 		case "apps":
 			m.push(scrBackupApps)
+			m.filterOpen = false
+			m.filterText = ""
 			m.backupAppsPicker = m.rebuildBackupApps()
 			return m, nil
 		case "app-settings":
@@ -3228,6 +3226,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 
 	case scrBackupApps:
 		// Enter on any row returns to the options (the checkmarks are kept).
+		m.filterOpen = false
+		m.filterText = ""
 		m.pop()
 		m.backupOptPicker = m.rebuildBackupOptions()
 		return m, nil
@@ -5285,16 +5285,65 @@ func (m model) rebuildBackupAppSettings() navPicker {
 
 // rebuildBackupApps rebuilds the backup content tree picker.
 func (m model) rebuildBackupApps() navPicker {
+	if m.filterText != "" {
+		return m.rebuildFilteredBackupApps()
+	}
 	idx := m.backupAppsPicker.Index()
 	p := newNavPicker("", m.backupTreeItems()).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
 		)
 	return p.SelectIndex(idx)
+}
+
+// rebuildFilteredBackupApps is the backup tree's typing filter: matching leaf
+// rows only, prefixed by their folder, exactly like Setup's filtered view.
+func (m model) rebuildFilteredBackupApps() navPicker {
+	ft := strings.ToLower(m.filterText)
+	labelOf := make(map[string]string, len(m.backupFolders))
+	for _, f := range m.backupFolders {
+		labelOf[f.Folder] = f.Label
+	}
+	// A query matching a folder name shows the whole folder (typing "apps"
+	// lists every app row).
+	folderHit := make(map[string]bool, len(m.backupFolders))
+	for _, f := range m.backupFolders {
+		if searchMatch(f.Label, ft) {
+			folderHit[f.Folder] = true
+		}
+	}
+	items := make([]tuikit.PickerItem, 0, len(m.backupItems))
+	for _, it := range m.backupItems {
+		if !folderHit[it.Folder] && !searchMatch(it.Label, ft) && !searchMatch(it.Info, ft) {
+			continue
+		}
+		v := setupValue(it.Folder, it.Key)
+		mark := "○"
+		if m.backupChecked[v] {
+			mark = "●"
+		}
+		label := labelOf[it.Folder]
+		if label == "" {
+			label = it.Folder
+		}
+		items = append(items, tuikit.PickerItem{
+			Display: label + " › " + it.Label,
+			Value:   v,
+			Badge:   mark,
+		})
+	}
+	p := newNavPicker("", items).SetSize(m.contentSize()).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
+		)
+	return p.KeepCursor(m.backupAppsPicker.SelectedValue())
 }
 
 // reaperDepthLabel is the app-settings row text for the REAPER depth.

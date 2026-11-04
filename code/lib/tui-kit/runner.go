@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -33,6 +34,31 @@ type Runner struct {
 	done     bool
 	err      error
 	cancel   context.CancelFunc
+	progress int
+	hasProg  bool
+}
+
+// runnerProgressPrefix is the control prefix a streamed command uses to
+// report byte progress (`\001progress 42`). Those lines feed Progress() and
+// never appear in the log; `\001progress -1` clears the bar.
+const runnerProgressPrefix = "\x01progress "
+
+// Progress is the last 0-100 value reported by the running command, and
+// whether a bar should be drawn. A fresh Start resets both.
+func (r Runner) Progress() (int, bool) { return r.progress, r.hasProg }
+
+func parseRunnerProgress(line string) (int, bool) {
+	if !strings.HasPrefix(line, runnerProgressPrefix) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, runnerProgressPrefix)))
+	if err != nil {
+		return 0, false
+	}
+	if n > 100 {
+		n = 100
+	}
+	return n, true
 }
 
 type RunnerLineMsg struct{ Text string }
@@ -68,6 +94,8 @@ func (r Runner) start(label, name string, args ...string) (Runner, tea.Cmd) {
 	r.output = nil
 	r.done = false
 	r.err = nil
+	r.progress = 0
+	r.hasProg = false
 	cmd := exec.CommandContext(ctx, name, args...)
 	// Run the action in its own process group and cancel the WHOLE group: a
 	// module's own signal traps (e.g. Davinci's ~25 GB temp-dir cleanup) only
@@ -150,6 +178,15 @@ func waitErr(err error, ps *os.ProcessState) error {
 func (r Runner) Update(msg tea.Msg) (Runner, tea.Cmd) {
 	switch m := msg.(type) {
 	case RunnerLineMsg:
+		if pct, ok := parseRunnerProgress(m.Text); ok {
+			if pct < 0 {
+				r.hasProg = false
+				r.progress = 0
+			} else {
+				r.progress, r.hasProg = pct, true
+			}
+			return r, waitForRunnerActivity(r.lines, r.result)
+		}
 		r.output = append(r.output, m.Text)
 		r.viewport.SetContent(strings.Join(r.output, "\n"))
 		r.viewport.GotoBottom()

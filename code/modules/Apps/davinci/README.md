@@ -15,7 +15,7 @@ Installs **DaVinci Resolve** (Studio or free) from the official Blackmagic insta
 
 Drop the zip in `code/modules/Apps/davinci/` (exact file name = edition chosen automatically). When the zip is missing, the script itself displays these three links as clickable hyperlinks (Ctrl+click to open).
 
-Steps: dependencies + OpenCL runtime depending on GPU → copy to `/opt/resolve` → XWayland launcher (`QT_QPA_PLATFORM=xcb`) → **codecs** (Studio = native H.264/H.265, optional FFmpeg plugin and optional AAC decode via `resolve-aacfix`; free = transcode to DNxHR/PCM) → **DRwrap** → optional OFX **SpectraFilm**. Data (projects, preferences) is never touched.
+Steps: dependencies + OpenCL runtime depending on GPU → copy to `/opt/resolve` → XWayland launcher (`QT_QPA_PLATFORM=xcb`) → **codecs** (Studio = native H.264/H.265, optional FFmpeg plugin and optional AAC decode via `resolve-aacfix`; free = transcode to DNxHR/PCM) → **DRwrap**. Data (projects, preferences) is never touched. The SpektraFilm OFX has its own module: `code/modules/Apps/spektrafilm/`.
 
 ## AAC audio (important)
 
@@ -61,7 +61,6 @@ If the AAC fix/license patch/FFmpeg plugin were present before the update, they 
 code/modules/Apps/davinci/setup-davinci.sh                     # interactive
 code/modules/Apps/davinci/setup-davinci.sh -y                  # default choices
 code/modules/Apps/davinci/setup-davinci.sh --studio|--free     # force the edition if ambiguous
-code/modules/Apps/davinci/setup-davinci.sh --with-spektrafilm  # also installs SpectraFilm OFX
 code/modules/Apps/davinci/setup-davinci.sh --no-codecs         # leave codec setup alone
 code/modules/Apps/davinci/setup-davinci.sh --keep-mesa         # do not remove opencl-mesa (AMD)
 code/modules/Apps/davinci/setup-davinci.sh --status            # current state, changes nothing

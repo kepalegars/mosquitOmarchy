@@ -2,8 +2,8 @@
 # uninstall-davinci.sh — Removes DaVinci Resolve
 #
 # Removes /opt/resolve (sudo required), the launcher, the menu shortcut, the
-# Hyprland tiling rule, the optional AAC patch (back to the stock binary/libs)
-# and the SpectraFilm OFX.
+# Hyprland tiling rule and the optional AAC patch (back to the stock
+# binary/libs). The SpektraFilm OFX belongs to its own module and is untouched.
 # The DATA (projects, LUTs, preferences) in ~/.local/share and
 # ~/.config/Blackmagic Design are kept by default.
 #
@@ -18,7 +18,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESOLVE_DIR=/opt/resolve
 LAUNCHER="$HOME/.local/bin/davinci-resolve"
 HYPR="$HOME/.config/hypr/hyprland.lua"
-OFX_PLUGIN_DIR=/usr/OFX/Plugins
 
 
 YES=0
@@ -62,7 +61,6 @@ found=0
 [[ -f "$HYPR" ]] && grep -qF -- '-- >>> mosquito-davinci-tiling >>>' "$HYPR" && found=1
 [[ -e "${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/davinci-state" ]] && found=1
 [[ -e /opt/resolve/bin/resolve.aac-orig ]] && found=1
-[[ -d "$OFX_PLUGIN_DIR" ]] && find "$OFX_PLUGIN_DIR" -maxdepth 1 -iname '*spektra*' | grep -q . && found=1
 
 if (( ! found )); then
   warn "Nothing to remove — DaVinci Resolve is not installed."
@@ -110,19 +108,7 @@ if [[ -d /opt/resolve ]]; then
   fi
 fi
 
-# 3) SpectraFilm OFX
-if [[ -d "$OFX_PLUGIN_DIR" ]] && find "$OFX_PLUGIN_DIR" -maxdepth 1 -iname '*spektra*' | grep -q .; then
-  if ask "Remove the SpectraFilm OFX ($OFX_PLUGIN_DIR)?" y; then
-    if [[ $EUID -eq 0 || -n "${SUDO_USER:-}" ]] || mq_sudo -v 2>/dev/null; then
-      mq_sudo bash -c "rm -rf '$OFX_PLUGIN_DIR'/*[Ss]pektra*"
-      ok "SpectraFilm OFX removed"
-    else
-      warn "SpectraFilm OFX not removed: sudo required —  sudo rm -rf '$OFX_PLUGIN_DIR'/*[Ss]pektra*"
-    fi
-  fi
-fi
-
-# 4) DRwrap integration (service + generated launcher; package and converted files kept)
+# 3) DRwrap integration (service + generated launcher; package and converted files kept)
 if command -v drwrap >/dev/null 2>&1; then
   if ask "Remove the DRwrap service/launcher integration (package and converted files kept)?" y; then
     drwrap setup --remove >/dev/null 2>&1 && ok "DRwrap integration removed" || warn "drwrap setup --remove failed"

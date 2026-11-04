@@ -94,6 +94,7 @@ Details, options and caveats live in each module's own `README.md`. This table i
 | `ableton` | Ableton Live 12 native on Linux, sharing the same VST root | [README](code/modules/Apps/ableton/README.md) |
 | `guitarpro` | Guitar Pro 8 in its own Wine prefix | [README](code/modules/Apps/guitarpro/README.md) |
 | `davinci-resolve` | DaVinci Resolve (free or Studio) + silent DRwrap integration | [README](code/modules/Apps/davinci/README.md) |
+| `spektrafilm` | SpektraFilm (film simulation): OFX from a local zip (any version) + standalone `spektrafilm-git` AUR app | [README](code/modules/Apps/spektrafilm/README.md) |
 | `extracto` | Extracto | [README](code/modules/Apps/extracto/README.md) |
 | `douze` | SSL 12 control (douze daemon, udev, PipeWire split) + Omarchy360 mixer | [README](code/modules/Apps/douze/README.md) · [study](code/modules/Apps/douze/STUDY.md) |
 | `tidal` | TIDAL Hi-Fi (TidaLuna): package, hidden menu bar, `SUPER+SHIFT+M` binding | [setup](code/modules/Apps/tidal/setup-tidal.sh) |
@@ -296,6 +297,7 @@ Also not in the repo:
 | Ableton Live | `ableton_live_suite_*.zip` or `_intro_*.zip` | [ableton.com](https://www.ableton.com/en/download/) (account needed) |
 | Bitwig Studio | `bitwig-studio-*.deb`, version pinned by the module | [bitwig.com](https://www.bitwig.com/download/) |
 | DaVinci Resolve | `DaVinci_Resolve_*_Linux.zip` (~7 GB) | [Blackmagic](https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion) |
+| SpektraFilm OFX | `spektrafilm*.zip` (any version) | [spektrafilm.114c.de](https://downloads.spektrafilm.114c.de/latest/spektrafilm-OFX-linux.zip) |
 | Guitar Pro 8 | `guitar-pro-8-setup.exe` | [downloads](https://downloads.guitar-pro.com/gp8/stable/guitar-pro-8-setup.exe) |
 
 ## Layout

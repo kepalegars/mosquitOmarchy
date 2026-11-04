@@ -22,14 +22,10 @@
 # can be added: drop the ffmpeg_encoder_plugin.dvcp.bundle.zip here or
 # downloaded from GitHub.
 #
-# OFX option: the free "SpectraFilm" plugin (photochemical film simulation)
-# can be installed straight into DaVinci Resolve (/usr/OFX/Plugins).
-#
 # Usage :
 #   ./setup-davinci.sh                     # interactive
 #   ./setup-davinci.sh -y                  # non-interactive (default choices)
 #   ./setup-davinci.sh --studio|--free     # force the edition if ambiguous
-#   ./setup-davinci.sh --with-spektrafilm  # also installs the SpectraFilm OFX
 #   ./setup-davinci.sh --no-codecs         # leave codec setup alone
 #   ./setup-davinci.sh --keep-mesa         # do not remove opencl-mesa (AMD)
 #   ./setup-davinci.sh --status            # current state, changes nothing
@@ -48,16 +44,13 @@ BIN_DIR="$HOME/.local/bin"
 APPS_DIR="$HOME/.local/share/applications"
 LAUNCHER="$BIN_DIR/davinci-resolve"
 DESKTOP="$APPS_DIR/davinci-resolve.desktop"
-OFX_PLUGIN_DIR=/usr/OFX/Plugins
 FFMPEG_PLUGIN_URL="https://github.com/EdvinNilsson/ffmpeg_encoder_plugin/releases/latest/download/ffmpeg_encoder_plugin.dvcp.bundle.zip"
-SPEKTRAFILM_URL="https://downloads.spektrafilm.114c.de/latest/spektrafilm-OFX-linux.zip"
 
-YES=0 STATUS_ONLY=0 FORCE_ED="" WITH_SPEKTRA=0 SKIP_CODECS=0 KEEP_MESA=0
+YES=0 STATUS_ONLY=0 FORCE_ED="" SKIP_CODECS=0 KEEP_MESA=0
 while (( $# )); do a="$1"; case "$a" in
   -y|--yes) YES=1 ;;
   --status) STATUS_ONLY=1 ;;
   --studio|--free) FORCE_ED="${a#--}" ;;
-  --with-spektrafilm) WITH_SPEKTRA=1 ;;
   --no-codecs) SKIP_CODECS=1 ;;
   --keep-mesa) KEEP_MESA=1 ;;
   -h|--help) sed -n '2,/^# Launched from a file manager/p' "$0" | head -n -1 || true; exit 0 ;;
@@ -254,11 +247,6 @@ do_status(){
   else warn "AAC decode     : not enabled (AAC imports are silent)"; fi
   if [[ -d "$RESOLVE_DIR/IOPlugins/ffmpeg_encoder_plugin.dvcp.bundle" ]]; then ok "FFmpeg encoder plugin : installed (Studio)"
   else warn "FFmpeg encoder plugin : absent"; fi
-  if [[ -d "$OFX_PLUGIN_DIR" ]] && find "$OFX_PLUGIN_DIR" -maxdepth 1 -iname '*spektra*' -print -quit 2>/dev/null | grep -q .; then
-    ok "SpectraFilm OFX : installed"
-  else
-    warn "SpectraFilm OFX : absent"
-  fi
   if command -v drwrap >/dev/null 2>&1; then
     if systemctl --user is-enabled drwrap.service >/dev/null 2>&1; then
       ok "DRwrap          : installed (converter service enabled)"
@@ -746,48 +734,6 @@ install_ffmpeg_plugin(){
   ok "FFmpeg encoder plugin: $dst/ffmpeg_encoder_plugin.dvcp.bundle"
 }
 
-# ───────────────────────── SpectraFilm OFX (option) ─────────────────────────
-install_spektrafilm(){
-  local src="" tmp bund
-  if [[ -d "$OFX_PLUGIN_DIR" ]] && find "$OFX_PLUGIN_DIR" -maxdepth 1 -iname '*spektra*' -print -quit 2>/dev/null | grep -q .; then
-    ok "SpectraFilm OFX already installed."
-    return 0
-  fi
-  msg "Installing the SpectraFilm OFX (film simulation, free)"
-  for f in "$SCRIPT_DIR"/spektrafilm*.zip; do [[ -f "$f" ]] && { src="$f"; break; }; done
-  if [[ -z "$src" ]]; then
-    if ( (( YES )) || ask "Download SpectraFilm from spektrafilm.114c.de?" y ); then
-      if curl -fL --max-time 300 -o "$SCRIPT_DIR/spektrafilm-OFX-linux.zip" "$SPEKTRAFILM_URL"; then
-        src="$SCRIPT_DIR/spektrafilm-OFX-linux.zip"
-        ok "Downloaded: $(basename "$src")"
-      else
-        rm -f "$SCRIPT_DIR/spektrafilm-OFX-linux.zip"
-        err "Download failed — drop spektrafilm-OFX-linux.zip in $SCRIPT_DIR/" >&2
-        return 1
-      fi
-    else
-      warn "SpectraFilm OFX not installed."
-      return 0
-    fi
-  fi
-  tmp="$(davinci_tmpdir spektra)"
-  install_tmp="$tmp"
-  unzip -oq "$src" -d "$tmp" || { err "Cannot extract: $src"; return 1; }
-  mapfile -t bund < <(find "$tmp" -maxdepth 4 -type d -name '*.ofx.bundle' | sort)
-  if (( ${#bund[@]} == 0 )); then
-    err "No *.ofx.bundle folder found in $src."
-    return 1
-  fi
-  mq_sudo -v || { err "Password required (writing into $OFX_PLUGIN_DIR)."; return 1; }
-  mq_sudo mkdir -p "$OFX_PLUGIN_DIR"
-  local b
-  for b in "${bund[@]}"; do
-    mq_sudo cp -a "$b" "$OFX_PLUGIN_DIR/"
-    ok "OFX installed: $OFX_PLUGIN_DIR/$(basename "$b")"
-  done
-  warn "Restart DaVinci Resolve then look for \"SpectraFilm\" in Color > Open FX."
-}
-
 # ───────────────────────── Recap ─────────────────────────
 recap(){
   local ed="${1:-}"
@@ -899,11 +845,6 @@ main(){
   fix_audio_backend
   ((SKIP_CODECS)) && warn "--no-codecs: codec setup NOT applied." || step_codecs "$ed"
   install_drwrap
-  echo
-
-  if ((WITH_SPEKTRA)) || { ((YES == 0)) && ask "Install the free \"SpectraFilm\" OFX (film simulation) into Resolve?" n; }; then
-    install_spektrafilm
-  fi
   echo
   recap "$ed"
 

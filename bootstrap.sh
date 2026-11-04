@@ -164,6 +164,7 @@ collect_installers(){
     'bitwig.jar|code/modules/Apps/bitwig/PATCH'
     '*[Rr]esolve*.zip|code/modules/Apps/davinci'
     '[Dd]a[Vv]inci*.zip|code/modules/Apps/davinci'
+    '*[Ss]pektra[Ff]ilm*.zip|code/modules/Apps/spektrafilm'
   )
   local moved=0 skipped=0 entry pat dest f base target
   shopt -s nullglob
@@ -199,6 +200,8 @@ collect_installers(){
   compgen -G "$SRC/code/modules/Apps/davinci/*[Rr]esolve*.zip" >/dev/null \
     || compgen -G "$SRC/code/modules/Apps/davinci/[Dd]a[Vv]inci*.zip" >/dev/null \
     || greyed+=("davinci-resolve")
+  compgen -G "$SRC/code/modules/Apps/spektrafilm/*[Ss]pektra[Ff]ilm*.zip" >/dev/null \
+    || greyed+=("spektrafilm")
   hr
   if ((${#greyed[@]})); then
     warn "Setup rows staying greyed out (installer still missing): ${greyed[*]}"

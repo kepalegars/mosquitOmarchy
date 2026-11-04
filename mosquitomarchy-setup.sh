@@ -1019,6 +1019,17 @@ st_davinci(){
   [[ -x /opt/resolve/bin/resolve ]] || { echo missing; return; }
   [[ -x "$HOME/.local/bin/davinci-resolve" ]] && echo ok || echo partial
 }
+st_spektrafilm(){
+  # Both halves of the module: the four OFX bundles the official installer
+  # writes into /usr/OFX/Plugins, and the standalone spektrafilm-git app (AUR).
+  local n=0 b app=0
+  for b in /usr/OFX/Plugins/spektrafilm*.ofx.bundle; do
+    [[ -d $b ]] && n=$((n+1))
+  done
+  pkg_has spektrafilm-git && app=1
+  ((n == 0 && app == 0)) && { echo missing; return; }
+  ((n >= 4 && app == 1)) && echo ok || echo partial
+}
 st_handbrake(){
   # HandBrake GUI installed + Hyprland rules block present
   pkg_has handbrake || { echo missing; return; }
@@ -1084,7 +1095,8 @@ MODULES=(
   "omarchy-vm:Omarchy in QEMU/KVM from the official ISO — launcher + TUI manager + shared folder + USB/GPU passthrough"
   "ableton:Native Linux Ableton Live 12 (ableton-linux) + multi-DAW VST sharing"
   "guitarpro:Guitar Pro 8 via wine (dedicated prefix + launcher + menu shortcut)"
-  "davinci-resolve:DaVinci Resolve (Studio or free) + AAC fix + FFmpeg encoder + SpectraFilm OFX option"
+  "davinci-resolve:DaVinci Resolve (Studio or free) + AAC fix + FFmpeg encoder"
+  "spektrafilm:SpektraFilm (film simulation) — installs the OFX plugins from a local zip and the standalone spektrafilm-git AUR app; any OFX version accepted"
   "ableton-move-manager:Move Manager — Ableton Move → Ableton Live → Bitwig (menu: address / Move Manager / convert — native Omarchy prompts, MIDI export)"
   "handbrake:HandBrake (Qt GUI + CLI) + H.264/H.265 encoders + preset sync + Hyprland rules"
   "signal:Signal Desktop — official Electron client + autostart minimized to tray, hide menu bar, menu entry Signal, login autostart"
@@ -1150,6 +1162,7 @@ TWEAKS=(
   "wine-apps:Promote the real apps a Windows/Wine installer publishes into the Omarchy Apps menu: read each Wine .desktop, copy its icon, write a clean entry and move the original to the trash. A path-unit watcher runs only while a Wine process is alive; APM installs are left alone (APM removes its own entries)"
   "wine-theme:Make every native Windows (Wine/XWayland) window follow the Omarchy theme — dark title bars and controls on a dark theme, light on a light one (per-prefix registry + a theme-watch hook that re-applies on every theme change)"
   "colors-unifier:Make GTK4/GTK3 (and Qt via qgtk3) apps follow the active Omarchy theme with guaranteed-readable text, and offer to refresh Nautilus immediately (hardened fork of Accord; replaces its plugin)"
+  "amdgpu-compute-timeout:Give the AMDGPU compute rings a 90 s watchdog instead of 2 s so a heavy Vulkan/OpenCL job on an integrated GPU (SpektraFilm OFX in DaVinci Resolve, Blender, …) stops dying with VK_ERROR_DEVICE_LOST. Adds one marked amdgpu.lockup_timeout=2000,90000,2000,2000 line to Omarchy's Limine config (GFX, Compute, SDMA, Video) and regenerates the boot entry. GPU-WIDE, not per-app: every compute job on this AMD GPU gets the longer watchdog, so a real hang can freeze the desktop or that app for up to 90 s before the queue resets; graphics/DMA/video stay at 2 s. It works around a too-short watchdog, not a real driver/shader hang. FULL REBOOT required (a logout or session restart does not reload amdgpu); --remove also needs a reboot."
 )
 
 fix_desc(){ # id -> description (searches both catalogs)
@@ -1178,6 +1191,7 @@ fix_category(){
     1px-seam)           echo "Appearance" ;;
     bar-center-anchor)  echo "Omarchy" ;;
     bluetooth)          echo "Hardware" ;;
+    amdgpu-compute-timeout) echo "Hardware" ;;
     hyprland-autofocus) echo "Windows & input" ;;
     *)                echo "Other" ;;
   esac
@@ -1209,6 +1223,7 @@ run_tweak(){ # single tweak by id
     terminal-padding) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-terminal-padding.sh" ;;
     wine-theme) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-wine-theme.sh" ;;
     colors-unifier) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-colors-unifier.sh" ;;
+    amdgpu-compute-timeout) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-amdgpu-compute-timeout.sh" ;;
     *) err "Unknown tweak: $id"; return 1 ;;
   esac
 }
@@ -1223,6 +1238,7 @@ run_tweak_remove(){ # single tweak removal by id
     wine-apps) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-wine-apps.sh" --remove ;;
     wine-theme) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-wine-theme.sh" --remove ;;
     colors-unifier) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-colors-unifier.sh" --remove ;;
+    amdgpu-compute-timeout) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-amdgpu-compute-timeout.sh" --remove ;;
     *) return 1 ;;
   esac
 }
@@ -1265,6 +1281,7 @@ module_state(){
     ableton) st_ableton ;; guitarpro) st_guitarpro ;;
     ableton-move-manager) st_ableton_move_converter ;;
     davinci-resolve) st_davinci ;;
+    spektrafilm) st_spektrafilm ;;
 handbrake) st_handbrake ;;
       signal) st_signal ;;
       betterbird) st_betterbird ;;
@@ -1322,6 +1339,7 @@ module_of_path(){
     code/modules/Apps/ableton/*)     echo ableton ;;
     code/modules/Apps/guitarpro/*)   echo guitarpro ;;
     code/modules/Apps/davinci/*)     echo davinci-resolve ;;
+    code/modules/Apps/spektrafilm/*) echo spektrafilm ;;
     code/modules/Apps/handbrake/*)   echo handbrake ;;
     code/modules/Apps/signal/*)      echo signal ;;
     code/modules/Apps/betterbird/*)  echo betterbird ;;
@@ -4143,7 +4161,8 @@ un_betterbird(){
 
 un_davinci(){
   # Delegates to davinci/uninstall-davinci.sh: removes launcher + menu + libav
-  # patch + /opt/resolve (sudo) + OFX SpectraFilm, without the project data.
+  # patch + /opt/resolve (sudo), without the project data. The SpektraFilm OFX
+  # has its own module and is left alone.
   if [[ -x /opt/resolve/bin/resolve || -x "$BIN_DIR/davinci-resolve" ]]; then
     info "Uninstalling DaVinci Resolve"
     if command -v sudo >/dev/null && [[ -d /opt/resolve ]] \
@@ -4156,6 +4175,11 @@ un_davinci(){
   else
     ok "DaVinci Resolve not installed — nothing to do"
   fi
+}
+
+un_spektrafilm(){
+  info "Uninstalling the SpektraFilm OFX"
+  bash "$SPEKTRAFILM_DIR/setup-spektrafilm.sh" --remove -y || warn "setup-spektrafilm.sh --remove ran into problems"
 }
 
 un_handbrake(){
@@ -4772,6 +4796,7 @@ uninstall_module(){
     ableton) un_ableton ;;
     guitarpro) un_guitarpro ;;
     davinci-resolve) un_davinci ;;
+    spektrafilm) un_spektrafilm ;;
     ableton-move-manager) un_ableton_move_converter ;;
 handbrake) un_handbrake ;;
       signal) un_signal ;;
@@ -4903,6 +4928,7 @@ OMARCHY_VM_DIR="$SCRIPTS/VMs/omarchy-vm"
 ABLETON_DIR="$APPS_DIR/ableton"
 GUITARPRO_DIR="$APPS_DIR/guitarpro"
 DAVINCI_DIR="$APPS_DIR/davinci"
+SPEKTRAFILM_DIR="$APPS_DIR/spektrafilm"
 HANDBRAKE_DIR="$APPS_DIR/handbrake"
 SIGNAL_DIR="$APPS_DIR/signal"
 BETTERBIRD_DIR="$APPS_DIR/betterbird"
@@ -5079,36 +5105,33 @@ run_davinci(){
   # DaVinci Resolve (Studio or free): the Blackmagic zip must be placed in
   # davinci/ (the file name picks the edition). H.264/H.265 handled according to
   # the edition; the AAC patch / FFmpeg plugin proposed. With -y: auto AAC
-  # patch (Studio), FFmpeg plugin not forced (Studio), SpectraFilm not forced.
+  # patch (Studio), FFmpeg plugin not forced (Studio).
   #
   # Update mode (MOSQUITOMARCHY_UPDATE=1): the user updated Resolve itself.
-  # Re-apply the integration/patches without asking for the zip or the OFX.
+  # Re-apply the integration/patches without asking for the zip.
   if [[ "${MOSQUITOMARCHY_UPDATE:-0}" == 1 ]]; then
     bash "$DAVINCI_DIR/setup-davinci.sh" -y
     return
   fi
-  # spektrFilm (the free photochemical film-simulation OFX) is asked HERE rather
-  # than left to setup-davinci.sh's own prompt: the TUI runs this module with
-  # YES=1, and setup-davinci.sh only offers it under `((YES == 0)) && ask`, so
-  # from the TUI it was neither proposed nor installed. The decision is taken
-  # where it can still be a real question, then handed over as an explicit flag.
-  local -a extra=()
-  [[ $YES == 1 ]] && extra+=(-y)
-  local spek="${MOSQUITOMARCHY_DAVINCI_SPEKTRAFILM:-}"
-  if [[ -z $spek ]]; then
-    if ask "Also install the free spektrFilm OFX (photochemical film simulation) into Resolve?" n; then
-      spek=1
-    else
-      spek=0
-    fi
+  bash "$DAVINCI_DIR/setup-davinci.sh" $([[ $YES == 1 ]] && echo -y)
+}
+
+run_spektrafilm(){
+  # The official OFX zip must be in spektrafilm/ (any version). Setup greys the
+  # row out when it is missing; reaching here without one means the user ran
+  # the module directly, so say which file is expected.
+  local f found=0
+  for f in "$SPEKTRAFILM_DIR"/*.zip; do
+    [[ -f $f ]] || continue
+    [[ ${f,,} == *spektrafilm* ]] || continue
+    found=1; break
+  done
+  if ((!found)); then
+    err "No SpektraFilm zip in code/modules/Apps/spektrafilm/ — this module needs the"
+    err "official spektrafilm-OFX-linux.zip (or any version with 'spektrafilm' in its name)."
+    return 1
   fi
-  if [[ $spek == 1 ]]; then
-    extra+=(--with-spektrafilm)
-    msg "spektrFilm OFX: requested (--with-spektrafilm)"
-  else
-    msg "spektrFilm OFX: skipped"
-  fi
-  bash "$DAVINCI_DIR/setup-davinci.sh" "${extra[@]}"
+  bash "$SPEKTRAFILM_DIR/setup-spektrafilm.sh" $([[ $YES == 1 ]] && echo -y)
 }
 
 run_ableton_move_converter(){
@@ -5484,6 +5507,7 @@ exec_modules(){
       ableton) run_module ableton run_ableton ;;
       guitarpro) run_module guitarpro run_guitarpro ;;
       davinci-resolve) run_module davinci-resolve run_davinci ;;
+      spektrafilm) run_module spektrafilm run_spektrafilm ;;
       ableton-move-manager) run_module ableton-move-manager run_ableton_move_converter ;;
       handbrake) run_module handbrake run_handbrake ;;
       signal) run_module signal run_signal ;;
@@ -5542,7 +5566,7 @@ exec_modules(){
 
 # Categories of the "setup" action. id|label|modules (space-separated module ids).
 CATEGORIES=(
-  "apps|Apps|reaper bitwig ableton guitarpro davinci-resolve extracto douze tidal handbrake signal betterbird whatsapp-native superfile flea zen keepassxc"
+  "apps|Apps|reaper bitwig ableton guitarpro davinci-resolve spektrafilm extracto douze tidal handbrake signal betterbird whatsapp-native superfile flea zen keepassxc"
   "tuis|TUIs|"
   # "Plugins" is the project's own layer: the manager itself (the deployer),
   # its update module, and project utilities such as power management and SSH

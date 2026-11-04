@@ -162,7 +162,7 @@ collect_complete(){
   # passwords, generated lists, nested archives and (unless requested) logs.
   local exclude='(^|/)\.git(/|$)|(^|/)PATCH(/|$)|(^|/)\.local(/|$)|(^|/)(Passwords\.kdbx|pkglist\.txt|aurlist\.txt|apps\.selected)$|\.tar\.gz(\.gpg)?$'
   (( ${LOGS:-0} )) || exclude+='|\.log$'
-  (( ${ARCHIVE_INSTALLERS:-0} )) || exclude+='|^code/modules/Apps/(ableton/[^/]+\.(run|zip)|bitwig/[^/]+\.deb|davinci/[^/]+\.zip|guitarpro/[^/]+\.exe)$'
+  (( ${ARCHIVE_INSTALLERS:-0} )) || exclude+='|^code/modules/Apps/(ableton/[^/]+\.(run|zip)|bitwig/[^/]+\.deb|davinci/[^/]+\.zip|spektrafilm/[^/]+\.zip|guitarpro/[^/]+\.exe)$'
   {
     git -C "$ROOT" ls-files -z
     git -C "$ROOT" ls-files --others -z
@@ -174,6 +174,7 @@ installer_files(){
   for f in "$ROOT"/code/modules/Apps/ableton/*.{run,zip} \
            "$ROOT"/code/modules/Apps/bitwig/*.deb \
            "$ROOT"/code/modules/Apps/davinci/*.zip \
+           "$ROOT"/code/modules/Apps/spektrafilm/*.zip \
            "$ROOT"/code/modules/Apps/guitarpro/*.exe; do
     [[ -f $f ]] && printf '%s\0' "${f#"$ROOT"/}"
   done

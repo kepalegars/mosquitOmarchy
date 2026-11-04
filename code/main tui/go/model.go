@@ -444,8 +444,7 @@ type model struct {
 	// installStageQueue holds the special app stages (DaVinci, Guitar Pro,
 	// Ableton) that run AFTER everything else, one prompt+install at a time.
 	// Ableton is last by construction.
-	installStageQueue       []installStage
-	installStagePendingPlan []string
+	installStageQueue []installStage
 	// abletonInstallWait holds the rest of an install plan while Ableton runs
 	// in its own interactive flow (the module needs a real TTY for its
 	// archive/disk prompts). Empty = no continuation pending.
@@ -497,9 +496,6 @@ type model struct {
 	// above the shortcut bar (Setup/Uninstall + their subcategories). The
 	// zone echoes every pressed key in real time while filtering.
 	filterOpen bool
-	// dvcSpektra tracks the per-install-plan answer to "install the free
-	// spektrFilm OFX too?". 0 = not asked yet.
-	dvcSpektra   int
 	kbCatPicker  navPicker
 	kbItemPicker navPicker
 	kbCatItems   []KbCatItem

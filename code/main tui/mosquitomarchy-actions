@@ -50,6 +50,11 @@ export MOSQUITOMARCHY_LIB_ONLY=1
 # Tell the engine it is driven by the TUI: suppress the launcher's FINAL REPORT
 # and "Left to do by hand" checklist (see final_report).
 export MOSQUITOMARCHY_TUI=1
+# Streamed actions feed the TUI Runner: scripts that can report byte progress
+# (the Ableton .run download) emit `\001progress <pct>` lines instead of a
+# per-update log line. Set only here, so the ExecProcess Ableton flow still
+# gets curl's normal in-place bar.
+export MOSQUITOMARCHY_TUI_STREAM=1
 
 # Library-only source: defines every function, skips the flag parsing and the
 # auto-run `main "$@"`. `set -e` is transferred by the sourced `set -euo
@@ -259,6 +264,8 @@ tweak_applied(){
       [[ -f "$HOME/.local/state/mosquitomarchy/wine-theme/mode" ]] ;;
     wine-apps)
       [[ -f "$HOME/.config/systemd/user/mosquitomarchy-wine-apps.path" ]] ;;
+    amdgpu-compute-timeout)
+      grep -qF -- "mosquitOmarchy-amdgpu-compute-timeout" /etc/default/limine 2>/dev/null ;;
     *) return 1 ;;
   esac
 }
@@ -1204,7 +1211,7 @@ uninstall_state_signature(){
   for f in hyprland-crash 1px-seam; do
     fix_applied "$f" && sig+="fix:$f|"
   done
-  for t in terminal-padding wine-theme; do
+  for t in terminal-padding wine-theme amdgpu-compute-timeout; do
     tweak_applied "$t" && sig+="tweak:$t|"
   done
   # Still-present stock preinstalls (input to the Preinstalls folder).
@@ -1402,7 +1409,7 @@ _uninstall_tree(){
   # is a dead row.
   local -a applied_tweaks=()
   local tid
-  for tid in terminal-padding wine-theme; do
+  for tid in terminal-padding wine-theme amdgpu-compute-timeout; do
     tweak_applied "$tid" && applied_tweaks+=("$tid")
   done
   if ((${#applied_tweaks[@]})); then
@@ -1634,6 +1641,22 @@ cmd_backup_options(){
       && ! grep -q '"parent":"mosquito"' <<<"$tree"; then
     tree="$(sed '/"folder":"mosquito"/d' <<<"$tree")"
   fi
+  # The Uninstall tree only carries what is installed. Backup content must
+  # still offer every app module: the backup/restore selection is what decides
+  # which apps are put back, so an app that is not installed right now (flea,
+  # for example) must be tickable.
+  local _am _alabel _ainfo
+  for _am in $(category_items apps); do
+    grep -Fq "\"key\":\"$_am\"" <<<"$tree" && continue
+    _alabel="$_am - v$(module_version "$_am")"
+    _ainfo="$(module_desc "$_am")"
+    tree+=$'\n'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+      "$(json_str apps)" "$(json_str "$_am")" \
+      "$(json_str "$_alabel")" "$(json_str "$_ainfo")")"
+  done
+  grep -q '"folder":"apps","label"' <<<"$tree" \
+    || tree="$(printf '{"folder":%s,"label":%s,"accent":%s}\n%s' \
+      "$(json_str apps)" "$(json_str Apps)" false "$tree")"
   BK_HAS_USER=0
   grep -q '"folder":"user","key"' <<<"$tree" && BK_HAS_USER=1
 
@@ -1884,6 +1907,7 @@ _manual_asset_spec(){ # appkey -> "expected-file|url" (empty: no manual file)
     bitwig)    printf '%s|%s' 'bitwig-studio-*.deb' 'https://www.bitwig.com/download/' ;;
     guitarpro) printf '%s|%s' 'guitar-pro-8-setup.exe' 'https://www.guitar-pro.com/' ;;
     davinci|davinci-resolve)   printf '%s|%s' 'DaVinci_Resolve_[Studio_]<version>_Linux.zip' 'https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion' ;;
+    spektrafilm) printf '%s|%s' 'spektrafilm*.zip' 'https://downloads.spektrafilm.114c.de/latest/spektrafilm-OFX-linux.zip' ;;
     *)         printf '' ;;
   esac
 }
@@ -1898,6 +1922,12 @@ _manual_asset_present(){ # appkey -> 0 if its installer file exists
       [[ -f $APPS_DIR/guitarpro/guitar-pro-8-setup.exe ]] && return 0 ;;
     davinci|davinci-resolve)
       for f in "$APPS_DIR"/davinci/*[Rr]esolve*.zip "$APPS_DIR"/davinci/[Dd]a[Vv]inci*.zip; do [[ -f $f ]] && return 0; done ;;
+    spektrafilm)
+      for f in "$APPS_DIR"/spektrafilm/*.zip; do
+        [[ -f $f ]] || continue
+        [[ ${f,,} == *spektrafilm* ]] || continue
+        return 0
+      done ;;
   esac
   return 1
 }
@@ -1924,7 +1954,7 @@ _manual_asset_note(){ # appkey -> human note (empty when nothing to add)
 # it, and two hardcoded copies drift apart silently — davinci got gated while the
 # cache key still did not know about it, so its row would have kept whatever
 # state the last run wrote until the 30-minute reap.
-ASSET_GATED_KEYS=(ableton bitwig guitarpro davinci-resolve)
+ASSET_GATED_KEYS=(ableton bitwig guitarpro davinci-resolve spektrafilm)
 
 # Every module in that list: the row stays VISIBLE in Setup but is greyed and
 # refuses Enter, because dropping it from the list would leave the user

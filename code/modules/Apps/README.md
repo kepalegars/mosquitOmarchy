@@ -21,7 +21,7 @@ multi-GB zip does not belong in a git clone. Drop every installer you want into
 its module folder (never overwriting an existing file) and reports which Setup
 rows stay greyed out. You can also drop a file straight into its module folder
 (`code/modules/Apps/ableton/`, `code/modules/Apps/guitarpro/`, `code/modules/Apps/bitwig/`,
-`code/modules/Apps/davinci/`).
+`code/modules/Apps/davinci/`, `code/modules/Apps/spektrafilm/`).
 
 A missing installer is not a failure. The module that needs it stays visible in
 Setup, greyed out, and Enter on the row names the exact file and folder instead

@@ -4,6 +4,7 @@
 # GitHub repository limit (100 MB per file) and bloat the clone.
 code/modules/Apps/ableton/*.zip
 code/modules/Apps/davinci/*.zip
+code/modules/Apps/spektrafilm/*.zip
 code/modules/Apps/guitarpro/*.exe
 code/modules/Apps/**/*.run
 code/modules/Apps/bitwig/*.deb
