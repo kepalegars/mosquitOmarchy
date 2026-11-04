@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -30,6 +31,35 @@ func searchNorm(s string) string {
 func searchMatch(text, query string) bool {
 	q := searchNorm(query)
 	return q == "" || strings.Contains(searchNorm(text), q)
+}
+
+// sortSetupItems keeps every tree screen alphabetical, folder by folder. The
+// backend mostly sorts already, but Backup content appends the modules the
+// current tree does not list (flea, menu entries, …) after its sorted output,
+// so the display layer is the one place that can guarantee the order.
+func sortSetupItems(items []SetupItemRec, folders []FolderRec) {
+	pos := make(map[string]int, len(folders))
+	for i, f := range folders {
+		pos[f.Folder] = i
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		pi, iok := pos[items[i].Folder]
+		pj, jok := pos[items[j].Folder]
+		if !iok {
+			pi = len(folders)
+		}
+		if !jok {
+			pj = len(folders)
+		}
+		if pi != pj {
+			return pi < pj
+		}
+		a, b := strings.ToLower(items[i].Label), strings.ToLower(items[j].Label)
+		if a != b {
+			return a < b
+		}
+		return items[i].Key < items[j].Key
+	})
 }
 
 // firstRunMsg is delivered once, at startup, when the "add a shortcut?" question
@@ -261,6 +291,14 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
+			// Ctrl+C during a run is a manual cancel like Esc: ask first.
+			if m.top() == scrWorking && !m.runner.Done() {
+				return m.askCancelRun()
+			}
+			// Backing out of the cancel question answers No.
+			if m.top() == scrConfirm && m.cancelRunAsking {
+				m.cancelRunAsking = false
+			}
 			if len(m.nav) == 1 {
 				m.quit = true
 				return m, tea.Quit
@@ -326,6 +364,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.runner, cmd = m.runner.Update(msg)
 		if _, ok := msg.(tuikit.RunnerLineMsg); ok {
 			return m, cmd
+		}
+		// The run finished while the cancel question was still up: the
+		// question no longer applies, so close it and report normally.
+		if m.cancelRunAsking && m.top() == scrConfirm {
+			m.cancelRunAsking = false
+			m.pop()
 		}
 		if m.passphraseSet {
 			os.Unsetenv("OMARCHY_BACKUP_PASSPHRASE")
@@ -598,6 +642,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		sortSetupItems(msg.items, msg.folders)
 		m.setupFolders = msg.folders
 		m.setupItems = msg.items
 		m.setupByValue = make(map[string]SetupItemRec, len(msg.items))
@@ -619,6 +664,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, nil
 		}
 		firstBackupLoad := len(m.backupFolders) == 0
+		sortSetupItems(msg.items, msg.folders)
 		m.backupFolders = msg.folders
 		m.backupItems = msg.items
 		// All folders start folded on the FIRST load of the session. The open
@@ -1175,6 +1221,14 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			markShortcutPrompted(state)
 		}
 		m.pop()
+		if m.cancelRunAsking {
+			// Only an explicit Yes stops the run; Esc/No keeps it going.
+			m.cancelRunAsking = false
+			if !msg.Canceled && msg.Yes {
+				m.runner.Cancel()
+			}
+			return m, nil
+		}
 		if msg.Canceled || !msg.Yes {
 			if m.pendingAction == "backup" {
 				m.cleanupBackupSelection()
@@ -2345,7 +2399,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				return m, nil
 			}
 			if km.String() == "esc" || km.String() == "backspace" {
-				m.runner.Cancel()
+				return m.askCancelRun()
 			}
 		}
 		m.runner, cmd = m.runner.Update(msg)
@@ -3407,11 +3461,29 @@ func (m model) closeConfirm() (model, tea.Cmd) {
 // args are the full mosquitomarchy-actions command line (subcommand first).
 func (m model) startWorking(label string, args ...string) (model, tea.Cmd) {
 	m.replace(scrWorking)
+	m.cancelRunAsking = false
 	m.workingLabel = label
 	m.runner = tuikit.NewRunner().SetSize(m.contentSize())
 	var cmd tea.Cmd
 	m.runner, cmd = m.runner.Start(label, actionsBin(), args...)
 	return m, cmd
+}
+
+// askCancelRun is the one gate in front of a manual cancel: stopping a run
+// kills the backend's whole process group and can leave an install half
+// applied, so an accidental Esc (or Ctrl+C) must not do it silently. Every
+// path that would cancel a running action goes through here.
+func (m model) askCancelRun() (model, tea.Cmd) {
+	if m.cancelRunAsking {
+		return m, nil
+	}
+	m.cancelRunAsking = true
+	m.pendingMsg = "Are you sure?\n\nThe running action will be stopped. Anything it already changed is left as is."
+	m.pendingNo = "Keep running"
+	m.pendingYes = "Stop"
+	m.push(scrConfirm)
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+	return m, nil
 }
 
 // workingArgs returns the action's full command line with a leading

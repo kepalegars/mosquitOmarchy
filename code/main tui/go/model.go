@@ -495,7 +495,7 @@ type model struct {
 	// filterOpen: the 'f' toggle that shows the rectangular filter zone
 	// above the shortcut bar (Setup/Uninstall + their subcategories). The
 	// zone echoes every pressed key in real time while filtering.
-	filterOpen bool
+	filterOpen   bool
 	kbCatPicker  navPicker
 	kbItemPicker navPicker
 	kbCatItems   []KbCatItem
@@ -554,6 +554,10 @@ type model struct {
 	pendingMsg  string
 	pendingNo   string
 	pendingYes  string
+	// cancelRunAsking is set while the "Are you sure?" confirm for stopping a
+	// running action is up. pendingAction belongs to the run itself and must
+	// not be overwritten: the run's completion still reads it.
+	cancelRunAsking bool
 
 	// spaceSeq/spaceOp tag the async disk-space answer to the confirm that
 	// asked for it, so a late answer cannot rewrite a later prompt.
@@ -843,7 +847,8 @@ func splitSetupValue(v string) (folder, key string) {
 // folderValue is the picker key for a Setup folder row.
 func folderValue(folder string) string { return "cat:" + folder }
 
-// setupItemsOf returns the children of one folder, in backend order.
+// setupItemsOf returns the children of one folder, in the alphabetical order
+// sortSetupItems applied when the tree was loaded.
 func (m model) setupItemsOf(folder string) []SetupItemRec {
 	out := make([]SetupItemRec, 0, 8)
 	for _, it := range m.setupItems {

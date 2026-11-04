@@ -14,13 +14,16 @@ import (
 func TestDownloadBarGrowsWithPercent(t *testing.T) {
 	m := model{}
 	m.w = 80
-	inner := m.contentSizeW() - 2
+	inner := m.contentSizeW()
 
 	empty, half, full := m.downloadBar(0), m.downloadBar(50), m.downloadBar(100)
 	for _, bar := range []string{empty, half, full} {
 		if got := lipgloss.Width(bar); got != m.w {
 			t.Fatalf("bar width = %d, want %d (%q)", got, m.w, bar)
 		}
+	}
+	if strings.ContainsAny(empty, "[]") {
+		t.Fatalf("bar should not draw side brackets: %q", empty)
 	}
 
 	e, h, f := strings.Count(empty, "█"), strings.Count(half, "█"), strings.Count(full, "█")
@@ -49,6 +52,20 @@ func TestDownloadBarFitsTheWindow(t *testing.T) {
 	m.runner, _ = m.runner.Update(tuikit.RunnerLineMsg{Text: "\x01progress 30"})
 	if got := strings.Count(m.View(), "\n") + 1; got != m.h {
 		t.Fatalf("view has %d rows, want %d", got, m.h)
+	}
+	lines := strings.Split(m.View(), "\n")
+	if !strings.Contains(lines[len(lines)-1], "esc cancel") {
+		t.Fatalf("last row is not the shortcut legend: %q", lines[len(lines)-1])
+	}
+	foundBar := false
+	for i := 0; i < len(lines)-1; i++ {
+		if strings.ContainsAny(lines[i], "█░") {
+			foundBar = true
+			break
+		}
+	}
+	if !foundBar {
+		t.Fatalf("progress bar not rendered inside the frame")
 	}
 }
 

@@ -163,17 +163,6 @@ func (m model) View() string {
 	// current, so they always need the current budget.
 	m.info = m.info.SetSize(m.contentSize())
 	m.runner = m.runner.SetSize(m.contentSize())
-	// A streamed download reports 0-100 and the host draws a bar on the row
-	// BELOW the frame. Give the runner one row less so the frame still fits.
-	if m.top() == scrWorking && !m.runner.Done() {
-		if _, ok := m.runner.Progress(); ok {
-			rw, rh := m.contentSize()
-			if rh > 1 {
-				m.runner = m.runner.SetSize(rw, rh-1)
-			}
-		}
-	}
-
 	switch m.top() {
 	case scrMain:
 		version = "v" + appVersion
@@ -365,16 +354,15 @@ func (m model) View() string {
 		title = screenTitle("Working…", w)
 		body = m.runner.View()
 		bar = barLine(m.runner.ShortcutsHint())
+		// A streamed download reports 0-100; the bar sits inside the frame,
+		// directly above the shortcut legend, so it can never be scrolled off.
+		if pct, ok := m.downloadPercent(); ok {
+			bar = m.downloadBar(pct) + "\n" + bar
+		}
 	}
 
 	if m.w == 0 || m.h == 0 {
 		return title + "\n" + body + "\n" + bar
-	}
-	if pct, ok := m.downloadPercent(); ok && m.h > 1 {
-		// The bar owns the window's last row, outside the frame, so the frame
-		// is drawn one row shorter for as long as it is up.
-		return tuikit.FrameScreenVersion(m.w, m.h-1, title, body, bar, version) +
-			"\n" + m.downloadBar(pct)
 	}
 	return tuikit.FrameScreenVersion(m.w, m.h, title, body, bar, version)
 }
@@ -399,15 +387,13 @@ func (m model) downloadBar(pct int) string {
 	if pct > 100 {
 		pct = 100
 	}
-	inner := m.contentSizeW() - 2 // the two bracket columns
+	inner := m.contentSizeW()
 	if inner < 2 {
 		inner = 2
 	}
 	filled := inner * pct / 100
-	line := "[" +
-		lipgloss.NewStyle().Foreground(tuikit.ColorAccent).Render(strings.Repeat("█", filled)) +
-		lipgloss.NewStyle().Foreground(tuikit.ColorDisabled).Render(strings.Repeat("░", inner-filled)) +
-		"]"
+	line := lipgloss.NewStyle().Foreground(tuikit.ColorAccent).Render(strings.Repeat("█", filled)) +
+		lipgloss.NewStyle().Foreground(tuikit.ColorDisabled).Render(strings.Repeat("░", inner-filled))
 	return lipgloss.NewStyle().Width(m.w).Align(lipgloss.Center).Render(line)
 }
 
