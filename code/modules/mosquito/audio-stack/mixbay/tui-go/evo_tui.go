@@ -1907,13 +1907,18 @@ func (m *model) evoControlsKey(k string) tea.Cmd {
 	case "O":
 		return m.evoToggleMonoStereo()
 	case "r":
-		// One value back to its neutral: gains/volumes at 0 dB, monitor 50.
+		// One value back to its neutral: input gains 0 dB, output volumes at
+		// the minimum, monitor 50.
 		if m.evo.cursor >= len(els) {
 			return nil
 		}
+		e := els[m.evo.cursor]
 		neutral := 0.0
-		if els[m.evo.cursor].key == "monitor" {
+		switch {
+		case e.key == "monitor":
 			neutral = 50
+		case strings.HasPrefix(e.key, "output"):
+			neutral = m.status.Spec.VolMin
 		}
 		return m.evoSetVal(neutral)
 	case "R":

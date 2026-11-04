@@ -98,18 +98,19 @@ Ce que **mixbay ajoute** :
   canal passe donc par le gain du sink PipeWire, sur la base FU10 du canal le
   plus fort. Chaque disposition garde ses propres valeurs : repasser en
   mono/stéréo restaure les réglages de cette disposition ;
-- `r` remet le paramètre sous le curseur au défaut (gain/volume **0 dB**,
-  monitor 50) ; `R` remet la page active au défaut après confirmation :
-  CONTROLS remet tout à **0 dB** et les sorties **en stéréo** (les trims mono
-  sont effacés) sans jamais toucher au mixer ; MIXER remet le bus Artist Mix
-  sélectionné (les deux bus liés quand Artist Mix est OFF). Seul MIX 1|2
-  rouvre `PC 1|2 → OUT 1|2` à **0 dB** ; MIX 3|4 revient au **silence
-  (-128 dB)** pour ne pas recopier le programme dans OUT 3|4 ;
-- défauts neutres : gains d'entrée 0 dB, pans d'entrée centrés, sources stéréo
-  -100/+100, et la route d'usine `PC 1|2 → OUT 1|2` ouverte à **0 dB** ; les
-  autres crosspoints sont fermés. Charger le preset `default` garde les
-  sorties au **minimum** (`VolMin`) pour ne pas envoyer un niveau fort aux
-  monitors ;
+- `r` remet le paramètre sous le curseur au défaut (gain d'entrée **0 dB**,
+  volume de sortie au **minimum**, monitor 50) ; `R` remet la page active au
+  défaut après confirmation : CONTROLS remet les gains à **0 dB**, les
+  volumes de sortie au **minimum** (`VolMin`) et les sorties **en stéréo**
+  (les trims mono sont effacés) sans jamais toucher au mixer ; MIXER remet
+  le bus Artist Mix sélectionné (les deux bus liés quand Artist Mix est OFF).
+  Seul MIX 1|2 rouvre `PC 1|2 → OUT 1|2` à **0 dB** ; MIX 3|4 revient au
+  **silence (-128 dB)** pour ne pas recopier le programme dans OUT 3|4 ;
+- défauts neutres : gains d'entrée 0 dB, **volume de sortie au minimum**
+  (`VolMin` : un reset ne peut pas envoyer un niveau fort aux monitors), pans
+  d'entrée centrés, sources stéréo -100/+100, et la route d'usine
+  `PC 1|2 → OUT 1|2` ouverte à **0 dB** ; les autres crosspoints sont
+  fermés ;
 - chrome en **texte blanc** : cadres arrondis, libellés PAN / VOL / gains et
   ligne de bus utilisent le `bright_foreground` du thème, plus jamais `muted`
   (vert sur achraf67) ni `dark_foreground` (gris chaud) ;

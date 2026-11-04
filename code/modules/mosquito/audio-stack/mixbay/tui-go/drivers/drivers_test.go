@@ -507,9 +507,9 @@ func TestEvoResetControlsLeavesMixer(t *testing.T) {
 	}
 }
 
-// The page reset zeroes every control (0 dB, not the safety floor) and leaves
+// The page reset zeroes the input gains, floors the output volumes and leaves
 // the outputs in stereo.
-func TestEvoResetControlsZeroesEverything(t *testing.T) {
+func TestEvoResetControlsFloorsOutputs(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
 	d := newEvo(EVO8Spec)
@@ -527,8 +527,9 @@ func TestEvoResetControlsZeroesEverything(t *testing.T) {
 	}
 	st := d.demoStatus()
 	for i, out := range st.Outputs {
-		if out.VolumeDb != 0 || out.Muted {
-			t.Errorf("output %d = %v dB muted=%v, want 0 dB unmuted", i+1, out.VolumeDb, out.Muted)
+		if out.VolumeDb != st.Spec.VolMin || out.Muted {
+			t.Errorf("output %d = %v dB muted=%v, want %v dB unmuted",
+				i+1, out.VolumeDb, out.Muted, st.Spec.VolMin)
 		}
 	}
 	for i, in := range st.Inputs {

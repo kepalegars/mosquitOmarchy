@@ -1561,8 +1561,8 @@ func TestEvoControlsResetLeavesMixer(t *testing.T) {
 		t.Errorf("controls reset cleared the mixer: %+v", c)
 	}
 	for i, o := range st.Outputs {
-		if o.VolumeDb != 0 {
-			t.Errorf("controls reset left output %d at %v dB, want 0", i+1, o.VolumeDb)
+		if o.VolumeDb != st.Spec.VolMin {
+			t.Errorf("controls reset left output %d at %v dB, want %v", i+1, o.VolumeDb, st.Spec.VolMin)
 		}
 	}
 	for i, in := range st.Inputs {
@@ -1600,8 +1600,8 @@ func TestEvoControlsLowercaseResetsOneValue(t *testing.T) {
 	}
 	d, _ := drivers.Open(drivers.DevEVO8)
 	st, _ := d.Status()
-	if st.Outputs[0].VolumeDb != 0 {
-		t.Errorf("r left the selected output at %v dB, want 0", st.Outputs[0].VolumeDb)
+	if st.Outputs[0].VolumeDb != st.Spec.VolMin {
+		t.Errorf("r left the selected output at %v dB, want %v", st.Outputs[0].VolumeDb, st.Spec.VolMin)
 	}
 	if st.Outputs[1].VolumeDb != -20 {
 		t.Errorf("r touched the other output: %v dB", st.Outputs[1].VolumeDb)

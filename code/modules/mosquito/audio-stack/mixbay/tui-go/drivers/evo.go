@@ -1349,13 +1349,10 @@ func (d *evoDriver) SaveTo(path string) error {
 const ProtectedConfigName = "default"
 
 // ResetControls restores the neutral control defaults without touching the
-// loopback matrix: everything at 0 dB (outputs back to stereo, their mono
-// trims cleared), nothing muted, phantom off, monitor centred.
+// loopback matrix: unity input gains, output volumes at the minimum (so a
+// reset never blasts the monitors), outputs back to stereo with their mono
+// trims cleared, nothing muted, phantom off, monitor centred.
 func (d *evoDriver) ResetControls() error {
-	return d.resetControls(0)
-}
-
-func (d *evoDriver) resetControls(volumeDb float64) error {
 	if !d.allowDemo && !d.hasDevice() {
 		return ErrOffline
 	}
@@ -1377,7 +1374,7 @@ func (d *evoDriver) resetControls(volumeDb float64) error {
 			return err
 		}
 	}
-	if err := d.SetVolume(-1, volumeDb); err != nil {
+	if err := d.SetVolume(-1, d.spec.VolMin); err != nil {
 		return err
 	}
 	for i := 0; i < d.spec.NumInputs; i++ {
@@ -1400,11 +1397,10 @@ func (d *evoDriver) resetControls(volumeDb float64) error {
 	return nil
 }
 
-// ResetToDefaults restores the built-in preset: the Controls page at unity
-// plus the factory mix, with outputs kept at VolMin so loading the preset
-// cannot blast the monitors.
+// ResetToDefaults restores the built-in preset: ResetControls plus the factory
+// mix (only MIX 1|2 reopens PC 1|2 → OUT 1|2 at 0 dB).
 func (d *evoDriver) ResetToDefaults() error {
-	if err := d.resetControls(d.spec.VolMin); err != nil {
+	if err := d.ResetControls(); err != nil {
 		return err
 	}
 	return d.ResetMixer()
