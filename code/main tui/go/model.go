@@ -558,6 +558,10 @@ type model struct {
 	// running action is up. pendingAction belongs to the run itself and must
 	// not be overwritten: the run's completion still reads it.
 	cancelRunAsking bool
+	// runCanceled is true when the last run ended because the user stopped it
+	// manually: the exit code is then a cancellation, not a real failure, and
+	// the message/log wording changes accordingly.
+	runCanceled bool
 
 	// spaceSeq/spaceOp tag the async disk-space answer to the confirm that
 	// asked for it, so a late answer cannot rewrite a later prompt.

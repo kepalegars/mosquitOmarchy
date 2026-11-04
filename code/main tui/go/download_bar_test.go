@@ -18,8 +18,8 @@ func TestDownloadBarGrowsWithPercent(t *testing.T) {
 
 	empty, half, full := m.downloadBar(0), m.downloadBar(50), m.downloadBar(100)
 	for _, bar := range []string{empty, half, full} {
-		if got := lipgloss.Width(bar); got != m.w {
-			t.Fatalf("bar width = %d, want %d (%q)", got, m.w, bar)
+		if got := lipgloss.Width(bar); got != m.contentSizeW() {
+			t.Fatalf("bar width = %d, want %d (%q)", got, m.contentSizeW(), bar)
 		}
 	}
 	if strings.ContainsAny(empty, "[]") {

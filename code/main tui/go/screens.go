@@ -423,10 +423,19 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				if rerr != nil {
 					out = fmt.Sprintf("# exit: %v\n%s", rerr, out)
 				}
-				reportCrash(m.workingLabel, out)
-				m.toast, _ = m.toast.SetErr("finished with errors")
+				if m.runCanceled {
+					writeRunLog(m.workingLabel, out)
+					m.toast, _ = m.toast.SetWarn("action interrupted")
+				} else {
+					reportCrash(m.workingLabel, out)
+					m.toast, _ = m.toast.SetErr("finished with errors")
+				}
 				m.pendingAction = "run-errors"
-				m.pendingMsg = "The action finished with errors.\n\nView the full log, or go back?"
+				if m.runCanceled {
+					m.pendingMsg = "The action was interrupted.\n\nView the full log, or go back?"
+				} else {
+					m.pendingMsg = "The action finished with errors.\n\nView the full log, or go back?"
+				}
 				m.pendingNo = "Back"
 				m.pendingYes = "View the log"
 				m.push(scrConfirm)
@@ -1225,6 +1234,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// Only an explicit Yes stops the run; Esc/No keeps it going.
 			m.cancelRunAsking = false
 			if !msg.Canceled && msg.Yes {
+				m.runCanceled = true
 				m.runner.Cancel()
 			}
 			return m, nil
@@ -3462,6 +3472,7 @@ func (m model) closeConfirm() (model, tea.Cmd) {
 func (m model) startWorking(label string, args ...string) (model, tea.Cmd) {
 	m.replace(scrWorking)
 	m.cancelRunAsking = false
+	m.runCanceled = false
 	m.workingLabel = label
 	m.runner = tuikit.NewRunner().SetSize(m.contentSize())
 	var cmd tea.Cmd

@@ -394,7 +394,7 @@ func (m model) downloadBar(pct int) string {
 	filled := inner * pct / 100
 	line := lipgloss.NewStyle().Foreground(tuikit.ColorAccent).Render(strings.Repeat("█", filled)) +
 		lipgloss.NewStyle().Foreground(tuikit.ColorDisabled).Render(strings.Repeat("░", inner-filled))
-	return lipgloss.NewStyle().Width(m.w).Align(lipgloss.Center).Render(line)
+	return lipgloss.NewStyle().Width(m.contentSizeW()).Align(lipgloss.Center).Render(line)
 }
 
 // homeTitle renders the pinned-top banner on the main menu. It draws the SAME
