@@ -1285,6 +1285,8 @@ func (r *evoRender) controlsHelp() ([]evoHint, []evoHint) {
 		{key: "Ctrl+←→", desc: evoStepLabel("volume", true)},
 		{key: "Ctrl+Shift+←→", desc: evoStepLabel("volume", false)},
 		{key: "0-9", desc: " dial"},
+		{key: "r", desc: " reset"},
+		{key: "R", desc: " all"},
 	}
 	return nav, set
 }
@@ -1904,6 +1906,16 @@ func (m *model) evoControlsKey(k string) tea.Cmd {
 		return m.evoTogglePhantom()
 	case "O":
 		return m.evoToggleMonoStereo()
+	case "r":
+		// One value back to its neutral: gains/volumes at 0 dB, monitor 50.
+		if m.evo.cursor >= len(els) {
+			return nil
+		}
+		neutral := 0.0
+		if els[m.evo.cursor].key == "monitor" {
+			neutral = 50
+		}
+		return m.evoSetVal(neutral)
 	case "R":
 		m.confirm = tuikit.NewConfirm("Reset the Controls page to defaults?", "Cancel", "Reset")
 		m.confirmAct = func() tea.Cmd { return m.evoResetControls() }
@@ -2314,6 +2326,10 @@ func (m *model) evoResetControls() tea.Cmd {
 	}
 	m.evo.inStereo = [2]bool{}
 	m.evo.outMono = [2]bool{}
+	m.evo.inMono = [4]evoInputSetting{}
+	m.evo.inStereoV = [2]evoInputSetting{}
+	m.evo.outMonoV = [4]evoOutputSetting{}
+	m.evo.outStereo = [2]evoOutputSetting{}
 	m.evo.modesSet = false
 	m.evoClampCursor()
 	dev := m.deviceID

@@ -1531,12 +1531,18 @@ func TestAllowNativeVolumeNeedsLevelsGuard(t *testing.T) {
 	t.Fatal("allow_native row missing")
 }
 
-// R on Controls resets the controls only and never touches the mixer.
+// R on Controls zeroes every control, puts the outputs back in stereo and
+// never touches the mixer.
 func TestEvoControlsResetLeavesMixer(t *testing.T) {
 	m := evoModel(t, drivers.DevEVO8, 0)
 	if cmd := m.evoMxSetValTo("input1", "volume", -6); cmd != nil {
 		cmd()
 	}
+	m.evo.sub = 1
+	if cmd := m.evoSetVal(-40); cmd != nil {
+		cmd()
+	}
+	m.evo.outMono[0] = true
 	if cmd := m.evoControlsKey("R"); cmd != nil {
 		t.Fatal("R must open a confirmation first")
 	}
@@ -1546,10 +1552,59 @@ func TestEvoControlsResetLeavesMixer(t *testing.T) {
 	if cmd := m.confirmAct(); cmd != nil {
 		cmd()
 	}
+	if m.evo.outMono != [2]bool{} {
+		t.Errorf("controls reset left outputs split: %v", m.evo.outMono)
+	}
 	d, _ := drivers.Open(drivers.DevEVO8)
 	st, _ := d.Status()
 	if c := st.Mixer["input1"]; c.VolumeDb != -6 {
 		t.Errorf("controls reset cleared the mixer: %+v", c)
+	}
+	for i, o := range st.Outputs {
+		if o.VolumeDb != 0 {
+			t.Errorf("controls reset left output %d at %v dB, want 0", i+1, o.VolumeDb)
+		}
+	}
+	for i, in := range st.Inputs {
+		if in.GainDb != 0 {
+			t.Errorf("controls reset left input %d at %v dB, want 0", i+1, in.GainDb)
+		}
+	}
+}
+
+// The Controls footer must advertise both resets, like the Mixer footer does.
+func TestEvoControlsHelpShowsResets(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	plain := stripANSI(m.View())
+	for _, want := range []string{"r reset", "R all"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("controls legend missing %q", want)
+		}
+	}
+}
+
+// r resets only the value under the cursor, leaving the other channel alone.
+func TestEvoControlsLowercaseResetsOneValue(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	m.evo.sub = 1
+	m.evo.cursor = 1
+	if cmd := m.evoSetVal(-20); cmd != nil {
+		cmd()
+	}
+	m.evo.cursor = 0
+	if cmd := m.evoSetVal(-40); cmd != nil {
+		cmd()
+	}
+	if cmd := m.evoControlsKey("r"); cmd != nil {
+		cmd()
+	}
+	d, _ := drivers.Open(drivers.DevEVO8)
+	st, _ := d.Status()
+	if st.Outputs[0].VolumeDb != 0 {
+		t.Errorf("r left the selected output at %v dB, want 0", st.Outputs[0].VolumeDb)
+	}
+	if st.Outputs[1].VolumeDb != -20 {
+		t.Errorf("r touched the other output: %v dB", st.Outputs[1].VolumeDb)
 	}
 }
 
