@@ -821,12 +821,16 @@ func titleLadder(width int) tuikit.TitleLadder {
 // The title is a single centred line with nothing to read beside it, so it is
 // bounded by the window itself, not by the panel's comfortable width. The
 // ladder still refuses any rung wider than this, so nothing ever wraps.
+//
+// The one-column margin each side is applied ONCE, by Layout.ContentWidth when
+// the ladder measures. Subtracting it here too made the title need 4 columns
+// more than the art: a 121-column wordmark was demoted to the compact box in a
+// 121-to-124-column window that had room for it.
 func (m *model) titleWidth() int {
-	w := m.w - 2 // one column of breathing room each side, so the frame is not flush
-	if w < 1 {
+	if m.w < 1 {
 		return 1
 	}
-	return w
+	return m.w
 }
 
 // setupValue is the stable picker/selection key for a Setup item.

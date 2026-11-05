@@ -169,6 +169,25 @@ func TestHomeTitleUsesTheWindowNotThePanelCap(t *testing.T) {
 	}
 }
 
+// TestHomeTitleUsesOneColumnOfMargin pins the margin arithmetic: the boxed
+// wordmark is 121 columns, and the layout keeps one column of breathing room
+// each side, so 123 columns is the narrowest window that can still show it.
+// The margin used to be subtracted twice, which pushed that boundary out to 125
+// and demoted the title in windows that had room for it.
+func TestHomeTitleUsesOneColumnOfMargin(t *testing.T) {
+	for _, tc := range []struct {
+		w    int
+		want bool
+	}{{123, true}, {122, false}} {
+		m := initialModel()
+		m.w, m.h = tc.w, 40
+		title := ansiSGR.ReplaceAllString(m.homeTitle(), "")
+		if got := strings.Contains(title, "███"); got != tc.want {
+			t.Errorf("%d columns: boxed wordmark = %v, want %v", tc.w, got, tc.want)
+		}
+	}
+}
+
 // TestHomeTitleIsASCIIAtTheDefaultWindow guards the cell size the floating
 // window must provide for the one-line 121-column wordmark. install-tui.sh
 // sizes it for this; the title must be the ANSI Shadow art there, not the box.

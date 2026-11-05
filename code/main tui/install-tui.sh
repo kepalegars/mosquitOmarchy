@@ -241,10 +241,18 @@ install_float_rule() {
   sed -i '/-- >>> mosquitomarchy-tui-floating >>>/,/-- <<< mosquitomarchy-tui-floating <<</d' "$HYPRLAND"
   {
     printf '\n%s\n' "$FLOAT_BEGIN"
-    printf -- '-- Join Omarchy'\''s floating-window tag (float + center) and widen it:\n'
-    printf -- '-- the one-line ANSI Shadow wordmark is 121 columns, and the tag alone\n'
-    printf -- '-- opens ~87 columns, which forced a smaller fallback title.\n'
-    printf 'o.window("org.omarchy.mosquitomarchy-tui", { tag = "+floating-window", size = { 1300, 800 } })\n'
+    printf -- '-- Width is the title, height follows the monitor ratio.\n'
+    printf -- '-- The one-line ANSI Shadow wordmark is 121 columns. At the default\n'
+    printf -- '-- foot font (JetBrainsMono Nerd Font 9, pad 14) 920 px yields 124\n'
+    printf -- '-- columns: the art plus one column of margin each side. A fixed\n'
+    printf -- '-- 1300 px opened far wider than the title ever needs.\n'
+    printf -- '-- monitor_w/monitor_h are the opening window'"'"'s own monitor, so the\n'
+    printf -- '-- height matches that screen'"'"'s ratio (16:10, 16:9, ...).\n'
+    printf 'o.window("org.omarchy.mosquitomarchy-tui", {\n'
+    printf '  float = true,\n'
+    printf '  center = true,\n'
+    printf '  size = { 920, "920 * monitor_h / monitor_w" },\n'
+    printf '})\n'
     printf '%s\n' "$FLOAT_END"
   } >> "$HYPRLAND"
   hyprctl reload >/dev/null 2>&1 || true
