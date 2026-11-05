@@ -50,6 +50,13 @@ DESKTOP_DST="$HOME/.local/share/applications/guitarpro.desktop"
 LAUNCHER="$HOME/.local/bin/guitarpro"
 EXE_NAME="guitar-pro-8-setup.exe"
 
+G='\033[1;32m'; B='\033[1;34m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
+msg(){ printf "${B}==>${N} %s\n" "$*"; }
+ok(){ printf " ${G}✓${N} %s\n" "$*"; }
+warn(){ printf " ${Y}!${N} %s\n" "$*"; }
+err(){ printf " ${R}✗${N} %s\n" "$*" >&2; }
+hr(){ printf '%.0s─' {1..70}; echo; }
+
 # The prefix runs on the wine-staging already installed on the host (11.17).
 # (True legacy Wine-GE desktop builds stopped in 2024; the newer GE-Proton build
 # is only a Steam/Proton wrapper around an older Wine 11.0 and is NOT suitable
@@ -77,13 +84,6 @@ while (( $# )); do a="$1"; case "$a" in
   -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
   *) echo "Unknown option: $a" >&2; exit 1 ;;
 esac; shift; done
-
-G='\033[1;32m'; B='\033[1;34m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
-msg(){ printf "${B}==>${N} %s\n" "$*"; }
-ok(){ printf " ${G}✓${N} %s\n" "$*"; }
-warn(){ printf " ${Y}!${N} %s\n" "$*"; }
-err(){ printf " ${R}✗${N} %s\n" "$*" >&2; }
-hr(){ printf '%.0s─' {1..70}; echo; }
 
 # -y means "take the DEFAULT answer", not "answer yes to everything": the
 # previous hardcoded `return 0` silently turned every default-n question into

@@ -765,19 +765,17 @@ st_brightness(){
     && echo ok || echo partial
 }
 st_achraf67(){
-  # achraf67 theme: files present + applied. The old 'achraff-67' slug is
-  # still accepted so a machine installed before the rename keeps reporting
-  # installed instead of offering a reinstall.
+  # achraf67 theme: files present. Whether it is the CURRENT theme is the
+  # user's choice, not a health defect — switching to another theme must not
+  # turn this module into a permanent "partial" nag. The old 'achraff-67'
+  # slug is still accepted so a machine installed before the rename keeps
+  # reporting installed instead of offering a reinstall.
   local tdir="$HOME/.config/omarchy/themes/achraf67"
   local legacy="$HOME/.config/omarchy/themes/achraff-67"
   if [[ ! -f "$tdir/colors.toml" && -f "$legacy/colors.toml" ]]; then
     tdir="$legacy"
   fi
-  [[ -f "$tdir/colors.toml" && -f "$tdir/unlock.png" ]] || { echo missing; return; }
-  case "$(omarchy theme current 2>/dev/null || true)" in
-    "Achraf67"|"Achraff 67") echo ok ;;
-    *) echo partial ;;
-  esac
+  [[ -f "$tdir/colors.toml" ]] && echo ok || echo missing
 }
 st_reboot_windows(){
   # System menu entry + helper; no root, no system file.
@@ -919,6 +917,10 @@ st_jamjamjam_plugin(){
   [[ -d "$plug" ]] || plug="$HOME/.config/omarchy/plugins/jamjamjam-plugin"
   [[ -d "$plug" && -f "$plug/manifest.json" ]] || { echo missing; return; }
   compgen -G "$plug/backend/*.py" >/dev/null 2>&1 || { echo partial; return; }
+  # Without numpy the backend cannot analyze (key/BPM/chord). Report it as
+  # partial so the module is offered for re-apply instead of showing "ok"
+  # while the plugin silently does nothing.
+  python3 -c "import numpy" 2>/dev/null || { echo partial; return; }
   if [[ -f "$HOME/.config/omarchy/shell.json" ]] \
      && grep -q '"mosquito.jamjamjam"\|"jamjamjam-plugin"' "$HOME/.config/omarchy/shell.json"; then
     echo ok
@@ -1095,7 +1097,7 @@ MODULES=(
   "omarchy-vm:Omarchy in QEMU/KVM from the official ISO — launcher + TUI manager + shared folder + USB/GPU passthrough"
   "ableton:Native Linux Ableton Live 12 (ableton-linux) + multi-DAW VST sharing"
   "guitarpro:Guitar Pro 8 via wine (dedicated prefix + launcher + menu shortcut)"
-  "davinci-resolve:DaVinci Resolve (Studio or free) + AAC fix + FFmpeg encoder"
+  "davinci-resolve:DaVinci Resolve (Studio or free) + AAC fix + FFmpeg encoder. Radeon 780M/Phoenix: press D on this row in Setup to apply the optimized Mesa Rusticl + CPU-scopes profile (never applied automatically by a restore)"
   "spektrafilm:SpektraFilm (film simulation) — installs the OFX plugins from a local zip and the standalone spektrafilm-git AUR app; any OFX version accepted"
   "ableton-move-manager:Move Manager — Ableton Move → Ableton Live → Bitwig (menu: address / Move Manager / convert — native Omarchy prompts, MIDI export)"
   "handbrake:HandBrake (Qt GUI + CLI) + H.264/H.265 encoders + preset sync + Hyprland rules"
@@ -1115,7 +1117,7 @@ MODULES=(
   "reboot-into-windows:Reboot into Windows — System menu entry: finds the UEFI Windows Boot Manager, 15 s yes/no countdown, arms BootNext for the next boot only, then reboots"
   "mega-caffeine:Coffee mode (mega-caffeine) — laptop closed without sleeping, red tint, natural-language durations"
   "brightness:Display brightness — Omarchy default step, 0% = screen off, and a silent 1% ramp on held keys for smoother steps (no run-on beyond the current step)"
-  "achraf67:'Achraf67' visual theme + unlock/Plymouth logo (lock screen left stock)"
+  "achraf67:'Achraf67' visual theme (colors, icons, wallpaper)"
   "touchpad:Touchpad (pointer acceleration, sensitivity + kinetic scrolling — external mouse is not affected)"
   "mx-master:MX Master (any model) — thumb gesture button → SUPER (logiops daemon, system service)"
   "keepassxc:KeePassXC as your password manager + KeePassXC-Browser integration (Firefox/Zen and Chromium). Omarchy's keyring is left INTACT — LibreSecret apps (Chromium Safe Storage, kDrive, …) keep using gnome-keyring, so no 'KeePassXC requests access to Chromium Safe Storage' prompt and apps don't lose their login. Browser link: the native-messaging manifests are installed; finish by ticking the browsers in KeePassXC → Settings → Browser Integration and clicking Connect in the extension. On FIRST KeePassXC launch choose YOUR .kdbx: the install pins it into keepassxc.ini so every launch opens THAT database. Opt into replacing gnome-keyring with 'setup-keepassxc-integration.sh --secret-service'."
@@ -1243,8 +1245,20 @@ run_tweak_remove(){ # single tweak removal by id
   esac
 }
 
+# Only the fixes that write system files need an elevation prompt. Priming
+# sudo unconditionally made a user-level fix (bar-center-anchor, omarchy-menu,
+# 1px-seam…) wait up to 3 minutes on an askpass dialog nobody asked for — the
+# TUI looked like it had done nothing and wrote no log.
+fixes_need_sudo(){
+  local id
+  for id in "${FIXES_SELECTED[@]:-}"; do
+    case $id in bluetooth) return 0 ;; esac
+  done
+  return 1
+}
+
 run_fixes(){ # loop over FIXES_SELECTED, log results
-  mq_sudo_prime >/dev/null 2>&1 || true   # one prompt for the whole fix batch
+  fixes_need_sudo && mq_sudo_prime >/dev/null 2>&1 || true
   local id
   for id in "${FIXES_SELECTED[@]:-}"; do
     hr
@@ -1260,8 +1274,16 @@ run_addons(){
   bash "$SCRIPT_DIR/code/main tui/mosquitomarchy-actions" addons-reinstall || true
 }
 
+tweaks_need_sudo(){
+  local id
+  for id in "${TWEAKS_SELECTED[@]:-}"; do
+    case $id in amdgpu-compute-timeout|replace-evince-with-papers) return 0 ;; esac
+  done
+  return 1
+}
+
 run_tweaks(){ # loop over TWEAKS_SELECTED, log results
-  mq_sudo_prime >/dev/null 2>&1 || true   # one prompt for the whole tweak batch
+  tweaks_need_sudo && mq_sudo_prime >/dev/null 2>&1 || true
   local id
   for id in "${TWEAKS_SELECTED[@]:-}"; do
     hr
@@ -4581,15 +4603,9 @@ un_mosquitomarchy_update(){
 }
 
 un_achraf67(){
-  info "Uninstalling the Achraf67 theme (theme / unlock logo / plymouth)"
+  info "Uninstalling the Achraf67 theme"
   drop_locktitle   # leftovers of the old lock/theme sync (if present)
-  if mq_sudo -n true 2>/dev/null; then
-    omarchy-plymouth-set-by-theme default 2>/dev/null || true
-  else
-    warn "Plymouth: run  omarchy-plymouth-set-by-theme default  (password)"
-  fi
-  omarchy-plymouth-set --refresh-default 2>/dev/null || true
-  # Removes the custom lock plugin (or residual <user>.lock clone)
+  # Removes the legacy custom lock plugin (or residual <user>.lock clone)
   omarchy plugin disable custom.lock 2>/dev/null || true
   omarchy plugin disable "$USER.lock" 2>/dev/null || true
   rm -rf "$PLUG/custom.lock" "$PLUG/$USER.lock"
@@ -4599,7 +4615,7 @@ un_achraf67(){
   omarchy-theme-remove achraf67 >/dev/null 2>&1 || true
   omarchy-theme-remove achraff-67 >/dev/null 2>&1 || true
   rm -rf "$HOME/.config/omarchy/themes/achraf67" "$HOME/.config/omarchy/themes/achraff-67"
-  ok "theme + unlock logo + plymouth restored (default theme)"
+  ok "theme restored (default theme)"
 }
 
 # Removes the leftovers of the old lock/theme sync (daemon + scripts).
@@ -5224,8 +5240,8 @@ stock_preinstalls(){
 
 preinstall_label(){
   case "$1" in
-    aether)            printf 'Aether (web browser)' ;;
-    cliamp)            printf 'Cliamp (terminal Claude Code client)' ;;
+    aether)            printf 'Aether' ;;
+    cliamp)            printf 'Cliamp' ;;
     libreoffice-fresh) printf 'LibreOffice' ;;
     xournalpp)         printf 'Xournal++' ;;
     pinta)             printf 'Pinta' ;;
@@ -5337,7 +5353,7 @@ run_better_pip(){ bash "$BETTER_PIP_DIR/setup-better-pip.sh"; }
 run_reboot_windows(){ bash "$REBOOT_WINDOWS_DIR/setup-reboot-into-windows.sh"; }
 run_mega_caffeine(){ bash "$MEGA_CAFFEINE_DIR/setup-mega-caffeine.sh"; }
 run_brightness(){ bash "$BRIGHTNESS_DIR/optimized-brightness.sh"; }
-run_achraf67(){ bash "$THEME_DIR/create-theme.sh" --apply "$THEME_DIR/Wallpapers/achraf67.png"; }
+run_achraf67(){ bash "$THEME_DIR/create-theme.sh" --apply --no-unlock-style "$THEME_DIR/Wallpapers/achraf67.png"; }
 run_touchpad(){ bash "$TOUCHPAD_DIR/touchpad.sh" $([[ $YES == 1 ]] && echo -y); }
 run_superfile(){ bash "$SUPERFILE_DIR/setup-superfile.sh" $([[ $YES == 1 ]] && echo -y); }
 run_flea(){ bash "$FLEA_DIR/setup-flea.sh" $([[ $YES == 1 ]] && echo -y); }
@@ -5413,12 +5429,7 @@ run_levels_guard(){
   bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" $([[ $YES == 1 ]] && echo -y)
 }
 
-run_levels_guard(){
-  info "Uninstalling Levels Guard"
-  bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" --uninstall \
-    || warn "setup-levels-guard.sh --uninstall reported a problem"
-}
-un_live_mode(){
+run_live_mode(){
   # Live mode (performance session): stay-awake + thermal + routing in
   # scratchpad. Idempotent; -y installs non-interactively (same flag the
   # move-manager / audio scripts accept). Needs root for the sudoers part.
@@ -5482,8 +5493,6 @@ final_report(){
   echo " • Bitwig 6.0 Beta 6: license via the app at first launch."
   echo " • DaVinci Resolve: Studio activation at first launch (file/dongle);"
   echo "     free version → H.264/H.265/AAC are not native: transcode to DNxHR/PCM."
-  echo " • Achraf67 (achraf67 module): the Plymouth BOOT screen to apply by hand:"
-  echo "     omarchy-plymouth-set-by-theme \"achraf67\"   (asks for the password)"
   hr
 }
 

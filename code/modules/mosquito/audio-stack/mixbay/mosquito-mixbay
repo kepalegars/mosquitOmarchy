@@ -64,7 +64,9 @@ if [[ $# -eq 0 ]]; then
     "$MGR_TUI_BIN"
     exit $?
   elif command -v foot >/dev/null 2>&1; then
-    foot -W 100x40 --app-id=org.omarchy.mosquito-mixbay-tui -e "$MGR_TUI_BIN"
+    # No -W/geometry override: foot keeps Omarchy's own font, padding and
+    # scale, so the TUI opens like any other terminal.
+    foot --app-id=org.omarchy.mosquito-mixbay-tui -e "$MGR_TUI_BIN"
     exit $?
   elif command -v xterm >/dev/null 2>&1; then
     xterm -e "$MGR_TUI_BIN"

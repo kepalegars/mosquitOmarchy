@@ -99,7 +99,9 @@ BarWidget {
       width: Style.space(14)
       height: Style.space(14)
 
-      // White at rest, so the fork matches the other monochrome bar icons.
+      // Theme bar foreground at rest, like the other bar icons (the bar is
+      // wallpaper-adaptive, so a fixed white disappears on light wallpapers);
+      // white/red blink while the plugin is listening.
       NoteGlyph {
         id: noteGlyph
         anchors.centerIn: parent
@@ -107,8 +109,9 @@ BarWidget {
         // and read as a larger, unrelated mark.
         width: Style.space(16)
         height: Style.space(16)
-        // White at rest; white/red blink while the plugin is listening.
-        color: root.listening && root.blinkOn ? Color.urgent : "#ffffff"
+        color: root.listening && root.blinkOn
+          ? Color.urgent
+          : (root.bar ? root.bar.barForeground : Color.foreground)
       }
 
       // Analysis indicator: a pulsing ring while a global analysis hold is

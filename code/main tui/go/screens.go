@@ -1359,6 +1359,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			ids := m.pendingFixIDs
 			m.pendingFixIDs = nil
 			return m, quickCatalogRunCmd("tweaks", ids)
+		case "davinci-alt-drivers":
+			return m.startWorking("Applying the Radeon 780M OpenCL profile",
+				workingArgs("davinci-alt-drivers", nil)...)
 		case "preinstalls-remove":
 			// The only path that ever reaches `pacman -Rns`: an explicit "Remove
 			// them". Reached from Enter AND from back, both through the same
@@ -1980,6 +1983,16 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			return m, fetchPatchSecretCmd(m.treeMode == "uninstall", keys)
 		}
+		// D (Shift+D) on the DaVinci row applies the Radeon 780M OpenCL
+		// profile. Deliberately a per-row key and not an automatic step: a
+		// restore must never change the GPU backend without being asked.
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "D" || km.String() == "shift+d") {
+			if m.treeMode != "uninstall" {
+				if _, key := splitSetupValue(m.setupPicker.SelectedValue()); key == "davinci-resolve" {
+					return m.confirmAltDrivers()
+				}
+			}
+		}
 		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "i" || km.String() == "?") {
 			v := m.setupPicker.SelectedValue()
 			// Menu entries FIRST: it is a cat: row, but its description is not
@@ -2051,6 +2064,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					m.filterText += string(runes[0])
 					m.setupCatPicker = m.rebuildSetupCat()
 					return m, nil
+				}
+			}
+		}
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "D" || km.String() == "shift+d") {
+			if m.treeMode != "uninstall" {
+				if _, key := splitSetupValue(m.setupCatPicker.SelectedValue()); key == "davinci-resolve" {
+					return m.confirmAltDrivers()
 				}
 			}
 		}
@@ -3457,6 +3477,37 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 // closeConfirm opens the "Close mosquitOmarchy?" confirmation, shared by the
 // Close row and by Esc at the main menu. Buttons are Yes/No like every other
 // confirm in the mosquito TUIs (never Cancel/Close).
+// altDriversPrompt spells out WHAT the 780M profile changes and its scope,
+// because the action writes system files (OpenCL ICD) and the user must be
+// able to decide without reading the guide.
+func altDriversPrompt() string {
+	return "Apply the optimized OpenCL profile for the Radeon 780M (gfx1103)?\n\n" +
+		"WHAT IT CHANGES\n" +
+		" • installs opencl-mesa (Mesa Rusticl) and makes Resolve use it;\n" +
+		" • disables the ROCm OpenCL ICD (amdocl64.icd -> .disabled): ROCm's\n" +
+		"   OpenCL is unsupported on Phoenix APUs and causes GPU resets;\n" +
+		" • rewrites ~/.local/bin/davinci-resolve to force RUSTICL_ENABLE=radeonsi;\n" +
+		" • moves Resolve's OpenCL shader cache aside (recompiled on next launch);\n" +
+		" • disables GPU scopes in Resolve's config (Local.GPU.Scopes=0): the\n" +
+		"   scopes use the CPU, freeing the iGPU for playback/grading (4K).\n\n" +
+		"SCOPE\n" +
+		" • opencl-mesa is a system package; other OpenCL apps keep their own\n" +
+		"   backend, but the ROCm ICD is disabled system-wide (reversible).\n" +
+		" • No kernel/amdgpu change, no ROCm install.\n" +
+		" • Reversible with: setup-davinci.sh --alt-drivers-revert\n" +
+		" • Restart Resolve afterwards; the first launch recompiles its shaders."
+}
+
+func (m model) confirmAltDrivers() (model, tea.Cmd) {
+	m.pendingAction = "davinci-alt-drivers"
+	m.pendingMsg = altDriversPrompt()
+	m.pendingNo = "Cancel"
+	m.pendingYes = "Apply"
+	m.push(scrConfirm)
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+	return m, nil
+}
+
 func (m model) closeConfirm() (model, tea.Cmd) {
 	m.pendingAction = "close"
 	m.pendingMsg = "Close mosquitomarchy?\n\nNothing is changed — you can reopen it from the Omarchy menu at any time."

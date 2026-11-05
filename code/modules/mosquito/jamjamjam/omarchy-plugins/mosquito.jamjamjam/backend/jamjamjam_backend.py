@@ -88,13 +88,16 @@ CHORD_TEMPLATES = (
     ((0, 2, 4, 7), "add9"),
 )
 
-# Krumhansl-Schmuckler key profiles.
+# Krumhansl-Schmuckler key profiles. Guarded so a machine without numpy can
+# still IMPORT the backend: the tuner is pure Python and must keep working,
+# and a module-level `np.array` is what turned "numpy missing" into a bare
+# NameError crash loop (backend restarted every 3 s, tuner dropdown empty).
 KS_MAJOR = np.array([
     6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88,
-])
+]) if HAVE_NUMPY else ()
 KS_MINOR = np.array([
     6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17,
-])
+]) if HAVE_NUMPY else ()
 
 
 def pitch_classes(notes) -> list[int]:
@@ -150,6 +153,10 @@ DEFAULT_CONFIG = {
     "clickCustom": False,
     "customDown": "",
     "customUp": "",
+    # Persisted tuner input (PipeWire node name). Without the key here,
+    # load_config() dropped it on every restart: the dropdown looked saved
+    # but came back on "System default".
+    "tunerInput": "",
 }
 
 TEMPO_SIGNATURE_RE = re.compile(r"(?<!\d)(\d{1,2})\s*/\s*(\d{1,2})(?!\d)")
@@ -1684,17 +1691,20 @@ class AudioAnalyzerBackend:
         self._restart_tuner()
 
     def _restart_tuner(self):
-        """(Re)point the tuner's capture at the default microphone.
+        """(Re)point the tuner's capture at the selected input.
 
-        With AEC enabled, an AecSource sits BETWEEN the mic recorder and the
-        inner Tuner (it subtracts the aligned PC-audio estimate), and a second
-        capture runs on the sink monitor as the subtraction reference. The
-        loopback recorder share the same privacy gate in _sync_capture().
+        The TUNER INPUT dropdown outranks the default: an explicitly picked
+        interface is what the tuner hears. Empty means the system default
+        source. With AEC enabled, an AecSource sits BETWEEN the mic recorder
+        and the inner Tuner (it subtracts the aligned PC-audio estimate), and a
+        second capture runs on the sink monitor as the subtraction reference.
+        The loopback recorder shares the same privacy gate in _sync_capture().
         """
         if self.tuner is None:
             return
-        was_running = bool(self.tuner_recorder and self.tuner_recorder.running)
-        target = self.input_target or ""
+        # The tuner's own device, NOT the analyzer's: the analyzer follows the
+        # PC/MIC source toggle, and picking a tuner input must not silence it.
+        target = self.tuner_input or self.input_target or ""
         analyzer = self.tuner
         self.aec_source = None
         if self.aec_enabled:
@@ -1706,6 +1716,10 @@ class AudioAnalyzerBackend:
                 self.tuner_recorder.stop()
             self.tuner_recorder = AudioRecorder(analyzer, target=target, kind="source")
         else:
+            # A running capture keeps the OLD device until it is restarted:
+            # updating `.target` on a live parec/pw-record changes nothing.
+            if self.tuner_recorder.running:
+                self.tuner_recorder.stop()
             self.tuner_recorder.target = target
             self.tuner_recorder.kind = "source"
         # The loopback recorder mirrors the microphone one (same gate in
@@ -1722,8 +1736,9 @@ class AudioAnalyzerBackend:
         elif self.aec_recorder is not None:
             self.aec_recorder.stop()
             self.aec_recorder = None
-        if was_running:
-            self._sync_capture()
+        # Restart only when the panel/hold gate allows capture; _sync_capture()
+        # enforces that, so a stopped tuner stays stopped (privacy).
+        self._sync_capture()
 
     # A source the user picked explicitly, overriding the default source. Empty
     # means "follow the system default", which is what makes the plugin behave
@@ -1731,19 +1746,11 @@ class AudioAnalyzerBackend:
     tuner_input: str = ""
 
     def _apply_target(self) -> None:
-        # An explicitly chosen tuner input outranks the source mode.
-        #
-        # TUNER INPUT is a direct statement of what the tuner should hear, so it
-        # cannot be overruled by whether the analyzer happens to be on PC audio
-        # or on the mic: picking an interface in the dropdown and still getting
-        # the speakers is the setting looking broken. "" (System default) hands
-        # the decision back to the source mode below, which is also what makes
-        # the default entry a way out rather than a dead end.
-        if self.tuner_input:
-            self.recorder.target = self.tuner_input
-            self.recorder.kind = "source"
-            self.capture_target = self.tuner_input
-        elif self.input_source == "pc":
+        # The ANALYSIS source only. The tuner's device is _restart_tuner()'s
+        # job: pointing this recorder at the picked tuner input used to make
+        # "choose my interface for the tuner" silence the key/BPM/chord
+        # analysis and leave the tuner on the default mic — both wrong.
+        if self.input_source == "pc":
             # Pre-volume monitor of the DEFAULT sink: follows whatever output
             # device is active (internal/HDMI/Bluetooth/jack) and stays audible
             # to the analyzer even when the output is muted or at 0 volume.
@@ -2028,7 +2035,9 @@ class AudioAnalyzerBackend:
                     continue
                 if "Stream" in media or "Sink" in media:
                     continue
-                if "Source" not in media:
+                # Audio sources only: a V4L2 webcam is Video/Source and has no
+                # audio, so offering it as a tuner input is a dead entry.
+                if "Audio" not in media or "Source" not in media:
                     continue
                 if name.endswith(".monitor"):
                     continue
@@ -2048,13 +2057,9 @@ class AudioAnalyzerBackend:
                 # a prettified view of it.
                 self.config["tunerInput"] = chosen
                 save_config(self.config)
+                # Repoints and restarts the TUNER capture only; the analysis
+                # recorder keeps following the PC/MIC source toggle.
                 self._restart_tuner()
-                was_running = self.recorder.running
-                if was_running:
-                    self.recorder.stop()
-                self._apply_target()
-                if was_running:
-                    self.recorder.start()
                 self.dirty = True
             return {}
         if op == "setSource":

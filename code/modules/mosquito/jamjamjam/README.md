@@ -26,9 +26,10 @@ Two guarantees, and they are the reason the capture is gated rather than always-
 - **Tuner input.** The panel settings carry a dropdown of every capture source on the machine,
   and the choice outranks the analysis source: picking an interface there is a direct statement
   of what the tuner should hear, so the tuner plays it even while the analyzer is on PC audio.
-  `System default` hands the decision back to the source toggle. This is the same selection
-  model Pitchfork uses — the default entry is always present and always first, so there is a
-  way back from a device that has since been unplugged.
+  `System default` follows the system's default input device, and the analysis source toggle
+  never changes the tuner. This is the same selection model Pitchfork uses — the default entry
+  is always present and always first, so there is a way back from a device that has since been
+  unplugged.
 - **Key** — Krumhansl-Schmuckler profile over harmonic chroma, with a confidence percentage.
   Adopted only after holding across two analyses, and the confidence gates the fretboard.
 - **BPM** — onset-envelope autocorrelation over the same window, so tempo locks within a

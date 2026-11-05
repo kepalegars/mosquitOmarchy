@@ -1658,3 +1658,30 @@ func TestBackupFolderSquareAndParentToggleIncludeChildren(t *testing.T) {
 		t.Fatalf("deselecting mosquito left a child selected: %v", checked)
 	}
 }
+
+// TestDOnDavinciOpensAltDrivers: the 780M profile is a deliberate per-row
+// action. Pressing D with the cursor on davinci must open the confirm; on any
+// other row it must do nothing.
+func TestDOnDavinciOpensAltDrivers(t *testing.T) {
+	m := flatSetup()
+	it := SetupItemRec{Folder: "apps", Key: "davinci-resolve", Label: "DaVinci Resolve"}
+	m.setupItems = append(m.setupItems, it)
+	m.setupByValue[setupValue("apps", "davinci-resolve")] = it
+	m.setupPicker = m.rebuildSetup()
+	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "davinci-resolve"))
+
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	if m.top() != scrConfirm || m.pendingAction != "davinci-alt-drivers" {
+		t.Fatalf("D on davinci did not open the alt-drivers confirm: top=%v action=%q", m.top(), m.pendingAction)
+	}
+	if !strings.Contains(m.pendingMsg, "Radeon 780M") || !strings.Contains(m.pendingMsg, "SCOPE") {
+		t.Fatalf("alt-drivers prompt does not state what/scope: %q", m.pendingMsg)
+	}
+
+	m = flatSetup()
+	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "reaper"))
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	if m.top() != scrSetup || m.pendingAction == "davinci-alt-drivers" {
+		t.Fatalf("D on another row must be inert: top=%v action=%q", m.top(), m.pendingAction)
+	}
+}

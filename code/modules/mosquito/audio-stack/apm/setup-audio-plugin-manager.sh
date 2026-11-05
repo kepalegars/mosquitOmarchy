@@ -276,9 +276,8 @@ fi
 # marked-block pattern as code/modules/Apps/reaper/setup-reaper.sh and the sibling
 # setup-ableton-move-manager.sh: strip any previously-injected block first
 # so re-running after an edit actually updates hyprland.lua rather than
-# being a no-op, then append the current one. Size matches Omarchy's own
-# floating-window tag (system.lua) for consistency with the rest of the
-# desktop's TUI popups.
+# being a no-op, then append the current one. No size is forced: the TUI
+# inherits foot's Omarchy font/padding/scale and the user's own geometry.
 # -----------------------------------------------------------------------------
 HYPR_CONF="$HOME/.config/hypr/hyprland.lua"
 mkdir -p "$HOME/.config/hypr"
@@ -289,9 +288,10 @@ cat >>"$HYPR_CONF" <<'EOF'
 -- (the Bubble Tea TUI's own window) instead of the tiled default -- its
 -- app-id isn't in Omarchy's own floating-window whitelist (that one only
 -- matches a fixed set of known app-ids verbatim, not a wildcard).
--- Shared compact default with every mosquito TUI: one size everywhere,
--- title ladders degrade and lists paginate below it.
-o.window("org.omarchy.mosquito-audio-plugin-manager-tui", { float = true, center = true, size = { 1000, 780 } })
+-- Shared compact default with every mosquito TUI — no size forced: the window
+-- joins Omarchy's own floating-window tag (system.lua: float + center +
+-- size 875x600) instead of a hardcoded geometry, so it follows the desktop.
+o.window("org.omarchy.mosquito-audio-plugin-manager-tui", { tag = "+floating-window" })
 -- <<< mosquito-audio-plugin-manager-tui-setup <<<
 EOF
 hyprctl reload >/dev/null 2>&1 || true

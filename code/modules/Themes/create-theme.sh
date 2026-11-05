@@ -608,7 +608,7 @@ hr
 ok "Theme ' $THEME_NAME ' ready."
 echo "  • Folder   : ~/.config/omarchy/themes/$THEME_SLUG/"
 echo "  • Colors   : accent ${C[accent]} / background ${C[background]} / text ${C[foreground]}"
-echo "  • Plymouth (boot) : omarchy-plymouth-set-by-theme \"$THEME_SLUG\"  (password)"
+((PLYMOUTH)) && echo "  • Plymouth (boot) : omarchy-plymouth-set-by-theme \"$THEME_SLUG\"  (password)"
   echo "  • Remove   : omarchy theme (choose another theme) ; reverse:"
   echo "    rm -rf ~/.config/omarchy/themes/$THEME_SLUG"
 hr

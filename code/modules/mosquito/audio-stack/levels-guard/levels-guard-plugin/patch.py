@@ -9,7 +9,7 @@ missing snippet is a hard error, never a silently half-patched panel.
 from pathlib import Path
 import sys
 
-GUARD = '''  readonly property bool inputMuted: source && source.audio ? source.audio.muted : false
+GUARD = '''  readonly property bool inputMuted: inputViaWpctl ? UntypedInput.muted : (source && source.audio ? source.audio.muted : false)
 
   // levels-guard guard: USB hardware volume belongs to mosquitomixbay.
   // It only ignores the native surfaces; direct pactl/wpctl stays untouched.
@@ -88,31 +88,31 @@ REPLACEMENTS = [
     // icons render visually smaller in JetBrainsMono Nerd Font.
     if (!sink || !sink.audio) return ""
     if (isHeadphones(sink)) return "󰋋"
-    if (levelsGuardBlockOutput) return ""
+    if (levelsGuardBlockOutput) return ""
     if (outputMuted) return ""
 ''',
     ),
     (
         '''  function inputIcon() {
-    if (!source || !source.audio) return "󰍭"
+    if (!hasInput) return "󰍭"
     return inputMuted ? "󰍭" : "󰍬"
   }
 ''',
         '''  function inputIcon() {
-    if (!source || !source.audio) return "󰍭"
     if (levelsGuardBlockInput) return "󰍬"
+    if (!hasInput) return "󰍭"
     return inputMuted ? "󰍭" : "󰍬"
   }
 ''',
     ),
     (
         '''  function outputVolumeName(volume, muted) {
-    return Model.outputVolumeName(volume, muted)
+    return Model.outputVolumeName(volume, muted, Commons.I18n.t)
   }
 ''',
         '''  function outputVolumeName(volume, muted) {
-    if (levelsGuardBlockOutput) return Model.outputVolumeName(1, false)
-    return Model.outputVolumeName(volume, muted)
+    if (levelsGuardBlockOutput) return Model.outputVolumeName(1, false, Commons.I18n.t)
+    return Model.outputVolumeName(volume, muted, Commons.I18n.t)
   }
 ''',
     ),
@@ -126,10 +126,11 @@ REPLACEMENTS = [
     ),
     (
         '''  function setInputVolume(v) {
-    if (!source || !source.audio) return
+    if (inputViaWpctl) {
 ''',
         '''  function setInputVolume(v) {
-    if (!source || !source.audio || levelsGuardBlockInput) return
+    if (levelsGuardBlockInput) return
+    if (inputViaWpctl) {
 ''',
     ),
     (
@@ -143,23 +144,27 @@ REPLACEMENTS = [
     ),
     (
         '''  function toggleInputMute() {
-    if (source && source.audio) source.audio.muted = !source.audio.muted
-  }''',
+    if (inputViaWpctl) {
+''',
         '''  function toggleInputMute() {
     if (levelsGuardBlockInput) return
-    if (source && source.audio) source.audio.muted = !source.audio.muted
-  }''',
+    if (inputViaWpctl) {
+''',
     ),
     (
         '''  function toggleAllMuted() {
     var mute = anyAudible
     if (hasOutput) volumeSink.audio.muted = mute
-    if (hasInput) source.audio.muted = mute
+    if (hasInput && inputViaWpctl) UntypedInput.setMuted(mute)
+    else if (hasInput) source.audio.muted = mute
   }''',
         '''  function toggleAllMuted() {
     var mute = anyAudible
     if (hasOutput && !levelsGuardBlockOutput) volumeSink.audio.muted = mute
-    if (hasInput && !levelsGuardBlockInput) source.audio.muted = mute
+    if (!levelsGuardBlockInput) {
+      if (hasInput && inputViaWpctl) UntypedInput.setMuted(mute)
+      else if (hasInput) source.audio.muted = mute
+    }
   }''',
     ),
     (
@@ -177,22 +182,6 @@ REPLACEMENTS = [
 ''',
     ),
     (
-        '''              opacity: root.outputMuted ? 0.5 : 1.0
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-''',
-        '''              opacity: root.outputMuted && !root.levelsGuardBlockOutput ? 0.5 : 1.0
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-''',
-    ),
-    (
-        '''                text: Math.round((outputSlider.dragging ? outputSlider.liveValue : root.outputVolume) * 100) + "%"
-''',
-        '''                text: root.levelsGuardBlockOutput ? "100%" : Math.round((outputSlider.dragging ? outputSlider.liveValue : root.outputVolume) * 100) + "%"
-''',
-    ),
-    (
         '''                anchors.rightMargin: Style.space(6)
                 anchors.verticalCenter: parent.verticalCenter
                 opacity: root.outputMuted ? 0.5 : 1.0
@@ -200,6 +189,12 @@ REPLACEMENTS = [
         '''                anchors.rightMargin: Style.space(6)
                 anchors.verticalCenter: parent.verticalCenter
                 opacity: root.outputMuted && !root.levelsGuardBlockOutput ? 0.5 : 1.0
+''',
+    ),
+    (
+        '''                text: Commons.I18n.formatNumber(Math.round((outputSlider.dragging ? outputSlider.liveValue : root.outputVolume) * 100)) + "%"
+''',
+        '''                text: root.levelsGuardBlockOutput ? "100%" : Commons.I18n.formatNumber(Math.round((outputSlider.dragging ? outputSlider.liveValue : root.outputVolume) * 100)) + "%"
 ''',
     ),
     (
@@ -272,9 +267,9 @@ REPLACEMENTS = [
 ''',
     ),
     (
-        '''                text: Math.round((inputSlider.dragging ? inputSlider.liveValue : root.inputVolume) * 100) + "%"
+        '''                text: root.inputLevelKnown ? Commons.I18n.formatNumber(Math.round((inputSlider.dragging ? inputSlider.liveValue : root.inputVolume) * 100)) + "%" : "–"
 ''',
-        '''                text: root.levelsGuardBlockInput ? "100%" : Math.round((inputSlider.dragging ? inputSlider.liveValue : root.inputVolume) * 100) + "%"
+        '''                text: root.levelsGuardBlockInput ? "100%" : root.inputLevelKnown ? Commons.I18n.formatNumber(Math.round((inputSlider.dragging ? inputSlider.liveValue : root.inputVolume) * 100)) + "%" : "–"
 ''',
     ),
     (
@@ -352,7 +347,7 @@ REPLACEMENTS = [
     ),
 ]
 
-NEEDLE = '''  readonly property bool inputMuted: source && source.audio ? source.audio.muted : false
+NEEDLE = '''  readonly property bool inputMuted: inputViaWpctl ? UntypedInput.muted : (source && source.audio ? source.audio.muted : false)
 '''
 
 

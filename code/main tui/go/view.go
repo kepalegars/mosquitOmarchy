@@ -180,7 +180,13 @@ func (m model) View() string {
 			title = screenTitle("Setup", w)
 		}
 		body = m.setupPicker.View()
-		bar = m.searchBar(m.setupPicker.ShortcutsHint())
+		hint := m.setupPicker.ShortcutsHint()
+		if m.treeMode != "uninstall" {
+			if _, key := splitSetupValue(m.setupPicker.SelectedValue()); key == "davinci-resolve" {
+				hint += " · D alt drivers"
+			}
+		}
+		bar = m.searchBar(hint)
 	case scrSetupCat:
 		if m.treeMode == "uninstall" {
 			title = screenTitle("Uninstall — "+m.setupCatLabel(), w)
@@ -188,7 +194,13 @@ func (m model) View() string {
 			title = screenTitle("Setup — "+m.setupCatLabel(), w)
 		}
 		body = m.setupCatPicker.View()
-		bar = m.searchBar(m.setupCatPicker.ShortcutsHint())
+		hint := m.setupCatPicker.ShortcutsHint()
+		if m.treeMode != "uninstall" {
+			if _, key := splitSetupValue(m.setupCatPicker.SelectedValue()); key == "davinci-resolve" {
+				hint += " · D alt drivers"
+			}
+		}
+		bar = m.searchBar(hint)
 	case scrUpdate:
 		title = screenTitle("Update", w)
 		body = m.updateBody()

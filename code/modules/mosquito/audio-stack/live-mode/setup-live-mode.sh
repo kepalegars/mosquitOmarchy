@@ -125,8 +125,8 @@ install_routing_tool() {
 }
 
 # ---------------------------------------------------------------------------
-# 1c. Hyprland float rule: all mosquito terminal managers open untiled, at
-# the same fixed foot size (-W 92x92 at launch). Idempotent marked block in
+# 1c. Hyprland float rule: all mosquito terminal managers open untiled, with
+# foot's own (Omarchy) geometry — no size override. Idempotent marked block in
 # hyprland.lua, the same pattern tweak-keepassxc-window.sh established.
 # ---------------------------------------------------------------------------
 
@@ -141,19 +141,19 @@ install_hypr_rule() {
   marker_strip "$CONF_HYPR" "$FLOAT_START" "$FLOAT_END"
   cat >> "$CONF_HYPR" <<EOF
 $FLOAT_START
--- Live Mode's own TUI floats + centered, and no pixel size is forced: its
--- dispatcher launches foot with -W 92x92, so the terminal keeps its square
--- geometry and no title gets clipped.
+-- Live Mode's own TUI joins Omarchy's floating-window tag (system.lua: float +
+-- center + size 875x600) instead of a hardcoded geometry. foot keeps Omarchy's
+-- font/padding/scale.
 --
 -- Only its OWN TUI. This block used to also carry the audio-plugin-manager and
 -- move-manager TUIs, which duplicated the rules their own setup scripts already
 -- install under "mosquito-audio-plugin-manager-tui-setup" and
 -- "move-manager-tui-setup" — two identical o.window lines for the same class in
 -- the same file. Whoever needs those rules now owns them in one place only.
-o.window("org.omarchy.mosquito-live-mode-tui", { float = true, center = true, size = { 1000, 780 } })
+o.window("org.omarchy.mosquito-live-mode-tui", { tag = "+floating-window" })
 $FLOAT_END
 EOF
-  ok "Hyprland rule installed: mosquito live-mode TUI opens untiled (foot 92x92)"
+  ok "Hyprland rule installed: mosquito live-mode TUI opens untiled"
 }
 
 remove_hypr_rule() {

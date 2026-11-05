@@ -149,25 +149,41 @@ func TestContentSizeFitsTheGap(t *testing.T) {
 }
 
 // The panel is capped at ManagerContent.MaxW so a list stays readable on a wide
-// terminal, but the wordmark ladder must NOT be measured against that same cap:
-// the full "mosquitomarchy" art is 121 columns, so feeding it 92 demoted a wide
-// terminal to the 3-row compact box no matter how much room it actually had.
+// terminal, but the title ladder must NOT be measured against that same cap:
+// the 121-column wordmark has to use the window's real width.
 func TestHomeTitleUsesTheWindowNotThePanelCap(t *testing.T) {
-	const bannerRows = 9 // the boxed wordmark rung
-
 	m := initialModel()
 	m.w, m.h = 200, 44
 	if got := m.contentWidth(); got != 92 {
 		t.Fatalf("precondition: panel width = %d, want the 92 cap", got)
 	}
-	if got := m.homeLayout().TitleRows; got != bannerRows {
-		t.Errorf("on a 200-column terminal the title took %d rows, want %d (the full wordmark)", got, bannerRows)
+	if title := ansiSGR.ReplaceAllString(m.homeTitle(), ""); !strings.Contains(title, "███") {
+		t.Errorf("on a 200-column terminal the title is not the boxed wordmark: %q", title)
 	}
 
-	// A terminal that cannot hold the art must still degrade rather than wrap.
+	// The 121-column art cannot fit 80 columns; it must degrade to the
+	// one-line box, not wrap.
 	m.w = 80
-	if got := m.homeLayout().TitleRows; got >= bannerRows {
-		t.Errorf("on an 80-column terminal the title took %d rows, expected it to degrade", got)
+	if title := ansiSGR.ReplaceAllString(m.homeTitle(), ""); strings.Contains(title, "███") || !strings.Contains(title, "┌") {
+		t.Errorf("on an 80-column terminal the title should be the one-line box: %q", title)
+	}
+}
+
+// TestHomeTitleIsASCIIAtTheDefaultWindow guards the cell size the floating
+// window must provide for the one-line 121-column wordmark. install-tui.sh
+// sizes it for this; the title must be the ANSI Shadow art there, not the box.
+func TestHomeTitleIsASCIIAtTheDefaultWindow(t *testing.T) {
+	m := initialModel()
+	m.w, m.h = 130, 36
+	title := ansiSGR.ReplaceAllString(m.homeTitle(), "")
+	if strings.Contains(title, "┌") {
+		t.Fatalf("130x36 fell back to the plain-text box instead of ASCII: %q", title)
+	}
+	if !strings.Contains(title, "███") {
+		t.Fatalf("130x36 does not show the ANSI Shadow wordmark: %q", title)
+	}
+	if got := lipgloss.Height(title); got < 4 {
+		t.Fatalf("130x36 title is %d rows, want the multi-row ASCII wordmark", got)
 	}
 }
 

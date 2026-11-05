@@ -10,3 +10,12 @@ _mq_go_cache="${XDG_CACHE_HOME:-$HOME/.cache}/mosquitomarchy"
 export GOPATH="$_mq_go_cache/go"
 export GOMODCACHE="$_mq_go_cache/go/pkg/mod"
 export GOCACHE="$_mq_go_cache/go-build"
+
+# mise ships a `go` shim that refuses to run inside this repo until its
+# .mise.toml is trusted, which broke every TUI build ("Config files are not
+# trusted"). Trust this repo's own config for the build only, without writing
+# persistent mise state.
+_mq_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [[ -f "$_mq_repo/.mise.toml" ]]; then
+  export MISE_TRUSTED_CONFIG_PATHS="${MISE_TRUSTED_CONFIG_PATHS:+$MISE_TRUSTED_CONFIG_PATHS:}$_mq_repo/.mise.toml"
+fi

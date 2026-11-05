@@ -28,8 +28,17 @@
 #   ./setup-davinci.sh --studio|--free     # force the edition if ambiguous
 #   ./setup-davinci.sh --no-codecs         # leave codec setup alone
 #   ./setup-davinci.sh --keep-mesa         # do not remove opencl-mesa (AMD)
+#   ./setup-davinci.sh --alt-drivers       # Radeon 780M: apply Mesa Rusticl + CPU scopes (steps 1+2)
+#   ./setup-davinci.sh --alt-drivers-revert# undo the 780M profile
 #   ./setup-davinci.sh --status            # current state, changes nothing
 #   ./setup-davinci.sh -h                  # help
+#
+# Radeon 780M / Phoenix (gfx1103): ROCm OpenCL is unsupported and can wedge the
+# GPU. The optimized profile installs Mesa Rusticl (opencl-mesa), disables the
+# ROCm ICD, forces RUSTICL_ENABLE=radeonsi in the launcher, clears Resolve's
+# OpenCL cache, and disables GPU scopes (Local.GPU.Scopes=0). It is proposed
+# during an interactive install, and applied from the TUI only by pressing D
+# on the davinci row in Setup — never automatically during a restore.
 
 # Launched from a file manager (Nautilus)? Reopen in a terminal and keep the
 # window open until a key is pressed (cf. gui-run.bash).
@@ -47,15 +56,24 @@ DESKTOP="$APPS_DIR/davinci-resolve.desktop"
 FFMPEG_PLUGIN_URL="https://github.com/EdvinNilsson/ffmpeg_encoder_plugin/releases/latest/download/ffmpeg_encoder_plugin.dvcp.bundle.zip"
 
 YES=0 STATUS_ONLY=0 FORCE_ED="" SKIP_CODECS=0 KEEP_MESA=0
+ALT_DRIVERS=0 ALT_DRIVERS_ONLY=0 ALT_DRIVERS_REVERT=0
 while (( $# )); do a="$1"; case "$a" in
   -y|--yes) YES=1 ;;
   --status) STATUS_ONLY=1 ;;
   --studio|--free) FORCE_ED="${a#--}" ;;
   --no-codecs) SKIP_CODECS=1 ;;
   --keep-mesa) KEEP_MESA=1 ;;
+  --alt-drivers) ALT_DRIVERS_ONLY=1 ;;
+  --alt-drivers-revert) ALT_DRIVERS_REVERT=1 ;;
   -h|--help) sed -n '2,/^# Launched from a file manager/p' "$0" | head -n -1 || true; exit 0 ;;
   *) echo "Unknown option: $a" >&2; exit 1 ;;
 esac; shift; done
+
+# Radeon 780M / Phoenix (gfx1103) profile paths.
+ALT_ICD=/etc/OpenCL/vendors/amdocl64.icd
+RUSTICL_ICD=/usr/lib/libRusticlOpenCL.so.1
+RESOLVE_CONFIG="$HOME/.local/share/DaVinciResolve/configs/config.dat"
+OPENCL_CACHE="$HOME/.local/share/DaVinciResolve/DVIP/Cache/OpenCL.cache"
 
 G='\033[1;32m'; B='\033[1;34m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
 msg(){ printf "${B}==>${N} %s\n" "$*"; }
@@ -95,6 +113,21 @@ ask(){
 pkg_has(){ pacman -Q "$1" &>/dev/null; }
 resolve_installed(){ [[ -x "$RESOLVE_DIR/bin/resolve" ]]; }
 
+# Radeon 780M = Phoenix APU (gfx1103). lspci reports it as "Phoenix1" on the
+# ThinkPad P14s; match the marketing name too so other vendors work.
+detect_780m(){
+  lspci -nn 2>/dev/null | grep -iE 'vga|3d|display' | grep -qiE '780M|Phoenix1|Phoenix'
+}
+
+# The profile is "applied" when the launcher forces Rusticl and the ROCm ICD
+# cannot be picked. GPU scopes are checked separately (config.dat may not exist
+# before Resolve's first launch).
+alt_drivers_active(){
+  [[ -x "$LAUNCHER" ]] || return 1
+  grep -q 'RUSTICL_ENABLE=radeonsi' "$LAUNCHER" 2>/dev/null || return 1
+  [[ -e "$ALT_ICD.disabled" || ! -e "$ALT_ICD" ]]
+}
+
 # Persistent state outside /opt/resolve (which a Resolve update replaces):
 # lets the mosquitOmarchy update flow notice a user-installed Resolve update
 # and re-apply the integration/patches that were enabled before it.
@@ -122,10 +155,11 @@ license_patched(){
 }
 
 save_davinci_state(){
-  local ed="${1:-}" lic="${2:-}" aac="${3:-}" ff="${4:-}"
+  local ed="${1:-}" lic="${2:-}" aac="${3:-}" ff="${4:-}" alt="${5:-}"
   [[ -n "$lic" ]] || lic=$(license_patched && echo 1 || echo 0)
   [[ -n "$aac" ]] || aac=$([[ -e "$RESOLVE_DIR/bin/resolve.aac-orig" ]] && echo 1 || echo 0)
   [[ -n "$ff" ]] || ff=$([[ -d "$RESOLVE_DIR/IOPlugins/ffmpeg_encoder_plugin.dvcp.bundle" ]] && echo 1 || echo 0)
+  [[ -n "$alt" ]] || alt=$(alt_drivers_active && echo 1 || echo 0)
   mkdir -p "$(dirname "$DAVINCI_STATE")"
   {
     echo "version=$(resolve_version)"
@@ -133,6 +167,7 @@ save_davinci_state(){
     echo "aacfix=$aac"
     echo "license_patch=$lic"
     echo "ffmpeg_plugin=$ff"
+    echo "alt_drivers=$alt"
   } > "$DAVINCI_STATE"
 }
 
@@ -256,6 +291,17 @@ do_status(){
   else
     warn "DRwrap          : absent"
   fi
+  if detect_780m; then
+    if alt_drivers_active; then
+      ok "Radeon 780M     : Mesa Rusticl profile applied"
+    else
+      warn "Radeon 780M     : optimized profile not applied (D on the davinci row in Setup, or --alt-drivers)"
+    fi
+    local scopes="not set (launch Resolve once)"
+    [[ -r "$RESOLVE_CONFIG" ]] && scopes="$(sed -n 's/^Local\.GPU\.Scopes = //p' "$RESOLVE_CONFIG" | head -n1)"
+    [[ -n "$scopes" ]] || scopes="not set"
+    ok "GPU scopes      : $scopes"
+  fi
   local n=0 z
   while IFS= read -r z; do
     [[ -n $z ]] || continue
@@ -324,15 +370,26 @@ install_deps(){
 
   local opencl opencl_pkg
   opencl="$(detect_opencl_pkg)"
+  # Phoenix/RDNA3 (780M) must NOT use ROCm OpenCL: it is unsupported on
+  # gfx1103 and causes compute-queue timeouts. Mesa Rusticl is the backend.
+  if detect_780m; then
+    opencl=opencl-mesa
+    warn "Radeon 780M/Phoenix: using Mesa Rusticl (opencl-mesa), not ROCm."
+  fi
   if [[ -n "$opencl" ]]; then
     if pkg_has "$opencl"; then
       ok "OpenCL runtime already present: $opencl"
     else
       mq_sudo -v || { err "Password required to install $opencl."; return 1; }
-      mq_sudo pacman -S --needed --noconfirm "$opencl" || { warn "Failed to install $opencl."; }
-      ok "OpenCL runtime: $opencl"
+      if mq_sudo pacman -S --needed --noconfirm "$opencl"; then
+        ok "OpenCL runtime: $opencl"
+      else
+        warn "Failed to install $opencl — Resolve will not start until an OpenCL runtime is installed."
+      fi
     fi
-    if [[ "$opencl" == rocm-opencl-runtime ]] && pkg_has opencl-mesa && (( ! KEEP_MESA )); then
+    # Only drop Rusticl once ROCm is actually installed: after a failed
+    # rocm install this used to remove the only working OpenCL runtime.
+    if [[ "$opencl" == rocm-opencl-runtime ]] && pkg_has "$opencl" && pkg_has opencl-mesa && (( ! KEEP_MESA )); then
       # Rusticl (= opencl-mesa) sometimes loads instead of ROCm and makes
       # Resolve crash once a project is open: we remove it by default.
       if ((YES)) || ask "Remove opencl-mesa (Rusticl) — causes AMD crashes in Resolve?" y; then
@@ -413,9 +470,24 @@ install_resolve(){
 }
 
 # ───────────────────────── Launcher + shortcut ─────────────────────────
-install_launcher(){
-  msg "Launcher and menu shortcut"
-  mkdir -p "$BIN_DIR" "$APPS_DIR"
+# write_launcher is separate from install_launcher because the 780M profile
+# rewrites ONLY the launcher (no icon/desktop work) when toggled later.
+write_launcher(){
+  mkdir -p "$BIN_DIR"
+  local gpu_block
+  if (( ALT_DRIVERS )); then
+    gpu_block="# RDNA3 iGPU (780M/Phoenix): force Mesa Rusticl. ROCm OpenCL is
+# unsupported on gfx1103 and can wedge the GPU.
+export RUSTICL_ENABLE=radeonsi
+export OCL_ICD_FILENAMES=$RUSTICL_ICD"
+  else
+    gpu_block="# ROCm OpenCL (AMD): points the driver if present, otherwise system ICD (GPU detected at install).
+resolve_gpu_pick(){
+  [[ -r /opt/rocm/lib/libamdocl64.so ]] && export OCL_ICD_FILENAMES=/opt/rocm/lib/libamdocl64.so
+  return 0
+}
+resolve_gpu_pick"
+  fi
   cat > "$LAUNCHER" <<LAUNE
 #!/usr/bin/env bash
 # DaVinci Resolve — launcher (generated by apps/davinci/setup-davinci.sh)
@@ -430,15 +502,17 @@ fi
 
 # Native UI under Wayland not supported: force XWayland (xcb).
 export QT_QPA_PLATFORM=xcb
-# ROCm OpenCL (AMD): points the driver if present, otherwise system ICD (GPU detected at install).
-resolve_gpu_pick(){
-  [[ -r /opt/rocm/lib/libamdocl64.so ]] && export OCL_ICD_FILENAMES=/opt/rocm/lib/libamdocl64.so
-}
-resolve_gpu_pick
+$gpu_block
 # UI scale is left to Resolve's own preferences (no QT_*/DisplayScale override).
 exec "\$RESOLVE_DIR/bin/resolve" "\$@"
 LAUNE
   chmod +x "$LAUNCHER"
+}
+
+install_launcher(){
+  msg "Launcher and menu shortcut"
+  mkdir -p "$BIN_DIR" "$APPS_DIR"
+  write_launcher
   ok "Launcher: $LAUNCHER"
 
   # The payload ships its icon as DV_Resolve.png (128x128) — not the names we
@@ -480,6 +554,93 @@ DESKE
   if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$APPS_DIR" 2>/dev/null || true
   fi
+}
+
+# ───────────────────────── Radeon 780M profile (guide steps 1+2) ─────────────
+# Step 1: Mesa Rusticl instead of ROCm's unsupported OpenCL on gfx1103.
+# Step 2: GPU scopes off, so the iGPU serves playback/grading instead.
+apply_alt_drivers(){
+  if ! detect_780m; then
+    err "No Radeon 780M / Phoenix iGPU detected — the Rusticl profile is not applicable."
+    return 1
+  fi
+  msg "Radeon 780M (Phoenix) — optimized OpenCL profile"
+
+  if pkg_has opencl-mesa; then
+    ok "Mesa Rusticl already installed (opencl-mesa)"
+  else
+    mq_sudo -v || { err "Password required to install opencl-mesa."; return 1; }
+    mq_sudo pacman -S --needed --noconfirm opencl-mesa \
+      || { err "Failed to install opencl-mesa."; return 1; }
+    ok "Installed opencl-mesa (Mesa Rusticl)"
+  fi
+
+  if [[ -e "$ALT_ICD" && ! -e "$ALT_ICD.disabled" ]]; then
+    mq_sudo mv "$ALT_ICD" "$ALT_ICD.disabled" \
+      && ok "ROCm OpenCL ICD disabled (reversible: $ALT_ICD.disabled)" \
+      || { err "Could not disable $ALT_ICD."; return 1; }
+  elif [[ -e "$ALT_ICD.disabled" ]]; then
+    ok "ROCm OpenCL ICD already disabled"
+  else
+    ok "No ROCm OpenCL ICD installed (nothing to disable)"
+  fi
+
+  local saved=$ALT_DRIVERS
+  ALT_DRIVERS=1
+  write_launcher
+  ALT_DRIVERS=$saved
+  ok "Launcher forces Mesa Rusticl (RUSTICL_ENABLE=radeonsi)"
+
+  if [[ -e "$OPENCL_CACHE" ]]; then
+    mv "$OPENCL_CACHE" "$OPENCL_CACHE.bak.$(date +%s)" \
+      && ok "Resolve OpenCL cache moved aside (recompiles on next launch)"
+  fi
+
+  if [[ -f "$RESOLVE_CONFIG" ]]; then
+    if grep -q '^Local\.GPU\.Scopes = 0$' "$RESOLVE_CONFIG"; then
+      ok "GPU scopes already disabled"
+    else
+      cp -a "$RESOLVE_CONFIG" "$RESOLVE_CONFIG.bak.alt-drivers.$(date +%s)"
+      if grep -q '^Local\.GPU\.Scopes =' "$RESOLVE_CONFIG"; then
+        sed -i 's/^Local\.GPU\.Scopes =.*/Local.GPU.Scopes = 0/' "$RESOLVE_CONFIG"
+      else
+        printf '\nLocal.GPU.Scopes = 0\n' >> "$RESOLVE_CONFIG"
+      fi
+      ok "GPU scopes disabled (scopes now use the CPU)"
+    fi
+  else
+    warn "config.dat not found yet — launch Resolve once, then re-run --alt-drivers."
+  fi
+
+  local ed; ed="$(state_get edition)"; [[ -n "$ed" ]] || ed="$(infer_edition)"
+  save_davinci_state "$ed" "" "" "" 1
+  ok "Restart Resolve; its first launch recompiles the OpenCL shaders."
+}
+
+revert_alt_drivers(){
+  msg "Reverting the Radeon 780M optimized profile"
+  if [[ -e "$ALT_ICD.disabled" && ! -e "$ALT_ICD" ]]; then
+    mq_sudo mv "$ALT_ICD.disabled" "$ALT_ICD" \
+      && ok "ROCm OpenCL ICD re-enabled" \
+      || { err "Could not restore $ALT_ICD."; return 1; }
+  else
+    ok "ROCm OpenCL ICD is already in place (or absent)"
+  fi
+
+  local saved=$ALT_DRIVERS
+  ALT_DRIVERS=0
+  write_launcher
+  ALT_DRIVERS=$saved
+  ok "Launcher restored (system OpenCL ICD / ROCm if present)"
+
+  local bk; bk="$(ls -1t "$RESOLVE_CONFIG".bak.alt-drivers.* 2>/dev/null | head -n1)"
+  if [[ -n "$bk" ]]; then
+    cp -a "$bk" "$RESOLVE_CONFIG" && ok "config.dat restored (GPU scopes setting)"
+  fi
+
+  local ed; ed="$(state_get edition)"; [[ -n "$ed" ]] || ed="$(infer_edition)"
+  save_davinci_state "$ed" "" "" "" 0
+  ok "Restart Resolve to reload the previous OpenCL backend."
 }
 
 # Omarchy's default app rule (default/hypr/apps/davinci-resolve.lua) floats
@@ -749,6 +910,9 @@ recap(){
   else
     echo " • H.264/H.265/AAC: not supported by Resolve Linux (free) — transcode to DNxHR/PCM."
   fi
+  if alt_drivers_active; then
+    echo " • Radeon 780M: Mesa Rusticl + CPU scopes (apply/revert from Setup: D on davinci)."
+  fi
   echo " • First-run config: Preferences > System > Memory & GPU (OpenCL auto-detected)."
   echo " • DRwrap: drag/drop, clipboard paste and codec conversion handled silently."
   echo "   Watch folder: ~/Videos/ResolveDrop · ready files: ~/Videos/ResolveIngest."
@@ -769,10 +933,11 @@ update_davinci(){
     return 0
   fi
   YES=1
-  local ed aac lic ff cur_ver state_ver
+  local ed aac lic ff cur_ver state_ver alt
   state_ver="$(state_get version)"
   ed="$(state_get edition)"; [[ -n "$ed" ]] || ed="$(infer_edition)"
   aac="$(state_get aacfix)"; lic="$(state_get license_patch)"; ff="$(state_get ffmpeg_plugin)"
+  alt="$(state_get alt_drivers)"
   cur_ver="$(resolve_version)"
   if [[ -z "$state_ver" ]]; then
     # First update after this feature existed: infer from the current install.
@@ -804,7 +969,11 @@ update_davinci(){
   if [[ "$ff" == 1 ]]; then
     install_ffmpeg_plugin || warn "FFmpeg encoder plugin failed."
   fi
-  save_davinci_state "$ed" "$lic" "$aac" "$ff"
+  if [[ "$alt" == 1 ]]; then
+    ALT_DRIVERS=1
+    apply_alt_drivers || warn "Radeon 780M profile could not be re-applied."
+  fi
+  save_davinci_state "$ed" "$lic" "$aac" "$ff" "$alt"
   recap "$ed"
 }
 
@@ -812,6 +981,15 @@ update_davinci(){
 main(){
   msg "install-davinci — DaVinci Resolve (Studio or free) for Omarchy"
   ((STATUS_ONLY)) && { do_status; exit 0; }
+  if (( ALT_DRIVERS_REVERT )); then
+    revert_alt_drivers
+    exit $?
+  fi
+  if (( ALT_DRIVERS_ONLY )); then
+    ALT_DRIVERS=1
+    apply_alt_drivers
+    exit $?
+  fi
   if [[ "${MOSQUITOMARCHY_UPDATE:-0}" == 1 ]]; then
     update_davinci
     exit $?
@@ -845,6 +1023,16 @@ main(){
   fix_audio_backend
   ((SKIP_CODECS)) && warn "--no-codecs: codec setup NOT applied." || step_codecs "$ed"
   install_drwrap
+
+  # Radeon 780M: propose the optimized profile in an interactive install only.
+  # A restore (YES=1) must not change the GPU backend behind the user's back;
+  # the TUI offers it explicitly with D on the davinci row.
+  if detect_780m && (( YES == 0 )); then
+    if ask "Apply the optimized Radeon 780M OpenCL profile (Mesa Rusticl + CPU scopes)?" y; then
+      ALT_DRIVERS=1
+      apply_alt_drivers || warn "Optimized 780M profile not fully applied."
+    fi
+  fi
   echo
   recap "$ed"
 

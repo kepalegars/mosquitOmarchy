@@ -236,11 +236,15 @@ install_backend_links() {
 install_float_rule() {
   mkdir -p "$HYPR_DIR"
   [[ -f $HYPRLAND ]] || touch "$HYPRLAND"
-  if grep -qF -e "$FLOAT_BEGIN" "$HYPRLAND"; then ok "Hyprland float rule already present."; return 0; fi
+  # Rewrite the marked block (not "already present, return"): an updated rule
+  # must reach machines that already installed an older one.
+  sed -i '/-- >>> mosquitomarchy-tui-floating >>>/,/-- <<< mosquitomarchy-tui-floating <<</d' "$HYPRLAND"
   {
     printf '\n%s\n' "$FLOAT_BEGIN"
-    printf -- '-- (the Bubble Tea TUI is not in Omarchy'\''s floating whitelist — float + center it.)\n'
-    printf 'o.window("org.omarchy.mosquitomarchy-tui", { float = true, center = true })\n'
+    printf -- '-- Join Omarchy'\''s floating-window tag (float + center) and widen it:\n'
+    printf -- '-- the one-line ANSI Shadow wordmark is 121 columns, and the tag alone\n'
+    printf -- '-- opens ~87 columns, which forced a smaller fallback title.\n'
+    printf 'o.window("org.omarchy.mosquitomarchy-tui", { tag = "+floating-window", size = { 1300, 800 } })\n'
     printf '%s\n' "$FLOAT_END"
   } >> "$HYPRLAND"
   hyprctl reload >/dev/null 2>&1 || true
@@ -348,11 +352,17 @@ install_shell_plugin() {
   # deliberately does not exist. strip_shell_entry() removes a leftover one;
   # nothing adds it back.
   strip_shell_entry
-  # Make sure the plugin is actually enabled (other plugin resets may have
-  # disabled it; the update-check watchdog needs it active).
-  omarchy plugin enable mosquito.indicators >/dev/null 2>&1 || true
-  omarchy plugin enable mosquito.confirm     >/dev/null 2>&1 || true
-  ok "mosquitomarchy QML plugins (confirm + indicators) enabled."
+  # mosquito.confirm is an overlay (no bar entry) and must be enabled.
+  omarchy plugin enable mosquito.confirm >/dev/null 2>&1 || true
+  # mosquito.indicators is a BAR WIDGET: `plugin enable` places it. Only
+  # refresh an indicators widget the user already has, never add one (that is
+  # how a set of hidden icons appeared unasked).
+  if [[ -f $SHELL_JSON ]] && grep -qE '"(omarchy|mosquito|'"$USER"')\.indicators"' "$SHELL_JSON" 2>/dev/null; then
+    omarchy plugin enable mosquito.indicators >/dev/null 2>&1 || true
+    ok "mosquitomarchy QML plugins (confirm + existing indicators) enabled."
+  else
+    ok "mosquitomarchy QML plugin (confirm) enabled; no indicators widget added."
+  fi
 }
 
 do_status() {
@@ -372,7 +382,7 @@ do_status() {
   else
     echo "stale bar entry  : none"
   fi
-  echo "shell plugins    : $(omarchy-shell shell listPlugins 2>/dev/null | python3 -c 'import json,sys;d=json.load(sys.stdin);on=lambda i:any(p["id"]==i and p["enabled"] for p in d);print("on" if on("mosquito.confirm") and on("mosquito.indicators") else "partial/missing")')"
+  echo "shell plugins    : $(omarchy-shell shell listPlugins 2>/dev/null | python3 -c 'import json,sys;d=json.load(sys.stdin);on=lambda i:any(p["id"]==i and p["enabled"] for p in d);print("on" if on("mosquito.confirm") else "partial/missing")')"
   echo "backend actions  : $([[ -e $BIN_DIR/mosquitomarchy-actions ]] && echo linked || echo absent)"
   echo "crash agent      : $([[ -e $BIN_DIR/mosquitomarchy-agent-crash ]] && echo linked || echo absent)"
   echo "crash skill      : $([[ -e $HOME/.agents/skills/mosquitomarchy-crash ]] && echo linked || echo absent)"

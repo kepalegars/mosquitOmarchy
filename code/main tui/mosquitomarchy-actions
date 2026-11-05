@@ -1021,7 +1021,7 @@ _setup_tree(){
   items+=("user/achraf67"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
     "$(json_str user)" "$(json_str achraf67)" \
     "$(json_str "achraf67 - v$ver")" \
-    "$(json_str "Omarchy theme created by mosquitOmarchy (Achraf67) — colors, icons, unlock logo and Plymouth")")")
+    "$(json_str "Omarchy theme created by mosquitOmarchy (Achraf67) — colors, icons and wallpaper")")")
   if ((${#_missing_themes[@]})); then
     folders+=("defaults"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s,"parent":%s}' \
       "$(json_str defaults)" "$(json_str defaults)" false "$(json_str themes)")")
@@ -4152,6 +4152,10 @@ case "$sub" in
   addons-reinstall)         cmd_addons_reinstall ;;
   fixes-run) mq_cache_clear; cmd_fixes_run "$@" ;;
   tweaks-run) mq_cache_clear; cmd_tweaks_run "$@" ;;
+  # DaVinci 780M profile: only ever reached from the explicit D key on the
+  # davinci row (never from a restore), so it can be non-interactive.
+  davinci-alt-drivers) bash "$DAVINCI_DIR/setup-davinci.sh" --alt-drivers ;;
+  davinci-alt-drivers-revert) bash "$DAVINCI_DIR/setup-davinci.sh" --alt-drivers-revert ;;
   theme-images)              cmd_theme_images "${1:-}" ;;
   theme-default-dir)         cmd_theme_default_dir "${1:-get}" "${2:-}" ;;
   theme-pick)                cmd_theme_pick "${1:-file}" "${2:-}" ;;

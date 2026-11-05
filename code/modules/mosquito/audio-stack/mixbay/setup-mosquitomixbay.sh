@@ -197,7 +197,9 @@ touch "$HYPR_CONF"
 sed -i '/-- >>> mosquito-mixbay-tui-setup >>>/,/-- <<< mosquito-mixbay-tui-setup <<</d' "$HYPR_CONF"
 cat >>"$HYPR_CONF" <<'EOF'
 -- >>> mosquito-mixbay-tui-setup >>> float mosquito-mixbay-tui
-o.window("org.omarchy.mosquito-mixbay-tui", { float = true, center = true, size = { 1000, 780 } })
+-- No size forced: the TUI joins Omarchy's own floating-window tag (system.lua:
+-- float + center + size 875x600) and foot keeps Omarchy's font/padding/scale.
+o.window("org.omarchy.mosquito-mixbay-tui", { tag = "+floating-window" })
 o.window("org.omarchy.mosquito-mixbay-scratchpad", { float = true, center = true, size = { 1000, 780 } })
 -- <<< mosquito-mixbay-tui-setup <<<
 EOF

@@ -14,10 +14,12 @@
 #   ./setup-jamjamjam-plugin.sh           # installs/enables the plugin
 #   ./setup-jamjamjam-plugin.sh --remove  # removes the plugin + bar entry
 #
-# Prerequisites: python3 with numpy; pw-cat and pw-record (PipeWire).
+# Prerequisites: python3 (numpy for key/BPM/chord; the tuner works without it),
+# pw-cat, pw-record and parec (PipeWire).
 # =============================================================================
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/gui-run.bash"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/marker-strip.bash"  # marker_strip: safe managed-block removal
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/elevate.bash"     # mq_sudo: install python-numpy
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -70,9 +72,37 @@ ensure_deps() {
   local missing=0
   check_dep pw-cat   "pipewire / pipewire-utils"
   check_dep pw-record "pipewire / pipewire-utils"
+  # parec reaches sink monitors (pw-record cannot on PipeWire 1.6); without it
+  # the analyzer hears silence even though the plugin looks installed.
+  check_dep parec    "pipewire-pulse / libpulse"
   check_dep python3  "python"
-  python3 -c "import numpy" 2>/dev/null || { warn "Missing: python3 numpy (pip install numpy)"; missing=1; }
+  python3 -c "import numpy" 2>/dev/null || { warn "Missing: python3 numpy (python-numpy)"; missing=1; }
   return "$missing"
+}
+
+# numpy is the one dependency the installer can fix itself. It is needed for
+# key/BPM/chord analysis; the tuner is pure Python and works without it, so a
+# failed download must NOT abort the install (the Omarchy mirror times out on
+# the tiny .sig files now and then — one retry usually gets them from cache).
+ensure_numpy() {
+  python3 -c "import numpy" 2>/dev/null && { ok "numpy present"; return 0; }
+  info "Installing python-numpy (key/BPM/chord analysis needs it)…"
+  local attempt
+  for attempt in 1 2 3; do
+    if mq_sudo pacman -S --needed --noconfirm python-numpy \
+       && python3 -c "import numpy" 2>/dev/null; then
+      ok "python-numpy installed"
+      return 0
+    fi
+    if (( attempt < 3 )); then
+      warn "pacman failed (mirror timeout?) — retry $attempt/3…"
+      sleep 3
+    fi
+  done
+  err "Could not install python-numpy."
+  err "The tuner and metronome still work; key/BPM/chord stay off until it is installed."
+  err "Retry later with: sudo pacman -S python-numpy"
+  return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -214,6 +244,8 @@ if [[ $REMOVE == true ]]; then
   info "Uninstall complete. Restart the shell: omarchy restart shell"
 else
   ensure_deps || true
+  # Warn, do not abort: a flaky mirror must not cost the user the tuner.
+  ensure_numpy || true
   install_plugin
   add_to_bar
   install_data

@@ -120,6 +120,63 @@ fi
 #     found, so no machine keeps the old id.
 # -----------------------------------------------------------------------------
 POWER_CLONED=0
+
+# Exactly ONE widget with the given suffix in the bar layout. A stock/legacy
+# id is adopted, and leftover duplicates are dropped. Blindly repointing
+# every power id is how the bar ended up with two mosquito.power widgets: a
+# stale clone id (kapeq_mosquito.power) renders nothing while its plugin dir
+# is gone, then becomes a second live widget the moment it is repointed.
+normalize_bar_widget(){  # normalize_bar_widget <shell.json> <user> power|indicators
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, os, sys, time
+path, user, suffix = sys.argv[1], sys.argv[2], sys.argv[3]
+CANON = "mosquito." + suffix
+IDS = {"omarchy." + suffix, "custom." + suffix, user + "." + suffix, CANON}
+try:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+except (OSError, ValueError):
+    sys.exit(0)
+layout = data.get("bar", {}).get("layout")
+if not isinstance(layout, dict):
+    sys.exit(0)
+positions = [(sec, i, it.get("id"))
+             for sec, items in layout.items() if isinstance(items, list)
+             for i, it in enumerate(items)
+             if isinstance(it, dict) and it.get("id") in IDS]
+if not positions:
+    sys.exit(0)
+if len(positions) == 1 and positions[0][2] == CANON:
+    sys.exit(0)  # already correct: no write, no backup
+# Keep the live clone when one is placed (prefer the right cluster, where the
+# power widget lives), else adopt the first matching entry.
+canon = [p for p in positions if p[2] == CANON]
+if canon:
+    keep = next((p for p in canon if p[0] == "right"), canon[0])
+else:
+    keep = positions[0]
+    layout[keep[0]][keep[1]]["id"] = CANON
+drop = {p[:2] for p in positions} - {keep[:2]}
+for section, items in layout.items():
+    if isinstance(items, list) and any(s == section for s, _ in drop):
+        gone = {i for s, i in drop if s == section}
+        layout[section] = [it for i, it in enumerate(items) if i not in gone]
+try:
+    with open(path, encoding="utf-8") as src:
+        backup = path + ".bak.fix-" + suffix + "-" + str(int(time.time()))
+        with open(backup, "w", encoding="utf-8") as dst:
+            dst.write(src.read())
+except OSError:
+    pass
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+print("changed")
+PY
+}
+
 ensure_power_plugin() {
   local PLUG="$REAL_HOME/.config/omarchy/plugins"
   local PLUGIN_ID="mosquito.power"
@@ -161,15 +218,15 @@ ensure_power_plugin() {
     sed -i -E "s/\"id\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/\"id\": \"$PLUGIN_ID\"/" "$mf"
   fi
 
-  # ALWAYS repoint the bar layout to mosquito.power and enable it. A reinstall,
+  # ALWAYS make the bar layout show exactly one mosquito.power. A reinstall,
   # an Omarchy update or an earlier partial run can leave shell.json on the
   # STOCK omarchy.power (or a stale custom.power / <user>.power clone): the
   # customized widget then exists but is never shown, so nothing we change in
-  # its QML has any effect.
-  if grep -qE "\"(omarchy|custom|${REAL_USER})\\.power\"" "$SHELL_JSON" 2>/dev/null; then
-    cp -f "$SHELL_JSON" "$SHELL_JSON.bak.fix-power-$(date +%s)" 2>/dev/null || true
-    sed -i -E "s#\"(omarchy|custom|${REAL_USER})\.power\"#\"$PLUGIN_ID\"#g" "$SHELL_JSON"
-    ok "Bar layout repointed: power widget -> $PLUGIN_ID"
+  # its QML has any effect. A leftover duplicate is removed, never repointed.
+  local layout_change
+  layout_change="$(normalize_bar_widget "$SHELL_JSON" "$REAL_USER" power)"
+  if [[ $layout_change == changed ]]; then
+    ok "Bar layout: one power widget -> $PLUGIN_ID (duplicates removed)"
   fi
   # And any self-reference inside the plugin's own QML.
   sed -i -E "s#\"(omarchy|custom|${REAL_USER})\.power\"#\"$PLUGIN_ID\"#g" "$PLUGIN_DIR"/*.qml 2>/dev/null || true
@@ -260,7 +317,18 @@ overlay_plugin_files() {
 
 INDICATORS_CLONED=0
 ensure_indicators_plugin() {
-  [[ -f "$REAL_HOME/.config/omarchy/shell.json" ]] || return 0
+  local shell_json="$REAL_HOME/.config/omarchy/shell.json"
+  [[ -f "$shell_json" ]] || return 0
+  # The clone only customizes an indicators widget the user ALREADY has on the
+  # bar. `omarchy plugin enable` places a bar widget, so enabling it here on a
+  # machine that never asked for indicators is how a set of hidden icons
+  # (idle lock, DND…) appeared out of nowhere. Adopt/refresh, never add.
+  local in_bar=0
+  grep -qE '"(omarchy|mosquito|'"$REAL_USER"')\.indicators"' "$shell_json" 2>/dev/null && in_bar=1
+  if (( ! in_bar )) && [[ ! -d "$PLUG_DIR/mosquito.indicators" ]]; then
+    ok "No indicators widget in the bar — skipped (nothing added)."
+    return 0
+  fi
   if [[ -d "$PLUG_DIR/mosquito.indicators" ]]; then
     ok "Omarchy plugin mosquito.indicators already present"
   else
@@ -278,9 +346,18 @@ ensure_indicators_plugin() {
         return 1
       fi
     fi
-    sed -i "s|\"$REAL_USER\\.indicators\"|\"mosquito.indicators\"|g" "$REAL_HOME/.config/omarchy/shell.json"
-    omarchy plugin enable mosquito.indicators >/dev/null 2>&1 || true
-    ok "Omarchy plugin mosquito.indicators cloned and enabled (bar widget)"
+    sed -i "s|\"$REAL_USER\\.indicators\"|\"mosquito.indicators\"|g" "$shell_json"
+    # Only (re)place it when the bar already had an indicators widget.
+    (( in_bar )) && omarchy plugin enable mosquito.indicators >/dev/null 2>&1 || true
+    ok "Omarchy plugin mosquito.indicators cloned (bar widget already present)"
+  fi
+  # Exactly one indicators widget. `omarchy plugin enable` adds a bar entry on
+  # top of the one the user already had, which is how the same widget ended up
+  # in both centerBegin and centerEnd.
+  local layout_change
+  layout_change="$(normalize_bar_widget "$shell_json" "$REAL_USER" indicators)"
+  if [[ $layout_change == changed ]]; then
+    ok "Bar layout: one indicators widget (duplicates removed)"
   fi
   # The clone carries Omarchy's "My Indicators" display name. Patch it on
   # EVERY run, not only on the first clone: an existing clone kept the stock

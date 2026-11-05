@@ -61,6 +61,6 @@ run** — the theme itself is already built and Plymouth is only the boot screen
 ## "Achraf67" mode
 
 `achraf67.png` produces the frozen reference theme `achraf67`: lime
-`#b5e61d`/red palette, `Yaru-olive` icons, the `achraf67` unlock logo, Plymouth
-in the theme colours. The name and logo are locked and do not vary. This is what
-the `achraf67` module of `mosquitomarchy-setup.sh` runs (forced image, `--apply`).
+`#b5e61d`/red palette and `Yaru-olive` icons. The name is locked and does not
+vary. The `achraf67` module of `mosquitomarchy-setup.sh` runs it with
+`--apply --no-unlock-style`, so it installs the theme only — no Plymouth.

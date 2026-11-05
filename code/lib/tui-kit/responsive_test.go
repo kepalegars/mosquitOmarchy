@@ -105,19 +105,23 @@ func TestTitleLadderNeverWraps(t *testing.T) {
 // but actually uses the room it has.
 func TestTitleLadderPicksTheBiggestThatFits(t *testing.T) {
 	ladder := MosquitOmarchyTitleLadder()
-	if got := lipgloss.Height(ladder.Render(140, 40)); got != 9 {
-		t.Errorf("a 140x40 window should show the full wordmark (9 rows), got %d", got)
+	// The first rung is the whole word on one line, in ANSI Shadow.
+	wide := stripANSI(ladder.Render(140, 40))
+	if !strings.Contains(wide, "███") {
+		t.Errorf("a 140x40 window should show the boxed wordmark, got %q", wide)
 	}
-	if got := lipgloss.Height(ladder.Render(80, 40)); got == 9 {
-		t.Errorf("an 80-column window must NOT show the 121-column wordmark")
+	// Below 121 columns the same word stays on one line, in a plain box.
+	narrow := stripANSI(ladder.Render(80, 40))
+	if strings.Contains(narrow, "███") {
+		t.Errorf("an 80-column window cannot fit the 121-column wordmark: %q", narrow)
 	}
-	// And the small rung must fit where the big one cannot.
-	small := ladder.Render(60, 40)
-	if lipgloss.Width(small) > 60 {
+	if !strings.Contains(narrow, "mosquitomarchy") || !strings.Contains(narrow, "┌") {
+		t.Errorf("an 80-column window should fall back to the one-line box, got %q", narrow)
+	}
+	// The fallback is never wider than the window.
+	small := stripANSI(ladder.Render(40, 40))
+	if lipgloss.Width(small) > 40 {
 		t.Errorf("small rung still too wide: %d", lipgloss.Width(small))
-	}
-	if !strings.Contains(strings.ToLower(stripANSI(small)), "mosquitomarchy") {
-		t.Errorf("the title must still say mosquitomarchy, got %q", stripANSI(small))
 	}
 }
 

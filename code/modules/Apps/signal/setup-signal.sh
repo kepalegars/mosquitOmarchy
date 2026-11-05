@@ -93,10 +93,25 @@ EOF
 }
 
 uninstall_signal(){
-  msg "Uninstalling Signal Desktop"
-  mq_sudo pacman -R --noconfirm signal-desktop || true
+  if pacman -Q signal-desktop &>/dev/null; then
+    msg "Uninstalling Signal Desktop"
+    # A stale db.lck (e.g. a previous run was interrupted mid-pacman) makes
+    # every transaction fail. Say so instead of claiming the removal worked.
+    if [[ -e /var/lib/pacman/db.lck ]]; then
+      err "pacman is locked: /var/lib/pacman/db.lck"
+      err "Another package manager is running, or a previous run was interrupted."
+      err "Close it (or remove the stale lock) and retry. Nothing was removed."
+      return 1
+    fi
+    mq_sudo pacman -R --noconfirm signal-desktop || {
+      err "Failed to remove signal-desktop. Nothing was removed."
+      return 1
+    }
+  else
+    ok "Signal Desktop is not installed"
+  fi
 
-  # Remove config and autostart
+  # Remove config and autostart only once the package is gone.
   rm -f "$SIGNAL_CONFIG_FILE"
   rm -f "$SIGNAL_DESKTOP_FILE"
   # Remove empty config dir if no other files
@@ -107,7 +122,7 @@ uninstall_signal(){
 
 main(){
   case "${1:-install}" in
-    install)
+    install|-y|--yes)
       install_signal
       configure_signal
       setup_autostart
@@ -117,7 +132,7 @@ main(){
       uninstall_signal
       ;;
     *)
-      err "Usage: $0 {install|uninstall}"
+      err "Usage: $0 {install|-y|--yes|uninstall}"
       exit 1
       ;;
   esac

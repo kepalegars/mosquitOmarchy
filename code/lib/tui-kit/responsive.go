@@ -332,12 +332,10 @@ func padLines(s string, w int) string {
 }
 
 // MosquitOmarchyTitleLadder is the title ladder for the mosquitomarchy setup
-// TUI: the 121-column figlet wordmark when the tile is wide enough, a compact
-// single-line box when it is not, then plain text.
-//
-// Before this existed the wordmark was rendered unconditionally and lipgloss
-// hard-wrapped it at the window width, which turned the title into shredded
-// glyph fragments in any tile narrower than 121 columns — i.e. most tiles.
+// TUI: the full word on ONE line in the shared ANSI Shadow font, exactly like
+// the boxed "mosquito" wordmark the four managers use. The 121-column art needs
+// a wide tile; install-tui.sh sizes the floating window for it. Narrower tiles
+// fall back to the same word in a one-line box, never to a different font.
 func MosquitOmarchyTitleLadder() TitleLadder {
 	return NewTitleLadder(
 		BoxedMosquitOmarchy(),

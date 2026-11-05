@@ -1298,14 +1298,14 @@ cmd_manage() {
   # ask before taking over.
   manager_single_instance_gate "$replace"
   # Launch the manager in a terminal (foot, falling back to xterm) when this
-  # call is detached — e.g. from the Omarchy menu. Square window, same as the
-  # other mosquito managers. The TUI runs as a child (not exec) so the EXIT
-  # trap can drop the PID file when it ends.
+  # call is detached — e.g. from the Omarchy menu. No geometry override: foot
+  # keeps Omarchy's own font, padding and scale. The TUI runs as a child (not
+  # exec) so the EXIT trap can drop the PID file when it ends.
   if [[ -t 0 && -t 1 ]]; then
     "$TUI_BIN"
     exit $?
   elif command -v foot >/dev/null 2>&1; then
-    foot -W 100x40 --app-id=org.omarchy.mosquito-live-mode-tui -e "$TUI_BIN"
+    foot --app-id=org.omarchy.mosquito-live-mode-tui -e "$TUI_BIN"
     exit $?
   elif command -v xterm >/dev/null 2>&1; then
     xterm -e "$TUI_BIN"
