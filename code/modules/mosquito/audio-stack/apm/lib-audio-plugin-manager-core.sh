@@ -2831,8 +2831,26 @@ yabridge_touch_check() {
 # Serialized with flock so a throttled status check can never race post_install.
 yabridge_build() {
   local ok=1
+  # meson's cross build runs a small test binary through Wine. Using the
+  # user's real prefix starts its services, and those services inherit FD 9
+  # (the build lock): an interrupted build then leaves the lock held forever,
+  # so the next run blocks on flock before doing anything. A private build
+  # prefix is disposable and can be shut down without touching the user's
+  # Wine session.
+  local build_prefix="${YABRIDGE_BUILD_PREFIX:-${XDG_CACHE_HOME:-$HOME/.cache}/mosquito-audio-plugin-manager/yabridge-build-prefix}"
   exec 9>"$YABRIDGE_LOCK"
-  flock 9 || { warn "yabridge build already running — skipping."; return 1; }
+  if ! flock -w 10 9; then
+    # An interrupted build leaves the private prefix's wineserver holding the
+    # lock. No build tool is running then, so shut that prefix down and retry
+    # once; a real concurrent build keeps the lock and is left alone.
+    if ! pgrep -x meson >/dev/null 2>&1 && ! pgrep -x ninja >/dev/null 2>&1; then
+      WINEPREFIX="$build_prefix" wineserver -k >/dev/null 2>&1 || true
+      flock -w 10 9 || { warn "yabridge: build lock is held — skipping."; return 1; }
+    else
+      warn "yabridge: another build is running — skipping."
+      return 1
+    fi
+  fi
 
   msg "yabridge: syncing master ($YABRIDGE_URL)"
   if [[ ! -d "$YABRIDGE_SRC/.git" ]]; then
@@ -2873,11 +2891,16 @@ yabridge_build() {
     # meson refuses an already-configured build dir, and a failed run leaves
     # one behind; a from-source tree has nothing in it worth keeping.
     rm -rf "$YABRIDGE_SRC/build"
-    if ( cd "$YABRIDGE_SRC" && meson setup build --buildtype=release --cross-file=cross-wine.conf \
-          --unity=on --unity-size=1000 >>"$YABRIDGE_LOG" 2>&1 && \
-          ninja -C build >>"$YABRIDGE_LOG" 2>&1 ); then
+    if ( cd "$YABRIDGE_SRC" && \
+         WINEPREFIX="$build_prefix" WINEDLLOVERRIDES='mscoree,mshtml=' \
+         meson setup build --buildtype=release --cross-file=cross-wine.conf \
+           --unity=on --unity-size=1000 >>"$YABRIDGE_LOG" 2>&1 && \
+         WINEPREFIX="$build_prefix" WINEDLLOVERRIDES='mscoree,mshtml=' \
+         ninja -C build >>"$YABRIDGE_LOG" 2>&1 ); then
+      WINEPREFIX="$build_prefix" wineserver -k >/dev/null 2>&1 || true
       ok "yabridge: build finished"
     else
+      WINEPREFIX="$build_prefix" wineserver -k >/dev/null 2>&1 || true
       err "yabridge: build failed — see $YABRIDGE_LOG"
       return 1
     fi

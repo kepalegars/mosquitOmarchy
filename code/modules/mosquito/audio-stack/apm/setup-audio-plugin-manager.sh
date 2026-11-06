@@ -405,7 +405,7 @@ if [[ -x "$BIN_DIR/mosquito-audio-plugin-manager-actions" ]] && command -v yabri
   if [[ -f "$HOME/.local/share/yabridge/libyabridge-chainloader-vst2.so" ]]; then
     ok "yabridge runtime ready ($HOME/.local/share/yabridge)"
   else
-    warn "yabridge runtime not installed — open the manager and install a plugin, or see $SCRIPT_DIR/yabridge-build.log"
+    warn "yabridge runtime not installed — open the manager and install a plugin, or see $BIN_DIR/yabridge-build.log"
   fi
 fi
 
