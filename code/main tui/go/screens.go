@@ -3460,12 +3460,16 @@ func altDriversPrompt() string {
 		" • rewrites ~/.local/bin/davinci-resolve to force RUSTICL_ENABLE=radeonsi;\n" +
 		" • moves Resolve's OpenCL shader cache aside (recompiled on next launch);\n" +
 		" • disables GPU scopes in Resolve's config (Local.GPU.Scopes=0): the\n" +
-		"   scopes use the CPU, freeing the iGPU for playback/grading (4K).\n\n" +
+		"   scopes use the CPU, freeing the iGPU for playback/grading (4K);\n" +
+		" • raises amdgpu's compute watchdog from 2 s to 90 s (SpektraFilm's\n" +
+		"   spectral upsampling was being killed with VK_ERROR_DEVICE_LOST).\n\n" +
 		"SCOPE\n" +
 		" • opencl-mesa is a system package; other OpenCL apps keep their own\n" +
 		"   backend, but the ROCm ICD is disabled system-wide (reversible).\n" +
-		" • No kernel/amdgpu change, no ROCm install.\n" +
-		" • Reversible with: setup-davinci.sh --alt-drivers-revert\n" +
+		" • the 90 s watchdog is GPU-WIDE and only active after a FULL REBOOT.\n" +
+		" • No kernel/amdgpu change beyond that watchdog, no ROCm install.\n" +
+		" • Reversible with: setup-davinci.sh --alt-drivers-revert (the watchdog\n" +
+		"   is also its own Quick fix: amdgpu-compute-timeout).\n" +
 		" • Restart Resolve afterwards; the first launch recompiles its shaders."
 }
 

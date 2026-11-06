@@ -1670,6 +1670,13 @@ func TestDOnDavinciOpensAltDrivers(t *testing.T) {
 	m.setupPicker = m.rebuildSetup()
 	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "davinci-resolve"))
 
+	// The key must be advertised where it is usable: the old hint was appended
+	// after the whole shortcut bar, so BottomBar truncated it away at normal
+	// widths and D was invisible.
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "D 780M drivers") {
+		t.Fatalf("Setup legend does not advertise the D key on the davinci row:\n%s", view)
+	}
+
 	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
 	if m.top() != scrConfirm || m.pendingAction != "davinci-alt-drivers" {
 		t.Fatalf("D on davinci did not open the alt-drivers confirm: top=%v action=%q", m.top(), m.pendingAction)

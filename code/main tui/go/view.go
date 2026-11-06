@@ -183,7 +183,7 @@ func (m model) View() string {
 		hint := m.setupPicker.ShortcutsHint()
 		if m.treeMode != "uninstall" {
 			if _, key := splitSetupValue(m.setupPicker.SelectedValue()); key == "davinci-resolve" {
-				hint += " · D alt drivers"
+				hint = "D 780M drivers · " + hint
 			}
 		}
 		bar = m.searchBar(hint)
@@ -197,7 +197,7 @@ func (m model) View() string {
 		hint := m.setupCatPicker.ShortcutsHint()
 		if m.treeMode != "uninstall" {
 			if _, key := splitSetupValue(m.setupCatPicker.SelectedValue()); key == "davinci-resolve" {
-				hint += " · D alt drivers"
+				hint = "D 780M drivers · " + hint
 			}
 		}
 		bar = m.searchBar(hint)

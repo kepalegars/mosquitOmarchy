@@ -1103,7 +1103,7 @@ MODULES=(
   "omarchy-vm:Omarchy in QEMU/KVM from the official ISO — launcher + TUI manager + shared folder + USB/GPU passthrough"
   "ableton:Native Linux Ableton Live 12 (ableton-linux) + multi-DAW VST sharing"
   "guitarpro:Guitar Pro 8 via wine (dedicated prefix + launcher + menu shortcut)"
-  "davinci-resolve:DaVinci Resolve (Studio or free) + AAC fix + FFmpeg encoder. Radeon 780M/Phoenix: press D on this row in Setup to apply the optimized Mesa Rusticl + CPU-scopes profile (never applied automatically by a restore)"
+  "davinci-resolve:DaVinci Resolve (Studio or free) + AAC fix + FFmpeg encoder. Radeon 780M/Phoenix: press D on this row in Setup to apply the optimized Mesa Rusticl + CPU-scopes profile and the 90 s amdgpu compute watchdog for SpektraFilm (active after a full reboot; never applied automatically by a restore)"
   "spektrafilm:SpektraFilm (film simulation) — installs the OFX plugins from a local zip and the standalone spektrafilm-git AUR app; any OFX version accepted"
   "ableton-move-manager:Move Manager — Ableton Move → Ableton Live → Bitwig (menu: address / Move Manager / convert — native Omarchy prompts, MIDI export)"
   "handbrake:HandBrake (Qt GUI + CLI) + H.264/H.265 encoders + preset sync + Hyprland rules"

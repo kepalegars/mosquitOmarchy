@@ -28,17 +28,21 @@
 #   ./setup-davinci.sh --studio|--free     # force the edition if ambiguous
 #   ./setup-davinci.sh --no-codecs         # leave codec setup alone
 #   ./setup-davinci.sh --keep-mesa         # do not remove opencl-mesa (AMD)
-#   ./setup-davinci.sh --alt-drivers       # Radeon 780M: apply Mesa Rusticl + CPU scopes (steps 1+2)
-#   ./setup-davinci.sh --alt-drivers-revert# undo the 780M profile
+#   ./setup-davinci.sh --alt-drivers       # Radeon 780M: Mesa Rusticl + CPU scopes + 90 s compute watchdog
+#   ./setup-davinci.sh --alt-drivers-revert# undo the 780M OpenCL profile
 #   ./setup-davinci.sh --status            # current state, changes nothing
 #   ./setup-davinci.sh -h                  # help
 #
 # Radeon 780M / Phoenix (gfx1103): ROCm OpenCL is unsupported and can wedge the
 # GPU. The optimized profile installs Mesa Rusticl (opencl-mesa), disables the
 # ROCm ICD, forces RUSTICL_ENABLE=radeonsi in the launcher, clears Resolve's
-# OpenCL cache, and disables GPU scopes (Local.GPU.Scopes=0). It is proposed
-# during an interactive install, and applied from the TUI only by pressing D
-# on the davinci row in Setup — never automatically during a restore.
+# OpenCL cache, disables GPU scopes (Local.GPU.Scopes=0) and raises amdgpu's
+# compute watchdog from 2 s to 90 s, because SpektraFilm's spectral upsampling
+# is one long Vulkan compute submission that the default watchdog kills with
+# VK_ERROR_DEVICE_LOST. It is proposed during an interactive install, and
+# applied from the TUI only by pressing D on the davinci row in Setup — never
+# automatically during a restore. The watchdog is read from the kernel command
+# line at boot: only a full reboot activates it.
 
 # Launched from a file manager (Nautilus)? Reopen in a terminal and keep the
 # window open until a key is pressed (cf. gui-run.bash).
@@ -74,6 +78,9 @@ ALT_ICD=/etc/OpenCL/vendors/amdocl64.icd
 RUSTICL_ICD=/usr/lib/libRusticlOpenCL.so.1
 RESOLVE_CONFIG="$HOME/.local/share/DaVinciResolve/configs/config.dat"
 OPENCL_CACHE="$HOME/.local/share/DaVinciResolve/DVIP/Cache/OpenCL.cache"
+# Shared with the amdgpu-compute-timeout fix in Quick fixes: one owner for the
+# marked Limine block, so the two paths cannot drift apart.
+COMPUTE_TIMEOUT_TWEAK="$SCRIPT_DIR/../../Tweaks/tweak-amdgpu-compute-timeout.sh"
 
 G='\033[1;32m'; B='\033[1;34m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
 msg(){ printf "${B}==>${N} %s\n" "$*"; }
@@ -296,6 +303,14 @@ do_status(){
       ok "Radeon 780M     : Mesa Rusticl profile applied"
     else
       warn "Radeon 780M     : optimized profile not applied (D on the davinci row in Setup, or --alt-drivers)"
+    fi
+    if [[ -x "$COMPUTE_TIMEOUT_TWEAK" ]]; then
+      local ctw
+      ctw="$(bash "$COMPUTE_TIMEOUT_TWEAK" --status 2>/dev/null | head -n1 || true)"
+      case "$ctw" in
+        ok:*|pending-reboot:*) ok "Compute watchdog: $ctw" ;;
+        *) warn "Compute watchdog: $ctw" ;;
+      esac
     fi
     local scopes="not set (launch Resolve once)"
     [[ -r "$RESOLVE_CONFIG" ]] && scopes="$(sed -n 's/^Local\.GPU\.Scopes = //p' "$RESOLVE_CONFIG" | head -n1)"
@@ -612,6 +627,18 @@ apply_alt_drivers(){
     warn "config.dat not found yet — launch Resolve once, then re-run --alt-drivers."
   fi
 
+  # SpektraFilm's spectral upsampling runs longer than amdgpu's 2 s compute
+  # watchdog, which resets the ring and hands Resolve VK_ERROR_DEVICE_LOST.
+  # The Quick-fixes tweak owns the marked Limine block; call it instead of
+  # writing a second one here.
+  if [[ -x "$COMPUTE_TIMEOUT_TWEAK" ]]; then
+    bash "$COMPUTE_TIMEOUT_TWEAK" -y \
+      && ok "AMDGPU compute watchdog: 90 s (active after a full reboot)" \
+      || warn "Could not set the AMDGPU compute watchdog (see the message above)."
+  else
+    warn "Compute-watchdog tweak not found: $COMPUTE_TIMEOUT_TWEAK"
+  fi
+
   local ed; ed="$(state_get edition)"; [[ -n "$ed" ]] || ed="$(infer_edition)"
   save_davinci_state "$ed" "" "" "" 1
   ok "Restart Resolve; its first launch recompiles the OpenCL shaders."
@@ -641,6 +668,12 @@ revert_alt_drivers(){
   local ed; ed="$(state_get edition)"; [[ -n "$ed" ]] || ed="$(infer_edition)"
   save_davinci_state "$ed" "" "" "" 0
   ok "Restart Resolve to reload the previous OpenCL backend."
+  # The watchdog is a GPU-wide setting that also exists as its own Quick fix,
+  # so a revert of the Resolve profile must not silently remove a choice the
+  # user may have made there.
+  if [[ -x "$COMPUTE_TIMEOUT_TWEAK" ]] && bash "$COMPUTE_TIMEOUT_TWEAK" --status 2>/dev/null | grep -qE '^(ok|pending-reboot):'; then
+    warn "The 90 s AMDGPU compute watchdog is still set (GPU-wide). Remove it from Quick fixes (amdgpu-compute-timeout) if you no longer want it."
+  fi
 }
 
 # Omarchy's default app rule (default/hypr/apps/davinci-resolve.lua) floats
@@ -911,7 +944,7 @@ recap(){
     echo " • H.264/H.265/AAC: not supported by Resolve Linux (free) — transcode to DNxHR/PCM."
   fi
   if alt_drivers_active; then
-    echo " • Radeon 780M: Mesa Rusticl + CPU scopes (apply/revert from Setup: D on davinci)."
+    echo " • Radeon 780M: Mesa Rusticl + CPU scopes + 90 s compute watchdog (apply/revert from Setup: D on davinci)."
   fi
   echo " • First-run config: Preferences > System > Memory & GPU (OpenCL auto-detected)."
   echo " • DRwrap: drag/drop, clipboard paste and codec conversion handled silently."
@@ -1028,7 +1061,7 @@ main(){
   # A restore (YES=1) must not change the GPU backend behind the user's back;
   # the TUI offers it explicitly with D on the davinci row.
   if detect_780m && (( YES == 0 )); then
-    if ask "Apply the optimized Radeon 780M OpenCL profile (Mesa Rusticl + CPU scopes)?" y; then
+    if ask "Apply the optimized Radeon 780M OpenCL profile (Mesa Rusticl + CPU scopes + 90 s compute watchdog, active after a reboot)?" y; then
       ALT_DRIVERS=1
       apply_alt_drivers || warn "Optimized 780M profile not fully applied."
     fi
