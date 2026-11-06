@@ -933,17 +933,6 @@ st_jamjamjam_plugin(){
     echo partial
   fi
 }
-st_better_pip(){
-  # Better PiP service plugin: installed copy + enabled in shell.json.
-  local plug="$HOME/.config/omarchy/plugins/mosquito.better-pip"
-  [[ -d "$plug" && -f "$plug/manifest.json" ]] || { echo missing; return; }
-  if [[ -f "$HOME/.config/omarchy/shell.json" ]] \
-     && grep -q '"mosquito.better-pip"' "$HOME/.config/omarchy/shell.json"; then
-    echo ok
-  else
-    echo partial
-  fi
-}
 st_live_mode(){
   # Live mode: the whole set is 4 binaries + the sudoers root helper + the
   # QML overlay plugin. The sudoers part needs root, so a normal (non-sudo)
@@ -1118,8 +1107,6 @@ MODULES=(
   "downloads:Downloads — themed popup for recent files (SUPER + ALT + D)"
   "taskq:TaskQ — bar-based task list with deadlines"
   "process-killer:Process Killer — inspect and stop running processes"
-  "pocket:Pocket — hide rarely-used bar widgets behind one mark and reveal them on hover; widgets stay in the bar with their settings"
-  "better-pip:Better PiP — picture-in-picture windows as plain floating windows (never pinned, stays on its workspace): aspect ratio kept, grabbable border, idle inhibitor while open"
   "reboot-into-windows:Reboot into Windows — System menu entry: finds the UEFI Windows Boot Manager, 15 s yes/no countdown, arms BootNext for the next boot only, then reboots"
   "mega-caffeine:Coffee mode (mega-caffeine) — laptop closed without sleeping, red tint, natural-language durations"
   "brightness:Display brightness — Omarchy default step, 0% = screen off, and a silent 1% ramp on held keys for smoother steps (no run-on beyond the current step)"
@@ -1320,7 +1307,6 @@ handbrake) st_handbrake ;;
     downloads) st_downloads ;;
     taskq) st_omarchy_plugin sendaljpt.taskq ;;
     process-killer) st_omarchy_plugin io.github.beresn.process-killer ;;
-    pocket) st_omarchy_plugin jrmmhm.pocket ;;
     mega-caffeine) st_mega_caffeine ;;
     brightness) st_brightness ;;
     touchpad) st_touchpad ;;
@@ -1341,7 +1327,6 @@ handbrake) st_handbrake ;;
     tidal) st_tidal ;;
     zen) st_zen ;;
     jamjamjam-plugin) st_jamjamjam_plugin ;;
-    better-pip) st_better_pip ;;
     reboot-into-windows) st_reboot_windows ;;
     pipewire-settings) st_pipewire_settings ;;
     live-mode) st_live_mode ;;
@@ -1384,11 +1369,9 @@ module_of_path(){
     code/modules/Plugins/omaskpinpass/*)       echo omaskpinpass ;;
     code/modules/Plugins/omarchy-downloads/*)  echo downloads ;;
     code/modules/Plugins/brightness/*)         echo brightness ;;
-    code/modules/Plugins/better-pip/*)         echo better-pip ;;
     code/modules/Plugins/reboot-into-windows/*) echo reboot-into-windows ;;
     code/modules/Plugins/touchpad/*)           echo touchpad ;;
     code/modules/Plugins/mx-master/*)          echo mx-master ;;
-    code/modules/Plugins/pocket/*)             echo pocket ;;
     code/modules/Themes/*)                     echo achraf67 ;;
     code/modules/Fixes/fix-ableton-fullscreen.sh) echo ableton-fullscreen ;;
     code/modules/Fixes/fix-bar-center-anchor.sh)  echo bar-center-anchor ;;
@@ -4373,7 +4356,6 @@ un_battery_management(){
   return "$module_failed"
 }
 
-un_pocket(){ bash "$SCRIPTS/Plugins/pocket/setup-omarchy-pocket.sh" --remove; }
 un_omaskpinpass(){
   local conf="${GNUPGHOME:-$HOME/.gnupg}/gpg-agent.conf"
   omarchy plugin disable lbssousa.omaskpass 2>/dev/null || true
@@ -4455,17 +4437,6 @@ un_reboot_windows(){
   else
     warn "setup-reboot-into-windows.sh not found — cleaning up directly."
     rm -f "$HOME/.local/bin/reboot-into-windows"
-  fi
-}
-un_better_pip(){
-  info "Uninstalling Better PiP (mosquito.better-pip)"
-  if [[ -f "$BETTER_PIP_DIR/setup-better-pip.sh" ]]; then
-    bash "$BETTER_PIP_DIR/setup-better-pip.sh" --remove \
-      || warn "setup-better-pip.sh --remove reported a problem"
-  else
-    warn "setup-better-pip.sh not found — cleaning up directly."
-    rm -rf "$HOME/.config/omarchy/plugins/mosquito.better-pip"
-    omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
   fi
 }
 un_superfile(){
@@ -4834,10 +4805,8 @@ handbrake) un_handbrake ;;
     downloads) un_downloads ;;
     taskq) un_taskq ;;
     process-killer) un_process_killer ;;
-    pocket) un_pocket ;;
     mega-caffeine) un_mega_caffeine ;;
     brightness) un_brightness ;;
-    better-pip) un_better_pip ;;
     reboot-into-windows) un_reboot_windows ;;
     achraf67) un_achraf67 ;;
     touchpad) un_touchpad ;;
@@ -4960,7 +4929,6 @@ DOUZE_DIR="$APPS_DIR/douze"
 TIDAL_DIR="$APPS_DIR/tidal"
 MOVE_CONVERTER_DIR="$SCRIPTS/mosquito/move-manager"
 BATTERY_DIR="$SCRIPTS/Plugins/battery-management"
-BETTER_PIP_DIR="$SCRIPTS/Plugins/better-pip"
 REBOOT_WINDOWS_DIR="$SCRIPTS/Plugins/reboot-into-windows"
 MEGA_CAFFEINE_DIR="$SCRIPTS/mosquito/mega-caffeine"
 BRIGHTNESS_DIR="$SCRIPTS/Plugins/brightness"
@@ -5354,8 +5322,6 @@ ensure_shell_plugin(){
 run_downloads(){ bash "$SCRIPTS/Plugins/omarchy-downloads/setup-omarchy-downloads.sh"; }
 run_taskq(){ ensure_shell_plugin sendaljpt.taskq https://github.com/sendaljpt/taskq.git; }
 run_process_killer(){ ensure_shell_plugin io.github.beresn.process-killer https://github.com/BeresN/omarchy-process-killer.git; }
-run_pocket(){ bash "$SCRIPTS/Plugins/pocket/setup-omarchy-pocket.sh"; }
-run_better_pip(){ bash "$BETTER_PIP_DIR/setup-better-pip.sh"; }
 run_reboot_windows(){ bash "$REBOOT_WINDOWS_DIR/setup-reboot-into-windows.sh"; }
 run_mega_caffeine(){ bash "$MEGA_CAFFEINE_DIR/setup-mega-caffeine.sh"; }
 run_brightness(){ bash "$BRIGHTNESS_DIR/optimized-brightness.sh"; }
@@ -5538,8 +5504,6 @@ exec_modules(){
       downloads) run_module downloads run_downloads ;;
       taskq) run_module taskq run_taskq ;;
       process-killer) run_module process-killer run_process_killer ;;
-      pocket) run_module pocket run_pocket ;;
-      better-pip) run_module better-pip run_better_pip ;;
       reboot-into-windows) run_module reboot-into-windows run_reboot_windows ;;
       mega-caffeine) run_module mega-caffeine run_mega_caffeine ;;
       brightness) run_module brightness run_brightness ;;
@@ -5558,6 +5522,10 @@ exec_modules(){
       levels-guard) run_module levels-guard run_levels_guard ;;
       mixbay) run_module mixbay run_mixbay ;;
       mosquitomarchy) run_module mosquitomarchy run_mosquitomarchy ;;
+      better-pip|pocket)
+        # Retired from the module tree; an older backup can still list them.
+        warn "Module '$id' was removed from mosquitOmarchy — skipped."
+        ;;
       *)
         # A selected id nothing handles must never look like a success.
         MODULE_FAILURES=$((MODULE_FAILURES + 1))
@@ -5591,7 +5559,7 @@ CATEGORIES=(
   # including the deployer, i.e. installed and updatable but reachable from
   # neither Setup nor Uninstall. `mega-caffeine` is deliberately absent: it is a
   # mosquito tool and lives in the mosquito row.
-  "plugins|Plugins|battery-management omaskpinpass downloads taskq process-killer pocket better-pip reboot-into-windows brightness touchpad mx-master"
+  "plugins|Plugins|battery-management omaskpinpass downloads taskq process-killer reboot-into-windows brightness touchpad mx-master"
   "fixes|Fixes|"
   "tweaks|Tweaks|"
   "mosquito|mosquito|"

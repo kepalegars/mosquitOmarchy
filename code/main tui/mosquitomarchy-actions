@@ -1549,7 +1549,6 @@ setup_folder_for(){
 MOSQ_INSTALLED_PLUGINS=(
   kirklandgee.downloads
   sendaljpt.taskq
-  jrmmhm.pocket
   io.github.beresn.process-killer
   lbssousa.omaskpass
   lbssousa.omapin
@@ -3289,7 +3288,7 @@ _space_pkgs(){
     install:zen|install:mosquitomarchy|install:pipewire-settings|\
     install:jamjamjam-plugin|install:remove-ai|\
     install:keybindings|install:battery|install:battery-management|\
-    install:better-pip|install:mega-caffeine|install:brightness|\
+    install:mega-caffeine|install:brightness|\
     install:achraf67|install:touchpad|install:levels-guard|\
     install:mosquitomarchy-update)
       return 3 ;;
@@ -3303,7 +3302,7 @@ _space_pkgs(){
     uninstall:zen|uninstall:mosquitomarchy|\
     uninstall:pipewire-settings|uninstall:jamjamjam-plugin|\
     uninstall:remove-ai|uninstall:keybindings|\
-    uninstall:battery|uninstall:battery-management|uninstall:better-pip|\
+    uninstall:battery|uninstall:battery-management|\
     uninstall:mega-caffeine|uninstall:brightness|uninstall:achraf67|\
     uninstall:touchpad|uninstall:mx-master|uninstall:mixbay|\
     uninstall:ableton|uninstall:ableton-move-manager|\

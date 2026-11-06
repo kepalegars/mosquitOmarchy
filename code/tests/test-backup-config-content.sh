@@ -15,7 +15,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/hyprctl"
 chmod +x "$TMP/bin/keepassxc" "$TMP/bin/hyprctl"
 export PATH="$TMP/bin:$PATH"
 mkdir -p "$HOME/.config/windows" "$HOME/.config/omarchy/extensions" \
-  "$HOME/.config/omarchy/plugins/mosquito.better-pip" \
+  "$HOME/.config/omarchy/plugins/mosquito.jamjamjam" \
   "$HOME/.config/zen/profile.release/chrome/zen-themes/custom-mod" \
   "$HOME/.config/zen/profile.release/extensions" \
   "$HOME/.config/keepassxc" "$HOME/.config/autostart" \
@@ -30,7 +30,7 @@ printf '[GUI]\nLaunchAtStartup=true\n' > "$HOME/.config/keepassxc/keepassxc.ini"
 printf '[Desktop Entry]\nName=KeePassXC\nExec=keepassxc\n' \
   > "$HOME/.config/autostart/org.keepassxc.KeePassXC.desktop"
 printf '{"name":"stale menu"}\n' > "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
-printf 'plugin payload\n' > "$HOME/.config/omarchy/plugins/mosquito.better-pip/Service.qml"
+printf 'plugin payload\n' > "$HOME/.config/omarchy/plugins/mosquito.jamjamjam/Service.qml"
 printf '[Desktop Entry]\nName=Never selected\n' > "$HOME/.local/share/applications/stale.desktop"
 printf 'icon\n' > "$HOME/.local/share/icons/hicolor/256x256/apps/stale.png"
 printf '#!/bin/sh\n' > "$HOME/.local/bin/omarchy-vm"
@@ -40,7 +40,7 @@ chmod +x "$HOME/.local/bin/omarchy-vm" "$HOME/.local/bin/reaper-launch"
 cat > "$TMP/selection.tsv" <<'EOF'
 apps	reaper
 apps	keepassxc
-plugins	battery-management	better-pip
+plugins	battery-management	brightness
 EOF
 export BACKUP_APPS_SELECTION_FILE="$TMP/selection.tsv"
 
@@ -72,13 +72,13 @@ archive="$(find "$OMARCHY_BACKUP_DIR" -maxdepth 1 -name '*.tar.gz' -print -quit)
 [[ -n $archive ]]
 mkdir "$TMP/unpacked"
 tar xzf "$archive" -C "$TMP/unpacked"
-[[ "$(cat "$TMP/unpacked/install.list")" == $'# install.list — packages selected in the mosquitOmarchy TUI\napps\treaper\napps\tkeepassxc\nplugins\tbattery-management\tbetter-pip' ]]
+[[ "$(cat "$TMP/unpacked/install.list")" == $'# install.list — packages selected in the mosquitOmarchy TUI\napps\treaper\napps\tkeepassxc\nplugins\tbattery-management\tbrightness' ]]
 
 tar tzf "$TMP/unpacked/config-backup.tar.gz" > "$TMP/config-paths"
 grep -q '^\.config/windows/user.conf$' "$TMP/config-paths"
 for forbidden in \
   '.config/omarchy/extensions/' \
-  '.config/omarchy/plugins/mosquito.better-pip/' \
+  '.config/omarchy/plugins/mosquito.jamjamjam/' \
   '.local/share/applications/' \
   '.local/share/icons/hicolor/' \
   '.local/bin/omarchy-vm' \

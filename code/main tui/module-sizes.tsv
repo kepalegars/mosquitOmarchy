@@ -19,7 +19,6 @@ omaskpinpass||~/.local/bin/omaskpass;~/.local/bin/omapin;~/.config/omarchy/plugi
 downloads||~/.config/omarchy/plugins/kirklandgee.downloads|0|0|Plugin and managed keybinding removed
 taskq||~/.config/omarchy/plugins/sendaljpt.taskq|0|0|Plugin removed; task data stays
 process-killer||~/.config/omarchy/plugins/io.github.beresn.process-killer|0|0|Plugin removed
-better-pip|~/.config/omarchy/plugins/mosquito.better-pip|~/.config/omarchy/plugins/mosquito.better-pip|4|4|Service plugin removed
 mega-caffeine||~/.local/bin/mega-caffeine;~/.local/state/caffeine|0|8|Binary, state and menu entry removed
 whatsapp-native|~/.local/share/whatsapp-web|~/.local/share/whatsapp-web/tray;~/.local/share/whatsapp-web/extension;~/.local/bin/whatsapp;~/.local/share/applications/WhatsApp.desktop;~/.local/share/icons/hicolor/256x256/apps/whatsapp.png;~/.local/state/whatsapp-web|144|280|Login data kept
 superfile|~/.local/share/applications/superfile.desktop;~/.local/share/icons/hicolor/256x256/apps/superfile.png;~/.local/bin/superfile-open-exec|~/.local/share/applications/superfile.desktop;~/.local/share/icons/hicolor/256x256/apps/superfile.png;~/.local/bin/superfile-open-exec;~/.config/superfile-module|16|24|Package and profile kept
