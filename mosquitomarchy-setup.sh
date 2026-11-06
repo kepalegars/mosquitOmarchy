@@ -1001,11 +1001,12 @@ st_guitarpro(){
 }
 
 st_signal(){
-  # Signal Desktop: visible manual launches + tray-only login autostart
+  # Signal Desktop: native tray/menu settings + login autostart.
+  # Current Signal stores them in ephemeral.json; the old config.json keys are
+  # ignored by current releases, so checking them was a permanent false "partial".
   [[ -x /usr/bin/signal-desktop ]] || { echo missing; return; }
-  [[ -f "$HOME/.config/Signal/config.json" ]] \
-    && jq -e '.minimizeToTray == false and .startMinimized == false and .hideMenuBar == true' "$HOME/.config/Signal/config.json" >/dev/null \
-    && jq -e '."system-tray-setting" == "DoNotUseSystemTray"' "$HOME/.config/Signal/ephemeral.json" >/dev/null \
+  [[ -f "$HOME/.config/Signal/ephemeral.json" ]] \
+    && jq -e '."system-tray-setting" == "MinimizeToAndStartInSystemTray" and (.window.autoHideMenuBar == true)' "$HOME/.config/Signal/ephemeral.json" >/dev/null 2>&1 \
     && grep -q '^Exec=signal-desktop --start-in-tray$' "$HOME/.config/autostart/signal-desktop.desktop" \
     && echo ok || echo partial
 }

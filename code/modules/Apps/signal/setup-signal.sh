@@ -34,48 +34,50 @@ install_signal(){
 }
 
 configure_signal(){
-  msg "Configuring Signal Desktop (tray only at login, normal menu launch, hide menu bar)"
+  msg "Configuring Signal Desktop (minimize to tray, start in tray, hide menu bar)"
   mkdir -p "$SIGNAL_CONFIG_DIR"
 
-  # Signal Desktop stores settings in ~/.config/Signal/config.json (electron-store)
-  # Keep close-to-tray off so Quit exits the process and its tray icon; the
-  # dedicated autostart flag starts it in the tray without hiding menu launches.
-  local json="{}"
-  if [[ -f "$SIGNAL_CONFIG_FILE" ]]; then
-    json="$(cat "$SIGNAL_CONFIG_FILE" 2>/dev/null || echo "{}")"
-  fi
-
-  # Use jq to merge settings, preserving existing keys
-  json="$(printf '%s' "$json" | jq '.minimizeToTray = false | .startMinimized = false | .hideMenuBar = true')" || {
-    warn "jq not available or config parsing failed; writing minimal config"
-    json='{"minimizeToTray":false,"startMinimized":false,"hideMenuBar":true}'
-  }
-
-  printf '%s\n' "$json" > "$SIGNAL_CONFIG_FILE"
-  ok "Signal configuration written to $SIGNAL_CONFIG_FILE"
-
-  # Signal's actual tray preference lives in ephemeral.json; config.json's
-  # startMinimized/minimizeToTray keys alone do not control current releases.
+  # Current Signal (8.x) keeps all three switches in ephemeral.json:
+  #   system-tray-setting = MinimizeToAndStartInSystemTray
+  #     -> the native "Minimize to system tray and start in tray" option
+  #   window.autoHideMenuBar = true
+  #     -> the native "Hide menu bar" option
+  # The old config.json keys (minimizeToTray/startMinimized/hideMenuBar) are
+  # from older releases and are ignored by current builds, so only the file
+  # Signal actually reads is written.
   local ephemeral="{}"
   if [[ -f $SIGNAL_EPHEMERAL_FILE ]]; then
-    if ! jq -e '."system-tray-setting" == "DoNotUseSystemTray"' "$SIGNAL_EPHEMERAL_FILE" >/dev/null 2>&1; then
-      cp -n "$SIGNAL_EPHEMERAL_FILE" "$SIGNAL_EPHEMERAL_FILE.bak.$(date +%Y%m%d%H%M%S)"
+    if ! jq -e '."system-tray-setting" == "MinimizeToAndStartInSystemTray"
+                and (.window.autoHideMenuBar == true)' "$SIGNAL_EPHEMERAL_FILE" >/dev/null 2>&1; then
+      cp -n "$SIGNAL_EPHEMERAL_FILE" "$SIGNAL_EPHEMERAL_FILE.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
     fi
-    ephemeral="$(cat "$SIGNAL_EPHEMERAL_FILE")"
+    ephemeral="$(cat "$SIGNAL_EPHEMERAL_FILE" 2>/dev/null || echo "{}")"
   fi
-  ephemeral="$(printf '%s' "$ephemeral" | jq '."system-tray-setting" = "DoNotUseSystemTray"')" || {
-    err "Could not update Signal's tray preference in ephemeral.json"
+  ephemeral="$(printf '%s' "$ephemeral" | jq '
+    ."system-tray-setting" = "MinimizeToAndStartInSystemTray"
+    | .window = ((.window // {}) | .autoHideMenuBar = true)
+  ')" || {
+    err "Could not update Signal's tray/menu settings in ephemeral.json"
     return 1
   }
   printf '%s\n' "$ephemeral" > "$SIGNAL_EPHEMERAL_FILE"
-  ok "Manual launches show the window; the autostart flag still starts in the tray"
+  ok "Signal: minimize to tray, start in tray, menu bar hidden"
+
+  # Signal writes ephemeral.json on exit. Editing it under a running instance
+  # means the running copy wins when it quits, so the settings would silently
+  # revert. Say so instead of reporting a configuration that will not stick.
+  if pgrep -x signal-desktop >/dev/null 2>&1; then
+    warn "Signal is running — quit it completely (tray → Quit) and relaunch so these settings stick."
+  fi
 }
 
 setup_autostart(){
-  msg "Setting up Signal autostart (minimized to tray)"
+  msg "Setting up Signal autostart (start in tray)"
   mkdir -p "$AUTOSTART_DIR"
 
-  # Only the login launch starts hidden; the Omarchy app-menu launcher stays normal.
+  # The native setting already starts Signal minimized to the tray; the flag
+  # also makes the login entry explicit and matches Signal's own --start-in-tray
+  # behavior. Manual launches read the persistent setting.
   cat > "$SIGNAL_DESKTOP_FILE" <<'EOF'
 [Desktop Entry]
 Type=Application
@@ -88,6 +90,17 @@ StartupNotify=false
 StartupWMClass=signal
 X-GNOME-Autostart-enabled=true
 EOF
+
+  # XDG autostart is consumed by systemd-xdg-autostart-generator, which runs at
+  # login. A file created after login therefore has no unit until the next
+  # one — the "autostart does nothing" report. Regenerate now, and start the
+  # generated unit immediately unless Signal is already running.
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    if ! pgrep -x signal-desktop >/dev/null 2>&1 && command -v systemd-escape >/dev/null 2>&1; then
+      systemctl --user start "app-$(systemd-escape 'signal-desktop')@autostart.service" >/dev/null 2>&1 || true
+    fi
+  fi
 
   ok "Autostart entry created at $SIGNAL_DESKTOP_FILE"
 }
