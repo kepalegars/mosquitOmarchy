@@ -38,14 +38,10 @@ resolve_vst_root() {
     printf '%s\n' "$AUDIOSTACK_VST_ROOT"
     return
   fi
-  if find "$HOME/Music/Audio Plugins" -mindepth 2 \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) 2>/dev/null | grep -q .; then
-    printf '%s\n' "$HOME/Music/Audio Plugins"
-  elif find "$HOME/VST" -mindepth 2 \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) 2>/dev/null | grep -q .; then
+  if find "$HOME/VST" -mindepth 2 \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) 2>/dev/null | grep -q .; then
     printf '%s\n' "$HOME/VST"
-  elif [[ -d "$HOME/Music/Audio Plugins/vst3" ]]; then
-    printf '%s\n' "$HOME/Music/Audio Plugins"
   else
-    printf '%s\n' "$HOME/VST"
+    printf '%s\n' "$HOME/Music/Audio Plugins"
   fi
 }
 VST_ROOT="$(resolve_vst_root)"

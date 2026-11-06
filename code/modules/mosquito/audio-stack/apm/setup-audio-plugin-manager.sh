@@ -43,16 +43,6 @@ ok()    { echo -e "\033[1;32m ✓\033[0m $*"; }
 warn()  { echo -e "\033[1;33m !\033[0m $*"; }
 die()   { warn "$*"; exit 1; }
 
-ask(){
-  local q="$1" def="${2:-y}" r
-  ((YES)) && { ok "(auto) $q -> yes"; return 0; }
-  if command -v gum >/dev/null; then
-    gum confirm "$q" --default=$([[ $def == y ]] && echo true || echo false) && return 0 || return 1
-  fi
-  read -rp "$q [$([ $def = y ] && echo Y/n || echo y/N)] " r
-  r="${r:-$def}"; [[ $r =~ ^[oOyY] ]]
-}
-
 YES=0 UNINSTALL=0
 for a in "$@"; do case "$a" in
   -y|--yes) YES=1 ;;
@@ -89,35 +79,43 @@ VST_ICON_SRC="$SCRIPT_DIR/audio-plugin-manager-icon.png"
 VST_ICON_DST="$HOME/.local/share/icons/hicolor/256x256/apps/mosquito-audio-plugin-manager.png"
 
 # -----------------------------------------------------------------------------
-# 0. Runtime dependencies (the tools the core actually invokes). The stack
-# script (setup-audio-stack.sh) installs the full audio set; this step keeps
-# the manager usable standalone for machines that only install the manager.
+# 0. Runtime dependencies (the tools the core actually invokes). Installed
+# directly: the manager cannot install plugins without them, and a prompt on a
+# fresh machine just blocks the install.
+#
+# The distro `yabridge` package is deliberately NOT in this list — its host
+# binaries shadow the fixed master build in ~/.local/share/yabridge. The
+# runtime is built from master at the end of this script (and on first use);
+# only its build tools and `yabridgectl` are packages.
 # -----------------------------------------------------------------------------
-if ! command -v wine >/dev/null 2>&1 || ! command -v yabridgectl >/dev/null 2>&1 \
-   || ! command -v meson >/dev/null 2>&1 || ! command -v ninja >/dev/null 2>&1; then
-  info "Runtime dependencies (wine-staging + yabridge and its build tools) — required for Windows-VST support"
-  missing_deps=()
-  for p in wine-staging yabridgectl meson ninja; do
-    pacman -Q "$p" &>/dev/null || missing_deps+=("$p")
-  done
-  if ((${#missing_deps[@]})) && ask "Install the missing packages (${missing_deps[*]}) ?"; then
-    mq_sudo -v || die "Password required to install package(s): ${missing_deps[*]}"
-    mq_sudo pacman -S --needed --noconfirm "${missing_deps[@]}" \
-      || die "Installation failed: ${missing_deps[*]}"
-    ok "Installed: ${missing_deps[*]}"
-  fi
+info "Runtime dependencies (wine, yabridge build tools, Python, winetricks)"
+missing_deps=()
+# Any working `wine` provider is enough; forcing wine-staging would conflict
+# with a deliberately installed wine-cachyos/wine build.
+command -v wine >/dev/null 2>&1 || missing_deps+=("wine-staging")
+for p in yabridgectl meson ninja git jq winetricks \
+         python python-numpy gcc pkgconf \
+         libxcb xcb-util xcb-util-wm xcb-util-cursor xcb-util-keysyms \
+         libxkbcommon tomlplusplus; do
+  pacman -Q "$p" &>/dev/null || missing_deps+=("$p")
+done
+if ((${#missing_deps[@]})); then
+  mq_sudo -v || die "Password required to install package(s): ${missing_deps[*]}"
+  mq_sudo pacman -S --needed --noconfirm "${missing_deps[@]}" \
+    || die "Installation failed: ${missing_deps[*]}"
+  ok "Installed: ${missing_deps[*]}"
+else
+  ok "Runtime dependencies already present"
 fi
 
 # The distro yabridge (5.1.1) shadows the fixed master build kept in
 # ~/.local/share/yabridge: its /usr/bin/yabridge-host.exe wins the chainloader's
 # PATH lookup. yabridgectl does not depend on the package and stays.
 if pacman -Q yabridge &>/dev/null; then
-  warn "The distro yabridge package shadows the fixed build in ~/.local/share/yabridge."
-  if ask "Remove the distro yabridge package (yabridgectl stays) ?"; then
-    mq_sudo -v || die "Password required to remove yabridge"
-    mq_sudo pacman -R --noconfirm yabridge || die "Could not remove yabridge"
-    ok "Removed the distro yabridge package"
-  fi
+  warn "Removing the distro yabridge package (it shadows the fixed build; yabridgectl stays)."
+  mq_sudo -v || die "Password required to remove yabridge"
+  mq_sudo pacman -R --noconfirm yabridge || die "Could not remove yabridge"
+  ok "Removed the distro yabridge package"
 fi
 
 # -----------------------------------------------------------------------------
@@ -396,5 +394,19 @@ clean_wine_menu(){
   fi
 }
 clean_wine_menu
+
+# ── yabridge runtime ───────────────────────────────────────────────────────
+# The bridge is a build, not a package: build/install the fixed master runtime
+# now so the first plugin install doesn't have to. Failure is reported but not
+# fatal — the rest of the manager works, and the TUI retries on first use.
+if [[ -x "$BIN_DIR/mosquito-audio-plugin-manager-actions" ]] && command -v yabridgectl >/dev/null 2>&1; then
+  info "yabridge — preparing the fixed runtime (first run can take a few minutes)"
+  "$BIN_DIR/mosquito-audio-plugin-manager-actions" yabridge-ensure force >/dev/null 2>&1 || true
+  if [[ -f "$HOME/.local/share/yabridge/libyabridge-chainloader-vst2.so" ]]; then
+    ok "yabridge runtime ready ($HOME/.local/share/yabridge)"
+  else
+    warn "yabridge runtime not installed — open the manager and install a plugin, or see $SCRIPT_DIR/yabridge-build.log"
+  fi
+fi
 
 info "mosquito Audio Plugin Manager ready (see the Omarchy launcher, Audio category — search 'mosquito')."

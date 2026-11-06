@@ -489,6 +489,20 @@ type adoptPluginsMsg struct {
 	err error
 }
 
+// existingDirOrHome keeps superfile from opening a stale start directory — a
+// removed folder or a disconnected drive. superfile draws a full-screen error
+// for a path it cannot stat, which flashes red before its normal page. The home
+// folder always exists, so it is the safe fallback.
+func existingDirOrHome(dir string) string {
+	if dir != "" {
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			return dir
+		}
+	}
+	home, _ := os.UserHomeDir()
+	return home
+}
+
 func pickFileViaSuperfileEmbedded(startDir string) tea.Cmd {
 	tmp, err := os.CreateTemp("", "audio-plugin-manager-pick-*")
 	if err != nil {
@@ -497,9 +511,7 @@ func pickFileViaSuperfileEmbedded(startDir string) tea.Cmd {
 	tmpPath := tmp.Name()
 	tmp.Close()
 	os.Remove(tmpPath) // spf writes this path itself on pick; must not pre-exist as a stale non-empty file
-	if startDir == "" {
-		startDir, _ = os.UserHomeDir()
-	}
+	startDir = existingDirOrHome(startDir)
 	cmd := exec.Command("spf", "--chooser-file", tmpPath, startDir)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		defer os.Remove(tmpPath)

@@ -69,7 +69,7 @@ FIXES_STATE="${XDG_CONFIG_HOME:-$HOME/.config}/audio-plugin-manager/fixes.json"
 # from the persisted PLUGINS_ROOT preference via apply_plugins_root() below
 # -- AUDIOSTACK_VST_ROOT still wins over everything, same as before, for
 # test-fixture isolation. Default root resolution must agree with
-# setup-audio-stack.sh's resolve_vst_root / link-vst-shared.sh: the shared
+# setup-yabridge.sh's resolve_vst_root / link-vst-shared.sh: the shared
 # root is the folder the wine prefixes' "Common Files/VST3|CLAP" symlinks
 # point at (~/Music/Audio Plugins on this machine), NOT the legacy ~/VST —
 # otherwise an installer writes through the prefix link into the real
@@ -77,14 +77,13 @@ FIXES_STATE="${XDG_CONFIG_HOME:-$HOME/.config}/audio-plugin-manager/fixes.json"
 # the whole install/uninstall/visibility chain breaks silently.
 if [[ -n "${AUDIOSTACK_VST_ROOT:-}" ]]; then
   VST_ROOT="$AUDIOSTACK_VST_ROOT"
-elif find "$HOME/Music/Audio Plugins" -mindepth 2 \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) 2>/dev/null -print -quit | grep -q .; then
-  VST_ROOT="$HOME/Music/Audio Plugins"
 elif find "$HOME/VST" -mindepth 2 \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) 2>/dev/null -print -quit | grep -q .; then
+  # Legacy root that still holds REAL plugins: keep using it. An empty ~/VST
+  # (just the vst/vst3/clap skeleton) is never the default any more; falling
+  # back to it would recreate the folder this module is supposed to leave gone.
   VST_ROOT="$HOME/VST"
-elif [[ -d "$HOME/Music/Audio Plugins/vst3" ]]; then
-  VST_ROOT="$HOME/Music/Audio Plugins"
 else
-  VST_ROOT="$HOME/VST"
+  VST_ROOT="$HOME/Music/Audio Plugins"
 fi
 VST_VST2="$VST_ROOT/vst"
 VST_VST3="$VST_ROOT/vst3"
@@ -1129,6 +1128,20 @@ apm_clean_shared_leftovers() {
   return 0
 }
 
+# The legacy ~/VST root is no longer the default: an empty skeleton there
+# (vst/, vst3/, clap/ with no plugin files) is what older runs created. Remove
+# it so nothing keeps pointing at a folder the user does not want. A legacy root
+# that still holds real plugins is left alone.
+apm_clean_empty_legacy_vst_root() {
+  local root="$HOME/VST"
+  [[ -d $root ]] || return 0
+  if find "$root" -mindepth 1 \( -type f -o -type l \) -print -quit 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  find "$root" -depth -type d -empty -delete 2>/dev/null || true
+  return 0
+}
+
 is_redistributable_runtime(){
   case "${1,,}" in
     mfc*|msvcr*.dll|msvcp*.dll|vcruntime*.dll|ucrtbase.dll|msvcp*.dll|api-ms-win-*|    concrt*.dll|d3dcompiler_*.dll|dxil.dll|directx*.dll|*.ocx|comdlg32.dll|    gdi*.dll|ole*.dll|comctl*.dll|msvcp*.dll) return 0 ;;
@@ -1719,6 +1732,25 @@ is_sonible_installer() {
   return 1
 }
 
+# installer_uses_isskin <file> — the Inno Setup builds that embed the ISSKIN
+# skin (ISSKINU.DLL) before their wizard. ISSKINU.DLL links against the Visual
+# C++ 6 / MFC42 runtime, which Wine does not ship: without it the installer dies
+# with "Cannot import dll: … ISSKINU.DLL" before drawing anything. The DLL is
+# part of the installer's own payload; what it lacks is MFC42, so the fix is the
+# runtime, not a copied DLL. The string is plain in the installer, so a binary
+# scan finds it before the wizard runs; sonible installers are also recognised
+# by name because their build compresses it.
+installer_uses_isskin() {
+  local f="$1"
+  [[ -f $f ]] || return 1
+  grep -a -i -q -m1 'isskin' -- "$f" 2>/dev/null
+}
+
+needs_isskin_runtime() {
+  is_sonible_installer "$1" && return 0
+  installer_uses_isskin "$1"
+}
+
 # Idempotent: install the MFC42 runtime (mfc42.dll/mfc42u.dll) into a prefix
 # when missing. winetricks caches the download; safe to call every time.
 ensure_mfc42() {
@@ -1728,12 +1760,16 @@ ensure_mfc42() {
     ok "MFC42u already present in $prefix"
     return 0
   fi
-  msg "Pre-installation patch: installing MFC42 (winetricks mfc42) into $prefix"
+  command -v winetricks >/dev/null 2>&1 || {
+    warn "winetricks is not installed — cannot add the ISSKIN runtime (MFC42). Install it (pacman -S winetricks) and retry."
+    return 1
+  }
+  msg "Pre-installation patch: installing the ISSKIN runtime (winetricks mfc42) into $prefix"
   if WINEPREFIX="$prefix" winetricks -q mfc42 >/dev/null 2>&1 \
      || WINEPREFIX="$prefix" winetricks mfc42; then
-    ok "MFC42 patch applied (MFC42/MFC42u present in $prefix)"
+    ok "ISSKIN runtime applied (MFC42/MFC42u present in $prefix)"
   else
-    warn "winetricks mfc42 failed — the Sonible installer may still hit the ISSKINU.DLL error."
+    warn "winetricks mfc42 failed — the installer may still hit the ISSKINU.DLL error."
   fi
 }
 
@@ -2072,6 +2108,12 @@ install_manager_app(){
   fi
   file="$dst"
 
+  # Same ISSKIN/MFC42 pre-flight as install_plugin: a manager installer is
+  # still an Inno Setup build and can die before its window on the same DLL.
+  if needs_isskin_runtime "$file"; then
+    ensure_mfc42 "$prefix"
+  fi
+
   msg "Wait for it to open, install what you want, then close it. Nothing is touched before that."
   # Wait for the WINDOW, not for the exit code.
   #
@@ -2252,12 +2294,13 @@ install_plugin() {
   apm_desktop_shortcuts_snapshot "$wine_prefix" > "$desktop_before" 2>/dev/null || true
 
   # ── PRE-INSTALLATION PATCH (automatic, no prompt) ─────────────────────
-  # Sonible / "smart chain" installers are Inno Setup builds using the
-  # ISSKINU.DLL skin runtime, which needs native MFC42u — without it the
-  # installer dies with "Runtime error: Cannot import dll: …is-XXXX.tmp  # ISSKINU.DLL" before drawing anything. Strong detection: the installer's
-  # name or its folder mentions sonible / smart chain / smarteq. The patch
-  # only adds the mfc42 runtime (winetricks-managed, idempotent, cached).
-  if is_sonible_installer "$file"; then
+  # Inno Setup installers that embed the ISSKINU.DLL skin runtime need native
+  # MFC42u — without it the installer dies with "Runtime error: Cannot import
+  # dll: … ISSKINU.DLL" before drawing anything. This is not specific to one
+  # vendor: any installer carrying the ISSKIN string is detected (sonible
+  # builds are also matched by name), and the patch only adds the MFC42 runtime
+  # (winetricks-managed, idempotent, cached).
+  if needs_isskin_runtime "$file"; then
     ensure_mfc42 "$wine_prefix"
   fi
 
@@ -2979,6 +3022,7 @@ post_install() {
   if [[ $defer_sync != defer-sync && $defer_sync != 1 ]]; then
     purge_aax
     apm_clean_shared_leftovers
+    apm_clean_empty_legacy_vst_root
     if ! yabridge_ensure force; then
       # Not fatal to the install (the plugin files are in place), but fatal to
       # "REAPER sees the plugin": say so instead of swallowing it.
@@ -4432,6 +4476,9 @@ load_prefs() {
     save_prefs
   fi
   apply_plugins_root
+  # An empty legacy ~/VST is only clutter now; drop it every launch so a
+  # half-initialized old root cannot linger. A root with real plugins stays.
+  apm_clean_empty_legacy_vst_root
   # NOTE: deliberately NO apply_plugin_handler here. Loading prefs (every
   # status/list/launch invocation) must never touch ~/.config/hypr/hyprland.lua
   # — doing so rewrote the Omarchy config and triggered a hyprctl reload on

@@ -75,21 +75,18 @@ pkg_has(){ pacman -Q "$1" &>/dev/null; }
 #      through the prefix link, so every tool (plugin manager scan,
 #      yabridgectl registration, native-DAW search paths) must converge
 #      on this same root or the bridging chain silently breaks.
-#   3. Legacy ~/VST (kept as a fallback only for old machines where
-#      plugins really live there).
+#   3. Legacy ~/VST, but ONLY while it still holds real plugin files.
+#      An empty legacy skeleton is ignored: the default is ~/Music/Audio
+#      Plugins, and falling back to ~/VST would recreate the folder.
 resolve_vst_root() {
   if [[ -n "${AUDIOSTACK_VST_ROOT:-}" ]]; then
     printf '%s\n' "$AUDIOSTACK_VST_ROOT"
     return
   fi
-  if find "$HOME/Music/Audio Plugins" -mindepth 2 \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) 2>/dev/null | grep -q .; then
-    printf '%s\n' "$HOME/Music/Audio Plugins"
-  elif find "$HOME/VST" -mindepth 2 \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) 2>/dev/null | grep -q .; then
+  if find "$HOME/VST" -mindepth 2 \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) 2>/dev/null | grep -q .; then
     printf '%s\n' "$HOME/VST"
-  elif [[ -d "$HOME/Music/Audio Plugins/vst3" ]]; then
-    printf '%s\n' "$HOME/Music/Audio Plugins"
   else
-    printf '%s\n' "$HOME/VST"
+    printf '%s\n' "$HOME/Music/Audio Plugins"
   fi
 }
 VST_ROOT="$(resolve_vst_root)"
@@ -114,14 +111,17 @@ step_packages(){
     return 1
   fi
   local missing=() p
-  for p in wine-staging yabridgectl meson ninja realtime-privileges lib32-glibc lib32-libxcb winetricks; do
+  for p in wine-staging yabridgectl meson ninja git jq winetricks \
+           python python-numpy gcc pkgconf \
+           libxcb xcb-util xcb-util-wm xcb-util-cursor xcb-util-keysyms \
+           libxkbcommon tomlplusplus \
+           realtime-privileges lib32-glibc lib32-libxcb; do
     pkg_has "$p" || missing+=("$p")
   done
   if ((${#missing[@]})); then
-    if ask "Install the missing packages (${missing[*]}) ?" y; then
-      mq_sudo -v || return 1
-      run mq_sudo pacman -S --needed --noconfirm "${missing[@]}"
-    fi
+    msg "Installing the missing packages (${missing[*]})"
+    mq_sudo -v || return 1
+    run mq_sudo pacman -S --needed --noconfirm "${missing[@]}"
   else ok "All packages already present"; fi
 
   # The distro `yabridge` package is 5.1.1, which predates the Wine 9.22+
@@ -129,11 +129,9 @@ step_packages(){
   # PATH lookup over ~/.local/share/yabridge, so the fixed runtime never loads.
   # `yabridgectl` has no dependency on it and stays.
   if pkg_has yabridge; then
-    warn "The distro yabridge package shadows the fixed build in ~/.local/share/yabridge."
-    if ask "Remove the distro yabridge package (yabridgectl stays) ?" y; then
-      mq_sudo -v || return 1
-      run mq_sudo pacman -R --noconfirm yabridge
-    fi
+    warn "Removing the distro yabridge package (it shadows the fixed build; yabridgectl stays)."
+    mq_sudo -v || return 1
+    run mq_sudo pacman -R --noconfirm yabridge
   fi
 
   if ! getent group realtime | grep -qw "$USER"; then

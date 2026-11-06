@@ -60,4 +60,36 @@ printf 'explorer metadata\n' > "$VST_VST3/Arturia/desktop.ini"
 apm_clean_shared_leftovers
 [[ ! -e "$stray" ]] || { echo "fail: stray suite link kept" >&2; exit 1; }
 [[ ! -e "$VST_VST3/Arturia/desktop.ini" ]] || { echo "fail: desktop.ini kept" >&2; exit 1; }
-echo 'ok: yabridgectl points at the scanned folders; stray suite links are cleaned'
+
+# ISSKIN: the installer carries the string; the missing piece is the MFC42
+# runtime, not a copy of ISSKINU.DLL. sonible installers are recognised by name
+# too (their build compresses the string).
+printf 'MZ....ISSKINU.DLL....' > "$TMP/isskin.exe"
+installer_uses_isskin "$TMP/isskin.exe" || { echo "fail: ISSKIN installer not detected" >&2; exit 1; }
+needs_isskin_runtime "$TMP/isskin.exe" || { echo "fail: ISSKIN runtime not required" >&2; exit 1; }
+printf 'MZ....plain....' > "$TMP/plain.exe"
+installer_uses_isskin "$TMP/plain.exe" && { echo "fail: false ISSKIN match" >&2; exit 1; }
+needs_isskin_runtime "$TMP/plain.exe" && { echo "fail: plain installer flagged" >&2; exit 1; }
+needs_isskin_runtime "$TMP/Setup smartEQ4 v1.0.1.exe" || { echo "fail: sonible installer not detected" >&2; exit 1; }
+
+# The default root is the shared Music folder, never the empty legacy ~/VST.
+(
+  export HOME="$TMP/home-default"
+  mkdir -p "$HOME"
+  unset AUDIOSTACK_VST_ROOT
+  # shellcheck source=/dev/null
+  source "$ROOT/code/modules/mosquito/audio-stack/apm/lib-audio-plugin-manager-core.sh"
+  [[ $VST_ROOT == "$HOME/Music/Audio Plugins" ]] || {
+    echo "fail: default VST root is $VST_ROOT, not the shared Music folder" >&2; exit 1; }
+)
+
+# An empty ~/VST skeleton is removed; a legacy root holding a real plugin stays.
+mkdir -p "$HOME/VST/vst" "$HOME/VST/vst3" "$HOME/VST/clap"
+apm_clean_empty_legacy_vst_root
+[[ ! -e "$HOME/VST" ]] || { echo "fail: empty ~/VST kept" >&2; exit 1; }
+mkdir -p "$HOME/VST/vst/Keep"
+: > "$HOME/VST/vst/Keep/plugin.dll"
+apm_clean_empty_legacy_vst_root
+[[ -d "$HOME/VST" ]] || { echo "fail: legacy ~/VST with a plugin removed" >&2; exit 1; }
+
+echo 'ok: yabridgectl points at the scanned folders; stray suite links are cleaned; ISSKIN and VST-root rules hold'
