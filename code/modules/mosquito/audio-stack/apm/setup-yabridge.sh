@@ -98,7 +98,7 @@ VST_SRC_VST2="$VST_ROOT/vst"; VST_SRC_VST3="$VST_ROOT/vst3"; VST_SRC_CLAP="$VST_
 detect_summary(){
   hr; msg "Detected state"
   local p
-  for p in wine-staging yabridgectl realtime-privileges lib32-glibc lib32-libxcb winetricks; do
+  for p in wine-staging yabridgectl meson ninja realtime-privileges lib32-glibc lib32-libxcb winetricks; do
     pkg_has "$p" && ok "$p $(pacman -Q "$p" | awk '{print $2}')" || warn "$p missing"
   done
   groups | grep -qw realtime && ok "realtime group: member" || warn "realtime group: not a member"
@@ -114,7 +114,7 @@ step_packages(){
     return 1
   fi
   local missing=() p
-  for p in wine-staging yabridgectl realtime-privileges lib32-glibc lib32-libxcb winetricks; do
+  for p in wine-staging yabridgectl meson ninja realtime-privileges lib32-glibc lib32-libxcb winetricks; do
     pkg_has "$p" || missing+=("$p")
   done
   if ((${#missing[@]})); then

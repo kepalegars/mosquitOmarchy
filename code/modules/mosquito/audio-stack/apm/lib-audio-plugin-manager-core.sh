@@ -137,6 +137,16 @@ else
 fi
 unset _mq_wm_lib
 
+# Privilege elevation for the one step that needs it: the yabridge build
+# installs meson/ninja when they are absent (see yabridge_build).
+_mq_elevate="$SCRIPT_DIR/../../../../lib/elevate.bash"
+[[ -f $_mq_elevate ]] || _mq_elevate="$HOME/mosquitOmarchy/code/lib/elevate.bash"
+if [[ -f $_mq_elevate ]]; then
+  # shellcheck source=/dev/null
+  source "$_mq_elevate"
+fi
+unset _mq_elevate
+
 # ── Native Omarchy UI (same helpers as the Move manager) ────────────────────
 is_tty() { [[ -t 0 ]] && [[ -n ${TERM:-} && ${TERM:-} != dumb ]]; }
 
@@ -1074,38 +1084,49 @@ recommended_prefix_for_plugins() {
 # itself; copying one into a plugin folder changes nothing and clutters the
 # list. A suite's own companion module (Meter Tap, a vendor's shared engine) is
 # NOT one of these: the plugin looks for it next to itself.
-# link_suite_support <prefix> <plugin-file> <vendor-dir>
+# link_suite_support used to mirror every Cores/Presets directory found in
+# the prefix into the plugin's vendor folder by PREFIX-relative path. That put
+# them at <vendor>/drive_c/ProgramData/... — a path no plugin reads — and it
+# did it for every vendor in the prefix, so Plugin Alliance received Arturia's
+# Presets. Vendor support data is link-vst-shared.sh's job (it links the real
+# path into every prefix); this only removes what the old mirror left behind.
 #
-# Mirror a suite's support directories into the shared folder as SYMLINKS.
-#
-# A suite's modules load their engine by relative path: every Neutron and RX
-# module carries "iZNeutron5Core.dll" and reads the path from a PE resource, so
-# nothing about the expected layout is readable from the binary. Left in the
-# prefix it resolved; copied FLAT into the shared folder it did not, and every
-# module failed to load with "one of the files this plugin needs cannot be
-# found" — while the one self-contained module (Visual Mixer, which needs no
-# core) loaded fine, which is exactly what was seen.
-#
-# Copying the Cores instead of linking them costs 650 MB of a disk that has
-# under 2 GB free, and the manager already links the other way round (the
-# prefix points INTO the shared folder), so linking is both cheaper and
-# reversible.
-link_suite_support(){
-  local pfx="$1" plugin="$2" vendor_dir="$3"
-  local -a dirs=()
-  mapfile -t dirs < <(find "$pfx" -maxdepth 4 -type d \( -iname 'Cores' -o -iname 'Presets' \) 2>/dev/null)
-  ((${#dirs[@]})) || return 0
-  local d rel target
-  for d in "${dirs[@]}"; do
-    # Only the suites that have modules in this vendor folder are relevant.
-    grep -qF "$plugin" "$pfx/registered-plugins.list" 2>/dev/null || true
-    rel="${d#"$pfx"/}"
-    target="$vendor_dir/$rel"
-    mkdir -p "$(dirname "$target")"
-    [[ -e $target ]] && continue
-    ln -sfn "$d" "$target" 2>/dev/null || true
-    ok "$(basename "$rel") linked beside the plugins that need it"
+# The signature is exact on purpose: a drive_c tree holding nothing but
+# symlinks into a wine prefix. Anything else may be a real bundle.
+apm_clean_stray_suite_links() {
+  local root d l t links foreign n=0
+  for root in "$VST_VST2" "$VST_VST3" "$VST_CLAP"; do
+    [[ -d $root ]] || continue
+    while IFS= read -r -d '' d; do
+      links=0 foreign=0
+      while IFS= read -r -d '' l; do
+        links=$((links + 1))
+        t="$(readlink -f "$l" 2>/dev/null || true)"
+        case "$t" in "$HOME"/.wine*/*) ;; *) foreign=1 ;; esac
+      done < <(find "$d" -type l -print0 2>/dev/null)
+      ((links)) || continue
+      ((foreign)) && continue
+      [[ -z $(find "$d" -type f -print -quit 2>/dev/null) ]] || continue
+      rm -rf -- "$d" && { ok "stray support link removed: ${d#"$VST_ROOT"/}"; n=$((n + 1)); }
+    done < <(find "$root" -mindepth 2 -maxdepth 2 -type d -name drive_c -print0 2>/dev/null)
   done
+  return 0
+}
+
+# Windows Explorer metadata, not plugin data: an installer (or a Wine Explorer
+# visit) leaves desktop.ini + PlugIn.ico in the vendor folder. They do nothing
+# for a DAW and show up as clutter in the plugin store.
+apm_clean_shared_leftovers() {
+  local root f
+  for root in "$VST_VST2" "$VST_VST3" "$VST_CLAP"; do
+    [[ -d $root ]] || continue
+    while IFS= read -r -d '' f; do
+      rm -f -- "$f" && ok "Windows folder metadata removed: ${f#"$VST_ROOT"/}"
+    done < <(find "$root" -mindepth 2 -maxdepth 2 -type f \
+      \( -iname 'desktop.ini' -o -iname 'PlugIn.ico' \) -print0 2>/dev/null)
+  done
+  apm_clean_stray_suite_links
+  return 0
 }
 
 is_redistributable_runtime(){
@@ -2535,7 +2556,6 @@ install_plugin() {
     state_register_install "$(plugin_key "$_f")" "$wine_prefix" "$_f"
   done
   unset _f
-  link_suite_support "$wine_prefix" "${newfiles[0]}" "$(dirname "${newfiles[0]}")"
   register_standalones_from_prefix "$wine_prefix"
   post_install
   hide_wine_menu_entries "$wine_prefix"
@@ -2708,23 +2728,43 @@ yabridge_distro_shadowing() {
   [[ -e /usr/bin/yabridge-host.exe || -e /usr/lib/libyabridge-vst2.so ]]
 }
 
-# Pin yabridgectl to our build. "set --path" on the Arch package panics
-# (clap_builder bug), so the config is written directly: yabridge_home must be
-# a *top-level* key, never inside the [last_known_config] table.
+# Pin yabridgectl to our build AND to the folders the manager actually scans.
+# "set --path" on the Arch package panics (clap_builder bug), so the config is
+# written directly: yabridge_home must be a *top-level* key, never inside the
+# [last_known_config] table.
+#
+# The folder list matters as much as the home. A config carried over from
+# another user (or an older layout) points yabridgectl at paths that do not
+# exist; sync then drops no chainloader into ~/.vst* and every DAW reports
+# "no plugins" even though the runtime is built. Register the folders the
+# manager really scans and drop the dead entries.
 yabridge_pin_yabridgectl() {
   local cfg="${YABRIDGE_CFG:-$HOME/.config/yabridgectl/config.toml}"
-  [[ -f $cfg ]] || return 0
-  mkdir -p "$(dirname "$cfg")" 2>/dev/null
-  if grep -q "^yabridge_home *= *\"$YABRIDGE_DST\"" "$cfg" 2>/dev/null; then
-    return 0
+  mkdir -p "$(dirname "$cfg")" 2>/dev/null || return 0
+  [[ -f $cfg ]] || : > "$cfg"
+  if ! grep -qF "yabridge_home = \"$YABRIDGE_DST\"" "$cfg" 2>/dev/null && \
+     ! grep -qF "yabridge_home = '$YABRIDGE_DST'" "$cfg" 2>/dev/null; then
+    # Shell-quote the path: it is a double-quoted TOML string.
+    local quoted
+    quoted="$(printf '%s' "$YABRIDGE_DST" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    {
+      printf 'yabridge_home = "%s"\n' "$quoted"
+      # grep exits 1 when the old file had nothing else in it; that is not an
+      # error here, only an empty remainder.
+      grep -v "^yabridge_home" "$cfg" || true
+    } > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
   fi
-  # Shell-quote the path: it is a double-quoted TOML string.
-  local quoted
-  quoted="$(printf '%s' "$YABRIDGE_DST" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-  {
-    printf 'yabridge_home = "%s"\n' "$quoted"
-    grep -v "^yabridge_home" "$cfg"
-  } > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
+  command -v yabridgectl >/dev/null 2>&1 || return 0
+  local d
+  while IFS= read -r d; do
+    [[ -n $d && ! -d $d ]] || continue
+    yabridgectl rm "$d" >/dev/null 2>&1 || true
+  done < <(yabridgectl list 2>/dev/null)
+  for d in "$VST_VST2" "$VST_VST3" "$VST_CLAP"; do
+    mkdir -p "$d"
+    yabridgectl list 2>/dev/null | grep -qxF "$d" && continue
+    yabridgectl add "$d" >/dev/null 2>&1 || true
+  done
 }
 
 yabridge_write_state() {
@@ -2774,10 +2814,22 @@ yabridge_build() {
   if [[ $ok == 1 ]]; then
     msg "yabridge: building master ($commit) — this takes a couple of minutes the first time"
     if ! command -v meson >/dev/null 2>&1 || ! command -v ninja >/dev/null 2>&1; then
-      err "yabridge: meson and ninja are required to build yabridge"
-      return 1
+      # First plugin setup on a machine where only the runtime packages were
+      # installed: the build half was never needed before, so install it here
+      # rather than failing the whole bridge with "meson required".
+      msg "yabridge: installing the build tools (meson, ninja)"
+      if declare -F mq_sudo >/dev/null 2>&1 && \
+         mq_sudo pacman -S --needed --noconfirm meson ninja >>"$YABRIDGE_LOG" 2>&1; then
+        ok "yabridge: build tools installed"
+      else
+        err "yabridge: meson and ninja are required to build yabridge (sudo pacman -S meson ninja)"
+        return 1
+      fi
     fi
     mkdir -p "$YABRIDGE_DST"
+    # meson refuses an already-configured build dir, and a failed run leaves
+    # one behind; a from-source tree has nothing in it worth keeping.
+    rm -rf "$YABRIDGE_SRC/build"
     if ( cd "$YABRIDGE_SRC" && meson setup build --buildtype=release --cross-file=cross-wine.conf \
           --unity=on --unity-size=1000 >>"$YABRIDGE_LOG" 2>&1 && \
           ninja -C build >>"$YABRIDGE_LOG" 2>&1 ); then
@@ -2816,6 +2868,11 @@ yabridge_ensure() {
   # No sensible state dir (tests, exotic setups) — stay out of the way.
   [[ -n $STATE_DIR && -d $STATE_DIR ]] || return 0
   command -v git >/dev/null 2>&1 || { warn "yabridge: git is required to track master"; return 0; }
+
+  # Register the scanned folders even when the runtime is already built and
+  # current: a config carried over from another machine is the difference
+  # between "yabridgectl sync OK" and a DAW that sees no plugin at all.
+  yabridge_pin_yabridgectl
 
   if [[ $force != force ]]; then
     local now; now="$(date +%s)"
@@ -2863,7 +2920,14 @@ yabridge_state_json() {
 # shortcut: AAX is deleted because Pro Tools is not installed; revisit if Pro Tools is added.
 purge_aax() {
   local pf root n=0
-  for pf in "$HOME"/.wine "$HOME"/.wine-ableton "$HOME"/.wine-vst; do
+  local -A seen=()
+  # Every prefix the manager knows, not just the three historical names: a
+  # plugin installed into a custom DEFAULT_PREFIX drops its AAX copy there.
+  local -a prefixes=("${WINE_PREFIXES[@]:-}" "$(default_prefix)" \
+    "$HOME/.wine" "$HOME/.wine-ableton" "$HOME/.wine-vst")
+  for pf in "${prefixes[@]}"; do
+    [[ -n $pf && -z ${seen[$pf]:-} ]] || continue
+    seen[$pf]=1
     [[ -d $pf/drive_c ]] || continue
     for root in "$pf/drive_c/Program Files/Common Files/Avid/Audio/Plug-Ins" \
                 "$pf/drive_c/Program Files (x86)/Common Files/Avid/Audio/Plug-Ins"; do
@@ -2914,7 +2978,12 @@ post_install() {
   # prefix is walked, and nothing between two removals depends on the result.
   if [[ $defer_sync != defer-sync && $defer_sync != 1 ]]; then
     purge_aax
-    yabridge_ensure force || true
+    apm_clean_shared_leftovers
+    if ! yabridge_ensure force; then
+      # Not fatal to the install (the plugin files are in place), but fatal to
+      # "REAPER sees the plugin": say so instead of swallowing it.
+      warn "yabridge: runtime not installed — the plugin is in the shared folder but no DAW will load it until this is fixed (see $YABRIDGE_LOG)"
+    fi
     local pf
     for pf in "${WINE_PREFIXES[@]:-}"; do
       fix_sonible_runtime_deps "$pf"
@@ -2927,7 +2996,11 @@ post_install() {
   if [[ $defer_sync != defer-sync && $defer_sync != 1 ]]; then
     yabridge_pin_yabridgectl
     if command -v yabridgectl >/dev/null; then
-      yabridgectl sync >/dev/null 2>&1 && ok "yabridgectl sync OK"
+      if yabridgectl sync >/dev/null 2>&1; then
+        ok "yabridgectl sync OK"
+      else
+        warn "yabridgectl sync failed — see $YABRIDGE_LOG"
+      fi
     fi
   fi
   local linker="$SCRIPT_DIR/link-vst-shared.sh"

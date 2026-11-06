@@ -93,10 +93,11 @@ VST_ICON_DST="$HOME/.local/share/icons/hicolor/256x256/apps/mosquito-audio-plugi
 # script (setup-audio-stack.sh) installs the full audio set; this step keeps
 # the manager usable standalone for machines that only install the manager.
 # -----------------------------------------------------------------------------
-if ! command -v wine >/dev/null 2>&1 || ! command -v yabridgectl >/dev/null 2>&1; then
-  info "Runtime dependencies (wine-staging + yabridge) — required for Windows-VST support"
+if ! command -v wine >/dev/null 2>&1 || ! command -v yabridgectl >/dev/null 2>&1 \
+   || ! command -v meson >/dev/null 2>&1 || ! command -v ninja >/dev/null 2>&1; then
+  info "Runtime dependencies (wine-staging + yabridge and its build tools) — required for Windows-VST support"
   missing_deps=()
-  for p in wine-staging yabridgectl; do
+  for p in wine-staging yabridgectl meson ninja; do
     pacman -Q "$p" &>/dev/null || missing_deps+=("$p")
   done
   if ((${#missing_deps[@]})) && ask "Install the missing packages (${missing_deps[*]}) ?"; then

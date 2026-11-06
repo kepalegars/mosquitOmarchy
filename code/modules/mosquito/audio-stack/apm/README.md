@@ -42,8 +42,8 @@ something before they will work, and that is recorded there.
 
 Every step is detected and idempotent.
 
-1. **Packages** — `[multilib]`, wine-staging, yabridge, yabridgectl, realtime-privileges,
-   winetricks, the `realtime` group
+1. **Packages** — `[multilib]`, wine-staging, yabridge, yabridgectl, meson + ninja (the
+   runtime is built from master), realtime-privileges, winetricks, the `realtime` group
 2. **Plugin folders** — the shared root (default `~/Music/Audio Plugins`, legacy `~/VST`
    reused if it holds real plugins), yabridgectl registration, `yabridge-autosync` units, the
    native search paths (`VST_PATH`, `VST3_PATH`, `CLAP_PATH`, `LV2_PATH` in
@@ -336,7 +336,10 @@ On a machine with no preferences yet, a short wizard runs first:
 
 1. **Plugins folder** — the default shared root is used right away; choosing *No* opens the file
    manager so you can pick an existing one. Stored in Settings, changeable later.
-2. **DAW paths** — updates the config of every already-installed DAW, per the table above.
+2. **yabridge** — the fixed runtime is built (meson/ninja installed if absent), the chosen
+   folders are registered with `yabridgectl`, and the chainloaders are synced into `~/.vst*`.
+   A failure is named with its log path instead of leaving the first install silently unbridged.
+3. **DAW paths** — updates the config of every already-installed DAW, per the table above.
    Whatever cannot be done externally is named on screen rather than failing quietly.
 
 ## The plugin list

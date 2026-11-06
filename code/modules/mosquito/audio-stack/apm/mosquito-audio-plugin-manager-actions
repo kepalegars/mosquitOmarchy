@@ -124,6 +124,24 @@ case "$cmd" in
     save_prefs
     init_plugins_root
     apply_plugins_root
+    # Windows plugins reach a Linux DAW only through yabridge. Build the fixed
+    # runtime now (installing meson/ninja if absent), register the folders just
+    # chosen, and drop the chainloaders, so the first plugin installed
+    # afterwards appears in REAPER/Bitwig without a manual sync.
+    if command -v yabridgectl >/dev/null 2>&1; then
+      printf '→  yabridge — preparing the Windows-plugin bridge (the first run can take a few minutes)\n'
+      if yabridge_ensure force >/dev/null 2>&1; then
+        if yabridgectl sync >/dev/null 2>&1; then
+          printf '✓  yabridge — runtime ready, plugin folders registered, chainloaders synced\n'
+        else
+          printf '·  yabridge — runtime ready, but the first sync failed (see %s)\n' "$YABRIDGE_LOG"
+        fi
+      else
+        printf '·  yabridge — runtime not installed (see %s)\n' "$YABRIDGE_LOG"
+      fi
+    else
+      printf '·  yabridge — yabridgectl is missing; Windows plugins cannot be bridged\n'
+    fi
     found=0
     # ── REAPER ────────────────────────────────────────────────────────────
     reaper_ini="$HOME/.config/REAPER/reaper.ini"
