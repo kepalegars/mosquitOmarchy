@@ -751,37 +751,6 @@ func fetchPatchSecretCmd(remove bool, keys []string) tea.Cmd {
 	}
 }
 
-// patchesMsg carries the post-install patch check for a plan.
-type patchesMsg struct {
-	items []PatchRec
-	err   error
-}
-
-// fetchPatchesCmd checks, AFTER a successful apply, which of the applied apps
-// have a patch script present, so the TUI can propose it (and stay silent when
-// there is none — the pre-TUI launcher behaviour).
-func fetchPatchesCmd(plan []string) tea.Cmd {
-	return func() tea.Msg {
-		var items []PatchRec
-		for _, group := range plan {
-			parts := strings.Split(group, "\t")
-			if len(parts) < 2 {
-				continue
-			}
-			out, err := runQuick(append([]string{"patches", parts[0]}, parts[1:]...)...)
-			if err != nil {
-				return patchesMsg{err: err}
-			}
-			recs, err := decodeJSONLines[PatchRec](out)
-			if err != nil {
-				return patchesMsg{err: err}
-			}
-			items = append(items, recs...)
-		}
-		return patchesMsg{items: items}
-	}
-}
-
 func fetchUpdateCheckCmd() tea.Cmd {
 	return func() tea.Msg {
 		out, err := runQuick("update-check")

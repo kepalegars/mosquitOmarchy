@@ -226,10 +226,10 @@ apply_custom_jar(){
     msg "[dry-run] would run: sudo bash \"$patch_script\""
     return 0
   fi
-  # Driven by the mosquitOmarchy TUI: never auto-apply here. The TUI proposes the
-  # patch (only when the script is present) after the install.
+  # Driven by the mosquitOmarchy TUI: never auto-apply and never ask. The `p`
+  # shortcut on the Setup tree applies (or removes) the patch on demand.
   if [[ -n ${MOSQUITOMARCHY_TUI:-} ]]; then
-    ok "Custom jar available — the TUI proposes the patch after the install."
+    ok "Custom jar available — press p in the TUI to apply it."
     return 0
   fi
   # Already applied? Propose to revert to the stock jar instead of silently

@@ -256,38 +256,6 @@ func TestMissingAssetsRunsWhenPresent(t *testing.T) {
 	}
 }
 
-// TestPatchesPromptsAfterInstall checks that a present patch script opens the
-// "Apply patch?" confirmation (only when there is a patch).
-func TestPatchesPromptsAfterInstall(t *testing.T) {
-	m := initialModel()
-	m.w, m.h = 120, 40
-	m.push(scrMain)
-	m, _ = m.update(patchesMsg{items: []PatchRec{{
-		Folder: "apps", Key: "guitarpro", Label: "guitarpro",
-		Script: "/repo/code/modules/Apps/guitarpro/PATCH/patch-guitarpro",
-	}}})
-	if m.top() != scrConfirm {
-		t.Fatalf("top = %d, want scrConfirm(%d)", m.top(), scrConfirm)
-	}
-	if m.pendingAction != "apply-patches" {
-		t.Fatalf("pendingAction = %q, want apply-patches", m.pendingAction)
-	}
-	if len(m.pendingPatchKeys) != 1 || m.pendingPatchKeys[0] != "guitarpro" {
-		t.Fatalf("pendingPatchKeys = %v", m.pendingPatchKeys)
-	}
-}
-
-// TestPatchesSilentWhenAbsent checks that no patch means no prompt.
-func TestPatchesSilentWhenAbsent(t *testing.T) {
-	m := initialModel()
-	m.w, m.h = 120, 40
-	m.push(scrMain)
-	m, _ = m.update(patchesMsg{})
-	if m.top() != scrMain {
-		t.Fatalf("top = %d, want scrMain(%d)", m.top(), scrMain)
-	}
-}
-
 // TestSecretPatchWorksOnSetupRoot checks the hidden "p" shortcut from the
 // top-level Setup tree, not only from a category screen. It only asserts that
 // the key dispatches the backend query; the query itself is covered by the

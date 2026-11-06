@@ -1104,11 +1104,10 @@ step_patch(){
     return 0
   fi
 
-  # Driven by the mosquitOmarchy TUI: never auto-apply here. The TUI detects the
-  # patch script and proposes it (only when present) after the install, exactly
-  # like the pre-TUI launcher did.
+  # Driven by the mosquitOmarchy TUI: never auto-apply and never ask. The `p`
+  # shortcut on the Setup tree applies (or removes) the patch on demand.
   if [[ -n ${MOSQUITOMARCHY_TUI:-} ]]; then
-    ok "Patch available ($(basename "$helper")) — the TUI proposes it after the install."
+    ok "Patch available ($(basename "$helper")) — press p in the TUI to apply it."
     return 0
   fi
 

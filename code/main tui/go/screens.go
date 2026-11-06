@@ -510,11 +510,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.pendingYes = "See log"
 			m.push(scrConfirm)
 			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
-			// After a successful app apply, propose the patch script(s) that are
-			// actually present (and stay silent when there is none).
-			if m.pendingAction == "apply" && len(m.pendingArgs) > 0 {
-				return m, fetchPatchesCmd(m.pendingArgs)
-			}
+			// Patches are never proposed automatically: `p` on the Setup tree is
+			// the one path to apply (or remove) one, so an install never stops
+			// on a patch question.
 			// Keybindings writes: always offer the Hyprland reload that makes
 			// them live (and validates the config), then refresh the list.
 			switch m.pendingAction {
@@ -1694,33 +1692,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.info = tuikit.NewInfo(b.String()).SetSize(m.contentSize())
 		m.push(scrInfo)
-		return m, nil
-
-	case patchesMsg:
-		// Post-install: no patch script present (or the check failed) → just
-		// refresh. Otherwise propose to run it, naming the app(s).
-		if msg.err != nil || len(msg.items) == 0 {
-			switch m.top() {
-			case scrMain:
-				return m, fetchStatusCmd()
-			case scrUpdate:
-				return m, fetchUpdateCheckCmd()
-			}
-			return m, nil
-		}
-		keys := make([]string, 0, len(msg.items))
-		labels := make([]string, 0, len(msg.items))
-		for _, it := range msg.items {
-			keys = append(keys, it.Key)
-			labels = append(labels, it.Label)
-		}
-		m.pendingPatchKeys = keys
-		m.pendingAction = "apply-patches"
-		m.pendingMsg = "Patch script available for: " + strings.Join(labels, ", ") + "\n\nApply it now?"
-		m.pendingNo = "Not now"
-		m.pendingYes = "Apply patch"
-		m.push(scrConfirm)
-		m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 		return m, nil
 
 	case healthMsg:

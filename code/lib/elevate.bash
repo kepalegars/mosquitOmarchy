@@ -10,6 +10,13 @@
 #   3. pkexec + a usable polkit agent -> pkexec "$@" (native GUI prompt).
 #   4. otherwise                      -> sudo "$@"   (terminal prompt).
 #
+# When sudo's PAM stack waits on pam_fprintd, step "prime sudo through an
+# askpass" is skipped: `sudo -A` never invokes the askpass while PAM waits on
+# the reader, so the dialog never appears and the only hint is printed to a tty
+# the TUI does not show. pkexec goes through the polkit stack instead, and
+# Omarchy's agent draws the fingerprint prompt (falling back to a password
+# field) natively.
+#
 # pkexec prompts once per invocation (polkit does not cache credentials the
 # way sudo does), so callers that need several root steps should batch them
 # into a single elevated `mq_sudo bash -c '...'` where practical.
@@ -44,6 +51,13 @@ mq_sane_shell() {
     [[ -x $line ]] && grep -qxF "$line" /etc/shells 2>/dev/null && { printf '%s' "$line"; return 0; }
   done
   return 1
+}
+
+# True when sudo's PAM stack waits on pam_fprintd. `sudo -A` then blocks on the
+# reader without ever calling the askpass, so the askpass-priming path cannot
+# work: mq_sudo_prime routes to pkexec instead (see the header).
+mq_sudo_has_fingerprint() {
+  grep -qs 'pam_fprintd\.so' "${MQ_PAM_SUDO:-/etc/pam.d/sudo}" 2>/dev/null
 }
 
 # pkexec with an acceptable $SHELL (see mq_sane_shell).
@@ -256,8 +270,12 @@ mq_sudo_prime() {
   # sudo's timestamp through the themed graphical askpass, so the user sees the
   # dialog they are used to rather than a polkit one. It also caches, so the
   # rest of the run asks nothing at all.
+  #
+  # NOT when pam_fprintd is in sudo's stack: `sudo -A` then blocks on the
+  # reader and never calls the askpass (verified), so fall through to the
+  # polkit helper, whose agent shows the fingerprint prompt itself.
   local ap
-  if ap="$(mq_sudo_askpass)"; then
+  if ! mq_sudo_has_fingerprint && ap="$(mq_sudo_askpass)"; then
     # Bounded wait: an unanswered password dialog used to block the caller
     # FOREVER (the TUI sat on its "Uninstalling" spinner with no way to know
     # a dialog was even open). After 3 minutes sudo gives up and the run

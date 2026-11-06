@@ -241,10 +241,10 @@ apply_optional_patch(){
     warn "Patch tool not found — patch step ignored."
     return 0
   fi
-  # Driven by the mosquitOmarchy TUI: never auto-apply here. The TUI proposes the
-  # patch (only when the script is present) after the install.
+  # Driven by the mosquitOmarchy TUI: never auto-apply and never ask. The `p`
+  # shortcut on the Setup tree applies (or removes) the patch on demand.
   if [[ -n ${MOSQUITOMARCHY_TUI:-} ]]; then
-    ok "Patch available — the TUI proposes it after the install."
+    ok "Patch available — press p in the TUI to apply it."
     return 0
   fi
   # Already patched? Propose to remove it (restore the .stock originals) instead
