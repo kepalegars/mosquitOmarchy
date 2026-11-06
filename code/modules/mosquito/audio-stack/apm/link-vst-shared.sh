@@ -451,11 +451,13 @@ registry_has_state() { # <prefix> <regkey> [owner] -> 0 when the prefix already 
   local sys="$1/system.reg" osys="$owner/system.reg"
   [[ -f $sys && -f $osys ]] || return 1
   case "$key" in
-    *iZotope)
+    'HKLM\Software\iZotope')
       # "CorePath" is iZotope's marker, but ONE product's CorePath proves
       # nothing about a newly installed product. Ozone 12's 21 keys were
       # skipped because Neutron 5's 34 were already there. Compare the
       # CorePath-bearing product keys against the owner instead.
+      # HKLM only: HKCU carries no CorePath, so it falls through to the
+      # generic hive check below.
       local missing
       missing="$(comm -23 \
         <(awk '/^\[Software\\\\iZotope\\\\/ {k=$1} /"CorePath"/ {print k}' "$osys" 2>/dev/null | sort -u) \
@@ -544,6 +546,13 @@ link_vendor_registry() {
       root="$(prefix_wine_root "$pf")"
       if WINEPREFIX="$pf" "$root/bin/wine" reg import "$export" >/dev/null 2>&1; then
         ok "   $label registry state shared into $(basename "$pf")"
+        # The import leaves its own wineserver behind. Without this, the NEXT
+        # vendor entry for the same prefix reads that server as "prefix
+        # running" and skips its import -- which is how the iZotope HKCU state
+        # was reported as skipped right after the HKLM state had just been
+        # imported. We only get here after prefix_busy said no, so this server
+        # is ours.
+        WINEPREFIX="$pf" "$root/bin/wineserver" -k >/dev/null 2>&1 || true
       else
         warn "could not share the $label registry state into $(basename "$pf")"
         rc=1
