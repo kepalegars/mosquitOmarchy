@@ -13,6 +13,12 @@ code/modules/Apps/bitwig/*.deb
 *.log
 *.part
 
+# update-desktop-database writes this next to whatever folder it is run from.
+# A script that ran with this folder as CWD left one here; it is a cache, not
+# part of the module, and mapping it to the "apps" module made the update
+# screen propose a re-apply for a file nobody edited.
+code/modules/Apps/mimeinfo.cache
+
 # ── Crash logs: local-only, one dated log per failed mosquitOmarchy run ──
 # Written by code/lib/crash.bash into .local/crash-logs/. NEVER pushed and
 # NEVER archived (archive-customarchy.sh excludes .local/ too).

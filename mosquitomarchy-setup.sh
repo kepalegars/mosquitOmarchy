@@ -565,7 +565,12 @@ repo_update_avail(){ # 0 if a GitHub version is newer than the local one
   [[ -n "$local_head" ]] || return 1
   remote_head="$(timeout 15 git -C "$REPO_DIR" ls-remote "$REPO_REMOTE" "refs/heads/$REPO_BRANCH" 2>/dev/null | awk '{print $1}' | head -1)"
   [[ -n "$remote_head" ]] || return 1
-  [[ "$remote_head" != "$local_head" ]]
+  # A local checkout with unpushed commits is AHEAD, not outdated. Comparing
+  # the two hashes for inequality reported "GitHub has a newer version" on the
+  # owner machine after every commit, and offered a pull that cannot
+  # fast-forward. Only a remote that actually contains HEAD is newer.
+  [[ "$remote_head" != "$local_head" ]] \
+    && git -C "$REPO_DIR" merge-base --is-ancestor "$local_head" "$remote_head" 2>/dev/null
 }
 
 update_repo_ff(){

@@ -96,7 +96,7 @@ command -v wine >/dev/null 2>&1 || missing_deps+=("wine-staging")
 for p in yabridgectl meson ninja git jq winetricks \
          python python-numpy gcc pkgconf \
          libxcb xcb-util xcb-util-wm xcb-util-cursor xcb-util-keysyms \
-         libxkbcommon tomlplusplus; do
+         libxkbcommon tomlplusplus realtime-privileges; do
   pacman -Q "$p" &>/dev/null || missing_deps+=("$p")
 done
 if ((${#missing_deps[@]})); then
@@ -106,6 +106,18 @@ if ((${#missing_deps[@]})); then
   ok "Installed: ${missing_deps[*]}"
 else
   ok "Runtime dependencies already present"
+fi
+
+# yabridge asks the kernel to lock its audio buffers in RAM. With the default
+# 8 MiB RLIMIT_MEMLOCK it falls back to unlocked buffers and shows "Low memory
+# locking limit detected". The realtime group (from realtime-privileges) raises
+# both rtprio and memlock; it only applies to the next login session.
+if ! getent group realtime 2>/dev/null | grep -qw "$USER"; then
+  mq_sudo -v || die "Password required to add $USER to the realtime group"
+  mq_sudo gpasswd -a "$USER" realtime || die "Could not add $USER to the realtime group"
+  warn "Added $USER to the realtime group — log out and back in (or reboot) for the memlock limit to apply."
+else
+  ok "realtime group: member (memlock limit applies after login)"
 fi
 
 # The distro yabridge (5.1.1) shadows the fixed master build kept in

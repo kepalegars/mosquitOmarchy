@@ -218,6 +218,10 @@ ensure_power_plugin() {
     sed -i -E "s/\"id\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/\"id\": \"$PLUGIN_ID\"/" "$mf"
   fi
 
+  # Enable BEFORE normalizing: `omarchy plugin enable` places a bar widget, so
+  # normalizing first let enable re-add the duplicate that had just been
+  # removed (that is how the bar ended up with two battery icons).
+  omarchy plugin enable "$PLUGIN_ID" >/dev/null 2>&1 || true
   # ALWAYS make the bar layout show exactly one mosquito.power. A reinstall,
   # an Omarchy update or an earlier partial run can leave shell.json on the
   # STOCK omarchy.power (or a stale custom.power / <user>.power clone): the
@@ -230,7 +234,6 @@ ensure_power_plugin() {
   fi
   # And any self-reference inside the plugin's own QML.
   sed -i -E "s#\"(omarchy|custom|${REAL_USER})\.power\"#\"$PLUGIN_ID\"#g" "$PLUGIN_DIR"/*.qml 2>/dev/null || true
-  omarchy plugin enable "$PLUGIN_ID" >/dev/null 2>&1 || true
   ok "Omarchy plugin $PLUGIN_ID present + enabled (bar widget)"
 }
 
@@ -444,6 +447,7 @@ refresh_plugin(){
   if (( rc == 0 )); then
     omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
     omarchy plugin enable "$id" >/dev/null 2>&1 || true
+    normalize_bar_widget "$REAL_HOME/.config/omarchy/shell.json" "$REAL_USER" "$key" >/dev/null 2>&1 || true
     rm -rf "$backup" || true
     if [[ -e $leftover_bak ]]; then rm -rf "$leftover_bak" || true; fi
     ok "Refreshed $id from the current $source_id"
@@ -455,6 +459,7 @@ refresh_plugin(){
   if [[ -e $leftover_bak ]]; then mv "$leftover_bak" "$leftover" 2>/dev/null || true; fi
   omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
   omarchy plugin enable "$id" >/dev/null 2>&1 || true
+  normalize_bar_widget "$REAL_HOME/.config/omarchy/shell.json" "$REAL_USER" "$key" >/dev/null 2>&1 || true
   warn "Could not refresh $id — the previous clone was restored."
   return 1
 }
