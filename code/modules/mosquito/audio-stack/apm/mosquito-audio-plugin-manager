@@ -89,7 +89,7 @@ _mgr_single_instance_gate() {
   pids=$(_mgr_running_tui_pids)
   if [[ -n $pids ]]; then
     if [[ $replace != true ]]; then
-      # Short button labels so the shared mosquito.confirm overlay (fixed
+      # Short button labels so the APM-owned mosquito.apm-confirm overlay (fixed
       # button width) never clips them; the message carries the full intent.
       if ! ui_confirm "Another mosquito Audio Plugin Manager instance is already open. Close it and continue?" "Keep" "Close & continue"; then
         echo "mosquito-audio-plugin-manager: another instance is already open — leaving it alone." >&2

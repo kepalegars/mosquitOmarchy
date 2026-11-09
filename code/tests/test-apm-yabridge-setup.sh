@@ -92,4 +92,71 @@ mkdir -p "$HOME/VST/vst/Keep"
 apm_clean_empty_legacy_vst_root
 [[ -d "$HOME/VST" ]] || { echo "fail: legacy ~/VST with a plugin removed" >&2; exit 1; }
 
+# A native DAW must not scan the shared WINDOWS plugin folders: a Windows PE
+# .vst3 cannot be loaded by native REAPER, and its cached failure shadows the
+# yabridge chainloader of the same basename. Old wizard versions wrote those
+# paths; the repair removes them, keeps the native folders, and drops the
+# failure-only cache lines so the chainloaders are retried.
+mkdir -p "$HOME/.config/REAPER"
+reaper_ini="$HOME/.config/REAPER/reaper.ini"
+cat > "$reaper_ini" <<EOF
+[reaper]
+vstpath=~/.vst;~/.vst3;$AUDIOSTACK_VST_ROOT/vst/;$AUDIOSTACK_VST_ROOT/vst3/;$AUDIOSTACK_VST_ROOT/vst3-native/
+lv2path_linux=/usr/lib/lv2;~/.lv2;$AUDIOSTACK_VST_ROOT/lv2/;$AUDIOSTACK_VST_ROOT/clap/;$AUDIOSTACK_VST_ROOT/clap-native/
+clappath=~/.clap;$AUDIOSTACK_VST_ROOT/clap/
+EOF
+cat > "$HOME/.config/REAPER/reaper-vstplugins64.ini" <<'EOF'
+[vstcache]
+kHs_Gain.vst3=801A4EA5CF6DDD01
+Analog_Lab_V.vst3=00069EB649E7DB01,1097621878,Analog Lab V (Arturia)!!!VSTi
+EOF
+apm_fix_native_daw_paths
+vst_line="$(sed -n 's/^vstpath=//p' "$reaper_ini")"
+lv2_line="$(sed -n 's/^lv2path_linux=//p' "$reaper_ini")"
+clap_line="$(sed -n 's/^clappath=//p' "$reaper_ini")"
+case ";$vst_line;" in
+  *";$AUDIOSTACK_VST_ROOT/vst;"*|*";$AUDIOSTACK_VST_ROOT/vst3;"*)
+    echo "fail: Windows VST folder kept in REAPER vstpath" >&2; exit 1 ;;
+esac
+case ";$vst_line;" in
+  *";$AUDIOSTACK_VST_ROOT/vst3-native;"*|*";$HOME/.vst;"*) ;;
+  *) echo "fail: native/chainloader VST folders lost from REAPER vstpath" >&2; exit 1 ;;
+esac
+case ";$lv2_line;$clap_line;" in
+  *";$AUDIOSTACK_VST_ROOT/clap;"*)
+    echo "fail: Windows CLAP folder kept in REAPER paths" >&2; exit 1 ;;
+esac
+case ";$lv2_line;" in
+  *";$AUDIOSTACK_VST_ROOT/lv2;"*|*";$AUDIOSTACK_VST_ROOT/clap-native;"*) ;;
+  *) echo "fail: native LV2/CLAP folders lost from REAPER lv2path" >&2; exit 1 ;;
+esac
+grep -q '^kHs_Gain\.vst3=[0-9A-F]*$' "$HOME/.config/REAPER/reaper-vstplugins64.ini" && {
+  echo "fail: failed-scan cache line kept (chainloader stays shadowed)" >&2; exit 1; }
+grep -q '^Analog_Lab_V\.vst3=.*,' "$HOME/.config/REAPER/reaper-vstplugins64.ini" || {
+  echo "fail: valid cache line removed with the failures" >&2; exit 1; }
+[[ -f "$reaper_ini.mosquito.bak" ]] || { echo "fail: no REAPER backup written" >&2; exit 1; }
+
+# Wine's builtin msvcp140_atomic_wait.dll exports the __std_atomic_* names and
+# then aborts when one is called. Checking only the exports called it a real
+# runtime, so the fix reported "already present" and installed nothing -- and
+# the first smart:comp3 call took the DAW down. The builtin marker must reject.
+stub_pfx="$TMP/stub-pfx"
+mkdir -p "$stub_pfx/drive_c/windows/system32"
+printf 'MZ....Wine builtin DLL....__std_atomic_wait_get_deadline\n' \
+  > "$stub_pfx/drive_c/windows/system32/msvcp140_atomic_wait.dll"
+apm_has_real_msvc_atomic_wait "$stub_pfx" && {
+  echo "fail: Wine builtin msvcp140_atomic_wait treated as the real runtime" >&2; exit 1; }
+
+# A wrapper generated before the plugin prefix existed pins an EMPTY prefix. The
+# DAW then falls back to ~/.wine, and grepping only for "WINEPREFIX=" called the
+# wrapper pinned, so it was never rewritten.
+# shellcheck source=/dev/null
+source "$ROOT/code/lib/wine-runtime-daw.bash"
+printf 'VST_PREFIX=""\n' > "$TMP/w-empty"
+wrapper_pins_prefix "$TMP/w-empty" && {
+  echo "fail: wrapper with an empty prefix treated as pinned" >&2; exit 1; }
+printf 'VST_PREFIX="/home/u/.wine-vst"\n' > "$TMP/w-full"
+wrapper_pins_prefix "$TMP/w-full" || {
+  echo "fail: wrapper with a real prefix not recognised as pinned" >&2; exit 1; }
+
 echo 'ok: yabridgectl points at the scanned folders; stray suite links are cleaned; ISSKIN and VST-root rules hold'

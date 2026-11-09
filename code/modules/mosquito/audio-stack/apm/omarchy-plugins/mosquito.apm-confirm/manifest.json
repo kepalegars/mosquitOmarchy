@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "mosquito.apm-confirm",
+  "name": "Mosquito APM Confirm",
+  "version": "1.0.0",
+  "author": "Mosquito",
+  "description": "Confirmation overlay owned by the mosquito Audio Plugin Manager",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Confirm.qml"
+  }
+}

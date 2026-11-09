@@ -24,7 +24,7 @@
 # (the flag-driven paths that run through the shared core), the ui_*
 # functions are defined INSIDE this file, guarded by
 # ${MOSQUITO_AUDIO_PLUGIN_MANAGER_NATIVE_UI} (set by the dispatcher): the native
-# Omarchy overlay (mosquito.confirm, omarchy-menu-input/-select), zenity as
+# Omarchy overlay (mosquito.apm-confirm, omarchy-menu-input/-select), zenity as
 # fallback, plain read on a tty. The actions backend pre-defines its own
 # stubs and sources this file with the guard unset, so they keep winning —
 # the Go TUI never needs a bash-rendered prompt, every decision is made in
@@ -175,7 +175,7 @@ ui_confirm() {
     s=$(jq -cn --arg message "$msg" --arg sel "$mel" --arg donef "$done" \
       --arg noLabel "$no_label" --arg yesLabel "$yes_label" \
       '{message:$message,selectionFile:$sel,doneFile:$donef,noLabel:$noLabel,yesLabel:$yesLabel}')
-    omarchy-shell shell summon mosquito.confirm "$s" >/dev/null 2>&1 || true
+    omarchy-shell shell summon mosquito.apm-confirm "$s" >/dev/null 2>&1 || true
     while [[ ! -e $done ]]; do sleep 0.05; done
     local ret=1
     [[ $(cat "$mel" 2>/dev/null) == yes ]] && ret=0
@@ -201,7 +201,7 @@ ui_info() {
   if command -v omarchy-shell >/dev/null 2>&1; then
     local mel done
     mel=$(mktemp); done=$(mktemp); rm -f "$done"
-    omarchy-shell shell summon mosquito.confirm "$(jq -cn --arg message "$1" --arg sel "$mel" --arg donef "$done" \
+    omarchy-shell shell summon mosquito.apm-confirm "$(jq -cn --arg message "$1" --arg sel "$mel" --arg donef "$done" \
       '{message:$message,selectionFile:$sel,doneFile:$donef,okOnly:true}')" >/dev/null 2>&1 || true
     while [[ ! -e $done ]]; do sleep 0.05; done
     rm -f "$mel" "$done"
@@ -671,6 +671,13 @@ standalone_icon_warm(){ standalone_icon_for "$1" >/dev/null; }
 # kept writing the old shape ("SubLabXL.exe", no Icon=) over the top.
 toggle_executable_menu(){
   local exe="$1" base stem slug icon
+  # A manager has no menu entry on purpose: opening it from the app menu would
+  # bypass the adoption watcher, which is exactly how its plugins came back
+  # untracked. It lives in "Launch a standalone plugin" instead.
+  if is_manager_exe "$exe"; then
+    warn "plugin managers are opened from \"Launch a standalone plugin\", where what they install is tracked — no menu entry"
+    return 1
+  fi
   base="${exe##*/}"
   stem="$(printf '%s' "$base" | sed 's/\.[eE][xX][eE]$//')"
   mkdir -p "$APPS_DIR"
@@ -1972,29 +1979,34 @@ watch_for_plugins(){
   local added
   added="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | grep -c . || true)"
   msg "manager closed — registering what it installed"
-  adopt_plugins_silent || true
+  adopt_plugins_silent "$prefix" || true
   ok "registered $added plugin(s) from the manager"
   return 0
 }
 
 # adopt_plugins_silent is adopt-plugins' body with no output, for the watcher.
+# $1 = the prefix the manager ran in (optional; default prefix otherwise).
 adopt_plugins_silent(){
   local -a out=()
-  mapfile -t out < <(adopt_plugin_rows)
+  mapfile -t out < <(adopt_plugin_rows "${1:-}")
   ((${#out[@]})) || return 0
   printf '%s\n' "${out[@]}"
+  # Registration alone leaves the native host with no chainloader to load.
+  apm_yabridge_sync
   return 0
 }
 
 # adopt_plugin_rows emits one line per plugin newly registered.
+# $1 = prefix to attribute wine plugins to (optional).
 adopt_plugin_rows(){
+  local pfx_override="${1:-}"
   local _f key pfx first variants n=0
   local _tmp="${TMPDIR:-/tmp}/apm-adopt.$$"
   plugin_group_rows > "$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }
   while IFS=$'\t' read -r _sk _gk _label grp _formats _enabled value variants key; do
     [[ -n $key ]] || continue
     state_has "$key" && continue
-    pfx="$(default_prefix)"
+    pfx="${pfx_override:-$(default_prefix)}"
     case "$value" in native:*) pfx="" ;; esac
     first=""
     while IFS= read -r _f; do
@@ -2002,7 +2014,14 @@ adopt_plugin_rows(){
       bare="$_f"
       case "$_f" in vst:*:*) bare="${_f#vst:*:}" ;; native:*) bare="${_f#native:}" ;; esac
       [[ -n $first ]] || first="$bare"
-      state_register_install "$(plugin_key "$bare")" "$pfx" "$bare"
+      # Native plugins are keyed "native/<label>" by plugin_group_rows; using
+      # plugin_key() here files LV2 as "lv2/<label>" and the row stays untracked
+      # forever (the same mismatch add-orphan documented).
+      if [[ $_f == native:* ]]; then
+        state_register_install "native/$(native_plugin_label "$bare")" "" "$bare"
+      else
+        state_register_install "$(plugin_key "$bare")" "$pfx" "$bare"
+      fi
     done <<< "$(printf '%s' "$variants" | tr ';' '\n')"
     ok "registered from the manager: ${first##*/}"
     n=$((n + 1))
@@ -2155,6 +2174,11 @@ install_manager_app(){
     fi
   done
   msg "the installer closed — looking at what it brought."
+  # A manager installs its plugins from INSIDE its own window: there is no
+  # installer payload to diff, and nothing was watching the folder. Whatever it
+  # wrote is untracked at this point, so register it now that it is closed (the
+  # files are complete and the app is not touching them any more).
+  adopt_plugins_silent "$prefix" || true
   # The manager's own exe is whatever the installer just wrote that is not a
   # plugin and not an uninstaller.
   exe=""
@@ -2601,6 +2625,17 @@ install_plugin() {
   unset _f
   register_standalones_from_prefix "$wine_prefix"
   post_install
+  # A plugin importing MSVCP140_ATOMIC_WAIT.dll cannot run under Wine's builtin
+  # stub: the stub exports the names and aborts when called, which kills the
+  # Wine plugin host and yabridge then takes the DAW down (REAPER SIGABRT).
+  # smart:comp3 and smart:gate are the case; smartEQ4 does not import it, so the
+  # check is on the installed binary rather than on the installer's name.
+  for f in "${newfiles[@]}"; do
+    if apm_plugin_needs_msvc_atomic_wait "$f"; then
+      fix_install_msvc_runtime "$wine_prefix"
+      break
+    fi
+  done
   hide_wine_menu_entries "$wine_prefix"
   # Close an idle wineserver the installer left behind, so the NEXT install
   # does not find the prefix "busy". Drive aliases are left alone: Wine
@@ -2808,6 +2843,21 @@ yabridge_pin_yabridgectl() {
     yabridgectl list 2>/dev/null | grep -qxF "$d" && continue
     yabridgectl add "$d" >/dev/null 2>&1 || true
   done
+}
+
+# apm_yabridge_sync — regenerate the Linux chainloaders after the log changed.
+#
+# Registering a plugin only writes our own state: until yabridgectl syncs, the
+# native host has no .so/.vst3 bundle to load, so the plugin is "tracked" and
+# still invisible. Every path that ADDS plugins calls this.
+apm_yabridge_sync() {
+  yabridge_pin_yabridgectl
+  command -v yabridgectl >/dev/null 2>&1 || return 0
+  if yabridgectl sync >/dev/null 2>&1; then
+    ok "yabridgectl sync OK"
+  else
+    warn "yabridgectl sync failed — see $YABRIDGE_LOG"
+  fi
 }
 
 yabridge_write_state() {
@@ -3046,6 +3096,7 @@ post_install() {
     purge_aax
     apm_clean_shared_leftovers
     apm_clean_empty_legacy_vst_root
+    apm_fix_native_daw_paths
     if ! yabridge_ensure force; then
       # Not fatal to the install (the plugin files are in place), but fatal to
       # "REAPER sees the plugin": say so instead of swallowing it.
@@ -3061,14 +3112,7 @@ post_install() {
   # Deferred in a batch, like the sync: re-linking every prefix and re-fixing
   # the runtime once per removed plugin is the same cost, repeated.
   if [[ $defer_sync != defer-sync && $defer_sync != 1 ]]; then
-    yabridge_pin_yabridgectl
-    if command -v yabridgectl >/dev/null; then
-      if yabridgectl sync >/dev/null 2>&1; then
-        ok "yabridgectl sync OK"
-      else
-        warn "yabridgectl sync failed — see $YABRIDGE_LOG"
-      fi
-    fi
+    apm_yabridge_sync
   fi
   local linker="$SCRIPT_DIR/link-vst-shared.sh"
   if [[ ! -x $linker ]]; then
@@ -3717,6 +3761,16 @@ launch_standalone() {
   list="$(executable_list)"
   if [[ -z $list ]]; then ui_info "No standalone executable registered yet — install a plugin via the manager first."; return 0; fi
   pick=$(ui_select --plain "Launch a standalone plugin (via wine)?" "$list") || { ui_info "No standalone picked."; return 0; }
+  local pfx
+  pfx="$(default_prefix)"
+  case "$pick" in */drive_c/*) pfx="${pick%%/drive_c/*}" ;; esac
+  if is_manager_exe "$pick"; then
+    # A manager installs plugins from inside its own window. Wait for it and
+    # adopt what it wrote; a plain launch would leave them untracked.
+    msg "Opening the plugin manager — what it installs is tracked when it closes."
+    watch_for_plugins "$pick" "$pfx"
+    return 0
+  fi
   msg "Launching wine $pick"
   setsid wine start /unix "$pick" >/dev/null 2>&1 &
   ok "launched (standalone window may open)"
@@ -3732,6 +3786,9 @@ manage_executables() {
     local f base slug shown
     while IFS=$'\t' read -r f junk; do
       [[ -n $f ]] || continue
+      # Managers belong in "Launch a standalone plugin" (watcher attached), not
+      # in the app-menu toggle.
+      is_manager_exe "$f" && continue
       base="$(basename "$f")"
       slug="$APPS_DIR/$DESKTOP_SLUG-$(basename "${base%.exe}" | tr ' ' '-' | tr -cd '[:alnum:]-').desktop"
       shown=hide
@@ -4264,6 +4321,100 @@ reconcile_tick_to_add() {
   done
 }
 
+# ── Native DAW path repair ───────────────────────────────────────────────────
+# apm_fix_native_daw_paths — keep a native DAW pointed at what it can load.
+#
+# An older version of the first-run wizard added the shared WINDOWS plugin
+# folders (<root>/vst, /vst3, /clap) to REAPER's vstpath. A native REAPER
+# cannot load a Windows PE .vst3, so every one it finds there is cached as a
+# failed scan — and REAPER keys that cache by BASENAME, so the failure hides
+# the working yabridge bundle of the same name. That is the Kilohearts case:
+# 35 kHs*.vst3 failures in reaper-vstplugins64.ini while every chainloader in
+# ~/.vst3/yabridge was valid. The earlier correction only stopped ADDING those
+# paths; the entries already written stayed. Remove them, and drop the
+# failure-only cache lines so the chainloaders are scanned again.
+apm_fix_native_daw_paths(){
+  # Same location the wizard writes, so both agree even when XDG_CONFIG_HOME
+  # is set to something else.
+  local ini="$HOME/.config/REAPER/reaper.ini"
+  [[ -f $ini ]] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 - "$ini" "$VST_ROOT" "$HOME" >/dev/null 2>&1 <<'PY' || true
+import os
+import re
+import shutil
+import sys
+
+ini, root, home = sys.argv[1], os.path.abspath(sys.argv[2].rstrip("/")), sys.argv[3]
+windows_roots = {os.path.normpath(os.path.join(root, d)) for d in ("vst", "vst3", "clap")}
+defaults = {
+    "vstpath": [os.path.join(home, ".vst"), os.path.join(home, ".vst3")],
+    "vst3path": [os.path.join(home, ".vst3")],
+    "clappath": [os.path.join(home, ".clap")],
+    "lv2path_linux": [os.path.join(home, ".lv2")],
+}
+
+
+def norm(p):
+    p = p.strip().strip('"').rstrip("\\/")
+    return os.path.normpath(os.path.expanduser(p)) if p else ""
+
+
+def is_windows_root(p):
+    # A wine prefix's Common Files path is just as unloadable as the shared one.
+    return p in windows_roots or "/drive_c/" in p
+
+
+src = ini + ".mosquito.bak"
+
+with open(ini, encoding="utf-8") as f:
+    lines = f.read().splitlines()
+
+out = []
+changed = False
+for line in lines:
+    key, sep, raw = line.partition("=")
+    if not sep or key not in defaults:
+        out.append(line)
+        continue
+    # REAPER Linux separates paths with ";" (older code split only on ","/"|",
+    # which treated the whole list as one entry and never removed anything).
+    keep = []
+    for part in re.split(r"[;|,]", raw):
+        p = norm(part)
+        if not p or is_windows_root(p) or p in keep:
+            continue
+        keep.append(p)
+    for d in defaults[key]:
+        if d not in keep:
+            keep.append(d)
+    new = key + "=" + ";".join(keep)
+    changed = changed or new != line
+    out.append(new)
+
+if not changed:
+    raise SystemExit(0)
+
+# Keep the state the user actually had before this repair.
+shutil.copy2(ini, src)
+with open(ini, "w", encoding="utf-8") as f:
+    f.write("\n".join(out) + "\n")
+
+# A cached failure has only a hash after "=", no plugin name/unique-id fields.
+# Remove those so the next start retries the (now correct) chainloader.
+for cache in ("reaper-vstplugins64.ini", "reaper-vstplugins.ini"):
+    c = os.path.join(os.path.dirname(ini), cache)
+    if not os.path.exists(c):
+        continue
+    with open(c, encoding="utf-8") as f:
+        cached = f.read().splitlines()
+    kept = [l for l in cached if not re.match(r"^[^=]+\.(vst3|so|clap)=[0-9A-Fa-f]+$", l)]
+    if len(kept) != len(cached):
+        with open(c, "w", encoding="utf-8") as f:
+            f.write("\n".join(kept) + "\n")
+PY
+}
+
 # ── Cleanup (one-shot, non-destructive) ──────────────────────────────────────
 # "cleanup!" -- checks every plugin/log inconsistency in one pass instead of
 # letting the startup dialog nag one at a time, then fixes them WITHOUT
@@ -4283,6 +4434,11 @@ reconcile_tick_to_add() {
 # (`cleanup` command) uses `cleanup | tail -1` to get exactly it.
 cleanup() {
   local -a kept=() registered=() desktops=() deduped=()
+
+  # A native DAW must never be pointed at the shared Windows plugin folders:
+  # see apm_fix_native_daw_paths. Idempotent, and also repairs the cache
+  # entries that shadow the chainloaders. Runs on demand and after installs.
+  apm_fix_native_daw_paths
 
   # 1. Missing: in the log, at least one tracked file, all absent on disk.
   local -a missing=()
@@ -4321,6 +4477,10 @@ cleanup() {
     done
     ok "Cleanup: registered ${#registered[@]} untracked plugin(s) into the log (files kept)"
   fi
+  # Registering is not enough for a native host: yabridge must rebuild the
+  # chainloaders it just learned about. (In an `if`: a bare
+  # `((n)) && cmd` returns 1 when n is 0, and set -e would abort cleanup.)
+  if ((${#registered[@]})); then apm_yabridge_sync; fi
 
   # 3. Duplicate file tracking: one path referenced by several keys. Keep it
   #    under the alphabetically-first key only; the disk is never touched.
@@ -5427,12 +5587,17 @@ apm_prefix_wine_root() {
 apm_has_real_msvc_atomic_wait() {
   local pf="$1" f="$1/drive_c/windows/system32/msvcp140_atomic_wait.dll" sym
   [[ -f $f && ! -L $f ]] || return 1
-  # The symbols, not the file size. A size threshold is a guess about a file
-  # whose real size is not what anyone would predict -- Microsoft's
-  # msvcp140_atomic_wait.dll is ~50 KB and Wine's stub for the same name is
-  # ~37 KB, close enough that any cutoff either rejects the genuine file or
-  # accepts the stub. What actually matters is whether the five
-  # __std_atomic_* entry points a plugin imports are exported.
+  # Wine's builtin exports the same five __std_atomic_* names, so the export
+  # list alone cannot tell it from Microsoft's DLL. What it does instead is
+  # abort when a plugin calls one:
+  #   wine: Call from ... to unimplemented function
+  #   msvcp140_atomic_wait.dll.__std_atomic_wait_get_deadline, aborting
+  # That abort kills the Wine plugin host, the socket hits EOF, and yabridge's
+  # uncaught std::system_error takes the DAW down with it (REAPER SIGABRT).
+  # Wine stamps its own DLLs with this literal; Microsoft's do not carry it.
+  if grep -qa "Wine builtin DLL" "$f"; then
+    return 1
+  fi
   command -v objdump >/dev/null 2>&1 || return 0
   # Read objdump's output ONCE. Piping it into `grep -q` under `set -o pipefail`
   # reports failure every time: grep exits at the first match, objdump dies of
@@ -5448,17 +5613,38 @@ apm_has_real_msvc_atomic_wait() {
   return 0
 }
 
+# apm_plugin_needs_msvc_atomic_wait <plugin-file>
+#
+# True when the Windows PE imports MSVCP140_ATOMIC_WAIT.dll. This is checked on
+# the installed plugin, not guessed from its name: smart:comp3 and smart:gate
+# import it and smartEQ4 does not, and an installer name is not a contract.
+apm_plugin_needs_msvc_atomic_wait() {
+  [[ -f $1 ]] || return 1
+  command -v objdump >/dev/null 2>&1 || return 1
+  local imports
+  imports="$(objdump -p "$1" 2>/dev/null)" || return 1
+  [[ ${imports,,} == *msvcp140_atomic_wait* ]]
+}
+
 fix_install_msvc_runtime() {
-  local pf root missing=() installed=()
+  local pf root missing=() installed=() seen=" " candidates=()
   command -v winetricks >/dev/null 2>&1 || {
     warn "winetricks is not installed -- the Microsoft C++ runtime cannot be added"
     return 0
   }
+  # The DAW prefixes are detected; the caller adds the prefix the plugin was
+  # just installed into, because a plugin installed in a prefix the detector
+  # does not recognise would otherwise be left with Wine's stub.
   while IFS= read -r pf; do
     [[ -n $pf && -d $pf/drive_c ]] || continue
+    [[ $seen == *" $pf "* ]] && continue
+    seen="$seen$pf "
+    candidates+=("$pf")
+  done < <(apm_daw_prefixes_unique; printf '%s\n' "$@")
+  for pf in "${candidates[@]}"; do
     apm_has_real_msvc_atomic_wait "$pf" && continue
     missing+=("$pf")
-  done < <(apm_daw_prefixes_unique)
+  done
   if ((${#missing[@]} == 0)); then
     ok "the Microsoft C++ runtime is already present in every DAW prefix"
     return 0
@@ -6076,6 +6262,15 @@ main() {
     --version)   echo "mosquito-audio-plugin-manager v0.4.0"; exit 0 ;;
     launch)
       [[ -n ${2:-} ]] || { err "usage: mosquito-audio-plugin-manager launch <exe>"; exit 1; }
+      # A manager (Kilohearts Installer…) is not a plugin GUI: hold the
+      # adoption watcher until it closes, so the plugins it installs from its
+      # own window are tracked. A .desktop entry may still point here.
+      if is_manager_exe "$2"; then
+        local _pfx
+        _pfx="$(default_prefix)"
+        case "$2" in */drive_c/*) _pfx="${2%%/drive_c/*}" ;; esac
+        exec watch_for_plugins "$2" "$_pfx" >/dev/null 2>&1
+      fi
       msg "Launching wine $2"; setsid wine start /unix "$2" >/dev/null 2>&1 &
       exit 0 ;;
     install)

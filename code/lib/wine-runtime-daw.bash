@@ -161,7 +161,11 @@ EOF
 wrapper_pins_prefix() {
   local w="$1"
   [[ -f $w ]] || return 1
-  grep -q 'WINEPREFIX=' "$w" 2>/dev/null
+  # A generated wrapper always carries the assignment, but an EMPTY one means
+  # the generator ran before the plugin prefix existed. That wrapper then lets
+  # the DAW fall back to ~/.wine (the gaming prefix), and grepping for
+  # "WINEPREFIX=" alone called it pinned, so it was never regenerated.
+  grep -qE '^VST_PREFIX="[^"]+"' "$w" 2>/dev/null
 }
 
 # And does it carry the pre-launch hook it is supposed to? A wrapper written

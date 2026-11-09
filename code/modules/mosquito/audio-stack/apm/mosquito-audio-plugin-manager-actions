@@ -149,47 +149,10 @@ case "$cmd" in
       found=1
       mkdir -p "$(dirname "$reaper_ini")" "$HOME/.vst" "$HOME/.vst3" "$HOME/.clap"
       [[ -f $reaper_ini ]] || : > "$reaper_ini"
-      python3 - "$reaper_ini" "$HOME" <<'PYWIZARD'
-import os
-import sys
-import shutil
-
-path, home = sys.argv[1], sys.argv[2]
-keys = {"vstpath": ".vst", "vst3path": ".vst3", "clappath": ".clap"}
-src = path + ".mosquito.bak"
-if not os.path.exists(src):
-    shutil.copy2(path, src)
-with open(path, encoding="utf-8") as f:
-    lines = f.read().splitlines()
-out = []
-changed = False
-pending = dict(keys)
-for ln in lines:
-    for k, sub in list(pending.items()):
-        if ln.startswith(k + "="):
-            raw = ln[len(k) + 1:]
-            parts = raw.split(",") if "," in raw else raw.split("|")
-            seen, cur = set(), []
-            for d in parts:
-                d = d.strip().strip('"').rstrip("\\")
-                if d and d not in seen:
-                    seen.add(d)
-                    cur.append(d)
-            add = os.path.join(home, sub)
-            if add not in seen:
-                cur.append(add)
-                changed = True
-            ln = k + "=" + ",".join(cur)
-            del pending[k]
-            break
-    out.append(ln)
-for k, sub in pending.items():
-    out.append(k + "=" + os.path.join(home, sub))
-    changed = True
-if changed:
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(out) + "\n")
-PYWIZARD
+      # Adds the yabridge chainloader roots AND removes the Windows plugin
+      # folders an older wizard wrote (a native REAPER cannot load them and
+      # caches every one as a failed scan).
+      apm_fix_native_daw_paths
       printf '✓  REAPER — reaper.ini now scans the yabridge chainloaders (%s, %s, %s)\n' "$HOME/.vst" "$HOME/.vst3" "$HOME/.clap"
     else
       printf '·  REAPER — not installed, nothing to point at the plugins folder\n'
@@ -1087,9 +1050,25 @@ PYWIZARD
 
   launch-standalone)
     exe="${1:?exe path required}"
-    setsid wine start /unix "$exe" >/dev/null 2>&1 &
-    disown
-    echo "launched (standalone window may open)"
+    # A manager is not a plugin GUI: launching it with a plain `wine start`
+    # detaches the only watcher that would register the plugins it installs, so
+    # they come back untracked on the next launch. Re-exec the watch-manager
+    # action detached: it stays with the app until it closes (even if the TUI
+    # quits), then adopts + syncs. Its output goes to a log, not the terminal.
+    if is_manager_exe "$exe"; then
+      self="$(command -v -- "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+      log="${XDG_CACHE_HOME:-$HOME/.cache}/mosquito-audio-plugin-manager/manager-watch.log"
+      mkdir -p "$(dirname "$log")"
+      pfx="$(default_prefix)"
+      case "$exe" in */drive_c/*) pfx="${exe%%/drive_c/*}" ;; esac
+      setsid "$self" watch-manager "$exe" "$pfx" >>"$log" 2>&1 &
+      disown
+      echo "launched (plugins installed from it are registered when it closes; log: $log)"
+    else
+      setsid wine start /unix "$exe" >/dev/null 2>&1 &
+      disown
+      echo "launched (standalone window may open)"
+    fi
     ;;
 
   list-standalones-detailed)
@@ -1145,6 +1124,9 @@ PYWIZARD
   list-executables-toggle)
     while IFS=$'\t' read -r base f; do
       [[ -n $f ]] || continue
+      # Managers are launched from "Launch a standalone plugin", where the
+      # adoption watcher is attached — a menu entry would bypass it.
+      is_manager_exe "$f" && continue
       slug="$APPS_DIR/$DESKTOP_SLUG-$(basename "${base%.exe}" | tr ' ' '-' | tr -cd '[:alnum:]-').desktop"
       shown=false
       [[ -f $slug ]] && shown=true
@@ -1376,6 +1358,9 @@ PYWIZARD
       fi
       state_register_install "$key" "$prefix" "$bare"
     done <<< "$files"
+    # A tracked plugin is not yet a loadable one for a native host: yabridge
+    # must rebuild the chainloader. stderr, so stdout stays one clean line.
+    apm_yabridge_sync >&2
     echo "added to the manager: $(basename "$first")"
     ;;
 
@@ -1430,7 +1415,13 @@ PYWIZARD
           native:*) bare="${f#native:}" ;;
         esac
         [[ -n $first ]] || first="$bare"
-        state_register_install "$(plugin_key "$bare")" "$pfx" "$bare"
+        # Native rows are keyed "native/<label>" by plugin_group_rows, not
+        # plugin_key() ("lv2/<label>") — the mismatch add-orphan documents.
+        if [[ $f == native:* ]]; then
+          state_register_install "native/$(native_plugin_label "$bare")" "" "$bare"
+        else
+          state_register_install "$(plugin_key "$bare")" "$pfx" "$bare"
+        fi
       done <<< "$(printf '%s' "$variants" | tr ';' '\n')"
       # n=$((n+1)), NOT (( n++ )): under `set -e` the arithmetic command
       # returns the value it was BEFORE the increment, so (( n++ )) on n=0
@@ -1439,6 +1430,10 @@ PYWIZARD
       n=$((n + 1))
     done < "$_apm_ad"
     rm -f "$_apm_ad"
+    if ((n > 0)); then
+      # Tracked ≠ loadable: rebuild the chainloaders for what was just added.
+      apm_yabridge_sync >&2
+    fi
     jq -nc --argjson n "$n" '{registered:$n}'
     ;;
 
