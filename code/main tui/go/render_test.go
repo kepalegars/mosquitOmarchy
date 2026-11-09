@@ -796,14 +796,14 @@ func TestLongHealthSubtitleScrollsInTheHostView(t *testing.T) {
 	m.push(scrHealth)
 	m.w, m.h = 80, 24
 	items := []HealthRec{{
-		Kind: "plugin", ID: "plugin-power", Label: "Mosquito Power plugin — clone of Omarchy's power panel",
+		Kind: "plugin", ID: "plugin-battery", Label: "Mosquito Battery plugin — clone of Omarchy's battery service",
 		Detail: "plugin predates upstream tracking — replace it once to establish a baseline; " + strings.Repeat("upstream drift ", 4),
 	}}
 	m, _ = m.update(healthMsg{items: items})
 	if m.top() != scrHealth {
 		t.Fatalf("health screen not opened: top=%v", m.top())
 	}
-	m.healthPicker = m.healthPicker.SelectValue("plugin-power")
+	m.healthPicker = m.healthPicker.SelectValue("plugin-battery")
 	first := m.View()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {

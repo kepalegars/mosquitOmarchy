@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Mosquito Power — battery profile icon and panel
+# Mosquito Battery — battery service, profile icon and panel
 # =============================================================================
 # Installs the power-profile panel and corrected battery telemetry. The former
 # ultra-save mode (CPU/power cap plus watchdog) was abandoned; this module now
@@ -9,7 +9,7 @@
 # Usage:
 #   ./setup-battery-management.sh            # apply (idempotent)
 #   ./setup-battery-management.sh --remove   # remove the old menu/privileged artifacts
-#   ./setup-battery-management.sh --refresh-plugin power|indicators
+#   ./setup-battery-management.sh --refresh-plugin battery|indicators
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 set -euo pipefail
@@ -67,7 +67,7 @@ case "${1:-}" in
   --refresh-plugin) REFRESH_PLUGIN="${2:-}" ;;
 esac
 if [[ ${1:-} == --refresh-plugin && -z $REFRESH_PLUGIN ]]; then
-  err "--refresh-plugin needs power or indicators"
+  err "--refresh-plugin needs battery or indicators"
   exit 2
 fi
 
@@ -114,24 +114,28 @@ deploy_bin "battery-temps"
 fi
 
 # -----------------------------------------------------------------------------
-# 1b. Mosquito mosquito.power plugin (bar widget: power profiles)
-#     Recreates it if missing: clones omarchy.power then renames to
-#     mosquito.power. The legacy custom.power clone is adopted (renamed) when
-#     found, so no machine keeps the old id.
+# 1b. Mosquito battery plugin — ONE plugin for the service and the bar widget
+#     The battery service (real-charger guard) and the power-profile bar widget
+#     used to be two plugins (mosquito.battery + mosquito.power) that had to be
+#     kept in sync. They now share one directory and manifest, so Omarchy lists
+#     a single "Mosquito Battery" and the bar shows one battery icon.
+#     Cloned from omarchy.battery; our Service.qml, Panel.qml, Model.js and
+#     manifest are overlaid on every run.
 # -----------------------------------------------------------------------------
-POWER_CLONED=0
+BATTERY_CLONED=0
 
-# Exactly ONE widget with the given suffix in the bar layout. A stock/legacy
-# id is adopted, and leftover duplicates are dropped. Blindly repointing
-# every power id is how the bar ended up with two mosquito.power widgets: a
-# stale clone id (kapeq_mosquito.power) renders nothing while its plugin dir
-# is gone, then becomes a second live widget the moment it is repointed.
-normalize_bar_widget(){  # normalize_bar_widget <shell.json> <user> power|indicators
-  python3 - "$1" "$2" "$3" <<'PY'
+# Exactly ONE widget from the battery family in the bar layout. The legacy
+# separate ids (mosquito.power, custom.power, <user>.power) are adopted into
+# the merged id, and leftover duplicates are dropped. Blindly repointing every
+# power id is how the bar ended up with two battery widgets: a stale clone id
+# (kapeq_mosquito.power) renders nothing while its plugin dir is gone, then
+# becomes a second live widget the moment it is repointed.
+normalize_bar_widget(){  # <shell.json> <user> <suffix> [canonical-id] [extra-id…]
+  python3 - "$1" "$2" "$3" "${@:4}" <<'PY'
 import json, os, sys, time
-path, user, suffix = sys.argv[1], sys.argv[2], sys.argv[3]
-CANON = "mosquito." + suffix
-IDS = {"omarchy." + suffix, "custom." + suffix, user + "." + suffix, CANON}
+path, user, suffix, extra = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+CANON = extra[0] if extra else "mosquito." + suffix
+IDS = {"omarchy." + suffix, "custom." + suffix, user + "." + suffix, CANON, *extra}
 try:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
@@ -177,82 +181,22 @@ print("changed")
 PY
 }
 
-ensure_power_plugin() {
-  local PLUG="$REAL_HOME/.config/omarchy/plugins"
-  local PLUGIN_ID="mosquito.power"
-  local PLUGIN_DIR="$PLUG/$PLUGIN_ID"
-  local SHELL_JSON="$REAL_HOME/.config/omarchy/shell.json"
-
-  [[ -f "$REAL_HOME/.config/omarchy/shell.json" ]] || return 0
-
-  if [[ -d "$PLUGIN_DIR" ]]; then
-    ok "Omarchy plugin $PLUGIN_ID already present"
-  else
-    # A legacy custom.power clone, or a residual <user>.power clone? Re-adopt.
-    if [[ -d "$PLUG/custom.power" ]]; then
-      warn "Legacy clone custom.power present — renamed to $PLUGIN_ID"
-      mv "$PLUG/custom.power" "$PLUGIN_DIR"
-      omarchy plugin disable custom.power >/dev/null 2>&1 || true
-    elif [[ -d "$PLUG/$REAL_USER.power" ]]; then
-      warn "Clone $REAL_USER.power present — renamed to $PLUGIN_ID"
-      mv "$PLUG/$REAL_USER.power" "$PLUGIN_DIR"
-    else
-      warn "Plugin $PLUGIN_ID missing — cloning from omarchy.power"
-      POWER_CLONED=1
-      omarchy plugin clone omarchy.power || { warn "Could not clone omarchy.power"; return 1; }
-      if [[ -d "$PLUG/$REAL_USER.power" ]]; then
-        mv "$PLUG/$REAL_USER.power" "$PLUGIN_DIR"
-      else
-        warn "Clone $REAL_USER.power not found after cloning."
-        return 1
-      fi
-    fi
-  fi
-
-  # Force the manifest id AND the mosquito display name (a fresh clone carries
-  # omarchy.power's or the legacy custom.power's "My Power" name).
-  local mf="$PLUGIN_DIR/manifest.json"
-  if command -v jq >/dev/null 2>&1 && [[ -f $mf ]]; then
-    jq --arg id "$PLUGIN_ID" '.id=$id | .name="Mosquito Power" | .author="Mosquito" | if has("barWidget") then .barWidget.displayName="Mosquito Power" else . end' "$mf" >"$mf.tmp" && mv "$mf.tmp" "$mf"
-  else
-    sed -i -E "s/\"id\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/\"id\": \"$PLUGIN_ID\"/" "$mf"
-  fi
-
-  # Enable BEFORE normalizing: `omarchy plugin enable` places a bar widget, so
-  # normalizing first let enable re-add the duplicate that had just been
-  # removed (that is how the bar ended up with two battery icons).
-  omarchy plugin enable "$PLUGIN_ID" >/dev/null 2>&1 || true
-  # ALWAYS make the bar layout show exactly one mosquito.power. A reinstall,
-  # an Omarchy update or an earlier partial run can leave shell.json on the
-  # STOCK omarchy.power (or a stale custom.power / <user>.power clone): the
-  # customized widget then exists but is never shown, so nothing we change in
-  # its QML has any effect. A leftover duplicate is removed, never repointed.
-  local layout_change
-  layout_change="$(normalize_bar_widget "$SHELL_JSON" "$REAL_USER" power)"
-  if [[ $layout_change == changed ]]; then
-    ok "Bar layout: one power widget -> $PLUGIN_ID (duplicates removed)"
-  fi
-  # And any self-reference inside the plugin's own QML.
-  sed -i -E "s#\"(omarchy|custom|${REAL_USER})\.power\"#\"$PLUGIN_ID\"#g" "$PLUGIN_DIR"/*.qml 2>/dev/null || true
-  ok "Omarchy plugin $PLUGIN_ID present + enabled (bar widget)"
-}
-
-# -----------------------------------------------------------------------------
-# 1b-bis. Mosquito battery SERVICE (false-AC guard)
-# -----------------------------------------------------------------------------
-# Omarchy's battery service switches the power profile from UPower.onBattery.
-# UPower marks a bus-powered USB-C disk/hub as external power for a moment, so
-# plugging an external HDD switched the machine to the AC profile while the
-# battery kept discharging. The clone keeps the service's low-battery warning
-# and changes only the source decision: battery-status --external.
-ensure_battery_service() {
+ensure_battery_plugin() {
   local PLUG="$REAL_HOME/.config/omarchy/plugins"
   local PLUGIN_ID="mosquito.battery"
   local PLUGIN_DIR="$PLUG/$PLUGIN_ID"
-  local cloned=""
+  local SHELL_JSON="$REAL_HOME/.config/omarchy/shell.json"
+  local cloned rel
 
-  [[ -f "$REAL_HOME/.config/omarchy/shell.json" ]] || return 0
+  [[ -f "$SHELL_JSON" ]] || return 0
 
+  if [[ ! -d $PLUGIN_DIR ]]; then
+    # A residual <user>.battery clone? Re-adopt it instead of cloning again.
+    for cloned in "$PLUG/$REAL_USER.battery" "$PLUG"/*.battery; do
+      [[ -d $cloned && $cloned != "$PLUGIN_DIR" ]] || continue
+      mv "$cloned" "$PLUGIN_DIR" 2>/dev/null && break
+    done
+  fi
   if [[ ! -d $PLUGIN_DIR ]]; then
     if ! omarchy plugin clone omarchy.battery >/dev/null 2>&1; then
       warn "Could not clone omarchy.battery — copying the stock service directory"
@@ -264,39 +208,57 @@ ensure_battery_service() {
       mv "$cloned" "$PLUGIN_DIR" 2>/dev/null && break
     done
     [[ -d $PLUGIN_DIR ]] || { warn "Clone of omarchy.battery not found"; return 1; }
+    BATTERY_CLONED=1
+  else
+    ok "Omarchy plugin $PLUGIN_ID already present"
   fi
 
-  # Our patched QML + the model it imports. The model is taken from the clone
-  # (upstream's) when present; the QML is always ours.
-  if [[ -f "$PLUG_SRC/mosquito.battery/Service.qml" ]]; then
-    cp -f "$PLUG_SRC/mosquito.battery/Service.qml" "$PLUGIN_DIR/Service.qml" 2>/dev/null \
-      || { warn "Could not install mosquito.battery Service.qml"; return 1; }
-  fi
+  # Our files, always: the QML and the merged manifest are the module's.
+  for rel in Service.qml Panel.qml Model.js manifest.json; do
+    if [[ ! -f "$PLUG_SRC/$PLUGIN_ID/$rel" ]]; then
+      warn "Missing source file $PLUG_SRC/$PLUGIN_ID/$rel"
+      return 1
+    fi
+    cp -f "$PLUG_SRC/$PLUGIN_ID/$rel" "$PLUGIN_DIR/$rel" 2>/dev/null \
+      || { warn "Could not install $PLUGIN_ID/$rel"; return 1; }
+  done
+  # Upstream's BatteryModel.js is the service's model: keep the clone's copy.
   if [[ ! -f "$PLUGIN_DIR/BatteryModel.js" && -f /usr/share/omarchy/shell/plugins/services/battery/BatteryModel.js ]]; then
     cp -f /usr/share/omarchy/shell/plugins/services/battery/BatteryModel.js "$PLUGIN_DIR/BatteryModel.js" 2>/dev/null || true
   fi
+  omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
 
-  local mf="$PLUGIN_DIR/manifest.json"
-  if command -v jq >/dev/null 2>&1 && [[ -f $mf ]]; then
-    jq --arg id "$PLUGIN_ID" '.id=$id | .name="Mosquito Battery" | .author="Mosquito"' "$mf" >"$mf.tmp" && mv "$mf.tmp" "$mf"
-  else
-    sed -i -E "s/\"id\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/\"id\": \"$PLUGIN_ID\"/" "$mf"
-  fi
+  # Migrate the retired power widget BEFORE enabling. Renaming in place keeps
+  # its position and inline settings (e.g. showPercentage) instead of dropping
+  # them with the old entry.
+  normalize_bar_widget "$SHELL_JSON" "$REAL_USER" power "$PLUGIN_ID" >/dev/null || true
 
-  # One battery service only: ours replaces the first-party one.
+  # One battery service and one battery widget: ours replaces the stock ones.
   omarchy plugin disable omarchy.battery >/dev/null 2>&1 || true
-  if omarchy plugin enable "$PLUGIN_ID" >/dev/null 2>&1; then
-    ok "Battery service: mosquito.battery (external-power guard active)"
-  else
-    warn "Battery service installed but not enabled — run: omarchy plugin enable $PLUGIN_ID"
+  omarchy plugin disable omarchy.power >/dev/null 2>&1 || true
+  if ! omarchy plugin enable "$PLUGIN_ID" >/dev/null 2>&1; then
+    warn "Battery plugin installed but not enabled — run: omarchy plugin enable $PLUGIN_ID"
   fi
+  # enable places a bar widget; drop any duplicate it just added next to the
+  # migrated entry (the migrated one wins, settings included).
+  normalize_bar_widget "$SHELL_JSON" "$REAL_USER" power "$PLUGIN_ID" >/dev/null || true
+
+  # The separate power plugin is retired: its QML now lives in mosquito.battery.
+  # Removing a clone makes Omarchy restore its source (omarchy.power) in the
+  # bar, so absorb that restored entry into ours afterwards.
+  omarchy plugin disable mosquito.power >/dev/null 2>&1 || true
+  omarchy plugin remove mosquito.power --yes >/dev/null 2>&1 || true
+  rm -rf "$PLUG/mosquito.power" "$PLUG/custom.power" "$PLUG/$REAL_USER.power" 2>/dev/null || true
+  normalize_bar_widget "$SHELL_JSON" "$REAL_USER" power "$PLUGIN_ID" >/dev/null || true
+
+  ok "Omarchy plugin $PLUGIN_ID (battery service + power widget)"
 }
 
 # -----------------------------------------------------------------------------
 # 1c. mosquitOmarchy plugins (bar widget + overlay) — same clone/rename pattern
 #     but with QML sources shipped in ./omarchy-plugins/ (the stock clones are
 #     then patched so a fresh machine reproduces this machine's customizations):
-#       • mosquito.power/Panel.qml          : profile-colored battery icon
+#       • mosquito.battery/Panel.qml       : profile-colored battery icon
 #       • mosquito.indicators/            : StayAwake red icon + time tooltip
 #       • mosquito.confirm/               : native Yes/No overlay for prompts
 # -----------------------------------------------------------------------------
@@ -410,9 +372,9 @@ refresh_plugin(){
   local key="$1" id source_id ensure dir leftover leftover_bak backup
   local -a files
   case $key in
-    power)
-      id="mosquito.power"; source_id="omarchy.power"; ensure="ensure_power_plugin"
-      files=("Panel.qml" "Model.js") ;;
+    power|battery)
+      id="mosquito.battery"; source_id="omarchy.battery"; ensure="ensure_battery_plugin"
+      files=("Service.qml" "Panel.qml" "Model.js" "manifest.json") ;;
     indicators)
       id="mosquito.indicators"; source_id="omarchy.indicators"; ensure="ensure_indicators_plugin"
       files=("Indicators.qml" "indicators/StayAwake.qml") ;;
@@ -447,7 +409,11 @@ refresh_plugin(){
   if (( rc == 0 )); then
     omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
     omarchy plugin enable "$id" >/dev/null 2>&1 || true
-    normalize_bar_widget "$REAL_HOME/.config/omarchy/shell.json" "$REAL_USER" "$key" >/dev/null 2>&1 || true
+    if [[ $id == mosquito.battery ]]; then
+      normalize_bar_widget "$REAL_HOME/.config/omarchy/shell.json" "$REAL_USER" power "$id" >/dev/null 2>&1 || true
+    else
+      normalize_bar_widget "$REAL_HOME/.config/omarchy/shell.json" "$REAL_USER" "$key" >/dev/null 2>&1 || true
+    fi
     rm -rf "$backup" || true
     if [[ -e $leftover_bak ]]; then rm -rf "$leftover_bak" || true; fi
     ok "Refreshed $id from the current $source_id"
@@ -459,7 +425,11 @@ refresh_plugin(){
   if [[ -e $leftover_bak ]]; then mv "$leftover_bak" "$leftover" 2>/dev/null || true; fi
   omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
   omarchy plugin enable "$id" >/dev/null 2>&1 || true
-  normalize_bar_widget "$REAL_HOME/.config/omarchy/shell.json" "$REAL_USER" "$key" >/dev/null 2>&1 || true
+  if [[ $id == mosquito.battery ]]; then
+    normalize_bar_widget "$REAL_HOME/.config/omarchy/shell.json" "$REAL_USER" power "$id" >/dev/null 2>&1 || true
+  else
+    normalize_bar_widget "$REAL_HOME/.config/omarchy/shell.json" "$REAL_USER" "$key" >/dev/null 2>&1 || true
+  fi
   warn "Could not refresh $id — the previous clone was restored."
   return 1
 }
@@ -470,13 +440,11 @@ if [[ -n $REFRESH_PLUGIN ]]; then
 fi
 
 if [[ $REMOVE == false ]]; then
-  ensure_power_plugin || true
-  ensure_battery_service || true
-  overlay_plugin_files "mosquito.power" "Panel.qml" "Model.js"
-  record_clone_stamp "mosquito.power" "omarchy.power" "$POWER_CLONED"
+  ensure_battery_plugin || true
+  record_clone_stamp "mosquito.battery" "omarchy.battery" "$BATTERY_CLONED"
 
   # Omarchy's OWN power panel, overlaid for the same reason. It is disabled in
-  # favour of mosquito.power on this desktop, but it is one `omarchy plugin
+  # favour of mosquito.battery on this desktop, but it is one `omarchy plugin
   # enable omarchy.power` away from being live again, and its setProfile() calls
   # omarchy-powerprofiles-set directly — so a machine that switched back would
   # silently lose the Live Mode guard. The overlay is only applied when the
@@ -558,7 +526,7 @@ fi
 
 # -----------------------------------------------------------------------------
 # 5. Cleanup of the old "System > Ultra-save mode" block in the Omarchy menu
-#    (now driven by the mosquito.power widget, no menu entry needed anymore)
+#    (now driven by the mosquito.battery widget, no menu entry needed anymore)
 # -----------------------------------------------------------------------------
 remove_menu_block() {
   [[ -f $MENU ]] || { ok "Menu absent, nothing to remove."; return 0; }
@@ -618,9 +586,20 @@ remove_menu_block
 # -----------------------------------------------------------------------------
 echo ""
 if [[ $REMOVE == true ]]; then
+  # Hand the bar back to the stock power widget BEFORE the merged plugin
+  # disappears. First consolidate the battery family to one entry (keeping its
+  # position and settings), then rename that entry to the stock id.
+  normalize_bar_widget "$REAL_HOME/.config/omarchy/shell.json" "$REAL_USER" power mosquito.battery >/dev/null 2>&1 || true
+  normalize_bar_widget "$REAL_HOME/.config/omarchy/shell.json" "$REAL_USER" power omarchy.power >/dev/null 2>&1 || true
   omarchy plugin disable mosquito.battery >/dev/null 2>&1 || true
   omarchy plugin remove mosquito.battery --yes >/dev/null 2>&1 || true
+  # Legacy separate power plugin from older installs.
+  omarchy plugin disable mosquito.power >/dev/null 2>&1 || true
+  omarchy plugin remove mosquito.power --yes >/dev/null 2>&1 || true
+  rm -rf "$PLUG_DIR/mosquito.power" "$PLUG_DIR/custom.power" "$PLUG_DIR/$REAL_USER.power" 2>/dev/null || true
   omarchy plugin enable omarchy.battery >/dev/null 2>&1 || true
+  omarchy plugin enable omarchy.power >/dev/null 2>&1 || true
+  normalize_bar_widget "$REAL_HOME/.config/omarchy/shell.json" "$REAL_USER" power omarchy.power >/dev/null 2>&1 || true
   info "Uninstall complete."
   if (( LEGACY_ACTIVE )); then
     echo "  Ultra-save is still active; its executable/state/sudoers were preserved. Turn it off, then rerun this script."
@@ -631,8 +610,7 @@ else
   info "Setup complete. Summary:"
   echo "  • Plugin helper         -> $BIN_DIR/power-helper + /usr/local/bin"
   echo "  • Battery status        -> $BIN_DIR/battery-status (corrected charger/0W detection)"
-  echo "  • Battery service       -> mosquito.battery (real charger only, external disks ignored)"
-  echo "  • Omarchy widget        -> mosquito.power plugin (power-profile icon colors)"
+  echo "  • Battery plugin        -> mosquito.battery (service + power-profile widget)"
   echo "  • Omarchy overlay       -> mosquito.confirm plugin (native Yes/No prompts)"
   echo "  • Omarchy indicators    -> mosquito.indicators widget (stay-awake red icon + tooltip)"
   echo "  • Legacy ultra-save menu entry removed"

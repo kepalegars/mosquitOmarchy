@@ -7,7 +7,7 @@ This module used to provide **ultra-save**, an aggressive low-power mode that fo
 - **balanced/other** — normal adaptive bar color
 - **below 10% battery** — red
 
-The installer deploys corrected `battery-status` telemetry, `battery-temps` (live CPU/GPU temperatures) and the `power-helper`, and provisions the `mosquito.power`, `mosquito.indicators`, and `mosquito.confirm` plugins. The power panel's status line reads `CPU 56°C` (plus `GPU 54°C` when a discrete GPU is present) instead of the rotating phrases. It also removes legacy ultra-save binaries, state, timer, sudoers, and menu entries when possible.
+The installer deploys corrected `battery-status` telemetry, `battery-temps` (live CPU/GPU temperatures) and the `power-helper`, and provisions the `mosquito.battery` (battery service + power-profile bar widget), `mosquito.indicators`, and `mosquito.confirm` plugins. The battery panel's status line reads `CPU 56°C` (plus `GPU 54°C` when a discrete GPU is present) instead of the rotating phrases. It also removes legacy ultra-save binaries, state, timer, sudoers, and menu entries when possible.
 
 Coffee mode (`mega-caffeine`) is independent: [code/modules/mosquito/mega-caffeine](../../mosquito/mega-caffeine/README.md).
 
@@ -16,7 +16,7 @@ Coffee mode (`mega-caffeine`) is independent: [code/modules/mosquito/mega-caffei
 ```bash
 code/modules/Plugins/battery-management/setup-battery-management.sh
 code/modules/Plugins/battery-management/setup-battery-management.sh --remove
-code/modules/Plugins/battery-management/setup-battery-management.sh --refresh-plugin power
+code/modules/Plugins/battery-management/setup-battery-management.sh --refresh-plugin battery
 ```
 
 Run as the desktop user for plugins and as root when removing the retired sudoers or legacy charge-control rule.

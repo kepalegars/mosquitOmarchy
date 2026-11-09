@@ -8,8 +8,8 @@ import "Model.js" as Model
 
 Panel {
   id: root
-  moduleName: "omarchy.power"
-  ipcTarget: "omarchy.power"
+  moduleName: "mosquito.battery"
+  ipcTarget: "mosquito.battery"
   // manageIpc: false so this panel can own the single IpcHandler the target
   // permits — needed for the togglePercentage method below.
   manageIpc: false
@@ -247,7 +247,7 @@ Panel {
   }
 
   IpcHandler {
-    target: "omarchy.power"
+    target: "mosquito.battery"
 
     function open() { root.open() }
     function close() { root.close() }

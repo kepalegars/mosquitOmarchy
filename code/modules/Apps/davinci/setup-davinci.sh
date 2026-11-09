@@ -697,7 +697,10 @@ install_hypr_rule(){
 -- Omarchy's default app rule floats Resolve and fullscreens the project window
 -- (usr/share/omarchy/default/hypr/apps/davinci-resolve.lua). Later rules win:
 -- undo both for the main project window only; the Project Manager stays floating.
-o.window({ class = ".*[Rr]esolve.*", title = "^DaVinci Resolve( Studio)? - .+$" }, { float = false, fullscreen = false })
+-- stay_focused/no_follow_mouse repeat the upstream intent explicitly: this rule
+-- must keep the editor from stealing focus or warping the pointer to dialogs,
+-- even if the defaults change.
+o.window({ class = ".*[Rr]esolve.*", title = "^DaVinci Resolve( Studio)? - .+$" }, { float = false, fullscreen = false, stay_focused = false, no_follow_mouse = true })
 -- <<< mosquito-davinci-tiling <<<
 EOF
   if command -v hyprctl >/dev/null 2>&1; then

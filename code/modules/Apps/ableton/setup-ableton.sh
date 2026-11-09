@@ -32,7 +32,7 @@
 # .run at will without losing our adjustments.
 #
 # Power management: by default --power=off (the project does NOT touch the
-# power profile; mosquito.power keeps control). One-off
+# power profile; mosquito.battery keeps control). One-off
 # override: POWER=performance|balanced ./setup-ableton.sh -y
 #
 # Audio buffer: by default --audio-buffer=512 (the most stable value for
@@ -63,7 +63,7 @@ if [[ ! -t 0 ]] && [[ -z "${MOSQUITOMARCHY_TUI:-}${MOSQUITOMARCHY_NO_GUI:-}" ]] 
 fi
 
 LINKER="$SCRIPT_DIR/../../mosquito/audio-stack/apm/link-vst-shared.sh"
-POWER_DEFAULT="${POWER:-off}"   # off = do not change the power profile (mosquito.power keeps control)
+POWER_DEFAULT="${POWER:-off}"   # off = do not change the power profile (mosquito.battery keeps control)
 BUFFER_DEFAULT="${BUFFER:-512}" # 512 frames = stable latency for PipeASIO
 
 YES=0 LINKS_ONLY=0 STATUS_ONLY=0 UNINSTALL_ONLY=0 UPDATE_ONLY=0 INSTALL_ONLY=0
@@ -700,7 +700,7 @@ do_install(){
     return $?
   fi
   msg "Launching the official installer with the default values:"
-  msg "  --power=$POWER_DEFAULT (power profile not modified; mosquito.power keeps control)"
+  msg "  --power=$POWER_DEFAULT (power profile not modified; mosquito.battery keeps control)"
   msg "  --audio-buffer=$BUFFER_DEFAULT frames (256 and below = more dropouts/glitches)"
   msg "  dpi=auto, rt=auto, shortcuts=take (the project defaults)."
   msg "  The 6 pre-flight questions are NOT asked: on an explicit 'install'"

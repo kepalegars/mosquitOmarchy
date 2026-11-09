@@ -298,8 +298,12 @@ func (m model) rebuildThemeImagePicker() navPicker {
 // by default. The whole point of not applying automatically is that the user
 // sees what they made first.
 func (m model) rebuildThemeDone() navPicker {
+	title := fmt.Sprintf("Theme '%s' created — not applied", m.themeCreated)
+	if !m.workStart.IsZero() {
+		title = fmt.Sprintf("Theme '%s' created in %s — not applied", m.themeCreated, formatElapsed(m.workElapsed()))
+	}
 	return newNavPicker(
-		fmt.Sprintf("Theme '%s' created — not applied", m.themeCreated),
+		title,
 		[]tuikit.PickerItem{
 			{Display: "See log", Value: "log", Sub: "what the generator did"},
 			{Display: "Back", Value: "ok", Sub: "back to the menu"},

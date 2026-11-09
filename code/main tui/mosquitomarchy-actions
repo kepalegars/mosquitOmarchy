@@ -2118,7 +2118,7 @@ _plugin_clone_drift(){
 _plugin_drift(){
   case "$1" in
     levels-guard) bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" --plugin-status 2>/dev/null || true ;;
-    power)        _plugin_clone_drift "mosquito.power" "omarchy.power" ;;
+    battery)      _plugin_clone_drift "mosquito.battery" "omarchy.battery" ;;
     indicators)   _plugin_clone_drift "mosquito.indicators" "omarchy.indicators" ;;
   esac
 }
@@ -2235,7 +2235,7 @@ cmd_health(){
       "$(json_str "$id")" "$(json_str "${row#*:}")" "$(json_str "$detail")"
   done
   _plugin_health_record levels-guard "Levels Guard plugin — clone of Omarchy's audio panel" "audio panel"
-  _plugin_health_record power "Mosquito Power plugin — clone of Omarchy's power panel" "power panel"
+  _plugin_health_record battery "Mosquito Battery plugin — clone of Omarchy's battery service" "battery service"
   _plugin_health_record indicators "Mosquito Indicators plugin — clone of Omarchy's indicators widget" "indicators widget"
   [[ -x "$BIN_DIR/mosquitomarchy" && -x "$BIN_DIR/mosquitomarchy-tui" ]] || \
     printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
@@ -2347,7 +2347,7 @@ cmd_heal(){
   # user ticked (or every drifted clone when heal is called with no selection)
   # are rebuilt.
   local key want_id drift refreshed_plugins=0
-  for key in levels-guard power indicators; do
+  for key in levels-guard battery indicators; do
     want_id="plugin-$key"
     in_want "$want_id" || continue
     drift="$(_plugin_drift "$key")"

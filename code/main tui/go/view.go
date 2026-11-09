@@ -364,6 +364,11 @@ func (m model) View() string {
 		bar = barLine(m.info.ShortcutsHint())
 	case scrWorking:
 		title = screenTitle("Working…", w)
+		// Same operation name the end prompt will use, so start and finish read
+		// as the same run (the body keeps the more specific label).
+		if m.workOp != "" {
+			title = screenTitle(m.workOp+"…", w)
+		}
 		body = m.runner.View()
 		bar = barLine(m.runner.ShortcutsHint())
 		// A streamed download reports 0-100; the bar sits inside the frame,

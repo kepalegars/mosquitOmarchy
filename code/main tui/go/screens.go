@@ -183,29 +183,36 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// The module's flow and clean removal ran in the terminal; the TUI is
 		// back. Show the captured transcript first, exactly like a normal
 		// runner action, then resume/refresh once the log is dismissed.
+		// Capture the duration BEFORE takeAbletonLog clears the start time.
+		if !m.abletonLogSince.IsZero() {
+			m.abletonElapsed = time.Since(m.abletonLogSince)
+		}
 		out := abletonLogText(m.takeAbletonLog(), msg.err)
 		m.lastOutput = out
 		if msg.err != nil {
 			reportCrash("ableton uninstall", out)
-			m.toast, _ = m.toast.SetErr("ableton uninstall finished with errors")
+			m.toast, _ = m.toast.SetErr(m.abletonFinishedText("ableton-uninstall", true))
 			return m.askAbletonLog("ableton-uninstall-err")
 		}
 		writeRunLog("ableton uninstall", out)
-		m.toast, _ = m.toast.SetOK("ableton uninstalled")
+		m.toast, _ = m.toast.SetOK(m.abletonFinishedText("ableton-uninstall", false))
 		return m.askAbletonLog("ableton-uninstall-ok")
 
 	case abletonInstallMsg:
 		// Same contract as install: keep the transcript in a real Info frame
 		// (so `c` copies it), never drop the user straight back to the menu.
+		if !m.abletonLogSince.IsZero() {
+			m.abletonElapsed = time.Since(m.abletonLogSince)
+		}
 		out := abletonLogText(m.takeAbletonLog(), msg.err)
 		m.lastOutput = out
 		if msg.err != nil {
 			reportCrash("ableton install", out)
-			m.toast, _ = m.toast.SetErr("ableton install finished with errors")
+			m.toast, _ = m.toast.SetErr(m.abletonFinishedText("ableton-install", true))
 			return m.askAbletonLog("ableton-install-err")
 		}
 		writeRunLog("ableton install", out)
-		m.toast, _ = m.toast.SetOK("ableton installed")
+		m.toast, _ = m.toast.SetOK(m.abletonFinishedText("ableton-install", false))
 		return m.askAbletonLog("ableton-install-ok")
 
 	// THE SETTINGS RULE (see PickerItem.Toggle). A toggle repaints FIRST and
@@ -408,7 +415,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				}
 				m.push(scrAddons)
 				m.addonsPicker = m.rebuildAddons()
-				m.toast, _ = m.toast.SetOK("Addons updated")
+				m.toast, _ = m.toast.SetOK(m.workFinishedText(false))
 				m.deferCmd(fetchAddonsCmd())
 				return m, nil
 			}
@@ -428,13 +435,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					m.toast, _ = m.toast.SetWarn("action interrupted")
 				} else {
 					reportCrash(m.workingLabel, out)
-					m.toast, _ = m.toast.SetErr("finished with errors")
+					m.toast, _ = m.toast.SetErr(m.workFinishedText(true))
 				}
 				m.pendingAction = "run-errors"
 				if m.runCanceled {
-					m.pendingMsg = "The action was interrupted.\n\nView the full log, or go back?"
+					m.pendingMsg = fmt.Sprintf("%s was interrupted after %s.\n\nView the full log, or go back?", workOpOrAction(m.workOp), formatElapsed(m.workElapsed()))
 				} else {
-					m.pendingMsg = "The action finished with errors.\n\nView the full log, or go back?"
+					m.pendingMsg = m.workFinishedText(true) + ".\n\nView the full log, or go back?"
 				}
 				m.pendingNo = "Back"
 				m.pendingYes = "View the log"
@@ -442,7 +449,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 				return m, nil
 			}
-			m.toast, _ = m.toast.SetOK("done")
+			m.toast, _ = m.toast.SetOK(m.workFinishedText(false))
 			if m.pendingAction == "add-shortcut" {
 				// First-run setup should return to the home screen, not leave the
 				// user choosing between a log and a back path through the runner.
@@ -488,7 +495,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// is applied on the way back in.
 			if m.pendingAction == "update-repo" || wantsSelfRebuild(m.pendingAction, m.pendingArgs) {
 				m.pendingAction = "update-reboot"
-				m.pendingMsg = "Repo updated — the manager rebuilds on next launch.\n\nRestart now for the new version, or see the log first?"
+				m.pendingMsg = m.workFinishedText(false) + " — the manager rebuilds on next launch.\n\nRestart now for the new version, or see the log first?"
 				m.pendingNo = "See log"
 				m.pendingYes = "Restart"
 				m.push(scrConfirm)
@@ -505,7 +512,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// offer for a backup that had just worked.
 			writeRunLog(m.workingLabel, out)
 			m.pendingAction = "run-done-log"
-			m.pendingMsg = "The action finished successfully.\n\nView the full log, or go back?"
+			m.pendingMsg = m.workFinishedText(false) + ".\n\nView the full log, or go back?"
 			m.pendingNo = "Back"
 			m.pendingYes = "See log"
 			m.push(scrConfirm)
@@ -3526,10 +3533,88 @@ func (m model) startWorking(label string, args ...string) (model, tea.Cmd) {
 	m.cancelRunAsking = false
 	m.runCanceled = false
 	m.workingLabel = label
+	m.workOp = ""
+	if len(args) > 0 {
+		m.workOp = operationName(args[0])
+	}
+	m.workStart = time.Now()
 	m.runner = tuikit.NewRunner().SetSize(m.contentSize())
 	var cmd tea.Cmd
 	m.runner, cmd = m.runner.Start(label, actionsBin(), args...)
 	return m, cmd
+}
+
+// operationName is the short, consistent name of a run, derived from the
+// backend subcommand. The Working screen title and the end prompt both read
+// it, so a run announced as "Uninstall…" cannot end as "The action finished".
+func operationName(sub string) string {
+	switch sub {
+	case "apply":
+		return "Setup"
+	case "uninstall", "preinstalls-remove":
+		return "Uninstall"
+	case "restore":
+		return "Restore"
+	case "backup":
+		return "Backup"
+	case "update", "update-modules", "update-repo":
+		return "Update"
+	case "heal":
+		return "Repair"
+	case "cleanup":
+		return "Cleanup"
+	case "addons-apply":
+		return "Addons"
+	case "add-shortcut":
+		return "Shortcut"
+	case "kb-add", "kb-remove", "kb-reset", "kb-reload":
+		return "Keybindings"
+	case "theme-create", "theme-apply", "theme-remove-any", "theme-restore-stock":
+		return "Theme"
+	case "run-patch", "remove-patch":
+		return "Patch"
+	case "davinci-alt-drivers":
+		return "DaVinci profile"
+	}
+	return ""
+}
+
+// formatElapsed is the "Xm Xs" duration shown on every end prompt.
+func formatElapsed(d time.Duration) string {
+	secs := int(d.Round(time.Second) / time.Second)
+	if secs < 0 {
+		secs = 0
+	}
+	if secs < 60 {
+		return fmt.Sprintf("%ds", secs)
+	}
+	return fmt.Sprintf("%dm %02ds", secs/60, secs%60)
+}
+
+// workFinishedText is the one phrasing a run ends with: the same operation
+// name the Working screen used, the outcome, and how long it took.
+func (m model) workFinishedText(failed bool) string {
+	text := workOpOrAction(m.workOp) + " finished"
+	if failed {
+		text += " with errors"
+	}
+	return text + " in " + formatElapsed(m.workElapsed())
+}
+
+func workOpOrAction(op string) string {
+	if op == "" {
+		return "Action"
+	}
+	return op
+}
+
+// workElapsed is zero when a run never went through startWorking (tests build
+// models directly), so time.Since(zero) can never leak into a prompt.
+func (m model) workElapsed() time.Duration {
+	if m.workStart.IsZero() {
+		return 0
+	}
+	return time.Since(m.workStart)
 }
 
 // askCancelRun is the one gate in front of a manual cancel: stopping a run
@@ -3766,20 +3851,28 @@ func abletonLogText(out string, err error) string {
 // askAbletonLog is the runner's "finished / View log / Back" step for the
 // module's interactive runs.
 func (m model) askAbletonLog(kind string) (model, tea.Cmd) {
-	noun := "installation"
-	if strings.HasPrefix(kind, "ableton-uninstall") {
-		noun = "uninstallation"
-	}
 	m.pendingAction = kind
-	m.pendingMsg = "The Ableton " + noun + " finished successfully.\n\nView the full log, or go back?"
-	if strings.HasSuffix(kind, "-err") {
-		m.pendingMsg = "The Ableton " + noun + " finished with errors.\n\nView the full log, or go back?"
-	}
+	failed := strings.HasSuffix(kind, "-err")
+	m.pendingMsg = m.abletonFinishedText(kind, failed) + ".\n\nView the full log, or go back?"
 	m.pendingNo = "Back"
 	m.pendingYes = "View log"
 	m.push(scrConfirm)
 	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
 	return m, nil
+}
+
+// abletonFinishedText names the interactive Ableton run and its duration, in
+// the same words every other end prompt uses.
+func (m model) abletonFinishedText(kind string, failed bool) string {
+	noun := "install"
+	if strings.HasPrefix(kind, "ableton-uninstall") {
+		noun = "uninstall"
+	}
+	text := "Ableton " + noun + " finished"
+	if failed {
+		text += " with errors"
+	}
+	return text + " in " + formatElapsed(m.abletonElapsed)
 }
 
 // finishAbleton runs the follow-up after the log prompt is answered: refresh

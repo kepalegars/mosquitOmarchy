@@ -722,10 +722,10 @@ st_ableton_move_converter(){
 }
 st_battery_management(){
   [[ -x "$HOME/.local/bin/power-helper" ]] || { echo missing; return; }
-  # The parent widget is the mosquito.power plugin: if enabled, the module is "ok".
-  # custom.power is still accepted: machines that have not re-run the battery
-  # module since the rename still carry the legacy clone.
-  omarchy plugin list 2>/dev/null | grep -qE '^\s*(mosquito|custom)\.power\s+enabled' && echo ok || echo partial
+  # The merged plugin carries both the battery service and the bar widget: if
+  # it is enabled, the module is "ok". mosquito.power is still accepted on
+  # machines that have not re-run the module since the merge.
+  omarchy plugin list 2>/dev/null | grep -qE '^\s*(mosquito\.battery|mosquito\.power|custom\.power)\s+enabled' && echo ok || echo partial
 }
 st_omaskpinpass(){
   local plugins
@@ -4300,7 +4300,7 @@ un_apps(){
 }
 
 un_battery_management(){
-  info "Uninstalling battery-management (power-helper / mosquito.power)"
+  info "Uninstalling battery-management (power-helper / mosquito.battery)"
   local legacy_active=0 module_failed=0
 
   if [[ -f "$BATTERY_DIR/setup-battery-management.sh" ]]; then
@@ -4327,15 +4327,17 @@ un_battery_management(){
         "$HOME/.config/systemd/user/ultra-save-monitor.timer"
   systemctl --user daemon-reload 2>/dev/null || true
 
-  # Mosquito plugins (mosquito.power, mosquito.indicators, mosquito.confirm),
-  # plus the legacy custom.power clone when a machine still carries it.
+  # Mosquito plugins (mosquito.battery, mosquito.indicators, mosquito.confirm),
+  # plus the retired power plugin and legacy clones when a machine still carries
+  # them.
+  omarchy plugin disable mosquito.battery 2>/dev/null || true
   omarchy plugin disable mosquito.power 2>/dev/null || true
   omarchy plugin disable custom.power 2>/dev/null || true
   omarchy plugin disable "$USER.power" 2>/dev/null || true
   omarchy plugin disable mosquito.indicators 2>/dev/null || true
   omarchy plugin disable mosquito.confirm 2>/dev/null || true
-  rm -rf "$PLUG/mosquito.power" "$PLUG/custom.power" "$PLUG/$USER.power" "$PLUG/mosquito.indicators" "$PLUG/mosquito.confirm"
-  ok "mosquito plugins removed (mosquito.power / mosquito.indicators / mosquito.confirm)"
+  rm -rf "$PLUG/mosquito.battery" "$PLUG/$USER.battery" "$PLUG/mosquito.power" "$PLUG/custom.power" "$PLUG/$USER.power" "$PLUG/mosquito.indicators" "$PLUG/mosquito.confirm"
+  ok "mosquito plugins removed (mosquito.battery / mosquito.indicators / mosquito.confirm)"
 
   # Normalize shell.json back to the stock power/lock widgets — done HERE (the
   # module that owns the plugins), never in un_shared_menu on every uninstall.
@@ -4749,24 +4751,24 @@ restore_zen_profile(){
 
 clean_plugins(){
   # Normalizes the Omarchy plugin state in shell.json to go back to stock:
-  # removes our clones (mosquito./custom./<user>. power/lock) from
+  # removes our clones (mosquito./custom./<user>. power/battery/lock) from
   # bars/plugins/disabled and re-enables the original Omarchy plugins
-  # (omarchy.lock, omarchy.power).
+  # (omarchy.lock, omarchy.battery, omarchy.power).
   [[ -f $SHELL ]] || return 0
   command -v jq >/dev/null 2>&1 || { warn "jq missing — Omarchy plugin state not normalized"; return 0; }
-  local ours='(mosquito|custom)\.(power|lock)|mosquito\.(indicators|confirm)|'"$USER"'\.(power|lock)'
+  local ours='(mosquito|custom)\.(power|battery|lock)|mosquito\.(indicators|confirm)|'"$USER"'\.(power|battery|lock)'
   # Null-safe: .plugins and .disabledPlugins may be absent (null) — the old jq
   # then failed with "Cannot iterate over null" and aborted the uninstall (and
   # tripped the crash reporter). Guard both, and never abort on a jq error.
   if jq '
     ( .. | objects | select(has("moduleList")) )
-      |= ( .moduleList = ((.moduleList // []) | map(select(.id != "mosquito.power" and .id != "custom.power" and .id != "'"$USER"'.power"))) )
+      |= ( .moduleList = ((.moduleList // []) | map(select(.id != "mosquito.battery" and .id != "mosquito.power" and .id != "custom.power" and .id != "'"$USER"'.battery" and .id != "'"$USER"'.power"))) )
     | .plugins = ((.plugins // []) | map(select(
         (if type == "object" then (.id // "") else (. | tostring) end)
-        | test("^(custom|mosquito|'$USER')\\.(power|lock|indicators|confirm)$") | not)))
+        | test("^(custom|mosquito|'$USER')\\.(power|battery|lock|indicators|confirm)$") | not)))
     | .disabledPlugins = ((.disabledPlugins // []) | map(select(
         (if type == "object" then (.id // "") else (. | tostring) end)
-        | test("^(custom|mosquito|'$USER')\\.(power|lock|indicators|confirm)$") | not)))
+        | test("^(custom|mosquito|'$USER')\\.(power|battery|lock|indicators|confirm)$") | not)))
   ' "$SHELL" > "$SHELL.tmp" 2>/dev/null; then
     mv "$SHELL.tmp" "$SHELL"
   else
@@ -4776,10 +4778,11 @@ clean_plugins(){
 
   command -v omarchy >/dev/null 2>&1 && {
     omarchy plugin enable omarchy.lock >/dev/null 2>&1 || true
+    omarchy plugin enable omarchy.battery >/dev/null 2>&1 || true
     omarchy plugin enable omarchy.power >/dev/null 2>&1 || true
     omarchy plugin enable omarchy.indicators >/dev/null 2>&1 || true
   }
-  ok "Omarchy plugin state (power/lock) restored to stock"
+  ok "Omarchy plugin state (power/battery/lock) restored to stock"
 }
 
 un_shared_menu(){

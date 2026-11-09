@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Power-profile helper for the mosquito.power Omarchy plugin.
+# Power-profile helper for the mosquito.battery Omarchy plugin.
 # Output is plain key\tvalue per line for Model.parseKeyValue.
 set -euo pipefail
 

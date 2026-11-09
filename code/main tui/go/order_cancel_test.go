@@ -16,7 +16,7 @@ func TestTreeItemsStayAlphabetical(t *testing.T) {
 		{Folder: "apps", Key: "zen", Label: "zen"},
 		{Folder: "apps", Key: "flea", Label: "flea"},
 		{Folder: "apps", Key: "bitwig", Label: "Bitwig"},
-		{Folder: "plugins", Key: "clip", Label: "Clipboard Cards"},
+		{Folder: "plugins", Key: "taskq", Label: "TaskQ"},
 	}
 
 	m := initialModel()
@@ -27,7 +27,7 @@ func TestTreeItemsStayAlphabetical(t *testing.T) {
 
 	m = initialModel()
 	m, _ = m.update(backupOptionsMsg{folders: folders, items: append([]SetupItemRec(nil), items...)})
-	if got := labelsOf(m.backupItems); !equalStrings(got, []string{"Bitwig", "flea", "zen", "Clipboard Cards"}) {
+	if got := labelsOf(m.backupItems); !equalStrings(got, []string{"Bitwig", "flea", "zen", "TaskQ"}) {
 		t.Fatalf("backup order = %v, want folders in order, each alphabetical", got)
 	}
 }

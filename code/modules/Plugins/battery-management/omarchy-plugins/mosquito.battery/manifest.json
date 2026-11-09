@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "mosquito.battery",
+  "name": "Mosquito Battery",
+  "version": "1.0.0",
+  "author": "Mosquito",
+  "description": "Battery service (real charger only) and power-profile bar widget",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Mosquito Battery",
+    "description": "Battery, power profile, and system stats",
+    "category": "System",
+    "allowMultiple": false
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.battery"
+  }
+}

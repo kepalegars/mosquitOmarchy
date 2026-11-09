@@ -30,11 +30,36 @@ check() {  # check NAME SUFFIX JSON WANTED_IDS
   [[ $got == "$want" ]] || { echo "$name: ids = '$got', want '$want'"; exit 1; }
 }
 
+check_canon() {  # check_canon NAME SUFFIX CANON JSON WANTED_IDS
+  local name="$1" suffix="$2" canon="$3" json="$4" want="$5" got
+  printf '%s' "$json" >"$tmp/$name.json"
+  normalize_bar_widget "$tmp/$name.json" kapeq_mosquito "$suffix" "$canon" >/dev/null
+  got="$(widget_ids "$tmp/$name.json" "${canon#mosquito.}")"
+  [[ $got == "$want" ]] || { echo "$name: ids = '$got', want '$want'"; exit 1; }
+}
+
 check power-stale-and-live power '{"bar":{"layout":{"centerEnd":[{"id":"kapeq_mosquito.power"}],"right":[{"id":"mosquito.power"}]}}}' 'mosquito.power'
 check power-stale-only     power '{"bar":{"layout":{"centerEnd":[{"id":"kapeq_mosquito.power"}],"right":[]}}}' 'mosquito.power'
 check power-stock-and-live power '{"bar":{"layout":{"centerEnd":[{"id":"omarchy.power"}],"right":[{"id":"mosquito.power"}]}}}' 'mosquito.power'
 check indicators-twice     indicators '{"bar":{"layout":{"centerBegin":[{"id":"mosquito.indicators"}],"centerEnd":[{"id":"mosquito.indicators"}]}}}' 'mosquito.indicators'
 check indicators-stock     indicators '{"bar":{"layout":{"centerBegin":[{"id":"omarchy.indicators"}]}}}' 'mosquito.indicators'
+
+# Merged plugin: every power-family id becomes mosquito.battery, once, in place,
+# keeping the entry (and its inline settings) that was already on the right.
+check_canon battery-migrate power mosquito.battery \
+  '{"bar":{"layout":{"centerEnd":[{"id":"kapeq_mosquito.power"}],"right":[{"id":"mosquito.power","showPercentage":true}]}}}' \
+  'mosquito.battery'
+check_canon battery-dedupe power mosquito.battery \
+  '{"bar":{"layout":{"right":[{"id":"mosquito.battery"},{"id":"mosquito.battery"}]}}}' \
+  'mosquito.battery'
+
+# A single correct merged entry is a no-op: no rewrite, no backup.
+printf '{"bar":{"layout":{"right":[{"id":"mosquito.battery","showPercentage":true}]}}}' >"$tmp/ok-battery.json"
+before="$(sha256sum "$tmp/ok-battery.json" | cut -d' ' -f1)"
+normalize_bar_widget "$tmp/ok-battery.json" kapeq_mosquito power mosquito.battery >/dev/null
+after="$(sha256sum "$tmp/ok-battery.json" | cut -d' ' -f1)"
+[[ $before == $after ]] || { echo "a lone merged battery widget was rewritten"; exit 1; }
+compgen -G "$tmp/ok-battery.json.bak*" >/dev/null && { echo "a lone merged battery widget made a backup"; exit 1; }
 
 # A single correct entry is a no-op: no rewrite, no backup.
 for suffix in power indicators; do

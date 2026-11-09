@@ -587,6 +587,15 @@ type model struct {
 	// workingLabel is the label of the running action, used to name its crash
 	// log when the run fails.
 	workingLabel string
+	// workOp is the operation's short name (Setup, Uninstall, Update, …) and
+	// workStart when it began. Both the Working screen and its end prompt read
+	// them, so a run can never be announced as one thing and reported as
+	// another.
+	workOp    string
+	workStart time.Time
+	// abletonElapsed keeps the duration of an interactive Ableton run across
+	// the log hand-off, which clears abletonLogSince.
+	abletonElapsed time.Duration
 
 	// pendingPatchKeys holds the app keys whose patch script should be proposed
 	// after a successful apply.
