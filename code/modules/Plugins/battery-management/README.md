@@ -1,13 +1,13 @@
 # Battery management — Omarchy module
 
-This module used to provide **ultra-save**, an aggressive low-power mode that forced the power-saver profile and capped CPU performance, with a watchdog to warn when that cap stalled work. That mode was abandoned. The module is now a simple power-profile panel: it changes the battery icon color to match the selected profile and turns it red below 10% charge.
+This module is a power-profile panel: it changes the battery icon color to match the selected profile and turns it red below 10% charge. Installing it replaces the stock battery/power bar widget in place, keeping its position and settings.
 
 - **performance** — blue
 - **power-saver** — green
 - **balanced/other** — normal adaptive bar color
 - **below 10% battery** — red
 
-The installer deploys corrected `battery-status` telemetry, `battery-temps` (live CPU/GPU temperatures) and the `power-helper`, and provisions the `mosquito.battery` (battery service + power-profile bar widget), `mosquito.indicators`, and `mosquito.confirm` plugins. The battery panel's status line reads `CPU 56°C` (plus `GPU 54°C` when a discrete GPU is present) instead of the rotating phrases. It also removes legacy ultra-save binaries, state, timer, sudoers, and menu entries when possible.
+The installer deploys corrected `battery-status` telemetry, `battery-temps` (live CPU/GPU temperatures) and the `power-helper`, and provisions the `mosquito.battery` plugin (battery service + power-profile bar widget), which also hosts the module's own confirm card. The bar's indicators widget is not managed here: the clone that adds the Mega caffeine / Live Mode state belongs to those two modules. The battery panel's status line reads `CPU 56°C` (plus `GPU 54°C` when a discrete GPU is present) instead of the rotating phrases.
 
 Coffee mode (`mega-caffeine`) is independent: [code/modules/mosquito/mega-caffeine](../../mosquito/mega-caffeine/README.md).
 
@@ -19,4 +19,4 @@ code/modules/Plugins/battery-management/setup-battery-management.sh --remove
 code/modules/Plugins/battery-management/setup-battery-management.sh --refresh-plugin battery
 ```
 
-Run as the desktop user for plugins and as root when removing the retired sudoers or legacy charge-control rule.
+Run as the desktop user for plugins and as root when removing the legacy charge-control rule.

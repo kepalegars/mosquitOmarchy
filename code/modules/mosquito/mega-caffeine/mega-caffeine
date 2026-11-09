@@ -203,7 +203,7 @@ is_live_mode() { [[ -f "$LIVE_FLAG" ]]; }
 
 ask_yes() {
   # $1 = question. Returns 0 for yes.
-  # Native Omarchy confirm overlay (square card with the message and Yes/No —
+  # Module-owned confirm overlay (square card with the message and Yes/No —
   # no auto "…" appended, unlike the dmenu input/select header), zenity as a
   # fallback, plain read on a tty.
   if [[ -t 0 ]] && [[ -n ${TERM:-} ]]; then
@@ -219,7 +219,7 @@ ask_yes() {
     rm -f "$done"
     payload=$(jq -cn --arg message "$1" --arg selectionFile "$sel" --arg doneFile "$done" \
       '{message:$message, selectionFile:$selectionFile, doneFile:$doneFile}')
-    omarchy-shell shell summon mosquito.confirm "$payload" >/dev/null 2>&1 || true
+    omarchy-shell shell summon mosquito.mega-caffeine "$payload" >/dev/null 2>&1 || true
     while [[ ! -e $done ]]; do sleep 0.05; done
     local ret=1
     [[ $(cat "$sel" 2>/dev/null) == yes ]] && ret=0

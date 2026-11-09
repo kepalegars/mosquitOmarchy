@@ -18,3 +18,15 @@ backup_vm_shared_folder(){
     mv -- "$shared_dir" "$backup_dir"
   fi
 }
+
+# Preserve every VM's shared files before a batch deletion. Refuses (returns 1)
+# when any backup fails, so callers can abort instead of destroying data.
+backup_all_vm_shared_folders(){
+  local vms_dir="$1" backup_dir="$2" d
+  [[ -d $vms_dir ]] || return 0
+  for d in "$vms_dir"/*/; do
+    [[ -f "$d/.vm-config" ]] || continue
+    backup_vm_shared_folder "${d%/}" "$backup_dir" || return 1
+  done
+  return 0
+}

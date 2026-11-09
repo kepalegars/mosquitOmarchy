@@ -209,7 +209,7 @@ _mgr_single_instance_gate() {
   if [[ -n $pids ]]; then
     _mgr_debug_conflict "$pids"
     if [[ $replace != true ]]; then
-      # Short button labels so the shared mosquito.confirm overlay never
+      # Short button labels so the module-owned mosquito.move-manager overlay never
       # clips them; the message carries the full intent. "Replace" is short
       # enough to fit even the overlay's minimum button width.
       if ! ui_confirm "Another mosquito Move Manager instance is already open. Close it and continue?" "Keep" "Replace"; then

@@ -1,32 +1,38 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.Commons
 import qs.Ui
 
+// mosquitOmarchy overlay for the cloned indicators widget. Everything else in
+// this plugin is re-copied from the installed Omarchy on every setup run; this
+// file is the only one we own. It keeps Omarchy's glyph, i18n and behaviour and
+// only adds the Mega caffeine / Live Mode state on top.
 BarIndicator {
   id: root
 
   readonly property var idleService: bar?.shell?.firstPartyServiceFor("omarchy.idle")
 
-  // Red icon ONLY while Mega caffeine runs. The plain "Allow Idle Lock &
-  // Screensaver" stay-awake keeps the normal foreground color instead.
   property bool megaEnabled: false
   property bool liveMode: false
   property bool blinkOn: false
   property int remainingMinutes: 0
   property bool unlimited: false
-  property string tooltip: ""
-
-  activeText: "󰅶"
-  inactiveText: "󰅶"
-
-  // Live mode (code/modules/mosquito/audio-stack/live-mode): the icon blinks red/white. Otherwise it's
-  // red directly when Mega caffeine runs.
-  useActiveColor: root.liveMode ? root.blinkOn : root.megaEnabled
+  property string megaTooltip: ""
 
   active: idleService ? idleService.stayAwake : false
-  activeTooltipText: tooltip
-  inactiveTooltipText: tooltip
+  // A mug without a saucer, which drew a line under the cup.
+  activeText: "\uef59"
+  inactiveText: "\uef59"
+  // Live Mode blinks red/white; a plain caffeine session is red; otherwise the
+  // native tooltip stays untouched.
+  useActiveColor: root.liveMode ? root.blinkOn : root.megaEnabled
+  activeTooltipText: root.megaEnabled || root.liveMode ? root.megaTooltip : I18n.t("bar.allowIdleLock")
+  inactiveTooltipText: root.megaEnabled || root.liveMode ? root.megaTooltip : I18n.t("bar.stayAwake")
+
+  function toggle() {
+    if (root.idleService) root.idleService.setIdleEnabled(root.active)
+  }
 
   function refresh() {
     statusProc.running = true
@@ -38,16 +44,13 @@ BarIndicator {
     root.liveMode = !!data.liveMode
     root.remainingMinutes = Number(data.remainingMinutes || 0)
     root.unlimited = !!data.unlimited
-    root.tooltip = root.liveMode
+    root.megaTooltip = root.liveMode
       ? "Live Mode ON"
-      : (root.megaEnabled
-          ? (root.unlimited
-              ? "Mega caffeine: unlimited"
-              : "Mega caffeine: " + root.remainingMinutes + " min remaining")
-          : (root.active ? "Allow Idle Lock & Screensaver" : "Stay Awake"))
+      : (root.unlimited
+          ? "Mega caffeine: unlimited"
+          : "Mega caffeine: " + root.remainingMinutes + " min remaining")
   }
 
-  // Blink red/white while live mode is active.
   Timer {
     interval: 600
     running: root.liveMode
@@ -55,21 +58,20 @@ BarIndicator {
     onTriggered: root.blinkOn = !root.blinkOn
   }
 
-  // Keep the remaining-time tooltip fresh while the mode runs. Also poll
-  // while the bare stay-awake is active: when Mega caffeine takes over an
-  // already-active stay-awake, the file never changes, so no signal fires —
-  // this backstop makes sure the red icon still appears promptly.
+  // Keep the remaining-time tooltip fresh while a mode runs, and poll while the
+  // bare stay-awake is active: when Mega caffeine takes over an already-active
+  // stay-awake the file never changes, so no signal fires.
   Timer {
     interval: 10000
-    running: root.megaEnabled || root.active
+    running: root.megaEnabled || root.liveMode || root.active
     repeat: true
     onTriggered: root.refresh()
   }
 
   Component.onCompleted: refresh()
 
-  // Mega caffeine activates/deactivates by writing the same stay-awake file
-  // the idle service watches, so this fires the instant the mode changes.
+  // Mega caffeine activates/deactivates by writing the same stay-awake file the
+  // idle service watches, so this fires the instant the mode changes.
   Connections {
     target: root.idleService
     ignoreUnknownSignals: true
@@ -84,13 +86,11 @@ BarIndicator {
 
   Process {
     id: statusProc
-    // Live mode (code/modules/mosquito/audio-stack/live-mode) is tint-free and does not run mega
-    // caffeine — when its active flag exists, report it directly so the
-    // coffee icon shows red with the "Live Mode ON" tooltip regardless of
-    // any caffeine session state.
+    // Live mode is tint-free and runs no caffeine session: report it directly
+    // so the icon shows red with the "Live Mode ON" tooltip.
     command: ["bash", "-lc",
       "if [ -f \"$HOME/.local/state/live-mode/active\" ]; then " +
-      "echo '{\"enabled\":true,\"liveMode\":true,\"unlimited\":true,\"stayAwake\":true}'; " +
+      "echo '{\"enabled\":true,\"liveMode\":true,\"unlimited\":true}'; " +
       "else \"$HOME/.local/bin/mega-caffeine\" --status; fi"]
     stdout: StdioCollector {
       waitForEnd: true
@@ -102,9 +102,8 @@ BarIndicator {
   }
 
   onPressed: function() {
-    // While live mode is on, mega caffeine is locked (click does nothing);
-    // while a plain caffeine session runs, one click stops it and restores
-    // the previous stay-awake state; otherwise it toggles stay-awake directly.
+    // Live mode locks mega caffeine (click only refreshes); a running caffeine
+    // session stops on click; otherwise toggle stay-awake like native does.
     if (root.liveMode) {
       root.refresh()
     } else if (root.megaEnabled) {

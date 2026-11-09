@@ -718,6 +718,8 @@ st_ableton_move_converter(){
   [[ -x "$HOME/.local/bin/move-bundle-to-midi" ]] || { echo partial; return; }
   [[ -x "$HOME/.local/bin/move-udev-refresh" ]] || { echo partial; return; }
   [[ -x "$HOME/.local/bin/move-manager-webapp" ]] || { echo partial; return; }
+  [[ -d "$HOME/.config/omarchy/plugins/mosquito.move-manager" ]] \
+    || { echo "partial:missing the mosquito.move-manager overlay (rerun setup-ableton-move-manager.sh)"; return; }
   echo ok
 }
 st_battery_management(){
@@ -725,7 +727,8 @@ st_battery_management(){
   # The merged plugin carries both the battery service and the bar widget: if
   # it is enabled, the module is "ok". mosquito.power is still accepted on
   # machines that have not re-run the module since the merge.
-  omarchy plugin list 2>/dev/null | grep -qE '^\s*(mosquito\.battery|mosquito\.power|custom\.power)\s+enabled' && echo ok || echo partial
+  omarchy plugin list 2>/dev/null | grep -qE '^\s*(mosquito\.battery|mosquito\.power|custom\.power)\s+enabled' \
+    && echo ok || echo partial
 }
 st_omaskpinpass(){
   local plugins
@@ -761,7 +764,12 @@ st_mega_caffeine(){
   [[ -x "$HOME/.local/bin/mega-caffeine" ]] || { echo missing; return; }
   bash -n "$HOME/.local/bin/mega-caffeine" 2>/dev/null || { echo partial; return; }
   grep -qF '"trigger.toggle.mega-caffeine"' "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc" 2>/dev/null \
-    && echo ok || echo partial
+    || { echo partial; return; }
+  local miss=""
+  [[ -d "$HOME/.config/omarchy/plugins/mosquito.mega-caffeine" ]] \
+    || miss="the indicators clone"
+  [[ -n $miss ]] && { echo "partial:missing $miss (rerun setup-mega-caffeine.sh)"; return; }
+  echo ok
 }
 st_brightness(){
   [[ -x "$HOME/.local/bin/brightness-0" ]] || { echo missing; return; }
@@ -969,7 +977,10 @@ st_live_mode(){
 }
 st_audio_plugin_manager(){
   [[ -x "$BIN_DIR/mosquito-audio-plugin-manager-tui" || -x "$BIN_DIR/mosquito-audio-plugin-manager" ]] \
-    && echo ok || echo missing
+    || { echo missing; return; }
+  [[ -d "$HOME/.config/omarchy/plugins/mosquito.audio-plugin-manager" ]] \
+    || { echo "partial:missing the mosquito.audio-plugin-manager overlay (rerun setup-audio-plugin-manager.sh)"; return; }
+  echo ok
 }
 st_levels_guard(){
   bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" --status 2>/dev/null || echo missing
@@ -1113,12 +1124,12 @@ MODULES=(
   "tidal:TIDAL Hi-Fi (TidaLuna) — native Tidal client, menu bar hidden and SUPER+SHIFT+M bound to it"
   "apps:Apps, tuis (one folder + setup script per entry in code/modules/TUIs)"
   "remove-ai:remove omarchy's agentic stuff — the Agents bar widget and the AI-diagnosis crash toasts, i.e. exactly what Omarchy ships."
-  "battery-management:Battery management — formerly ultra-save, a CPU/power-capping mode; abandoned for a simple script that colors the battery icon by power profile"
+  "battery-management:Battery management — profile-colored battery icon/panel, replaces the stock power widget in place"
   "omaskpinpass:Omarchy SSH askpass + GnuPG pinentry dialogs, built per-user from source (installs Rust/Cargo if missing); sets SSH_ASKPASS_REQUIRE=prefer"
   "downloads:Downloads — themed popup for recent files (SUPER + ALT + D)"
   "taskq:TaskQ — bar-based task list with deadlines"
   "process-killer:Process Killer — inspect and stop running processes"
-  "better-pip:Better PiP — picture-in-picture windows as plain floating windows (never pinned, stays on its workspace): aspect ratio kept, grabbable border, idle inhibitor while open"
+  "better-pip:Mosquito Better PiP — picture-in-picture windows as plain floating windows (never pinned, stays on its workspace): aspect ratio kept, grabbable border, idle inhibitor while open"
   "reboot-into-windows:Reboot into Windows — System menu entry: finds the UEFI Windows Boot Manager, 15 s yes/no countdown, arms BootNext for the next boot only, then reboots"
   "mega-caffeine:Coffee mode (mega-caffeine) — laptop closed without sleeping, red tint, natural-language durations"
   "brightness:Display brightness — Omarchy default step, 0% = screen off, and a silent 1% ramp on held keys for smoother steps (no run-on beyond the current step)"
@@ -3846,6 +3857,9 @@ un_audio(){
   rm_desktops mosquito-audio-plugin-manager.desktop mosquito-vst-manager.desktop \
                vst-manager.desktop vst-install.desktop
   rm -f "$HOME/.local/share/icons/hicolor/256x256/apps/mosquito-audio-plugin-manager.png"
+  # APM owns its confirm overlay; removing the binaries takes it too.
+  omarchy plugin disable mosquito.audio-plugin-manager >/dev/null 2>&1 || true
+  rm -rf "$HOME/.config/omarchy/plugins/mosquito.audio-plugin-manager"
   if [[ -f "$HYPRLAND" ]] && grep -qF -- 'mosquito-audio-plugin-manager-tui-setup' "$HYPRLAND"; then
     local tmp=$(mktemp)
     awk '
@@ -4301,7 +4315,7 @@ un_apps(){
 
 un_battery_management(){
   info "Uninstalling battery-management (power-helper / mosquito.battery)"
-  local legacy_active=0 module_failed=0
+  local module_failed=0
 
   if [[ -f "$BATTERY_DIR/setup-battery-management.sh" ]]; then
     bash "$BATTERY_DIR/setup-battery-management.sh" --remove \
@@ -4310,34 +4324,19 @@ un_battery_management(){
     warn "setup-battery-management.sh not found — sudoers/legacy udev not cleaned by it."
   fi
 
-  systemctl --user disable --now mosquito-ultra-save-watch.timer ultra-save-monitor.timer 2>/dev/null || true
-  grep -qx 'on' "$HOME/.local/state/ultra-save/state" 2>/dev/null && legacy_active=1
-  rm -f "$BIN_DIR/power-helper" "$BIN_DIR/battery-status"
-  if (( legacy_active )); then
-    warn "Ultra-save remains active; preserving its executable, state and sudoers so it can be turned off safely."
-  else
-    rm -f "$BIN_DIR/ultra-save" "$BIN_DIR/ultra-save-watch" "$BIN_DIR/ultra-save-monitor" \
-          "$BIN_DIR/ultra-save-setup" "$BIN_DIR/ultra-save.sudoers"
-    rm -rf "$HOME/.local/state/ultra-save"
-    ok "Power helper, battery telemetry and legacy ultra-save artifacts removed"
-  fi
-  rm -f "$HOME/.config/systemd/user/mosquito-ultra-save-watch.service" \
-        "$HOME/.config/systemd/user/mosquito-ultra-save-watch.timer" \
-        "$HOME/.config/systemd/user/ultra-save-monitor.service" \
-        "$HOME/.config/systemd/user/ultra-save-monitor.timer"
-  systemctl --user daemon-reload 2>/dev/null || true
+  rm -f "$BIN_DIR/power-helper" "$BIN_DIR/battery-status" "$BIN_DIR/battery-temps"
+  ok "Power helper and battery telemetry removed"
 
-  # Mosquito plugins (mosquito.battery, mosquito.indicators, mosquito.confirm),
-  # plus the retired power plugin and legacy clones when a machine still carries
-  # them.
+  # This module's plugins (mosquito.battery + its confirm overlay), plus the
+  # retired power plugin older installs left behind. The indicators clone and
+  # the other confirm overlays belong to their own modules and are removed by
+  # those modules' uninstallers.
   omarchy plugin disable mosquito.battery 2>/dev/null || true
   omarchy plugin disable mosquito.power 2>/dev/null || true
   omarchy plugin disable custom.power 2>/dev/null || true
   omarchy plugin disable "$USER.power" 2>/dev/null || true
-  omarchy plugin disable mosquito.indicators 2>/dev/null || true
-  omarchy plugin disable mosquito.confirm 2>/dev/null || true
-  rm -rf "$PLUG/mosquito.battery" "$PLUG/$USER.battery" "$PLUG/mosquito.power" "$PLUG/custom.power" "$PLUG/$USER.power" "$PLUG/mosquito.indicators" "$PLUG/mosquito.confirm"
-  ok "mosquito plugins removed (mosquito.battery / mosquito.indicators / mosquito.confirm)"
+  rm -rf "$PLUG/mosquito.battery" "$PLUG/$USER.battery" "$PLUG/mosquito.power" "$PLUG/custom.power" "$PLUG/$USER.power"
+  ok "battery plugins + legacy power clone removed"
 
   # Normalize shell.json back to the stock power/lock widgets — done HERE (the
   # module that owns the plugins), never in un_shared_menu on every uninstall.
@@ -4347,24 +4346,14 @@ un_battery_management(){
   # per file instead of requiring the whole uninstall to run as root.
   if (( YES || PURGE )); then
     if [[ $EUID -eq 0 ]]; then
-      rm -f /etc/udev/rules.d/99-lenovo-charge-threshold.rules /usr/local/bin/power-helper
-      (( legacy_active )) || rm -f /etc/sudoers.d/battery-management
+      rm -f /etc/udev/rules.d/99-lenovo-charge-threshold.rules /usr/local/bin/power-helper \
+            /etc/sudoers.d/battery-management
       udevadm control --reload 2>/dev/null || true
-      if (( legacy_active )); then
-        warn "Kept /etc/sudoers.d/battery-management until ultra-save is turned off."
-      else
-        ok "sudoers + legacy udev rule + /usr/local/bin helper removed"
-      fi
-    elif mq_sudo rm -f /etc/udev/rules.d/99-lenovo-charge-threshold.rules /usr/local/bin/power-helper; then
-      if (( ! legacy_active )); then
-        mq_sudo rm -f /etc/sudoers.d/battery-management || true
-      fi
+      ok "sudoers + legacy udev rule + /usr/local/bin helper removed"
+    elif mq_sudo rm -f /etc/udev/rules.d/99-lenovo-charge-threshold.rules /usr/local/bin/power-helper \
+                  /etc/sudoers.d/battery-management; then
       mq_sudo udevadm control --reload 2>/dev/null || true
-      if (( legacy_active )); then
-        warn "Kept /etc/sudoers.d/battery-management until ultra-save is turned off."
-      else
-        ok "sudoers + legacy udev rule + /usr/local/bin helper removed"
-      fi
+      ok "sudoers + legacy udev rule + /usr/local/bin helper removed"
     else
       warn "System part (sudoers/udev) not removed — the password prompt was declined or failed."
     fi
@@ -4756,7 +4745,6 @@ clean_plugins(){
   # (omarchy.lock, omarchy.battery, omarchy.power).
   [[ -f $SHELL ]] || return 0
   command -v jq >/dev/null 2>&1 || { warn "jq missing — Omarchy plugin state not normalized"; return 0; }
-  local ours='(mosquito|custom)\.(power|battery|lock)|mosquito\.(indicators|confirm)|'"$USER"'\.(power|battery|lock)'
   # Null-safe: .plugins and .disabledPlugins may be absent (null) — the old jq
   # then failed with "Cannot iterate over null" and aborted the uninstall (and
   # tripped the crash reporter). Guard both, and never abort on a jq error.
@@ -4765,10 +4753,10 @@ clean_plugins(){
       |= ( .moduleList = ((.moduleList // []) | map(select(.id != "mosquito.battery" and .id != "mosquito.power" and .id != "custom.power" and .id != "'"$USER"'.battery" and .id != "'"$USER"'.power"))) )
     | .plugins = ((.plugins // []) | map(select(
         (if type == "object" then (.id // "") else (. | tostring) end)
-        | test("^(custom|mosquito|'$USER')\\.(power|battery|lock|indicators|confirm)$") | not)))
+        | test("^(custom|mosquito|'$USER')\\.(power|battery|lock)$") | not)))
     | .disabledPlugins = ((.disabledPlugins // []) | map(select(
         (if type == "object" then (.id // "") else (. | tostring) end)
-        | test("^(custom|mosquito|'$USER')\\.(power|battery|lock|indicators|confirm)$") | not)))
+        | test("^(custom|mosquito|'$USER')\\.(power|battery|lock)$") | not)))
   ' "$SHELL" > "$SHELL.tmp" 2>/dev/null; then
     mv "$SHELL.tmp" "$SHELL"
   else
@@ -4780,7 +4768,6 @@ clean_plugins(){
     omarchy plugin enable omarchy.lock >/dev/null 2>&1 || true
     omarchy plugin enable omarchy.battery >/dev/null 2>&1 || true
     omarchy plugin enable omarchy.power >/dev/null 2>&1 || true
-    omarchy plugin enable omarchy.indicators >/dev/null 2>&1 || true
   }
   ok "Omarchy plugin state (power/battery/lock) restored to stock"
 }
@@ -5238,8 +5225,10 @@ PROTECT_OMARCHY_PKGS=(omacut omacalc omawrite)   # Omarchy core utilities, never
 # while the predicate only looked at 9, so a machine with only omacut installed
 # was reported as having nothing to remove while omacut was removable.
 stock_preinstalls(){
-  printf '%s\n' aether cliamp libreoffice-fresh xournalpp pinta obsidian \
-                  obs-studio kdenlive moonlight-qt lazydocker omacut omacalc omawrite
+  # Mirrors `omarchy-remove-preinstalls` (Omarchy 4.5): both track
+  # omarchy-base.packages. Keep this list in sync with upstream.
+  printf '%s\n' aether cliamp libreoffice-fresh pinta obsidian moonlight-qt \
+                  omacut monologue omacalc omawrite hype signed
 }
 
 preinstall_label(){
@@ -5247,16 +5236,15 @@ preinstall_label(){
     aether)            printf 'Aether' ;;
     cliamp)            printf 'Cliamp' ;;
     libreoffice-fresh) printf 'LibreOffice' ;;
-    xournalpp)         printf 'Xournal++' ;;
     pinta)             printf 'Pinta' ;;
     obsidian)          printf 'Obsidian' ;;
-    obs-studio)        printf 'OBS Studio' ;;
-    kdenlive)          printf 'Kdenlive' ;;
     moonlight-qt)      printf 'Moonlight' ;;
-    lazydocker)        printf 'Lazydocker' ;;
     omacut)            printf 'omarchy-cut' ;;
+    monologue)         printf 'Monologue' ;;
     omacalc)           printf 'omarchy-calc' ;;
     omawrite)          printf 'omarchy-write' ;;
+    hype)              printf 'Hype' ;;
+    signed)            printf 'Signed' ;;
     *)                 printf '%s' "$1" ;;
   esac
 }

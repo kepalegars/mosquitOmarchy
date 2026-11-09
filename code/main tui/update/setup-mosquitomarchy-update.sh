@@ -154,8 +154,7 @@ qui personnalise des fichiers maintenant susceptibles d'évoluer avec cette mise
 - ~/.config/hypr/touchpad.lua
 - ~/.local/bin/                                     (backlight, power-helper,
                                                      mega-caffeine, guitarpro, …)
-- système : /etc/sudoers.d/battery-management,
-            /etc/udev/rules.d/99-lenovo-charge-threshold.rules,
+- système : /etc/udev/rules.d/99-lenovo-charge-threshold.rules,
             /usr/local/bin/power-helper, /opt/resolve (patch libav)
 
 Vérifie la mise à jour en attente pour les conflits possibles :

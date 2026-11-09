@@ -6,6 +6,11 @@ the local tooling around them.
 
 Re-running any script on a configured machine is safe.
 
+> **Requirements.** Omarchy **4.5** or newer is required, and this is the version the
+> modules are written against: plugin ids (`omarchy.power`, `omarchy.audio`,
+> `omarchy.indicators`), the stock preinstall list, and the Lua config layout are
+> those of Omarchy 4.5. Older releases are not tested and will only partially work.
+
 > **Scope.** Every module is built exclusively for Omarchy and is only tested on the
 > author's own machine. The scripts assume Omarchy's `omarchy-*` commands and its
 > config layout (`~/.config/hypr/hyprland.lua`, `foot`, `omarchy-notification-send`).
@@ -129,12 +134,12 @@ The project's own layer: the manager itself, and the desktop-hardware modules.
 
 | Module | Installs | Doc |
 |---|---|---|
-| `battery-management` | Profile-colored battery icon/panel; the retired ultra-save CPU/power cap is removed | [README](code/modules/Plugins/battery-management/README.md) |
+| `battery-management` | Profile-colored battery icon/panel; replaces the stock power widget in place | [README](code/modules/Plugins/battery-management/README.md) |
 | `omaskpinpass` | SSH askpass + GnuPG pinentry plugins and binaries, built per-user (installs Rust/Cargo if missing); configures SSH askpass and GPG agent | [installer](code/modules/Plugins/omaskpinpass/setup-omaskpinpass.sh) |
 | `downloads` | Omarchy Downloads popup + `SUPER+ALT+D` binding | [installer](code/modules/Plugins/omarchy-downloads/setup-omarchy-downloads.sh) |
 | `taskq` | TaskQ deadline widget | [GitHub](https://github.com/sendaljpt/taskq) |
 | `process-killer` | Omarchy process-killer widget | [GitHub](https://github.com/BeresN/omarchy-process-killer) |
-| `better-pip` | Picture-in-picture windows as plain floating windows: aspect ratio kept, grabbable border, idle inhibitor while open | [installer](code/modules/Plugins/better-pip/setup-better-pip.sh) |
+| `better-pip` | Mosquito Better PiP — picture-in-picture windows as plain floating windows: aspect ratio kept, grabbable border, idle inhibitor while open | [installer](code/modules/Plugins/better-pip/setup-better-pip.sh) |
 | `mosquitomarchy` | This TUI (built from the Go sources in the repo), its dispatcher, menu entry, float rule and post-boot hook; first launch offers the optional `SUPER+ALT+M` shortcut | [README](code/main%20tui/README.md) |
 | `mosquitomarchy-update` | The update watchdog (scripts repo first, then Omarchy) | [README](code/main%20tui/update/README.md) |
 | `brightness` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp | [notes](code/modules/Plugins/brightness/display-fixes.md) |

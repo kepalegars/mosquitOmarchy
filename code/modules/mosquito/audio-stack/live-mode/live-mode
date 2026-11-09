@@ -125,7 +125,7 @@ confirm() {
   rm -f "$sel" "$donef"
   payload=$(jq -cn --arg message "$message" --arg selectionFile "$sel" --arg doneFile "$donef" \
     '{message:$message, selectionFile:$selectionFile, doneFile:$doneFile}')
-  omarchy-shell shell summon mosquito.confirm "$payload" >/dev/null 2>&1 || true
+  omarchy-shell shell summon mosquito.livemode "$payload" >/dev/null 2>&1 || true
   for i in $(seq 1 60); do
     [[ -f "$donef" ]] && break
     sleep 0.5
@@ -144,7 +144,7 @@ confirm_ok() {
   rm -f "$sel" "$donef"
   payload=$(jq -cn --arg message "$message" --arg selectionFile "$sel" --arg doneFile "$donef" \
     '{message:$message, selectionFile:$selectionFile, doneFile:$doneFile, okOnly:true}')
-  omarchy-shell shell summon mosquito.confirm "$payload" >/dev/null 2>&1 || true
+  omarchy-shell shell summon mosquito.livemode "$payload" >/dev/null 2>&1 || true
   for i in $(seq 1 60); do
     [[ -f "$donef" ]] && break
     sleep 0.5

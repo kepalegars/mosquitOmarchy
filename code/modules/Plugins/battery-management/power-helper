@@ -27,7 +27,7 @@ confirm() {
   rm -f "$sel" "$donef"
   payload=$(jq -cn --arg message "$message" --arg selectionFile "$sel" --arg doneFile "$donef" \
     '{message:$message,selectionFile:$selectionFile,doneFile:$doneFile}') || { rm -rf "$dir"; return 1; }
-  omarchy-shell shell summon mosquito.confirm "$payload" >/dev/null 2>&1 || true
+  omarchy-shell shell summon mosquito.battery "$payload" >/dev/null 2>&1 || true
   local i
   for i in $(seq 1 60); do [[ -f $donef ]] && break; sleep 0.5; done
   [[ -f $donef ]] && ans=$(cat "$sel" 2>/dev/null || true)

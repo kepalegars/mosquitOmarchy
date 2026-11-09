@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# mosquitOmarchy - Better PiP
+# mosquitOmarchy - Mosquito Better PiP
 # =============================================================================
 # Fork of ricardo-ti.pip-solver (MIT, (c) 2026 Ricardo Franco)
 #   https://github.com/rfranco-ti/pip-solver
@@ -59,7 +59,7 @@ write_plugin() {
 {
   "schemaVersion": 1,
   "id": "mosquito.better-pip",
-  "name": "Better PiP",
+  "name": "Mosquito Better PiP",
   "version": "1.0.0",
   "author": "mosquito",
   "license": "MIT",
@@ -363,7 +363,7 @@ if [[ $REMOVE == true ]]; then
     ok "Plugin $PLUGIN_ID already absent"
   fi
   reload_plugins
-  info "Better PiP removed. Restart the shell if anything lingers: omarchy restart shell"
+  info "Mosquito Better PiP removed. Restart the shell if anything lingers: omarchy restart shell"
   exit 0
 fi
 
@@ -390,7 +390,7 @@ if (( retired )); then
   hyprctl reload >/dev/null 2>&1 || true
 fi
 
-info "Better PiP installed and enabled"
+info "Mosquito Better PiP installed and enabled"
 echo "  • Plugin      -> $PLUGIN_DIR"
 echo "  • Behavior    -> floating PiP, NOT pinned (stays on its workspace)"
 echo "  • Diagnostics -> omarchy-shell better-pip status"

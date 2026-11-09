@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "mosquito.apm-confirm",
-  "name": "Mosquito APM Confirm",
+  "id": "mosquito.move-manager",
+  "name": "Mosquito Move Manager",
   "version": "1.0.0",
   "author": "Mosquito",
-  "description": "Confirmation overlay owned by the mosquito Audio Plugin Manager",
+  "description": "Prompt surface owned by the mosquitOmarchy Move Manager module",
   "kinds": [
     "overlay"
   ],

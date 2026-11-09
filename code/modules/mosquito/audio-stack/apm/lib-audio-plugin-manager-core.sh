@@ -24,7 +24,7 @@
 # (the flag-driven paths that run through the shared core), the ui_*
 # functions are defined INSIDE this file, guarded by
 # ${MOSQUITO_AUDIO_PLUGIN_MANAGER_NATIVE_UI} (set by the dispatcher): the native
-# Omarchy overlay (mosquito.apm-confirm, omarchy-menu-input/-select), zenity as
+# Omarchy overlay (mosquito.audio-plugin-manager, omarchy-menu-input/-select), zenity as
 # fallback, plain read on a tty. The actions backend pre-defines its own
 # stubs and sources this file with the guard unset, so they keep winning —
 # the Go TUI never needs a bash-rendered prompt, every decision is made in
@@ -175,7 +175,7 @@ ui_confirm() {
     s=$(jq -cn --arg message "$msg" --arg sel "$mel" --arg donef "$done" \
       --arg noLabel "$no_label" --arg yesLabel "$yes_label" \
       '{message:$message,selectionFile:$sel,doneFile:$donef,noLabel:$noLabel,yesLabel:$yesLabel}')
-    omarchy-shell shell summon mosquito.apm-confirm "$s" >/dev/null 2>&1 || true
+    omarchy-shell shell summon mosquito.audio-plugin-manager "$s" >/dev/null 2>&1 || true
     while [[ ! -e $done ]]; do sleep 0.05; done
     local ret=1
     [[ $(cat "$mel" 2>/dev/null) == yes ]] && ret=0
@@ -201,7 +201,7 @@ ui_info() {
   if command -v omarchy-shell >/dev/null 2>&1; then
     local mel done
     mel=$(mktemp); done=$(mktemp); rm -f "$done"
-    omarchy-shell shell summon mosquito.apm-confirm "$(jq -cn --arg message "$1" --arg sel "$mel" --arg donef "$done" \
+    omarchy-shell shell summon mosquito.audio-plugin-manager "$(jq -cn --arg message "$1" --arg sel "$mel" --arg donef "$done" \
       '{message:$message,selectionFile:$sel,doneFile:$donef,okOnly:true}')" >/dev/null 2>&1 || true
     while [[ ! -e $done ]]; do sleep 0.05; done
     rm -f "$mel" "$done"

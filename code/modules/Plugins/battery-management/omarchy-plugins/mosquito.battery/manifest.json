@@ -4,14 +4,16 @@
   "name": "Mosquito Battery",
   "version": "1.0.0",
   "author": "Mosquito",
-  "description": "Battery service (real charger only) and power-profile bar widget",
+  "description": "Battery service (real charger only), power-profile bar widget and the module's own confirm dialog",
   "kinds": [
     "service",
-    "bar-widget"
+    "bar-widget",
+    "overlay"
   ],
   "entryPoints": {
     "service": "Service.qml",
-    "barWidget": "Panel.qml"
+    "barWidget": "Panel.qml",
+    "overlay": "Confirm.qml"
   },
   "barWidget": {
     "displayName": "Mosquito Battery",
@@ -21,5 +23,6 @@
   },
   "omarchy": {
     "clonedFrom": "omarchy.battery"
-  }
+  },
+  "keepLoaded": true
 }

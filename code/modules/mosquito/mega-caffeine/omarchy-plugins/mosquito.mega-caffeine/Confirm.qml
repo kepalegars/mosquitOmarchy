@@ -76,7 +76,7 @@ Item {
   function dismiss() {
     root.opened = false
     if (root.shell && typeof root.shell.hide === "function")
-      root.shell.hide((root.manifest && root.manifest.id) || "mosquito.apm-confirm")
+      root.shell.hide((root.manifest && root.manifest.id) || "")
   }
 
   function finish(pick) {

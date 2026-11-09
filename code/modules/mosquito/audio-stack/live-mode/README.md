@@ -12,6 +12,13 @@ live-mode status
 live-mode manage   # the TUI
 ```
 
+The installer also ensures the `mosquito.mega-caffeine` indicators clone, the
+same one mega-caffeine installs: while a session runs, the bar's stay-awake
+indicator blinks red. The module's prompts live inside `mosquito.livemode`
+itself (the red frame and the Yes/No card share that one overlay), so there is
+no separate confirm plugin. Uninstalling live mode leaves the clone when
+mega-caffeine is still installed.
+
 ## Settings
 
 `~/.config/live-mode/settings`, one `KEY=value` per line. Every key is optional and

@@ -21,7 +21,7 @@
 #   7b. Bitwig converter      (<bin-dir>/bwpreset-converter/ : convert_bw_kit.py
 #                              + template_blocks.pkl, "Convert a preset" →
 #                              Bitwig preset; output under <projects>/Presets)
-#   8. Omarchy overlay        : mosquito.confirm (native Yes/No prompts,
+#   8. Omarchy overlay        : mosquito.move-manager (native Yes/No prompts,
 #                              used by the dispatcher's flag-driven flows
 #                              and shared with battery-management) enabled
 #   9. Omarchy menu           : ONE entry "mosquito Move Manager"
@@ -233,7 +233,7 @@ step_main_menu() {
   read -rp "   Choice [1-4] : " choice || choice=""
   case "$choice" in
     1) return 0 ;;                # normal installation flow
-    2) remove_menu; remove_udev; remove_chromium_policy; remove_ydotoold_nopasswd; echo; info "Uninstall complete: menu entry + udev rule + chromium policy + ydotool NOPASSWD removed."; echo "  The binaries stay in $BIN_DIR (mosquito-move-manager (+ -tui/lib-move-manager-core.sh, -features.sh), move-bundle-to-midi, move-bundle-to-als, move-udev-refresh, move-manager-webapp)."; exit 0 ;;
+    2) remove_menu; remove_udev; remove_chromium_policy; remove_ydotoold_nopasswd; remove_confirm_plugin; echo; info "Uninstall complete: menu entry + udev rule + chromium policy + ydotool NOPASSWD + confirm overlay removed."; echo "  The binaries stay in $BIN_DIR (mosquito-move-manager (+ -tui/lib-move-manager-core.sh, -features.sh), move-bundle-to-midi, move-bundle-to-als, move-udev-refresh, move-manager-webapp)."; exit 0 ;;
     3) do_status; exit 0 ;;
     4) echo "Bye."; exit 0 ;;
     q|Q) echo "Bye."; exit 0 ;;
@@ -355,7 +355,7 @@ deploy_move_bitwig() {
 }
 
 # -----------------------------------------------------------------------------
-# 2. Omarchy overlay for native prompts (mosquito.confirm)
+# 2. Omarchy overlay for native prompts (mosquito.move-manager, shipped here)
 # -----------------------------------------------------------------------------
 configure_tracker_exclusion() {
   # GNOME/Tracker (localsearch) indexes $HOME recursively by default and
@@ -417,26 +417,29 @@ build_and_deploy_tui() {
 }
 
 ensure_confirm_plugin() {
-  # Always re-copies over whatever's deployed, not just on first install:
-  # a stale deployed copy silently never picking up repo changes (this
-  # used to skip entirely once the destination existed) was found to be
-  # exactly why the deployed and repo copies of Confirm.qml had already
-  # drifted apart in an earlier round, before that got caught and both
-  # were manually re-synced. `cp -a` is cheap and idempotent either way.
+  # The overlay source lives in this module: no other module's install or
+  # uninstall can make Move Manager's prompts disappear. Always re-copied so a
+  # repo update is never left stale in the deployed copy.
   local PLUG_DIR="$REAL_HOME/.config/omarchy/plugins"
-  local SRC_DIR="$SCRIPT_DIR/../../Plugins/battery-management/omarchy-plugins/mosquito.confirm"
+  local SRC_DIR="$SCRIPT_DIR/omarchy-plugins/mosquito.move-manager"
   if [[ -d $SRC_DIR ]]; then
-    mkdir -p "$PLUG_DIR/mosquito.confirm"
-    cp -a "$SRC_DIR/." "$PLUG_DIR/mosquito.confirm/"
-    ok "Omarchy plugin mosquito.confirm installed/updated (native Yes/No overlay)"
-  elif [[ -d "$PLUG_DIR/mosquito.confirm" ]]; then
-    ok "Omarchy plugin mosquito.confirm already present (repo source not found to re-sync from — kept as-is)"
+    mkdir -p "$PLUG_DIR/mosquito.move-manager"
+    cp -a "$SRC_DIR/." "$PLUG_DIR/mosquito.move-manager/"
+    ok "Omarchy overlay mosquito.move-manager installed/updated (module-owned Yes/No card)"
+  elif [[ -d "$PLUG_DIR/mosquito.move-manager" ]]; then
+    ok "Omarchy overlay mosquito.move-manager already present (repo source not found to re-sync from — kept as-is)"
   else
-    warn "mosquito.confirm sources not found — prompts will use the zenity fallback."
+    warn "mosquito.move-manager sources not found — prompts will use the zenity fallback."
     return 0
   fi
-  omarchy plugin enable mosquito.confirm >/dev/null 2>&1 || true
-  ok "Omarchy plugin mosquito.confirm enabled (native Yes/No overlay)"
+  omarchy plugin enable mosquito.move-manager >/dev/null 2>&1 || true
+  ok "Omarchy overlay mosquito.move-manager enabled (module-owned Yes/No card)"
+}
+
+remove_confirm_plugin() {
+  omarchy plugin disable mosquito.move-manager >/dev/null 2>&1 || true
+  rm -rf "$REAL_HOME/.config/omarchy/plugins/mosquito.move-manager"
+  ok "Omarchy overlay mosquito.move-manager removed"
 }
 
 ensure_tui_float_windowrule() {
@@ -1035,7 +1038,8 @@ if [[ $REMOVE == true ]]; then
   remove_chromium_policy
   remove_ydotoold_nopasswd
   remove_webapp_icon
-  info "Uninstall complete: menu entry + udev rule + chromium policy + ydotool NOPASSWD + webapp icon removed."
+  remove_confirm_plugin
+  info "Uninstall complete: menu entry + udev rule + chromium policy + ydotool NOPASSWD + webapp icon + confirm overlay removed."
   echo "  The binaries stay in $BIN_DIR (mosquito-move-manager (+ -tui/lib-move-manager-core.sh), move-bundle-to-midi, move-bundle-to-als, move-udev-refresh, move-manager-webapp):"
   echo "    use the 'ableton-move-manager' module of mosquitomarchy-setup.sh --uninstall to remove them too."
 elif (( STATUS_ONLY )); then
@@ -1110,7 +1114,7 @@ else
   echo "  • Webapp icon      -> $WEBAPP_ICON_DST (custom Move Manager icon)"
   echo "  • Disconnect warn  -> udev rule (notifies only while the Move Manager webapp is actively in use)"
   echo "  • Folders          -> $MOVE_DIR/{ablbundle,als,bwproject,bwproject/midi}"
-  echo "  • Omarchy overlay  -> mosquito.confirm plugin (native Yes/No prompts)"
+  echo "  • Omarchy overlay  -> mosquito.move-manager plugin (native Yes/No prompts)"
   echo "  • Omarchy menu     -> Setup > mosquito > Move manager (TUI: address / Move Manager / convert)"
   echo
   echo "  Run the menu from the Omarchy launcher or with: mosquito-move-manager"

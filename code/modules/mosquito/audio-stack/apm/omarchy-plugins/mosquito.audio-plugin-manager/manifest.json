@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "mosquito.confirm",
-  "name": "Mosquito Confirm",
+  "id": "mosquito.audio-plugin-manager",
+  "name": "mosquito Audio Plugin Manager",
   "version": "1.0.0",
   "author": "Mosquito",
-  "description": "Native square confirmation dialog (message + Yes/No) for Mega caffeine prompts",
+  "description": "Prompt surface owned by the mosquito Audio Plugin Manager module",
   "kinds": [
     "overlay"
   ],

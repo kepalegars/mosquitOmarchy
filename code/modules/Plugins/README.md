@@ -14,9 +14,9 @@ code/modules/Plugins/reboot-into-windows/setup-reboot-into-windows.sh
 Most installers also accept `--status` (read-only) and `--remove`/`--uninstall`.
 They are idempotent: re-running is safe.
 
-## Better PiP
+## Mosquito Better PiP
 
-**Better PiP** (`mosquito.better-pip`) is a normal module again: Setup row,
+**Mosquito Better PiP** (`mosquito.better-pip`) is a normal module again: Setup row,
 backup selection and update zone all include it. It is a fork of
 `ricardo-ti.pip-solver`; installing it retires the upstream plugin.
 

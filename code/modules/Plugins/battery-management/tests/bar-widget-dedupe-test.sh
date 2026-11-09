@@ -8,9 +8,8 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# Extract just the function; sourcing the installer would run the install.
-sed -n '/^normalize_bar_widget()/,/^}$/p' "$here/setup-battery-management.sh" >"$tmp/fn.sh"
-source "$tmp/fn.sh"
+# Source just the shared bar-layout helper; sourcing the installer would run it.
+source "$here/../../../lib/bar-widget.bash"
 
 widget_ids() {  # widget_ids FILE SUFFIX
   python3 - "$1" "$2" <<'PY'
@@ -25,7 +24,7 @@ PY
 check() {  # check NAME SUFFIX JSON WANTED_IDS
   local name="$1" suffix="$2" json="$3" want="$4" got
   printf '%s' "$json" >"$tmp/$name.json"
-  normalize_bar_widget "$tmp/$name.json" kapeq_mosquito "$suffix" >/dev/null
+  mq_normalize_bar_widget "$tmp/$name.json" kapeq_mosquito "$suffix" >/dev/null
   got="$(widget_ids "$tmp/$name.json" "$suffix")"
   [[ $got == "$want" ]] || { echo "$name: ids = '$got', want '$want'"; exit 1; }
 }
@@ -33,7 +32,7 @@ check() {  # check NAME SUFFIX JSON WANTED_IDS
 check_canon() {  # check_canon NAME SUFFIX CANON JSON WANTED_IDS
   local name="$1" suffix="$2" canon="$3" json="$4" want="$5" got
   printf '%s' "$json" >"$tmp/$name.json"
-  normalize_bar_widget "$tmp/$name.json" kapeq_mosquito "$suffix" "$canon" >/dev/null
+  mq_normalize_bar_widget "$tmp/$name.json" kapeq_mosquito "$suffix" "$canon" >/dev/null
   got="$(widget_ids "$tmp/$name.json" "${canon#mosquito.}")"
   [[ $got == "$want" ]] || { echo "$name: ids = '$got', want '$want'"; exit 1; }
 }
@@ -52,11 +51,14 @@ check_canon battery-migrate power mosquito.battery \
 check_canon battery-dedupe power mosquito.battery \
   '{"bar":{"layout":{"right":[{"id":"mosquito.battery"},{"id":"mosquito.battery"}]}}}' \
   'mosquito.battery'
+check_canon battery-stock-battery power mosquito.battery \
+  '{"bar":{"layout":{"right":[{"id":"omarchy.battery","showPercentage":true}]}}}' \
+  'mosquito.battery'
 
 # A single correct merged entry is a no-op: no rewrite, no backup.
 printf '{"bar":{"layout":{"right":[{"id":"mosquito.battery","showPercentage":true}]}}}' >"$tmp/ok-battery.json"
 before="$(sha256sum "$tmp/ok-battery.json" | cut -d' ' -f1)"
-normalize_bar_widget "$tmp/ok-battery.json" kapeq_mosquito power mosquito.battery >/dev/null
+mq_normalize_bar_widget "$tmp/ok-battery.json" kapeq_mosquito power mosquito.battery >/dev/null
 after="$(sha256sum "$tmp/ok-battery.json" | cut -d' ' -f1)"
 [[ $before == $after ]] || { echo "a lone merged battery widget was rewritten"; exit 1; }
 compgen -G "$tmp/ok-battery.json.bak*" >/dev/null && { echo "a lone merged battery widget made a backup"; exit 1; }
@@ -65,7 +67,7 @@ compgen -G "$tmp/ok-battery.json.bak*" >/dev/null && { echo "a lone merged batte
 for suffix in power indicators; do
   printf '{"bar":{"layout":{"right":[{"id":"mosquito.%s"}]}}}' "$suffix" >"$tmp/ok-$suffix.json"
   before="$(sha256sum "$tmp/ok-$suffix.json" | cut -d' ' -f1)"
-  normalize_bar_widget "$tmp/ok-$suffix.json" kapeq_mosquito "$suffix" >/dev/null
+  mq_normalize_bar_widget "$tmp/ok-$suffix.json" kapeq_mosquito "$suffix" >/dev/null
   after="$(sha256sum "$tmp/ok-$suffix.json" | cut -d' ' -f1)"
   [[ $before == $after ]] || { echo "a lone $suffix widget was rewritten"; exit 1; }
   if compgen -G "$tmp/ok-$suffix.json.bak*" >/dev/null; then

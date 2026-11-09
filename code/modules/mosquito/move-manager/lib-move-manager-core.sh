@@ -18,7 +18,7 @@
 # (the flag-driven paths that run through the shared core), the ui_*
 # functions are defined INSIDE this file, guarded by
 # ${MOSQUITO_MOVE_MANAGER_NATIVE_UI} (set by the dispatcher): the native
-# Omarchy overlay (mosquito.confirm / omarchy-menu-input/-select), zenity
+# Omarchy overlay (mosquito.move-manager / omarchy-menu-input/-select), zenity
 # as fallback, plain read on a tty. The actions backend pre-defines its own
 # stubs and sources this file with the guard unset, so they keep winning —
 # the Go TUI never needs a bash-rendered prompt, every decision is made in
@@ -407,7 +407,7 @@ ui_confirm() {
   # $1 = message, $2 = optional "no"-button label (default "No"), $3 =
   # optional "yes"-button label (default "Yes") — labels only, the
   # returned meaning is unchanged: 0 for yes/the second button, 1 for
-  # no/cancel. Native square overlay (mosquito.confirm), zenity as a
+  # no/cancel. Native square overlay (mosquito.move-manager), zenity as a
   # fallback, plain read on a tty.
   local msg="$1" no_label="${2:-No}" yes_label="${3:-Yes}"
   if is_tty; then
@@ -422,7 +422,7 @@ ui_confirm() {
     payload=$(jq -cn --arg message "$msg" --arg selectionFile "$sel" --arg doneFile "$done" \
       --arg noLabel "$no_label" --arg yesLabel "$yes_label" \
       '{message:$message, selectionFile:$selectionFile, doneFile:$doneFile, noLabel:$noLabel, yesLabel:$yesLabel}')
-    omarchy-shell shell summon mosquito.confirm "$payload" >/dev/null 2>&1 || true
+    omarchy-shell shell summon mosquito.move-manager "$payload" >/dev/null 2>&1 || true
     while [[ ! -e $done ]]; do sleep 0.05; done
     local ret=1
     [[ $(cat "$sel" 2>/dev/null) == yes ]] && ret=0
@@ -550,7 +550,7 @@ ui_select() {
 
 ui_ready_or_die() {
   # From the Omarchy launcher stdin is not a tty: the menu then uses the
-  # native overlay widgets (omarchy-menu-select / mosquito.confirm).
+  # native overlay widgets (omarchy-menu-select / mosquito.move-manager).
   is_tty && return 0
   command -v omarchy-menu-select >/dev/null 2>&1 && return 0
   command -v zenity >/dev/null 2>&1 && return 0

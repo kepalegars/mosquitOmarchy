@@ -584,6 +584,6 @@ code/modules/mosquito/audio-stack/apm/setup-audio-plugin-manager.sh -y        # 
 ```
 
 Deploys the dispatcher, the core and the compiled TUI to `~/.local/bin`, installs the icon, the
-Hyprland float rule and APM's own `mosquito.apm-confirm` overlay, and removes every pre-rename artifact
+Hyprland float rule and APM's own `mosquito.audio-plugin-manager` overlay, and removes every pre-rename artifact
 (the "VST Manager" binaries, desktop entry, icon and Hyprland block, and the older superseded
 `vst-install` wrapper).

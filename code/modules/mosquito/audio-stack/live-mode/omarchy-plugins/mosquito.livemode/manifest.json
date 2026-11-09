@@ -4,12 +4,12 @@
   "name": "Mosquito Live Mode",
   "version": "1.0.0",
   "author": "Mosquito",
-  "description": "Thin red frame drawn around the screen while live mode is active",
+  "description": "Live mode: red session frame and the module's own confirm dialog",
   "kinds": [
     "overlay"
   ],
   "keepLoaded": true,
   "entryPoints": {
-    "overlay": "Frame.qml"
+    "overlay": "Overlay.qml"
   }
 }

@@ -64,6 +64,10 @@ warn()  { echo -e "\033[1;33m !\033[0m $*"; }
 die()   { warn "$*"; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Save each VM's shared files before --purge deletes the VM dirs.
+BACKUP_SHARED_LIB="$SCRIPT_DIR/backup-vm-shared.bash"
+# shellcheck source=backup-vm-shared.bash
+[[ -f $BACKUP_SHARED_LIB ]] && source "$BACKUP_SHARED_LIB"
 # Version of THIS script (the installer), not of the Omarchy ISO/VM it builds.
 SCRIPT_VERSION="1.0.0"
 BIN_DIR="$HOME/.local/bin"
@@ -586,8 +590,22 @@ if [[ $REMOVE == true ]]; then
   kb_remove "$KEYBIND" || warn "Could not remove $KEYBIND"
   hyprctl reload >/dev/null 2>&1 || true
   if [[ $PURGE == true ]]; then
-    # VM dirs only: VMS_ROOT also holds shared/, which is data, not a VM.
-    rm -rf "$VMS_DIR"/*/ "$ISO_CACHE" && ok "VMs ($VMS_DIR) and ISO cache ($ISO_CACHE) deleted"
+    # Preserve the shared files first: a purge that cannot save them aborts
+    # instead of silently destroying the user's data.
+    if [[ -f $BACKUP_SHARED_LIB ]]; then
+      backup_all_vm_shared_folders "$VMS_DIR" "$VMS_DIR/shared folder backup" \
+        || { warn "Shared-folder backup failed; VMs and ISO cache kept."; exit 1; }
+    else
+      warn "$BACKUP_SHARED_LIB missing; VMs and ISO cache kept to protect shared files."
+      exit 1
+    fi
+    # VM dirs only: VMS_ROOT also holds the shared-folder backup, which is data.
+    for d in "$VMS_DIR"/*/; do
+      case "${d%/}" in "$VMS_DIR/shared folder backup"|"$VMS_DIR/shared") continue ;; esac
+      [[ -f "$d/.vm-config" || -f "$d/disk.qcow2" ]] || continue
+      rm -rf "$d"
+    done
+    rm -rf "$ISO_CACHE" && ok "VMs ($VMS_DIR) and ISO cache ($ISO_CACHE) deleted (shared files kept)"
   else
     warn "VMs kept in $VMS_DIR and the ISO cache in $ISO_CACHE (use --purge to delete them)."
   fi

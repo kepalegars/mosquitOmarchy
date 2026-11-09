@@ -5,11 +5,13 @@ import QtQuick.Controls
 import qs.Commons
 import qs.Ui
 
-// Native confirmation dialog styled like Omarchy's "sudo"/update flow:
-// a square card with the message and two buttons (Yes / No), no auto "…"
-// appended (unlike the dmenu input/select header which always adds one).
-// Invoked by mega-caffeine via:
-//   omarchy-shell shell summon mosquito.confirm '{"message":"...","selectionFile":"...","doneFile":"..."}'
+// Confirmation dialog owned by the module that ships it. Each consumer
+// installs its own copy under its own plugin id, so uninstalling one module
+// can never break another module's prompts.
+// Styled like Omarchy's "sudo"/update flow: a square card with the message and
+// two buttons (Yes / No), no auto "…" appended (unlike the dmenu input/select
+// header which always adds one). Invoked with:
+//   omarchy-shell shell summon <this-plugin-id> '{"message":"...","selectionFile":"...","doneFile":"..."}'
 // The answer (or empty on cancel) is written to selectionFile, then doneFile
 // is touched so the caller stops waiting.
 //
@@ -74,7 +76,7 @@ Item {
   function dismiss() {
     root.opened = false
     if (root.shell && typeof root.shell.hide === "function")
-      root.shell.hide((root.manifest && root.manifest.id) || "mosquito.confirm")
+      root.shell.hide((root.manifest && root.manifest.id) || "")
   }
 
   function finish(pick) {

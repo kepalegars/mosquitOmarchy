@@ -19,8 +19,8 @@
 #      (~/.local/share/applications/mosquito-audio-plugin-manager.desktop) visible in
 #      the Omarchy launcher, consistent with "Ableton Live (VM)" (AudioVideo);
 #      also matches the "mosquito" search in the Omarchy launcher.
-#   3. The mosquito.apm-confirm Omarchy overlay, shipped inside this module
-#      (omarchy-plugins/mosquito.apm-confirm). APM owns its prompt surface:
+#   3. The mosquito.audio-plugin-manager Omarchy overlay, shipped inside this module
+#      (omarchy-plugins/mosquito.audio-plugin-manager). APM owns its prompt surface:
 #      removing another module's confirm plugin can never break APM.
 #   4. A custom monochrome jigsaw-piece icon (audio-plugin-manager-icon.png, white
 #      glyph on transparent 256×256, same style as the Move Manager's) for
@@ -67,8 +67,8 @@ if ((UNINSTALL)); then
     "$HOME/.config/hypr/hyprland.lua" 2>/dev/null || true
   hyprctl reload >/dev/null 2>&1 || true
   # This module owns its confirm overlay; removing APM takes it with it.
-  omarchy plugin disable mosquito.apm-confirm >/dev/null 2>&1 || true
-  rm -rf "$HOME/.config/omarchy/plugins/mosquito.apm-confirm"
+  omarchy plugin disable mosquito.audio-plugin-manager >/dev/null 2>&1 || true
+  rm -rf "$HOME/.config/omarchy/plugins/mosquito.audio-plugin-manager"
   ok "manager removed (plugin state and install history kept)"
   exit 0
 fi
@@ -241,21 +241,21 @@ sed -i '/-- >>> mosquito-vst-manager-tui-setup >>>/,/-- <<< mosquito-vst-manager
 ok "Pre-rename \"VST Manager\" artifacts cleaned up (binaries, .desktop, icon, Hyprland block)"
 
 # -----------------------------------------------------------------------------
-# 1c. mosquito.apm-confirm Omarchy overlay — APM-owned, always re-copied over
+# 1c. mosquito.audio-plugin-manager Omarchy overlay — APM-owned, always re-copied over
 # whatever's deployed. The source lives inside this module, so an update or an
 # uninstall of any other mosquitOmarchy module cannot break APM's prompts.
 # -----------------------------------------------------------------------------
-PLUGIN_SRC="$SCRIPT_DIR/omarchy-plugins/mosquito.apm-confirm"
-PLUGIN_DST="$HOME/.config/omarchy/plugins/mosquito.apm-confirm"
+PLUGIN_SRC="$SCRIPT_DIR/omarchy-plugins/mosquito.audio-plugin-manager"
+PLUGIN_DST="$HOME/.config/omarchy/plugins/mosquito.audio-plugin-manager"
 if [[ -d $PLUGIN_SRC ]]; then
   mkdir -p "$PLUGIN_DST"
   cp -a "$PLUGIN_SRC/." "$PLUGIN_DST/"
-  omarchy plugin enable mosquito.apm-confirm >/dev/null 2>&1 || true
-  ok "Omarchy overlay mosquito.apm-confirm installed/updated (APM-owned Yes/No card)"
+  omarchy plugin enable mosquito.audio-plugin-manager >/dev/null 2>&1 || true
+  ok "Omarchy overlay mosquito.audio-plugin-manager installed/updated (APM-owned Yes/No card)"
 elif [[ -d $PLUGIN_DST ]]; then
-  ok "Omarchy overlay mosquito.apm-confirm already present (repo source not found to re-sync from)"
+  ok "Omarchy overlay mosquito.audio-plugin-manager already present (repo source not found to re-sync from)"
 else
-  warn "mosquito.apm-confirm sources not found — prompts will use the zenity fallback."
+  warn "mosquito.audio-plugin-manager sources not found — prompts will use the zenity fallback."
 fi
 
 # -----------------------------------------------------------------------------

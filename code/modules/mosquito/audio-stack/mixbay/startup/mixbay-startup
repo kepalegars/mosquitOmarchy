@@ -48,7 +48,7 @@ apply(){
   if [[ $on == true ]]; then
     {
       printf '%s\n' "$START"
-      printf 'o.launch_on_start("%s")\n' "$BIN"
+      printf 'o.launch_on_start("%s --run")\n' "$BIN"
       printf '%s\n' "$END"
     } >> "$AUTOSTART"
     printf 'autostart: on\n'

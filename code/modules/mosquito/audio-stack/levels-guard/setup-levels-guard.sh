@@ -34,6 +34,8 @@ HELPER_SRC="$SCRIPT_DIR/levels-guard"
 HELPER_BIN="$BIN_DIR/levels-guard"
 OLD_HELPER_BIN="$BIN_DIR/mixbay-native-volume"
 PATCH="$SCRIPT_DIR/levels-guard-plugin/patch.py"
+# shellcheck source=../../../lib/bar-widget.bash
+source "$SCRIPT_DIR/../../../lib/bar-widget.bash"
 
 info()  { echo -e "\033[1;34m==>\033[0m $*"; }
 ok()    { echo -e "\033[1;32m ✓\033[0m $*"; }
@@ -226,8 +228,13 @@ install_plugin(){
       jq -e --arg id "$PLUGIN_ID" 'any(.[]; .id == $id)' >/dev/null 2>&1 && break
     sleep 0.05
   done
+  # Adopt the stock audio panel's bar entry (or the old Mixbay clone's) in
+  # place, so the guard replaces it without moving or duplicating the widget.
+  local shell_json="$HOME/.config/omarchy/shell.json" user="${USER:-$(id -un)}"
+  mq_normalize_bar_widget "$shell_json" "$user" audio "$PLUGIN_ID" "$OLD_PLUGIN_ID" >/dev/null 2>&1 || true
   omarchy-plugin-enable "$PLUGIN_ID" >/dev/null 2>&1 \
     || { warn "installed but could not enable $PLUGIN_ID"; return 1; }
+  mq_normalize_bar_widget "$shell_json" "$user" audio "$PLUGIN_ID" "$OLD_PLUGIN_ID" >/dev/null 2>&1 || true
   # The running shell caches QML components; a rescan alone keeps the old panel.
   if command -v omarchy-restart-shell >/dev/null 2>&1; then
     omarchy-restart-shell >/dev/null 2>&1 \
