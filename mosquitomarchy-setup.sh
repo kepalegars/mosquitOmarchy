@@ -767,7 +767,7 @@ st_mega_caffeine(){
     || { echo partial; return; }
   local miss=""
   [[ -d "$HOME/.config/omarchy/plugins/mosquito.mega-caffeine" ]] \
-    || miss="the indicators clone"
+    || miss="the bar widget"
   [[ -n $miss ]] && { echo "partial:missing $miss (rerun setup-mega-caffeine.sh)"; return; }
   echo ok
 }
@@ -4328,7 +4328,7 @@ un_battery_management(){
   ok "Power helper and battery telemetry removed"
 
   # This module's plugins (mosquito.battery + its confirm overlay), plus the
-  # retired power plugin older installs left behind. The indicators clone and
+  # retired power plugin older installs left behind. The coffee bar widget and
   # the other confirm overlays belong to their own modules and are removed by
   # those modules' uninstallers.
   omarchy plugin disable mosquito.battery 2>/dev/null || true

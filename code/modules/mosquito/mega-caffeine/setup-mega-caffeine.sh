@@ -14,7 +14,7 @@
 #   ./setup-mega-caffeine.sh --status   # 0 when binary + menu entry are there
 # =============================================================================
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/gui-run.bash"
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/indicators-clone.bash"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/mega-caffeine-widget.bash"
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -99,9 +99,9 @@ if [[ $REMOVE == true ]]; then
   else
     ok "No Mega caffeine menu entry, nothing to remove."
   fi
-  # The indicators clone is shared with live-mode: only drop it when live mode
-  # is not installed, so uninstalling one module never breaks the other.
-  remove_indicators_clone_if_unused "$REAL_HOME" "$REAL_HOME/.config/omarchy/plugins/mosquito.livemode"
+  # The coffee widget is shared with live-mode: only drop it when live mode is
+  # not installed, so uninstalling one module never breaks the other.
+  remove_mega_caffeine_widget_if_unused "$REAL_HOME" "$REAL_HOME/.config/omarchy/plugins/mosquito.livemode"
   exit 0
 fi
 
@@ -223,10 +223,10 @@ install_mc_menu() {
 migrate_mc_markers
 install_mc_menu
 
-# The bar's stay-awake indicator turns red while coffee mode runs. Installed
-# here, and by live-mode too: whichever runs first creates the clone.
-ensure_indicators_clone "$REAL_HOME" "$SCRIPT_DIR/omarchy-plugins/mosquito.mega-caffeine" \
-  || warn "Could not install the indicators clone — the coffee icon will not turn red."
+# The bar's stay-awake icon turns red while coffee mode runs. Installed here,
+# and by live-mode too: whichever runs first creates the shared widget.
+ensure_mega_caffeine_widget "$REAL_HOME" "$SCRIPT_DIR/omarchy-plugins/mosquito.mega-caffeine" \
+  || warn "Could not install the Mega Caffeine bar widget — the coffee icon will not appear."
 
 echo
 info "Setup complete: mega-caffeine + its Trigger > Toggle > Mega caffeine menu entry."

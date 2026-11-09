@@ -10,20 +10,23 @@ thresholds).
 - **uninstall** → `setup-mega-caffeine.sh --remove`, or the `mega-caffeine` module of `mosquitomarchy-setup.sh --uninstall`
 
 The installer deploys the binary, the `Trigger > Toggle > Mega caffeine` menu
-entry, and the `mosquito.mega-caffeine` clone of Omarchy's indicators (see
-below). That one plugin also carries the module's Yes/No card, so there is no
-separate confirm plugin. Mega caffeine does not depend on battery-management.
+entry, and the `mosquito.mega-caffeine` bar widget (see below). That one plugin
+also carries the module's Yes/No card, so there is no separate confirm plugin.
+Mega caffeine does not depend on battery-management.
 
 ## Bar indicator
 
-Omarchy has no extension point for a third-party indicator, so the red coffee
-state lives in a clone of `omarchy.indicators` with a single overlaid file,
-`indicators/StayAwake.qml` plus its own `Confirm.qml`, all inside the same
-`mosquito.mega-caffeine` plugin. Everything else is re-copied from the
-installed Omarchy on every setup run. Live mode installs the same clone: whichever module
-runs first creates it, and uninstalling one leaves it in place while the other
-is still installed (`omarchy plugin remove mosquito.mega-caffeine --yes` restores
-the native widget and its bar entry).
+The native `omarchy.indicators` widget stays in the bar untouched; the installer
+only removes its own `StayAwake` entry and places it next to
+`mosquito.mega-caffeine`, a small bar widget of ours that owns the coffee mug.
+The widget reads the same state files as the shell, so it also works when only
+live mode is installed, and it shows only while stay-awake is on: normal colour
+for a plain stay-awake session, red while Mega caffeine runs, blinking red
+during Live Mode. Clicking it toggles stay-awake, as the native indicator did.
+Live mode installs the same widget: whichever module runs first creates it, and
+uninstalling one leaves it in place while the other is still installed
+(`omarchy plugin remove mosquito.mega-caffeine --yes` gives `StayAwake` back to
+the native indicators).
 
 ```bash
 code/modules/mosquito/mega-caffeine/setup-mega-caffeine.sh          # install (idempotent)

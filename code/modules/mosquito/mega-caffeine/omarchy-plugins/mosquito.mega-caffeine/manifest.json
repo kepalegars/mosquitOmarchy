@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "mosquito.mega-caffeine",
+  "name": "Mega Caffeine",
+  "version": "1.0.0",
+  "author": "Mosquito",
+  "description": "Coffee-mode stay-awake icon and the module's own confirm dialog",
+  "kinds": [
+    "bar-widget",
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "overlay": "Confirm.qml"
+  },
+  "barWidget": {
+    "displayName": "Mega Caffeine",
+    "description": "Stay-awake icon for Mega caffeine and Live Mode",
+    "category": "Status",
+    "allowMultiple": false
+  }
+}

@@ -2119,7 +2119,6 @@ _plugin_drift(){
   case "$1" in
     levels-guard) bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" --plugin-status 2>/dev/null || true ;;
     battery)      _plugin_clone_drift "mosquito.battery" "omarchy.battery" ;;
-    indicators)   _plugin_clone_drift "mosquito.mega-caffeine" "omarchy.indicators" ;;
   esac
 }
 
@@ -2236,7 +2235,6 @@ cmd_health(){
   done
   _plugin_health_record levels-guard "Levels Guard plugin — clone of Omarchy's audio panel" "audio panel"
   _plugin_health_record battery "Mosquito Battery plugin — clone of Omarchy's battery service" "battery service"
-  _plugin_health_record indicators "Mega Caffeine indicators clone — Omarchy's indicators widget" "indicators widget"
   [[ -x "$BIN_DIR/mosquitomarchy" && -x "$BIN_DIR/mosquitomarchy-tui" ]] || \
     printf '{"kind":"infra","id":%s,"label":%s,"detail":%s}\n' \
       "$(json_str tui)" "$(json_str "mosquitOmarchy TUI")" "$(json_str "launcher binary missing")"
@@ -2347,7 +2345,7 @@ cmd_heal(){
   # user ticked (or every drifted clone when heal is called with no selection)
   # are rebuilt.
   local key want_id drift refreshed_plugins=0
-  for key in levels-guard battery indicators; do
+  for key in levels-guard battery; do
     want_id="plugin-$key"
     in_want "$want_id" || continue
     drift="$(_plugin_drift "$key")"
@@ -2355,9 +2353,6 @@ cmd_heal(){
     if [[ $key == levels-guard ]]; then
       bash "$LEVELS_GUARD_DIR/setup-levels-guard.sh" --refresh -y \
         || { err "Levels Guard clone refresh failed."; MODULE_FAILURES=$((MODULE_FAILURES + 1)); continue; }
-    elif [[ $key == indicators ]]; then
-      bash "$MEGA_CAFFEINE_DIR/setup-mega-caffeine.sh" \
-        || { err "indicators clone refresh failed."; MODULE_FAILURES=$((MODULE_FAILURES + 1)); continue; }
     else
       bash "$BATTERY_DIR/setup-battery-management.sh" --refresh-plugin "$key" \
         || { err "$key clone refresh failed."; MODULE_FAILURES=$((MODULE_FAILURES + 1)); continue; }

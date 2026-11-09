@@ -17,7 +17,7 @@
 #   bash setup-live-mode.sh --status    (read-only, no sudo)
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/marker-strip.bash"  # marker_strip: safe managed-block removal
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/elevate.bash"  # mq_sudo: themed prompt, one question per run
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/indicators-clone.bash"  # shared indicators clone (also installed by mega-caffeine)
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/mega-caffeine-widget.bash"  # shared coffee widget (also installed by mega-caffeine)
 set -euo pipefail
 [[ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/go-build-env.bash" ]] && source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/go-build-env.bash"  # contained Go caches (no ~/go)
 
@@ -259,15 +259,15 @@ remove_plugin() {
   ok "Plugin mosquito.livemode removed"
 }
 
-# Same clone mega-caffeine installs: the red coffee icon while live mode runs.
+# Same widget mega-caffeine installs: the red coffee icon while live mode runs.
 # Whichever module runs first creates it; the other just refreshes it.
 install_indicators() {
-  ensure_indicators_clone "$REAL_HOME" "$SCRIPT_DIR/../../mega-caffeine/omarchy-plugins/mosquito.mega-caffeine" \
-    || warn "Could not install the indicators clone — live mode will not tint the coffee icon."
+  ensure_mega_caffeine_widget "$REAL_HOME" "$SCRIPT_DIR/../../mega-caffeine/omarchy-plugins/mosquito.mega-caffeine" \
+    || warn "Could not install the Mega Caffeine bar widget — live mode will not tint the coffee icon."
 }
 
 remove_indicators() {
-  remove_indicators_clone_if_unused "$REAL_HOME" "$BIN_DIR/mega-caffeine"
+  remove_mega_caffeine_widget_if_unused "$REAL_HOME" "$BIN_DIR/mega-caffeine"
 }
 
 # ---------------------------------------------------------------------------
@@ -551,11 +551,11 @@ status() {
   else
     echo "  ✗ not installed"
   fi
-  echo "── Indicators clone (mosquito.mega-caffeine) ─────────────"
+  echo "── Coffee bar widget (mosquito.mega-caffeine) ────────────"
   if [[ -d "$PLUG_DIR/mosquito.mega-caffeine" ]]; then
     echo "  ✓ $PLUG_DIR/mosquito.mega-caffeine"
   else
-    echo "  ✗ not installed (mega-caffeine installs the same clone)"
+    echo "  ✗ not installed (mega-caffeine installs the same widget)"
   fi
   echo "── Menu entries ──────────────────────────────────────────"
   # Two different rows: the TOGGLE under Trigger > Toggle, and the manager TUI
