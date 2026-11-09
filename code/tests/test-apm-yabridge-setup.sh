@@ -150,6 +150,42 @@ grep -q '^Addictive_Drums_2\.vst3=[0-9A-F]*$' "$HOME/.config/REAPER/reaper-vstpl
 grep -q '^Analog_Lab_V\.vst3=.*,' "$HOME/.config/REAPER/reaper-vstplugins64.ini" || {
   echo "fail: valid cache line removed on the no-change path" >&2; exit 1; }
 
+# XLN's installer records the VST3 folder as a Windows path; under yabridge the
+# plugin is handed the canonical Z: path and aborts ("Wrong binary location").
+# The install repair must rewrite only that line, keep a backup, and be a no-op
+# on the next run.
+xln_vendor="$VST_VST3/XLN Audio"
+mkdir -p "$xln_vendor"
+xln_cfg="$HOME/.wine-vst/drive_c/ProgramData/XLN Audio/XLN Online Installer/App/config.txt"
+mkdir -p "$(dirname "$xln_cfg")"
+cat > "$xln_cfg" <<'EOF'
+vst,"C:\ProgramData\XLN Audio\VST64\"
+vst3,"C:\Program Files\Common Files\VST3\XLN Audio\"
+aax,"C:\Program Files\Common Files\Avid\Audio\Plug-Ins\XLN Audio\"
+EOF
+xln_want="Z:$(cd "$xln_vendor" && pwd -P)/"
+xln_want="${xln_want//\//\\}"
+apm_fix_xln_vst3_path
+grep -qxF "vst3,\"$xln_want\"" "$xln_cfg" || {
+  echo "fail: XLN vst3 path not rewritten to the Z: path" >&2; exit 1; }
+grep -qxF 'vst,"C:\ProgramData\XLN Audio\VST64\"' "$xln_cfg" || {
+  echo "fail: XLN vst entry changed" >&2; exit 1; }
+grep -qxF 'aax,"C:\Program Files\Common Files\Avid\Audio\Plug-Ins\XLN Audio\"' "$xln_cfg" || {
+  echo "fail: XLN aax entry changed" >&2; exit 1; }
+[[ -f "$xln_cfg.mosquito.bak" ]] || { echo "fail: no XLN config backup written" >&2; exit 1; }
+xln_before="$(cat "$xln_cfg")"
+apm_fix_xln_vst3_path
+[[ "$(cat "$xln_cfg")" == "$xln_before" ]] || {
+  echo "fail: XLN config rewrite is not idempotent" >&2; exit 1; }
+# No XLN vendor folder in the shared VST3 root -> leave any config alone.
+rm -rf "$xln_vendor"
+xln_other="$HOME/.wine-noxln/drive_c/ProgramData/XLN Audio/XLN Online Installer/App/config.txt"
+mkdir -p "$(dirname "$xln_other")"
+printf 'vst3,"C:\\Program Files\\Common Files\\VST3\\XLN Audio\\"\n' > "$xln_other"
+apm_fix_xln_vst3_path
+grep -qxF 'vst3,"C:\Program Files\Common Files\VST3\XLN Audio\"' "$xln_other" || {
+  echo "fail: XLN config rewritten without an installed vendor folder" >&2; exit 1; }
+
 # Wine's builtin msvcp140_atomic_wait.dll exports the __std_atomic_* names and
 # then aborts when one is called. Checking only the exports called it a real
 # runtime, so the fix reported "already present" and installed nothing -- and

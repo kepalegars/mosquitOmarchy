@@ -3097,6 +3097,7 @@ post_install() {
     apm_clean_shared_leftovers
     apm_clean_empty_legacy_vst_root
     apm_fix_native_daw_paths
+    apm_fix_xln_vst3_path
     if ! yabridge_ensure force; then
       # Not fatal to the install (the plugin files are in place), but fatal to
       # "REAPER sees the plugin": say so instead of swallowing it.
@@ -4414,6 +4415,45 @@ for cache in ("reaper-vstplugins64.ini", "reaper-vstplugins.ini"):
         with open(c, "w", encoding="utf-8") as f:
             f.write("\n".join(kept) + "\n")
 PY
+}
+
+# apm_fix_xln_vst3_path — let XLN's plugins find their VST3 install again.
+#
+# The XLN installer stores the VST3 folder it was given in
+# ProgramData/XLN Audio/XLN Online Installer/App/config.txt as a Windows path.
+# Under yabridge the plugin is started with the canonical (Z:) path of the
+# shared folder, so an old C:\... record makes Analog Lab/Addictive Drums abort
+# with "Wrong binary location" and the DAW scan hangs. Rewrite it to the Z:
+# path yabridge actually reports; the VST2/AAX entries stay untouched.
+apm_fix_xln_vst3_path(){
+  local vendor="$VST_VST3/XLN Audio" p cfg zpfx
+  [[ -d $vendor ]] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  zpfx="Z:$(cd "$vendor" && pwd -P)/"
+  zpfx="${zpfx//\//\\}"
+  while IFS= read -r p; do
+    [[ -n $p ]] || continue
+    cfg="$p/drive_c/ProgramData/XLN Audio/XLN Online Installer/App/config.txt"
+    [[ -f $cfg ]] || continue
+    if python3 - "$cfg" "$zpfx" >/dev/null 2>&1 <<'PY'
+import shutil
+import sys
+
+cfg, want = sys.argv[1], sys.argv[2]
+with open(cfg, encoding="utf-8") as f:
+    lines = f.read().splitlines()
+
+line = 'vst3,"%s"' % want
+out = [line if l.startswith("vst3,") else l for l in lines]
+if out == lines:
+    sys.exit(3)
+
+shutil.copy2(cfg, cfg + ".mosquito.bak")
+with open(cfg, "w", encoding="utf-8") as f:
+    f.write("\n".join(out) + "\n")
+PY
+    then ok "XLN VST3 path → $zpfx"; fi
+  done < <(scan_prefixes | sort -u)
 }
 
 # ── Cleanup (one-shot, non-destructive) ──────────────────────────────────────
