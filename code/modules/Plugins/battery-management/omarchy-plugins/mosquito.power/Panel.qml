@@ -243,7 +243,7 @@ Panel {
 
   Process {
     id: acToastProc
-    onExited: root.refreshPowerStatus()
+    onExited: root.refresh()
   }
 
   IpcHandler {
@@ -390,9 +390,11 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     foreground: root.batteryGlyphColor
-    text: root.showPercentage && !vertical
-      ? Math.round(root.batteryFraction * 100) + "% " + root.batteryIcon()
-      : root.batteryIcon()
+    // The percentage is a LABEL, not part of the glyph text: OpticalGlyph sizes
+    // one glyph, so "85% 󰁹" as `text` rendered as a cramped, mis-scaled blob.
+    // Upstream omarchy.power splits them the same way.
+    text: root.batteryIcon()
+    labelText: root.showPercentage && !vertical ? Math.round(root.batteryFraction * 100) + "%" : ""
     slotSize: Style.bar.iconSlot * (root.showPercentage && !vertical ? 2 : 1)
     tooltipText: ""
     onPressed: function(b) {

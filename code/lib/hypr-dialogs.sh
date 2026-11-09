@@ -26,7 +26,8 @@
 #
 # Usage (idempotent, one marked block per app):
 #   hypr_dialogs_install guitarpro            # dialogs only (caller tiles main)
-#   hypr_app_windows_install betterbird '^eu\\.betterbird\\.Betterbird$'  # tile main + float dialogs
+#   hypr_app_windows_install betterbird '^eu\\.betterbird\\.Betterbird$' ' - .+@.+ - Betterbird$'
+#                                        # tile only the main window, float the rest
 #   hypr_dialogs_remove guitarpro
 #
 # The caller owns HYPRLAND_CONFIG (defaults to ~/.config/hypr/hyprland.lua).
@@ -103,19 +104,37 @@ EOF
   echo "dialog rules installed for $app"
 }
 
-# hypr_app_windows_install <app-id> <class-lua-regex>
+# hypr_app_windows_install <app-id> <class-lua-regex> [main-title-lua-regex]
 # The complete per-app deal: the MAIN window is explicitly tiled (so an app
 # whose class ends in .exe, or any generic float rule, cannot leave it
 # floating), then its dialogs/menus float at the pointer without focus steal.
 # Order matters: later rules win, so the dialog rule comes after the tiling
 # one and a title that matches a dialog word overrides the tiling.
+#
+# With a main-title regex, the app gets the stricter deal: EVERY window of the
+# class floats and only the one whose initial title matches that regex tiles.
+# Apps like Betterbird open compose/message/address-book windows that share the
+# class but have no dialog word in their title, so the word list alone leaves
+# them tiled. The main window is the one carrying the account address
+# ("<folder> - user@host - <product>"); the windows it opens never do.
 hypr_app_windows_install(){
-  local app="$1" cls="$2" f rx
+  local app="$1" cls="$2" main="${3:-}" f rx
   f="$(hypr_dialogs_file)"
   [[ -f $f ]] || { echo "no hyprland config at $f" >&2; return 1; }
   hypr_dialogs_remove "$app" >/dev/null 2>&1 || true
-  rx="$(hypr_dialogs_regex)"
-  cat >> "$f" <<EOF
+  if [[ -n $main ]]; then
+    cat >> "$f" <<EOF
+-- >>> mosquito-dialogs-$app >>> $app: ONLY the main window tiles; every other
+-- window the app opens (compose, message, address book…) floats. The class-wide
+-- float is first and the main window's tile last because later rules win.
+-- See code/lib/hypr-dialogs.sh for the rationale.
+o.window({ class = "$(lua_escape "$cls")" }, { float = true })
+o.window({ class = "$(lua_escape "$cls")", initial_title = "$(lua_escape "$main")" }, { float = false, tile = true })
+-- <<< mosquito-dialogs-$app <<<
+EOF
+  else
+    rx="$(hypr_dialogs_regex)"
+    cat >> "$f" <<EOF
 -- >>> mosquito-dialogs-$app >>> $app: main window TILED, dialogs/menus float
 -- at the pointer without stealing focus (the Zoom-recipe fix, applied to this
 -- app alone). See code/lib/hypr-dialogs.sh for the rationale + word list.
@@ -123,6 +142,7 @@ o.window({ class = "$(lua_escape "$cls")" }, { float = false, tile = true })
 $(hypr_dialog_rule "${cls}" "^(?i)(${rx})")
 -- <<< mosquito-dialogs-$app <<<
 EOF
+  fi
   command -v hyprctl >/dev/null 2>&1 && hyprctl reload >/dev/null 2>&1 || true
   echo "window rules installed for $app"
 }
@@ -147,8 +167,9 @@ hypr_dialogs_status(){
 
 # CLI: install|remove|status <app> [class-regex]. Lets a setup script call it
 # without sourcing (which would run the whole file under `set -e` in its own
-# shell). `appwin <app> <class-regex>` installs the full tile+float deal.
+# shell). `appwin <app> <class-regex> [main-title-regex]` installs the full
+# tile+float deal; with a main-title regex only that window tiles.
 case "${1:-}" in
   install|remove|status) "hypr_dialogs_${1}" "${2:?app id required}" ;;
-  appwin)               hypr_app_windows_install "${2:?app id required}" "${3:?class regex required}" ;;
+  appwin)               hypr_app_windows_install "${2:?app id required}" "${3:?class regex required}" "${4:-}" ;;
 esac

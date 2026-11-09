@@ -141,8 +141,12 @@ setup_hypr(){
   [[ -f $HYPR_DIALOGS ]] || { warn "hypr-dialogs.sh missing — window rules skipped"; return 0; }
   # StartupWMClass=eu.betterbird.Betterbird (native Wayland) or the X11 class
   # betterbird — the same one-or-the-other dance as KeePassXC.
-  if bash "$HYPR_DIALOGS" appwin betterbird '^(?i)eu\.betterbird\.Betterbird$|^(?i)betterbird$'; then
-    ok "Hyprland rules applied (main tiled, popups at the pointer)"
+  # Only the main window tiles. Every window Betterbird opens (compose,
+  # message, address book) shares the class but is not the account window, so
+  # it floats. The account address in the title ("<folder> - user@host -
+  # Betterbird") is what tells the main window apart from the rest.
+  if bash "$HYPR_DIALOGS" appwin betterbird '^(?i)eu\.betterbird\.Betterbird$|^(?i)betterbird$' ' - [^ ]+@[^ ]+ - Betterbird$'; then
+    ok "Hyprland rules applied (main tiled, windows it opens float)"
   else
     warn "Hyprland rules could not be applied"
   fi

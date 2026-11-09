@@ -467,3 +467,39 @@ func TestBeginBackupKeepsZenSettingsIndependentOfInstallSelection(t *testing.T) 
 		}
 	}
 }
+
+// TestBackupResetToInstalledPicksPresentRows pins the R key: the backup
+// selection must go back to exactly the rows present on this machine, after a
+// confirmation, discarding whatever was ticked by hand.
+func TestBackupResetToInstalledPicksPresentRows(t *testing.T) {
+	// saveBackupSelection shells out to the real backend; keep it away from the
+	// user's own selection file.
+	t.Setenv("BACKUP_SEL_FILE", t.TempDir()+"/selection.json")
+	m := initialModel()
+	m.nav = []screen{scrMain, scrBackup, scrBackupOptions, scrBackupApps}
+	m.w, m.h = 120, 40
+	m.backupFolders = []FolderRec{{Folder: "apps", Label: "Apps"}}
+	m.backupItems = []SetupItemRec{
+		{Folder: "apps", Key: "reaper", Label: "reaper", Present: true},
+		{Folder: "apps", Key: "vlc", Label: "vlc", Present: false},
+	}
+	m.backupPresent = map[string]bool{setupValue("apps", "reaper"): true}
+	// Something the user ticked by hand that is NOT installed.
+	m.backupChecked = map[string]bool{setupValue("apps", "vlc"): true}
+	m.backupAppsPicker = m.rebuildBackupApps()
+
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("R")})
+	if m.top() != scrConfirm {
+		t.Fatalf("R should ask for confirmation, top is %v", m.top())
+	}
+	m, _ = m.update(tuikit.ConfirmResultMsg{Yes: true})
+	if m.top() != scrBackupApps {
+		t.Fatalf("after the confirm we should be back on the tree, top is %v", m.top())
+	}
+	if !m.backupChecked[setupValue("apps", "reaper")] {
+		t.Fatal("present row reaper is not ticked after the reset")
+	}
+	if m.backupChecked[setupValue("apps", "vlc")] {
+		t.Fatal("absent row vlc stayed ticked after the reset")
+	}
+}

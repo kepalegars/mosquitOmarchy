@@ -682,9 +682,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.backupOpen = map[string]bool{}
 		}
 		m.backupChecked = map[string]bool{}
+		m.backupPresent = map[string]bool{}
 		for _, it := range msg.items {
 			if it.Checked {
 				m.backupChecked[setupValue(it.Folder, it.Key)] = true
+			}
+			if it.Present {
+				m.backupPresent[setupValue(it.Folder, it.Key)] = true
 			}
 		}
 		m.backupOpts.HasKeep = msg.keepass
@@ -1292,6 +1296,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, nil
 		}
 		switch m.pendingAction {
+		case "backup-reset-present":
+			m.backupChecked = map[string]bool{}
+			for v := range m.backupPresent {
+				m.backupChecked[v] = true
+			}
+			saveBackupSelection(m.backupItems, m.backupChecked)
+			m.backupAppsPicker = m.rebuildBackupApps()
+			m.toast, _ = m.toast.SetOK(fmt.Sprintf("%d installed item(s) selected", len(m.backupChecked)))
+			return m, nil
 		case "add-shortcut":
 			return m.startWorking("Adding the shortcut", workingArgs("add-shortcut", nil)...)
 		case "restore-review":
@@ -2112,6 +2125,19 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					return m, nil
 				}
 			}
+		}
+		if km, ok := msg.(tea.KeyMsg); ok && !m.filterOpen && km.String() == "R" {
+			if len(m.backupPresent) == 0 {
+				m.toast, _ = m.toast.SetWarn("nothing installed to select")
+				return m, nil
+			}
+			m.pendingAction = "backup-reset-present"
+			m.pendingMsg = fmt.Sprintf("Reset the backup selection to the %d item(s) installed on this computer?\n\nEvery current tick is replaced by what is present.", len(m.backupPresent))
+			m.pendingNo = "Cancel"
+			m.pendingYes = "Reset selection"
+			m.push(scrConfirm)
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+			return m, nil
 		}
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
 			v := m.backupAppsPicker.SelectedValue()
@@ -5401,6 +5427,7 @@ func (m model) rebuildBackupApps() navPicker {
 	p := newNavPicker("", m.backupTreeItems()).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "reset to installed")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
 			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
 			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
@@ -5449,6 +5476,7 @@ func (m model) rebuildFilteredBackupApps() navPicker {
 	p := newNavPicker("", items).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "reset to installed")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
 		)

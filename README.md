@@ -134,6 +134,7 @@ The project's own layer: the manager itself, and the desktop-hardware modules.
 | `downloads` | Omarchy Downloads popup + `SUPER+ALT+D` binding | [installer](code/modules/Plugins/omarchy-downloads/setup-omarchy-downloads.sh) |
 | `taskq` | TaskQ deadline widget | [GitHub](https://github.com/sendaljpt/taskq) |
 | `process-killer` | Omarchy process-killer widget | [GitHub](https://github.com/BeresN/omarchy-process-killer) |
+| `better-pip` | Picture-in-picture windows as plain floating windows: aspect ratio kept, grabbable border, idle inhibitor while open | [installer](code/modules/Plugins/better-pip/setup-better-pip.sh) |
 | `mosquitomarchy` | This TUI (built from the Go sources in the repo), its dispatcher, menu entry, float rule and post-boot hook; first launch offers the optional `SUPER+ALT+M` shortcut | [README](code/main%20tui/README.md) |
 | `mosquitomarchy-update` | The update watchdog (scripts repo first, then Omarchy) | [README](code/main%20tui/update/README.md) |
 | `brightness` | Omarchy default brightness plus 0% screen-off and a 1% hold ramp | [notes](code/modules/Plugins/brightness/display-fixes.md) |
@@ -141,11 +142,9 @@ The project's own layer: the manager itself, and the desktop-hardware modules.
 | `mx-master` | MX Master thumb button → `SUPER`, smartshift off, scroll direction | [notes](code/modules/Plugins/mx-master/mx-master.md) |
 | `reboot-into-windows` | System menu entry: find the UEFI Windows Boot Manager, 15 s yes/no countdown, arm BootNext for the next boot only, reboot | [README](code/modules/Plugins/reboot-into-windows/README.md) |
 
-Folder layout, manual installs, and the modules that were set aside live in the
+Folder layout and the module that was removed live in the
 [Plugins README](code/modules/Plugins/README.md). In short: **Pocket** was removed
-(`omarchy plugin remove jrmmhm.pocket --yes` on a machine that still has it), and
-**Better PiP** is set aside — its installer stays in
-`code/modules/Plugins/better-pip/` and is run by hand, not from Setup.
+(`omarchy plugin remove jrmmhm.pocket --yes` on a machine that still has it).
 
 ### Themes
 

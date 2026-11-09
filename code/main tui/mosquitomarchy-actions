@@ -1053,9 +1053,18 @@ _setup_tree(){
         "$(json_str preinstalls)" "$(json_str "Preinstalls")" false)")
       for pp in "${pre_seen[@]}"; do
         pl="$(preinstall_label "$pp")"
-        items+=("preinstalls/$pp"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s}' \
-          "$(json_str preinstalls)" "$(json_str "preinstall:$pp")" \
-          "$(json_str "$pl")")")
+        # A stock preinstall that is already gone has nothing to remove. Keep
+        # the row (so the stock set is still visible) but grey it: selecting it
+        # used to reach a "Remove 1 preinstall?" confirm that frees 0 KiB.
+        if pkg_has "$pp"; then
+          items+=("preinstalls/$pp"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s}' \
+            "$(json_str preinstalls)" "$(json_str "preinstall:$pp")" \
+            "$(json_str "$pl")")")
+        else
+          items+=("preinstalls/$pp"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s,"disabled":true}' \
+            "$(json_str preinstalls)" "$(json_str "preinstall:$pp")" \
+            "$(json_str "$pl")" "$(json_str "not installed — nothing to remove")")")
+        fi
       done
     fi
   }
@@ -1628,14 +1637,37 @@ cmd_backup_options(){
   if command -v reaper >/dev/null 2>&1 || [[ -d "$HOME/.config/REAPER" ]]; then reaper=true; fi
   printf '{"opts":true,"keepass":%s,"zen":%s,"reaper":%s}\n' "$keepass" "$zen" "$reaper"
 
-  local line key folder chk k tree
+  local line key folder chk k tree raw_tree
   # The running manager is required to open this screen and restore a backup.
   # Fixes, tweaks, the agentic switch and preinstalls are appended below from
   # the Setup catalog: the Uninstall tree only carries what is applied/present,
   # and Backup content must offer the same names as Setup.
-  tree="$(mq_cached uninstall-tree 600 cmd_uninstall_tree \
-    | grep -vE '"folder":"(patches|fixes|preinstalls|tweaks|lame)"' \
+  #
+  # cmd_uninstall_tree caches itself on a fingerprint that includes the
+  # installed state, so it is called directly: the old outer 600 s cache kept
+  # serving rows for packages that had been removed in the meantime.
+  raw_tree="$(cmd_uninstall_tree)"
+  tree="$(grep -vE '"folder":"(patches|fixes|preinstalls|tweaks|lame)"' <<<"$raw_tree" \
     | sed '/"key":"mosquitomarchy"/d')"
+
+  # What is actually present on this machine: the Uninstall tree lists only
+  # installed modules, applied patches/fixes/tweaks and still-present
+  # preinstalls, so it IS the present set. Map its keys into this tree's key
+  # space (themes are reparented, fix:/tweak: prefixes dropped) so a row can be
+  # matched directly. This drives both the default selection and the R reset.
+  local -A PRESENT=()
+  local pline pfolder pkey
+  while IFS= read -r pline; do
+    [[ -n $pline && $pline == *'"key":'* ]] || continue
+    pfolder="$(sed -n 's/.*"folder":"\([^"]*\)".*/\1/p' <<<"$pline")"
+    pkey="$(sed -n 's/.*"key":"\([^"]*\)".*/\1/p' <<<"$pline")"
+    [[ $pfolder == defaults ]] && continue
+    [[ $pfolder == user ]] && pfolder=themes
+    [[ $pfolder == themes && $pkey == achraf67 ]] && pkey="theme:achraf67"
+    [[ $pkey == tweak:* ]] && pkey="${pkey#tweak:}"
+    [[ $pkey == fix:* ]] && pkey="${pkey#fix:}"
+    PRESENT["@$pfolder $pkey"]=1
+  done <<<"$raw_tree"
   if ! grep -q '"folder":"mosquito","key":' <<<"$tree" \
       && ! grep -q '"parent":"mosquito"' <<<"$tree"; then
     tree="$(sed '/"folder":"mosquito"/d' <<<"$tree")"
@@ -1670,6 +1702,7 @@ cmd_backup_options(){
     local _pid _plabel
     for _pid in "${_thirdparty[@]}"; do
       _plabel="$(plugin_label "$_pid")"
+      PRESENT["@plugins omarchyplugin:$_pid"]=1
       tree+=$'\n'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
         "$(json_str plugins)" "$(json_str "omarchyplugin:$_pid")" \
         "$(json_str "$_plabel")" \
@@ -1749,11 +1782,12 @@ cmd_backup_options(){
       continue
     fi
     folder="$BK_FOLDER"; key="$BK_KEY"
-    # Default content: everything is backed up except the opt-in odd jobs.
-    case $folder in
-      fixes|tweaks|lame|vms) chk=false ;;
-      *)                     chk=true ;;
-    esac
+    local present=false
+    [[ -n ${PRESENT["@$folder $key"]+x} ]] && present=true
+    # Default content: only what is on this machine. A backup should carry the
+    # installed set, not every module the catalog knows about — and it is what
+    # R restores the ticks to.
+    chk=$present
     if ((has_saved)); then
       # Only a folder that the saved selection actually knows about can
       # override its default. A folder added to this page later (preinstalls)
@@ -1769,7 +1803,7 @@ cmd_backup_options(){
         done
       fi
     fi
-    printf '%s\n' "${line%\}},\"checked\":$chk}"
+    printf '%s\n' "${line%\}},\"checked\":$chk,\"present\":$present}"
   done <<<"$tree"
 }
 
@@ -3288,7 +3322,7 @@ _space_pkgs(){
     install:zen|install:mosquitomarchy|install:pipewire-settings|\
     install:jamjamjam-plugin|install:remove-ai|\
     install:keybindings|install:battery|install:battery-management|\
-    install:mega-caffeine|install:brightness|\
+    install:better-pip|install:mega-caffeine|install:brightness|\
     install:achraf67|install:touchpad|install:levels-guard|\
     install:mosquitomarchy-update)
       return 3 ;;
@@ -3302,7 +3336,7 @@ _space_pkgs(){
     uninstall:zen|uninstall:mosquitomarchy|\
     uninstall:pipewire-settings|uninstall:jamjamjam-plugin|\
     uninstall:remove-ai|uninstall:keybindings|\
-    uninstall:battery|uninstall:battery-management|\
+    uninstall:battery|uninstall:battery-management|uninstall:better-pip|\
     uninstall:mega-caffeine|uninstall:brightness|uninstall:achraf67|\
     uninstall:touchpad|uninstall:mx-master|uninstall:mixbay|\
     uninstall:ableton|uninstall:ableton-move-manager|\
@@ -3438,8 +3472,12 @@ cmd_space(){
           install_pkgs+=("$pkg")
         fi
       else
-        key_known=1
+        # An uninstall only frees what is really installed. A package that is
+        # already gone frees nothing and must not be reported as a resolved
+        # "0 KiB" (a stale tree row can still name it): leaving key_known at 0
+        # makes the whole answer "unknown" instead of a false zero.
         if pkg_has "$pkg"; then
+          key_known=1
           if size=$(_pkg_kb Q "$pkg"); then freed_kb=$((freed_kb+size));
           else freed_unknown=true; fi
         fi
@@ -4129,12 +4167,16 @@ case "$sub" in
   fixes)                    cmd_fixes ;;
   tweaks)                   cmd_tweaks ;;
   setup)                    mq_cached setup-tree 600 cmd_setup ;;
-  uninstall-tree)           mq_cached uninstall-tree 600 cmd_uninstall_tree ;;
+  uninstall-tree)           ( set +e; cmd_uninstall_tree ) ;;
   preinstalls)              cmd_preinstalls ;;
   preinstalls-remove) mq_cache_clear; cmd_preinstalls_remove "$@" ;;
   backup-options)
-    _bp_sel_key="$(stat -c %y "$(backup_sel_file)" 2>/dev/null | tr -d ' :+-' || echo 0)"
-    mq_cached "backup-options-$_bp_sel_key" 600 cmd_backup_options ;;
+    # Not mq_cached: the default ticks are "present on this machine", so a
+    # 600 s cache would keep offering a package that was just removed. The
+    # expensive part (the Uninstall tree) has its own fingerprint cache.
+    # `set +e` in a subshell keeps this script's errexit out of the tree
+    # builders, which were written to run inside mq_cached's `if`.
+    ( set +e; cmd_backup_options ) ;;
   backup-opts)              cmd_backup_opts "${1:-get}" "${2:-}" ;;
   backup-sel)               cmd_backup_sel "${1:-get}" "${2:-}" ;;
   backups)                  mq_cached backups 10 cmd_backups ;;

@@ -19,9 +19,8 @@
 #   ./setup-better-pip.sh            # install + enable (idempotent)
 #   ./setup-better-pip.sh --remove   # disable + delete the plugin
 #
-# SET ASIDE — this is NOT a mosquitOmarchy Setup module (no row, no category,
-# no backup entry). It is kept here as a standalone installer for whoever wants
-# it, and is run by hand: bash code/modules/Plugins/better-pip/setup-better-pip.sh
+# This is a normal mosquitOmarchy Setup module (row, category, backup entry and
+# update zone). The orchestrator calls it through run_better_pip.
 # =============================================================================
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 set -euo pipefail

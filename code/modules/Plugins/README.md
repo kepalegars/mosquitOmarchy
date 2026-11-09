@@ -14,26 +14,22 @@ code/modules/Plugins/reboot-into-windows/setup-reboot-into-windows.sh
 Most installers also accept `--status` (read-only) and `--remove`/`--uninstall`.
 They are idempotent: re-running is safe.
 
-## Set aside
+## Better PiP
 
-Two former Setup rows are no longer modules:
+**Better PiP** (`mosquito.better-pip`) is a normal module again: Setup row,
+backup selection and update zone all include it. It is a fork of
+`ricardo-ti.pip-solver`; installing it retires the upstream plugin.
 
-- **Better PiP** (`mosquito.better-pip`) is kept as a standalone installer in
-  [`better-pip/setup-better-pip.sh`](better-pip/setup-better-pip.sh). It is not
-  offered in Setup, not in the backup selection and not updated by the module
-  update zone. Install or remove it by hand:
+```bash
+bash code/modules/Plugins/better-pip/setup-better-pip.sh
+bash code/modules/Plugins/better-pip/setup-better-pip.sh --remove
+```
 
-  ```bash
-  bash code/modules/Plugins/better-pip/setup-better-pip.sh
-  bash code/modules/Plugins/better-pip/setup-better-pip.sh --remove
-  ```
+## Removed
 
-  It is a fork of `ricardo-ti.pip-solver`; installing it retires the upstream
-  plugin.
+**Pocket** (`jrmmhm.pocket`) was removed from the project. A machine that still
+has the plugin can remove it with:
 
-- **Pocket** (`jrmmhm.pocket`) was removed from the project. A machine that
-  still has the plugin can remove it with:
-
-  ```bash
-  omarchy plugin remove jrmmhm.pocket --yes
-  ```
+```bash
+omarchy plugin remove jrmmhm.pocket --yes
+```

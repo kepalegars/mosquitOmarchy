@@ -315,6 +315,9 @@ type SetupItemRec struct {
 	// Disabled greys the row and refuses Enter. The backend uses it to keep an
 	// option visible in its "nothing left to do" state instead of dropping it.
 	Disabled bool `json:"disabled"`
+	// Present marks a row that exists on this machine. The backup tree defaults
+	// its ticks to these rows and R resets the ticks to them.
+	Present bool `json:"present"`
 }
 
 // backupOptionsMsg carries the backup content tree + environment facts.

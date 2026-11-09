@@ -540,6 +540,7 @@ type model struct {
 	backupFolders []FolderRec
 	backupItems   []SetupItemRec
 	backupChecked map[string]bool
+	backupPresent map[string]bool
 	backupOpen    map[string]bool
 	backupOpts    BackupOpts
 	backupSelFile string
@@ -630,6 +631,7 @@ func initialModel() model {
 		statusOpen:       map[string]bool{},
 		setupByValue:     map[string]SetupItemRec{},
 		backupChecked:    map[string]bool{},
+		backupPresent:    map[string]bool{},
 		backupOpen:       map[string]bool{},
 		backupOpts:       loadBackupOpts(),
 		cleanupOpts:      defaultCleanupOpts(),
