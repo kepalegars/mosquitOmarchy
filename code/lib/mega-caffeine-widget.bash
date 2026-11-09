@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Shared Mega Caffeine bar widget for mega-caffeine and live-mode.
+# Mega Caffeine's own bar widget.
 #
-# Omarchy's indicators widget is first-party and cannot be extended by a
-# third-party plugin, so the coffee icon is a widget of its own. The native
-# `omarchy.indicators` stays in the bar; this helper keeps it next to the
-# coffee widget and removes its own StayAwake entry, so there is exactly one
-# stay-awake icon and it knows about coffee mode / live mode.
+# Omarchy's indicators widget is first-party and cannot be extended, so the
+# coffee icon is a widget of its own. The native `omarchy.indicators` stays in
+# the bar, enabled (the retired clone used to switch it off); this helper keeps
+# it next to the coffee widget, removes its own StayAwake entry, and the widget
+# reads the live-mode flag too, so a Live Mode session shows without live mode
+# installing anything.
 #
 # Usage: ensure_mega_caffeine_widget HOME SOURCE_DIR
 #   SOURCE_DIR contains BarWidget.qml, Confirm.qml and manifest.json.
@@ -84,6 +85,20 @@ if widget_at is None:
     layout[section].append({"id": widget_id})
     widget_at = (section, len(layout[section]) - 1)
 
+# The retired omarchy.indicators clone switched the native widget off and
+# registered itself as a clone source. Both are stale now: the native widget
+# belongs in the bar, and this plugin is a normal widget, not a clone.
+if isinstance(data.get("disabledPlugins"), list):
+    data["disabledPlugins"] = [entry for entry in data["disabledPlugins"]
+                               if entry != native_id]
+    if not data["disabledPlugins"]:
+        del data["disabledPlugins"]
+if isinstance(data.get("cloneSourceRestores"), list):
+    data["cloneSourceRestores"] = [entry for entry in data["cloneSourceRestores"]
+                                   if entry != widget_id]
+    if not data["cloneSourceRestores"]:
+        del data["cloneSourceRestores"]
+
 native_at = find(native_id)
 native_entry = {"id": native_id}
 if native_at is not None:
@@ -128,18 +143,23 @@ ensure_mega_caffeine_widget() {
 
   # Discovery first: enable silently fails for a plugin the shell has not seen.
   omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
-  omarchy plugin enable "$MEGA_CAFFEINE_PLUGIN_ID" >/dev/null 2>&1 || true
+  # The retired indicators clone disabled the native widget; switch it back on
+  # so the bar keeps its Night light / DND / Reminder icons.
+  omarchy plugin enable "$NATIVE_INDICATORS_ID" >/dev/null 2>&1 || true
+  # put, not enable: `enable` re-adds a widget it cannot find in its snapshot
+  # and can drop it to centerEnd, moving one the user already placed.
+  omarchy-shell shell putBarWidget "$MEGA_CAFFEINE_PLUGIN_ID" '{}' >/dev/null 2>&1 || true
 
   _mega_caffeine_layout "$shell_json" || return 1
   echo "  ✓ Mega Caffeine bar widget installed (native indicators kept)"
 }
 
-# Called by a module uninstall: drop the shared widget only when the other
-# module is gone too, then give StayAwake back to omarchy.indicators.
-remove_mega_caffeine_widget_if_unused() {
-  local home="$1" other="$2"
+# Called by the module uninstall: drop the widget and give StayAwake back to
+# omarchy.indicators. Live mode does not call this — it never installed the
+# widget; without it, live mode simply has no coffee icon.
+remove_mega_caffeine_widget() {
+  local home="$1"
   local shell_json="$home/.config/omarchy/shell.json"
-  [[ -e $other ]] && return 0
 
   omarchy plugin remove "$MEGA_CAFFEINE_PLUGIN_ID" --yes >/dev/null 2>&1 || {
     rm -rf "$home/.config/omarchy/plugins/$MEGA_CAFFEINE_PLUGIN_ID"

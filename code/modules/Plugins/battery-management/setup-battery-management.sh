@@ -212,8 +212,8 @@ ensure_battery_plugin() {
 #                                            of the same plugin (no extra entry)
 #
 # The coffee bar widget the bar uses is NOT managed here: it belongs to
-# mega-caffeine and live-mode (it replaces their stay-awake icon). Removing the
-# battery module must not take that widget away.
+# mega-caffeine (it replaces the native stay-awake icon). Removing the battery
+# module must not take that widget away.
 # -----------------------------------------------------------------------------
 PLUG_SRC="$SCRIPT_DIR/omarchy-plugins"
 PLUG_DIR="$REAL_HOME/.config/omarchy/plugins"

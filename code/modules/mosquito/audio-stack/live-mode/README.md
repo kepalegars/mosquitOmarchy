@@ -12,12 +12,12 @@ live-mode status
 live-mode manage   # the TUI
 ```
 
-The installer also ensures the `mosquito.mega-caffeine` coffee bar widget, the
-same one mega-caffeine installs: while a session runs, the bar's stay-awake
-icon blinks red. The module's prompts live inside `mosquito.livemode`
-itself (the red frame and the Yes/No card share that one overlay), so there is
-no separate confirm plugin. Uninstalling live mode leaves the widget when
-mega-caffeine is still installed.
+The bar's stay-awake icon is owned by `mosquito.mega-caffeine`, which reads the
+live-mode state files: while a session runs, the icon blinks red. Live mode
+does not install that widget — without mega-caffeine it works the same, only
+the coffee icon is missing. The module's own prompts (the red frame and the
+Yes/No card) live inside `mosquito.livemode`, so there is no separate confirm
+plugin.
 
 ## Settings
 

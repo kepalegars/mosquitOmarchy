@@ -1159,8 +1159,6 @@ FIXES=(
   "ableton-wine-scroll:Ableton/Wine: stop the patched Wine's optional pointer features (XInput2 grab) from freezing trackpad scrolling in other apps while Live is open (persistent master switch in the prefix)"
   "1px-seam:Hair-thin transparent 1px line between the Omarchy bar and a window in borderless/no-gaps tiling — switch the blur to its legacy path (helps when blur is enabled)"
   "ableton-fullscreen:Ableton Live Full Screen is shifted/broken (content sits off where you click) — launches Live with WINE_WIN32_FULLSCREEN_CLASS=off (documented ableton-linux cure; drag-the-window alternative)"
-  "omarchy-bar:The Omarchy toolbar disappeared (toggled off / slid off-screen) — clear the bar-off toggle and re-sync the shell (also repairs the centre anchor below)"
-  "bar-center-anchor:The bar's centre modules shuffle and the clock slides sideways when the hidden indicators (night light, stay-awake, DND…) are revealed — shell.json's bar.centerAnchor names a widget that is not in the centre layout, so the section reflows as a whole; point it back at a real centre module (omarchy.clock, the default)"
   "bluetooth:Fix Bluetooth stutter/instability — MX Master freezing every second (BLE params Latency=0 / 6-7 ms + USB autosuspend off) and audio glitches (stop BlueZ AVDTP polling of paired speakers)"
   "hyprland-autofocus:Disable every automatic Hyprland focus change — pointer follow, client activation, monitor move and new-window focus; only a click or a bind changes focus"
 )
@@ -1198,7 +1196,6 @@ fix_category(){
     tui-theme)        echo "Appearance" ;;
     terminal-padding) echo "Appearance" ;;
     omarchy-menu)     echo "Omarchy" ;;
-    omarchy-bar)      echo "Omarchy" ;;
     hyprland-crash)   echo "Recovery" ;;
     ableton-wine-scroll) echo "Windows & input" ;;
     ableton-fullscreen) echo "Windows & input" ;;
@@ -1207,7 +1204,6 @@ fix_category(){
     wine-theme)         echo "Appearance" ;;
     colors-unifier)     echo "Appearance" ;;
     1px-seam)           echo "Appearance" ;;
-    bar-center-anchor)  echo "Omarchy" ;;
     bluetooth)          echo "Hardware" ;;
     amdgpu-compute-timeout) echo "Hardware" ;;
     hyprland-autofocus) echo "Windows & input" ;;
@@ -1223,8 +1219,6 @@ run_fix(){ # single fix by id
     ableton-wine-scroll) bash "$SCRIPT_DIR/code/modules/Fixes/fix-wine-scroll.sh" ;;
     ableton-fullscreen) bash "$SCRIPT_DIR/code/modules/Fixes/fix-ableton-fullscreen.sh" ;;
     1px-seam) bash "$SCRIPT_DIR/code/modules/Fixes/fix-1px-seam.sh" ;;
-    omarchy-bar) bash "$SCRIPT_DIR/code/modules/Fixes/fix-omarchy-bar.sh" ;;
-    bar-center-anchor) bash "$SCRIPT_DIR/code/modules/Fixes/fix-bar-center-anchor.sh" ;;
     bluetooth) bash "$SCRIPT_DIR/code/modules/Fixes/fix-bluetooth.sh" ;;
     hyprland-autofocus) bash "$SCRIPT_DIR/code/modules/Fixes/fix-hyprland-autofocus.sh" ;;
     *) err "Unknown fix: $id"; return 1 ;;
@@ -1262,9 +1256,9 @@ run_tweak_remove(){ # single tweak removal by id
 }
 
 # Only the fixes that write system files need an elevation prompt. Priming
-# sudo unconditionally made a user-level fix (bar-center-anchor, omarchy-menu,
-# 1px-seam…) wait up to 3 minutes on an askpass dialog nobody asked for — the
-# TUI looked like it had done nothing and wrote no log.
+# sudo unconditionally made a user-level fix (omarchy-menu, 1px-seam…) wait up
+# to 3 minutes on an askpass dialog nobody asked for — the TUI looked like it
+# had done nothing and wrote no log.
 fixes_need_sudo(){
   local id
   for id in "${FIXES_SELECTED[@]:-}"; do
@@ -1399,7 +1393,6 @@ module_of_path(){
     code/modules/Plugins/mx-master/*)          echo mx-master ;;
     code/modules/Themes/*)                     echo achraf67 ;;
     code/modules/Fixes/fix-ableton-fullscreen.sh) echo ableton-fullscreen ;;
-    code/modules/Fixes/fix-bar-center-anchor.sh)  echo bar-center-anchor ;;
     code/modules/Fixes/fix-bluetooth.sh)          echo bluetooth ;;
     code/modules/mosquito/mega-caffeine/*)  echo mega-caffeine ;;
     code/modules/mosquito/move-manager/*)   echo ableton-move-manager ;;

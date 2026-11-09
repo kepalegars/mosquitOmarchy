@@ -17,7 +17,6 @@
 #   bash setup-live-mode.sh --status    (read-only, no sudo)
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/marker-strip.bash"  # marker_strip: safe managed-block removal
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/elevate.bash"  # mq_sudo: themed prompt, one question per run
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/mega-caffeine-widget.bash"  # shared coffee widget (also installed by mega-caffeine)
 set -euo pipefail
 [[ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/go-build-env.bash" ]] && source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/go-build-env.bash"  # contained Go caches (no ~/go)
 
@@ -257,17 +256,6 @@ remove_plugin() {
   rm -rf "$PLUG_INST"
   omarchy plugin disable mosquito.livemode >/dev/null 2>&1 || true
   ok "Plugin mosquito.livemode removed"
-}
-
-# Same widget mega-caffeine installs: the red coffee icon while live mode runs.
-# Whichever module runs first creates it; the other just refreshes it.
-install_indicators() {
-  ensure_mega_caffeine_widget "$REAL_HOME" "$SCRIPT_DIR/../../mega-caffeine/omarchy-plugins/mosquito.mega-caffeine" \
-    || warn "Could not install the Mega Caffeine bar widget — live mode will not tint the coffee icon."
-}
-
-remove_indicators() {
-  remove_mega_caffeine_widget_if_unused "$REAL_HOME" "$BIN_DIR/mega-caffeine"
 }
 
 # ---------------------------------------------------------------------------
@@ -551,12 +539,6 @@ status() {
   else
     echo "  ✗ not installed"
   fi
-  echo "── Coffee bar widget (mosquito.mega-caffeine) ────────────"
-  if [[ -d "$PLUG_DIR/mosquito.mega-caffeine" ]]; then
-    echo "  ✓ $PLUG_DIR/mosquito.mega-caffeine"
-  else
-    echo "  ✗ not installed (mega-caffeine installs the same widget)"
-  fi
   echo "── Menu entries ──────────────────────────────────────────"
   # Two different rows: the TOGGLE under Trigger > Toggle, and the manager TUI
   # under Setup > mosquito (that one is declared by mosquitomarchy-setup.sh, so
@@ -594,7 +576,6 @@ if [[ $REMOVE == true ]]; then
   remove_sudoers || true
   remove_menu || true
   remove_plugin || true
-  remove_indicators || true
   ok "Live mode removed (the ~/.local/bin binaries were left in place)."
   exit 0
 fi
@@ -609,7 +590,6 @@ if [[ $YES -eq 1 ]]; then
   install_routing_tool || true
   install_sudoers || true
   install_plugin
-  install_indicators
   install_menu
   install_hypr_rule
   refresh_hypr
@@ -634,7 +614,6 @@ select opt in "Install live mode" "Uninstall live mode" "Status" "Quit"; do
       install_routing_tool || true
       install_sudoers || true
       install_plugin || true
-      install_indicators || true
       install_menu || true
       install_hypr_rule || true
       refresh_hypr
@@ -646,8 +625,7 @@ select opt in "Install live mode" "Uninstall live mode" "Status" "Quit"; do
       remove_sudoers || true
       remove_menu || true
       remove_plugin || true
-      remove_indicators || true
-          remove_hypr_rule || true
+      remove_hypr_rule || true
       refresh_hypr
       echo
       ok "Uninstall finished. Choose again or quit."

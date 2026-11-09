@@ -16,17 +16,18 @@ Mega caffeine does not depend on battery-management.
 
 ## Bar indicator
 
-The native `omarchy.indicators` widget stays in the bar untouched; the installer
-only removes its own `StayAwake` entry and places it next to
-`mosquito.mega-caffeine`, a small bar widget of ours that owns the coffee mug.
-The widget reads the same state files as the shell, so it also works when only
-live mode is installed, and it shows only while stay-awake is on: normal colour
-for a plain stay-awake session, red while Mega caffeine runs, blinking red
-during Live Mode. Clicking it toggles stay-awake, as the native indicator did.
-Live mode installs the same widget: whichever module runs first creates it, and
-uninstalling one leaves it in place while the other is still installed
-(`omarchy plugin remove mosquito.mega-caffeine --yes` gives `StayAwake` back to
-the native indicators).
+The native `omarchy.indicators` widget stays in the bar; the installer also
+re-enables it (the old clone used to switch it off), removes its own `StayAwake`
+entry and places it next to `mosquito.mega-caffeine`, a small bar widget of ours
+that owns the coffee mug.
+The widget reads the same state files as the shell, so a Live Mode session shows
+even though live mode installs nothing here, and it shows only while stay-awake
+is on: normal colour for a plain stay-awake session, red while Mega caffeine
+runs, blinking red during Live Mode. Clicking it toggles stay-awake, as the
+native indicator did.
+`omarchy plugin remove mosquito.mega-caffeine --yes` gives `StayAwake` back to
+the native indicators (the other mosquito overlay then restores the before
+state).
 
 ```bash
 code/modules/mosquito/mega-caffeine/setup-mega-caffeine.sh          # install (idempotent)

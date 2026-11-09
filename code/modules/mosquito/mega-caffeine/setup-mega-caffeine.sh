@@ -99,9 +99,9 @@ if [[ $REMOVE == true ]]; then
   else
     ok "No Mega caffeine menu entry, nothing to remove."
   fi
-  # The coffee widget is shared with live-mode: only drop it when live mode is
-  # not installed, so uninstalling one module never breaks the other.
-  remove_mega_caffeine_widget_if_unused "$REAL_HOME" "$REAL_HOME/.config/omarchy/plugins/mosquito.livemode"
+  # The widget belongs to this module: live mode reads its state files but
+  # never installs it, so uninstalling Mega caffeine removes it.
+  remove_mega_caffeine_widget "$REAL_HOME"
   exit 0
 fi
 
@@ -223,8 +223,8 @@ install_mc_menu() {
 migrate_mc_markers
 install_mc_menu
 
-# The bar's stay-awake icon turns red while coffee mode runs. Installed here,
-# and by live-mode too: whichever runs first creates the shared widget.
+# The bar's stay-awake icon turns red while coffee mode runs. Live mode does
+# not install this widget; it just reads the live-mode flag.
 ensure_mega_caffeine_widget "$REAL_HOME" "$SCRIPT_DIR/omarchy-plugins/mosquito.mega-caffeine" \
   || warn "Could not install the Mega Caffeine bar widget — the coffee icon will not appear."
 

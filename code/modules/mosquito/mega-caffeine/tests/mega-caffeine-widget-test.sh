@@ -12,7 +12,9 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 mkdir -p "$tmp/home/.config/omarchy" "$tmp/bin"
-printf '{"bar":{"layout":{"centerBegin":[],"right":[]}}}\n' >"$tmp/home/.config/omarchy/shell.json"
+# A machine coming from the retired indicators clone: the native widget is
+# switched off and the plugin still carries clone bookkeeping.
+printf '{"bar":{"layout":{"centerBegin":[],"right":[]}},"disabledPlugins":["omarchy.indicators","omarchy.battery"],"cloneSourceRestores":["mosquito.mega-caffeine","mosquito.battery"]}\n' >"$tmp/home/.config/omarchy/shell.json"
 # The helper must never drive the caller's live shell here. A failing
 # `omarchy plugin remove` exercises the rm -rf fallback.
 printf '#!/bin/sh\nexit 1\n' >"$tmp/bin/omarchy"
@@ -43,6 +45,12 @@ layout="$tmp/home/.config/omarchy/shell.json"
   || fail "native StayAwake not removed from the default items"
 [[ "$(jq -r '.bar.layout.centerBegin[1] | has("alwaysShow")' "$layout")" == "false" ]] \
   || fail "old clone alwaysShow left on the widget"
+# The native widget is re-enabled and the stale clone bookkeeping is gone
+# (other plugins' entries are left alone).
+[[ "$(jq -r '.disabledPlugins | join(",")' "$layout")" == "omarchy.battery" ]] \
+  || fail "native indicators left disabled"
+[[ "$(jq -r '.cloneSourceRestores | join(",")' "$layout")" == "mosquito.battery" ]] \
+  || fail "stale clone source restore left behind"
 
 # 2. Idempotent: a second run leaves shell.json byte for byte alone.
 before="$(sha256sum "$layout")"
@@ -60,14 +68,10 @@ ensure_mega_caffeine_widget "$tmp/home" "$src" >/dev/null
 [[ "$(jq -r '.bar.layout.centerBegin[0].alwaysShow' "$layout")" == "true" ]] || fail "native settings not preserved"
 [[ "$(jq -r '.bar.layout.centerBegin[1] | has("items")' "$layout")" == "false" ]] || fail "old clone items left on the widget"
 
-# 4. Removal while live-mode is still installed keeps the shared widget.
-touch "$tmp/livemode"
-remove_mega_caffeine_widget_if_unused "$tmp/home" "$tmp/livemode" >/dev/null
-[[ -d $plugin ]] || fail "widget removed while live mode still needs it"
-
-# 5. Removal with no other module drops the widget and gives StayAwake back to
-#    the native indicators by dropping the inline items key.
-remove_mega_caffeine_widget_if_unused "$tmp/home" "$tmp/nothing" >/dev/null
+# 4. Removal drops the widget and gives StayAwake back to the native
+#    indicators by dropping the inline items key. It does not care whether
+#    live mode is installed: it never installed the widget.
+remove_mega_caffeine_widget "$tmp/home" >/dev/null
 [[ -d $plugin ]] && fail "widget left behind"
 [[ "$(jq -r '.bar.layout.centerBegin[0] | has("items")' "$layout")" == "false" ]] \
   || fail "native StayAwake not restored"
