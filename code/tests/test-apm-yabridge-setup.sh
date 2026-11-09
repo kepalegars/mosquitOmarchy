@@ -136,6 +136,20 @@ grep -q '^Analog_Lab_V\.vst3=.*,' "$HOME/.config/REAPER/reaper-vstplugins64.ini"
   echo "fail: valid cache line removed with the failures" >&2; exit 1; }
 [[ -f "$reaper_ini.mosquito.bak" ]] || { echo "fail: no REAPER backup written" >&2; exit 1; }
 
+# Running on an already-clean reaper.ini must still purge the failure-only
+# cache lines: the earlier repair rewrote the paths and exited before the
+# purge, so the stale failures were never retried.
+cat > "$HOME/.config/REAPER/reaper-vstplugins64.ini" <<'EOF'
+[vstcache]
+Addictive_Drums_2.vst3=80235537CE6DDD01
+Analog_Lab_V.vst3=00069EB649E7DB01,1097621878,Analog Lab V (Arturia)!!!VSTi
+EOF
+apm_fix_native_daw_paths
+grep -q '^Addictive_Drums_2\.vst3=[0-9A-F]*$' "$HOME/.config/REAPER/reaper-vstplugins64.ini" && {
+  echo "fail: failure-only cache line kept when reaper.ini needed no change" >&2; exit 1; }
+grep -q '^Analog_Lab_V\.vst3=.*,' "$HOME/.config/REAPER/reaper-vstplugins64.ini" || {
+  echo "fail: valid cache line removed on the no-change path" >&2; exit 1; }
+
 # Wine's builtin msvcp140_atomic_wait.dll exports the __std_atomic_* names and
 # then aborts when one is called. Checking only the exports called it a real
 # runtime, so the fix reported "already present" and installed nothing -- and

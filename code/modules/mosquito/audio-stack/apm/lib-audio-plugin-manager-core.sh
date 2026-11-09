@@ -4392,13 +4392,14 @@ for line in lines:
     changed = changed or new != line
     out.append(new)
 
-if not changed:
-    raise SystemExit(0)
-
-# Keep the state the user actually had before this repair.
-shutil.copy2(ini, src)
-with open(ini, "w", encoding="utf-8") as f:
-    f.write("\n".join(out) + "\n")
+# The cache purge below must run even when `reaper.ini` is already clean: an
+# earlier run that fixed the paths left the failure-only cache lines behind,
+# and those still shadow the chainloaders.
+if changed:
+    # Keep the state the user actually had before this repair.
+    shutil.copy2(ini, src)
+    with open(ini, "w", encoding="utf-8") as f:
+        f.write("\n".join(out) + "\n")
 
 # A cached failure has only a hash after "=", no plugin name/unique-id fields.
 # Remove those so the next start retries the (now correct) chainloader.
