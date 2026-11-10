@@ -482,11 +482,13 @@ otherwise. `--prune` would delete them and break those suites, so APM does not u
 actual format line in `yabridgectl status`: `Arturia/Analog Lab V.dll :: VST2, 64-bit, synced`
 means the VST2 is fine.
 
-**Desktop shortcuts left by an installer** — Wine maps its Desktop to `$HOME` here, so an
-installer with "create a desktop shortcut" checked leaves e.g. `~/Analog Lab V.lnk` and
-`~/Analog Lab V.desktop`. APM snapshots the desktop before/after an install and removes only the
-`.lnk`/`.desktop` files that install created. AAX copies are likewise deleted after every
-install/uninstall (Pro Tools is not installed).
+**Desktop or Start Menu shortcuts left by an installer** — Wine maps its Desktop to `$HOME`
+here, so an installer with "create a desktop shortcut" checked leaves e.g. `~/Analog Lab V.lnk`
+and `~/Analog Lab V.desktop`. Windows installers also drop Start Menu `.lnk` files (per-user and
+all-users `ProgramData`): "Uninstall X", manuals, the standalone app. APM snapshots the desktop
+and the Start Menu before/after an install and removes only the `.lnk`/`.desktop`/`.url` files
+that install created — plus the vendor Start Menu folder it emptied. AAX copies are likewise deleted
+after every install/uninstall (Pro Tools is not installed).
 
 **A raw `X::` drive link is missing after cleanup** — expected. Wine recreates `X::` for every
 block device on each start; they show as blank drive letters in some installers and cannot be

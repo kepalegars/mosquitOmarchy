@@ -1319,29 +1319,55 @@ apm_vendor_symlink_roots() {
   done | sort -u
 }
 
-# Installers write .lnk / .desktop shortcuts into the Wine user's Desktop,
-# which Wine maps to ~/ here. The manager owns its own menu entries and does
-# not need a second, unmanaged launcher per plugin on the desktop. Snapshot
-# before/after so only files THIS install created are removed.
-apm_desktop_shortcuts_snapshot() {
+# Installers write .lnk / .desktop shortcuts into the Wine user's Desktop
+# (which Wine maps to ~/ here) and into the Start Menu (all-users ProgramData
+# and per-user AppData — "Uninstall X.lnk", "Manual.lnk", the standalone app).
+# The manager owns its own menu entries and does not need a second, unmanaged
+# launcher per plugin. Snapshot before/after so only files THIS install created
+# are removed.
+apm_shortcuts_snapshot() {
   local prefix="$1" d
-  for d in "$prefix"/drive_c/users/*/Desktop "$HOME/Desktop"; do
-    [[ -d $d ]] || continue
-    find -L "$d" -maxdepth 1 -type f \
-      \( -iname '*.lnk' -o -iname '*.desktop' \) -printf '%p\n' 2>/dev/null
-  done | sort -u
+  {
+    for d in "$prefix"/drive_c/users/*/Desktop "$HOME/Desktop"; do
+      [[ -d $d ]] || continue
+      find -L "$d" -maxdepth 1 -type f \
+        \( -iname '*.lnk' -o -iname '*.desktop' -o -iname '*.url' \) -printf '%p\n' 2>/dev/null
+    done
+    # Start Menu shortcuts sit in vendor subfolders (Programs/<Vendor>/), hence
+    # the recursive find (no maxdepth).
+    for d in "$prefix"/drive_c/users/*/AppData/Roaming/Microsoft/Windows/'Start Menu' \
+             "$prefix"/drive_c/ProgramData/Microsoft/Windows/'Start Menu'; do
+      [[ -d $d ]] || continue
+      find -L "$d" -type f \
+        \( -iname '*.lnk' -o -iname '*.desktop' -o -iname '*.url' \) -printf '%p\n' 2>/dev/null
+    done
+    # ONE sort for the whole output: comm in the removal needs a globally
+    # sorted list, and two per-loop sorts made it see pre-existing files as
+    # new (and delete them).
+  } | sort -u
 }
 
-apm_remove_new_desktop_shortcuts() {
-  local before="$1" after="$2" f
+# $1 = prefix, $2/$3 = before/after snapshots (strings, not temp files —
+# nothing to clean up on the error paths that way).
+apm_remove_new_shortcuts() {
+  local prefix="$1" before="$2" after="$3" f d
   while IFS= read -r f; do
     [[ -n $f ]] || continue
     if rm -f -- "$f"; then
-      ok "installer desktop shortcut removed: $(basename "$f")"
+      ok "installer shortcut removed: $(basename "$f")"
     else
-      warn "could not remove installer desktop shortcut: $f"
+      warn "could not remove installer shortcut: $f"
     fi
-  done < <(comm -13 "$before" "$after" 2>/dev/null)
+  done < <(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") 2>/dev/null)
+  # A vendor Start Menu folder emptied by the removal is litter, not a menu.
+  # Real directories only (no -L: a symlinked/shared folder is never touched),
+  # and -mindepth 2 so the standard Start Menu/Programs skeleton survives even
+  # when a sweep empties it.
+  for d in "$prefix"/drive_c/users/*/AppData/Roaming/Microsoft/Windows/'Start Menu' \
+           "$prefix"/drive_c/ProgramData/Microsoft/Windows/'Start Menu'; do
+    [[ -d $d ]] || continue
+    find "$d" -mindepth 2 -type d -empty -delete 2>/dev/null || true
+  done
 }
 
 apm_vendor_data_known() {
@@ -1945,9 +1971,12 @@ apm_wine() {
 # The sweep is a plain loop on the same principle as adopt-plugins: it is
 # non-destructive, idempotent, and a plugin already registered is skipped.
 watch_for_plugins(){
-  local exe="$1" prefix="$2" _p_secs=2 pid before after
+  local exe="$1" prefix="$2" _p_secs=2 pid before after shortcuts_before shortcuts_after
   # Snapshot what is already tracked, so what the manager ADDS can be named.
   before="$(plugin_group_rows 2>/dev/null | cut -f9 | sort -u)"
+  # Same shortcut snapshot as install_plugin: installing from inside a manager
+  # window can drop Desktop / Start Menu .lnk too.
+  shortcuts_before="$(apm_shortcuts_snapshot "$prefix" 2>/dev/null || true)"
   msg "Open it, install what you want, then close it. Nothing is touched before you close it."
   WINEPREFIX="$prefix" "$(apm_wine)" "$exe" &
   pid=$!
@@ -1981,6 +2010,8 @@ watch_for_plugins(){
   msg "manager closed — registering what it installed"
   adopt_plugins_silent "$prefix" || true
   ok "registered $added plugin(s) from the manager"
+  shortcuts_after="$(apm_shortcuts_snapshot "$prefix" 2>/dev/null || true)"
+  apm_remove_new_shortcuts "$prefix" "$shortcuts_before" "$shortcuts_after"
   return 0
 }
 
@@ -2133,6 +2164,12 @@ install_manager_app(){
     ensure_mfc42 "$prefix"
   fi
 
+  # Same before/after shortcut snapshot as install_plugin: a manager installer
+  # writes Desktop / Start Menu .lnk of its own (and so may the plugins the
+  # user installs from its window before closing it).
+  local shortcuts_before shortcuts_after
+  shortcuts_before="$(apm_shortcuts_snapshot "$prefix" 2>/dev/null || true)"
+
   msg "Wait for it to open, install what you want, then close it. Nothing is touched before that."
   # Wait for the WINDOW, not for the exit code.
   #
@@ -2174,6 +2211,8 @@ install_manager_app(){
     fi
   done
   msg "the installer closed — looking at what it brought."
+  shortcuts_after="$(apm_shortcuts_snapshot "$prefix" 2>/dev/null || true)"
+  apm_remove_new_shortcuts "$prefix" "$shortcuts_before" "$shortcuts_after"
   # A manager installs its plugins from INSIDE its own window: there is no
   # installer payload to diff, and nothing was watching the folder. Whatever it
   # wrote is untracked at this point, so register it now that it is closed (the
@@ -2307,15 +2346,14 @@ install_plugin() {
   # whole prefix) before the installer runs, then diff the sets after. Using
   # `find -newer <stamp>` missed installers that write files with an OLD mtime
   # (archive timestamps) — exactly the Serum 2 "No new VST file detected" case.
-  local before after before_pfx after_pfx before_state="" vendor_before vendor_after desktop_before desktop_after
+  local before after before_pfx after_pfx before_state="" vendor_before vendor_after shortcuts_before shortcuts_after
   before="$(mktemp)"; after="$(mktemp)"
   before_pfx="$(mktemp)"; after_pfx="$(mktemp)"
   vendor_before="$(mktemp)"; vendor_after="$(mktemp)"
-  desktop_before="$(mktemp)"; desktop_after="$(mktemp)"
   list_shared_plugin_files > "$before" 2>/dev/null || true
   list_prefix_plugin_files "$wine_prefix" > "$before_pfx" 2>/dev/null || true
   apm_vendor_roots_snapshot "$wine_prefix" > "$vendor_before" 2>/dev/null || true
-  apm_desktop_shortcuts_snapshot "$wine_prefix" > "$desktop_before" 2>/dev/null || true
+  shortcuts_before="$(apm_shortcuts_snapshot "$wine_prefix" 2>/dev/null || true)"
 
   # ── PRE-INSTALLATION PATCH (automatic, no prompt) ─────────────────────
   # Inno Setup installers that embed the ISSKINU.DLL skin runtime need native
@@ -2364,12 +2402,12 @@ install_plugin() {
       else
         warn "it also failed with $(basename "$other") — this prefix is held by a third build."
         [[ -n $before_state && $before_state != /dev/null ]] && rm -f "$before_state"
-  rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$vendor_before" "$vendor_after" "$desktop_before" "$desktop_after"
+  rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$vendor_before" "$vendor_after"
         return 1
       fi
     else
       [[ -n $before_state && $before_state != /dev/null ]] && rm -f "$before_state"
-  rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$vendor_before" "$vendor_after" "$desktop_before" "$desktop_after"
+  rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$vendor_before" "$vendor_after"
       return 1
     fi
   fi
@@ -2380,8 +2418,8 @@ install_plugin() {
   # Learn the vendor's support tree BEFORE post_install runs the linker, so a
   # new ProgramData/<Vendor> reaches every prefix on this very install.
   apm_record_vendor_state "$wine_prefix" "$vendor_before" "$vendor_after"
-  apm_desktop_shortcuts_snapshot "$wine_prefix" > "$desktop_after" 2>/dev/null || true
-  apm_remove_new_desktop_shortcuts "$desktop_before" "$desktop_after"
+  shortcuts_after="$(apm_shortcuts_snapshot "$wine_prefix" 2>/dev/null || true)"
+  apm_remove_new_shortcuts "$wine_prefix" "$shortcuts_before" "$shortcuts_after"
 
   # .aux support files = files that appear in the shared folders or the prefix.
   local -a auxfiles=()
@@ -2499,7 +2537,7 @@ install_plugin() {
   fi
 
   [[ -n $before_state && $before_state != /dev/null ]] && rm -f "$before_state"
-  rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$vendor_before" "$vendor_after" "$desktop_before" "$desktop_after"
+  rm -f "$before" "$after" "$before_pfx" "$after_pfx" "$vendor_before" "$vendor_after"
 
 
   # What the installer rewrote, as opposed to created.
