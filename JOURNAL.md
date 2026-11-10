@@ -2,6 +2,21 @@
 
 ## Log
 
+### 2026-11-10 — Quick fixes/tweaks: no more silent path, streamed run + log + success confirmation
+
+Applying a fix (or a tweak) from the TUI went through `quickCatalogRunCmd`: one
+backend call whose whole output was buffered until the end, one toast, no log,
+no progress, no cancel. Fixes now go through the same streamed Runner as a
+module — `fixes-run` / `tweaks-run` (only `nautilus-audio` used to stream) — so
+the run is visible, cancellable, writes a dated `writeRunLog` on success, and
+ends on the "finished — view the full log?" confirmation (failure still raises
+the crash notification). The Setup tree is rebuilt behind it. Removed the dead
+quick-path machinery (quickFixesRunMsg, quickCatalogRunCmd, slowTweaks) and its
+tests; new tests cover both catalogs reaching scrWorking and a successful fix
+run leaving a log plus the log-offering confirmation.
+
+Verified: `go vet ./...`, full `mosquitomarchy-tui` suite green (220 tests).
+
 ### 2026-11-10 — Live Mode round 2: no migration code, PipeWire inline confirm + manual lock, sudo hardening
 
 Follow-up user feedback on the first pass:

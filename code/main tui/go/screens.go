@@ -469,6 +469,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// The selection is consumed FIRST, while pendingAction still names
 			// the action: overwriting it below would make this test never match.
 			wasApplyOrUninstall := m.pendingAction == "apply" || m.pendingAction == "uninstall"
+			// Quick fixes/tweaks return to the Setup tree they were started
+			// from; rebuild it so its rows reflect what was just applied.
+			wasQuickCatalog := m.pendingAction == "quick-fixes" || m.pendingAction == "quick-tweaks"
 			if m.pendingAction == "heal" {
 				// The missing pieces were just re-applied: drop the stale
 				// finding now (square clears instantly) and re-verify behind
@@ -485,6 +488,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				// agentic-stuff answer, so ask again — in the background, as
 				// ever. aiRemovedMsg rebuilds the row when it lands.
 				m.deferCmd(fetchAIRemovedCmd())
+				if m.top() == scrSetupCat {
+					m.setupCatPicker = m.rebuildSetupCat()
+				} else if m.top() == scrSetup {
+					m.setupPicker = m.rebuildSetup()
+				}
+			}
+			if wasQuickCatalog {
 				if m.top() == scrSetupCat {
 					m.setupCatPicker = m.rebuildSetupCat()
 				} else if m.top() == scrSetup {
@@ -1395,30 +1405,25 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m.startWorking("Creating the theme",
 				workingArgs("theme-create", []string{m.themeDir, m.themeImage, name, "no", unlock})...)
 		case "quick-fixes":
-			// One backend call runs the whole marked set through the same
-			// run_fixes() the shell launcher uses, so RESULTS accounting and the
-			// final report are identical whichever way a fix is started.
+			// Streamed like a module: the fix's own output is visible while it
+			// runs, a dated log is written for the run and success ends on the
+			// "finished — view the log?" confirmation. The old silent path
+			// buffered everything and left no log at all.
 			ids := m.pendingFixIDs
 			m.pendingFixIDs = nil
-			return m, quickCatalogRunCmd("fixes", ids)
+			return m.startWorking("Applying quick fixes", workingArgs("fixes-run", ids)...)
 		case "cleanup":
 			ids := append([]string{}, m.pendingArgs...)
 			m.pendingArgs = nil
 			return m.startWorking("Cleaning temporary files",
 				workingArgs("cleanup", []string{strings.Join(ids, ",")})...)
 		case "quick-tweaks":
-			// Same shape as quick-fixes, over the Tweaks (preferences) catalog:
-			// run_tweaks() in one backend call. A tweak that installs packages
-			// or builds AUR dependencies takes minutes, and the quick path
-			// buffers its whole output until the end — which reads as "nothing
-			// happens" and cannot be cancelled. Those run in the streamed
-			// Runner instead, so the build is visible and stoppable.
+			// Same streamed shape as quick-fixes: a tweak that installs
+			// packages or builds AUR dependencies takes minutes, and every
+			// plain tweak now gets a log and a success confirmation too.
 			ids := m.pendingFixIDs
 			m.pendingFixIDs = nil
-			if tweakRunsStreamed(ids) {
-				return m.startWorking("Applying tweaks", workingArgs("tweaks-run", ids)...)
-			}
-			return m, quickCatalogRunCmd("tweaks", ids)
+			return m.startWorking("Applying tweaks", workingArgs("tweaks-run", ids)...)
 		case "davinci-alt-drivers":
 			return m.startWorking("Applying the Radeon 780M OpenCL profile",
 				workingArgs("davinci-alt-drivers", nil)...)
@@ -2373,18 +2378,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.info = tuikit.NewInfo(txt).SetSize(m.contentSize())
 				m.push(scrInfo)
 			}
-			return m, nil
-		}
-		if qf, ok := msg.(quickFixesRunMsg); ok {
-			if qf.err != nil {
-				m.toast, _ = m.toast.SetErr("quick fix failed: " + qf.err.Error())
-				return m, nil
-			}
-			m.toast, _ = m.toast.SetOK(qf.what)
-			// Straight back to the Setup page the folder was opened from, so the
-			// result of the fix is visible on the row it fixed.
-			m.pop()
-			m.setupPicker = m.rebuildSetup()
 			return m, nil
 		}
 		m.quickFixPicker, cmd = m.quickFixPicker.Update(msg)
@@ -3698,6 +3691,8 @@ func operationName(sub string) string {
 		return "DaVinci profile"
 	case "tweaks-run":
 		return "Tweaks"
+	case "fixes-run":
+		return "Quick fixes"
 	}
 	return ""
 }

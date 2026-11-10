@@ -169,55 +169,6 @@ func menuEntriesApplyCmd(name string, restore bool) tea.Cmd {
 	}
 }
 
-// quickFixesRunMsg reports the outcome of a batch of quick fixes or tweaks.
-type quickFixesRunMsg struct {
-	what string
-	err  error
-}
-
-// quickCatalogRunCmd applies the ticked entries of ONE catalog in a single
-// backend call. catalog is "fixes" or "tweaks"; the backend command is
-// "<catalog>-run", which runs the ids through the very same run_fixes() /
-// run_tweaks() the shell launcher uses, so an entry applied from the TUI is
-// applied identically to one applied from the CLI — same RESULTS accounting,
-// same failure counting, same final report.
-func quickCatalogRunCmd(catalog string, ids []string) tea.Cmd {
-	runCmd := catalog + "-run"
-	label := "quick fix"
-	if catalog == "tweaks" {
-		label = "tweak"
-	}
-	return func() tea.Msg {
-		if len(ids) == 0 {
-			return quickFixesRunMsg{err: fmt.Errorf("no %s selected", label)}
-		}
-		if _, err := runQuick(append([]string{runCmd}, ids...)...); err != nil {
-			return quickFixesRunMsg{err: err}
-		}
-		return quickFixesRunMsg{what: fmt.Sprintf("%d %s(s) applied", len(ids), label)}
-	}
-}
-
-// slowTweaks are the tweaks that install packages or build AUR dependencies.
-// quickCatalogRunCmd buffers the whole run and reports only at the end, so a
-// multi-minute build showed no progress at all (the user saw the sudo prompt,
-// then "nothing happens") and could not even be cancelled. These run through
-// the streamed Runner instead, like a module.
-var slowTweaks = map[string]bool{
-	"nautilus-audio": true,
-}
-
-// tweakRunsStreamed reports whether the batch contains a tweak that must run
-// in the streamed Runner rather than the silent quick path.
-func tweakRunsStreamed(ids []string) bool {
-	for _, id := range ids {
-		if slowTweaks[id] {
-			return true
-		}
-	}
-	return false
-}
-
 // PreinstallRec is one Omarchy stock app in the Uninstall ▸ Preinstalls list.
 // Installed&&!protected is what makes it selectable; the rest render greyed.
 type PreinstallRec struct {

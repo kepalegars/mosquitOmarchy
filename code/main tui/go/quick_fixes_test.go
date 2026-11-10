@@ -1,8 +1,11 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tuikit "mosquitomarchy.local/tui-kit"
 )
@@ -210,19 +213,79 @@ func TestEnterOnATweakRowQueuesTheTweaksCatalog(t *testing.T) {
 	}
 }
 
-// A tweak that installs packages or builds AUR dependencies (nautilus-audio)
-// must run in the streamed Runner: the quick path buffers everything until the
-// end, so a multi-minute build looked like "nothing happened" and could not be
-// cancelled. Plain preference tweaks keep the silent fast path.
-func TestSlowTweakRunsStreamed(t *testing.T) {
-	if !tweakRunsStreamed([]string{"nautilus-audio"}) {
-		t.Error("nautilus-audio must run in the streamed Runner")
+// Quick fixes and tweaks run in the streamed Runner, exactly like a module:
+// the old silent path buffered the whole run until the end, showed one toast
+// and wrote no log. The runner shows the output live, writes a dated log and
+// ends on the "view the full log?" confirmation.
+func TestConfirmingAFixStartsTheStreamedRunner(t *testing.T) {
+	m := qfSetup()
+	m.w, m.h = 120, 40
+	m.nav = []screen{scrMain, scrSetup, scrQuickFixes, scrConfirm}
+	m.pendingAction = "quick-fixes"
+	m.pendingFixIDs = []string{"wine-menu"}
+
+	next, _ := m.update(tuikit.ConfirmResultMsg{Yes: true})
+	defer next.runner.Cancel()
+	if next.top() != scrWorking {
+		t.Fatalf("the run did not reach the streamed runner: top=%d", next.top())
 	}
-	if tweakRunsStreamed([]string{"wine-theme"}) {
-		t.Error("a plain preference tweak must keep the quick path")
+	if next.workOp != "Quick fixes" {
+		t.Fatalf("workOp = %q, want Quick fixes", next.workOp)
 	}
-	if !tweakRunsStreamed([]string{"wine-theme", "nautilus-audio"}) {
-		t.Error("a batch containing a slow tweak must run in the streamed Runner")
+	if len(next.pendingFixIDs) != 0 {
+		t.Errorf("pendingFixIDs = %v, want them consumed", next.pendingFixIDs)
+	}
+}
+
+func TestConfirmingATweakStartsTheStreamedRunner(t *testing.T) {
+	m := qfSetup()
+	m.w, m.h = 120, 40
+	m.nav = []screen{scrMain, scrSetup, scrQuickFixes, scrConfirm}
+	m.pendingAction = "quick-tweaks"
+	m.pendingFixIDs = []string{"wine-theme"}
+
+	next, _ := m.update(tuikit.ConfirmResultMsg{Yes: true})
+	defer next.runner.Cancel()
+	if next.top() != scrWorking {
+		t.Fatalf("the tweak did not reach the streamed runner: top=%d", next.top())
+	}
+	if next.workOp != "Tweaks" {
+		t.Fatalf("workOp = %q, want Tweaks", next.workOp)
+	}
+}
+
+// A successful quick-fix run must leave a dated log on disk and end on the
+// confirmation that offers to read it.
+func TestASuccessfulFixRunWritesALogAndOffersIt(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("MOSQUITOMARCHY_LOG_DIR", dir)
+	m := qfSetup()
+	m.w, m.h = 120, 40
+	m.nav = []screen{scrMain, scrSetup, scrWorking}
+	m.pendingAction = "quick-fixes"
+	m.workingLabel = "Applying quick fixes"
+	m.workOp = "Quick fixes"
+	m.workStart = time.Now()
+	m.runner = tuikit.NewRunner()
+	m.runner, _ = m.runner.Update(tuikit.RunnerLineMsg{Text: "✓ 1px-seam applied"})
+
+	done, _ := m.update(tuikit.RunnerDoneMsg{})
+	if done.pendingAction != "run-done-log" {
+		t.Fatalf("pendingAction = %q, want run-done-log", done.pendingAction)
+	}
+	if done.top() != scrConfirm {
+		t.Fatalf("top = %d, want the success confirmation", done.top())
+	}
+	if !strings.Contains(done.pendingMsg, "View the full log") {
+		t.Fatalf("confirmation = %q, want it to offer the log", done.pendingMsg)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("run log: %v, entries=%v", err, entries)
+	}
+	body, _ := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+	if !strings.Contains(string(body), "1px-seam applied") {
+		t.Fatalf("log does not contain the run output:\n%s", body)
 	}
 }
 
