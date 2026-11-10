@@ -771,9 +771,27 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.toast, _ = m.toast.SetOK("Default audio interface: " + msg.id)
 			case "reset":
 				m.toast, _ = m.toast.SetOK("Connection history cleared")
+			case "split-on":
+				m.toast, _ = m.toast.SetOK(msg.id + " split on")
+				m.confirm = tuikit.NewConfirm("Restart the Omarchy shell now so the audio panel shows the new split?", "Later", "Restart now")
+				m.confirmAct = func() tea.Cmd { return shellRestartCmd() }
+				m.push(scrConfirm)
+			case "split-off":
+				m.toast, _ = m.toast.SetOK(msg.id + " split off")
+				m.confirm = tuikit.NewConfirm("Restart the Omarchy shell now so the audio panel shows the raw interface?", "Later", "Restart now")
+				m.confirmAct = func() tea.Cmd { return shellRestartCmd() }
+				m.push(scrConfirm)
 			}
 		}
 		return m, foundationStatusCmd()
+
+	case shellRestartMsg:
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("Shell restart: " + msg.err.Error())
+		} else {
+			m.toast, _ = m.toast.SetOK("Omarchy shell restarted")
+		}
+		return m, nil
 
 	case scanMsg:
 		m.scanLoading = false
@@ -1176,7 +1194,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				post = startupApplyCmd()
 			case "launch_scratchpad":
 				m.ui.LaunchInScratchpad = !m.ui.LaunchInScratchpad
-				post = startupApplyCmd()
+				post = tea.Batch(startupApplyCmd(), startupPlaceCmd())
 			case "foundation":
 				m.foundationLoading = true
 				m.push(scrFoundation)
@@ -1208,6 +1226,22 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "d":
 			m.push(scrFoundationDefault)
 			m.syncPicker()
+			return m, nil
+		case "s":
+			c, ok := m.selectedSplitCard()
+			if !ok {
+				return m, nil
+			}
+			on := "on"
+			if c.Split == "on" {
+				on = "off"
+			}
+			m.confirm = tuikit.NewConfirm(
+				fmt.Sprintf("Turn the %s split %s? With the split on, the audio panel shows one EVO entry; with it off, the raw card is the one entry. PipeWire restarts briefly.", c.Name, on),
+				"Cancel", "Split "+on)
+			id := c.ID
+			m.confirmAct = func() tea.Cmd { return foundationSplitCmd(on, id) }
+			m.push(scrConfirm)
 			return m, nil
 		case "enter":
 			val := m.picker.SelectedValue()

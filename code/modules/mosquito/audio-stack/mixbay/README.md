@@ -179,6 +179,12 @@ d'Omarchy n'affiche qu'**une entrée par interface** (`EVO 8`) : les nœuds du
 split restent internes à Mixbay et sont masqués via
 `/usr/share/omarchy-platform/audio.json`.
 
+Settings → Audio foundation : `s` sur une interface EVO bascule son split
+(`split on/off` est affiché après les Hz). Split ON = une entrée stéréo par
+sens (`EVO 8`) ; split OFF = le nœud Pro Audio brut, également une seule
+entrée. Après la bascule, Mixbay propose de redémarrer le shell Omarchy pour
+rafraîchir le panneau audio.
+
 L'installateur pose aussi `/etc/udev/rules.d/99-evo8-capture.rules` et
 `/usr/local/lib/mosquitomixbay/evo8-capture-enable.py` : à chaque connexion,
 EU51 est demandé (best-effort, Enable write-only) pour que le DAW voie les 6
@@ -414,7 +420,10 @@ dans le graphe vivant.
 - **Launch Mixbay at startup** et **Launch in scratchpad** : actifs par défaut
   à l'install. Le premier ajoute la ligne `o.launch_on_start` dans
   `~/.config/hypr/autostart.lua` ; le second parque la TUI dans
-  `special:scratchpad` (bascule Omarchy habituelle).
+  `special:scratchpad` (bascule Omarchy habituelle) **immédiatement** :
+  `mixbay-startup --place` déplace la fenêtre déjà ouverte, sans attendre le
+  prochain login. `--run` réutilise aussi une instance existante au lieu d'en
+  lancer une seconde.
 - **Audio foundation** : liste des cartes déjà connectées, install/remove par
   carte avec confirmation, choix de la carte par défaut/prioritaire, et
   **Reset connection history** (le journal séparé

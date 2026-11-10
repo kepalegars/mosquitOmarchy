@@ -25,6 +25,7 @@
 #   mixbay-audio-foundation --status [--json]
 #   mixbay-audio-foundation --needs evo8
 #   mixbay-audio-foundation --apply [--restart] [--force-evo4-split]
+#   mixbay-audio-foundation --split on|off --device evo8 [--restart]
 #   mixbay-audio-foundation --remove [--restart]
 # =============================================================================
 set -euo pipefail
@@ -52,6 +53,7 @@ CONNLOG="$CONF/mosquitomixbay/connected-interfaces.json"
 
 BASE_CONF="$PW_DIR/50-mixbay-audio.conf"
 EVO_CONF="$PW_DIR/50-mixbay-evo.conf"
+EVO4_CONF="$PW_DIR/50-mixbay-evo4.conf"
 WP_CONF="$WP_DIR/50-mixbay-interfaces.conf"
 UDEV_RULE="/etc/udev/rules.d/70-mixbay-evo.rules"
 CAPTURE_RULE="/etc/udev/rules.d/99-evo8-capture.rules"
@@ -108,6 +110,18 @@ state_set_default(){
   state_init
   jq --arg id "$1" '.default = $id' "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
 }
+# split is "on"/"off"/"" (never chosen). "off" is a user choice, not a gap the
+# onboarding prompt may keep asking about.
+state_split(){
+  state_init
+  jq -r --arg id "$1" '.devices[$id].split // ""' "$STATE" 2>/dev/null || true
+}
+state_set_split(){
+  state_init
+  jq --arg id "$1" --arg v "$2" \
+    '.devices[$id] = ((.devices[$id] // {}) + {split: $v})' \
+    "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
+}
 state_set_default_if_empty(){
   [[ -n "$(state_default)" ]] && return 0
   state_set_default "$1"
@@ -117,13 +131,14 @@ state_first_installed(){
   jq -r '(.default // "") as $d | if $d != "" then $d else (.devices | to_entries | map(select(.value.installed == true)) | .[0].key // "") end' "$STATE"
 }
 
-FORCE_EVO4=0 RESTART=0 MODE=status JSON=0 DEV=""
+FORCE_EVO4=0 RESTART=0 MODE=status JSON=0 DEV="" SPLIT=""
 while (($#)); do
   case "$1" in
     --status) MODE=status; shift ;;
     --needs) MODE=needs; shift ;;
     --apply) MODE=apply; shift ;;
     --remove) MODE=remove; shift ;;
+    --split) MODE=split; SPLIT="${2:-}"; shift 2; ;;
     --track) MODE=track; shift ;;
     --reset-history) MODE=reset-history; shift ;;
     --json) JSON=1; shift ;;
@@ -347,6 +362,26 @@ native_installed(){
   esac
 }
 
+# split_supported <id>: interfaces whose split file Mixbay owns and can toggle.
+split_supported(){
+  case "$1" in evo8|evo4) return 0 ;; *) return 1 ;; esac
+}
+
+# split_state <id> -> on|off|"". Empty means "no split concept" (ALSA level 1).
+split_state(){
+  case "$1" in
+    evo8)
+      if [[ "$(state_split evo8)" == off ]]; then echo off
+      elif [[ -f $EVO_CONF ]]; then echo on
+      else echo off; fi ;;
+    evo4)
+      if [[ "$(state_split evo4)" == off ]]; then echo off
+      elif [[ -f $EVO4_CONF ]]; then echo on
+      else echo off; fi ;;
+    *) echo "" ;;
+  esac
+}
+
 status_json(){
   local rate quantum allowed id name version native installed online drate match beta
   local mismatch=0 wp=0 udev=0 defaults=0 base=0 split=0
@@ -380,11 +415,12 @@ status_json(){
       drate="$(card_rate "$match" || true)"
     fi
     [[ -n $rate && -n $drate && $rate != "$drate" ]] && mismatch=1
-    local row
+    local row sstate
+    sstate="$(split_state "$id")"
     row="$(jq -c -n --arg id "$id" --arg name "$name" --arg version "$version" \
       --argjson installed "$installed" --argjson online "$online" \
-      --argjson beta "$beta" --arg rate "${drate:-}" \
-      '{id:$id,name:$name,version:$version,installed:$installed,online:$online,beta:$beta,rate:(if $rate=="" then null else ($rate|tonumber) end)}')"
+      --argjson beta "$beta" --arg rate "${drate:-}" --arg split "$sstate" \
+      '{id:$id,name:$name,version:$version,installed:$installed,online:$online,beta:$beta,rate:(if $rate=="" then null else ($rate|tonumber) end),split:$split}')"
     conns="$(jq -c --argjson d "$conns" --argjson r "$row" '. + [$r]' <<< "$conns")"
     # CARDS only carries native or explicitly added beta interfaces; the
     # DEFAULT picker uses the full connection log below.
@@ -684,7 +720,14 @@ fi
 [[ -n $card ]] || exit 0
 sink_match="" src_match=""
 case "$card" in
-  evo8)      sink_match="evo8_main_output"; src_match="evo8_mic_1_2" ;;
+  evo8)
+    sink_match="evo8_main_output"; src_match="evo8_mic_1_2"
+    # Split off: those loopback nodes do not exist; the raw Pro Audio node is
+    # the single visible entry, so it must also be the default.
+    if ! wpctl status 2>/dev/null | grep -q "evo8_main_output"; then
+      sink_match="EVO8 Pro"; src_match="EVO8 Pro"
+    fi
+    ;;
   evo4)      sink_match="EVO4";             src_match="EVO4" ;;
   ssl12)     sink_match="ssl12.pb12";       src_match="Solid_State_Logic_SSL_12" ;;
   fireface-ucx2) sink_match="Fireface";     src_match="Fireface" ;;
@@ -699,7 +742,7 @@ case "$card" in
     ;;
 esac
 [[ -n $sink_match ]] || exit 0
-id_of(){ wpctl status 2>/dev/null | grep -m1 -E "[0-9]+\. .*$1.*\[Audio/(Sink|Source)\]" | grep -oE '[0-9]+\.' | head -1 | tr -d .; }
+id_of(){ wpctl status 2>/dev/null | grep -m1 -E "[0-9]+\. .*$1.*(\[vol:|\[Audio/(Sink|Source)\])" | grep -oE '[0-9]+\.' | head -1 | tr -d .; }
 sink=""; src=""
 for _ in $(seq 1 20); do
   sink="$(id_of "$sink_match")"
@@ -759,13 +802,18 @@ apply(){
     state_installed "$dev" || first=1
     case $dev in
       evo8)
-        read -r node ch < <(discover_node evo8 output)
-        if evo_present evo8 && { [[ -z $node ]] || (( ch < 6 )); }; then
-          info "Selecting the EVO 8 Pro Audio profile (6 USB channels)"
-          set_pro_audio evo8 && read -r node ch < <(discover_node evo8 output) \
-            || warn "could not select the EVO 8 Pro Audio profile"
+        if [[ "$(state_split evo8)" == off ]]; then
+          rm -f "$EVO_CONF"
+        else
+          read -r node ch < <(discover_node evo8 output)
+          if evo_present evo8 && { [[ -z $node ]] || (( ch < 6 )); }; then
+            info "Selecting the EVO 8 Pro Audio profile (6 USB channels)"
+            set_pro_audio evo8 && read -r node ch < <(discover_node evo8 output) \
+              || warn "could not select the EVO 8 Pro Audio profile"
+          fi
+          write_evo_split evo8 "$node" "$ch"
+          [[ -f $EVO_CONF ]] && state_set_split evo8 on
         fi
-        write_evo_split evo8 "$node" "$ch"
         state_set_installed evo8 true
         state_set_default_if_empty evo8
         ;;
@@ -777,6 +825,7 @@ apply(){
           # modern ALSA, so it is opt-in.
           if [[ -n $node && $ch -ge 4 ]]; then
             write_evo4_split "$node" "$ch"
+            [[ -f $EVO4_CONF ]] && state_set_split evo4 on
           else
             warn "EVO 4 split skipped: need a 4-channel USB node (got ${ch:-0})."
           fi
@@ -837,10 +886,10 @@ write_evo4_split(){
   read -r in_node in_ch < <(discover_node evo4 input)
   [[ $ch -ge 4 && -n $in_node ]] || return 0
   mkdir -p "$PW_DIR"
-  backup_file "$EVO_CONF"
+  backup_file "$EVO4_CONF"
   # One stereo main output (PC 1/2), one loopback output (LP 3/4), one mic
   # source (IN 1/2), one loopback capture (LP 3/4).
-  cat > "$EVO_CONF" <<EOF
+  cat > "$EVO4_CONF" <<EOF
 # Mixbay audio foundation — EVO 4 opt-in split (--force-evo4-split).
 # Modern ALSA UCM (>= 1.2.16) already exposes this graph; only use this file
 # when the UCM is absent or the raw 4-channel node is all you have.
@@ -875,7 +924,52 @@ context.modules = [
   }
 ]
 EOF
-  ok "EVO 4 split written ($EVO_CONF)"
+  ok "EVO 4 split written ($EVO4_CONF)"
+}
+
+# toggle_split: --split on|off for one interface. Visibility follows the file:
+# with a split the raw Pro Audio node is hidden and the stereo main/mic nodes
+# are the single entry; without it the raw node is the one entry. Only EVO
+# splits are Mixbay-owned (SSL 12 belongs to douze).
+toggle_split(){
+  local dev="$DEV" on="$SPLIT" node ch
+  [[ -n $dev ]] || { warn "--split needs --device"; return 2; }
+  split_supported "$dev" || { warn "$dev has no Mixbay split to toggle"; return 1; }
+  case $on in
+    on)
+      native_online "$dev" || { warn "$dev is offline — connect it, then turn the split on"; return 1; }
+      if [[ $dev == evo8 ]]; then
+        read -r node ch < <(discover_node evo8 output)
+        if [[ -z $node || $ch -lt 6 ]]; then
+          set_pro_audio evo8 || true
+          read -r node ch < <(discover_node evo8 output)
+        fi
+        write_evo_split evo8 "$node" "$ch"
+        [[ -f $EVO_CONF ]] || return 1
+        state_set_split evo8 on
+      else
+        read -r node ch < <(discover_node evo4 output)
+        write_evo4_split "$node" "$ch"
+        [[ -f $EVO4_CONF ]] || return 1
+        state_set_split evo4 on
+      fi
+      ok "$dev split on"
+      ;;
+    off)
+      if [[ $dev == evo8 ]]; then rm -f "$EVO_CONF"; else rm -f "$EVO4_CONF"; fi
+      state_set_split "$dev" off
+      ok "$dev split off"
+      ;;
+    *) warn "--split expects on|off"; return 2 ;;
+  esac
+  if (( RESTART )); then
+    restart_audio
+    if [[ $dev == evo8 && $on == on ]] && evo_present evo8; then
+      # Same restart race as apply: re-select pro-audio once the graph is up.
+      set_pro_audio evo8 && "$DEFAULT_SCRIPT" 2>/dev/null || true
+    fi
+  fi
+  return 0
 }
 
 remove_device(){
@@ -886,7 +980,7 @@ remove_device(){
       if grep -q 'EVO8' "$EVO_CONF" 2>/dev/null; then rm -f "$EVO_CONF"; fi
       ;;
     evo4)
-      if grep -q 'EVO4' "$EVO_CONF" 2>/dev/null; then rm -f "$EVO_CONF"; fi
+      if grep -q 'EVO4' "$EVO4_CONF" 2>/dev/null; then rm -f "$EVO4_CONF"; fi
       ;;
     ssl12)
       local douze="$MIXBAY_ROOT/../../../Apps/douze/setup-douze.sh"
@@ -928,7 +1022,7 @@ remove_device(){
 
 remove_all(){
   info "Removing the Mixbay audio foundation"
-  rm -f "$BASE_CONF" "$EVO_CONF" "$WP_CONF" "$DEFAULT_SCRIPT" "$DEFAULT_UNIT"
+  rm -f "$BASE_CONF" "$EVO_CONF" "$EVO4_CONF" "$WP_CONF" "$DEFAULT_SCRIPT" "$DEFAULT_UNIT"
   systemctl --user disable --now mixbay-audio-defaults.service 2>/dev/null || true
   systemctl --user daemon-reload 2>/dev/null || true
   if [[ -f $UDEV_RULE ]]; then
@@ -952,11 +1046,11 @@ needs(){
   if [[ ! -f $PLATFORM_AUDIO ]]; then echo "audio panel hints (one entry per interface)"; miss=1; fi
   if [[ $dev == evo8 ]]; then
     local node ch; read -r node ch < <(discover_node evo8 output)
-    if evo_present evo8 && [[ ( -z $node || $ch -lt 6 ) ]]; then
+    if [[ "$(state_split evo8)" != off ]] && evo_present evo8 && [[ ( -z $node || $ch -lt 6 ) ]]; then
       echo "EVO 8 6-channel Pro Audio node (select the multichannel profile / check the USB connection)"
       miss=1
     fi
-    if [[ -n $node && $ch -ge 6 && ! -f $EVO_CONF ]]; then echo "EVO 8 stereo split (6-channel Pro Audio node)"; miss=1; fi
+    if [[ -n $node && $ch -ge 6 && ! -f $EVO_CONF && "$(state_split evo8)" != off ]]; then echo "EVO 8 stereo split (6-channel Pro Audio node)"; miss=1; fi
     if [[ ! -f $DEFAULT_UNIT ]]; then echo "EVO 8 default sink/source service"; miss=1; fi
   fi
   if [[ $dev == ssl12 ]]; then
@@ -971,6 +1065,7 @@ case $MODE in
   status) if (( JSON )); then status_json; else status_human; fi ;;
   needs) needs ;;
   apply) apply ;;
+  split) toggle_split ;;
   remove)
     if [[ -n $DEV ]]; then remove_device "$DEV"; else remove_all; fi
     ;;

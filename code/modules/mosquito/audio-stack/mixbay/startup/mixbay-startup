@@ -9,6 +9,7 @@
 # Usage:
 #   mixbay-startup --apply   # sync the autostart line with ui.json
 #   mixbay-startup --run     # launched by Hyprland at login
+#   mixbay-startup --place   # park/unpark the running TUI from ui.json
 # =============================================================================
 set -euo pipefail
 
@@ -57,8 +58,46 @@ apply(){
   fi
 }
 
+# Window classes: the TUI and its scratchpad variant. Both are Mixbay windows;
+# matching the prefix means a window launched with the other app-id still gets
+# parked (turning "launch in scratchpad" on must move the window already open).
+window_addrs(){
+  command -v hyprctl >/dev/null 2>&1 || return 0
+  hyprctl clients -j 2>/dev/null | jq -r '
+    .[] | select(((.class // "") | startswith("org.omarchy.mosquito-mixbay")))
+    | .address' 2>/dev/null || true
+}
+
+# hypr_move <address> <workspace> — Lua dispatcher first, classic fallback.
+hypr_move(){
+  local addr="$1" ws="$2"
+  hyprctl dispatch "hl.dsp.window.move({ window = \"address:$addr\", workspace = \"$ws\" })" >/dev/null 2>&1 \
+    || hyprctl dispatch "movetoworkspacesilent $ws,address:$addr" >/dev/null 2>&1 \
+    || true
+}
+
+place(){
+  local addrs scratch ws
+  addrs="$(window_addrs)"
+  [[ -n $addrs ]] || return 0
+  scratch="$(pref launch_in_scratchpad true)"
+  if [[ $scratch == true ]]; then
+    while IFS= read -r addr; do
+      [[ -n $addr ]] && hypr_move "$addr" "special:scratchpad"
+    done <<< "$addrs"
+    return 0
+  fi
+  ws="$(hyprctl workspaces -j 2>/dev/null | jq -r '[.[]|select(.id > 0)]|sort_by(.id)|.[0].id // 1' 2>/dev/null || echo 1)"
+  while IFS= read -r addr; do
+    [[ -n $addr ]] && hypr_move "$addr" "$ws"
+  done <<< "$addrs"
+}
+
 run(){
   [[ "$(pref launch_at_startup true)" == true ]] || exit 0
+  # Already open (toggled settings, or autostart raced a manual launch): park
+  # or unpark the live window instead of spawning a duplicate.
+  if [[ -n "$(window_addrs)" ]]; then place; exit 0; fi
   local scratch; scratch="$(pref launch_in_scratchpad true)"
   local term app
   if command -v foot >/dev/null 2>&1; then term=foot; else term=xterm; fi
@@ -73,24 +112,21 @@ run(){
   else
     "$term" -e "$HOME_DIR/.local/bin/mosquito-mixbay-tui" >/dev/null 2>&1 &
   fi
-  [[ $scratch == true ]] || exit 0
-  command -v hyprctl >/dev/null 2>&1 || exit 0
-  local addr=""
-  for _ in $(seq 1 20); do
-    addr="$(hyprctl clients -j 2>/dev/null | jq -r --arg c "$app" '.[]|select(.class==$c or .initialClass==$c)|.address' 2>/dev/null | head -1)"
-    [[ -n $addr ]] && break
+  # Wait for Hyprland to map the window: at login hyprctl can lag the exec by
+  # several seconds on a cold session.
+  local i
+  for i in $(seq 1 60); do
     sleep 0.25
+    [[ -n "$(window_addrs)" ]] && break
   done
-  [[ -n $addr ]] || exit 0
-  hyprctl dispatch "hl.dsp.window.move({ window = \"address:$addr\", workspace = \"special:scratchpad\" })" >/dev/null 2>&1 \
-    || hyprctl dispatch "movetoworkspacesilent special:scratchpad,address:$addr" >/dev/null 2>&1 \
-    || true
+  place
 }
 
 case "${1:-}" in
   --apply) apply ;;
   --run) run ;;
+  --place) place ;;
   --remove) remove_block; printf 'autostart: off\n' ;;
-  -h|--help) sed -n '2,16p' "$0" ;;
-  *) printf 'usage: %s --apply|--run|--remove\n' "$0" >&2; exit 2 ;;
+  -h|--help) sed -n '2,17p' "$0" ;;
+  *) printf 'usage: %s --apply|--run|--place|--remove\n' "$0" >&2; exit 2 ;;
 esac

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	tuikit "mosquitomarchy.local/tui-kit"
@@ -18,6 +19,7 @@ type foundationCard struct {
 	Online    bool   `json:"online"`
 	Beta      bool   `json:"beta"`
 	Rate      *int   `json:"rate"`
+	Split     string `json:"split"`
 }
 
 type foundationState struct {
@@ -71,6 +73,39 @@ func foundationSetDefaultCmd(id string) tea.Cmd {
 	}
 }
 
+// foundationSplitCmd toggles the per-interface split. --restart reloads
+// PipeWire so the hidden/visible node set changes immediately.
+func foundationSplitCmd(on, id string) tea.Cmd {
+	c := exec.Command("mixbay-audio-foundation", "--split", on, "--device", id, "--restart")
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return foundationActionMsg{action: "split-" + on, id: id, err: err}
+	})
+}
+
+type shellRestartMsg struct{ err error }
+
+// shellRestartCmd reloads the Omarchy shell so the bar/audio panel rebuilds
+// its cached device lists after a split toggle.
+func shellRestartCmd() tea.Cmd {
+	return func() tea.Msg {
+		return shellRestartMsg{err: exec.Command("omarchy-restart-shell").Run()}
+	}
+}
+
+// selectedSplitCard returns the highlighted interface when it has a
+// Mixbay-owned split (EVO 8/4). The split shortcut is offered only then.
+func (m model) selectedSplitCard() (foundationCard, bool) {
+	val := m.picker.SelectedValue()
+	if !strings.HasPrefix(val, "card:") {
+		return foundationCard{}, false
+	}
+	c, ok := m.foundationCardByID(strings.TrimPrefix(val, "card:"))
+	if !ok || c.Split == "" {
+		return foundationCard{}, false
+	}
+	return c, true
+}
+
 func foundationResetHistoryCmd() tea.Cmd {
 	return func() tea.Msg {
 		err := exec.Command("mixbay-audio-foundation", "--reset-history").Run()
@@ -83,8 +118,15 @@ type startupMsg struct{ err error }
 // startupApplyCmd re-reads ui.json and writes/removes the autostart line.
 func startupApplyCmd() tea.Cmd {
 	return func() tea.Msg {
-		err := exec.Command("mixbay-startup", "--apply").Run()
-		return startupMsg{err: err}
+		return startupMsg{err: exec.Command("mixbay-startup", "--apply").Run()}
+	}
+}
+
+// startupPlaceCmd moves the window already open to (or out of) the
+// scratchpad, so toggling "launch in scratchpad" takes effect immediately.
+func startupPlaceCmd() tea.Cmd {
+	return func() tea.Msg {
+		return startupMsg{err: exec.Command("mixbay-startup", "--place").Run()}
 	}
 }
 
@@ -116,6 +158,9 @@ func (m model) foundationItems() []tuikit.PickerItem {
 		rate := ""
 		if c.Rate != nil {
 			rate = fmt.Sprintf(" %d Hz", *c.Rate)
+		}
+		if c.Split != "" {
+			rate += " split " + c.Split
 		}
 		flag := ""
 		if c.Beta {

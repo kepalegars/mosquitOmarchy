@@ -76,6 +76,34 @@ INSERTIONS = [
 
 REPLACEMENTS = [
     (
+        '''  function outputIcon(volume) {
+    // Match the old Waybar pulseaudio glyph set. The Material Design speaker
+    // icons render visually smaller in JetBrainsMono Nerd Font.
+    if (!sink || !sink.audio) return ""
+    if (isHeadphones(sink)) return "󰋋"
+    if (outputMuted) return ""
+    var v = volume === undefined ? outputVolume : volume
+''',
+        '''  function outputIcon(volume) {
+    // Match the old Waybar pulseaudio glyph set. The Material Design speaker
+    // icons render visually smaller in JetBrainsMono Nerd Font.
+    // A Mixbay split sink is a loopback node: Quickshell does not expose it as
+    // an audio node, so "no audio" on `sink` alone is not a mute. Show the
+    // resolved sink's state (or a normal speaker when that is unknown too)
+    // instead of a false muted glyph.
+    if (!sink) return ""
+    if (isHeadphones(sink)) return "󰋋"
+    if (outputMuted) return ""
+    var v = volume === undefined ? (hasOutput ? outputVolume : 1) : volume
+    // Mixbay split sinks and Pro Audio nodes expose no usable PipeWire
+    // volume (Quickshell reads 0): the hardware level belongs to Mixbay.
+    // Showing the "silenced" glyph there is a false mute.
+    var levelUnknown = /^evo[0-9]_/.test(String(sink.name || ""))
+        || String(sink.name || "").indexOf(".pro-output-") >= 0
+    if (v <= 0 && levelUnknown) return ""
+''',
+    ),
+    (
         '''  function outputVolumeName(volume, muted) {
     return Model.outputVolumeName(volume, muted, Commons.I18n.t)
   }

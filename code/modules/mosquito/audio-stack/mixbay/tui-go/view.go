@@ -87,7 +87,7 @@ func (m model) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.picker.View())
 		b.WriteString("\n")
-		b.WriteString(m.legendLine(w))
+		b.WriteString(m.footer(w, ""))
 	case scrPatchbay:
 		title, rows := m.accentBudget(h, "PipeWire patchbay")
 		m.picker = m.picker.SetSize(w, rows)
@@ -95,7 +95,7 @@ func (m model) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.picker.View())
 		b.WriteString("\n")
-		b.WriteString(m.legendLine(w))
+		b.WriteString(m.footer(w, ""))
 	case scrFoundation:
 		title, rows := m.accentBudget(h, "Audio foundation settings")
 		m.picker = m.picker.SetSize(w, rows)
@@ -103,7 +103,7 @@ func (m model) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.picker.View())
 		b.WriteString("\n")
-		b.WriteString(m.legendLine(w))
+		b.WriteString(m.footer(w, ""))
 	case scrFoundationDefault:
 		title, rows := m.accentBudget(h, "Default audio interface")
 		m.picker = m.picker.SetSize(w, rows)
@@ -111,7 +111,7 @@ func (m model) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.picker.View())
 		b.WriteString("\n")
-		b.WriteString(m.legendLine(w))
+		b.WriteString(m.footer(w, ""))
 	case scrAddInterface:
 		title, rows := m.accentBudget(h, "Add an audio interface")
 		m.picker = m.picker.SetSize(w, rows)
@@ -119,7 +119,7 @@ func (m model) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.picker.View())
 		b.WriteString("\n")
-		b.WriteString(m.legendLine(w))
+		b.WriteString(m.footer(w, ""))
 	case scrInput:
 		return centerModal(m.text.View(), w, h)
 	case scrInfo:
@@ -130,13 +130,6 @@ func (m model) View() string {
 		return centerModal(m.info.View(), w, h)
 	case scrConfirm:
 		return centerModal(m.confirm.View(), w, h)
-	}
-
-	if t := m.toast.View(); t != "" {
-		b.WriteString("\n" + t)
-	}
-	if m.loading {
-		b.WriteString("\n" + tuikit.StyleMuted.Render("loading..."))
 	}
 
 	content := strings.TrimRight(b.String(), " \t\n")
@@ -248,6 +241,12 @@ func statusRows() int { return 2 }
 func pickerChromeRows() int { return 2 }
 
 func (m model) statusLine(w int) string {
+	return m.footer(w, m.statusNote())
+}
+
+// statusNote is the persistent device note (dial prompt / DEMO etc.). A toast
+// takes over its row while it is up.
+func (m model) statusNote() string {
 	note := m.status.Note
 	// The device list is a picker, not a device page: the selected driver's
 	// DEMO/offline note ("… not found. State is simulated…") belongs on that
@@ -261,7 +260,24 @@ func (m model) statusLine(w int) string {
 	if m.numBuf != "" {
 		note = fmt.Sprintf("dial: %s_  (Enter applies · Esc cancels)", m.numBuf)
 	}
-	return centerTrunc(note, w) + "\n" + m.legendLine(w)
+	return note
+}
+
+// footer reserves the notification row above the shortcut legend, exactly like
+// tuikit.BottomBar: a toast never moves the body, never sits after the legend
+// and always appears at the same place, horizontally centred.
+func (m model) footer(w int, note string) string {
+	notify := m.toast.View()
+	if notify == "" && m.loading {
+		notify = tuikit.StyleMuted.Render("loading...")
+	}
+	if notify == "" {
+		notify = note
+	}
+	if notify == "" {
+		notify = " "
+	}
+	return tuikit.BottomBar(notify, m.legendLine(w), w)
 }
 
 func (m model) legendLine(w int) string {
@@ -277,6 +293,9 @@ func (m model) legendLine(w int) string {
 		hint = "enter apply (explicit) · r refresh · esc back"
 	case scrFoundation:
 		hint = "enter install/remove · d default · r refresh · esc back"
+		if _, ok := m.selectedSplitCard(); ok {
+			hint = "enter install/remove · s split on/off · d default · r refresh · esc back"
+		}
 	case scrFoundationDefault:
 		hint = "enter choose · esc back"
 	case scrAddInterface:

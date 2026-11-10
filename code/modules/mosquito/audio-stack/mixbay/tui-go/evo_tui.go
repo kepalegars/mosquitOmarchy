@@ -1215,14 +1215,22 @@ func (r *evoRender) drawStatusBar(row, cx, sectionW int) int {
 	if r.u.numBuf != "" {
 		attr := evoStyle{col: cYellow}
 		prefix := "= " + r.u.numBuf
-		r.put(cx+evoSliderOff, row, prefix, attr)
-		r.put(cx+evoSliderOff+len([]rune(prefix))+1, row, " "+r.currentUnit(), attr)
+		x := cx + (sectionW-len([]rune(prefix))-1-len([]rune(r.currentUnit())))/2
+		if x < cx {
+			x = cx
+		}
+		r.put(x, row, prefix, attr)
+		r.put(x+len([]rune(prefix))+1, row, " "+r.currentUnit(), attr)
 	} else if r.u.statusMsg != "" {
 		attr := evoStyle{col: cYellow}
 		if r.u.statusErr {
 			attr = evoStyle{col: cRed, bold: true}
 		}
-		r.put(cx+evoSliderOff, row, r.u.statusMsg, attr)
+		x := cx + (sectionW-len([]rune(r.u.statusMsg)))/2
+		if x < cx {
+			x = cx
+		}
+		r.put(x, row, r.u.statusMsg, attr)
 	}
 	row++
 	hints := []evoHint{{key: "s", desc: " save"}, {key: "o", desc: " load"}, {key: "q", desc: " quit"}}

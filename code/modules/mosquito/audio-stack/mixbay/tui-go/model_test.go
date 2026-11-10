@@ -1760,3 +1760,63 @@ func TestEvoLinkedInputShowsTwoMeters(t *testing.T) {
 		t.Errorf("meterKey = %q", got)
 	}
 }
+
+// The audio-foundation list shows the per-interface split state after the Hz,
+// and the split shortcut is offered only while a split-capable card is
+// highlighted. Both come from the same status payload.
+func TestFoundationSplitStateAndHint(t *testing.T) {
+	rate := 48000
+	m := initialModel()
+	m.foundation.Devices = []foundationCard{{ID: "evo8", Name: "Audient EVO 8", Version: "v1.0.0", Rate: &rate, Split: "off"}}
+	m.foundation.Connections = m.foundation.Devices
+	m.push(scrFoundation)
+	m.syncPicker()
+	m.picker = m.picker.SelectValue("card:evo8")
+
+	c, ok := m.selectedSplitCard()
+	if !ok || c.Split != "off" {
+		t.Fatalf("selectedSplitCard = %+v, %v; want evo8 split off", c, ok)
+	}
+	if hint := m.legendLine(140); !strings.Contains(hint, "s split on/off") {
+		t.Fatalf("split hint missing for split-capable card: %q", hint)
+	}
+	rowFound := false
+	for _, it := range m.foundationItems() {
+		if it.Value == "card:evo8" {
+			rowFound = true
+			if !strings.Contains(it.Display, "48000 Hz split off") {
+				t.Fatalf("foundation row = %q, want Hz followed by split state", it.Display)
+			}
+		}
+	}
+	if !rowFound {
+		t.Fatal("evo8 row missing")
+	}
+
+	// A card with no split concept must not advertise the shortcut.
+	m.foundation.Devices = []foundationCard{{ID: "ugm192", Name: "ESI UGM192", Version: "v0.0.1", Rate: &rate}}
+	m.foundation.Connections = m.foundation.Devices
+	m.syncPicker()
+	m.picker = m.picker.SelectValue("card:ugm192")
+	if hint := m.legendLine(140); strings.Contains(hint, "split on/off") {
+		t.Fatalf("split hint shown for card without a split: %q", hint)
+	}
+}
+
+// A toast owns the reserved notification row above the shortcuts: it never
+// appends a third row after the legend and never moves the body.
+func TestToastSitsAboveLegend(t *testing.T) {
+	m := initialModel()
+	m.toast, _ = m.toast.SetOK("settings saved")
+	bar := m.footer(100, "note")
+	lines := strings.Split(bar, "\n")
+	if len(lines) != tuikit.BarRows {
+		t.Fatalf("footer rows = %d, want %d: %q", len(lines), tuikit.BarRows, bar)
+	}
+	if !strings.Contains(lines[0], "settings saved") {
+		t.Fatalf("toast not on the notification row: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "enter") {
+		t.Fatalf("legend not below the toast: %q", lines[1])
+	}
+}
