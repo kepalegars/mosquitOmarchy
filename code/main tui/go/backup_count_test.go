@@ -503,3 +503,69 @@ func TestBackupResetToInstalledPicksPresentRows(t *testing.T) {
 		t.Fatal("absent row vlc stayed ticked after the reset")
 	}
 }
+
+// TestRestoreAppsSelection covers the restore-content picker: everything is
+// ticked from the start, the options row says "all" until a row is unticked,
+// and the written selection is install.list-shaped so the backend can replay
+// exactly the ticked apps.
+func TestRestoreAppsSelection(t *testing.T) {
+	m := initialModel()
+	m.w, m.h = 120, 40
+	m.restoreManifest = BackupManifest{
+		Config: true,
+		Bar:    true,
+		InstallGroups: []BackupInstallGroup{
+			{Folder: "apps", Items: []string{"reaper", "keepassxc"}},
+			{Folder: "plugins", Items: []string{"battery-management"}},
+		},
+	}
+	m, _ = m.openRestoreOptions()
+	if m.top() != scrRestoreOptions {
+		t.Fatalf("restore options did not open, top is %v", m.top())
+	}
+	appsRow := ""
+	for _, it := range m.restorePicker.items {
+		if it.Value == "apps" {
+			appsRow = it.Display
+		}
+	}
+	if !strings.Contains(appsRow, "all") {
+		t.Fatalf("everything ticked should read all, got %q", appsRow)
+	}
+
+	m, _ = m.update(tuikit.PickerResultMsg{Value: "apps"})
+	if m.top() != scrRestoreApps {
+		t.Fatalf("the apps row did not open the picker, top is %v", m.top())
+	}
+	m, _ = m.update(tuikit.PickerToggleMsg{Value: "apps\tkeepassxc"})
+	if m.restoreAppsChecked["apps\tkeepassxc"] {
+		t.Fatal("the toggle did not untick keepassxc")
+	}
+	m, _ = m.update(tuikit.PickerResultMsg{Canceled: true})
+	if m.top() != scrRestoreOptions {
+		t.Fatalf("esc did not return to the options, top is %v", m.top())
+	}
+	appsRow = ""
+	for _, it := range m.restorePicker.items {
+		if it.Value == "apps" {
+			appsRow = it.Display
+		}
+	}
+	if !strings.Contains(appsRow, "2 selected") {
+		t.Fatalf("two ticked rows should read 2 selected, got %q", appsRow)
+	}
+
+	sel, err := m.writeRestoreSelection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(sel)
+	body, err := os.ReadFile(sel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(body)
+	if strings.Contains(got, "keepassxc") || !strings.Contains(got, "\treaper") || !strings.Contains(got, "battery-management") {
+		t.Fatalf("selection file does not match the ticks:\n%s", got)
+	}
+}

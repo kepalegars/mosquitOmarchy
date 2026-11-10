@@ -2924,17 +2924,19 @@ cmd_menu_entry(){
 #   --vst=list|full|none   VST plugin handling (default: list)
 #   --keepass=yes|no       include KeePassXC passwords when installed
 #   --zen=yes|no           include the Zen browser settings (default: yes)
+#   --bar=yes|no           include the Omarchy bar layout (default: yes)
 #   --selection=FILE       apps.selected content (the TUI's checkbox tree)
 #   --name=TEXT            label for the archive; sanitised into the filename
 cmd_backup(){
   local vst="list" keepass="yes" keepass_settings="yes" zen="yes" reaper="full"
-  local keybindings="no" sel="" name="" a hyprland="no"
+  local keybindings="no" sel="" name="" a hyprland="no" bar="yes"
   for a in "$@"; do
     case $a in
       --vst=*) vst="${a#*=}" ;;
       --keepass=*) keepass="${a#*=}" ;;
       --keepass-settings=*) keepass_settings="${a#*=}" ;;
       --zen=*) zen="${a#*=}" ;;
+      --bar=*) bar="${a#*=}" ;;
       --reaper=*) reaper="${a#*=}" ;;
       --keybindings=*) keybindings="${a#*=}" ;;
       --hyprland=*) hyprland="${a#*=}" ;;
@@ -2950,6 +2952,7 @@ cmd_backup(){
   if [[ $keepass == no ]]; then export BACKUP_SKIP_KEEPASS=1; fi
   if [[ $keepass_settings == no ]]; then export BACKUP_SKIP_KEEPASS_SETTINGS=1; fi
   if [[ $zen == no ]]; then export BACKUP_SKIP_ZEN=1; fi
+  if [[ $bar == no ]]; then export BACKUP_SKIP_BAR=1; fi
   if [[ $hyprland == no ]]; then export BACKUP_SKIP_HYPR=1; fi
   # REAPER depth: none | settings | full. An unknown value is the default
   # rather than an error: a malformed preference must not kill a backup.
@@ -2999,7 +3002,7 @@ cmd_backup_manifest(){
     | tar tzf - > "$cfg_list" 2>/dev/null || true
 
   local vst=false vst_files=false vst_list=false reaper=false zen=false keepass=false keepass_settings=false themes=false config=false
-  local omarchy_plugins=false hyprland=false
+  local omarchy_plugins=false hyprland=false bar=false
   local keybindings=none
   local pkglist=false aurlist=false
   grep -qE '(^|/)config-backup\.tar\.gz$' "$outer" && config=true
@@ -3018,6 +3021,7 @@ cmd_backup_manifest(){
   fi
   grep -qE '(^|/)themes/themes\.tar\.gz$' "$outer" && themes=true
   grep -qE '(^|/)omarchy-plugins/plugins\.tar\.gz$' "$outer" && omarchy_plugins=true
+  grep -qE '(^|/)\.config/omarchy/shell\.json$' "$cfg_list" && bar=true
   grep -qE '(^|/)hyprland/hyprland\.tar\.gz$' "$outer" && hyprland=true
   grep -qE '(^|/)\.config/hypr(/|$)' "$cfg_list" && hyprland=true
   grep -qE '(^|/)keybindings/all\.lua$' "$outer" && keybindings=all
@@ -3053,8 +3057,8 @@ cmd_backup_manifest(){
     fi
   fi
 
-  printf '{"config":%s,"vst":%s,"vst_files":%s,"vst_list":%s,"reaper":%s,"zen":%s,"keepass":%s,"keepass_settings":%s,"themes":%s,"omarchy_plugins":%s,"hyprland":%s,"keybindings":%s,"install_groups":%s,"pkglist":%s,"aurlist":%s}\n' \
-    "$config" "$vst" "$vst_files" "$vst_list" "$reaper" "$zen" "$keepass" "$keepass_settings" "$themes" "$omarchy_plugins" "$hyprland" "$(json_str "$keybindings")" "$install_groups" "$pkglist" "$aurlist"
+  printf '{"config":%s,"vst":%s,"vst_files":%s,"vst_list":%s,"reaper":%s,"zen":%s,"keepass":%s,"keepass_settings":%s,"themes":%s,"omarchy_plugins":%s,"bar":%s,"hyprland":%s,"keybindings":%s,"install_groups":%s,"pkglist":%s,"aurlist":%s}\n' \
+    "$config" "$vst" "$vst_files" "$vst_list" "$reaper" "$zen" "$keepass" "$keepass_settings" "$themes" "$omarchy_plugins" "$bar" "$hyprland" "$(json_str "$keybindings")" "$install_groups" "$pkglist" "$aurlist"
 }
 
 # Is it worth updating before a restore? Two independent answers:
@@ -3080,21 +3084,25 @@ cmd_restore_update_check(){
 #   --reaper=yes|no      deploy REAPER (installing it first in full mode)
 #   --zen=yes|no         deploy the Zen settings
 #   --keepass=yes|no     deploy KeePassXC settings + database
+#   --bar=yes|no         deploy the Omarchy bar layout (shell.json)
+#   --install-selection=FILE  install.list-shaped subset written by the TUI
 cmd_restore(){
   local file="" mode="full" vst="yes" reaper="yes" zen="yes" keepass="yes"
   local keepass_settings="yes" themes="yes" omarchy_plugins="yes" hyprland="yes"
-  local keybindings="custom" a
+  local bar="yes" install_selection="" keybindings="custom" a
   for a in "$@"; do
     case $a in
       --mode=*) mode="${a#*=}" ;;
       --vst=*) vst="${a#*=}" ;;
       --reaper=*) reaper="${a#*=}" ;;
       --zen=*) zen="${a#*=}" ;;
+      --bar=*) bar="${a#*=}" ;;
       --keepass=*) keepass="${a#*=}" ;;
       --keepass-settings=*) keepass_settings="${a#*=}" ;;
       --themes=*) themes="${a#*=}" ;;
       --omarchy-plugins=*) omarchy_plugins="${a#*=}" ;;
       --hyprland=*) hyprland="${a#*=}" ;;
+      --install-selection=*) install_selection="${a#*=}" ;;
       --keybindings=*) keybindings="${a#*=}" ;;
       -*) continue ;;
       *) [[ -z $file ]] && file="$a" ;;
@@ -3112,6 +3120,8 @@ cmd_restore(){
   RESTORE_DEPLOY_THEMES="$themes"
   RESTORE_DEPLOY_OMARCHY_PLUGINS="$omarchy_plugins"
   RESTORE_DEPLOY_HYPRLAND="$hyprland"
+  RESTORE_DEPLOY_BAR="$bar"
+  RESTORE_INSTALL_SELECTION="$install_selection"
   RESTORE_KEYBINDINGS="$keybindings"
   YES=1
   RESTORE_FILE="$file"

@@ -148,6 +148,8 @@ func (m model) View() string {
 		m.backupAppPicker = m.backupAppPicker.SetSize(m.contentSize())
 	case scrRestoreOptions:
 		m.restorePicker = m.restorePicker.SetSize(m.contentSize())
+	case scrRestoreApps:
+		m.restoreAppsPicker = m.restoreAppsPicker.SetSize(m.contentSize())
 	case scrBackupApps:
 		m.backupAppsPicker = m.backupAppsPicker.SetSize(m.contentSize())
 	case scrMenuEntries:
@@ -343,6 +345,10 @@ func (m model) View() string {
 			notify = tuikit.StyleWarn.Render(m.restoreNotice)
 		}
 		bar = tuikit.BottomBar(notify, m.restorePicker.ShortcutsHint(), cw)
+	case scrRestoreApps:
+		title = screenTitle("Restore content — packages, themes & tweaks", w)
+		body = m.restoreAppsPicker.View()
+		bar = barLine(m.restoreAppsPicker.ShortcutsHint())
 	case scrBackupApps:
 		title = screenTitle("Backup content — packages, themes & tweaks", w)
 		body = m.backupAppsPicker.View()

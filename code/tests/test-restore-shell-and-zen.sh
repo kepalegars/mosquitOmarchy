@@ -23,7 +23,9 @@ cat > "$TMP/source-shell.json" <<'EOF'
       "center": [{"id": "omarchy.clock", "format": "HH:mm"}]
     }
   },
-  "plugins": [{"id": "omarchy.agents"}, {"id": "missing.plugin"}]
+  "plugins": [{"id": "omarchy.agents"}, {"id": "missing.plugin"}],
+  "disabledPlugins": ["omarchy.clock", "gone.plugin"],
+  "cloneSourceRestores": ["omarchy.menu", "gone.plugin"]
 }
 EOF
 mkdir -p "$TMP/src/.config/omarchy"
@@ -64,6 +66,30 @@ jq -e '(.plugins | map(.id)) == ["omarchy.agents"]' "$shell_json" >/dev/null
 jq -e '(.bar.layout.left | map(.id)) == ["omarchy.menu"]' "$shell_json" >/dev/null
 jq -e '(.bar.layout.center | map(.id)) == ["omarchy.clock"]' "$shell_json" >/dev/null
 jq -e '.bar | has("id") | not' "$shell_json" >/dev/null
+jq -e '.disabledPlugins == ["omarchy.clock"]' "$shell_json" >/dev/null
+jq -e '.cloneSourceRestores == ["omarchy.menu"]' "$shell_json" >/dev/null
+
+# Safe mode keeps the target's unrelated settings and replaces only the bar
+# slice, so restoring onto a live machine does not reset its idle/dock settings.
+cat > "$shell_json" <<'EOF'
+{
+  "version": 1,
+  "bar": {"layout": {"left": [{"id": "omarchy.menu"}]}},
+  "plugins": [],
+  "disabledPlugins": ["omarchy.agents"],
+  "cloneSourceRestores": [],
+  "idle": {"lock": 999},
+  "dock": {"pinned": ["foot"]}
+}
+EOF
+restore_shell_json "$TMP/config.tar.gz" safe
+jq -e '(.bar.layout.left | map(.id)) == ["omarchy.menu"]' "$shell_json" >/dev/null
+jq -e '(.bar.layout.center | map(.id)) == ["omarchy.clock"]' "$shell_json" >/dev/null
+jq -e '(.plugins | map(.id)) == ["omarchy.agents"]' "$shell_json" >/dev/null
+jq -e '.disabledPlugins == ["omarchy.clock"]' "$shell_json" >/dev/null
+jq -e '.cloneSourceRestores == ["omarchy.menu"]' "$shell_json" >/dev/null
+jq -e '.idle.lock == 999' "$shell_json" >/dev/null
+jq -e '.dock.pinned == ["foot"]' "$shell_json" >/dev/null
 
 # --- Zen: the Mods land in the profile this machine uses --------------------
 mkdir -p "$TMP/zen-src/.config/zen/source-profile/chrome/zen-themes/my-mod" \

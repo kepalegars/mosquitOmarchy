@@ -30,6 +30,7 @@ printf '[GUI]\nLaunchAtStartup=true\n' > "$HOME/.config/keepassxc/keepassxc.ini"
 printf '[Desktop Entry]\nName=KeePassXC\nExec=keepassxc\n' \
   > "$HOME/.config/autostart/org.keepassxc.KeePassXC.desktop"
 printf '{"name":"stale menu"}\n' > "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
+printf '{"bar":{"layout":{"right":[{"id":"omarchy.tray"}]}}}\n' > "$HOME/.config/omarchy/shell.json"
 printf 'plugin payload\n' > "$HOME/.config/omarchy/plugins/mosquito.jamjamjam/Service.qml"
 printf '[Desktop Entry]\nName=Never selected\n' > "$HOME/.local/share/applications/stale.desktop"
 printf 'icon\n' > "$HOME/.local/share/icons/hicolor/256x256/apps/stale.png"
@@ -91,6 +92,21 @@ done
 grep -qF '.config/zen/profile.release/chrome/zen-themes/custom-mod/chrome.css' "$TMP/config-paths"
 grep -qF '.config/zen/profile.release/extensions/custom-addon.xpi' "$TMP/config-paths"
 grep -qF '.config/autostart/org.keepassxc.KeePassXC.desktop' "$TMP/config-paths"
+# The bar layout is backed up by default, and left out when the toggle is off.
+grep -qF '.config/omarchy/shell.json' "$TMP/config-paths"
+export BACKUP_SKIP_BAR=1
+BACKUP_DIR="$TMP/backups-nobar"
+do_backup >"$TMP/backup-nobar.log" 2>&1
+archive2="$(find "$TMP/backups-nobar" -maxdepth 1 -name '*.tar.gz' -print -quit)"
+[[ -n $archive2 ]]
+mkdir "$TMP/unpacked-nobar"
+tar xzf "$archive2" -C "$TMP/unpacked-nobar"
+tar tzf "$TMP/unpacked-nobar/config-backup.tar.gz" > "$TMP/config-paths-nobar"
+if grep -qF '.config/omarchy/shell.json' "$TMP/config-paths-nobar"; then
+  echo 'FAIL: --bar=no still backed up shell.json' >&2
+  exit 1
+fi
+unset BACKUP_SKIP_BAR
 
 # Restoring those files does not require selecting Zen for module reinstall.
 export HOME="$TMP/restore-home"

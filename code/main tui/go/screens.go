@@ -385,6 +385,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if m.backupSelFile != "" {
 			m.cleanupBackupSelection()
 		}
+		if m.restoreSelFile != "" {
+			_ = os.Remove(m.restoreSelFile)
+			m.restoreSelFile = ""
+		}
 		// Runner finished: report, pop off the working screen and refresh
 		// whatever screen we land back on. A success toast is shown ONLY when
 		// the run really succeeded. The FINAL STATE decides: the backend is
@@ -996,6 +1000,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// does quitting the TUI.
 			saveBackupSelection(m.backupItems, m.backupChecked)
 			m.backupAppsPicker = m.rebuildBackupApps()
+		case scrRestoreApps:
+			if _, ok := m.restoreAppsChecked[msg.Value]; ok {
+				m.restoreAppsChecked[msg.Value] = !m.restoreAppsChecked[msg.Value]
+			}
+			m.restoreAppsPicker = m.rebuildRestoreApps()
 		case scrUpdate:
 			if msg.Value == "" || msg.Value == "repo" || msg.Value == "back" || msg.Value == "apply" {
 				return m, nil
@@ -1110,6 +1119,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.backupOpts.Encrypt = !m.backupOpts.Encrypt
 			case "keybindings":
 				m.backupOpts.Keybindings = cycleKeybindings(m.backupOpts.Keybindings, msg.Dir)
+			case "bar":
+				m.backupOpts.Bar = !m.backupOpts.Bar
 			case "hyprland":
 				m.backupOpts.Hyprland = !m.backupOpts.Hyprland
 			default:
@@ -1157,6 +1168,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.restoreOpts.Themes = !m.restoreOpts.Themes
 			case "omarchy-plugins":
 				m.restoreOpts.OmarchyPlugins = !m.restoreOpts.OmarchyPlugins
+			case "bar":
+				m.restoreOpts.Bar = !m.restoreOpts.Bar
 			case "hyprland":
 				m.restoreOpts.Hyprland = !m.restoreOpts.Hyprland
 			case "keybindings":
@@ -1255,6 +1268,10 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			if m.pendingAction == "restore-review" {
 				m.pendingAction = ""
 				m.pendingArgs = nil
+				if m.restoreSelFile != "" {
+					_ = os.Remove(m.restoreSelFile)
+					m.restoreSelFile = ""
+				}
 				return m, nil
 			}
 			if m.pendingAction == "add-shortcut" {
@@ -2359,6 +2376,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.backupAppPicker, cmd = m.backupAppPicker.Update(msg)
 	case scrRestoreOptions:
 		m.restorePicker, cmd = m.restorePicker.Update(msg)
+	case scrRestoreApps:
+		m.restoreAppsPicker, cmd = m.restoreAppsPicker.Update(msg)
 	case scrThemeFolder:
 		// Needed: without a case here the picker never receives the KeyMsg, so
 		// the screen draws its rows but arrows and Enter go nowhere — which
@@ -2727,6 +2746,10 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.backupPicker = m.backupPicker.KeepCursor(was)
 		case scrBackupOptions:
 			m.backupOptPicker = m.rebuildBackupOptions()
+		case scrRestoreOptions:
+			// Esc returns here from the apps tree: refresh the "all / N
+			// selected" figure now that the ticks changed.
+			m.restorePicker = m.rebuildRestoreOptions()
 		}
 		return m, nil
 	}
@@ -3295,6 +3318,11 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			saveBackupOpts(m.backupOpts)
 			m.backupOptPicker = m.rebuildBackupOptions()
 			return m, nil
+		case "bar":
+			m.backupOpts.Bar = !m.backupOpts.Bar
+			saveBackupOpts(m.backupOpts)
+			m.backupOptPicker = m.rebuildBackupOptions()
+			return m, nil
 		case "hyprland":
 			m.backupOpts.Hyprland = !m.backupOpts.Hyprland
 			saveBackupOpts(m.backupOpts)
@@ -3318,6 +3346,12 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		m.filterText = ""
 		m.pop()
 		m.backupOptPicker = m.rebuildBackupOptions()
+		return m, nil
+
+	case scrRestoreApps:
+		// Enter on any row returns to the restore options with the ticks kept.
+		m.pop()
+		m.restorePicker = m.rebuildRestoreOptions()
 		return m, nil
 
 	case scrBackupAppSettings:
@@ -3373,6 +3407,10 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 
 	case scrRestoreOptions:
 		switch res.Value {
+		case "apps":
+			m.push(scrRestoreApps)
+			m.restoreAppsPicker = m.rebuildRestoreApps()
+			return m, nil
 		case "vst":
 			m.restoreOpts.VST = !m.restoreOpts.VST
 		case "reaper":
@@ -3387,6 +3425,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.restoreOpts.Themes = !m.restoreOpts.Themes
 		case "omarchy-plugins":
 			m.restoreOpts.OmarchyPlugins = !m.restoreOpts.OmarchyPlugins
+		case "bar":
+			m.restoreOpts.Bar = !m.restoreOpts.Bar
 		case "hyprland":
 			m.restoreOpts.Hyprland = !m.restoreOpts.Hyprland
 		case "keybindings":
@@ -3410,7 +3450,22 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 				"--themes=" + yesno(m.restoreOpts.Themes),
 				"--omarchy-plugins=" + yesno(m.restoreOpts.OmarchyPlugins),
 				"--keybindings=" + m.restoreOpts.Keybindings,
+				"--bar=" + yesno(m.restoreOpts.Bar),
 				"--hyprland=" + yesno(m.restoreOpts.Hyprland),
+			}
+			// The ticked modules, not the whole install.list: the backend reads
+			// this file in the same format and skips whatever is not in it.
+			if m.restoreAppsTotal() > 0 {
+				path, err := m.writeRestoreSelection()
+				if err != nil {
+					m.toast, _ = m.toast.SetErr("could not write the restore selection: " + err.Error())
+					return m, nil
+				}
+				if m.restoreSelFile != "" {
+					_ = os.Remove(m.restoreSelFile)
+				}
+				m.restoreSelFile = path
+				args = append(args, "--install-selection="+path)
 			}
 			m.pendingAction = "restore-review"
 			m.pendingArgs = args
@@ -5432,6 +5487,7 @@ func (m model) rebuildBackupOptions() navPicker {
 		{Display: fmt.Sprintf("Packages, Themes & tweaks: %d selected", len(m.backupChecked)), Value: "apps"},
 		{Display: "App specific settings", Value: "app-settings"},
 		{Display: "Keybindings: " + keybindingsBackupLabel(m.backupOpts.Keybindings), Value: "keybindings"},
+		{Display: "Omarchy bar: " + yesno(m.backupOpts.Bar), Value: "bar"},
 		{Display: "Hyprland configs: " + yesno(m.backupOpts.Hyprland), Value: "hyprland"},
 	}
 	enc := "no"
@@ -5463,6 +5519,8 @@ func backupOptionInfo(value string) string {
 		return "Keybindings\n\nSave all bindings, only the mosquitOmarchy-managed bindings, or none."
 	case "hyprland":
 		return "Hyprland configs\n\nInclude the Hyprland configuration tree in the archive."
+	case "bar":
+		return "Omarchy bar\n\nSave the bar layout: widget order, which widgets and tray items are shown or hidden, and the settings of every widget in the bar (including Omarchy widgets that are off by default). Restore puts the same bar back on the target machine, dropping only widgets that are not installed there."
 	case "encrypt":
 		return "Encryption\n\nEncrypt the archive with AES-256. The passphrase will be required to inspect and restore it."
 	case "start":
@@ -5677,6 +5735,12 @@ func restoreModeNotice(mode string) string {
 func (m model) rebuildRestoreOptions() navPicker {
 	idx := m.restorePicker.Index()
 	items := []tuikit.PickerItem{}
+	if len(m.restoreManifest.InstallGroups) > 0 {
+		items = append(items, tuikit.PickerItem{
+			Display: "Packages, Themes & tweaks: " + m.restoreAppsLabel(),
+			Value:   "apps",
+		})
+	}
 	if m.restoreManifest.VST {
 		items = append(items, tuikit.PickerItem{Display: "VST plugins: " + yesno(m.restoreOpts.VST), Value: "vst"})
 	}
@@ -5701,6 +5765,9 @@ func (m model) rebuildRestoreOptions() navPicker {
 	if m.restoreManifest.Keybindings != "" && m.restoreManifest.Keybindings != "none" {
 		items = append(items, tuikit.PickerItem{Display: "Keybindings: " + restoreKeybindingsLabel(m.restoreOpts.Keybindings), Value: "keybindings"})
 	}
+	if m.restoreManifest.Bar {
+		items = append(items, tuikit.PickerItem{Display: "Omarchy bar: " + yesno(m.restoreOpts.Bar), Value: "bar"})
+	}
 	if m.restoreManifest.Hyprland {
 		items = append(items, tuikit.PickerItem{Display: "Hyprland configs: " + yesno(m.restoreOpts.Hyprland), Value: "hyprland"})
 	}
@@ -5723,6 +5790,109 @@ func (m model) rebuildRestoreOptions() navPicker {
 	return p.SelectIndex(idx)
 }
 
+// restoreAppKey identifies one install.list row (folder + module key). The tab
+// matches the file format the backend already reads.
+func restoreAppKey(folder, item string) string { return folder + "\t" + item }
+
+func (m model) restoreAppsTotal() int {
+	n := 0
+	for _, g := range m.restoreManifest.InstallGroups {
+		n += len(g.Items)
+	}
+	return n
+}
+
+func (m model) restoreAppsCheckedCount() int {
+	n := 0
+	for _, g := range m.restoreManifest.InstallGroups {
+		for _, it := range g.Items {
+			if m.restoreAppsChecked[restoreAppKey(g.Folder, it)] {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// restoreAppsLabel is the restore-options row text. "all" instead of "30
+// selected" is what the user asked for: the default state deserves a word,
+// not a count that repeats the length of the list behind it.
+func (m model) restoreAppsLabel() string {
+	total := m.restoreAppsTotal()
+	if total == 0 {
+		return "none"
+	}
+	checked := m.restoreAppsCheckedCount()
+	switch {
+	case checked == total:
+		return "all"
+	case checked == 0:
+		return "none"
+	default:
+		return fmt.Sprintf("%d selected", checked)
+	}
+}
+
+// rebuildRestoreApps builds the restore content tree: every module the
+// archive's install.list carries, ticked by default, so a restore can skip
+// individual apps without editing the archive.
+func (m model) rebuildRestoreApps() navPicker {
+	idx := m.restoreAppsPicker.Index()
+	items := make([]tuikit.PickerItem, 0, m.restoreAppsTotal()+1)
+	for _, g := range m.restoreManifest.InstallGroups {
+		for _, it := range g.Items {
+			v := restoreAppKey(g.Folder, it)
+			mark := "○"
+			if m.restoreAppsChecked[v] {
+				mark = "●"
+			}
+			items = append(items, tuikit.PickerItem{
+				Display: restoreGroupLabel(g.Folder) + " › " + restoreItemLabel(it),
+				Value:   v,
+				Badge:   mark,
+			})
+		}
+	}
+	items = append(items, tuikit.PickerItem{Display: "Done", Value: "done", Engage: true})
+	p := newNavPicker("", items).SetSize(m.contentSize()).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
+		)
+	return p.SelectIndex(idx)
+}
+
+// writeRestoreSelection writes the ticked modules as an install.list-shaped
+// file. The backend reads it with restore_install_list, so skipped apps never
+// reach the installer and the reaper auto-install check sees the same truth.
+func (m model) writeRestoreSelection() (string, error) {
+	f, err := os.CreateTemp("", "mosquitomarchy-restore-apps-")
+	if err != nil {
+		return "", err
+	}
+	var order []string
+	byFolder := map[string][]string{}
+	for _, g := range m.restoreManifest.InstallGroups {
+		for _, it := range g.Items {
+			if !m.restoreAppsChecked[restoreAppKey(g.Folder, it)] {
+				continue
+			}
+			if _, seen := byFolder[g.Folder]; !seen {
+				order = append(order, g.Folder)
+			}
+			byFolder[g.Folder] = append(byFolder[g.Folder], it)
+		}
+	}
+	fmt.Fprintln(f, "# install.list — restore selection from the mosquitOmarchy TUI")
+	for _, folder := range order {
+		fmt.Fprintf(f, "%s\t%s\n", folder, strings.Join(byFolder[folder], "\t"))
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	return f.Name(), nil
+}
+
 // openRestoreOptions is the single entry point for the page: it initialises the
 // section flags from the archive manifest (so only what exists is offered) and
 // resets the mode to the Full default.
@@ -5730,6 +5900,18 @@ func (m model) openRestoreOptions() (model, tea.Cmd) {
 	m.pendingAction = ""
 	m.restoreOpts = restoreOptsFor(m.restoreManifest)
 	m.restoreNotice = restoreModeNotice(m.restoreOpts.Mode)
+	// A new archive starts from "everything ticked": restoring is opt-out, and
+	// an unticked row is a deliberate skip rather than a remembered default.
+	m.restoreAppsChecked = map[string]bool{}
+	for _, g := range m.restoreManifest.InstallGroups {
+		for _, it := range g.Items {
+			m.restoreAppsChecked[restoreAppKey(g.Folder, it)] = true
+		}
+	}
+	if m.restoreSelFile != "" {
+		_ = os.Remove(m.restoreSelFile)
+		m.restoreSelFile = ""
+	}
 	m.push(scrRestoreOptions)
 	m.restorePicker = m.rebuildRestoreOptions()
 	return m, nil
@@ -5753,11 +5935,28 @@ func (m model) restorePlanLines() []string {
 	if len(m.restoreManifest.InstallGroups) == 0 {
 		lines = append(lines, "  • No module packages selected")
 	} else {
+		skipped := 0
 		for _, group := range m.restoreManifest.InstallGroups {
-			lines = append(lines, "  "+restoreGroupLabel(group.Folder))
+			var kept []string
 			for _, item := range group.Items {
+				if m.restoreAppsChecked[restoreAppKey(group.Folder, item)] {
+					kept = append(kept, item)
+				} else {
+					skipped++
+				}
+			}
+			if len(kept) == 0 {
+				continue
+			}
+			lines = append(lines, "  "+restoreGroupLabel(group.Folder))
+			for _, item := range kept {
 				lines = append(lines, "    • "+restoreItemLabel(item))
 			}
+		}
+		if m.restoreAppsCheckedCount() == 0 {
+			lines = append(lines, "  • No module package left after the selection")
+		} else if skipped > 0 {
+			lines = append(lines, fmt.Sprintf("  • %d package(s) skipped by the selection", skipped))
 		}
 		lines = append(lines, "  • Sync missing Pacman databases if needed (no system upgrade)")
 	}
@@ -5814,6 +6013,9 @@ func (m model) restorePlanLines() []string {
 	}
 	if m.restoreManifest.Keybindings != "" && m.restoreManifest.Keybindings != "none" {
 		lines = append(lines, "  • Keybindings: "+restoreKeybindingsLabel(m.restoreOpts.Keybindings))
+	}
+	if m.restoreManifest.Bar {
+		lines = append(lines, "  • Omarchy bar: "+yesno(m.restoreOpts.Bar))
 	}
 	if m.restoreManifest.Hyprland {
 		lines = append(lines, "  • Hyprland configs: "+yesno(m.restoreOpts.Hyprland))
@@ -5939,6 +6141,7 @@ func (m model) beginBackup() (model, tea.Cmd) {
 		"--zen=" + yesno(opts.Zen),
 		"--reaper=" + opts.Reaper,
 		"--keybindings=" + opts.Keybindings,
+		"--bar=" + yesno(opts.Bar),
 		"--hyprland=" + yesno(opts.Hyprland),
 		"--selection=" + m.backupSelFile,
 		// Always sent, empty or not: the backend treats an empty name as "use

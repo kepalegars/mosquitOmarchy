@@ -201,7 +201,7 @@ func TestStatusScroll(t *testing.T) {
 func TestViewRenders(t *testing.T) {
 	screens := []screen{scrMain, scrStatus, scrSetup, scrSetupCat, scrUpdate, scrBackup,
 		scrBackupRestore, scrBackupOptions, scrBackupAppSettings, scrRestoreOptions,
-		scrBackupApps, scrConfirm, scrWorking, scrPassphrase, scrInfo, scrCleanup}
+		scrRestoreApps, scrBackupApps, scrConfirm, scrWorking, scrPassphrase, scrInfo, scrCleanup}
 	for _, s := range screens {
 		m := initialModel()
 		m.nav = []screen{s}
@@ -242,10 +242,16 @@ func TestViewRenders(t *testing.T) {
 			m.backupOpts.HasKeep, m.backupOpts.HasZen, m.backupOpts.HasReaper = true, true, true
 			m.backupAppPicker = m.rebuildBackupAppSettings()
 		case scrRestoreOptions:
-			m.restoreManifest = BackupManifest{VST: true, Reaper: true, Zen: true, Keepass: true, KeepassSettings: true, Themes: true, OmarchyPlugins: true, Hyprland: true, Keybindings: "all"}
+			m.restoreManifest = BackupManifest{VST: true, Reaper: true, Zen: true, Keepass: true, KeepassSettings: true, Themes: true, OmarchyPlugins: true, Hyprland: true, Bar: true, Keybindings: "all",
+				InstallGroups: []BackupInstallGroup{{Folder: "apps", Items: []string{"reaper"}}}}
 			m.restoreOpts = restoreOptsFor(m.restoreManifest)
 			m.restoreNotice = restoreModeNotice(m.restoreOpts.Mode)
+			m.restoreAppsChecked = map[string]bool{restoreAppKey("apps", "reaper"): true}
 			m.restorePicker = m.rebuildRestoreOptions()
+		case scrRestoreApps:
+			m.restoreManifest = BackupManifest{InstallGroups: []BackupInstallGroup{{Folder: "apps", Items: []string{"reaper"}}}}
+			m.restoreAppsChecked = map[string]bool{restoreAppKey("apps", "reaper"): true}
+			m.restoreAppsPicker = m.rebuildRestoreApps()
 		case scrBackupApps:
 			m.backupFolders = []FolderRec{{Folder: "apps", Label: "Apps"}}
 			m.backupItems = []SetupItemRec{{Folder: "apps", Key: "APP reaper", Label: "reaper", Checked: true}}

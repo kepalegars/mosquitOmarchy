@@ -48,6 +48,9 @@ const (
 	// scrRestoreOptions is the restore-side mirror: mode (safe/full) plus the
 	// granular sections to deploy, shown after picking an archive.
 	scrRestoreOptions
+	// scrRestoreApps is the restore content tree: the modules install.list
+	// carries, all ticked, so a restore can skip individual apps.
+	scrRestoreApps
 	scrPreinstalls
 	// scrQuickFixes is the Quick fixes list, reached from its folder row in
 	// Setup. It existed in the shell launcher (launcher_run_category -> fixes)
@@ -96,6 +99,7 @@ type BackupOpts struct {
 	Reaper          string // "none" | "settings" | "full" (full = every dir REAPER created)
 	Keybindings     string // "all" | "custom" | "no"
 	Hyprland        bool   // include the whole ~/.config/hypr tree
+	Bar             bool   // include the Omarchy bar layout (shell.json)
 	Encrypt         bool   // AES-256 with a passphrase
 	Name            string // optional label for the archive, "" = the dated default
 	HasKeep         bool   // the machine has keepassxc + its config/db
@@ -115,6 +119,7 @@ type storedBackupOpts struct {
 	Reaper          string `json:"reaper"`
 	Keybindings     string `json:"keybindings"`
 	Hyprland        bool   `json:"hyprland"`
+	Bar             bool   `json:"bar"`
 	Encrypt         bool   `json:"encrypt"`
 	Name            string `json:"name"`
 }
@@ -135,6 +140,7 @@ type RestoreOpts struct {
 	Themes          bool
 	OmarchyPlugins  bool
 	Hyprland        bool
+	Bar             bool
 	Keybindings     string // "none" | "custom" | "all"
 }
 
@@ -153,6 +159,7 @@ type BackupManifest struct {
 	Themes          bool                 `json:"themes"`
 	OmarchyPlugins  bool                 `json:"omarchy_plugins"`
 	Hyprland        bool                 `json:"hyprland"`
+	Bar             bool                 `json:"bar"`
 	Keybindings     string               `json:"keybindings"` // "all" | "custom" | "none"
 	InstallGroups   []BackupInstallGroup `json:"install_groups"`
 	PkgList         bool                 `json:"pkglist"`
@@ -175,6 +182,7 @@ func restoreOptsFor(mf BackupManifest) RestoreOpts {
 		Themes:          mf.Themes,
 		OmarchyPlugins:  mf.OmarchyPlugins,
 		Hyprland:        mf.Hyprland,
+		Bar:             mf.Bar,
 	}
 	switch mf.Keybindings {
 	case "all":
@@ -192,7 +200,7 @@ func restoreOptsFor(mf BackupManifest) RestoreOpts {
 // the defaults instead of an error: a corrupt preference file must never be
 // able to stop the Backup screen from opening.
 func loadBackupOpts() BackupOpts {
-	def := BackupOpts{VST: "list", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "full", Keybindings: "no", Hyprland: false}
+	def := BackupOpts{VST: "list", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "full", Keybindings: "no", Hyprland: false, Bar: true}
 	out, err := runQuick("backup-opts", "get")
 	if err != nil {
 		return def
@@ -216,7 +224,7 @@ func loadBackupOpts() BackupOpts {
 	// saveBackupOpts, which always writes all five, so a decode that produced a
 	// zero value anywhere means the file was not written by us.
 	if st.VST == "" {
-		return BackupOpts{VST: "list", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "full", Keybindings: "no", Hyprland: false}
+		return BackupOpts{VST: "list", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "full", Keybindings: "no", Hyprland: false, Bar: true}
 	}
 	def.Keepass = st.Keepass
 	def.Zen = st.Zen
@@ -233,6 +241,11 @@ func loadBackupOpts() BackupOpts {
 	if st.Version >= 3 {
 		def.Hyprland = st.Hyprland
 	}
+	// The Omarchy bar arrived in v4: older files keep the ON default, which is
+	// how every earlier backup behaved (shell.json was always included).
+	if st.Version >= 4 {
+		def.Bar = st.Bar
+	}
 	return def
 }
 
@@ -241,7 +254,7 @@ func loadBackupOpts() BackupOpts {
 // as an error on the run that triggered it.
 func saveBackupOpts(o BackupOpts) {
 	payload, err := json.Marshal(storedBackupOpts{
-		Version:         3,
+		Version:         4,
 		VST:             o.VST,
 		Keepass:         o.Keepass,
 		KeepassSettings: o.KeepassSettings,
@@ -249,6 +262,7 @@ func saveBackupOpts(o BackupOpts) {
 		Reaper:          o.Reaper,
 		Keybindings:     o.Keybindings,
 		Hyprland:        o.Hyprland,
+		Bar:             o.Bar,
 		Encrypt:         o.Encrypt,
 		Name:            o.Name,
 	})
@@ -329,6 +343,13 @@ type model struct {
 	backupAppsPicker navPicker
 	backupAppPicker  navPicker
 	restorePicker    navPicker
+	// restoreAppsPicker drives the restore content tree (install.list modules,
+	// all ticked by default), restoreAppsChecked is its tick map.
+	restoreAppsPicker  navPicker
+	restoreAppsChecked map[string]bool
+	// restoreSelFile is the install.list-shaped file written from those ticks
+	// and handed to the backend as --install-selection.
+	restoreSelFile   string
 	restoreOpts      RestoreOpts
 	restoreManifest  BackupManifest
 	// restoreManifestReady means the archive has been read and the page's rows
