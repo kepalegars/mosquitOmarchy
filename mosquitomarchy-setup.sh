@@ -1179,6 +1179,7 @@ TWEAKS=(
   "wine-theme:Make every native Windows (Wine/XWayland) window follow the Omarchy theme — dark title bars and controls on a dark theme, light on a light one (per-prefix registry + a theme-watch hook that re-applies on every theme change)"
   "colors-unifier:Make GTK4/GTK3 (and Qt via qgtk3) apps follow the active Omarchy theme with guaranteed-readable text, and offer to refresh Nautilus immediately (hardened fork of Accord; replaces its plugin)"
   "amdgpu-compute-timeout:Give the AMDGPU compute rings a 90 s watchdog instead of 2 s so a heavy Vulkan/OpenCL job on an integrated GPU (SpektraFilm OFX in DaVinci Resolve, Blender, …) stops dying with VK_ERROR_DEVICE_LOST. Adds one marked amdgpu.lockup_timeout=2000,90000,2000,2000 line to Omarchy's Limine config (GFX, Compute, SDMA, Video) and regenerates the boot entry. GPU-WIDE, not per-app: every compute job on this AMD GPU gets the longer watchdog, so a real hang can freeze the desktop or that app for up to 90 s before the queue resets; graphics/DMA/video stay at 2 s. It works around a too-short watchdog, not a real driver/shader hang. FULL REBOOT required (a logout or session restart does not reload amdgpu); --remove also needs a reboot."
+  "nautilus-audio:Two right-click tools in Nautilus (Scripts submenu). PACPL (Perl Audio Converter, AUR) converts the selected files to MP3/FLAC/OGG/OPUS/WAV/M4A/AIFF/WV with a zenity picker, tags kept, existing outputs skipped unless overwrite is answered yes; installed with the common encoders (vorbis-tools, opus-tools, sox, flac, lame, wavpack, ffmpeg, zenity). makesfz (single bash script, downloaded to ~/.local/bin) generates .sfz sampler instruments from a selection of WAV/FLAC/OGG samples: one .sfz per sample, a single multi-sample map (-s), key ranges, velocity layers by name prefix/suffix or sub-directory, interactive mode in a terminal. The FIRST run compiles pacpl's AUR Perl dependencies, which takes several minutes; the run streams its progress. --remove deletes only the two managed Nautilus scripts and makesfz; pacpl and the encoders stay installed."
 )
 
 fix_desc(){ # id -> description (searches both catalogs)
@@ -1206,6 +1207,7 @@ fix_category(){
     1px-seam)           echo "Appearance" ;;
     bluetooth)          echo "Hardware" ;;
     amdgpu-compute-timeout) echo "Hardware" ;;
+    nautilus-audio)     echo "Files & audio" ;;
     hyprland-autofocus) echo "Windows & input" ;;
     *)                echo "Other" ;;
   esac
@@ -1236,6 +1238,7 @@ run_tweak(){ # single tweak by id
     wine-theme) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-wine-theme.sh" ;;
     colors-unifier) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-colors-unifier.sh" ;;
     amdgpu-compute-timeout) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-amdgpu-compute-timeout.sh" ;;
+    nautilus-audio) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-nautilus-audio.sh" ;;
     *) err "Unknown tweak: $id"; return 1 ;;
   esac
 }
@@ -1251,6 +1254,7 @@ run_tweak_remove(){ # single tweak removal by id
     wine-theme) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-wine-theme.sh" --remove ;;
     colors-unifier) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-colors-unifier.sh" --remove ;;
     amdgpu-compute-timeout) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-amdgpu-compute-timeout.sh" --remove ;;
+    nautilus-audio) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-nautilus-audio.sh" --remove ;;
     *) return 1 ;;
   esac
 }
@@ -1287,7 +1291,7 @@ run_addons(){
 tweaks_need_sudo(){
   local id
   for id in "${TWEAKS_SELECTED[@]:-}"; do
-    case $id in amdgpu-compute-timeout|replace-evince-with-papers) return 0 ;; esac
+    case $id in amdgpu-compute-timeout|replace-evince-with-papers|nautilus-audio) return 0 ;; esac
   done
   return 1
 }

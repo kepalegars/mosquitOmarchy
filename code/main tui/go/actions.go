@@ -198,6 +198,26 @@ func quickCatalogRunCmd(catalog string, ids []string) tea.Cmd {
 	}
 }
 
+// slowTweaks are the tweaks that install packages or build AUR dependencies.
+// quickCatalogRunCmd buffers the whole run and reports only at the end, so a
+// multi-minute build showed no progress at all (the user saw the sudo prompt,
+// then "nothing happens") and could not even be cancelled. These run through
+// the streamed Runner instead, like a module.
+var slowTweaks = map[string]bool{
+	"nautilus-audio": true,
+}
+
+// tweakRunsStreamed reports whether the batch contains a tweak that must run
+// in the streamed Runner rather than the silent quick path.
+func tweakRunsStreamed(ids []string) bool {
+	for _, id := range ids {
+		if slowTweaks[id] {
+			return true
+		}
+	}
+	return false
+}
+
 // PreinstallRec is one Omarchy stock app in the Uninstall ▸ Preinstalls list.
 // Installed&&!protected is what makes it selectable; the rest render greyed.
 type PreinstallRec struct {

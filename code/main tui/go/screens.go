@@ -1408,9 +1408,16 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				workingArgs("cleanup", []string{strings.Join(ids, ",")})...)
 		case "quick-tweaks":
 			// Same shape as quick-fixes, over the Tweaks (preferences) catalog:
-			// run_tweaks() in one backend call.
+			// run_tweaks() in one backend call. A tweak that installs packages
+			// or builds AUR dependencies takes minutes, and the quick path
+			// buffers its whole output until the end — which reads as "nothing
+			// happens" and cannot be cancelled. Those run in the streamed
+			// Runner instead, so the build is visible and stoppable.
 			ids := m.pendingFixIDs
 			m.pendingFixIDs = nil
+			if tweakRunsStreamed(ids) {
+				return m.startWorking("Applying tweaks", workingArgs("tweaks-run", ids)...)
+			}
 			return m, quickCatalogRunCmd("tweaks", ids)
 		case "davinci-alt-drivers":
 			return m.startWorking("Applying the Radeon 780M OpenCL profile",
@@ -3689,6 +3696,8 @@ func operationName(sub string) string {
 		return "Patch"
 	case "davinci-alt-drivers":
 		return "DaVinci profile"
+	case "tweaks-run":
+		return "Tweaks"
 	}
 	return ""
 }

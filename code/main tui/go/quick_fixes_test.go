@@ -210,6 +210,22 @@ func TestEnterOnATweakRowQueuesTheTweaksCatalog(t *testing.T) {
 	}
 }
 
+// A tweak that installs packages or builds AUR dependencies (nautilus-audio)
+// must run in the streamed Runner: the quick path buffers everything until the
+// end, so a multi-minute build looked like "nothing happened" and could not be
+// cancelled. Plain preference tweaks keep the silent fast path.
+func TestSlowTweakRunsStreamed(t *testing.T) {
+	if !tweakRunsStreamed([]string{"nautilus-audio"}) {
+		t.Error("nautilus-audio must run in the streamed Runner")
+	}
+	if tweakRunsStreamed([]string{"wine-theme"}) {
+		t.Error("a plain preference tweak must keep the quick path")
+	}
+	if !tweakRunsStreamed([]string{"wine-theme", "nautilus-audio"}) {
+		t.Error("a batch containing a slow tweak must run in the streamed Runner")
+	}
+}
+
 // uninstallTweaksSetup is flatSetup plus a tickable tweak row, in the tree the
 // Uninstall screen shows.
 func uninstallTweaksSetup() model {

@@ -266,6 +266,9 @@ tweak_applied(){
       [[ -f "$HOME/.config/systemd/user/mosquitomarchy-wine-apps.path" ]] ;;
     amdgpu-compute-timeout)
       grep -qF -- "mosquitOmarchy-amdgpu-compute-timeout" /etc/default/limine 2>/dev/null ;;
+    nautilus-audio)
+      grep -qsF -- "tweak-nautilus-audio" "$HOME/.local/share/nautilus/scripts/Convert Audio (PACPL)" \
+      && grep -qsF -- "tweak-nautilus-audio" "$HOME/.local/share/nautilus/scripts/Make SFZ" ;;
     *) return 1 ;;
   esac
 }
@@ -1220,7 +1223,7 @@ uninstall_state_signature(){
   for f in hyprland-crash 1px-seam; do
     fix_applied "$f" && sig+="fix:$f|"
   done
-  for t in terminal-padding wine-theme amdgpu-compute-timeout; do
+  for t in terminal-padding wine-theme amdgpu-compute-timeout nautilus-audio; do
     tweak_applied "$t" && sig+="tweak:$t|"
   done
   # Still-present stock preinstalls (input to the Preinstalls folder).
@@ -1424,7 +1427,7 @@ _uninstall_tree(){
   # is a dead row.
   local -a applied_tweaks=()
   local tid
-  for tid in terminal-padding wine-theme amdgpu-compute-timeout; do
+  for tid in terminal-padding wine-theme amdgpu-compute-timeout nautilus-audio; do
     tweak_applied "$tid" && applied_tweaks+=("$tid")
   done
   if ((${#applied_tweaks[@]})); then

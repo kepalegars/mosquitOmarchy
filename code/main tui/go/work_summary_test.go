@@ -24,6 +24,7 @@ func TestWorkFinishedTextNamesTheOperation(t *testing.T) {
 		{"heal", "Repair"},
 		{"kb-remove", "Keybindings"},
 		{"theme-create", "Theme"},
+		{"tweaks-run", "Tweaks"},
 	}
 	for _, c := range cases {
 		if got := operationName(c.sub); got != c.want {
