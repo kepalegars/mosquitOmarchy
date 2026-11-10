@@ -16,8 +16,12 @@ GUARD = '''  readonly property bool inputMuted: inputViaWpctl ? UntypedInput.mut
   property bool levelsGuardAllowNative: false
   function levelsGuardManagedInterface(name, prefix) {
     var n = String(name || "").toLowerCase()
-    if (n.indexOf(prefix) !== 0) return false
-    return n.indexOf("audient_evo") >= 0
+    // Mixbay split sinks (evo8_main_output, evo8_mic_1_2, …) carry the level
+    // Mixbay owns too, even though they are not raw USB devices.
+    var split = /^evo[0-9]_/.test(n)
+    if (!split && n.indexOf(prefix) !== 0) return false
+    return split
+        || n.indexOf("audient_evo") >= 0
         || n.indexOf("fireface") >= 0
         || n.indexOf("ugm192") >= 0
         || n.indexOf("quantum_es") >= 0

@@ -55,6 +55,11 @@ set_source() { printf '%s\n' "$1" >"$tmp/source"; SOURCE_NAME="$tmp/source"; }
 [[ -z $(run output raise) ]] || { echo "managed output was not blocked"; exit 1; }
 blocked_osd volume || { echo "blocked output OSD is wrong"; exit 1; }
 
+# Mixbay split sinks are managed too, even though they are loopbacks.
+set_sink 'evo8_main_output'
+[[ -z $(run output raise) ]] || { echo "split output was not blocked"; exit 1; }
+blocked_osd volume || { echo "split output OSD is wrong"; exit 1; }
+
 # Every supported Mixbay interface is recognised by its PipeWire node name.
 set_sink 'alsa_output.usb-RME_Fireface_UCX_II_12345678-00.analog-stereo'
 [[ -z $(run output raise) ]] || { echo "RME output was not blocked"; exit 1; }
@@ -80,6 +85,10 @@ rm -f "$tmp/config/mosquitomixbay/ui.json"
 set_source 'alsa_input.usb-Audient_EVO8-00.pro-input-0'
 [[ -z $(run input) ]] || { echo "managed input was not blocked"; exit 1; }
 blocked_osd microphone || { echo "blocked input OSD is wrong"; exit 1; }
+
+set_source 'evo8_mic_1_2'
+[[ -z $(run input) ]] || { echo "split input was not blocked"; exit 1; }
+blocked_osd microphone || { echo "split input OSD is wrong"; exit 1; }
 
 set_source 'alsa_input.usb-ESI_Audiotechnik_UGM192_1234-00.analog-stereo'
 [[ -z $(run input) ]] || { echo "ESI input was not blocked"; exit 1; }

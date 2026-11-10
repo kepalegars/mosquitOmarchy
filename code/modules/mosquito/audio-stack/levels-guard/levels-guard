@@ -33,8 +33,9 @@ output_sink() {
 
 managed_interface() {
   local prefix="$1" name="${2,,}"
-  [[ $name == "$prefix"* ]] || return 1
-  [[ $name == *audient_evo* || $name == *fireface* || $name == *ugm192* || $name == *quantum_es* ]]
+  # Split sinks (evo8_main_output, evo8_mic_1_2, …) are Mixbay-owned too.
+  [[ $name == "$prefix"* || $name =~ ^evo[0-9]_ ]] || return 1
+  [[ $name =~ ^evo[0-9]_ || $name == *audient_evo* || $name == *fireface* || $name == *ugm192* || $name == *quantum_es* ]]
 }
 
 blocked_osd(){
