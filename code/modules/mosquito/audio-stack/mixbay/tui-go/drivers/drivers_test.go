@@ -538,3 +538,23 @@ func TestEvoResetControlsFloorsOutputs(t *testing.T) {
 		}
 	}
 }
+
+// PC/LOOP mixer sources (SetMixerOutput) top out at unity; only input sends
+// keep the +6 dB headroom.
+func TestEvoMixerOutputTopsAtUnity(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
+	d := newEvo(EVO8Spec)
+	if err := d.SetMixerOutput(0, 6, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.demoStatus().Mixer["output1_2"].VolumeDb; got != 0 {
+		t.Fatalf("mixer output volume = %v dB, want 0", got)
+	}
+	if err := d.SetMixerInput(1, 6, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.demoStatus().Mixer["input1"].VolumeDb; got != 6 {
+		t.Fatalf("mixer input volume = %v dB, want +6 headroom", got)
+	}
+}

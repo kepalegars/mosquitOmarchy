@@ -1024,7 +1024,7 @@ func (r *evoRender) drawMixerSection(topRow, cx, secIdx int, compact bool) {
 	}
 	r.boxSide(row, cx, siw)
 	row++
-	volFrac := clampf((volVal-evoMixDbMin)/(evoMixDbMax-evoMixDbMin), 0, 1)
+	volFrac := clampf((volVal-evoMixDbMin)/(evoMxMaxForKey(s.key)-evoMixDbMin), 0, 1)
 	volSel := selSec && r.u.mxParam == volIdx
 	r.boxSide(row, cx, siw)
 	r.hslider(row, cx+2, volFrac, false, volSel, s.color, siw-2)
@@ -2216,7 +2216,7 @@ func (m *model) evoMxSetValTo(key, param string, val float64) tea.Cmd {
 	vol, pan, panL, panR := c.VolumeDb, c.Pan, c.PanL, c.PanR
 	switch param {
 	case "volume":
-		vol = clampf(val, evoMixDbMin, evoMixDbMax)
+		vol = clampf(val, evoMixDbMin, evoMxMaxForKey(key))
 	case "pan":
 		pan = clampf(val, evoPanMin, evoPanMax)
 	case "pan_l":
@@ -2255,6 +2255,15 @@ func (m *model) evoMxSetValTo(key, param string, val float64) tea.Cmd {
 		}, "")
 	}
 	return nil
+}
+
+// evoMxMaxForKey: mixer outputs (PC/LOOP sources) stop at 0 dB; only the
+// input sends keep the +6 dB headroom.
+func evoMxMaxForKey(key string) float64 {
+	if strings.HasPrefix(key, "output") {
+		return 0
+	}
+	return evoMixDbMax
 }
 
 func evoMxDefault(param string) float64 {

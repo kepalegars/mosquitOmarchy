@@ -76,6 +76,20 @@ INSERTIONS = [
 
 REPLACEMENTS = [
     (
+        '''    // A hardware output is its own volume sink, as omarchy-audio-output-sink
+    // reports without looking further, so only a DSP sink needs the script.
+    if (sink && String(sink.name).indexOf("alsa_output.") === 0) {
+''',
+        '''    // A hardware output is its own volume sink, as omarchy-audio-output-sink
+    // reports without looking further, so only a DSP sink needs the script.
+    // Mixbay split sinks are stereo loopbacks with their own PipeWire volume;
+    // resolving them to the raw Pro Audio node loses that volume (pro-audio
+    // reports 0), so they stay their own volume sink.
+    if (sink && (String(sink.name).indexOf("alsa_output.") === 0
+        || /^evo[0-9]_/.test(String(sink.name)))) {
+''',
+    ),
+    (
         '''  function outputIcon(volume) {
     // Match the old Waybar pulseaudio glyph set. The Material Design speaker
     // icons render visually smaller in JetBrainsMono Nerd Font.

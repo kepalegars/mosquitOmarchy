@@ -1224,7 +1224,9 @@ func (d *evoDriver) SetMixerOutput(srcPair int, volDb, panL, panR float64, mixOu
 		return fmt.Errorf("mix bus must be 0..%d", MixBuses(d.spec)-1)
 	}
 	cell := MixerCell{
-		VolumeDb: clamp(volDb, mixDbMin, mixDbMax),
+		// PC 1|2, PC 3|4 and LOOP 5|6 are mixer sources: their send tops out at
+		// unity. Only input sends may use the +6 dB headroom.
+		VolumeDb: clamp(volDb, mixDbMin, 0),
 		Pan:      clamp((panL+panR)/2, -100, 100),
 		PanL:     clamp(panL, -100, 100),
 		PanR:     clamp(panR, -100, 100),

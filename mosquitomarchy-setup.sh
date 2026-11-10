@@ -3580,9 +3580,9 @@ $MENU_MOSQUITO_START
       "rme", "rme fireface", "fireface", "fireface ucx ii", "ucx ii", "ucx2",
       "esi", "esi ugm192", "ugm192", "beta", "add interface", "reverse engineering"],
     "when": "test -x $BIN_DIR/mosquito-mixbay",
-    // Go through the dispatcher (not the TUI binary directly) so the
-    // first-connection onboarding prompt runs before the panel opens.
-    "action": "omarchy-launch-or-focus-tui --app-id=org.omarchy.mosquito-mixbay-tui mosquito-mixbay"
+    // Go through mixbay-startup so the first-connection onboarding runs and
+    // the window opens/reveals in the scratchpad when that preference is on.
+    "action": "mixbay-startup --open"
   },
   "setup.mosquito.jam": {
     "icon": "\uef4e",

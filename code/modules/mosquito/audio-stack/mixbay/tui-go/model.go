@@ -773,12 +773,12 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.toast, _ = m.toast.SetOK("Connection history cleared")
 			case "split-on":
 				m.toast, _ = m.toast.SetOK(msg.id + " split on")
-				m.confirm = tuikit.NewConfirm("Restart the Omarchy shell now so the audio panel shows the new split?", "Later", "Restart now")
+				m.confirm = tuikit.NewConfirm("Restart the Omarchy shell now so the audio panel lists every stereo pair?", "Later", "Restart now")
 				m.confirmAct = func() tea.Cmd { return shellRestartCmd() }
 				m.push(scrConfirm)
 			case "split-off":
 				m.toast, _ = m.toast.SetOK(msg.id + " split off")
-				m.confirm = tuikit.NewConfirm("Restart the Omarchy shell now so the audio panel shows the raw interface?", "Later", "Restart now")
+				m.confirm = tuikit.NewConfirm("Restart the Omarchy shell now so the audio panel shows one EVO entry?", "Later", "Restart now")
 				m.confirmAct = func() tea.Cmd { return shellRestartCmd() }
 				m.push(scrConfirm)
 			}
@@ -1237,7 +1237,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				on = "off"
 			}
 			m.confirm = tuikit.NewConfirm(
-				fmt.Sprintf("Turn the %s split %s? With the split on, the audio panel shows one EVO entry; with it off, the raw card is the one entry. PipeWire restarts briefly.", c.Name, on),
+				fmt.Sprintf("Turn the %s split %s? This only changes the Omarchy audio panel: on lists every stereo pair, off leaves one EVO entry. Routing is unchanged.", c.Name, on),
 				"Cancel", "Split "+on)
 			id := c.ID
 			m.confirmAct = func() tea.Cmd { return foundationSplitCmd(on, id) }

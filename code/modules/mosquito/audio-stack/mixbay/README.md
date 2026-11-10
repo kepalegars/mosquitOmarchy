@@ -175,15 +175,16 @@ mosquito-mixbay-actions save | load --device evo8
 
 Le premier setup d'une carte applique son preset par défaut (contrôles + matrice
 usine) puis ne réécrit plus jamais les niveaux de l'utilisateur. Le widget audio
-d'Omarchy n'affiche qu'**une entrée par interface** (`EVO 8`) : les nœuds du
-split restent internes à Mixbay et sont masqués via
+d'Omarchy affiche **une entrée par sens** (`EVO 8`) par défaut : les autres
+nœuds du split restent internes à Mixbay et sont masqués via
 `/usr/share/omarchy-platform/audio.json`.
 
-Settings → Audio foundation : `s` sur une interface EVO bascule son split
-(`split on/off` est affiché après les Hz). Split ON = une entrée stéréo par
-sens (`EVO 8`) ; split OFF = le nœud Pro Audio brut, également une seule
-entrée. Après la bascule, Mixbay propose de redémarrer le shell Omarchy pour
-rafraîchir le panneau audio.
+Settings → Audio foundation : `s` sur une interface EVO bascule `split on/off`
+(affiché après les Hz). Ce réglage ne concerne **que le panneau audio** : les
+nœuds du split existent toujours, donc aucun restart PipeWire. OFF (défaut) =
+une entrée stéréo par sens ; ON = toutes les paires stéréo (main, 3+4, loopback,
+mics). Après la bascule, Mixbay propose de redémarrer le shell Omarchy pour
+rafraîchir le panneau.
 
 L'installateur pose aussi `/etc/udev/rules.d/99-evo8-capture.rules` et
 `/usr/local/lib/mosquitomixbay/evo8-capture-enable.py` : à chaque connexion,

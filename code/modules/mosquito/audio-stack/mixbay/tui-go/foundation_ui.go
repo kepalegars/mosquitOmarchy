@@ -73,10 +73,10 @@ func foundationSetDefaultCmd(id string) tea.Cmd {
 	}
 }
 
-// foundationSplitCmd toggles the per-interface split. --restart reloads
-// PipeWire so the hidden/visible node set changes immediately.
+// foundationSplitCmd toggles the per-interface audio-panel split. The nodes
+// always exist; only the visible entry count changes.
 func foundationSplitCmd(on, id string) tea.Cmd {
-	c := exec.Command("mixbay-audio-foundation", "--split", on, "--device", id, "--restart")
+	c := exec.Command("mixbay-audio-foundation", "--split", on, "--device", id)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		return foundationActionMsg{action: "split-" + on, id: id, err: err}
 	})

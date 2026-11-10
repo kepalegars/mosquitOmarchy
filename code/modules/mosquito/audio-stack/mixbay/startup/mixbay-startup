@@ -9,6 +9,7 @@
 # Usage:
 #   mixbay-startup --apply   # sync the autostart line with ui.json
 #   mixbay-startup --run     # launched by Hyprland at login
+#   mixbay-startup --open    # launched by the Omarchy menu (reveals the window)
 #   mixbay-startup --place   # park/unpark the running TUI from ui.json
 # =============================================================================
 set -euo pipefail
@@ -93,11 +94,7 @@ place(){
   done <<< "$addrs"
 }
 
-run(){
-  [[ "$(pref launch_at_startup true)" == true ]] || exit 0
-  # Already open (toggled settings, or autostart raced a manual launch): park
-  # or unpark the live window instead of spawning a duplicate.
-  if [[ -n "$(window_addrs)" ]]; then place; exit 0; fi
+spawn(){
   local scratch; scratch="$(pref launch_in_scratchpad true)"
   local term app
   if command -v foot >/dev/null 2>&1; then term=foot; else term=xterm; fi
@@ -108,9 +105,9 @@ run(){
     app="org.omarchy.mosquito-mixbay-tui"
   fi
   if [[ $term == foot ]]; then
-    "$term" --app-id="$app" -e "$HOME_DIR/.local/bin/mosquito-mixbay-tui" >/dev/null 2>&1 &
+    "$term" --app-id="$app" -e "$HOME_DIR/.local/bin/mosquito-mixbay" >/dev/null 2>&1 &
   else
-    "$term" -e "$HOME_DIR/.local/bin/mosquito-mixbay-tui" >/dev/null 2>&1 &
+    "$term" -e "$HOME_DIR/.local/bin/mosquito-mixbay" >/dev/null 2>&1 &
   fi
   # Wait for Hyprland to map the window: at login hyprctl can lag the exec by
   # several seconds on a cold session.
@@ -122,11 +119,41 @@ run(){
   place
 }
 
+run(){
+  [[ "$(pref launch_at_startup true)" == true ]] || exit 0
+  # Already open (toggled settings, or autostart raced a manual launch): park
+  # or unpark the live window instead of spawning a duplicate.
+  if [[ -n "$(window_addrs)" ]]; then place; exit 0; fi
+  spawn
+}
+
+# open: what the Omarchy menu calls. Unlike --run it ignores the autostart
+# preference, respects launch_in_scratchpad, and reveals the window.
+open_mixbay(){
+  if [[ -n "$(window_addrs)" ]]; then place; else spawn; fi
+  # Let the async move land before asking which special workspace is shown;
+  # otherwise the freshly moved window is still hidden and the toggle below
+  # can flip an already-open scratchpad shut.
+  sleep 0.4
+  local addr scratch special
+  addr="$(window_addrs | head -1)"
+  [[ -n $addr ]] || exit 0
+  scratch="$(pref launch_in_scratchpad true)"
+  if [[ $scratch == true ]]; then
+    special="$(hyprctl monitors -j 2>/dev/null | jq -r '[.[]|select(.specialWorkspace.name=="special:scratchpad")]|length' 2>/dev/null || echo 0)"
+    if [[ ${special:-0} == 0 ]]; then
+      hyprctl dispatch 'hl.dsp.workspace.toggle_special("scratchpad")' >/dev/null 2>&1 || true
+    fi
+  fi
+  hyprctl dispatch focuswindow "address:$addr" >/dev/null 2>&1 || true
+}
+
 case "${1:-}" in
   --apply) apply ;;
   --run) run ;;
+  --open) open_mixbay ;;
   --place) place ;;
   --remove) remove_block; printf 'autostart: off\n' ;;
-  -h|--help) sed -n '2,17p' "$0" ;;
-  *) printf 'usage: %s --apply|--run|--place|--remove\n' "$0" >&2; exit 2 ;;
+  -h|--help) sed -n '2,18p' "$0" ;;
+  *) printf 'usage: %s --apply|--run|--open|--place|--remove\n' "$0" >&2; exit 2 ;;
 esac
