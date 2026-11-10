@@ -246,11 +246,11 @@ func TestViewRenders(t *testing.T) {
 				InstallGroups: []BackupInstallGroup{{Folder: "apps", Items: []string{"reaper"}}}}
 			m.restoreOpts = restoreOptsFor(m.restoreManifest)
 			m.restoreNotice = restoreModeNotice(m.restoreOpts.Mode)
-			m.restoreAppsChecked = map[string]bool{restoreAppKey("apps", "reaper"): true}
+			m.restoreAppsChecked = map[string]bool{setupValue("apps", "reaper"): true}
 			m.restorePicker = m.rebuildRestoreOptions()
 		case scrRestoreApps:
 			m.restoreManifest = BackupManifest{InstallGroups: []BackupInstallGroup{{Folder: "apps", Items: []string{"reaper"}}}}
-			m.restoreAppsChecked = map[string]bool{restoreAppKey("apps", "reaper"): true}
+			m.restoreAppsChecked = map[string]bool{setupValue("apps", "reaper"): true}
 			m.restoreAppsPicker = m.rebuildRestoreApps()
 		case scrBackupApps:
 			m.backupFolders = []FolderRec{{Folder: "apps", Label: "Apps"}}

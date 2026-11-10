@@ -348,7 +348,7 @@ func (m model) View() string {
 	case scrRestoreApps:
 		title = screenTitle("Restore content — packages, themes & tweaks", w)
 		body = m.restoreAppsPicker.View()
-		bar = barLine(m.restoreAppsPicker.ShortcutsHint())
+		bar = m.searchBar(m.restoreAppsPicker.ShortcutsHint())
 	case scrBackupApps:
 		title = screenTitle("Backup content — packages, themes & tweaks", w)
 		body = m.backupAppsPicker.View()

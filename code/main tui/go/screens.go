@@ -1001,8 +1001,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			saveBackupSelection(m.backupItems, m.backupChecked)
 			m.backupAppsPicker = m.rebuildBackupApps()
 		case scrRestoreApps:
-			if _, ok := m.restoreAppsChecked[msg.Value]; ok {
-				m.restoreAppsChecked[msg.Value] = !m.restoreAppsChecked[msg.Value]
+			if strings.HasPrefix(msg.Value, "cat:") {
+				toggleTreeFolder(m.restoreItems(), m.restoreAppsChecked, m.restoreFolders(),
+					strings.TrimPrefix(msg.Value, "cat:"))
+			} else if strings.HasPrefix(msg.Value, "item:") {
+				if m.restoreAppsChecked[msg.Value] {
+					delete(m.restoreAppsChecked, msg.Value)
+				} else {
+					m.restoreAppsChecked[msg.Value] = true
+				}
 			}
 			m.restoreAppsPicker = m.rebuildRestoreApps()
 		case scrUpdate:
@@ -1197,6 +1204,17 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				delete(m.backupOpen, folder)
 			}
 			m.backupAppsPicker = m.rebuildBackupApps()
+		case scrRestoreApps:
+			folder := folderOfValue(m.restoreAppsPicker.SelectedValue())
+			if folder == "" {
+				return m, nil
+			}
+			if msg.Dir > 0 {
+				m.restoreAppsOpen[folder] = true
+			} else {
+				delete(m.restoreAppsOpen, folder)
+			}
+			m.restoreAppsPicker = m.rebuildRestoreApps()
 		}
 		return m, nil
 
@@ -2377,6 +2395,43 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	case scrRestoreOptions:
 		m.restorePicker, cmd = m.restorePicker.Update(msg)
 	case scrRestoreApps:
+		if km, ok := msg.(tea.KeyMsg); ok {
+			switch km.String() {
+			case "F", "shift+F", "/":
+				if m.filterOpen {
+					m.filterOpen = false
+					m.filterText = ""
+				} else {
+					m.filterOpen = true
+				}
+				m.restoreAppsPicker = m.rebuildRestoreApps()
+				return m, nil
+			case "esc":
+				if m.filterOpen {
+					m.filterOpen = false
+					m.filterText = ""
+					m.restoreAppsPicker = m.rebuildRestoreApps()
+					return m, nil
+				}
+			case "backspace":
+				if m.filterOpen {
+					if m.filterText == "" {
+						return m, nil
+					}
+					r := []rune(m.filterText)
+					m.filterText = string(r[:len(r)-1])
+					m.restoreAppsPicker = m.rebuildRestoreApps()
+					return m, nil
+				}
+			}
+			if m.filterOpen {
+				if runes := km.Runes; len(runes) == 1 && unicode.IsPrint(runes[0]) {
+					m.filterText += string(runes[0])
+					m.restoreAppsPicker = m.rebuildRestoreApps()
+					return m, nil
+				}
+			}
+		}
 		m.restoreAppsPicker, cmd = m.restoreAppsPicker.Update(msg)
 	case scrThemeFolder:
 		// Needed: without a case here the picker never receives the KeyMsg, so
@@ -3350,6 +3405,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 
 	case scrRestoreApps:
 		// Enter on any row returns to the restore options with the ticks kept.
+		m.filterOpen = false
+		m.filterText = ""
 		m.pop()
 		m.restorePicker = m.rebuildRestoreOptions()
 		return m, nil
@@ -3409,6 +3466,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		switch res.Value {
 		case "apps":
 			m.push(scrRestoreApps)
+			m.filterOpen = false
+			m.filterText = ""
 			m.restoreAppsPicker = m.rebuildRestoreApps()
 			return m, nil
 		case "vst":
@@ -5790,9 +5849,26 @@ func (m model) rebuildRestoreOptions() navPicker {
 	return p.SelectIndex(idx)
 }
 
-// restoreAppKey identifies one install.list row (folder + module key). The tab
-// matches the file format the backend already reads.
-func restoreAppKey(folder, item string) string { return folder + "\t" + item }
+// restoreFolders / restoreItems turn the archive's install groups into the
+// same folder tree the backup content screen uses. The checked map stays keyed
+// by setupValue, which is what pickerTreeItems and toggleTreeFolder read.
+func (m model) restoreFolders() []FolderRec {
+	out := make([]FolderRec, 0, len(m.restoreManifest.InstallGroups))
+	for _, g := range m.restoreManifest.InstallGroups {
+		out = append(out, FolderRec{Folder: g.Folder, Label: restoreGroupLabel(g.Folder)})
+	}
+	return out
+}
+
+func (m model) restoreItems() []SetupItemRec {
+	out := make([]SetupItemRec, 0, m.restoreAppsTotal())
+	for _, g := range m.restoreManifest.InstallGroups {
+		for _, it := range g.Items {
+			out = append(out, SetupItemRec{Folder: g.Folder, Key: it, Label: restoreItemLabel(it)})
+		}
+	}
+	return out
+}
 
 func (m model) restoreAppsTotal() int {
 	n := 0
@@ -5806,7 +5882,7 @@ func (m model) restoreAppsCheckedCount() int {
 	n := 0
 	for _, g := range m.restoreManifest.InstallGroups {
 		for _, it := range g.Items {
-			if m.restoreAppsChecked[restoreAppKey(g.Folder, it)] {
+			if m.restoreAppsChecked[setupValue(g.Folder, it)] {
 				n++
 			}
 		}
@@ -5834,32 +5910,63 @@ func (m model) restoreAppsLabel() string {
 }
 
 // rebuildRestoreApps builds the restore content tree: every module the
-// archive's install.list carries, ticked by default, so a restore can skip
-// individual apps without editing the archive.
+// archive's install.list carries, ticked by default, folded by folder exactly
+// like the backup content screen. There is no Done row — Enter anywhere
+// returns with the ticks kept.
 func (m model) rebuildRestoreApps() navPicker {
+	if m.filterText != "" {
+		return m.rebuildFilteredRestoreApps()
+	}
 	idx := m.restoreAppsPicker.Index()
-	items := make([]tuikit.PickerItem, 0, m.restoreAppsTotal()+1)
+	p := newNavPicker("", pickerTreeItems(m.restoreFolders(), m.restoreItems(),
+		m.restoreAppsChecked, m.restoreAppsOpen, false, "backup", m.aiRemovalLogged())).
+		SetSize(m.contentSize()).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
+			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
+			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
+		)
+	return p.SelectIndex(idx)
+}
+
+// rebuildFilteredRestoreApps is the restore tree's typing filter: matching
+// leaf rows only, prefixed by their folder, exactly like the backup tree.
+func (m model) rebuildFilteredRestoreApps() navPicker {
+	ft := strings.ToLower(m.filterText)
+	folderHit := map[string]bool{}
+	for _, g := range m.restoreManifest.InstallGroups {
+		if searchMatch(restoreGroupLabel(g.Folder), ft) {
+			folderHit[g.Folder] = true
+		}
+	}
+	items := make([]tuikit.PickerItem, 0, m.restoreAppsTotal())
 	for _, g := range m.restoreManifest.InstallGroups {
 		for _, it := range g.Items {
-			v := restoreAppKey(g.Folder, it)
+			label := restoreItemLabel(it)
+			if !folderHit[g.Folder] && !searchMatch(label, ft) && !searchMatch(it, ft) {
+				continue
+			}
+			v := setupValue(g.Folder, it)
 			mark := "○"
 			if m.restoreAppsChecked[v] {
 				mark = "●"
 			}
 			items = append(items, tuikit.PickerItem{
-				Display: restoreGroupLabel(g.Folder) + " › " + restoreItemLabel(it),
+				Display: restoreGroupLabel(g.Folder) + " › " + label,
 				Value:   v,
 				Badge:   mark,
 			})
 		}
 	}
-	items = append(items, tuikit.PickerItem{Display: "Done", Value: "done", Engage: true})
 	p := newNavPicker("", items).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
 		)
-	return p.SelectIndex(idx)
+	return p.KeepCursor(m.restoreAppsPicker.SelectedValue())
 }
 
 // writeRestoreSelection writes the ticked modules as an install.list-shaped
@@ -5874,7 +5981,7 @@ func (m model) writeRestoreSelection() (string, error) {
 	byFolder := map[string][]string{}
 	for _, g := range m.restoreManifest.InstallGroups {
 		for _, it := range g.Items {
-			if !m.restoreAppsChecked[restoreAppKey(g.Folder, it)] {
+			if !m.restoreAppsChecked[setupValue(g.Folder, it)] {
 				continue
 			}
 			if _, seen := byFolder[g.Folder]; !seen {
@@ -5905,7 +6012,7 @@ func (m model) openRestoreOptions() (model, tea.Cmd) {
 	m.restoreAppsChecked = map[string]bool{}
 	for _, g := range m.restoreManifest.InstallGroups {
 		for _, it := range g.Items {
-			m.restoreAppsChecked[restoreAppKey(g.Folder, it)] = true
+			m.restoreAppsChecked[setupValue(g.Folder, it)] = true
 		}
 	}
 	if m.restoreSelFile != "" {
@@ -5939,7 +6046,7 @@ func (m model) restorePlanLines() []string {
 		for _, group := range m.restoreManifest.InstallGroups {
 			var kept []string
 			for _, item := range group.Items {
-				if m.restoreAppsChecked[restoreAppKey(group.Folder, item)] {
+				if m.restoreAppsChecked[setupValue(group.Folder, item)] {
 					kept = append(kept, item)
 				} else {
 					skipped++
@@ -6047,11 +6154,27 @@ func restoreItemLabel(item string) string {
 	if item == "" {
 		return item
 	}
-	if strings.HasPrefix(item, "TUI ") {
-		return item
+	name := item
+	// TUI keys can carry a "|pkg — description" tail (and older archives
+	// do). Keep only the human name from it; drop the "TUI " prefix either
+	// way so a DAW filed under Apps never reads as a terminal tool.
+	if i := strings.Index(name, "|"); i >= 0 {
+		name = name[i+1:]
 	}
-	item = strings.ReplaceAll(item, "-", " ")
-	return strings.ToUpper(item[:1]) + item[1:]
+	if i := strings.Index(name, " — "); i >= 0 {
+		name = name[:i]
+	}
+	name = strings.TrimSpace(name)
+	name = strings.TrimPrefix(name, "TUI ")
+	if name == "" {
+		name = item
+		if i := strings.Index(name, "|"); i >= 0 {
+			name = name[:i]
+		}
+		name = strings.TrimPrefix(name, "TUI ")
+	}
+	name = strings.ReplaceAll(name, "-", " ")
+	return strings.ToUpper(name[:1]) + name[1:]
 }
 
 func restoreKeybindingsLabel(mode string) string {

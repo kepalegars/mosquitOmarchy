@@ -347,6 +347,8 @@ type model struct {
 	// all ticked by default), restoreAppsChecked is its tick map.
 	restoreAppsPicker  navPicker
 	restoreAppsChecked map[string]bool
+	// restoreAppsOpen is the tree's folder expansion, like backupOpen.
+	restoreAppsOpen map[string]bool
 	// restoreSelFile is the install.list-shaped file written from those ticks
 	// and handed to the backend as --install-selection.
 	restoreSelFile   string
@@ -663,6 +665,7 @@ func initialModel() model {
 		backupChecked:    map[string]bool{},
 		backupPresent:    map[string]bool{},
 		backupOpen:       map[string]bool{},
+		restoreAppsOpen:  map[string]bool{},
 		backupOpts:       loadBackupOpts(),
 		cleanupOpts:      defaultCleanupOpts(),
 		treeMode:         "install",

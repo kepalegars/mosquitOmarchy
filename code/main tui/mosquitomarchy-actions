@@ -542,7 +542,7 @@ cmd_backup_sel(){
       # A missing file means "nothing saved yet", NOT a failure: the caller
       # treats an empty answer as "fall back to the last archive", and a
       # non-zero status here would make that fallback unreachable.
-      [[ -r $f ]] && cat "$f"
+      [[ -r $f ]] && sed -E 's/"TUI ([^"|]*)\|[^"]*"/"TUI \1"/g' "$f"
       return 0 ;;
     set)
       [[ -n $arg ]] || { err "backup-sel set needs a JSON payload"; return 1; }
@@ -1280,7 +1280,11 @@ _uninstall_tree(){
     local -a keys=()
     case $id in
       tuis)
-        for e in "${INSTALLED_TUI[@]:-}"; do [[ -n $e ]] && keys+=("TUI $e"); done
+        # Clean keys: only the package name, no "|description" tail. The
+        # human name is recovered from CAT_TUI when the row is rendered, so
+        # the same key is short everywhere (backup selection, install.list,
+        # restore content, restore plan).
+        for e in "${INSTALLED_TUI[@]:-}"; do [[ -n $e ]] && keys+=("TUI ${e%%|*}"); done
         ;;
       mosquito)
         local pk
@@ -1301,13 +1305,15 @@ _uninstall_tree(){
       "$(json_str "$id")" "$(json_str "$label")" "$accent")")
     for e in "${keys[@]}"; do
       case $e in
-        # A TUI key is "TUI <pkg>|<pkg> — <what it is>" from load_catalog.
-        # split_name_desc takes the human name and drops the repetition.
-        TUI\ *) local trest tpkg ttext
-                trest="${e#TUI }"
-                tpkg="${trest%%|*}"; ttext="${trest#*|}"
-                [[ $ttext == "$trest" ]] && ttext="$trest"
-                split_name_desc "$tpkg" "$ttext"
+        # Clean key ("TUI pkg"): recover the human name from the catalog.
+        TUI\ *) local tpkg ttext
+                tpkg="${e#TUI }"
+                ttext=""
+                local ce
+                for ce in "${CAT_TUI[@]:-}"; do
+                  [[ "${ce%%|*}" == "$tpkg" ]] && { ttext="${ce#*|}"; break; }
+                done
+                split_name_desc "$tpkg" "${ttext:-$tpkg}"
                 name="$CAND_NAME - v$(module_version "$tpkg")"
                 info="installed TUI (apps module)$( [[ -n $CAND_DESC ]] && printf ' — %s' "$CAND_DESC")" ;;
         *)

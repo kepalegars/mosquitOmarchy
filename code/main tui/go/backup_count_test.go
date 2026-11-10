@@ -537,8 +537,8 @@ func TestRestoreAppsSelection(t *testing.T) {
 	if m.top() != scrRestoreApps {
 		t.Fatalf("the apps row did not open the picker, top is %v", m.top())
 	}
-	m, _ = m.update(tuikit.PickerToggleMsg{Value: "apps\tkeepassxc"})
-	if m.restoreAppsChecked["apps\tkeepassxc"] {
+	m, _ = m.update(tuikit.PickerToggleMsg{Value: setupValue("apps", "keepassxc")})
+	if m.restoreAppsChecked[setupValue("apps", "keepassxc")] {
 		t.Fatal("the toggle did not untick keepassxc")
 	}
 	m, _ = m.update(tuikit.PickerResultMsg{Canceled: true})
