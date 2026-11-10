@@ -5862,6 +5862,9 @@ func (m model) rebuildRestoreOptions() navPicker {
 // same folder tree the backup content screen uses. The checked map stays keyed
 // by setupValue, which is what pickerTreeItems and toggleTreeFolder read.
 func (m model) restoreFolderLabel(folder string) string {
+	if folder == "preinstalls" {
+		return "Preinstalls to remove"
+	}
 	for _, g := range m.restoreManifest.InstallGroups {
 		if g.Folder == folder && g.FolderLabel != "" {
 			return g.FolderLabel
@@ -5885,9 +5888,28 @@ func (m model) restoreItemLabelFor(folder, item string) string {
 }
 
 func (m model) restoreFolders() []FolderRec {
-	out := make([]FolderRec, 0, len(m.restoreManifest.InstallGroups))
+	out := make([]FolderRec, 0, len(m.restoreManifest.InstallGroups)+1)
+	hasMosquito := false
 	for _, g := range m.restoreManifest.InstallGroups {
-		out = append(out, FolderRec{Folder: g.Folder, Label: m.restoreFolderLabel(g.Folder)})
+		if g.Folder == "mosquito" {
+			hasMosquito = true
+		}
+	}
+	for _, g := range m.restoreManifest.InstallGroups {
+		f := FolderRec{Folder: g.Folder, Label: m.restoreFolderLabel(g.Folder)}
+		if g.Folder == "audio-stack" {
+			f.Parent = "mosquito"
+			f.Bundle = true
+		}
+		out = append(out, f)
+	}
+	// audio-stack folds under mosquito: make sure that parent exists even when
+	// the backup carried audio tools but no other mosquito module.
+	for _, g := range m.restoreManifest.InstallGroups {
+		if g.Folder == "audio-stack" && !hasMosquito {
+			out = append(out, FolderRec{Folder: "mosquito", Label: "mosquito"})
+			break
+		}
 	}
 	return out
 }
