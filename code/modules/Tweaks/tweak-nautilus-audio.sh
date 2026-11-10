@@ -4,11 +4,12 @@
 # Adds two entries to Nautilus' right-click **Scripts** submenu:
 #
 #   Convert Audio (PACPL) — Perl Audio Converter (pacpl, AUR): converts the
-#     selected files to MP3/FLAC/OGG/OPUS/WAV/M4A/AIFF/WV through a zenity
-#     picker. Tags are kept; an existing output is skipped unless the
-#     "overwrite" question is answered yes. The encoder set (vorbis-tools,
-#     opus-tools, sox, flac, lame, wavpack, ffmpeg) is installed with it so the
-#     common formats work out of the box.
+#     selected files to MP3/FLAC/OGG/OPUS/WAV/M4A/AIFF/WV through a small
+#     tui-kit Go picker (mosquitOmarchy-audio-convert, themed like the other
+#     TUIs), opened in a terminal. Tags are kept. The overwrite question is
+#     asked ONLY when at least one output file already exists. The encoder set
+#     (vorbis-tools, opus-tools, sox, flac, lame, wavpack, ffmpeg) is installed
+#     with it so the common formats work out of the box.
 #
 #   Make SFZ — makesfz (single bash script from rock-hopper/makesfz, public
 #     domain): turns the selected WAV/FLAC/OGG samples into .sfz sampler
@@ -22,15 +23,15 @@
 # files) and carry a marker; a same-named file without that marker is the
 # user's and is never overwritten or deleted.
 #
-# Idempotent: may be re-run without risk. --remove deletes only the two
-# managed Nautilus scripts and ~/.local/bin/makesfz — pacpl and the encoders
-# stay installed (remove them by hand if unwanted), because pacman packages are
-# shared with the rest of the system.
+# Idempotent: may be re-run without risk. --remove deletes the two managed
+# Nautilus scripts, ~/.local/bin/makesfz and the converter TUI. pacpl and the
+# encoders stay installed (remove them by hand if unwanted), because pacman
+# packages are shared with the rest of the system.
 #
 # Usage:
 #   ./tweak-nautilus-audio.sh            # apply (idempotent)
 #   ./tweak-nautilus-audio.sh --status   # current state, changes nothing
-#   ./tweak-nautilus-audio.sh --remove   # drop the Nautilus scripts + makesfz
+#   ./tweak-nautilus-audio.sh --remove   # drop the scripts, makesfz and the TUI
 #   ./tweak-nautilus-audio.sh -y         # accepted, no prompt (there is none)
 #   ./tweak-nautilus-audio.sh -h
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
@@ -42,6 +43,8 @@ source "$SCRIPT_DIR/../../lib/common.bash"
 MAKESFZ_URL="https://raw.githubusercontent.com/rock-hopper/makesfz/master/makesfz"
 BIN_DIR="$HOME/.local/bin"
 MAKESFZ="$BIN_DIR/makesfz"
+CONVERT_BIN="$BIN_DIR/mosquitomarchy-audio-convert"
+TUI_DIR="$SCRIPT_DIR/nautilus-audio/tui-go"
 NAUTILUS_DIR="$HOME/.local/share/nautilus/scripts"
 PACPL_SCRIPT="$NAUTILUS_DIR/Convert Audio (PACPL)"
 SFZ_SCRIPT="$NAUTILUS_DIR/Make SFZ"
@@ -54,7 +57,7 @@ YES=0
 # ---------------------------------------------------------------------------
 install_audio_tools() {
   local c missing=()
-  for c in pacpl oggenc opusenc sox flac lame wavpack ffmpeg zenity; do
+  for c in pacpl oggenc opusenc sox flac lame wavpack ffmpeg; do
     command -v "$c" >/dev/null 2>&1 || missing+=("$c")
   done
   if ((${#missing[@]} == 0)); then
@@ -72,7 +75,7 @@ install_audio_tools() {
   fi
   msg "Installing pacpl (AUR) + encoders: ${missing[*]}"
   # One yay call for AUR and repo packages alike; --needed keeps a re-run free.
-  yay -S --needed --noconfirm pacpl vorbis-tools opus-tools sox flac lame wavpack ffmpeg zenity || {
+  yay -S --needed --noconfirm pacpl vorbis-tools opus-tools sox flac lame wavpack ffmpeg || {
     err "package installation failed — see the yay output above"
     return 1
   }
@@ -102,6 +105,23 @@ install_makesfz() {
   fi
 }
 
+install_convert_tui() {
+  command -v go >/dev/null 2>&1 || {
+    err "Go is required to build the converter TUI — install it first (pacman -S go)"
+    return 1
+  }
+  [[ -d $TUI_DIR ]] || { err "converter source missing at $TUI_DIR"; return 1; }
+  msg "Building the converter TUI (tui-kit)…"
+  mkdir -p "$BIN_DIR"
+  (
+    cd "$TUI_DIR" || exit 1
+    # shellcheck source=../../lib/go-build-env.bash
+    source "$SCRIPT_DIR/../../lib/go-build-env.bash"
+    go build -o "$CONVERT_BIN" .
+  ) || { err "converter TUI build failed"; return 1; }
+  ok "converter TUI: $CONVERT_BIN"
+}
+
 # ---------------------------------------------------------------------------
 # Nautilus scripts
 # ---------------------------------------------------------------------------
@@ -129,30 +149,22 @@ set -euo pipefail
 mapfile -t files < <(printf '%s\n' "${NAUTILUS_SCRIPT_SELECTED_FILE_PATHS:-}" | sed '/^$/d')
 ((${#files[@]})) || exit 0
 
-fmt=$(zenity --list --radiolist --title="Convert Audio (PACPL)" \
-  --text="Output format for ${#files[@]} file(s):" \
-  --column '' --column 'Format' \
-  FALSE MP3 FALSE FLAC FALSE OGG FALSE OPUS FALSE WAV FALSE M4A FALSE AIFF FALSE WV) || exit 0
-[[ -n $fmt ]] || exit 0
-
-opts=()
-if zenity --question --title="Convert Audio (PACPL)" \
-     --text="Overwrite files that already exist?" --default-cancel; then
-  opts+=(--overwrite)
+bin="$HOME/.local/bin/mosquitomarchy-audio-convert"
+if [[ ! -x $bin ]]; then
+  notify-send -a mosquitOmarchy "Convert Audio" "Converter not installed — re-run the nautilus-audio tweak."
+  exit 1
 fi
 
-failed=()
-for f in "${files[@]}"; do
-  pacpl --to "$fmt" --outdir "$(dirname "$f")" "${opts[@]}" "$f" \
-    || failed+=("$(basename "$f")")
-done
-
-if ((${#failed[@]})); then
-  zenity --error --title="Convert Audio (PACPL)" \
-    --text="Failed to convert:$(printf '\n%s' "${failed[@]}")"
+# The tui-kit picker (and the overwrite question, only when needed) runs in a
+# real terminal; the trailing read keeps the window open to show pacpl's output.
+run=(bash -c '"$0" "$@"; ec=$?; echo; read -rp "Press Enter to close…" _; exit $ec' "$bin" "${files[@]}")
+if command -v foot >/dev/null 2>&1; then
+  exec foot "${run[@]}"
+elif command -v xterm >/dev/null 2>&1; then
+  exec xterm -e "${run[@]}"
 else
-  zenity --info --title="Convert Audio (PACPL)" \
-    --text="Done: ${#files[@]} file(s) → $fmt."
+  notify-send -a mosquitOmarchy "Convert Audio" "No terminal found (foot or xterm)."
+  exit 1
 fi
 PACPL
 
@@ -168,8 +180,7 @@ mapfile -t files < <(printf '%s\n' "${NAUTILUS_SCRIPT_SELECTED_FILE_PATHS:-}" | 
 bin="$(command -v makesfz || true)"
 [[ -n $bin ]] || bin="$HOME/.local/bin/makesfz"
 if [[ ! -x $bin ]]; then
-  zenity --error --title="Make SFZ" \
-    --text="makesfz is not installed. Re-run the nautilus-audio tweak in mosquitOmarchy."
+  notify-send -a mosquitOmarchy "Make SFZ" "makesfz is not installed — re-run the nautilus-audio tweak."
   exit 1
 fi
 
@@ -180,7 +191,7 @@ if command -v foot >/dev/null 2>&1; then
 elif command -v xterm >/dev/null 2>&1; then
   exec xterm -e bash -c '"$0" -I --files "$@"; ec=$?; echo; read -rp "Press Enter to close…" _; exit $ec' "$bin" "${files[@]}"
 else
-  zenity --error --title="Make SFZ" --text="No terminal found (foot or xterm). Run makesfz -I from a terminal."
+  notify-send -a mosquitOmarchy "Make SFZ" "No terminal found (foot or xterm)."
   exit 1
 fi
 SFZ
@@ -199,10 +210,11 @@ show_status() {
     warn "pacpl NOT installed"
   fi
   local c
-  for c in oggenc opusenc sox flac lame wavpack ffmpeg zenity; do
+  for c in oggenc opusenc sox flac lame wavpack ffmpeg; do
     command -v "$c" >/dev/null 2>&1 || warn "encoder missing: $c"
   done
   if [[ -x $MAKESFZ ]]; then ok "makesfz: $MAKESFZ"; else warn "makesfz NOT installed"; fi
+  if [[ -x $CONVERT_BIN ]]; then ok "converter TUI: $CONVERT_BIN"; else warn "converter TUI NOT built"; fi
   local s
   for s in "$PACPL_SCRIPT" "$SFZ_SCRIPT"; do
     if [[ -e $s ]] && grep -qF -- "$MARK" "$s" 2>/dev/null; then
@@ -214,7 +226,7 @@ show_status() {
 }
 
 remove_all() {
-  msg "Removing the Nautilus audio scripts (pacpl and the encoders are left installed)…"
+  msg "Removing the Nautilus audio tools (pacpl and the encoders are left installed)…"
   local s
   for s in "$PACPL_SCRIPT" "$SFZ_SCRIPT"; do
     if [[ -e $s ]] && grep -qF -- "$MARK" "$s" 2>/dev/null; then
@@ -228,6 +240,10 @@ remove_all() {
     rm -f "$MAKESFZ"
     ok "removed makesfz"
   fi
+  if [[ -e $CONVERT_BIN ]]; then
+    rm -f "$CONVERT_BIN"
+    ok "removed the converter TUI"
+  fi
   echo
   echo "pacpl and the encoders stay installed. Remove them with:"
   echo "  yay -Rns pacpl vorbis-tools opus-tools sox"
@@ -236,7 +252,7 @@ remove_all() {
 case "${1:-}" in
   --status) show_status; exit 0 ;;
   --remove|--uninstall) remove_all; exit 0 ;;
-  -h|--help) sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   -y|--yes) YES=1 ;;
   "") ;;
   *) err "Unknown option: $1 (supported: -y --status --remove)"; exit 1 ;;
@@ -245,13 +261,16 @@ esac
 # ---------------------------------------------------------------------------
 # Apply
 # ---------------------------------------------------------------------------
-msg "== 1/3 Audio tools (pacpl + encoders) =="
+msg "== 1/4 Audio tools (pacpl + encoders) =="
 install_audio_tools
 
-msg "== 2/3 makesfz =="
+msg "== 2/4 makesfz =="
 install_makesfz
 
-msg "== 3/3 Nautilus scripts =="
+msg "== 3/4 Converter TUI (tui-kit) =="
+install_convert_tui
+
+msg "== 4/4 Nautilus scripts =="
 install_nautilus_scripts
 
 echo

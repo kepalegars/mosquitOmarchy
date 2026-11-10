@@ -28,7 +28,21 @@ cat > "$TMP/bin/curl" <<'EOF'
 out="${*: -1}"
 printf '#!/bin/bash\n# makesfz fixture\n' > "$out"
 EOF
-chmod +x "$TMP/bin/yay" "$TMP/bin/curl"
+# Stub go: "go build -o OUT ." -> create a fixture binary at OUT (no compile).
+cat > "$TMP/bin/go" <<'EOF'
+#!/usr/bin/env bash
+out=""
+while (($#)); do
+  case $1 in
+    -o) out="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[[ -n $out ]] || exit 1
+printf '#!/bin/sh\nexit 0\n' > "$out"
+chmod +x "$out"
+EOF
+chmod +x "$TMP/bin/yay" "$TMP/bin/curl" "$TMP/bin/go"
 export PATH="$TMP/bin:$PATH"
 export YAY_LOG="$TMP/yay.log" TOOL_BIN="$TMP/bin" GUI_RUN_EXEC=1
 
@@ -36,6 +50,7 @@ SCRIPTS="$HOME/.local/share/nautilus/scripts"
 PACPL="$SCRIPTS/Convert Audio (PACPL)"
 SFZ="$SCRIPTS/Make SFZ"
 MAKESFZ="$HOME/.local/bin/makesfz"
+CONVERT="$HOME/.local/bin/mosquitomarchy-audio-convert"
 
 fail(){ echo "FAIL: $*" >&2; exit 1; }
 
@@ -44,18 +59,27 @@ bash "$SCRIPT" >"$TMP/apply.log" 2>&1 || fail "apply exited non-zero"
 [[ -x $PACPL ]] || fail "Convert Audio (PACPL) missing or not executable"
 [[ -x $SFZ ]] || fail "Make SFZ missing or not executable"
 [[ -x $MAKESFZ ]] || fail "makesfz not installed"
+[[ -x $CONVERT ]] || fail "converter TUI not built"
 grep -qF 'tweak-nautilus-audio' "$PACPL" || fail "PACPL script lacks the managed marker"
 grep -qF 'tweak-nautilus-audio' "$SFZ" || fail "SFZ script lacks the managed marker"
+grep -qF 'mosquitomarchy-audio-convert' "$PACPL" || fail "PACPL script does not call the converter TUI"
+! grep -qF 'zenity' "$PACPL" || fail "PACPL script still uses zenity"
 bash -n "$PACPL" || fail "Convert Audio (PACPL) is not valid bash"
 bash -n "$SFZ" || fail "Make SFZ is not valid bash"
-grep -q 'yay -S' "$YAY_LOG" || fail "yay was not called on the first apply"
+# yay is only called when a tool is missing; on a machine that already has the
+# packages the "already installed" fast path is what runs.
+if ! command -v pacpl >/dev/null 2>&1; then
+  grep -q 'yay -S' "$YAY_LOG" || fail "yay was not called on the first apply"
+fi
 
 # ── idempotent: same bytes, no extra files, no second package install ────────
 cp "$PACPL" "$TMP/pacpl.before"
 bash "$SCRIPT" >"$TMP/apply2.log" 2>&1 || fail "second apply exited non-zero"
 cmp -s "$PACPL" "$TMP/pacpl.before" || fail "second apply changed the script"
 [[ $(find "$SCRIPTS" -type f | wc -l) -eq 2 ]] || fail "unexpected files in the scripts dir"
-[[ $(wc -l < "$YAY_LOG") -eq 1 ]] || fail "second apply reinstalled the packages"
+if [[ -s $YAY_LOG ]]; then
+  [[ $(wc -l < "$YAY_LOG") -eq 1 ]] || fail "second apply reinstalled the packages"
+fi
 
 # ── status reports the installed pieces ──────────────────────────────────────
 bash "$SCRIPT" --status >"$TMP/status.log" 2>&1 || fail "status exited non-zero"
@@ -75,6 +99,6 @@ cmp -s "$SFZ" "$TMP/foreign.before" || fail "foreign Make SFZ was modified"
 rm -f "$SFZ"
 bash "$SCRIPT" >/dev/null 2>&1 || fail "apply after cleanup failed"
 bash "$SCRIPT" --remove >"$TMP/remove.log" 2>&1 || fail "remove exited non-zero"
-[[ ! -e $PACPL && ! -e $SFZ && ! -e $MAKESFZ ]] || fail "remove left managed files behind"
+[[ ! -e $PACPL && ! -e $SFZ && ! -e $MAKESFZ && ! -e $CONVERT ]] || fail "remove left managed files behind"
 
 echo 'ok: nautilus-audio tweak installs, is idempotent, refuses foreign files and removes its own'
