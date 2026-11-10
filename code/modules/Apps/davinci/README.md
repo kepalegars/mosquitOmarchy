@@ -45,6 +45,21 @@ Check it later with `drwrap doctor`, or remove just the integration with `drwrap
 
 > Launchable from the file manager too: started without a terminal, the script reopens itself inside a terminal emulator (foot/xterm) and the window stays open with a *"Press Enter to close this terminal."* prompt once it finishes (success or crash) — same for all `setup-*.sh` / `uninstall-*.sh` (`gui-run.bash`).
 
+## File browser / Media Storage (Locate, Deliver)
+
+Resolve does **not** use the system file dialog. Its built-in browser (Relink > Locate, the Deliver destination, the media pool) only lists the **Media Storage locations** from `Preferences > System > Media Storage`, stored in `~/.local/share/DaVinciResolve/configs/config.dat`. Flea, Nautilus or Strata cannot replace it: the dialog is drawn by Resolve (Qt 5) and never calls the GTK chooser or `xdg-desktop-portal`.
+
+After the first launch (once `config.dat` exists), the generated launcher seeds the usual folders — `~/Projects`, `~/Documents`, `~/Downloads`, `~/Pictures`, `~/Music`, `~/DaVinci Resolve Media`, `~/kDrive`, `/run/media/$USER`, `/media/$USER` — so they appear in every Resolve file dialog. `$HOME` is deliberately **not** added: Resolve rejects nested locations and `~/Videos` is already a root. `~/Videos` stays the first location (cache/gallery). `/mnt` is not added.
+
+```bash
+setup-davinci.sh --media-storage                  # (re)seed the defaults + list them
+setup-davinci.sh --media-storage /path/to/folder  # add one folder
+davinci-resolve-storage list                      # current locations
+davinci-resolve-storage add /path/to/folder
+```
+
+Close Resolve first: it rewrites `config.dat` on exit. The helper backs up the file and refuses nested/duplicate locations with the same rule as Resolve. If the seed did not happen (Resolve was installed before this feature), run `setup-davinci.sh --media-storage` once.
+
 ## Window (Hyprland)
 
 On Omarchy, the setup appends a user rule to `~/.config/hypr/hyprland.lua` (marker `mosquito-davinci-tiling`) so the Resolve project window opens **tiled** instead of Omarchy's default floating/fullscreen. The Project Manager stays floating. `uninstall-davinci.sh` removes the block.
@@ -63,6 +78,8 @@ code/modules/Apps/davinci/setup-davinci.sh -y                  # default choices
 code/modules/Apps/davinci/setup-davinci.sh --studio|--free     # force the edition if ambiguous
 code/modules/Apps/davinci/setup-davinci.sh --no-codecs         # leave codec setup alone
 code/modules/Apps/davinci/setup-davinci.sh --keep-mesa         # do not remove opencl-mesa (AMD)
+code/modules/Apps/davinci/setup-davinci.sh --media-storage     # seed Media Storage (home folders + drives)
+code/modules/Apps/davinci/setup-davinci.sh --media-storage DIR # add one folder to Media Storage
 code/modules/Apps/davinci/setup-davinci.sh --status            # current state, changes nothing
 code/modules/Apps/davinci/uninstall-davinci.sh                  # uninstalls (data preserved)
 ```

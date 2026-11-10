@@ -31,6 +31,8 @@
 #   ./setup-davinci.sh --alt-drivers       # Radeon 780M: Mesa Rusticl + CPU scopes + 90 s compute watchdog
 #   ./setup-davinci.sh --alt-drivers-revert# undo the 780M OpenCL profile
 #   ./setup-davinci.sh --status            # current state, changes nothing
+#   ./setup-davinci.sh --media-storage     # let Resolve's file browser reach home folders + removable drives
+#   ./setup-davinci.sh --media-storage DIR # add one folder as a Media Storage location
 #   ./setup-davinci.sh -h                  # help
 #
 # Radeon 780M / Phoenix (gfx1103): ROCm OpenCL is unsupported and can wedge the
@@ -56,11 +58,13 @@ RESOLVE_DIR=/opt/resolve
 BIN_DIR="$HOME/.local/bin"
 APPS_DIR="$HOME/.local/share/applications"
 LAUNCHER="$BIN_DIR/davinci-resolve"
+HELPER="$BIN_DIR/davinci-resolve-storage"
 DESKTOP="$APPS_DIR/davinci-resolve.desktop"
 FFMPEG_PLUGIN_URL="https://github.com/EdvinNilsson/ffmpeg_encoder_plugin/releases/latest/download/ffmpeg_encoder_plugin.dvcp.bundle.zip"
 
 YES=0 STATUS_ONLY=0 FORCE_ED="" SKIP_CODECS=0 KEEP_MESA=0
 ALT_DRIVERS=0 ALT_DRIVERS_ONLY=0 ALT_DRIVERS_REVERT=0
+MEDIA_STORAGE=0 MEDIA_STORAGE_PATH=""
 while (( $# )); do a="$1"; case "$a" in
   -y|--yes) YES=1 ;;
   --status) STATUS_ONLY=1 ;;
@@ -69,6 +73,9 @@ while (( $# )); do a="$1"; case "$a" in
   --keep-mesa) KEEP_MESA=1 ;;
   --alt-drivers) ALT_DRIVERS_ONLY=1 ;;
   --alt-drivers-revert) ALT_DRIVERS_REVERT=1 ;;
+  --media-storage)
+    MEDIA_STORAGE=1
+    if (( $# > 1 )) && [[ "$2" != -* ]]; then MEDIA_STORAGE_PATH="$2"; shift; fi ;;
   -h|--help) sed -n '2,/^# Launched from a file manager/p' "$0" | head -n -1 || true; exit 0 ;;
   *) echo "Unknown option: $a" >&2; exit 1 ;;
 esac; shift; done
@@ -289,6 +296,15 @@ do_status(){
   else warn "AAC decode     : not enabled (AAC imports are silent)"; fi
   if [[ -d "$RESOLVE_DIR/IOPlugins/ffmpeg_encoder_plugin.dvcp.bundle" ]]; then ok "FFmpeg encoder plugin : installed (Studio)"
   else warn "FFmpeg encoder plugin : absent"; fi
+  if [[ -r "$RESOLVE_CONFIG" ]]; then
+    local roots
+    roots="$(sed -n 's/^Site\.1\.FS\.[0-9]*\.Root = //p' "$RESOLVE_CONFIG" \
+      | grep -v '^ResolveVirtual$' | paste -sd ',' - | sed 's/,/, /g')"
+    [[ -n "$roots" ]] && ok "Media storage  : $roots" \
+      || warn "Media storage  : none"
+  else
+    warn "Media storage  : not configured (launch Resolve once, then --media-storage)"
+  fi
   if command -v drwrap >/dev/null 2>&1; then
     if systemctl --user is-enabled drwrap.service >/dev/null 2>&1; then
       ok "DRwrap          : installed (converter service enabled)"
@@ -518,7 +534,15 @@ fi
 # Native UI under Wayland not supported: force XWayland (xcb).
 export QT_QPA_PLATFORM=xcb
 $gpu_block
-# UI scale is left to Resolve's own preferences (no QT_*/DisplayScale override).
+# UI scale is left to Resolve's own settings (no QT_*/DisplayScale override).
+
+# Resolve's built-in file browser only lists Media Storage locations. Seed the
+# user's folders and removable drives once, after Resolve has written its
+# config (idempotent, never blocks the launch).
+if [[ -x "\$HOME/.local/bin/davinci-resolve-storage" ]]; then
+  "\$HOME/.local/bin/davinci-resolve-storage" ensure --quiet >/dev/null 2>&1 || true
+fi
+
 exec "\$RESOLVE_DIR/bin/resolve" "\$@"
 LAUNE
   chmod +x "$LAUNCHER"
@@ -529,6 +553,7 @@ install_launcher(){
   mkdir -p "$BIN_DIR" "$APPS_DIR"
   write_launcher
   ok "Launcher: $LAUNCHER"
+  install_media_storage
 
   # The payload ships its icon as DV_Resolve.png (128x128) — not the names we
   # used to look for, so the menu entry ended up iconless. Find it, then INSTALL
@@ -744,6 +769,22 @@ DESKW
     && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
 }
 
+# Resolve's own file browser only lists Media Storage locations. The helper
+# edits config.dat; the launcher calls it once after the first launch. $HOME is
+# never added: it contains ~/Videos, and Resolve rejects nested locations.
+install_media_storage(){
+  mkdir -p "$BIN_DIR"
+  install -m 0755 "$SCRIPT_DIR/davinci-resolve-storage.sh" "$HELPER"
+  ok "Media Storage helper: $HELPER"
+}
+
+ensure_media_storage(){
+  if [[ ! -x "$HELPER" || "$SCRIPT_DIR/davinci-resolve-storage.sh" -nt "$HELPER" ]]; then
+    install_media_storage
+  fi
+  "$HELPER" ensure --quiet || true
+}
+
 # Resolve defaults its audio backend to DeckLink, which aborts on a machine
 # without a Blackmagic card. The setting lives in the user config, so a Resolve
 # update does not touch it — but a fresh config can reintroduce it.
@@ -952,6 +993,8 @@ recap(){
   echo " • First-run config: Preferences > System > Memory & GPU (OpenCL auto-detected)."
   echo " • DRwrap: drag/drop, clipboard paste and codec conversion handled silently."
   echo "   Watch folder: ~/Videos/ResolveDrop · ready files: ~/Videos/ResolveIngest."
+  echo " • Media browser (Locate/Deliver): home folders + removable drives."
+  echo "   Add another folder: setup-davinci.sh --media-storage /path"
   echo " • Project / LUT data: kept in ~/.local/share, ~/.config/Blackmagic Design."
   echo " • Uninstall: ./uninstall-davinci.sh"
   hr
@@ -1017,6 +1060,25 @@ update_davinci(){
 main(){
   msg "install-davinci — DaVinci Resolve (Studio or free) for Omarchy"
   ((STATUS_ONLY)) && { do_status; exit 0; }
+  # Seed the Media Storage locations whenever mosquitOmarchy runs this module
+  # (install, update, alt-drivers…). No-op once the marker exists.
+  (( MEDIA_STORAGE )) || ensure_media_storage
+  if (( MEDIA_STORAGE )); then
+    [[ -x "$HELPER" ]] || install_media_storage
+    # Refresh the launcher so its first-launch seeding hook exists even when
+    # Resolve is open and config.dat cannot be edited right now.
+    if resolve_installed; then
+      ALT_DRIVERS=$(alt_drivers_active && echo 1 || echo 0)
+      write_launcher
+      ok "Launcher updated: $LAUNCHER"
+    fi
+    if [[ -n "$MEDIA_STORAGE_PATH" ]]; then
+      "$HELPER" add "$MEDIA_STORAGE_PATH"
+      exit $?
+    fi
+    "$HELPER" ensure --force
+    exit $?
+  fi
   if (( ALT_DRIVERS_REVERT )); then
     revert_alt_drivers
     exit $?

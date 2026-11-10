@@ -57,6 +57,7 @@ msg "Uninstalling DaVinci Resolve"
 found=0
 [[ -x /opt/resolve/bin/resolve ]] && found=1
 [[ -x "$LAUNCHER" ]] && found=1
+[[ -x "$HOME/.local/bin/davinci-resolve-storage" ]] && found=1
 [[ -e "$HOME/.local/share/applications/davinci-resolve-wrapper.desktop" ]] && found=1
 [[ -f "$HYPR" ]] && grep -qF -- '-- >>> mosquito-davinci-tiling >>>' "$HYPR" && found=1
 [[ -e "${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/davinci-state" ]] && found=1
@@ -70,9 +71,11 @@ fi
 # 1) Launcher + menu shortcut
 rm -f "$HOME/.local/share/applications/davinci-resolve-wrapper.desktop"
 rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/davinci-state"
+rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/davinci-media-storage"
 if { [[ -x "$LAUNCHER" ]] || grep -qF -- '-- >>> mosquito-davinci-tiling >>>' "$HYPR" 2>/dev/null; } \
    && ask "Remove the launcher (~/.local/bin/davinci-resolve), the menu shortcut and the Hyprland tiling rule?" y; then
-  rm -f "$LAUNCHER" "$HOME/.local/bin/davinci-resolve-rocm" "$HOME/.local/bin/davinci-resolve-mesa"
+  rm -f "$LAUNCHER" "$HOME/.local/bin/davinci-resolve-rocm" "$HOME/.local/bin/davinci-resolve-mesa" \
+        "$HOME/.local/bin/davinci-resolve-storage"
   rm -f "$HOME/.local/share/applications/davinci-resolve.desktop" \
         "$HOME/.local/share/applications/DaVinciResolve.desktop"
   if [[ -L /usr/local/bin/resolve-omarchy ]]; then
