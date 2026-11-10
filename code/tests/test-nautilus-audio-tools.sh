@@ -17,10 +17,15 @@ mkdir -p "$HOME" "$TMP/bin"
 cat > "$TMP/bin/yay" <<'EOF'
 #!/usr/bin/env bash
 echo "yay $*" >> "$YAY_LOG"
-for t in pacpl oggenc opusenc sox flac lame wavpack ffmpeg zenity; do
+for t in pacpl oggenc opusenc sox flac lame wavpack ffmpeg; do
   printf '#!/bin/sh\nexit 0\n' > "$TOOL_BIN/$t"
   chmod +x "$TOOL_BIN/$t"
 done
+# pacpl's undeclared startup modules, which a real install would provide.
+mkdir -p "$TOOL_BIN/perl5/File" "$TOOL_BIN/perl5/Ogg/Vorbis" "$TOOL_BIN/perl5/String"
+printf '1;\n' > "$TOOL_BIN/perl5/File/Util.pm"
+printf '1;\n' > "$TOOL_BIN/perl5/Ogg/Vorbis/Header.pm"
+printf '1;\n' > "$TOOL_BIN/perl5/String/ShellQuote.pm"
 EOF
 # Stub curl: the last argument is the -o target; write a fake makesfz there.
 cat > "$TMP/bin/curl" <<'EOF'
@@ -44,6 +49,8 @@ chmod +x "$out"
 EOF
 chmod +x "$TMP/bin/yay" "$TMP/bin/curl" "$TMP/bin/go"
 export PATH="$TMP/bin:$PATH"
+# The yay stub drops pacpl's Perl modules here; the tweak checks them with perl.
+export PERL5LIB="$TMP/bin/perl5"
 export YAY_LOG="$TMP/yay.log" TOOL_BIN="$TMP/bin" GUI_RUN_EXEC=1
 
 SCRIPTS="$HOME/.local/share/nautilus/scripts"

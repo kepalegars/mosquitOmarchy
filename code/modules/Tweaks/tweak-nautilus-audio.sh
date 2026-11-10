@@ -60,6 +60,13 @@ install_audio_tools() {
   for c in pacpl oggenc opusenc sox flac lame wavpack ffmpeg; do
     command -v "$c" >/dev/null 2>&1 || missing+=("$c")
   done
+  # pacpl loads these at startup, but its AUR package does not declare them:
+  # without them it dies with "Can't locate File/Util.pm". Check the modules
+  # themselves instead of trusting a package name.
+  local m
+  for m in File::Util Ogg::Vorbis::Header String::ShellQuote; do
+    perl -M"$m" -e1 >/dev/null 2>&1 || missing+=("$m")
+  done
   if ((${#missing[@]} == 0)); then
     ok "audio tools already installed (pacpl + encoders)"
     return 0
@@ -75,7 +82,10 @@ install_audio_tools() {
   fi
   msg "Installing pacpl (AUR) + encoders: ${missing[*]}"
   # One yay call for AUR and repo packages alike; --needed keeps a re-run free.
-  yay -S --needed --noconfirm pacpl vorbis-tools opus-tools sox flac lame wavpack ffmpeg || {
+  # The three perl-* packages are pacpl's undeclared startup modules.
+  yay -S --needed --noconfirm pacpl \
+    perl-file-util perl-ogg-vorbis-header perl-string-shellquote \
+    vorbis-tools opus-tools sox flac lame wavpack ffmpeg || {
     err "package installation failed — see the yay output above"
     return 1
   }
@@ -212,6 +222,10 @@ show_status() {
   local c
   for c in oggenc opusenc sox flac lame wavpack ffmpeg; do
     command -v "$c" >/dev/null 2>&1 || warn "encoder missing: $c"
+  done
+  local m
+  for m in File::Util Ogg::Vorbis::Header String::ShellQuote; do
+    perl -M"$m" -e1 >/dev/null 2>&1 || warn "perl module missing: $m"
   done
   if [[ -x $MAKESFZ ]]; then ok "makesfz: $MAKESFZ"; else warn "makesfz NOT installed"; fi
   if [[ -x $CONVERT_BIN ]]; then ok "converter TUI: $CONVERT_BIN"; else warn "converter TUI NOT built"; fi
