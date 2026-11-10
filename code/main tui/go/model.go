@@ -167,8 +167,10 @@ type BackupManifest struct {
 }
 
 type BackupInstallGroup struct {
-	Folder string   `json:"folder"`
-	Items  []string `json:"items"`
+	Folder      string   `json:"folder"`
+	FolderLabel string   `json:"folder_label,omitempty"`
+	Items       []string `json:"items"`
+	ItemLabels  []string `json:"item_labels,omitempty"`
 }
 
 func restoreOptsFor(mf BackupManifest) RestoreOpts {

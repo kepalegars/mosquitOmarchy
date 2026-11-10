@@ -5861,10 +5861,33 @@ func (m model) rebuildRestoreOptions() navPicker {
 // restoreFolders / restoreItems turn the archive's install groups into the
 // same folder tree the backup content screen uses. The checked map stays keyed
 // by setupValue, which is what pickerTreeItems and toggleTreeFolder read.
+func (m model) restoreFolderLabel(folder string) string {
+	for _, g := range m.restoreManifest.InstallGroups {
+		if g.Folder == folder && g.FolderLabel != "" {
+			return g.FolderLabel
+		}
+	}
+	return restoreGroupLabel(folder)
+}
+
+func (m model) restoreItemLabelFor(folder, item string) string {
+	for _, g := range m.restoreManifest.InstallGroups {
+		if g.Folder != folder {
+			continue
+		}
+		for i, it := range g.Items {
+			if it == item && i < len(g.ItemLabels) && g.ItemLabels[i] != "" {
+				return g.ItemLabels[i]
+			}
+		}
+	}
+	return restoreItemLabel(item)
+}
+
 func (m model) restoreFolders() []FolderRec {
 	out := make([]FolderRec, 0, len(m.restoreManifest.InstallGroups))
 	for _, g := range m.restoreManifest.InstallGroups {
-		out = append(out, FolderRec{Folder: g.Folder, Label: restoreGroupLabel(g.Folder)})
+		out = append(out, FolderRec{Folder: g.Folder, Label: m.restoreFolderLabel(g.Folder)})
 	}
 	return out
 }
@@ -5872,8 +5895,12 @@ func (m model) restoreFolders() []FolderRec {
 func (m model) restoreItems() []SetupItemRec {
 	out := make([]SetupItemRec, 0, m.restoreAppsTotal())
 	for _, g := range m.restoreManifest.InstallGroups {
-		for _, it := range g.Items {
-			out = append(out, SetupItemRec{Folder: g.Folder, Key: it, Label: restoreItemLabel(it)})
+		for i, it := range g.Items {
+			label := restoreItemLabel(it)
+			if i < len(g.ItemLabels) && g.ItemLabels[i] != "" {
+				label = g.ItemLabels[i]
+			}
+			out = append(out, SetupItemRec{Folder: g.Folder, Key: it, Label: label})
 		}
 	}
 	return out
@@ -5946,15 +5973,18 @@ func (m model) rebuildFilteredRestoreApps() navPicker {
 	ft := strings.ToLower(m.filterText)
 	folderHit := map[string]bool{}
 	for _, g := range m.restoreManifest.InstallGroups {
-		if searchMatch(restoreGroupLabel(g.Folder), ft) {
+		if searchMatch(m.restoreFolderLabel(g.Folder), ft) {
 			folderHit[g.Folder] = true
 		}
 	}
 	items := make([]tuikit.PickerItem, 0, m.restoreAppsTotal())
 	for _, g := range m.restoreManifest.InstallGroups {
-		for _, it := range g.Items {
+		for i, it := range g.Items {
 			label := restoreItemLabel(it)
-			if !folderHit[g.Folder] && !searchMatch(label, ft) && !searchMatch(it, ft) {
+			if i < len(g.ItemLabels) && g.ItemLabels[i] != "" {
+				label = g.ItemLabels[i]
+			}
+			if !folderHit[g.Folder] && !searchMatch(label, ft) && !searchMatch(it, ft) && !searchMatch(m.restoreFolderLabel(g.Folder), ft) {
 				continue
 			}
 			v := setupValue(g.Folder, it)
@@ -5963,7 +5993,7 @@ func (m model) rebuildFilteredRestoreApps() navPicker {
 				mark = "●"
 			}
 			items = append(items, tuikit.PickerItem{
-				Display: restoreGroupLabel(g.Folder) + " › " + label,
+				Display: m.restoreFolderLabel(g.Folder) + " › " + label,
 				Value:   v,
 				Badge:   mark,
 			})
@@ -6064,9 +6094,9 @@ func (m model) restorePlanLines() []string {
 			if len(kept) == 0 {
 				continue
 			}
-			lines = append(lines, "  "+restoreGroupLabel(group.Folder))
+			lines = append(lines, "  "+m.restoreFolderLabel(group.Folder))
 			for _, item := range kept {
-				lines = append(lines, "    • "+restoreItemLabel(item))
+				lines = append(lines, "    • "+m.restoreItemLabelFor(group.Folder, item))
 			}
 		}
 		if m.restoreAppsCheckedCount() == 0 {
