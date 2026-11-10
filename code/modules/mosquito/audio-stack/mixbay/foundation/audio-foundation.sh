@@ -56,6 +56,9 @@ WP_CONF="$WP_DIR/50-mixbay-interfaces.conf"
 UDEV_RULE="/etc/udev/rules.d/70-mixbay-evo.rules"
 CAPTURE_RULE="/etc/udev/rules.d/99-evo8-capture.rules"
 CAPTURE_HELPER="/usr/local/lib/mosquitomixbay/evo8-capture-enable.py"
+# Omarchy's bar/audio panel (AudioNodes.platformHides) reads this file to leave
+# Mixbay's internal split nodes out of every output/input list.
+PLATFORM_AUDIO="/usr/share/omarchy-platform/audio.json"
 DEFAULT_SCRIPT="$BIN_DIR/mixbay-audio-defaults"
 DEFAULT_UNIT="$SYS_USER/mixbay-audio-defaults.service"
 PW_SETTINGS_CONF="$PW_DIR/90-mosquitomarchy-pipewire.conf"
@@ -267,6 +270,28 @@ discover_node(){
   fi
   ch="$(sed 's/:.*//' <<< "$list" | grep -Fxc "$node" || true)"
   printf '%s %s\n' "$node" "${ch:-0}"
+}
+
+# set_pro_audio <dev>: the EVO exposes its six USB channels only on PipeWire's
+# "pro-audio" profile. PipeWire never picks it alone (priority 1), so without
+# this the split is skipped on every fresh connection and onboarding keeps
+# asking for a 6-channel node. Switch, then wait for the wide node to appear.
+set_pro_audio(){
+  local dev="$1" model card cur i node ch
+  model="EVO${dev#evo}"
+  card="$(pactl list cards short 2>/dev/null | awk -v m="$model" 'tolower($2) ~ tolower(m) {print $2; exit}')"
+  [[ -n $card ]] || return 1
+  cur="$(pactl list cards 2>/dev/null | awk -v c="$card" '
+    $1 == "Name:" && $2 == c { found = 1 }
+    found && $1 == "Active" && $2 == "Profile:" { print $3; exit }')"
+  [[ $cur == pro-audio ]] && return 0
+  pactl set-card-profile "$card" pro-audio 2>/dev/null || return 1
+  for i in $(seq 1 20); do
+    read -r node ch < <(discover_node "$dev" output)
+    [[ -n $node && $ch -ge 6 ]] && return 0
+    sleep 0.25
+  done
+  return 1
 }
 
 card_rate(){
@@ -495,6 +520,47 @@ EOF
   ok "WirePlumber rules written ($WP_CONF)"
 }
 
+# Hide Mixbay's internal nodes from the Omarchy bar and audio panel. Every
+# split node exists for Mixbay's routing, but the user sees ONE entry per
+# interface: evo8_main_output / evo8_mic_1_2. The raw Pro Audio node is hidden
+# only while its split exists, so an interface without a split stays visible.
+install_platform_hints(){
+  local tmp; tmp="$(mktemp)"
+  cat > "$tmp" <<'EOF'
+{
+  "hidden": [
+    "evo8_(output_3_4|loopback_output|mic_3_4|loopback_capture)(\\.(out|in|monitor))?",
+    "evo8_(main_output|mic_1_2)\\.(out|in|monitor)",
+    "evo4_(loopback_output|loopback_capture)(\\.(out|in|monitor))?",
+    "evo4_(main_output|mic_1_2)\\.(out|in|monitor)"
+  ],
+  "replaced": [
+    { "node": "alsa_(output|input)\\.usb-Audient_EVO8-.*\\.pro-.*", "by": "evo8_(main_output|mic_1_2)" },
+    { "node": "alsa_(output|input)\\.usb-Audient_EVO4-.*\\.pro-.*", "by": "evo4_(main_output|mic_1_2)" }
+  ]
+}
+EOF
+  mq_sudo install -D -m 0644 "$tmp" "$PLATFORM_AUDIO" \
+    && ok "audio panel hints installed (one entry per Mixbay interface)" \
+    || warn "could not install $PLATFORM_AUDIO"
+  rm -f "$tmp"
+}
+
+# init_defaults <dev>: first setup only. Apply the interface's built-in default
+# preset and make the system endpoints usable; a later apply never overwrites
+# the levels the user set. Cards without a preset (ALSA level 1) only get the
+# default sink/source and are left unmuted.
+init_defaults(){
+  local dev="$1"
+  if command -v mosquito-mixbay-actions >/dev/null 2>&1; then
+    mosquito-mixbay-actions reset-defaults --device "$dev" >/dev/null 2>&1 || true
+  fi
+  [[ "$(state_default)" == "$dev" ]] || return 0
+  [[ -x $DEFAULT_SCRIPT ]] && "$DEFAULT_SCRIPT" >/dev/null 2>&1 || true
+  wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 2>/dev/null || true
+  wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0 2>/dev/null || true
+}
+
 install_udev(){
   local tmp
   tmp="$(mktemp)"
@@ -556,6 +622,7 @@ EOF
       capture.props = {
         media.class = Audio/Sink
         node.name = "evo8_${names[$i]}"
+        node.nick = "EVO 8"
         audio.position = [ FL FR ]
       }
       playback.props = {
@@ -587,6 +654,7 @@ EOF
       playback.props = {
         media.class = Audio/Source
         node.name = "evo8_${srcs[$i]}"
+        node.nick = "EVO 8"
         audio.position = [ FL FR ]
       }
     }
@@ -632,7 +700,7 @@ case "$card" in
     ;;
 esac
 [[ -n $sink_match ]] || exit 0
-id_of(){ wpctl status 2>/dev/null | grep -m1 -E "$1" | grep -oE '[0-9]+\.' | head -1 | tr -d .; }
+id_of(){ wpctl status 2>/dev/null | grep -m1 -E "[0-9]+\. .*$1.*\[Audio/(Sink|Source)\]" | grep -oE '[0-9]+\.' | head -1 | tr -d .; }
 sink=""; src=""
 for _ in $(seq 1 20); do
   sink="$(id_of "$sink_match")"
@@ -677,6 +745,7 @@ apply(){
   write_base_clock
   write_wp_rules
   install_udev
+  install_platform_hints
   local -a targets=()
   if [[ -n $DEV ]]; then
     targets=("$DEV")
@@ -684,11 +753,19 @@ apply(){
     evo_present evo8 && targets+=(evo8)
     evo_present evo4 && targets+=(evo4)
   fi
-  local node ch dev
+  local node ch dev first
+  local -a firsts=()
   for dev in "${targets[@]}"; do
+    first=0
+    state_installed "$dev" || first=1
     case $dev in
       evo8)
         read -r node ch < <(discover_node evo8 output)
+        if evo_present evo8 && { [[ -z $node ]] || (( ch < 6 )); }; then
+          info "Selecting the EVO 8 Pro Audio profile (6 USB channels)"
+          set_pro_audio evo8 && read -r node ch < <(discover_node evo8 output) \
+            || warn "could not select the EVO 8 Pro Audio profile"
+        fi
         write_evo_split evo8 "$node" "$ch"
         state_set_installed evo8 true
         state_set_default_if_empty evo8
@@ -736,11 +813,24 @@ apply(){
         fi
         ;;
     esac
+    (( first )) && firsts+=("$dev") || true
   done
   install_defaults
   state_init
+  for dev in "${firsts[@]}"; do init_defaults "$dev"; done
   ok "foundation applied"
-  (( RESTART )) && restart_audio || true
+  if (( RESTART )); then
+    restart_audio
+    # The restart re-enumerates the card before WirePlumber has saved the
+    # profile, so it falls back to surround 2.1 and the split targets vanish.
+    # Select pro-audio again now that the graph is up; it persists from here.
+    if evo_present evo8 && state_installed evo8; then
+      # restart_audio already ran the defaults script, but the split sink only
+      # exists once pro-audio is back: run it again after the profile switch.
+      set_pro_audio evo8 && "$DEFAULT_SCRIPT" 2>/dev/null \
+        || warn "EVO 8 Pro Audio profile not restored after restart"
+    fi
+  fi
 }
 
 write_evo4_split(){
@@ -846,6 +936,10 @@ remove_all(){
     mq_sudo rm -f "$UDEV_RULE" && mq_sudo udevadm control --reload-rules \
       && ok "udev seat rule removed" || warn "could not remove $UDEV_RULE"
   fi
+  if [[ -f $PLATFORM_AUDIO ]]; then
+    mq_sudo rm -f "$PLATFORM_AUDIO" && ok "audio panel hints removed" \
+      || warn "could not remove $PLATFORM_AUDIO"
+  fi
   state_init
   printf '{"default":"","devices":{}}\n' > "$STATE"
   ok "foundation files removed (pipewire-settings config untouched)"
@@ -856,6 +950,7 @@ needs(){
   local dev="${DEV:-evo8}" miss=0
   if [[ ! -f $UDEV_RULE ]]; then echo "udev seat rule for /dev/evo4 + /dev/evo8"; miss=1; fi
   if [[ ! -f $WP_CONF ]]; then echo "WirePlumber anti-suspend/no-upmix rule"; miss=1; fi
+  if [[ ! -f $PLATFORM_AUDIO ]]; then echo "audio panel hints (one entry per interface)"; miss=1; fi
   if [[ $dev == evo8 ]]; then
     local node ch; read -r node ch < <(discover_node evo8 output)
     if evo_present evo8 && [[ ( -z $node || $ch -lt 6 ) ]]; then

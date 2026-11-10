@@ -12,6 +12,7 @@
 #   mosquito-mixbay-actions set phantom 0 -t input1
 #   mosquito-mixbay-actions mixer input1 --volume -6 --pan 0
 #   mosquito-mixbay-actions save | load [--device evo8]
+#   mosquito-mixbay-actions reset-defaults [--device evo8]
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec "$DIR/mosquito-mixbay-tui" "$@"

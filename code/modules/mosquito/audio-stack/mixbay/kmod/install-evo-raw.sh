@@ -44,10 +44,26 @@ fi
 [[ -x "$CACHE/kmod/install.sh" ]] || die "upstream layout changed ($CACHE/kmod/install.sh missing) — check $UPSTREAM"
 ok "upstream sources ready ($CACHE)"
 
-# The upstream installer asks about DKMS + autoload service itself and needs
-# root for depmod/udev. Run it with our sudo primer (one native prompt).
+# The upstream installer only builds when DKMS is present; without it it
+# stops on an interactive prompt, builds nothing, and the bay stays in DEMO.
+# Install it first so a -y/onboarding run has everything it needs.
+if ! command -v dkms >/dev/null 2>&1; then
+  command -v pacman >/dev/null 2>&1 \
+    || die "dkms required to build evo_raw — install it, or build evo_raw.c by hand."
+  mq_sudo pacman -S --needed --noconfirm dkms || die "could not install dkms"
+fi
+
+# install.sh is interactive (device menu, dialout, autoload). Answer it here or
+# a non-interactive run stops at the first prompt with nothing built: pick the
+# connected EVO (rules are listed evo4, evo8), decline dialout (70-mixbay-evo
+# already grants uaccess) and autoload (evoctl is not installed by Mixbay).
 mq_sudo -v || die "sudo required for the kernel module install"
-mq_sudo bash "$CACHE/kmod/install.sh"
+_choice=1
+for _f in /sys/bus/usb/devices/*/idVendor; do
+  [[ "$(cat "$_f" 2>/dev/null)" == 2708 ]] || continue
+  [[ "$(cat "${_f%idVendor}idProduct" 2>/dev/null)" == 0007 ]] && _choice=2
+done
+printf '%s\nn\nn\n' "$_choice" | mq_sudo bash "$CACHE/kmod/install.sh"
 
 # The upstream installer builds DKMS only for the kernel it runs under. With
 # both linux and linux-omarchy installed, booting the other kernel left

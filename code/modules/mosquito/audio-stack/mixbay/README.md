@@ -169,8 +169,15 @@ mosquito-mixbay-actions set gain 30 -t input3
 mosquito-mixbay-actions set mute 1 -t output1
 mosquito-mixbay-actions set phantom 0 -t input1
 mosquito-mixbay-actions mixer input1 --volume -6 --pan -20
+mosquito-mixbay-actions reset-defaults --device evo8
 mosquito-mixbay-actions save | load --device evo8
 ```
+
+Le premier setup d'une carte applique son preset par défaut (contrôles + matrice
+usine) puis ne réécrit plus jamais les niveaux de l'utilisateur. Le widget audio
+d'Omarchy n'affiche qu'**une entrée par interface** (`EVO 8`) : les nœuds du
+split restent internes à Mixbay et sont masqués via
+`/usr/share/omarchy-platform/audio.json`.
 
 L'installateur pose aussi `/etc/udev/rules.d/99-evo8-capture.rules` et
 `/usr/local/lib/mosquitomixbay/evo8-capture-enable.py` : à chaque connexion,

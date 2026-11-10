@@ -34,8 +34,8 @@ HELPER_SRC="$SCRIPT_DIR/levels-guard"
 HELPER_BIN="$BIN_DIR/levels-guard"
 OLD_HELPER_BIN="$BIN_DIR/mixbay-native-volume"
 PATCH="$SCRIPT_DIR/levels-guard-plugin/patch.py"
-# shellcheck source=../../../lib/bar-widget.bash
-source "$SCRIPT_DIR/../../../lib/bar-widget.bash"
+# shellcheck source=../../../../lib/bar-widget.bash
+source "$SCRIPT_DIR/../../../../lib/bar-widget.bash"
 
 info()  { echo -e "\033[1;34m==>\033[0m $*"; }
 ok()    { echo -e "\033[1;32m ✓\033[0m $*"; }

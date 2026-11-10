@@ -76,36 +76,6 @@ INSERTIONS = [
 
 REPLACEMENTS = [
     (
-        '''  function outputIcon(volume) {
-    // Match the old Waybar pulseaudio glyph set. The Material Design speaker
-    // icons render visually smaller in JetBrainsMono Nerd Font.
-    if (!sink || !sink.audio) return ""
-    if (isHeadphones(sink)) return "󰋋"
-    if (outputMuted) return ""
-''',
-        '''  function outputIcon(volume) {
-    // Match the old Waybar pulseaudio glyph set. The Material Design speaker
-    // icons render visually smaller in JetBrainsMono Nerd Font.
-    if (!sink || !sink.audio) return ""
-    if (isHeadphones(sink)) return "󰋋"
-    if (levelsGuardBlockOutput) return ""
-    if (outputMuted) return ""
-''',
-    ),
-    (
-        '''  function inputIcon() {
-    if (!hasInput) return "󰍭"
-    return inputMuted ? "󰍭" : "󰍬"
-  }
-''',
-        '''  function inputIcon() {
-    if (levelsGuardBlockInput) return "󰍬"
-    if (!hasInput) return "󰍭"
-    return inputMuted ? "󰍭" : "󰍬"
-  }
-''',
-    ),
-    (
         '''  function outputVolumeName(volume, muted) {
     return Model.outputVolumeName(volume, muted, Commons.I18n.t)
   }

@@ -103,6 +103,29 @@ func runCLI(args []string) int {
 		}
 		fmt.Println("ok")
 		return 0
+	case "reset-defaults":
+		fs := flag.NewFlagSet("reset-defaults", flag.ContinueOnError)
+		dev := fs.String("device", defaultDevice(), "device id")
+		demo := fs.Bool("demo", false, "allow writing the persistent DEMO state when offline")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		d, err := openWrite(*dev, *demo)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		r, ok := d.(interface{ ResetToDefaults() error })
+		if !ok {
+			fmt.Fprintf(os.Stderr, "%s has no built-in default preset\n", *dev)
+			return 1
+		}
+		if err := r.ResetToDefaults(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Println("ok")
+		return 0
 	case "-h", "--help", "help":
 		fmt.Print(cliHelp())
 		return 0
@@ -118,6 +141,7 @@ func cliHelp() string {
   status-json [--device ID] [--live]  full state (JSON; --live fails offline)
   set ... [--demo]                    writes are live-only unless --demo
   save | load [--device ID] [--demo]  snapshot / re-apply (strict by default)
+  reset-defaults [--device ID]        apply the built-in default preset
   patchbay-status-json                PipeWire links, interfaces and presets
   patchbay-save NAME                  save current hardware links as a preset
   patchbay-apply NAME [--replace]     apply a preset (explicit, no auto)
