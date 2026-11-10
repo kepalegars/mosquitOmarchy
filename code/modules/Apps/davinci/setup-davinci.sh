@@ -305,6 +305,12 @@ do_status(){
   else
     warn "Media storage  : not configured (launch Resolve once, then --media-storage)"
   fi
+  if [[ -x "$HELPER" ]]; then
+    ok "Media helper   : installed (auto at every Resolve launch)"
+    echo "                   remove: rm $HELPER"
+  else
+    warn "Media helper   : absent (run --media-storage)"
+  fi
   if command -v drwrap >/dev/null 2>&1; then
     if systemctl --user is-enabled drwrap.service >/dev/null 2>&1; then
       ok "DRwrap          : installed (converter service enabled)"
@@ -994,7 +1000,8 @@ recap(){
   echo " • DRwrap: drag/drop, clipboard paste and codec conversion handled silently."
   echo "   Watch folder: ~/Videos/ResolveDrop · ready files: ~/Videos/ResolveIngest."
   echo " • Media browser (Locate/Deliver): home folders + removable drives."
-  echo "   Add another folder: setup-davinci.sh --media-storage /path"
+  echo "   Helper runs at every Resolve launch. Add: setup-davinci.sh --media-storage /path"
+  echo "   Remove it: rm ~/.local/bin/davinci-resolve-storage"
   echo " • Project / LUT data: kept in ~/.local/share, ~/.config/Blackmagic Design."
   echo " • Uninstall: ./uninstall-davinci.sh"
   hr
@@ -1029,6 +1036,7 @@ update_davinci(){
   fi
 
   install_launcher
+  ensure_media_storage
   install_hypr_rule
   install_wrapper
   fix_audio_backend
@@ -1060,9 +1068,6 @@ update_davinci(){
 main(){
   msg "install-davinci — DaVinci Resolve (Studio or free) for Omarchy"
   ((STATUS_ONLY)) && { do_status; exit 0; }
-  # Seed the Media Storage locations whenever mosquitOmarchy runs this module
-  # (install, update, alt-drivers…). No-op once the marker exists.
-  (( MEDIA_STORAGE )) || ensure_media_storage
   if (( MEDIA_STORAGE )); then
     [[ -x "$HELPER" ]] || install_media_storage
     # Refresh the launcher so its first-launch seeding hook exists even when
@@ -1116,6 +1121,7 @@ main(){
   install_deps || exit 1
   install_resolve "$zip" || exit 1
   install_launcher
+  ensure_media_storage
   install_hypr_rule
   install_wrapper
   fix_audio_backend

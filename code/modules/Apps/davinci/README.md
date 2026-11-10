@@ -60,6 +60,14 @@ davinci-resolve-storage add /path/to/folder
 
 Close Resolve first: it rewrites `config.dat` on exit. The helper backs up the file and refuses nested/duplicate locations with the same rule as Resolve. If the seed did not happen (Resolve was installed before this feature), run `setup-davinci.sh --media-storage` once.
 
+The launcher runs `davinci-resolve-storage ensure --quiet` at **every Resolve start**. mosquitOmarchy also runs it once after installing or updating the module, once Resolve is present. It only writes once (a marker in `~/.local/state/mosquitomarchy/` records the seed), so removing a location in Resolve does not bring it back. To stop the automatic seed:
+
+```bash
+rm -f ~/.local/bin/davinci-resolve-storage
+```
+
+The locations already written to `config.dat` stay; remove them in `Preferences > System > Media Storage`. A full `uninstall-davinci.sh` also removes the helper and the marker.
+
 ## Window (Hyprland)
 
 On Omarchy, the setup appends a user rule to `~/.config/hypr/hyprland.lua` (marker `mosquito-davinci-tiling`) so the Resolve project window opens **tiled** instead of Omarchy's default floating/fullscreen. The Project Manager stays floating. `uninstall-davinci.sh` removes the block.
