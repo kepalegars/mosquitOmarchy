@@ -62,10 +62,18 @@ install_audio_tools() {
     return 0
   fi
   require_yay || return 1
+  if ! command -v pacpl >/dev/null 2>&1; then
+    # An interrupted earlier run can leave a truncated source in yay's cache;
+    # makepkg then fails every later run on a checksum that can never pass
+    # ("pacpl-6.1.3.tar.bz2 ... FAILED", bzip2 "trailing garbage after EOF").
+    # Clearing just this package's build cache makes yay fetch it again; the
+    # dependency caches are separate and survive.
+    rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/yay/pacpl"
+  fi
   msg "Installing pacpl (AUR) + encoders: ${missing[*]}"
   # One yay call for AUR and repo packages alike; --needed keeps a re-run free.
   yay -S --needed --noconfirm pacpl vorbis-tools opus-tools sox flac lame wavpack ffmpeg zenity || {
-    err "package installation failed — pacpl may be missing its AUR build dependencies"
+    err "package installation failed — see the yay output above"
     return 1
   }
   command -v pacpl >/dev/null 2>&1 || { err "pacpl still missing after install"; return 1; }
