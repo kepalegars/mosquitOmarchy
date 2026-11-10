@@ -551,10 +551,9 @@ EOF
 # the levels the user set. Cards without a preset (ALSA level 1) only get the
 # default sink/source and are left unmuted.
 init_defaults(){
-  local dev="$1"
-  if command -v mosquito-mixbay-actions >/dev/null 2>&1; then
-    mosquito-mixbay-actions reset-defaults --device "$dev" >/dev/null 2>&1 || true
-  fi
+  local dev="$1" actions="$BIN_DIR/mosquito-mixbay-actions"
+  command -v "$actions" >/dev/null 2>&1 || actions="$(command -v mosquito-mixbay-actions 2>/dev/null || true)"
+  [[ -n $actions ]] && "$actions" reset-defaults --device "$dev" >/dev/null 2>&1 || true
   [[ "$(state_default)" == "$dev" ]] || return 0
   [[ -x $DEFAULT_SCRIPT ]] && "$DEFAULT_SCRIPT" >/dev/null 2>&1 || true
   wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 2>/dev/null || true
