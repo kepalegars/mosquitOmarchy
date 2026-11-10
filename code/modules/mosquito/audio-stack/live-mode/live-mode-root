@@ -47,6 +47,8 @@ Commands:
   restore                               Restore pre-live state
   thermal-cap <kHz>                     Set scaling_max_freq on all policies
   thermal-restore                       Restore scaling_max_freq to hardware max
+  harden-sudo                           Ensure the scoped live-mode-root rule and
+                                        remove broad NOPASSWD grants (one way)
 EOF
   exit 1
 }
@@ -242,6 +244,44 @@ cmd_thermal_restore() {
 }
 
 # ---------------------------------------------------------------------------
+# harden-sudo — revoke broad passwordless sudo for the session and after
+#
+# The setup's temporary `NOPASSWD: ALL` drop-in (99-omarchy-nopasswd-<uid>)
+# exists so the installer can run unattended. Live mode gives the user a way to
+# close that hole for good: first make sure the SCOPED live-mode-root grant is
+# in place (off/restore and the thermal guard still need it), then delete every
+# drop-in that grants a broad `NOPASSWD: ALL`. Nothing restores those files —
+# re-running the setup is the only way to get a broad grant back.
+# ---------------------------------------------------------------------------
+
+SUDOERS_FILE="/etc/sudoers.d/live-mode"
+HELPER="$REAL_HOME/.local/bin/live-mode-root"
+
+cmd_harden_sudo() {
+  local tmp
+  tmp=$(mktemp) || { echo '{"error":"mktemp failed"}' >&2; return 1; }
+  cat > "$tmp" <<SUDOEOF
+$REAL_USER ALL=(root) NOPASSWD: $HELPER apply, $HELPER restore, $HELPER status, $HELPER harden-sudo, $HELPER thermal-cap *, $HELPER thermal-restore
+Defaults! $HELPER env_keep += "DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS"
+SUDOEOF
+  if ! visudo -cf "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp"
+    echo '{"error":"generated sudoers rule is invalid — broad grants kept"}' >&2
+    return 1
+  fi
+  install -m 0440 -o root -g root "$tmp" "$SUDOERS_FILE"
+  rm -f "$tmp"
+
+  local f
+  for f in /etc/sudoers.d/*; do
+    [[ -f $f && $f != "$SUDOERS_FILE" ]] || continue
+    grep -qE 'NOPASSWD:[[:space:]]*ALL' "$f" || continue
+    rm -f "$f"
+  done
+  echo '{"status":"ok","passwordless_sudo":"removed"}'
+}
+
+# ---------------------------------------------------------------------------
 # status
 # ---------------------------------------------------------------------------
 
@@ -274,5 +314,6 @@ case "$cmd" in
   restore)          cmd_restore ;;
   thermal-cap)      cmd_thermal_cap "$@" ;;
   thermal-restore)  cmd_thermal_restore ;;
+  harden-sudo)      cmd_harden_sudo ;;
   *)                usage ;;
 esac

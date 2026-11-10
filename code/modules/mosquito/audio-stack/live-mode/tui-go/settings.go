@@ -13,10 +13,12 @@ import (
 // next activation applies. The file is shell-sourceable (KEY="value"), the
 // exact format live-mode and its watchdog read back via source.
 
-// knownApps is the historical default close-at-start set. The chooser itself
-// lists what is actually installed (installedApps); these names only seed the
-// default selection and keep settings written by older versions meaningful.
-var knownApps = []string{"kDrive", "qBittorrent", "Steam", "Discord", "Slack", "Spotify"}
+// knownApps is the default close-at-start set. The chooser itself lists what
+// is actually installed (installedApps); these names only seed the default
+// selection and keep settings written by older versions meaningful. Superwhisper
+// is the one background app a session actually needs out of the way: it holds
+// the microphone and its virtual device while you are playing.
+var knownApps = []string{"Superwhisper"}
 
 type Settings struct {
 	ThermalLimitC int      // 95|90|85|80|75 (°C)
@@ -44,20 +46,35 @@ type Settings struct {
 	// Live mode installs nothing, so the lock protected nothing. It is here for
 	// the times you WANT the machine pinned, never imposed.
 	FencePackages bool
+	// RelaunchApps starts again the apps the session closed, when the session
+	// ends. OFF by default: closing is the point, and reopening an app the
+	// user closed for a reason must be asked for once, not assumed.
+	RelaunchApps bool
+	// DisablePasswordlessSudo revokes broad `NOPASSWD: ALL` drop-ins at
+	// activation and never restores them. ON by default: a live session is a
+	// good moment to stop leaving root reachable without a password.
+	DisablePasswordlessSudo bool
+	// PipewireAutolock starts the PipeWire settings widget locked during live
+	// mode. ON by default; turning it off leaves the values editable and the
+	// user can still lock them with L.
+	PipewireAutolock bool
 }
 
 func defaultSettings() Settings {
 	return Settings{
-		ThermalLimitC: 85,
-		CloseApps:     true,
-		CloseAppsList: append([]string(nil), knownApps...),
-		RoutingTool:   true,
-		PatchbayApp:   PatchbayBoth,
-		NoGaps:        true,
-		SilenceNotifs: true,
-		SwitchTheme:   true,
-		ProfilePrompt: true,
-		FencePackages: false,
+		ThermalLimitC:           85,
+		CloseApps:               true,
+		CloseAppsList:           append([]string(nil), knownApps...),
+		RoutingTool:             true,
+		PatchbayApp:             PatchbayBoth,
+		NoGaps:                  true,
+		SilenceNotifs:           true,
+		SwitchTheme:             true,
+		ProfilePrompt:           true,
+		FencePackages:           false,
+		RelaunchApps:            false,
+		DisablePasswordlessSudo: true,
+		PipewireAutolock:        true,
 	}
 }
 
@@ -116,6 +133,17 @@ func loadSettings() Settings {
 	if v, ok := kv["FENCE_PACKAGES"]; ok && v == "yes" {
 		s.FencePackages = true
 	}
+	// Same "only an explicit yes" rule: reopening apps is opt-in.
+	if v, ok := kv["RELAUNCH_APPS"]; ok && v == "yes" {
+		s.RelaunchApps = true
+	}
+	// On by default: absence means yes, only an explicit "no" turns them off.
+	if v, ok := kv["DISABLE_PASSWORDLESS_SUDO"]; ok {
+		s.DisablePasswordlessSudo = v != "no"
+	}
+	if v, ok := kv["PIPEWIRE_AUTOLOCK"]; ok {
+		s.PipewireAutolock = v != "no"
+	}
 	return s
 }
 
@@ -137,7 +165,10 @@ func saveSettings(s Settings) error {
 		"SILENCE_NOTIFICATIONS=\"" + boolVal(s.SilenceNotifs) + "\"\n" +
 		"SWITCH_THEME=\"" + boolVal(s.SwitchTheme) + "\"\n" +
 		"POWER_PROFILE_PROMPT=\"" + boolVal(s.ProfilePrompt) + "\"\n" +
-		"FENCE_PACKAGES=\"" + boolVal(s.FencePackages) + "\"\n"
+		"FENCE_PACKAGES=\"" + boolVal(s.FencePackages) + "\"\n" +
+		"RELAUNCH_APPS=\"" + boolVal(s.RelaunchApps) + "\"\n" +
+		"DISABLE_PASSWORDLESS_SUDO=\"" + boolVal(s.DisablePasswordlessSudo) + "\"\n" +
+		"PIPEWIRE_AUTOLOCK=\"" + boolVal(s.PipewireAutolock) + "\"\n"
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 

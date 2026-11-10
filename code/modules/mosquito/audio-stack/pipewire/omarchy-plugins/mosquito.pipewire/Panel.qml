@@ -75,6 +75,66 @@ Panel {
         { label: "Remember on restart", kind: "persist" }
     ]
 
+    // ── live mode ───────────────────────────────────────────────────────────
+    //
+    // Live mode forces the graph's current values and sets the persisted config
+    // aside; the widget then locks the two remaining values (they cannot be
+    // changed mid-session by accident) and hides the two switches live mode owns.
+    // L unlocks the values after a confirmation, for the rest of the session.
+    property bool liveActive: false
+    property bool unlocked: false
+    property bool unlockConfirmOpen: false
+    property int unlockSelected: 1
+
+    readonly property bool locked: root.liveActive && !root.unlocked
+    readonly property bool autoLock: root.info.autolock !== false
+    readonly property var displayRows: {
+        if (!root.liveActive) return root.rows
+        return root.rows.filter(function (r) {
+            return r.kind === "rate" || r.kind === "quantum"
+        })
+    }
+
+    function setLive(on) {
+        var changed = on !== root.liveActive
+        root.liveActive = on
+        if (!on) {
+            root.unlocked = false
+            root.unlockConfirmOpen = false
+        } else if (changed) {
+            // autoLock on: start locked; off: start editable (L locks).
+            root.unlocked = !root.autoLock
+        }
+        if (changed) root.row = 0
+    }
+
+    function requestUnlock() {
+        if (!root.liveActive || root.unlocked) return
+        root.unlockSelected = 1
+        root.unlockConfirmOpen = true
+    }
+    function confirmUnlock() {
+        root.unlockConfirmOpen = false
+        root.unlocked = true
+    }
+    function cancelUnlock() { root.unlockConfirmOpen = false }
+    function toggleLock() {
+        if (!root.liveActive) return
+        if (root.unlocked) root.unlocked = false
+        else root.requestUnlock()
+    }
+
+    // The shell runs with QS_DISABLE_FILE_WATCHER=1, so a FileView watcher on
+    // the live-mode flag never fires. `show` reports the flag instead, and the
+    // panel re-reads it when it opens and while it stays open.
+    onOpenedChanged: if (opened) read()
+    Timer {
+        interval: 2000
+        running: root.opened
+        repeat: true
+        onTriggered: root.read()
+    }
+
     Component.onCompleted: read()
 
     // ── backend ─────────────────────────────────────────────────────────────
@@ -110,6 +170,7 @@ Panel {
             try {
                 root.info = JSON.parse(raw)
                 root.error = ""
+                root.setLive(root.info.live === true)
             } catch (e) {
                 root.error = "cannot read: " + e
             }
@@ -159,14 +220,14 @@ Panel {
         return s === "dynamic" ? s : s + " frames"
     }
     function rowValue(index) {
-        var k = root.rows[index].kind
+        var k = root.displayRows[index].kind
         if (k === "rate") return root.rateLabel()
         if (k === "quantum") return root.quantumLabel()
         if (k === "force") return root.forcing() ? "on" : "off"
         return root.persisting() ? "on" : "off"
     }
     function isSwitch(index) {
-        var k = root.rows[index].kind
+        var k = root.displayRows[index].kind
         return k === "force" || k === "persist"
     }
 
@@ -180,12 +241,14 @@ Panel {
     }
 
     function moveCursor(dy) {
-        var n = root.rows.length
+        if (root.locked) return
+        var n = root.displayRows.length
         root.row = (((root.row + dy) % n) + n) % n
     }
 
     function adjust(delta) {
-        var kind = root.rows[root.row].kind
+        if (root.locked) return
+        var kind = root.displayRows[root.row].kind
         if (kind === "rate")
             root.write(["set-rate", root.step(root.rates, root.currentRate(), delta)])
         else if (kind === "quantum")
@@ -202,6 +265,7 @@ Panel {
     // flip the sample rate with no visible intent, and there is no undo for
     // a graph change mid-take.
     function selectAt(index) {
+        if (root.locked) return
         root.row = index
     }
 
@@ -298,29 +362,55 @@ Panel {
         contentWidth: panel.fittedContentWidth(Style.space(340), Style.space(340))
         contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(420))
 
-        PanelKeyCatcher {
+        // A plain key catcher rather than PanelKeyCatcher: that component owns
+        // lowercase "l" as "move right", and the lock key is L. Handling the
+        // arrows here keeps both, and matches how the shell's other panels
+        // (clipboard, menu) do their own keys anyway.
+        Item {
             id: keyCatcher
             anchors.fill: parent
-            // BOTH axes matter, and discarding one of them is what made ←/→
-            // do nothing at all: PanelKeyCatcher reports an arrow key as
-            // moveRequested with one non-zero component, so a handler that only
-            // reads dy silently ignores every horizontal press.
-            //
-            // Vertical moves the cursor between the four settings; horizontal
-            // changes the one under it. Doing both on the same signal is what
-            // makes this feel like the rest of the shell's panels.
-            onMoveRequested: function (dx, dy) {
-                if (dy !== 0) root.moveCursor(dy)
-                else if (dx !== 0) root.adjust(dx > 0 ? 1 : -1)
+            focus: true
+            Keys.priority: Keys.BeforeItem
+            Keys.onPressed: function (event) {
+                if (root.unlockConfirmOpen) {
+                    if (event.key === Qt.Key_Escape) {
+                        root.cancelUnlock()
+                    } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Right ||
+                               event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                        root.unlockSelected = root.unlockSelected === 0 ? 1 : 0
+                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                        if (root.unlockSelected === 1) root.confirmUnlock()
+                        else root.cancelUnlock()
+                    } else {
+                        return
+                    }
+                    event.accepted = true
+                    return
+                }
+                if (event.key === Qt.Key_Escape) {
+                    root.toggle()
+                } else if (event.key === Qt.Key_Up) {
+                    root.moveCursor(-1)
+                } else if (event.key === Qt.Key_Down) {
+                    root.moveCursor(1)
+                } else if (event.key === Qt.Key_Left) {
+                    root.adjust(-1)
+                } else if (event.key === Qt.Key_Right) {
+                    root.adjust(1)
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                    // Enter toggles the two-state rows (force / persist) and
+                    // does nothing on sample rate / buffer size: a stray Enter
+                    // there changed the graph's rate by one step.
+                    if (!root.locked && root.isSwitch(root.row)) root.adjust(1)
+                } else if (event.text === "l" || event.text === "L") {
+                    // L locks when unlocked, and asks before unlocking.
+                    root.toggleLock()
+                } else {
+                    return
+                }
+                event.accepted = true
             }
-            // Enter toggles the two-state rows (force / persist), and does
-            // NOTHING on a multi-value one (sample rate, buffer size): a
-            // stray Enter there changed the graph's rate by one step, which
-            // is a setting you notice immediately and regret slowly.
-            onActivateRequested: {
-              if (root.isSwitch(root.row)) root.adjust(1)
-            }
-            onCloseRequested: function () { root.toggle() }
+
 
             Column {
                 id: panelColumn
@@ -337,85 +427,189 @@ Panel {
                     bottomPadding: Style.spacing.xs
                 }
 
-                Repeater {
-                    model: root.rows
+                Item {
+                    id: body
+                    width: parent.width
+                    height: normalBody.implicitHeight
 
-                    delegate: Rectangle {
-                        id: rowItem
-                        required property var modelData
-                        required property int index
-                        readonly property bool active: root.row === index
+                    Column {
+                        id: normalBody
+                        width: parent.width
+                        spacing: Style.spacing.xs
 
-                        width: panelColumn.width
-                        height: Style.spacing.popupRowHeight
-                        color: active ? Util.alpha(Color.foreground, 0.08) : "transparent"
+                    Repeater {
+                        model: root.displayRows
+
+                        delegate: Rectangle {
+                            id: rowItem
+                            required property var modelData
+                            required property int index
+                            readonly property bool active: root.row === index && !root.locked
+
+                            width: panelColumn.width
+                            height: Style.spacing.popupRowHeight
+                            color: active ? Util.alpha(Color.foreground, 0.08) : "transparent"
+                            radius: Style.cornerRadius
+
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: Style.spacing.md
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: rowItem.modelData.label
+                                // Always muted, active row included: the label is the
+                                // category NAME, not the value. Highlighting it on the
+                                // cursor row made the name compete with the number it
+                                // describes, which is the only part of the row that
+                                // changes.
+                                color: root.dim
+                                font.family: Style.font.family
+                                font.pixelSize: Style.font.body
+                            }
+
+                            Text {
+                                anchors.right: parent.right
+                                anchors.rightMargin: Style.spacing.md
+                                anchors.verticalCenter: parent.verticalCenter
+                                // Locked: the value only — no arrows, no [on]/[off],
+                                // and muted. There is nothing to select or change.
+                                text: root.locked
+                                      ? root.rowValue(rowItem.index)
+                                      : (root.isSwitch(rowItem.index)
+                                         ? (root.rowValue(rowItem.index) === "on" ? "[on]" : "[off]")
+                                         : "◂ " + root.rowValue(rowItem.index) + " ▸")
+                                // Always the full foreground: this is the value, and a
+                                // value that dims when the cursor leaves it is a value
+                                // you have to hunt for. Bold still marks the cursor.
+                                color: root.locked ? root.dim : Color.foreground
+                                font.family: Style.font.family
+                                font.pixelSize: Style.font.body
+                                font.bold: rowItem.active
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                // Selection only: clicking a row moves the cursor
+                                // there so the keyboard acts on it. No button
+                                // ever writes — see selectAt.
+                                acceptedButtons: Qt.LeftButton
+                                enabled: !root.locked
+                                onClicked: function (mouse) {
+                                    root.selectAt(rowItem.index)
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        visible: root.error !== ""
+                        text: root.error
+                        color: Color.urgent
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.caption
+                        leftPadding: Style.spacing.md
+                        rightPadding: Style.spacing.md
+                        wrapMode: Text.WordWrap
+                        width: panelColumn.width - Style.spacing.md * 2
+                    }
+
+                    Text {
+                        // The legend follows the state: L locks while unlocked,
+                        // and asks before unlocking while locked.
+                        text: root.locked
+                              ? "Locked for live mode · L unlock"
+                              : root.liveActive
+                                ? "Unlocked · ↑↓ choose   ←→ change · L lock"
+                                : "↑↓ choose   ←→ change   enter toggles"
+                        color: root.dim
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.caption
+                        leftPadding: Style.spacing.md
+                        topPadding: Style.spacing.xs
+                    }
+                }
+
+                    // The unlock confirmation is an overlay on the same body
+                    // area: it replaces the interface without resizing the
+                    // panel (the underlying rows keep defining the height).
+                    Rectangle {
+                        anchors.fill: parent
+                        visible: root.unlockConfirmOpen
+                        color: Color.background
                         radius: Style.cornerRadius
+                        z: 5
 
-                        Text {
-                            anchors.left: parent.left
-                            anchors.leftMargin: Style.spacing.md
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: rowItem.modelData.label
-                            // Always muted, active row included: the label is the
-                            // category NAME, not the value. Highlighting it on the
-                            // cursor row made the name compete with the number it
-                            // describes, which is the only part of the row that
-                            // changes.
-                            color: root.dim
-                            font.family: Style.font.family
-                            font.pixelSize: Style.font.body
-                        }
+                        MouseArea { anchors.fill: parent }
 
-                        Text {
-                            anchors.right: parent.right
-                            anchors.rightMargin: Style.spacing.md
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: root.isSwitch(rowItem.index)
-                                  ? (root.rowValue(rowItem.index) === "on" ? "[on]" : "[off]")
-                                  : "◂ " + root.rowValue(rowItem.index) + " ▸"
-                            // Always the full foreground: this is the value, and a
-                            // value that dims when the cursor leaves it is a value
-                            // you have to hunt for. Bold still marks the cursor.
-                            color: Color.foreground
-                            font.family: Style.font.family
-                            font.pixelSize: Style.font.body
-                            font.bold: rowItem.active
-                        }
+                        Column {
+                            id: confirmBody
+                            width: parent.width
+                            spacing: Style.spacing.xs
 
-                        MouseArea {
-                            anchors.fill: parent
-                            // Selection only: clicking a row moves the cursor
-                            // there so the keyboard acts on it. No button
-                            // ever writes — see selectAt.
-                            acceptedButtons: Qt.LeftButton
-                            onClicked: function (mouse) {
-                                root.selectAt(rowItem.index)
+                    Text {
+                        text: "Unlock PipeWire settings?"
+                        color: Color.foreground
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.body
+                        font.bold: true
+                        leftPadding: Style.spacing.md
+                    }
+
+                    Text {
+                        text: "Changing the sample rate or buffer size can cause audio crackles."
+                        color: root.dim
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.caption
+                        leftPadding: Style.spacing.md
+                        rightPadding: Style.spacing.md
+                        wrapMode: Text.WordWrap
+                        width: panelColumn.width - Style.spacing.md * 2
+                    }
+
+                    Row {
+                        x: Style.spacing.md
+                        spacing: Style.space(8)
+
+                        Repeater {
+                            model: ["Keep locked", "Unlock"]
+
+                            delegate: BorderSurface {
+                                required property int index
+                                required property string modelData
+                                readonly property bool selected: root.unlockSelected === index
+                                readonly property bool destructive: index === 1
+
+                                width: Style.space(104)
+                                height: Style.space(28)
+                                color: selected
+                                    ? Util.alpha(destructive ? Color.urgent : Color.foreground, 0.22)
+                                    : "transparent"
+                                borderSpec: Border.flat(destructive
+                                    ? (selected ? Color.urgent : Util.alpha(Color.urgent, 0.56))
+                                    : (selected ? Color.accent : Util.alpha(Color.foreground, 0.38)),
+                                    Style.normalBorderWidth)
+                                radius: Style.cornerRadius
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData
+                                    color: destructive
+                                        ? (selected ? Color.urgent : Color.foreground)
+                                        : (selected ? Color.accent : Color.foreground)
+                                    font.family: Style.font.family
+                                    font.pixelSize: Style.font.caption
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: index === 0 ? root.cancelUnlock() : root.confirmUnlock()
+                                }
                             }
                         }
                     }
                 }
-
-                Text {
-                    visible: root.error !== ""
-                    text: root.error
-                    color: Color.urgent
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.caption
-                    leftPadding: Style.spacing.md
-                    rightPadding: Style.spacing.md
-                    wrapMode: Text.WordWrap
-                    width: panelColumn.width - Style.spacing.md * 2
-                }
-
-                Text {
-                    text: "↑↓ choose   ←→ change   enter toggles"
-                    color: root.dim
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.caption
-                    leftPadding: Style.spacing.md
-                    topPadding: Style.spacing.xs
-                }
             }
         }
     }
+}
+}
 }

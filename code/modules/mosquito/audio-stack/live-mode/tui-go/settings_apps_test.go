@@ -43,11 +43,73 @@ func TestSelectedAppsStartWithAddRow(t *testing.T) {
 	}
 }
 
+// Superwhisper is the one background app a session closes by default: it had
+// been replaced by six app names the machine never ran.
+func TestTheDefaultCloseListIsSuperwhisper(t *testing.T) {
+	s := defaultSettings()
+	if len(s.CloseAppsList) != 1 || s.CloseAppsList[0] != "Superwhisper" {
+		t.Fatalf("default close list = %q, want [Superwhisper]", s.CloseAppsList)
+	}
+}
+
+// Relaunching closed apps is opt-in: absence in the file means off, and a
+// written "yes" survives a round trip.
+func TestRelaunchClosedAppsIsOptInAndPersists(t *testing.T) {
+	if defaultSettings().RelaunchApps {
+		t.Fatal("relaunch must default to off")
+	}
+	path := isolateSettings(t)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("RELAUNCH_APPS=\"no\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if loadSettings().RelaunchApps {
+		t.Fatal("RELAUNCH_APPS=no read as on")
+	}
+	s := defaultSettings()
+	s.RelaunchApps = true
+	if err := saveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	if !loadSettings().RelaunchApps {
+		t.Fatal("RELAUNCH_APPS=yes lost on round trip")
+	}
+}
+
 func TestAllAppsUseFilledOrHollowCircle(t *testing.T) {
 	s := defaultSettings()
 	for _, it := range s.allAppItems() {
 		if !strings.HasPrefix(it.Display, "● ") && !strings.HasPrefix(it.Display, "○ ") {
 			t.Fatalf("app row %q lacks a ●/○ mark", it.Display)
 		}
+	}
+}
+
+// The security hardening and the PipeWire lock are on by default, and only an
+// explicit "no" turns them off.
+func TestPasswordlessSudoAndPipewireLockDefaultOnAndPersist(t *testing.T) {
+	s := defaultSettings()
+	if !s.DisablePasswordlessSudo || !s.PipewireAutolock {
+		t.Fatalf("defaults = sudo %v / pipewire lock %v, want both on", s.DisablePasswordlessSudo, s.PipewireAutolock)
+	}
+	path := isolateSettings(t)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("DISABLE_PASSWORDLESS_SUDO=\"no\"\nPIPEWIRE_AUTOLOCK=\"no\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := loadSettings()
+	if got.DisablePasswordlessSudo || got.PipewireAutolock {
+		t.Fatalf("explicit no ignored: %+v", got)
+	}
+	if err := saveSettings(got); err != nil {
+		t.Fatal(err)
+	}
+	got = loadSettings()
+	if got.DisablePasswordlessSudo || got.PipewireAutolock {
+		t.Fatalf("round trip flipped: %+v", got)
 	}
 }

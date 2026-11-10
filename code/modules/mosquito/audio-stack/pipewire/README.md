@@ -68,6 +68,24 @@ Rate and quantum are validated against the upstream's lists. They are the values
 worth *offering*, not every value the hardware accepts — inventing a longer list
 would put choices in the menu that nothing here can run.
 
+## Live mode
+
+When live mode is on (`~/.local/state/live-mode/active`), the panel switches to
+its **live mode**: the two switches are hidden and owned by live mode, which
+forces the current values and sets the persisted config aside for the session.
+
+- `PIPEWIRE_AUTOLOCK=yes` (default) starts the two values **locked** — greyed,
+  without the ◂ ▸ arrows, and not selectable — because changing the sample rate
+  or buffer size mid-session is a good way to get audio crackles.
+  `PIPEWIRE_AUTOLOCK=no` starts them editable.
+- **L** locks the values immediately; when locked, **L** replaces the panel's
+  interface with an inline confirmation ("Unlock PipeWire settings? Changing
+  the sample rate or buffer size can cause audio crackles.") inside the same
+  panel, without resizing it. Accepting restores the arrows and editing.
+
+Nothing is persisted while live mode is active; `live-off` restores the
+pre-session force/pin state and the remember-on-restart file.
+
 ## Two things worth knowing
 
 **Absent is not zero.** An untouched graph reports only `clock.rate`,

@@ -86,23 +86,31 @@ thermal_control() {
 # in the gap gets through. The guard is cheap — one file read — so it gets its
 # own sub-second loop and the thermal cadence stops being its clock.
 #
-# The bar writes ~/.local/state/omarchy/notifications.json, which is exactly
-# what we read, so there is no way for the two views to disagree. The toggle
-# command is used first so Omarchy's own bookkeeping happens; the state file is
-# written directly only when that command declines, because it can while a DND
-# expiry timer is still pending.
+# The shell writes ~/.local/state/omarchy/notifications/quiet.json, which is
+# what we read. This used to read the LEGACY notifications.json (never written
+# by the current shell), so the guard saw "off" on every pass and toggled DND
+# twice a second — the blinking icon. `setDnd on` is idempotent, so a pass that
+# has nothing to do changes nothing.
+DND_STATE_FILE="$REAL_HOME/.local/state/omarchy/notifications/quiet.json"
+
+# Store.js writes compact JSON ({"dnd":true}, no space), so a literal
+# grep for '"dnd": true' never matched and the guard rebuilt itself on every
+# tick. jq also tolerates any other key the shell adds to the file.
+dnd_file_on() {
+  [[ -f $DND_STATE_FILE ]] && jq -e '.dnd == true' "$DND_STATE_FILE" >/dev/null 2>&1
+}
+
 enforce_dnd() {
   [[ $SILENCE_NOTIFICATIONS != no ]] || return 0
-  grep -q '"dnd": true' "$REAL_HOME/.local/state/omarchy/notifications.json" 2>/dev/null && return 0
-  omarchy-toggle-notification-silencing >/dev/null 2>&1 || true
-  grep -q '"dnd": true' "$REAL_HOME/.local/state/omarchy/notifications.json" 2>/dev/null && return 0
-  local nf="$REAL_HOME/.local/state/omarchy/notifications.json"
-  [[ -f $nf ]] || return 0
+  dnd_file_on && return 0
+  omarchy-shell notifications setDnd on >/dev/null 2>&1 || true
+  dnd_file_on && return 0
+  [[ -f $DND_STATE_FILE ]] || return 0
   command -v jq >/dev/null 2>&1 || return 0
   local tmp
-  tmp=$(mktemp "${nf}.XXXXXX" 2>/dev/null) || return 0
-  if jq '.dnd = true' "$nf" > "$tmp" 2>/dev/null; then
-    mv -f "$tmp" "$nf"
+  tmp=$(mktemp "${DND_STATE_FILE}.XXXXXX" 2>/dev/null) || return 0
+  if jq '.dnd = true' "$DND_STATE_FILE" > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$DND_STATE_FILE"
   else
     rm -f "$tmp"
   fi
@@ -126,6 +134,48 @@ confirm() {
   ans=$(cat "$sel" 2>/dev/null || echo "")
   rm -f "$sel" "$donef"
   [[ "$ans" == "yes" ]]
+}
+
+# Theme reassertion helpers. Same rationale as live-mode's copies: the Live
+# theme lives outside the scanned theme directory, so the link exists only for
+# the duration of the `theme set` call and never shows "Live" in the picker.
+LIVE_THEME_DIR="$STATE_DIR/theme"
+LIVE_THEME_LINK="$REAL_HOME/.config/omarchy/themes/live"
+THEME_KEYS_FLAG="$STATE_DIR/theme_keys_blocked"
+
+live_theme_apply() {
+  [[ -d $LIVE_THEME_DIR ]] || return 1
+  mkdir -p "$(dirname "$LIVE_THEME_LINK")"
+  rm -f "$LIVE_THEME_LINK"
+  ln -sfn "$LIVE_THEME_DIR" "$LIVE_THEME_LINK"
+  local rc=0
+  omarchy theme set Live >/dev/null 2>&1 || rc=$?
+  rm -f "$LIVE_THEME_LINK"
+  return "$rc"
+}
+
+# Unbind only Omarchy's four DEFAULT theme/background combos, and only while
+# they still carry that action. A shortcut the user bound himself keeps
+# working; a config reload during the session is re-blocked on the next pass.
+block_theme_keys() {
+  command -v hyprctl >/dev/null 2>&1 || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local binds mask key chord
+  binds=$(hyprctl -j binds 2>/dev/null) || return 0
+  while read -r mask key; do
+    [[ -n $mask && -n $key ]] || continue
+    case "$mask $key" in
+      "68 SPACE"|"68 W"|"68 T") chord="SUPER + CTRL + $key" ;;
+      "69 SPACE")               chord="SUPER + SHIFT + CTRL + SPACE" ;;
+      *) continue ;;
+    esac
+    hyprctl eval "hl.unbind(\"$chord\")" >/dev/null 2>&1 || true
+  done < <(jq -r '.[]
+    | select((.description // "") | test("^(Theme menu|Background switcher)$"))
+    | select((.modmask == 68 and (.key == "SPACE" or .key == "W" or .key == "T"))
+             or (.modmask == 69 and .key == "SPACE"))
+    | "\(.modmask) \(.key)"' <<< "$binds" 2>/dev/null || true)
+  touch "$THEME_KEYS_FLAG"
 }
 
 reassert_state() {
@@ -168,22 +218,8 @@ reassert_state() {
     [[ $NO_GAPS != no ]] && touch "$STATE_DIR/gaps_were_on"
   fi
 
-  # DND forced ON for the whole session. This is re-asserted every pass, so
-  # turning notifications back on during a live session does not work: the only
-  # way to get them back is to end live mode. It goes through the same two
-  # steps activation does (the toggle, then the state file) because either one
-  # alone can be declined.
-  if [[ $SILENCE_NOTIFICATIONS != no ]] && \
-     ! grep -q '"dnd": true' "$REAL_HOME/.local/state/omarchy/notifications.json" 2>/dev/null; then
-    omarchy-toggle-notification-silencing >/dev/null 2>&1 || true
-    grep -q '"dnd": true' "$REAL_HOME/.local/state/omarchy/notifications.json" 2>/dev/null || {
-      local nf="$REAL_HOME/.local/state/omarchy/notifications.json"
-      if [[ -f $nf ]] && command -v jq >/dev/null 2>&1; then
-        local tmp; tmp=$(mktemp "${nf}.XXXXXX" 2>/dev/null) && \
-          jq '.dnd = true' "$nf" > "$tmp" 2>/dev/null && mv -f "$tmp" "$nf" || rm -f "$tmp"
-      fi
-    }
-  fi
+  # DND is enforced by enforce_dnd on its own fast loop; no second copy here
+  # (the old copy read the legacy state file and toggled against enforce_dnd).
 
   # Live theme (re-assert if user switched away). SWITCH_THEME=no is honoured
   # here too: re-asserting the theme every pass would restart the user's
@@ -191,10 +227,17 @@ reassert_state() {
   if [[ $SWITCH_THEME != no ]]; then
     local theme
     theme=$(cat "$REAL_HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || true)
-    if [[ "$theme" != "Live" && -L "$REAL_HOME/.config/omarchy/themes/live" ]]; then
-      omarchy theme set Live >/dev/null 2>&1 || true
+    # "live" lowercase: theme set lowercases the name, so comparing to "Live"
+    # was always true and re-applied the theme (and restarted every terminal)
+    # on every 5s pass.
+    if [[ "$theme" != "live" ]]; then
+      live_theme_apply
     fi
   fi
+
+  # Theme/background default keybinds stay unbound for the whole session, even
+  # after a config reload (monitor plug, manual reload) put them back.
+  block_theme_keys
 }
 
 # The same provider resolution live-mode uses: the PATCHBAY_APP setting
@@ -328,6 +371,11 @@ patchbay_watch() {
       # swallowed by 2>&1, so the window was never parked.
       while IFS= read -r a; do
         [[ -n $a ]] || continue
+        # Both providers tiled, exactly like activation: mixbay carries a
+        # float+center rule and would otherwise reopen floating over qpwgraph.
+        hyprctl dispatch "hl.dsp.window.float({ window = \"address:$a\", action = \"off\" })" \
+          >/dev/null 2>&1 \
+          || hyprctl dispatch "settiled address:$a" >/dev/null 2>&1 || true
         hyprctl dispatch "hl.dsp.window.move({ window = \"address:$a\", workspace = \"special:scratchpad\" })" \
           >/dev/null 2>&1 \
           || hyprctl dispatch "movetoworkspacesilent special:scratchpad,address:$a" >/dev/null 2>&1 || true

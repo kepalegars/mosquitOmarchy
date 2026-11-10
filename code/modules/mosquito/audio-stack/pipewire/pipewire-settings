@@ -26,6 +26,10 @@
 # The min/max keys are ABSENT unless something set them — an untouched machine
 # reports only rate/quantum and the two force keys. So "absent" is a real answer
 # and is reported as null rather than guessed at.
+#
+# live-on / live-off are for live mode: they force the current values, set the
+# persisted config aside and put both back when the session ends. While live
+# mode is active, no change is persisted.
 set -euo pipefail
 
 G='\033[1;32m'; Y='\033[1;33m'; R='\033[1;31m'; B='\033[1;34m'; N='\033[0m'
@@ -36,6 +40,18 @@ err(){ printf "${R}✗${N} %s\n" "$*" >&2; }
 
 CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/pipewire/pipewire.conf.d"
 CONF_FILE="$CONF_DIR/90-mosquitomarchy-pipewire.conf"
+
+# Live mode owns force/persistence for the session: `live-on` records the
+# current force/pin state, forces the current values and sets the persisted
+# config aside; `live-off` puts both back. The state lives with live mode, and
+# the active flag is what suppresses persistence below.
+LIVE_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/live-mode"
+LIVE_SNAPSHOT="$LIVE_STATE_DIR/pipewire_before"
+LIVE_PERSIST_SAVE="$LIVE_STATE_DIR/pipewire_persist.conf"
+LIVE_SETTINGS="${XDG_CONFIG_HOME:-$HOME/.config}/live-mode/settings"
+LIVE_KEYS=(clock.min-rate clock.max-rate clock.force-rate
+           clock.min-quantum clock.max-quantum clock.force-quantum)
+live_mode_active(){ [[ -f $LIVE_STATE_DIR/active ]]; }
 
 # The upstream's lists, unchanged. These are not "the ones PipeWire allows" —
 # they are the ones worth offering — and inventing a longer list would put values
@@ -120,8 +136,12 @@ cmd_show(){
     "$(json_null_if_empty "$(_pw_get "$dump" clock.max-rate)")" \
     "$(json_null_if_empty "$(_pw_get "$dump" clock.min-quantum)")" \
     "$(json_null_if_empty "$(_pw_get "$dump" clock.max-quantum)")"
-  printf '"configured_rate":%s,"configured_quantum":%s,"persist":%s}\n' \
+  printf '"configured_rate":%s,"configured_quantum":%s,"persist":%s,' \
     "$(json_null_if_empty "$rate")" "$(json_null_if_empty "$quantum")" "$persist"
+  local live=false autolock=true
+  live_mode_active && live=true
+  [[ -f $LIVE_SETTINGS ]] && grep -q '^PIPEWIRE_AUTOLOCK="no"' "$LIVE_SETTINGS" && autolock=false
+  printf '"live":%s,"autolock":%s}\n' "$live" "$autolock"
 }
 
 # Pin min = default = max, then set force/unforce. The triple is what makes an
@@ -151,6 +171,9 @@ _apply_quantum(){
 # from the arguments: `set-force 1` alone changes no rate, and a config written
 # from its arguments would record the old one.
 _write_conf(){
+  # Live mode hides "remember on restart" and suppresses it for the session: a
+  # change made after an unlock must not write the config back behind it.
+  live_mode_active && return 0
   need_pw_metadata || return 1
   local dump; dump="$(_pw_dump)"
   [[ -n $dump ]] || { err "PipeWire did not answer — nothing persisted."; return 1; }
@@ -267,6 +290,50 @@ cmd_persist(){
   esac
 }
 
+cmd_live_on(){
+  # Idempotent: a second call must not snapshot the forced state as "before".
+  [[ -f $LIVE_SNAPSHOT ]] && return 0
+  need_pw_metadata || return 1
+  local dump rate quantum k
+  dump="$(_pw_dump)"
+  [[ -n $dump ]] || { err "PipeWire did not answer — live mode not applied."; return 1; }
+  rate="$(_pw_get "$dump" clock.rate)"
+  quantum="$(_pw_get "$dump" clock.quantum)"
+
+  mkdir -p "$LIVE_STATE_DIR"
+  : > "$LIVE_SNAPSHOT"
+  for k in "${LIVE_KEYS[@]}"; do
+    printf '%s=%s\n' "$k" "$(_pw_get "$dump" "$k")" >> "$LIVE_SNAPSHOT"
+  done
+  [[ -f $CONF_FILE ]] && mv -f "$CONF_FILE" "$LIVE_PERSIST_SAVE"
+
+  [[ -n $rate ]] && { _apply_rate "$rate" 1 || true; }
+  [[ -n $quantum ]] && { _apply_quantum "$quantum" 1 || true; }
+  ok "live mode: values forced, remember-on-restart off"
+}
+
+cmd_live_off(){
+  # Nothing was stashed (live-on never ran, or the module was installed
+  # mid-session): leave the user's graph and config alone.
+  [[ -f $LIVE_SNAPSHOT || -f $LIVE_PERSIST_SAVE ]] || return 0
+  local k v
+  if [[ -f $LIVE_SNAPSHOT ]]; then
+    while IFS='=' read -r k v; do
+      [[ -n $k ]] || continue
+      if [[ -n $v ]]; then pw_set "$k" "$v" || true
+      else pw_del "$k" || true
+      fi
+    done < "$LIVE_SNAPSHOT"
+    rm -f "$LIVE_SNAPSHOT"
+  fi
+  if [[ -f $LIVE_PERSIST_SAVE ]]; then
+    mv -f "$LIVE_PERSIST_SAVE" "$CONF_FILE"
+  else
+    _delete_conf
+  fi
+  ok "live mode: force/persist state restored"
+}
+
 cmd_reset(){
   msg "back to PipeWire's defaults: ${DEF_RATE} Hz, quantum ${QUANTUM_MIN}/${DEF_QUANTUM}/${QUANTUM_MAX}"
   pw_set clock.rate "$DEF_RATE"
@@ -281,7 +348,7 @@ cmd_reset(){
 }
 
 usage(){
-  sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 main(){
@@ -292,6 +359,8 @@ main(){
     set-quantum)  cmd_set_quantum "$@" ;;
     set-force)    cmd_set_force "$@" ;;
     persist)      cmd_persist "$@" ;;
+    live-on)      cmd_live_on ;;
+    live-off)     cmd_live_off ;;
     reset)        cmd_reset "$@" ;;
     -h|--help|help|"") usage ;;
     *) err "unknown command: $cmd"; usage; return 1 ;;

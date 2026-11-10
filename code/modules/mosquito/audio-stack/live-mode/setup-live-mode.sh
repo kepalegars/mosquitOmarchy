@@ -30,6 +30,12 @@ PLUG_DIR="$REAL_HOME/.config/omarchy/plugins"
 PLUG_INST="$PLUG_DIR/mosquito.livemode"
 PLUG_SRC="$SCRIPT_DIR/omarchy-plugins/mosquito.livemode"
 TUI_SRC="$SCRIPT_DIR/tui-go"
+CONFIG_DIR="$REAL_HOME/.config/live-mode"
+CONFIG_FILE="$CONFIG_DIR/settings"
+LIVE_THEME_DIR="$REAL_HOME/.local/state/live-mode/theme"
+LIVE_THEME_LINK="$REAL_HOME/.config/omarchy/themes/live"
+LIVE_BG_SRC="$SCRIPT_DIR/assets/live-bg.png"
+LIVE_BG_DST="$LIVE_THEME_DIR/backgrounds/black.png"
 
 MENU_START="// >>> Omarchy_Custom_Scripts - live-mode (managed by setup-live-mode.sh)"
 MENU_END="// <<< Omarchy_Custom_Scripts - live-mode (managed by setup-live-mode.sh)"
@@ -81,6 +87,72 @@ install_binaries() {
     chmod 755 "$BIN_DIR/mosquito-live-mode-tui"
     ok "Manage TUI built and installed: $BIN_DIR/mosquito-live-mode-tui"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# 1a. The Live theme
+#
+# Installed HERE, at setup time, instead of being generated on the first
+# activation: the branded wallpaper used to be created by the activation code
+# and was lost when that code was restructured, leaving plain black behind.
+# The theme lives in ~/.local/state/live-mode/theme, OUTSIDE
+# ~/.config/omarchy/themes: `omarchy theme list` scans that directory, so a
+# theme placed there shows up in the picker. live-mode links it in only for the
+# duration of each `theme set`.
+# ---------------------------------------------------------------------------
+
+install_live_theme() {
+  mkdir -p "$LIVE_THEME_DIR/backgrounds"
+  if [[ ! -f "$LIVE_THEME_DIR/colors.toml" ]]; then
+    cat > "$LIVE_THEME_DIR/colors.toml" <<'LIVETHEME'
+mode = "dark"
+
+accent = "#ff1a1a"
+selection = "#3a0000"
+muted = "#660000"
+
+background = "#000000"
+dark_background = "#000000"
+darker_background = "#000000"
+lighter_background = "#1a0000"
+
+foreground = "#e0e0e0"
+dark_foreground = "#808080"
+light_foreground = "#f0f0f0"
+bright_foreground = "#ffffff"
+
+red = "#ff1a1a"
+yellow = "#ff4444"
+orange = "#ff3333"
+green = "#cc0000"
+cyan = "#ff2222"
+blue = "#ff1a1a"
+magenta = "#ff1a1a"
+brown = "#990000"
+
+bright_red = "#ff4444"
+bright_yellow = "#ff6666"
+bright_green = "#ff3333"
+bright_cyan = "#ff3333"
+bright_blue = "#ff4444"
+bright_magenta = "#ff4444"
+LIVETHEME
+  fi
+  if [[ -f $LIVE_BG_SRC ]]; then
+    cp -f "$LIVE_BG_SRC" "$LIVE_BG_DST"
+  elif [[ ! -f $LIVE_BG_DST ]]; then
+    # Asset missing from the checkout: leave a valid black background rather
+    # than a theme with no background at all.
+    magick -size 1920x1080 xc:"#000000" "$LIVE_BG_DST" 2>/dev/null || \
+    convert -size 1920x1080 xc:"#000000" "$LIVE_BG_DST" 2>/dev/null || true
+  fi
+  chmod 644 "$LIVE_BG_DST" 2>/dev/null || true
+  if [[ $EUID -eq 0 ]]; then
+    chown -R "$REAL_USER":"$REAL_USER" "$REAL_HOME/.local/state/live-mode" 2>/dev/null || true
+  fi
+  # The link only exists during a theme set; never keep one behind.
+  rm -f "$LIVE_THEME_LINK"
+  ok "Live theme installed: $LIVE_THEME_DIR (branded black wallpaper)"
 }
 
 # ---------------------------------------------------------------------------
@@ -161,6 +233,11 @@ remove_hypr_rule() {
   ok "Hyprland float rule removed"
 }
 
+remove_live_theme_link() {
+  rm -f "$LIVE_THEME_LINK"
+  ok "Live theme link removed from the theme picker"
+}
+
 refresh_hypr() {
   hyprctl reload >/dev/null 2>&1 || true
 }
@@ -182,7 +259,7 @@ install_sudoers() {
   # (themed, one question per run) and the rest of the run reuses that cache.
   local body
   body="$(cat <<SUDOEOF
-$REAL_USER ALL=(root) NOPASSWD: $BIN_DIR/live-mode-root apply, $BIN_DIR/live-mode-root restore, $BIN_DIR/live-mode-root status, $BIN_DIR/live-mode-root thermal-cap *, $BIN_DIR/live-mode-root thermal-restore
+$REAL_USER ALL=(root) NOPASSWD: $BIN_DIR/live-mode-root apply, $BIN_DIR/live-mode-root restore, $BIN_DIR/live-mode-root status, $BIN_DIR/live-mode-root harden-sudo, $BIN_DIR/live-mode-root thermal-cap *, $BIN_DIR/live-mode-root thermal-restore
 Defaults! $BIN_DIR/live-mode-root env_keep += "DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS"
 SUDOEOF
 )"
@@ -539,6 +616,17 @@ status() {
   else
     echo "  ✗ not installed"
   fi
+  echo "── Live theme ────────────────────────────────────────────"
+  if [[ -f $LIVE_THEME_DIR/colors.toml && -f $LIVE_THEME_DIR/backgrounds/black.png ]]; then
+    echo "  ✓ $LIVE_THEME_DIR (with branded wallpaper)"
+  else
+    echo "  ✗ theme incomplete — re-run the setup"
+  fi
+  if [[ -e $LIVE_THEME_LINK ]]; then
+    echo "  ✗ theme link present ($LIVE_THEME_LINK) — re-run the setup"
+  else
+    echo "  ✓ not listed in the Omarchy theme picker"
+  fi
   echo "── Menu entries ──────────────────────────────────────────"
   # Two different rows: the TOGGLE under Trigger > Toggle, and the manager TUI
   # under Setup > mosquito (that one is declared by mosquitomarchy-setup.sh, so
@@ -576,6 +664,7 @@ if [[ $REMOVE == true ]]; then
   remove_sudoers || true
   remove_menu || true
   remove_plugin || true
+  remove_live_theme_link || true
   ok "Live mode removed (the ~/.local/bin binaries were left in place)."
   exit 0
 fi
@@ -587,6 +676,7 @@ fi
 
 if [[ $YES -eq 1 ]]; then
   install_binaries
+  install_live_theme
   install_routing_tool || true
   install_sudoers || true
   install_plugin
@@ -611,6 +701,7 @@ select opt in "Install live mode" "Uninstall live mode" "Status" "Quit"; do
   case "$opt" in
     "Install live mode")
       install_binaries || true
+      install_live_theme || true
       install_routing_tool || true
       install_sudoers || true
       install_plugin || true
@@ -625,6 +716,7 @@ select opt in "Install live mode" "Uninstall live mode" "Status" "Quit"; do
       remove_sudoers || true
       remove_menu || true
       remove_plugin || true
+      remove_live_theme_link || true
       remove_hypr_rule || true
       refresh_hypr
       echo

@@ -210,6 +210,34 @@ did, with the same user-visible result.
 
 - [ ] Manager row: ←/→ and Tab on the package-fence row; persisted
       `FENCE_PACKAGES`.
+- [ ] Manager row: ←/→ and Enter on `Relaunch closed apps on deactivation`;
+      `RELAUNCH_APPS=yes` starts the closed app(s) at `off`, default off.
+- [ ] Activation prompt: names only the background apps actually running.
+- [ ] `off`: `quiet.json` is back to its pre-session DND value (off stays off).
+- [ ] During a session the four default theme/background chords are absent from
+      `hyprctl binds`; a custom chord bound to the theme menu still opens it;
+      `off` restores the defaults.
+- [ ] `omarchy theme list` never contains "Live" (off, and during a session).
+- [ ] The Live theme shows the branded red "LIVE MODE" wallpaper, not plain
+      black.
+- [ ] Scratchpad: mixbay AND qpwgraph are both `floating=false` on
+      `special:scratchpad`; same after refusing the watchdog's close prompt.
+- [ ] Activation card on a laptop says "Always awake (even with the lid
+      closed)"; on a desktop (no `/proc/acpi/button/lid`) the parenthesis is
+      absent.
+- [ ] `on` never asks the power-profile question; the profile is already
+      `performance` when the watchdog starts.
+- [ ] Manager hint bar: "enter toggle / select" and "←/→ change value".
+- [ ] Manager rows: `Disable passwordless sudo on activation` and `Lock
+      PipeWire settings during live mode`, both On by default.
+- [ ] PipeWire Settings during live mode: Force/Remember hidden, values greyed
+      with no arrows, no selection when autolock is on; `l` opens the inline
+      confirmation (same panel size); Enter on "Unlock" restores arrows/editing;
+      `l` locks again immediately with the legend switching to "L unlock";
+      with `PIPEWIRE_AUTOLOCK=no` the panel starts unlocked.
+- [ ] `DISABLE_PASSWORDLESS_SUDO=yes`: after `on`, broad `NOPASSWD: ALL`
+      drop-ins are gone, the scoped live-mode-root rule is present, and
+      `off`/the thermal guard still work. Nothing restores the broad grants.
 - [ ] Real `live-mode on` with the fence ON: pacman is refused; `live-mode off`
       releases the lock.
 - [ ] A lock held by a running pacman is never deleted by restore.

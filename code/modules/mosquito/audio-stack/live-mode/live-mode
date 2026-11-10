@@ -23,6 +23,7 @@ WATCHER="$HOME/.local/bin/live-mode-watch"
 TUI_BIN="$HOME/.local/bin/mosquito-live-mode-tui"
 FRAME_OVERLAY_ID="mosquito.livemode"
 MEGA_CAFFEINE="$HOME/.local/bin/mega-caffeine"
+PIPEWIRE_SETTINGS="$REAL_HOME/.local/bin/mosquitomarchy-pipewire-settings"
 CAFFEINE_STATE_DIR="$REAL_HOME/.local/state/caffeine"
 
 # Single-instance PID file for the Live Manager TUI (see the gate below).
@@ -55,12 +56,15 @@ EOF
 
 THERMAL_LIMIT_C=85
 CLOSE_APPS=yes
-CLOSE_APPS_LIST="kDrive|qBittorrent|Steam|Discord|Slack|Spotify"
+CLOSE_APPS_LIST="Superwhisper"
 ROUTING_TOOL=yes
 PATCHBAY_APP=mixbay+qpwgraph
 NO_GAPS=yes
 SILENCE_NOTIFICATIONS=yes
 SWITCH_THEME=yes
+RELAUNCH_APPS=no
+DISABLE_PASSWORDLESS_SUDO=yes
+PIPEWIRE_AUTOLOCK=yes
 
 load_settings() {
   # Defaults FIRST, then the file, then normalisation.
@@ -78,12 +82,15 @@ load_settings() {
   # unconditional fence already made once.
   THERMAL_LIMIT_C=85
   CLOSE_APPS=yes
-  CLOSE_APPS_LIST=""
+  CLOSE_APPS_LIST="Superwhisper"
   ROUTING_TOOL=yes
   PATCHBAY_APP=mixbay+qpwgraph
   NO_GAPS=yes
   SILENCE_NOTIFICATIONS=yes
   SWITCH_THEME=yes
+  RELAUNCH_APPS=no
+  DISABLE_PASSWORDLESS_SUDO=yes
+  PIPEWIRE_AUTOLOCK=yes
   FENCE_PACKAGES=no
   [[ -f $CONFIG_FILE ]] && source "$CONFIG_FILE" || true
 
@@ -106,6 +113,11 @@ load_settings() {
   [[ $NO_GAPS == no ]] || NO_GAPS=yes
   [[ $SILENCE_NOTIFICATIONS == no ]] || SILENCE_NOTIFICATIONS=yes
   [[ $SWITCH_THEME == no ]] || SWITCH_THEME=yes
+  # Opt-in: only an explicit "yes" relaunches the apps the session closed.
+  [[ $RELAUNCH_APPS == yes ]] || RELAUNCH_APPS=no
+  # On by default: only an explicit "no" keeps broad passwordless sudo.
+  [[ $DISABLE_PASSWORDLESS_SUDO == no ]] || DISABLE_PASSWORDLESS_SUDO=yes
+  [[ $PIPEWIRE_AUTOLOCK == no ]] || PIPEWIRE_AUTOLOCK=yes
   # The fence inverts that rule on purpose — see above.
   [[ $FENCE_PACKAGES == yes ]] || FENCE_PACKAGES=no
 }
@@ -115,6 +127,16 @@ load_settings() {
 # ---------------------------------------------------------------------------
 
 is_active() { [[ -f "$ACTIVE_FLAG" ]]; }
+
+# A laptop reports a lid switch under /proc/acpi; a desktop does not. Used to
+# say only what is true in the activation card (no lid = no lid sentence).
+has_lid() {
+  local f
+  for f in /proc/acpi/button/lid/*/state; do
+    [[ -e $f ]] && return 0
+  done
+  return 1
+}
 
 ok()   { printf '\033[32m●\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m●\033[0m %s\n' "$*" >&2; }
@@ -246,23 +268,33 @@ app_catalog() {
         /^(NoDisplay|Hidden)=true/ { hidden = 1 }
         END {
           if (name == "" || type != "Application" || hidden) exit
+          raw = exec
+          # Strip quoted arguments before splitting: Exec values such as
+          # --font="JetBrainsMono Nerd Font" hold spaces INSIDE the quotes, and
+          # a raw split then takes "Nerd" for the program name and the whole
+          # entry never matches the process it is supposed to close.
+          gsub(/"[^"]*"/, "", exec)
+          gsub(/\047[^\047]*\047/, "", exec)
           n = split(exec, part, /[ \t]+/)
           exe = ""
           for (i = 1; i <= n; i++) {
             t = part[i]
-            gsub(/^["\047]|["\047]$/, "", t)
-            if (t ~ /^[A-Za-z_][A-Za-z0-9_]*=/) continue
-            if (t == "env" || t ~ /^-/) continue
+            if (t == "" || t ~ /^[A-Za-z_][A-Za-z0-9_]*=/ || t ~ /^-/) continue
             sub(/.*\//, "", t)
+            # Skip the wrappers, not the program they start. The Superwhisper
+            # desktop entry is Exec=foot ... env SW_TUI_LOGO=font superwhisper
+            # settings: stopping at "foot" made the app catalog match EVERY
+            # terminal on the machine, so "close Superwhisper" would have
+            # killed every foot window and left Superwhisper running.
+            if (tolower(t) ~ /^(sh|bash|dash|zsh|python|python3|flatpak|env|uwsm|uwsm-app|gio|gtk4-launch|xdg-terminal-exec|foot|alacritty|kitty|ghostty|wezterm|xterm|konsole|gnome-terminal|terminator|tilix)$/) continue
             exe = t
             break
           }
           casefold = tolower(exe)
-          if (casefold ~ /^(sh|bash|python|python3|flatpak|env|xdg-terminal-exec|omarchy-launch-or-focus-tui|uwsm|gio|gtk4-launch)$/) casefold = ""
           matches = casefold
           if (wm != "") matches = matches " " tolower(wm)
           gsub(/^ +/, "", matches)
-          if (matches != "") print name "\t" matches
+          if (matches != "") print name "\t" matches "\t" raw
         }' "$f"
     done
   done | sort -u
@@ -289,7 +321,7 @@ _running_menu_apps() {
     [[ -n $pid && -n $rest ]] || continue
     base="$(basename -- "${rest%% *}")"; base="${base,,}"
     comm="$(cat "/proc/$pid/comm" 2>/dev/null || true)"; comm="${comm,,}"
-    while IFS=$'\t' read -r name matches; do
+    while IFS=$'\t' read -r name matches _exec; do
       [[ -n $name ]] || continue
       for m in $matches; do
         if [[ $base == "${m,,}" || $comm == "${m,,}" ]]; then
@@ -313,31 +345,140 @@ detect_background_apps() {
   printf '%s\n' "${!seen[@]}" | sort
 }
 
+# The apps a session closed, in a form `off` can undo/relaunch them from. One
+# line per app: "<unit|exec>\t<name>\t<command>". A systemd user unit is
+# preferred (Superwhisper ships one, and starting it brings back the daemon AND
+# its bar indicator); a plain desktop Exec is the fallback for apps started
+# directly.
+CLOSED_APPS_RECORD="$STATE_DIR/closed_apps"
+
+app_exec() {
+  # The desktop entry's Exec line, for the relaunch fallback.
+  app_catalog | awk -F'\t' -v n="$1" '$1 == n { print $3; exit }'
+}
+
+# The systemd user unit a process belongs to, if any.
+pid_unit() {
+  sed -n 's|.*/\([^/]*\.service\)$|\1|p' "/proc/$1/cgroup" 2>/dev/null | head -n1
+}
+
+# True when a unit plausibly belongs to the app, never to the session around
+# it. A process can live under the compositor's or the terminal's service
+# (Superwhisper's shortcut bridge ran under wayland-wm@hyprland.desktop.service),
+# and masking THAT would take the desktop down. Require the unit name to carry
+# one of the app's own executable/WM-class tokens.
+unit_matches_app() {
+  local unit="${1,,}" name="$2" m
+  [[ -n $unit ]] || return 1
+  case $unit in
+    user@*|wayland-wm*|graphical-session*|dbus*|pipewire*|wireplumber*) return 1 ;;
+  esac
+  for m in $(app_catalog | awk -F'\t' -v n="$name" '$1 == n { print $2; exit }'); do
+    [[ -n $m ]] || continue
+    [[ $unit == *"${m,,}"* ]] && return 0
+  done
+  return 1
+}
+
+# exec_of_app <name> — the desktop Exec with the menu field codes (%f, %U, …)
+# stripped: they are placeholders the shell would have expanded, and running
+# them literally opens a file named "%f".
+exec_of_app() {
+  local e
+  e=$(app_exec "$1")
+  printf '%s' "$e" | sed -E 's/%[fFuUdDnNickvm]//g; s/^ +| +$//g'
+}
+
+# App names closed by a session that died before `off` are still masked (a
+# runtime mask under /run). Clear those before a new session reuses the record.
+clear_stale_app_masks() {
+  [[ -s $CLOSED_APPS_RECORD ]] || return 0
+  local kind name cmd
+  while IFS=$'\t' read -r kind name cmd; do
+    [[ $kind == unit ]] && systemctl --user unmask --runtime "$cmd" >/dev/null 2>&1 || true
+  done < "$CLOSED_APPS_RECORD"
+  rm -f "$CLOSED_APPS_RECORD"
+}
+
 close_background_apps() {
   [[ $CLOSE_APPS == no ]] && return 0
   local list
   list=$(detect_background_apps)
   [[ -z "$list" ]] && return 0
-  local apps_text
-  apps_text=$(echo "$list" | sed 's/^/  • /')
-  if confirm $'Close these background apps?\n'"$apps_text"; then
-    local pid name
-    declare -A closed=()
-    while IFS=$'\t' read -r pid name; do
-      [[ -n $pid && -n $name ]] || continue
-      app_selected "$name" || continue
-      [[ -n ${closed[$name]+x} ]] && continue
-      if kill "$pid" 2>/dev/null; then
-        closed["$name"]=1
-        ok "Closed $name"
-      else
-        warn "Could not close $name"
+  : > "$CLOSED_APPS_RECORD"
+  local pid name unit e
+  declare -A pids=() units=()
+  while IFS=$'\t' read -r pid name; do
+    [[ -n $pid && -n $name ]] || continue
+    app_selected "$name" || continue
+    case " ${pids[$name]:-} " in *" $pid "*) continue ;; esac
+    pids["$name"]+="${pids[$name]:+ }$pid"
+    if [[ -z ${units[$name]:-} ]]; then
+      unit=$(pid_unit "$pid")
+      if [[ -n $unit ]] && unit_matches_app "$unit" "$name"; then
+        units["$name"]=$unit
       fi
-    done < <(_running_menu_apps)
-    sleep 1
-  else
-    ok "Background apps kept running."
-  fi
+    fi
+  done < <(_running_menu_apps)
+  for name in "${!pids[@]}"; do
+    if [[ -n ${units[$name]:-} ]]; then
+      # A plain kill is not enough for a supervised app: systemd brings
+      # Superwhisper back two seconds later (Restart=on-failure). A RUNTIME
+      # mask under /run keeps it down for the session; `off` always removes it.
+      if systemctl --user mask --runtime --now "${units[$name]}" >/dev/null 2>&1 \
+        || [[ $(systemctl --user is-enabled "${units[$name]}" 2>/dev/null) == masked* ]]; then
+        printf 'unit\t%s\t%s\n' "$name" "${units[$name]}" >> "$CLOSED_APPS_RECORD"
+        ok "Closed $name"
+        continue
+      fi
+      warn "Could not stop ${units[$name]} — killing its processes instead"
+    fi
+    local closed=0
+    for pid in ${pids[$name]}; do
+      if kill "$pid" 2>/dev/null; then closed=1; fi
+    done
+    if (( closed )); then
+      e=$(exec_of_app "$name")
+      [[ -n $e ]] && printf 'exec\t%s\t%s\n' "$name" "$e" >> "$CLOSED_APPS_RECORD"
+      ok "Closed $name"
+    else
+      warn "Could not close $name"
+    fi
+  done
+  sleep 1
+}
+
+relaunch_closed_apps() {
+  [[ -s $CLOSED_APPS_RECORD ]] || return 0
+  local kind name cmd running
+  running=$(detect_background_apps)
+  while IFS=$'\t' read -r kind name cmd; do
+    [[ -n $kind && -n $cmd ]] || continue
+    case $kind in
+      unit)
+        # Always unmask: keeping a service masked is never the point of
+        # closing it, whether or not the user asked for a relaunch.
+        systemctl --user unmask --runtime "$cmd" >/dev/null 2>&1 || true
+        [[ $RELAUNCH_APPS == yes ]] || continue
+        systemctl --user is-active --quiet "$cmd" 2>/dev/null && continue
+        if systemctl --user start "$cmd" >/dev/null 2>&1; then
+          ok "Relaunched $name"
+        else
+          warn "Could not relaunch $name"
+        fi
+        ;;
+      exec)
+        [[ $RELAUNCH_APPS == yes ]] || continue
+        grep -qxF "$name" <<< "$running" && continue
+        if setsid --fork bash -c "$cmd" >/dev/null 2>&1; then
+          ok "Relaunched $name"
+        else
+          warn "Could not relaunch $name"
+        fi
+        ;;
+    esac
+  done < "$CLOSED_APPS_RECORD"
+  rm -f "$CLOSED_APPS_RECORD"
 }
 
 # ---------------------------------------------------------------------------
@@ -453,6 +594,18 @@ park_in_scratchpad() {
   hypr_dispatch \
     "hl.dsp.window.move({ window = \"address:$addr\", workspace = \"special:scratchpad\" })" \
     "movetoworkspacesilent special:scratchpad,address:$addr"
+}
+
+# tile_window <address> — force a patchbay window back into the tiling layout.
+# mixbay carries a float+center window rule (its scratchpad variant), so
+# without this the scratchpad showed a floating mixer on top of a tiled graph
+# instead of the two side by side.
+tile_window() {
+  local addr="$1"
+  [[ -n $addr ]] || return 1
+  hypr_dispatch \
+    "hl.dsp.window.float({ window = \"address:$addr\", action = \"off\" })" \
+    "settiled address:$addr"
 }
 
 # close_window <address>
@@ -633,8 +786,8 @@ snapshot_scratchpad() {
   rm -f "$PATCHBAY_PREEXISTED"
   # Per-session state: a previous session that died without restoring must not
   # make this one think it owes a gap toggle — same for the power-profile
-  # question, which re-arms every session.
-  rm -f "$GAPS_WERE_ON_FLAG" "$STATE_DIR/profile_asked"
+  # question, which re-arms every session — nor relaunch apps it never closed.
+  rm -f "$GAPS_WERE_ON_FLAG" "$STATE_DIR/profile_asked" "$CLOSED_APPS_RECORD"
   special_clients > "$SCRATCHPAD_SNAPSHOT"
 }
 
@@ -675,6 +828,7 @@ open_patchbay() {
     : > "$PATCHBAY_ADDR_FILE"
     while IFS= read -r addr; do
       [[ -n $addr ]] || continue
+      tile_window "$addr" >/dev/null 2>&1 || true
       if grep -qF "$addr" "$SCRATCHPAD_SNAPSHOT" 2>/dev/null; then
         printf '%s\n' "$addr" >> "$PATCHBAY_ADDR_FILE"
       else
@@ -747,6 +901,9 @@ open_patchbay() {
     while IFS= read -r addr; do
       [[ -n $addr ]] || continue
       printf '%s\n' "$addr" >> "$PATCHBAY_ADDR_FILE"
+      # Both providers are tiled, never floating: a floating mixbay over a
+      # tiled graph was the scratchpad the user was actually getting.
+      tile_window "$addr" >/dev/null 2>&1 || true
       # Park it only if the scratchpad is free (no occupants).
       if [[ -z $(scratchpad_occupied_by_others) ]]; then
         park_in_scratchpad "$addr" >/dev/null 2>&1 || true
@@ -784,48 +941,102 @@ restore_scratchpad() {
 
 # ---------------------------------------------------------------------------
 # Notifications DND
+#
+# Omarchy keeps the do-not-disturb state in
+# ~/.local/state/omarchy/notifications/quiet.json and exposes
+# `notifications isDnd` / `setDnd` on the shell IPC. This module used to read
+# and write the LEGACY ~/.local/state/omarchy/notifications.json, which the
+# current shell never touches: the guard therefore always saw "off" and
+# toggled DND on every pass — twice a second — which is the blinking icon.
+# The pre-session state is recorded so `off` can put DND back where it was.
 # ---------------------------------------------------------------------------
 
-silence_is_on() {
-  grep -q '"dnd": true' "$REAL_HOME/.local/state/omarchy/notifications.json" 2>/dev/null
+DND_STATE_FILE="$REAL_HOME/.local/state/omarchy/notifications/quiet.json"
+DND_PREV_FILE="$STATE_DIR/dnd_before"
+
+dnd_is_on() {
+  local v
+  v=$(omarchy-shell notifications isDnd 2>/dev/null || true)
+  case "$v" in
+    on) return 0 ;;
+    off) return 1 ;;
+  esac
+  [[ -f $DND_STATE_FILE ]] && jq -e '.dnd == true' "$DND_STATE_FILE" >/dev/null 2>&1
 }
 
-# FORCE DND ON. Not "toggle it if it happens to be off": a toggle is a
-# question, and during a live session the question has to have one answer. If
-# anything turns notifications back on mid-session — a stray key, another
-# toggle, a plugin that resets it — the watchdog re-asserts this on its next
-# pass, so the only way out of DND is to end live mode, which is the point.
-# It also bypasses Omarchy's own per-app "allow" list and any DND expiry, so
-# nothing can quietly turn it back on by itself.
-force_dnd_on() {
-  [[ $SILENCE_NOTIFICATIONS == no ]] && return 0
-  if silence_is_on; then return 0; fi
-  omarchy-toggle-notification-silencing >/dev/null 2>&1 || true
-  # Some builds refuse while a timer/expiry is pending; force the state file
-  # too so a later watchdog pass sees the truth either way.
-  if ! silence_is_on; then
-    force_dnd_file_on
-  fi
-  ok "Notifications silenced (forced for the whole session)."
-}
-
-# The notifications state file is the source of truth for what the shell shows.
-# Writing it directly is what makes the forcing stick when the toggle command
-# declines (an expiry timer still running, say).
-force_dnd_file_on() {
-  local f="$REAL_HOME/.local/state/omarchy/notifications.json"
-  [[ -f $f ]] || return 0
+# dnd_write <on|off> — last resort when the IPC is unavailable: write the
+# state file the shell reads, keeping the other keys quiet.json carries.
+dnd_write() {
+  local want="$1" val tmp
+  [[ -f $DND_STATE_FILE ]] || return 0
   command -v jq >/dev/null 2>&1 || return 0
-  local tmp
-  tmp=$(mktemp "${f}.XXXXXX" 2>/dev/null) || return 0
-  if jq '.dnd = true' "$f" > "$tmp" 2>/dev/null; then
-    mv -f "$tmp" "$f" && return 0
+  [[ $want == on ]] && val=true || val=false
+  tmp=$(mktemp "${DND_STATE_FILE}.XXXXXX" 2>/dev/null) || return 0
+  if jq --argjson v "$val" '.dnd = $v' "$DND_STATE_FILE" > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$DND_STATE_FILE" && return 0
   fi
   rm -f "$tmp"
 }
 
-silence_notifications_restore() {
-  silence_is_on && omarchy-toggle-notification-silencing >/dev/null 2>&1 || true
+# dnd_set <on|off> — idempotent through the shell IPC. The old code called the
+# TOGGLE command, so a guard that ran while the state it expected was not
+# visible flipped DND on and off continuously.
+dnd_set() {
+  local want="$1" cur
+  cur=$(omarchy-shell notifications setDnd "$want" 2>/dev/null || true)
+  [[ $cur == "$want" ]] && return 0
+  omarchy-toggle-notification-silencing >/dev/null 2>&1 || true
+  [[ $want == on ]] && dnd_is_on && return 0
+  [[ $want == off ]] && ! dnd_is_on && return 0
+  dnd_write "$want"
+}
+
+save_dnd_state() {
+  dnd_is_on && echo on > "$DND_PREV_FILE" || echo off > "$DND_PREV_FILE"
+}
+
+# FORCE DND ON for the session. The watchdog re-asserts it on its own fast
+# loop, so the only way out of DND is to end live mode, which is the point.
+force_dnd_on() {
+  [[ $SILENCE_NOTIFICATIONS == no ]] && return 0
+  save_dnd_state
+  dnd_is_on && return 0
+  dnd_set on
+  ok "Notifications silenced (forced for the whole session)."
+}
+
+# Put back the state the session found. Only a pre-session "off" needs
+# undoing: forcing DND on is ours, leaving an already-on DND on is the user's
+# own setting.
+restore_dnd_state() {
+  if [[ $SILENCE_NOTIFICATIONS == no ]]; then
+    rm -f "$DND_PREV_FILE"
+    return 0
+  fi
+  local prev
+  prev=$(cat "$DND_PREV_FILE" 2>/dev/null || true)
+  rm -f "$DND_PREV_FILE"
+  [[ $prev == off ]] && dnd_set off
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# PipeWire settings widget
+#
+# When the pipewire-settings module is installed, its backend owns the graph's
+# rate/quantum. Live mode puts it in live mode: the values are frozen (forced)
+# for the session and the persisted config is set aside, so the bar widget can
+# lock its controls and nothing writes a new "remember on restart" file behind
+# the session's back. `off` restores both states.
+# ---------------------------------------------------------------------------
+pipewire_live_on() {
+  [[ -x $PIPEWIRE_SETTINGS ]] || return 0
+  "$PIPEWIRE_SETTINGS" live-on >/dev/null 2>&1 || warn "PipeWire settings: live mode could not be applied."
+}
+
+pipewire_live_off() {
+  [[ -x $PIPEWIRE_SETTINGS ]] || return 0
+  "$PIPEWIRE_SETTINGS" live-off >/dev/null 2>&1 || warn "PipeWire settings: pre-live state could not be restored."
 }
 
 # ---------------------------------------------------------------------------
@@ -909,15 +1120,16 @@ frame_hide() {
 }
 
 # ---------------------------------------------------------------------------
-# Theme (live mode: solid black wallpaper + all accents red)
+# Theme (live mode: branded black wallpaper + all accents red)
 #
 # The Live theme is stored OUTSIDE ~/.config/omarchy/themes/ (at
 # $STATE_DIR/theme), so it never shows up in `omarchy theme list` / the theme
-# switcher, which scan that directory. During live mode a symlink
-# ~/.config/omarchy/themes/live -> $STATE_DIR/theme is created so
-# `omarchy theme set Live` can resolve it; it's removed again on deactivation,
-# hiding the entry from the theme picker whenever live mode is off. The theme
-# in use before activation is memorized and reapplied when the session ends.
+# switcher. Omarchy resolves a theme name only from the two scanned
+# directories, so a symlink ~/.config/omarchy/themes/live is created for the
+# DURATION OF THE `theme set` CALL ONLY, then removed: theme set copies the
+# directory into current/theme at the start, the name is all it needs.
+# Keeping the link for the whole session (the old behaviour) is what made
+# "Live" appear in the picker.
 # ---------------------------------------------------------------------------
 
 # omarchy theme set lowercases its argument and writes the lowercase name
@@ -933,6 +1145,9 @@ theme_current() {
   cat "$REAL_HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || true
 }
 
+# The link only ever exists for the duration of a theme set: remove it.
+drop_live_theme_link() { rm -f "$LIVE_THEME_LINK" 2>/dev/null || true; }
+
 save_current_theme() {
   local name
   name=$(theme_current)
@@ -940,7 +1155,9 @@ save_current_theme() {
 }
 
 ensure_live_theme() {
-  # Create the Live theme on demand if it isn't installed yet.
+  # Create the Live theme on demand if it isn't installed yet. The installer
+  # ships the branded wallpaper; this is the fallback for a state dir the
+  # user wiped by hand.
   if [[ ! -f "$LIVE_THEME_DIR/colors.toml" ]]; then
     mkdir -p "$LIVE_THEME_DIR" "$LIVE_THEME_DIR/backgrounds"
     cat > "$LIVE_THEME_DIR/colors.toml" <<LIVETHEME
@@ -986,23 +1203,28 @@ LIVETHEME
 
 switch_to_live_theme() {
   ensure_live_theme
+  # A link left behind by an interrupted run must not make the theme visible.
+  drop_live_theme_link
   local current
   current=$(theme_current)
   if [[ "$current" != "$LIVE_THEME_NAME" ]]; then
     save_current_theme
-    # Link the theme into the scanned dir only while live mode is active.
-    mkdir -p "$(dirname "$LIVE_THEME_LINK")"
-    ln -sfn "$LIVE_THEME_DIR" "$LIVE_THEME_LINK"
     # Detached + self-healing (same rationale as restore_previous_theme:
-    # theme-set post-hooks restart terminals and can race the write).
+    # theme-set post-hooks restart terminals and can race the write). The
+    # script is detached, so the helper is inlined rather than sourced.
     setsid --fork bash -lc '
-      local_expected="'"$LIVE_THEME_NAME"'"
+      link="'"$LIVE_THEME_LINK"'"
+      theme="'"$LIVE_THEME_DIR"'"
       for i in $(seq 1 30); do
+        rm -f "$link"
+        ln -sfn "$theme" "$link"
         omarchy theme set Live >/dev/null 2>&1 || true
+        rm -f "$link"
+        cur=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || true)
+        [[ "$cur" == "live" ]] && exit 0
         sleep 0.4
-        cur=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null)
-        [[ "$cur" == "$local_expected" ]] && exit 0
       done
+      rm -f "$link"
     ' >/dev/null 2>&1 &
   fi
 }
@@ -1010,11 +1232,20 @@ switch_to_live_theme() {
 restore_previous_theme() {
   local prev
   prev=$(cat "$PRE_THEME_FILE" 2>/dev/null || true)
-  [[ -z "$prev" || "$prev" == "$LIVE_THEME_NAME" ]] && prev="achraf67"
+  if [[ -z $prev || "$prev" == "$LIVE_THEME_NAME" ]]; then
+    # No usable memory (state wiped, interrupted activation). Fall back to the
+    # last theme this script restored, then to any installed non-Live theme.
+    prev=$(cat "$STATE_DIR/last_theme" 2>/dev/null || true)
+    if [[ -z $prev || "$prev" == "$LIVE_THEME_NAME" || ! -d "${OMARCHY_PATH:-/usr/share/omarchy}/themes/$prev" && ! -d "$REAL_HOME/.config/omarchy/themes/$prev" ]]; then
+      prev=$(find "$REAL_HOME/.config/omarchy/themes" "${OMARCHY_PATH:-/usr/share/omarchy}/themes" \
+        -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | grep -vx "$LIVE_THEME_NAME" | sort | head -n1)
+    fi
+  fi
+  printf '%s\n' "$prev" > "$STATE_DIR/last_theme"
 
   local current
   current=$(theme_current)
-  if [[ "$current" == "$LIVE_THEME_NAME" ]]; then
+  if [[ "$current" == "$LIVE_THEME_NAME" && -n $prev ]]; then
     # Detached + self-healing: omarchy-theme-set's post-hooks restart
     # terminals (killing this script's terminal mid-OFF if run inline), and
     # the first write can be raced by other hooks — the background job
@@ -1031,8 +1262,55 @@ restore_previous_theme() {
     ok "Restoring theme: $prev."
   fi
   rm -f "$PRE_THEME_FILE"
-  # Drop the symlink so the Live theme entry disappears from the theme picker.
-  rm -f "$LIVE_THEME_LINK"
+  # Drop the link so the Live theme entry disappears from the theme picker.
+  drop_live_theme_link
+}
+
+# ---------------------------------------------------------------------------
+# Theme / background default keybinds, blocked for the session
+#
+# `omarchy theme set` is re-asserted by the watchdog, so a theme picked from the
+# menu would flick back seconds later (restarting every terminal on the way).
+# Blocking the FUNCTION would also break a shortcut the user bound himself, so
+# only Omarchy's four DEFAULT combos are unbound, and only while they still
+# carry the Theme/Background action. Any other chord bound to those menus by
+# the user keeps working; `hyprctl reload` at the end of the session restores
+# the defaults from the config file.
+# ---------------------------------------------------------------------------
+
+THEME_KEYS_FLAG="$STATE_DIR/theme_keys_blocked"
+
+block_theme_keys() {
+  command -v hyprctl >/dev/null 2>&1 || return 0
+  local binds mask key chord
+  binds=$(hyprctl -j binds 2>/dev/null) || return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    return 0
+  fi
+  while read -r mask key; do
+    [[ -n $mask && -n $key ]] || continue
+    case "$mask $key" in
+      "68 SPACE"|"68 W"|"68 T") chord="SUPER + CTRL + $key" ;;
+      "69 SPACE")               chord="SUPER + SHIFT + CTRL + SPACE" ;;
+      *) continue ;;
+    esac
+    hyprctl eval "hl.unbind(\"$chord\")" >/dev/null 2>&1 || true
+  done < <(jq -r '.[]
+    | select((.description // "") | test("^(Theme menu|Background switcher)$"))
+    | select((.modmask == 68 and (.key == "SPACE" or .key == "W" or .key == "T"))
+             or (.modmask == 69 and .key == "SPACE"))
+    | "\(.modmask) \(.key)"' <<< "$binds" 2>/dev/null || true)
+  touch "$THEME_KEYS_FLAG"
+}
+
+unblock_theme_keys() {
+  # Only reload when this session actually unbound something: a reload is
+  # harmless but it is not something to run on every `off` of a machine that
+  # never blocked anything.
+  [[ -f $THEME_KEYS_FLAG ]] || return 0
+  rm -f "$THEME_KEYS_FLAG"
+  command -v hyprctl >/dev/null 2>&1 || return 0
+  hyprctl reload >/dev/null 2>&1 || true
 }
 
 # ---------------------------------------------------------------------------
@@ -1079,6 +1357,12 @@ cmd_on() {
     return 0
   fi
 
+  # A crashed session must not leave the theme shortcuts blocked, a runtime
+  # app mask behind, or the Live theme linked into the theme picker.
+  unblock_theme_keys
+  clear_stale_app_masks
+  drop_live_theme_link
+
   load_settings
 
   # Step 1 — confirm activation (unless forced).
@@ -1098,9 +1382,20 @@ cmd_on() {
     _lm_bullets=(
       "Max performance (audio optimized)"
       "Thermal guard at ${THERMAL_LIMIT_C}°C"
-      "Always awake (lid closed without sleeping)"
     )
-    [[ $CLOSE_APPS == yes ]] && _lm_bullets+=("Close ${CLOSE_APPS_LIST:-(no app selected)}")
+    if has_lid; then
+      _lm_bullets+=("Always awake (even with the lid closed)")
+    else
+      _lm_bullets+=("Always awake")
+    fi
+    [[ $CLOSE_APPS == yes ]] && {
+      # The prompt names the apps actually RUNNING and selected, not the
+      # stored list: the old line announced six apps the machine did not even
+      # have while silently ignoring the one that would be closed.
+      _lm_closing=$(detect_background_apps | paste -sd, - | sed 's/,/, /g')
+      [[ -n $_lm_closing ]] && _lm_bullets+=("Close $_lm_closing")
+    }
+    [[ $RELAUNCH_APPS == yes ]] && _lm_bullets+=("Relaunch closed apps on exit")
     if [[ $ROUTING_TOOL == yes ]]; then
       if [[ ${PATCHBAY_APP:-mixbay+qpwgraph} == mixbay+qpwgraph ]]; then
         _lm_bullets+=("mixbay + qpwgraph in scratchpad (SUPER + S)")
@@ -1111,6 +1406,7 @@ cmd_on() {
     [[ $NO_GAPS == yes ]] && _lm_bullets+=("Gaps disabled during the session")
     [[ $SILENCE_NOTIFICATIONS == yes ]] && _lm_bullets+=("Notifications silenced")
     [[ $SWITCH_THEME == yes ]] && _lm_bullets+=("Switch to the Live theme")
+    [[ $DISABLE_PASSWORDLESS_SUDO == yes ]] && _lm_bullets+=("Disable passwordless sudo")
     # The fence is the one line that must be visible when it is on, because it
     # is the one that makes the machine refuse to install anything.
     [[ $FENCE_PACKAGES == yes ]] && _lm_bullets+=("Package installation BLOCKED for the session")
@@ -1125,13 +1421,19 @@ cmd_on() {
   fi
 
   # on_failure() removes the session flag so a failed/crashed activation can
-  # never strand the "manage only while off" gate or the toggle logic.
-  on_fail() { rm -f "$ACTIVE_FLAG"; }
+  # never strand the "manage only while off" gate or the toggle logic, and
+  # gives the theme/background shortcuts back.
+  on_fail() { rm -f "$ACTIVE_FLAG"; unblock_theme_keys; }
   trap on_fail EXIT
 
   # Mark active first: every helper below (sleep management, watchdog,
   # theme) treats the flag as the source of truth for the session.
   echo on > "$ACTIVE_FLAG"
+
+  # The theme/background switchers are refused for the session. Only the
+  # Omarchy default chords are unbound — a shortcut the user bound himself
+  # keeps working (see block_theme_keys).
+  block_theme_keys
 
   ok "Activating Live Mode..."
 
@@ -1139,7 +1441,7 @@ cmd_on() {
   # back exactly (see restore_scratchpad).
   snapshot_scratchpad
 
-  # 1. Ask whether to close the background apps (names only, per settings).
+  # 1. Close the selected background apps (the activation card listed them).
   close_background_apps
 
   # 2. Privileged setup (profile/audio/usb/battery/fence) runs while the
@@ -1157,6 +1459,7 @@ cmd_on() {
   # 5. Independent cosmetic/setup steps concurrently.
   [[ $NO_GAPS == yes ]] && { toggle_gaps_off & }
   { [[ $SILENCE_NOTIFICATIONS == yes ]] && force_dnd_on & } >/dev/null 2>&1
+  pipewire_live_on
   frame_show &
 
   # 6. Scratchpad windows out of the way.
@@ -1164,12 +1467,12 @@ cmd_on() {
 
   # 7. mosquito patchbay into the scratchpad (idempotent). If the user
   #    refuses the scratchpad-occupied prompt, abort the whole activation.
-  if ! open_patchbay; then
-    if [[ $? -eq 1 ]]; then
-      trap - EXIT
-      rm -f "$ACTIVE_FLAG"
-      return 0
-    fi
+  #    The status is captured: `if ! open_patchbay; then ... $?` reads the
+  #    status of `!`, which is always 0, so the refusal branch never ran.
+  local patchbay_rc=0
+  open_patchbay || patchbay_rc=$?
+  if (( patchbay_rc == 1 )); then
+    return 0
   fi
 
   # 8. Live theme switched from a DETACHED process: omarchy-theme-set's
@@ -1189,12 +1492,34 @@ cmd_on() {
     ok "Theme switch skipped (SWITCH_THEME=no)."
   fi
 
-  # 9. Thermal watchdog (last: it reasserts everything above).
+  # 9. Thermal watchdog (last: it reasserts everything above). Re-block the
+  #    theme shortcuts first: the gaps toggle above is an Omarchy config toggle
+  #    and reloads Hyprland, which restores the default binds.
+  #
+  #    The performance profile is set DIRECTLY here, before the watchdog's
+  #    first pass: the watchdog's power-profile question is for a hand change
+  #    mid-session, not for starting the session (it used to fire seconds after
+  #    `on` because the root helper runs in the background).
+  block_theme_keys
+  powerprofilesctl set performance 2>/dev/null || true
   start_watchdog
 
   wait "$root_job" 2>/dev/null || true
   if ! sudo -n "$ROOT_HELPER" status >/dev/null 2>&1; then
     warn "System state could not be applied (sudo denied) — performance steps inactive."
+  fi
+
+  # One-way hardening: after the privileged work is done, install the scoped
+  # live-mode-root grant and remove every broad NOPASSWD: ALL drop-in. Nothing
+  # puts them back; the session (and later `off`/the thermal guard) keeps
+  # working through the scoped rule.
+  if [[ $DISABLE_PASSWORDLESS_SUDO == yes ]]; then
+    if ! sudo -n "$ROOT_HELPER" harden-sudo >/dev/null 2>&1; then
+      warn "Passwordless sudo could not be disabled."
+    fi
+    # Drop the cached sudo timestamp too, so the change is immediate; the
+    # scoped live-mode-root rule (NOPASSWD for its commands) is unaffected.
+    sudo -k 2>/dev/null || true
   fi
 
   trap - EXIT
@@ -1208,6 +1533,8 @@ cmd_on() {
 cmd_off() {
   local force="${1:-}"
   if ! is_active; then
+    # A crashed session may still have left the theme shortcuts blocked.
+    unblock_theme_keys
     ok "Live Mode is already off."
     return 0
   fi
@@ -1225,21 +1552,25 @@ cmd_off() {
   # 1. Stop watchdog
   stop_watchdog
 
-  # 2. Frame hide
+  # 2. Give the theme/background shortcuts back. AFTER stop_watchdog: the
+  #    watchdog re-blocks them on every pass, so unblocking first let it
+  #    re-unbind between the reload and its own death.
+  unblock_theme_keys
+
+  # 3. Frame hide
   frame_hide
 
-  # 3. Restore the theme that was in use before activation
+  # 4. Restore the theme that was in use before activation
   restore_previous_theme
 
-  # 4. Notifications. Live mode turned DND ON, so it takes it back OFF on the
-  #    way out and re-asserts it until the session really ends — see
-  #    force_dnd_on for why leaving it to a toggle is not enough.
-  silence_notifications_restore
+  # 5. Notifications back to the state the session found. Forcing DND on is
+  #    ours to undo; an already-on DND was the user's own setting.
+  restore_dnd_state
 
-  # 4b. Gaps, only if this session is the reason they are off.
+  # 5b. Gaps, only if this session is the reason they are off.
   toggle_gaps_on
 
-  # 4c. The scratchpad back to its pre-live contents.
+  # 5c. The scratchpad back to its pre-live contents.
   #
   # This step was DEFINED and never CALLED. The patchbay the session launched
   # therefore stayed parked in the scratchpad after deactivation, holding a
@@ -1249,16 +1580,22 @@ cmd_off() {
   # alone, because the user put it there.
   restore_scratchpad
 
-  # 5. Sleep management off (also ends any mega-caffeine session)
+  # 5d. Opt-in: start again the apps this session closed at activation.
+  relaunch_closed_apps
+
+  # 6. Sleep management off (also ends any mega-caffeine session)
   stop_sleep_management
 
-  # 6. Restore the screen tint that was neutralized
+  # 7. Restore the screen tint that was neutralized
   restore_tint
 
-  # 7. Privileged: restore profile, audio, usb, battery, thermal, fence
+  # 7b. PipeWire settings: give back the pre-live force/persist state.
+  pipewire_live_off
+
+  # 8. Privileged: restore profile, audio, usb, battery, thermal, fence
   sudo -n "$ROOT_HELPER" restore >/dev/null 2>&1 || warn "Partial restore (sudo denied for some ops)."
 
-  # 8. Remove active flag
+  # 9. Remove active flag
   rm -f "$ACTIVE_FLAG"
 
   ok "Live Mode is OFF."

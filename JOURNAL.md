@@ -2,6 +2,39 @@
 
 ## Log
 
+### 2026-11-10 — Live Mode round 2: no migration code, PipeWire inline confirm + manual lock, sudo hardening
+
+Follow-up user feedback on the first pass:
+
+- **No migration code**: removed `migrate_settings` (legacy `CLOSE_APPS_LIST` rewrite) and every “legacy link/directory” branch from the setup. The theme link is purely a runtime detail of `theme set`; the installer assumes a fresh install.
+- **Live Manager legend**: Enter is “toggle / select”, ←/→ “change value”.
+- **Activation card**: “Always awake (even with the lid closed)”, and the parenthesis is omitted when `/proc/acpi/button/lid/*/state` is absent (desktop). The performance profile is set directly before the watchdog's first pass, so `on` never asks the power-profile question.
+- **PipeWire unlock confirmation is inline**: it replaces the panel's interface (rows hidden, question + crackle warning + Keep locked / Unlock buttons) *inside the same panel*; the panel height is defined by the underlying rows, so nothing resizes. The shell's `QS_DISABLE_FILE_WATCHER=1` is why the panel learns `live`/`autolock` from `pipewire-settings show` (on open + every 2 s while open) instead of a FileView watcher.
+- **`PIPEWIRE_AUTOLOCK`** (Live Manager setting, default on): starts the widget locked during live. **L** locks immediately when unlocked and asks before unlocking when locked; the legend follows (`L lock` / `L unlock`). Manual lock/unlock works for the rest of the session.
+- **`DISABLE_PASSWORDLESS_SUDO`** (Live Manager setting, default on): at the end of activation, `live-mode-root harden-sudo` installs the scoped `live-mode-root` sudoers rule and removes every broad `NOPASSWD: ALL` drop-in (e.g. Omarchy's temporary `99-omarchy-nopasswd-<uid>`). Nothing restores them; re-running the setup is the only way back. The scoped rule keeps `off` and the thermal guard working.
+
+Verified: 35 Go tests, `bash -n` on all scripts, `visudo -cf` on the generated rule, PipeWire live-on/off round trip (force/pins/persist), panel lock/unlock/manual-lock/auto-lock-off checked on screen, inline confirmation same panel size.
+
+### 2026-11-10 — Live Mode fixes: theme install, DND schema, theme keybinds, Superwhisper, tiled scratchpad, PipeWire live lock
+
+User-reported issues, all root-caused:
+
+- **DND icon blinking**: Omarchy now stores do-not-disturb in `~/.local/state/omarchy/notifications/quiet.json`; live mode still read/wrote the legacy `notifications.json`, never saw its own state, and toggled DND twice a second. Both scripts now read `quiet.json`, set with `omarchy-shell notifications setDnd on` (idempotent), and save/restore the PRE-session state (`dnd_before`): if DND was off, `off` turns it back off.
+- **Live theme setup / missing background**: the setup now installs the theme in `~/.local/state/live-mode/theme` (colors + branded 1920×1080 "LIVE MODE" red ANSI-Shadow wallpaper, `assets/live-bg.png`) instead of generating plain black at activation. The restore fallback resolves the last restored theme, then any installed non-Live theme (no hardcoded machine-specific name). No migration code: the installer assumes a fresh install and never cleans up previous versions.
+- **Live theme in the Omarchy picker**: the `~/.config/omarchy/themes/live` symlink exists only for the duration of each `theme set` call (Omarchy resolves by name only), so Live never appears in the picker.
+- **Watchdog theme loop**: it compared `theme.name` (`live`, lowercased by Omarchy) to `"Live"`, so it re-applied the theme — restarting every terminal — on every 5 s pass. Fixed to `live`.
+- **Theme/background shortcut blocking**: the four Omarchy DEFAULT chords (`SUPER+CTRL+T`, `SUPER+CTRL+W`, `SUPER+CTRL+SPACE`, `SUPER+SHIFT+CTRL+SPACE`) are unbound with `hyprctl eval 'hl.unbind(...)'` while live, re-asserted by the watchdog, restored with `hyprctl reload` on `off`. Only chords still bound to the Theme/Background action are touched, so a user's custom shortcut keeps working.
+- **Background-app list**: default is now `Superwhisper` (was six apps the machine never ran). The desktop-entry parser no longer stops at the terminal launcher (`foot`) — it skipped the real program, so "Superwhisper" matched every foot window and the daemon was never touched. Opening prompt lists the apps actually RUNNING. Closing a systemd-supervised app uses a RUNTIME mask (`systemctl --user mask --runtime --now`) because a plain kill is restarted two seconds later; `off` always unmasks.
+- **New Live Manager toggle** `RELAUNCH_APPS` (default off): on deactivation, start the apps the session closed (systemd units are started, plain apps re-run their desktop Exec). Unmasking happens regardless, so a closed service never stays masked.
+- **Scratchpad tiling**: both mixbay and qpwgraph are forced `float=off` before parking (mixbay carries a float+center rule) — at activation and when the watchdog relaunches them after a close attempt.
+- Fixed `open_patchbay` refusal handling: `if ! open_patchbay; then ... $?` read the status of `!` (always 0), so refusing the occupied-scratchpad prompt never aborted activation.
+- **Live Manager shortcut legend**: Enter is now "toggle / select" and ←/→ "change value" (the old hint claimed the arrows only moved the thermal row).
+- **Activation card "Always awake"**: the parenthesis is "(even with the lid closed)" and is omitted when `/proc/acpi/button/lid/*/state` is absent (desktop).
+- **Performance profile**: set directly at activation, before the watchdog's first pass, so `on` never asks the power-profile question (that question remains for a hand change mid-session).
+- **PipeWire settings live mode**: the backend gained `live-on`/`live-off`. Live mode forces the current rate/quantum, suppresses persistence (no `_write_conf` while active), stashes the persisted config, and `off` restores the full force/pin snapshot and the config. The bar panel reads `live` from `show`, hides Force/Remember, greys the two values and removes the ◂ ▸ arrows while locked, prevents selection; **L** opens a ConfirmDialog ("Unlock PipeWire settings for this live session? Changing the sample rate or buffer size can cause audio crackles.") and unlocks arrows/editing for the rest of the session. The panel uses its own key handler (PanelKeyCatcher owns lowercase `l` as "right").
+
+Verified: `bash -n` on all scripts, `go test ./...` (34 tests) + deployed TUI, DND on/off round trip (`quiet.json` back to `{"dnd":false}`), theme binds 4 → 0 → 4, `omarchy theme list` never shows Live, branded wallpaper installed, PipeWire `live-on`/`live-off` round trip (force 0 → forced → 0, persist true → false → true), shell restart with no QML error, locked panel and unlock dialog checked on screen.
+
 ### 2026-10-15 — Superfile non-default system-wide + APM path truncation + Signal module + false-positive fix
 
 Superfile is now strictly opt-in: default file picker is "default" everywhere; superfile is only invoked by apps that explicitly request it (APM's "Install a plugin from file" when the user set the preference to Superfile). No system-wide default change — the APM preference lives in `~/.config/audio-plugin-manager/file-picker` and defaults to "default".

@@ -117,13 +117,16 @@ func (m model) mainItems() []tuikit.PickerItem {
 		{Display: fmt.Sprintf("Thermal limit: %d°C", s.ThermalLimitC), Value: "thermal"},
 		{Display: "Ask to close background apps at start: " + boolLabel(s.CloseApps), Value: "close_apps"},
 		{Display: fmt.Sprintf("Background apps to close in live mode: %d selected", len(s.CloseAppsList)), Value: "choose_apps"},
+		{Display: "Relaunch closed apps on deactivation: " + boolLabel(s.RelaunchApps), Value: "relaunch"},
 		{Display: "Audio mixer/patchbay in the scratchpad: " + boolLabel(s.RoutingTool), Value: "routing", Disabled: locked, Suffix: lockedSuffix},
 		{Display: "Scratchpad app: " + patchbayLabel(s.PatchbayApp), Value: "patchbay", Disabled: locked, Suffix: lockedSuffix},
+		{Display: "Lock PipeWire settings during live mode: " + boolLabel(s.PipewireAutolock), Value: "pipewire_lock"},
 		{Display: "Switch to the Live theme on activation: " + boolLabel(s.SwitchTheme), Value: "theme"},
 		{Display: "Confirm before changing power profile: " + boolLabel(s.ProfilePrompt), Value: "profile_prompt"},
 		{Display: "Window gaps disabled during the session: " + boolLabel(s.NoGaps), Value: "gaps"},
 		{Display: "Silence notifications: " + boolLabel(s.SilenceNotifs), Value: "notifs"},
 		{Display: "Block package installation during the session: " + boolLabel(s.FencePackages), Value: "fence"},
+		{Display: "Disable passwordless sudo on activation: " + boolLabel(s.DisablePasswordlessSudo), Value: "sudo_hardening"},
 		{Display: "Reset defaults", Value: "reset"},
 		{Display: "Close", Value: "quit"},
 	}
@@ -185,16 +188,22 @@ func (m model) mainItemsWithPending() []tuikit.PickerItem {
 			items[i].Display = fmt.Sprintf("Thermal limit: %s°C", target)
 		case "close_apps":
 			items[i].Display = "Ask to close background apps at start: " + boolLabel(target == "on")
+		case "relaunch":
+			items[i].Display = "Relaunch closed apps on deactivation: " + boolLabel(target == "on")
 		case "routing":
 			items[i].Display = "Audio mixer/patchbay in the scratchpad: " + boolLabel(target == "on")
 		case "patchbay":
 			items[i].Display = "Scratchpad app: " + patchbayLabel(target)
+		case "pipewire_lock":
+			items[i].Display = "Lock PipeWire settings during live mode: " + boolLabel(target == "on")
 		case "gaps":
 			items[i].Display = "Window gaps disabled during the session: " + boolLabel(target == "on")
 		case "notifs":
 			items[i].Display = "Silence notifications: " + boolLabel(target == "on")
 		case "fence":
 			items[i].Display = "Block package installation during the session: " + boolLabel(target == "on")
+		case "sudo_hardening":
+			items[i].Display = "Disable passwordless sudo on activation: " + boolLabel(target == "on")
 		}
 	}
 	return items
@@ -203,7 +212,7 @@ func (m model) mainItemsWithPending() []tuikit.PickerItem {
 func (m *model) rebuildMainPicker() {
 	idx := m.picker.Index()
 	m.picker = tuikit.NewPicker("", m.mainItemsWithPending()).SetSize(m.contentSize()).
-		SetHelpKeys(thermalHelpKeys()...)
+		SetHelpKeys(mainHelpKeys()...)
 	m.picker = m.picker.SelectIndex(idx)
 }
 
@@ -216,12 +225,16 @@ func setPending(s Settings, row, target string) Settings {
 		}
 	case "close_apps":
 		s.CloseApps = target == "on"
+	case "relaunch":
+		s.RelaunchApps = target == "on"
 	case "routing":
 		s.RoutingTool = target == "on"
 	case "patchbay":
 		if validPatchbayApp(target) {
 			s.PatchbayApp = target
 		}
+	case "pipewire_lock":
+		s.PipewireAutolock = target == "on"
 	case "theme":
 		s.SwitchTheme = target == "on"
 	case "profile_prompt":
@@ -232,6 +245,8 @@ func setPending(s Settings, row, target string) Settings {
 		s.SilenceNotifs = target == "on"
 	case "fence":
 		s.FencePackages = target == "on"
+	case "sudo_hardening":
+		s.DisablePasswordlessSudo = target == "on"
 	}
 	return s
 }
@@ -333,6 +348,12 @@ func (m model) cycleSetting(dir int) (tea.Model, tea.Cmd) {
 			cur = p == "on"
 		}
 		m.pending[row] = liveToggleTarget(!cur)
+	case "relaunch":
+		cur := m.settings.RelaunchApps
+		if p, ok := m.pending[row]; ok {
+			cur = p == "on"
+		}
+		m.pending[row] = liveToggleTarget(!cur)
 	case "routing":
 		cur := m.settings.RoutingTool
 		if p, ok := m.pending[row]; ok {
@@ -345,6 +366,12 @@ func (m model) cycleSetting(dir int) (tea.Model, tea.Cmd) {
 			curApp = p
 		}
 		m.pending[row] = nextPatchbayApp(curApp)
+	case "pipewire_lock":
+		cur := m.settings.PipewireAutolock
+		if p, ok := m.pending[row]; ok {
+			cur = p == "on"
+		}
+		m.pending[row] = liveToggleTarget(!cur)
 	case "gaps":
 		cur := m.settings.NoGaps
 		if p, ok := m.pending[row]; ok {
@@ -369,6 +396,12 @@ func (m model) cycleSetting(dir int) (tea.Model, tea.Cmd) {
 		// but never to this one — which is why it was the only toggle in the
 		// list that the arrows silently did nothing to.
 		cur := m.settings.FencePackages
+		if p, ok := m.pending[row]; ok {
+			cur = p == "on"
+		}
+		m.pending[row] = liveToggleTarget(!cur)
+	case "sudo_hardening":
+		cur := m.settings.DisablePasswordlessSudo
 		if p, ok := m.pending[row]; ok {
 			cur = p == "on"
 		}
@@ -430,11 +463,15 @@ func (m *model) apply(choice string) {
 		s.ThermalLimitC = thermalSteps[(idx+1)%len(thermalSteps)]
 	case "close_apps":
 		s.CloseApps = !s.CloseApps
+	case "relaunch":
+		s.RelaunchApps = !s.RelaunchApps
 	case "routing":
 		s.RoutingTool = !s.RoutingTool
 	case "patchbay":
 		// Enter cycles the app too, so the row is key-only usable.
 		s.PatchbayApp = nextPatchbayApp(s.PatchbayApp)
+	case "pipewire_lock":
+		s.PipewireAutolock = !s.PipewireAutolock
 	case "theme":
 		s.SwitchTheme = !s.SwitchTheme
 	case "profile_prompt":
@@ -445,6 +482,8 @@ func (m *model) apply(choice string) {
 		s.SilenceNotifs = !s.SilenceNotifs
 	case "fence":
 		s.FencePackages = !s.FencePackages
+	case "sudo_hardening":
+		s.DisablePasswordlessSudo = !s.DisablePasswordlessSudo
 	default:
 		return
 	}

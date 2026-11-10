@@ -44,10 +44,13 @@ func boolVal(b bool) string {
 	return "no"
 }
 
-// thermalHelpKeys adds the Left/Right hint to the main screen's help bar so
-// the arrow-controlled thermal limit is discoverable alongside Enter.
-func thermalHelpKeys() []key.Binding {
+// mainHelpKeys names the main screen's two non-obvious keys: Enter both opens
+// a row and toggles a boolean, and Left/Right change the value under the
+// cursor. The old hint said "thermal limit", which was only ever true for one
+// row.
+func mainHelpKeys() []key.Binding {
 	return []key.Binding{
-		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "thermal limit")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "toggle / select")),
+		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "change value")),
 	}
 }
