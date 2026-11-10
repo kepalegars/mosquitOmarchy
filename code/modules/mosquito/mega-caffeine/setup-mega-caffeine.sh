@@ -14,7 +14,7 @@
 #   ./setup-mega-caffeine.sh --status   # 0 when binary + menu entry are there
 # =============================================================================
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/gui-run.bash"
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/mega-caffeine-widget.bash"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/mega-caffeine-indicator.bash"
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -99,9 +99,9 @@ if [[ $REMOVE == true ]]; then
   else
     ok "No Mega caffeine menu entry, nothing to remove."
   fi
-  # The widget belongs to this module: live mode reads its state files but
-  # never installs it, so uninstalling Mega caffeine removes it.
-  remove_mega_caffeine_widget "$REAL_HOME"
+  # The indicator belongs to this module: live mode reads its state files but
+  # never installs it, so uninstalling Mega caffeine restores native StayAwake.
+  remove_mega_caffeine_indicator "$REAL_HOME"
   exit 0
 fi
 
@@ -223,10 +223,10 @@ install_mc_menu() {
 migrate_mc_markers
 install_mc_menu
 
-# The bar's stay-awake icon turns red while coffee mode runs. Live mode does
-# not install this widget; it just reads the live-mode flag.
-ensure_mega_caffeine_widget "$REAL_HOME" "$SCRIPT_DIR/omarchy-plugins/mosquito.mega-caffeine" \
-  || warn "Could not install the Mega Caffeine bar widget — the coffee icon will not appear."
+# The bar's stay-awake icon turns red while coffee mode runs. It stays inside
+# omarchy.indicators; live mode does not install it, it just reads the flag.
+ensure_mega_caffeine_indicator "$REAL_HOME" "$SCRIPT_DIR/omarchy-plugins/mosquito.mega-caffeine" \
+  || warn "Could not install the Mega Caffeine indicator — the coffee icon will not appear."
 
 echo
 info "Setup complete: mega-caffeine + its Trigger > Toggle > Mega caffeine menu entry."

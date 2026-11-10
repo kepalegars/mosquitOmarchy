@@ -10,24 +10,24 @@ thresholds).
 - **uninstall** → `setup-mega-caffeine.sh --remove`, or the `mega-caffeine` module of `mosquitomarchy-setup.sh --uninstall`
 
 The installer deploys the binary, the `Trigger > Toggle > Mega caffeine` menu
-entry, and the `mosquito.mega-caffeine` bar widget (see below). That one plugin
+entry, and the `mosquito.mega-caffeine` plugin (see below). That one plugin
 also carries the module's Yes/No card, so there is no separate confirm plugin.
 Mega caffeine does not depend on battery-management.
 
 ## Bar indicator
 
-The native `omarchy.indicators` widget stays in the bar; the installer also
-re-enables it (the old clone used to switch it off), removes its own `StayAwake`
-entry and places it next to `mosquito.mega-caffeine`, a small bar widget of ours
-that owns the coffee mug.
-The widget reads the same state files as the shell, so a Live Mode session shows
-even though live mode installs nothing here, and it shows only while stay-awake
-is on: normal colour for a plain stay-awake session, red while Mega caffeine
-runs, blinking red during Live Mode. Clicking it toggles stay-awake, as the
-native indicator did.
-`omarchy plugin remove mosquito.mega-caffeine --yes` gives `StayAwake` back to
-the native indicators (the other mosquito overlay then restores the before
-state).
+The coffee mug lives inside the native `omarchy.indicators` widget, not in a
+plugin of its own: Omarchy's widget cannot load indicators from outside its
+own directory, so the installer names the QML file by its path in the widget's
+inline `items` list, in place of `StayAwake`. Everything else about the widget
+is left alone (same position, settings and other indicators).
+The indicator reads the same state files as the shell, so a Live Mode session
+shows even though live mode installs nothing here, and it shows only while
+stay-awake is on: normal colour for a plain stay-awake session, red while Mega
+caffeine runs, blinking red during Live Mode. Clicking it toggles stay-awake,
+as the native indicator did.
+Removing the module swaps `StayAwake` back into the widget; the overlay plugin
+goes away with it.
 
 ```bash
 code/modules/mosquito/mega-caffeine/setup-mega-caffeine.sh          # install (idempotent)

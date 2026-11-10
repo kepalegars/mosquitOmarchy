@@ -361,7 +361,7 @@ install_shell_plugin() {
   # nothing adds it back.
   strip_shell_entry
   # No plugin belongs to this module: confirm overlays are installed by the
-  # module that uses them, and the coffee bar widget by mega-caffeine.
+  # module that uses them, and the coffee indicator by mega-caffeine.
   ok "shell.json checked (no shell plugin is owned by the TUI module)."
 }
 

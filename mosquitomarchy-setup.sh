@@ -4352,7 +4352,7 @@ un_battery_management(){
   ok "Power helper and battery telemetry removed"
 
   # This module's plugins (mosquito.battery + its confirm overlay), plus the
-  # retired power plugin older installs left behind. The coffee bar widget and
+  # retired power plugin older installs left behind. The coffee indicator and
   # the other confirm overlays belong to their own modules and are removed by
   # those modules' uninstallers.
   omarchy plugin disable mosquito.battery 2>/dev/null || true

@@ -211,9 +211,9 @@ ensure_battery_plugin() {
 #       • mosquito.battery/Confirm.qml     : this module's Yes/No overlay, part
 #                                            of the same plugin (no extra entry)
 #
-# The coffee bar widget the bar uses is NOT managed here: it belongs to
+# The coffee indicator the bar uses is NOT managed here: it belongs to
 # mega-caffeine (it replaces the native stay-awake icon). Removing the battery
-# module must not take that widget away.
+# module must not take that indicator away.
 # -----------------------------------------------------------------------------
 PLUG_SRC="$SCRIPT_DIR/omarchy-plugins"
 PLUG_DIR="$REAL_HOME/.config/omarchy/plugins"

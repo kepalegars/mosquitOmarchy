@@ -14,7 +14,7 @@ live-mode manage   # the TUI
 
 The bar's stay-awake icon is owned by `mosquito.mega-caffeine`, which reads the
 live-mode state files: while a session runs, the icon blinks red. Live mode
-does not install that widget — without mega-caffeine it works the same, only
+does not install that indicator — without mega-caffeine it works the same, only
 the coffee icon is missing. The module's own prompts (the red frame and the
 Yes/No card) live inside `mosquito.livemode`, so there is no separate confirm
 plugin.
