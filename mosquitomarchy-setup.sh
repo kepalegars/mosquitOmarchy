@@ -1119,7 +1119,7 @@ MODULES=(
   "ableton-move-manager:Move Manager — Ableton Move → Ableton Live → Bitwig (menu: address / Move Manager / convert — native Omarchy prompts, MIDI export)"
   "handbrake:HandBrake (Qt GUI + CLI) + H.264/H.265 encoders + preset sync + Hyprland rules"
   "signal:Signal Desktop — official Electron client + autostart minimized to tray, hide menu bar, menu entry Signal, login autostart"
-  "betterbird:Betterbird — Thunderbird fork + system tray (close/minimise to tray), starts in the tray at login, main window tiled + popups at the pointer"
+  "betterbird:Betterbird — Thunderbird fork + system tray (close/minimise to tray), starts in the tray at login, window opens floating"
   "whatsapp-native:WhatsApp Web as a Chromium web app — tray supervisor (login starts hidden in the tray, menu opens directly), silent visuals, close-to-tray, no menu bar, login autostart"
   "tidal:TIDAL Hi-Fi (TidaLuna) — native Tidal client, menu bar hidden and SUPER+SHIFT+M bound to it"
   "apps:Apps, tuis (one folder + setup script per entry in code/modules/TUIs)"
@@ -1230,7 +1230,6 @@ run_fix(){ # single fix by id
 run_tweak(){ # single tweak by id
   local id="$1"
   case $id in
-    keepassxc-window) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-keepassxc-window.sh" ;;
     tui-theme) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-tui-theme.sh" ;;
     wine-menu) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-wine-menu.sh" ;;
     wine-apps) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-wine-apps.sh" ;;
@@ -1248,7 +1247,6 @@ run_tweak(){ # single tweak by id
 run_tweak_remove(){ # single tweak removal by id
   local id="$1"
   case $id in
-    keepassxc-window) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-keepassxc-window.sh" --remove ;;
     terminal-padding) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-terminal-padding.sh" --remove ;;
     wine-apps) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-wine-apps.sh" --remove ;;
     wine-theme) bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-wine-theme.sh" --remove ;;
@@ -3368,9 +3366,10 @@ restore_backup(){
     info "Hyprland configs: skipped (restore option)."
   fi
   # Hyprland is restored after module setup when selected, and an install may
-  # have been skipped. Reapply the KeePassXC module-owned rule last either way.
+  # have been skipped. Reapply the KeePassXC module-owned rule last either way
+  # (the module owns that rule; there is no legacy tweak anymore).
   if command -v keepassxc >/dev/null 2>&1; then
-    bash "$SCRIPT_DIR/code/modules/Tweaks/tweak-keepassxc-window.sh" \
+    bash "$SCRIPT_DIR/code/modules/Apps/keepassxc/setup-keepassxc-integration.sh" --window-rule \
       || { warn "Could not reapply the KeePassXC floating-window rule."; restore_failed=1; }
   fi
 
@@ -3646,40 +3645,12 @@ ensure_mosquitomarchy_tui(){
     mkdir -p "$HOME/.agents/skills"
     ln -sfn "$MOSQUITOMARCHY_APP_DIR/skills/mosquitomarchy-crash" "$HOME/.agents/skills/mosquitomarchy-crash"
   fi
-  ensure_mosquitomarchy_float_rule
 }
 
-# ── mosquitOmarchy TUI window rule ──
-# The TUI's foot window uses app-id org.omarchy.mosquitomarchy-tui, which is
-# not in Omarchy's floating-window whitelist, so it would open TILED and
-# reflow the workspace. Float + center it (the mosquito managers' convention).
-ensure_mosquitomarchy_float_rule(){
-  [[ -f $HYPRLAND ]] || return 0
-  grep -qF -- 'mosquitomarchy-tui-floating' "$HYPRLAND" && return 0
-  cat >> "$HYPRLAND" <<'HYPR'
-
--- >>> mosquitomarchy-tui-floating >>> float the mosquitOmarchy TUI
--- (its app-id isn't in Omarchy's floating whitelist, so it would open tiled)
--- Shared compact default with every mosquito TUI: one size everywhere,
--- title ladders degrade and lists paginate below it.
-o.window("org.omarchy.mosquitomarchy-tui", { float = true, center = true, size = { 1000, 780 } })
--- <<< mosquitomarchy-tui-floating <<<
-HYPR
-  hyprctl reload >/dev/null 2>&1 || true
-  ok "mosquitOmarchy TUI float rule added to hyprland.lua"
-}
-
-remove_mosquitomarchy_float_rule(){
-  [[ -f $HYPRLAND ]] || return 0
-  grep -qF -- 'mosquitomarchy-tui-floating' "$HYPRLAND" || return 0
-  local tmp; tmp=$(mktemp)
-  awk '
-    /-- >>> mosquitomarchy-tui-floating/ {skip=1; next}
-    /-- <<< mosquitomarchy-tui-floating/ {skip=0; next}
-    !skip {print}
-  ' "$HYPRLAND" > "$tmp" && mv "$tmp" "$HYPRLAND"
-  hyprctl reload >/dev/null 2>&1 || true
-}
+# The TUI's float rule is owned by install-tui.sh alone (code/lib/hypr-tui.sh):
+# one computed size shared with every other mosquito TUI. This script used to
+# append a second, fixed 1000x780 rule under the same marker, so which geometry
+# won depended on the module order.
 
 # JSONC validation (comments + trailing commas stripped): python3 when present,
 # jq otherwise. Read-only — never rewrites the file.

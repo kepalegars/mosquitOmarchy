@@ -25,6 +25,7 @@
 # =============================================================================
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/code/lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/code/lib/elevate.bash"   # mq_sudo: native pkexec prompt when not root
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/code/lib/hypr-tui.sh"    # one float rule for every mosquito TUI
 set -euo pipefail
 [[ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/go-build-env.bash" ]] && source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/go-build-env.bash"  # contained Go caches (no ~/go)
 
@@ -37,7 +38,7 @@ TUI_BIN="$BIN_DIR/mosquitomarchy-tui"
 DISPATCHER_DST="$BIN_DIR/mosquitomarchy"
 HYPR_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"
 HYPRLAND="$HYPR_DIR/hyprland.lua"
-FLOAT_BEGIN="-- >>> mosquitomarchy-tui-floating >>> float the mosquitOmarchy TUI"
+FLOAT_BEGIN="-- >>> mosquitomarchy-tui-floating >>>"
 FLOAT_END="-- <<< mosquitomarchy-tui-floating <<<"
 SHELL_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy"
@@ -235,27 +236,14 @@ install_backend_links() {
 
 install_float_rule() {
   mkdir -p "$HYPR_DIR"
-  [[ -f $HYPRLAND ]] || touch "$HYPRLAND"
+  touch "$HYPRLAND"
   # Rewrite the marked block (not "already present, return"): an updated rule
-  # must reach machines that already installed an older one.
-  sed -i '/-- >>> mosquitomarchy-tui-floating >>>/,/-- <<< mosquitomarchy-tui-floating <<</d' "$HYPRLAND"
-  {
-    printf '\n%s\n' "$FLOAT_BEGIN"
-    printf -- '-- Width is the title, height follows the monitor ratio.\n'
-    printf -- '-- The one-line ANSI Shadow wordmark is 121 columns. At the default\n'
-    printf -- '-- foot font (JetBrainsMono Nerd Font 9, pad 14) 920 px yields 124\n'
-    printf -- '-- columns: the art plus one column of margin each side. A fixed\n'
-    printf -- '-- 1300 px opened far wider than the title ever needs.\n'
-    printf -- '-- monitor_w/monitor_h are the opening window'"'"'s own monitor, so the\n'
-    printf -- '-- height matches that screen'"'"'s ratio (16:10, 16:9, ...).\n'
-    printf 'o.window("org.omarchy.mosquitomarchy-tui", {\n'
-    printf '  float = true,\n'
-    printf '  center = true,\n'
-    printf '  size = { 920, "920 * monitor_h / monitor_w" },\n'
-    printf '})\n'
-    printf '%s\n' "$FLOAT_END"
-  } >> "$HYPRLAND"
-  hyprctl reload >/dev/null 2>&1 || true
+  # must reach machines that already installed an older one. The width comes
+  # from the shared column-grid helper (code/lib/hypr-tui.sh), so every
+  # mosquito TUI gets the same size on the same screen.
+  HYPRLAND_CONFIG="$HYPRLAND" mq_tui_install "org.omarchy.mosquitomarchy-tui" \
+    "mosquitomarchy-tui-floating" \
+    || { warn "Hyprland float rule could not be installed."; return 0; }
   ok "Hyprland float rule installed (org.omarchy.mosquitomarchy-tui)."
 }
 

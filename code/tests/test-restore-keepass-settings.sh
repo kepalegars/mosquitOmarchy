@@ -58,7 +58,7 @@ YES=1 RESTORE_DEPLOY_HYPRLAND=yes RESTORE_DEPLOY_VST=no RESTORE_DEPLOY_REAPER=no
   restore_backup "$TMP/restore.tar.gz" >/dev/null
 grep -q '^RestorePreference=from-backup$' "$HOME/.config/keepassxc/keepassxc.ini"
 [[ -f "$HOME/.config/keepassxc/custom-settings.json" ]]
-grep -q 'float = true, center = true' "$HOME/.config/hypr/hyprland.lua"
+grep -q 'float = true, center = true, size = { "monitor_w\*0.65"' "$HOME/.config/hypr/hyprland.lua"
 grep -qF 'class = "(?i)^keepassxc$"' "$HOME/.config/hypr/hyprland.lua"
 ! grep -q 'tag = "+floating-window"' "$HOME/.config/hypr/hyprland.lua"
 [[ $module_runs == 1 ]]

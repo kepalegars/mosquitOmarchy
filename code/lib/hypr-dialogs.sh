@@ -28,6 +28,8 @@
 #   hypr_dialogs_install guitarpro            # dialogs only (caller tiles main)
 #   hypr_app_windows_install betterbird '^eu\\.betterbird\\.Betterbird$' ' - .+@.+ - Betterbird$'
 #                                        # tile only the main window, float the rest
+#   hypr_float_install betterbird '^eu\\.betterbird\\.Betterbird$'
+#                                        # float every window, fixed size, centered
 #   hypr_dialogs_remove guitarpro
 #
 # The caller owns HYPRLAND_CONFIG (defaults to ~/.config/hypr/hyprland.lua).
@@ -147,6 +149,29 @@ EOF
   echo "window rules installed for $app"
 }
 
+# hypr_float_install <app-id> <class-lua-regex>
+# The simplest deal: every window of the class floats centered at ~80% of the
+# screen, following the screen's own ratio and resolution. Nothing tiles. Same
+# shape as the KeePassXC rule.
+hypr_float_install(){
+  local app="$1" cls="$2" f
+  f="$(hypr_dialogs_file)"
+  [[ -f $f ]] || { echo "no hyprland config at $f" >&2; return 1; }
+  hypr_dialogs_remove "$app" >/dev/null 2>&1 || true
+  # 0.78/0.83 reproduce the window size validated on a 1920x1200@1.25 screen
+  # (1200x800 logical); monitor_w/monitor_h are the opening window's own
+  # monitor, so the window scales with resolution and keeps the screen ratio.
+  cat >> "$f" <<EOF
+-- >>> mosquito-dialogs-$app >>> $app: every window floats, centered at ~80%
+-- of the screen (monitor-relative size, so it follows resolution and ratio);
+-- nothing tiles. Same shape as the KeePassXC rule.
+o.window({ class = "$(lua_escape "$cls")" }, { float = true, center = true, size = { "monitor_w*0.78", "monitor_h*0.83" } })
+-- <<< mosquito-dialogs-$app <<<
+EOF
+  command -v hyprctl >/dev/null 2>&1 && hyprctl reload >/dev/null 2>&1 || true
+  echo "float rule installed for $app"
+}
+
 hypr_dialogs_remove(){
   local app="$1" f
   f="$(hypr_dialogs_file)"
@@ -169,7 +194,9 @@ hypr_dialogs_status(){
 # without sourcing (which would run the whole file under `set -e` in its own
 # shell). `appwin <app> <class-regex> [main-title-regex]` installs the full
 # tile+float deal; with a main-title regex only that window tiles.
+# `float <app> <class-regex>` floats every window of the class, nothing tiles.
 case "${1:-}" in
   install|remove|status) "hypr_dialogs_${1}" "${2:?app id required}" ;;
   appwin)               hypr_app_windows_install "${2:?app id required}" "${3:?class regex required}" "${4:-}" ;;
+  float)                hypr_float_install "${2:?app id required}" "${3:?class regex required}" ;;
 esac

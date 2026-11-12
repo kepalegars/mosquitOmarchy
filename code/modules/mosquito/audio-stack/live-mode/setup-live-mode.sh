@@ -15,7 +15,6 @@
 #   sudo bash setup-live-mode.sh        (full install)
 #   sudo bash setup-live-mode.sh --uninstall
 #   bash setup-live-mode.sh --status    (read-only, no sudo)
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/marker-strip.bash"  # marker_strip: safe managed-block removal
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/elevate.bash"  # mq_sudo: themed prompt, one question per run
 set -euo pipefail
 [[ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/go-build-env.bash" ]] && source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/go-build-env.bash"  # contained Go caches (no ~/go)
@@ -198,38 +197,28 @@ install_routing_tool() {
 
 # ---------------------------------------------------------------------------
 # 1c. Hyprland float rule: all mosquito terminal managers open untiled, with
-# foot's own (Omarchy) geometry — no size override. Idempotent marked block in
-# hyprland.lua, the same pattern tweak-keepassxc-window.sh established.
+# one computed size for every mosquito TUI (code/lib/hypr-tui.sh). Idempotent
+# marked block in hyprland.lua, the same pattern as the other modules.
 # ---------------------------------------------------------------------------
 
 CONF_HYPR="$REAL_HOME/.config/hypr/hyprland.lua"
-FLOAT_START="-- >>> live-mode-tui-floating >>> mosquito terminal managers open untiled"
-FLOAT_END="-- >>> live-mode-tui-floating <<<"
 
 install_hypr_rule() {
   mkdir -p "$(dirname "$CONF_HYPR")"
   touch "$CONF_HYPR"
-  # Strip an earlier block (idempotent install).
-  marker_strip "$CONF_HYPR" "$FLOAT_START" "$FLOAT_END"
-  cat >> "$CONF_HYPR" <<EOF
-$FLOAT_START
--- Live Mode's own TUI joins Omarchy's floating-window tag (system.lua: float +
--- center + size 875x600) instead of a hardcoded geometry. foot keeps Omarchy's
--- font/padding/scale.
---
--- Only its OWN TUI. This block used to also carry the audio-plugin-manager and
--- move-manager TUIs, which duplicated the rules their own setup scripts already
--- install under "mosquito-audio-plugin-manager-tui-setup" and
--- "move-manager-tui-setup" — two identical o.window lines for the same class in
--- the same file. Whoever needs those rules now owns them in one place only.
-o.window("org.omarchy.mosquito-live-mode-tui", { tag = "+floating-window" })
-$FLOAT_END
-EOF
+  # One size for every mosquito TUI: width from the column grid at the screen
+  # DPI, height from the opening monitor's ratio (code/lib/hypr-tui.sh).
+  HYPRLAND_CONFIG="$CONF_HYPR" \
+    bash "$(dirname "${BASH_SOURCE[0]}")/../../../../lib/hypr-tui.sh" \
+      install "org.omarchy.mosquito-live-mode-tui" "live-mode-tui-floating" \
+    || { warn "could not install the TUI float rule"; return 1; }
   ok "Hyprland rule installed: mosquito live-mode TUI opens untiled"
 }
 
 remove_hypr_rule() {
-  marker_strip "$CONF_HYPR" "$FLOAT_START" "$FLOAT_END" 2>/dev/null || true
+  HYPRLAND_CONFIG="$CONF_HYPR" \
+    bash "$(dirname "${BASH_SOURCE[0]}")/../../../../lib/hypr-tui.sh" remove "live-mode-tui-floating" \
+    2>/dev/null || true
   ok "Hyprland float rule removed"
 }
 

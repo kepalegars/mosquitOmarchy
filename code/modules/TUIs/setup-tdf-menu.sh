@@ -36,10 +36,10 @@ fi
 remove_rule
 cat >> "$CONF" <<'EOF'
 -- >>> superfile-tdf-setup >>> float the foot terminal used by SuperFile's PDF action
-o.window("org.mosquitomarchy.superfile-tdf", { float = true, center = true, size = { 1100, 800 } })
+o.window("org.mosquitomarchy.superfile-tdf", { float = true, center = true, size = { "monitor_w*0.72", "monitor_h*0.83" } })
 -- <<< superfile-tdf-setup <<<
 EOF
 hyprctl reload >/dev/null || exit 1
 errors="$(hyprctl configerrors 2>/dev/null || true)"
 [[ -z $errors ]] || { echo "$errors" >&2; exit 1; }
-echo "tdf PDF window floats in a centered 1100×800 Foot terminal"
+echo "tdf PDF window floats in a centered Foot terminal (monitor-relative size)"

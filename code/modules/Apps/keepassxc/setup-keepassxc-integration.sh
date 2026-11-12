@@ -35,6 +35,7 @@
 #   ./setup-keepassxc-integration.sh                  # apply (browser integration)
 #   ./setup-keepassxc-integration.sh --secret-service # ALSO replace gnome-keyring (old behaviour)
 #   ./setup-keepassxc-integration.sh --status         # status
+#   ./setup-keepassxc-integration.sh --window-rule    # (re)apply ONLY the Hyprland rule
 #   ./setup-keepassxc-integration.sh --remove         # undo this module (browser manifests + pin + any takeover)
 #   ./setup-keepassxc-integration.sh -y               # non-interactive (nothing asked)
 #
@@ -81,8 +82,9 @@ for a in "$@"; do case "$a" in
   -y|--yes) : ;;
   --secret-service|--replace-keyring) WANT_SECRET_SERVICE=1 ;;
   --status) MODE=status ;;
+  --window-rule) MODE=window-rule ;;
   --remove|--uninstall) MODE=remove ;;
-  -h|--help) sed -n '2,58p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,59p' "$0"; exit 0 ;;
 esac; done
 MODE="${MODE:-apply}"
 
@@ -177,10 +179,11 @@ ensure_window_rule(){
   cat >> "$KPXC_HYPR" <<'EOF'
 -- >>> keepassxc-window-setup >>> KeePassXC is a fixed-size password window:
 -- float and center it instead of tiling it. Matches the native Wayland app-id
--- and the XWayland class (StartupWMClass=keepassxc). Managed by the
+-- and the XWayland class (StartupWMClass=keepassxc). Monitor-relative size, so
+-- the panel keeps its footprint on a laptop and on a 4K screen. Managed by the
 -- keepassxc module — no separate tweak to apply.
-o.window("org.keepassxc.KeePassXC", { float = true, center = true, size = { 1000, 700 } })
-o.window({ class = "(?i)^keepassxc$" }, { float = true, center = true, size = { 1000, 700 } })
+o.window("org.keepassxc.KeePassXC", { float = true, center = true, size = { "monitor_w*0.65", "monitor_h*0.73" } })
+o.window({ class = "(?i)^keepassxc$" }, { float = true, center = true, size = { "monitor_w*0.65", "monitor_h*0.73" } })
 -- <<< keepassxc-window-setup <<<
 EOF
   hyprctl reload >/dev/null 2>&1 || true
@@ -468,6 +471,7 @@ do_remove(){
 
 case $MODE in
   status) do_status ;;
+  window-rule) ensure_window_rule ;;
   remove) do_remove ;;
   *)      do_apply ;;
 esac

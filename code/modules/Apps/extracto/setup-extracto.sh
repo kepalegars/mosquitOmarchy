@@ -366,7 +366,7 @@ if [[ -f $HYPR ]]; then
 -- archive is not squeezed into a tiled slot, exempt it from the default window
 -- opacity so contents stay legible over other windows, and no blur (the dialog
 -- draws its own drop area). This is a per-class rule; nothing else is forced.
-o.window({ class = "^(File-roller|file-roller|org.gnome.FileRoller)$" }, { tag = "-default-opacity", float = true, center = true, size = { 900, 620 }, opaque = true, no_blur = true })
+o.window({ class = "^(File-roller|file-roller|org.gnome.FileRoller)$" }, { tag = "-default-opacity", float = true, center = true, size = { "monitor_w*0.59", "monitor_h*0.65" }, opaque = true, no_blur = true })
 -- <<< extracto-setup <<<
 EOF
   hyprctl reload >/dev/null 2>&1 || true

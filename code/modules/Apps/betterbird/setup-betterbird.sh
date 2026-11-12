@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # =============================================================================
 # Betterbird — install + configure (system tray, close/minimise to tray, start
-# in the tray) + login autostart + Hyprland window rules (main window tiled,
-# popups float at the pointer without stealing focus).
+# in the tray) + login autostart + a Hyprland float rule (the window opens
+# floating; no tiling).
 #
 # Betterbird is a Thunderbird fork. Its tray is NOT a separate add-on: it is
 # built in and driven by preferences (see the Expert Tips page). We set them
 # through user.js so they survive profile rewrites and apply on every start.
 #
 # Usage:
-#   ./setup-betterbird.sh            # install + configure + autostart + rules
+#   ./setup-betterbird.sh            # install + configure + autostart + float rule
 #   ./setup-betterbird.sh -y         # same (accepted for the orchestrator)
 #   ./setup-betterbird.sh --status   # report state, change nothing
-#   ./setup-betterbird.sh uninstall  # remove autostart + rules (keep your mails)
+#   ./setup-betterbird.sh uninstall  # remove autostart + float rule (keep your mails)
 # =============================================================================
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/elevate.bash"  # mq_sudo: GUI password prompt, never a blind sudo hang
@@ -136,19 +136,16 @@ EOF
   ok "autostart entry created at $AUTOSTART_FILE"
 }
 
-# ── Hyprland rules: main window tiled, popups float at the pointer ─────────────
+# ── Hyprland: Betterbird opens as a centered floating window ──────────────────
 setup_hypr(){
-  [[ -f $HYPR_DIALOGS ]] || { warn "hypr-dialogs.sh missing — window rules skipped"; return 0; }
+  [[ -f $HYPR_DIALOGS ]] || { warn "hypr-dialogs.sh missing — window rule skipped"; return 0; }
   # StartupWMClass=eu.betterbird.Betterbird (native Wayland) or the X11 class
-  # betterbird — the same one-or-the-other dance as KeePassXC.
-  # Only the main window tiles. Every window Betterbird opens (compose,
-  # message, address book) shares the class but is not the account window, so
-  # it floats. The account address in the title ("<folder> - user@host -
-  # Betterbird") is what tells the main window apart from the rest.
-  if bash "$HYPR_DIALOGS" appwin betterbird '^(?i)eu\.betterbird\.Betterbird$|^(?i)betterbird$' ' - [^ ]+@[^ ]+ - Betterbird$'; then
-    ok "Hyprland rules applied (main tiled, windows it opens float)"
+  # betterbird. Floats centered at ~80% of the screen — same shape as KeePassXC,
+  # but the size follows the monitor's resolution and ratio.
+  if bash "$HYPR_DIALOGS" float betterbird '^(?i)eu\.betterbird\.Betterbird$|^(?i)betterbird$'; then
+    ok "Hyprland float rule applied (~80% of the screen, centered)"
   else
-    warn "Hyprland rules could not be applied"
+    warn "Hyprland float rule could not be applied"
   fi
 }
 
@@ -172,7 +169,7 @@ status_betterbird(){
 }
 
 uninstall_betterbird(){
-  msg "Removing Betterbird autostart and window rules (mail data is kept)"
+  msg "Removing Betterbird autostart and float rule (mail data is kept)"
   rm -f "$AUTOSTART_FILE"
   [[ -f $HYPR_DIALOGS ]] && bash "$HYPR_DIALOGS" remove betterbird >/dev/null 2>&1 || true
   # The package itself is removed by the orchestrator's uninstall (pacman -R).

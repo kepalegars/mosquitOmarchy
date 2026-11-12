@@ -194,13 +194,17 @@ fi
 HYPR_CONF="$HOME/.config/hypr/hyprland.lua"
 mkdir -p "$HOME/.config/hypr"
 touch "$HYPR_CONF"
+# One size for every mosquito TUI: width from the column grid at the screen
+# DPI, height from the opening monitor's ratio (code/lib/hypr-tui.sh). The
+# scratchpad keeps its bigger panel, monitor-relative so it fits any screen.
+TUI_W="$(HYPRLAND_CONFIG="$HYPR_CONF" bash "$(dirname "${BASH_SOURCE[0]}")/../../../../lib/hypr-tui.sh" width)"
 sed -i '/-- >>> mosquito-mixbay-tui-setup >>>/,/-- <<< mosquito-mixbay-tui-setup <<</d' "$HYPR_CONF"
-cat >>"$HYPR_CONF" <<'EOF'
+cat >>"$HYPR_CONF" <<EOF
 -- >>> mosquito-mixbay-tui-setup >>> float mosquito-mixbay-tui
--- No size forced: the TUI joins Omarchy's own floating-window tag (system.lua:
--- float + center + size 875x600) and foot keeps Omarchy's font/padding/scale.
-o.window("org.omarchy.mosquito-mixbay-tui", { tag = "+floating-window" })
-o.window("org.omarchy.mosquito-mixbay-scratchpad", { float = true, center = true, size = { 1000, 780 } })
+-- One size for every mosquito TUI (code/lib/hypr-tui.sh): width from the
+-- column grid at the screen DPI, height from the monitor ratio.
+o.window("org.omarchy.mosquito-mixbay-tui", { float = true, center = true, size = { $TUI_W, "$TUI_W * monitor_h / monitor_w" } })
+o.window("org.omarchy.mosquito-mixbay-scratchpad", { float = true, center = true, size = { "monitor_w*0.65", "monitor_h*0.81" } })
 -- <<< mosquito-mixbay-tui-setup <<<
 EOF
 hyprctl reload >/dev/null 2>&1 || true

@@ -263,10 +263,10 @@ drop_block_from_file() {
 }
 
 macos_rule_body() {
-  cat <<'BODY'
+  cat <<BODY
 -- >>> Omarchy_Custom_Scripts_MacosVm
--- macOS VM Manager TUI: floating centered window (setup-macos-vm.sh)
-o.window("org.omarchy.macos-vm-tui", { float = true, center = true, size = { 800, 600 } })
+-- macOS VM Manager TUI (setup-macos-vm.sh): one size for every mosquito TUI.
+$(bash "$(dirname "${BASH_SOURCE[0]}")/../../../lib/hypr-tui.sh" rule "org.omarchy.macos-vm-tui")
 BODY
 }
 
@@ -286,7 +286,7 @@ if [[ $REMOVE == false ]]; then
 
   if [[ -f $HYPRLAND ]]; then
     upsert_block_file "$HYPRLAND" "$HYPR_BEGIN" "$HYPR_END" "$(macos_rule_body)"
-    ok "Window rule added: org.omarchy.macos-vm-tui floats centered (800x600)"
+    ok "Window rule added: org.omarchy.macos-vm-tui floats centered (computed TUI size)"
   fi
 
   # No keybinding is registered on purpose: the manager is reached from the

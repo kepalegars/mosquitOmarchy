@@ -14,7 +14,8 @@ Run macOS in a QEMU/KVM virtual machine on Omarchy, from the
 - A gum-based VM manager TUI — `macos-vm-tui.sh` — to create / delete / inspect VMs
   (multiple VMs, different macOS versions, deterministic SSH port each).
 - Menu entry **Setup > macOS VM**, with the TUI window
-  floating centered (800x600). No global keybinding is registered.
+  floating centered (computed size shared with every mosquito TUI). No global
+  keybinding is registered.
 
 ## Usage
 

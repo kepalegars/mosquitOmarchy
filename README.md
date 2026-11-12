@@ -105,7 +105,7 @@ Details, options and caveats live in each module's own `README.md`. This table i
 | `tidal` | TIDAL Hi-Fi (TidaLuna): package, hidden menu bar, `SUPER+SHIFT+M` binding | [setup](code/modules/Apps/tidal/setup-tidal.sh) |
 | `handbrake` | HandBrake GUI + CLI, preset sync, Hyprland rules | [README](code/modules/Apps/handbrake/README.md) |
 | `signal` | Signal Desktop, tray behavior, menu entry, and login autostart | [setup](code/modules/Apps/signal/setup-signal.sh) |
-| `betterbird` | Betterbird (Thunderbird fork): install, system-tray close/minimise, login autostart, tiled main window + popups at the pointer | [setup](code/modules/Apps/betterbird/setup-betterbird.sh) |
+| `betterbird` | Betterbird (Thunderbird fork): install, system-tray close/minimise, login autostart, window opens floating | [setup](code/modules/Apps/betterbird/setup-betterbird.sh) |
 | `whatsapp-native` | WhatsApp Web as a Chromium web app: tray supervisor (login starts hidden in the tray, menu opens directly), silent notifications, close-to-tray, no menu bar, no shortcut, login autostart | [README](code/modules/Apps/whatsapp-native/README.md) |
 | `superfile` | SuperFile terminal file manager; the system default file manager is left unchanged | [README](code/modules/Apps/superfile/README.md) |
 | `zen` | Zen Browser, seeded extensions and theme | [README](code/modules/Apps/zen/README.md) |

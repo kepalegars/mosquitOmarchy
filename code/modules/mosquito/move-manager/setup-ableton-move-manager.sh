@@ -451,23 +451,16 @@ ensure_tui_float_windowrule() {
   # marked-block pattern as code/modules/Apps/reaper/setup-reaper.sh: strip any
   # previously-injected block first so re-running after an edit actually
   # updates hyprland.lua rather than being a no-op, then append the current
-  # one. No size is forced: the TUI inherits foot's Omarchy font/padding/scale
-  # and the user's own geometry.
+  # one. The size comes from code/lib/hypr-tui.sh, the same computed rule every
+  # mosquito TUI gets.
   local CONF="$REAL_HOME/.config/hypr/hyprland.lua"
   mkdir -p "$REAL_HOME/.config/hypr"
   touch "$CONF"
-  sed -i '/-- >>> move-manager-tui-setup >>>/,/-- <<< move-manager-tui-setup <<</d' "$CONF"
-  cat >>"$CONF" <<'EOF'
--- >>> move-manager-tui-setup >>> float mosquito-move-manager-tui (the
--- Bubble Tea TUI's own window) instead of the tiled default -- its app-id
--- isn't in Omarchy's own floating-window whitelist (that one only matches
--- a fixed set of known app-ids verbatim, not a wildcard).
--- No size forced: the TUI joins Omarchy's own floating-window tag (system.lua:
--- float + center + size 875x600) and foot keeps Omarchy's font/padding/scale.
-o.window("org.omarchy.mosquito-move-manager-tui", { tag = "+floating-window" })
--- <<< move-manager-tui-setup <<<
-EOF
-  hyprctl reload >/dev/null 2>&1 || true
+  # One size for every mosquito TUI: width from the column grid at the screen
+  # DPI, height from the opening monitor's ratio (code/lib/hypr-tui.sh).
+  HYPRLAND_CONFIG="$CONF" bash "$(dirname "${BASH_SOURCE[0]}")/../../../lib/hypr-tui.sh" \
+    install "org.omarchy.mosquito-move-manager-tui" "move-manager-tui-setup" \
+    || { warn "could not install the Move Manager TUI float rule"; return 1; }
   ok "Hyprland float rule for the TUI window installed/updated ($CONF)"
 }
 
@@ -489,8 +482,9 @@ ensure_webapp_float_windowrule() {
 -- >>> move-manager-webapp-setup >>> float & center the Move Manager webapp
 -- (a Chromium --app= window titled "Move Manager") instead of tiling it at
 -- some small grid fraction. Matches any Chromium class with that page title,
--- so regular Chromium windows are unaffected.
-o.window({ class = "[cC]hrom.*", title = "^Move Manager" }, { float = true, center = true, size = { 1100, 720 } })
+-- so regular Chromium windows are unaffected. Monitor-relative size, so the
+-- panel keeps the same footprint on any screen.
+o.window({ class = "[cC]hrom.*", title = "^Move Manager" }, { float = true, center = true, size = { "monitor_w*0.72", "monitor_h*0.75" } })
 -- <<< move-manager-webapp-setup <<<
 EOF
   hyprctl reload >/dev/null 2>&1 || true

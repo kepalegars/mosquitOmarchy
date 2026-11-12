@@ -52,7 +52,7 @@ THEME_HOOK="$HOOKS_DIR/gnome-gtk-theme.sh"
 PALETTE="$HOME/.local/state/omarchy/current/theme/colors.toml"
 
 # Papers window(s) float rule — "untiled" (reuses Omarchy's floating-window
-# tag, same pattern as code/modules/Tweaks/tweak-keepassxc-window.sh).
+# tag, same marked-block pattern as the other Hyprland rules).
 FLOAT_MARK_START="-- >>> papers-window-setup >>>"
 FLOAT_MARK_END="-- <<< papers-window-setup <<<"
 

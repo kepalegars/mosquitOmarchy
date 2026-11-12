@@ -294,19 +294,11 @@ fi
 HYPR_CONF="$HOME/.config/hypr/hyprland.lua"
 mkdir -p "$HOME/.config/hypr"
 touch "$HYPR_CONF"
-sed -i '/-- >>> mosquito-audio-plugin-manager-tui-setup >>>/,/-- <<< mosquito-audio-plugin-manager-tui-setup <<</d' "$HYPR_CONF"
-cat >>"$HYPR_CONF" <<'EOF'
--- >>> mosquito-audio-plugin-manager-tui-setup >>> float mosquito-audio-plugin-manager-tui
--- (the Bubble Tea TUI's own window) instead of the tiled default -- its
--- app-id isn't in Omarchy's own floating-window whitelist (that one only
--- matches a fixed set of known app-ids verbatim, not a wildcard).
--- Shared compact default with every mosquito TUI — no size forced: the window
--- joins Omarchy's own floating-window tag (system.lua: float + center +
--- size 875x600) instead of a hardcoded geometry, so it follows the desktop.
-o.window("org.omarchy.mosquito-audio-plugin-manager-tui", { tag = "+floating-window" })
--- <<< mosquito-audio-plugin-manager-tui-setup <<<
-EOF
-hyprctl reload >/dev/null 2>&1 || true
+# One size for every mosquito TUI: width from the column grid at the screen
+# DPI, height from the opening monitor's ratio (code/lib/hypr-tui.sh).
+HYPRLAND_CONFIG="$HYPR_CONF" bash "$(dirname "${BASH_SOURCE[0]}")/../../../../lib/hypr-tui.sh" \
+  install "org.omarchy.mosquito-audio-plugin-manager-tui" "mosquito-audio-plugin-manager-tui-setup" \
+  || warn "could not install the TUI float rule"
 ok "Hyprland float rule for the TUI window installed/updated ($HYPR_CONF)"
 
 # Wine's explorer.exe creates a "Wine System Tray" window for every tray icon a

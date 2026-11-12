@@ -1327,10 +1327,10 @@ upsert_block_file() {
 }
 
 omarchy_rule_body() {
-  cat <<'BODY'
+  cat <<BODY
 -- >>> Omarchy_Custom_Scripts_OmarchyVm
--- Omarchy VM Manager TUI: floating centered window (setup-omarchy-vm.sh)
-o.window("org.omarchy.omarchy-vm-tui", { float = true, center = true, size = { 800, 600 } })
+-- Omarchy VM Manager TUI (setup-omarchy-vm.sh): one size for every mosquito TUI.
+$(bash "$(dirname "${BASH_SOURCE[0]}")/../../../lib/hypr-tui.sh" rule "org.omarchy.omarchy-vm-tui")
 -- Omarchy VM keyboard: toggle where SUPER+… goes (the "focus").
 -- NORMAL (default): the host keeps ALL its shortcuts, so you can fullscreen
 -- the VM window (SUPER + F), move it, switch workspaces, etc.
@@ -1356,7 +1356,7 @@ if [[ $CREATE_ONLY == false ]]; then
 
   if [[ -f $HYPRLAND ]]; then
     upsert_block_file "$HYPRLAND" "$HYPR_BEGIN" "$HYPR_END" "$(omarchy_rule_body)"
-    ok "Window rule added: org.omarchy.omarchy-vm-tui floats centered (800x600)"
+    ok "Window rule added: org.omarchy.omarchy-vm-tui floats centered (computed TUI size)"
   fi
 
   # No keybinding is registered on purpose: the VM manager is reached from the

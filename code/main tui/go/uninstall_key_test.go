@@ -25,7 +25,7 @@ func TestUninstallKeyKeepsCatalogLines(t *testing.T) {
 		{"stocktheme:nord", "stocktheme:nord"},
 		{"patch:reaper", "patch:reaper"},
 		{"fix:hyprland-crash", "fix:hyprland-crash"},
-		{"tweak:keepassxc-window", "tweak:keepassxc-window"},
+		{"tweak:nautilus-audio", "tweak:nautilus-audio"},
 		{"menu:entry", "menu:entry"},
 		{"user:theme:rarity", "theme:rarity"},
 		{"themes:achraf67", "achraf67"},
