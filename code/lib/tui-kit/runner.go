@@ -157,6 +157,13 @@ func runExternal(cmd *exec.Cmd, lines chan<- string, result chan<- error) {
 	}
 	err := cmd.Wait()
 	pw.Close()
+	// A surviving grandchild still holding stdout open (a sudo keep-alive, a
+	// helper the backend detached) keeps the pipe from ever reaching EOF, so
+	// the scanner below would block forever: the run is dead but RunnerDoneMsg
+	// never arrives — the "stop did nothing, step still in progress" hang.
+	// The direct child's own output is complete, so unblock the scanner and
+	// drop whatever stragglers come late.
+	pr.Close()
 	<-scanDone
 	result <- waitErr(err, cmd.ProcessState)
 }

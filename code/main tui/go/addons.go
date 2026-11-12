@@ -80,7 +80,7 @@ func (m model) rebuildAddons() navPicker {
 			SetSize(m.contentSize())
 	}
 	// Same rule as Setup/Uninstall: the filter only replaces the tree once
-	// there is text. Opening it (shift+F) just shows the one-line field in the
+	// there is text. Opening it (F) just shows the one-line field in the
 	// bottom bar, so the list does not jump before the first keystroke.
 	if m.filterText != "" {
 		return m.rebuildFilteredAddons()
@@ -116,9 +116,9 @@ func (m model) rebuildAddons() navPicker {
 	out = append(out, tuikit.PickerItem{Display: "Back", Value: "back"})
 	return newNavPicker("", out).SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
-			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "fold")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
 		).KeepCursor(m.addonsPicker.SelectedValue())
 }
@@ -150,7 +150,7 @@ func (m model) rebuildFilteredAddons() navPicker {
 	}
 	p := newNavPicker("", items).SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
 		)

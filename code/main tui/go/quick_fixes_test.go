@@ -340,3 +340,47 @@ func TestEnterOnTheTweaksFolderInUninstallModeUninstallsTheSelection(t *testing.
 		t.Fatalf("pendingArgs = %v, want [tweak:wine-theme]", next.pendingArgs)
 	}
 }
+
+// Enter on a fix row applies the Tab-marked set, not the row under the cursor.
+// The old branch built the confirmation from the cursor alone, so ticking
+// three repairs and pressing Enter on one offered to run only that one.
+func TestEnterOnAFixRowAppliesTheTickedSet(t *testing.T) {
+	m := qfSetup()
+	m.selected[setupValue("fixes", "wine-menu")] = true
+	m.selected[setupValue("fixes", "tui-theme")] = true
+	next, _ := m.update(tuikit.PickerResultMsg{Value: "item:fixes:wine-menu"})
+	if next.pendingAction != "quick-fixes" {
+		t.Fatalf("pendingAction = %q, want quick-fixes", next.pendingAction)
+	}
+	if got := strings.Join(next.pendingFixIDs, ","); got != "wine-menu,tui-theme" {
+		t.Fatalf("pendingFixIDs = %v, want both ticked fixes", next.pendingFixIDs)
+	}
+	if strings.Contains(next.pendingMsg, "Apply fix?") {
+		t.Errorf("single-fix wording used for two ticked fixes: %q", next.pendingMsg)
+	}
+}
+
+// A ticked fix plus a ticked tweak is one confirmation, but two backend
+// subcommands: fixes run first, the tweaks are queued as the next stage.
+func TestEnterOnAMixedSelectionRunsBothKinds(t *testing.T) {
+	m := qfSetup()
+	m.tweaks = []ItemRec{{Key: "wine-menu-tweak", Label: "Wine menu tweak"}}
+	m.setupFolders = append(m.setupFolders, FolderRec{Folder: "tweaks", Label: "Tweaks"})
+	m.setupItems = append(m.setupItems, SetupItemRec{Folder: "tweaks", Key: "wine-menu-tweak", Label: "Wine menu tweak"})
+	m.selected[setupValue("fixes", "wine-menu")] = true
+	m.selected[setupValue("tweaks", "wine-menu-tweak")] = true
+
+	next, _ := m.update(tuikit.PickerResultMsg{Value: "item:fixes:wine-menu"})
+	if next.pendingAction != "quick-repairs" {
+		t.Fatalf("pendingAction = %q, want quick-repairs", next.pendingAction)
+	}
+	if got := strings.Join(next.pendingFixIDs, ","); got != "wine-menu" {
+		t.Fatalf("pendingFixIDs = %v", next.pendingFixIDs)
+	}
+	if got := strings.Join(next.pendingArgs, ","); got != "wine-menu-tweak" {
+		t.Fatalf("pendingArgs = %v", next.pendingArgs)
+	}
+	if !strings.Contains(next.pendingMsg, "fixes and tweaks") {
+		t.Errorf("mixed prompt does not say what will run: %q", next.pendingMsg)
+	}
+}

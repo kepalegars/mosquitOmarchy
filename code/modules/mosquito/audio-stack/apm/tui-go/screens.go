@@ -30,6 +30,15 @@ func itemsToPicker(items []Item) []tuikit.PickerItem {
 	return out
 }
 
+// settingsHelpKeys mirrors the Live Mode Manager legend for the screens whose
+// Enter opens a row or toggles a value and whose Left/Right change that value.
+func settingsHelpKeys() []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "toggle / select")),
+		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "change value")),
+	}
+}
+
 func (m *model) enterCmd() tea.Cmd {
 	switch m.top() {
 	case scrMain:
@@ -38,10 +47,13 @@ func (m *model) enterCmd() tea.Cmd {
 	case scrSettings:
 		m.picker = tuikit.NewPicker("Settings", m.settingsItemsWithPending()).
 			SetSize(m.contentSize()).
-			SetHelpNote(settingsHelpNote())
+			SetHelpNote(settingsHelpNote()).
+			SetHelpKeys(settingsHelpKeys()...)
 		return nil
 	case scrVstMenu:
-		m.picker = tuikit.NewPicker("Windows VST Plugins (Wine)", m.vstMenuItemsWithPending()).SetSize(m.contentSize())
+		m.picker = tuikit.NewPicker("Windows VST Plugins (Wine)", m.vstMenuItemsWithPending()).
+			SetSize(m.contentSize()).
+			SetHelpKeys(settingsHelpKeys()...)
 		return nil
 	case scrPluginList:
 		m.loading = true
@@ -764,7 +776,7 @@ func (m *model) rebuildOrphanPicker() {
 			treeItemsToPicker(orphanTree(m.orphanCache), m.orphanChecked, m.folderExpanded)).SetSize(m.contentSize()).
 			SetHelpKeys(
 				key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
-				key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "fold")),
+				key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
 				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "track")),
 			).WithTree(m.folderExpanded)
 	})
@@ -790,10 +802,10 @@ func (m *model) rebuildUninstallPicker() {
 			return tuikit.NewPicker(header, items).SetSize(m.contentSize()).
 				SetHelpKeys(
 					key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
-					key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+F", "search")),
+					key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "search")),
 					key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 					key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "open folder")),
-					key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "uninstall")),
+					key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "uninstall selection")),
 				)
 		})
 		return
@@ -803,11 +815,11 @@ func (m *model) rebuildUninstallPicker() {
 		return tuikit.NewPicker(header, items).SetSize(m.contentSize()).
 			SetHelpKeys(
 				key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
-				key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+F", "search")),
+				key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "search")),
 				key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 				key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "open folder")),
-				key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "fold")),
-				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "uninstall")),
+				key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
+				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "uninstall selection")),
 			).WithTree(m.folderExpanded)
 	})
 }
@@ -1742,7 +1754,7 @@ func (m *model) rebuildFixPicker() {
 			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "toggle")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
-			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "fold")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
 		).WithTree(m.fixFolderExpanded)
 	m.picker = m.picker.SelectIndex(sidx)
@@ -1798,9 +1810,9 @@ func (m *model) rebuildFixPluginPicker() {
 			SetSize(m.contentSize()).
 			SetHelpKeys(
 				key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
-				key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+F", "search")),
+				key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "search")),
 				key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
-				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "choose")),
+				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "next")),
 			)
 		m.picker = m.picker.SelectIndex(sidx)
 		return
@@ -1838,10 +1850,10 @@ func (m *model) rebuildFixPluginPicker() {
 		SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
-			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+F", "search")),
+			key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "search")),
 			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
-			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "fold")),
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "choose")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "next")),
 		).WithTree(m.folderExpanded)
 	m.picker = m.picker.SelectIndex(sidx)
 }
@@ -1896,9 +1908,9 @@ func folderHoldsAppliedFix(tree []uninstallTreeItem, folderValue string, applied
 func pluginListHelpKeys() []key.Binding {
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
-		key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+F", "search")),
+		key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "search")),
 		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
-		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "fold")),
+		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
 		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "window handler")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "info")),
 	}
@@ -1941,7 +1953,7 @@ func (m *model) rebuildPluginPicker() {
 }
 
 // rebuildStandalonePicker renders the Launch-a-standalone list from the last
-// fetched rows, filtered by shift+F when a query is active.
+// fetched rows, filtered by F when a query is active.
 func (m *model) rebuildStandalonePicker() {
 	var items []tuikit.PickerItem
 	if m.filterText != "" {
@@ -1961,7 +1973,7 @@ func (m *model) rebuildStandalonePicker() {
 	m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
 		return tuikit.NewPicker(header, items).SetSize(m.contentSize()).
 			SetHelpKeys(
-				key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+F", "search")),
+				key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "search")),
 				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "launch")),
 			)
 	})
@@ -1994,7 +2006,7 @@ func (m model) pluginDirtyCounts() (toHide, toShow int) {
 	return
 }
 
-// isSearchScreen names the plugin lists that answer shift+F. They are the
+// isSearchScreen names the plugin lists that answer F. They are the
 // four the user picks a plugin from: Installed plugins, Uninstall, Launch a
 // standalone plugin and the Plugin-fixes chooser.
 func isSearchScreen(s screen) bool {
@@ -3426,7 +3438,8 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.nav = []screen{scrMain, scrSettings}
 				m.picker = tuikit.NewPicker("Settings", m.settingsItemsWithPending()).
 					SetSize(m.contentSize()).
-					SetHelpNote(settingsHelpNote())
+					SetHelpNote(settingsHelpNote()).
+					SetHelpKeys(settingsHelpKeys()...)
 				return m, m.enterCmd()
 			}
 			m.pop()
@@ -3613,33 +3626,25 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		if rr, ok := msg.(reconcileResultMsg); ok {
-			if rr.err != nil {
-				// Not a toast: it expires in seconds and the user is left
-				// believing nothing happened, which is the report this
-				// replaces. A full screen states it and stays until dismissed.
-				m.info = tuikit.NewInfo("Could not track the plugins:\n\n" + rr.err.Error() +
-					"\n\nThe backend command failed. Run this to see it yourself:\n\n  ~/.local/bin/mosquito-audio-plugin-manager-actions add-orphan <value>").SetSize(m.contentSize())
-				m.replace(scrInfo)
-				return m, nil
-			}
-			m.toast, _ = m.toast.SetOK(rr.ok)
-			// Tracking is done: always close the untracked screen so the
-			// user lands back where they were.
-			m.pop()
-			return m, fetchStatus()
-		}
 		var cmd tea.Cmd
 		m.picker, cmd = m.picker.Update(msg)
 		return m, cmd
 
 	case scrOrphansConfirm:
 		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
-			m.pop()
 			if !res.Yes {
+				m.pop()
 				return m, nil
 			}
-			return m, addOrphansAndRefetch(m.orphanTargets)
+			// Yes leaves the untracked screen IMMEDIATELY for the main menu.
+			// It used to stay on the list while the backend ran, so a batch
+			// that took 15 seconds left the user walking a stale orphan list.
+			m.nav = []screen{scrMain}
+			// The orphan rows must not follow us to the main menu (the kit
+			// renders m.picker as-is), so rebuild it for the new top.
+			m.syncPickerToTop()
+			m.toast, _ = m.toast.SetWarn(fmt.Sprintf("tracking %d plugin(s)…", len(m.orphanTargets)))
+			return m, addOrphans(m.orphanTargets)
 		}
 		var cmd tea.Cmd
 		m.confirm, cmd = m.confirm.Update(msg)

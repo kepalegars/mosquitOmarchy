@@ -327,13 +327,15 @@ apply() {
   if [[ -n $MX_MAC ]]; then
     bluetoothctl disconnect "$MX_MAC" >/dev/null 2>&1 || true
   fi
-  priv systemctl stop bluetooth.service >/dev/null 2>&1 || true
+  # Bounded: a stuck systemd job used to keep the TUI on "applying" with no
+  # output for minutes. The job may still finish; the restart below retries.
+  priv timeout 20 systemctl stop bluetooth.service >/dev/null 2>&1 || true
   sleep 1
 
   apply_info_files
   ok "ConnectionParameters updated on disk (Latency=0, MaxInterval=7)"
 
-  priv systemctl start bluetooth.service >/dev/null 2>&1 || true
+  priv timeout 20 systemctl start bluetooth.service >/dev/null 2>&1 || true
   ok "bluetooth.service started (loads new LE params)"
   sleep 2
 
@@ -354,11 +356,11 @@ remove() {
   info "Removing Bluetooth fix"
   remove_persist
   # Restore info + main.conf while bluetoothd is stopped so it reloads old values.
-  priv systemctl stop bluetooth.service >/dev/null 2>&1 || true
+  priv timeout 20 systemctl stop bluetooth.service >/dev/null 2>&1 || true
   sleep 1
   restore_info_files
   restore_main_conf
-  priv systemctl start bluetooth.service >/dev/null 2>&1 || true
+  priv timeout 20 systemctl start bluetooth.service >/dev/null 2>&1 || true
   sleep 2
   # restore USB runtime to auto
   if [[ -d $USB_SYS ]]; then

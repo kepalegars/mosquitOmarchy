@@ -112,7 +112,16 @@ case "$cmd" in
     ;;
 
   set-address)
-    MOVE_ADDRESS="${1:-}"
+    # Normalize to "" (= move.local, no suffix) or 1…99: the TUI sends the
+    # raw field, so a pasted "move12.local" or stray spaces must not become
+    # a broken hostname — and anything out of range falls back to move.local.
+    raw="${1:-}"
+    num="$(printf '%s' "$raw" | tr -cd '0-9' | sed 's/^0*//')"
+    if [[ "$num" =~ ^[0-9]+$ ]] && (( num >= 1 && num <= 99 )); then
+      MOVE_ADDRESS="$num"
+    else
+      MOVE_ADDRESS=""
+    fi
     save_prefs
     ;;
 

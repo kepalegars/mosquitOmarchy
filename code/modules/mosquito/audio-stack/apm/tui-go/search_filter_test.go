@@ -40,7 +40,7 @@ func TestFilteredLeafRows(t *testing.T) {
 	}
 }
 
-// shift+F opens the bottom filter zone, typing filters live, and F/Esc close
+// F opens the bottom filter zone, typing filters live, and F/Esc close
 // it and restore the full list (the mosquitOmarchy convention).
 func TestSearchKeyFlow(t *testing.T) {
 	m := initialModel()
@@ -57,7 +57,7 @@ func TestSearchKeyFlow(t *testing.T) {
 
 	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
 	if !m.filterOpen {
-		t.Fatal("shift+F did not open the filter zone")
+		t.Fatal("F did not open the filter zone")
 	}
 	for _, r := range "analog" {
 		m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})

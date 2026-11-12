@@ -250,23 +250,6 @@ apply_custom_jar(){
   fi
 }
 
-# ─── Blocking the updates (IgnorePkg) ────────────────────────────────────────
-block_updates(){
-  msg "Blocking the bitwig-studio updates (IgnorePkg)"
-  local conf="/etc/pacman.conf"
-  local bound
-  bound="$(grep -n "^\[" "$conf" | sed -n '2p' | cut -d: -f1)"
-  [[ -z "$bound" ]] && bound="$(grep -n "^\[" "$conf" | head -1 | cut -d: -f1)"
-  if awk -v n="$bound" 'NR<n && /^IgnorePkg/ {found=1} END{exit !found}' "$conf"; then
-    ok "bitwig-studio already in IgnorePkg"
-    return 0
-  fi
-  if ((DRY)); then ok "(dry-run) IgnorePkg would be added"; return 0; fi
-  mq_sudo sed -i '/^IgnorePkg/d' "$conf"
-  mq_sudo sed -i "/^\[options\]/a IgnorePkg = bitwig-studio" "$conf"
-  ok "Bitwig updates blocked"
-}
-
 # ─── Manual installer check (at opening) ─────────────────────────────────────
 # Bitwig Studio is not public: download the .deb from your Bitwig account and
 # drop it here (any version: the script finds bitwig*.deb). Warn up front and
@@ -307,15 +290,11 @@ main(){
   cleanup_old
   install_aur
   apply_custom_jar
-  block_updates
 
   hr
   ok "Bitwig Studio $BW_VERSION installed"
   echo ""
   echo "  Launch: bitwig-studio"
-  echo ""
-  warn "Remember to disable the updates in Bitwig:"
-  echo "     Dashboard > Settings > Misc > uncheck auto-update"
   hr
 }
 

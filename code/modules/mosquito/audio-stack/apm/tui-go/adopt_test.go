@@ -122,6 +122,46 @@ func TestOrphanFolderTabAndConfirm(t *testing.T) {
 	}
 }
 
+// Yes on the track confirm leaves the untracked screen at once: the batch runs
+// in the background while the user is on the main menu, instead of leaving them
+// walking a stale orphan list for the duration.
+func TestTrackingBatchReturnsToMainImmediately(t *testing.T) {
+	m := initialModel()
+	m.nav = []screen{scrMain, scrReconcileOrphansTick, scrOrphansConfirm}
+	m.orphanTargets = []string{"vst:vst2:/x/One.dll", "vst:vst3:/x/Two.vst3"}
+	mm, cmd := m.update(tuikit.ConfirmResultMsg{Yes: true})
+	got, _ := mm.(model)
+	if got.top() != scrMain {
+		t.Fatalf("Yes did not return to the main menu (top=%d)", got.top())
+	}
+	if !strings.Contains(got.toast.View(), "tracking 2 plugin") {
+		t.Errorf("the batch is not announced: %q", got.toast.View())
+	}
+	// The orphan rows must not be left on the main menu.
+	foundMainRow := false
+	for _, it := range got.picker.Items() {
+		if it.Value == "list" {
+			foundMainRow = true
+		}
+	}
+	if !foundMainRow {
+		t.Error("the main menu still shows the orphan picker rows")
+	}
+	if cmd == nil {
+		t.Fatal("Yes started no tracking command")
+	}
+
+	// The result is handled globally now, since that screen is gone.
+	mm2, _ := got.update(reconcileResultMsg{ok: "added to the manager: 2 plugin(s)"})
+	got2, _ := mm2.(model)
+	if got2.top() != scrMain {
+		t.Errorf("the result changed screen (top=%d)", got2.top())
+	}
+	if !strings.Contains(got2.toast.View(), "2 plugin") {
+		t.Errorf("the toast does not report the batch: %q", got2.toast.View())
+	}
+}
+
 // Adopting is a result, not a screen to work through: once the log is up to
 // date there is nothing left to pick, so it reports and goes back.
 func TestAdoptingReportsAndReturns(t *testing.T) {

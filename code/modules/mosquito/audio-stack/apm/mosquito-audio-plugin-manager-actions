@@ -30,6 +30,16 @@ prefs_existed=false
 [[ -f $PREFS_FILE ]] && prefs_existed=true
 load_prefs
 
+# vendor_display_name <vendor folder> — the name to SHOW for a vendor.
+# Installer folders often carry a credit line in parentheses ("Airwindows (with
+# BaconPaul and members of the Surge Synth Team)"); the list shows "Airwindows".
+# Display only: the folder on disk and the plugin values are untouched.
+vendor_display_name() {
+  local v="$1"
+  [[ $v == *' ('*')' ]] && v="${v% (*}"
+  printf '%s\n' "$v"
+}
+
 
 # ── Wine-program parents, computed ONCE per invocation ──────────────────────
 #
@@ -490,17 +500,22 @@ case "$cmd" in
       # you can open, which is not what "sorted inside the vendor" means.
       while IFS=$'\t' read -r _sk _gk _label grp formats enabled value _variants _key; do
         [[ -n $value ]] || continue
-        vendor="${grp%%/*}"
+        vendor="$(vendor_display_name "${grp%%/*}")"
         subgroup=""
         [[ $grp == */* ]] && subgroup="${grp#*/}"
         printf 'p\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
           "$_label" "$value" "$vendor" "$formats" "$enabled" "$_variants" "$(_wpm_parent_lookup "$value")" "$subgroup"
       done < "$_apm_g"
       # One folder row per VENDOR (never per subgroup), the tree's top level.
-      awk -F'\t' '{sub(/\/.*$/, "", $4); print $4}' "$_apm_g" | sort -u | while IFS= read -r grp; do
-        [[ -n $grp ]] || continue
-        printf 'f\t%s\tvendor:%s\n' "$([[ $grp == native ]] && printf Native || printf '%s' "$grp")" "$grp"
-      done
+      # Normalised before `sort -u`, so two folders whose display name is the
+      # same ("Airwindows (…)") never become two identical rows.
+      awk -F'\t' '{sub(/\/.*$/, "", $4); print $4}' "$_apm_g" |
+        while IFS= read -r grp; do
+          [[ -n $grp ]] && vendor_display_name "$grp"
+        done | sort -u | while IFS= read -r grp; do
+          [[ -n $grp ]] || continue
+          printf 'f\t%s\tvendor:%s\n' "$([[ $grp == native ]] && printf Native || printf '%s' "$grp")" "$grp"
+        done
     } | jq -R -s -c 'split("\n")
         | map(select(length > 0) | split("\t"))
         | map(
@@ -891,15 +906,20 @@ case "$cmd" in
     vendor="${1:?vendor required}"
     _apm_lv="${TMPDIR:-/tmp}/apm-lv.$$"
     plugin_group_rows > "$_apm_lv"
-    awk -F'\t' -v v="$vendor" '$3==v' "$_apm_lv" | while IFS=$'\t' read -r sk label grp formats enabled value variants; do
+    # NINE fields: sortkey, gkey, label, group ("vendor" or "vendor/subgroup"),
+    # formats, enabled, value, variants, key. Reading this as the old eight-field
+    # shape matched NOTHING, which is why a vendor-wide fix visit opened an
+    # empty catalog.
+    while IFS=$'\t' read -r _sk _gk label grp formats enabled value variants _key; do
       [[ -n $value ]] || continue
+      [[ "$(vendor_display_name "${grp%%/*}")" == "$vendor" ]] || continue
       # LV2 bundles take no fixes (every fix is a Wine affair) — they are not
       # offered as fix targets at all, instead of opening an empty list.
       case "$value" in native:*.lv2|native:*.lv2.disabled) continue ;; esac
-      jq -nc --arg display "$label" --arg value "$value" --arg vendor "$grp" \
+      jq -nc --arg display "$label" --arg value "$value" --arg vendor "$vendor" \
         --arg formats "$formats" --argjson enabled "$enabled" --arg variants "$variants" \
         '{display:$display, value:$value, kind:"plugin", vendor:$vendor, formats:$formats, enabled:$enabled, variants:$variants}'
-    done
+    done < "$_apm_lv"
     rm -f "$_apm_lv"
     ;;
 
@@ -913,7 +933,11 @@ case "$cmd" in
     target="${1:?plugin value required}"
     _apm_pv="${TMPDIR:-/tmp}/apm-pv.$$"
     plugin_group_rows > "$_apm_pv"
-    awk -F'\t' -v val="$target" '$6==val{print $3; exit}' "$_apm_pv"
+    while IFS=$'\t' read -r _sk _gk _label grp _formats _enabled value _variants _key; do
+      [[ $value == "$target" ]] || continue
+      vendor_display_name "${grp%%/*}"
+      break
+    done < "$_apm_pv"
     rm -f "$_apm_pv"
     ;;
 
@@ -938,8 +962,12 @@ case "$cmd" in
     _apm_plugs="${TMPDIR:-/tmp}/apm-vendor-plugs.$$"
     plugin_group_rows > "$_apm_rows"
     # Only the label is needed to apply: fix_apply() takes the plugin NAME. The
-    # value ("vst:vst2:/path") is only for hide/show/uninstall.
-    awk -F'\t' -v v="$vendor" '$3==v{print $2}' "$_apm_rows" > "$_apm_plugs"
+    # value ("vst:vst2:/path") is only for hide/show/uninstall. The vendor is
+    # normalised for display, so match the same way list-vendor-plugins does.
+    while IFS=$'\t' read -r _sk _gk label grp _formats _enabled _value _variants _key; do
+      [[ -n $label ]] || continue
+      [[ "$(vendor_display_name "${grp%%/*}")" == "$vendor" ]] && printf '%s\n' "$label"
+    done < "$_apm_rows" > "$_apm_plugs"
     if [[ ! -s $_apm_plugs ]]; then
       warn "no plugin found for vendor '$vendor'."
       rm -f "$_apm_rows" "$_apm_plugs"
@@ -1308,21 +1336,20 @@ case "$cmd" in
     ;;
 
   add-orphan)
-    # $1 = a plugin list value ("vst:<type>:<path>") or a bare path, as the
-    # reconcile screen holds it.
+    # $@ = one or more plugin list values ("vst:<type>:<path>") or bare paths,
+    # as the reconcile screen holds them.
     #
-    # Registers EVERY file of that plugin, not just the one that was picked. The
+    # Registers EVERY file of each plugin, not just the one that was picked. The
     # reconcile screen is one row per plugin, so adding one row used to leave
     # the other formats untracked — the plugin then came BACK on the next open
     # as an orphan, once per format. That is the "it still says untracked"
     # loop this closes.
-    target="${1:?file required}"
-    path="$target"
-    case "$target" in
-      vst:*:*) path="${target#vst:*:}" ;;
-      native:*) path="${target#native:}" ;;
-    esac
-    # plugin_group_rows already merged the plugin's formats into field 7
+    #
+    # ALL targets in one call, with ONE scan and ONE yabridge sync at the end.
+    # The old per-plugin calls paid a full sync each, which is why ticking a
+    # batch took 15 seconds and the screen stayed interactive the whole time.
+    (($#)) || { echo "file required" >&2; exit 2; }
+    # plugin_group_rows already merged each plugin's formats into field 8
     # (semicolon-separated). Reading them from there is exact: re-matching by
     # label across rows was not, because two plugins can share a name
     # ("FabFilter Micro" and "FabFilter Micro (Mono)").
@@ -1332,36 +1359,49 @@ case "$cmd" in
     # formats, enabled, value, variants, key). The target is field 7 and the
     # plugin's complete file set is field 8; the old $6/$7 pair matched
     # nothing and silently tracked only one variant.
-    files="$(awk -F'\t' -v v="$target" '$7==v{print $8; exit}' "$_apm_ao" | tr ';' '\n')"
-    rm -f "$_apm_ao"
-    [[ -n $files ]] || files="$target"
-
     first=""
-    prefix="$(default_prefix)"
-    src="$(wine_source_of "$path" 2>/dev/null)" || src=""
-    [[ -n $src ]] && prefix="${src%%/drive_c/*}"
-    while IFS= read -r f; do
-      [[ -n $f ]] || continue
-      bare="$f"
-      case "$f" in
-        vst:*:*) bare="${f#vst:*:}" ;;
-        native:*) bare="${f#native:}" ;;
+    n=0
+    for target in "$@"; do
+      path="$target"
+      case "$target" in
+        vst:*:*) path="${target#vst:*:}" ;;
+        native:*) path="${target#native:}" ;;
       esac
-      [[ -n $first ]] || first="$bare"
-      # Key EXACTLY the way plugin_group_rows keys the row: native plugins
-      # (lv2/clap/vst3 loaded directly) are "native/<label>", not plugin_key()
-      # ("lv2/<label>"), which is why LV2s came back untracked after adding.
-      if [[ $f == native:* ]]; then
-        key="native/$(native_plugin_label "$bare")"
-      else
-        key="$(plugin_key "$bare")"
-      fi
-      state_register_install "$key" "$prefix" "$bare"
-    done <<< "$files"
+      files="$(awk -F'\t' -v v="$target" '$7==v{print $8; exit}' "$_apm_ao" | tr ';' '\n')"
+      [[ -n $files ]] || files="$target"
+
+      prefix="$(default_prefix)"
+      src="$(wine_source_of "$path" 2>/dev/null)" || src=""
+      [[ -n $src ]] && prefix="${src%%/drive_c/*}"
+      while IFS= read -r f; do
+        [[ -n $f ]] || continue
+        bare="$f"
+        case "$f" in
+          vst:*:*) bare="${f#vst:*:}" ;;
+          native:*) bare="${f#native:}" ;;
+        esac
+        [[ -n $first ]] || first="$bare"
+        # Key EXACTLY the way plugin_group_rows keys the row: native plugins
+        # (lv2/clap/vst3 loaded directly) are "native/<label>", not plugin_key()
+        # ("lv2/<label>"), which is why LV2s came back untracked after adding.
+        if [[ $f == native:* ]]; then
+          key="native/$(native_plugin_label "$bare")"
+        else
+          key="$(plugin_key "$bare")"
+        fi
+        state_register_install "$key" "$prefix" "$bare"
+      done <<< "$files"
+      n=$((n + 1))
+    done
+    rm -f "$_apm_ao"
     # A tracked plugin is not yet a loadable one for a native host: yabridge
     # must rebuild the chainloader. stderr, so stdout stays one clean line.
     apm_yabridge_sync >&2
-    echo "added to the manager: $(basename "$first")"
+    if ((n == 1)); then
+      echo "added to the manager: $(basename "$first")"
+    else
+      echo "added to the manager: $n plugin(s)"
+    fi
     ;;
 
   watch-manager)

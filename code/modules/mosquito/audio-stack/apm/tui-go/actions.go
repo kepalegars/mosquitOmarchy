@@ -786,72 +786,32 @@ func toggleExecAndRefetch(exe string) tea.Cmd {
 	}
 }
 
-// addOrphanAndRefetch mirrors toggleExecAndRefetch for the reconcile
-// "tick to add" screen — same "stay and keep picking" shape.
-// reconcileResultMsg bundles the visible feedback of an orphan
-// registration with the refreshed orphan list: what the action printed
-// ("added to the manager: X" / the bash error), plus the new orphan set
-// (nil = no orphan left → the screen pops).
+// reconcileResultMsg is the visible feedback of an orphan batch: what the
+// action printed ("added to the manager: X plugin(s)") or the bash error.
 type reconcileResultMsg struct {
-	items []Item
-	ok    string
-	err   error
+	ok  string
+	err error
 }
 
-func addOrphanAndRefetch(file string) tea.Cmd {
+// addOrphans tracks every selected orphan in ONE backend call: add-orphan
+// registers each plugin's every variant, and the batch costs one scan and one
+// yabridge sync instead of one of each per plugin (15s for a handful).
+//
+// It deliberately does NOT re-run reconcile-orphans afterwards: the untracked
+// screen has already been left for the main menu, so there is no list left to
+// refresh. The state write is done when this returns, which is what the plugin
+// lists and the other menus read.
+func addOrphans(files []string) tea.Cmd {
 	return func() tea.Msg {
-		// Capture the register step's output: a silent failure here left
-		// the picker identical to the previous frame, which read as
-		// "Enter does nothing" (the user's report while stuck on the
-		// ScaleFinder orphan). The bash action prints a line
-		// ("added to the manager: <name>") on success or an error to
-		// stderr — surface both as a visible toast.
-		addOut, addErr := runQuick("add-orphan", file)
-		out, err := runQuick("reconcile-orphans")
-		if addErr != nil {
-			return reconcileResultMsg{err: addErr}
-		}
+		out, err := runQuick(append([]string{"add-orphan"}, files...)...)
 		if err != nil {
 			return reconcileResultMsg{err: err}
 		}
-		items, _ := decodeJSONLines[Item](out)
-		what := strings.TrimSpace(string(addOut))
+		what := strings.TrimSpace(string(out))
 		if what == "" {
-			what = "added: " + filepath.Base(file)
+			what = fmt.Sprintf("tracked %d plugin(s)", len(files))
 		}
-		return reconcileResultMsg{items: items, ok: what}
-	}
-}
-
-// addOrphansAndRefetch tracks every selected orphan, then refetches like the
-// single version. One backend call per plugin (add-orphan registers that
-// plugin's every variant); a failure aborts the batch with what succeeded
-// so far, and the refetch shows exactly what is still untracked.
-func addOrphansAndRefetch(files []string) tea.Cmd {
-	return func() tea.Msg {
-		done := 0
-		for _, f := range files {
-			if _, err := runQuick("add-orphan", f); err != nil {
-				out, rerr := runQuick("reconcile-orphans")
-				items, _ := decodeJSONLines[Item](out)
-				if rerr != nil {
-					return reconcileResultMsg{err: rerr}
-				}
-				return reconcileResultMsg{items: items,
-					err: fmt.Errorf("tracked %d of %d, then failed: %v", done, len(files), err)}
-			}
-			done++
-		}
-		out, err := runQuick("reconcile-orphans")
-		if err != nil {
-			return reconcileResultMsg{err: err}
-		}
-		items, _ := decodeJSONLines[Item](out)
-		what := fmt.Sprintf("tracked %d plugin(s) — the rest stays untracked", done)
-		if done == 1 {
-			what = "tracked 1 plugin — the rest stays untracked"
-		}
-		return reconcileResultMsg{items: items, ok: what}
+		return reconcileResultMsg{ok: what}
 	}
 }
 

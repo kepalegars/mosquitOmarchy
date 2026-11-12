@@ -192,7 +192,7 @@ func TestShortcutsHintFitsAndKeepsThePrimaryAction(t *testing.T) {
 	}).SetSize(92, 20).SetHelpKeys(
 		kb("tab/x", "select"),
 		kb("i", "info"),
-		kb("shift+f", "search"),
+		kb("F", "search"),
 		kb("right", "open"),
 		kb("left", "close"),
 		kb("enter", "install selection"),

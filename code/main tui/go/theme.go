@@ -608,7 +608,7 @@ func (m model) rebuildThemeUnlock() navPicker {
 	}
 	return newNavPicker(h, items).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "toggle unlock screen")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "change value")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "continue")),
 		).
 		SetSize(m.contentSize())
@@ -694,7 +694,11 @@ func (m model) rebuildThemeUninstall() navPicker {
 	} else if stockCount > 0 {
 		h += fmt.Sprintf("  — %d stock theme(s) included (⧉)", stockCount)
 	}
-	return newNavPicker(h, items).SetSize(m.contentSize())
+	return newNavPicker(h, items).SetSize(m.contentSize()).
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "remove")),
+		)
 }
 
 // rebuildThemeRestore lists the stock themes with a circle on the ones already

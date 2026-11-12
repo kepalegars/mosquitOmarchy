@@ -234,7 +234,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			return m, nil
 		}
 		m.crashNotify = msg.Next
-		m.pickPicker = newNavPicker("Extras:", m.settingsItems2()).SetSize(m.contentSize()).
+		m.pickPicker = newNavPicker("Extras:", m.settingsItems2()).SetSize(m.contentSize()).SetHelpKeys(extrasHelpKeys()...).
 			KeepCursor(m.pickPicker.SelectedValue())
 		return m, crashNotifyApplyCmd(msg.Next)
 
@@ -244,7 +244,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		if m.crashNotify != msg.On {
 			m.crashNotify = msg.On
-			m.pickPicker = newNavPicker("Extras:", m.settingsItems2()).SetSize(m.contentSize()).
+			m.pickPicker = newNavPicker("Extras:", m.settingsItems2()).SetSize(m.contentSize()).SetHelpKeys(extrasHelpKeys()...).
 				KeepCursor(m.pickPicker.SelectedValue())
 		}
 		if msg.Failed {
@@ -256,7 +256,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.crashNotify = msg.on
 		m.crashNotifyLoaded = true
 		if m.top() == scrSettings {
-			m.pickPicker = newNavPicker("Extras:", m.settingsItems2()).SetSize(m.contentSize())
+			m.pickPicker = newNavPicker("Extras:", m.settingsItems2()).SetSize(m.contentSize()).SetHelpKeys(extrasHelpKeys()...)
 		}
 		return m, nil
 
@@ -495,6 +495,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				}
 			}
 			if wasQuickCatalog {
+				// The applied repairs are consumed like an install selection:
+				// re-entering the page must not offer to run them again.
+				for _, it := range m.setupItems {
+					if it.Folder == quickFixesFolder || it.Folder == quickTweaksFolder {
+						delete(m.selected, setupValue(it.Folder, it.Key))
+					}
+				}
 				if m.top() == scrSetupCat {
 					m.setupCatPicker = m.rebuildSetupCat()
 				} else if m.top() == scrSetup {
@@ -1404,6 +1411,25 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.themeDonePicker = m.rebuildThemeDone()
 			return m.startWorking("Creating the theme",
 				workingArgs("theme-create", []string{m.themeDir, m.themeImage, name, "no", unlock})...)
+		case "quick-repairs":
+			// Fixes and tweaks use different backend subcommands. The set the
+			// user ticked can contain both, so run fixes first and queue the
+			// tweaks as the next stage (the runner's stage queue already
+			// handles "run this, then that").
+			fixes := m.pendingFixIDs
+			m.pendingFixIDs = nil
+			tweaks := append([]string{}, m.pendingArgs...)
+			m.pendingArgs = nil
+			m.installStageQueue = nil
+			if len(tweaks) > 0 {
+				m.installStageQueue = []installStage{{kind: "tweaks", plan: tweaks}}
+			}
+			if len(fixes) > 0 {
+				m.pendingAction = "quick-fixes"
+				return m.startWorking("Applying quick fixes", workingArgs("fixes-run", fixes)...)
+			}
+			m.pendingAction = "quick-tweaks"
+			return m.startWorking("Applying tweaks", workingArgs("tweaks-run", tweaks)...)
 		case "quick-fixes":
 			// Streamed like a module: the fix's own output is visible while it
 			// runs, a dated log is written for the run and success ends on the
@@ -2141,7 +2167,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		m.setupCatPicker, cmd = m.setupCatPicker.Update(msg)
 	case scrBackupApps:
-		// Same live search as Setup: SHIFT+F (or /) opens the framed filter
+		// Same live search as Setup: F (or /) opens the framed filter
 		// zone, printable keys refine the tree, Backspace trims, Esc closes.
 		if km, ok := msg.(tea.KeyMsg); ok {
 			switch km.String() {
@@ -2278,7 +2304,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	case scrSettings:
 		m.pickPicker, cmd = m.pickPicker.Update(msg)
 	case scrAddons:
-		// Same live filter convention as Setup: SHIFT+F opens the filter zone,
+		// Same live filter convention as Setup: F opens the filter zone,
 		// typing refines, esc clears. Enter still applies the ticked set.
 		if km, ok := msg.(tea.KeyMsg); ok {
 			switch km.String() {
@@ -2606,6 +2632,9 @@ func (m model) runNextInstallStage() (model, tea.Cmd) {
 		return m.startWorking("Installing DaVinci Resolve", workingArgs("apply", stage.plan)...)
 	case "ableton":
 		return m.startAbletonInstall(stage.plan)
+	case "tweaks":
+		m.pendingAction = "quick-tweaks"
+		return m.startWorking("Applying tweaks", workingArgs("tweaks-run", stage.plan)...)
 	default:
 		m.pendingAction = "apply"
 		return m.startWorking("Installing Guitar Pro", workingArgs("apply", stage.plan)...)
@@ -2740,6 +2769,79 @@ func (m model) markedFixes(items []tuikit.TreeItem) int {
 	return n
 }
 
+// tickedRepairs splits the Tab-marked Setup rows into fix and tweak ids, in
+// the catalog order the tree lists them. The ticks are the selection Enter
+// must act on; the cursor row is only the fallback when nothing is ticked.
+func (m model) tickedRepairs() (fixes, tweaks []string) {
+	for _, it := range m.setupItems {
+		if !m.selected[setupValue(it.Folder, it.Key)] {
+			continue
+		}
+		switch it.Folder {
+		case quickFixesFolder:
+			fixes = append(fixes, it.Key)
+		case quickTweaksFolder:
+			tweaks = append(tweaks, it.Key)
+		}
+	}
+	return fixes, tweaks
+}
+
+// repairLabels resolves the human labels of the ids being confirmed, so the
+// prompt names what will run instead of the backend's internal keys.
+func (m model) repairLabels(folder string, ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		label := id
+		if it, ok := m.setupByValue[setupValue(folder, id)]; ok && it.Label != "" {
+			label = it.Label
+		}
+		out = append(out, label)
+	}
+	return out
+}
+
+// promptQuickRepairs is the one confirmation for fixes and tweaks together:
+// "Apply fix?" for one, "Apply N fixes?"/"tweaks?" for one kind, and
+// "Apply N fixes and tweaks?" when both are ticked.
+func (m model) promptQuickRepairs(fixes, tweaks []string) (model, tea.Cmd) {
+	lines := append(m.repairLabels(quickFixesFolder, fixes), m.repairLabels(quickTweaksFolder, tweaks)...)
+	n := len(lines)
+	var what string
+	switch {
+	case n == 1 && len(fixes) == 1:
+		what = "Apply fix?"
+	case n == 1:
+		what = "Apply tweak?"
+	case len(tweaks) == 0:
+		what = fmt.Sprintf("Apply %d fixes?", n)
+	case len(fixes) == 0:
+		what = fmt.Sprintf("Apply %d tweaks?", n)
+	default:
+		what = fmt.Sprintf("Apply %d fixes and tweaks?", n)
+	}
+	switch {
+	case len(fixes) > 0 && len(tweaks) > 0:
+		m.pendingAction = "quick-repairs"
+		m.pendingFixIDs = fixes
+		m.pendingArgs = tweaks
+	case len(fixes) > 0:
+		m.pendingAction = "quick-fixes"
+		m.pendingFixIDs = fixes
+		m.pendingArgs = nil
+	default:
+		m.pendingAction = "quick-tweaks"
+		m.pendingFixIDs = tweaks
+		m.pendingArgs = nil
+	}
+	m.pendingMsg = what + "\n\n" + strings.Join(lines, "\n")
+	m.pendingNo = "Cancel"
+	m.pendingYes = "Apply"
+	m.push(scrConfirm)
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+	return m, nil
+}
+
 // checkedQuickFixes is the marked set, in catalog order so the confirmation
 // reads the same way every time.
 func (m model) checkedQuickFixes() []string {
@@ -2763,7 +2865,7 @@ func (m model) rebuildQuickFixes() navPicker {
 	cur := m.quickFixPicker.SelectedValue()
 	return newNavPicker("", m.quickFixesList()).SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply selection")),
 		).
@@ -2894,7 +2996,7 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			// Show the cached value straight away, then correct it if the
 			// backend says otherwise. The list is a pure function of the cache
 			// now, so opening Extras costs no subprocess to draw.
-			m.pickPicker = newNavPicker("Extras:", m.settingsItems2()).SetSize(m.contentSize())
+			m.pickPicker = newNavPicker("Extras:", m.settingsItems2()).SetSize(m.contentSize()).SetHelpKeys(extrasHelpKeys()...)
 			if !m.crashNotifyLoaded {
 				return m, fetchCrashNotifyCmd()
 			}
@@ -2927,7 +3029,11 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 		}
 		m.pendingAction = "quick-fixes"
 		m.pendingFixIDs = ids
-		m.pendingMsg = fmt.Sprintf("Apply %d quick fix(es)?\n\n%s", len(ids), strings.Join(ids, "\n"))
+		if len(ids) == 1 {
+			m.pendingMsg = fmt.Sprintf("Apply fix?\n\n%s", strings.Join(ids, "\n"))
+		} else {
+			m.pendingMsg = fmt.Sprintf("Apply %d fixes?\n\n%s", len(ids), strings.Join(ids, "\n"))
+		}
 		m.pendingNo = "Cancel"
 		m.pendingYes = "Apply"
 		m.push(scrConfirm)
@@ -2993,23 +3099,19 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			if m.treeMode == "uninstall" {
 				return m.confirmUninstallSelection()
 			}
-			label := key
-			if it, ok := m.setupByValue[res.Value]; ok && it.Label != "" {
-				label = it.Label
+			// The Tab-marked set is the selection, not the row under the
+			// cursor: Enter on any ticked repair applies every ticked repair.
+			// The cursor is only the fallback when nothing is ticked, so Enter
+			// stays a working key on a bare row.
+			fixes, tweaks := m.tickedRepairs()
+			if len(fixes)+len(tweaks) == 0 {
+				if m.isTweakKey(key) {
+					tweaks = []string{key}
+				} else {
+					fixes = []string{key}
+				}
 			}
-			if m.isTweakKey(key) {
-				m.pendingAction = "quick-tweaks"
-				m.pendingMsg = fmt.Sprintf("Apply tweak?\n\n%s", label)
-			} else {
-				m.pendingAction = "quick-fixes"
-				m.pendingMsg = fmt.Sprintf("Apply quick fix?\n\n%s", label)
-			}
-			m.pendingFixIDs = []string{key}
-			m.pendingNo = "Cancel"
-			m.pendingYes = "Apply"
-			m.push(scrConfirm)
-			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
-			return m, nil
+			return m.promptQuickRepairs(fixes, tweaks)
 		}
 		if strings.HasPrefix(res.Value, tuikit.TreeFolderPrefix) {
 			// Uninstall mode: a folder is a batch selector, exactly like a
@@ -4302,8 +4404,8 @@ func (m model) rebuildFilteredSetup() navPicker {
 	// search: filtering "item:fixes:" out was why searching for a fix by name
 	// (e.g. "hyprland autofocus") returned nothing even though the row exists.
 	p := newNavPicker("", items).SetSize(m.contentSize()).
-		SetHelpKeys(key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
-			key.NewBinding(key.WithKeys("F"), key.WithHelp("shift+f", "search")),
+		SetHelpKeys(key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
+			key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "search")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterDesc)))
 	// Carry the cursor over from the list being replaced. This function used
 	// to return the picker with no SelectIndex at all, so it always started at
@@ -4562,6 +4664,8 @@ func (m model) rebuildSetup() navPicker {
 		SetContentWidth(pinned).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		).
@@ -5051,6 +5155,7 @@ func (m model) rebuildSetupCat() navPicker {
 	p := newNavPicker("", pickerTreeItems(folders, items, m.selected, m.folderOpen, m.blinkOn, m.treeMode, m.aiRemovalLogged())).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		)
@@ -5465,9 +5570,9 @@ func (m model) rebuildHealth() navPicker {
 	items = append([]tuikit.PickerItem{head}, items...)
 
 	p := newNavPicker("", items).SetSize(m.contentSize()).
-		SetHelpKeys(key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select/reapply")),
+		SetHelpKeys(key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "re-apply")))
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")))
 	// Keep the focused row where it was, matching by value like the Setup tree
 	// does. This used to carry a raw index and decrement it by one "to
 	// compensate for the headline row" — but rebuildHealth always prepends
@@ -5564,8 +5669,9 @@ func (m model) rebuildBackupOptions() navPicker {
 	)
 	p := newNavPicker("", items).SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "change/start")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "toggle / select")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "change value")),
 		)
 	return p.SelectIndex(idx)
 }
@@ -5626,8 +5732,8 @@ func (m model) rebuildBackupAppSettings() navPicker {
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
 	p := newNavPicker("", items).SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "change")),
-			key.NewBinding(key.WithKeys("left"), key.WithHelp("←/→", "cycle")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "toggle / select")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "change value")),
 		)
 	return p.SelectIndex(idx)
 }
@@ -5640,11 +5746,10 @@ func (m model) rebuildBackupApps() navPicker {
 	idx := m.backupAppsPicker.Index()
 	p := newNavPicker("", m.backupTreeItems()).SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "reset to installed")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
-			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
-			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
 		)
@@ -5689,7 +5794,7 @@ func (m model) rebuildFilteredBackupApps() navPicker {
 	}
 	p := newNavPicker("", items).SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "reset to installed")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
@@ -5847,8 +5952,8 @@ func (m model) rebuildRestoreOptions() navPicker {
 	)
 	p := newNavPicker("", items).SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "change/restore")),
-			key.NewBinding(key.WithKeys("left"), key.WithHelp("←/→", "cycle")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "toggle / select")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "change value")),
 		)
 	return p.SelectIndex(idx)
 }
@@ -5975,10 +6080,9 @@ func (m model) rebuildRestoreApps() navPicker {
 		m.restoreAppsChecked, m.restoreAppsOpen, false, "backup", m.aiRemovalLogged())).
 		SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
-			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "expand")),
-			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "collapse")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
 		)
 	return p.SelectIndex(idx)
@@ -6018,7 +6122,7 @@ func (m model) rebuildFilteredRestoreApps() navPicker {
 	}
 	p := newNavPicker("", items).SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
 		)
@@ -6452,9 +6556,9 @@ func (m *model) rebuildStatus() navPicker {
 	}
 	return newNavPicker("", m.statusTree()).SetSize(m.contentSize()).
 		SetHelpKeys(
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "info")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
-			key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "open")),
-			key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "close")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
 		).
 		SelectIndex(idx)
 }
@@ -6734,7 +6838,8 @@ func (m model) rebuildCleanup() navPicker {
 		tuikit.PickerItem{Display: "Cleanup now!", Value: "run", Engage: true},
 		tuikit.PickerItem{Display: "Back", Value: "back"},
 	)
-	return newNavPicker("Cleanup:", items).SetSize(m.contentSize())
+	return newNavPicker("Cleanup:", items).SetSize(m.contentSize()).
+		SetHelpKeys(key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "toggle / select")))
 }
 
 func (m model) selectedCleanupIDs() []string {
@@ -6761,6 +6866,14 @@ func (m model) settingsItems2() []tuikit.PickerItem {
 		{Display: "Cleanup temporary files", Value: "cleanup"},
 		{Display: "Addons", Value: "addons", Engage: true},
 		{Display: "Back", Value: "back"},
+	}
+}
+
+// extrasHelpKeys keeps the Extras legend identical to every other settings
+// screen in the mosquitOmarchy TUIs.
+func extrasHelpKeys() []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "toggle / select")),
 	}
 }
 

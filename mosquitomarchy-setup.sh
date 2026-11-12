@@ -1221,7 +1221,7 @@ run_fix(){ # single fix by id
     ableton-wine-scroll) bash "$SCRIPT_DIR/code/modules/Fixes/fix-wine-scroll.sh" ;;
     ableton-fullscreen) bash "$SCRIPT_DIR/code/modules/Fixes/fix-ableton-fullscreen.sh" ;;
     1px-seam) bash "$SCRIPT_DIR/code/modules/Fixes/fix-1px-seam.sh" ;;
-    bluetooth) bash "$SCRIPT_DIR/code/modules/Fixes/fix-bluetooth.sh" ;;
+    bluetooth) bash "$SCRIPT_DIR/code/modules/Fixes/fix-bluetooth.sh" -y ;;
     hyprland-autofocus) bash "$SCRIPT_DIR/code/modules/Fixes/fix-hyprland-autofocus.sh" ;;
     *) err "Unknown fix: $id"; return 1 ;;
   esac

@@ -1088,10 +1088,15 @@ func (p Picker) ShortcutsHint() string {
 		}
 	}
 	extras = rest
-	mid := append(append([]string{}, nav...), primary...)
 
+	// Rebuilt on every fit() call: the shed loop above edits nav and tail,
+	// and a frozen mid is why dropping "? help" never actually shortened
+	// the bar.
 	fit := func() string {
-		return strings.Join(append(append([]string{}, mid...), append(extras, tail...)...), " · ")
+		parts := append(append([]string{}, nav...), primary...)
+		parts = append(parts, extras...)
+		parts = append(parts, tail...)
+		return strings.Join(parts, " · ")
 	}
 
 	plain := fit()
@@ -1100,8 +1105,19 @@ func (p Picker) ShortcutsHint() string {
 		return StyleHelp.Render(plain)
 	}
 
-	// 1. Shed the redundant navigation keys, least useful first.
-	for _, k := range []string{"? help", "esc back", "enter select"} {
+	// 1. Shed the redundant keys, least useful first. esc/? live in tail,
+	// not nav, so both lists have to be searched — this is where the old
+	// loop dropped screen hints while keeping "? help" on the bar. The
+	// arrow/vim keys go last of all: standard everywhere, so a cramped bar
+	// is better spent on what Enter and ←/→ do HERE.
+	for _, k := range []string{"? help", "esc back", "enter select", "↑/k up", "↓/j down"} {
+		if idx := indexOf(tail, k); idx >= 0 {
+			tail = append(tail[:idx], tail[idx+1:]...)
+			if lipgloss.Width(fit()) <= w {
+				return StyleHelp.Render(fit())
+			}
+			continue
+		}
 		if idx := indexOf(nav, k); idx >= 0 {
 			nav = append(nav[:idx], nav[idx+1:]...)
 			if lipgloss.Width(fit()) <= w {

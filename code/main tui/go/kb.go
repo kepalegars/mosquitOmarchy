@@ -198,7 +198,7 @@ func (m model) rebuildKBList() navPicker {
 	header := "Managed keybindings — tick the ones to remove"
 	p := newNavPicker(header, items).SetSize(m.contentSize()).
 		SetHelpKeys(
-			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "select")),
+			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "remove")),
 			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")))
 	return p.SelectIndex(idx)

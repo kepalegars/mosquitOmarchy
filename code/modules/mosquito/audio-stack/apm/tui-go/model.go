@@ -245,7 +245,7 @@ type model struct {
 	uninstallChecked map[string]bool
 	uninstallTargets []string
 	// standaloneCache is the Launch-a-standalone picker's last fetched rows.
-	// It exists so shift+F can rebuild the filtered list without a round trip.
+	// It exists so F can rebuild the filtered list without a round trip.
 	standaloneCache []Item
 	// Orphan picker (scrReconcileOrphansTick): the on-disk-but-untracked
 	// plugins grouped in per-format folders, Tab multi-select like
@@ -278,7 +278,7 @@ type model struct {
 	// this set is never force-opened again.
 	folderFoldedByUser map[string]bool
 
-	// Global search (shift+F) state, shared where applicable
+	// Global search (F) state, shared where applicable
 	fixPromptPlugin       string
 	fixPromptName         string
 	installFixItems       []FixItem
@@ -901,14 +901,16 @@ func (m *model) rebuildSettingsPicker() {
 	sidx := m.picker.Index()
 	m.picker = tuikit.NewPicker("Settings", m.settingsItemsWithPending()).
 		SetSize(m.contentSize()).
-		SetHelpNote(settingsHelpNote())
+		SetHelpNote(settingsHelpNote()).
+		SetHelpKeys(settingsHelpKeys()...)
 	m.picker = m.picker.SelectIndex(sidx)
 }
 
 func (m *model) rebuildVstPicker() {
 	sidx := m.picker.Index()
 	m.picker = tuikit.NewPicker("Windows VST Plugins (Wine)", m.vstMenuItemsWithPending()).
-		SetSize(m.contentSize())
+		SetSize(m.contentSize()).
+		SetHelpKeys(settingsHelpKeys()...)
 	m.picker = m.picker.SelectIndex(sidx)
 }
 
@@ -1099,9 +1101,12 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.picker = tuikit.NewPicker("Settings", items).
 				SetSize(cw, h).
-				SetHelpNote(settingsHelpNote())
+				SetHelpNote(settingsHelpNote()).
+				SetHelpKeys(settingsHelpKeys()...)
 		case scrVstMenu:
-			m.picker = tuikit.NewPicker("Windows VST Plugins", m.vstMenuItemsWithPending()).SetSize(m.contentSize())
+			m.picker = tuikit.NewPicker("Windows VST Plugins", m.vstMenuItemsWithPending()).
+				SetSize(m.contentSize()).
+				SetHelpKeys(settingsHelpKeys()...)
 		}
 		m.picker = m.picker.SelectIndex(idx)
 		if !m.status.WizardDone && !m.wizardStarted && m.top() == scrMain {
@@ -1604,6 +1609,23 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, cmd
+
+	case reconcileResultMsg:
+		// Tracking a batch always leaves the untracked screen for the main
+		// menu (see scrOrphansConfirm), so its result lands here, not on that
+		// screen: report it wherever the user has got to and refresh the
+		// counts from the log that was just written.
+		if msg.err != nil {
+			// Not a toast: it expires in seconds and the user is left
+			// believing nothing happened. A full screen states it and stays
+			// until dismissed.
+			m.info = tuikit.NewInfo("Could not track the plugins:\n\n" + msg.err.Error() +
+				"\n\nThe backend command failed. Run this to see it yourself:\n\n  ~/.local/bin/mosquito-audio-plugin-manager-actions add-orphan <value>").SetSize(m.contentSize())
+			m.push(scrInfo)
+			return m, nil
+		}
+		m.toast, _ = m.toast.SetOK(msg.ok)
+		return m, fetchStatus()
 	}
 
 	return m.updateScreen(msg)

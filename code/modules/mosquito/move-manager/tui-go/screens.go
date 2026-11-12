@@ -17,7 +17,10 @@ import (
 // (enterCmd) always match.
 func (m model) newSettingsPicker() navPicker {
 	return newNavPicker("Settings", m.settingsItemsWithPending()).
-		SetHelpKeys(key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "toggle")))
+		SetHelpKeys(
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "toggle / select")),
+			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "change value")),
+		)
 }
 
 // settingsItemsWithPending overlays the pending Left/Right target on the
@@ -179,13 +182,13 @@ func (m *model) cycleSetting() (tea.Model, tea.Cmd) {
 			m.settingsPending[row] = "superfile"
 		}
 	default:
-		return m, nil
+		return *m, nil
 	}
 	m.rebuildSettingsPicker()
 	m.settingsDwellSeq++
 	seq := m.settingsDwellSeq
 	rowID := row
-	return m, tea.Tick(settingsDwell, func(time.Time) tea.Msg {
+	return *m, tea.Tick(settingsDwell, func(time.Time) tea.Msg {
 		return settingsDwellMsg{row: rowID, seq: seq}
 	})
 }
@@ -1130,11 +1133,9 @@ func (m model) handleMainChoice(v string) (tea.Model, tea.Cmd) {
 func (m model) handleSettingsChoice(v string) (tea.Model, tea.Cmd) {
 	switch v {
 	case "hide_converted":
-		m.loading = true
-		return m, runFireAndForget("setting saved", "toggle-hide-converted")
+		return m, fireToast("setting saved", "toggle-hide-converted")
 	case "open_als_ydotool":
-		m.loading = true
-		return m, runFireAndForget("setting saved", "toggle-open-als-ydotool")
+		return m, fireToast("setting saved", "toggle-open-als-ydotool")
 	case "ableton_version":
 		m.push(scrAbletonVersion)
 		return m, m.enterCmd()

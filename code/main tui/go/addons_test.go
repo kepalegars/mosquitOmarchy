@@ -95,7 +95,7 @@ func TestAddonsSearchShortcutAndFilter(t *testing.T) {
 	next, _ := m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
 	m = next
 	if !m.filterOpen {
-		t.Fatal("shift+F did not open the addon filter")
+		t.Fatal("F did not open the addon filter")
 	}
 	if !strings.Contains(m.filterBarLine(), "search") {
 		t.Fatal("filter input zone is not visible")
@@ -111,7 +111,7 @@ func TestAddonsSearchShortcutAndFilter(t *testing.T) {
 		}
 	}
 	if folders == 0 {
-		t.Fatal("shift+F flattened the tree before any text was typed")
+		t.Fatal("F flattened the tree before any text was typed")
 	}
 	next, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
 	m = next
@@ -156,7 +156,7 @@ func TestAddonShortcutsFit(t *testing.T) {
 	m := addonTestModel()
 	m.w, m.h = 100, 40
 	hint := m.rebuildAddons().ShortcutsHint()
-	for _, want := range []string{"tab", "search", "fold", "apply"} {
+	for _, want := range []string{"tab", "search", "collapse", "apply"} {
 		if !strings.Contains(hint, want) {
 			t.Fatalf("shortcut %q missing from %q", want, hint)
 		}
