@@ -32,17 +32,32 @@ cat >"$tmp/bin/omarchy-shell" <<'SH'
 #!/bin/bash
 printf '%s\n' "$*" >>"$OSD_LOG"
 SH
+cat >"$tmp/bin/omarchy-osd" <<'SH'
+#!/bin/bash
+printf 'osd %s\n' "$*" >>"$OSD_LOG"
+SH
+cat >"$tmp/bin/mosquito-mixbay-actions" <<'SH'
+#!/bin/bash
+printf '%s\n' "$*" >>"$ACTIONS_LOG"
+case "$1" in
+  status-json) cat "$STATUS_JSON" ;;
+esac
+SH
 chmod +x "$tmp"/bin/*
 export PATH="$tmp/bin:$PATH"
 export XDG_CONFIG_HOME="$tmp/config"
 export LOG="$log"
 export OSD_LOG="$osd_log"
+export ACTIONS_LOG="$tmp/actions"
+printf '{"spec":{"vol_min_db":-96,"vol_max_db":0,"num_output_pairs":2},"outputs":[{"volume_db":-20,"muted":false}]}\n' >"$tmp/status.json"
+export STATUS_JSON="$tmp/status.json"
 printf 'alsa_output.usb-Audient_EVO8-00.pro-output-0\n' >"$tmp/sink"
 printf 'alsa_input.pci-0000.test\n' >"$tmp/source"
 export SINK_NAME="$tmp/sink"
 export SOURCE_NAME="$tmp/source"
 
-run() { : >"$log"; : >"$osd_log"; "$helper" "$@" || true; cat "$log"; }
+run() { : >"$log"; : >"$osd_log"; : >"$tmp/actions"; "$helper" "$@" || true; cat "$log"; }
+actions_log() { cat "$tmp/actions"; }
 blocked_osd() {  # blocked_osd ICON : empty level bar, 100% text
   grep -qF -- "\"icon\":\"$1\"" "$osd_log" \
     && grep -qF -- '"value":0' "$osd_log" \
@@ -75,10 +90,41 @@ set_sink 'alsa_output.usb-Focusrite_Scarlett_2i2_USB-00.analog-stereo'
 set_sink 'alsa_output.pci-0000.00.0.analog-stereo'
 [[ $(run output lower) == "output lower" ]] || { echo "unmanaged PCI output did not delegate"; exit 1; }
 
-# Managed output, opt-in: delegated.
-set_sink 'alsa_output.usb-Audient_EVO8-00.pro-output-0'
+# Managed output, opt-in: the keys drive the card's hardware volume through
+# Mixbay instead of the PipeWire level, and the OSD shows the result.
+set_sink 'evo8_main_output'
 echo '{"allow_native_volume": true}' >"$tmp/config/mosquitomixbay/ui.json"
-[[ $(run output raise) == "output raise" ]] || { echo "opt-in did not delegate"; exit 1; }
+run output raise >/dev/null
+grep -qF -- 'set volume -15.0 --device evo8 --pair 0' <<<"$(actions_log)" \
+  || { echo "managed output raise did not reach Mixbay hardware: $(actions_log)"; exit 1; }
+grep -qF -- 'osd -i volume-high -p 84' "$osd_log" \
+  || { echo "managed output OSD is wrong: $(cat "$osd_log")"; exit 1; }
+
+# ALT+arrows are the precise ±1 dB step.
+run output +1 >/dev/null
+grep -qF -- 'set volume -19.0 --device evo8 --pair 0' <<<"$(actions_log)" \
+  || { echo "precise step did not reach Mixbay hardware: $(actions_log)"; exit 1; }
+
+# Mute toggles the right output pair and reports a muted OSD.
+run output mute-toggle >/dev/null
+grep -qF -- 'set mute 1 -t output1 --device evo8' <<<"$(actions_log)" \
+  || { echo "mute did not reach Mixbay hardware: $(actions_log)"; exit 1; }
+grep -qF -- 'osd -i volume-muted -p 0' "$osd_log" \
+  || { echo "muted output OSD is wrong: $(cat "$osd_log")"; exit 1; }
+rm -f "$tmp/config/mosquitomixbay/ui.json"
+
+# The EVO 8 secondary split node maps to output pair 2, not the main out.
+echo '{"allow_native_volume": true}' >"$tmp/config/mosquitomixbay/ui.json"
+set_sink 'evo8_output_3_4'
+run output lower >/dev/null
+grep -qF -- 'set volume -25.0 --device evo8 --pair 1' <<<"$(actions_log)" \
+  || { echo "secondary output did not map to pair 2: $(actions_log)"; exit 1; }
+
+# A failed hardware read falls back to Omarchy instead of leaving keys dead.
+: >"$tmp/status.json"
+[[ $(run output raise) == "output raise" ]] \
+  || { echo "failed hardware read did not delegate"; exit 1; }
+printf '{"spec":{"vol_min_db":-96,"vol_max_db":0,"num_output_pairs":2},"outputs":[{"volume_db":-20,"muted":false}]}\n' >"$tmp/status.json"
 rm -f "$tmp/config/mosquitomixbay/ui.json"
 
 # Managed input, no opt-in: ignored with the mic icon; then opt-in delegates.

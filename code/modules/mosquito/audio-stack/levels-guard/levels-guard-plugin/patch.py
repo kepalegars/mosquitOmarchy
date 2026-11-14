@@ -105,6 +105,9 @@ REPLACEMENTS = [
         '''  function outputIcon(volume) {
     // Match the old Waybar pulseaudio glyph set. The Material Design speaker
     // icons render visually smaller in JetBrainsMono Nerd Font.
+    // A Mixbay-managed interface always shows the maximum-volume glyph: its
+    // level belongs to Mixbay, and a PipeWire volume of 0 there is not a mute.
+    if (levelsGuardManagedOutput) return ""
     // A Mixbay split sink is a loopback node: Quickshell does not expose it as
     // an audio node, so "no audio" on `sink` alone is not a mute. Show the
     // resolved sink's state (or a normal speaker when that is unknown too)
@@ -127,7 +130,9 @@ REPLACEMENTS = [
   }
 ''',
         '''  function outputVolumeName(volume, muted) {
-    if (levelsGuardBlockOutput) return Model.outputVolumeName(1, false, Commons.I18n.t)
+    // The hero subtitle under the Audio title: the level is not a PipeWire
+    // value on a managed interface, so say who owns it.
+    if (levelsGuardManagedOutput) return "handled by mixbay"
     return Model.outputVolumeName(volume, muted, Commons.I18n.t)
   }
 ''',

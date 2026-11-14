@@ -2,12 +2,14 @@
 # =============================================================================
 # mosquitOmarchy - levels-guard
 # =============================================================================
-# Media-key guard installed by setup-levels-guard.sh. When the default
-# output/source is a Mixbay-managed interface, the native volume keys are
-# blocked unless the user enabled "Allow native volume controls" in Mixbay.
-# The blocked OSD shows its icon and text at 100%, with the level bar at 0%,
-# so the key still answers visually. Other interfaces delegate to Omarchy
-# unchanged.
+# Media-key front-end installed by setup-levels-guard.sh. When the default
+# output is a Mixbay-managed interface:
+#   - with "Control active audio interface volume with keyboard" ON, the keys
+#     drive that interface's USB hardware volume through mosquito-mixbay-actions
+#     (the same value Mixbay shows) and the OSD reports the result;
+#   - with it OFF, the keys are blocked and the OSD shows its icon and text at
+#     100% with the level bar at 0%, so the key still answers visually.
+# Other interfaces delegate to Omarchy unchanged.
 #
 # This guard only covers the control surfaces (media keys + Omarchy audio
 # panel). Direct pactl/wpctl calls and applications are never intercepted.
@@ -38,6 +40,111 @@ managed_interface() {
   [[ $name =~ ^evo[0-9]_ || $name == *audient_evo* || $name == *fireface* || $name == *ugm192* || $name == *quantum_es* ]]
 }
 
+mixbay_actions() {
+  local bin
+  bin="$(command -v mosquito-mixbay-actions 2>/dev/null)"
+  [[ -n $bin ]] || bin="$HOME/.local/bin/mosquito-mixbay-actions"
+  [[ -x $bin ]] || return 1
+  "$bin" "$@"
+}
+
+# mixbay_device maps the PipeWire sink to the Mixbay device id.
+mixbay_device() {
+  case "${1,,}" in
+    *evo8_main_output*|*evo8_output_*|*evo8_loopback*|*audient_evo8*) echo evo8 ;;
+    *evo4_main_output*|*evo4_output_*|*evo4_loopback*|*audient_evo4*) echo evo4 ;;
+    *ugm192*) echo ugm192 ;;
+    *fireface*) echo fireface-ucx2 ;;
+    *quantum_es*) echo quantum-es4 ;;
+    *) return 1 ;;
+  esac
+}
+
+# mixbay_pair maps the split output node to its output pair (main = 0).
+# shortcut: a raw Pro Audio sink always maps to pair 1; only the split nodes
+# carry a real pair. Parse pro-output-N if a second pair becomes a default.
+mixbay_pair() {
+  case "${1,,}" in
+    *output_3_4*) echo 1 ;;
+    *) echo 0 ;;
+  esac
+}
+
+show_osd() {
+  local icon="$1" percent="$2"
+  if command -v omarchy-osd >/dev/null 2>&1; then
+    omarchy-osd -i "$icon" -p "$percent" >/dev/null 2>&1 || true
+    return 0
+  fi
+  command -v omarchy-shell >/dev/null 2>&1 || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local payload
+  payload="$(jq -cn --arg icon "$icon" --arg value "$percent" --arg text "$percent%" \
+    '{icon:$icon,message:"",value:$value,progressText:$text,max:100}')"
+  omarchy-shell -q osd show "$payload" >/dev/null 2>&1 || true
+}
+
+# mixbay_volume applies a media-key action to the selected interface's
+# hardware level. Returns non-zero when Mixbay cannot answer (offline, no
+# action binary, missing jq), so the caller can fall back to Omarchy.
+mixbay_volume() {
+  local sink="$1"; shift
+  local act="${1:-}"
+  local dev pair st db min max muted pairs target step=0 toggle=0
+  dev="$(mixbay_device "$sink")" || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  st="$(mixbay_actions status-json --device "$dev" --live 2>/dev/null)" || return 1
+  [[ -n $st ]] || return 1
+  pair="$(mixbay_pair "$sink")"
+  db="$(jq -r --argjson p "$pair" '(.outputs[$p] // .outputs[0] // {}).volume_db // empty' <<<"$st")"
+  min="$(jq -r '.spec.vol_min_db // empty' <<<"$st")"
+  max="$(jq -r '.spec.vol_max_db // empty' <<<"$st")"
+  muted="$(jq -r --argjson p "$pair" '(.outputs[$p] // .outputs[0] // {}).muted // false' <<<"$st")"
+  pairs="$(jq -r '.spec.num_output_pairs // 1' <<<"$st")"
+  [[ -n $db && -n $min && -n $max ]] || return 1
+  if [[ $pairs -gt 1 ]]; then target="output$((pair + 1))"; else target="output"; fi
+
+  case "$act" in
+    raise) step=5 ;;
+    lower) step=-5 ;;
+    mute-toggle) toggle=1 ;;
+    +[0-9]*) step="${act#+}" ;;
+    -[0-9]*) step="${act#-}"; step=$((0 - step)) ;;
+    *) return 1 ;;
+  esac
+
+  if ((toggle)); then
+    if [[ $muted == true ]]; then
+      mixbay_actions set mute 0 -t "$target" --device "$dev" >/dev/null 2>&1 || return 1
+      muted=false
+    else
+      mixbay_actions set mute 1 -t "$target" --device "$dev" >/dev/null 2>&1 || return 1
+      muted=true
+    fi
+  else
+    db="$(awk -v db="$db" -v min="$min" -v max="$max" -v step="$step" \
+      'BEGIN { v = db + step; if (v < min) v = min; if (v > max) v = max; printf "%.1f", v }')"
+    mixbay_actions set volume "$db" --device "$dev" --pair "$pair" >/dev/null 2>&1 || return 1
+    # Raising from mute unmutes, like the native helper.
+    if [[ $muted == true ]] && ((step > 0)); then
+      mixbay_actions set mute 0 -t "$target" --device "$dev" >/dev/null 2>&1 || true
+      muted=false
+    fi
+  fi
+
+  local percent icon
+  if [[ $muted == true ]]; then
+    percent=0 icon=volume-muted
+  else
+    percent="$(awk -v db="$db" -v min="$min" -v max="$max" \
+      'BEGIN { if (max <= min) { print 0; exit } v = (db - min) / (max - min) * 100; printf "%d", v + 0.5 }')"
+    icon=volume-high
+    ((percent <= 0)) && icon=volume-muted
+  fi
+  show_osd "$icon" "$percent"
+  return 0
+}
+
 blocked_osd(){
   command -v omarchy-shell >/dev/null 2>&1 || return 0
   local payload
@@ -50,11 +157,14 @@ blocked_osd(){
 
 case "$mode" in
   output)
-    ignore=0
-    if managed_interface alsa_output.usb- "$(output_sink)" && ! allow_native; then
-      ignore=1
+    sink="$(output_sink)"
+    if managed_interface alsa_output.usb- "$sink"; then
+      if ! allow_native; then
+        blocked_osd output
+        exit 0
+      fi
+      if mixbay_volume "$sink" "$@"; then exit 0; fi
     fi
-    if ((ignore)); then blocked_osd output; exit 0; fi
     command -v omarchy-audio-output-volume >/dev/null 2>&1 || exit 0
     exec omarchy-audio-output-volume "$@"
     ;;
