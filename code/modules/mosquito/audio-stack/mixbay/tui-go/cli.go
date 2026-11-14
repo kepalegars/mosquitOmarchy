@@ -67,6 +67,24 @@ func runCLI(args []string) int {
 		return cliMixer(args[1:])
 	case "patchbay-status-json":
 		return cliPatchbayStatus()
+	case "profiles-index":
+		return cliProfilesIndex(args[1:])
+	case "profiles-import":
+		return cliProfilesImport(args[1:])
+	case "profiles-export":
+		return cliProfilesExport(args[1:])
+	case "profiles-list-local":
+		return cliProfilesLocal()
+	case "profiles-validate":
+		return cliProfilesValidate(args[1:])
+	case "profiles-remove":
+		return cliProfilesRemove(args[1:])
+	case "profiles-clear-user":
+		return cliProfilesClearUser(args[1:])
+	case "profiles-set-url":
+		return cliProfilesSetURL(args[1:])
+	case "profiles-offer-json":
+		return cliProfilesOffer(nil)
 	case "patchbay-save":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: patchbay-save NAME")
@@ -145,6 +163,14 @@ func cliHelp() string {
   patchbay-status-json                PipeWire links, interfaces and presets
   patchbay-save NAME                  save current hardware links as a preset
   patchbay-apply NAME [--replace]     apply a preset (explicit, no auto)
+  profiles-index [--cached]           community profile index (JSON)
+  profiles-import ID... [--all]       download/update card(s) from the repo
+  profiles-export [ID...] [--to DIR]  clean PR-ready export of local cards
+  profiles-list-local                 installed cards + metadata (JSON)
+  profiles-validate FILE|DIR...       validate one or more card profiles
+  profiles-remove ID...               delete a downloaded/local card
+  profiles-clear-user ID              drop a card's local UI override
+  profiles-set-url URL                point Mixbay at a repo mirror
   set gain DB -t inputN               input gain in dB
   set mute 0|1 -t TARGET              mute (inputN / output[N])
   set phantom 0|1 -t inputN           48V phantom power (EVO)
@@ -162,7 +188,7 @@ func cliDevices() int {
 		Probed bool `json:"probed"`
 	}
 	var out []row
-	specs := append(append([]drivers.Spec{}, drivers.Registry()...), drivers.BetaSpecs()...)
+	specs := drivers.Registry()
 	for _, spec := range specs {
 		d, err := drivers.Open(spec.ID)
 		probed := err == nil && d.Probe()

@@ -82,6 +82,22 @@ func TestControlItemsALSAShowsNoGainRows(t *testing.T) {
 	}
 }
 
+// The UCX II card menu must expose the oscmix GTK mixer and its setup, the
+// same way the SSL 12 exposes douze.
+func TestControlItemsFirefaceShowsOscmix(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	st := demoStatus(t, drivers.DevFireface)
+	found := map[string]bool{}
+	for _, it := range controlItems(st) {
+		found[it.Value] = true
+	}
+	for _, want := range []string{"fireface:oscmix-gtk", "fireface:oscmix-setup"} {
+		if !found[want] {
+			t.Errorf("UCX II controls missing %q", want)
+		}
+	}
+}
+
 func TestMixerItemsBusSelectorFirst(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	st := demoStatus(t, drivers.DevEVO8)
@@ -1525,10 +1541,29 @@ func TestAllowNativeVolumeNeedsLevelsGuard(t *testing.T) {
 			if !it.Disabled {
 				t.Fatal("allow_native must be disabled without mosquito.levels-guard")
 			}
+			if !strings.Contains(it.Display, "Control active audio interface volume with keyboard: on") {
+				t.Fatalf("row must be frozen on without the guard: %q", it.Display)
+			}
 			return
 		}
 	}
 	t.Fatal("allow_native row missing")
+}
+
+// Changing a setting rebuilds the picker; the cursor must stay on the row the
+// user was on instead of snapping back to the first line.
+func TestSyncPickerKeepsCursor(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := initialModel()
+	m.w, m.h = 100, 30
+	m.push(scrSettings)
+	m.syncPicker()
+	m.picker = m.picker.SelectValue("launch_scratchpad")
+	nm, _ := m.updateKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(model)
+	if got := m.picker.SelectedValue(); got != "launch_scratchpad" {
+		t.Fatalf("selection after a settings change = %q, want launch_scratchpad", got)
+	}
 }
 
 // R on Controls zeroes every control, puts the outputs back in stereo and

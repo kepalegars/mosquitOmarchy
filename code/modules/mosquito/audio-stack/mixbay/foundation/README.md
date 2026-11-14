@@ -8,7 +8,7 @@ share a channel layout:
 |---|---|---|
 | Audient EVO 8 | 6 playback / 6 capture | no ALSA UCM → split into stereo nodes |
 | Audient EVO 4 | 4 / 4 | ALSA UCM ≥ 1.2.16 already exposes the right graph |
-| RME Fireface UCX II | multichannel | class-compliant; TotalMix not in this pack |
+| RME Fireface UCX II | multichannel | oscmix + GTK mixer (card-specific setup; the foundation never writes to the card) |
 | ESI UGM192 | stereo | class-compliant |
 | PreSonus Quantum ES 4 | beta | base de test reverse engineering (pas native) |
 | SSL 12 (douze) | 8 / 8 in Pro Audio | split already owned by the douze module |
@@ -25,6 +25,7 @@ per card
   EVO 8  : 6→3 stereo playback sinks + 3 stereo capture sources
   EVO 4  : UCM (opt-in 4-channel split only when UCM is absent)
   SSL 12 : douze's own split + WirePlumber rule (not duplicated here)
+  UCX II : oscmix + GTK mixer (user-local; the foundation writes no card state)
   others : floor only, until their control protocol is integrated
 ```
 
@@ -102,10 +103,15 @@ capture, or the ALSA card/connection-log match for any other interface).
 ## Adding an unsupported interface (beta)
 
 Mixbay → Settings → **Add an audio interface** scans connected USB cards and
-lists those that are not native. Adding one writes it to
-`~/.config/mosquitomixbay/beta-devices.json`; it appears in the device list as
-`demo-beta` / `online-beta`, runs ALSA level 1 (volume/mute), and carries a
-**Restart reverse engineering** action in its controls with a confirmation.
+lists those that are not native. Adding one writes a local card under
+`~/.config/mosquitomixbay/cards/<id>/` (same format as a downloaded community
+profile); it appears in the device list as `demo-beta` / `online-beta`, runs
+ALSA level 1 (volume/mute), and carries a **Restart reverse engineering**
+action in its controls with a confirmation. The old
+`beta-devices.json` store is migrated once and archived.
+
+Community profiles are managed in **Settings → Audio interface profiles**
+(download/update, export for a PR, remove, clear local UI override).
 
 The guided reverse-engineering harness (usbmon/libusb/hidraw → labelled
 tuple → replay with GET/acks) is the next slice. Until a control is mapped and

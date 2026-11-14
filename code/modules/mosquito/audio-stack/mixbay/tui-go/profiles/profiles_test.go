@@ -1,0 +1,314 @@
+package profiles
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func testHome(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MIXBAY_CONFIG_DIR", filepath.Join(home, ".config", "mosquitomixbay"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+}
+
+func TestNativeCardsAreValid(t *testing.T) {
+	cards := NativeCards()
+	if len(cards) != 5 {
+		t.Fatalf("native cards = %d, want 5", len(cards))
+	}
+	for _, c := range cards {
+		if errs := Errors(Validate(c)); len(errs) > 0 {
+			t.Errorf("%s: %s", c.Spec.ID, errs[0])
+		}
+		if c.Preset() == "" {
+			t.Errorf("%s: no UI preset", c.Spec.ID)
+		}
+	}
+	if !IsNative("evo8") || IsNative("quantum-es4") {
+		t.Fatal("native detection wrong")
+	}
+}
+
+func TestParseRejectsTypoAndBadPreset(t *testing.T) {
+	_, issues, err := Parse([]byte(`{"schema_version":1,"spec":{"spce":{}},"ui":{"preset":"nope"},"spce":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := map[string]bool{}
+	for _, i := range issues {
+		fields[i.Field] = true
+	}
+	if !fields["spce"] || !fields["spec.spce"] || !fields["ui.preset"] || !fields["spec.id"] {
+		t.Fatalf("missing issues: %+v", issues)
+	}
+}
+
+func TestEffectiveMergesSparseOverride(t *testing.T) {
+	testHome(t)
+	card, err := InstallLocalCard("quantum-es4", "PreSonus Quantum ES 4", "Quantum ES")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.Preset() != "single-pair" {
+		t.Fatalf("default preset = %q", card.Preset())
+	}
+	if err := SaveUserLayout("quantum-es4", []byte(`{"preset":"auto","sections":{"gain":{"min_db":-5}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	got, meta, err := Effective("quantum-es4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Preset() != "auto" {
+		t.Fatalf("override preset = %q", got.Preset())
+	}
+	if meta.Source != "local" {
+		t.Fatalf("meta source = %q", meta.Source)
+	}
+	// Upstream stays intact: a later repo update does not absorb the tweak.
+	raw, err := os.ReadFile(upstreamFile("quantum-es4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk Card
+	if err := json.Unmarshal(raw, &onDisk); err != nil {
+		t.Fatal(err)
+	}
+	if onDisk.Preset() != "single-pair" {
+		t.Fatalf("upstream was modified: %q", onDisk.Preset())
+	}
+	if _, ok := got.UI["sections"]; !ok {
+		t.Fatal("user sections dropped by merge")
+	}
+}
+
+func TestNativeCannotBeRemovedOrOverwritten(t *testing.T) {
+	testHome(t)
+	if err := Remove("evo8"); err == nil {
+		t.Fatal("native remove succeeded")
+	}
+	if _, err := InstallLocalCard("evo8", "Fake EVO", "Fake"); err == nil {
+		t.Fatal("native card was overwritten by a local install")
+	}
+}
+
+func TestImportAndUpdate(t *testing.T) {
+	testHome(t)
+	card := Card{
+		SchemaVersion: 1,
+		Spec: Spec{
+			ID: "quantum-es4", Display: "PreSonus Quantum ES 4", Vendor: "PreSonus",
+			NumInputs: 4, NumOutPairs: 2, GainMin: 0, GainMax: 60,
+			VolMin: -96, VolMax: 0, MixerInputs: 4, MixerOutputs: 2,
+			Backend: "alsa", Version: "v1.0.0",
+			Caps: Caps{Volume: true, Mute: true},
+		},
+		UI: map[string]any{"preset": "single-pair"},
+	}
+	body := Encode(card)
+	sum := sha256.Sum256(body)
+	digest := hex.EncodeToString(sum[:])
+	index := Index{SchemaVersion: 1, Revision: "r1", Cards: []IndexCard{{
+		ID: "quantum-es4", Display: card.Spec.Display, Vendor: card.Spec.Vendor,
+		Version: card.Spec.Version, Path: "cards/quantum-es4/card.json", SHA256: digest,
+	}}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/index.json", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(index)
+	})
+	mux.HandleFunc("/cards/quantum-es4/card.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Write(body)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("MIXBAY_PROFILES_URL", srv.URL)
+
+	res, err := Import(context.Background(), []string{"quantum-es4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || res[0].Err != nil || res[0].Updated {
+		t.Fatalf("import = %+v", res)
+	}
+	got, meta, err := Effective("quantum-es4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.Version != "v1.0.0" || meta.Revision != "r1" || meta.Source != "repo" {
+		t.Fatalf("effective = %+v meta=%+v", got.Spec, meta)
+	}
+	// A second import updates in place and keeps user overrides.
+	if err := SaveUserLayout("quantum-es4", []byte(`{"preset":"auto"}`)); err != nil {
+		t.Fatal(err)
+	}
+	res, err = Import(context.Background(), []string{"quantum-es4"})
+	if err != nil || !res[0].Updated {
+		t.Fatalf("update = %+v err=%v", res, err)
+	}
+	if eff, _, _ := Effective("quantum-es4"); eff.Preset() != "auto" {
+		t.Fatal("update destroyed the user override")
+	}
+	// Corrupt digest is refused.
+	index.Cards[0].SHA256 = "0000000000000000000000000000000000000000000000000000000000000000"
+	if _, err := Import(context.Background(), []string{"quantum-es4"}); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := Import(context.Background(), []string{"quantum-es4"}); res[0].Err == nil {
+		t.Fatal("sha mismatch accepted")
+	}
+}
+
+func TestCheckUpdatesInstallAndUpdate(t *testing.T) {
+	testHome(t)
+	card := Card{SchemaVersion: 1, Spec: Spec{
+		ID: "quantum-es4", Display: "PreSonus Quantum ES 4", Vendor: "PreSonus",
+		NumInputs: 4, NumOutPairs: 2, Backend: "alsa", Version: "v1.0.0",
+		Caps: Caps{Volume: true},
+	}, UI: map[string]any{"preset": "auto"}}
+	if _, err := InstallLocalCard("quantum-es4", card.Spec.Display, "Quantum ES"); err != nil {
+		t.Fatal(err)
+	}
+	body := Encode(card)
+	sum := sha256.Sum256(body)
+	index := Index{SchemaVersion: 1, Cards: []IndexCard{{
+		ID: "quantum-es4", Display: card.Spec.Display, Version: "v1.1.0",
+		Path: "cards/quantum-es4/card.json", SHA256: hex.EncodeToString(sum[:]),
+	}}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/index.json", func(w http.ResponseWriter, r *http.Request) { json.NewEncoder(w).Encode(index) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("MIXBAY_PROFILES_URL", srv.URL)
+
+	offers, err := CheckUpdates(context.Background(), []ConnEntry{{ID: "beta-quantum-es-4", Name: card.Spec.Display}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(offers) != 1 || offers[0].Kind != "update" || offers[0].ID != "quantum-es4" {
+		t.Fatalf("offers = %+v", offers)
+	}
+	offers, _ = CheckUpdates(context.Background(), []ConnEntry{{ID: "beta-unknown", Name: "Brand New Card"}})
+	if len(offers) != 0 {
+		t.Fatalf("unknown matched: %+v", offers)
+	}
+}
+
+func TestExportRedactsAndWritesIndex(t *testing.T) {
+	testHome(t)
+	card, err := InstallLocalCard("beta-lab", "Lab Card", "Lab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	card.Captures = []Capture{{File: "captures/gain.jsonl", SHA256: "0000000000000000000000000000000000000000000000000000000000000000"}}
+	if err := writeFileAtomic(upstreamFile("beta-lab"), Encode(card)); err != nil {
+		t.Fatal(err)
+	}
+	capDir := filepath.Join(cardDir("beta-lab"), "captures")
+	if err := os.MkdirAll(capDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	capture := `{"bus":1,"dev":7,"serial":"ABC","action":"gain:input1","value":12,"nested":{"path":"/dev/bus/001"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(capDir, "gain.jsonl"), []byte(capture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dest, err := Export([]string{"beta-lab"}, filepath.Join(t.TempDir(), "out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, err := os.ReadFile(filepath.Join(dest, "cards", "beta-lab", "captures", "gain.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var line map[string]any
+	if err := json.Unmarshal(exported, &line); err != nil {
+		t.Fatalf("capture is not one JSON line: %v", err)
+	}
+	for _, k := range []string{"bus", "dev", "serial"} {
+		if _, ok := line[k]; ok {
+			t.Fatalf("capture leaked %q: %s", k, exported)
+		}
+	}
+	if _, ok := line["nested"].(map[string]any)["path"]; ok {
+		t.Fatal("nested path leaked")
+	}
+	var ix Index
+	data, err := os.ReadFile(filepath.Join(dest, "index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &ix); err != nil {
+		t.Fatal(err)
+	}
+	if len(ix.Cards) != 1 || ix.Cards[0].ID != "beta-lab" || len(ix.Cards[0].SHA256) != 64 {
+		t.Fatalf("index = %+v", ix)
+	}
+	for _, name := range []string{"README.md", "PR.md"} {
+		if _, err := os.Stat(filepath.Join(dest, name)); err != nil {
+			t.Fatalf("%s missing", name)
+		}
+	}
+}
+
+func TestDuplicatesPreferRepoOverBeta(t *testing.T) {
+	testHome(t)
+	if _, err := InstallLocalCard("beta-quantum-es-4", "PreSonus Quantum ES 4", "Quantum ES"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InstallLocalCard("quantum-es4", "PreSonus Quantum ES 4", "Quantum ES"); err != nil {
+		t.Fatal(err)
+	}
+	dups := Duplicates()
+	if len(dups) != 1 {
+		t.Fatalf("duplicates = %+v, want 1", dups)
+	}
+	if dups[0].KeepID != "quantum-es4" || dups[0].RemoveID != "beta-quantum-es-4" {
+		t.Fatalf("kept %s / removed %s, want quantum-es4 / beta-quantum-es-4", dups[0].KeepID, dups[0].RemoveID)
+	}
+}
+
+func TestDuplicatesNeverProposeRemovingNative(t *testing.T) {
+	testHome(t)
+	if _, err := InstallLocalCard("beta-evo-8", "Audient EVO 8", "EVO 8"); err != nil {
+		t.Fatal(err)
+	}
+	dups := Duplicates()
+	if len(dups) != 1 || dups[0].KeepID != "evo8" || dups[0].RemoveID != "beta-evo-8" {
+		t.Fatalf("duplicates = %+v", dups)
+	}
+}
+
+func TestVersionLess(t *testing.T) {
+	if !versionLess("v1.2.0", "v1.10.0") || versionLess("v2.0.0", "v1.9.9") {
+		t.Fatal("version comparison wrong")
+	}
+}
+
+func TestLegacyBetaMigration(t *testing.T) {
+	testHome(t)
+	dir := ConfigDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `[{"id":"beta-lab","name":"Lab Card","match":"Lab"}]`
+	if err := os.WriteFile(filepath.Join(dir, "beta-devices.json"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateLegacyBeta(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacyBetaPath() + ".migrated"); err != nil {
+		t.Fatal("legacy file was not archived")
+	}
+	if _, _, err := Effective("beta-lab"); err != nil {
+		t.Fatal(err)
+	}
+}

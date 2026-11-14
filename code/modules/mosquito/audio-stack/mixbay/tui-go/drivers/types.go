@@ -1,8 +1,9 @@
 // Package drivers is the hardware abstraction of mosquitomixbay.
 //
-// One Driver per supported interface. The TUI and the CLI actions both talk
-// to this interface only, so adding a device means adding one file here,
-// never touching the UI.
+// One Driver per control transport. The TUI and the CLI actions both talk to
+// this interface only. Device definitions (I/O, ranges, capabilities) are JSON
+// cards from the mosquito mixbay profiles repo, embedded for the native five;
+// adding a community card therefore never touches this package.
 //
 // Device roadmap:
 //   - evo8 / evo4  : full control via evo_raw kmod (/dev/evo* ioctl).
@@ -11,15 +12,14 @@
 //     FU11 wire is -8..50 dB), 2 output
 //     pairs (-127..0 dB), 10x4 loopback matrix over 2 mix buses, no monitor
 //     blend knob (monitoring goes through the matrix).
-//   - fireface-ucx2: RME Fireface UCX II. Level 1 = ALSA volumes + mutes
-//     (works today, class-compliant). Level 2 = full TotalMix matrix once
-//     snd-fireface-ctl-services supports the UCX II over USB.
+//   - fireface-ucx2: RME Fireface UCX II. Mixbay installs oscmix (USB MIDI
+//     SysEx, Class Compliant) and opens its GTK mixer from the card menu;
+//     ALSA volumes + mutes remain the level 1 fallback.
 //   - ugm192       : ESI UGM192, class-compliant, no vendor DSP → ALSA only.
 //   - ssl12        : SSL 12 via the douze HTTP daemon (volumes/mutes/mixer;
 //     preamps and the full SSL 360 surface stay in Omarchy360).
-//   - quantum-es4  : PreSonus Quantum ES 4, NOT native: the reverse-engineering
-//     test base. Add it through "Add an audio interface" as a beta card; the
-//     spec stays here for that workflow.
+//   - quantum-es4  : PreSonus Quantum ES 4, a community profile: install it
+//     from the repo or add it through "Add an audio interface" as a beta card.
 //
 // With no hardware connected every driver reports Online=false and serves a
 // persistent DEMO state (same JSON shape), so the TUI is fully usable for
@@ -177,34 +177,22 @@ type LiveReader interface {
 	Read() (Status, error)
 }
 
-// Registry lists every native device. Quantum ES 4 is deliberately NOT here:
-// it is the reverse-engineering test base, added through "Add an audio
-// interface" as a beta device until its protocol is mapped.
+// Registry lists every interface available to this build: the embedded native
+// cards plus every downloaded/local community profile.
 func Registry() []Spec {
-	return []Spec{EVO8Spec, EVO4Spec, FirefaceSpec, UGM192Spec, SSL12Spec}
+	specs := append([]Spec{}, nativeSpecs()...)
+	specs = append(specs, localSpecs()...)
+	return specs
 }
 
 // Open returns the driver for id. Unknown ids are an error (fail loud, the
 // TUI device list only ever offers Registry ids).
 func Open(id string) (Driver, error) {
-	switch id {
-	case DevEVO8:
-		return newEvo(EVO8Spec), nil
-	case DevEVO4:
-		return newEvo(EVO4Spec), nil
-	case DevFireface:
-		return newALSA(FirefaceSpec), nil
-	case DevUGM192:
-		return newALSA(UGM192Spec), nil
-	case DevQuantumES4:
-		return newALSA(QuantumES4Spec), nil
-	case DevSSL12:
-		return newDouze(SSL12Spec), nil
+	spec, ok := specByID(id)
+	if !ok {
+		return nil, fmt.Errorf("unknown device %q", id)
 	}
-	if spec, ok := betaSpec(id); ok {
-		return newALSA(spec), nil
-	}
-	return nil, fmt.Errorf("unknown device %q", id)
+	return driverFor(spec), nil
 }
 
 // OpenLive opens the driver for a control write that must reach real

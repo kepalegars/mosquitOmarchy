@@ -3,7 +3,8 @@
 #
 # mosquitomixbay drives the USB audio interfaces over one TUI:
 # Audient EVO 8 (full control today), EVO 4 (same protocol), RME Fireface
-# UCX II / ESI UGM192 / PreSonus Quantum ES 4 (ALSA level 1 + demo).
+# UCX II (oscmix + GTK mixer), ESI UGM192 / PreSonus Quantum ES 4 (ALSA
+# level 1 + demo).
 #
 # Same architecture as the sibling mosquito-audio-plugin-manager dispatcher:
 #   - No arguments → the interactive TUI (mosquito-mixbay-tui, Go/Bubble Tea
@@ -49,7 +50,7 @@ if [[ $# -eq 0 ]]; then
   # every launch until accepted. The helper is a no-op when the device is not
   # plugged or already set up. Terminal only: the gum prompt needs one.
   if [[ -t 0 && -t 1 ]] && command -v mosquito-mixbay-compat >/dev/null 2>&1; then
-    for _dev in evo8 evo4; do
+    for _dev in evo8 evo4 fireface-ucx2; do
       if mosquito-mixbay-compat --needs "$_dev" >/dev/null 2>&1; then
         mosquito-mixbay-compat --prompt "$_dev" || true
       fi

@@ -42,32 +42,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Device specs — mirrors evo/devices.py, except the EVO 8 gain scale: the
-// card/app shows 0…58 dB while FU11/ALSA use the same physical gain as
-// -8…50 dB. GainOffset = 8 bridges them (display 0 → wire -8, 58 → 50).
+// EVO specs are embedded JSON cards (see cards.go and profiles/cards/).
+// The EVO 8 gain scale is carried by GainOffset: the card/app shows 0…58 dB
+// while FU11/ALSA use the same physical gain as -8…50 dB.
 var (
-	EVO8Spec = Spec{
-		ID: "evo8", Display: "Audient EVO 8", Vendor: "Audient",
-		USBVID: "2708", USBPID: "0007",
-		NumInputs: 4, NumOutPairs: 2,
-		GainMin: 0, GainMax: 58, GainOffset: 8, VolMin: -127, VolMax: 0,
-		MixerInputs: 10, MixerOutputs: 4,
-		HasMonitor: false, Backend: BackendEvoRaw, NeedsKmod: true,
-		Version:     "v1.0.0",
-		Caps:        Caps{Volume: true, Gain: true, Mute: true, Phantom: true, Monitor: false, Mixer: true},
-		Description: "4 in / 2 out pairs + loopback matrix over 2 mix buses. Monitoring via the matrix.",
-	}
-	EVO4Spec = Spec{
-		ID: "evo4", Display: "Audient EVO 4", Vendor: "Audient",
-		USBVID: "2708", USBPID: "0006",
-		NumInputs: 2, NumOutPairs: 1,
-		GainMin: -8, GainMax: 50, VolMin: -96, VolMax: 0,
-		MixerInputs: 6, MixerOutputs: 2,
-		HasMonitor: true, Backend: BackendEvoRaw, NeedsKmod: true,
-		Version:     "v1.0.0",
-		Caps:        Caps{Volume: true, Gain: true, Mute: true, Phantom: true, Monitor: true, Mixer: true},
-		Description: "2 in / 1 out pair + loopback. Direct-monitor blend knob.",
-	}
+	EVO8Spec = mustNativeSpec("evo8")
+	EVO4Spec = mustNativeSpec("evo4")
 )
 
 const (

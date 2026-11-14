@@ -18,11 +18,10 @@
 // knob that does not exist would be a lie.
 //
 // Fireface note: oudeis01/linux-fireface-mixer drives the Fireface 400 over
-// FireWire via snd-fireface-ctl-service. The UCX II is a USB interface and
-// that service does not expose it today, so the full TotalMix crosspoint
-// matrix is out of reach for now. Level 1 (this file: ALSA volumes and
-// mutes) covers daily use; the matrix arrives when the kernel/ctl service
-// exposes UCX II routing.
+// FireWire via snd-fireface-ctl-service and does not support the UCX II. For
+// the UCX II, Mixbay installs michaelforney/oscmix (USB MIDI SysEx in Class
+// Compliant mode) and opens its GTK mixer from the card menu. This file keeps
+// the ALSA level 1 fallback (volumes/mutes) for the same card.
 package drivers
 
 import (
@@ -39,48 +38,12 @@ import (
 )
 
 var (
-	FirefaceSpec = Spec{
-		ID: "fireface-ucx2", Display: "RME Fireface UCX II", Vendor: "RME",
-		USBVID: "0422", USBPID: "3xxx",
-		NumInputs: 8, NumOutPairs: 3,
-		GainMin: 0, GainMax: 65, VolMin: -96, VolMax: 0,
-		MixerInputs: 8, MixerOutputs: 2,
-		HasMonitor: false, Backend: BackendALSA, NeedsKmod: false,
-		Version:     "v0.0.1",
-		Caps:        Caps{Volume: true, Gain: false, Mute: true, Phantom: false, Monitor: false, Mixer: false},
-		Description: "ALSA level 1 (volumes/mutes). TotalMix matrix pending kernel support.",
-	}
-	UGM192Spec = Spec{
-		ID: "ugm192", Display: "ESI UGM192", Vendor: "ESI",
-		USBVID: "0a51", USBPID: "0019",
-		NumInputs: 2, NumOutPairs: 1,
-		GainMin: 0, GainMax: 40, VolMin: -96, VolMax: 0,
-		MixerInputs: 2, MixerOutputs: 2,
-		HasMonitor: false, Backend: BackendALSA, NeedsKmod: false,
-		Version:     "v0.0.1",
-		Caps:        Caps{Volume: true, Gain: false, Mute: true, Phantom: false, Monitor: false, Mixer: false},
-		Description: "Class-compliant USB. ALSA volumes only, no DSP.",
-	}
-	QuantumES4Spec = Spec{
-		ID: "quantum-es4", Display: "PreSonus Quantum ES 4", Vendor: "PreSonus",
-		USBVID: "194f", USBPID: "010d",
-		NumInputs: 4, NumOutPairs: 2,
-		GainMin: 0, GainMax: 60, VolMin: -96, VolMax: 0,
-		MixerInputs: 4, MixerOutputs: 2,
-		HasMonitor: false, Backend: BackendALSA, NeedsKmod: false,
-		Version:     "beta",
-		Caps:        Caps{Volume: true, Gain: false, Mute: true, Phantom: false, Monitor: false, Mixer: false},
-		Description: "Class-compliant USB. ALSA volumes only, no DSP.",
-	}
+	FirefaceSpec = mustNativeSpec("fireface-ucx2")
+	UGM192Spec   = mustNativeSpec("ugm192")
 )
 
-// alsaMatch maps a device to the card-name fragments seen in
-// /proc/asound/cards and `aplay -l`.
-var alsaMatch = map[string][]string{
-	"fireface-ucx2": {"UCX II", "UCXII", "Fireface"},
-	"ugm192":        {"UGM192", "UGM 192"},
-	"quantum-es4":   {"Quantum ES", "QuantumES"},
-}
+// Quantum ES 4 is a community profile now: it is installed from the repo or
+// added through "Add an audio interface" and never hardcoded here.
 
 type alsaDriver struct {
 	spec      Spec
@@ -97,15 +60,16 @@ func (d *alsaDriver) Spec() Spec { return d.spec }
 
 // Probe scans /proc/asound/cards for our USB signature.
 func (d *alsaDriver) Probe() bool {
-	f, err := os.Open("/proc/asound/cards")
+	path := "/proc/asound/cards"
+	if p := os.Getenv("MOSQUITOMIXBAY_ASOUND_CARDS"); p != "" {
+		path = p // tests point this at a fixture
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		return false
 	}
 	defer f.Close()
-	want := alsaMatch[d.spec.ID]
-	if len(d.spec.CardMatch) > 0 {
-		want = d.spec.CardMatch
-	}
+	want := d.spec.CardMatch
 	sc := bufio.NewScanner(f)
 	cardRe := regexp.MustCompile(`^\s*(\d+)\s*\[`)
 	var cur = -1
@@ -205,13 +169,72 @@ func (d *alsaDriver) Status() (Status, error) {
 	st.Online = true
 	st.Backend = BackendALSA
 	st.Note = fmt.Sprintf("ALSA card %d — level-1 controls (volumes/mutes only, no DSP).", d.card)
+	lvl, hasLevel := d.readLevel()
 	for i := 0; i < d.spec.NumInputs; i++ {
 		st.Inputs = append(st.Inputs, InputState{Name: fmt.Sprintf("input%d", i+1)})
 	}
 	for i := 0; i < d.spec.NumOutPairs; i++ {
-		st.Outputs = append(st.Outputs, OutputState{Name: d.outName(i)})
+		o := OutputState{Name: d.outName(i)}
+		if hasLevel {
+			o.VolumeDb = lvl.db
+			o.Muted = lvl.muted
+		}
+		st.Outputs = append(st.Outputs, o)
 	}
 	return st, nil
+}
+
+// Read is the live seam for polling: unlike Status it never fabricates the
+// persistent DEMO state when the card is gone.
+func (d *alsaDriver) Read() (Status, error) {
+	if !d.Probe() {
+		return Status{}, ErrOffline
+	}
+	return d.Status()
+}
+
+// alsaLevel is one amixer control's playback value.
+type alsaLevel struct {
+	db    float64
+	muted bool
+}
+
+var (
+	amixerDBRe = regexp.MustCompile(`\[(-?[0-9]+(?:\.[0-9]+)?)dB\]`)
+	amixerOnRe = regexp.MustCompile(`\[(on|off)\]`)
+)
+
+// parseAmixerLevel reads the first playback channel of `amixer sget` output:
+// "Front Left: Playback 41 [64%] [-23.00dB] [on]".
+func parseAmixerLevel(out string) (alsaLevel, bool) {
+	m := amixerDBRe.FindStringSubmatch(out)
+	if m == nil {
+		return alsaLevel{}, false
+	}
+	db, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return alsaLevel{}, false
+	}
+	lvl := alsaLevel{db: db}
+	if on := amixerOnRe.FindStringSubmatch(out); on != nil {
+		lvl.muted = on[1] == "off"
+	}
+	return lvl, true
+}
+
+// readLevel reads the first control this card exposes. All the level-1
+// interfaces put their monitor volume on one of these names.
+func (d *alsaDriver) readLevel() (alsaLevel, bool) {
+	for _, ctl := range []string{"Master", "PCM", "Speaker"} {
+		out, err := d.amixer("sget", ctl)
+		if err != nil {
+			continue
+		}
+		if lvl, ok := parseAmixerLevel(out); ok {
+			return lvl, true
+		}
+	}
+	return alsaLevel{}, false
 }
 
 func (d *alsaDriver) SetVolume(pair int, db float64) error {
@@ -235,8 +258,9 @@ func (d *alsaDriver) SetVolume(pair int, db float64) error {
 		return nil
 	}
 	// Best-effort on Master/PCM; interfaces without such a control report it.
+	pct := alsaVolumePercent(d.spec, db)
 	for _, ctl := range []string{"Master", "PCM", "Speaker"} {
-		if _, err := d.amixer("sset", ctl, fmt.Sprintf("%.0f%%", (db+96)/96*100)); err == nil {
+		if _, err := d.amixer("sset", ctl, fmt.Sprintf("%.0f%%", pct)); err == nil {
 			return nil
 		}
 	}
@@ -338,6 +362,16 @@ func (d *alsaDriver) Load() error {
 		}
 	}
 	return nil
+}
+
+// alsaVolumePercent maps dB to amixer's 0..100% for a card whose control
+// spans Spec.VolMin..VolMax (UGM192: -64..0 dB, linear).
+func alsaVolumePercent(spec Spec, db float64) float64 {
+	span := spec.VolMax - spec.VolMin
+	if span <= 0 {
+		span = 96
+	}
+	return clamp((db-spec.VolMin)/span*100, 0, 100)
 }
 
 // mixerKeys returns the known shadow keys in stable order (demo only — the

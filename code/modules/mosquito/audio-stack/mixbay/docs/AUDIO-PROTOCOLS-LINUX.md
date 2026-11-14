@@ -364,7 +364,7 @@ recommandation Mixbay.
 | **RME Digiface USB** | USB | mixer TotalMix-like, ADAT/SPDIF, clock | kernel ≥ 6.12 + `Openface Mixer` | **vérifié (48 kHz)** | 4× ADAT/SPDIF |
 | **RME Fireface 802** | FireWire / USB CC | mixer, routing, clock, gains, 48 V | `snd-fireface` + `Openface Mixer` | **communauté, non testé sur unité** | USB via MIDI SysEx |
 | **RME Fireface 800** | FireWire | mixer, routing, clock, gains, 48 V | `snd-fireface` + `Openface Mixer` | **communauté, non testé sur unité** | |
-| **RME Fireface UCX II** | USB vendor | audio 20 in / 24 out, registres, une partie du mixer | `oscmix` / `rme-ucx2-linux` | **expérimental** | PoC user-space, GUI mixer TODO |
+| **RME Fireface UCX II** | USB vendor | audio 20 in / 24 out, registres, une partie du mixer | `oscmix` / `rme-ucx2-linux` | **expérimental** | oscmix (OSC + GTK) intégré à Mixbay en mode Class Compliant |
 | **RME Fireface UC / UCX / 400** | USB / FireWire | audio + une partie du mixer | `snd-fireface`, `oscmix`, `fireface-control`, `Openface Mixer` | **partiel** | couverture variable selon modèle |
 | **Tascam US-16x08** | USB | mixer DSP (EQ, comp), routing, gains | kernel ≥ 4.11 + `tascam-gtk` | **vérifié** | un des rares USB avec DSP contrôlable |
 | **MOTU PCI-424** (2408mk3, 24I/O, HD192) | PCIe | CueMix DSP, routing, gains | `motu-pci-424` / `motu424-ctl` | **expérimental** | reverse engineering récent |
@@ -427,7 +427,7 @@ pas après suspend, fréquence verrouillée, channels mapping incorrect, etc.
 
 | Cas | Pourquoi |
 |---|---|
-| **RME Fireface UCX II** | PoC user-space récent ; audio et registres, mixer GUI encore TODO |
+| **RME Fireface UCX II** | oscmix (OSC + GTK) en mode Class Compliant ; GUI lancée depuis le menu de la carte |
 | **RME Fireface 802/800 via Openface** | protocole documenté, pas encore validé sur toutes les unités |
 | **MOTU PCI-424** | reverse engineering récent, `motu424-ctl` |
 | **UA Apollo (modèles non x4/x8p/Solo)** | même registre annoncé, mais non testé ; TB2 non supporté |
@@ -571,9 +571,10 @@ pas après suspend, fréquence verrouillée, channels mapping incorrect, etc.
   PoC, pas production.
 - **fireface-control / linux-fireface-mixer :** alternatives OSC/GUI pour
   Fireface.
-- **Pour Mixbay :** le backend RME actuel est ALSA niveau 1. Le rapport
-  recommande d'ajouter un backend « RME mixer » qui parle aux daemons/protocoles
-  existants plutôt que de dupliquer TotalMix.
+- **Pour Mixbay :** le backend RME est `oscmix` (OSC + GTK) en mode Class
+  Compliant, installé et lancé depuis le menu de la carte ; le rapport
+  recommande de parler aux daemons/protocoles existants plutôt que de
+  dupliquer TotalMix. `rme-ucx2-linux` reste un PoC vendor-specific.
 
 ### 5.7 MOTU — `motu-pci-424`, CueMix 5 Linux, FFADO
 
@@ -722,7 +723,7 @@ car c'est transverse et utile à tous les utilisateurs.
 | Audient EVO 8 | `2708:0007` | `evo_raw` kmod (`/dev/evo8`, ioctl) |
 | Audient EVO 4 | `2708:0006` | `evo_raw` kmod (`/dev/evo4`, ioctl) |
 | Solid State Logic SSL 12 | `31e9:0005` (audio) / `31e9:0024` (contrôle) | `douze` HTTP 1212 |
-| RME Fireface UCX II | `2a39:3xxx` | ALSA niveau 1 (TotalMix via oscmix/Openface à intégrer) |
+| RME Fireface UCX II | `2a39:3fd9` (CC) / `2a39:3f82` (Windows) | oscmix (OSC + GTK, USB MIDI SysEx) |
 | ESI UGM192 | `0a51:0019` | ALSA niveau 1 |
 | PreSonus Quantum ES 4 | `194f:010d` | ALSA niveau 1 (beta) |
 
@@ -755,9 +756,12 @@ car c'est transverse et utile à tous les utilisateurs.
 
 ### 7.3 RME Fireface UCX II / ESI UGM192
 
-- **Niveau 1 ALSA** : volumes/mutes, pas de DSP.
-- **Statut :** v0.0.1 ; la matrice TotalMix est en attente. Le rapport note que
-  `oscmix`, `Openface Mixer` et `rme-ucx2-linux` peuvent accélérer ce support.
+- **UCX II :** `oscmix` (OSC + GTK, USB MIDI SysEx) en mode Class Compliant ;
+  installé depuis le menu de la carte et lancé à la demande. La fondation audio
+  ne modifie pas la carte (socle udev/WirePlumber/PipeWire seulement).
+- **ESI UGM192 :** niveau 1 ALSA (volumes/mutes), pas de DSP.
+- **Statut :** UCX II v0.1.0 via oscmix ; UGM192 v0.0.1. La matrice TotalMix est
+  portée par oscmix, pas par le driver ALSA de Mixbay.
 
 ### 7.4 PreSonus Quantum ES 4
 

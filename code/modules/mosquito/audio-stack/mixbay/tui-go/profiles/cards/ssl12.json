@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "spec": {
+    "id": "ssl12",
+    "display": "Solid State Logic SSL 12",
+    "vendor": "SSL",
+    "usb_vid": "31e9",
+    "usb_pid": "0005",
+    "num_inputs": 4,
+    "num_output_pairs": 4,
+    "gain_min_db": 0,
+    "gain_max_db": 70,
+    "vol_min_db": -96,
+    "vol_max_db": 12,
+    "mixer_inputs": 12,
+    "mixer_outputs": 8,
+    "has_monitor": false,
+    "backend": "douze",
+    "needs_kmod": false,
+    "version": "v0.1.0",
+    "caps": {
+      "volume": true,
+      "gain": false,
+      "mute": true,
+      "phantom_48v": false,
+      "monitor_blend": false,
+      "mixer": true
+    },
+    "bus_names": ["MONITOR", "LINE 3-4", "HP A", "HP B"],
+    "description": "douze backend: master volumes, mutes and mixer sends. Preamps/48V and the full SSL 360 surface stay in Omarchy360."
+  },
+  "ui": {
+    "preset": "auto",
+    "blocks": ["tabBar", "controlsGrid", "mixerGrid", "statusBar", "help"]
+  },
+  "captures": []
+}

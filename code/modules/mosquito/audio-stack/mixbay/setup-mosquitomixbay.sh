@@ -3,8 +3,8 @@
 # mosquitOmarchy - "mosquitomixbay" (install / status)
 # =============================================================================
 # USB-audio control bay: Audient EVO 8 (full control via evo_raw kmod),
-# EVO 4 (same protocol), SSL 12 via douze, RME Fireface UCX II / ESI UGM192
-# (ALSA level 1) and user-added beta interfaces.
+# EVO 4 (same protocol), SSL 12 via douze, RME Fireface UCX II (oscmix +
+# GTK mixer), ESI UGM192 (ALSA level 1) and user-added beta interfaces.
 #
 # Installs:
 #   1. mosquito-mixbay + mosquito-mixbay-actions → ~/.local/bin
@@ -76,8 +76,12 @@ if ((UNINSTALL)); then
     bash "$SCRIPT_DIR/foundation/audio-foundation.sh" --remove \
       || warn "audio foundation removal reported a problem"
   fi
+  if [[ -f "$SCRIPT_DIR/oscmix/setup-oscmix.sh" ]]; then
+    bash "$SCRIPT_DIR/oscmix/setup-oscmix.sh" --uninstall \
+      || warn "oscmix removal reported a problem"
+  fi
   [[ -x "$BIN_DIR/mixbay-startup" ]] && "$BIN_DIR/mixbay-startup" --remove || true
-  rm -f "$BIN_DIR/mosquito-mixbay" "$BIN_DIR/mosquito-mixbay-actions" "$BIN_DIR/mosquito-mixbay-tui" "$BIN_DIR/mosquito-mixbay-compat" "$BIN_DIR/mixbay-audio-foundation" "$BIN_DIR/mixbay-audio-defaults" "$BIN_DIR/mixbay-setup-ssl12" "$BIN_DIR/mixbay-startup" "$BIN_DIR/mixbay-reverse"
+  rm -f "$BIN_DIR/mosquito-mixbay" "$BIN_DIR/mosquito-mixbay-actions" "$BIN_DIR/mosquito-mixbay-tui" "$BIN_DIR/mosquito-mixbay-compat" "$BIN_DIR/mixbay-audio-foundation" "$BIN_DIR/mixbay-audio-defaults" "$BIN_DIR/mixbay-setup-ssl12" "$BIN_DIR/mixbay-oscmix-gtk" "$BIN_DIR/mixbay-startup" "$BIN_DIR/mixbay-reverse"
   ok "binaries removed from $BIN_DIR"
   if [[ -f "$HOME/.config/hypr/hyprland.lua" ]]; then
     sed -i '/-- >>> mosquito-mixbay-tui-setup >>>/,/-- <<< mosquito-mixbay-tui-setup <<</d' "$HOME/.config/hypr/hyprland.lua"
@@ -168,6 +172,16 @@ EOF
   chmod +x "$SSL12_TMP"
   mv -f "$SSL12_TMP" "$BIN_DIR/mixbay-setup-ssl12"
   ok "mixbay-setup-ssl12 deployed: $BIN_DIR/mixbay-setup-ssl12"
+fi
+
+# RME Fireface UCX II: oscmix (OSC daemon) + GTK mixer. The launcher starts
+# oscmix on the card's raw MIDI port and stops only the instance it started.
+# The installer itself is reached through mixbay-audio-foundation --apply.
+if [[ -f "$SCRIPT_DIR/oscmix/launch-oscmix-gtk" ]]; then
+  cp "$SCRIPT_DIR/oscmix/launch-oscmix-gtk" "$BIN_DIR/mixbay-oscmix-gtk"
+  chmod +x "$BIN_DIR/mixbay-oscmix-gtk"
+  bash -n "$BIN_DIR/mixbay-oscmix-gtk" || die "Invalid syntax: mixbay-oscmix-gtk"
+  ok "mixbay-oscmix-gtk deployed: $BIN_DIR/mixbay-oscmix-gtk"
 fi
 
 # -----------------------------------------------------------------------------

@@ -47,13 +47,15 @@ usb_present() { # device id -> 0 when its USB vendor/product is plugged
   case $dev in
     evo8) vid=2708; pid=0007 ;;
     evo4) vid=2708; pid=0006 ;;
+    # 3fd9 = class-compliant (oscmix), 3f82 = Windows-driver mode.
+    fireface-ucx2) vid=2a39; pid="3fd9|3f82" ;;
     *) return 1 ;;
   esac
   for f in /sys/bus/usb/devices/*/idVendor; do
     [[ -r $f ]] || continue
     [[ "$(cat "$f" 2>/dev/null)" == "$vid" ]] || continue
     p="$(cat "${f%idVendor}idProduct" 2>/dev/null || true)"
-    [[ $p == "$pid" ]] && return 0
+    [[ $p =~ ^($pid)$ ]] && return 0
   done
   return 1
 }
@@ -87,15 +89,44 @@ needs_for() { # device id -> newline-separated missing pieces (empty = none)
       [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/pipewire/pipewire.conf.d/99-ssl12-sinks.conf" ]] \
         || printf '%s\n' "PipeWire playback-pair split (ssl12.pb12 … pb78)"
       ;;
+    fireface-ucx2)
+      # oscmix owns the TotalMix-like surface; the foundation installs it and
+      # never writes to the card. Delegate to the foundation so the shared
+      # system floor and the card-specific step report the same answer.
+      if command -v mixbay-audio-foundation >/dev/null 2>&1; then
+        mixbay-audio-foundation --needs fireface-ucx2 2>/dev/null || true
+      else
+        local b
+        for b in oscmix alsarawio oscmix-gtk; do
+          [[ -x "$HOME/.local/bin/$b" ]] || {
+            printf '%s\n' "oscmix + GTK mixer (build from source, user-local)"
+            break
+          }
+        done
+        if command -v amidi >/dev/null 2>&1; then
+          amidi -l 2>/dev/null | grep -q 'Fireface UCX II' \
+            || printf '%s\n' "Class Compliant mode on the UCX II (SETUP ▸ Options) with a raw MIDI port (check: amidi -l)"
+        fi
+      fi
+      ;;
     *) return 1 ;;
   esac
 }
 
 apply() {
   local dev="$1"
-  # The full installer is idempotent and already owns the kmod + udev steps.
-  # Reusing it keeps ONE source of truth for what "installed" means.
-  if [[ -x "$ROOT_DIR/setup-mosquitomixbay.sh" ]]; then
+  # The UCX II's card-specific step is oscmix only. The foundation applies the
+  # shared system floor and delegates the card to oscmix; it never writes to
+  # the interface. Other cards keep the full Mixbay installer.
+  if [[ $dev == fireface-ucx2 ]]; then
+    if [[ -f "$ROOT_DIR/foundation/audio-foundation.sh" ]]; then
+      info "Applying the audio foundation for $dev (system floor + oscmix)"
+      bash "$ROOT_DIR/foundation/audio-foundation.sh" --apply --device "$dev" --restart
+    else
+      warn "foundation/audio-foundation.sh not found under $ROOT_DIR — cannot apply."
+      return 1
+    fi
+  elif [[ -f "$ROOT_DIR/setup-mosquitomixbay.sh" ]]; then
     info "Running the Mixbay installer for $dev (one-time system steps)"
     bash "$ROOT_DIR/setup-mosquitomixbay.sh" -y
   else
@@ -133,7 +164,7 @@ while (($#)); do
   case "$1" in
     --needs|--status|--prompt|--apply|--accept) MODE="${1#--}"; shift ;;
     -h|--help) usage; exit 0 ;;
-    evo4|evo8|ssl12) DEV="$1"; shift ;;
+    evo4|evo8|ssl12|fireface-ucx2) DEV="$1"; shift ;;
     *) warn "Unknown argument: $1"; usage >&2; exit 2 ;;
   esac
 done
@@ -179,7 +210,7 @@ case $MODE in
       apply "$DEV" && { record "$DEV"; ok "$DEV setup recorded"; exit 0; }
       exit 1
     fi
-    warn "Later — $DEV stays in DEMO mode; you will be asked again next launch."
+    warn "Later — $DEV stays without its one-time setup; you will be asked again next launch."
     exit 1
     ;;
   accept)

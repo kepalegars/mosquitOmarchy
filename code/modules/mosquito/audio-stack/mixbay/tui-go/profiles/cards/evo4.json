@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "spec": {
+    "id": "evo4",
+    "display": "Audient EVO 4",
+    "vendor": "Audient",
+    "usb_vid": "2708",
+    "usb_pid": "0006",
+    "num_inputs": 2,
+    "num_output_pairs": 1,
+    "gain_min_db": -8,
+    "gain_max_db": 50,
+    "vol_min_db": -96,
+    "vol_max_db": 0,
+    "mixer_inputs": 6,
+    "mixer_outputs": 2,
+    "has_monitor": true,
+    "backend": "evo-raw",
+    "needs_kmod": true,
+    "version": "v1.0.0",
+    "caps": {
+      "volume": true,
+      "gain": true,
+      "mute": true,
+      "phantom_48v": true,
+      "monitor_blend": true,
+      "mixer": true
+    },
+    "description": "2 in / 1 out pair + loopback. Direct-monitor blend knob."
+  },
+  "ui": {
+    "preset": "evo4",
+    "blocks": ["tabBar", "controlsGrid", "mixerGrid", "levelsColumns", "statusBar", "help"]
+  },
+  "captures": []
+}

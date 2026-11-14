@@ -74,7 +74,7 @@ func foundationSetDefaultCmd(id string) tea.Cmd {
 }
 
 // foundationSplitCmd toggles the per-interface audio-panel split. The nodes
-// always exist; only the visible entry count changes.
+// exist while the card is connected; only the visible entry count changes.
 func foundationSplitCmd(on, id string) tea.Cmd {
 	c := exec.Command("mixbay-audio-foundation", "--split", on, "--device", id)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
@@ -225,4 +225,14 @@ type ssl12SetupMsg struct{ err error }
 func ssl12SetupCmd() tea.Cmd {
 	c := exec.Command("mixbay-setup-ssl12")
 	return tea.ExecProcess(c, func(err error) tea.Msg { return ssl12SetupMsg{err: err} })
+}
+
+// oscmixSetupCmd builds oscmix + the GTK mixer for the Fireface UCX II. It
+// goes through the foundation (one deploy, already on PATH) instead of its own
+// wrapper, and runs in the real terminal because pacman needs sudo.
+type oscmixSetupMsg struct{ err error }
+
+func oscmixSetupCmd() tea.Cmd {
+	c := exec.Command("mixbay-audio-foundation", "--apply", "--device", "fireface-ucx2")
+	return tea.ExecProcess(c, func(err error) tea.Msg { return oscmixSetupMsg{err: err} })
 }

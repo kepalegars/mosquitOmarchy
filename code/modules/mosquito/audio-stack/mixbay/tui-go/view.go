@@ -46,6 +46,9 @@ func (m model) View() string {
 		if m.isEvoDevice() {
 			return m.evoView()
 		}
+		if m.isUGMDevice() {
+			return m.ugmView()
+		}
 		titleText := "Controls"
 		if m.status.Spec.Display != "" {
 			titleText = m.status.Spec.Display
@@ -114,6 +117,14 @@ func (m model) View() string {
 		b.WriteString(m.footer(w, ""))
 	case scrAddInterface:
 		title, rows := m.accentBudget(h, "Add an audio interface")
+		m.picker = m.picker.SetSize(w, rows)
+		b.WriteString(centerBlock(title, w))
+		b.WriteString("\n")
+		b.WriteString(m.picker.View())
+		b.WriteString("\n")
+		b.WriteString(m.footer(w, ""))
+	case scrLibrary:
+		title, rows := m.accentBudget(h, "Audio interface profiles")
 		m.picker = m.picker.SetSize(w, rows)
 		b.WriteString(centerBlock(title, w))
 		b.WriteString("\n")
@@ -283,6 +294,8 @@ func (m model) footer(w int, note string) string {
 func (m model) legendLine(w int) string {
 	var hint string
 	switch m.top() {
+	case scrDevices:
+		hint = "↑/↓ · enter open · r refresh · settings · q quit"
 	case scrControls:
 		hint = "Tab mixer · enter · [ ] adjust · { } big · digits dial · s/o save/load · ? help"
 	case scrMixer:
@@ -300,6 +313,8 @@ func (m model) legendLine(w int) string {
 		hint = "enter choose · esc back"
 	case scrAddInterface:
 		hint = "enter add as beta · r rescan · esc back"
+	case scrLibrary:
+		hint = "enter install/detail · tab mark · e export · d remove · u clear UI · r refresh · esc back"
 	default:
 		hint = "↑/↓ · enter · q quit"
 	}

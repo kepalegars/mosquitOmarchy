@@ -163,8 +163,37 @@ func TestMixerBusKeys(t *testing.T) {
 	}
 }
 
+func TestParseAmixerLevel(t *testing.T) {
+	lvl, ok := parseAmixerLevel("  Front Left: Playback 41 [64%] [-23.00dB] [on]\n  Front Right: Playback 41 [64%] [-23.00dB] [on]")
+	if !ok || lvl.muted || math.Abs(lvl.db+23) > 1e-9 {
+		t.Fatalf("level = %+v ok=%v, want -23 dB on", lvl, ok)
+	}
+	lvl, ok = parseAmixerLevel("  Front Left: Playback 0 [0%] [-64.00dB] [off]")
+	if !ok || !lvl.muted || math.Abs(lvl.db+64) > 1e-9 {
+		t.Fatalf("level = %+v ok=%v, want -64 dB muted", lvl, ok)
+	}
+	if _, ok := parseAmixerLevel("Simple mixer control 'PCM',0"); ok {
+		t.Fatal("a control header must not parse as a level")
+	}
+}
+
+// The UGM192 control is 0..64 = -64..0 dB: -23 dB must map to 64%, not the
+// old -96 dB scale (which sent ~76% and left the output ~8 dB too loud).
+func TestUGM192VolumeScale(t *testing.T) {
+	if UGM192Spec.VolMin != -64 || UGM192Spec.VolMax != 0 {
+		t.Fatalf("UGM192 range = %v..%v, want -64..0", UGM192Spec.VolMin, UGM192Spec.VolMax)
+	}
+	if got := alsaVolumePercent(UGM192Spec, -23); math.Abs(got-64.0625) > 1e-6 {
+		t.Errorf("-23 dB = %v%%, want 64.0625", got)
+	}
+	if got := alsaVolumePercent(UGM192Spec, -100); got != 0 {
+		t.Errorf("below range = %v%%, want 0", got)
+	}
+}
+
 func TestAlsaCapsRefuseUnsupported(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MOSQUITOMIXBAY_ASOUND_CARDS", filepath.Join(t.TempDir(), "absent"))
 	d, _ := Open(DevUGM192)
 	if err := d.SetGain(1, 20); err == nil {
 		t.Errorf("ALSA gain should fail (analog knob)")
@@ -356,6 +385,7 @@ func TestEvoLiveOnlyWritesRefuseOffline(t *testing.T) {
 
 func TestALSALiveOnlyWritesRefuseOffline(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MOSQUITOMIXBAY_ASOUND_CARDS", filepath.Join(t.TempDir(), "absent"))
 	d := newALSA(UGM192Spec)
 	d.allowDemo = false
 	if err := d.SetVolume(0, -12); !errors.Is(err, ErrOffline) {

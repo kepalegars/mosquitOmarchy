@@ -34,15 +34,69 @@ Projets amont explicitement suivis (sourcés, pas copiés) :
 | Audient EVO 8 | `evo_raw` kmod (`/dev/evo8` ioctl) | **plein contrôle** : volumes, gains 0…58 dB (échelle carte ; FU11/ALSA -8…50), mutes, 48V, loopback mixer 10×4 sur 2 bus (MIX 1\|2, MIX 3\|4) — **v1.0.0** |
 | Audient EVO 4 | même protocole | plein contrôle + monitor blend, Levels 4 canaux — **v1.0.0** |
 | Solid State Logic SSL 12 | douze (HTTP local) | volumes masters, mutes, mixer/sends, setup complet depuis Mixbay ; préamps/48V et surface SSL 360 complète via Omarchy360 — **v0.1.0** |
-| RME Fireface UCX II | ALSA niveau 1 | volumes/mutes ; matrice TotalMix via oscmix/Openface à intégrer — **v0.0.1** |
-| ESI UGM192 | ALSA | volumes/mutes (pas de DSP) — **v0.0.1** |
-| PreSonus Quantum ES 4 | ALSA (beta) | **base de test reverse engineering**, pas natif : ajout via Settings → Add an audio interface, flag `beta`, volume/mute seulement |
+| RME Fireface UCX II | oscmix (OSC + GTK) | mixer complet : gains, 48 V, niveaux, routage via oscmix ; installé depuis le menu de la carte, sans écriture dans la carte par la fondation — **v0.1.0** |
+| ESI UGM192 | ALSA | panneau dédié style EVO : volume de sortie (0…-64 dB) + mute réels, mètres 2 IN / 2 OUT ; GAIN, MONITOR et 48V restent matériels — **v0.1.0** |
+| PreSonus Quantum ES 4 | ALSA (profil communautaire) | **base de test reverse engineering**, pas natif : profil dans le dépôt, ou ajout via Settings → Add an audio interface, flag `beta`, volume/mute seulement |
 | Autres interfaces USB | ALSA niveau 1 (beta) | ajout via Settings → Add an audio interface ; flag `demo-beta`/`online-beta` tant que non supportées nativement |
 
 Sans hardware (ou sans kmod), chaque driver sert un **état DEMO persistant**
 (même JSON) : la TUI, le CLI et les répètes live-mode marchent débranché.
 La démo respecte les capacités du hardware : un boîtier ALSA n'y expose que
 volumes et mutes, jamais de gain, 48V ni mixer.
+
+## Profils communautaires (mosquito mixbay profiles)
+
+Les définitions d'interfaces ne sont plus codées en dur dans Mixbay : chaque
+carte est un profil JSON. Le dépôt
+[`mosquito mixbay profiles`](https://github.com/mosquitomarchy/mosquito-mixbay-profiles)
+est la source de vérité ; les cinq cartes natives (`evo8`, `evo4`, `ugm192`,
+`fireface-ucx2`, `ssl12`) y figurent et sont aussi embarquées dans le binaire
+pour marcher hors ligne.
+
+- **Téléchargement à la connexion** : au démarrage, Mixbay compare les
+  interfaces vues dans `connected-interfaces.json` à `index.json` et propose
+  d'installer un profil absent ou de mettre à jour une carte plus ancienne.
+  Hors ligne, rien n'est proposé et les profils locaux continuent de marcher.
+- **Un seul fichier par carte** : `profiles-import` ne télécharge que le
+  `card.json` sélectionné (les captures restent dans le dépôt), vérifie son
+  `sha256`, le valide, puis l'écrit atomiquement. Le dossier `user/` n'est
+  jamais touché.
+- **Natives non écrasables** : un profil importé ne peut pas remplacer une
+  carte native ; seules vos surcharges locales s'appliquent à ces ids.
+- **Export prêt pour une PR** : `profiles-export` aplatit la carte effective
+  (upstream + surcharges), retire numéros de série et chemins bus/dev des
+  captures distilléees, et écrit `cards/<id>/`, `index.json`, `README.md`,
+  `PR.md`.
+
+Stockage local : `~/.config/mosquitomixbay/cards/<id>/` avec
+`upstream/card.json`, `user/layout.json` (surcharge UI creuse),
+`captures/` et `_meta.json`. Précédence :
+`built-in < upstream < user/layout.json`.
+
+Surcharge UI sans toucher au profil : `~/.config/mosquitomixbay/cards/<id>/user/layout.json`
+ne contient que les clés à changer (les objets fusionnent, les tableaux
+remplacent) :
+
+```json
+{ "preset": "auto", "blocks": ["controlsGrid", "statusBar"] }
+```
+
+Presets disponibles : `evo8`, `evo4`, `ugm192`, `single-pair`, `auto`.
+
+Commandes (`mosquito-mixbay-actions …`) : `profiles-index`,
+`profiles-import ID… [--all]`, `profiles-export [ID…] [--to DIR]`,
+`profiles-list-local`, `profiles-validate FILE|DIR…`, `profiles-remove ID…`,
+`profiles-clear-user ID`, `profiles-set-url URL` (dépôt miroir).
+La TUI expose le même ensemble dans **Settings → Audio interface profiles**.
+
+L'ancien `beta-devices.json` est migré une fois vers un profil local
+(`source: local`) puis archivé en `beta-devices.json.migrated`.
+
+Doublons : si une carte ajoutée par le scan (`beta-…`) et un profil téléchargé
+portent le même nom, la bibliothèque l'affiche et propose de retirer l'ancienne
+entrée ; **Skip** laisse les deux en place. Le reste du chantier profils
+(blocs UI composables, interpréteur USB/HID, mètres déclaratifs) est listé dans
+[`TODO-PROFILES.md`](TODO-PROFILES.md).
 
 ## Protocole EVO
 
@@ -181,7 +235,8 @@ nœuds du split restent internes à Mixbay et sont masqués via
 
 Settings → Audio foundation : `s` sur une interface EVO bascule `split on/off`
 (affiché après les Hz). Ce réglage ne concerne **que le panneau audio** : les
-nœuds du split existent toujours, donc aucun restart PipeWire. OFF (défaut) =
+nœuds du split n'existent que tant que la carte est connectée (service veille
+`mixbay-evo8-split.service`), donc aucun restart PipeWire. OFF (défaut) =
 une entrée stéréo par sens ; ON = toutes les paires stéréo (main, 3+4, loopback,
 mics). Après la bascule, Mixbay propose de redémarrer le shell Omarchy pour
 rafraîchir le panneau.
@@ -237,9 +292,10 @@ déconnexion ne bascule **jamais** l'écran en DEMO.
 Le 48V bascule immédiatement (comme evotui). Sur EVO 4 le bus loopback est
 unique (`MIX 3|4`, capture USB CH3/4) ; sur EVO 8 les deux bus sont nommés
 `MIX 1|2` et `MIX 3|4`. L'écran Settings filtre les interfaces non connectées
-et propose **Allow native volume controls** (défaut : off), actif seulement
-quand le plugin `mosquito.levels-guard` est installé et activé. La version du
-script est épinglée en haut à gauche.
+et propose **Control active audio interface volume with keyboard** (défaut :
+off), réglable seulement quand le plugin `mosquito.levels-guard` est installé et
+activé ; sans lui la ligne est grisée et figée sur on, puisque rien ne bloque
+les touches natives. La version du script est épinglée en haut à gauche.
 
 Trois volumes différents ne doivent pas être confondus :
 
@@ -268,6 +324,34 @@ mosquito-mixbay-compat --accept evo8   # ne plus demander pour cette interface
 « Later » n'est **pas** enregistré : le prompt revient au prochain lancement
 jusqu'à acceptation (`~/.config/mosquitomixbay/onboarding.json`). Le prompt
 n'apparaît que si l'interface est réellement branchée.
+
+## RME Fireface UCX II — oscmix
+
+[`michaelforney/oscmix`](https://github.com/michaelforney/oscmix) (ISC) pilote
+le mixer UCX II en USB MIDI SysEx (mode Class Compliant) et expose une API OSC ;
+`oscmix-gtk` est l'interface graphique.
+
+- **Installation manuelle** : `bash oscmix/setup-oscmix.sh` (`-y`, `--status`,
+  `--uninstall`). Le script construit `oscmix`, `alsarawio`, `alsaseqio` et
+  `oscmix-gtk` dans `~/.local/share/mosquitomixbay/oscmix` et les pose dans
+  `~/.local/bin`. Les paquets pacman (`gcc make pkgconf git gtk3 alsa-lib
+  alsa-utils`) restent installés à la désinstallation.
+- **Première connexion** : `mosquito-mixbay-compat` propose le même prompt que
+  pour l'EVO ; « Later » n'est pas mémorisé.
+- **Menu de la carte** : `Open oscmix GTK mixer` lance le mixer ; `Set up /
+  repair oscmix` (re)construit l'ensemble.
+- La fondation audio ne modifie **jamais** la carte : elle ne pose que le socle
+  système partagé (PipeWire/WirePlumber) et délègue le pas carte à oscmix. Les
+  règles udev/panneau audio spécifiques à l'EVO ne sont pas installées pour une
+  UCX II seule. Aucun service oscmix ne tourne en arrière-plan ;
+  `mixbay-oscmix-gtk` démarre oscmix à l'ouverture du mixer et arrête
+  uniquement l'instance qu'il a lancée.
+- Le mode **Class Compliant** est obligatoire (SETUP sur l'unité). Si le
+  lanceur ne trouve pas de port MIDI, vérifier `amidi -l` : la ligne doit finir
+  par `,1` et s'appeler `Fireface UCX II`.
+
+`oudeis01/linux-fireface-mixer` n'est pas utilisé : il vise la Fireface 400 en
+FireWire via `snd-fireface-ctl-service`, pas l'UCX II en USB.
 
 ## Reverse engineering harness (usbmon)
 
@@ -318,6 +402,10 @@ virtuels** :
 - `evo8_loopback_output` → canaux 5/6 (loopback)
 - `evo8_mic_1_2`, `evo8_mic_3_4`, `evo8_loopback_capture` côté capture
 
+Ce découpage est créé par le service utilisateur `mixbay-evo8-split.service`
+à la connexion de la carte, et détruit au débranchement : une EVO 8 absente ne
+laisse plus de `evo8_main_output` fantôme dans le panneau audio.
+
 D'après le manuel Audient EVO 8 :
 
 > Pressing the Volume Control 1 button will adjust the volume of the 1+2 speaker
@@ -359,6 +447,10 @@ vue stéréo des canaux USB. Il ne remplace pas le mixer, il l'alimente.
 - **Pas de profil/rate forcé.** Le pack audio respecte `pipewire-settings` et
   signale un mismatch plutôt que de changer une fréquence sous une session
   live.
+- **ESI UGM192** : seule la Feature Unit USB est pilotable (volume de sortie et
+  mute). Les boutons GAIN, MONITOR et 48V sont câblés au matériel : ils
+  n'émettent aucun rapport HID exploitable et ne sont donc ni lus ni écrits par
+  Mixbay. Les mètres affichent les flux USB, pas l'état des boutons.
 - **ADAT / talkback trim / fonctions non décodées** : expérimental ou absent
   selon la carte ; voir les notes de protocole de douze pour la SSL 12.
 - **Reverse engineering** : le harnais réel est `mixbay-reverse` (usbmon,
@@ -476,12 +568,19 @@ Mixbay seul ne touche ni au panneau audio d'Omarchy ni aux touches média.
 Sur une interface gérée, le panneau remplace le slider par une barre pleine
 non ajustable (100 %), sans bouton ; le mètre de crête d'entrée reste réel.
 
-Le réglage **Allow native volume controls** (Settings) écrit
-`allow_native_volume` dans `ui.json` ; le panneau le relit à chaud. Il est
-grisé tant que `mosquito.levels-guard` n'est pas actif. La garde ne bloque que
-ces surfaces : `pactl`/`wpctl` directs et les applications ne sont jamais
-interceptés. Une touche bloquée affiche quand même l'OSD avec son icône et
-100 %, mais la barre de niveau vide (0 %). Si le panneau upstream change,
+Le réglage **Control active audio interface volume with keyboard** (Settings)
+écrit `allow_native_volume` dans `ui.json` ; le panneau le relit à chaud. Il est
+grisé et figé sur on tant que `mosquito.levels-guard` n'est pas actif (rien ne
+bloque alors les touches natives). Quand il est actif et que l'interface
+sélectionnée en sortie est gérée par Mixbay, les touches de volume pilotent son
+volume matériel (par pas de 5 dB, ±1 dB avec ALT) et la sourdine via
+`mosquito-mixbay-actions`, avec l'OSD au niveau résultant. Sur une interface
+gérée, le panneau affiche l'icône de volume maximum et le sous-titre « handled
+by mixbay » à la place du niveau PipeWire. La garde ne bloque que ces
+surfaces : `pactl`/`wpctl` directs et les applications ne sont jamais
+interceptés. Avec le réglage sur off, une touche bloquée affiche quand même
+l'OSD avec son icône et 100 %, mais la barre de niveau vide (0 %).
+Si le panneau upstream change,
 la mise à jour refuse de rafraîchir le clone (supprimer le dossier, ou
 réinstaller Levels Guard, pour repartir de l'upstream).
 
@@ -494,6 +593,7 @@ mosquitomixbay/
   setup-mosquitomixbay.sh    installateur (Go build + Hyprland + kmod)
   compat/                    accueil première connexion (udev/kmod/split)
   foundation/                pack audio par défaut (udev, WP, split, kHz)
+  oscmix/                    oscmix + GTK de la Fireface UCX II (setup + lanceur)
   harness/                   mixbay-reverse (usbmon capture/diff/replay) + tests
   docs/                      AUDIO-PROTOCOLS-LINUX.md (rapport de référence)
   tui-go/                    binaire unique (TUI + CLI) sur tui-kit

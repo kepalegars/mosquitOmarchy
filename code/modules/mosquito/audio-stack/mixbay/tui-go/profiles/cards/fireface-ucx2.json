@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "spec": {
+    "id": "fireface-ucx2",
+    "display": "RME Fireface UCX II",
+    "vendor": "RME",
+    "usb_vid": "0422",
+    "usb_pid": "3xxx",
+    "num_inputs": 8,
+    "num_output_pairs": 3,
+    "gain_min_db": 0,
+    "gain_max_db": 65,
+    "vol_min_db": -96,
+    "vol_max_db": 0,
+    "mixer_inputs": 8,
+    "mixer_outputs": 2,
+    "has_monitor": false,
+    "backend": "alsa",
+    "needs_kmod": false,
+    "version": "v0.0.1",
+    "caps": {
+      "volume": true,
+      "gain": false,
+      "mute": true,
+      "phantom_48v": false,
+      "monitor_blend": false,
+      "mixer": false
+    },
+    "card_match": ["UCX II", "UCXII", "Fireface"],
+    "description": "ALSA level 1 (volumes/mutes). TotalMix matrix pending kernel support."
+  },
+  "ui": {
+    "preset": "auto",
+    "blocks": ["controlsGrid", "statusBar", "help"]
+  },
+  "captures": []
+}

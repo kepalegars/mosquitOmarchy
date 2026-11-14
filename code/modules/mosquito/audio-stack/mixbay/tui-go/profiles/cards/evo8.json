@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "spec": {
+    "id": "evo8",
+    "display": "Audient EVO 8",
+    "vendor": "Audient",
+    "usb_vid": "2708",
+    "usb_pid": "0007",
+    "num_inputs": 4,
+    "num_output_pairs": 2,
+    "gain_min_db": 0,
+    "gain_max_db": 58,
+    "gain_offset_db": 8,
+    "vol_min_db": -127,
+    "vol_max_db": 0,
+    "mixer_inputs": 10,
+    "mixer_outputs": 4,
+    "has_monitor": false,
+    "backend": "evo-raw",
+    "needs_kmod": true,
+    "version": "v1.0.0",
+    "caps": {
+      "volume": true,
+      "gain": true,
+      "mute": true,
+      "phantom_48v": true,
+      "monitor_blend": false,
+      "mixer": true
+    },
+    "description": "4 in / 2 out pairs + loopback matrix over 2 mix buses. Monitoring via the matrix."
+  },
+  "ui": {
+    "preset": "evo8",
+    "blocks": ["tabBar", "controlsGrid", "mixerGrid", "levelsColumns", "statusBar", "help"]
+  },
+  "captures": []
+}

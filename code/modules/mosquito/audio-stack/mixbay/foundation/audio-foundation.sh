@@ -12,6 +12,8 @@
 #     PreSonus USB nodes. Passive loopbacks otherwise go idle and resync.
 #   • EVO 8: split the raw 6-channel USB node into stereo nodes
 #     (main, output 3+4, loopback out, mic 1+2, mic 3+4, loopback capture).
+#     The split is a watchdog service: the nodes exist only while the card is
+#     connected, so an unplugged EVO 8 never shows up as a selectable output.
 #     EVO 4 is left to ALSA UCM >= 1.2.16, which already exposes the right
 #     stereo output / split captures.
 #   • Defaults: EVO 8 main out + mic 1+2 become the default sink/source at
@@ -51,6 +53,19 @@ BIN_DIR="$HOME_DIR/.local/bin"
 STATE="$CONF/mosquitomixbay/foundation.json"
 CONNLOG="$CONF/mosquitomixbay/connected-interfaces.json"
 
+# Local profile cards, the same store the Go binary uses. A downloaded or
+# self-added card counts as installed when its upstream/card.json exists;
+# native cards are embedded in Mixbay and never live here.
+profile_card_dir(){ printf '%s/mosquitomixbay/cards/%s' "$CONF" "$1"; }
+profile_installed(){ [[ -f "$(profile_card_dir "$1")/upstream/card.json" ]]; }
+profile_id_for_name(){
+  local n=$1 f
+  for f in "$CONF"/mosquitomixbay/cards/*/upstream/card.json; do
+    [[ -f $f ]] || continue
+    jq -r --arg n "$n" 'select(.spec.display==$n)|.spec.id' "$f" 2>/dev/null
+  done | head -1
+}
+
 BASE_CONF="$PW_DIR/50-mixbay-audio.conf"
 EVO_CONF="$PW_DIR/50-mixbay-evo.conf"
 EVO4_CONF="$PW_DIR/50-mixbay-evo4.conf"
@@ -63,6 +78,7 @@ CAPTURE_HELPER="/usr/local/lib/mosquitomixbay/evo8-capture-enable.py"
 PLATFORM_AUDIO="/usr/share/omarchy-platform/audio.json"
 DEFAULT_SCRIPT="$BIN_DIR/mixbay-audio-defaults"
 DEFAULT_UNIT="$SYS_USER/mixbay-audio-defaults.service"
+EVO_SPLIT_UNIT="$SYS_USER/mixbay-evo8-split.service"
 PW_SETTINGS_CONF="$PW_DIR/90-mosquitomarchy-pipewire.conf"
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -141,6 +157,7 @@ while (($#)); do
     --split) MODE=split; SPLIT="${2:-}"; shift 2; ;;
     --track) MODE=track; shift ;;
     --reset-history) MODE=reset-history; shift ;;
+    --evo-split-run) MODE=evo-split-run; shift ;;
     --json) JSON=1; shift ;;
     --restart) RESTART=1; shift ;;
     --force-evo4-split) FORCE_EVO4=1; shift ;;
@@ -176,7 +193,8 @@ version_for_id(){
   case "$1" in
     evo8|evo4) echo v1.0.0 ;;
     ssl12) echo v0.1.0 ;;
-    fireface-ucx2|ugm192) echo v0.0.1 ;;
+    fireface-ucx2) echo v0.1.0 ;;
+    ugm192) echo v0.0.1 ;;
     *) echo beta ;;
   esac
 }
@@ -231,8 +249,7 @@ track_connections(){
     else
       native=false
       version=beta
-      existing="$(jq -r --arg n "$desc" '.[]|select(.name==$n)|.id' \
-        "$CONF/mosquitomixbay/beta-devices.json" 2>/dev/null | head -1 || true)"
+      existing="$(profile_id_for_name "$desc" || true)"
       id="${existing:-beta-$(slug "$desc")}"
     fi
     jq --arg id "$id" --arg name "$name" --arg match "$match" \
@@ -353,11 +370,17 @@ native_rate(){
   esac
 }
 
+# oscmix is the UCX II's control surface: user-local binaries, no card writes.
+oscmix_installed(){
+  [[ -x $BIN_DIR/oscmix && -x $BIN_DIR/alsarawio && -x $BIN_DIR/oscmix-gtk ]]
+}
+
 native_installed(){
   state_installed "$1" && return 0
   case "$1" in
-    evo8) [[ -f $EVO_CONF ]] ;;
+    evo8) [[ -f $EVO_SPLIT_UNIT ]] ;;
     ssl12) systemctl --user is-active --quiet douze 2>/dev/null ;;
+    fireface-ucx2) oscmix_installed ;;
     *) return 1 ;;
   esac
 }
@@ -367,9 +390,10 @@ split_supported(){
   case "$1" in evo8|evo4) return 0 ;; *) return 1 ;; esac
 }
 
-# split_state <id> -> on|off|"". The split nodes always exist: the toggle only
-# decides how many of them the Omarchy audio panel lists (one stereo entry when
-# off, every pair when on). Empty means "no split concept" (ALSA level 1).
+# split_state <id> -> on|off|"". The split nodes exist while the card is
+# connected: the toggle only decides how many of them the Omarchy audio panel
+# lists (one stereo entry when off, every pair when on). Empty means "no split
+# concept" (ALSA level 1).
 split_state(){
   split_supported "$1" || { echo ""; return; }
   [[ "$(state_split "$1")" == on ]] && echo on || echo off
@@ -382,7 +406,7 @@ status_json(){
   rate="$(pw_get clock.rate)"
   quantum="$(pw_get clock.quantum)"
   allowed="$(pw_get clock.allowed-rates)"
-  [[ -f $EVO_CONF ]] && split=1
+  [[ -f $EVO_SPLIT_UNIT ]] && split=1
   [[ -f $WP_CONF ]] && wp=1
   [[ -f $UDEV_RULE ]] && udev=1
   [[ -f $DEFAULT_UNIT ]] && defaults=1
@@ -394,8 +418,7 @@ status_json(){
     beta=false; [[ $native == false ]] && beta=true
     installed=false; native_installed "$id" && installed=true
     if [[ $beta == true ]]; then
-      jq -e --arg id "$id" '.[]|select(.id==$id)' \
-        "$CONF/mosquitomixbay/beta-devices.json" >/dev/null 2>&1 && installed=true
+      profile_installed "$id" && installed=true
     fi
     online=false
     if [[ $native == true ]]; then native_online "$id" && online=true; else
@@ -417,8 +440,7 @@ status_json(){
     conns="$(jq -c --argjson d "$conns" --argjson r "$row" '. + [$r]' <<< "$conns")"
     # CARDS only carries native or explicitly added beta interfaces; the
     # DEFAULT picker uses the full connection log below.
-    if [[ $beta == false ]] || jq -e --arg id "$id" '.[]|select(.id==$id)' \
-        "$CONF/mosquitomixbay/beta-devices.json" >/dev/null 2>&1; then
+    if [[ $beta == false ]] || profile_installed "$id"; then
       cards="$(jq -c --argjson d "$cards" --argjson r "$row" '. + [$r]' <<< "$cards")"
     fi
   done < <(jq -r '.[] | [.id,.name,.version,(.native|tostring),.match] | @tsv' "$CONNLOG" 2>/dev/null || true)
@@ -456,8 +478,7 @@ status_human(){
   while IFS=$'\t' read -r dev name version native match; do
     [[ -n $dev ]] || continue
     installed="no"; native_installed "$dev" && installed="yes"
-    if [[ $native == false ]] && jq -e --arg id "$dev" '.[]|select(.id==$id)' \
-        "$CONF/mosquitomixbay/beta-devices.json" >/dev/null 2>&1; then
+    if [[ $native == false ]] && profile_installed "$dev"; then
       installed="yes"
     fi
     online="offline"
@@ -550,8 +571,8 @@ EOF
 }
 
 # Hide Mixbay's internal nodes from the Omarchy bar and audio panel. The split
-# always exists for routing; the per-interface toggle only decides how many
-# entries the panel lists:
+# exists while the card is connected; the per-interface toggle only decides how
+# many entries the panel lists:
 #   off (default) -> evo8_main_output / evo8_mic_1_2 only, one EVO 8 per side;
 #   on            -> every stereo pair (main, 3+4, loopback, mics).
 # Internal .out/.in streams and monitors stay hidden either way, and the raw
@@ -622,82 +643,108 @@ EOF
   fi
 }
 
-write_evo_split(){
-  local dev="$1" node="$2" ch="$3"
-  local in_node in_ch
-  if [[ -f "$PW_DIR/evo8-stereo.conf" ]]; then
-    warn "upstream evo8-stereo.conf is present — not writing a second split (duplicate nodes)."
-    return 0
-  fi
-  read -r in_node in_ch < <(discover_node "$dev" input)
-  if [[ -z $node || -z $in_node || $ch -lt 6 ]]; then
-    warn "$dev split skipped: need a 6-channel USB node (got ${ch:-0} playback / ${in_ch:-0} capture)."
-    warn "Connect the EVO, select the multichannel/Pro Audio profile, then re-run."
-    return 0
-  fi
-  mkdir -p "$PW_DIR"
-  backup_file "$EVO_CONF"
-  cat > "$EVO_CONF" <<EOF
-# Mixbay audio foundation — EVO 8 stereo split.
-# Generated from the live PipeWire graph: target names carry the card serial.
-# Playback CH1/2 = main, CH3/4 = output 3+4, CH5/6 = loopback out.
-# Capture  CH1/2 = mic 1+2, CH3/4 = mic 3+4, CH5/6 = loopback capture.
-context.modules = [
+# install_evo_split: the old static 50-mixbay-evo.conf created the six
+# loopback nodes at every PipeWire start, even with the card unplugged — the
+# phantom "EVO 8" sink Omarchy then offered as an output. The split is now a
+# watchdog service: it creates the same nodes with pw-loopback only while the
+# EVO 8 is present and tears them down when it disappears.
+install_evo_split(){
+  local legacy=0 runner
+  if [[ -f $EVO_CONF ]]; then rm -f "$EVO_CONF"; legacy=1; fi
+  mkdir -p "$SYS_USER"
+  runner="$BIN_DIR/mixbay-audio-foundation"
+  [[ -x $runner ]] || runner="$(readlink -f "${BASH_SOURCE[0]}")"
+  backup_file "$EVO_SPLIT_UNIT"
+  cat > "$EVO_SPLIT_UNIT" <<EOF
+[Unit]
+Description=Mixbay EVO 8 split (only while the interface is connected)
+After=pipewire.service wireplumber.service
+[Service]
+Type=simple
+ExecStart=$runner --evo-split-run
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=graphical-session.target
 EOF
-  local -a names=(main_output output_3_4 loopback_output)
+  systemctl --user daemon-reload 2>/dev/null || true
+  systemctl --user enable mixbay-evo8-split.service 2>/dev/null || true
+  if (( legacy )); then
+    warn "removed the old static EVO 8 split — restart PipeWire (--apply --restart) to drop its nodes"
+  else
+    systemctl --user restart mixbay-evo8-split.service 2>/dev/null || true
+  fi
+  ok "EVO 8 split watchdog installed ($EVO_SPLIT_UNIT)"
+}
+
+# evo_split_run: systemd user service body. Polls for the card, keeps the six
+# stereo loopbacks alive while it is there, removes them when it is gone.
+evo_split_run(){
+  command -v pw-loopback >/dev/null 2>&1 \
+    || { warn "pw-loopback not found — EVO 8 split disabled"; exit 0; }
+  local p node="" in_node="" ch="" in_ch="" last_node="" last_in="" i
+  local -a pids=("" "" "" "" "" "")
+  local -a names=(main_output output_3_4 loopback_output mic_1_2 mic_3_4 loopback_capture)
+  local -a nicks=("EVO 8" "EVO 8 3+4" "EVO 8 Loopback" "EVO 8" "EVO 8 Mic 3+4" "EVO 8 Loopback In")
   local -a positions=("FL FR" "FC LFE" "RL RR")
-  local -a nicks=("EVO 8" "EVO 8 3+4" "EVO 8 Loopback")
-  local i
-  for i in 0 1 2; do
-    cat >> "$EVO_CONF" <<EOF
-  { name = libpipewire-module-loopback
-    args = {
-      node.description = "EVO8 ${names[$i]}"
-      capture.props = {
-        media.class = Audio/Sink
-        node.name = "evo8_${names[$i]}"
-        node.nick = "${nicks[$i]}"
-        audio.position = [ FL FR ]
-      }
-      playback.props = {
-        node.name = "evo8_${names[$i]}.out"
-        audio.position = [ ${positions[$i]} ]
-        target.object = "$node"
-        node.dont-reconnect = true
-        stream.dont-remix = true
-      }
-    }
+
+  stop_children(){
+    for p in "${pids[@]}"; do
+      [[ -n $p ]] && kill "$p" 2>/dev/null || true
+    done
+    pids=("" "" "" "" "" "")
   }
-EOF
-  done
-  local -a srcs=(mic_1_2 mic_3_4 loopback_capture)
-  local -a srcpos=("FL FR" "FC LFE" "RL RR")
-  local -a srcnicks=("EVO 8" "EVO 8 Mic 3+4" "EVO 8 Loopback In")
-  for i in 0 1 2; do
-    cat >> "$EVO_CONF" <<EOF
-  { name = libpipewire-module-loopback
-    args = {
-      node.description = "EVO8 ${srcs[$i]}"
-      capture.props = {
-        node.name = "evo8_${srcs[$i]}.in"
-        audio.position = [ ${srcpos[$i]} ]
-        target.object = "$in_node"
-        node.dont-reconnect = true
-        stream.dont-remix = true
-        node.passive = true
-      }
-      playback.props = {
-        media.class = Audio/Source
-        node.name = "evo8_${srcs[$i]}"
-        node.nick = "${srcnicks[$i]}"
-        audio.position = [ FL FR ]
-      }
-    }
+  trap 'stop_children; exit 0' TERM INT
+
+  # start_one <index> <sink|source> <name> <nick> <capture-pos> <playback-pos> <target>
+  start_one(){
+    local idx="$1" kind="$2" name="$3" nick="$4" cpos="$5" ppos="$6" target="$7" carr parr
+    if [[ -n ${pids[$idx]} ]] && kill -0 "${pids[$idx]}" 2>/dev/null; then return 0; fi
+    carr="[\"${cpos// /\", \"}\"]"
+    parr="[\"${ppos// /\", \"}\"]"
+    if [[ $kind == sink ]]; then
+      pw-loopback \
+        --capture-props "{\"media.class\":\"Audio/Sink\",\"node.name\":\"evo8_$name\",\"node.nick\":\"$nick\",\"node.description\":\"EVO8 $name\",\"audio.position\":$carr}" \
+        --playback-props "{\"node.name\":\"evo8_$name.out\",\"audio.position\":$parr,\"target.object\":\"$target\",\"node.dont-reconnect\":true,\"stream.dont-remix\":true}" \
+        >/dev/null 2>&1 &
+    else
+      pw-loopback \
+        --capture-props "{\"node.name\":\"evo8_$name.in\",\"audio.position\":$parr,\"target.object\":\"$target\",\"node.dont-reconnect\":true,\"stream.dont-remix\":true,\"node.passive\":true}" \
+        --playback-props "{\"media.class\":\"Audio/Source\",\"node.name\":\"evo8_$name\",\"node.nick\":\"$nick\",\"node.description\":\"EVO8 $name\",\"audio.position\":$carr}" \
+        >/dev/null 2>&1 &
+    fi
+    pids[$idx]=$!
   }
-EOF
+
+  info "EVO 8 split watchdog running"
+  while :; do
+    if evo_present evo8; then
+      read -r node ch < <(discover_node evo8 output)
+      if [[ -z $node || ${ch:-0} -lt 6 ]]; then
+        set_pro_audio evo8 >/dev/null 2>&1 || true
+        read -r node ch < <(discover_node evo8 output)
+      fi
+      read -r in_node in_ch < <(discover_node evo8 input)
+      if [[ -n $node && -n $in_node && ${ch:-0} -ge 6 && ${in_ch:-0} -ge 6 ]]; then
+        # A profile/name change means the old targets are gone: rebuild once.
+        if [[ $node != "$last_node" || $in_node != "$last_in" ]]; then
+          stop_children
+          last_node="$node"; last_in="$in_node"
+        fi
+        for i in 0 1 2; do
+          start_one "$i" sink "${names[$i]}" "${nicks[$i]}" "FL FR" "${positions[$i]}" "$node"
+        done
+        for i in 0 1 2; do
+          start_one "$((i+3))" source "${names[$((i+3))]}" "${nicks[$((i+3))]}" \
+            "${positions[$i]}" "FL FR" "$in_node"
+        done
+      fi
+    else
+      stop_children
+      last_node=""; last_in=""
+    fi
+    sleep 2
   done
-  echo ']' >> "$EVO_CONF"
-  ok "EVO 8 split written ($EVO_CONF)"
 }
 
 install_defaults(){
@@ -773,6 +820,16 @@ restart_audio(){
   info "Restarting PipeWire + WirePlumber"
   systemctl --user restart pipewire pipewire-pulse wireplumber 2>/dev/null \
     && ok "audio graph restarted" || warn "audio graph restart failed"
+  # The split sink only exists once the watchdog has re-created it, so give it
+  # a moment before pointing the default sink at evo8_main_output.
+  systemctl --user restart mixbay-evo8-split.service 2>/dev/null || true
+  if evo_present evo8; then
+    local i
+    for i in $(seq 1 20); do
+      pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -qx evo8_main_output && break
+      sleep 0.5
+    done
+  fi
   "$DEFAULT_SCRIPT" 2>/dev/null || true
 }
 
@@ -780,14 +837,23 @@ apply(){
   info "Applying the Mixbay audio foundation${DEV:+ for $DEV}"
   write_base_clock
   write_wp_rules
-  install_udev
-  install_platform_hints
+  # The EVO udev seat rule and audio-panel hints are EVO-specific. A UCX II
+  # setup stays on the shared floor (PipeWire/WirePlumber) and oscmix only.
+  if [[ $DEV != fireface-ucx2 ]]; then
+    install_udev
+    install_platform_hints
+  fi
   local -a targets=()
   if [[ -n $DEV ]]; then
     targets=("$DEV")
   else
     evo_present evo8 && targets+=(evo8)
     evo_present evo4 && targets+=(evo4)
+  fi
+  # Migrate the old static split even with the card unplugged: its loopback
+  # nodes are the phantom EVO 8 output this foundation must remove.
+  if [[ -f $EVO_CONF && ! " ${targets[*]:-} " =~ " evo8 " ]]; then
+    targets+=(evo8)
   fi
   local node ch dev first
   local -a firsts=()
@@ -796,13 +862,7 @@ apply(){
     state_installed "$dev" || first=1
     case $dev in
       evo8)
-        read -r node ch < <(discover_node evo8 output)
-        if evo_present evo8 && { [[ -z $node ]] || (( ch < 6 )); }; then
-          info "Selecting the EVO 8 Pro Audio profile (6 USB channels)"
-          set_pro_audio evo8 && read -r node ch < <(discover_node evo8 output) \
-            || warn "could not select the EVO 8 Pro Audio profile"
-        fi
-        write_evo_split evo8 "$node" "$ch"
+        install_evo_split
         [[ -n "$(state_split evo8)" ]] || state_set_split evo8 off
         state_set_installed evo8 true
         state_set_default_if_empty evo8
@@ -836,14 +896,28 @@ apply(){
           warn "douze module not found ($douze) — install it from Setup → Apps → douze"
         fi
         ;;
-      fireface-ucx2|ugm192)
+      fireface-ucx2)
+        # oscmix is the whole card-specific setup. It is user-local and never
+        # writes a card register; the shared floor above is system config only.
+        local oscmix="$MIXBAY_ROOT/oscmix/setup-oscmix.sh"
+        if [[ -f $oscmix ]]; then
+          if bash "$oscmix" -y; then
+            state_set_installed fireface-ucx2 true
+            state_set_default_if_empty fireface-ucx2
+          else
+            warn "oscmix setup failed — Fireface UCX II not marked as set up"
+          fi
+        else
+          warn "oscmix module not found ($oscmix)"
+        fi
+        ;;
+      ugm192)
         # Native ALSA level 1: the shared floor is the setup.
-        state_set_installed "$dev" true
-        state_set_default_if_empty "$dev"
+        state_set_installed ugm192 true
+        state_set_default_if_empty ugm192
         ;;
       *)
-        if jq -e --arg id "$dev" '.[]|select(.id==$id)' \
-            "$CONF/mosquitomixbay/beta-devices.json" >/dev/null 2>&1; then
+        if profile_installed "$dev"; then
           state_set_installed "$dev" true
           state_set_default_if_empty "$dev"
         else
@@ -855,20 +929,14 @@ apply(){
   done
   install_defaults
   state_init
-  for dev in "${firsts[@]}"; do init_defaults "$dev"; done
+  # oscmix owns the UCX II; the foundation must not write ALSA volume/mute to
+  # the card on first setup (system-level config only). Other cards keep the
+  # one-time preset application.
+  for dev in "${firsts[@]}"; do
+    [[ $dev == fireface-ucx2 ]] || init_defaults "$dev"
+  done
   ok "foundation applied"
-  if (( RESTART )); then
-    restart_audio
-    # The restart re-enumerates the card before WirePlumber has saved the
-    # profile, so it falls back to surround 2.1 and the split targets vanish.
-    # Select pro-audio again now that the graph is up; it persists from here.
-    if evo_present evo8 && state_installed evo8; then
-      # restart_audio already ran the defaults script, but the split sink only
-      # exists once pro-audio is back: run it again after the profile switch.
-      set_pro_audio evo8 && "$DEFAULT_SCRIPT" 2>/dev/null \
-        || warn "EVO 8 Pro Audio profile not restored after restart"
-    fi
-  fi
+  (( RESTART )) && restart_audio || true
 }
 
 write_evo4_split(){
@@ -918,14 +986,15 @@ EOF
 }
 
 # toggle_split: --split on|off for one interface. This is a PANEL choice only:
-# the split nodes always exist, on lists every pair, off lists just the main
-# stereo pair. No PipeWire restart, so volumes and routing never drop.
+# the split nodes exist while the card is connected, on lists every pair, off
+# lists just the main stereo pair. No PipeWire restart, so volumes and routing
+# never drop.
 toggle_split(){
   local dev="$DEV" on="$SPLIT"
   [[ -n $dev ]] || { warn "--split needs --device"; return 2; }
   split_supported "$dev" || { warn "$dev has no Mixbay split to toggle"; return 1; }
   if [[ $dev == evo8 ]]; then
-    [[ -f $EVO_CONF ]] || { warn "EVO 8 split is not installed — run --apply first"; return 1; }
+    [[ -f $EVO_SPLIT_UNIT ]] || { warn "EVO 8 split is not installed — run --apply first"; return 1; }
   else
     [[ -f $EVO4_CONF ]] || { warn "EVO 4 split is not installed — run --apply --force-evo4-split first"; return 1; }
   fi
@@ -943,7 +1012,9 @@ remove_device(){
   info "Removing the Mixbay foundation for $dev"
   case $dev in
     evo8)
-      if grep -q 'EVO8' "$EVO_CONF" 2>/dev/null; then rm -f "$EVO_CONF"; fi
+      rm -f "$EVO_CONF"
+      systemctl --user disable --now mixbay-evo8-split.service 2>/dev/null || true
+      rm -f "$EVO_SPLIT_UNIT"
       ;;
     evo4)
       if grep -q 'EVO4' "$EVO4_CONF" 2>/dev/null; then rm -f "$EVO4_CONF"; fi
@@ -956,13 +1027,19 @@ remove_device(){
         warn "douze module not found — remove it from Setup → Apps → douze"
       fi
       ;;
-    fireface-ucx2|ugm192) : ;;
+    fireface-ucx2)
+      local oscmix="$MIXBAY_ROOT/oscmix/setup-oscmix.sh"
+      if [[ -f $oscmix ]]; then
+        bash "$oscmix" --uninstall || warn "oscmix removal reported a problem"
+      else
+        warn "oscmix module not found — remove it manually from $MIXBAY_ROOT/oscmix"
+      fi
+      ;;
+    ugm192) : ;;
     *)
-      if jq -e --arg id "$dev" '.[]|select(.id==$id)' \
-          "$CONF/mosquitomixbay/beta-devices.json" >/dev/null 2>&1; then
-        jq --arg id "$dev" 'map(select(.id != $id))' \
-          "$CONF/mosquitomixbay/beta-devices.json" > "$CONF/mosquitomixbay/beta-devices.json.tmp" \
-          && mv "$CONF/mosquitomixbay/beta-devices.json.tmp" "$CONF/mosquitomixbay/beta-devices.json"
+      if profile_installed "$dev"; then
+        [[ $dev =~ ^[a-z0-9][a-z0-9-]*$ ]] || { warn "Invalid device id: $dev"; return 1; }
+        rm -rf "$(profile_card_dir "$dev")"
       else
         warn "Unknown device: $dev"
         return 1
@@ -988,8 +1065,8 @@ remove_device(){
 
 remove_all(){
   info "Removing the Mixbay audio foundation"
-  rm -f "$BASE_CONF" "$EVO_CONF" "$EVO4_CONF" "$WP_CONF" "$DEFAULT_SCRIPT" "$DEFAULT_UNIT"
-  systemctl --user disable --now mixbay-audio-defaults.service 2>/dev/null || true
+  rm -f "$BASE_CONF" "$EVO_CONF" "$EVO4_CONF" "$WP_CONF" "$DEFAULT_SCRIPT" "$DEFAULT_UNIT" "$EVO_SPLIT_UNIT"
+  systemctl --user disable --now mixbay-audio-defaults.service mixbay-evo8-split.service 2>/dev/null || true
   systemctl --user daemon-reload 2>/dev/null || true
   if [[ -f $UDEV_RULE ]]; then
     mq_sudo rm -f "$UDEV_RULE" && mq_sudo udevadm control --reload-rules \
@@ -1007,22 +1084,35 @@ remove_all(){
 
 needs(){
   local dev="${DEV:-evo8}" miss=0
-  if [[ ! -f $UDEV_RULE ]]; then echo "udev seat rule for /dev/evo4 + /dev/evo8"; miss=1; fi
+  # EVO-specific system files: not part of a UCX II setup.
+  if [[ $dev != fireface-ucx2 && ! -f $UDEV_RULE ]]; then
+    echo "udev seat rule for /dev/evo4 + /dev/evo8"; miss=1
+  fi
   if [[ ! -f $WP_CONF ]]; then echo "WirePlumber anti-suspend/no-upmix rule"; miss=1; fi
-  if [[ ! -f $PLATFORM_AUDIO ]]; then echo "audio panel hints (one entry per interface)"; miss=1; fi
+  if [[ $dev != fireface-ucx2 && ! -f $PLATFORM_AUDIO ]]; then
+    echo "audio panel hints (one entry per interface)"; miss=1
+  fi
   if [[ $dev == evo8 ]]; then
     local node ch; read -r node ch < <(discover_node evo8 output)
     if evo_present evo8 && [[ ( -z $node || $ch -lt 6 ) ]]; then
       echo "EVO 8 6-channel Pro Audio node (select the multichannel profile / check the USB connection)"
       miss=1
     fi
-    if [[ -n $node && $ch -ge 6 && ! -f $EVO_CONF ]]; then echo "EVO 8 stereo split (6-channel Pro Audio node)"; miss=1; fi
+    if [[ ! -f $EVO_SPLIT_UNIT ]]; then echo "EVO 8 split watchdog (nodes only while the card is connected)"; miss=1; fi
     if [[ ! -f $DEFAULT_UNIT ]]; then echo "EVO 8 default sink/source service"; miss=1; fi
   fi
   if [[ $dev == ssl12 ]]; then
     systemctl --user is-active --quiet douze 2>/dev/null || { echo "douze daemon (SSL 12 backend)"; miss=1; }
     [[ -d "$CONF/omarchy/plugins/fenrirrhogar.omarchy360" ]] || { echo "Omarchy360 plugin (full SSL 12 surface)"; miss=1; }
     [[ -f "$PW_DIR/99-ssl12-sinks.conf" ]] || { echo "SSL 12 PipeWire playback-pair split (only when the card is connected)"; miss=1; }
+  fi
+  if [[ $dev == fireface-ucx2 ]]; then
+    oscmix_installed || { echo "oscmix + GTK mixer (Fireface UCX II control)"; miss=1; }
+    if command -v amidi >/dev/null 2>&1 \
+       && ! amidi -l 2>/dev/null | grep -q 'Fireface UCX II'; then
+      echo "Fireface UCX II in Class Compliant mode (raw MIDI port; check: amidi -l)"
+      miss=1
+    fi
   fi
   return $(( miss == 0 ))
 }
@@ -1047,6 +1137,7 @@ case $MODE in
     ok "default audio interface: $DEV"
     ;;
   track) track_connections ;;
+  evo-split-run) evo_split_run ;;
   reset-history)
     printf '[]\n' > "$CONNLOG"
     ok "connected-interface history cleared (installed configs are kept)"

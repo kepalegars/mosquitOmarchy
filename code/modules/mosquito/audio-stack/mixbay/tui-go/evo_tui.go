@@ -1211,16 +1211,23 @@ func (r *evoRender) currentUnit() string {
 }
 
 func (r *evoRender) drawStatusBar(row, cx, sectionW int) int {
+	return r.drawStatusBarWith(row, cx, sectionW, r.u.numBuf, r.currentUnit(),
+		[]evoHint{{key: "s", desc: " save"}, {key: "o", desc: " load"}, {key: "q", desc: " quit"}})
+}
+
+// drawStatusBarWith is the EVO separator line and its right-aligned hints.
+// The UGM192 uses it too: same place for q quit, without save/load.
+func (r *evoRender) drawStatusBarWith(row, cx, sectionW int, numBuf, unit string, hints []evoHint) int {
 	dim := evoDim
-	if r.u.numBuf != "" {
+	if numBuf != "" {
 		attr := evoStyle{col: cYellow}
-		prefix := "= " + r.u.numBuf
-		x := cx + (sectionW-len([]rune(prefix))-1-len([]rune(r.currentUnit())))/2
+		prefix := "= " + numBuf
+		x := cx + (sectionW-len([]rune(prefix))-1-len([]rune(unit)))/2
 		if x < cx {
 			x = cx
 		}
 		r.put(x, row, prefix, attr)
-		r.put(x+len([]rune(prefix))+1, row, " "+r.currentUnit(), attr)
+		r.put(x+len([]rune(prefix))+1, row, " "+unit, attr)
 	} else if r.u.statusMsg != "" {
 		attr := evoStyle{col: cYellow}
 		if r.u.statusErr {
@@ -1233,8 +1240,7 @@ func (r *evoRender) drawStatusBar(row, cx, sectionW int) int {
 		r.put(x, row, r.u.statusMsg, attr)
 	}
 	row++
-	hints := []evoHint{{key: "s", desc: " save"}, {key: "o", desc: " load"}, {key: "q", desc: " quit"}}
-	if r.u.numBuf != "" {
+	if numBuf != "" {
 		hints = append([]evoHint{
 			{key: "↵", desc: ":set", col: cYellow},
 			{key: "Esc", desc: ":cancel", col: cYellow},
@@ -1701,6 +1707,15 @@ func (u *evoUI) evoStatus(msg string, err bool) tea.Cmd {
 // (EVO 4 / EVO 8). Those screens are drawn by the faithful evotui port in
 // this file instead of the tui-kit picker.
 func (m model) isEvoDevice() bool {
+	switch m.preset {
+	case "evo8", "evo4":
+		return true
+	case "ugm192", "single-pair":
+		return false
+	case "auto":
+		return m.status.Spec.Backend == drivers.BackendEvoRaw
+	}
+	// Tests and very early startup have no card bound yet.
 	return m.deviceID == drivers.DevEVO8 || m.deviceID == drivers.DevEVO4
 }
 

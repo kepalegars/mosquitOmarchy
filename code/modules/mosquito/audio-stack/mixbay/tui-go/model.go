@@ -22,10 +22,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"mosquitomarchy.local/mosquitomixbay-tui/drivers"
 	"mosquitomarchy.local/mosquitomixbay-tui/meters"
 	"mosquitomarchy.local/mosquitomixbay-tui/patchbay"
+	"mosquitomarchy.local/mosquitomixbay-tui/profiles"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
@@ -40,6 +42,7 @@ const (
 	scrFoundation
 	scrFoundationDefault
 	scrAddInterface
+	scrLibrary
 	scrInput
 	scrInfo
 	scrConfirm
@@ -91,6 +94,19 @@ type model struct {
 	scanCards   []scanCard
 	scanLoading bool
 
+	// library is Settings → Audio interface profiles. The index is cached in
+	// memory for the session; upstream/ is the only folder an import writes.
+	libraryIndex    profiles.Index
+	libraryLoading  bool
+	libraryErr      string
+	libraryChecked  map[string]bool
+	dupPrompted     map[string]bool
+	profilePrompted bool
+
+	// preset is the card's UI composition ("evo8", "ugm192", "auto"…). It
+	// routes the renderer and can be overridden per card by user/layout.json.
+	preset string
+
 	// meter captures the EVO USB streams while an EVO panel is visible, even
 	// when the terminal loses focus. Freezing is a pure UI decision.
 	meter         *meters.Engine
@@ -116,11 +132,14 @@ func initialModel() model {
 	m := model{nav: []screen{scrDevices}, deviceID: defaultDevice(), ui: loadUIPrefs(), focused: true}
 	m.picker = tuikit.NewPicker("", nil)
 	m.cursor = tuikit.NewCursorMemory()
+	m.libraryChecked = map[string]bool{}
+	m.dupPrompted = map[string]bool{}
+	m.bindPreset()
 	return m
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(fetchStatus(m.deviceID), tuikit.ThemeWatchCmd(), evoDotBlinkTick(), evoPollTick(m.pollGen))
+	return tea.Batch(fetchStatus(m.deviceID), tuikit.ThemeWatchCmd(), evoDotBlinkTick(), evoPollTick(m.pollGen), profileCheckCmd())
 }
 func (m model) top() screen { return m.nav[len(m.nav)-1] }
 
@@ -160,8 +179,9 @@ type uiPrefs struct {
 	Listed string `json:"listed,omitempty"`
 	// ArtistMixOff keeps OUT 1|2 and OUT 3|4 unified (one mirrored mix).
 	ArtistMixOff bool `json:"artist_mix_off"`
-	// AllowNativeVolume lets the Omarchy audio panel and the media keys touch
-	// the EVO's USB hardware volume. Default false: Mixbay owns those values.
+	// AllowNativeVolume is the "Control active audio interface volume with
+	// keyboard" row: true lets Levels Guard drive the selected interface's
+	// hardware volume through Mixbay. Default false: the media keys are blocked.
 	AllowNativeVolume bool `json:"allow_native_volume"`
 	// LaunchAtStartup and LaunchInScratchpad default to true on a fresh
 	// install (the foundation/startup helper reads the same file).
@@ -297,10 +317,16 @@ func pollStatus(dev string, gen int) tea.Cmd {
 }
 
 // shouldPoll reads the hardware only when its values are on screen and the app
-// owns the keyboard. Non-EVO backends are left alone: their Status() shells
-// out to amixer and is too heavy for a 2 Hz poll.
+// owns the keyboard. Other backends are left alone: their Status() shells out
+// to amixer and is too heavy for a 2 Hz poll.
 func (m model) shouldPoll() bool {
-	return m.focused && m.isEvoDevice() && m.evo.mode == 0 &&
+	if !m.focused {
+		return false
+	}
+	if m.isUGMDevice() {
+		return m.top() == scrControls
+	}
+	return m.isEvoDevice() && m.evo.mode == 0 &&
 		(m.top() == scrControls || m.top() == scrMixer)
 }
 
@@ -337,9 +363,15 @@ func (m model) applyCmd(dev string, fn func(drivers.Driver) error, what string) 
 
 func (m *model) syncPicker() {
 	cw, ch := m.contentSize()
+	// A settings change (or a status poll) rebuilds the list, and a fresh
+	// Picker starts on row 0. Keep the cursor where the user left it; an
+	// unknown value leaves the selection alone.
+	sel := m.picker.SelectedValue()
 	switch m.top() {
 	case scrDevices:
-		m.picker = tuikit.NewPicker("mosquitomixbay — interfaces", m.deviceItems()).SetSize(cw, ch)
+		m.picker = tuikit.NewPicker("mosquitomixbay — interfaces", m.deviceItems()).
+			SetSize(cw, ch).
+			SetHelpKeys(key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")))
 	case scrControls:
 		m.picker = tuikit.NewPicker(m.status.Spec.Display+" — controls", controlItems(m.status)).SetSize(cw, ch)
 	case scrMixer:
@@ -354,12 +386,17 @@ func (m *model) syncPicker() {
 		m.picker = tuikit.NewPicker("Default audio interface", m.foundationDefaultItems()).SetSize(cw, ch)
 	case scrAddInterface:
 		m.picker = tuikit.NewPicker("Add an audio interface", m.addInterfaceItems()).SetSize(cw, ch)
+	case scrLibrary:
+		m.picker = tuikit.NewPicker("Audio interface profiles", m.libraryItems()).SetSize(cw, ch)
+	}
+	if sel != "" {
+		m.picker = m.picker.SelectValue(sel)
 	}
 }
 
 func (m model) deviceItems() []tuikit.PickerItem {
 	var items []tuikit.PickerItem
-	specs := append(append([]drivers.Spec{}, drivers.Registry()...), drivers.BetaSpecs()...)
+	specs := drivers.Registry()
 	used := map[string]bool{}
 	if m.ui.Listed == listedUsed {
 		used = drivers.UsedIDs()
@@ -415,6 +452,17 @@ func (m model) deviceItems() []tuikit.PickerItem {
 var levelsGuardEnabled = queryLevelsGuardEnabled
 
 func queryLevelsGuardEnabled() bool {
+	// The media-key helper is the surface this option actually controls:
+	// accept a partial install (helper + Hypr block) even when the cloned
+	// panel plugin is not enabled yet.
+	if home, err := os.UserHomeDir(); err == nil {
+		if _, err := os.Stat(filepath.Join(home, ".local", "bin", "levels-guard")); err == nil {
+			return true
+		}
+	}
+	if _, err := exec.LookPath("levels-guard"); err == nil {
+		return true
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "omarchy-plugin-list", "--json").Output()
@@ -437,13 +485,16 @@ func queryLevelsGuardEnabled() bool {
 }
 
 func (m model) settingsItems() []tuikit.PickerItem {
+	// Without Levels Guard nothing blocks the native surfaces, so keyboard
+	// control is always on and the row only explains why it cannot change.
+	guard := levelsGuardEnabled()
 	native := tuikit.PickerItem{
-		Display: "Allow native volume controls: " + onOff(m.ui.AllowNativeVolume),
+		Display: "Control active audio interface volume with keyboard: " + onOff(!guard || m.ui.AllowNativeVolume),
 		Value:   "allow_native",
 	}
-	if !levelsGuardEnabled() {
+	if !guard {
 		native.Disabled = true
-		native.Suffix = "  (needs mosquito.levels-guard)"
+		native.Suffix = "  (always on without Levels Guard)"
 	}
 	return []tuikit.PickerItem{
 		{Display: "Listed interfaces: " + listedLabel(m.ui.Listed), Value: "listed"},
@@ -451,6 +502,7 @@ func (m model) settingsItems() []tuikit.PickerItem {
 		{Display: "Launch Mixbay at startup: " + onOff(m.ui.LaunchAtStartup), Value: "launch_startup"},
 		{Display: "Launch in scratchpad: " + onOff(m.ui.LaunchInScratchpad), Value: "launch_scratchpad"},
 		{Display: "Audio foundation settings", Value: "foundation"},
+		{Display: "Audio interface profiles", Value: "profiles"},
 		{Display: "Add an audio interface", Value: "add_interface"},
 		{Display: "Back", Value: "back"},
 	}
@@ -534,6 +586,12 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 			tuikit.PickerItem{Display: "  Set up / repair SSL 12 (douze)", Value: "ssl12:setup"},
 		)
 	}
+	if st.Spec.ID == drivers.DevFireface {
+		items = append(items,
+			tuikit.PickerItem{Display: "  Open oscmix GTK mixer", Value: "fireface:oscmix-gtk"},
+			tuikit.PickerItem{Display: "  Set up / repair oscmix (GTK mixer)", Value: "fireface:oscmix-setup"},
+		)
+	}
 	items = append(items,
 		tuikit.PickerItem{Display: "  Save state", Value: "save"},
 		tuikit.PickerItem{Display: "  Reload saved state", Value: "load"},
@@ -603,6 +661,54 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.evo.caretOn = !m.evo.caretOn
 		return m, evoDotBlinkTick()
 
+	case libraryIndexMsg:
+		m.libraryLoading = false
+		if msg.err != nil {
+			m.libraryErr = msg.err.Error()
+			return m, nil
+		}
+		m.libraryErr = ""
+		m.libraryIndex = msg.ix
+		m.syncPicker()
+		return m, nil
+
+	case libraryApplyMsg:
+		m.libraryLoading = false
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr(msg.what + ": " + msg.err.Error())
+			return m, nil
+		}
+		m.toast, _ = m.toast.SetOK(msg.what)
+		m.syncPicker()
+		if msg.checkDups {
+			if dups := profiles.Duplicates(); len(dups) > 0 {
+				return m, m.promptDuplicate(dups[0])
+			}
+		}
+		return m, nil
+
+	case profileOfferMsg:
+		if msg.err != nil {
+			return m, nil
+		}
+		if len(msg.offers) > 0 {
+			return m, m.promptNextOffer(msg.offers)
+		}
+		// No repo offer, but two installed cards may be the same interface
+		// (scan-added beta + downloaded profile).
+		if dups := profiles.Duplicates(); len(dups) > 0 {
+			return m, m.promptDuplicate(dups[0])
+		}
+		return m, nil
+
+	case tuikit.PickerToggleMsg:
+		if m.top() == scrLibrary && strings.HasPrefix(msg.Value, "card:") {
+			id := strings.TrimPrefix(msg.Value, "card:")
+			m.libraryChecked[id] = !m.libraryChecked[id]
+			m.syncPicker()
+		}
+		return m, nil
+
 	case evoAnimTickMsg:
 		if msg.gen != m.evo.animGen {
 			return m, nil
@@ -657,6 +763,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		oldStatus := m.status
 		m.status = st
+		// Preset routing is local-file driven; do not re-read it on every
+		// 2 Hz poll, only when the device changes or the user refreshes.
+		if !msg.quiet || oldStatus.Spec.ID != st.Spec.ID {
+			m.bindPreset()
+		}
 		// (Re)bind the EVO renderer to THIS status's spec. Selecting a new
 		// device leaves evo.spec empty until its real status arrives, so the
 		// mixer can never iterate an old spec's section list over a new
@@ -697,7 +808,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case meterStartedMsg:
 		if msg.engine == nil {
 			m.meterStarting = false
-			m.toast, _ = m.toast.SetWarn("Meters: EVO USB node not found")
+			m.toast, _ = m.toast.SetWarn("Meters: USB node not found")
 			return m, nil
 		}
 		if !m.wantsMeters() {
@@ -846,6 +957,14 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, fetchStatus(m.deviceID)
 
+	case oscmixSetupMsg:
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("oscmix setup: " + msg.err.Error())
+		} else {
+			m.toast, _ = m.toast.SetOK("oscmix setup finished")
+		}
+		return m, fetchStatus(m.deviceID)
+
 	case patchbayLoadedMsg:
 		m.patchbay.loading = false
 		m.patchbay.err, m.patchbay.states = "", msg.states
@@ -925,7 +1044,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Picker navigation (up/down) on list screens.
-	if m.top() == scrDevices || m.top() == scrControls || m.top() == scrMixer || m.top() == scrSettings || m.top() == scrPatchbay || m.top() == scrFoundation || m.top() == scrFoundationDefault || m.top() == scrAddInterface {
+	if m.top() == scrDevices || m.top() == scrControls || m.top() == scrMixer || m.top() == scrSettings || m.top() == scrPatchbay || m.top() == scrFoundation || m.top() == scrFoundationDefault || m.top() == scrAddInterface || m.top() == scrLibrary {
 		var cmd tea.Cmd
 		m.picker, cmd = m.picker.Update(msg)
 		return m, cmd
@@ -987,9 +1106,16 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.info, cmd = m.info.Update(msg)
 		return m, cmd
 	}
+	if m.top() == scrLibrary {
+		return m.libraryKey(msg)
+	}
 	// EVO 4 / EVO 8 draw their own evotui frame and own their keys.
 	if m.isEvoDevice() && (m.top() == scrControls || m.top() == scrMixer) {
 		return m, m.evoKey(k)
+	}
+	// The UGM192 has its own single-panel frame (volume/mute + meters).
+	if m.isUGMDevice() && m.top() == scrControls {
+		return m, m.ugmKey(k)
 	}
 	if m.top() == scrPatchbay {
 		return m.patchbayKey(msg)
@@ -997,6 +1123,11 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.top() {
 	case scrDevices:
 		switch k {
+		case "r":
+			// Re-probe every interface and rebuild the list in place.
+			m.syncPicker()
+			m.toast, _ = m.toast.SetOK("Connection status refreshed")
+			return m, profileCheckCmd()
 		case "enter":
 			if m.picker.SelectedValue() == "quit" {
 				m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")
@@ -1024,6 +1155,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.deviceID = m.picker.SelectedValue()
 			m.loading = true
+			m.bindPreset()
 			// A deliberate (re)selection starts a fresh session: a device can
 			// be picked in DEMO mode even if it was online earlier.
 			m.session.selectDevice()
@@ -1183,7 +1315,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "allow_native":
 				if !levelsGuardEnabled() {
-					m.toast, _ = m.toast.SetWarn("Install Levels Guard to use native volume controls")
+					m.toast, _ = m.toast.SetWarn("Keyboard control is always on without Levels Guard")
 					return m, nil
 				}
 				m.ui.AllowNativeVolume = !m.ui.AllowNativeVolume
@@ -1200,6 +1332,8 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.push(scrFoundation)
 				m.syncPicker()
 				return m, foundationStatusCmd()
+			case "profiles":
+				return m, m.openLibrary()
 			case "add_interface":
 				m.scanCards = nil
 				m.scanLoading = true
@@ -1273,10 +1407,14 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					action, label = "remove", "Remove"
 				}
 				var msg string
-				if action == "apply" {
+				if action == "apply" && c.ID == "fireface-ucx2" {
+					msg = "Install oscmix + the GTK mixer for RME Fireface UCX II? The shared system floor (udev/WirePlumber/PipeWire) is applied too; nothing is written to the interface. Audio restarts briefly."
+				} else if action == "apply" {
 					msg = fmt.Sprintf("Install the audio foundation for %s? This writes udev/WirePlumber/PipeWire config and restarts the audio graph briefly.", c.Name)
 				} else if c.ID == "ssl12" {
 					msg = "Remove SSL 12? This uninstalls douze (service, udev rule, PipeWire split and Omarchy360 plugin). Mixer state in ~/.config/sslctl is kept."
+				} else if c.ID == "fireface-ucx2" {
+					msg = "Remove oscmix + the GTK mixer for RME Fireface UCX II? User-local binaries and build source are removed; system packages stay. The interface is untouched."
 				} else {
 					msg = fmt.Sprintf("Remove the audio foundation for %s? Its split/udev/default mapping is removed; the shared WirePlumber floor stays if another card uses it. Audio restarts briefly.", c.Name)
 				}
@@ -1455,6 +1593,18 @@ func (m *model) activateControl(val string) tea.Cmd {
 	case val == "ssl12:setup":
 		m.confirm = tuikit.NewConfirm("Set up SSL 12 (douze): udev access, user service, PipeWire split and Omarchy360 plugin. Audio may restart for a second. Continue?", "Cancel", "Set up")
 		m.confirmAct = func() tea.Cmd { return ssl12SetupCmd() }
+		m.push(scrConfirm)
+		return nil
+	case val == "fireface:oscmix-gtk":
+		if err := exec.Command("mixbay-oscmix-gtk").Start(); err != nil {
+			m.toast, _ = m.toast.SetWarn("oscmix GTK mixer is not installed — run Set up / repair oscmix")
+		} else {
+			m.toast, _ = m.toast.SetOK("oscmix GTK mixer opened")
+		}
+		return nil
+	case val == "fireface:oscmix-setup":
+		m.confirm = tuikit.NewConfirm("Build and install oscmix + the GTK mixer? This installs build dependencies (gcc, make, pkgconf, git, gtk3, alsa-lib, alsa-utils) and never writes to the interface. Continue?", "Cancel", "Set up")
+		m.confirmAct = func() tea.Cmd { return oscmixSetupCmd() }
 		m.push(scrConfirm)
 		return nil
 	case val == "beta:reverse":

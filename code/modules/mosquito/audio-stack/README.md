@@ -23,5 +23,6 @@ of them; use the component rows to install one at a time, or
 
 `mixbay` installs standalone without the guard. `levels-guard` owns the cloned
 `mosquito.levels-guard` panel and the `levels-guard` block in
-`~/.config/hypr/bindings.lua`; Mixbay's **Allow native volume controls** toggle
-only works while that plugin is enabled.
+`~/.config/hypr/bindings.lua`; Mixbay's **Control active audio interface volume
+with keyboard** toggle only works while that plugin is enabled, and drives the
+selected output interface's hardware volume through Mixbay.

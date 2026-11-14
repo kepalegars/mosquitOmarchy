@@ -31,18 +31,7 @@ import (
 
 const douzeBase = "http://127.0.0.1:1212"
 
-var SSL12Spec = Spec{
-	ID: DevSSL12, Display: "Solid State Logic SSL 12", Vendor: "SSL",
-	USBVID: "31e9", USBPID: "0005",
-	NumInputs: 4, NumOutPairs: 4,
-	GainMin: 0, GainMax: 70, VolMin: -96, VolMax: 12,
-	MixerInputs: 12, MixerOutputs: 8, // 4 analog + 4 playback pairs; 4 buses
-	HasMonitor: false, Backend: BackendDouze, NeedsKmod: false,
-	Version:     "v0.1.0",
-	BusNames:    []string{"MONITOR", "LINE 3-4", "HP A", "HP B"},
-	Caps:        Caps{Volume: true, Gain: false, Mute: true, Phantom: false, Monitor: false, Mixer: true},
-	Description: "douze backend: master volumes, mutes and mixer sends. Preamps/48V and the full SSL 360 surface stay in Omarchy360.",
-}
+var SSL12Spec = mustNativeSpec("ssl12")
 
 type douzeDriver struct {
 	spec      Spec
