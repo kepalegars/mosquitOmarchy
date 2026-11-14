@@ -355,6 +355,12 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.top() {
 
 	case scrMain:
+		// r is the reserved home-page refresh: the row used to sit in the
+		// menu, where it also showed up as a normal option.
+		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "r" {
+			m.loading = true
+			return m, fetchStatus()
+		}
 		if res, ok := msg.(tuikit.PickerResultMsg); ok {
 			if res.Canceled {
 				// Esc on the home screen asks the same quit-confirmation

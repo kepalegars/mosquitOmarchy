@@ -114,19 +114,27 @@ func (m model) mainItems() []tuikit.PickerItem {
 		lockedSuffix = "  (needs mixbay or qpwgraph)"
 	}
 	return []tuikit.PickerItem{
+		{Display: "Session", Heading: true},
 		{Display: fmt.Sprintf("Thermal limit: %d°C", s.ThermalLimitC), Value: "thermal"},
+		{Display: "Confirm before changing power profile: " + boolLabel(s.ProfilePrompt), Value: "profile_prompt"},
+		{Display: "Silence notifications: " + boolLabel(s.SilenceNotifs), Value: "notifs"},
+		{Display: "Window gaps disabled during the session: " + boolLabel(s.NoGaps), Value: "gaps"},
+		{Display: "Switch to the Live theme on activation: " + boolLabel(s.SwitchTheme), Value: "theme"},
+
+		{Display: "Background apps", Heading: true},
 		{Display: "Ask to close background apps at start: " + boolLabel(s.CloseApps), Value: "close_apps"},
 		{Display: fmt.Sprintf("Background apps to close in live mode: %d selected", len(s.CloseAppsList)), Value: "choose_apps"},
 		{Display: "Relaunch closed apps on deactivation: " + boolLabel(s.RelaunchApps), Value: "relaunch"},
+
+		{Display: "Audio", Heading: true},
 		{Display: "Audio mixer/patchbay in the scratchpad: " + boolLabel(s.RoutingTool), Value: "routing", Disabled: locked, Suffix: lockedSuffix},
 		{Display: "Scratchpad app: " + patchbayLabel(s.PatchbayApp), Value: "patchbay", Disabled: locked, Suffix: lockedSuffix},
 		{Display: "Lock PipeWire settings during live mode: " + boolLabel(s.PipewireAutolock), Value: "pipewire_lock"},
-		{Display: "Switch to the Live theme on activation: " + boolLabel(s.SwitchTheme), Value: "theme"},
-		{Display: "Confirm before changing power profile: " + boolLabel(s.ProfilePrompt), Value: "profile_prompt"},
-		{Display: "Window gaps disabled during the session: " + boolLabel(s.NoGaps), Value: "gaps"},
-		{Display: "Silence notifications: " + boolLabel(s.SilenceNotifs), Value: "notifs"},
+
+		{Display: "Safety", Heading: true},
 		{Display: "Block package installation during the session: " + boolLabel(s.FencePackages), Value: "fence"},
 		{Display: "Disable passwordless sudo on activation: " + boolLabel(s.DisablePasswordlessSudo), Value: "sudo_hardening"},
+
 		{Display: "Reset defaults", Value: "reset"},
 		{Display: "Close", Value: "quit"},
 	}

@@ -4,6 +4,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
@@ -156,7 +157,8 @@ func initialModel() model {
 	// left empty so it doesn't render a duplicate white title under it. The
 	// connection status (host + dot) is shown as a separate line under the
 	// banner instead (see view.go's main screen).
-	m.mainPicker = newNavPicker("", mainMenuItems(MoveStatus{}, true))
+	m.mainPicker = newNavPicker("", mainMenuItems(MoveStatus{}, true)).
+		SetHelpKeys(key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")))
 	m.settingsPicker = newNavPicker("", nil)
 	m.abletonPicker = newNavPicker("", nil)
 	m.bundlePicker = newNavPicker("", nil)
@@ -249,7 +251,6 @@ func mainMenuItems(s MoveStatus, checking bool) []tuikit.PickerItem {
 		managerDisabled = true
 	}
 	items := []tuikit.PickerItem{
-		{Display: "Refresh connection status", Value: "refresh"},
 		{Display: "Set the Move address", Value: "address"},
 		{Display: managerLabel, Value: "manager", Disabled: managerDisabled},
 		{Display: "Convert a Move set", Value: "convert"},
@@ -495,7 +496,8 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if idx < 0 {
 			idx = 0
 		}
-		m.mainPicker = newNavPicker("", items).SetSize(m.mainContentSize())
+		m.mainPicker = newNavPicker("", items).SetSize(m.mainContentSize()).
+			SetHelpKeys(key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")))
 		m.mainPicker = m.mainPicker.SelectIndex(idx)
 		if m.top() == scrSettings {
 			m.rebuildSettingsPicker()
