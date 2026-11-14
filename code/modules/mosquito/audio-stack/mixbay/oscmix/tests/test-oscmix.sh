@@ -18,12 +18,12 @@ check "launcher syntax" "bash -n '$HERE/launch-oscmix-gtk'"
 mkdir -p "$TMP/bin" "$TMP/home" "$TMP/data"
 cat > "$TMP/bin/amidi" <<'EOF'
 #!/usr/bin/env bash
-printf 'Dir Device    Name\nIO  hw:2,0,1  Fireface UCX II\n'
+printf 'Dir Device    Name\nIO  hw:2,0,0  Fireface UCX II (x) Port\nIO  hw:2,0,1  Fireface UCX II (x) Port\n'
 EOF
 chmod +x "$TMP/bin/amidi"
 
 out="$(PATH="$TMP/bin:$PATH" "$HERE/launch-oscmix-gtk" --detect 2>&1)" || true
-check "detect returns card,dev,sub" "[[ '$out' == '2,0,1' ]]"
+check "detect picks the control port (,1)" "[[ '$out' == '2,0,1' ]]"
 
 cat > "$TMP/bin/amidi" <<'EOF'
 #!/usr/bin/env bash

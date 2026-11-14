@@ -771,7 +771,10 @@ case "$card" in
     sink_match="evo8_main_output"; src_match="evo8_mic_1_2" ;;
   evo4)      sink_match="EVO4";             src_match="EVO4" ;;
   ssl12)     sink_match="ssl12.pb12";       src_match="Solid_State_Logic_SSL_12" ;;
-  fireface-ucx2) sink_match="Fireface";     src_match="Fireface" ;;
+  # The UCM profile splits the CC-mode card into one sink per output pair.
+  # "Fireface" alone matches the AES3 sink first, which is silent unless
+  # something is plugged into AES; the analogue line outs are the speakers.
+  fireface-ucx2) sink_match="HiFi__Line5__sink"; src_match="Fireface" ;;
   ugm192)    sink_match="UGM192";           src_match="UGM192" ;;
   *)
     # Any card that was connected once (native, beta or unsupported) is in
