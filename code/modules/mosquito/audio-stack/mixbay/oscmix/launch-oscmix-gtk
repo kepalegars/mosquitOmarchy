@@ -44,8 +44,14 @@ resolve() {
 }
 
 hint() {
-  warn "The UCX II must be in Class Compliant mode (SETUP on the unit)."
-  warn "Check that it appears in: amidi -l   (line ending in ,1 — Fireface UCX II)"
+  if command -v lsusb >/dev/null 2>&1 && lsusb -d 2a39:3f82 >/dev/null 2>&1; then
+    warn "The UCX II is plugged in but running in USB driver mode (2a39:3f82)."
+    warn "Linux only sees it in Class Compliant mode: on the unit SETUP → Options"
+    warn "→ CC Mode = ON. It re-enumerates as 2a39:3fd9 and gets an audio card."
+  else
+    warn "The UCX II must be in Class Compliant mode (SETUP → Options → CC Mode)."
+    warn "Check that it appears in: amidi -l   (line ending in ,1 — Fireface UCX II)"
+  fi
 }
 
 case "${1:-}" in
