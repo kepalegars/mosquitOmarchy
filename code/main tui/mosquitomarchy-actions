@@ -4259,6 +4259,11 @@ case "$sub" in
   # davinci row (never from a restore), so it can be non-interactive.
   davinci-alt-drivers) bash "$DAVINCI_DIR/setup-davinci.sh" --alt-drivers ;;
   davinci-alt-drivers-revert) bash "$DAVINCI_DIR/setup-davinci.sh" --alt-drivers-revert ;;
+  # REAPER theme + custom config: only ever reached from the explicit C key on
+  # the reaper row, never from a normal install/restore. C in Uninstall runs the
+  # same script backwards.
+  reaper-custom-config) bash "$REAPER_DIR/setup-reaper-config.sh" "--fonts=${1:-system}" ;;
+  reaper-custom-config-revert) bash "$REAPER_DIR/setup-reaper-config.sh" --revert ;;
   theme-images)              cmd_theme_images "${1:-}" ;;
   theme-default-dir)         cmd_theme_default_dir "${1:-get}" "${2:-}" ;;
   theme-pick)                cmd_theme_pick "${1:-file}" "${2:-}" ;;

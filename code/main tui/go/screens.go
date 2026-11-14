@@ -1296,6 +1296,32 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		// C in Uninstall undoes the C install: restore the backups, drop the
+		// files the install created. Its own prompt has only Yes/No.
+		if m.pendingAction == "reaper-custom-config-revert" {
+			if msg.Canceled || !msg.Yes {
+				m.pendingAction = ""
+				return m, nil
+			}
+			m.pendingAction = ""
+			return m.startWorking("Restoring the REAPER config",
+				workingArgs("reaper-custom-config-revert", nil)...)
+		}
+		// REAPER config: the three buttons are Cancel / Reapertips fonts /
+		// System fonts (the default). Extra carries the Reapertips choice.
+		if m.pendingAction == "reaper-custom-config" {
+			if msg.Canceled || (!msg.Yes && !msg.Extra) {
+				m.pendingAction = ""
+				return m, nil
+			}
+			fonts := "system"
+			if msg.Extra {
+				fonts = "reapertips"
+			}
+			m.pendingAction = ""
+			return m.startWorking("Installing the Reaper config",
+				workingArgs("reaper-custom-config", []string{fonts})...)
+		}
 		if msg.Canceled || !msg.Yes {
 			if m.pendingAction == "backup" {
 				m.cleanupBackupSelection()
@@ -2057,6 +2083,18 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				}
 			}
 		}
+		// C on the REAPER row installs the custom Reapertips config. Per-row,
+		// like D on DaVinci: re-running a setup must never replace the user's
+		// REAPER configuration without being asked. In Uninstall the same row
+		// restores the backup instead.
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "C" || km.String() == "shift+c") {
+			if _, key := splitSetupValue(m.setupPicker.SelectedValue()); key == "reaper" {
+				if m.treeMode == "uninstall" {
+					return m.confirmReaperRevert()
+				}
+				return m.confirmReaperConfig()
+			}
+		}
 		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "i" || km.String() == "?") {
 			v := m.setupPicker.SelectedValue()
 			// Menu entries FIRST: it is a cat: row, but its description is not
@@ -2136,6 +2174,14 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				if _, key := splitSetupValue(m.setupCatPicker.SelectedValue()); key == "davinci-resolve" {
 					return m.confirmAltDrivers()
 				}
+			}
+		}
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "C" || km.String() == "shift+c") {
+			if _, key := splitSetupValue(m.setupCatPicker.SelectedValue()); key == "reaper" {
+				if m.treeMode == "uninstall" {
+					return m.confirmReaperRevert()
+				}
+				return m.confirmReaperConfig()
 			}
 		}
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
@@ -3732,6 +3778,63 @@ func (m model) confirmAltDrivers() (model, tea.Cmd) {
 	return m, nil
 }
 
+// reaperConfigPrompt says what the C action installs and, above all, that it
+// replaces the current REAPER configuration. The backup path is stated because
+// the user must be able to recover without reading the script.
+func reaperConfigPrompt() string {
+	return "Install the Reapertips theme and the custom REAPER config?\n\n" +
+		"WHAT IT CHANGES\n" +
+		" • installs the Reapertips theme (dark or light), its purple toolbar\n" +
+		"   icons, the REAPER 7 splash screen and the Linux window colours;\n" +
+		" • copies configs/custom/ over the REAPER resource path, when that\n" +
+		"   folder exists (scripts, plugins, settings — whatever you put there);\n" +
+		" • uses Omarchy's accent colour and follows it on later launches;\n" +
+		" • follows Omarchy's dark/light mode (Reapertips Purple or Light).\n\n" +
+		"IT REPLACES THE CURRENT CONFIG\n" +
+		"The REAPER config and every file it overwrites are backed up first in\n" +
+		"code/modules/Apps/reaper/backups/<date>-install/.\n\n" +
+		"FONTS\n" +
+		" • System fonts: use the font Omarchy currently uses (recommended, default).\n" +
+		" • Reapertips fonts: install Fira Sans + Roboto and keep the theme's own."
+}
+
+func (m model) confirmReaperConfig() (model, tea.Cmd) {
+	m.pendingAction = "reaper-custom-config"
+	m.pendingMsg = reaperConfigPrompt()
+	m.pendingNo = "Cancel"
+	m.pendingYes = "System fonts"
+	m.push(scrConfirm)
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).
+		WithExtra("Reapertips fonts", "r").
+		FocusYes()
+	return m, nil
+}
+
+// reaperRevertPrompt is the Uninstall counterpart of reaperConfigPrompt: it
+// says exactly what comes back and what goes away, and that the backups are
+// not deleted by the restore itself.
+func reaperRevertPrompt() string {
+	return "Restore the REAPER config backup?\n\n" +
+		"WHAT IT DOES\n" +
+		" • puts the REAPER config back as it was when C was run in Setup, so the\n" +
+		"   theme it loads is the one used before;\n" +
+		" • removes the generated theme, its purple toolbar icons, the splash and\n" +
+		"   the Linux window colours;\n" +
+		" • leaves scripts, plugins, JSFX, ReaPacks, SWS and LSP plugins alone.\n\n" +
+		"Before restoring, the config REAPER has right now is saved to\n" +
+		"code/modules/Apps/reaper/backups/<date>-before-restore/."
+}
+
+func (m model) confirmReaperRevert() (model, tea.Cmd) {
+	m.pendingAction = "reaper-custom-config-revert"
+	m.pendingMsg = reaperRevertPrompt()
+	m.pendingNo = "Cancel"
+	m.pendingYes = "Restore"
+	m.push(scrConfirm)
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).FocusYes()
+	return m, nil
+}
+
 func (m model) closeConfirm() (model, tea.Cmd) {
 	m.pendingAction = "close"
 	m.pendingMsg = "Close mosquitomarchy?\n\nNothing is changed — you can reopen it from the Omarchy menu at any time."
@@ -3791,6 +3894,10 @@ func operationName(sub string) string {
 		return "Patch"
 	case "davinci-alt-drivers":
 		return "DaVinci profile"
+	case "reaper-custom-config":
+		return "REAPER config"
+	case "reaper-custom-config-revert":
+		return "REAPER restore"
 	case "tweaks-run":
 		return "Tweaks"
 	case "fixes-run":

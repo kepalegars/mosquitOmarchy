@@ -165,6 +165,7 @@ collect_installers(){
     '*[Rr]esolve*.zip|code/modules/Apps/davinci'
     '[Dd]a[Vv]inci*.zip|code/modules/Apps/davinci'
     '*[Ss]pektra[Ff]ilm*.zip|code/modules/Apps/spektrafilm'
+    '[Rr]eapertips Theme*.zip|code/modules/Apps/reaper/configs'
   )
   local moved=0 skipped=0 entry pat dest f base target
   shopt -s nullglob

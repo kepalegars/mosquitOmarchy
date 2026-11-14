@@ -188,6 +188,13 @@ func (m model) View() string {
 				hint = "D 780M drivers · " + hint
 			}
 		}
+		if _, key := splitSetupValue(m.setupPicker.SelectedValue()); key == "reaper" {
+			if m.treeMode == "uninstall" {
+				hint = "C restore config · " + hint
+			} else {
+				hint = "C custom config · " + hint
+			}
+		}
 		bar = m.searchBar(hint)
 	case scrSetupCat:
 		if m.treeMode == "uninstall" {
@@ -200,6 +207,13 @@ func (m model) View() string {
 		if m.treeMode != "uninstall" {
 			if _, key := splitSetupValue(m.setupCatPicker.SelectedValue()); key == "davinci-resolve" {
 				hint = "D 780M drivers · " + hint
+			}
+		}
+		if _, key := splitSetupValue(m.setupCatPicker.SelectedValue()); key == "reaper" {
+			if m.treeMode == "uninstall" {
+				hint = "C restore config · " + hint
+			} else {
+				hint = "C custom config · " + hint
 			}
 		}
 		bar = m.searchBar(hint)

@@ -96,8 +96,12 @@ mosquitomarchy_daw_wrapper_points_at() {
 mosquitomarchy_daw_prelaunch() {
   case "$1" in
     reaper)
+      # Regenerate the recoloured theme before REAPER reads it, then the scale.
+      # Both are optional: a missing helper must not stop REAPER from launching.
+      [[ -x "$HOME/.local/bin/reaper-theme-sync" ]] \
+        && "$HOME/.local/bin/reaper-theme-sync" --quiet || true
       [[ -x "$HOME/.local/bin/reaper-ui-scale" ]] \
-        && "$HOME/.local/bin/reaper-ui-scale" --quiet
+        && "$HOME/.local/bin/reaper-ui-scale" --quiet || true
       ;;
   esac
   return 0
@@ -132,8 +136,10 @@ fi
 mosquitomarchy_daw_prelaunch() {
   case "\$1" in
     reaper)
+      [ -x "\$HOME/.local/bin/reaper-theme-sync" ] \
+        && "\$HOME/.local/bin/reaper-theme-sync" --quiet || true
       [ -x "\$HOME/.local/bin/reaper-ui-scale" ] \
-        && "\$HOME/.local/bin/reaper-ui-scale" --quiet
+        && "\$HOME/.local/bin/reaper-ui-scale" --quiet || true
       ;;
   esac
   return 0
@@ -176,7 +182,8 @@ wrapper_has_prelaunch() {
   local w="$1" app="$2"
   [[ -f $w ]] || return 1
   case "$app" in
-    reaper) grep -q 'reaper-ui-scale' "$w" 2>/dev/null ;;
+    reaper) grep -q 'reaper-theme-sync' "$w" 2>/dev/null \
+              && grep -q 'reaper-ui-scale' "$w" 2>/dev/null ;;
     *)      return 0 ;;
   esac
 }

@@ -81,6 +81,7 @@ fi
 
 echo "== 5/6 reaper-ui-scale (per-monitor UI scale) =="
 UI_SCALE_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reaper-ui-scale"
+THEME_SYNC_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/reaper-theme-sync"
 mkdir -p "$HOME/.local/bin"
 if [[ -f $UI_SCALE_SRC ]]; then
   cp "$UI_SCALE_SRC" "$HOME/.local/bin/reaper-ui-scale"
@@ -88,6 +89,11 @@ if [[ -f $UI_SCALE_SRC ]]; then
   echo "installed: ~/.local/bin/reaper-ui-scale  (SUPER SHIFT ALT + Y)"
 else
   echo "WARNING: reaper-ui-scale not found next to this script; the bind will do nothing."
+fi
+if [[ -f $THEME_SYNC_SRC ]]; then
+  cp "$THEME_SYNC_SRC" "$HOME/.local/bin/reaper-theme-sync"
+  chmod +x "$HOME/.local/bin/reaper-theme-sync"
+  echo "installed: ~/.local/bin/reaper-theme-sync (accent/font follow Omarchy)"
 fi
 
 echo "== 6/6 REAPER settings (initial window size) =="

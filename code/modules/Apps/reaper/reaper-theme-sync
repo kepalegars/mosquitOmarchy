@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# Regenerates REAPER's Reapertips theme and libSwell colors from the current
+# Omarchy accent, font and dark/light mode. Called by reaper-launch before
+# REAPER starts, and by setup-reaper-config.sh right after installing.
+#
+# REAPER has no launch flag / global "accent" setting: theme colours are baked
+# into the .ReaperThemeZip. So the theme is generated here from the untouched
+# Reapertips zips kept in .mosquitomarchy/ (dark and light), with the theme's
+# own accents (#ff92af purple, #feb946 light) and the libSwell accent (#d1a660)
+# replaced by Omarchy's accent. The native Linux menus/dialogs read
+# libSwell-user.
+set -euo pipefail
+
+RES="${REAPER_RESOURCE_PATH:-$HOME/.config/REAPER}"
+STATE="$RES/.mosquitomarchy"
+TARGET="$RES/ColorThemes/Reapertips Theme – Omarchy.ReaperThemeZip"
+SIGFILE="$STATE/sync.sig"
+
+FORCE=0
+for a in "$@"; do [[ $a == --force ]] && FORCE=1; done
+
+accent="$(omarchy-theme-color accent 2>/dev/null || true)"
+if [[ ! $accent =~ ^#[0-9a-fA-F]{6}$ ]]; then
+  accent="$(sed -nE 's/^accent *= *"(#[0-9a-fA-F]{6})".*/\1/p' \
+    "$HOME/.local/state/omarchy/current/theme/colors.toml" 2>/dev/null | head -1)"
+fi
+[[ $accent =~ ^#[0-9a-fA-F]{6}$ ]] || accent="#d1a660"
+
+mode="$(omarchy-theme-color mode 2>/dev/null || true)"
+if [[ $mode != light && $mode != dark ]]; then
+  mode="$(sed -nE 's/^mode *= *"(dark|light)".*/\1/p' \
+    "$HOME/.local/state/omarchy/current/theme/colors.toml" 2>/dev/null | head -1)"
+fi
+[[ $mode == light || $mode == dark ]] || mode=dark
+
+base="$STATE/reapertips-base-$mode.ReaperThemeZip"
+if [[ ! -f "$base" ]]; then
+  # No base means the config was restored (or never installed): if REAPER's
+  # exit re-pointed lastthemefn5 at the theme we removed, drop that pointer so
+  # it falls back to the default theme instead of looking broken.
+  if [[ -f $RES/reaper.ini ]]; then
+    cur="$(sed -n 's/^lastthemefn5=//p' "$RES/reaper.ini" | tail -1)"
+    if [[ $cur == *"/ColorThemes/Reapertips Theme – "* && ! -f $cur ]]; then
+      sed -i "/^lastthemefn5=/d" "$RES/reaper.ini"
+    fi
+  fi
+  exit 0
+fi
+variant="$mode"
+
+font_mode="$(cat "$STATE/font-mode" 2>/dev/null || echo system)"
+font=""
+if [[ $font_mode == system ]]; then
+  font="$(omarchy-font-current 2>/dev/null || true)"
+  if [[ -z $font ]] && command -v fc-match >/dev/null 2>&1; then
+    font="$(fc-match monospace -f '%{family}\n' | head -1 | cut -d, -f1)"
+  fi
+else
+  # Reapertips choice: the theme keeps its Fira Sans, and the native menus get
+  # the same family instead of libSwell's stock Liberation Sans.
+  font="Fira Sans"
+fi
+
+# A theme picked by hand is the user's choice: only repoint reaper.ini when it
+# still names a theme this script generated.
+if [[ -f $RES/reaper.ini ]]; then
+  cur="$(sed -n 's/^lastthemefn5=//p' "$RES/reaper.ini" | tail -1)"
+  if [[ $cur == *"/ColorThemes/Reapertips Theme – "* && $cur != "$TARGET" ]]; then
+    sed -i "s|^lastthemefn5=.*|lastthemefn5=$TARGET|" "$RES/reaper.ini"
+  fi
+fi
+
+sig="$accent|$mode|$font_mode|$font|$base|$(stat -c '%Y' "$base" 2>/dev/null || echo 0)"
+if (( ! FORCE )) && [[ -f $SIGFILE && -f $TARGET ]] \
+   && { [[ ! -f "$STATE/libSwell-base.colortheme" ]] || [[ -f "$RES/libSwell-user.colortheme" ]]; } \
+   && [[ "$(cat "$SIGFILE")" == "$sig" ]]; then
+  exit 0
+fi
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+unzip -q "$base" -d "$tmp"
+
+python3 - "$tmp" "$accent" "$font" "$variant" <<'PY'
+import os, re, sys
+
+root, accent, font, variant = sys.argv[1:5]
+accent_i = int(accent.lstrip('#'), 16)
+# Each Reapertips variation has its own accent: #ff92af in Purple, #feb946 in
+# Light. The other hex can appear elsewhere (Purple's stretch marker) and must
+# stay as the theme author drew it.
+source_accent = 0xFEB946 if variant == 'light' else 0xFF92AF
+font_b = font.encode('ascii', 'ignore') if font else b''
+
+for dirpath, _, files in os.walk(root):
+    for name in files:
+        if not name.endswith('.ReaperTheme'):
+            continue
+        path = os.path.join(dirpath, name)
+        text = open(path, encoding='utf-8', errors='replace').read()
+        out = []
+        for line in text.splitlines(keepends=True):
+            body = line.rstrip('\n')
+            m = re.match(r'^([A-Za-z0-9_]+)=(-?\d+)$', body)
+            if m:
+                key, raw = m.group(1), int(m.group(2))
+                unsigned = raw if raw >= 0 else raw + 2**32
+                # 0xFF92AF = the purple variation's accent, 0xFEB946 = the
+                # light variation's; only the one for this base is replaced.
+                if unsigned & 0xFFFFFF == source_accent:
+                    raw = accent_i if raw >= 0 else accent_i - 2**32
+                    line = '%s=%d\n' % (key, raw)
+            else:
+                m = re.match(r'^([A-Za-z0-9_]*font[A-Za-z0-9_]*)=([0-9A-Fa-f]{122})$', body)
+                if m and font_b:
+                    key, hexval = m.group(1), m.group(2)
+                    blob = bytearray(bytes.fromhex(hexval))
+                    if len(blob) == 61:
+                        field = bytes(blob[28:60])
+                        _, _, suffix = field.partition(b'\0')
+                        suffix = suffix.rstrip(b'\0')
+                        # REAPER stores family\0style in 32 bytes; keep style
+                        # and truncate an over-long family rather than corrupt.
+                        room = max(1, 31 - len(suffix))
+                        field = font_b[:room] + b'\0' + suffix
+                        field = (field + b'\0' * 32)[:32]
+                        blob[28:60] = field
+                        blob[60] = sum(blob[:60]) & 0xFF
+                        line = '%s=%s\n' % (key, blob.hex().upper())
+            out.append(line)
+        open(path, 'w', encoding='utf-8').write(''.join(out))
+PY
+
+mkdir -p "$RES/ColorThemes"
+tmpzip="$TARGET.tmp"
+rm -f "$tmpzip"
+( cd "$tmp" && zip -qr - . ) >"$tmpzip"
+mv -f "$tmpzip" "$TARGET"
+
+base_colors="$STATE/libSwell-base.colortheme"
+if [[ -f "$base_colors" ]]; then
+  if [[ -n $font ]]; then
+    esc="$(printf '%s' "$font" | sed 's/[\\&|]/\\&/g')"
+    sed -E -e "s/#d1a660/$accent/Ig" \
+           -e "s|^default_font_face .*|default_font_face $esc|" \
+      "$base_colors" >"$RES/libSwell-user.colortheme"
+  else
+    sed -E "s/#d1a660/$accent/Ig" "$base_colors" >"$RES/libSwell-user.colortheme"
+  fi
+fi
+
+printf '%s' "$sig" >"$SIGFILE"
