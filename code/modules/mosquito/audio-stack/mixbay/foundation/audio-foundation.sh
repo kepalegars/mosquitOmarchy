@@ -61,12 +61,17 @@ CONNLOG="$CONF/mosquitomixbay/connected-interfaces.json"
 # here; a card counts as installed when its upstream/card.json exists.
 profile_card_dir(){ printf '%s/mosquitomixbay/cards/%s' "$CONF" "$1"; }
 profile_installed(){ [[ -f "$(profile_card_dir "$1")/upstream/card.json" ]]; }
+# The LONGEST installed display contained in the card description: the RME
+# names nest, so "Fireface UFX" must not win over "Fireface UFX III".
 profile_id_for_name(){
   local n=$1 f
   for f in "$CONF"/mosquitomixbay/cards/*/upstream/card.json; do
     [[ -f $f ]] || continue
-    jq -r --arg n "$n" 'select(.spec.display==$n)|.spec.id' "$f" 2>/dev/null
-  done | head -1
+    jq -r --arg n "$n" '
+      .spec | (.display // "") as $d
+      | select($d != "" and ($n | ascii_downcase | contains($d | ascii_downcase)))
+      | "\($d | length)\t\(.id)"' "$f" 2>/dev/null
+  done | sort -rn | head -1 | cut -f2
 }
 
 # card_setup <id>: the named integration a card needs. Native cards keep the
@@ -236,7 +241,9 @@ native_id_for_name(){
     *evo8*|*"evo 8"*) echo evo8 ;;
     *evo4*|*"evo 4"*) echo evo4 ;;
     *"ssl 12"*|*ssl12*|*"solid state logic"*) echo ssl12 ;;
-    *fireface*|*ucx*) echo fireface-ucx2 ;;
+    # Only the UCX II is built in. The other RME cards are repo profiles, so
+    # profile_id_for_name (or the TUI's name match) resolves them.
+    *"fireface ucx ii"*) echo fireface-ucx2 ;;
     *ugm192*|*"ugm 192"*) echo ugm192 ;;
   esac
 }

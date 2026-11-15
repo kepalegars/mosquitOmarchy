@@ -363,12 +363,37 @@ func matchEntry(ix Index, e ConnEntry) (IndexCard, bool) {
 	if name == "" {
 		return IndexCard{}, false
 	}
+	// Exact display first: "RME Fireface UFX" must never resolve to "…UFX II".
 	for _, ic := range ix.Cards {
-		display := strings.ToLower(ic.Display)
-		if display != "" && (strings.Contains(name, display) ||
-			(entryName != "" && strings.Contains(display, entryName))) {
+		d := strings.ToLower(ic.Display)
+		if d != "" && (d == name || d == entryName) {
 			return ic, true
 		}
+	}
+	// Then the LONGEST display contained in the entry: the RME names nest, so
+	// "RME Fireface UFX III" has to beat "RME Fireface UFX II" and "…UFX".
+	best, bestLen := IndexCard{}, 0
+	for _, ic := range ix.Cards {
+		d := strings.ToLower(ic.Display)
+		if d != "" && strings.Contains(name, d) && len(d) > bestLen {
+			best, bestLen = ic, len(d)
+		}
+	}
+	if bestLen > 0 {
+		return best, true
+	}
+	// Finally a short entry name inside a display, and only when exactly one
+	// card matches: an ambiguous family must not offer the wrong mixer.
+	var only IndexCard
+	matches := 0
+	for _, ic := range ix.Cards {
+		d := strings.ToLower(ic.Display)
+		if entryName != "" && strings.Contains(d, entryName) {
+			only, matches = ic, matches+1
+		}
+	}
+	if matches == 1 {
+		return only, true
 	}
 	return IndexCard{}, false
 }

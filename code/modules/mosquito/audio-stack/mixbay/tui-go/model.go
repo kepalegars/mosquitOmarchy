@@ -777,6 +777,21 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case libraryUninstallMsg:
 		if msg.err != nil {
 			m.toast, _ = m.toast.SetErr("Uninstall: " + msg.err.Error())
+		} else {
+			m.toast, _ = m.toast.SetOK("Uninstalled " + strings.Join(msg.ids, ", "))
+		}
+		// The selected interface may be gone now: fall back to the first
+		// installed card instead of leaving the app pointed at a dead id.
+		for _, id := range msg.ids {
+			if id != m.deviceID {
+				continue
+			}
+			m.deviceID = ""
+			if inst := profiles.Installed(); len(inst) > 0 {
+				m.deviceID = inst[0].ID
+			}
+			m.bindPreset()
+			break
 		}
 		m.libraryChecked = map[string]bool{}
 		m.syncPicker()

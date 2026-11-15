@@ -107,15 +107,15 @@ capture, or the ALSA card/connection-log match for any other interface).
 ## Adding an unsupported interface (beta)
 
 Mixbay → Settings → **Add an audio interface** scans connected USB cards and
-lists those that are not native. Adding one writes a local card under
-`~/.config/mosquitomixbay/cards/<id>/` (same format as a downloaded community
-profile); it appears in the device list as `demo-beta` / `online-beta`, runs
-ALSA level 1 (volume/mute), and carries a **Restart reverse engineering**
-action in its controls with a confirmation. The old
+lists those that are not already installed. Adding one writes a local card
+under `~/.config/mosquitomixbay/cards/<id>/` (same format as a downloaded
+community profile); it appears in the device list as `demo-beta` /
+`online-beta`, runs ALSA level 1 (volume/mute), and carries a **Restart
+reverse engineering** action in its controls with a confirmation. The old
 `beta-devices.json` store is migrated once and archived.
 
 Community profiles are managed in **Settings → Audio interface profiles**
-(download/update, export for a PR, remove, clear local UI override).
+(install/update, export for a PR, uninstall, info).
 
 The guided reverse-engineering harness (usbmon/libusb/hidraw → labelled
 tuple → replay with GET/acks) is the next slice. Until a control is mapped and

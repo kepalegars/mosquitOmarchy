@@ -43,7 +43,13 @@ func defaultDevice() string {
 			return spec.ID
 		}
 	}
-	return drivers.DevEVO8
+	// Nothing is connected: keep the first installed card as the remembered
+	// selection. No profile installed at all (everything uninstalled) leaves
+	// the id empty rather than pointing at a card Mixbay cannot open.
+	if specs := drivers.Registry(); len(specs) > 0 {
+		return specs[0].ID
+	}
+	return ""
 }
 
 func runCLI(args []string) int {

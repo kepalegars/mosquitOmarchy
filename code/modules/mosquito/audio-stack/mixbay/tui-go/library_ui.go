@@ -162,7 +162,7 @@ func libraryUninstallCmd(ids []string) tea.Cmd {
 		// Drop the card folder right away so a batch uninstall of several RME
 		// cards reaches "no oscmix user left" on the last one. profiles.Remove
 		// then only writes the .removed marker for a shipped card.
-		fmt.Fprintf(&script, "rm -rf \"$HOME/.config/mosquitomixbay/cards/%s\"\n", id)
+		fmt.Fprintf(&script, "rm -rf \"${MIXBAY_CONFIG_DIR:-$HOME/.config/mosquitomixbay}/cards/%s\"\n", id)
 		// Drop the history entry too; otherwise the card keeps appearing in
 		// "used" lists and the default picker after its profile is gone.
 		fmt.Fprintf(&script, `log="$HOME/.config/mosquitomixbay/connected-interfaces.json"
