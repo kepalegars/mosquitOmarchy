@@ -26,14 +26,22 @@
       "monitor_blend": true,
       "mixer": true
     },
-    "description": "2 in / 1 out pair + loopback. Direct-monitor blend knob."
+    "description": "2 in / 1 out pair + loopback. Direct-monitor blend knob.",
+    "setup": "evo-raw"
   },
   "credits": {
     "author": "mosquito"
   },
   "ui": {
     "preset": "evo4",
-    "blocks": ["tabBar", "controlsGrid", "mixerGrid", "levelsColumns", "statusBar", "help"]
+    "blocks": [
+      "tabBar",
+      "controlsGrid",
+      "mixerGrid",
+      "levelsColumns",
+      "statusBar",
+      "help"
+    ]
   },
   "captures": []
 }

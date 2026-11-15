@@ -127,8 +127,20 @@ apply() {
       return 1
     fi
   elif [[ -f "$ROOT_DIR/setup-mosquitomixbay.sh" ]]; then
+    # The card profile owns its integration now (evo_raw for the EVO, oscmix
+    # for the RME). Install the profile first so setup can fetch it; the
+    # foundation floor is still applied by the installer.
+    if command -v mosquito-mixbay-actions >/dev/null 2>&1; then
+      info "Installing the $dev profile"
+      mosquito-mixbay-actions profiles-import "$dev" >/dev/null 2>&1 \
+        || warn "could not install the $dev profile (offline?) — continuing"
+    fi
     info "Running the Mixbay installer for $dev (one-time system steps)"
     bash "$ROOT_DIR/setup-mosquitomixbay.sh" -y
+    if command -v mixbay-audio-foundation >/dev/null 2>&1; then
+      mixbay-audio-foundation --setup --device "$dev" \
+        || warn "$dev integration setup reported a problem"
+    fi
   else
     warn "setup-mosquitomixbay.sh not found under $ROOT_DIR — cannot apply."
     return 1

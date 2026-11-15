@@ -99,13 +99,14 @@ type model struct {
 
 	// library is Settings → Audio interface profiles. The index is cached in
 	// memory for the session; upstream/ is the only folder an import writes.
-	libraryIndex   profiles.Index
-	libraryLoading bool
-	libraryErr     string
-	libraryChecked map[string]bool
-	libraryManual  bool
-	libraryTab     int
-	dupPrompted    map[string]bool
+	libraryIndex    profiles.Index
+	libraryUpstream map[string]profiles.Card
+	libraryLoading  bool
+	libraryErr      string
+	libraryChecked  map[string]bool
+	libraryManual   bool
+	libraryTab      int
+	dupPrompted     map[string]bool
 	// profileChecking drives the blinking square on Settings → Audio interface
 	// profiles; profileBlink is its on/off frame (see evoDotBlinkMsg).
 	// profileChecked is "the repo was already checked this session": entering
@@ -525,16 +526,16 @@ func (m model) settingsItems() []tuikit.PickerItem {
 	profilesRow := tuikit.PickerItem{Display: "Audio interface profiles", Value: "profiles"}
 	if m.profileChecking {
 		profilesRow.TrailingBadge = tuikit.LoadingGlyph(m.profileBlink)
-	} else if updates, _ := m.repoNews(); updates > 0 {
+	} else if updates, installs := m.repoNews(); updates+installs > 0 {
 		profilesRow.TrailingBadge = "■"
 	}
 	return []tuikit.PickerItem{
+		profilesRow,
+		{Display: "Audio foundation settings", Value: "foundation"},
 		{Display: "Listed interfaces: " + listedLabel(m.ui.Listed), Value: "listed"},
 		native,
 		{Display: "Launch Mixbay at startup: " + onOff(m.ui.LaunchAtStartup), Value: "launch_startup"},
 		{Display: "Launch in scratchpad: " + onOff(m.ui.LaunchInScratchpad), Value: "launch_scratchpad"},
-		{Display: "Audio foundation settings", Value: "foundation"},
-		profilesRow,
 		{Display: "Add an audio interface", Value: "add_interface"},
 		{Display: "Back", Value: "back"},
 	}
@@ -745,6 +746,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.libraryErr = ""
 		m.libraryIndex = msg.ix
+		m.libraryUpstream = msg.upstream
 		if manual {
 			updates, installs := m.repoNews()
 			m.toast, _ = m.toast.SetOK("Repo checked · " + repoNewsLabel(updates, installs))
@@ -760,11 +762,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.toast, _ = m.toast.SetOK(msg.what)
 		m.syncPicker()
-		// A downloaded card that needs its own integration (oscmix, douze)
-		// runs it now, in the real terminal. The audio foundation waits until
-		// the card has been connected once.
-		if msg.setup != "" {
-			return m, cardSetupCmd(msg.id)
+		// Downloaded cards that need their own integration (oscmix, evo-raw,
+		// douze) run them now, one at a time in the real terminal. The audio
+		// foundation waits until the card has been connected once.
+		if len(msg.setupIDs) > 0 {
+			return m, setupChain(msg.setupIDs, nil)
 		}
 		if msg.checkDups {
 			if dups := profiles.Duplicates(); len(dups) > 0 {

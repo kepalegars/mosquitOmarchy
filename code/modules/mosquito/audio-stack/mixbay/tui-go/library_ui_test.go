@@ -152,6 +152,23 @@ func TestProfilesSquareBlinkAndUpdate(t *testing.T) {
 	if got := badge(m); got != "■" {
 		t.Fatalf("update available should hold the square solid, got %q", got)
 	}
+	// A repo card that is not installed is news too: the row is the gateway
+	// to the profiles tab, so the square must be visible on arrival.
+	m.libraryIndex.Cards = append(m.libraryIndex.Cards, profiles.IndexCard{
+		ID: "new-card", Display: "New Card", Version: "v1",
+	})
+	m.libraryIndex.Cards = m.libraryIndex.Cards[1:] // only the uninstalled card remains
+	if got := badge(m); got != "■" {
+		t.Fatalf("new repo profile should show the square, got %q", got)
+	}
+}
+
+func TestSettingsListsProfilesThenFoundation(t *testing.T) {
+	m := model{}
+	items := m.settingsItems()
+	if len(items) < 2 || items[0].Value != "profiles" || items[1].Value != "foundation" {
+		t.Fatalf("settings order = %v, want profiles then foundation", []string{items[0].Value, items[1].Value})
+	}
 }
 
 func TestLibraryShowsUpdateAndRefreshToast(t *testing.T) {
@@ -270,6 +287,38 @@ func TestInstallWithLocalUIOffersBackup(t *testing.T) {
 	}
 	if got.libraryLoading {
 		t.Fatal("nothing should start before the confirmation")
+	}
+}
+
+func TestUpstreamUpdateWarnsAndDeploysDirect(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, err := profiles.InstallLocalCard("quantum-es4", "PreSonus Quantum ES 4", "Quantum ES"); err != nil {
+		t.Fatal(err)
+	}
+	up, _, err := profiles.Effective("quantum-es4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up.Spec.Version = "v9"
+	m := model{
+		nav:            []screen{scrLibrary},
+		libraryChecked: map[string]bool{},
+		libraryIndex: profiles.Index{SchemaVersion: 1, Cards: []profiles.IndexCard{
+			{ID: "quantum-es4", Display: "PreSonus Quantum ES 4", Version: "beta"},
+		}},
+		libraryUpstream: map[string]profiles.Card{"quantum-es4": up},
+	}
+	m.picker = tuikit.NewPicker("", []tuikit.PickerItem{{Display: "quantum", Value: "card:quantum-es4"}})
+	next, _ := m.libraryKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got := next.(model)
+	if got.top() != scrConfirm {
+		t.Fatal("a direct upstream update must ask for confirmation")
+	}
+	text := stripANSI(got.confirm.View())
+	for _, want := range []string{"Quantum", "v9", "github.com/kepalegars/mosquito-mixbay-profiles", "uninstall the profile and install it again"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("upstream warning missing %q:\n%s", want, text)
+		}
 	}
 }
 

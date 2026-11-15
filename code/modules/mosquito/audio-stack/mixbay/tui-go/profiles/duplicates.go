@@ -50,7 +50,7 @@ func Duplicates() []Duplicate {
 		keep := g[0]
 		for _, m := range g[1:] {
 			if m.Native {
-				continue // never propose deleting a built-in card
+				continue // never propose deleting a seeded snapshot
 			}
 			out = append(out, Duplicate{
 				KeepID: keep.ID, KeepDisplay: keep.Display,

@@ -74,6 +74,23 @@ profile_id_for_name(){
   done | sort -rn | head -1 | cut -f2
 }
 
+# Profile-owned tooling (oscmix, evo-raw) is downloaded by the profile that
+# needs it, outside this checkout. These helpers fetch it on demand.
+DATA_DIR="${XDG_DATA_HOME:-$HOME_DIR/.local/share}"
+integration_dir(){ printf '%s/mosquitomixbay/integrations/%s' "$DATA_DIR" "$1"; }
+ensure_integration(){
+  local name="$1" dir
+  dir="$(integration_dir "$name")"
+  if [[ ! -f "$dir/.manifest.json" ]]; then
+    command -v mosquito-mixbay-actions >/dev/null 2>&1 \
+      || { warn "mosquito-mixbay-actions not found — cannot fetch $name"; return 1; }
+    dir="$(mosquito-mixbay-actions profiles-integration "$name" 2>/dev/null)" \
+      || { warn "could not fetch the $name integration"; return 1; }
+  fi
+  [[ -d $dir ]] || { warn "missing integration folder $dir"; return 1; }
+  printf '%s\n' "$dir"
+}
+
 # card_setup <id>: the named integration a card needs. Native cards keep the
 # mapping that predates the schema; a downloaded card declares it in
 # spec.setup. Empty means the card needs no extra step.
@@ -93,9 +110,11 @@ card_setup(){
 run_card_setup(){
   case "$1" in
     oscmix)
-      local s="$MIXBAY_ROOT/oscmix/setup-oscmix.sh"
-      [[ -f $s ]] || { warn "oscmix module not found ($s)"; return 1; }
-      bash "$s" -y ;;
+      local d; d="$(ensure_integration oscmix)" || return 1
+      bash "$d/setup-oscmix.sh" -y ;;
+    evo-raw)
+      local d; d="$(ensure_integration evo-raw)" || return 1
+      bash "$d/install-evo-raw.sh" ;;
     douze)
       local s="$MIXBAY_ROOT/../../../Apps/douze/setup-douze.sh"
       [[ -f $s ]] || { warn "douze module not found ($s)"; return 1; }
@@ -110,9 +129,10 @@ run_card_setup(){
 remove_card_setup(){
   case "$1" in
     oscmix)
-      local s="$MIXBAY_ROOT/oscmix/setup-oscmix.sh"
-      [[ -f $s ]] || { warn "oscmix module not found ($s)"; return 1; }
+      local s; s="$(integration_dir oscmix)/setup-oscmix.sh"
+      [[ -f $s ]] || { info "oscmix integration is not downloaded — nothing to remove"; return 0; }
       bash "$s" --uninstall ;;
+    evo-raw) : ;; # the kmod stays: unloading it mid-session would cut the card
     douze)
       local s="$MIXBAY_ROOT/../../../Apps/douze/setup-douze.sh"
       [[ -f $s ]] || { warn "douze module not found ($s)"; return 1; }
@@ -241,8 +261,8 @@ native_id_for_name(){
     *evo8*|*"evo 8"*) echo evo8 ;;
     *evo4*|*"evo 4"*) echo evo4 ;;
     *"ssl 12"*|*ssl12*|*"solid state logic"*) echo ssl12 ;;
-    # Only the UCX II is built in. The other RME cards are repo profiles, so
-    # profile_id_for_name (or the TUI's name match) resolves them.
+    # Only the UCX II ships embedded. The other RME cards are repo profiles,
+    # so profile_id_for_name (or the TUI's name match) resolves them.
     *"fireface ucx ii"*) echo fireface-ucx2 ;;
     *ugm192*|*"ugm 192"*) echo ugm192 ;;
   esac
@@ -694,10 +714,13 @@ EOF
   rm -f "$tmp"
 
   # EVO 8 capture helper: EU51 may stay disabled after power-on, leaving the
-  # six capture channels silent even when gains/mutes/48V are correct.
-  if [[ -f "$MIXBAY_ROOT/kmod/evo8-capture-enable.py" && -f "$MIXBAY_ROOT/kmod/99-evo8-capture.rules" ]]; then
-    mq_sudo install -D -m 0755 "$MIXBAY_ROOT/kmod/evo8-capture-enable.py" "$CAPTURE_HELPER" \
-      && mq_sudo install -D -m 0644 "$MIXBAY_ROOT/kmod/99-evo8-capture.rules" "$CAPTURE_RULE" \
+  # six capture channels silent even when gains/mutes/48V are correct. The
+  # files belong to the evo-raw integration, so it is fetched on demand.
+  local kmod
+  kmod="$(ensure_integration evo-raw 2>/dev/null || true)"
+  if [[ -n $kmod && -f "$kmod/evo8-capture-enable.py" && -f "$kmod/99-evo8-capture.rules" ]]; then
+    mq_sudo install -D -m 0755 "$kmod/evo8-capture-enable.py" "$CAPTURE_HELPER" \
+      && mq_sudo install -D -m 0644 "$kmod/99-evo8-capture.rules" "$CAPTURE_RULE" \
       && mq_sudo udevadm control --reload-rules \
       && ok "EVO 8 capture helper installed" \
       || warn "could not install the EVO 8 capture helper"

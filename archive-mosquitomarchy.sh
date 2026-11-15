@@ -17,10 +17,12 @@
 #   archive is a backup: a restore is done by the user, with tar.
 #
 # TWO ARCHIVE TYPES (the menu below explains each before you pick it)
-#   complete   tracked, untracked and ignored working-tree files; logs are
-#              and application installers are asked about after Start. Sensitive
-#              machine state, PATCH/.local, passwords and nested archives are excluded.
+#   complete   tracked, untracked and ignored working-tree files; logs,
+#              application installers, local backups and downloaded profile
+#              integrations are asked about after Start. Sensitive machine
+#              state, PATCH/.local, passwords and nested archives are excluded.
 #   source     the tracked code only: no logs, no install files, no backups
+#              and no profile integrations
 #
 # BUILT FROM GIT WHERE IT MATTERS
 #   The source list is `git ls-files`, not a `tar --exclude=` guess list:
@@ -35,6 +37,8 @@
 #   ./archive-mosquitomarchy.sh --type=TYPE  # complete | source (skip the menu)
 #   ./archive-mosquitomarchy.sh --logs / --no-logs   # complete type: log files in or out
 #   ./archive-mosquitomarchy.sh --installers / --no-installers # complete: app installers in or out
+#   ./archive-mosquitomarchy.sh --backups / --no-backups # complete: local backups in or out
+#   ./archive-mosquitomarchy.sh --integrations / --no-integrations # complete: profile integrations in or out
 #   ./archive-mosquitomarchy.sh -y           # take the defaults (source type)
 #   ./archive-mosquitomarchy.sh -h
 #
@@ -69,6 +73,8 @@ LIST_ONLY=0 YES=0
 # "" = not asked yet. The prompts are the only interactive thing this script has.
 LOGS=""
 ARCHIVE_INSTALLERS=""
+ARCHIVE_BACKUPS=""
+ARCHIVE_INTEGRATIONS=""
 ARCHIVE_TYPE=""
 for a in "$@"; do case "$a" in
   -y|--yes) YES=1 ;;                # -y takes the defaults (source type)
@@ -79,8 +85,12 @@ for a in "$@"; do case "$a" in
   --no-logs) LOGS=0 ;;
   --installers) ARCHIVE_INSTALLERS=1 ;;
   --no-installers) ARCHIVE_INSTALLERS=0 ;;
-  -h|--help) sed -n '2,70p' "$0"; exit 0 ;;
-  *) err "Unknown option: $a (supported: -y --list --out=DIR --type=TYPE --logs --no-logs --installers --no-installers)"; exit 1 ;;
+  --backups) ARCHIVE_BACKUPS=1 ;;
+  --no-backups) ARCHIVE_BACKUPS=0 ;;
+  --integrations) ARCHIVE_INTEGRATIONS=1 ;;
+  --no-integrations) ARCHIVE_INTEGRATIONS=0 ;;
+  -h|--help) sed -n '2,78p' "$0"; exit 0 ;;
+  *) err "Unknown option: $a (supported: -y --list --out=DIR --type=TYPE --logs --no-logs --installers --no-installers --backups --no-backups --integrations --no-integrations)"; exit 1 ;;
 esac; done
 case "$ARCHIVE_TYPE" in
   ""|complete|source) ;;
@@ -159,10 +169,13 @@ collect(){
 
 collect_complete(){
   # Includes ignored files too, except sensitive machine state, PATCH/.local,
-  # passwords, generated lists, nested archives and (unless requested) logs.
+  # passwords, generated lists, nested archives and (unless requested) logs,
+  # local backups and downloaded profile integrations.
   local exclude='(^|/)\.git(/|$)|(^|/)PATCH(/|$)|(^|/)\.local(/|$)|(^|/)(Passwords\.kdbx|pkglist\.txt|aurlist\.txt|apps\.selected)$|\.tar\.gz(\.gpg)?$'
   (( ${LOGS:-0} )) || exclude+='|\.log$'
   (( ${ARCHIVE_INSTALLERS:-0} )) || exclude+='|^code/modules/Apps/(ableton/[^/]+\.(run|zip)|bitwig/[^/]+\.deb|davinci/[^/]+\.zip|spektrafilm/[^/]+\.zip|guitarpro/[^/]+\.exe)$'
+  (( ${ARCHIVE_BACKUPS:-0} )) || exclude+='|(^|/)backups/|\.bak($|\.)|\.backup($|\.)'
+  (( ${ARCHIVE_INTEGRATIONS:-0} )) || exclude+='|(^|/)mixbay/integrations/'
   {
     git -C "$ROOT" ls-files -z
     git -C "$ROOT" ls-files --others -z
@@ -200,7 +213,8 @@ type_menu(){
     printf '\n'
     printf '  complete:\n'
     printf '    • tracked, untracked and ignored files (except sensitive state)\n'
-    printf '    • after Start, choose whether installers and logs are included\n'
+    printf '    • after Start, choose whether installers, logs, local backups and\n'
+    printf '      downloaded profile integrations are included\n'
     printf '    • excludes .local, PATCH, passwords, generated lists and nested archives\n'
     printf '\n'
     printf '  source:\n'
@@ -285,8 +299,9 @@ ask_installers(){
   esac
 }
 
-# The one question the complete type asks. Default keeps the logs OUT: they
-# are machine state, and an archive that holds everything already holds a lot.
+# The complete type asks separately about logs, local backups and downloaded
+# profile integrations. Defaults keep all three OUT: they are machine state,
+# and an archive that holds everything already holds a lot.
 ask_logs(){
   [[ $ARCHIVE_TYPE == complete ]] || return 0
   [[ -n $LOGS ]] && return 0
@@ -301,6 +316,54 @@ ask_logs(){
     [yY]) LOGS=1 ;;
     *)    LOGS=0 ;;
   esac
+}
+
+ask_backups(){
+  [[ $ARCHIVE_TYPE == complete ]] || return 0
+  [[ -n $ARCHIVE_BACKUPS ]] && return 0
+  if (( YES )) || [[ ! -t 0 ]]; then
+    ARCHIVE_BACKUPS=0
+    (( YES )) && ok "(auto) backups excluded"
+    return 0
+  fi
+  printf '\nLocal backups: */backups/, *.bak, *.bak.*, *.backup, *.backup.*\n'
+  local r
+  read -rp "  Include the local backup files? [y/n] " r
+  case "${r:-n}" in
+    [yY]) ARCHIVE_BACKUPS=1 ;;
+    *)    ARCHIVE_BACKUPS=0 ;;
+  esac
+}
+
+ask_integrations(){
+  [[ $ARCHIVE_TYPE == complete ]] || return 0
+  [[ -n $ARCHIVE_INTEGRATIONS ]] && return 0
+  local -a dirs=()
+  mapfile -d '' -t dirs < <(integration_files)
+  if (( ${#dirs[@]} == 0 )); then
+    ARCHIVE_INTEGRATIONS=0
+    return 0
+  fi
+  if (( YES )) || [[ ! -t 0 ]]; then
+    ARCHIVE_INTEGRATIONS=0
+    (( YES )) && ok "(auto) profile integrations excluded"
+    return 0
+  fi
+  printf '\nDownloaded profile integrations: (%s)\n' "${dirs[*]#"$ROOT"/}"
+  local r
+  read -rp "  Include these profile files (oscmix, evo-raw)? [y/n] " r
+  case "${r:-n}" in
+    [yY]) ARCHIVE_INTEGRATIONS=1 ;;
+    *)    ARCHIVE_INTEGRATIONS=0 ;;
+  esac
+}
+
+# Prints the repo-relative profile integration trees that exist locally.
+integration_files(){
+  local d
+  for d in "$ROOT"/code/modules/mosquito/audio-stack/mixbay/integrations/*/; do
+    [[ -d $d ]] && printf '%s\0' "${d#"$ROOT"/}"
+  done
 }
 
 preflight(){
@@ -322,6 +385,8 @@ do_list(){
     printf '  total                : ~%s\n' "$(human "$code")"
     printf '  free at destination : %s\n' "$(human "$(space_available)")"
     if (( LOGS )); then printf '  logs                 : included\n'; else printf '  logs                 : excluded (default)\n'; fi
+    if (( ${ARCHIVE_BACKUPS:-0} )); then printf '  local backups        : included\n'; else printf '  local backups        : excluded (default)\n'; fi
+    if (( ${ARCHIVE_INTEGRATIONS:-0} )); then printf '  profile integrations : included\n'; else printf '  profile integrations : excluded (default)\n'; fi
     local -a installers=()
     mapfile -d '' -t installers < <(installer_files)
     if (( ARCHIVE_INSTALLERS )); then
@@ -349,6 +414,8 @@ verify_archive(){
   local archive="$1" allow_logs="$2" listing="$3" f bad="" pat
   local -a forbidden=("${FORBIDDEN_PATTERNS[@]}")
   (( allow_logs )) || forbidden+=( '*.log' )
+  (( ${ARCHIVE_BACKUPS:-0} )) || forbidden+=( '*/backups/*' '*/backups' '*.bak' '*.bak.*' '*.backup' '*.backup.*' )
+  (( ${ARCHIVE_INTEGRATIONS:-0} )) || forbidden+=( '*/mixbay/integrations/*' '*/mixbay/integrations' )
   tar tzf "$archive" > "$listing" 2>/dev/null \
     || { err "Archive verification failed (truncated or corrupt)."; return 1; }
   while IFS= read -r f; do
@@ -412,6 +479,8 @@ archive_path(){
   local type="$1" logs="$2" stamp suffix=""
   stamp="$(date +%Y-%m-%d-%H%M%S-%N)"
   (( logs )) && suffix="+logs"
+  (( ${ARCHIVE_BACKUPS:-0} )) && suffix+="+backups"
+  (( ${ARCHIVE_INTEGRATIONS:-0} )) && suffix+="+profiles"
   printf '%s/mosquitomarchy-%s-%s%s.tar.gz' "$OUT_DIR" "$type" "$stamp" "$suffix"
 }
 
@@ -439,11 +508,15 @@ build_complete(){
   preflight
   ask_installers
   ask_logs
+  ask_backups
+  ask_integrations
   mapfile -d '' -t FILES < <(collect_complete)
   (( ${#FILES[@]} )) || { err "Nothing to archive."; exit 1; }
   msg "complete archive of ' $PROJECT_NAME '"
   msg "  Source : $ROOT @ $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?') plus working-tree files"
   if (( LOGS )); then msg "  Logs   : included (as requested)"; else msg "  Logs   : excluded"; fi
+  if (( ${ARCHIVE_BACKUPS:-0} )); then msg "  Backups: included (as requested)"; else msg "  Backups: excluded"; fi
+  if (( ${ARCHIVE_INTEGRATIONS:-0} )); then msg "  Profiles: integrations included (as requested)"; else msg "  Profiles: integrations excluded"; fi
   printf '  Content: %s files, ~%s uncompressed\n' "${#FILES[@]}" "$(human "$(file_bytes "${FILES[@]}")")"
   msg "  Safety exclusions: .local, PATCH, passwords, generated lists and nested archives"
   local input_bytes out tmp listing

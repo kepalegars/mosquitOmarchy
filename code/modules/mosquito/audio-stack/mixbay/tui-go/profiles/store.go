@@ -31,7 +31,7 @@ type Meta struct {
 	Vendor      string    `json:"vendor"`
 	Version     string    `json:"version"`
 	Native      bool      `json:"native"`
-	Source      string    `json:"source"` // built-in | repo | local
+	Source      string    `json:"source"` // preinstalled | repo | local
 	Revision    string    `json:"revision,omitempty"`
 	SHA256      string    `json:"sha256,omitempty"`
 	InstalledAt time.Time `json:"installed_at,omitzero"`

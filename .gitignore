@@ -15,6 +15,20 @@ code/modules/Apps/reaper/configs/*.zip
 # Dated REAPER config backups written by the C action, local only.
 code/modules/Apps/reaper/backups/
 
+# ── Local backups: copies made before an edit/install, never source ──
+# A complete archive includes them only when the archive asks and the user
+# accepts; git never does.
+*.bak
+*.bak.*
+*.backup
+*.backup.*
+**/backups/
+
+# ── Profile-owned Mixbay integrations (oscmix, evo-raw) ──
+# Downloaded on demand by the interface profile that declares them, outside
+# this checkout. If someone unpacks them here, they are still not source.
+code/modules/mosquito/audio-stack/mixbay/integrations/
+
 # ── Logs & transient install files ──
 *.log
 *.part
@@ -30,8 +44,7 @@ code/modules/Apps/mimeinfo.cache
 # NEVER archived (archive-customarchy.sh excludes .local/ too).
 .local/
 
-# ── Machine-scoped state (mosquito Audio Plugin Manager): per-machine, never committed ──
-# audio-plugin-manager-state.json is the installed-plugins truth log; the
+# ── Machine-scoped state (mosquito Audio Plugin Manager): per-machine, never committed ──# audio-plugin-manager-state.json is the installed-plugins truth log; the
 # yabridge-driver.* pair is the same thing for the yabridge build/install
 # bookkeeping the core writes next to itself (YABRIDGE_STATE / YABRIDGE_LOCK).
 # All three describe THIS machine, and differ on every other one.

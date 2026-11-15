@@ -12,9 +12,10 @@
 #   2. mosquito-mixbay-tui → ~/.local/bin (compiled Go/Bubble Tea over the
 #      shared lib/tui-kit; the ONLY interface)
 #   3. Hyprland float rule for the TUI window
-#   4. evo_raw kernel module (/dev/evo4, /dev/evo8) via kmod/install-evo-raw.sh
-#      — optional but required for REAL hardware control; without it the bay
-#      runs in persistent DEMO mode (fully usable for prep/rehearsal).
+#   4. Nothing profile-specific: oscmix (RME) and the evo_raw kmod (EVO) are
+#      installed on demand by the interface profile that declares them, into
+#      ~/.local/share/mosquitomixbay/integrations/. Without a profile the bay
+#      stays in DEMO mode.
 #
 # Usage:
 #   ./setup-mosquitomixbay.sh        install (interactive, silent re-install)
@@ -34,11 +35,10 @@ ok()    { echo -e "\033[1;32m ✓\033[0m $*"; }
 warn()  { echo -e "\033[1;33m !\033[0m $*"; }
 die()   { warn "$*"; exit 1; }
 
-YES=0 STATUS_ONLY=0 NO_KMOD=0 UNINSTALL=0 NO_FOUNDATION=0
+YES=0 STATUS_ONLY=0 UNINSTALL=0 NO_FOUNDATION=0
 for a in "$@"; do case "$a" in
   -y|--yes) YES=1 ;;
   --status) STATUS_ONLY=1 ;;
-  --no-kmod) NO_KMOD=1 ;;
   --no-foundation) NO_FOUNDATION=1 ;;
   --uninstall) UNINSTALL=1 ;;
 esac; done
@@ -60,7 +60,12 @@ mixbay_status(){
   [[ -x $disp && -x $tui ]] || { echo missing; return; }
   local miss=""
   grep -qF "mosquito-mixbay-tui-setup" "$HOME/.config/hypr/hyprland.lua" 2>/dev/null || miss="${miss:+$miss, }hyprland float rule"
-  [[ -e /dev/evo8 || -e /dev/evo4 ]] || miss="${miss:+$miss, }evo_raw kmod (demo mode only)"
+  # The kmod is profile-owned: only expect /dev/evo* when an EVO profile is
+  # installed. A machine that never downloaded one is not "partial".
+  if [[ -f "$HOME/.config/mosquitomixbay/cards/evo8/upstream/card.json" ||
+        -f "$HOME/.config/mosquitomixbay/cards/evo4/upstream/card.json" ]]; then
+    [[ -e /dev/evo8 || -e /dev/evo4 ]] || miss="${miss:+$miss, }evo_raw kmod (demo mode only)"
+  fi
   [[ -f "$HOME/.config/wireplumber/wireplumber.conf.d/50-mixbay-interfaces.conf" ]] \
     || miss="${miss:+$miss, }audio foundation (WirePlumber/udev/rate)"
   [[ -x "$BIN_DIR/mixbay-reverse" ]] || miss="${miss:+$miss, }reverse harness (usbmon)"
@@ -76,10 +81,13 @@ if ((UNINSTALL)); then
     bash "$SCRIPT_DIR/foundation/audio-foundation.sh" --remove \
       || warn "audio foundation removal reported a problem"
   fi
-  if [[ -f "$SCRIPT_DIR/oscmix/setup-oscmix.sh" ]]; then
-    bash "$SCRIPT_DIR/oscmix/setup-oscmix.sh" --uninstall \
+  local integ="${XDG_DATA_HOME:-$HOME/.local/share}/mosquitomixbay/integrations"
+  if [[ -f "$integ/oscmix/setup-oscmix.sh" ]]; then
+    bash "$integ/oscmix/setup-oscmix.sh" --uninstall \
       || warn "oscmix removal reported a problem"
   fi
+  rm -rf "$integ"
+  ok "profile integrations removed ($integ)"
   [[ -x "$BIN_DIR/mixbay-startup" ]] && "$BIN_DIR/mixbay-startup" --remove || true
   rm -f "$BIN_DIR/mosquito-mixbay" "$BIN_DIR/mosquito-mixbay-actions" "$BIN_DIR/mosquito-mixbay-tui" "$BIN_DIR/mosquito-mixbay-compat" "$BIN_DIR/mixbay-audio-foundation" "$BIN_DIR/mixbay-audio-defaults" "$BIN_DIR/mixbay-setup-ssl12" "$BIN_DIR/mixbay-oscmix-gtk" "$BIN_DIR/mixbay-oscmix-qt" "$BIN_DIR/mixbay-startup" "$BIN_DIR/mixbay-reverse"
   ok "binaries removed from $BIN_DIR"
@@ -174,17 +182,10 @@ EOF
   ok "mixbay-setup-ssl12 deployed: $BIN_DIR/mixbay-setup-ssl12"
 fi
 
-# RME cards: oscmix (engine + GTK mixer, huddx01 fork) and the optional Qt UI.
-# The launchers start the engine for the card it finds and stop it on exit;
-# the installer itself is reached through mixbay-audio-foundation --setup.
-for l in gtk qt; do
-  src="$SCRIPT_DIR/oscmix/launch-oscmix-$l"
-  [[ -f $src ]] || continue
-  cp "$src" "$BIN_DIR/mixbay-oscmix-$l"
-  chmod +x "$BIN_DIR/mixbay-oscmix-$l"
-  bash -n "$BIN_DIR/mixbay-oscmix-$l" || die "Invalid syntax: mixbay-oscmix-$l"
-  ok "mixbay-oscmix-$l deployed: $BIN_DIR/mixbay-oscmix-$l"
-done
+# RME cards: oscmix (engine + GTK/Qt mixers) is profile-owned tooling now.
+# The profile's setup downloads it into ~/.local/share/mosquitomixbay/
+# integrations/ and deploys the launchers, so nothing oscmix-specific ships in
+# this checkout.
 
 # -----------------------------------------------------------------------------
 # 2. Build the Go TUI (build-time-only Go dependency, same as siblings)
@@ -227,41 +228,16 @@ hyprctl reload >/dev/null 2>&1 || true
 ok "Hyprland float rule installed ($HYPR_CONF)"
 
 # -----------------------------------------------------------------------------
-# 4. evo_raw kernel module (REAL EVO control; demo mode without it)
+# 4. Profile-owned tooling (oscmix, evo_raw kmod) is not installed here.
+#    Installing an interface profile runs the integration it declares:
+#    oscmix for the RME cards, evo-raw for the EVO 8/4. Without a profile the
+#    bay stays in DEMO mode, which is the point of the profile gateway.
 # -----------------------------------------------------------------------------
-if [[ -e /dev/evo8 || -e /dev/evo4 ]]; then
-  ok "evo_raw already live ($(ls /dev/evo* 2>/dev/null | tr '\n' ' '))"
-elif ((NO_KMOD)); then
-  ok "kmod skipped (--no-kmod) — the bay runs in DEMO mode"
-elif ask "Install the evo_raw kernel module (REAL EVO 8/4 control — needs sudo + reboot-safe DKMS)?" y; then
-  if bash "$SCRIPT_DIR/kmod/install-evo-raw.sh"; then
-    ok "evo_raw installed"
-  else
-    warn "evo_raw install failed — the bay stays in DEMO mode (re-run kmod/install-evo-raw.sh later)."
-  fi
-else
-  ok "skipped — the bay runs in DEMO mode until the kmod is installed"
-fi
 
 # -----------------------------------------------------------------------------
-# 5. EVO 8 USB capture enable (system-wide, on every connect)
+# 5. EVO 8 USB capture enable is part of the evo-raw integration: the audio
+#    foundation installs the udev hook when the EVO profile is set up.
 # -----------------------------------------------------------------------------
-# EU51 may be disabled by the firmware after power-on. The Go driver also asks
-# for it once per process, but this udev hook makes capture work in every app
-# (DAW included) before Mixbay is ever launched.
-CAPTURE_HELPER=/usr/local/lib/mosquitomixbay/evo8-capture-enable.py
-CAPTURE_RULE=/etc/udev/rules.d/99-evo8-capture.rules
-if mq_sudo bash -c "
-  install -D -m 755 '$SCRIPT_DIR/kmod/evo8-capture-enable.py' '$CAPTURE_HELPER'
-  install -D -m 644 '$SCRIPT_DIR/kmod/99-evo8-capture.rules' '$CAPTURE_RULE'
-  udevadm control --reload-rules
-  udevadm trigger --action=add --subsystem-match=misc --sysname-match=evo8 2>/dev/null || true
-  [[ -e /dev/evo8 ]] && /usr/bin/python3 '$CAPTURE_HELPER' || true
-"; then
-  ok "EVO 8 capture helper installed ($CAPTURE_RULE)"
-else
-  warn "EVO 8 capture helper not installed — mic capture may stay silent"
-fi
 
 # -----------------------------------------------------------------------------
 # 5b. Audio foundation: udev seat access, WirePlumber rules, EVO 8 split,

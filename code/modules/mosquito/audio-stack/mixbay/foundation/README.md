@@ -15,6 +15,13 @@ share a channel layout:
 
 So the pack has **one shared floor** and **per-card extensions**:
 
+The card-specific installers are profile-owned: `oscmix` (RME) and `evo-raw`
+(the evo_raw kmod + EVO 8 capture helper) are downloaded into
+`~/.local/share/mosquitomixbay/integrations/<name>/` when the matching
+interface profile is installed, and verified file by file against the
+profiles index. They are not part of the mosquitOmarchy archive unless the
+archive is asked for them. Installing Mixbay alone never installs a kmod.
+
 ```
 shared floor (all supported interfaces)
   udev seat access (uaccess, no dialout re-login)

@@ -26,8 +26,9 @@ const (
 )
 
 type libraryIndexMsg struct {
-	ix  profiles.Index
-	err error
+	ix       profiles.Index
+	upstream map[string]profiles.Card
+	err      error
 }
 
 type libraryApplyMsg struct {
@@ -36,10 +37,10 @@ type libraryApplyMsg struct {
 	// checkDups asks the screen to re-run duplicate detection (after an
 	// install/update/remove), and offer removing a now-redundant scan card.
 	checkDups bool
-	// setup names the card integration an import must run (oscmix, douze).
-	// id is that card, so the setup helper knows which one.
-	setup string
-	id    string
+	// setupIDs lists the cards whose integration must run after the import,
+	// in order (one terminal setup at a time).
+	setupIDs []string
+	id       string
 }
 
 type libraryUninstallMsg struct {
@@ -53,10 +54,10 @@ type libraryBusyMsg struct{ what string }
 
 func libraryIndexCmd() tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
 		ix, err := profiles.FetchIndex(ctx)
-		return libraryIndexMsg{ix: ix, err: err}
+		return libraryIndexMsg{ix: ix, upstream: profiles.CheckUpstreams(ctx), err: err}
 	}
 }
 
@@ -105,13 +106,22 @@ func libraryImportCmd(ids []string, replaceUI bool) tea.Cmd {
 			what += "; failed " + strings.Join(failed, ", ")
 		}
 		msg := libraryApplyMsg{what: what, err: err, checkDups: err == nil && len(ids) == 1, id: ids[0]}
-		// shortcut: only a single-card install runs its spec.setup; a bulk
-		// install of a card that declares one would need the same pass. Add it
-		// when a repo card ships setup != "".
-		if err == nil && len(res) == 1 {
-			msg.setup = res[0].Setup
+		for _, r := range res {
+			if r.Err == nil && r.Setup != "" {
+				msg.setupIDs = append(msg.setupIDs, r.ID)
+			}
 		}
 		return msg
+	}
+}
+
+// libraryDeployUpstreamCmd writes a card fetched straight from its upstream
+// URL. No second download: the confirmation applies exactly what was shown.
+func libraryDeployUpstreamCmd(card profiles.Card) tea.Cmd {
+	return func() tea.Msg {
+		err := profiles.DeployCard(card)
+		what := "Updated " + card.Spec.Display + " to " + card.Spec.Version
+		return libraryApplyMsg{what: what, err: err, id: card.Spec.ID}
 	}
 }
 
@@ -120,8 +130,17 @@ func libraryImportCmd(ids []string, replaceUI bool) tea.Cmd {
 // runs in the real terminal because the installers need sudo/build output.
 // The foundation floor is not applied here: that waits for a first connection.
 // The result popup offers the transcript like every other setup.
-func cardSetupCmd(id string) tea.Cmd {
-	return setupCmd(id+" setup", nil, "mixbay-audio-foundation", "--setup", "--device", id)
+func cardSetupCmd(id string, after tea.Cmd) tea.Cmd {
+	return setupCmd(id+" setup", after, "mixbay-audio-foundation", "--setup", "--device", id)
+}
+
+// setupChain runs one card integration after another, each in the real
+// terminal, so a bulk install does not silently skip oscmix or evo-raw.
+func setupChain(ids []string, after tea.Cmd) tea.Cmd {
+	if len(ids) == 0 {
+		return after
+	}
+	return cardSetupCmd(ids[0], setupChain(ids[1:], after))
 }
 
 // openRepoCmd opens the community repo page in the desktop's default handler.
@@ -219,14 +238,18 @@ func (m model) installedItems() []tuikit.PickerItem {
 			mark = "●"
 		}
 		status, badge := "up to date", ""
-		ic, inRepo := m.libraryIndex.Card(meta.ID)
+		ic, _ := m.libraryIndex.Card(meta.ID)
+		target := ic.Version
+		if up, ok := m.libraryUpstream[meta.ID]; ok && profiles.VersionLess(meta.Version, up.Spec.Version) {
+			target = up.Spec.Version
+		}
 		switch {
-		case m.libraryIndex.SchemaVersion == 0:
+		case m.libraryIndex.SchemaVersion == 0 && target == "":
 			status = "not checked"
-		case !inRepo:
+		case target == "":
 			status = "local only"
-		case ic.Version != meta.Version:
-			status, badge = "update "+ic.Version, "■"
+		case target != meta.Version:
+			status, badge = "update "+target, "■"
 		}
 		items = append(items, tuikit.PickerItem{
 			Display:       fmt.Sprintf("%s %-30s %-8s %s", mark, meta.Display, meta.Version, status),
@@ -262,7 +285,7 @@ func (m model) availableItems() []tuikit.PickerItem {
 			mark = "●"
 		}
 		items = append(items, tuikit.PickerItem{
-			Display: fmt.Sprintf("%s %-30s %-8s %s", mark, ic.Display, ic.Version, ic.Vendor),
+			Display: fmt.Sprintf("%s %-30s %-8s", mark, ic.Display, ic.Version),
 			Value:   "repo:" + ic.ID,
 		})
 	}
@@ -394,11 +417,33 @@ func (m model) updateCursor() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	inst, _, err := profiles.Effective(id)
-	if err == nil && inst.Spec.Version == ic.Version {
+	if err != nil {
+		return m, nil
+	}
+	if up, ok := m.libraryUpstream[id]; ok && profiles.VersionLess(inst.Spec.Version, up.Spec.Version) {
+		return m.promptUpstream(inst, up)
+	}
+	if inst.Spec.Version == ic.Version {
 		m.toast, _ = m.toast.SetOK(id + " is already up to date")
 		return m, nil
 	}
 	return m.startInstall([]string{id})
+}
+
+// promptUpstream warns that this update bypasses the published index: the
+// card is pulled straight from the profiles repository, so it may be newer
+// than this Mixbay build expects.
+func (m model) promptUpstream(inst, up profiles.Card) (tea.Model, tea.Cmd) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Update %s from %s to %s?\n\n", inst.Spec.Display, inst.Spec.Version, up.Spec.Version)
+	b.WriteString("This update is not in the published profiles index yet: it is pulled directly from\n")
+	b.WriteString("github.com/kepalegars/mosquito-mixbay-profiles.\n\n")
+	b.WriteString("There is a very small risk that it is not fully compatible with this Mixbay build.\n")
+	b.WriteString("If something breaks, uninstall the profile and install it again.\n\nContinue?")
+	m.confirm = tuikit.NewConfirm(b.String(), "Cancel", "Update")
+	m.confirmAct = func() tea.Cmd { return libraryDeployUpstreamCmd(up) }
+	m.push(scrConfirm)
+	return m, nil
 }
 
 // startInstall imports the cards, first offering to back up any local layout
@@ -452,13 +497,28 @@ func (m model) openInfo() (tea.Model, tea.Cmd) {
 // repoNews counts what the index offers: updates for installed cards (the
 // square in Settings) and repo cards that are not installed here.
 func (m model) repoNews() (updates, installs int) {
+	seen := map[string]bool{}
 	for _, ic := range m.libraryIndex.Cards {
+		seen[ic.ID] = true
 		inst, _, err := profiles.Effective(ic.ID)
 		if err != nil {
 			installs++
 			continue
 		}
-		if inst.Spec.Version != ic.Version {
+		target := ic.Version
+		if up, ok := m.libraryUpstream[ic.ID]; ok && profiles.VersionLess(inst.Spec.Version, up.Spec.Version) {
+			target = up.Spec.Version
+		}
+		if inst.Spec.Version != target {
+			updates++
+		}
+	}
+	for id, up := range m.libraryUpstream {
+		if seen[id] {
+			continue
+		}
+		if inst, _, err := profiles.Effective(id); err == nil &&
+			profiles.VersionLess(inst.Spec.Version, up.Spec.Version) {
 			updates++
 		}
 	}
@@ -586,6 +646,9 @@ func (m model) libraryDetail(id string) string {
 	if profiles.HasUserUI(id) {
 		b.WriteString("layout     local override\n")
 	}
+	if up, ok := m.libraryUpstream[id]; ok && up.Spec.Version != card.Spec.Version {
+		fmt.Fprintf(&b, "upstream   %s  (direct from the profiles repo, not in the index)\n", up.Spec.Version)
+	}
 	fmt.Fprintf(&b, "backend    %s\n", card.Spec.Backend)
 	preset := card.Preset()
 	if preset == "auto" {
@@ -604,7 +667,6 @@ func (m model) libraryDetail(id string) string {
 	if meta.Revision != "" {
 		fmt.Fprintf(&b, "revision   %s\n", meta.Revision)
 	}
-	b.WriteString("\ni closes this popup.")
 	return b.String()
 }
 

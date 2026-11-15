@@ -189,6 +189,22 @@ func cliProfilesRemove(args []string) int {
 	return code
 }
 
+func cliProfilesIntegration(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: profiles-integration NAME")
+		return 2
+	}
+	ctx, cancel := profileContext()
+	defer cancel()
+	dir, err := profiles.EnsureIntegration(ctx, args[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Println(dir)
+	return 0
+}
+
 func cliProfilesSetURL(args []string) int {
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: profiles-set-url URL")

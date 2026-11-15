@@ -36,10 +36,20 @@ type IndexCard struct {
 
 // Index is the repo entry point.
 type Index struct {
-	SchemaVersion int         `json:"schema_version"`
-	Name          string      `json:"name"`
-	Revision      string      `json:"revision"`
-	Cards         []IndexCard `json:"cards"`
+	SchemaVersion int                    `json:"schema_version"`
+	Name          string                 `json:"name"`
+	Revision      string                 `json:"revision"`
+	Cards         []IndexCard            `json:"cards"`
+	Integrations  map[string]Integration `json:"integrations,omitempty"`
+}
+
+// Integration is the profile-owned tooling a card asks for by name
+// (spec.setup). Its files are code, so they live outside cards/ and every file
+// is pinned by sha256 in the index.
+type Integration struct {
+	Version string            `json:"version"`
+	Path    string            `json:"path"`
+	Files   map[string]string `json:"files"` // file name -> sha256
 }
 
 func (ix Index) Card(id string) (IndexCard, bool) {
@@ -161,7 +171,164 @@ func ValidateIndex(ix Index) error {
 			return fmt.Errorf("index: invalid sha256 for %s", c.ID)
 		}
 	}
+	for name, integ := range ix.Integrations {
+		if !ValidID(name) {
+			return fmt.Errorf("index: invalid integration name %q", name)
+		}
+		if integ.Path != "integrations/"+name || strings.Contains(integ.Path, "..") {
+			return fmt.Errorf("index: unsafe integration path %q for %s", integ.Path, name)
+		}
+		if len(integ.Files) == 0 || len(integ.Files) > 32 {
+			return fmt.Errorf("index: integration %s needs 1-32 files", name)
+		}
+		for file, sum := range integ.Files {
+			if file == "" || file != filepath.Base(file) || strings.Contains(file, "..") {
+				return fmt.Errorf("index: unsafe integration file %q in %s", file, name)
+			}
+			if len(sum) != 64 || strings.Trim(sum, "0123456789abcdef") != "" {
+				return fmt.Errorf("index: invalid sha256 for %s/%s", name, file)
+			}
+		}
+	}
 	return nil
+}
+
+// IntegrationDir is where a profile-owned integration is unpacked, one folder
+// per setup name (oscmix, evo-raw). Nothing here ships with Mixbay.
+func IntegrationDir(name string) string {
+	dir := os.Getenv("XDG_DATA_HOME")
+	if dir == "" {
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, ".local", "share")
+	}
+	return filepath.Join(dir, "mosquitomixbay", "integrations", name)
+}
+
+// EnsureIntegration downloads the files a setup name needs, verifying each
+// sha256 from the index. A matching local copy is reused without a download.
+func EnsureIntegration(ctx context.Context, name string) (string, error) {
+	if !ValidID(name) {
+		return "", fmt.Errorf("invalid integration name %q", name)
+	}
+	dir := IntegrationDir(name)
+	ix, err := FetchIndex(ctx)
+	if err != nil {
+		cached, cerr := CachedIndex()
+		if cerr != nil {
+			return "", err
+		}
+		ix = cached
+	}
+	integ, ok := ix.Integrations[name]
+	if !ok {
+		return "", fmt.Errorf("%w: integration %s", ErrNotFound, name)
+	}
+	if integrationReady(dir, integ) {
+		return dir, nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	base := strings.TrimSuffix(RepoURL(), "/") + "/" + integ.Path
+	for file, want := range integ.Files {
+		body, err := get(ctx, base+"/"+file)
+		if err != nil {
+			return "", err
+		}
+		sum := sha256.Sum256(body)
+		if got := hex.EncodeToString(sum[:]); got != want {
+			return "", fmt.Errorf("%s/%s: sha256 mismatch (index %s, download %s)", name, file, want, got)
+		}
+		path := filepath.Join(dir, file)
+		if err := writeFileAtomic(path, body); err != nil {
+			return "", err
+		}
+		mode := os.FileMode(0o644)
+		if strings.HasSuffix(file, ".sh") || strings.HasSuffix(file, ".py") || strings.HasPrefix(file, "launch-") {
+			mode = 0o755
+		}
+		if err := os.Chmod(path, mode); err != nil {
+			return "", err
+		}
+	}
+	marker, _ := json.MarshalIndent(integ, "", "  ")
+	if err := writeFileAtomic(filepath.Join(dir, ".manifest.json"), append(marker, '\n')); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func integrationReady(dir string, integ Integration) bool {
+	data, err := os.ReadFile(filepath.Join(dir, ".manifest.json"))
+	if err != nil {
+		return false
+	}
+	var got Integration
+	if json.Unmarshal(data, &got) != nil || got.Version != integ.Version || len(got.Files) != len(integ.Files) {
+		return false
+	}
+	for file, sum := range integ.Files {
+		if got.Files[file] != sum {
+			return false
+		}
+		if _, err := os.Stat(filepath.Join(dir, file)); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// FetchUpstreamCard downloads a card from the direct URL it declares. The URL
+// must belong to the official profiles repo, and the card is validated like
+// any import before it can replace anything.
+func FetchUpstreamCard(ctx context.Context, id, url string) (Card, error) {
+	if !ValidUpstreamURL(url) {
+		return Card{}, fmt.Errorf("%s: refusing upstream URL %q", id, url)
+	}
+	body, err := get(ctx, url)
+	if err != nil {
+		return Card{}, err
+	}
+	c, issues, err := Parse(body)
+	if err != nil {
+		return Card{}, err
+	}
+	if errs := Errors(issues); len(errs) > 0 {
+		return Card{}, fmt.Errorf("%s: %s", id, errs[0])
+	}
+	if c.Spec.ID != id {
+		return Card{}, fmt.Errorf("%s: upstream card declares id %q", id, c.Spec.ID)
+	}
+	return c, nil
+}
+
+// CheckUpstreams fetches the direct URL of every installed card that declares
+// one. A failure is not an error: offline is normal and the published index
+// stays the fallback.
+func CheckUpstreams(ctx context.Context) map[string]Card {
+	out := map[string]Card{}
+	for _, m := range Installed() {
+		card, _, err := Effective(m.ID)
+		if err != nil || card.Spec.Upstream == "" {
+			continue
+		}
+		up, err := FetchUpstreamCard(ctx, m.ID, card.Spec.Upstream)
+		if err != nil {
+			continue
+		}
+		out[m.ID] = up
+	}
+	return out
+}
+
+// DeployCard installs a card that was already fetched and validated (the
+// direct-upstream update path). It follows the same rules as an import.
+func DeployCard(c Card) error {
+	if errs := Errors(Validate(c)); len(errs) > 0 {
+		return fmt.Errorf("%s: %s", c.Spec.ID, errs[0])
+	}
+	sum := sha256.Sum256(Encode(c))
+	return deployCard(c, IndexCard{ID: c.Spec.ID, SHA256: hex.EncodeToString(sum[:])}, "upstream")
 }
 
 // FetchIndex downloads and validates index.json.
@@ -247,8 +414,7 @@ type ImportResult struct {
 }
 
 // Import downloads the selected profiles from the repo and deploys them.
-// Only the card JSON is fetched; captures and raw sessions stay remote. Native
-// ids are refused: their built-in copy must not be replaced by the repo.
+// Only the card JSON is fetched; captures and raw sessions stay remote.
 //
 // shortcut: card.json only; add opt-in capture download when a screen uses it
 // (TODO-PROFILES.md §7).
@@ -397,6 +563,9 @@ func matchEntry(ix Index, e ConnEntry) (IndexCard, bool) {
 	}
 	return IndexCard{}, false
 }
+
+// VersionLess compares dotted numeric versions ("1.2.0" < "1.10.0").
+func VersionLess(a, b string) bool { return versionLess(a, b) }
 
 // versionLess compares dotted numeric versions ("1.2.0" < "1.10.0"). Missing
 // or non-numeric parts compare as 0, which is fine for card metadata.

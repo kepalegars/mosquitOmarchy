@@ -85,6 +85,8 @@ func runCLI(args []string) int {
 		return cliProfilesValidate(args[1:])
 	case "profiles-remove":
 		return cliProfilesRemove(args[1:])
+	case "profiles-integration":
+		return cliProfilesIntegration(args[1:])
 	case "profiles-set-url":
 		return cliProfilesSetURL(args[1:])
 	case "profiles-offer-json":
@@ -173,6 +175,7 @@ func cliHelp() string {
   profiles-list-local                 installed cards + metadata (JSON)
   profiles-validate FILE|DIR...       validate one or more card profiles
   profiles-remove ID...               uninstall card(s) from the store
+  profiles-integration NAME           fetch/verify a profile integration and print its dir
   profiles-set-url URL                point Mixbay at a repo mirror
   set gain DB -t inputN               input gain in dB
   set mute 0|1 -t TARGET              mute (inputN / output[N])

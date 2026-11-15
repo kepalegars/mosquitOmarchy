@@ -30,8 +30,9 @@ const (
 // card may ask for. A card never carries a command or URL: the build knows
 // these, so a repo entry cannot run arbitrary code.
 const (
-	SetupOscmix = "oscmix" // RME CC-mode cards: huddx01/oscmix (GTK + Qt)
-	SetupDouze  = "douze"  // Solid State Logic SSL 12 control
+	SetupOscmix = "oscmix"  // RME CC-mode cards: huddx01/oscmix (GTK + Qt)
+	SetupDouze  = "douze"   // Solid State Logic SSL 12 control
+	SetupEvoRaw = "evo-raw" // Audient EVO: evo_raw kmod + capture helper
 )
 
 // Foundation is the optional per-card part of the audio foundation. Absent
@@ -80,6 +81,10 @@ type Spec struct {
 	Caps         Caps        `json:"caps"`
 	Setup        string      `json:"setup,omitempty"`
 	Foundation   *Foundation `json:"foundation,omitempty"`
+	// Upstream is an optional direct card URL (same schema) used by cards whose
+	// vendor integration moves faster than the published index, currently the
+	// RME/oscmix cards. Only the official profiles repo is accepted.
+	Upstream string `json:"upstream,omitempty"`
 }
 
 // Credits says who made a card: "mosquito" for the built-in integrations,
@@ -174,7 +179,7 @@ func validBlock(b string) bool {
 
 // Setups is the closed set of card-specific integrations this build can run
 // after a download. Empty means the card needs none.
-var Setups = []string{"", SetupOscmix, SetupDouze}
+var Setups = []string{"", SetupOscmix, SetupDouze, SetupEvoRaw}
 
 func validSetup(s string) bool {
 	for _, v := range Setups {
@@ -183,6 +188,18 @@ func validSetup(s string) bool {
 		}
 	}
 	return false
+}
+
+// ValidUpstreamURL accepts only a raw card URL from the official profiles
+// repository. Cards are data, but this URL is fetched by Mixbay itself, so the
+// host and owner are pinned instead of trusting whatever the card says.
+func ValidUpstreamURL(u string) bool {
+	const prefix = "https://raw.githubusercontent.com/kepalegars/mosquito-mixbay-profiles/"
+	if !strings.HasPrefix(u, prefix) || strings.Contains(u, "..") {
+		return false
+	}
+	rest := strings.TrimPrefix(u, prefix)
+	return strings.HasSuffix(rest, ".json") && len(rest) > len(".json")
 }
 
 // Issue is one validation finding. Level "error" blocks an import.
@@ -244,7 +261,10 @@ func Validate(c Card) []Issue {
 		add("error", "spec.caps.mixer", "mixer caps need %d+ inputs and 2+ outputs (got %d/%d)", s.NumInputs, s.MixerInputs, s.MixerOutputs)
 	}
 	if !validSetup(s.Setup) {
-		add("error", "spec.setup", "unknown setup %q (known: oscmix, douze)", s.Setup)
+		add("error", "spec.setup", "unknown setup %q (known: oscmix, douze, evo-raw)", s.Setup)
+	}
+	if s.Upstream != "" && !ValidUpstreamURL(s.Upstream) {
+		add("error", "spec.upstream", "%q is not a card URL from the profiles repository", s.Upstream)
 	}
 	if f := s.Foundation; f != nil {
 		if f.Sink == "" && f.Source == "" {

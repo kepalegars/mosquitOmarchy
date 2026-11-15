@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,7 @@ func testHome(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("MIXBAY_CONFIG_DIR", filepath.Join(home, ".config", "mosquitomixbay"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 }
 
 func TestNativeCardsAreValid(t *testing.T) {
@@ -362,6 +364,88 @@ func TestDuplicatesNeverProposeRemovingNative(t *testing.T) {
 	dups := Duplicates()
 	if len(dups) != 1 || dups[0].KeepID != "evo8" || dups[0].RemoveID != "beta-evo-8" {
 		t.Fatalf("duplicates = %+v", dups)
+	}
+}
+
+func TestUpstreamURLGuardAndDeploy(t *testing.T) {
+	good := "https://raw.githubusercontent.com/kepalegars/mosquito-mixbay-profiles/main/cards/rme/fireface-802/card.json"
+	if !ValidUpstreamURL(good) {
+		t.Fatal("official raw card URL refused")
+	}
+	for _, bad := range []string{
+		"http://raw.githubusercontent.com/kepalegars/mosquito-mixbay-profiles/main/x.json",
+		"https://raw.githubusercontent.com/someone/mosquito-mixbay-profiles/main/x.json",
+		"https://raw.githubusercontent.com/kepalegars/mosquito-mixbay-profiles/main/../x.json",
+		"https://raw.githubusercontent.com/kepalegars/mosquito-mixbay-profiles/main/x.sh",
+		"https://example.com/card.json",
+	} {
+		if ValidUpstreamURL(bad) {
+			t.Errorf("unsafe upstream URL accepted: %s", bad)
+		}
+	}
+
+	testHome(t)
+	if _, err := InstallLocalCard("quantum-es4", "PreSonus Quantum ES 4", "Quantum ES"); err != nil {
+		t.Fatal(err)
+	}
+	card, _, err := Effective("quantum-es4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	card.Spec.Version = "v9"
+	card.Spec.Upstream = good
+	if err := DeployCard(card); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := Effective("quantum-es4")
+	if err != nil || got.Spec.Version != "v9" || got.Spec.Upstream != good {
+		t.Fatalf("deployed upstream card = %+v, %v", got.Spec, err)
+	}
+}
+
+func TestEnsureIntegrationDownloadsAndVerifies(t *testing.T) {
+	testHome(t)
+	script := []byte("#!/usr/bin/env bash\necho ok\n")
+	sum := sha256.Sum256(script)
+	digest := hex.EncodeToString(sum[:])
+	ix := Index{SchemaVersion: SchemaVersion, Integrations: map[string]Integration{
+		"oscmix": {Version: "1", Path: "integrations/oscmix", Files: map[string]string{"setup-oscmix.sh": digest}},
+	}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/index.json", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(ix)
+	})
+	requests := 0
+	mux.HandleFunc("/integrations/oscmix/setup-oscmix.sh", func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_, _ = w.Write(script)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("MIXBAY_PROFILES_URL", srv.URL)
+
+	dir, err := EnsureIntegration(context.Background(), "oscmix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "setup-oscmix.sh")); err != nil || string(got) != string(script) {
+		t.Fatalf("downloaded script = %q, %v", got, err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "setup-oscmix.sh"))
+	if err != nil || info.Mode()&0o111 == 0 {
+		t.Fatalf("script is not executable: %v", err)
+	}
+	if _, err := EnsureIntegration(context.Background(), "oscmix"); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("ready integration downloaded again (%d requests)", requests)
+	}
+
+	ix.Integrations["oscmix"] = Integration{Version: "2", Path: "integrations/oscmix",
+		Files: map[string]string{"setup-oscmix.sh": strings.Repeat("0", 64)}}
+	if _, err := EnsureIntegration(context.Background(), "oscmix"); err == nil {
+		t.Fatal("a bad digest was accepted")
 	}
 }
 

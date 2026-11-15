@@ -82,11 +82,15 @@ réinstallable depuis le dépôt.
   "foundation": { "sink": "HiFi__Line5__sink", "source": "Fireface" }
   ```
   `setup` choisit une intégration connue du binaire (`oscmix` pour les RME
-  en CC mode, `douze` pour le SSL 12 ; absent = aucune). Elle est lancée
-  **après** le téléchargement. `foundation` donne les fragments de nœud
-  PipeWire du sink/source par défaut ; absent = le `match` de
-  `connected-interfaces.json` (le défaut). Ni commande ni URL ne sont
-  acceptées : la validation refuse tout le reste.
+  en CC mode, `evo-raw` pour le kmod + capture des EVO, `douze` pour le
+  SSL 12 ; absent = aucune). Les fichiers de l'intégration viennent du dépôt
+  de profils (`integrations/<nom>/`, chaque fichier vérifié par sha256) et
+  sont posés dans `~/.local/share/mosquitomixbay/integrations/`, puis lancés
+  **après** le téléchargement. Rien de tout cela n'est livré dans
+  mosquitOmarchy : pas de profil, pas de kmod. `foundation` donne les
+  fragments de nœud PipeWire du sink/source par défaut ; absent = le `match`
+  de `connected-interfaces.json` (le défaut). Ni commande ni URL libre ne
+  sont acceptées : la validation refuse tout le reste.
   La fondation audio n'est appliquée qu'après la **première connexion** de la
   carte ; un simple téléchargement ne pose que le setup de la carte.
 
@@ -244,7 +248,7 @@ bordures.
 ## Usage
 
 ```bash
-./setup-mosquitomixbay.sh            # installe (TUI + dispatchers + kmod + capture EU51)
+./setup-mosquitomixbay.sh            # installe la TUI, les dispatchers et la fondation audio
 ./setup-mosquitomixbay.sh --status   # missing | partial:… | ok
 mosquito-mixbay                      # la TUI (seule interface)
 mosquito-mixbay-actions devices-json
@@ -368,13 +372,23 @@ localement) et **Qt** (AppImage publiée avec les nightly builds).
   `backend: "alsa"` (présence seulement), `setup: "oscmix"`, toutes les
   capacités à `false`. Mixbay n'affiche donc **aucun contrôle** : le menu de la
   carte liste `Open GTK mixer`, `Open Qt UI`, `Set up / repair oscmix`.
-- **Installation manuelle** : `bash oscmix/setup-oscmix.sh` (`-y`, `--qt`,
-  `--status`, `--uninstall`). Le script installe les dépendances de build
-  (pacman), clone le commit `dev` épinglé dans
+- **Installation** : automatique quand le profil d'une Fireface est installé.
+  L'intégration `oscmix` est téléchargée depuis le dépôt de profils dans
+  `~/.local/share/mosquitomixbay/integrations/oscmix/` (fichiers vérifiés par
+  sha256), puis `setup-oscmix.sh` est lancé. Elle n'est **pas** livrée avec
+  mosquitOmarchy. Manuellement :
+  `bash ~/.local/share/mosquitomixbay/integrations/oscmix/setup-oscmix.sh -y`
+  (`--qt`, `--status`, `--uninstall`). Le script installe les dépendances de
+  build (pacman), clone le commit `dev` épinglé dans
   `~/.local/share/mosquitomixbay/oscmix`, construit
-  `oscmix`/`alsaseqio`/`alsarawio`/`oscmix-gtk` et les pose dans
-  `~/.local/bin` (+ schémas GSettings dans `~/.local/lib/oscmix/gtk`).
-  Il télécharge aussi l'AppImage Qt quand la release nightly en publie une.
+  `oscmix`/`alsaseqio`/`alsarawio`/`oscmix-gtk`, pose les binaires et les
+  lanceurs dans `~/.local/bin` (+ schémas GSettings dans
+  `~/.local/lib/oscmix/gtk`). Il télécharge aussi l'AppImage Qt quand la
+  release nightly en publie une.
+- **Mise à jour directe** : les cartes RME déclarent `spec.upstream`. `r`
+  compare aussi cette URL directe ; une mise à jour hors index est proposée
+  avec un avertissement (faible risque d'incompatibilité, désinstaller puis
+  réinstaller en cas de problème).
 - **Aucun service** : rien ne démarre au boot, rien ne s'accroche à la carte
   quand elle est débranchée. `mixbay-oscmix-gtk` trouve le client séquenceur
   ALSA, démarre le moteur sur les ports OSC par défaut, ouvre le mixer et
@@ -641,10 +655,9 @@ réinstaller Levels Guard, pour repartir de l'upstream).
 mosquitomixbay/
   mosquito-mixbay            dispatcher (TUI si tty, foot sinon)
   mosquito-mixbay-actions    backend non-interactif (scripts, live-mode)
-  setup-mosquitomixbay.sh    installateur (Go build + Hyprland + kmod)
+  setup-mosquitomixbay.sh    installateur (Go build + Hyprland + fondation)
   compat/                    accueil première connexion (udev/kmod/split)
   foundation/                pack audio par défaut (udev, WP, split, kHz)
-  oscmix/                    oscmix (huddx01) + GTK/Qt pour les RME (setup + lanceurs)
   harness/                   mixbay-reverse (usbmon capture/diff/replay) + tests
   docs/                      AUDIO-PROTOCOLS-LINUX.md (rapport de référence)
   tui-go/                    binaire unique (TUI + CLI) sur tui-kit
