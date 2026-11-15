@@ -11,7 +11,7 @@ est là, mais l'intégration n'en dépend plus.
 
 ```bash
 # MODULES+=( … )
-"mixbay:mosquitomixbay — USB audio bay (EVO 8/4 full control, SSL 12 via douze, Fireface UCX II via oscmix + GTK, UGM192 ALSA level 1, beta interfaces + demo)"
+"mixbay:mosquitomixbay — USB audio bay (EVO 8/4 full control, SSL 12 via douze, Fireface UCX II via oscmix-desk + GTK, UGM192 ALSA level 1, beta interfaces + demo)"
 
 # module_state(): ajouter au case
 mixbay) st_mixbay ;;
@@ -70,8 +70,8 @@ en plein set (même pattern que la garde thermale existante).
 
 ## 3. Portée volontairement hors v1
 
-- Matrice TotalMix UCX II : portée par `oscmix` (installé et lancé depuis le
-  menu de la carte), pas par le driver ALSA de Mixbay.
+- Matrice TotalMix UCX II : portée par `oscmix-desk` (installé et lancé depuis
+  le menu de la carte), pas par le driver ALSA de Mixbay.
 - Profils PipeWire EVO 8 (6 canaux, `analog-surround-51`) : voir
   `dev/wireplumber/evo8` upstream — à empaqueter quand le hardware est là.
 - Patchbay automatique au branchement : volontairement absent. Les presets se

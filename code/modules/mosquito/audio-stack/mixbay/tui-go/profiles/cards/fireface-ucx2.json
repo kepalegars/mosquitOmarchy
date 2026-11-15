@@ -4,7 +4,7 @@
     "id": "fireface-ucx2",
     "display": "RME Fireface UCX II",
     "vendor": "RME",
-    "usb_vid": "0422",
+    "usb_vid": "2a39",
     "usb_pid": "3xxx",
     "num_inputs": 8,
     "num_output_pairs": 3,
@@ -27,7 +27,12 @@
       "mixer": false
     },
     "card_match": ["UCX II", "UCXII", "Fireface"],
-    "description": "ALSA level 1 (volumes/mutes). TotalMix matrix pending kernel support."
+    "setup": "oscmix",
+    "foundation": {
+      "sink": "HiFi__Line5__sink",
+      "source": "Fireface"
+    },
+    "description": "Class Compliant mode: oscmix-desk controls the mixer. ALSA level 1 otherwise."
   },
   "ui": {
     "preset": "auto",

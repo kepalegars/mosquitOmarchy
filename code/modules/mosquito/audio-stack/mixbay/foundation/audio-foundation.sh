@@ -16,8 +16,10 @@
 #     connected, so an unplugged EVO 8 never shows up as a selectable output.
 #     EVO 4 is left to ALSA UCM >= 1.2.16, which already exposes the right
 #     stereo output / split captures.
-#   • Defaults: EVO 8 main out + mic 1+2 become the default sink/source at
-#     login, through a small user service.
+#   • Defaults: each card names its own default sink/source (EVO 8 main out +
+#     mic 1+2, UCX II line 5 + Fireface, ...), through a small user service.
+#   • Applied only after a card has been connected once: a downloaded profile
+#     has no node to match before that.
 #   • Rate: 48 kHz / 1024 frames with 44.1–192 kHz allowed, written only when
 #     the mosquitOmarchy pipewire-settings module is not already managing the
 #     clock (90-mosquitomarchy-pipewire.conf). Health checks always report the
@@ -27,6 +29,7 @@
 #   mixbay-audio-foundation --status [--json]
 #   mixbay-audio-foundation --needs evo8
 #   mixbay-audio-foundation --apply [--restart] [--force-evo4-split]
+#   mixbay-audio-foundation --setup --device ID
 #   mixbay-audio-foundation --split on|off --device evo8 [--restart]
 #   mixbay-audio-foundation --remove [--restart]
 # =============================================================================
@@ -64,6 +67,37 @@ profile_id_for_name(){
     [[ -f $f ]] || continue
     jq -r --arg n "$n" 'select(.spec.display==$n)|.spec.id' "$f" 2>/dev/null
   done | head -1
+}
+
+# card_setup <id>: the named integration a card needs. Native cards keep the
+# mapping that predates the schema; a downloaded card declares it in
+# spec.setup. Empty means the card needs no extra step.
+card_setup(){
+  local id="$1" f
+  case $id in
+    fireface-ucx2) echo oscmix; return ;;
+    ssl12) echo douze; return ;;
+  esac
+  f="$(profile_card_dir "$id")/upstream/card.json"
+  [[ -f $f ]] && jq -r '.spec.setup // ""' "$f" 2>/dev/null
+}
+
+# run_card_setup <name>: the closed set of integrations a card may name. A
+# card is data, so it can only select one of these; it can never supply a
+# command. The card's own setup never applies the audio foundation floor.
+run_card_setup(){
+  case "$1" in
+    oscmix)
+      local s="$MIXBAY_ROOT/oscmix/setup-oscmix.sh"
+      [[ -f $s ]] || { warn "oscmix module not found ($s)"; return 1; }
+      bash "$s" -y --enable ;;
+    douze)
+      local s="$MIXBAY_ROOT/../../../Apps/douze/setup-douze.sh"
+      [[ -f $s ]] || { warn "douze module not found ($s)"; return 1; }
+      bash "$s" -y --update --no-restart ;;
+    *)
+      warn "unknown card setup: $1" ; return 1 ;;
+  esac
 }
 
 BASE_CONF="$PW_DIR/50-mixbay-audio.conf"
@@ -153,6 +187,7 @@ while (($#)); do
     --status) MODE=status; shift ;;
     --needs) MODE=needs; shift ;;
     --apply) MODE=apply; shift ;;
+    --setup) MODE=setup; shift ;;
     --remove) MODE=remove; shift ;;
     --split) MODE=split; SPLIT="${2:-}"; shift 2; ;;
     --track) MODE=track; shift ;;
@@ -370,9 +405,12 @@ native_rate(){
   esac
 }
 
-# oscmix is the UCX II's control surface: user-local binaries, no card writes.
+# oscmix-desk is the UCX II's control surface: per-user binaries + a user
+# service. It applies ~/.config/oscmix/routing.conf (declarative desk); the
+# foundation itself still writes nothing to the interface.
 oscmix_installed(){
-  [[ -x $BIN_DIR/oscmix && -x $BIN_DIR/alsarawio && -x $BIN_DIR/oscmix-gtk ]]
+  [[ -x $BIN_DIR/oscmix-session && -x $BIN_DIR/oscmix-launch && -x $BIN_DIR/oscmix-gtk \
+     && -f "$HOME_DIR/.local/lib/oscmix-desk/oscmix_desk/__init__.py" ]]
 }
 
 native_installed(){
@@ -777,11 +815,19 @@ case "$card" in
   fireface-ucx2) sink_match="HiFi__Line5__sink"; src_match="Fireface" ;;
   ugm192)    sink_match="UGM192";           src_match="UGM192" ;;
   *)
+    # A downloaded card may declare its own nodes ("foundation": {sink,
+    # source}); otherwise fall back to its connection-log match.
+    card_file="${XDG_CONFIG_HOME:-$HOME/.config}/mosquitomixbay/cards/$card/upstream/card.json"
+    if [[ -f $card_file ]]; then
+      sink_match="$(jq -r '.spec.foundation.sink // ""' "$card_file" 2>/dev/null)"
+      src_match="$(jq -r '.spec.foundation.source // ""' "$card_file" 2>/dev/null)"
+    fi
     # Any card that was connected once (native, beta or unsupported) is in
     # the connection log with the ALSA match string.
     if [[ -f $CONNLOG ]]; then
       match="$(jq -r --arg id "$card" '.[]|select(.id==$id)|.match' "$CONNLOG" 2>/dev/null | head -1)"
-      sink_match="$match"; src_match="$match"
+      [[ -n $sink_match ]] || sink_match="$match"
+      [[ -n $src_match ]] || src_match="$match"
     fi
     ;;
 esac
@@ -838,11 +884,18 @@ restart_audio(){
 
 apply(){
   info "Applying the Mixbay audio foundation${DEV:+ for $DEV}"
+  # The foundation is only ever applied to a card that has been plugged in
+  # once: a downloaded card has no node to match until then.
+  track_connections
+  if [[ -n $DEV ]] && ! log_has_id "$DEV" && ! state_installed "$DEV"; then
+    warn "$DEV has never been connected — plug it in once, then apply the foundation."
+    return 1
+  fi
   write_base_clock
   write_wp_rules
-  # The EVO udev seat rule and audio-panel hints are EVO-specific. A UCX II
-  # setup stays on the shared floor (PipeWire/WirePlumber) and oscmix only.
-  if [[ $DEV != fireface-ucx2 ]]; then
+  # The EVO udev seat rule and audio-panel hints are EVO-specific: a
+  # UCX II or downloaded card stays on the shared floor plus its own setup.
+  if [[ -z $DEV || $DEV == evo8 || $DEV == evo4 ]]; then
     install_udev
     install_platform_hints
   fi
@@ -886,32 +939,15 @@ apply(){
         state_set_installed evo4 true
         state_set_default_if_empty evo4
         ;;
-      ssl12)
-        local douze="$MIXBAY_ROOT/../../../Apps/douze/setup-douze.sh"
-        if [[ -f $douze ]]; then
-          if bash "$douze" -y --update --no-restart; then
-            state_set_installed ssl12 true
-            state_set_default_if_empty ssl12
-          else
-            warn "douze setup failed — SSL 12 not marked as set up"
-          fi
+      ssl12|fireface-ucx2)
+        # douze for the SSL 12, oscmix-desk for the UCX II. The named
+        # integration is the whole card-specific step; the shared floor
+        # above is system config only.
+        if run_card_setup "$(card_setup "$dev")"; then
+          state_set_installed "$dev" true
+          state_set_default_if_empty "$dev"
         else
-          warn "douze module not found ($douze) — install it from Setup → Apps → douze"
-        fi
-        ;;
-      fireface-ucx2)
-        # oscmix is the whole card-specific setup. It is user-local and never
-        # writes a card register; the shared floor above is system config only.
-        local oscmix="$MIXBAY_ROOT/oscmix/setup-oscmix.sh"
-        if [[ -f $oscmix ]]; then
-          if bash "$oscmix" -y; then
-            state_set_installed fireface-ucx2 true
-            state_set_default_if_empty fireface-ucx2
-          else
-            warn "oscmix setup failed — Fireface UCX II not marked as set up"
-          fi
-        else
-          warn "oscmix module not found ($oscmix)"
+          warn "$dev setup failed — not marked as set up"
         fi
         ;;
       ugm192)
@@ -921,6 +957,13 @@ apply(){
         ;;
       *)
         if profile_installed "$dev"; then
+          # A downloaded card may name its own integration (spec.setup);
+          # without one the shared floor is all it needs.
+          local kind; kind="$(card_setup "$dev")"
+          if [[ -n $kind ]] && ! run_card_setup "$kind"; then
+            warn "$dev setup failed — not marked as set up"
+            continue
+          fi
           state_set_installed "$dev" true
           state_set_default_if_empty "$dev"
         else
@@ -1008,6 +1051,19 @@ toggle_split(){
   install_platform_hints
   ok "$dev split $on (audio panel only)"
   return 0
+}
+
+# setup_card: the card's own integration only, without the shared floor.
+# Used right after a download and by the device screen's "Set up / repair".
+# The audio foundation waits for a first connection, so this does not mark
+# the card as installed.
+setup_card(){
+  local dev="$DEV" kind
+  [[ -n $dev ]] || { warn "--setup needs --device"; return 2; }
+  kind="$(card_setup "$dev")"
+  [[ -n $kind ]] || { ok "$dev needs no card-specific setup"; return 0; }
+  info "Setting up $dev ($kind)"
+  run_card_setup "$kind" && ok "$dev setup finished"
 }
 
 remove_device(){
@@ -1110,11 +1166,13 @@ needs(){
     [[ -f "$PW_DIR/99-ssl12-sinks.conf" ]] || { echo "SSL 12 PipeWire playback-pair split (only when the card is connected)"; miss=1; }
   fi
   if [[ $dev == fireface-ucx2 ]]; then
-    oscmix_installed || { echo "oscmix + GTK mixer (Fireface UCX II control)"; miss=1; }
-    if command -v amidi >/dev/null 2>&1 \
-       && ! amidi -l 2>/dev/null | grep -q 'Fireface UCX II'; then
-      echo "Fireface UCX II in Class Compliant mode (raw MIDI port; check: amidi -l)"
-      miss=1
+    oscmix_installed || { echo "oscmix-desk (session + GTK mixer, Fireface UCX II control)"; miss=1; }
+    if command -v aconnect >/dev/null 2>&1; then
+      aconnect -l 2>/dev/null | grep -q 'Fireface UCX II' \
+        || { echo "Fireface UCX II in Class Compliant mode (ALSA sequencer client missing; check: aconnect -l)"; miss=1; }
+    elif command -v amidi >/dev/null 2>&1; then
+      amidi -l 2>/dev/null | grep -q 'Fireface UCX II' \
+        || { echo "Fireface UCX II in Class Compliant mode (raw MIDI port missing; check: amidi -l)"; miss=1; }
     fi
   fi
   return $(( miss == 0 ))
@@ -1124,6 +1182,7 @@ case $MODE in
   status) if (( JSON )); then status_json; else status_human; fi ;;
   needs) needs ;;
   apply) apply ;;
+  setup) setup_card ;;
   split) toggle_split ;;
   remove)
     if [[ -n $DEV ]]; then remove_device "$DEV"; else remove_all; fi

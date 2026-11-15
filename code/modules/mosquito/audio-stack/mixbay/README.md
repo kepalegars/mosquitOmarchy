@@ -26,15 +26,16 @@ Projets amont explicitement suivis (sourcés, pas copiés) :
   — Focusrite Scarlett/Clarett/Vocaster.
 - [`thomas-nelson23/Openface-Mixer`](https://github.com/thomas-nelson23/Openface-Mixer)
   — RME Digiface USB / Fireface 802/800 / RayDAT.
-- [`michaelforney/oscmix`](https://github.com/michaelforney/oscmix) — RME
-  Fireface UCX II / UC.
+- [`relative23/oscmix-desk`](https://github.com/relative23/oscmix-desk) —
+  RME Fireface UCX II (backend `michaelforney/oscmix` + desk déclaratif, GTK
+  et service utilisateur).
 
 | Interface | Backend | État |
 |---|---|---|
 | Audient EVO 8 | `evo_raw` kmod (`/dev/evo8` ioctl) | **plein contrôle** : volumes, gains 0…58 dB (échelle carte ; FU11/ALSA -8…50), mutes, 48V, loopback mixer 10×4 sur 2 bus (MIX 1\|2, MIX 3\|4) — **v1.0.0** |
 | Audient EVO 4 | même protocole | plein contrôle + monitor blend, Levels 4 canaux — **v1.0.0** |
 | Solid State Logic SSL 12 | douze (HTTP local) | volumes masters, mutes, mixer/sends, setup complet depuis Mixbay ; préamps/48V et surface SSL 360 complète via Omarchy360 — **v0.1.0** |
-| RME Fireface UCX II | oscmix (OSC + GTK) | mixer complet : gains, 48 V, niveaux, routage via oscmix ; installé depuis le menu de la carte, sans écriture dans la carte par la fondation — **v0.1.0** |
+| RME Fireface UCX II | oscmix-desk (oscmix + GTK + service) | mixer complet : gains, 48 V, niveaux, routage via le desk déclaratif `~/.config/oscmix/routing.conf` ; installé depuis le menu de la carte — **v0.1.0** |
 | ESI UGM192 | ALSA | panneau dédié style EVO : volume de sortie (0…-64 dB) + mute réels, mètres 2 IN / 2 OUT ; GAIN, MONITOR et 48V restent matériels — **v0.1.0** |
 | PreSonus Quantum ES 4 | ALSA (profil communautaire) | **base de test reverse engineering**, pas natif : profil dans le dépôt, ou ajout via Settings → Add an audio interface, flag `beta`, volume/mute seulement |
 | Autres interfaces USB | ALSA niveau 1 (beta) | ajout via Settings → Add an audio interface ; flag `demo-beta`/`online-beta` tant que non supportées nativement |
@@ -48,7 +49,7 @@ volumes et mutes, jamais de gain, 48V ni mixer.
 
 Les définitions d'interfaces ne sont plus codées en dur dans Mixbay : chaque
 carte est un profil JSON. Le dépôt
-[`mosquito mixbay profiles`](https://github.com/mosquitomarchy/mosquito-mixbay-profiles)
+[`mosquito mixbay profiles`](https://github.com/kepalegars/mosquito-mixbay-profiles)
 est la source de vérité ; les cinq cartes natives (`evo8`, `evo4`, `ugm192`,
 `fireface-ucx2`, `ssl12`) y figurent et sont aussi embarquées dans le binaire
 pour marcher hors ligne.
@@ -67,6 +68,20 @@ pour marcher hors ligne.
   (upstream + surcharges), retire numéros de série et chemins bus/dev des
   captures distilléees, et écrit `cards/<id>/`, `index.json`, `README.md`,
   `PR.md`.
+- **Setup et fondation par carte** : une carte peut déclarer deux champs
+  optionnels dans `spec` :
+  ```json
+  "setup": "oscmix",
+  "foundation": { "sink": "HiFi__Line5__sink", "source": "Fireface" }
+  ```
+  `setup` choisit une intégration connue du binaire (`oscmix` pour
+  oscmix-desk, `douze` pour le SSL 12 ; absent = aucune). Elle est lancée
+  **après** le téléchargement. `foundation` donne les fragments de nœud
+  PipeWire du sink/source par défaut ; absent = le `match` de
+  `connected-interfaces.json` (le défaut). Ni commande ni URL ne sont
+  acceptées : la validation refuse tout le reste.
+  La fondation audio n'est appliquée qu'après la **première connexion** de la
+  carte ; un simple téléchargement ne pose que le setup de la carte.
 
 Stockage local : `~/.config/mosquitomixbay/cards/<id>/` avec
 `upstream/card.json`, `user/layout.json` (surcharge UI creuse),
@@ -81,13 +96,18 @@ remplacent) :
 { "preset": "auto", "blocks": ["controlsGrid", "statusBar"] }
 ```
 
-Presets disponibles : `evo8`, `evo4`, `ugm192`, `single-pair`, `auto`.
+Presets disponibles : `evo8`, `evo4`, `ugm192`, `single-pair`, `auto` (`auto`
+choisit la disposition selon le backend de la carte).
 
 Commandes (`mosquito-mixbay-actions …`) : `profiles-index`,
 `profiles-import ID… [--all]`, `profiles-export [ID…] [--to DIR]`,
 `profiles-list-local`, `profiles-validate FILE|DIR…`, `profiles-remove ID…`,
 `profiles-clear-user ID`, `profiles-set-url URL` (dépôt miroir).
-La TUI expose le même ensemble dans **Settings → Audio interface profiles**.
+La TUI expose le reste dans **Settings → Audio interface profiles**, plus une
+entrée **Open community repo** qui ouvre la page du dépôt. Un carré clignote à
+côté de cette entrée pendant la vérification du dépôt et reste fixe quand une
+carte installée a une version plus récente (elle affiche alors `↑ vX` dans la
+liste).
 
 L'ancien `beta-devices.json` est migré une fois vers un profil local
 (`source: local`) puis archivé en `beta-devices.json.migrated`.
@@ -325,30 +345,33 @@ mosquito-mixbay-compat --accept evo8   # ne plus demander pour cette interface
 jusqu'à acceptation (`~/.config/mosquitomixbay/onboarding.json`). Le prompt
 n'apparaît que si l'interface est réellement branchée.
 
-## RME Fireface UCX II — oscmix
+## RME Fireface UCX II — oscmix-desk
 
-[`michaelforney/oscmix`](https://github.com/michaelforney/oscmix) (ISC) pilote
-le mixer UCX II en USB MIDI SysEx (mode Class Compliant) et expose une API OSC ;
-`oscmix-gtk` est l'interface graphique.
+[`relative23/oscmix-desk`](https://github.com/relative23/oscmix-desk) (MIT)
+enveloppe `michaelforney/oscmix` : même backend SysEx en mode Class Compliant,
+plus un desk déclaratif (`~/.config/oscmix/routing.conf`), un service
+utilisateur et le launcher GTK.
 
-- **Installation manuelle** : `bash oscmix/setup-oscmix.sh` (`-y`, `--status`,
-  `--uninstall`). Le script construit `oscmix`, `alsarawio`, `alsaseqio` et
-  `oscmix-gtk` dans `~/.local/share/mosquitomixbay/oscmix` et les pose dans
-  `~/.local/bin`. Les paquets pacman (`gcc make pkgconf git gtk3 alsa-lib
-  alsa-utils`) restent installés à la désinstallation.
-- **Première connexion** : `mosquito-mixbay-compat` propose le même prompt que
-  pour l'EVO ; « Later » n'est pas mémorisé.
-- **Menu de la carte** : `Open oscmix GTK mixer` lance le mixer ; `Set up /
-  repair oscmix` (re)construit l'ensemble.
-- La fondation audio ne modifie **jamais** la carte : elle ne pose que le socle
-  système partagé (PipeWire/WirePlumber) et délègue le pas carte à oscmix. Les
-  règles udev/panneau audio spécifiques à l'EVO ne sont pas installées pour une
-  UCX II seule. Aucun service oscmix ne tourne en arrière-plan ;
-  `mixbay-oscmix-gtk` démarre oscmix à l'ouverture du mixer et arrête
-  uniquement l'instance qu'il a lancée.
+- **Installation manuelle** : `bash oscmix/setup-oscmix.sh` (`-y`, `--enable`,
+  `--disable`, `--status`, `--uninstall`). Le script clone la version épinglée
+  dans `~/.local/share/mosquitomixbay/oscmix-desk`, construit le backend + GTK
+  et installe `oscmix`, `alsaseqio`, `oscmix-gtk`, `oscmix-launch` et
+  `oscmix-session` dans `~/.local/bin`. Les étapes root (udev hotplug, reprise
+  après veille, lock partagé) sont volontairement sautées : pas de sudo.
+- **Activation** : sans `--enable`, rien ne démarre automatiquement. Depuis
+  Mixbay, `Set up / repair oscmix-desk` installe **et** active le service
+  (confirmé explicitement), parce que le launcher GTK exige un service actif.
+  Le desk est alors appliqué à chaque démarrage (c'est le principe du desk).
+- **Première connexion** : `mosquito-mixbay-compat` propose le prompt ; « Later »
+  n'est pas mémorisé.
+- **Menu de la carte** : `Open oscmix-desk mixer` lance `oscmix-launch` ;
+  `Set up / repair oscmix-desk` (ré)installe l'ensemble.
+- La fondation audio ne modifie **pas** la carte : elle ne pose que le socle
+  système partagé (PipeWire/WirePlumber). Les règles udev/panneau audio
+  spécifiques à l'EVO ne sont pas installées pour une UCX II seule.
 - Le mode **Class Compliant** est obligatoire (SETUP sur l'unité). Si le
-  lanceur ne trouve pas de port MIDI, vérifier `amidi -l` : la ligne doit finir
-  par `,1` et s'appeler `Fireface UCX II`.
+  lanceur ne trouve pas la carte, vérifier `aconnect -l` : le client doit
+  s'appeler `Fireface UCX II` (en mode driver `2a39:3f82`, Linux ne la voit pas).
 
 `oudeis01/linux-fireface-mixer` n'est pas utilisé : il vise la Fireface 400 en
 FireWire via `snd-fireface-ctl-service`, pas l'UCX II en USB.
@@ -469,9 +492,15 @@ rend le graphe PipeWire prévisible en dessous.
 mixbay-audio-foundation --status          # état lisible
 mixbay-audio-foundation --status --json   # pour la TUI / scripts
 mixbay-audio-foundation --needs evo8      # ce qui manque pour cette carte
+mixbay-audio-foundation --setup --device ID  # setup propre à la carte, sans le socle
 mixbay-audio-foundation --apply [--restart]
 mixbay-audio-foundation --remove
 ```
+
+La fondation n'est appliquée qu'à une carte **déjà connectée une fois** (présente
+dans `connected-interfaces.json`) : un profil seulement téléchargé n'a encore
+aucun nœud à apparier. Le téléchargement lance uniquement le setup propre à la
+carte (`spec.setup`), jamais le socle.
 
 Ce qu'il pose :
 
@@ -488,8 +517,11 @@ Ce qu'il pose :
 - **EVO 4** : laissé à l'UCM ALSA ≥ 1.2.16 (sortie stéréo + captures split
   déjà correctes). Un split 4 canaux existe en opt-in
   (`--force-evo4-split`) pour les systèmes sans UCM ;
-- **défauts** : sink `evo8_main_output` + source `evo8_mic_1_2` au login via
-  `mixbay-audio-defaults.service` ;
+- **défauts par carte** : chaque carte fournit son sink/source par défaut —
+  EVO 8 → `evo8_main_output` + `evo8_mic_1_2`, UCX II → `HiFi__Line5__sink`
+  + `Fireface`, EVO 4 → son split. Une carte téléchargée peut déclarer
+  `spec.foundation` ; sans cela, son `match` du journal de connexion sert de
+  fragment. Écrit au login via `mixbay-audio-defaults.service` ;
 - **kHz** : si `pipewire-settings` gère déjà l'horloge
   (`90-mosquitomarchy-pipewire.conf`), le pack ne la touche pas. Sinon il écrit
   `50-mixbay-audio.conf` (48 kHz par défaut, 44,1–192 kHz autorisés,

@@ -19,7 +19,7 @@ import (
 
 // DefaultRepoURL is the community repo. It can be replaced with
 // $MIXBAY_PROFILES_URL or profiles-set-url, so a fork/mirror works unchanged.
-const DefaultRepoURL = "https://raw.githubusercontent.com/mosquitomarchy/mosquito-mixbay-profiles/main"
+const DefaultRepoURL = "https://raw.githubusercontent.com/kepalegars/mosquito-mixbay-profiles/main"
 
 // IndexCard is one row of index.json. sha256 makes a download verifiable even
 // when the index and card come from different requests.
@@ -65,6 +65,19 @@ func RepoURL() string {
 		}
 	}
 	return DefaultRepoURL
+}
+
+// RepoPageURL is the browser page matching the configured raw base, so opening
+// the community repo also works with a fork or mirror.
+func RepoPageURL() string {
+	u := RepoURL()
+	if rest, ok := strings.CutPrefix(u, "https://raw.githubusercontent.com/"); ok {
+		parts := strings.Split(rest, "/")
+		if len(parts) >= 3 {
+			return "https://github.com/" + parts[0] + "/" + parts[1]
+		}
+	}
+	return u
 }
 
 // SetRepoURL persists a mirror/repo URL and returns the normalized value.
@@ -226,7 +239,10 @@ type ImportResult struct {
 	Display string `json:"display"`
 	Version string `json:"version"`
 	Updated bool   `json:"updated"`
-	Err     error  `json:"-"`
+	// Setup is the card's named integration to run after the download
+	// ("oscmix", "douze"), empty when it needs none.
+	Setup string `json:"setup,omitempty"`
+	Err   error  `json:"-"`
 }
 
 // Import downloads the selected profiles from the repo and deploys them.
@@ -262,6 +278,7 @@ func Import(ctx context.Context, ids []string) ([]ImportResult, error) {
 			out = append(out, res)
 			continue
 		}
+		res.Setup = card.Spec.Setup
 		_, statErr := os.Stat(upstreamFile(id))
 		res.Updated = statErr == nil
 		if err := deployCard(card, ic, ix.Revision); err != nil {
@@ -307,11 +324,18 @@ type Offer struct {
 // Network failures are swallowed (offline is normal); the caller keeps the
 // local profiles it already has.
 func CheckUpdates(ctx context.Context, entries []ConnEntry) ([]Offer, error) {
+	_, offers, err := CheckUpdatesWithIndex(ctx, entries)
+	return offers, err
+}
+
+// CheckUpdatesWithIndex is CheckUpdates plus the index it used, so a caller
+// showing repo state does not fetch index.json twice.
+func CheckUpdatesWithIndex(ctx context.Context, entries []ConnEntry) (Index, []Offer, error) {
 	ix, err := FetchIndex(ctx)
 	if err != nil {
 		cached, cerr := CachedIndex()
 		if cerr != nil {
-			return nil, err
+			return Index{}, nil, err
 		}
 		ix = cached
 	}
@@ -330,7 +354,7 @@ func CheckUpdates(ctx context.Context, entries []ConnEntry) ([]Offer, error) {
 		}
 		out = append(out, Offer{ID: ic.ID, Display: ic.Display, Version: ic.Version, Kind: "install", Index: ic})
 	}
-	return out, nil
+	return ix, out, nil
 }
 
 // ConnEntry is the subset of the connection log this package needs.

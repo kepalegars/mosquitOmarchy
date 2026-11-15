@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Self-check for the oscmix module: syntax, MIDI detection, install status,
+# Self-check for the oscmix module: syntax, install status, launcher handoff
 # and uninstall. Runs entirely under a temporary HOME.
 set -euo pipefail
 
@@ -15,41 +15,36 @@ check() { # name, condition
 check "setup-oscmix syntax" "bash -n '$HERE/setup-oscmix.sh'"
 check "launcher syntax" "bash -n '$HERE/launch-oscmix-gtk'"
 
-mkdir -p "$TMP/bin" "$TMP/home" "$TMP/data"
-cat > "$TMP/bin/amidi" <<'EOF'
-#!/usr/bin/env bash
-printf 'Dir Device    Name\nIO  hw:2,0,0  Fireface UCX II (x) Port\nIO  hw:2,0,1  Fireface UCX II (x) Port\n'
-EOF
-chmod +x "$TMP/bin/amidi"
+mkdir -p "$TMP/bin" "$TMP/home"
+out="$(PATH="$TMP/bin:/usr/bin:/bin" HOME="$TMP/home" bash "$HERE/setup-oscmix.sh" --status 2>&1)" || true
+check "status reports the missing oscmix-desk" "[[ '$out' == missing:*oscmix-session* ]]"
 
-out="$(PATH="$TMP/bin:$PATH" "$HERE/launch-oscmix-gtk" --detect 2>&1)" || true
-check "detect picks the control port (,1)" "[[ '$out' == '2,0,1' ]]"
-
-cat > "$TMP/bin/amidi" <<'EOF'
-#!/usr/bin/env bash
-printf 'Dir Device    Name\nIO  hw:0,0,0  Some Other MIDI\n'
-EOF
-chmod +x "$TMP/bin/amidi"
-if PATH="$TMP/bin:$PATH" "$HERE/launch-oscmix-gtk" --detect >/dev/null 2>&1; then
-  printf 'FAIL detect rejects a non-UCX device\n'; FAIL=1
-else
-  printf 'ok   detect rejects a non-UCX device\n'
-fi
-
-out="$(HOME="$TMP/home" XDG_DATA_HOME="$TMP/data" bash "$HERE/setup-oscmix.sh" --status 2>&1)" || true
-check "status reports missing binaries" "[[ '$out' == missing:* ]]"
-
-mkdir -p "$TMP/home/.local/bin" "$TMP/data/glib-2.0/schemas" "$TMP/data/mosquitomixbay/oscmix"
-for b in oscmix alsarawio alsaseqio oscmix-gtk; do
-  printf '#!/bin/sh\n' > "$TMP/home/.local/bin/$b"; chmod +x "$TMP/home/.local/bin/$b"
+# Fake a complete per-user install.
+mkdir -p "$TMP/home/.local/bin" "$TMP/home/.local/lib/oscmix-desk/oscmix_desk"
+for b in oscmix alsaseqio oscmix-gtk oscmix-session oscmix-launch; do
+  printf '#!/bin/sh\n' > "$TMP/home/.local/bin/$b"
+  chmod +x "$TMP/home/.local/bin/$b"
 done
-touch "$TMP/data/glib-2.0/schemas/oscmix.gschema.xml"
-out="$(HOME="$TMP/home" XDG_DATA_HOME="$TMP/data" bash "$HERE/setup-oscmix.sh" --status 2>&1)" || true
+touch "$TMP/home/.local/lib/oscmix-desk/oscmix_desk/__init__.py"
+out="$(PATH="$TMP/bin:/usr/bin:/bin" HOME="$TMP/home" bash "$HERE/setup-oscmix.sh" --status 2>&1)" || true
 check "status reports ok" "[[ '$out' == ok ]]"
 
-HOME="$TMP/home" XDG_DATA_HOME="$TMP/data" bash "$HERE/setup-oscmix.sh" --uninstall >/dev/null 2>&1
-check "uninstall removes binaries" "[[ ! -e '$TMP/home/.local/bin/oscmix' && ! -e '$TMP/home/.local/bin/oscmix-gtk' ]]"
-check "uninstall removes schema" "[[ ! -e '$TMP/data/glib-2.0/schemas/oscmix.gschema.xml' ]]"
-check "uninstall removes source" "[[ ! -d '$TMP/data/mosquitomixbay/oscmix' ]]"
+# The launcher hands off to oscmix-launch.
+cat > "$TMP/bin/oscmix-launch" <<EOF
+#!/usr/bin/env bash
+printf 'launched\n' > "$TMP/launched"
+EOF
+chmod +x "$TMP/bin/oscmix-launch"
+PATH="$TMP/bin:/usr/bin:/bin" HOME="$TMP/home" "$HERE/launch-oscmix-gtk" >/dev/null 2>&1 || true
+check "launcher runs oscmix-launch" "[[ -f '$TMP/launched' ]]"
+
+# Without oscmix-desk it fails with a setup hint instead of silently doing
+# nothing.
+out="$(PATH="/usr/bin:/bin" HOME="$TMP/launcherless" "$HERE/launch-oscmix-gtk" 2>&1)" || true
+check "launcher explains a missing install" "[[ '$out' == *'oscmix-desk is not installed'* ]]"
+
+HOME="$TMP/home" XDG_DATA_HOME="$TMP/home/.local/share" bash "$HERE/setup-oscmix.sh" --uninstall >/dev/null 2>&1
+check "uninstall removes binaries" "[[ ! -e '$TMP/home/.local/bin/oscmix-session' && ! -e '$TMP/home/.local/bin/oscmix-launch' ]]"
+check "uninstall removes the runtime package" "[[ ! -d '$TMP/home/.local/lib/oscmix-desk' ]]"
 
 exit "$FAIL"

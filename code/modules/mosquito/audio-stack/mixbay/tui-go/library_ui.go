@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -30,10 +31,15 @@ type libraryApplyMsg struct {
 	// checkDups asks the screen to re-run duplicate detection (after an
 	// install/update/remove), and offer removing a now-redundant scan card.
 	checkDups bool
+	// setup names the card integration an import must run (oscmix, douze).
+	// id is that card, so the setup helper knows which one.
+	setup string
+	id    string
 }
 
 type profileOfferMsg struct {
 	offers []profiles.Offer
+	ix     profiles.Index
 	err    error
 }
 
@@ -58,7 +64,33 @@ func libraryImportCmd(id string) tea.Cmd {
 		if err == nil && len(res) > 0 && res[0].Updated {
 			verb = "Updated"
 		}
-		return libraryApplyMsg{what: verb + " " + id, err: err, checkDups: err == nil}
+		msg := libraryApplyMsg{what: verb + " " + id, err: err, checkDups: err == nil, id: id}
+		if err == nil && len(res) > 0 {
+			msg.setup = res[0].Setup
+		}
+		return msg
+	}
+}
+
+// cardSetupCmd runs the integration a downloaded card declares. It goes
+// through the foundation so the named integrations live in one place, and
+// runs in the real terminal because the installers need sudo/build output.
+// The foundation floor is not applied here: that waits for a first connection.
+func cardSetupCmd(id string, checkDups bool) tea.Cmd {
+	c := exec.Command("mixbay-audio-foundation", "--setup", "--device", id)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return libraryApplyMsg{what: "Set up " + id, err: err, checkDups: checkDups}
+	})
+}
+
+// openRepoCmd opens the community repo page in the desktop's default handler.
+// A missing opener is reported like any other library action.
+func openRepoCmd() tea.Cmd {
+	return func() tea.Msg {
+		if err := exec.Command("xdg-open", profiles.RepoPageURL()).Start(); err != nil {
+			return libraryApplyMsg{what: "Open community repo", err: err}
+		}
+		return nil
 	}
 }
 
@@ -84,32 +116,19 @@ func libraryClearUserCmd(id string) tea.Cmd {
 	}
 }
 
-func librarySetURLCmd(url string) tea.Cmd {
-	return func() tea.Msg {
-		got, err := profiles.SetRepoURL(url)
-		if err != nil {
-			return libraryApplyMsg{what: "Repo URL", err: err}
-		}
-		return libraryApplyMsg{what: "Profile repo: " + got}
-	}
-}
-
 // profileCheckCmd offers an install/update at startup for interfaces in the
 // connection log. Offline is a normal outcome: no prompt, local cards win.
 func profileCheckCmd() tea.Cmd {
 	return func() tea.Msg {
 		entries := drivers.ConnectionLog()
-		if len(entries) == 0 {
-			return profileOfferMsg{}
-		}
 		conns := make([]profiles.ConnEntry, 0, len(entries))
 		for _, e := range entries {
 			conns = append(conns, profiles.ConnEntry{ID: e.ID, Name: e.Name, Match: e.Match})
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		defer cancel()
-		offers, err := profiles.CheckUpdates(ctx, conns)
-		return profileOfferMsg{offers: offers, err: err}
+		ix, offers, err := profiles.CheckUpdatesWithIndex(ctx, conns)
+		return profileOfferMsg{offers: offers, ix: ix, err: err}
 	}
 }
 
@@ -125,24 +144,26 @@ func (m *model) bindPreset() {
 func (m model) libraryItems() []tuikit.PickerItem {
 	items := []tuikit.PickerItem{{Display: "Installed profiles", Heading: true}}
 	for _, meta := range profiles.Installed() {
-		preset, blocks := "", 0
-		if c, _, err := profiles.Effective(meta.ID); err == nil {
-			preset, blocks = c.Preset(), len(c.Blocks())
-		}
 		mark := "○"
 		if m.libraryChecked[meta.ID] {
 			mark = "●"
 		}
-		// Native cards are visible but cannot be removed or overwritten.
-		kind := meta.Source
-		if meta.Native {
-			kind = "native"
+		// Plain words beat "built-in | repo | local" and hide the preset id
+		// (evo8/auto): the renderer name is a detail, not a state.
+		status := "built in"
+		switch meta.Source {
+		case "repo":
+			status = "downloaded"
+		case "local":
+			status = "local"
 		}
-		display := fmt.Sprintf("%s %-28s %-7s %-7s %-10s", mark, meta.Display, kind, meta.Version, preset)
-		if blocks > 0 {
-			display += fmt.Sprintf(" · %d blocks", blocks)
+		if ic, ok := m.libraryIndex.Card(meta.ID); ok && !ic.Native && ic.Version != meta.Version {
+			status += "  ↑ " + ic.Version
 		}
-		items = append(items, tuikit.PickerItem{Display: display, Value: "card:" + meta.ID})
+		items = append(items, tuikit.PickerItem{
+			Display: fmt.Sprintf("%s %-30s %-8s %s", mark, meta.Display, meta.Version, status),
+			Value:   "card:" + meta.ID,
+		})
 	}
 	if dups := profiles.Duplicates(); len(dups) > 0 {
 		items = append(items, tuikit.PickerItem{Display: "Duplicate entries", Heading: true})
@@ -153,7 +174,6 @@ func (m model) libraryItems() []tuikit.PickerItem {
 			})
 		}
 	}
-	items = append(items, tuikit.PickerItem{Display: "Community repository", Heading: true})
 	switch {
 	case m.libraryLoading:
 		items = append(items, tuikit.PickerItem{Display: "  fetching index…", Disabled: true})
@@ -173,8 +193,9 @@ func (m model) libraryItems() []tuikit.PickerItem {
 		if err == nil {
 			verb = "update"
 		}
+		// ↓ separates "not installed yet" from the ○/● export marks above.
 		items = append(items, tuikit.PickerItem{
-			Display: fmt.Sprintf("  %-28s %-7s %-9s %s", ic.Display, ic.Vendor, ic.Version, verb),
+			Display: fmt.Sprintf("↓ %-30s %-8s %-9s %s", ic.Display, ic.Version, ic.Vendor, verb),
 			Value:   "repo:" + ic.ID,
 		})
 		available++
@@ -184,9 +205,8 @@ func (m model) libraryItems() []tuikit.PickerItem {
 	}
 	items = append(items,
 		tuikit.PickerItem{Display: "Actions", Heading: true},
-		tuikit.PickerItem{Display: "Check community repo", Value: "refresh"},
-		tuikit.PickerItem{Display: "Export marked cards", Value: "export"},
-		tuikit.PickerItem{Display: "Set profile repo URL…", Value: "url"},
+		tuikit.PickerItem{Display: "  Export marked cards for a PR", Value: "export"},
+		tuikit.PickerItem{Display: "  Open community repo", Value: "open-repo"},
 		tuikit.PickerItem{Display: "Back", Value: "back"},
 	)
 	return items
@@ -201,6 +221,7 @@ func (m *model) openLibrary() tea.Cmd {
 	}
 	if m.libraryIndex.SchemaVersion == 0 {
 		m.libraryLoading = true
+		m.profileChecking = true
 		return libraryIndexCmd()
 	}
 	return nil
@@ -215,6 +236,9 @@ func (m model) libraryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		m.libraryLoading = true
 		m.libraryErr = ""
+		m.libraryManual = true
+		m.profileChecking = true
+		m.toast, _ = m.toast.SetOK("Checking the community repo…")
 		return m, libraryIndexCmd()
 	case "e":
 		return m.exportChecked()
@@ -223,17 +247,10 @@ func (m model) libraryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case val == "back":
 			m.pop()
-		case val == "refresh":
-			m.libraryLoading = true
-			m.libraryErr = ""
-			return m, libraryIndexCmd()
 		case val == "export":
 			return m.exportChecked()
-		case val == "url":
-			m.text = tuikit.NewTextInput("Profile repository URL:", profiles.RepoURL())
-			m.textAct = librarySetURLCmd
-			m.push(scrInput)
-			return m, m.text.Init()
+		case val == "open-repo":
+			return m, openRepoCmd()
 		case strings.HasPrefix(val, "repo:"):
 			id := strings.TrimPrefix(val, "repo:")
 			m.libraryLoading = true
@@ -279,6 +296,39 @@ func (m model) libraryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.picker, cmd = m.picker.Update(msg)
 	return m, cmd
+}
+
+// repoNews counts what the index offers: updates for installed cards (the
+// square in Settings) and repo cards that are not installed here.
+func (m model) repoNews() (updates, installs int) {
+	for _, ic := range m.libraryIndex.Cards {
+		if ic.Native {
+			continue
+		}
+		inst, _, err := profiles.Effective(ic.ID)
+		if err != nil {
+			installs++
+			continue
+		}
+		if inst.Spec.Version != ic.Version {
+			updates++
+		}
+	}
+	return updates, installs
+}
+
+func repoNewsLabel(updates, installs int) string {
+	var parts []string
+	if updates > 0 {
+		parts = append(parts, fmt.Sprintf("%d update(s)", updates))
+	}
+	if installs > 0 {
+		parts = append(parts, fmt.Sprintf("%d to download", installs))
+	}
+	if len(parts) == 0 {
+		return "everything is up to date"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func findDuplicate(removeID, keepID string) (profiles.Duplicate, bool) {
@@ -338,7 +388,11 @@ func libraryDetail(id string) string {
 	fmt.Fprintf(&b, "version  %s\n", card.Spec.Version)
 	fmt.Fprintf(&b, "source   %s\n", meta.Source)
 	fmt.Fprintf(&b, "backend  %s\n", card.Spec.Backend)
-	fmt.Fprintf(&b, "preset   %s\n", card.Preset())
+	preset := card.Preset()
+	if preset == "auto" {
+		preset += " (layout follows the card backend)"
+	}
+	fmt.Fprintf(&b, "preset   %s\n", preset)
 	blocks := card.Blocks()
 	if len(blocks) == 0 {
 		blocks = presetBlocks(card.Preset())
@@ -351,7 +405,7 @@ func libraryDetail(id string) string {
 	if meta.Revision != "" {
 		fmt.Fprintf(&b, "revision %s\n", meta.Revision)
 	}
-	b.WriteString("\nTab marks this card for export.")
+	b.WriteString("\nTab marks this card for export to a PR folder.")
 	return b.String()
 }
 

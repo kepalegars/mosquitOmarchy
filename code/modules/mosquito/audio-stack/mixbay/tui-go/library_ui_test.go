@@ -28,10 +28,24 @@ func TestLibraryListsInstalledAndAvailable(t *testing.T) {
 			t.Errorf("Back row must not be indented: %q", it.Display)
 		}
 	}
-	for _, want := range []string{"Installed profiles", "Audient EVO 8", "● PreSonus Quantum ES 4", "up to date"} {
+	for _, want := range []string{"Installed profiles", "Audient EVO 8", "● PreSonus Quantum ES 4", "up to date", "  Open community repo"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("library missing %q in:\n%s", want, joined)
 		}
+	}
+	if strings.Contains(joined, "Set profile repo URL") || strings.Contains(joined, "Community repository") {
+		t.Errorf("library still offers the repo URL/category:\n%s", joined)
+	}
+	for _, it := range m.libraryItems() {
+		switch it.Value {
+		case "refresh", "export", "open-repo":
+			if !strings.HasPrefix(it.Display, "  ") {
+				t.Errorf("action row must be indented like a sub-option: %q", it.Display)
+			}
+		}
+	}
+	if got := m.libraryItems(); got[len(got)-1].Display != "Back" {
+		t.Errorf("Back must stay the last, unindented row: %q", got[len(got)-1].Display)
 	}
 	if strings.Contains(joined, "update") {
 		t.Errorf("installed same-version card still offered as update:\n%s", joined)
@@ -40,8 +54,12 @@ func TestLibraryListsInstalledAndAvailable(t *testing.T) {
 
 func TestDevicesLegendMentionsRefresh(t *testing.T) {
 	m := model{nav: []screen{scrDevices}}
-	if !strings.Contains(stripANSI(m.legendLine(160)), "r refresh") {
-		t.Fatalf("home legend is missing r refresh: %q", stripANSI(m.legendLine(160)))
+	hint := stripANSI(m.legendLine(160))
+	if !strings.Contains(hint, "r refresh") {
+		t.Fatalf("home legend is missing r refresh: %q", hint)
+	}
+	if strings.Contains(hint, "settings") {
+		t.Fatalf("home legend still mentions settings: %q", hint)
 	}
 }
 
@@ -84,6 +102,62 @@ func TestPresetBlocksAreKnown(t *testing.T) {
 		if _, ok := presetBlockSets[p]; !ok {
 			t.Errorf("profile preset %q has no renderer composition", p)
 		}
+	}
+}
+
+func TestProfilesSquareBlinkAndUpdate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	badge := func(m model) string {
+		for _, it := range m.settingsItems() {
+			if it.Value == "profiles" {
+				return it.TrailingBadge
+			}
+		}
+		return ""
+	}
+	m := model{profileChecking: true, profileBlink: 0}
+	if got := badge(m); got != "■" {
+		t.Fatalf("checking should blink on: %q", got)
+	}
+	m.profileBlink = 1
+	if got := badge(m); got != " " {
+		t.Fatalf("checking should blink off without moving the row: %q", got)
+	}
+	m.profileChecking = false
+	if got := badge(m); got != "" {
+		t.Fatalf("idle square should be empty, got %q", got)
+	}
+	if _, err := profiles.InstallLocalCard("quantum-es4", "PreSonus Quantum ES 4", "Quantum ES"); err != nil {
+		t.Fatal(err)
+	}
+	m.libraryIndex = profiles.Index{SchemaVersion: 1, Cards: []profiles.IndexCard{
+		{ID: "quantum-es4", Display: "PreSonus Quantum ES 4", Version: "v9"},
+	}}
+	if got := badge(m); got != "■" {
+		t.Fatalf("update available should hold the square solid, got %q", got)
+	}
+}
+
+func TestLibraryShowsUpdateAndRefreshToast(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, err := profiles.InstallLocalCard("quantum-es4", "PreSonus Quantum ES 4", "Quantum ES"); err != nil {
+		t.Fatal(err)
+	}
+	ix := profiles.Index{SchemaVersion: 1, Cards: []profiles.IndexCard{
+		{ID: "quantum-es4", Display: "PreSonus Quantum ES 4", Version: "v9"},
+	}}
+	m := model{nav: []screen{scrLibrary}, libraryManual: true}
+	next, _ := m.update(libraryIndexMsg{ix: ix})
+	got := next.(model)
+	rows := ""
+	for _, it := range got.libraryItems() {
+		rows += it.Display + "\n"
+	}
+	if !strings.Contains(rows, "↑ v9") {
+		t.Fatalf("installed row does not announce the update:\n%s", rows)
+	}
+	if toast := stripANSI(got.toast.View()); !strings.Contains(toast, "Repo checked") || !strings.Contains(toast, "1 update") {
+		t.Fatalf("refresh gave no feedback: %q", toast)
 	}
 }
 

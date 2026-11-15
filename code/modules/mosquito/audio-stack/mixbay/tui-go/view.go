@@ -295,7 +295,7 @@ func (m model) legendLine(w int) string {
 	var hint string
 	switch m.top() {
 	case scrDevices:
-		hint = "↑/↓ · enter open · r refresh · settings · q quit"
+		hint = "↑/↓ · enter open · r refresh · q quit"
 	case scrControls:
 		hint = "Tab mixer · enter · [ ] adjust · { } big · digits dial · s/o save/load · ? help"
 	case scrMixer:

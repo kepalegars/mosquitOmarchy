@@ -100,8 +100,13 @@ type model struct {
 	libraryLoading  bool
 	libraryErr      string
 	libraryChecked  map[string]bool
+	libraryManual   bool
 	dupPrompted     map[string]bool
 	profilePrompted bool
+	// profileChecking drives the blinking square on Settings → Audio interface
+	// profiles; profileBlink is its on/off frame (see evoDotBlinkMsg).
+	profileChecking bool
+	profileBlink    int
 
 	// preset is the card's UI composition ("evo8", "ugm192", "auto"…). It
 	// routes the renderer and can be overridden per card by user/layout.json.
@@ -129,7 +134,9 @@ type model struct {
 }
 
 func initialModel() model {
-	m := model{nav: []screen{scrDevices}, deviceID: defaultDevice(), ui: loadUIPrefs(), focused: true}
+	m := model{nav: []screen{scrDevices}, deviceID: defaultDevice(), ui: loadUIPrefs(), focused: true,
+		// Init launches the first repo check; the square blinks until it lands.
+		profileChecking: true}
 	m.picker = tuikit.NewPicker("", nil)
 	m.cursor = tuikit.NewCursorMemory()
 	m.libraryChecked = map[string]bool{}
@@ -139,7 +146,20 @@ func initialModel() model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(fetchStatus(m.deviceID), tuikit.ThemeWatchCmd(), evoDotBlinkTick(), evoPollTick(m.pollGen), profileCheckCmd())
+	return tea.Batch(fetchStatus(m.deviceID), tuikit.ThemeWatchCmd(), evoDotBlinkTick(), evoPollTick(m.pollGen), profileCheckCmd(), trackConnectionsCmd())
+}
+
+// trackConnectionsCmd writes every currently connected USB interface to the
+// connection log before the "Only used" list reads it. Without it the list
+// only knew about cards seen by the beta scan, so a card used since the last
+// scan never appeared.
+type connectionsTrackedMsg struct{}
+
+func trackConnectionsCmd() tea.Cmd {
+	return func() tea.Msg {
+		_ = exec.Command("mixbay-audio-foundation", "--track").Run()
+		return connectionsTrackedMsg{}
+	}
 }
 func (m model) top() screen { return m.nav[len(m.nav)-1] }
 
@@ -496,13 +516,21 @@ func (m model) settingsItems() []tuikit.PickerItem {
 		native.Disabled = true
 		native.Suffix = "  (always on without Levels Guard)"
 	}
+	// The square mirrors mosquitomarchy: it blinks while a repo check runs and
+	// stays solid while an installed card has a newer version to download.
+	profilesRow := tuikit.PickerItem{Display: "Audio interface profiles", Value: "profiles"}
+	if m.profileChecking {
+		profilesRow.TrailingBadge = tuikit.LoadingGlyph(m.profileBlink)
+	} else if updates, _ := m.repoNews(); updates > 0 {
+		profilesRow.TrailingBadge = "■"
+	}
 	return []tuikit.PickerItem{
 		{Display: "Listed interfaces: " + listedLabel(m.ui.Listed), Value: "listed"},
 		native,
 		{Display: "Launch Mixbay at startup: " + onOff(m.ui.LaunchAtStartup), Value: "launch_startup"},
 		{Display: "Launch in scratchpad: " + onOff(m.ui.LaunchInScratchpad), Value: "launch_scratchpad"},
 		{Display: "Audio foundation settings", Value: "foundation"},
-		{Display: "Audio interface profiles", Value: "profiles"},
+		profilesRow,
 		{Display: "Add an audio interface", Value: "add_interface"},
 		{Display: "Back", Value: "back"},
 	}
@@ -588,8 +616,8 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 	}
 	if st.Spec.ID == drivers.DevFireface {
 		items = append(items,
-			tuikit.PickerItem{Display: "  Open oscmix GTK mixer", Value: "fireface:oscmix-gtk"},
-			tuikit.PickerItem{Display: "  Set up / repair oscmix (GTK mixer)", Value: "fireface:oscmix-setup"},
+			tuikit.PickerItem{Display: "  Open oscmix-desk mixer", Value: "fireface:oscmix-gtk"},
+			tuikit.PickerItem{Display: "  Set up / repair oscmix-desk", Value: "fireface:oscmix-setup"},
 		)
 	}
 	items = append(items,
@@ -659,16 +687,39 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case evoDotBlinkMsg:
 		m.evo.dotLit = !m.evo.dotLit
 		m.evo.caretOn = !m.evo.caretOn
+		if m.profileChecking {
+			// Same clock as the online dot: the square blinks while a repo
+			// check runs, then settles solid if something needs attention.
+			m.profileBlink++
+			m.syncPicker()
+		}
 		return m, evoDotBlinkTick()
+
+	case connectionsTrackedMsg:
+		// The connection log now lists every card in use; the "Only used"
+		// list and the foundation default picker rebuild from it.
+		m.syncPicker()
+		return m, nil
 
 	case libraryIndexMsg:
 		m.libraryLoading = false
+		m.profileChecking = false
+		manual := m.libraryManual
+		m.libraryManual = false
 		if msg.err != nil {
 			m.libraryErr = msg.err.Error()
+			if manual {
+				m.toast, _ = m.toast.SetErr("Repo check failed: " + msg.err.Error())
+			}
+			m.syncPicker()
 			return m, nil
 		}
 		m.libraryErr = ""
 		m.libraryIndex = msg.ix
+		if manual {
+			updates, installs := m.repoNews()
+			m.toast, _ = m.toast.SetOK("Repo checked · " + repoNewsLabel(updates, installs))
+		}
 		m.syncPicker()
 		return m, nil
 
@@ -680,6 +731,12 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.toast, _ = m.toast.SetOK(msg.what)
 		m.syncPicker()
+		// A downloaded card that needs its own integration (oscmix, douze)
+		// runs it now, in the real terminal. The audio foundation waits until
+		// the card has been connected once.
+		if msg.setup != "" {
+			return m, cardSetupCmd(msg.id, msg.checkDups)
+		}
 		if msg.checkDups {
 			if dups := profiles.Duplicates(); len(dups) > 0 {
 				return m, m.promptDuplicate(dups[0])
@@ -688,6 +745,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case profileOfferMsg:
+		m.profileChecking = false
+		if msg.ix.SchemaVersion > 0 {
+			m.libraryIndex = msg.ix
+		}
+		m.syncPicker()
 		if msg.err != nil {
 			return m, nil
 		}
@@ -959,9 +1021,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case oscmixSetupMsg:
 		if msg.err != nil {
-			m.toast, _ = m.toast.SetErr("oscmix setup: " + msg.err.Error())
+			m.toast, _ = m.toast.SetErr("oscmix-desk setup: " + msg.err.Error())
 		} else {
-			m.toast, _ = m.toast.SetOK("oscmix setup finished")
+			m.toast, _ = m.toast.SetOK("oscmix-desk installed")
 		}
 		return m, fetchStatus(m.deviceID)
 
@@ -1126,8 +1188,9 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "r":
 			// Re-probe every interface and rebuild the list in place.
 			m.syncPicker()
+			m.profileChecking = true
 			m.toast, _ = m.toast.SetOK("Connection status refreshed")
-			return m, profileCheckCmd()
+			return m, tea.Batch(profileCheckCmd(), trackConnectionsCmd())
 		case "enter":
 			if m.picker.SelectedValue() == "quit" {
 				m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")
@@ -1406,15 +1469,22 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if c.Installed {
 					action, label = "remove", "Remove"
 				}
+				// The foundation waits for a first connection: a card that was
+				// only downloaded has nothing to match yet, and its setup
+				// already ran at download time.
+				if action == "apply" && !m.foundationConnected(c.ID) {
+					m.toast, _ = m.toast.SetWarn(c.Name + " has not been connected yet — plug it in once, then install its foundation.")
+					return m, nil
+				}
 				var msg string
 				if action == "apply" && c.ID == "fireface-ucx2" {
-					msg = "Install oscmix + the GTK mixer for RME Fireface UCX II? The shared system floor (udev/WirePlumber/PipeWire) is applied too; nothing is written to the interface. Audio restarts briefly."
+					msg = "Install oscmix-desk (session + GTK mixer) for RME Fireface UCX II and enable its automatic desk? The shared system floor is applied too. oscmix-desk applies ~/.config/oscmix/routing.conf to the interface at each start, so review that file if you want a different desk."
 				} else if action == "apply" {
 					msg = fmt.Sprintf("Install the audio foundation for %s? This writes udev/WirePlumber/PipeWire config and restarts the audio graph briefly.", c.Name)
 				} else if c.ID == "ssl12" {
 					msg = "Remove SSL 12? This uninstalls douze (service, udev rule, PipeWire split and Omarchy360 plugin). Mixer state in ~/.config/sslctl is kept."
 				} else if c.ID == "fireface-ucx2" {
-					msg = "Remove oscmix + the GTK mixer for RME Fireface UCX II? User-local binaries and build source are removed; system packages stay. The interface is untouched."
+					msg = "Remove oscmix-desk for RME Fireface UCX II? Its user service, binaries and build source are removed; the routing config is kept. The interface is untouched."
 				} else {
 					msg = fmt.Sprintf("Remove the audio foundation for %s? Its split/udev/default mapping is removed; the shared WirePlumber floor stays if another card uses it. Audio restarts briefly.", c.Name)
 				}
@@ -1597,13 +1667,13 @@ func (m *model) activateControl(val string) tea.Cmd {
 		return nil
 	case val == "fireface:oscmix-gtk":
 		if err := exec.Command("mixbay-oscmix-gtk").Start(); err != nil {
-			m.toast, _ = m.toast.SetWarn("oscmix GTK mixer is not installed — run Set up / repair oscmix")
+			m.toast, _ = m.toast.SetWarn("oscmix-desk mixer is not installed — run Set up / repair oscmix-desk")
 		} else {
-			m.toast, _ = m.toast.SetOK("oscmix GTK mixer opened")
+			m.toast, _ = m.toast.SetOK("oscmix-desk mixer opened")
 		}
 		return nil
 	case val == "fireface:oscmix-setup":
-		m.confirm = tuikit.NewConfirm("Build and install oscmix + the GTK mixer? This installs build dependencies (gcc, make, pkgconf, git, gtk3, alsa-lib, alsa-utils) and never writes to the interface. Continue?", "Cancel", "Set up")
+		m.confirm = tuikit.NewConfirm("Install oscmix-desk (oscmix + GTK mixer + user service) and enable its automatic desk? Build dependencies (git, make, gcc, pkg-config, alsa-lib, gtk3) are installed, and ~/.config/oscmix/routing.conf is applied to the interface at start. Continue?", "Cancel", "Set up")
 		m.confirmAct = func() tea.Cmd { return oscmixSetupCmd() }
 		m.push(scrConfirm)
 		return nil

@@ -174,9 +174,10 @@ EOF
   ok "mixbay-setup-ssl12 deployed: $BIN_DIR/mixbay-setup-ssl12"
 fi
 
-# RME Fireface UCX II: oscmix (OSC daemon) + GTK mixer. The launcher starts
-# oscmix on the card's raw MIDI port and stops only the instance it started.
-# The installer itself is reached through mixbay-audio-foundation --apply.
+# RME Fireface UCX II: oscmix-desk (backend + GTK mixer + user service).
+# The launcher hands off to oscmix-desk's own oscmix-launch, which reuses or
+# starts the backend. The installer itself is reached through
+# mixbay-audio-foundation --setup / --apply.
 if [[ -f "$SCRIPT_DIR/oscmix/launch-oscmix-gtk" ]]; then
   cp "$SCRIPT_DIR/oscmix/launch-oscmix-gtk" "$BIN_DIR/mixbay-oscmix-gtk"
   chmod +x "$BIN_DIR/mixbay-oscmix-gtk"

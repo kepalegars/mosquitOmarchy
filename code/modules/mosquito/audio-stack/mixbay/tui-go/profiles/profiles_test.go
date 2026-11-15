@@ -110,7 +110,8 @@ func TestImportAndUpdate(t *testing.T) {
 			NumInputs: 4, NumOutPairs: 2, GainMin: 0, GainMax: 60,
 			VolMin: -96, VolMax: 0, MixerInputs: 4, MixerOutputs: 2,
 			Backend: "alsa", Version: "v1.0.0",
-			Caps: Caps{Volume: true, Mute: true},
+			Caps:  Caps{Volume: true, Mute: true},
+			Setup: SetupOscmix,
 		},
 		UI: map[string]any{"preset": "single-pair"},
 	}
@@ -139,6 +140,9 @@ func TestImportAndUpdate(t *testing.T) {
 	if len(res) != 1 || res[0].Err != nil || res[0].Updated {
 		t.Fatalf("import = %+v", res)
 	}
+	if res[0].Setup != SetupOscmix {
+		t.Fatalf("import setup = %q, want %q", res[0].Setup, SetupOscmix)
+	}
 	got, meta, err := Effective("quantum-es4")
 	if err != nil {
 		t.Fatal(err)
@@ -164,6 +168,40 @@ func TestImportAndUpdate(t *testing.T) {
 	}
 	if res, _ := Import(context.Background(), []string{"quantum-es4"}); res[0].Err == nil {
 		t.Fatal("sha mismatch accepted")
+	}
+}
+
+func TestCardSetupAndFoundationSchema(t *testing.T) {
+	mk := func(setup string, f *Foundation) []byte {
+		return Encode(Card{SchemaVersion: 1, Spec: Spec{
+			ID: "usb-card", Display: "USB Card", Vendor: "ACME",
+			NumInputs: 2, NumOutPairs: 1, GainMin: 0, GainMax: 60,
+			VolMin: -96, VolMax: 0, Backend: "alsa", Version: "v1.0.0",
+			Setup: setup, Foundation: f,
+		}, UI: map[string]any{"preset": "single-pair"}})
+	}
+	assertIssue := func(name string, data []byte, field string) {
+		t.Helper()
+		_, issues, err := Parse(data)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, i := range Errors(issues) {
+			if i.Field == field {
+				return
+			}
+		}
+		t.Fatalf("%s: no %q issue in %+v", name, field, issues)
+	}
+	if _, issues, err := Parse(mk(SetupOscmix, &Foundation{Sink: "HiFi__Line5__sink", Source: "Fireface"})); err != nil || len(Errors(issues)) > 0 {
+		t.Fatalf("valid setup/foundation refused: %v %+v", err, issues)
+	}
+	assertIssue("unknown setup", mk("shell", nil), "spec.setup")
+	assertIssue("unsafe foundation name", mk("", &Foundation{Sink: "a; reboot"}), "spec.foundation.sink")
+
+	ff, ok := NativeCard("fireface-ucx2")
+	if !ok || ff.Spec.Setup != SetupOscmix || ff.Spec.Foundation == nil || ff.Spec.Foundation.Source == "" {
+		t.Fatalf("native UCX II setup/foundation = %+v", ff.Spec)
 	}
 }
 

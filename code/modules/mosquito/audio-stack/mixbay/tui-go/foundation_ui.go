@@ -217,6 +217,17 @@ func (m model) foundationCardByID(id string) (foundationCard, bool) {
 	return foundationCard{}, false
 }
 
+// foundationConnected reports whether the interface was ever plugged in. The
+// audio foundation is only offered after that first connection.
+func (m model) foundationConnected(id string) bool {
+	for _, c := range m.foundation.Connections {
+		if c.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // ssl12SetupCmd suspends the TUI and runs the douze installer in the real
 // terminal, so gum/pkexec/sudo prompts keep working. The wrapper is deployed
 // by setup-mosquitomixbay.sh with the repo path baked in.
@@ -227,12 +238,13 @@ func ssl12SetupCmd() tea.Cmd {
 	return tea.ExecProcess(c, func(err error) tea.Msg { return ssl12SetupMsg{err: err} })
 }
 
-// oscmixSetupCmd builds oscmix + the GTK mixer for the Fireface UCX II. It
-// goes through the foundation (one deploy, already on PATH) instead of its own
-// wrapper, and runs in the real terminal because pacman needs sudo.
+// oscmixSetupCmd installs oscmix-desk (oscmix + GTK mixer + user service) for
+// the Fireface UCX II. It goes through the foundation's --setup, which runs
+// only the card integration: the shared audio floor waits for a first
+// connection. It runs in the real terminal because the build needs sudo.
 type oscmixSetupMsg struct{ err error }
 
 func oscmixSetupCmd() tea.Cmd {
-	c := exec.Command("mixbay-audio-foundation", "--apply", "--device", "fireface-ucx2")
+	c := exec.Command("mixbay-audio-foundation", "--setup", "--device", "fireface-ucx2")
 	return tea.ExecProcess(c, func(err error) tea.Msg { return oscmixSetupMsg{err: err} })
 }

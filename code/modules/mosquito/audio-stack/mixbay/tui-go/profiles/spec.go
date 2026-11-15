@@ -26,6 +26,22 @@ const (
 	BackendDemo   = "demo"
 )
 
+// Setup names are the closed set of card-specific integrations a downloaded
+// card may ask for. A card never carries a command or URL: the build knows
+// these, so a repo entry cannot run arbitrary code.
+const (
+	SetupOscmix = "oscmix" // RME Fireface UCX II control (oscmix-desk)
+	SetupDouze  = "douze"  // Solid State Logic SSL 12 control
+)
+
+// Foundation is the optional per-card part of the audio foundation. Absent
+// means the default (match the card in the connection log and use that name
+// for the default sink/source).
+type Foundation struct {
+	Sink   string `json:"sink,omitempty"`
+	Source string `json:"source,omitempty"`
+}
+
 // Caps advertises what a card can actually do.
 type Caps struct {
 	Volume  bool `json:"volume"`
@@ -39,29 +55,31 @@ type Caps struct {
 // Spec is the hardware description of a card. Field names and JSON shape match
 // drivers.Spec so status-json and local data stay interchangeable.
 type Spec struct {
-	ID           string   `json:"id"`
-	Display      string   `json:"display"`
-	Vendor       string   `json:"vendor"`
-	USBVID       string   `json:"usb_vid"`
-	USBPID       string   `json:"usb_pid"`
-	NumInputs    int      `json:"num_inputs"`
-	NumOutPairs  int      `json:"num_output_pairs"`
-	GainMin      float64  `json:"gain_min_db"`
-	GainMax      float64  `json:"gain_max_db"`
-	GainOffset   float64  `json:"gain_offset_db"`
-	VolMin       float64  `json:"vol_min_db"`
-	VolMax       float64  `json:"vol_max_db"`
-	MixerInputs  int      `json:"mixer_inputs"`
-	MixerOutputs int      `json:"mixer_outputs"`
-	HasMonitor   bool     `json:"has_monitor"`
-	Backend      string   `json:"backend"`
-	NeedsKmod    bool     `json:"needs_kmod"`
-	Description  string   `json:"description"`
-	Version      string   `json:"version"`
-	Beta         bool     `json:"beta,omitempty"`
-	CardMatch    []string `json:"card_match,omitempty"`
-	BusNames     []string `json:"bus_names,omitempty"`
-	Caps         Caps     `json:"caps"`
+	ID           string      `json:"id"`
+	Display      string      `json:"display"`
+	Vendor       string      `json:"vendor"`
+	USBVID       string      `json:"usb_vid"`
+	USBPID       string      `json:"usb_pid"`
+	NumInputs    int         `json:"num_inputs"`
+	NumOutPairs  int         `json:"num_output_pairs"`
+	GainMin      float64     `json:"gain_min_db"`
+	GainMax      float64     `json:"gain_max_db"`
+	GainOffset   float64     `json:"gain_offset_db"`
+	VolMin       float64     `json:"vol_min_db"`
+	VolMax       float64     `json:"vol_max_db"`
+	MixerInputs  int         `json:"mixer_inputs"`
+	MixerOutputs int         `json:"mixer_outputs"`
+	HasMonitor   bool        `json:"has_monitor"`
+	Backend      string      `json:"backend"`
+	NeedsKmod    bool        `json:"needs_kmod"`
+	Description  string      `json:"description"`
+	Version      string      `json:"version"`
+	Beta         bool        `json:"beta,omitempty"`
+	CardMatch    []string    `json:"card_match,omitempty"`
+	BusNames     []string    `json:"bus_names,omitempty"`
+	Caps         Caps        `json:"caps"`
+	Setup        string      `json:"setup,omitempty"`
+	Foundation   *Foundation `json:"foundation,omitempty"`
 }
 
 // Capture references a distilled capture inside the card folder. Raw capture
@@ -108,6 +126,11 @@ func (c Card) Blocks() []string {
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
+// foundationNamePattern keeps a card from injecting a jq/wpctl expression into
+// the generated default-sink picker. Real node fragments look like
+// "HiFi__Line5__sink" or "Fireface".
+var foundationNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
+
 // ValidID reports whether id is safe as a folder/file name. Import paths and
 // local folders both go through it, so a crafted index cannot escape the store.
 func ValidID(id string) bool { return idPattern.MatchString(id) }
@@ -135,6 +158,19 @@ func validPreset(p string) bool {
 func validBlock(b string) bool {
 	for _, v := range Blocks {
 		if v == b {
+			return true
+		}
+	}
+	return false
+}
+
+// Setups is the closed set of card-specific integrations this build can run
+// after a download. Empty means the card needs none.
+var Setups = []string{"", SetupOscmix, SetupDouze}
+
+func validSetup(s string) bool {
+	for _, v := range Setups {
+		if v == s {
 			return true
 		}
 	}
@@ -199,6 +235,19 @@ func Validate(c Card) []Issue {
 	if s.Caps.Mixer && (s.MixerInputs < s.NumInputs || s.MixerOutputs < 2) {
 		add("error", "spec.caps.mixer", "mixer caps need %d+ inputs and 2+ outputs (got %d/%d)", s.NumInputs, s.MixerInputs, s.MixerOutputs)
 	}
+	if !validSetup(s.Setup) {
+		add("error", "spec.setup", "unknown setup %q (known: oscmix, douze)", s.Setup)
+	}
+	if f := s.Foundation; f != nil {
+		if f.Sink == "" && f.Source == "" {
+			add("error", "spec.foundation", "needs a sink or a source")
+		}
+		for field, v := range map[string]string{"sink": f.Sink, "source": f.Source} {
+			if v != "" && !foundationNamePattern.MatchString(v) {
+				add("error", "spec.foundation."+field, "%q is not a PipeWire node name fragment", v)
+			}
+		}
+	}
 	if s.Caps.Phantom && s.NumInputs < 1 {
 		add("error", "spec.caps.phantom_48v", "phantom power needs at least one input")
 	}
@@ -258,6 +307,7 @@ func Parse(data []byte) (Card, []Issue, error) {
 		"mixer_inputs": true, "mixer_outputs": true, "has_monitor": true,
 		"backend": true, "needs_kmod": true, "description": true, "version": true,
 		"beta": true, "card_match": true, "bus_names": true, "caps": true,
+		"setup": true, "foundation": true,
 	}
 	if specRaw, ok := raw["spec"]; ok {
 		var keys map[string]json.RawMessage

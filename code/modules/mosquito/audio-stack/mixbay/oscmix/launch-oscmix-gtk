@@ -1,43 +1,21 @@
 #!/usr/bin/env bash
 # =============================================================================
-# mixbay-oscmix-gtk — open the RME Fireface UCX II mixer (oscmix + GTK)
+# mixbay-oscmix-gtk — open the RME Fireface UCX II mixer (oscmix-desk)
 # =============================================================================
-# Starts oscmix on the card's raw MIDI port through alsarawio, waits for its
-# OSC port, runs the GTK frontend, then stops only the oscmix it started.
-# Class Compliant mode is required (SETUP on the unit). Nothing is written to
-# the interface at startup: oscmix only reads/writes the mixer over SysEx when
-# the user moves a control in the GUI.
+# oscmix-desk's own launcher checks the desk, reuses or starts the backend and
+# opens the GTK mixer. This wrapper only locates it and explains the two ways
+# it can fail to find the interface (driver mode / not connected).
+#
+# The interface must be in Class Compliant mode (SETUP on the unit).
 #
 # Usage:
-#   mixbay-oscmix-gtk           open the mixer
-#   mixbay-oscmix-gtk --detect  print CARD,DEV,SUB or exit 1
+#   mixbay-oscmix-gtk   open the mixer
 # =============================================================================
 set -euo pipefail
 
 BIN_DIR="$HOME/.local/bin"
-OSC_PORT=7222
 
-info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!\033[0m %s\n' "$*" >&2; }
-
-# CARD,DEV,SUB of the UCX II raw MIDI port, as alsarawio expects it. The
-# mixer control port is the second subdevice: oscmix's README says "the one
-# ending in ,1", so prefer it and only fall back to another port.
-detect() {
-  command -v amidi >/dev/null 2>&1 || return 1
-  amidi -l 2>/dev/null | awk '
-    /Fireface UCX II/ {
-      for (i = 1; i <= NF; i++) {
-        if ($i ~ /^hw:[0-9]+,[0-9]+,[0-9]+$/) {
-          t = $i
-          sub(/^hw:/, "", t)
-          if (t ~ /,1$/) { print t; found = 1; exit }
-          if (last == "") last = t
-        }
-      }
-    }
-    END { if (!found && last != "") print last }'
-}
 
 resolve() {
   local p
@@ -50,80 +28,26 @@ hint() {
   if command -v lsusb >/dev/null 2>&1 && lsusb -d 2a39:3f82 >/dev/null 2>&1; then
     warn "The UCX II is plugged in but running in USB driver mode (2a39:3f82)."
     warn "Linux only sees it in Class Compliant mode: on the unit SETUP → Options"
-    warn "→ CC Mode = ON. It re-enumerates as 2a39:3fd9 and gets an audio card."
-  else
-    warn "The UCX II must be in Class Compliant mode (SETUP → Options → CC Mode)."
-    warn "Check that it appears in: amidi -l   (line ending in ,1 — Fireface UCX II)"
+    warn "→ CC Mode = ON. It re-enumerates as 2a39:3fd9 and gets an ALSA card."
+  elif ! grep -qi 'fireface' /proc/asound/cards 2>/dev/null; then
+    warn "The UCX II is not visible to ALSA."
+    warn "Check that it is connected in Class Compliant mode (SETUP → Options"
+    warn "→ CC Mode) and appears in: aconnect -l   (client 'Fireface UCX II')"
   fi
 }
 
 case "${1:-}" in
   -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
-  --detect)
-    dev="$(detect)" || true
-    [[ -n $dev ]] || exit 1
-    printf '%s\n' "$dev"
-    exit 0
-    ;;
   "") ;;
   *) warn "Unknown option: $1"; exit 2 ;;
 esac
 
-device="$(detect)" || true
-if [[ -z $device ]]; then
-  warn "RME Fireface UCX II not found."
+launch="$(resolve oscmix-launch)" \
+  || { warn "oscmix-desk is not installed — run Set up / repair oscmix-desk."; exit 1; }
+
+# oscmix-launch replaces itself with the GTK mixer; when it cannot, it
+# notifies and exits non-zero, and the hint says why the card may be missing.
+if ! "$launch"; then
   hint
   exit 1
 fi
-
-gtk="$(resolve oscmix-gtk)" || { warn "oscmix-gtk is not installed — run Set up / repair oscmix."; exit 1; }
-alsarawio="$(resolve alsarawio)" || { warn "alsarawio is not installed — run Set up / repair oscmix."; exit 1; }
-oscmix="$(resolve oscmix)" || { warn "oscmix is not installed — run Set up / repair oscmix."; exit 1; }
-
-# A running oscmix already owns the OSC port; reuse it instead of failing to
-# bind a second one. We only stop a daemon this launcher started.
-if pgrep -x oscmix >/dev/null 2>&1; then
-  exec "$gtk"
-fi
-
-log="$(mktemp -t oscmix.XXXXXX)"
-osc_pid=""
-cleanup() {
-  if [[ -n ${osc_pid:-} ]] && kill -0 "$osc_pid" 2>/dev/null; then
-    kill "$osc_pid" 2>/dev/null || true
-    wait "$osc_pid" 2>/dev/null || true
-  fi
-  rm -f "$log"
-}
-trap cleanup EXIT
-trap 'exit 130' INT TERM
-
-info "Starting oscmix on raw MIDI $device"
-"$alsarawio" "$device" "$oscmix" 2>"$log" &
-osc_pid=$!
-
-ready=0
-for _ in $(seq 1 50); do
-  kill -0 "$osc_pid" 2>/dev/null || break
-  if command -v ss >/dev/null 2>&1; then
-    if ss -H -lun 2>/dev/null | grep -q ":$OSC_PORT "; then
-      ready=1
-      break
-    fi
-    sleep 0.1
-  else
-    sleep 0.6
-    ready=1
-    break
-  fi
-done
-
-if (( ! ready )); then
-  warn "oscmix did not open its OSC port."
-  [[ -s $log ]] && sed 's/^/    /' "$log" >&2
-  hint
-  exit 1
-fi
-
-info "Opening oscmix GTK mixer"
-"$gtk"
