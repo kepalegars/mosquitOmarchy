@@ -68,12 +68,28 @@ func readSetupLog(path string) string {
 	return text
 }
 
+// oscmixQtInstalled reports whether the preview Qt AppImage is on disk. The
+// upstream project publishes it in the nightly release only sometimes, so a
+// missing file is the normal state, not a broken setup.
+func oscmixQtInstalled() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	st, err := os.Stat(filepath.Join(home, ".local", "lib", "oscmix", "oscmix-qt.AppImage"))
+	return err == nil && !st.IsDir()
+}
+
 // setupResult turns a finished setup into the end-of-run prompt mosquitOmarchy
 // uses for its own modules: "Success!" or "failed", plus the log on demand.
 func (m model) setupResult(msg setupDoneMsg) (model, tea.Cmd) {
 	status := "Success! " + msg.what + " completed without errors."
 	if msg.err != nil {
 		status = msg.what + " failed (" + msg.err.Error() + ")."
+	} else if msg.what == "oscmix setup" && !oscmixQtInstalled() {
+		// The one thing the run could not deliver: be explicit instead of
+		// leaving the Qt action to explain it later.
+		status += "\nQt UI: upstream has not published its AppImage for this release yet — use the GTK mixer, or re-run this setup once it exists."
 	}
 	m.confirmLog = msg.log
 	m.confirm = tuikit.NewConfirm(status+"\n\nSee the full log, or close?", "Close", "See log")

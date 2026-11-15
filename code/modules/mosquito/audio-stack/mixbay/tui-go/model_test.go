@@ -1871,3 +1871,43 @@ func TestToastSitsAboveLegend(t *testing.T) {
 		t.Fatalf("legend not below the toast: %q", lines[1])
 	}
 }
+
+// The log screen is not a "press any key to dismiss" notice: `c` must reach
+// Info (copy), and the shortcut legend must be on screen.
+func TestInfoLogKeepsCopyAndShowsShortcuts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := initialModel()
+	m.w, m.h = 90, 26
+	m.info = tuikit.NewInfo("line one\nline two").SetSize(m.contentSize())
+	m.push(scrInfo)
+
+	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	m = mm.(model)
+	if m.top() != scrInfo {
+		t.Fatalf("`c` must reach Info for the clipboard, top=%v", m.top())
+	}
+	if !strings.Contains(m.View(), "c copy") {
+		t.Errorf("the log screen must show its shortcut line")
+	}
+	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if mm.(model).top() != scrDevices {
+		t.Errorf("esc must leave the log, top=%v", mm.(model).top())
+	}
+}
+
+// An action-only card has no adjust keys: the legend must not advertise them.
+func TestActionOnlyCardLegendHasNoControlKeys(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := initialModel()
+	m.status = demoStatus(t, drivers.DevFireface)
+	m.nav = append(m.nav, scrControls)
+	line := m.legendLine(120)
+	for _, bad := range []string{"Tab", "adjust", "big", "save/load", "digits"} {
+		if strings.Contains(line, bad) {
+			t.Errorf("action-only legend advertises %q: %q", bad, line)
+		}
+	}
+	if !strings.Contains(line, "enter open") {
+		t.Errorf("legend = %q, want the action hint", line)
+	}
+}

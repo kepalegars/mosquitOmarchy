@@ -143,8 +143,14 @@ func (m model) View() string {
 		// Modals return directly: centerModal already fills exactly h
 		// rows. Routing them through the TrimRight + re-center below
 		// eats their bottom padding and shifts them down a second time
-		// (the "prompt sits too low" bug).
-		return centerModal(m.info.View(), w, h)
+		// (the "prompt sits too low" bug). The hint row is the same one
+		// mosquitOmarchy's log screen shows: scroll, copy, continue.
+		rows := h - 1
+		if rows < 1 {
+			rows = 1
+		}
+		m.info = m.info.SetSize(w, rows)
+		return centerModal(m.info.View(), w, rows) + "\n" + centerTrunc(m.info.ShortcutsHint(), w)
 	case scrConfirm:
 		return centerModal(m.confirm.View(), w, h)
 	}
@@ -303,7 +309,11 @@ func (m model) legendLine(w int) string {
 	case scrDevices:
 		hint = "↑/↓ · enter open · r refresh · q quit"
 	case scrControls:
-		hint = "Tab mixer · enter · [ ] adjust · { } big · digits dial · s/o save/load · ? help"
+		if hasControls(m.status) {
+			hint = "Tab mixer · enter · [ ] adjust · { } big · digits dial · s/o save/load · ? help"
+		} else {
+			hint = "↑/↓ · enter open · r refresh · esc back · ? help"
+		}
 	case scrMixer:
 		hint = "Tab controls · [ ] vol · { }/,/. pan · digits dial · bus row switches MIX · ? help"
 	case scrSettings:

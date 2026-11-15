@@ -1045,6 +1045,16 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case setupDoneMsg:
 		return m.setupResult(msg)
 
+	case tuikit.InfoCopiedMsg:
+		// A copy is silent; a keypress that looks like it did nothing is
+		// indistinguishable from one that failed.
+		if msg.Err != nil {
+			m.toast, _ = m.toast.SetErr("copy failed: " + msg.Err.Error())
+			return m, nil
+		}
+		m.toast, _ = m.toast.SetOK(fmt.Sprintf("copied to the clipboard (%d bytes)", msg.Bytes))
+		return m, nil
+
 	case patchbayLoadedMsg:
 		m.patchbay.loading = false
 		m.patchbay.err, m.patchbay.states = "", msg.states
@@ -1319,8 +1329,16 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.syncPicker()
 			return m, nil
 		case "s":
+			if !hasControls(m.status) {
+				m.toast, _ = m.toast.SetWarn("No TUI controls on this interface — the mixer owns them")
+				return m, nil
+			}
 			return m, m.applyCmd(m.deviceID, func(d drivers.Driver) error { return d.Save() }, "state saved")
 		case "o":
+			if !hasControls(m.status) {
+				m.toast, _ = m.toast.SetWarn("No TUI controls on this interface — the mixer owns them")
+				return m, nil
+			}
 			m.confirmTitle = "Reload the saved state onto the hardware?"
 			m.confirm = tuikit.NewConfirm(m.confirmTitle, "Cancel", "Reload")
 			m.confirmAct = func() tea.Cmd {
@@ -1397,8 +1415,15 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case scrInfo:
-		m.pop()
-		return m, nil
+		// Info is the log screen: scrolling and `c` (copy) must reach the
+		// component, not pop it. Only the "continue" keys leave.
+		if k == "esc" || k == "enter" || k == "backspace" || k == "q" {
+			m.pop()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.info, cmd = m.info.Update(msg)
+		return m, cmd
 	case scrSettings:
 		switch k {
 		case "esc", "backspace":
@@ -1701,14 +1726,26 @@ func (m *model) activateControl(val string) tea.Cmd {
 		}
 		m.push(scrConfirm)
 		return nil
-	case val == "oscmix:gtk":
-		if err := exec.Command("mixbay-oscmix-gtk").Start(); err != nil {
-			m.toast, _ = m.toast.SetWarn("oscmix GTK mixer is not installed — run Set up / repair oscmix")
+	case val == "oscmix:gtk", val == "oscmix:qt":
+		// oscmix is a client for a live card: without it the mixer has
+		// nothing to talk to, so say why here instead of letting the
+		// launcher fail in a desktop notification.
+		if !m.status.Online {
+			m.toast, _ = m.toast.SetWarn("Connect " + m.status.Spec.Display + " in CC mode first — oscmix needs the card")
+			return nil
 		}
-		return nil
-	case val == "oscmix:qt":
-		if err := exec.Command("mixbay-oscmix-qt").Start(); err != nil {
-			m.toast, _ = m.toast.SetWarn("oscmix Qt UI is not installed — run Set up / repair oscmix")
+		bin := "mixbay-oscmix-gtk"
+		if val == "oscmix:qt" {
+			// The AppImage is a preview upstream publishes only sometimes:
+			// do not spawn a launcher that can only fail.
+			if !oscmixQtInstalled() {
+				m.toast, _ = m.toast.SetWarn("Qt UI: upstream has not published an AppImage for this release yet — use Open GTK mixer")
+				return nil
+			}
+			bin = "mixbay-oscmix-qt"
+		}
+		if err := exec.Command(bin).Start(); err != nil {
+			m.toast, _ = m.toast.SetWarn(bin + " is not installed — run Set up / repair oscmix")
 		}
 		return nil
 	case val == "oscmix:setup":

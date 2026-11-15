@@ -40,3 +40,17 @@ func TestReadSetupLogStripsANSI(t *testing.T) {
 		t.Errorf("missing log should say so, got %q", got)
 	}
 }
+
+// The Qt UI is a preview upstream ships only sometimes: a successful oscmix
+// setup must say so instead of leaving the Qt action to fail later.
+func TestSetupResultMentionsTheMissingQtUI(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := model{nav: []screen{scrDevices}}
+	next, _ := m.setupResult(setupDoneMsg{what: "oscmix setup", log: "/tmp/a.log"})
+	if !strings.Contains(next.confirm.Message, "Qt UI") {
+		t.Errorf("success prompt should explain the missing Qt UI: %q", next.confirm.Message)
+	}
+	if oscmixQtInstalled() {
+		t.Errorf("Qt UI reported installed under an empty HOME")
+	}
+}
