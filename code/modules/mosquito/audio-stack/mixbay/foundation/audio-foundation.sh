@@ -79,12 +79,14 @@ profile_id_for_name(){
 DATA_DIR="${XDG_DATA_HOME:-$HOME_DIR/.local/share}"
 integration_dir(){ printf '%s/mosquitomixbay/integrations/%s' "$DATA_DIR" "$1"; }
 ensure_integration(){
-  local name="$1" dir
+  local name="$1" dir actions
   dir="$(integration_dir "$name")"
   if [[ ! -f "$dir/.manifest.json" ]]; then
-    command -v mosquito-mixbay-actions >/dev/null 2>&1 \
+    actions="$(command -v mosquito-mixbay-actions 2>/dev/null || true)"
+    [[ -n $actions ]] || actions="$BIN_DIR/mosquito-mixbay-actions"
+    [[ -x $actions ]] \
       || { warn "mosquito-mixbay-actions not found — cannot fetch $name"; return 1; }
-    dir="$(mosquito-mixbay-actions profiles-integration "$name" 2>/dev/null)" \
+    dir="$("$actions" profiles-integration "$name" 2>/dev/null)" \
       || { warn "could not fetch the $name integration"; return 1; }
   fi
   [[ -d $dir ]] || { warn "missing integration folder $dir"; return 1; }
