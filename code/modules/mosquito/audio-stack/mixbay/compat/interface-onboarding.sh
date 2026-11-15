@@ -97,15 +97,15 @@ needs_for() { # device id -> newline-separated missing pieces (empty = none)
         mixbay-audio-foundation --needs fireface-ucx2 2>/dev/null || true
       else
         local b
-        for b in oscmix-session oscmix-launch oscmix-gtk; do
+        for b in oscmix alsaseqio oscmix-gtk; do
           [[ -x "$HOME/.local/bin/$b" ]] || {
-            printf '%s\n' "oscmix-desk (session + GTK mixer, user-local)"
+            printf '%s\n' "oscmix (engine + GTK mixer, user-local)"
             break
           }
         done
         if command -v aconnect >/dev/null 2>&1; then
-          aconnect -l 2>/dev/null | grep -q 'Fireface UCX II' \
-            || printf '%s\n' "Class Compliant mode on the UCX II (SETUP ▸ Options) with an ALSA sequencer client (check: aconnect -l)"
+          aconnect -l 2>/dev/null | grep -qi 'Fireface' \
+            || printf '%s\n' "Class Compliant mode on the RME card (SETUP ▸ Options) with an ALSA sequencer client (check: aconnect -l)"
         fi
       fi
       ;;
@@ -120,7 +120,7 @@ apply() {
   # the interface. Other cards keep the full Mixbay installer.
   if [[ $dev == fireface-ucx2 ]]; then
     if [[ -f "$ROOT_DIR/foundation/audio-foundation.sh" ]]; then
-      info "Applying the audio foundation for $dev (system floor + oscmix-desk)"
+      info "Applying the audio foundation for $dev (system floor + oscmix)"
       bash "$ROOT_DIR/foundation/audio-foundation.sh" --apply --device "$dev" --restart
     else
       warn "foundation/audio-foundation.sh not found under $ROOT_DIR — cannot apply."

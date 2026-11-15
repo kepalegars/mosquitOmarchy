@@ -17,22 +17,22 @@
     "has_monitor": false,
     "backend": "alsa",
     "needs_kmod": false,
-    "version": "v0.0.1",
+    "version": "v0.2.0",
     "caps": {
-      "volume": true,
+      "volume": false,
       "gain": false,
-      "mute": true,
+      "mute": false,
       "phantom_48v": false,
       "monitor_blend": false,
       "mixer": false
     },
-    "card_match": ["UCX II", "UCXII", "Fireface"],
+    "card_match": ["Fireface UCX II at"],
     "setup": "oscmix",
     "foundation": {
       "sink": "HiFi__Line5__sink",
       "source": "Fireface"
     },
-    "description": "Class Compliant mode: oscmix-desk controls the mixer. ALSA level 1 otherwise."
+    "description": "Class Compliant mode: oscmix (huddx01 fork) owns the mixer, opened as GTK or Qt from the card menu. Mixbay shows actions only."
   },
   "credits": {
     "author": "mosquito"

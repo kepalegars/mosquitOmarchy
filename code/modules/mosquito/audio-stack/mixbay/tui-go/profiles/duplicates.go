@@ -74,7 +74,7 @@ func keepRank(m Meta) string {
 	switch {
 	case m.Native:
 		rank = "0"
-	case m.Source == "repo" || m.Source == "built-in":
+	case m.Source == "repo" || m.Source == "built-in" || m.Source == "preinstalled":
 		rank = "1"
 	}
 	beta := "0"

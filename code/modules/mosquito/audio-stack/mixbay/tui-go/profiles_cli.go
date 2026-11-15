@@ -45,7 +45,7 @@ func cliProfilesIndex(args []string) int {
 
 func cliProfilesImport(args []string) int {
 	fs := flag.NewFlagSet("profiles-import", flag.ContinueOnError)
-	all := fs.Bool("all", false, "import every non-native card in the index")
+	all := fs.Bool("all", false, "import every card in the index")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -60,9 +60,7 @@ func cliProfilesImport(args []string) int {
 		}
 		ids = nil
 		for _, c := range ix.Cards {
-			if !c.Native {
-				ids = append(ids, c.ID)
-			}
+			ids = append(ids, c.ID)
 		}
 	}
 	if len(ids) == 0 {
@@ -189,19 +187,6 @@ func cliProfilesRemove(args []string) int {
 		fmt.Printf("removed %s\n", id)
 	}
 	return code
-}
-
-func cliProfilesClearUser(args []string) int {
-	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: profiles-clear-user ID")
-		return 2
-	}
-	if err := profiles.ClearUser(args[0]); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	fmt.Println("ok")
-	return 0
 }
 
 func cliProfilesSetURL(args []string) int {

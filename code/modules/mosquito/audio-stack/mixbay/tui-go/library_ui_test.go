@@ -221,7 +221,7 @@ func TestDuplicatePromptSkipsOnce(t *testing.T) {
 	}
 }
 
-func TestUninstallRecapKeepsBuiltins(t *testing.T) {
+func TestUninstallRecapIncludesEmbeddedCards(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if _, err := profiles.InstallLocalCard("quantum-es4", "PreSonus Quantum ES 4", "Quantum ES"); err != nil {
 		t.Fatal(err)
@@ -232,16 +232,44 @@ func TestUninstallRecapKeepsBuiltins(t *testing.T) {
 		t.Fatal("uninstall did not ask for confirmation")
 	}
 	text := stripANSI(m.confirm.View())
-	for _, want := range []string{"Uninstall 1 profile", "PreSonus Quantum ES 4", "evo8", "built in, kept"} {
+	for _, want := range []string{"Uninstall 2 profile", "PreSonus Quantum ES 4", "Audient EVO 8"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("uninstall recap missing %q:\n%s", want, text)
 		}
 	}
+	if strings.Contains(text, "built in") {
+		t.Errorf("uninstall recap still talks about built-in cards:\n%s", text)
+	}
+}
 
-	m.pop()
-	m.promptUninstall([]string{"evo8"})
-	if m.top() == scrConfirm {
-		t.Fatal("a built-in card must not open an uninstall confirmation")
+func TestInstallWithLocalUIOffersBackup(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, err := profiles.InstallLocalCard("quantum-es4", "PreSonus Quantum ES 4", "Quantum ES"); err != nil {
+		t.Fatal(err)
+	}
+	if err := profiles.SaveUserLayout("quantum-es4", []byte(`{"preset":"auto"}`)); err != nil {
+		t.Fatal(err)
+	}
+	m := model{
+		nav:            []screen{scrLibrary},
+		libraryChecked: map[string]bool{},
+		libraryIndex:   profiles.Index{SchemaVersion: 1},
+		libraryTab:     libAvailable,
+	}
+	m.picker = tuikit.NewPicker("", []tuikit.PickerItem{{Display: "quantum", Value: "repo:quantum-es4"}})
+	next, _ := m.libraryKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got := next.(model)
+	if got.top() != scrConfirm {
+		t.Fatal("a local layout must open a backup confirmation")
+	}
+	text := stripANSI(got.confirm.View())
+	for _, want := range []string{"quantum-es4 has a local layout", "backed up to", "before the repo layout replaces it", "Continue?"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("backup prompt missing %q:\n%s", want, text)
+		}
+	}
+	if got.libraryLoading {
+		t.Fatal("nothing should start before the confirmation")
 	}
 }
 

@@ -30,7 +30,7 @@ const (
 // card may ask for. A card never carries a command or URL: the build knows
 // these, so a repo entry cannot run arbitrary code.
 const (
-	SetupOscmix = "oscmix" // RME Fireface UCX II control (oscmix-desk)
+	SetupOscmix = "oscmix" // RME CC-mode cards: huddx01/oscmix (GTK + Qt)
 	SetupDouze  = "douze"  // Solid State Logic SSL 12 control
 )
 

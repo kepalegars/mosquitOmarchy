@@ -91,13 +91,54 @@ func TestEffectiveMergesSparseOverride(t *testing.T) {
 	}
 }
 
-func TestNativeCannotBeRemovedOrOverwritten(t *testing.T) {
+func TestEmbeddedCardCanBeUninstalledAndStaysRemoved(t *testing.T) {
 	testHome(t)
-	if err := Remove("evo8"); err == nil {
-		t.Fatal("native remove succeeded")
+	if _, _, err := Effective("evo8"); err != nil {
+		t.Fatal("embedded card was not seeded")
 	}
-	if _, err := InstallLocalCard("evo8", "Fake EVO", "Fake"); err == nil {
-		t.Fatal("native card was overwritten by a local install")
+	if err := Remove("evo8"); err != nil {
+		t.Fatalf("removing an embedded card failed: %v", err)
+	}
+	if _, _, err := Effective("evo8"); err == nil {
+		t.Fatal("uninstalled card is still effective")
+	}
+	// Reading the store seeds missing embedded cards, but never a removed one.
+	for _, c := range LocalCards() {
+		if c.Spec.ID == "evo8" {
+			t.Fatal("seeding restored a removed card")
+		}
+	}
+}
+
+func TestBackupUserUIDropsTheOverride(t *testing.T) {
+	testHome(t)
+	if _, err := InstallLocalCard("quantum-es4", "PreSonus Quantum ES 4", "Quantum ES"); err != nil {
+		t.Fatal(err)
+	}
+	override := []byte(`{"preset":"auto"}`)
+	if err := SaveUserLayout("quantum-es4", override); err != nil {
+		t.Fatal(err)
+	}
+	if !HasUserUI("quantum-es4") {
+		t.Fatal("local layout not detected")
+	}
+	dest, err := BackupUserUI("quantum-es4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || string(got) != string(override) {
+		t.Fatalf("backup = %q, %v", got, err)
+	}
+	if HasUserUI("quantum-es4") {
+		t.Fatal("local layout still active after backup")
+	}
+	card, _, err := Effective("quantum-es4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.Preset() != "single-pair" {
+		t.Fatalf("repo layout did not take over: %q", card.Preset())
 	}
 }
 

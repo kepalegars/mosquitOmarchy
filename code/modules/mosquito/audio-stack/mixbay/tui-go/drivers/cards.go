@@ -30,6 +30,7 @@ func specFromProfile(c profiles.Card) Spec {
 			Volume: s.Caps.Volume, Gain: s.Caps.Gain, Mute: s.Caps.Mute,
 			Phantom: s.Caps.Phantom, Monitor: s.Caps.Monitor, Mixer: s.Caps.Mixer,
 		},
+		Setup: s.Setup,
 	}
 }
 
@@ -46,12 +47,14 @@ func mustNativeSpec(id string) Spec {
 	return specFromProfile(c)
 }
 
-// nativeSpecs is the stable order shown by the interface picker.
+// nativeSpecs is the stable order of the embedded bootstrap cards. It is not
+// the registry: cards are installed from the store (seeded on first read), so
+// they can be uninstalled like any community profile.
 func nativeSpecs() []Spec {
 	return []Spec{EVO8Spec, EVO4Spec, FirefaceSpec, UGM192Spec, SSL12Spec}
 }
 
-// localSpecs reads downloaded/local cards from the profile store.
+// localSpecs reads installed cards from the profile store.
 func localSpecs() []Spec {
 	cards := profiles.LocalCards()
 	out := make([]Spec, 0, len(cards))
@@ -61,13 +64,9 @@ func localSpecs() []Spec {
 	return out
 }
 
-// specByID finds a runtime spec for a known card. Unknown ids are not guessed.
+// specByID finds a runtime spec for an installed card. Unknown ids are not
+// guessed.
 func specByID(id string) (Spec, bool) {
-	for _, s := range nativeSpecs() {
-		if s.ID == id {
-			return s, true
-		}
-	}
 	for _, s := range localSpecs() {
 		if s.ID == id {
 			return s, true

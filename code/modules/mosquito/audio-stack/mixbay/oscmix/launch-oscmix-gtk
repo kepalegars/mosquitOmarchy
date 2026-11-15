@@ -1,53 +1,101 @@
 #!/usr/bin/env bash
 # =============================================================================
-# mixbay-oscmix-gtk — open the RME Fireface UCX II mixer (oscmix-desk)
+# mixbay-oscmix-gtk — open the GTK mixer for a Class Compliant RME Fireface
 # =============================================================================
-# oscmix-desk's own launcher checks the desk, reuses or starts the backend and
-# opens the GTK mixer. This wrapper only locates it and explains the two ways
-# it can fail to find the interface (driver mode / not connected).
+# oscmix itself is the backend (USB MIDI SysEx ↔ OSC); oscmix-gtk is the
+# window. This wrapper finds the card's ALSA sequencer client (or raw MIDI
+# port), starts oscmix on the default OSC ports if it is not already running,
+# then opens the mixer. The daemon it started is stopped when the mixer
+# closes, so nothing is left holding the card.
 #
 # The interface must be in Class Compliant mode (SETUP on the unit).
-#
-# Usage:
-#   mixbay-oscmix-gtk   open the mixer
 # =============================================================================
 set -euo pipefail
 
 BIN_DIR="$HOME/.local/bin"
+LIB_DIR="$HOME/.local/lib/oscmix"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomixbay"
+PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/mixbay-oscmix-gtk.pid"
+LOG="$STATE/oscmix.log"
 
 warn() { printf '\033[1;33m!\033[0m %s\n' "$*" >&2; }
 
-resolve() {
-  local p
-  p="$(command -v "$1" 2>/dev/null || true)"
-  [[ -n $p ]] && { printf '%s\n' "$p"; return 0; }
-  [[ -x $BIN_DIR/$1 ]] && printf '%s\n' "$BIN_DIR/$1"
+# Mixbay opens the mixer detached from the TUI: the reason a launch failed has
+# to reach the desktop as well, or the click looks like it did nothing.
+fail() {
+  warn "$*"
+  command -v notify-send >/dev/null 2>&1 && notify-send "oscmix" "$*" || true
 }
 
 hint() {
   if command -v lsusb >/dev/null 2>&1 && lsusb -d 2a39:3f82 >/dev/null 2>&1; then
-    warn "The UCX II is plugged in but running in USB driver mode (2a39:3f82)."
-    warn "Linux only sees it in Class Compliant mode: on the unit SETUP → Options"
-    warn "→ CC Mode = ON. It re-enumerates as 2a39:3fd9 and gets an ALSA card."
-  elif ! grep -qi 'fireface' /proc/asound/cards 2>/dev/null; then
-    warn "The UCX II is not visible to ALSA."
-    warn "Check that it is connected in Class Compliant mode (SETUP → Options"
-    warn "→ CC Mode) and appears in: aconnect -l   (client 'Fireface UCX II')"
+    fail "The interface is in USB driver mode (2a39:3f82). Turn CC Mode on: on the unit SETUP → Options → CC Mode = ON. It re-enumerates as 2a39:3fd9 and gets an ALSA card."
+  else
+    fail "No Class Compliant RME Fireface found. Check that it is connected with CC Mode on, then: aconnect -l (the client is named 'Fireface …')."
   fi
 }
 
-case "${1:-}" in
-  -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
-  "") ;;
-  *) warn "Unknown option: $1"; exit 2 ;;
-esac
+# alsa_client -> "CLIENT:PORT" of the card's control port (the last one).
+alsa_client() {
+  command -v aconnect >/dev/null 2>&1 || return 1
+  local listing id
+  listing="$(aconnect -l 2>/dev/null)" || return 1
+  id="$(sed -n "s/^client \([0-9][0-9]*\): 'Fireface[^']*'.*/\1/p" <<<"$listing" | head -1)"
+  [[ -n $id ]] || return 1
+  awk -v want="$id" '
+    $1 == "client" { cur = $2; sub(":", "", cur); on = (cur == want); next }
+    on && $1 ~ /^[0-9]+$/ { port = $1 }
+    END { print want ":" port }
+  ' <<<"$listing"
+}
 
-launch="$(resolve oscmix-launch)" \
-  || { warn "oscmix-desk is not installed — run Set up / repair oscmix-desk."; exit 1; }
+# raw_midi -> "CARD,DEVICE,SUBDEVICE" from amidi, for kernels where the
+# sequencer client is missing.
+raw_midi() {
+  command -v amidi >/dev/null 2>&1 || return 1
+  local line dev
+  line="$(amidi -l 2>/dev/null | grep -i 'Fireface' | tail -1)" || return 1
+  [[ -n $line ]] || return 1
+  dev="$(awk '{print $2}' <<<"$line")"
+  printf '%s\n' "${dev#hw:}"
+}
 
-# oscmix-launch replaces itself with the GTK mixer; when it cannot, it
-# notifies and exits non-zero, and the hint says why the card may be missing.
-if ! "$launch"; then
-  hint
-  exit 1
+wait_osc() {
+  local i
+  command -v ss >/dev/null 2>&1 || { sleep 0.5; return 0; }
+  for i in {1..20}; do
+    ss -lun 2>/dev/null | grep -q ':7222 ' && return 0
+    sleep 0.1
+  done
+}
+
+[[ -x $BIN_DIR/oscmix && -x $BIN_DIR/oscmix-gtk ]] \
+  || { fail "oscmix is not installed — run Set up / repair oscmix in Mixbay."; exit 1; }
+
+started=0
+if [[ -f $PID_FILE ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+  started=0
+else
+  rm -f "$PID_FILE"
+  mkdir -p "$STATE"
+  if seq_port="$(alsa_client)"; then
+    setsid "$BIN_DIR/alsaseqio" "$seq_port" "$BIN_DIR/oscmix" >>"$LOG" 2>&1 &
+  elif raw_port="$(raw_midi)"; then
+    setsid "$BIN_DIR/alsarawio" "$raw_port" "$BIN_DIR/oscmix" >>"$LOG" 2>&1 &
+  else
+    hint
+    exit 1
+  fi
+  echo $! > "$PID_FILE"
+  started=1
+  wait_osc
 fi
+
+GSETTINGS_SCHEMA_DIR="$LIB_DIR/gtk" "$BIN_DIR/oscmix-gtk" "$@"
+rc=$?
+
+if ((started)); then
+  kill "$(cat "$PID_FILE")" 2>/dev/null || true
+  rm -f "$PID_FILE"
+fi
+exit "$rc"

@@ -18,10 +18,10 @@
 // knob that does not exist would be a lie.
 //
 // Fireface note: oudeis01/linux-fireface-mixer drives the Fireface 400 over
-// FireWire via snd-fireface-ctl-service and does not support the UCX II. For
-// the UCX II, Mixbay installs michaelforney/oscmix (USB MIDI SysEx in Class
-// Compliant mode) and opens its GTK mixer from the card menu. This file keeps
-// the ALSA level 1 fallback (volumes/mutes) for the same card.
+// FireWire via snd-fireface-ctl-service and does not support the CC-mode
+// cards. For those, Mixbay installs huddx01/oscmix (USB MIDI SysEx in Class
+// Compliant mode) and opens its GTK or Qt mixer from the card menu. This file
+// only probes the card so Mixbay knows it is there.
 package drivers
 
 import (

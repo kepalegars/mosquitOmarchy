@@ -9,11 +9,16 @@ func TestBetaDeviceRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	specs := BetaSpecs()
-	if len(specs) != 1 {
-		t.Fatalf("beta specs = %d, want 1", len(specs))
+	var s Spec
+	found := false
+	for _, spec := range BetaSpecs() {
+		if spec.ID == b.ID {
+			s, found = spec, true
+		}
 	}
-	s := specs[0]
+	if !found {
+		t.Fatalf("beta spec %s missing from the store", b.ID)
+	}
 	if !s.Beta || s.Version != "beta" || s.Display != "PreSonus Quantum ES 4" {
 		t.Fatalf("beta spec = %+v", s)
 	}
@@ -31,13 +36,15 @@ func TestBetaDeviceRoundTrip(t *testing.T) {
 	if _, err := AddBetaDevice("PreSonus Quantum ES 4", "Quantum ES"); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(BetaDevices()); got != 1 {
+	if got := len(BetaDevices()); got != 6 { // five seeded cards + this beta
 		t.Fatalf("duplicate add: %d entries", got)
 	}
 	if err := RemoveBetaDevice(b.ID); err != nil {
 		t.Fatal(err)
 	}
-	if len(BetaSpecs()) != 0 {
-		t.Fatal("beta spec survived removal")
+	for _, spec := range BetaSpecs() {
+		if spec.ID == b.ID {
+			t.Fatal("beta spec survived removal")
+		}
 	}
 }

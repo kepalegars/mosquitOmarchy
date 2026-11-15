@@ -12,9 +12,10 @@
 //     FU11 wire is -8..50 dB), 2 output
 //     pairs (-127..0 dB), 10x4 loopback matrix over 2 mix buses, no monitor
 //     blend knob (monitoring goes through the matrix).
-//   - fireface-ucx2: RME Fireface UCX II. Mixbay installs oscmix (USB MIDI
-//     SysEx, Class Compliant) and opens its GTK mixer from the card menu;
-//     ALSA volumes + mutes remain the level 1 fallback.
+//   - fireface-ucx2: RME Fireface UCX II (and the other CC-mode RME cards in
+//     the profiles repo). Mixbay installs huddx01/oscmix — engine + GTK mixer,
+//     with the Qt UI next to it — and shows actions only: the mixer owns every
+//     volume, gain and routing control.
 //   - ugm192       : ESI UGM192, class-compliant, no vendor DSP → ALSA only.
 //   - ssl12        : SSL 12 via the douze HTTP daemon (volumes/mutes/mixer;
 //     preamps and the full SSL 360 surface stay in Omarchy360).
@@ -101,6 +102,9 @@ type Spec struct {
 	// Line 3-4, HP A, HP B). Empty keeps the hardware-style labels.
 	BusNames []string `json:"bus_names,omitempty"`
 	Caps     Caps     `json:"caps"`
+	// Setup names the card-specific integration (oscmix, douze). The device
+	// screen shows it as actions instead of controls.
+	Setup string `json:"setup,omitempty"`
 }
 
 // InputState is one mic/line input.
@@ -177,12 +181,11 @@ type LiveReader interface {
 	Read() (Status, error)
 }
 
-// Registry lists every interface available to this build: the embedded native
-// cards plus every downloaded/local community profile.
+// Registry lists every interface installed on this machine. The embedded
+// snapshots are seeded into the store on first read, so a card can be
+// uninstalled and later installed again from the repo.
 func Registry() []Spec {
-	specs := append([]Spec{}, nativeSpecs()...)
-	specs = append(specs, localSpecs()...)
-	return specs
+	return localSpecs()
 }
 
 // Open returns the driver for id. Unknown ids are an error (fail loud, the

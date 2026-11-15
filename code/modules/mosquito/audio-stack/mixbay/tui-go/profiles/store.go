@@ -23,9 +23,6 @@ var nativeFS embed.FS
 // ErrNotFound says a card is not installed and has no built-in copy.
 var ErrNotFound = errors.New("profile not found")
 
-// ErrNative says an operation would overwrite a built-in native card.
-var ErrNative = errors.New("built-in native card")
-
 // Meta is the per-card bookkeeping file. It is local state only; export
 // regenerates nothing from it.
 type Meta struct {
@@ -64,7 +61,13 @@ func userLayoutFile(id string) string {
 
 func metaFile(id string) string { return filepath.Join(cardDir(id), "_meta.json") }
 
-// NativeCards returns every built-in card, sorted by id.
+// removedFile marks a card the user uninstalled. It stops the embedded
+// snapshot from being seeded back on the next start.
+func removedFile(id string) string { return filepath.Join(cardDir(id), ".removed") }
+
+// NativeCards returns every card snapshot shipped in the binary, sorted by
+// id. They are only a bootstrap: the first read seeds them into the local
+// store, where they become normal, uninstallable cards.
 func NativeCards() []Card {
 	entries, _ := fs.ReadDir(nativeFS, "cards")
 	var out []Card
@@ -95,18 +98,62 @@ func NativeCard(id string) (Card, bool) {
 	return Card{}, false
 }
 
-// IsNative reports whether id is a built-in card. Native profiles can be
-// updated by Mixbay but never replaced by an imported community card.
+// IsNative reports whether the binary ships a snapshot of id. It says nothing
+// about what is installed any more: a shipped card can be uninstalled like any
+// other and then reappears in the repo list.
 func IsNative(id string) bool {
 	_, ok := NativeCard(id)
 	return ok
 }
 
-// LocalCards returns every installed card that is NOT built-in, sorted by id.
+// EnsureSeeded copies each embedded snapshot into the local store once. A
+// card the user uninstalled keeps a .removed marker and is not restored; an
+// existing upstream file is never overwritten.
+func EnsureSeeded() {
+	entries, _ := fs.ReadDir(nativeFS, "cards")
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		if !ValidID(id) {
+			continue
+		}
+		if _, err := os.Stat(upstreamFile(id)); err == nil {
+			continue
+		}
+		if _, err := os.Stat(removedFile(id)); err == nil {
+			continue
+		}
+		data, err := nativeFS.ReadFile("cards/" + e.Name())
+		if err != nil {
+			continue
+		}
+		var c Card
+		if json.Unmarshal(data, &c) != nil {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(upstreamFile(id)), 0o755); err != nil {
+			continue
+		}
+		if writeFileAtomic(upstreamFile(id), data) != nil {
+			continue
+		}
+		_ = writeMeta(id, Meta{
+			ID: id, Display: c.Spec.Display, Vendor: c.Spec.Vendor,
+			Version: c.Spec.Version, Source: "preinstalled",
+		})
+	}
+}
+
+// LocalCards returns every installed card (shipped or downloaded), sorted by
+// id. The embedded bootstrap is seeded first, so callers never need a second
+// source of truth.
 func LocalCards() []Card {
 	// One-time upgrade from the pre-profile beta list, so the driver registry
 	// already sees those cards on first start after the update.
 	_ = MigrateLegacyBeta()
+	EnsureSeeded()
 	entries, err := os.ReadDir(CardsDir())
 	if err != nil {
 		return nil
@@ -114,7 +161,7 @@ func LocalCards() []Card {
 	var out []Card
 	for _, e := range entries {
 		id := e.Name()
-		if !e.IsDir() || !ValidID(id) || IsNative(id) {
+		if !e.IsDir() || !ValidID(id) {
 			continue
 		}
 		data, err := os.ReadFile(upstreamFile(id))
@@ -130,16 +177,10 @@ func LocalCards() []Card {
 	return out
 }
 
-// Installed returns the metadata of every card available to the drivers:
-// built-in natives first, then downloaded/local cards.
+// Installed returns the metadata of every installed card. Shipped cards are
+// seeded into the store, so this is the same list for everyone.
 func Installed() []Meta {
 	var out []Meta
-	for _, c := range NativeCards() {
-		out = append(out, Meta{
-			ID: c.Spec.ID, Display: c.Spec.Display, Vendor: c.Spec.Vendor,
-			Version: c.Spec.Version, Native: true, Source: "built-in",
-		})
-	}
 	for _, c := range LocalCards() {
 		m := readMeta(c.Spec.ID)
 		m.ID, m.Display, m.Vendor, m.Version = c.Spec.ID, c.Spec.Display, c.Spec.Vendor, c.Spec.Version
@@ -151,12 +192,13 @@ func Installed() []Meta {
 	return out
 }
 
-// Effective returns the card Mixbay must use: built-in (or downloaded
-// upstream) with the user's sparse layout override applied.
+// Effective returns the installed card with the user's sparse layout override
+// applied.
 func Effective(id string) (Card, Meta, error) {
 	if !ValidID(id) {
 		return Card{}, Meta{}, fmt.Errorf("invalid profile id %q", id)
 	}
+	EnsureSeeded()
 	card, meta, err := baseCard(id)
 	if err != nil {
 		return Card{}, Meta{}, err
@@ -172,14 +214,6 @@ func Effective(id string) (Card, Meta, error) {
 }
 
 func baseCard(id string) (Card, Meta, error) {
-	if c, ok := NativeCard(id); ok {
-		m := readMeta(id)
-		m.Native = true
-		if m.Source == "" {
-			m.Source = "built-in"
-		}
-		return c, m, nil
-	}
 	data, err := os.ReadFile(upstreamFile(id))
 	if err != nil {
 		return Card{}, Meta{}, fmt.Errorf("%w: %s", ErrNotFound, id)
@@ -234,24 +268,63 @@ func SaveUserLayout(id string, data []byte) error {
 	return writeFileAtomic(userLayoutFile(id), data)
 }
 
-// Remove deletes a downloaded/local card and its user overrides. Native cards
-// cannot be removed: their built-in copy always stays available.
+// HasUserUI reports whether the card carries a local layout override.
+func HasUserUI(id string) bool {
+	if !ValidID(id) {
+		return false
+	}
+	_, err := os.Stat(userLayoutFile(id))
+	return err == nil
+}
+
+// UserUIBackupDir is where a local layout is parked before a repo profile
+// replaces it.
+func UserUIBackupDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "mosquitomixbay", "backups")
+}
+
+// BackupUserUI copies the local layout aside and drops it, so the repo layout
+// becomes the effective one. It returns the backup path shown in the prompt.
+func BackupUserUI(id string) (string, error) {
+	if !ValidID(id) {
+		return "", fmt.Errorf("invalid profile id %q", id)
+	}
+	src := userLayoutFile(id)
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return "", err
+	}
+	dir := UserUIBackupDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	dest := filepath.Join(dir, id+"-"+time.Now().UTC().Format("20060102-150405.000")+".json")
+	if err := writeFileAtomic(dest, data); err != nil {
+		return "", err
+	}
+	if err := os.Remove(src); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+// Remove uninstalls a card: its folder, upstream copy and user overrides. A
+// shipped card leaves a .removed marker so seeding does not bring it back.
 func Remove(id string) error {
 	if !ValidID(id) {
 		return fmt.Errorf("invalid profile id %q", id)
 	}
+	if err := os.RemoveAll(cardDir(id)); err != nil {
+		return err
+	}
 	if IsNative(id) {
-		return fmt.Errorf("%w: %s", ErrNative, id)
+		if err := os.MkdirAll(cardDir(id), 0o755); err != nil {
+			return err
+		}
+		return writeFileAtomic(removedFile(id), []byte("removed\n"))
 	}
-	return os.RemoveAll(cardDir(id))
-}
-
-// ClearUser removes only the user override of a card.
-func ClearUser(id string) error {
-	if !ValidID(id) {
-		return fmt.Errorf("invalid profile id %q", id)
-	}
-	return os.RemoveAll(filepath.Join(cardDir(id), "user"))
+	return nil
 }
 
 // InstallLocalCard registers a card Mixbay discovered itself (Add an audio
@@ -260,9 +333,6 @@ func ClearUser(id string) error {
 func InstallLocalCard(id, name, match string) (Card, error) {
 	if !ValidID(id) {
 		return Card{}, fmt.Errorf("invalid profile id %q", id)
-	}
-	if IsNative(id) {
-		return Card{}, fmt.Errorf("%w: %s", ErrNative, id)
 	}
 	card := Card{
 		SchemaVersion: SchemaVersion,
@@ -286,6 +356,7 @@ func InstallLocalCard(id, name, match string) (Card, error) {
 	if err := writeFileAtomic(upstreamFile(id), append(data, '\n')); err != nil {
 		return Card{}, err
 	}
+	_ = os.Remove(removedFile(id))
 	err := writeMeta(id, Meta{
 		ID: id, Display: name, Vendor: "beta", Version: "beta",
 		Source: "local", InstalledAt: time.Now().UTC(),
@@ -314,7 +385,7 @@ func MigrateLegacyBeta() error {
 		return nil
 	}
 	for _, b := range list {
-		if b.ID == "" || b.Name == "" || IsNative(b.ID) {
+		if b.ID == "" || b.Name == "" {
 			continue
 		}
 		if _, err := os.Stat(upstreamFile(b.ID)); err == nil {

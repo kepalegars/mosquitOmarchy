@@ -8,7 +8,7 @@ share a channel layout:
 |---|---|---|
 | Audient EVO 8 | 6 playback / 6 capture | no ALSA UCM → split into stereo nodes |
 | Audient EVO 4 | 4 / 4 | ALSA UCM ≥ 1.2.16 already exposes the right graph |
-| RME Fireface UCX II | multichannel | oscmix + GTK mixer (card-specific setup; the foundation never writes to the card) |
+| RME Fireface (802, UCX, UCX II, UFX, UFX II, UFX III, UFX+) | multichannel | oscmix + GTK/Qt mixer (card-specific setup; the foundation never writes to the card) |
 | ESI UGM192 | stereo | class-compliant |
 | PreSonus Quantum ES 4 | beta | base de test reverse engineering (pas native) |
 | SSL 12 (douze) | 8 / 8 in Pro Audio | split already owned by the douze module |
@@ -25,7 +25,7 @@ per card
   EVO 8  : 6→3 stereo playback sinks + 3 stereo capture sources
   EVO 4  : UCM (opt-in 4-channel split only when UCM is absent)
   SSL 12 : douze's own split + WirePlumber rule (not duplicated here)
-  UCX II : oscmix + GTK mixer (user-local; the foundation writes no card state)
+  RME    : oscmix + GTK/Qt mixer (user-local; the foundation writes no card state)
   others : floor only, until their control protocol is integrated
 ```
 
@@ -90,9 +90,11 @@ The foundation is applied **per card**, with one shared floor:
 - The default picker marks the selected card with a filled `●`; other rows have
   no marker.
 - `--remove --device <id>` removes that card's split/mapping and its
-  card-specific integration (douze for the SSL 12, oscmix for the UCX II),
-  plus a downloaded card's profile folder. The shared WirePlumber rule stays
-  while another card still uses it.
+  card-specific integration (douze for the SSL 12, oscmix for the RME cards),
+  plus a downloaded card's profile folder. A shared integration is kept while
+  another installed card still declares it — oscmix disappears with the last
+  RME profile, not the first. The shared WirePlumber rule stays while another
+  card still uses it.
 - **Reset connection history** (in the foundation menu, after Refresh) clears
   the log after confirmation; installed splits/udev rules are kept.
 - The TUI shows the same list with **Install/Remove + confirmation** and the

@@ -79,6 +79,9 @@ type model struct {
 	// confirm carries one pending destructive/simple action.
 	confirmTitle string
 	confirmAct   func() tea.Cmd
+	// confirmLog is set when the confirm's Yes button opens a setup transcript
+	// instead of running confirmAct.
+	confirmLog string
 
 	// evo is the faithful evotui-style state for the EVO 4 / EVO 8 screens.
 	evo evoUI
@@ -557,6 +560,7 @@ func dbFmt(v float64) string {
 func controlItems(st drivers.Status) []tuikit.PickerItem {
 	caps := st.Spec.Caps
 	var items []tuikit.PickerItem
+	hasControls := caps.Gain || caps.Phantom || caps.Volume || caps.Mute || st.Monitor != nil
 	if len(st.Inputs) > 0 && (caps.Gain || caps.Phantom) {
 		items = append(items, tuikit.PickerItem{Display: "Inputs", Heading: true})
 		for _, in := range st.Inputs {
@@ -566,10 +570,12 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 					Value:   fmt.Sprintf("gain:%s", in.Name),
 				})
 			}
-			items = append(items, tuikit.PickerItem{
-				Display: fmt.Sprintf("  %-8s mute %s", strings.ToUpper(in.Name), onOff(in.Muted)),
-				Value:   fmt.Sprintf("mute:%s", in.Name),
-			})
+			if caps.Mute {
+				items = append(items, tuikit.PickerItem{
+					Display: fmt.Sprintf("  %-8s mute %s", strings.ToUpper(in.Name), onOff(in.Muted)),
+					Value:   fmt.Sprintf("mute:%s", in.Name),
+				})
+			}
 			if caps.Phantom {
 				items = append(items, tuikit.PickerItem{
 					Display: fmt.Sprintf("  %-8s 48V %s", strings.ToUpper(in.Name), onOff(in.Phantom)),
@@ -578,17 +584,21 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 			}
 		}
 	}
-	if len(st.Outputs) > 0 {
+	if len(st.Outputs) > 0 && (caps.Volume || caps.Mute) {
 		items = append(items, tuikit.PickerItem{Display: "Outputs", Heading: true})
 		for i, o := range st.Outputs {
-			items = append(items, tuikit.PickerItem{
-				Display: fmt.Sprintf("  %-8s vol %s", strings.ToUpper(o.Name), dbFmt(o.VolumeDb)),
-				Value:   fmt.Sprintf("vol:%d", i),
-			})
-			items = append(items, tuikit.PickerItem{
-				Display: fmt.Sprintf("  %-8s mute %s", strings.ToUpper(o.Name), onOff(o.Muted)),
-				Value:   fmt.Sprintf("mute:%s", o.Name),
-			})
+			if caps.Volume {
+				items = append(items, tuikit.PickerItem{
+					Display: fmt.Sprintf("  %-8s vol %s", strings.ToUpper(o.Name), dbFmt(o.VolumeDb)),
+					Value:   fmt.Sprintf("vol:%d", i),
+				})
+			}
+			if caps.Mute {
+				items = append(items, tuikit.PickerItem{
+					Display: fmt.Sprintf("  %-8s mute %s", strings.ToUpper(o.Name), onOff(o.Muted)),
+					Value:   fmt.Sprintf("mute:%s", o.Name),
+				})
+			}
 		}
 	}
 	if st.Monitor != nil {
@@ -597,11 +607,25 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 			Value:   "monitor",
 		})
 	}
-	items = append(items,
-		tuikit.PickerItem{Display: "Actions", Heading: true},
-	)
+	// A card with no TUI controls gets its actions directly: no heading, no
+	// indent. The action list IS the interface (RME cards open the oscmix
+	// mixer; the card itself has nothing to set here).
+	indent := "  "
+	if !hasControls {
+		indent = ""
+	} else {
+		items = append(items, tuikit.PickerItem{Display: "Actions", Heading: true})
+	}
+	add := func(label, value string) {
+		items = append(items, tuikit.PickerItem{Display: indent + label, Value: value})
+	}
 	if caps.Mixer {
-		items = append(items, tuikit.PickerItem{Display: "  Loopback mixer →", Value: "goto:mixer"})
+		add("Loopback mixer →", "goto:mixer")
+	}
+	if st.Spec.Setup == "oscmix" {
+		add("Open GTK mixer", "oscmix:gtk")
+		add("Open Qt UI", "oscmix:qt")
+		add("Set up / repair oscmix", "oscmix:setup")
 	}
 	if st.Spec.Beta {
 		items = append(items,
@@ -610,22 +634,14 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 		)
 	}
 	if st.Spec.ID == drivers.DevSSL12 {
-		items = append(items,
-			tuikit.PickerItem{Display: "  Open Omarchy360 mixer", Value: "ssl12:omarchy360"},
-			tuikit.PickerItem{Display: "  Set up / repair SSL 12 (douze)", Value: "ssl12:setup"},
-		)
+		add("Open Omarchy360 mixer", "ssl12:omarchy360")
+		add("Set up / repair SSL 12 (douze)", "ssl12:setup")
 	}
-	if st.Spec.ID == drivers.DevFireface {
-		items = append(items,
-			tuikit.PickerItem{Display: "  Open oscmix-desk mixer", Value: "fireface:oscmix-gtk"},
-			tuikit.PickerItem{Display: "  Set up / repair oscmix-desk", Value: "fireface:oscmix-setup"},
-		)
+	if hasControls {
+		add("Save state", "save")
+		add("Reload saved state", "load")
 	}
-	items = append(items,
-		tuikit.PickerItem{Display: "  Save state", Value: "save"},
-		tuikit.PickerItem{Display: "  Reload saved state", Value: "load"},
-		tuikit.PickerItem{Display: "  Back to devices", Value: "back"},
-	)
+	add("Back to devices", "back")
 	return items
 }
 
@@ -702,6 +718,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncPicker()
 		return m, nil
 
+	case libraryBusyMsg:
+		m.libraryLoading = true
+		m.toast, _ = m.toast.SetOK(msg.what)
+		return m, nil
+
 	case libraryIndexMsg:
 		m.libraryLoading = false
 		m.profileChecking = false
@@ -736,7 +757,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// runs it now, in the real terminal. The audio foundation waits until
 		// the card has been connected once.
 		if msg.setup != "" {
-			return m, cardSetupCmd(msg.id, msg.checkDups)
+			return m, cardSetupCmd(msg.id)
 		}
 		if msg.checkDups {
 			if dups := profiles.Duplicates(); len(dups) > 0 {
@@ -756,8 +777,6 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case libraryUninstallMsg:
 		if msg.err != nil {
 			m.toast, _ = m.toast.SetErr("Uninstall: " + msg.err.Error())
-		} else {
-			m.toast, _ = m.toast.SetOK("Uninstalled " + strings.Join(msg.ids, ", "))
 		}
 		m.libraryChecked = map[string]bool{}
 		m.syncPicker()
@@ -928,10 +947,6 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast, _ = m.toast.SetErr("Foundation " + msg.action + ": " + msg.err.Error())
 		} else {
 			switch msg.action {
-			case "apply":
-				m.toast, _ = m.toast.SetOK("Foundation installed for " + msg.id)
-			case "remove":
-				m.toast, _ = m.toast.SetOK("Foundation removed for " + msg.id)
 			case "default":
 				m.toast, _ = m.toast.SetOK("Default audio interface: " + msg.id)
 			case "reset":
@@ -1003,21 +1018,8 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case ssl12SetupMsg:
-		if msg.err != nil {
-			m.toast, _ = m.toast.SetErr("SSL 12 setup: " + msg.err.Error())
-		} else {
-			m.toast, _ = m.toast.SetOK("SSL 12 setup finished")
-		}
-		return m, fetchStatus(m.deviceID)
-
-	case oscmixSetupMsg:
-		if msg.err != nil {
-			m.toast, _ = m.toast.SetErr("oscmix-desk setup: " + msg.err.Error())
-		} else {
-			m.toast, _ = m.toast.SetOK("oscmix-desk installed")
-		}
-		return m, fetchStatus(m.deviceID)
+	case setupDoneMsg:
+		return m.setupResult(msg)
 
 	case patchbayLoadedMsg:
 		m.patchbay.loading = false
@@ -1107,9 +1109,18 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
 			act := m.confirmAct
 			m.confirmAct = nil
+			log := m.confirmLog
+			m.confirmLog = ""
 			m.pop()
-			if !res.Canceled && res.Yes && act != nil {
-				return m, act()
+			if !res.Canceled && res.Yes {
+				if log != "" {
+					m.info = tuikit.NewInfo(readSetupLog(log)).SetSize(m.contentSize())
+					m.push(scrInfo)
+					return m, nil
+				}
+				if act != nil {
+					return m, act()
+				}
 			}
 			return m, nil
 		}
@@ -1477,13 +1488,13 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				var msg string
 				if action == "apply" && c.ID == "fireface-ucx2" {
-					msg = "Install oscmix-desk (session + GTK mixer) for RME Fireface UCX II and enable its automatic desk? The shared system floor is applied too. oscmix-desk applies ~/.config/oscmix/routing.conf to the interface at each start, so review that file if you want a different desk."
+					msg = "Install the audio foundation for RME Fireface UCX II? oscmix (engine + GTK mixer) is installed first, then the shared system floor. Nothing is written to the interface."
 				} else if action == "apply" {
 					msg = fmt.Sprintf("Install the audio foundation for %s? This writes udev/WirePlumber/PipeWire config and restarts the audio graph briefly.", c.Name)
 				} else if c.ID == "ssl12" {
 					msg = "Remove SSL 12? This uninstalls douze (service, udev rule, PipeWire split and Omarchy360 plugin). Mixer state in ~/.config/sslctl is kept."
 				} else if c.ID == "fireface-ucx2" {
-					msg = "Remove oscmix-desk for RME Fireface UCX II? Its user service, binaries and build source are removed; the routing config is kept. The interface is untouched."
+					msg = "Remove the foundation for RME Fireface UCX II? oscmix is uninstalled with it and the shared floor stays if another card uses it. The interface is untouched."
 				} else {
 					msg = fmt.Sprintf("Remove the audio foundation for %s? Its split/udev/default mapping is removed; the shared WirePlumber floor stays if another card uses it. Audio restarts briefly.", c.Name)
 				}
@@ -1661,19 +1672,26 @@ func (m *model) activateControl(val string) tea.Cmd {
 		return nil
 	case val == "ssl12:setup":
 		m.confirm = tuikit.NewConfirm("Set up SSL 12 (douze): udev access, user service, PipeWire split and Omarchy360 plugin. Audio may restart for a second. Continue?", "Cancel", "Set up")
-		m.confirmAct = func() tea.Cmd { return ssl12SetupCmd() }
+		m.confirmAct = func() tea.Cmd {
+			return setupCmd("SSL 12 setup", fetchStatus(dev), "mixbay-setup-ssl12")
+		}
 		m.push(scrConfirm)
 		return nil
-	case val == "fireface:oscmix-gtk":
+	case val == "oscmix:gtk":
 		if err := exec.Command("mixbay-oscmix-gtk").Start(); err != nil {
-			m.toast, _ = m.toast.SetWarn("oscmix-desk mixer is not installed — run Set up / repair oscmix-desk")
-		} else {
-			m.toast, _ = m.toast.SetOK("oscmix-desk mixer opened")
+			m.toast, _ = m.toast.SetWarn("oscmix GTK mixer is not installed — run Set up / repair oscmix")
 		}
 		return nil
-	case val == "fireface:oscmix-setup":
-		m.confirm = tuikit.NewConfirm("Install oscmix-desk (oscmix + GTK mixer + user service) and enable its automatic desk? Build dependencies (git, make, gcc, pkg-config, alsa-lib, gtk3) are installed, and ~/.config/oscmix/routing.conf is applied to the interface at start. Continue?", "Cancel", "Set up")
-		m.confirmAct = func() tea.Cmd { return oscmixSetupCmd() }
+	case val == "oscmix:qt":
+		if err := exec.Command("mixbay-oscmix-qt").Start(); err != nil {
+			m.toast, _ = m.toast.SetWarn("oscmix Qt UI is not installed — run Set up / repair oscmix")
+		}
+		return nil
+	case val == "oscmix:setup":
+		m.confirm = tuikit.NewConfirm("Set up oscmix (engine + GTK mixer) for "+m.status.Spec.Display+"? Build dependencies are installed with pacman. Nothing is written to the interface. Continue?", "Cancel", "Set up")
+		m.confirmAct = func() tea.Cmd {
+			return setupCmd("oscmix setup", fetchStatus(dev), "mixbay-audio-foundation", "--setup", "--device", dev)
+		}
 		m.push(scrConfirm)
 		return nil
 	case val == "beta:reverse":

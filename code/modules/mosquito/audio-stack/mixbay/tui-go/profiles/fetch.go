@@ -268,11 +268,6 @@ func Import(ctx context.Context, ids []string) ([]ImportResult, error) {
 			continue
 		}
 		res.Display, res.Version = ic.Display, ic.Version
-		if IsNative(id) {
-			res.Err = fmt.Errorf("%w: %s is built in", ErrNative, id)
-			out = append(out, res)
-			continue
-		}
 		card, err := fetchCard(ctx, base, ic)
 		if err != nil {
 			res.Err = err
@@ -308,6 +303,7 @@ func deployCard(c Card, ic IndexCard, revision string) error {
 	best.ID, best.Display, best.Vendor = id, c.Spec.Display, c.Spec.Vendor
 	best.Version, best.Native = c.Spec.Version, false
 	best.Source, best.Revision, best.SHA256 = "repo", revision, ic.SHA256
+	_ = os.Remove(removedFile(id))
 	return writeMeta(id, best)
 }
 
@@ -336,7 +332,7 @@ func CheckUpdates(ctx context.Context, entries []ConnEntry) ([]Offer, error) {
 	var out []Offer
 	for _, e := range entries {
 		ic, ok := matchEntry(ix, e)
-		if !ok || IsNative(ic.ID) {
+		if !ok {
 			continue
 		}
 		if inst, _, err := Effective(ic.ID); err == nil {

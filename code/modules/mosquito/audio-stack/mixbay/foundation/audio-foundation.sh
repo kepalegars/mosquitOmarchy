@@ -56,9 +56,9 @@ BIN_DIR="$HOME_DIR/.local/bin"
 STATE="$CONF/mosquitomixbay/foundation.json"
 CONNLOG="$CONF/mosquitomixbay/connected-interfaces.json"
 
-# Local profile cards, the same store the Go binary uses. A downloaded or
-# self-added card counts as installed when its upstream/card.json exists;
-# native cards are embedded in Mixbay and never live here.
+# Local profile cards, the same store the Go binary uses. Every installed card
+# (the embedded snapshots included: Mixbay seeds them on first read) lives
+# here; a card counts as installed when its upstream/card.json exists.
 profile_card_dir(){ printf '%s/mosquitomixbay/cards/%s' "$CONF" "$1"; }
 profile_installed(){ [[ -f "$(profile_card_dir "$1")/upstream/card.json" ]]; }
 profile_id_for_name(){
@@ -90,7 +90,7 @@ run_card_setup(){
     oscmix)
       local s="$MIXBAY_ROOT/oscmix/setup-oscmix.sh"
       [[ -f $s ]] || { warn "oscmix module not found ($s)"; return 1; }
-      bash "$s" -y --enable ;;
+      bash "$s" -y ;;
     douze)
       local s="$MIXBAY_ROOT/../../../Apps/douze/setup-douze.sh"
       [[ -f $s ]] || { warn "douze module not found ($s)"; return 1; }
@@ -421,12 +421,12 @@ native_rate(){
   esac
 }
 
-# oscmix-desk is the UCX II's control surface: per-user binaries + a user
-# service. It applies ~/.config/oscmix/routing.conf (declarative desk); the
-# foundation itself still writes nothing to the interface.
+# oscmix is the RME cards' control surface: per-user engine + GTK mixer, built
+# from the huddx01 fork. The Qt UI is an optional AppImage. Nothing runs as a
+# service and the foundation itself writes nothing to the interface.
 oscmix_installed(){
-  [[ -x $BIN_DIR/oscmix-session && -x $BIN_DIR/oscmix-launch && -x $BIN_DIR/oscmix-gtk \
-     && -f "$HOME_DIR/.local/lib/oscmix-desk/oscmix_desk/__init__.py" ]]
+  [[ -x $BIN_DIR/oscmix && -x $BIN_DIR/alsaseqio && -x $BIN_DIR/oscmix-gtk \
+     && -f "$HOME_DIR/.local/lib/oscmix/gtk/gschemas.compiled" ]]
 }
 
 native_installed(){
@@ -956,7 +956,7 @@ apply(){
         state_set_default_if_empty evo4
         ;;
       ssl12|fireface-ucx2)
-        # douze for the SSL 12, oscmix-desk for the UCX II. The named
+        # douze for the SSL 12, oscmix for the RME cards. The named
         # integration is the whole card-specific step; the shared floor
         # above is system config only.
         if run_card_setup "$(card_setup "$dev")"; then
@@ -991,11 +991,11 @@ apply(){
   done
   install_defaults
   state_init
-  # oscmix owns the UCX II; the foundation must not write ALSA volume/mute to
-  # the card on first setup (system-level config only). Other cards keep the
+  # oscmix owns the RME cards; the foundation must not write ALSA volume/mute
+  # to them on first setup (system-level config only). Other cards keep the
   # one-time preset application.
   for dev in "${firsts[@]}"; do
-    [[ $dev == fireface-ucx2 ]] || init_defaults "$dev"
+    [[ $(card_setup "$dev") == oscmix ]] || init_defaults "$dev"
   done
   ok "foundation applied"
   (( RESTART )) && restart_audio || true
@@ -1082,6 +1082,32 @@ setup_card(){
   run_card_setup "$kind" && ok "$dev setup finished"
 }
 
+# setup_users <setup> <exclude-id>: installed cards that still declare that
+# integration, excluding the card being removed. It keeps a shared tool alive
+# (oscmix for RME cards) while another compatible card is installed.
+setup_users(){
+  local setup="$1" skip="$2" f id
+  for f in "$CONF"/mosquitomixbay/cards/*/upstream/card.json; do
+    [[ -f $f ]] || continue
+    id="${f#"$CONF"/mosquitomixbay/cards/}"
+    id="${id%%/*}"
+    [[ $id == "$skip" ]] && continue
+    [[ "$(jq -r '.spec.setup // ""' "$f" 2>/dev/null)" == "$setup" ]] && printf '%s ' "$id"
+  done
+}
+
+# remove_setup_if_unused <integration> <card-id>: uninstall the integration
+# only when no other installed card needs it.
+remove_setup_if_unused(){
+  local kind="$1" dev="$2" left
+  left="$(setup_users "$kind" "$dev")"
+  if [[ -n $left ]]; then
+    info "$kind kept: still used by ${left% }"
+    return 0
+  fi
+  remove_card_setup "$kind" || warn "$kind removal reported a problem"
+}
+
 remove_device(){
   local dev="$1"
   info "Removing the Mixbay foundation for $dev"
@@ -1095,10 +1121,10 @@ remove_device(){
       if grep -q 'EVO4' "$EVO4_CONF" 2>/dev/null; then rm -f "$EVO4_CONF"; fi
       ;;
     ssl12)
-      remove_card_setup douze || warn "douze removal reported a problem"
+      remove_setup_if_unused douze "$dev"
       ;;
     fireface-ucx2)
-      remove_card_setup oscmix || warn "oscmix removal reported a problem"
+      remove_setup_if_unused oscmix "$dev"
       ;;
     ugm192) : ;;
     *)
@@ -1106,7 +1132,7 @@ remove_device(){
         [[ $dev =~ ^[a-z0-9][a-z0-9-]*$ ]] || { warn "Invalid device id: $dev"; return 1; }
         local kind; kind="$(card_setup "$dev")"
         if [[ -n $kind ]]; then
-          remove_card_setup "$kind" || warn "$kind removal reported a problem"
+          remove_setup_if_unused "$kind" "$dev"
         fi
         rm -rf "$(profile_card_dir "$dev")"
       else
@@ -1152,13 +1178,14 @@ remove_all(){
 }
 
 needs(){
-  local dev="${DEV:-evo8}" miss=0
-  # EVO-specific system files: not part of a UCX II setup.
-  if [[ $dev != fireface-ucx2 && ! -f $UDEV_RULE ]]; then
+  local dev="${DEV:-evo8}" miss=0 kind
+  kind="$(card_setup "$dev")"
+  # EVO-specific system files: not part of an RME card's setup.
+  if [[ $kind != oscmix && ! -f $UDEV_RULE ]]; then
     echo "udev seat rule for /dev/evo4 + /dev/evo8"; miss=1
   fi
   if [[ ! -f $WP_CONF ]]; then echo "WirePlumber anti-suspend/no-upmix rule"; miss=1; fi
-  if [[ $dev != fireface-ucx2 && ! -f $PLATFORM_AUDIO ]]; then
+  if [[ $kind != oscmix && ! -f $PLATFORM_AUDIO ]]; then
     echo "audio panel hints (one entry per interface)"; miss=1
   fi
   if [[ $dev == evo8 ]]; then
@@ -1175,14 +1202,14 @@ needs(){
     [[ -d "$CONF/omarchy/plugins/fenrirrhogar.omarchy360" ]] || { echo "Omarchy360 plugin (full SSL 12 surface)"; miss=1; }
     [[ -f "$PW_DIR/99-ssl12-sinks.conf" ]] || { echo "SSL 12 PipeWire playback-pair split (only when the card is connected)"; miss=1; }
   fi
-  if [[ $dev == fireface-ucx2 ]]; then
-    oscmix_installed || { echo "oscmix-desk (session + GTK mixer, Fireface UCX II control)"; miss=1; }
+  if [[ $kind == oscmix ]]; then
+    oscmix_installed || { echo "oscmix (engine + GTK mixer, RME control surface)"; miss=1; }
     if command -v aconnect >/dev/null 2>&1; then
-      aconnect -l 2>/dev/null | grep -q 'Fireface UCX II' \
-        || { echo "Fireface UCX II in Class Compliant mode (ALSA sequencer client missing; check: aconnect -l)"; miss=1; }
+      aconnect -l 2>/dev/null | grep -qi 'Fireface' \
+        || { echo "$dev in Class Compliant mode (ALSA sequencer client missing; check: aconnect -l)"; miss=1; }
     elif command -v amidi >/dev/null 2>&1; then
-      amidi -l 2>/dev/null | grep -q 'Fireface UCX II' \
-        || { echo "Fireface UCX II in Class Compliant mode (raw MIDI port missing; check: amidi -l)"; miss=1; }
+      amidi -l 2>/dev/null | grep -qi 'Fireface' \
+        || { echo "$dev in Class Compliant mode (raw MIDI port missing; check: amidi -l)"; miss=1; }
     fi
   fi
   return $(( miss == 0 ))

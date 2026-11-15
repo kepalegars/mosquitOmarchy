@@ -79,8 +79,6 @@ func runCLI(args []string) int {
 		return cliProfilesValidate(args[1:])
 	case "profiles-remove":
 		return cliProfilesRemove(args[1:])
-	case "profiles-clear-user":
-		return cliProfilesClearUser(args[1:])
 	case "profiles-set-url":
 		return cliProfilesSetURL(args[1:])
 	case "profiles-offer-json":
@@ -168,8 +166,7 @@ func cliHelp() string {
   profiles-export [ID...] [--to DIR]  clean PR-ready export of local cards
   profiles-list-local                 installed cards + metadata (JSON)
   profiles-validate FILE|DIR...       validate one or more card profiles
-  profiles-remove ID...               delete a downloaded/local card
-  profiles-clear-user ID              drop a card's local UI override
+  profiles-remove ID...               uninstall card(s) from the store
   profiles-set-url URL                point Mixbay at a repo mirror
   set gain DB -t inputN               input gain in dB
   set mute 0|1 -t TARGET              mute (inputN / output[N])

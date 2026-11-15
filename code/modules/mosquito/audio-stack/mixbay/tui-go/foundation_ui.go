@@ -57,13 +57,14 @@ type foundationActionMsg struct {
 
 // foundationActionCmd runs apply/remove in the real terminal (sudo/pkexec and
 // gum prompts must stay usable) and adds --restart: the menu warning already
-// told the user the audio graph may cut for a second.
+// told the user the audio graph may cut for a second. The transcript is kept
+// for the result popup.
 func foundationActionCmd(action, id string) tea.Cmd {
-	args := []string{"--" + action, "--device", id, "--restart"}
-	c := exec.Command("mixbay-audio-foundation", args...)
-	return tea.ExecProcess(c, func(err error) tea.Msg {
-		return foundationActionMsg{action: action, id: id, err: err}
-	})
+	what := "Foundation install for " + id
+	if action == "remove" {
+		what = "Foundation removal for " + id
+	}
+	return setupCmd(what, foundationStatusCmd(), "mixbay-audio-foundation", "--"+action, "--device", id, "--restart")
 }
 
 func foundationSetDefaultCmd(id string) tea.Cmd {
@@ -226,25 +227,4 @@ func (m model) foundationConnected(id string) bool {
 		}
 	}
 	return false
-}
-
-// ssl12SetupCmd suspends the TUI and runs the douze installer in the real
-// terminal, so gum/pkexec/sudo prompts keep working. The wrapper is deployed
-// by setup-mosquitomixbay.sh with the repo path baked in.
-type ssl12SetupMsg struct{ err error }
-
-func ssl12SetupCmd() tea.Cmd {
-	c := exec.Command("mixbay-setup-ssl12")
-	return tea.ExecProcess(c, func(err error) tea.Msg { return ssl12SetupMsg{err: err} })
-}
-
-// oscmixSetupCmd installs oscmix-desk (oscmix + GTK mixer + user service) for
-// the Fireface UCX II. It goes through the foundation's --setup, which runs
-// only the card integration: the shared audio floor waits for a first
-// connection. It runs in the real terminal because the build needs sudo.
-type oscmixSetupMsg struct{ err error }
-
-func oscmixSetupCmd() tea.Cmd {
-	c := exec.Command("mixbay-audio-foundation", "--setup", "--device", "fireface-ucx2")
-	return tea.ExecProcess(c, func(err error) tea.Msg { return oscmixSetupMsg{err: err} })
 }

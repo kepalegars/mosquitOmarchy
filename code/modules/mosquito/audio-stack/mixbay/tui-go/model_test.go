@@ -82,18 +82,34 @@ func TestControlItemsALSAShowsNoGainRows(t *testing.T) {
 	}
 }
 
-// The UCX II card menu must expose the oscmix GTK mixer and its setup, the
-// same way the SSL 12 exposes douze.
+// The UCX II has no TUI controls: its menu is the oscmix actions, listed
+// flat, with an unindented way back.
 func TestControlItemsFirefaceShowsOscmix(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	st := demoStatus(t, drivers.DevFireface)
+	items := controlItems(st)
 	found := map[string]bool{}
-	for _, it := range controlItems(st) {
+	for _, it := range items {
 		found[it.Value] = true
+		if it.Heading {
+			t.Errorf("action-only card must not show a heading, got %q", it.Display)
+		}
+		if strings.HasPrefix(it.Display, " ") {
+			t.Errorf("action-only card must not indent rows, got %q", it.Display)
+		}
 	}
-	for _, want := range []string{"fireface:oscmix-gtk", "fireface:oscmix-setup"} {
+	for _, want := range []string{"oscmix:gtk", "oscmix:qt", "oscmix:setup", "back"} {
 		if !found[want] {
 			t.Errorf("UCX II controls missing %q", want)
+		}
+	}
+	for _, it := range items {
+		if it.Value == "back" && it.Display != "Back to devices" {
+			t.Errorf("back row = %q, want %q", it.Display, "Back to devices")
+		}
+		if strings.HasPrefix(it.Value, "vol:") || strings.HasPrefix(it.Value, "mute:") ||
+			strings.HasPrefix(it.Value, "gain:") || it.Value == "monitor" {
+			t.Errorf("UCX II must not expose the control row %q", it.Value)
 		}
 	}
 }
