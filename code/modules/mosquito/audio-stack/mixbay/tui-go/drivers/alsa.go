@@ -58,6 +58,19 @@ func newALSA(spec Spec) *alsaDriver {
 
 func (d *alsaDriver) Spec() Spec { return d.spec }
 
+// normalizeCardLine folds the parts /proc/asound/cards puts around the model:
+// the unit's serial in parentheses ("Fireface UCX II (24060185)") and the run
+// of spaces it leaves behind once removed. Matching is done on this form.
+func normalizeCardLine(s string) string {
+	s = cardParen.ReplaceAllString(s, " ")
+	return strings.ToUpper(cardSpace.ReplaceAllString(s, " "))
+}
+
+var (
+	cardParen = regexp.MustCompile(`\([^)]*\)`)
+	cardSpace = regexp.MustCompile(`\s+`)
+)
+
 // Probe scans /proc/asound/cards for our USB signature.
 func (d *alsaDriver) Probe() bool {
 	path := "/proc/asound/cards"
@@ -79,7 +92,7 @@ func (d *alsaDriver) Probe() bool {
 		if m := cardRe.FindStringSubmatch(line); m != nil {
 			cur, _ = strconv.Atoi(m[1])
 		}
-		up := strings.ToUpper(line)
+		up := normalizeCardLine(line)
 		for _, w := range want {
 			if strings.Contains(up, strings.ToUpper(w)) {
 				d.card = cur

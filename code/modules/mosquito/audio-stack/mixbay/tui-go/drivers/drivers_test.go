@@ -588,3 +588,42 @@ func TestEvoMixerOutputTopsAtUnity(t *testing.T) {
 		t.Fatalf("mixer input volume = %v dB, want +6 headroom", got)
 	}
 }
+
+// RME units put their serial in parentheses before " at " on the
+// /proc/asound/cards long name ("RME Fireface UCX II (24060185) at usb-…").
+// The probe must still find the card, and must not take a UFX III for the
+// UCX II (or any Fireface for the UCX II).
+func TestAlsaProbeMatchesSerializedRME(t *testing.T) {
+	write := func(body string) string {
+		p := filepath.Join(t.TempDir(), "cards")
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	ucx2 := ` 0 [Generic        ]: HDA-Intel - HD-Audio Generic
+                      HD-Audio Generic at 0x785c8000 irq 107
+ 3 [II24060185     ]: USB-Audio - Fireface UCX II (24060185)
+                      RME Fireface UCX II (24060185) at usb-0000:64:00.3-1, high speed
+`
+	t.Setenv("MOSQUITOMIXBAY_ASOUND_CARDS", write(ucx2))
+	d := newALSA(FirefaceSpec)
+	if !d.Probe() {
+		t.Fatalf("UCX II with a serial was not found")
+	}
+	if d.card != 3 {
+		t.Errorf("card = %d, want 3", d.card)
+	}
+
+	ufx3 := ` 4 [UFXIII         ]: USB-Audio - Fireface UFX III (999)
+                      RME Fireface UFX III (999) at usb-0000:64:00.3-2, high speed
+`
+	t.Setenv("MOSQUITOMIXBAY_ASOUND_CARDS", write(ufx3))
+	d = newALSA(FirefaceSpec)
+	if d.Probe() {
+		t.Errorf("a UFX III must not probe as the UCX II")
+	}
+	if d.card != -1 {
+		t.Errorf("card = %d after a failed probe, want -1", d.card)
+	}
+}
