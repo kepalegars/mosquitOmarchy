@@ -64,8 +64,9 @@ func Export(ids []string, dest string) (string, error) {
 		index.Cards = append(index.Cards, IndexCard{
 			ID: card.Spec.ID, Display: card.Spec.Display, Vendor: card.Spec.Vendor,
 			Version: card.Spec.Version, Native: IsNative(id), Credits: card.Credits,
-			Path:   "cards/" + id + "/card.json",
-			SHA256: hex.EncodeToString(sum[:]),
+			Upstream: card.Spec.Upstream,
+			Path:     "cards/" + id + "/card.json",
+			SHA256:   hex.EncodeToString(sum[:]),
 		})
 		if err := exportCaptures(id, dir, card.Captures); err != nil {
 			return "", err

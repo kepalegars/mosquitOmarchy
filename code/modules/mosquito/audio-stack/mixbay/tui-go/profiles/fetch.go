@@ -24,14 +24,17 @@ const DefaultRepoURL = "https://raw.githubusercontent.com/kepalegars/mosquito-mi
 // IndexCard is one row of index.json. sha256 makes a download verifiable even
 // when the index and card come from different requests.
 type IndexCard struct {
-	ID      string  `json:"id"`
-	Display string  `json:"display"`
-	Vendor  string  `json:"vendor"`
-	Version string  `json:"version"`
-	Native  bool    `json:"native"`
-	Path    string  `json:"path"`
-	SHA256  string  `json:"sha256"`
-	Credits Credits `json:"credits,omitempty"`
+	ID      string `json:"id"`
+	Display string `json:"display"`
+	Vendor  string `json:"vendor"`
+	Version string `json:"version"`
+	Native  bool   `json:"native"`
+	Path    string `json:"path"`
+	SHA256  string `json:"sha256"`
+	// Upstream is the optional direct card URL exported from the card, so a
+	// fresh install learns it even before opening the card.
+	Upstream string  `json:"upstream,omitempty"`
+	Credits  Credits `json:"credits,omitempty"`
 }
 
 // Index is the repo entry point.
@@ -170,6 +173,9 @@ func ValidateIndex(ix Index) error {
 		if len(c.SHA256) != 64 || strings.Trim(c.SHA256, "0123456789abcdef") != "" {
 			return fmt.Errorf("index: invalid sha256 for %s", c.ID)
 		}
+		if c.Upstream != "" && !ValidUpstreamURL(c.Upstream) {
+			return fmt.Errorf("index: unsafe upstream URL for %s", c.ID)
+		}
 	}
 	for name, integ := range ix.Integrations {
 		if !ValidID(name) {
@@ -307,12 +313,25 @@ func FetchUpstreamCard(ctx context.Context, id, url string) (Card, error) {
 // stays the fallback.
 func CheckUpstreams(ctx context.Context) map[string]Card {
 	out := map[string]Card{}
+	ix, _ := FetchIndex(ctx)
+	if ix.SchemaVersion == 0 {
+		ix, _ = CachedIndex()
+	}
 	for _, m := range Installed() {
 		card, _, err := Effective(m.ID)
-		if err != nil || card.Spec.Upstream == "" {
+		if err != nil {
 			continue
 		}
-		up, err := FetchUpstreamCard(ctx, m.ID, card.Spec.Upstream)
+		url := card.Spec.Upstream
+		if url == "" {
+			if ic, ok := ix.Card(m.ID); ok {
+				url = ic.Upstream
+			}
+		}
+		if url == "" {
+			continue
+		}
+		up, err := FetchUpstreamCard(ctx, m.ID, url)
 		if err != nil {
 			continue
 		}
