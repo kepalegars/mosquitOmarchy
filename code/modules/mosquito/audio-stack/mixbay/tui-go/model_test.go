@@ -98,7 +98,7 @@ func TestControlItemsFirefaceShowsOscmix(t *testing.T) {
 			t.Errorf("action-only card must not indent rows, got %q", it.Display)
 		}
 	}
-	for _, want := range []string{"oscmix:gtk", "oscmix:qt", "oscmix:setup", "back"} {
+	for _, want := range []string{"oscmix:gtk", "oscmix:qt", "oscmix:web", "oscmix:setup", "back"} {
 		if !found[want] {
 			t.Errorf("UCX II controls missing %q", want)
 		}
@@ -107,11 +107,37 @@ func TestControlItemsFirefaceShowsOscmix(t *testing.T) {
 		if it.Value == "back" && it.Display != "Back to devices" {
 			t.Errorf("back row = %q, want %q", it.Display, "Back to devices")
 		}
+		if it.Value == "oscmix:qt" && !it.Disabled {
+			t.Errorf("Qt UI must be greyed while no AppImage exists")
+		}
 		if strings.HasPrefix(it.Value, "vol:") || strings.HasPrefix(it.Value, "mute:") ||
 			strings.HasPrefix(it.Value, "gain:") || it.Value == "monitor" {
 			t.Errorf("UCX II must not expose the control row %q", it.Value)
 		}
 	}
+}
+
+// The Qt row comes back to life as soon as the AppImage is on disk.
+func TestControlItemsQtUngreysWhenInstalled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	app := filepath.Join(home, ".local", "lib", "oscmix", "oscmix-qt.AppImage")
+	if err := os.MkdirAll(filepath.Dir(app), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(app, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st := demoStatus(t, drivers.DevFireface)
+	for _, it := range controlItems(st) {
+		if it.Value == "oscmix:qt" {
+			if it.Disabled || it.Suffix != "" {
+				t.Errorf("installed Qt UI must not be greyed or annotated: %+v", it)
+			}
+			return
+		}
+	}
+	t.Fatalf("no oscmix:qt row")
 }
 
 func TestMixerItemsBusSelectorFirst(t *testing.T) {

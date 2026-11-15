@@ -636,7 +636,15 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 	}
 	if st.Spec.Setup == "oscmix" {
 		add("Open GTK mixer", "oscmix:gtk")
-		add("Open Qt UI", "oscmix:qt")
+		// The Qt UI is an upstream preview AppImage that only some nightly
+		// builds carry: grey the row while there is nothing to launch.
+		qt := tuikit.PickerItem{Display: indent + "Open Qt UI", Value: "oscmix:qt"}
+		if !oscmixQtInstalled() {
+			qt.Disabled = true
+			qt.Suffix = "  (not published upstream yet)"
+		}
+		items = append(items, qt)
+		add("Open web UI", "oscmix:web")
 		add("Set up / repair oscmix", "oscmix:setup")
 	}
 	if st.Spec.Beta {
@@ -1056,7 +1064,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast, _ = m.toast.SetErr("copy failed: " + msg.Err.Error())
 			return m, nil
 		}
-		m.toast, _ = m.toast.SetOK(fmt.Sprintf("copied to the clipboard (%d bytes)", msg.Bytes))
+		m.toast, _ = m.toast.SetOK(fmt.Sprintf("log copied to the clipboard (%d bytes)", msg.Bytes))
 		return m, nil
 
 	case patchbayLoadedMsg:
@@ -1729,6 +1737,18 @@ func (m *model) activateControl(val string) tea.Cmd {
 			return setupCmd("SSL 12 setup", fetchStatus(dev), "mixbay-setup-ssl12")
 		}
 		m.push(scrConfirm)
+		return nil
+	case val == "oscmix:web":
+		// Upstream's browser frontend: Web MIDI straight to the card, no
+		// engine needed, and the only modern UI available while the Qt
+		// preview has no published build.
+		if !m.status.Online {
+			m.toast, _ = m.toast.SetWarn("Connect " + m.status.Spec.Display + " in CC mode first — the web UI needs the card")
+			return nil
+		}
+		if err := exec.Command("xdg-open", oscmixWebURL).Start(); err != nil {
+			m.toast, _ = m.toast.SetWarn("Could not open a browser: " + err.Error())
+		}
 		return nil
 	case val == "oscmix:gtk", val == "oscmix:qt":
 		// oscmix is a client for a live card: without it the mixer has
