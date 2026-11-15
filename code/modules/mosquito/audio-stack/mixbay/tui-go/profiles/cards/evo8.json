@@ -18,7 +18,7 @@
     "has_monitor": false,
     "backend": "evo-raw",
     "needs_kmod": true,
-    "version": "v1.0.0",
+    "version": "v1.0.1",
     "caps": {
       "volume": true,
       "gain": true,
