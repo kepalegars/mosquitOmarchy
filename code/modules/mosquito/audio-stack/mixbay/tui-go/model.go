@@ -635,16 +635,17 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 		add("Loopback mixer →", "goto:mixer")
 	}
 	if st.Spec.Setup == "oscmix" {
+		// Web UI first: it works with no install at all. GTK second, Qt last —
+		// it is an upstream preview AppImage that only some nightly builds
+		// carry, so grey the row while there is nothing to launch.
+		add("Open web UI", "oscmix:web")
 		add("Open GTK mixer", "oscmix:gtk")
-		// The Qt UI is an upstream preview AppImage that only some nightly
-		// builds carry: grey the row while there is nothing to launch.
 		qt := tuikit.PickerItem{Display: indent + "Open Qt UI", Value: "oscmix:qt"}
 		if !oscmixQtInstalled() {
 			qt.Disabled = true
 			qt.Suffix = "  (not published upstream yet)"
 		}
 		items = append(items, qt)
-		add("Open web UI", "oscmix:web")
 		add("Set up / repair oscmix", "oscmix:setup")
 	}
 	if st.Spec.Beta {
@@ -1740,30 +1741,22 @@ func (m *model) activateControl(val string) tea.Cmd {
 		return nil
 	case val == "oscmix:web":
 		// Upstream's browser frontend: Web MIDI straight to the card, no
-		// engine needed, and the only modern UI available while the Qt
-		// preview has no published build.
-		if !m.status.Online {
-			m.toast, _ = m.toast.SetWarn("Connect " + m.status.Spec.Display + " in CC mode first — the web UI needs the card")
-			return nil
-		}
-		if err := exec.Command("xdg-open", oscmixWebURL).Start(); err != nil {
-			m.toast, _ = m.toast.SetWarn("Could not open a browser: " + err.Error())
+		// engine and no AppImage. Installed as an Omarchy app on first use,
+		// so it works with or without a card (CC mode warning is the
+		// launcher's job, not a reason to refuse).
+		if err := exec.Command("mixbay-oscmix-web").Start(); err != nil {
+			m.toast, _ = m.toast.SetWarn("Web UI: run Set up / repair oscmix first (" + err.Error() + ")")
 		}
 		return nil
 	case val == "oscmix:gtk", val == "oscmix:qt":
-		// oscmix is a client for a live card: without it the mixer has
-		// nothing to talk to, so say why here instead of letting the
-		// launcher fail in a desktop notification.
-		if !m.status.Online {
-			m.toast, _ = m.toast.SetWarn("Connect " + m.status.Spec.Display + " in CC mode first — oscmix needs the card")
-			return nil
-		}
+		// The GTK window opens even without a card (its offline device
+		// picker); the launcher tells the user that CC mode may be off.
 		bin := "mixbay-oscmix-gtk"
 		if val == "oscmix:qt" {
 			// The AppImage is a preview upstream publishes only sometimes:
 			// do not spawn a launcher that can only fail.
 			if !oscmixQtInstalled() {
-				m.toast, _ = m.toast.SetWarn("Qt UI: upstream has not published an AppImage for this release yet — use Open GTK mixer")
+				m.toast, _ = m.toast.SetWarn("Qt UI: upstream has not published an AppImage for this release yet — use Open GTK mixer or the web UI")
 				return nil
 			}
 			bin = "mixbay-oscmix-qt"

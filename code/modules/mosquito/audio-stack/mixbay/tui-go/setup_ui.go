@@ -68,10 +68,6 @@ func readSetupLog(path string) string {
 	return text
 }
 
-// oscmixWebURL is upstream's browser frontend. It speaks Web MIDI directly to
-// the card, so it needs neither the engine nor a published AppImage.
-const oscmixWebURL = "https://huddx01.github.io/oscmix/"
-
 // oscmixQtInstalled reports whether the preview Qt AppImage is on disk. The
 // upstream project publishes it in the nightly release only sometimes, so a
 // missing file is the normal state, not a broken setup.

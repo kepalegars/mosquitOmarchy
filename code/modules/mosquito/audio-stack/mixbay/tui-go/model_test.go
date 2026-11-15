@@ -103,6 +103,17 @@ func TestControlItemsFirefaceShowsOscmix(t *testing.T) {
 			t.Errorf("UCX II controls missing %q", want)
 		}
 	}
+	// Web UI first, GTK second, Qt third (the Qt preview is the odd one out).
+	var order []string
+	for _, it := range items {
+		if strings.HasPrefix(it.Value, "oscmix:") {
+			order = append(order, it.Value)
+		}
+	}
+	wantOrder := []string{"oscmix:web", "oscmix:gtk", "oscmix:qt", "oscmix:setup"}
+	if strings.Join(order, ",") != strings.Join(wantOrder, ",") {
+		t.Errorf("action order = %v, want %v", order, wantOrder)
+	}
 	for _, it := range items {
 		if it.Value == "back" && it.Display != "Back to devices" {
 			t.Errorf("back row = %q, want %q", it.Display, "Back to devices")
