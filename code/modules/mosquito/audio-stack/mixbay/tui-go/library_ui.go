@@ -1,9 +1,9 @@
 // Audio interface library — the TUI face of the community profile store.
 //
-// This screen is deliberately read-mostly: Enter installs a repo card, Tab
-// marks cards for export, d removes a downloaded card, u drops a local UI
-// override. Downloading only ever touches upstream/, so a profile update can
-// never eat the user's layout tweaks.
+// Two tabs: Installed (status, update, export, uninstall) and Available
+// (install one or several from the repo). Tab selects rows on the active tab;
+// ←/→ switch tabs. Downloading only ever touches upstream/, so a profile
+// update can never eat the user's layout tweaks.
 package main
 
 import (
@@ -15,9 +15,14 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"mosquitomarchy.local/mosquitomixbay-tui/drivers"
+	"github.com/charmbracelet/lipgloss"
 	"mosquitomarchy.local/mosquitomixbay-tui/profiles"
 	tuikit "mosquitomarchy.local/tui-kit"
+)
+
+const (
+	libInstalled = iota
+	libAvailable
 )
 
 type libraryIndexMsg struct {
@@ -37,10 +42,9 @@ type libraryApplyMsg struct {
 	id    string
 }
 
-type profileOfferMsg struct {
-	offers []profiles.Offer
-	ix     profiles.Index
-	err    error
+type libraryUninstallMsg struct {
+	ids []string
+	err error
 }
 
 func libraryIndexCmd() tea.Cmd {
@@ -52,20 +56,46 @@ func libraryIndexCmd() tea.Cmd {
 	}
 }
 
-func libraryImportCmd(id string) tea.Cmd {
+func libraryImportCmd(ids []string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		res, err := profiles.Import(ctx, []string{id})
-		if err == nil && len(res) > 0 {
-			err = res[0].Err
+		res, err := profiles.Import(ctx, ids)
+		var done, updated, failed []string
+		var firstErr error
+		for _, r := range res {
+			if r.Err != nil {
+				failed = append(failed, r.ID)
+				if firstErr == nil {
+					firstErr = r.Err
+				}
+				continue
+			}
+			if r.Updated {
+				updated = append(updated, r.ID)
+			} else {
+				done = append(done, r.ID)
+			}
 		}
-		verb := "Downloaded"
-		if err == nil && len(res) > 0 && res[0].Updated {
-			verb = "Updated"
+		if err == nil {
+			err = firstErr
 		}
-		msg := libraryApplyMsg{what: verb + " " + id, err: err, checkDups: err == nil, id: id}
-		if err == nil && len(res) > 0 {
+		what := "Downloaded " + strings.Join(done, ", ")
+		if len(updated) > 0 {
+			if len(done) > 0 {
+				what += "; updated " + strings.Join(updated, ", ")
+			} else {
+				what = "Updated " + strings.Join(updated, ", ")
+			}
+		}
+		if len(failed) > 0 {
+			what += "; failed " + strings.Join(failed, ", ")
+		}
+		msg := libraryApplyMsg{what: what, err: err, checkDups: err == nil && len(ids) == 1, id: ids[0]}
+		// shortcut: only a single-card install runs its spec.setup; a bulk
+		// install of a card that declares one would need the same pass. Add it
+		// when a repo card ships setup != "".
+		if err == nil && len(res) == 1 {
 			msg.setup = res[0].Setup
 		}
 		return msg
@@ -104,36 +134,43 @@ func libraryExportCmd(ids []string) tea.Cmd {
 	}
 }
 
-func libraryRemoveCmd(id string) tea.Cmd {
-	return func() tea.Msg {
-		return libraryApplyMsg{what: "Removed " + id, err: profiles.Remove(id), checkDups: true}
-	}
-}
-
-func libraryClearUserCmd(id string) tea.Cmd {
-	return func() tea.Msg {
-		return libraryApplyMsg{what: "Cleared local UI for " + id, err: profiles.ClearUser(id)}
-	}
-}
-
-// profileCheckCmd offers an install/update at startup for interfaces in the
-// connection log. Offline is a normal outcome: no prompt, local cards win.
-func profileCheckCmd() tea.Cmd {
-	return func() tea.Msg {
-		entries := drivers.ConnectionLog()
-		conns := make([]profiles.ConnEntry, 0, len(entries))
-		for _, e := range entries {
-			conns = append(conns, profiles.ConnEntry{ID: e.ID, Name: e.Name, Match: e.Match})
+// libraryUninstallCmd removes the cards and every trace they left: the
+// foundation's per-card state and card-specific integration (douze for the
+// SSL 12, oscmix for the UCX II, EVO split files), the connection-log entry
+// and the local card folder. It runs in the real terminal because the
+// integrations and udev cleanup may prompt for sudo.
+func libraryUninstallCmd(ids []string) tea.Cmd {
+	var script strings.Builder
+	script.WriteString("set +e\n")
+	for _, id := range ids {
+		if !profiles.ValidID(id) {
+			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-		defer cancel()
-		ix, offers, err := profiles.CheckUpdatesWithIndex(ctx, conns)
-		return profileOfferMsg{offers: offers, ix: ix, err: err}
+		fmt.Fprintf(&script, "mixbay-audio-foundation --remove --device '%s' || true\n", id)
+		// Drop the history entry too; otherwise the card keeps appearing in
+		// "used" lists and the default picker after its profile is gone.
+		fmt.Fprintf(&script, `log="$HOME/.config/mosquitomixbay/connected-interfaces.json"
+if [ -f "$log" ]; then
+  jq --arg id '%s' 'map(select(.id != $id))' "$log" > "$log.tmp" && mv "$log.tmp" "$log"
+fi
+`, id)
 	}
+	c := exec.Command("bash", "-c", script.String())
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		var leftovers []string
+		for _, id := range ids {
+			if rerr := profiles.Remove(id); rerr != nil {
+				leftovers = append(leftovers, id)
+			}
+		}
+		if err == nil && len(leftovers) > 0 {
+			err = fmt.Errorf("could not remove %s", strings.Join(leftovers, ", "))
+		}
+		return libraryUninstallMsg{ids: ids, err: err}
+	})
 }
 
-// libraryItems builds the installed + available list. Repo rows are only
-// shown when the index was fetched; "Check community repo" is the fallback.
+// bindPreset loads the card's UI composition for the active device.
 func (m *model) bindPreset() {
 	m.preset = ""
 	if c, _, err := profiles.Effective(m.deviceID); err == nil {
@@ -142,27 +179,45 @@ func (m *model) bindPreset() {
 }
 
 func (m model) libraryItems() []tuikit.PickerItem {
-	items := []tuikit.PickerItem{{Display: "Installed profiles", Heading: true}}
+	var items []tuikit.PickerItem
+	switch {
+	case m.libraryLoading:
+		items = append(items, tuikit.PickerItem{Display: "  checking the community repo…", Disabled: true})
+	case m.libraryErr != "":
+		items = append(items, tuikit.PickerItem{Display: "  offline: " + m.libraryErr, Disabled: true})
+	}
+	if m.libraryTab == libAvailable {
+		return append(items, m.availableItems()...)
+	}
+	return append(items, m.installedItems()...)
+}
+
+// installedItems lists every installed card with its repo state: up to date,
+// update vX (plus the solid square) or local only. Native cards are always
+// up to date because they ship inside the binary.
+func (m model) installedItems() []tuikit.PickerItem {
+	var items []tuikit.PickerItem
 	for _, meta := range profiles.Installed() {
 		mark := "○"
 		if m.libraryChecked[meta.ID] {
 			mark = "●"
 		}
-		// Plain words beat "built-in | repo | local" and hide the preset id
-		// (evo8/auto): the renderer name is a detail, not a state.
-		status := "built in"
-		switch meta.Source {
-		case "repo":
-			status = "downloaded"
-		case "local":
-			status = "local"
-		}
-		if ic, ok := m.libraryIndex.Card(meta.ID); ok && !ic.Native && ic.Version != meta.Version {
-			status += "  ↑ " + ic.Version
+		status, badge := "up to date", ""
+		if !meta.Native {
+			ic, inRepo := m.libraryIndex.Card(meta.ID)
+			switch {
+			case m.libraryIndex.SchemaVersion == 0:
+				status = "not checked"
+			case !inRepo:
+				status = "local only"
+			case ic.Version != meta.Version:
+				status, badge = "update "+ic.Version, "■"
+			}
 		}
 		items = append(items, tuikit.PickerItem{
-			Display: fmt.Sprintf("%s %-30s %-8s %s", mark, meta.Display, meta.Version, status),
-			Value:   "card:" + meta.ID,
+			Display:       fmt.Sprintf("%s %-30s %-8s %s", mark, meta.Display, meta.Version, status),
+			Value:         "card:" + meta.ID,
+			TrailingBadge: badge,
 		})
 	}
 	if dups := profiles.Duplicates(); len(dups) > 0 {
@@ -174,52 +229,51 @@ func (m model) libraryItems() []tuikit.PickerItem {
 			})
 		}
 	}
-	switch {
-	case m.libraryLoading:
-		items = append(items, tuikit.PickerItem{Display: "  fetching index…", Disabled: true})
-	case m.libraryErr != "":
-		items = append(items, tuikit.PickerItem{Display: "  offline: " + m.libraryErr, Disabled: true})
+	if m.libraryIndex.SchemaVersion == 0 && !m.libraryLoading && m.libraryErr == "" {
+		items = append(items, tuikit.PickerItem{Display: "  r checks the community repo", Disabled: true})
 	}
-	available := 0
+	return items
+}
+
+// availableItems lists repo cards that are not installed here. Installed
+// cards live in the other tab, updates included.
+func (m model) availableItems() []tuikit.PickerItem {
+	var items []tuikit.PickerItem
 	for _, ic := range m.libraryIndex.Cards {
 		if ic.Native {
 			continue
 		}
-		installed, _, err := profiles.Effective(ic.ID)
-		if err == nil && installed.Spec.Version == ic.Version {
+		if _, _, err := profiles.Effective(ic.ID); err == nil {
 			continue
 		}
-		verb := "download"
-		if err == nil {
-			verb = "update"
+		mark := "○"
+		if m.libraryChecked[ic.ID] {
+			mark = "●"
 		}
-		// ↓ separates "not installed yet" from the ○/● export marks above.
 		items = append(items, tuikit.PickerItem{
-			Display: fmt.Sprintf("↓ %-30s %-8s %-9s %s", ic.Display, ic.Version, ic.Vendor, verb),
+			Display: fmt.Sprintf("%s %-30s %-8s %s", mark, ic.Display, ic.Version, ic.Vendor),
 			Value:   "repo:" + ic.ID,
 		})
-		available++
 	}
-	if m.libraryIndex.SchemaVersion > 0 && available == 0 {
-		items = append(items, tuikit.PickerItem{Display: "  everything is up to date", Disabled: true})
+	if len(items) == 0 {
+		msg := "  no other profile in the repo"
+		if m.libraryIndex.SchemaVersion == 0 {
+			msg = "  r checks the community repo"
+		}
+		items = append(items, tuikit.PickerItem{Display: msg, Disabled: true})
 	}
-	items = append(items,
-		tuikit.PickerItem{Display: "Actions", Heading: true},
-		tuikit.PickerItem{Display: "  Export marked cards for a PR", Value: "export"},
-		tuikit.PickerItem{Display: "  Open community repo", Value: "open-repo"},
-		tuikit.PickerItem{Display: "Back", Value: "back"},
-	)
 	return items
 }
 
 func (m *model) openLibrary() tea.Cmd {
 	m.push(scrLibrary)
+	m.libraryTab = libInstalled
 	m.libraryChecked = map[string]bool{}
 	m.syncPicker()
 	if dups := profiles.Duplicates(); len(dups) > 0 {
 		m.toast, _ = m.toast.SetWarn(fmt.Sprintf("%d duplicate profile(s) — select a duplicate row to remove it", len(dups)))
 	}
-	if m.libraryIndex.SchemaVersion == 0 {
+	if m.libraryIndex.SchemaVersion == 0 && !m.profileChecking {
 		m.libraryLoading = true
 		m.profileChecking = true
 		return libraryIndexCmd()
@@ -233,6 +287,17 @@ func (m model) libraryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "backspace":
 		m.pop()
 		return m, nil
+	case "left", "right":
+		tab := libInstalled
+		if k == "right" {
+			tab = libAvailable
+		}
+		if m.libraryTab != tab {
+			m.libraryTab = tab
+			m.libraryChecked = map[string]bool{}
+			m.syncPicker()
+		}
+		return m, nil
 	case "r":
 		m.libraryLoading = true
 		m.libraryErr = ""
@@ -240,47 +305,21 @@ func (m model) libraryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.profileChecking = true
 		m.toast, _ = m.toast.SetOK("Checking the community repo…")
 		return m, libraryIndexCmd()
+	case "i":
+		return m.openInfo()
 	case "e":
-		return m.exportChecked()
-	case "enter":
-		val := m.picker.SelectedValue()
-		switch {
-		case val == "back":
-			m.pop()
-		case val == "export":
-			return m.exportChecked()
-		case val == "open-repo":
+		if m.libraryTab == libInstalled {
+			return m.exportSelected()
+		}
+	case "D":
+		if m.libraryTab == libInstalled {
+			cmd := m.promptUninstall(m.actionIDs())
+			return m, cmd
+		}
+	case "O":
+		if m.libraryTab == libAvailable {
 			return m, openRepoCmd()
-		case strings.HasPrefix(val, "repo:"):
-			id := strings.TrimPrefix(val, "repo:")
-			m.libraryLoading = true
-			return m, libraryImportCmd(id)
-		case strings.HasPrefix(val, "card:"):
-			id := strings.TrimPrefix(val, "card:")
-			m.info = tuikit.NewInfo(libraryDetail(id))
-			m.push(scrInfo)
-		case strings.HasPrefix(val, "dup:"):
-			parts := strings.SplitN(val, ":", 3)
-			if len(parts) == 3 {
-				if d, ok := findDuplicate(parts[1], parts[2]); ok {
-					return m, m.promptDuplicate(d)
-				}
-			}
 		}
-		return m, nil
-	case "d":
-		id := strings.TrimPrefix(m.picker.SelectedValue(), "card:")
-		if !strings.HasPrefix(m.picker.SelectedValue(), "card:") {
-			return m, nil
-		}
-		if profiles.IsNative(id) {
-			m.toast, _ = m.toast.SetWarn("Native cards are built in and cannot be removed")
-			return m, nil
-		}
-		m.confirm = tuikit.NewConfirm("Remove the downloaded profile \""+id+"\"? Local UI overrides go with it.", "Cancel", "Remove")
-		m.confirmAct = func() tea.Cmd { return libraryRemoveCmd(id) }
-		m.push(scrConfirm)
-		return m, nil
 	case "u":
 		id := strings.TrimPrefix(m.picker.SelectedValue(), "card:")
 		if !strings.HasPrefix(m.picker.SelectedValue(), "card:") {
@@ -290,12 +329,91 @@ func (m model) libraryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmAct = func() tea.Cmd { return libraryClearUserCmd(id) }
 		m.push(scrConfirm)
 		return m, nil
+	case "enter":
+		val := m.picker.SelectedValue()
+		switch {
+		case strings.HasPrefix(val, "dup:"):
+			parts := strings.SplitN(val, ":", 3)
+			if len(parts) == 3 {
+				if d, ok := findDuplicate(parts[1], parts[2]); ok {
+					return m, m.promptDuplicate(d)
+				}
+			}
+		case m.libraryTab == libAvailable && strings.HasPrefix(val, "repo:"):
+			ids := m.actionIDs()
+			if len(ids) == 0 {
+				return m, nil
+			}
+			sort.Strings(ids)
+			m.libraryChecked = map[string]bool{}
+			m.libraryLoading = true
+			m.toast, _ = m.toast.SetOK("Installing " + strings.Join(ids, ", ") + "…")
+			return m, libraryImportCmd(ids)
+		case m.libraryTab == libInstalled && strings.HasPrefix(val, "card:"):
+			return m.updateCursor()
+		}
+		return m, nil
 	}
 	// Everything else (arrows, j/k, tab, PgUp/PgDn, …) is normal picker
 	// navigation. Without this the screen was frozen on its first row.
 	var cmd tea.Cmd
 	m.picker, cmd = m.picker.Update(msg)
 	return m, cmd
+}
+
+// actionIDs returns the selected rows, or the row under the cursor when
+// nothing is selected. Duplicate rows are never action targets.
+func (m model) actionIDs() []string {
+	var ids []string
+	for id, on := range m.libraryChecked {
+		if on {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) > 0 {
+		sort.Strings(ids)
+		return ids
+	}
+	val := m.picker.SelectedValue()
+	for _, prefix := range []string{"card:", "repo:"} {
+		if strings.HasPrefix(val, prefix) {
+			return []string{strings.TrimPrefix(val, prefix)}
+		}
+	}
+	return nil
+}
+
+// updateCursor installs the repo version of the highlighted installed card.
+// Enter is the update action on the Installed tab.
+func (m model) updateCursor() (tea.Model, tea.Cmd) {
+	val := m.picker.SelectedValue()
+	if !strings.HasPrefix(val, "card:") {
+		return m, nil
+	}
+	id := strings.TrimPrefix(val, "card:")
+	ic, ok := m.libraryIndex.Card(id)
+	if !ok || ic.Native {
+		m.toast, _ = m.toast.SetOK(ic.Display + " is built in and already up to date")
+		return m, nil
+	}
+	inst, _, err := profiles.Effective(id)
+	if err == nil && inst.Spec.Version == ic.Version {
+		m.toast, _ = m.toast.SetOK(id + " is already up to date")
+		return m, nil
+	}
+	m.libraryLoading = true
+	return m, libraryImportCmd([]string{id})
+}
+
+func (m model) openInfo() (tea.Model, tea.Cmd) {
+	val := m.picker.SelectedValue()
+	id := strings.TrimPrefix(strings.TrimPrefix(val, "card:"), "repo:")
+	if id == "" || (!strings.HasPrefix(val, "card:") && !strings.HasPrefix(val, "repo:")) {
+		return m, nil
+	}
+	m.info = tuikit.NewInfo(m.libraryDetail(id))
+	m.push(scrInfo)
+	return m, nil
 }
 
 // repoNews counts what the index offers: updates for installed cards (the
@@ -361,70 +479,148 @@ func (m *model) promptDuplicate(d profiles.Duplicate) tea.Cmd {
 	return nil
 }
 
-func (m model) exportChecked() (tea.Model, tea.Cmd) {
-	var ids []string
-	for id, on := range m.libraryChecked {
-		if on {
-			ids = append(ids, id)
-		}
+func libraryRemoveCmd(id string) tea.Cmd {
+	return func() tea.Msg {
+		return libraryApplyMsg{what: "Removed " + id, err: profiles.Remove(id), checkDups: true}
 	}
+}
+
+func libraryClearUserCmd(id string) tea.Cmd {
+	return func() tea.Msg {
+		return libraryApplyMsg{what: "Cleared local UI for " + id, err: profiles.ClearUser(id)}
+	}
+}
+
+func (m model) exportSelected() (tea.Model, tea.Cmd) {
+	ids := m.actionIDs()
 	if len(ids) == 0 {
-		m.toast, _ = m.toast.SetWarn("Tab marks cards for export")
+		m.toast, _ = m.toast.SetWarn("Tab selects cards to export")
 		return m, nil
 	}
-	sort.Strings(ids)
 	m.toast, _ = m.toast.SetOK("Exporting " + strings.Join(ids, ", "))
 	return m, libraryExportCmd(ids)
 }
 
-func libraryDetail(id string) string {
+// promptUninstall shows the exact list before anything is removed. Built-in
+// cards stay: only the downloaded ones (and their setup) can be uninstalled.
+func (m *model) promptUninstall(ids []string) tea.Cmd {
+	var removable, builtin []string
+	for _, id := range ids {
+		if profiles.IsNative(id) {
+			builtin = append(builtin, id)
+			continue
+		}
+		removable = append(removable, id)
+	}
+	if len(removable) == 0 {
+		m.toast, _ = m.toast.SetWarn("Built-in profiles cannot be uninstalled — remove their foundation setup instead")
+		return nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Uninstall %d profile(s)?\n\n", len(removable))
+	for _, id := range removable {
+		if card, _, err := profiles.Effective(id); err == nil {
+			fmt.Fprintf(&b, "  • %s  %s\n", card.Spec.Display, card.Spec.Version)
+		} else {
+			fmt.Fprintf(&b, "  • %s\n", id)
+		}
+	}
+	for _, id := range builtin {
+		fmt.Fprintf(&b, "  • %s  (built in, kept)\n", id)
+	}
+	b.WriteString("\nThis deletes the downloaded card, its local UI overrides, its audio foundation setup (douze, oscmix, split files) and its history entry.")
+	m.confirm = tuikit.NewConfirm(b.String(), "Cancel", "Uninstall")
+	m.confirmAct = func() tea.Cmd { return libraryUninstallCmd(removable) }
+	m.push(scrConfirm)
+	return nil
+}
+
+// libraryDetail is the info popup: what the card is, its installed and repo
+// versions, and who made it.
+func (m model) libraryDetail(id string) string {
+	ic, inRepo := m.libraryIndex.Card(id)
 	card, meta, err := profiles.Effective(id)
 	if err != nil {
-		return err.Error()
+		if !inRepo {
+			return err.Error()
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "%s (%s)\n\n", ic.Display, ic.Vendor)
+		fmt.Fprintf(&b, "id         %s\n", ic.ID)
+		b.WriteString("installed  not installed\n")
+		fmt.Fprintf(&b, "repo       %s\n", ic.Version)
+		if c := creditsLine(ic.Credits); c != "" {
+			fmt.Fprintf(&b, "credits    %s\n", c)
+		}
+		b.WriteString("\nEnter downloads this profile.")
+		return b.String()
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s (%s)\n\n", card.Spec.Display, card.Spec.Vendor)
-	fmt.Fprintf(&b, "id       %s\n", card.Spec.ID)
-	fmt.Fprintf(&b, "version  %s\n", card.Spec.Version)
-	fmt.Fprintf(&b, "source   %s\n", meta.Source)
-	fmt.Fprintf(&b, "backend  %s\n", card.Spec.Backend)
+	fmt.Fprintf(&b, "id         %s\n", card.Spec.ID)
+	installed := card.Spec.Version
+	if meta.Native {
+		installed += " (built in)"
+	}
+	fmt.Fprintf(&b, "installed  %s\n", installed)
+	if inRepo {
+		repo := ic.Version
+		if ic.Version != card.Spec.Version {
+			repo += "  (update available)"
+		}
+		fmt.Fprintf(&b, "repo       %s\n", repo)
+	} else if !meta.Native {
+		b.WriteString("repo       not in the repo (local only)\n")
+	}
+	fmt.Fprintf(&b, "backend    %s\n", card.Spec.Backend)
 	preset := card.Preset()
 	if preset == "auto" {
 		preset += " (layout follows the card backend)"
 	}
-	fmt.Fprintf(&b, "preset   %s\n", preset)
-	blocks := card.Blocks()
-	if len(blocks) == 0 {
-		blocks = presetBlocks(card.Preset())
+	fmt.Fprintf(&b, "preset     %s\n", preset)
+	credits := creditsLine(card.Credits)
+	if credits == "" {
+		credits = creditsLine(ic.Credits)
 	}
-	if len(blocks) > 0 {
-		fmt.Fprintf(&b, "blocks   %s\n", strings.Join(blocks, ", "))
+	if credits != "" {
+		fmt.Fprintf(&b, "credits    %s\n", credits)
 	}
 	fmt.Fprintf(&b, "\n%d input(s) · %d output pair(s) · mixer %d in / %d out\n",
 		card.Spec.NumInputs, card.Spec.NumOutPairs, card.Spec.MixerInputs, card.Spec.MixerOutputs)
 	if meta.Revision != "" {
-		fmt.Fprintf(&b, "revision %s\n", meta.Revision)
+		fmt.Fprintf(&b, "revision   %s\n", meta.Revision)
 	}
-	b.WriteString("\nTab marks this card for export to a PR folder.")
+	b.WriteString("\ni closes this popup.")
 	return b.String()
 }
 
-// promptNextOffer asks once per session about the first available profile.
-// The library screen handles the rest without interrupting the user again.
-func (m *model) promptNextOffer(offers []profiles.Offer) tea.Cmd {
-	if len(offers) == 0 || m.profilePrompted {
-		return nil
+// creditsLine renders "author, contributor, contributor". Cards made here
+// credit mosquito; outside cards add their contributors.
+func creditsLine(c profiles.Credits) string {
+	var names []string
+	if c.Author != "" {
+		names = append(names, c.Author)
 	}
-	m.profilePrompted = true
-	o := profiles.SortedOffers(offers)[0]
-	verb := "Download"
-	if o.Kind == "update" {
-		verb = "Update"
+	for _, n := range c.Contributors {
+		if strings.TrimSpace(n) != "" {
+			names = append(names, n)
+		}
 	}
-	m.confirm = tuikit.NewConfirm(
-		fmt.Sprintf("%s the community profile for %s (%s)?\nOnly the card data is downloaded; your local UI overrides are kept.", verb, o.Display, o.Version),
-		"Later", verb)
-	m.confirmAct = func() tea.Cmd { return libraryImportCmd(o.ID) }
-	m.push(scrConfirm)
-	return nil
+	return strings.Join(names, ", ")
+}
+
+// libraryTabs draws the active tab as an accent block, like the EVO tab bar.
+func (m model) libraryTabs(w int) string {
+	tab := func(i int, label string) string {
+		if m.libraryTab == i {
+			return lipgloss.NewStyle().
+				Background(tuikit.ColorAccent).
+				Foreground(tuikit.ColorOnSurface).
+				Bold(true).
+				Render(" " + label + " ")
+		}
+		return tuikit.StyleMuted.Render(" " + label + " ")
+	}
+	line := tab(libInstalled, "Installed") + "  " + tab(libAvailable, "Available")
+	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(line)
 }

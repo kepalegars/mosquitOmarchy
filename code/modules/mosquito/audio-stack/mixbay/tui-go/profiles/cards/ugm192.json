@@ -32,6 +32,9 @@
     ],
     "description": "Class-compliant USB. One ALSA PCM volume/mute (0..64 = -64..0 dB); the rest is hardware."
   },
+  "credits": {
+    "author": "mosquito"
+  },
   "ui": {
     "preset": "ugm192",
     "blocks": [

@@ -29,6 +29,9 @@
     },
     "description": "4 in / 2 out pairs + loopback matrix over 2 mix buses. Monitoring via the matrix."
   },
+  "credits": {
+    "author": "mosquito"
+  },
   "ui": {
     "preset": "evo8",
     "blocks": ["tabBar", "controlsGrid", "mixerGrid", "levelsColumns", "statusBar", "help"]

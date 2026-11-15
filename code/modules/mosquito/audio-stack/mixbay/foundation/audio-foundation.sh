@@ -100,6 +100,22 @@ run_card_setup(){
   esac
 }
 
+# remove_card_setup <name>: the matching uninstaller for a card integration.
+# Used when a profile is uninstalled so douze/oscmix do not outlive their card.
+remove_card_setup(){
+  case "$1" in
+    oscmix)
+      local s="$MIXBAY_ROOT/oscmix/setup-oscmix.sh"
+      [[ -f $s ]] || { warn "oscmix module not found ($s)"; return 1; }
+      bash "$s" --uninstall ;;
+    douze)
+      local s="$MIXBAY_ROOT/../../../Apps/douze/setup-douze.sh"
+      [[ -f $s ]] || { warn "douze module not found ($s)"; return 1; }
+      bash "$s" --remove ;;
+    *) : ;;
+  esac
+}
+
 BASE_CONF="$PW_DIR/50-mixbay-audio.conf"
 EVO_CONF="$PW_DIR/50-mixbay-evo.conf"
 EVO4_CONF="$PW_DIR/50-mixbay-evo4.conf"
@@ -1079,25 +1095,19 @@ remove_device(){
       if grep -q 'EVO4' "$EVO4_CONF" 2>/dev/null; then rm -f "$EVO4_CONF"; fi
       ;;
     ssl12)
-      local douze="$MIXBAY_ROOT/../../../Apps/douze/setup-douze.sh"
-      if [[ -f $douze ]]; then
-        bash "$douze" --remove || warn "douze removal reported a problem"
-      else
-        warn "douze module not found — remove it from Setup → Apps → douze"
-      fi
+      remove_card_setup douze || warn "douze removal reported a problem"
       ;;
     fireface-ucx2)
-      local oscmix="$MIXBAY_ROOT/oscmix/setup-oscmix.sh"
-      if [[ -f $oscmix ]]; then
-        bash "$oscmix" --uninstall || warn "oscmix removal reported a problem"
-      else
-        warn "oscmix module not found — remove it manually from $MIXBAY_ROOT/oscmix"
-      fi
+      remove_card_setup oscmix || warn "oscmix removal reported a problem"
       ;;
     ugm192) : ;;
     *)
       if profile_installed "$dev"; then
         [[ $dev =~ ^[a-z0-9][a-z0-9-]*$ ]] || { warn "Invalid device id: $dev"; return 1; }
+        local kind; kind="$(card_setup "$dev")"
+        if [[ -n $kind ]]; then
+          remove_card_setup "$kind" || warn "$kind removal reported a problem"
+        fi
         rm -rf "$(profile_card_dir "$dev")"
       else
         warn "Unknown device: $dev"

@@ -89,8 +89,10 @@ The foundation is applied **per card**, with one shared floor:
   its category.
 - The default picker marks the selected card with a filled `●`; other rows have
   no marker.
-- `--remove --device <id>` removes that card's split/mapping. The shared
-  WirePlumber rule stays while another card still uses it.
+- `--remove --device <id>` removes that card's split/mapping and its
+  card-specific integration (douze for the SSL 12, oscmix for the UCX II),
+  plus a downloaded card's profile folder. The shared WirePlumber rule stays
+  while another card still uses it.
 - **Reset connection history** (in the foundation menu, after Refresh) clears
   the log after confirmation; installed splits/udev rules are kept.
 - The TUI shows the same list with **Install/Remove + confirmation** and the

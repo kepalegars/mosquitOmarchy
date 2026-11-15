@@ -82,6 +82,13 @@ type Spec struct {
 	Foundation   *Foundation `json:"foundation,omitempty"`
 }
 
+// Credits says who made a card: "mosquito" for the built-in integrations,
+// plus any outside contributors. Shown in the info popup, never executed.
+type Credits struct {
+	Author       string   `json:"author,omitempty"`
+	Contributors []string `json:"contributors,omitempty"`
+}
+
 // Capture references a distilled capture inside the card folder. Raw capture
 // bundles live in release artifacts and are referenced by sha256 only.
 type Capture struct {
@@ -96,6 +103,7 @@ type Capture struct {
 type Card struct {
 	SchemaVersion int            `json:"schema_version"`
 	Spec          Spec           `json:"spec"`
+	Credits       Credits        `json:"credits,omitempty"`
 	UI            map[string]any `json:"ui,omitempty"`
 	Captures      []Capture      `json:"captures,omitempty"`
 }
@@ -290,7 +298,7 @@ func Parse(data []byte) (Card, []Issue, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return Card{}, nil, fmt.Errorf("card is not JSON: %w", err)
 	}
-	allowed := map[string]bool{"schema_version": true, "spec": true, "ui": true, "captures": true}
+	allowed := map[string]bool{"schema_version": true, "spec": true, "credits": true, "ui": true, "captures": true}
 	var issues []Issue
 	for k := range raw {
 		if !allowed[k] {

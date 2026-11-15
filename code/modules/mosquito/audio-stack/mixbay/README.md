@@ -54,10 +54,10 @@ est la source de vérité ; les cinq cartes natives (`evo8`, `evo4`, `ugm192`,
 `fireface-ucx2`, `ssl12`) y figurent et sont aussi embarquées dans le binaire
 pour marcher hors ligne.
 
-- **Téléchargement à la connexion** : au démarrage, Mixbay compare les
-  interfaces vues dans `connected-interfaces.json` à `index.json` et propose
-  d'installer un profil absent ou de mettre à jour une carte plus ancienne.
-  Hors ligne, rien n'est proposé et les profils locaux continuent de marcher.
+- **Vérification du dépôt** : Mixbay compare `index.json` aux interfaces
+  installées à la première ouverture de **Settings** (une fois par session),
+  puis seulement sur `r`. Hors ligne, rien n'est proposé et les profils
+  locaux continuent de marcher.
 - **Un seul fichier par carte** : `profiles-import` ne télécharge que le
   `card.json` sélectionné (les captures restent dans le dépôt), vérifie son
   `sha256`, le valide, puis l'écrit atomiquement. Le dossier `user/` n'est
@@ -103,11 +103,13 @@ Commandes (`mosquito-mixbay-actions …`) : `profiles-index`,
 `profiles-import ID… [--all]`, `profiles-export [ID…] [--to DIR]`,
 `profiles-list-local`, `profiles-validate FILE|DIR…`, `profiles-remove ID…`,
 `profiles-clear-user ID`, `profiles-set-url URL` (dépôt miroir).
-La TUI expose le reste dans **Settings → Audio interface profiles**, plus une
-entrée **Open community repo** qui ouvre la page du dépôt. Un carré clignote à
-côté de cette entrée pendant la vérification du dépôt et reste fixe quand une
-carte installée a une version plus récente (elle affiche alors `↑ vX` dans la
-liste).
+La TUI expose le reste dans **Settings → Audio interface profiles** :
+onglets **Installed** (`←/→`), `tab` sélectionne, `enter` met à jour, `e`
+exporte la sélection, `D` désinstalle (récapitulatif + confirmation), `i`
+affiche la fiche (versions installée/dépôt, crédits), `r` revérifie le dépôt.
+L'onglet **Available** liste les cartes du dépôt non installées : `tab` pour
+en sélectionner plusieurs, `enter` les installe, `O` ouvre la page du dépôt.
+Un carré fixe marque les cartes installées en retard de version.
 
 L'ancien `beta-devices.json` est migré une fois vers un profil local
 (`source: local`) puis archivé en `beta-devices.json.migrated`.

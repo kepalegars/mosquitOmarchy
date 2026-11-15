@@ -96,16 +96,19 @@ type model struct {
 
 	// library is Settings → Audio interface profiles. The index is cached in
 	// memory for the session; upstream/ is the only folder an import writes.
-	libraryIndex    profiles.Index
-	libraryLoading  bool
-	libraryErr      string
-	libraryChecked  map[string]bool
-	libraryManual   bool
-	dupPrompted     map[string]bool
-	profilePrompted bool
+	libraryIndex   profiles.Index
+	libraryLoading bool
+	libraryErr     string
+	libraryChecked map[string]bool
+	libraryManual  bool
+	libraryTab     int
+	dupPrompted    map[string]bool
 	// profileChecking drives the blinking square on Settings → Audio interface
 	// profiles; profileBlink is its on/off frame (see evoDotBlinkMsg).
+	// profileChecked is "the repo was already checked this session": entering
+	// Settings checks once, r refreshes on demand.
 	profileChecking bool
+	profileChecked  bool
 	profileBlink    int
 
 	// preset is the card's UI composition ("evo8", "ugm192", "auto"…). It
@@ -134,9 +137,7 @@ type model struct {
 }
 
 func initialModel() model {
-	m := model{nav: []screen{scrDevices}, deviceID: defaultDevice(), ui: loadUIPrefs(), focused: true,
-		// Init launches the first repo check; the square blinks until it lands.
-		profileChecking: true}
+	m := model{nav: []screen{scrDevices}, deviceID: defaultDevice(), ui: loadUIPrefs(), focused: true}
 	m.picker = tuikit.NewPicker("", nil)
 	m.cursor = tuikit.NewCursorMemory()
 	m.libraryChecked = map[string]bool{}
@@ -146,7 +147,7 @@ func initialModel() model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(fetchStatus(m.deviceID), tuikit.ThemeWatchCmd(), evoDotBlinkTick(), evoPollTick(m.pollGen), profileCheckCmd(), trackConnectionsCmd())
+	return tea.Batch(fetchStatus(m.deviceID), tuikit.ThemeWatchCmd(), evoDotBlinkTick(), evoPollTick(m.pollGen), trackConnectionsCmd())
 }
 
 // trackConnectionsCmd writes every currently connected USB interface to the
@@ -744,31 +745,22 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case profileOfferMsg:
-		m.profileChecking = false
-		if msg.ix.SchemaVersion > 0 {
-			m.libraryIndex = msg.ix
-		}
-		m.syncPicker()
-		if msg.err != nil {
-			return m, nil
-		}
-		if len(msg.offers) > 0 {
-			return m, m.promptNextOffer(msg.offers)
-		}
-		// No repo offer, but two installed cards may be the same interface
-		// (scan-added beta + downloaded profile).
-		if dups := profiles.Duplicates(); len(dups) > 0 {
-			return m, m.promptDuplicate(dups[0])
-		}
-		return m, nil
-
 	case tuikit.PickerToggleMsg:
-		if m.top() == scrLibrary && strings.HasPrefix(msg.Value, "card:") {
-			id := strings.TrimPrefix(msg.Value, "card:")
+		if m.top() == scrLibrary && (strings.HasPrefix(msg.Value, "card:") || strings.HasPrefix(msg.Value, "repo:")) {
+			id := strings.TrimPrefix(strings.TrimPrefix(msg.Value, "card:"), "repo:")
 			m.libraryChecked[id] = !m.libraryChecked[id]
 			m.syncPicker()
 		}
+		return m, nil
+
+	case libraryUninstallMsg:
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("Uninstall: " + msg.err.Error())
+		} else {
+			m.toast, _ = m.toast.SetOK("Uninstalled " + strings.Join(msg.ids, ", "))
+		}
+		m.libraryChecked = map[string]bool{}
+		m.syncPicker()
 		return m, nil
 
 	case evoAnimTickMsg:
@@ -1186,11 +1178,11 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case scrDevices:
 		switch k {
 		case "r":
-			// Re-probe every interface and rebuild the list in place.
+			// Re-probe every interface and rebuild the list in place. The repo
+			// check belongs to Settings (once) and to its r shortcut.
 			m.syncPicker()
-			m.profileChecking = true
 			m.toast, _ = m.toast.SetOK("Connection status refreshed")
-			return m, tea.Batch(profileCheckCmd(), trackConnectionsCmd())
+			return m, trackConnectionsCmd()
 		case "enter":
 			if m.picker.SelectedValue() == "quit" {
 				m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")
@@ -1204,6 +1196,13 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.picker.SelectedValue() == "settings" {
 				m.push(scrSettings)
 				m.syncPicker()
+				// One repo check per session, on the first Settings visit.
+				if !m.profileChecked {
+					m.profileChecked = true
+					m.profileChecking = true
+					m.libraryLoading = m.libraryIndex.SchemaVersion == 0
+					return m, libraryIndexCmd()
+				}
 				return m, nil
 			}
 			if m.picker.SelectedValue() == "patchbay" {

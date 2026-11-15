@@ -24,13 +24,14 @@ const DefaultRepoURL = "https://raw.githubusercontent.com/kepalegars/mosquito-mi
 // IndexCard is one row of index.json. sha256 makes a download verifiable even
 // when the index and card come from different requests.
 type IndexCard struct {
-	ID      string `json:"id"`
-	Display string `json:"display"`
-	Vendor  string `json:"vendor"`
-	Version string `json:"version"`
-	Native  bool   `json:"native"`
-	Path    string `json:"path"`
-	SHA256  string `json:"sha256"`
+	ID      string  `json:"id"`
+	Display string  `json:"display"`
+	Vendor  string  `json:"vendor"`
+	Version string  `json:"version"`
+	Native  bool    `json:"native"`
+	Path    string  `json:"path"`
+	SHA256  string  `json:"sha256"`
+	Credits Credits `json:"credits,omitempty"`
 }
 
 // Index is the repo entry point.
@@ -324,18 +325,11 @@ type Offer struct {
 // Network failures are swallowed (offline is normal); the caller keeps the
 // local profiles it already has.
 func CheckUpdates(ctx context.Context, entries []ConnEntry) ([]Offer, error) {
-	_, offers, err := CheckUpdatesWithIndex(ctx, entries)
-	return offers, err
-}
-
-// CheckUpdatesWithIndex is CheckUpdates plus the index it used, so a caller
-// showing repo state does not fetch index.json twice.
-func CheckUpdatesWithIndex(ctx context.Context, entries []ConnEntry) (Index, []Offer, error) {
 	ix, err := FetchIndex(ctx)
 	if err != nil {
 		cached, cerr := CachedIndex()
 		if cerr != nil {
-			return Index{}, nil, err
+			return nil, err
 		}
 		ix = cached
 	}
@@ -354,7 +348,7 @@ func CheckUpdatesWithIndex(ctx context.Context, entries []ConnEntry) (Index, []O
 		}
 		out = append(out, Offer{ID: ic.ID, Display: ic.Display, Version: ic.Version, Kind: "install", Index: ic})
 	}
-	return ix, out, nil
+	return out, nil
 }
 
 // ConnEntry is the subset of the connection log this package needs.

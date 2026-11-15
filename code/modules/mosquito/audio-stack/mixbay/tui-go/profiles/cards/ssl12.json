@@ -30,6 +30,9 @@
     "setup": "douze",
     "description": "douze backend: master volumes, mutes and mixer sends. Preamps/48V and the full SSL 360 surface stay in Omarchy360."
   },
+  "credits": {
+    "author": "mosquito"
+  },
   "ui": {
     "preset": "auto",
     "blocks": ["tabBar", "controlsGrid", "mixerGrid", "statusBar", "help"]

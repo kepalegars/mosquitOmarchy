@@ -34,6 +34,9 @@
     },
     "description": "Class Compliant mode: oscmix-desk controls the mixer. ALSA level 1 otherwise."
   },
+  "credits": {
+    "author": "mosquito"
+  },
   "ui": {
     "preset": "auto",
     "blocks": ["controlsGrid", "statusBar", "help"]
