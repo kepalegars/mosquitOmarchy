@@ -423,7 +423,7 @@ func (m model) startInstall(ids []string) (tea.Model, tea.Cmd) {
 	} else {
 		fmt.Fprintf(&b, "%s have local layouts.\n\n", strings.Join(local, ", "))
 	}
-	fmt.Fprintf(&b, "It will be backed up to\n%s\nbefore the repo layout replaces it.\n\nContinue?",
+	fmt.Fprintf(&b, "It will be backed up to\n%s/<id>-<date>.json\nbefore the repo layout replaces it.\n\nContinue?",
 		profiles.UserUIBackupDir())
 	m.confirm = tuikit.NewConfirm(b.String(), "Cancel", "Replace")
 	m.confirmAct = func() tea.Cmd {
