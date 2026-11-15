@@ -128,13 +128,15 @@ func (m model) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.footer(w, ""))
 	case scrLibrary:
-		title, rows := m.accentBudget(h-1, "Audio interface profiles")
+		title, rows := m.accentBudget(h-1-libraryFilterRows, "Audio interface profiles")
 		m.picker = m.picker.SetSize(w, rows)
 		b.WriteString(centerBlock(title, w))
 		b.WriteString("\n")
 		b.WriteString(m.libraryTabs(w))
 		b.WriteString("\n")
 		b.WriteString(m.picker.View())
+		b.WriteString("\n")
+		b.WriteString(m.libraryFilterBar(w))
 		b.WriteString("\n")
 		b.WriteString(m.footer(w, ""))
 	case scrInput:
@@ -330,10 +332,12 @@ func (m model) legendLine(w int) string {
 	case scrAddInterface:
 		hint = "enter add as beta · r rescan · esc back"
 	case scrLibrary:
-		if m.libraryTab == libAvailable {
-			hint = "←/→ tabs · tab select · enter install · O open repo · i info · r refresh · esc back"
+		if m.libraryFilterOpen {
+			hint = "type to filter · enter action · esc close"
+		} else if m.libraryTab == libAvailable {
+			hint = "←/→ tabs · tab select · enter install · F search · O open repo · i info · r refresh · esc back"
 		} else {
-			hint = "←/→ tabs · tab select · enter update · e export · D uninstall · i info · r refresh · esc back"
+			hint = "←/→ tabs · tab select · enter update · F search · e export · D uninstall · i info · r refresh · esc back"
 		}
 	default:
 		hint = "↑/↓ · enter · q quit"

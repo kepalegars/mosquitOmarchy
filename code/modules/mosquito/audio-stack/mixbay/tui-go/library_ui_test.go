@@ -322,6 +322,59 @@ func TestUpstreamUpdateWarnsAndDeploysDirect(t *testing.T) {
 	}
 }
 
+func TestLibrarySearchFiltersBothTabs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := model{
+		nav:            []screen{scrLibrary},
+		libraryChecked: map[string]bool{},
+		libraryTab:     libAvailable,
+		libraryIndex: profiles.Index{SchemaVersion: 1, Cards: []profiles.IndexCard{
+			{ID: "fireface-802", Display: "RME Fireface 802", Vendor: "RME", Version: "v0.1.0"},
+			{ID: "quantum-es4", Display: "PreSonus Quantum ES 4", Vendor: "PreSonus", Version: "v0.1.0"},
+		}},
+	}
+	m.picker = tuikit.NewPicker("", m.libraryItems())
+	open, _ := m.libraryKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("F")})
+	got := open.(model)
+	if !got.libraryFilterOpen {
+		t.Fatal("F did not open the search zone")
+	}
+	filtered, _ := got.libraryKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("fire")})
+	got = filtered.(model)
+	rows := ""
+	for _, it := range got.libraryItems() {
+		rows += it.Display + "\n"
+	}
+	if !strings.Contains(rows, "RME Fireface 802") || strings.Contains(rows, "Quantum") {
+		t.Fatalf("available search did not narrow the list:\n%s", rows)
+	}
+	// Closing clears the text and restores the full list.
+	closed, _ := got.libraryKey(tea.KeyMsg{Type: tea.KeyEsc})
+	got = closed.(model)
+	if got.libraryFilterOpen || got.libraryFilterText != "" {
+		t.Fatal("esc did not close and clear the search")
+	}
+	if !strings.Contains(got.availableItems()[0].Display, "Fireface 802") {
+		t.Fatalf("full list not restored: %+v", got.availableItems())
+	}
+
+	// Installed tab: the same key filters installed cards (seeded EVO/SSL…).
+	got.libraryTab = libInstalled
+	got.libraryFilterText = "ssl"
+	if rows := got.libraryItems(); len(rows) != 1 || !strings.Contains(rows[0].Display, "SSL 12") {
+		t.Fatalf("installed search = %+v", rows)
+	}
+	if got := got.libraryFilterBar(80); strings.Count(got, "\n") != libraryFilterRows-1 {
+		t.Fatalf("search frame is %d rows, want %d", strings.Count(got, "\n")+1, libraryFilterRows)
+	}
+}
+
+func TestRepoNewsSaysAvailable(t *testing.T) {
+	if got := repoNewsLabel(1, 7); !strings.Contains(got, "1 update") || !strings.Contains(got, "7 available") || strings.Contains(got, "download") {
+		t.Fatalf("repo check label = %q", got)
+	}
+}
+
 func TestInfoShowsVersionsAndCredits(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if _, err := profiles.InstallLocalCard("quantum-es4", "PreSonus Quantum ES 4", "Quantum ES"); err != nil {

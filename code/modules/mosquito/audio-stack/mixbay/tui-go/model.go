@@ -106,7 +106,11 @@ type model struct {
 	libraryChecked  map[string]bool
 	libraryManual   bool
 	libraryTab      int
-	dupPrompted     map[string]bool
+	// libraryFilter is the F search zone shared by both tabs: the text is
+	// kept when switching tabs, and cleared when the zone closes.
+	libraryFilterOpen bool
+	libraryFilterText string
+	dupPrompted       map[string]bool
 	// profileChecking drives the blinking square on Settings → Audio interface
 	// profiles; profileBlink is its on/off frame (see evoDotBlinkMsg).
 	// profileChecked is "the repo was already checked this session": entering

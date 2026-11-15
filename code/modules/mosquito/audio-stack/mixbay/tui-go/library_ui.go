@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -228,10 +229,36 @@ func (m model) libraryItems() []tuikit.PickerItem {
 	return append(items, m.installedItems()...)
 }
 
+// libraryMatch is the live filter: case- and punctuation-insensitive, so
+// "ssl12" finds "SSL 12" and "quantum es" finds "PreSonus Quantum ES 4".
+func (m model) libraryMatch(fields ...string) bool {
+	q := libraryNorm(m.libraryFilterText)
+	if q == "" {
+		return true
+	}
+	for _, f := range fields {
+		if strings.Contains(libraryNorm(f), q) {
+			return true
+		}
+	}
+	return false
+}
+
+func libraryNorm(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // installedItems lists every installed card with its repo state: up to date,
 // update vX (plus the solid square) or local only.
 func (m model) installedItems() []tuikit.PickerItem {
 	var items []tuikit.PickerItem
+	shown := 0
 	for _, meta := range profiles.Installed() {
 		mark := "○"
 		if m.libraryChecked[meta.ID] {
@@ -251,22 +278,41 @@ func (m model) installedItems() []tuikit.PickerItem {
 		case target != meta.Version:
 			status, badge = "update "+target, "■"
 		}
+		if !m.libraryMatch(meta.Display, meta.ID, meta.Version, status) {
+			continue
+		}
 		items = append(items, tuikit.PickerItem{
 			Display:       fmt.Sprintf("%s %-30s %-8s %s", mark, meta.Display, meta.Version, status),
 			Value:         "card:" + meta.ID,
 			TrailingBadge: badge,
 		})
+		shown++
 	}
+	dupsShown := 0
 	if dups := profiles.Duplicates(); len(dups) > 0 {
-		items = append(items, tuikit.PickerItem{Display: "Duplicate entries", Heading: true})
+		var rows []tuikit.PickerItem
 		for _, d := range dups {
-			items = append(items, tuikit.PickerItem{
+			if !m.libraryMatch(d.RemoveDisplay, d.KeepDisplay) {
+				continue
+			}
+			rows = append(rows, tuikit.PickerItem{
 				Display: fmt.Sprintf("  ! %s also matches %s", d.RemoveDisplay, d.KeepDisplay),
 				Value:   "dup:" + d.RemoveID + ":" + d.KeepID,
 			})
 		}
+		if len(rows) > 0 {
+			items = append(items, tuikit.PickerItem{Display: "Duplicate entries", Heading: true})
+			items = append(items, rows...)
+			dupsShown = len(rows)
+		}
 	}
-	if m.libraryIndex.SchemaVersion == 0 && !m.libraryLoading && m.libraryErr == "" {
+	if m.libraryFilterText != "" && shown+dupsShown == 0 {
+		items = append(items, tuikit.PickerItem{
+			Display:  fmt.Sprintf("  no installed profile matches %q", m.libraryFilterText),
+			Disabled: true,
+		})
+	}
+	if m.libraryFilterText == "" && m.libraryIndex.SchemaVersion == 0 && !m.libraryLoading && m.libraryErr == "" {
 		items = append(items, tuikit.PickerItem{Display: "  r checks the community repo", Disabled: true})
 	}
 	return items
@@ -280,6 +326,9 @@ func (m model) availableItems() []tuikit.PickerItem {
 		if _, _, err := profiles.Effective(ic.ID); err == nil {
 			continue
 		}
+		if !m.libraryMatch(ic.Display, ic.ID, ic.Version, ic.Vendor) {
+			continue
+		}
 		mark := "○"
 		if m.libraryChecked[ic.ID] {
 			mark = "●"
@@ -291,7 +340,9 @@ func (m model) availableItems() []tuikit.PickerItem {
 	}
 	if len(items) == 0 {
 		msg := "  no other profile in the repo"
-		if m.libraryIndex.SchemaVersion == 0 {
+		if m.libraryFilterText != "" {
+			msg = fmt.Sprintf("  no available profile matches %q", m.libraryFilterText)
+		} else if m.libraryIndex.SchemaVersion == 0 {
 			msg = "  r checks the community repo"
 		}
 		items = append(items, tuikit.PickerItem{Display: msg, Disabled: true})
@@ -303,6 +354,8 @@ func (m *model) openLibrary() tea.Cmd {
 	m.push(scrLibrary)
 	m.libraryTab = libInstalled
 	m.libraryChecked = map[string]bool{}
+	m.libraryFilterOpen = false
+	m.libraryFilterText = ""
 	m.syncPicker()
 	if dups := profiles.Duplicates(); len(dups) > 0 {
 		m.toast, _ = m.toast.SetWarn(fmt.Sprintf("%d duplicate profile(s) — select a duplicate row to remove it", len(dups)))
@@ -317,6 +370,46 @@ func (m *model) openLibrary() tea.Cmd {
 
 func (m model) libraryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
+	// Search: SHIFT+F (or /) toggles the framed filter zone, exactly like
+	// mosquitomarchy's Setup. While it is open every printable key feeds the
+	// live filter, so the per-tab shortcuts are not triggered by typing.
+	if k == "F" || k == "shift+F" || k == "/" {
+		m.libraryFilterOpen = !m.libraryFilterOpen
+		if !m.libraryFilterOpen {
+			m.libraryFilterText = ""
+		}
+		m.syncPicker()
+		return m, nil
+	}
+	if m.libraryFilterOpen {
+		switch k {
+		case "esc":
+			m.libraryFilterOpen = false
+			m.libraryFilterText = ""
+			m.syncPicker()
+			return m, nil
+		case "backspace":
+			if m.libraryFilterText != "" {
+				r := []rune(m.libraryFilterText)
+				m.libraryFilterText = string(r[:len(r)-1])
+				m.syncPicker()
+			}
+			return m, nil
+		}
+		if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+			printable := true
+			for _, r := range msg.Runes {
+				if !unicode.IsPrint(r) {
+					printable = false
+				}
+			}
+			if printable {
+				m.libraryFilterText += string(msg.Runes)
+				m.syncPicker()
+				return m, nil
+			}
+		}
+	}
 	switch k {
 	case "esc", "backspace":
 		m.pop()
@@ -531,7 +624,7 @@ func repoNewsLabel(updates, installs int) string {
 		parts = append(parts, fmt.Sprintf("%d update(s)", updates))
 	}
 	if installs > 0 {
-		parts = append(parts, fmt.Sprintf("%d to download", installs))
+		parts = append(parts, fmt.Sprintf("%d available", installs))
 	}
 	if len(parts) == 0 {
 		return "everything is up to date"
@@ -683,6 +776,38 @@ func creditsLine(c profiles.Credits) string {
 		}
 	}
 	return strings.Join(names, ", ")
+}
+
+// libraryFilterRows is the height of the framed search box (top border,
+// text, bottom border). The same blank rows are reserved when it is shut, so
+// opening the search replaces empty space and never moves the list.
+const libraryFilterRows = 3
+
+// libraryFilterBar is the framed search field shared by both tabs, copied
+// from mosquitomarchy's Setup/Addons filter zone.
+func (m model) libraryFilterBar(w int) string {
+	if !m.libraryFilterOpen {
+		return strings.Join([]string{" ", " ", " "}, "\n")
+	}
+	inner := m.libraryFilterText + "▏"
+	if m.libraryFilterText == "" {
+		inner = lipgloss.NewStyle().Foreground(tuikit.ColorDisabled).Render("search")
+	}
+	fieldW := 44
+	if w-12 < fieldW {
+		fieldW = w - 12
+	}
+	if fieldW < 20 {
+		fieldW = 20
+	}
+	inner = lipgloss.NewStyle().Width(fieldW).Align(lipgloss.Center).Render(inner)
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(tuikit.ColorAccent).
+		Foreground(tuikit.ColorAccent).
+		Padding(0, 4).
+		Render(inner)
+	return lipgloss.NewStyle().Width(w).Align(lipgloss.Center).Render(box)
 }
 
 // libraryTabs draws the active tab as an accent block, like the EVO tab bar.

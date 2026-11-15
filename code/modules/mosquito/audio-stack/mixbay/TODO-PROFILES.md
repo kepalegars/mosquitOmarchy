@@ -1,7 +1,12 @@
 # TODO — profile system (v1 → v2)
 
-Deferred on purpose in the first community-profile pass. Each item is a real
-gap, not a nice-to-have; keep the profile format stable while closing them.
+Deferred on purpose. Each item is a real gap, not a nice-to-have; keep the
+profile format stable while closing them.
+
+Shipped since the first pass: two-tab library with search, bulk install,
+profile-owned integrations (`oscmix`, `evo-raw`) pinned by sha256, direct RME
+`spec.upstream` updates, credits/info, one-shot repo check, uninstall of every
+card including the seeded snapshots.
 
 ## 1. Split the EVO renderer into composable blocks
 
@@ -16,7 +21,7 @@ Goal:
 - keep a per-preset input model (EVO grid ↔ many controls, UGM ↔ one control);
 - render an unknown card from its `ui.blocks` list when the composition is
   valid, not only from a hardcoded preset;
-- keep `git diff` behaviour identical for the five native cards (golden-frame
+- keep `git diff` behaviour identical for the shipped cards (golden-frame
   tests before/after).
 
 ## 2. Generic USB/HID interpreter + `mixbay-reverse propose`
@@ -35,27 +40,21 @@ Still missing:
 community card has no meters. Add `hardware.meters` to the card (node prefix,
 channel map, scale) and build the meter engine from it.
 
-## 4. TUI bulk import
-
-The library imports one card at a time (Enter). The CLI accepts many ids and
-`--all`; the TUI should reuse the existing Tab-mark set for **import too**, not
-only export.
-
-## 5. Duplicate detection is name-based
+## 4. Duplicate detection is name-based
 
 `profiles.Duplicates()` compares normalized display names. That catches the
 scan-card + downloaded-profile case, but not two cards with different display
-strings for the same box. Upgrade to USB VID/PID + `card_match` overlap once
-more community cards exist.
+strings for the same box. Upgrade to USB VID/PID + `card_match` overlap.
 
-## 6. Publish and pin the repository
-
-- create the GitHub repo `mosquito mixbay profiles`, pick the owner;
-- replace the placeholder owner in `profiles.DefaultRepoURL`;
-- `profiles-set-url` is the per-machine escape hatch, not the default.
-
-## 7. Captures in the client (not needed yet)
+## 5. Captures in the client (not needed yet)
 
 Import downloads only `card.json`; captures remain in the repo. If a Mixbay
 screen ever displays capture-derived data, add opt-in per-capture download with
 the same sha256 + validation path.
+
+## 6. Integration supply chain
+
+Integrations are downloaded from the profiles repo and verified per file. A
+future hardening step: sign `index.json` (or fetch integrations from a release
+asset pinned by a signed tag) so a compromised raw host cannot swap both the
+card and its installer.
