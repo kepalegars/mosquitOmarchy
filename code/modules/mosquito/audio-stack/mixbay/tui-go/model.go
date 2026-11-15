@@ -554,13 +554,20 @@ func dbFmt(v float64) string {
 	return fmt.Sprintf("%+.1fdB", v)
 }
 
+// hasControls reports whether a card exposes any TUI control row. A card
+// with none is driven entirely from its own mixer (RME → oscmix).
+func hasControls(st drivers.Status) bool {
+	c := st.Spec.Caps
+	return c.Gain || c.Phantom || c.Volume || c.Mute || st.Monitor != nil
+}
+
 // controlItems builds the CONTROLS page: INPUTS section (gain/mute/48V),
 // OUTPUTS section (volume/mute), then the page actions. Only rows the
 // device's Caps advertise are emitted.
 func controlItems(st drivers.Status) []tuikit.PickerItem {
 	caps := st.Spec.Caps
 	var items []tuikit.PickerItem
-	hasControls := caps.Gain || caps.Phantom || caps.Volume || caps.Mute || st.Monitor != nil
+	hasControls := hasControls(st)
 	if len(st.Inputs) > 0 && (caps.Gain || caps.Phantom) {
 		items = append(items, tuikit.PickerItem{Display: "Inputs", Heading: true})
 		for _, in := range st.Inputs {

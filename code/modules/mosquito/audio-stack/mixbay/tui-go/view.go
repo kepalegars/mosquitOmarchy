@@ -55,7 +55,11 @@ func (m model) View() string {
 			if m.status.Spec.Version != "" {
 				titleText += " - " + m.status.Spec.Version
 			}
-			titleText += " — controls"
+			// An action-only card (RME) has no control rows: its screen is
+			// the mixer integration, not "controls".
+			if hasControls(m.status) {
+				titleText += " — controls"
+			}
 		}
 		title, rows := m.accentBudget(h, titleText)
 		m.picker = m.picker.SetSize(w, rows)
