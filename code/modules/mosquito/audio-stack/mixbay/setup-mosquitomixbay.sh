@@ -60,10 +60,11 @@ mixbay_status(){
   [[ -x $disp && -x $tui ]] || { echo missing; return; }
   local miss=""
   grep -qF "mosquito-mixbay-tui-setup" "$HOME/.config/hypr/hyprland.lua" 2>/dev/null || miss="${miss:+$miss, }hyprland float rule"
-  # The kmod is profile-owned: only expect /dev/evo* when an EVO profile is
-  # installed. A machine that never downloaded one is not "partial".
-  if [[ -f "$HOME/.config/mosquitomixbay/cards/evo8/upstream/card.json" ||
-        -f "$HOME/.config/mosquitomixbay/cards/evo4/upstream/card.json" ]]; then
+  # The kmod is profile-owned: only expect /dev/evo* when an EVO is actually
+  # in use (connected or already set up in the foundation state).
+  if [[ -e /dev/evo8 || -e /dev/evo4 ]] \
+     || jq -e '(.devices.evo8.installed == true) or (.devices.evo4.installed == true)' \
+          "$HOME/.config/mosquitomixbay/foundation.json" >/dev/null 2>&1; then
     [[ -e /dev/evo8 || -e /dev/evo4 ]] || miss="${miss:+$miss, }evo_raw kmod (demo mode only)"
   fi
   [[ -f "$HOME/.config/wireplumber/wireplumber.conf.d/50-mixbay-interfaces.conf" ]] \
