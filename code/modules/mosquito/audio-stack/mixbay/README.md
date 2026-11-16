@@ -36,7 +36,7 @@ Projets amont explicitement suivis (sourcés, pas copiés) :
 | Audient EVO 4 | même protocole | plein contrôle + monitor blend, Levels 4 canaux — **v1.0.0** |
 | Solid State Logic SSL 12 | douze (HTTP local) | volumes masters, mutes, mixer/sends, setup complet depuis Mixbay ; préamps/48V et surface SSL 360 complète via Omarchy360 — **v0.1.0** |
 | RME Fireface 802 / UCX / UCX II / UFX / UFX II / UFX III / UFX+ | oscmix (huddx01, CC mode) | aucun contrôle dans la TUI : le menu de la carte liste **Open web UI**, **Open GTK mixer**, **Open Qt UI**, **Set up / repair oscmix**. Tous les gains, 48 V, niveaux et le routage sont dans oscmix — **v1.0.0** (cartes dans `cards/rme/`) |
-| ESI UGM192 | ALSA | panneau dédié style EVO : volume de sortie (0…-64 dB) + mute réels, mètres 2 IN / 2 OUT ; GAIN, MONITOR et 48V restent matériels — **v0.1.0** |
+| ESI UGM192 | ALSA | panneau dédié style EVO : volume de sortie (0…-64 dB) + mute réels, mètres 2 IN / 2 OUT ; GAIN, MONITOR et 48V restent matériels — **v1.0.0** |
 | PreSonus Quantum ES 4 | ALSA (profil communautaire) | **base de test reverse engineering**, pas natif : profil dans le dépôt, ou ajout via Settings → Add an audio interface, flag `beta`, volume/mute seulement |
 | Autres interfaces USB | ALSA niveau 1 (beta) | ajout via Settings → Add an audio interface ; flag `offline-beta`/`online-beta` tant que non supportées nativement |
 
@@ -248,7 +248,7 @@ bordures.
 ## Usage
 
 ```bash
-./setup-mosquitomixbay.sh            # installe la TUI, les dispatchers et la fondation audio
+./setup-mosquitomixbay.sh            # installe la TUI, les dispatchers et le watcher
 ./setup-mosquitomixbay.sh --status   # missing | partial:… | ok
 mosquito-mixbay                      # la TUI (seule interface)
 mosquito-mixbay-actions devices-json
@@ -261,6 +261,13 @@ mosquito-mixbay-actions mixer input1 --volume -6 --pan -20
 mosquito-mixbay-actions reset-defaults --device evo8
 mosquito-mixbay-actions save | load --device evo8
 ```
+
+Le setup de base reste **propre** : il n'applique ni la fondation audio ni les
+intégrations d'une carte, et ne touche ni à `ui.json` ni aux profils installés.
+Réinstaller ou mettre à jour Mixbay par-dessus une installation existante
+conserve donc les réglages et les profils. La fondation est une étape **par
+interface**, appliquée depuis Settings → Audio foundation ou au premier
+branchement (le prompt de première connexion) — jamais par l'installateur.
 
 Le premier setup d'une carte applique son preset par défaut (contrôles + matrice
 usine) puis ne réécrit plus jamais les niveaux de l'utilisateur. Le widget audio
@@ -276,7 +283,8 @@ une entrée stéréo par sens ; ON = toutes les paires stéréo (main, 3+4, loop
 mics). Après la bascule, Mixbay propose de redémarrer le shell Omarchy pour
 rafraîchir le panneau.
 
-L'installateur pose aussi `/etc/udev/rules.d/99-evo8-capture.rules` et
+La fondation EVO (pas l'installateur de base) pose aussi
+`/etc/udev/rules.d/99-evo8-capture.rules` et
 `/usr/local/lib/mosquitomixbay/evo8-capture-enable.py` : à chaque connexion,
 EU51 est demandé (best-effort, Enable write-only) pour que le DAW voie les 6
 canaux de capture. Le driver Go le retente une fois par processus.
@@ -606,10 +614,12 @@ dans le graphe vivant.
   carte supportée branchée pendant que Mixbay est ouvert ouvre la même
   confirmation que la bibliothèque, en la nommant, quand son profil manque.
   Un profil simplement en retard de version ne déclenche pas ce prompt.
-- **Notify when a supported card is connected** (actif par défaut) : le
+- **Notify when an interface is connected** (actif par défaut) : le
   watcher installé par le setup envoie une notification `Mixbay` même quand
-  la TUI est fermée. Le clic ouvre/focus Mixbay ; si le profil manque, Mixbay
-  l'installe (import + intégration). Mixbay ouvert, le texte est un simple
+  la TUI est fermée. Une carte **non supportée** est aussi signalée, comme
+  telle (`not supported by Mixbay yet`), sans proposition d'installation. Le
+  clic ouvre/focus Mixbay ; si le profil manque, Mixbay l'installe (import +
+  intégration). Mixbay ouvert, le texte est un simple
   « … connected — handled by Mixbay. » ; fermé, il ajoute que le clic ouvre
   Mixbay (et installe le profil s'il manque). Le service systemd
   `mixbay-card-watcher.service` (user) reste actif entre deux sessions.

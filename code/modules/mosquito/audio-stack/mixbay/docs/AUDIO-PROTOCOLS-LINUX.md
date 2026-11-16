@@ -764,7 +764,7 @@ car c'est transverse et utile à tous les utilisateurs.
   depuis le menu de la carte et lancé à la demande. La fondation audio ne
   modifie pas la carte (socle udev/WirePlumber/PipeWire seulement).
 - **ESI UGM192 :** niveau 1 ALSA (volumes/mutes), pas de DSP.
-- **Statut :** cartes RME v1.0.0 via oscmix ; UGM192 v0.0.1. La matrice
+- **Statut :** cartes RME v1.0.0 via oscmix ; UGM192 v1.0.0. La matrice
   TotalMix est portée par oscmix, pas par le driver ALSA de Mixbay.
 
 ### 7.4 PreSonus Quantum ES 4

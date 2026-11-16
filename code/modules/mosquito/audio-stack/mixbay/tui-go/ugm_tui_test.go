@@ -43,7 +43,7 @@ func TestUGMVolumeFraction(t *testing.T) {
 func TestUGMPanelUsesEvoFrame(t *testing.T) {
 	out := stripANSI(ugmModel(t).ugmView())
 	for _, want := range []string{
-		"ESI UGM192 - v0.1.0", " Controls ", " Levels ",
+		"ESI UGM192 - v1.0.0", " Controls ", " Levels ",
 		"OUTPUT 1|2", "Vol:", "-23.0 dB", "[m]", "q quit", "Ctrl+←→",
 	} {
 		if !strings.Contains(out, want) {

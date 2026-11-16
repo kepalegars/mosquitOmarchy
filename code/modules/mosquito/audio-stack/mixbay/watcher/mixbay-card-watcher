@@ -48,7 +48,13 @@ mixbay_open(){
 
 notify_body(){
   local display="$1" kind="$2" open="$3"
-  if [[ $open == true ]]; then
+  if [[ $kind == unsupported ]]; then
+    if [[ $open == true ]]; then
+      printf '%s connected — not supported by Mixbay yet.\n' "$display"
+    else
+      printf '%s connected — not supported by Mixbay yet. Mixbay is not open: click this notification to open it.\n' "$display"
+    fi
+  elif [[ $open == true ]]; then
     printf '%s connected — handled by Mixbay.\n' "$display"
   elif [[ $kind == install ]]; then
     printf '%s connected — handled by Mixbay. Mixbay is not open: click this notification to open it and install the profile.\n' "$display"
@@ -73,16 +79,42 @@ send_notification(){
   fi
 }
 
-# new_cards <current-json> <previous-ids-json>: the rows that were not there
+# new_cards <current-json> <previous-keys-json>: the rows that were not there
 # before. A card that raises several connect events still notifies once.
 new_cards(){
   jq -c --argjson prev "$2" \
-    '[.[] | select(.id as $id | ($prev | index($id) | not))]' <<<"$1" 2>/dev/null \
+    '[.[] | select(.key as $k | ($prev | index($k) | not))]' <<<"$1" 2>/dev/null \
     || printf '[]\n'
 }
 
+# scan: every connected USB interface, supported or not (--all). The watcher
+# must stay useful for an unrecognized card too: it still says it was seen.
 scan(){
-  timeout 20 "$ACTIONS" cards-connected-json 2>/dev/null
+  timeout 20 "$ACTIONS" cards-connected-json --all 2>/dev/null
+}
+
+# announce <current-json> <previous-ids-json>: update the seen set and notify
+# for the cards that just appeared, subject to the three settings.
+announce(){
+  local current="$1" previous="$2" new mode open id display version kind
+  new="$(new_cards "$current" "$previous")"
+  jq -c '[.[].key]' <<<"$current" > "$SEEN" 2>/dev/null || true
+
+  mode="$(pref watcher_mode always)"
+  [[ $mode == off ]] && return 0
+  [[ "$(pref detect_cards true)" == true ]] || return 0
+  open=false; mixbay_open && open=true
+  [[ $mode == only_open && $open == false ]] && return 0
+  # Detection (not the notice): keep the foundation's connection history
+  # current even when Mixbay is closed.
+  "$FOUNDATION" --track >/dev/null 2>&1 || true
+  [[ $new == '[]' || -z $new ]] && return 0
+  [[ "$(pref notify_cards true)" == true ]] || return 0
+  # No empty middle field here: bash treats a tab as IFS whitespace and would
+  # collapse consecutive tabs, shifting an unsupported card's empty version.
+  while IFS=$'\t' read -r id display kind; do
+    send_notification "$id" "$display" "$kind" "$open"
+  done < <(jq -r '.[] | [.id,.display,.kind]|@tsv' <<<"$new")
 }
 
 main(){
@@ -90,37 +122,26 @@ main(){
   command -v jq >/dev/null 2>&1 || exit 0
   [[ -x $ACTIONS ]] || exit 0
 
-  # Remember what is already plugged at login, silently: the notice is for a
-  # card that just appeared, not for the desk waking up.
   local current
   if current="$(scan)"; then
-    jq -c '[.[].id]' <<<"$current" > "$SEEN" 2>/dev/null || true
+    if [[ -f $SEEN ]]; then
+      # A restart (PipeWire, update) can happen right after a plug: compare
+      # with the last run so that card is not silently swallowed. On the very
+      # first run there is no seen set, so the desk waking up stays quiet.
+      announce "$current" "$(cat "$SEEN" 2>/dev/null || printf '[]\n')"
+    else
+      jq -c '[.[].key]' <<<"$current" > "$SEEN" 2>/dev/null || true
+    fi
   fi
 
-  local line mode open previous new id display version kind
+  local line
   pactl subscribe 2>/dev/null | while IFS= read -r line; do
     [[ $line == *"on card"* ]] || continue
     # One plug raises several events in a row: let them settle, then read the
     # real card list once.
     sleep 0.8
     current="$(scan)" || continue
-    previous="$(cat "$SEEN" 2>/dev/null || printf '[]\n')"
-    new="$(new_cards "$current" "$previous")"
-    jq -c '[.[].id]' <<<"$current" > "$SEEN" 2>/dev/null || true
-
-    mode="$(pref watcher_mode always)"
-    [[ $mode == off ]] && continue
-    [[ "$(pref detect_cards true)" == true ]] || continue
-    open=false; mixbay_open && open=true
-    [[ $mode == only_open && $open == false ]] && continue
-    # Detection (not the notice): keep the foundation's connection history
-    # current even when Mixbay is closed.
-    "$FOUNDATION" --track >/dev/null 2>&1 || true
-    [[ $new == '[]' || -z $new ]] && continue
-    [[ "$(pref notify_cards true)" == true ]] || continue
-    while IFS=$'\t' read -r id display version kind; do
-      send_notification "$id" "$display" "$kind" "$open"
-    done < <(jq -r '.[] | [.id,.display,.version,.kind]|@tsv' <<<"$new")
+    announce "$current" "$(cat "$SEEN" 2>/dev/null || printf '[]\n')"
   done
 }
 
@@ -132,6 +153,10 @@ self_test(){
   [[ $b == *"install the profile"* ]] || fail=1
   b="$(notify_body 'RME Fireface UCX II' installed false)"
   [[ $b == *"open it"* && $b != *"install the profile"* ]] || fail=1
+  b="$(notify_body 'No Name Card' unsupported false)"
+  [[ $b == *"not supported by Mixbay yet"* && $b == *"open it"* ]] || fail=1
+  b="$(notify_body 'No Name Card' unsupported true)"
+  [[ $b == *"not supported by Mixbay yet"* && $b != *"not open"* ]] || fail=1
   ((fail)) && { printf 'self-test failed\n' >&2; return 1; }
   printf 'self-test ok\n'
 }

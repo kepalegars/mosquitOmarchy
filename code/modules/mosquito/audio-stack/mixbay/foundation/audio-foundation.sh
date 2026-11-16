@@ -279,7 +279,7 @@ version_for_id(){
     evo8|evo4) echo v1.0.0 ;;
     ssl12) echo v0.1.0 ;;
     fireface-ucx2) echo v1.0.0 ;;
-    ugm192) echo v0.0.1 ;;
+    ugm192) echo v1.0.0 ;;
     *) echo beta ;;
   esac
 }

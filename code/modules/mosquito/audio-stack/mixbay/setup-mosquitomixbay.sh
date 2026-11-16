@@ -44,16 +44,6 @@ for a in "$@"; do case "$a" in
   --uninstall) UNINSTALL=1 ;;
 esac; done
 
-ask(){
-  local q="$1" def="${2:-y}" r
-  ((YES)) && { ok "(auto) $q -> yes"; return 0; }
-  if command -v gum >/dev/null; then
-    gum confirm "$q" --default=$([[ $def == y ]] && echo true || echo false) && return 0 || return 1
-  fi
-  read -rp "$q [$([ $def = y ] && echo Y/n || echo y/N)] " r
-  r="${r:-$def}"; [[ $r =~ ^[oOyY] ]]
-}
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="$HOME/.local/bin"
 mixbay_status(){
@@ -68,8 +58,13 @@ mixbay_status(){
           "$HOME/.config/mosquitomixbay/foundation.json" >/dev/null 2>&1; then
     [[ -e /dev/evo8 || -e /dev/evo4 ]] || miss="${miss:+$miss, }evo_raw kmod (demo mode only)"
   fi
-  [[ -f "$HOME/.config/wireplumber/wireplumber.conf.d/50-mixbay-interfaces.conf" ]] \
-    || miss="${miss:+$miss, }audio foundation (WirePlumber/udev/rate)"
+  # The foundation is per-interface now: a clean install (no card set up yet)
+  # must not report it missing.
+  if jq -e '.devices | to_entries | any(.value.installed == true)' \
+       "$HOME/.config/mosquitomixbay/foundation.json" >/dev/null 2>&1; then
+    [[ -f "$HOME/.config/wireplumber/wireplumber.conf.d/50-mixbay-interfaces.conf" ]] \
+      || miss="${miss:+$miss, }audio foundation (WirePlumber/udev/rate)"
+  fi
   [[ -x "$BIN_DIR/mixbay-reverse" ]] || miss="${miss:+$miss, }reverse harness (usbmon)"
   [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
   echo ok
@@ -241,9 +236,11 @@ RestartSec=3
 WantedBy=default.target
 EOF
   systemctl --user daemon-reload >/dev/null 2>&1 || true
-  systemctl --user enable --now mixbay-card-watcher.service >/dev/null 2>&1 \
+  systemctl --user enable mixbay-card-watcher.service >/dev/null 2>&1 || true
+  # Restart, not just enable: an update must load the new script in place.
+  systemctl --user restart mixbay-card-watcher.service >/dev/null 2>&1 \
     && ok "card watcher service enabled (event-driven, works while Mixbay is closed)" \
-    || warn "could not enable mixbay-card-watcher.service — run: systemctl --user enable --now mixbay-card-watcher"
+    || warn "could not start mixbay-card-watcher.service — run: systemctl --user enable --now mixbay-card-watcher"
 fi
 
 # -----------------------------------------------------------------------------
@@ -281,24 +278,17 @@ ok "Hyprland float rule installed ($HYPR_CONF)"
 # -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
-# 5b. Audio foundation: udev seat access, WirePlumber rules, EVO 8 split,
-#     rate defaults, default sink/source. Applied by default; this is the
-#     "pro audio pack" that makes the graph reliable under the mixer.
+# 5b. Audio foundation: deployed in step 1, but NOT applied here. A clean
+#     Mixbay install leaves PipeWire/WirePlumber and the cards untouched; the
+#     foundation is a per-interface step, applied when a profile is added and
+#     that interface has been connected once (Settings → Audio foundation, or
+#     the first-connection prompt). Re-running this installer therefore never
+#     rewrites existing settings, profiles or foundation state.
 # -----------------------------------------------------------------------------
 if ((NO_FOUNDATION)); then
-  ok "audio foundation skipped (--no-foundation)"
-elif [[ -x "$SCRIPT_DIR/foundation/audio-foundation.sh" ]]; then
-  FOUNDATION_ARGS=(--apply)
-  if ((YES)) || ask "Apply the audio foundation and restart PipeWire now?" y; then
-    FOUNDATION_ARGS+=(--restart)
-  fi
-  if bash "$SCRIPT_DIR/foundation/audio-foundation.sh" "${FOUNDATION_ARGS[@]}"; then
-    ok "audio foundation applied"
-  else
-    warn "audio foundation reported a problem — run: mixbay-audio-foundation --status"
-  fi
+  ok "audio foundation not applied (--no-foundation)"
 else
-  warn "foundation/audio-foundation.sh not found — audio foundation skipped"
+  ok "audio foundation left for a profile's first connection"
 fi
 
 # -----------------------------------------------------------------------------

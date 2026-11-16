@@ -138,8 +138,10 @@ apply() {
     info "Running the Mixbay installer for $dev (one-time system steps)"
     bash "$ROOT_DIR/setup-mosquitomixbay.sh" -y
     if command -v mixbay-audio-foundation >/dev/null 2>&1; then
-      mixbay-audio-foundation --setup --device "$dev" \
-        || warn "$dev integration setup reported a problem"
+      # The base installer no longer applies the foundation: this first
+      # connection is exactly when the shared floor + card step belong.
+      mixbay-audio-foundation --apply --device "$dev" --restart \
+        || warn "$dev foundation setup reported a problem"
     fi
   else
     warn "setup-mosquitomixbay.sh not found under $ROOT_DIR — cannot apply."

@@ -552,6 +552,10 @@ func matchEntry(ix Index, e ConnEntry) (IndexCard, bool) {
 	if name == "" {
 		return IndexCard{}, false
 	}
+	// ALSA often reports a compact model ("EVO8", "UGM192", "SSL12") while the
+	// display has spaces ("Audient EVO 8"). Compare a spacing-punctuation-free
+	// form too, or those native cards never match the repo.
+	nName, nEntry := alnum(name), alnum(entryName)
 	// Exact display first: "RME Fireface UFX" must never resolve to "…UFX II".
 	for _, ic := range ix.Cards {
 		d := strings.ToLower(ic.Display)
@@ -571,13 +575,30 @@ func matchEntry(ix Index, e ConnEntry) (IndexCard, bool) {
 	if bestLen > 0 {
 		return best, true
 	}
+	// Same two passes on the compact form.
+	for _, ic := range ix.Cards {
+		d := alnum(strings.ToLower(ic.Display))
+		if d != "" && (d == nName || d == nEntry) {
+			return ic, true
+		}
+	}
+	best, bestLen = IndexCard{}, 0
+	for _, ic := range ix.Cards {
+		d := alnum(strings.ToLower(ic.Display))
+		if d != "" && strings.Contains(nName, d) && len(d) > bestLen {
+			best, bestLen = ic, len(d)
+		}
+	}
+	if bestLen > 0 {
+		return best, true
+	}
 	// Finally a short entry name inside a display, and only when exactly one
 	// card matches: an ambiguous family must not offer the wrong mixer.
 	var only IndexCard
 	matches := 0
 	for _, ic := range ix.Cards {
-		d := strings.ToLower(ic.Display)
-		if entryName != "" && strings.Contains(d, entryName) {
+		d := alnum(strings.ToLower(ic.Display))
+		if nEntry != "" && strings.Contains(d, nEntry) {
 			only, matches = ic, matches+1
 		}
 	}
@@ -585,6 +606,17 @@ func matchEntry(ix Index, e ConnEntry) (IndexCard, bool) {
 		return only, true
 	}
 	return IndexCard{}, false
+}
+
+// alnum keeps only a-z0-9 so "EVO8", "EVO 8" and "Evo-8" compare equal.
+func alnum(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // VersionLess compares dotted numeric versions ("1.2.0" < "1.10.0").

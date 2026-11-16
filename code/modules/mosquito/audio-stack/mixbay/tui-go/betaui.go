@@ -24,6 +24,9 @@ import (
 // does not support natively as beta interfaces. The real guided usbmon harness
 // is launched right after the card is stored (see reverseHarnessCmd).
 type scanCard struct {
+	// Key is the stable pactl card name (alsa_card.usb-…). The watcher uses
+	// it to remember an unsupported card across events.
+	Key   string
 	Name  string
 	Match string
 }
@@ -58,7 +61,7 @@ func usbCardsFromPactl(raw []byte) ([]scanCard, error) {
 		if match == "" {
 			match = desc
 		}
-		out = append(out, scanCard{Name: desc, Match: match})
+		out = append(out, scanCard{Key: c.Name, Name: desc, Match: match})
 	}
 	return out, nil
 }

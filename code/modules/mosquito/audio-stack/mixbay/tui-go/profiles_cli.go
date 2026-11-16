@@ -237,10 +237,18 @@ func cliProfilesOffer(_ []string) int {
 	return printJSON(profiles.SortedOffers(offers))
 }
 
-// cliCardsConnected prints the supported interfaces connected RIGHT NOW and
-// their profile state. The card watcher reads it on a PipeWire event; the
-// connection log is the wrong source there (it keeps cards that are gone).
-func cliCardsConnected() int {
+// cliCardsConnected prints the interfaces connected RIGHT NOW and their
+// profile state. --all also includes cards Mixbay does not support, so the
+// watcher can still say a newly plugged interface is unrecognized. The card
+// watcher reads it on a PipeWire event; the connection log is the wrong source
+// there (it keeps cards that are gone).
+func cliCardsConnected(args []string) int {
+	all := false
+	for _, a := range args {
+		if a == "--all" {
+			all = true
+		}
+	}
 	out, err := exec.Command("pactl", "-f", "json", "list", "cards").Output()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -260,21 +268,28 @@ func cliCardsConnected() int {
 		ix, _ = profiles.CachedIndex()
 	}
 	type row struct {
-		ID      string `json:"id"`
-		Display string `json:"display"`
-		Version string `json:"version"`
-		Kind    string `json:"kind"` // installed | install | update
+		// Key is the stable pactl card name. The watcher tracks it instead of
+		// the profile id, so a card classified unsupported offline and
+		// supported after a repo refresh is not announced twice.
+		Key       string `json:"key"`
+		ID        string `json:"id"`
+		Display   string `json:"display"`
+		Version   string `json:"version"`
+		Kind      string `json:"kind"` // installed | install | update | unsupported
+		Supported bool   `json:"supported"`
 	}
 	rows := []row{}
 	for _, c := range usb {
 		ic, ok := profiles.MatchEntry(ix, profiles.ConnEntry{Name: c.Name, Match: c.Match})
 		if !ok {
 			if m, found := installedByName(c.Name + " " + c.Match); found {
-				rows = append(rows, row{m.ID, m.Display, m.Version, "installed"})
+				rows = append(rows, row{Key: c.Key, ID: m.ID, Display: m.Display, Version: m.Version, Kind: "installed", Supported: true})
+			} else if all {
+				rows = append(rows, row{Key: c.Key, ID: c.Key, Display: c.Name, Kind: "unsupported"})
 			}
 			continue
 		}
-		r := row{ID: ic.ID, Display: ic.Display, Version: ic.Version, Kind: "install"}
+		r := row{Key: c.Key, ID: ic.ID, Display: ic.Display, Version: ic.Version, Kind: "install", Supported: true}
 		if inst, _, err := profiles.Effective(ic.ID); err == nil {
 			r.Kind = "installed"
 			if profiles.VersionLess(inst.Spec.Version, ic.Version) {
