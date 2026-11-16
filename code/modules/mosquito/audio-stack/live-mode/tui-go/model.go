@@ -130,6 +130,8 @@ func (m model) mainItems() []tuikit.PickerItem {
 		{Display: "Audio mixer/patchbay in the scratchpad: " + boolLabel(s.RoutingTool), Value: "routing", Disabled: locked, Suffix: lockedSuffix},
 		{Display: "Scratchpad app: " + patchbayLabel(s.PatchbayApp), Value: "patchbay", Disabled: locked, Suffix: lockedSuffix},
 		{Display: "Lock PipeWire settings during live mode: " + boolLabel(s.PipewireAutolock), Value: "pipewire_lock"},
+		volumeLockItem(s.LockOutputVolume),
+		moveAudioItem(s.MoveAudio),
 
 		{Display: "Safety", Heading: true},
 		{Display: "Block package installation during the session: " + boolLabel(s.FencePackages), Value: "fence"},
@@ -174,6 +176,36 @@ func boolLabel(b bool) string {
 	return "Off"
 }
 
+// volumeLockItem is the live output-volume lock row. Levels Guard and Mixbay
+// read LOCK_OUTPUT_VOLUME to enforce it, so without the guard the row is greyed
+// instead of promising a lock nothing applies.
+func volumeLockItem(on bool) tuikit.PickerItem {
+	it := tuikit.PickerItem{
+		Display: "Lock output volume to hardware & UI: " + boolLabel(on),
+		Value:   "volume_lock",
+	}
+	if !levelsGuardInstalled() {
+		it.Disabled = true
+		it.Suffix = "  (needs Levels Guard)"
+	}
+	return it
+}
+
+// moveAudioItem is the "release the Move" row. The Move is fixed at 44.1 kHz;
+// a live session must not inherit that pin. Greyed without the profile: there
+// is nothing to release.
+func moveAudioItem(on bool) tuikit.PickerItem {
+	it := tuikit.PickerItem{
+		Display: "Release the Ableton Move audio interface at start: " + boolLabel(on),
+		Value:   "move_audio",
+	}
+	if !moveAudioInstalled() {
+		it.Disabled = true
+		it.Suffix = "  (needs the Move profile)"
+	}
+	return it
+}
+
 // liveToggleTarget maps a boolean state to its pending-string target.
 func liveToggleTarget(on bool) string {
 	if on {
@@ -204,6 +236,10 @@ func (m model) mainItemsWithPending() []tuikit.PickerItem {
 			items[i].Display = "Scratchpad app: " + patchbayLabel(target)
 		case "pipewire_lock":
 			items[i].Display = "Lock PipeWire settings during live mode: " + boolLabel(target == "on")
+		case "volume_lock":
+			items[i] = volumeLockItem(target == "on")
+		case "move_audio":
+			items[i] = moveAudioItem(target == "on")
 		case "gaps":
 			items[i].Display = "Window gaps disabled during the session: " + boolLabel(target == "on")
 		case "notifs":
@@ -243,6 +279,10 @@ func setPending(s Settings, row, target string) Settings {
 		}
 	case "pipewire_lock":
 		s.PipewireAutolock = target == "on"
+	case "volume_lock":
+		s.LockOutputVolume = target == "on"
+	case "move_audio":
+		s.MoveAudio = target == "on"
 	case "theme":
 		s.SwitchTheme = target == "on"
 	case "profile_prompt":
@@ -380,6 +420,26 @@ func (m model) cycleSetting(dir int) (tea.Model, tea.Cmd) {
 			cur = p == "on"
 		}
 		m.pending[row] = liveToggleTarget(!cur)
+	case "volume_lock":
+		if !levelsGuardInstalled() {
+			m.toast, _ = m.toast.SetWarn("Volume lock needs Levels Guard")
+			return m, nil
+		}
+		cur := m.settings.LockOutputVolume
+		if p, ok := m.pending[row]; ok {
+			cur = p == "on"
+		}
+		m.pending[row] = liveToggleTarget(!cur)
+	case "move_audio":
+		if !moveAudioInstalled() {
+			m.toast, _ = m.toast.SetWarn("Release needs the Move profile (MixBay)")
+			return m, nil
+		}
+		cur := m.settings.MoveAudio
+		if p, ok := m.pending[row]; ok {
+			cur = p == "on"
+		}
+		m.pending[row] = liveToggleTarget(!cur)
 	case "gaps":
 		cur := m.settings.NoGaps
 		if p, ok := m.pending[row]; ok {
@@ -480,6 +540,18 @@ func (m *model) apply(choice string) {
 		s.PatchbayApp = nextPatchbayApp(s.PatchbayApp)
 	case "pipewire_lock":
 		s.PipewireAutolock = !s.PipewireAutolock
+	case "volume_lock":
+		if !levelsGuardInstalled() {
+			m.toast, _ = m.toast.SetWarn("Volume lock needs Levels Guard")
+			return
+		}
+		s.LockOutputVolume = !s.LockOutputVolume
+	case "move_audio":
+		if !moveAudioInstalled() {
+			m.toast, _ = m.toast.SetWarn("Release needs the Move profile (MixBay)")
+			return
+		}
+		s.MoveAudio = !s.MoveAudio
 	case "theme":
 		s.SwitchTheme = !s.SwitchTheme
 	case "profile_prompt":

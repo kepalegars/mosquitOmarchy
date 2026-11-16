@@ -308,6 +308,12 @@ patchbay_addr() {
     .[] | select((.class // "") | test($re)) | .address' 2>/dev/null
 }
 
+# patchbay_spec_running <class-regex> — does that provider have a window?
+patchbay_spec_running(){
+  hyprctl -j clients 2>/dev/null | jq -e --arg re "^($1)$" \
+    'any(.[]; (.class // "") | test($re))' >/dev/null 2>&1
+}
+
 # patchbay_relaunch — start the specs on stdin where the session put them.
 # "scratchpad" means BORN there (exec rule on the workspace), not shown on the
 # current workspace and moved afterwards; "workspace" means the user accepted
@@ -362,69 +368,105 @@ patchbay_place(){
   done <<< "$new"
 }
 
-# patchbay_watch: while live mode is on, closing the mosquito patchbay
-# prompts a confirmation — "yes" parks it for the rest of the session,
-patchbay_watch() {
-  [[ -f "$REAL_HOME/.config/live-mode/settings" ]] && source "$REAL_HOME/.config/live-mode/settings" || true
-  case ${PATCHBAY_APP:-mixbay+qpwgraph} in mixbay+qpwgraph|mixbay|qpwgraph|mosquito-patchbay) ;; *) PATCHBAY_APP=mixbay+qpwgraph ;; esac
-  [[ $ROUTING_TOOL == no ]] && return 0
-  # -s, not -f: an empty file means "flag reset", not "the user closed it".
-  [[ -s "$STATE_DIR/patchbay_closed_this_session" ]] && return 0
+# Per-provider state: which audio app was on screen at least once this session
+# (a provider that never came up is not "closed by the user"), and which ones
+# the user agreed to close (so it is not relaunched or asked about again).
+PATCHBAY_SEEN="$STATE_DIR/patchbay_seen"
+PATCHBAY_CLOSED="$STATE_DIR/patchbay_closed"
 
-  local addr want have prev
-  addr=$(patchbay_addr)
-  want=$(patchbay_specs 2>/dev/null | grep -c . || true)
-  have=$(printf '%s' "$addr" | grep -c . || true)
+patchbay_mark(){ # <file> <provider>
+  mkdir -p "$STATE_DIR"
+  grep -qxF -- "$2" "$1" 2>/dev/null || printf '%s\n' "$2" >> "$1"
+}
+patchbay_in(){ grep -qxF -- "$2" "$1" 2>/dev/null; }
 
-  # Every expected window still (or again) running — nothing to do. Record
-  # the addresses so the file always mirrors reality.
-  if (( want > 0 )) && (( have >= want )); then
-    printf '%s\n' "$addr" > "$STATE_DIR/patchbay_addr"
-    printf '%s' "$have" > "$STATE_DIR/patchbay_have"
-    return 0
-  fi
-
-  # How many were on screen on the PREVIOUS pass. A question may only be asked
-  # on the pass where a window actually disappeared. Without this memory the
-  # watcher asked again on every 5 s tick, forever: one provider it could not
-  # recognise (the scratchpad MixBay class) kept have < want while the app sat
-  # right there in the scratchpad, and no answer could ever satisfy the count.
-  prev=$(cat "$STATE_DIR/patchbay_have" 2>/dev/null || true)
-  printf '%s' "$have" > "$STATE_DIR/patchbay_have"
-  # Nothing was on screen yet: this is activation's launch, not a close. A
-  # provider that never came up must not be reported as one the user closed.
-  [[ -n $prev ]] || return 0
-  (( prev > have )) || return 0
-
-  # One of two is still on screen: the other was closed on purpose (or never
-  # came up). Put nothing back and ask nothing — the session's tool is still
-  # there, and relaunching behind the user's back is whack-a-mole, not help.
-  (( have > 0 )) && return 0
-
-  # Everything vanished: ask ONCE per vanishing event.
-  local payload sel="$STATE_DIR/confirm_sel" donef="$STATE_DIR/confirm_done" ans i
+# ask_close <provider> — "yes" = it stays closed for the session. The overlay's
+# yes/no is the only veto a window close can have: Hyprland closes the window
+# before any script hears about it, so the question arrives with the close and
+# "no" puts the window back.
+ask_close(){
+  local message="Close $1 for this Live session?" payload
+  local sel="$STATE_DIR/confirm_sel" donef="$STATE_DIR/confirm_done" ans i
   rm -f "$sel" "$donef"
-  payload=$(jq -cn --arg message "Close the scratchpad audio app(s) for this Live session?" \
-    --arg selectionFile "$sel" --arg doneFile "$donef" \
+  payload=$(jq -cn --arg message "$message" --arg selectionFile "$sel" --arg doneFile "$donef" \
     '{message:$message, selectionFile:$selectionFile, doneFile:$doneFile}')
   omarchy-shell shell summon mosquito.livemode "$payload" >/dev/null 2>&1 || true
-  ans=""
   for i in $(seq 1 60); do
     [[ -f "$donef" ]] && break
     sleep 0.5
   done
   ans=$(cat "$sel" 2>/dev/null || echo "")
   rm -f "$sel" "$donef"
+  [[ "$ans" == "yes" ]]
+}
 
-  if [[ "$ans" == "yes" ]]; then
-    touch "$STATE_DIR/patchbay_closed_this_session"
-    printf '' > "$STATE_DIR/patchbay_addr"
-    ok "scratchpad audio app(s) closed for this session by the user."
-  else
-    # Keep them running: relaunch and place them (same path as activation).
-    patchbay_specs | patchbay_relaunch
-    patchbay_place
+# patchbay_watch [quiet] — reconcile what is on screen with what the session
+# launched. Every provider that disappears gets its own question (the previous
+# version waited until NONE were left, which is not what closing one means).
+# "quiet" only records: the event loop below owns the questions, so the 5 s
+# thermal pass can never race a second overlay.
+patchbay_watch() {
+  local quiet="${1:-}"
+  [[ -f "$REAL_HOME/.config/live-mode/settings" ]] && source "$REAL_HOME/.config/live-mode/settings" || true
+  case ${PATCHBAY_APP:-mixbay+qpwgraph} in mixbay+qpwgraph|mixbay|qpwgraph|mosquito-patchbay) ;; *) PATCHBAY_APP=mixbay+qpwgraph ;; esac
+  [[ $ROUTING_TOOL == no ]] && return 0
+
+  local spec key addr
+  local -a missing=()
+  while IFS= read -r spec; do
+    [[ -n $spec ]] || continue
+    key="${spec%%|*}"
+    if patchbay_spec_running "${spec#*|}"; then
+      patchbay_mark "$PATCHBAY_SEEN" "$key"
+    elif patchbay_in "$PATCHBAY_SEEN" "$key" && ! patchbay_in "$PATCHBAY_CLOSED" "$key"; then
+      missing+=("$spec")
+    fi
+  done < <(patchbay_specs 2>/dev/null)
+
+  addr=$(patchbay_addr)
+  printf '%s\n' "$addr" > "$STATE_DIR/patchbay_addr"
+  (( ${#missing[@]} )) || return 0
+  [[ $quiet == quiet ]] && return 0
+
+  for spec in "${missing[@]}"; do
+    key="${spec%%|*}"
+    if ask_close "$key"; then
+      patchbay_mark "$PATCHBAY_CLOSED" "$key"
+      ok "$key closed for this Live session."
+    else
+      printf '%s\n' "$spec" | patchbay_relaunch
+      patchbay_place
+    fi
+  done
+}
+
+# Hyprland event socket: how the close is heard the moment it happens instead
+# of up to 5 s later.
+hypr_event_socket(){
+  local base="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/hypr" sig="${HYPRLAND_INSTANCE_SIGNATURE:-}" f
+  if [[ -n $sig && -S "$base/$sig/.socket2.sock" ]]; then
+    printf '%s\n' "$base/$sig/.socket2.sock"
+    return 0
   fi
+  for f in "$base"/*/.socket2.sock; do
+    [[ -S $f ]] && { printf '%s\n' "$f"; return 0; }
+  done
+  return 1
+}
+
+# patchbay_event_loop — one question per window close, at the moment it is
+# closed. Started only when socat and the socket are there; the 5 s pass still
+# records without asking, so nothing is lost if an event is missed.
+patchbay_event_loop(){
+  local sock line
+  sock=$(hypr_event_socket) || return 0
+  command -v socat >/dev/null 2>&1 || return 0
+  socat -U - "UNIX-CONNECT:$sock" 2>/dev/null | while IFS= read -r line; do
+    [[ $line == closewindow\>\>* ]] || continue
+    # Let Hyprland finish the close before reading the client list.
+    sleep 0.15
+    patchbay_watch
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -440,12 +482,26 @@ patchbay_watch() {
   done
 ) &
 
+# Window closes are heard on the compositor's event socket (a question at the
+# moment of the close) when socat and the socket exist; the 5 s pass then only
+# records, so two confirmation overlays can never race each other.
+PATCHBAY_EVENTS=0
+if hypr_event_socket >/dev/null 2>&1 && command -v socat >/dev/null 2>&1; then
+  PATCHBAY_EVENTS=1
+  patchbay_event_loop &
+fi
+
 while is_active; do
   thermal_control
   reassert_state
-  patchbay_watch
+  if (( PATCHBAY_EVENTS )); then
+    patchbay_watch quiet
+  else
+    patchbay_watch
+  fi
   sleep "$INTERVAL"
 done
 
-# The guard is a child of this process; do not outlive the session.
+# The guards are children of this process; do not outlive the session.
 pkill -P $$ -f "sleep 0.4" 2>/dev/null || true
+pkill -P $$ -f "socat -U - UNIX-CONNECT" 2>/dev/null || true

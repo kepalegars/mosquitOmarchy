@@ -22,7 +22,8 @@ plugin.
 ## Settings
 
 `~/.config/live-mode/settings`, one `KEY=value` per line. Every key is optional and
-absent means "off", except `THERMAL_LIMIT_C` which keeps its default.
+absent means "off", except the keys marked **on by default** and `THERMAL_LIMIT_C`,
+which keeps its default.
 
 | Key | Effect |
 |---|---|
@@ -31,8 +32,11 @@ absent means "off", except `THERMAL_LIMIT_C` which keeps its default.
 | `CLOSE_APPS_LIST` | which ones, `\|`-separated so names with spaces work. Default: `Superwhisper` |
 | `RELAUNCH_APPS` | **opt-in** — start the apps the session closed again on deactivation (default `no`) |
 | `DISABLE_PASSWORDLESS_SUDO` | **on by default** — at activation, install the scoped `live-mode-root` grant and delete every broad `NOPASSWD: ALL` drop-in. One way: nothing restores them. |
-| `PIPEWIRE_AUTOLOCK` | **on by default** — start the PipeWire Settings widget locked during live mode. `no` leaves the values editable; `L` locks/unlocks either way. || `ROUTING_TOOL` | park the audio mixer/patchbay in the scratchpad for the session |
+| `PIPEWIRE_AUTOLOCK` | **on by default** — start the PipeWire Settings widget locked during live mode. `no` leaves the values editable; `L` locks/unlocks either way. |
+| `LOCK_OUTPUT_VOLUME` | **on by default** — keep a Mixbay-managed interface's output volume exclusive to Mixbay (hardware & UI) for the session. It overrides Mixbay's own choice; needs Levels Guard. |
+| `ROUTING_TOOL` | park the audio mixer/patchbay in the scratchpad for the session |
 | `PATCHBAY_APP` | which scratchpad audio app(s): `mixbay+qpwgraph` (both, the default, opened tiled side by side), `mixbay`, `qpwgraph` or `mosquito-patchbay` |
+| `MOVE_AUDIO` | **on by default** — release the Ableton Move's audio interface when the session starts (it is fixed at 44.1 kHz and would pin the live graph). The previous devices/rate come back; deactivation never re-selects the Move. Needs Mixbay's Move profile; the row is greyed without it. |
 | `POWER_PROFILE_PROMPT` | ask before the session takes the performance profile back after a hand change (default yes; no = silent forcing) |
 | `NO_GAPS` | remove the Hyprland gaps for the session |
 | `SILENCE_NOTIFICATIONS` | suppress notifications for the session (the pre-session DND state is restored) |
@@ -61,10 +65,16 @@ and the missing one is started in the same pass.
 
 The Live theme is applied **before** the apps: a theme set retints and reloads
 the desktop, and anything started earlier is what made the switch look like it
-arrived last. If one of the two apps is closed during the session it stays
-closed (closing one is a choice); losing **both** raises the "close them for
-this session?" question once — a later relaunch follows the scratchpad/workspace
-choice activation made.
+arrived last.
+
+Closing **any** of them asks right away — *"Close mixbay for this Live session?"*
+The question arrives with the close, because Hyprland does not let a script
+veto a window close: it is read from the compositor's event socket (the 5 s
+thermal pass only records), so it is immediate rather than up to 5 s late.
+"Yes" keeps that app closed for the session and stops counting it; "No" puts
+it straight back, in the same place activation chose (scratchpad or the
+current workspace). The old version waited until **none** were left, which is
+not what closing one means.
 
 The installer **always installs qpwgraph when it is missing** (via the usual
 one-question password prompt), so the slot is never half empty.
@@ -114,6 +124,16 @@ values start editable.
 **L** locks the values immediately, and when locked it asks before unlocking:
 the confirmation replaces the widget's interface inside the same panel (no
 resize). `off` restores the pre-live force/pin state and the persisted config.
+
+## Output volume lock
+
+With `LOCK_OUTPUT_VOLUME` on, the session reserves a Mixbay-managed interface's
+output volume for the hardware and Mixbay's own UI: the media keys and the
+Omarchy audio panel cannot move it, exactly like Mixbay's *hardware & UI
+exclusive* setting, whatever `ui.json` currently says. Mixbay greys its own row
+and shows the lock while the session runs. Without Levels Guard nothing can
+enforce the lock, so the Live Manager greys the row out with `(needs Levels
+Guard)`.
 
 ## Passwordless sudo
 

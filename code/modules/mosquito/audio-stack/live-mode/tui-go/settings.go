@@ -58,6 +58,18 @@ type Settings struct {
 	// mode. ON by default; turning it off leaves the values editable and the
 	// user can still lock them with L.
 	PipewireAutolock bool
+	// LockOutputVolume keeps a managed interface's output volume exclusive to
+	// Mixbay (hardware & UI) for the whole session. ON by default; it overrides
+	// Mixbay's own free/exclusive preference, and needs Levels Guard to block
+	// the native surfaces.
+	LockOutputVolume bool
+	// MoveAudio releases the Ableton Move's USB audio interface when the
+	// session starts. ON by default, and the default is the useful one: the
+	// Move is fixed at 44.1 kHz, so a desk that pinned it would drag the whole
+	// graph (and the Live session) to 44.1 kHz. Releasing it puts the previous
+	// devices and rate back; it is never re-selected on deactivation — that is
+	// the Move watcher's job, not a session's side effect.
+	MoveAudio bool
 }
 
 func defaultSettings() Settings {
@@ -75,6 +87,8 @@ func defaultSettings() Settings {
 		RelaunchApps:            false,
 		DisablePasswordlessSudo: true,
 		PipewireAutolock:        true,
+		LockOutputVolume:        true,
+		MoveAudio:               true,
 	}
 }
 
@@ -144,6 +158,12 @@ func loadSettings() Settings {
 	if v, ok := kv["PIPEWIRE_AUTOLOCK"]; ok {
 		s.PipewireAutolock = v != "no"
 	}
+	if v, ok := kv["LOCK_OUTPUT_VOLUME"]; ok {
+		s.LockOutputVolume = v != "no"
+	}
+	if v, ok := kv["MOVE_AUDIO"]; ok {
+		s.MoveAudio = v != "no"
+	}
 	return s
 }
 
@@ -168,7 +188,9 @@ func saveSettings(s Settings) error {
 		"FENCE_PACKAGES=\"" + boolVal(s.FencePackages) + "\"\n" +
 		"RELAUNCH_APPS=\"" + boolVal(s.RelaunchApps) + "\"\n" +
 		"DISABLE_PASSWORDLESS_SUDO=\"" + boolVal(s.DisablePasswordlessSudo) + "\"\n" +
-		"PIPEWIRE_AUTOLOCK=\"" + boolVal(s.PipewireAutolock) + "\"\n"
+		"PIPEWIRE_AUTOLOCK=\"" + boolVal(s.PipewireAutolock) + "\"\n" +
+		"LOCK_OUTPUT_VOLUME=\"" + boolVal(s.LockOutputVolume) + "\"\n" +
+		"MOVE_AUDIO=\"" + boolVal(s.MoveAudio) + "\"\n"
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
@@ -215,6 +237,40 @@ func patchbayLabel(v string) string {
 // lookPath is exec.LookPath behind a variable so tests can stub the machine
 // without touching PATH.
 var lookPath = exec.LookPath
+
+// levelsGuardInstalled says whether the Levels Guard helper is on this machine.
+// Without it nothing blocks the native volume surfaces, so the live lock row
+// is greyed out instead of promising a lock it cannot enforce.
+var levelsGuardInstalled = queryLevelsGuardInstalled
+
+func queryLevelsGuardInstalled() bool {
+	if _, err := lookPath("levels-guard"); err == nil {
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if _, err := os.Stat(filepath.Join(home, ".local", "bin", "levels-guard")); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// moveAudioInstalled says whether Mixbay's Move profile (move-audio) is on this
+// machine. Without it there is nothing to release, so the row is greyed instead
+// of claiming a session action nothing can perform.
+var moveAudioInstalled = queryMoveAudioInstalled
+
+func queryMoveAudioInstalled() bool {
+	if _, err := lookPath("move-audio"); err == nil {
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if _, err := os.Stat(filepath.Join(home, ".local", "bin", "move-audio")); err == nil {
+			return true
+		}
+	}
+	return false
+}
 
 func haveMixbay() bool {
 	if _, err := lookPath("mosquito-mixbay"); err == nil {

@@ -87,29 +87,86 @@ func TestAllAppsUseFilledOrHollowCircle(t *testing.T) {
 	}
 }
 
-// The security hardening and the PipeWire lock are on by default, and only an
-// explicit "no" turns them off.
+// The security hardening, the PipeWire lock and the output-volume lock are on
+// by default, and only an explicit "no" turns them off.
 func TestPasswordlessSudoAndPipewireLockDefaultOnAndPersist(t *testing.T) {
 	s := defaultSettings()
-	if !s.DisablePasswordlessSudo || !s.PipewireAutolock {
-		t.Fatalf("defaults = sudo %v / pipewire lock %v, want both on", s.DisablePasswordlessSudo, s.PipewireAutolock)
+	if !s.DisablePasswordlessSudo || !s.PipewireAutolock || !s.LockOutputVolume {
+		t.Fatalf("defaults = sudo %v / pipewire lock %v / volume lock %v, want all on",
+			s.DisablePasswordlessSudo, s.PipewireAutolock, s.LockOutputVolume)
 	}
 	path := isolateSettings(t)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("DISABLE_PASSWORDLESS_SUDO=\"no\"\nPIPEWIRE_AUTOLOCK=\"no\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("DISABLE_PASSWORDLESS_SUDO=\"no\"\nPIPEWIRE_AUTOLOCK=\"no\"\nLOCK_OUTPUT_VOLUME=\"no\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	got := loadSettings()
-	if got.DisablePasswordlessSudo || got.PipewireAutolock {
+	if got.DisablePasswordlessSudo || got.PipewireAutolock || got.LockOutputVolume {
 		t.Fatalf("explicit no ignored: %+v", got)
 	}
 	if err := saveSettings(got); err != nil {
 		t.Fatal(err)
 	}
 	got = loadSettings()
-	if got.DisablePasswordlessSudo || got.PipewireAutolock {
+	if got.DisablePasswordlessSudo || got.PipewireAutolock || got.LockOutputVolume {
 		t.Fatalf("round trip flipped: %+v", got)
+	}
+}
+
+// The Move's interface is released by default when a session starts: the Move
+// is fixed at 44.1 kHz and must not drag the live graph (and Live) with it.
+// Only an explicit "no" keeps it selected.
+func TestMoveAudioReleasedByDefaultAndPersists(t *testing.T) {
+	if !defaultSettings().MoveAudio {
+		t.Fatal("MOVE_AUDIO must default to on (release the Move at activation)")
+	}
+	path := isolateSettings(t)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("MOVE_AUDIO=\"no\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if loadSettings().MoveAudio {
+		t.Fatal("MOVE_AUDIO=no read as release-on")
+	}
+	s := defaultSettings()
+	s.MoveAudio = false
+	if err := saveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	if loadSettings().MoveAudio {
+		t.Fatal("MOVE_AUDIO=no lost on round trip")
+	}
+}
+
+// The live output-volume lock is only offered when Levels Guard can enforce it.
+func TestVolumeLockRowNeedsLevelsGuard(t *testing.T) {
+	old := levelsGuardInstalled
+	t.Cleanup(func() { levelsGuardInstalled = old })
+	levelsGuardInstalled = func() bool { return false }
+	if it := volumeLockItem(true); !it.Disabled || !strings.Contains(it.Suffix, "needs Levels Guard") {
+		t.Fatalf("row without the guard = %+v", it)
+	}
+	levelsGuardInstalled = func() bool { return true }
+	if it := volumeLockItem(true); it.Disabled || it.Suffix != "" {
+		t.Fatalf("row with the guard = %+v", it)
+	}
+}
+
+// Releasing the Move is only a real action when Mixbay's Move profile (the
+// move-audio helper) is installed; without it the row must not pretend.
+func TestMoveAudioRowNeedsTheMoveProfile(t *testing.T) {
+	old := moveAudioInstalled
+	t.Cleanup(func() { moveAudioInstalled = old })
+	moveAudioInstalled = func() bool { return false }
+	if it := moveAudioItem(true); !it.Disabled || !strings.Contains(it.Suffix, "Move profile") {
+		t.Fatalf("row without the profile = %+v", it)
+	}
+	moveAudioInstalled = func() bool { return true }
+	if it := moveAudioItem(true); it.Disabled || it.Suffix != "" {
+		t.Fatalf("row with the profile = %+v", it)
 	}
 }

@@ -91,6 +91,7 @@ load_settings() {
   RELAUNCH_APPS=no
   DISABLE_PASSWORDLESS_SUDO=yes
   PIPEWIRE_AUTOLOCK=yes
+  MOVE_AUDIO=yes
   FENCE_PACKAGES=no
   [[ -f $CONFIG_FILE ]] && source "$CONFIG_FILE" || true
 
@@ -118,6 +119,10 @@ load_settings() {
   # On by default: only an explicit "no" keeps broad passwordless sudo.
   [[ $DISABLE_PASSWORDLESS_SUDO == no ]] || DISABLE_PASSWORDLESS_SUDO=yes
   [[ $PIPEWIRE_AUTOLOCK == no ]] || PIPEWIRE_AUTOLOCK=yes
+  # On by default: release the Ableton Move's interface for the session. The
+  # Move is fixed at 44.1 kHz; leaving it selected would pin the whole graph
+  # (and the session) there. Only an explicit "no" keeps it.
+  [[ $MOVE_AUDIO == no ]] || MOVE_AUDIO=yes
   # The fence inverts that rule on purpose — see above.
   [[ $FENCE_PACKAGES == yes ]] || FENCE_PACKAGES=no
 }
@@ -249,6 +254,14 @@ manager_single_instance_gate() {
 # where the matches are the Exec basename and StartupWMClass, lowercased. The
 # fixed process-name table this replaces missed every app installed outside it.
 app_catalog() {
+  # Built once per run: the prompt and the actual close both need it, and
+  # scanning every .desktop file twice cost a second before the confirmation
+  # card even appeared.
+  [[ -n ${APP_CATALOG:-} ]] || APP_CATALOG="$(_app_catalog_build)"
+  printf '%s\n' "$APP_CATALOG"
+}
+
+_app_catalog_build() {
   local dirs=() d f
   dirs+=("${XDG_DATA_HOME:-$HOME/.local/share}/applications")
   IFS=: read -r -a _xdg_dirs <<< "${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
@@ -313,23 +326,30 @@ app_selected() {
 # Print "pid<TAB>app name" for each running menu app whose executable or WM
 # class matches the catalog entry. The process is identified by /proc/<pid>/comm
 # too, because pgrep -a prints the full argv (wrappers change argv[0]).
+#
+# Lookup table, not a nested loop: the catalog was walked once per process
+# (hundreds × hundreds of entries), 1.4 s per call on this machine, twice
+# before the activation prompt even appeared.
 _running_menu_apps() {
-  local catalog pid rest base comm name matches m
+  local catalog pid rest base comm name
   catalog="$(app_catalog)"
   [[ -n $catalog ]] || return 0
+  declare -A tok=()
+  while IFS=$'\t' read -r name matches _exec; do
+    [[ -n $name ]] || continue
+    for m in $matches; do tok["$m"]="$name"; done
+  done <<< "$catalog"
   while read -r pid rest; do
     [[ -n $pid && -n $rest ]] || continue
-    base="$(basename -- "${rest%% *}")"; base="${base,,}"
-    comm="$(cat "/proc/$pid/comm" 2>/dev/null || true)"; comm="${comm,,}"
-    while IFS=$'\t' read -r name matches _exec; do
-      [[ -n $name ]] || continue
-      for m in $matches; do
-        if [[ $base == "${m,,}" || $comm == "${m,,}" ]]; then
-          printf '%s\t%s\n' "$pid" "$name"
-          break
-        fi
-      done
-    done <<< "$catalog"
+    base="${rest%% *}"; base="${base##*/}"; base="${base,,}"
+    name="${tok[$base]:-}"
+    if [[ -z $name ]]; then
+      # /proc/<pid>/comm only when argv[0] did not match: a fork per process
+      # otherwise, and nearly every entry already matches on its executable.
+      comm="$(cat "/proc/$pid/comm" 2>/dev/null || true)"; comm="${comm,,}"
+      name="${tok[$comm]:-}"
+    fi
+    [[ -n $name ]] && printf '%s\t%s\n' "$pid" "$name"
   done < <(pgrep -a -u "$REAL_USER" 2>/dev/null || true)
 }
 
@@ -661,7 +681,6 @@ PATCHBAY_ADDR_FILE="$STATE_DIR/patchbay_addr"
 # watchdog reads it so a relaunch goes to the same place activation chose.
 PATCHBAY_TARGET_FILE="$STATE_DIR/patchbay_target"
 PATCHBAY_PREEXISTED="$STATE_DIR/patchbay_preexisting"
-PATCHBAY_CLOSED_FLAG="$STATE_DIR/patchbay_closed_this_session"
 
 special_clients() {
   # Lists scratchpad clients as "address|class|initial_title|pid".
@@ -829,20 +848,15 @@ patchbay_launch_missing() {
 
 snapshot_scratchpad() {
   : > "$PATCHBAY_ADDR_FILE"
-  # rm, NOT `: >`. This flag means "the user closed the patchbay for THIS
-  # session" and the watchdog sets it only after asking. Truncating it CREATED
-  # an empty file, and every check for it is `[[ -f ... ]]` — so the flag read
-  # as "already closed" at the very start of every single activation.
-  # open_routing_tool() then returned 2 (skipped) before it ever looked for
-  # qpwgraph, the patchbay was never launched or parked, and nothing was
-  # printed: the feature was dead on every run and silent about it.
-  rm -f "$PATCHBAY_CLOSED_FLAG"
   rm -f "$PATCHBAY_PREEXISTED"
   # Per-session state: a previous session that died without restoring must not
   # make this one think it owes a gap toggle — same for the power-profile
   # question, which re-arms every session — nor relaunch apps it never closed.
+  # Seen/closed provider lists are per session too: a provider closed last
+  # night must be launched (and offered) again tonight.
   rm -f "$GAPS_WERE_ON_FLAG" "$STATE_DIR/profile_asked" "$CLOSED_APPS_RECORD"
-  rm -f "$PATCHBAY_TARGET_FILE" "$STATE_DIR/patchbay_have"
+  rm -f "$PATCHBAY_TARGET_FILE" "$STATE_DIR/patchbay_have" \
+        "$STATE_DIR/patchbay_seen" "$STATE_DIR/patchbay_closed"
   special_clients > "$SCRATCHPAD_SNAPSHOT"
 }
 
@@ -906,12 +920,6 @@ open_patchbay() {
     return 0
   fi
 
-  # The user closed the patchbay during a PREVIOUS session and asked not to be
-  # bothered again: honour that, but only if the flag actually carries content.
-  # Existence alone used to mean "closed", which is the bug above.
-  if [[ -s "$PATCHBAY_CLOSED_FLAG" ]]; then
-    return 2
-  fi
   if ! patchbay_specs >/dev/null 2>&1 || [[ -z $(patchbay_specs 2>/dev/null) ]]; then
     # No provider installed. Say so and say how to fix it: a silently missing
     # patchbay reads as "live mode just does not do that any more".
@@ -996,7 +1004,7 @@ restore_scratchpad() {
       }
     fi
   done < "$PATCHBAY_ADDR_FILE" 2>/dev/null || true
-  : > "$PATCHBAY_ADDR_FILE"; : > "$SCRATCHPAD_SNAPSHOT"; rm -f "$PATCHBAY_CLOSED_FLAG"
+  : > "$PATCHBAY_ADDR_FILE"; : > "$SCRATCHPAD_SNAPSHOT"
 }
 
 
@@ -1327,6 +1335,35 @@ restore_previous_theme() {
   drop_live_theme_link
 }
 
+# release_move_audio — hand the graph back if the Ableton Move is the chosen
+# interface. The Move is fixed at 44.1 kHz and the watcher pins the graph to it;
+# a live session runs at its own rate, so the Move must let go BEFORE the
+# session snapshots and forces the PipeWire values. Deactivation never
+# re-selects the Move: that is the watcher's decision, not a side effect of
+# ending a session. Helper absent = nothing to release.
+release_move_audio() {
+  [[ $MOVE_AUDIO == no ]] && return 0
+  local helper
+  for helper in "$REAL_HOME/.local/bin/move-audio" "$(command -v move-audio 2>/dev/null || true)"; do
+    [[ -n $helper && -x $helper ]] || continue
+    if "$helper" --release >/dev/null 2>&1; then
+      ok "Ableton Move interface released for the session."
+    fi
+    return 0
+  done
+  return 0
+}
+
+# wait_theme_left_live — bounded wait for the detached theme restore to land.
+wait_theme_left_live() {
+  local i
+  for i in $(seq 1 30); do
+    [[ "$(theme_current)" != "$LIVE_THEME_NAME" ]] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 # Theme / background default keybinds, blocked for the session
 #
@@ -1542,6 +1579,7 @@ cmd_on() {
   # 5. Independent cosmetic/setup steps concurrently.
   [[ $NO_GAPS == yes ]] && { toggle_gaps_off & }
   { [[ $SILENCE_NOTIFICATIONS == yes ]] && force_dnd_on & } >/dev/null 2>&1
+  release_move_audio
   pipewire_live_on
   frame_show &
 
@@ -1618,12 +1656,6 @@ cmd_off() {
   # 1. Stop watchdog
   stop_watchdog
 
-  # 1b. Sleep management off at once: the stay-awake file is what paints the
-  #     red coffee icon, and everything below (theme restore, gap toggle,
-  #     scratchpad teardown) takes seconds. Leaving the icon lit until the end
-  #     is what made it read "the coffee took ten seconds to go away".
-  stop_sleep_management
-
   # 2. Give the theme/background shortcuts back. AFTER stop_watchdog: the
   #    watchdog re-blocks them on every pass, so unblocking first let it
   #    re-unbind between the reload and its own death.
@@ -1634,6 +1666,13 @@ cmd_off() {
 
   # 4. Restore the theme that was in use before activation
   restore_previous_theme
+
+  # 4b. The coffee icon stops WHEN the desktop leaves the Live theme. It is the
+  #     session's own indicator: dropping it earlier left it gone while the red
+  #     theme was still on screen, and dropping it at the very end made it blink
+  #     seconds after the switch. The restore is detached, so wait on its result.
+  wait_theme_left_live
+  stop_sleep_management
 
   # 5. Notifications back to the state the session found. Forcing DND on is
   #    ours to undo; an already-on DND was the user's own setting.
