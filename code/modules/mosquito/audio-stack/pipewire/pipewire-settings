@@ -141,7 +141,19 @@ cmd_show(){
   local live=false autolock=true
   live_mode_active && live=true
   [[ -f $LIVE_SETTINGS ]] && grep -q '^PIPEWIRE_AUTOLOCK="no"' "$LIVE_SETTINGS" && autolock=false
-  printf '"live":%s,"autolock":%s}\n' "$live" "$autolock"
+
+  # The Ableton Move is fixed at 44.1 kHz. While it is the selected interface
+  # (default sink OR source, set by Mixbay's Move profile) the two values stay
+  # locked, exactly like live mode: changing them would fight the card. It is
+  # the STATE that decides, not the profile being installed, so a released or
+  # unplugged Move leaves the panel editable again.
+  local move_locked=false st dsr
+  st="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/move-audio-state"
+  if [[ -s $st ]] && command -v pactl >/dev/null 2>&1; then
+    dsr="$( { pactl get-default-sink 2>/dev/null; pactl get-default-source 2>/dev/null; } || true )"
+    grep -qi 'move' <<<"$dsr" && move_locked=true
+  fi
+  printf '"live":%s,"autolock":%s,"move_locked":%s}\n' "$live" "$autolock" "$move_locked"
 }
 
 # Pin min = default = max, then set force/unforce. The triple is what makes an

@@ -30,20 +30,111 @@ GUARD = '''  readonly property bool inputMuted: inputViaWpctl ? UntypedInput.mut
   readonly property bool levelsGuardManagedInput: levelsGuardManagedInterface(source && source.name, "alsa_input.usb-")
   readonly property bool levelsGuardBlockOutput: levelsGuardManagedOutput && !levelsGuardAllowNative
   readonly property bool levelsGuardBlockInput: levelsGuardManagedInput && !levelsGuardAllowNative
+
+  // levels-guard live lock: Live Mode's LOCK_OUTPUT_VOLUME (on unless "no")
+  // reserves the output volume for hardware & UI while a session is active,
+  // overriding Mixbay's own free/exclusive preference.
+  property bool levelsGuardPrefsAllow: true
+  property bool levelsGuardLiveActive: false
+  property bool levelsGuardLiveLock: true
+  function levelsGuardRefreshAllow() {
+    root.levelsGuardAllowNative = root.levelsGuardPrefsAllow
+      && !(root.levelsGuardLiveActive && root.levelsGuardLiveLock)
+  }
+
+  // levels-guard hero subtitle: the live PipeWire clock (sample rate / quantum)
+  // tells more about the graph than a mood name. force-* wins when set.
+  property int levelsGuardRate: 0
+  property int levelsGuardQuantum: 0
+  property int levelsGuardForceRate: 0
+  property int levelsGuardForceQuantum: 0
+  readonly property string levelsGuardClock: {
+    var rate = levelsGuardForceRate > 0 ? levelsGuardForceRate : levelsGuardRate
+    var frames = levelsGuardForceQuantum > 0 ? levelsGuardForceQuantum : levelsGuardQuantum
+    if (rate <= 0 || frames <= 0) return "—"
+    var khz = rate % 1000 === 0 ? String(rate / 1000) : String(Math.round(rate / 100) / 10)
+    return khz + "kHz / " + frames + "spls"
+  }
+  Process {
+    id: levelsGuardClockProbe
+    running: false
+    command: ["pw-metadata", "-n", "settings", "0"]
+    stdout: SplitParser {
+      onRead: function(line) {
+        var m = /key:'([^']+)' value:'([^']*)'/.exec(String(line))
+        if (!m) return
+        var value = parseInt(m[2], 10) || 0
+        if (m[1] === "clock.rate") root.levelsGuardRate = value
+        else if (m[1] === "clock.quantum") root.levelsGuardQuantum = value
+        else if (m[1] === "clock.force-rate") root.levelsGuardForceRate = value
+        else if (m[1] === "clock.force-quantum") root.levelsGuardForceQuantum = value
+      }
+    }
+  }
+  Timer {
+    interval: 5000
+    repeat: true
+    running: root.opened
+    triggeredOnStart: true
+    onTriggered: if (!levelsGuardClockProbe.running) levelsGuardClockProbe.running = true
+  }
+
   FileView {
     id: levelsGuardPrefs
     path: Quickshell.env("HOME") + "/.config/mosquitomixbay/ui.json"
     watchChanges: true
     printErrors: false
     onLoaded: {
-      var allow = false
+      var allow = true
       try {
         var o = JSON.parse(text())
-        allow = !!(o && o.allow_native_volume)
+        if (o && o.allow_native_volume === false) allow = false
       } catch (e) {}
-      root.levelsGuardAllowNative = allow
+      root.levelsGuardPrefsAllow = allow
+      root.levelsGuardRefreshAllow()
     }
-    onLoadFailed: root.levelsGuardAllowNative = false
+    onLoadFailed: {
+      root.levelsGuardPrefsAllow = true
+      root.levelsGuardRefreshAllow()
+    }
+    onFileChanged: reload()
+  }
+  FileView {
+    id: levelsGuardLiveState
+    path: Quickshell.env("HOME") + "/.local/state/live-mode/active"
+    watchChanges: true
+    printErrors: false
+    onLoaded: {
+      root.levelsGuardLiveActive = String(text()).trim() !== ""
+      root.levelsGuardRefreshAllow()
+    }
+    onLoadFailed: {
+      root.levelsGuardLiveActive = false
+      root.levelsGuardRefreshAllow()
+    }
+    onFileChanged: reload()
+  }
+  FileView {
+    id: levelsGuardLivePrefs
+    path: Quickshell.env("HOME") + "/.config/live-mode/settings"
+    watchChanges: true
+    printErrors: false
+    onLoaded: {
+      var lock = true
+      var lines = String(text()).split(String.fromCharCode(10))
+      for (var i = 0; i < lines.length; i++) {
+        var eq = lines[i].indexOf("=")
+        if (eq <= 0 || lines[i].slice(0, eq).trim() !== "LOCK_OUTPUT_VOLUME") continue
+        lock = lines[i].slice(eq + 1).trim().replace(/^["']|["']$/g, "") !== "no"
+        break
+      }
+      root.levelsGuardLiveLock = lock
+      root.levelsGuardRefreshAllow()
+    }
+    onLoadFailed: {
+      root.levelsGuardLiveLock = true
+      root.levelsGuardRefreshAllow()
+    }
     onFileChanged: reload()
   }
 '''
@@ -79,6 +170,21 @@ INSERTIONS = [
 ]
 
 REPLACEMENTS = [
+    (
+        '''  onOpenedChanged: {
+    if (opened) {
+      refreshDisplayAudioModels()
+''',
+        '''  onOpenedChanged: {
+    if (opened) {
+      // levels-guard: ui.json and live-mode state may have changed while the
+      // panel was closed, and their watchers do not fire for every case.
+      levelsGuardPrefs.reload()
+      levelsGuardLiveState.reload()
+      levelsGuardLivePrefs.reload()
+      refreshDisplayAudioModels()
+''',
+    ),
     (
         '''    // A hardware output is its own volume sink, as omarchy-audio-output-sink
     // reports without looking further, so only a DSP sink needs the script.
@@ -130,10 +236,9 @@ REPLACEMENTS = [
   }
 ''',
         '''  function outputVolumeName(volume, muted) {
-    // The hero subtitle under the Audio title: the level is not a PipeWire
-    // value on a managed interface, so say who owns it.
-    if (levelsGuardManagedOutput) return "handled by mixbay"
-    return Model.outputVolumeName(volume, muted, Commons.I18n.t)
+    // The hero subtitle under the Audio title: PipeWire's current rate and
+    // quantum, refreshed by levelsGuardClockProbe while the panel is open.
+    return root.levelsGuardClock
   }
 ''',
     ),

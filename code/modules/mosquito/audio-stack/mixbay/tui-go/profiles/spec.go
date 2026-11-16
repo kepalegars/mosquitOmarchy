@@ -33,6 +33,7 @@ const (
 	SetupOscmix = "oscmix"  // RME CC-mode cards: huddx01/oscmix (GTK + Qt)
 	SetupDouze  = "douze"   // Solid State Logic SSL 12 control
 	SetupEvoRaw = "evo-raw" // Audient EVO: evo_raw kmod + capture helper
+	SetupMove   = "move"    // Ableton Move: the 44.1 kHz audio switch helper
 )
 
 // Foundation is the optional per-card part of the audio foundation. Absent
@@ -149,7 +150,7 @@ var foundationNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 func ValidID(id string) bool { return idPattern.MatchString(id) }
 
 // Presets is the closed set of UI block compositions this build renders.
-var Presets = []string{"evo8", "evo4", "ugm192", "single-pair", "auto"}
+var Presets = []string{"evo8", "evo4", "ugm192", "single-pair", "move", "auto"}
 
 // Blocks is the closed set of reusable mixbay UI blocks a card may compose.
 // A preset chooses a default composition; ui.blocks documents the card's
@@ -179,7 +180,7 @@ func validBlock(b string) bool {
 
 // Setups is the closed set of card-specific integrations this build can run
 // after a download. Empty means the card needs none.
-var Setups = []string{"", SetupOscmix, SetupDouze, SetupEvoRaw}
+var Setups = []string{"", SetupOscmix, SetupDouze, SetupEvoRaw, SetupMove}
 
 func validSetup(s string) bool {
 	for _, v := range Setups {

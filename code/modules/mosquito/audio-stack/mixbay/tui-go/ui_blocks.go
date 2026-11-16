@@ -26,6 +26,7 @@ var presetBlockSets = map[string][]string{
 	"evo8":   {"tabBar", "controlsGrid", "mixerGrid", "levelsColumns", "statusBar", "help"},
 	"evo4":   {"tabBar", "controlsGrid", "mixerGrid", "levelsColumns", "statusBar", "help"},
 	"ugm192": {"tabBar", "controlsSingle", "levelsColumns", "statusBar", "help"}, "single-pair": {"controlsSingle", "statusBar", "help"},
+	"move": {"levelsColumns", "statusBar", "help"},
 	"auto": {"controlsGrid", "statusBar", "help"},
 }
 

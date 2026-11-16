@@ -51,7 +51,7 @@ func mustNativeSpec(id string) Spec {
 // the registry: cards are installed from the store (seeded on first read), so
 // they can be uninstalled like any community profile.
 func nativeSpecs() []Spec {
-	return []Spec{EVO8Spec, EVO4Spec, FirefaceSpec, UGM192Spec, SSL12Spec}
+	return []Spec{EVO8Spec, EVO4Spec, FirefaceSpec, UGM192Spec, SSL12Spec, MoveSpec}
 }
 
 // localSpecs reads installed cards from the profile store.

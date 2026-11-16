@@ -284,6 +284,12 @@ func cliCardsConnected(args []string) int {
 		if !ok {
 			if m, found := installedByName(c.Name + " " + c.Match); found {
 				rows = append(rows, row{Key: c.Key, ID: m.ID, Display: m.Display, Version: m.Version, Kind: "installed", Supported: true})
+			} else if nc, found := nativeMatch(c.Name + " " + c.Match); found {
+				// A card that ships inside the binary is installable without
+				// the network: offer it like a repo profile instead of calling
+				// it unsupported. This is what makes the Move visible (and
+				// installable) at the moment it is plugged in.
+				rows = append(rows, row{Key: c.Key, ID: nc.Spec.ID, Display: nc.Spec.Display, Version: nc.Spec.Version, Kind: "install", Supported: true})
 			} else if all {
 				rows = append(rows, row{Key: c.Key, ID: c.Key, Display: c.Name, Kind: "unsupported"})
 			}
@@ -300,6 +306,20 @@ func cliCardsConnected(args []string) int {
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
 	return printJSON(rows)
+}
+
+// nativeMatch resolves a connected card against the cards embedded in the
+// binary (the ones an offline install can still deploy).
+func nativeMatch(name string) (profiles.Card, bool) {
+	n := strings.ToLower(name)
+	for _, c := range profiles.NativeCards() {
+		for _, m := range c.Spec.CardMatch {
+			if m != "" && strings.Contains(n, strings.ToLower(m)) {
+				return c, true
+			}
+		}
+	}
+	return profiles.Card{}, false
 }
 
 // installedByName resolves a card against the local profiles, longest display

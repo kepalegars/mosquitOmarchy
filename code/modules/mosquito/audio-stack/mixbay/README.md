@@ -335,10 +335,10 @@ déconnexion ne bascule **jamais** l'écran en DEMO.
 Le 48V bascule immédiatement (comme evotui). Sur EVO 4 le bus loopback est
 unique (`MIX 3|4`, capture USB CH3/4) ; sur EVO 8 les deux bus sont nommés
 `MIX 1|2` et `MIX 3|4`. L'écran Settings filtre les interfaces non connectées
-et propose **Control active audio interface volume with keyboard** (défaut :
-off), réglable seulement quand le plugin `mosquito.levels-guard` est installé et
-activé ; sans lui la ligne est grisée et figée sur on, puisque rien ne bloque
-les touches natives. La version du script est épinglée en haut à gauche.
+et propose **Audio interface output volume controls** (défaut : *free*),
+réglable seulement quand le plugin `mosquito.levels-guard`
+est installé et activé ; sans lui la ligne est grisée et figée sur *free*,
+puisque rien ne bloque les touches natives. La version du script est épinglée en haut à gauche.
 
 Trois volumes différents ne doivent pas être confondus :
 
@@ -618,11 +618,16 @@ dans le graphe vivant.
   watcher installé par le setup envoie une notification `Mixbay` même quand
   la TUI est fermée. Une carte **non supportée** est aussi signalée, comme
   telle (`not supported by Mixbay yet`), sans proposition d'installation. Le
-  clic ouvre/focus Mixbay ; si le profil manque, Mixbay l'installe (import +
-  intégration). Mixbay ouvert, le texte est un simple
-  « … connected — handled by Mixbay. » ; fermé, il ajoute que le clic ouvre
-  Mixbay (et installe le profil s'il manque). Le service systemd
+  texte est le même que Mixbay soit ouvert ou non. Le clic ouvre/focus Mixbay
+  et va directement sur la page de la carte ; si le profil manque, Mixbay
+  l'installe (import + intégration) puis ouvre la page. L'avis de profil
+  manquant reste affiché (critique, sans timeout) jusqu'à ce que l'utilisateur
+  le ferme ou clique dessus. Le service systemd
   `mixbay-card-watcher.service` (user) reste actif entre deux sessions.
+- **Notify when an interface is disconnected** (actif par défaut) : même
+  watcher, pour le débranchement. Indépendant de l'option ci-dessus ; une
+  carte retirée envoie `<carte> disconnected.`. Grisé quand la détection ou
+  le watcher est coupé.
 - **Card watcher** : `Always on` (par défaut), `Only when Mixbay is open`, ou
   `Off`. En `Off`, les deux options ci-dessus sont grisées et affichées
   `off` ; leurs valeurs sont conservées et reviennent à la réactivation.
@@ -677,17 +682,23 @@ Mixbay seul ne touche ni au panneau audio d'Omarchy ni aux touches média.
 Sur une interface gérée, le panneau remplace le slider par une barre pleine
 non ajustable (100 %), sans bouton ; le mètre de crête d'entrée reste réel.
 
-Le réglage **Control active audio interface volume with keyboard** (Settings)
-écrit `allow_native_volume` dans `ui.json` ; le panneau le relit à chaud. Il est
-grisé et figé sur on tant que `mosquito.levels-guard` n'est pas actif (rien ne
-bloque alors les touches natives). Quand il est actif et que l'interface
+Le réglage **Audio interface output volume controls** (Settings) écrit
+`allow_native_volume` dans `ui.json` ; le panneau le relit à chaud. `free`
+laisse les touches et les autres surfaces piloter le volume ; *hardware &
+UI exclusive* réserve le volume matériel à Mixbay. Il est grisé et figé sur
+*free* tant que `mosquito.levels-guard` n'est pas actif (rien ne bloque alors
+les touches natives). Pendant une session Live Mode dont `LOCK_OUTPUT_VOLUME`
+est actif (défaut), Live Mode prime : la ligne affiche *hardware & UI
+exclusive* pour la durée de la session (sans grisage, la valeur enregistrée
+n'est pas modifiée). Quand il est actif et que l'interface
 sélectionnée en sortie est gérée par Mixbay, les touches de volume pilotent son
 volume matériel (par pas de 5 dB, ±1 dB avec ALT) et la sourdine via
 `mosquito-mixbay-actions`, avec l'OSD au niveau résultant. Sur une interface
-gérée, le panneau affiche l'icône de volume maximum et le sous-titre « handled
-by mixbay » à la place du niveau PipeWire. La garde ne bloque que ces
+gérée, le panneau affiche l'icône de volume maximum. Le sous-titre du panneau
+donne le clock PipeWire courant (`48kHz / 1024spls`, rafraîchi tant que le
+panneau est ouvert) à la place des anciens libellés d'humeur. La garde ne bloque que ces
 surfaces : `pactl`/`wpctl` directs et les applications ne sont jamais
-interceptés. Avec le réglage sur off, une touche bloquée affiche quand même
+interceptés. Avec *hardware & UI exclusive*, une touche bloquée affiche quand même
 l'OSD avec son icône et 100 %, mais la barre de niveau vide (0 %).
 Si le panneau upstream change,
 la mise à jour refuse de rafraîchir le clone (supprimer le dossier, ou

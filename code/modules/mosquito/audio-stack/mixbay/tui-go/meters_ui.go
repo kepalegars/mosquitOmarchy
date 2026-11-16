@@ -138,7 +138,7 @@ func (m model) wantsMeters() bool {
 	if m.quit || !m.session.live || !m.status.Online {
 		return false
 	}
-	if m.isUGMDevice() {
+	if m.isUGMDevice() || m.isMoveDevice() {
 		return m.top() == scrControls
 	}
 	if !m.isEvoDevice() {
@@ -310,7 +310,7 @@ func evoPlaybackBarsFor(spec drivers.Spec) []evoMeterBar {
 }
 
 func (m model) meterStatus() (string, int) {
-	if !m.isEvoDevice() && !m.isUGMDevice() {
+	if !m.isEvoDevice() && !m.isUGMDevice() && !m.isMoveDevice() {
 		return "Meters need the live USB streams.", cYellow
 	}
 	if !m.session.live || !m.status.Online {

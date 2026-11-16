@@ -24,8 +24,8 @@ func testHome(t *testing.T) {
 
 func TestNativeCardsAreValid(t *testing.T) {
 	cards := NativeCards()
-	if len(cards) != 5 {
-		t.Fatalf("native cards = %d, want 5", len(cards))
+	if len(cards) != 6 {
+		t.Fatalf("native cards = %d, want 6", len(cards))
 	}
 	for _, c := range cards {
 		if errs := Errors(Validate(c)); len(errs) > 0 {
@@ -473,5 +473,92 @@ func TestLegacyBetaMigration(t *testing.T) {
 	}
 	if _, _, err := Effective("beta-lab"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A card that ships in the binary installs offline and without waiting on the
+// repo: the Move gets its profile the moment it is plugged in, even with no
+// network. An installed card still takes the repo path (updates).
+func TestImportNativeCardNeedsNoNetwork(t *testing.T) {
+	testHome(t)
+	t.Setenv("MIXBAY_PROFILES_URL", "http://127.0.0.1:1")
+	res, err := Import(context.Background(), []string{"move"})
+	if err != nil {
+		t.Fatalf("offline import: %v", err)
+	}
+	if len(res) != 1 || res[0].Err != nil {
+		t.Fatalf("results = %+v", res)
+	}
+	if res[0].Updated {
+		t.Fatal("fresh install must not be reported as an update")
+	}
+	if _, err := os.Stat(upstreamFile("move")); err != nil {
+		t.Fatalf("card not on disk: %v", err)
+	}
+	if err := Remove("move"); err != nil {
+		t.Fatal(err)
+	}
+	res, err = Import(context.Background(), []string{"move"})
+	if err != nil || len(res) != 1 || res[0].Err != nil {
+		t.Fatalf("re-import after remove = %+v, %v", res, err)
+	}
+	if _, err := os.Stat(upstreamFile("move")); err != nil {
+		t.Fatalf(".removed was not cleared: %v", err)
+	}
+}
+
+// Uninstalling the Move profile must release its audio pin before the helper is
+// deleted, otherwise the graph stays at 44.1 kHz with nothing left to undo it.
+func TestRemoveMoveReleasesFirst(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MIXBAY_CONFIG_DIR", filepath.Join(home, ".config", "mosquitomixbay"))
+	bin := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(home, "released")
+	helper := filepath.Join(bin, "move-audio")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nprintf '%s' \"$1\" > "+marker+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := InstallNative("move"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Remove("move"); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(marker); err != nil || string(b) != "--release" {
+		t.Fatalf("helper was not released before removal (marker %q, %v)", b, err)
+	}
+	if _, err := os.Stat(helper); !os.IsNotExist(err) {
+		t.Fatal("helper survived the uninstall")
+	}
+}
+
+// Two profiles for the same box are duplicates by USB identity even when their
+// display names differ; the same vendor with another product is not.
+func TestDuplicatesByUSBIdentity(t *testing.T) {
+	testHome(t)
+	mk := func(id, display, pid string) {
+		c := Card{SchemaVersion: SchemaVersion, Spec: Spec{
+			ID: id, Display: display, Vendor: "Ableton", USBVID: "2982", USBPID: pid,
+			NumInputs: 2, NumOutPairs: 1, VolMin: -64, Version: "v1",
+			Backend: BackendALSA, CardMatch: []string{display},
+		}, UI: map[string]any{"preset": "auto"}}
+		if err := DeployCard(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("move-a", "Ableton Move", "1958")
+	mk("move-b", "Move Audio", "1958")
+	mk("move-c", "Move Something Else", "1960")
+	dups := Duplicates()
+	if len(dups) != 1 {
+		t.Fatalf("duplicates = %+v, want one pair", dups)
+	}
+	if !(dups[0].KeepID == "move-a" && dups[0].RemoveID == "move-b") &&
+		!(dups[0].KeepID == "move-b" && dups[0].RemoveID == "move-a") {
+		t.Fatalf("wrong pair: %+v", dups[0])
 	}
 }

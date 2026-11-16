@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -119,6 +120,13 @@ func EnsureSeeded() {
 		if !ValidID(id) {
 			continue
 		}
+		// The Move ships in the binary but is not installed by default: it is
+		// offered when the card is plugged in, and the library lists it under
+		// Available. Installing it for everyone would make "uninstall" the
+		// only half of the lifecycle that works.
+		if id == "move" {
+			continue
+		}
 		if _, err := os.Stat(upstreamFile(id)); err == nil {
 			continue
 		}
@@ -144,6 +152,38 @@ func EnsureSeeded() {
 			Version: c.Spec.Version, Source: "preinstalled",
 		})
 	}
+}
+
+// InstallNative (re)installs a shipped card from the binary. It is the
+// offline counterpart of a repo import: the card is already in the build, so
+// installing one never needs the network — and an uninstalled card keeps a
+// .removed marker that this clears.
+func InstallNative(id string) (Card, bool, error) {
+	c, ok := NativeCard(id)
+	if !ok {
+		return Card{}, false, fmt.Errorf("no built-in profile %q", id)
+	}
+	was := false
+	if _, err := os.Stat(upstreamFile(id)); err == nil {
+		was = true
+	}
+	if err := os.MkdirAll(filepath.Dir(upstreamFile(id)), 0o755); err != nil {
+		return Card{}, was, err
+	}
+	if err := writeFileAtomic(upstreamFile(id), Encode(c)); err != nil {
+		return Card{}, was, err
+	}
+	best := readMeta(id)
+	if best.InstalledAt.IsZero() {
+		best.InstalledAt = time.Now().UTC()
+	}
+	best.ID, best.Display, best.Vendor = id, c.Spec.Display, c.Spec.Vendor
+	best.Version, best.Native, best.Source = c.Spec.Version, true, "preinstalled"
+	if err := writeMeta(id, best); err != nil {
+		return Card{}, was, err
+	}
+	_ = os.Remove(removedFile(id))
+	return c, was, nil
 }
 
 // LocalCards returns every installed card (shipped or downloaded), sorted by
@@ -318,6 +358,13 @@ func Remove(id string) error {
 	if err := os.RemoveAll(cardDir(id)); err != nil {
 		return err
 	}
+	// A profile that also deployed a helper must take it with it, from every
+	// uninstall path (library, CLI, a script). The Move's helper is the only
+	// one today: leaving it behind would keep its notices alive after the card
+	// page is gone.
+	if id == "move" {
+		removeMoveHelper()
+	}
 	if IsNative(id) {
 		if err := os.MkdirAll(cardDir(id), 0o755); err != nil {
 			return err
@@ -460,4 +507,25 @@ func Encode(c Card) []byte {
 	enc.SetEscapeHTML(false)
 	_ = enc.Encode(c)
 	return buf.Bytes()
+}
+
+// removeMoveHelper drops what the Move profile deployed outside the store. It
+// releases first: uninstalling while the Move is the selected interface must
+// put the graph and its defaults back, or the 44.1 kHz pin would outlive the
+// only helper able to undo it.
+func removeMoveHelper() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	helper := filepath.Join(home, ".local", "bin", "move-audio")
+	if _, err := os.Stat(helper); err == nil {
+		_ = exec.Command(helper, "--release").Run()
+	}
+	_ = os.Remove(helper)
+	state := os.Getenv("XDG_STATE_HOME")
+	if state == "" {
+		state = filepath.Join(home, ".local", "state")
+	}
+	_ = os.Remove(filepath.Join(state, "mosquitomarchy", "move-audio-state"))
 }

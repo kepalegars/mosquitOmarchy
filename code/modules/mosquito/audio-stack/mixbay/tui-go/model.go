@@ -100,10 +100,12 @@ type model struct {
 	// hotplug is the "a supported card was just connected" path: a PipeWire
 	// event, not a timer. key is the last connected set and offered keeps one
 	// prompt per profile per session. pending defers the check while a dialog
-	// owns the keyboard; pendingInstallID comes from a notification click.
+	// owns the keyboard; pendingInstallID / pendingCardID come from a
+	// notification click and wait for that same dialog to close.
 	hotplugKey       string
 	hotplugPending   bool
 	pendingInstallID string
+	pendingCardID    string
 	offeredProfiles  map[string]bool
 
 	// library is Settings → Audio interface profiles. The index is cached in
@@ -167,11 +169,14 @@ func initialModel() model {
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		fetchStatus(m.deviceID), tuikit.ThemeWatchCmd(), evoDotBlinkTick(),
-		evoPollTick(m.pollGen), trackConnectionsCmd(), cardEventCmd(), installSignalCmd(),
+		evoPollTick(m.pollGen), trackConnectionsCmd(), cardEventCmd(), cardSignalCmd(),
 	}
 	// A notification clicked while Mixbay was closed left its request here.
 	if id := takePendingInstall(); id != "" {
 		cmds = append(cmds, func() tea.Msg { return installRequestMsg{id: id} })
+	}
+	if id := takePendingOpen(); id != "" {
+		cmds = append(cmds, func() tea.Msg { return cardOpenMsg{id: id} })
 	}
 	return tea.Batch(cmds...)
 }
@@ -187,6 +192,32 @@ func trackConnectionsCmd() tea.Cmd {
 		_ = exec.Command("mixbay-audio-foundation", "--track").Run()
 		return connectionsTrackedMsg{}
 	}
+}
+
+// openCard jumps straight to an installed card's control page, whether Mixbay
+// was opened by the notification click or already running on another screen.
+func (m model) openCard(id string) (tea.Model, tea.Cmd) {
+	if _, _, err := profiles.Effective(id); err != nil {
+		m.toast, _ = m.toast.SetWarn(id + " is not installed")
+		return m, nil
+	}
+	m.deviceID = id
+	m.bindPreset()
+	m.session.selectDevice()
+	m.status = drivers.Status{}
+	if m.meter != nil {
+		m.meter.Stop()
+		m.meter = nil
+	}
+	m.meterStarting = false
+	m.meterSnap = meters.Snapshot{}
+	m.meterPeakIn, m.meterPeakOut = [evoMaxMeterChannels]float64{}, [evoMaxMeterChannels]float64{}
+	m.meterFrozen = false
+	m.evo.spec = drivers.Spec{}
+	m.evo.window = evoWinControls
+	m.nav = []screen{scrDevices, scrControls}
+	m.syncPicker()
+	return m, fetchStatus(id)
 }
 func (m model) top() screen { return m.nav[len(m.nav)-1] }
 
@@ -236,9 +267,9 @@ type uiPrefs struct {
 	Listed string `json:"listed,omitempty"`
 	// ArtistMixOff keeps OUT 1|2 and OUT 3|4 unified (one mirrored mix).
 	ArtistMixOff bool `json:"artist_mix_off"`
-	// AllowNativeVolume is the "Control active audio interface volume with
-	// keyboard" row: true lets Levels Guard drive the selected interface's
-	// hardware volume through Mixbay. Default false: the media keys are blocked.
+	// AllowNativeVolume is the "Audio interface output volume controls" row:
+	// true is "free" (media keys and other surfaces may move the hardware
+	// volume); false is "hardware & UI exclusive" (Mixbay owns it).
 	AllowNativeVolume bool `json:"allow_native_volume"`
 	// LaunchAtStartup and LaunchInScratchpad default to true on a fresh
 	// install (the foundation/startup helper reads the same file).
@@ -252,6 +283,9 @@ type uiPrefs struct {
 	// back on restores the previous choices instead of resetting them.
 	DetectCards bool `json:"detect_cards"`
 	NotifyCards bool `json:"notify_cards"`
+	// NotifyDisconnected is its own switch: going away is less interesting
+	// than a missing profile for many users, but still on by default.
+	NotifyDisconnected bool `json:"notify_disconnected"`
 	// WatcherMode is "always", "only_open" or "off". "off" forces the two
 	// rows above to read off (and be inert) without touching their values.
 	WatcherMode string `json:"watcher_mode"`
@@ -294,6 +328,9 @@ func nextWatcher(v string) string {
 func (p uiPrefs) watcherOff() bool { return p.WatcherMode == watcherOff }
 func (p uiPrefs) detects() bool    { return !p.watcherOff() && p.DetectCards }
 func (p uiPrefs) notifies() bool   { return p.detects() && p.NotifyCards }
+func (p uiPrefs) notifiesDisconnected() bool {
+	return p.detects() && p.NotifyDisconnected
+}
 
 func listedLabel(v string) string {
 	switch v {
@@ -326,7 +363,7 @@ func loadUIPrefs() uiPrefs {
 	p := uiPrefs{
 		Listed: listedConnected, LaunchAtStartup: true, LaunchInScratchpad: true,
 		HandleExternalWindows: true, DetectCards: true, NotifyCards: true,
-		WatcherMode: watcherAlways,
+		NotifyDisconnected: true, AllowNativeVolume: true, WatcherMode: watcherAlways,
 	}
 	data, err := os.ReadFile(uiPrefsFile())
 	if err != nil {
@@ -361,6 +398,14 @@ func loadUIPrefs() uiPrefs {
 	}
 	if _, ok := raw["notify_cards"]; !ok {
 		p.NotifyCards = true
+	}
+	if _, ok := raw["notify_disconnected"]; !ok {
+		p.NotifyDisconnected = true
+	}
+	// "hardware & UI exclusive" is opt-in: media keys stay free unless the
+	// user (or Live Mode) locks them.
+	if _, ok := raw["allow_native_volume"]; !ok {
+		p.AllowNativeVolume = true
 	}
 	if p.WatcherMode != watcherAlways && p.WatcherMode != watcherOpen && p.WatcherMode != watcherOff {
 		p.WatcherMode = watcherAlways
@@ -439,7 +484,7 @@ func (m model) shouldPoll() bool {
 	if !m.focused {
 		return false
 	}
-	if m.isUGMDevice() {
+	if m.isUGMDevice() || m.isMoveDevice() {
 		return m.top() == scrControls
 	}
 	return m.isEvoDevice() && m.evo.mode == 0 &&
@@ -600,17 +645,47 @@ func queryLevelsGuardEnabled() bool {
 	return false
 }
 
+// liveVolumeLock reports whether a live session currently reserves the output
+// volume for hardware & UI: Live Mode's LOCK_OUTPUT_VOLUME (on unless "no")
+// while ~/.local/state/live-mode/active exists. It overrides Mixbay's row.
+func liveVolumeLock() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(home, ".local", "state", "live-mode", "active")); err != nil {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".config", "live-mode", "settings"))
+	if err != nil {
+		return true
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, val, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && strings.TrimSpace(key) == "LOCK_OUTPUT_VOLUME" {
+			return strings.Trim(strings.TrimSpace(val), `"'`) != "no"
+		}
+	}
+	return true
+}
+
 func (m model) settingsItems() []tuikit.PickerItem {
-	// Without Levels Guard nothing blocks the native surfaces, so keyboard
-	// control is always on and the row only explains why it cannot change.
+	// Without Levels Guard nothing blocks the native surfaces, so control is
+	// always free and the row only explains why it cannot change. A live
+	// session with Live Mode's output lock shows the forced value instead of
+	// greying the row: the choice stays stored, it just cannot win right now.
 	guard := levelsGuardEnabled()
+	lock := liveVolumeLock() && guard
 	native := tuikit.PickerItem{
-		Display: "Control active audio interface volume with keyboard: " + onOff(!guard || m.ui.AllowNativeVolume),
+		Display: "Audio interface output volume controls: " + volumeControlLabel(!guard || m.ui.AllowNativeVolume),
 		Value:   "allow_native",
 	}
-	if !guard {
+	switch {
+	case lock:
+		native.Display = "Audio interface output volume controls: " + volumeControlLabel(false)
+	case !guard:
 		native.Disabled = true
-		native.Suffix = "  (always on without Levels Guard)"
+		native.Suffix = "  (always free without Levels Guard)"
 	}
 	// The square mirrors mosquitomarchy: it blinks while a repo check runs and
 	// stays solid while an installed card has a newer version to download.
@@ -624,11 +699,14 @@ func (m model) settingsItems() []tuikit.PickerItem {
 	// off, while their stored choices wait for the switch to come back.
 	detect := tuikit.PickerItem{Display: "Detect plugged cards: " + onOff(m.ui.detects()), Value: "detect_cards"}
 	notify := tuikit.PickerItem{Display: "Notify when an interface is connected: " + onOff(m.ui.notifies()), Value: "notify_cards"}
+	notifyGone := tuikit.PickerItem{Display: "Notify when an interface is disconnected: " + onOff(m.ui.notifiesDisconnected()), Value: "notify_disconnected"}
 	if m.ui.watcherOff() {
 		detect.Disabled = true
 		notify.Disabled = true
+		notifyGone.Disabled = true
 	} else if !m.ui.DetectCards {
 		notify.Disabled = true
+		notifyGone.Disabled = true
 	}
 	return []tuikit.PickerItem{
 		profilesRow,
@@ -640,6 +718,7 @@ func (m model) settingsItems() []tuikit.PickerItem {
 		{Display: "Let Mixbay handle external windows: " + onOff(m.ui.HandleExternalWindows), Value: "external_windows"},
 		detect,
 		notify,
+		notifyGone,
 		{Display: "Card watcher: " + watcherLabel(m.ui.WatcherMode), Value: "watcher_mode"},
 		{Display: "Add an audio interface", Value: "add_interface"},
 		{Display: "Back", Value: "back"},
@@ -651,6 +730,13 @@ func onOff(b bool) string {
 		return "on"
 	}
 	return "off"
+}
+
+func volumeControlLabel(free bool) string {
+	if free {
+		return "free"
+	}
+	return "hardware & UI exclusive"
 }
 
 func dbFmt(v float64) string {
@@ -800,7 +886,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !m.modalOpen() {
 		if id := m.pendingInstallID; id != "" {
 			m.pendingInstallID = ""
-			next, c := m.startInstall([]string{id})
+			next, c := m.startInstall([]string{id}, id)
+			m = next.(model)
+			cmd = tea.Batch(cmd, c)
+		} else if id := m.pendingCardID; id != "" {
+			m.pendingCardID = ""
+			next, c := m.openCard(id)
 			m = next.(model)
 			cmd = tea.Batch(cmd, c)
 		} else if m.hotplugPending {
@@ -894,8 +985,15 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Downloaded cards that need their own integration (oscmix, evo-raw,
 		// douze) run them now, one at a time in the real terminal. The audio
 		// foundation waits until the card has been connected once.
+		var focus tea.Cmd
+		if msg.focusID != "" {
+			focus = cardOpenCmd(msg.focusID)
+		}
 		if len(msg.setupIDs) > 0 {
-			return m, setupChain(msg.setupIDs, nil)
+			return m, setupChain(msg.setupIDs, focus)
+		}
+		if focus != nil {
+			return m, focus
 		}
 		if msg.checkDups {
 			if dups := profiles.Duplicates(); len(dups) > 0 {
@@ -984,11 +1082,14 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
-	case installRequestedMsg:
+	case cardRequestedMsg:
 		// The notification click found Mixbay already running.
-		cmds := []tea.Cmd{installSignalCmd()}
+		cmds := []tea.Cmd{cardSignalCmd()}
 		if id := takePendingInstall(); id != "" {
 			cmds = append(cmds, func() tea.Msg { return installRequestMsg{id: id} })
+		}
+		if id := takePendingOpen(); id != "" {
+			cmds = append(cmds, func() tea.Msg { return cardOpenMsg{id: id} })
 		}
 		return m, tea.Batch(cmds...)
 
@@ -1000,7 +1101,17 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingInstallID = msg.id
 			return m, nil
 		}
-		return m.startInstall([]string{msg.id})
+		return m.startInstall([]string{msg.id}, msg.id)
+
+	case cardOpenMsg:
+		if msg.id == "" {
+			return m, nil
+		}
+		if m.modalOpen() {
+			m.pendingCardID = msg.id
+			return m, nil
+		}
+		return m.openCard(msg.id)
 
 	case hotplugMsg:
 		if !msg.ok || msg.key == m.hotplugKey {
@@ -1022,7 +1133,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.confirmAct = func() tea.Cmd {
 				return tea.Sequence(
 					func() tea.Msg { return libraryBusyMsg{what: "Installing " + id + "…"} },
-					libraryImportCmd([]string{id}, false),
+					libraryImportCmd([]string{id}, false, ""),
 				)
 			}
 			m.push(scrConfirm)
@@ -1402,6 +1513,10 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.isEvoDevice() && (m.top() == scrControls || m.top() == scrMixer) {
 		return m, m.evoKey(k)
 	}
+	// The Move has only meters: no controls to edit.
+	if m.isMoveDevice() && m.top() == scrControls {
+		return m, m.moveKey(k)
+	}
 	// The UGM192 has its own single-panel frame (volume/mute + meters).
 	if m.isUGMDevice() && m.top() == scrControls {
 		return m, m.ugmKey(k)
@@ -1626,8 +1741,12 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.pop()
 				return m, nil
 			case "allow_native":
+				if liveVolumeLock() {
+					m.toast, _ = m.toast.SetWarn("Output volume is locked by Live Mode")
+					return m, nil
+				}
 				if !levelsGuardEnabled() {
-					m.toast, _ = m.toast.SetWarn("Keyboard control is always on without Levels Guard")
+					m.toast, _ = m.toast.SetWarn("Volume controls are always free without Levels Guard")
 					return m, nil
 				}
 				m.ui.AllowNativeVolume = !m.ui.AllowNativeVolume
@@ -1653,6 +1772,10 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "notify_cards":
 				if !m.ui.watcherOff() && m.ui.DetectCards {
 					m.ui.NotifyCards = !m.ui.NotifyCards
+				}
+			case "notify_disconnected":
+				if !m.ui.watcherOff() && m.ui.DetectCards {
+					m.ui.NotifyDisconnected = !m.ui.NotifyDisconnected
 				}
 			case "watcher_mode":
 				m.ui.WatcherMode = nextWatcher(m.ui.WatcherMode)

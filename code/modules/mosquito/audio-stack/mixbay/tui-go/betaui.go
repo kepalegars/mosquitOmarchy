@@ -204,13 +204,19 @@ func pendingInstallFile() string {
 	return filepath.Join(profiles.ConfigDir(), "pending-install.json")
 }
 
-// takePendingInstall consumes the request, so one click installs once.
-func takePendingInstall() string {
-	data, err := os.ReadFile(pendingInstallFile())
+// pendingOpenFile is the same hand-off for a card that is already installed:
+// the click only has to land on its page, not download anything.
+func pendingOpenFile() string {
+	return filepath.Join(profiles.ConfigDir(), "pending-open.json")
+}
+
+// takePending consumes one click request, so it runs exactly once.
+func takePending(path string) string {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	_ = os.Remove(pendingInstallFile())
+	_ = os.Remove(path)
 	var req struct {
 		ID string `json:"id"`
 	}
@@ -220,21 +226,31 @@ func takePendingInstall() string {
 	return req.ID
 }
 
+// takePendingInstall consumes the request, so one click installs once.
+func takePendingInstall() string { return takePending(pendingInstallFile()) }
+
+// takePendingOpen consumes a "show this card" request.
+func takePendingOpen() string { return takePending(pendingOpenFile()) }
+
 // installRequestMsg starts the profile install a notification click asked for.
 type installRequestMsg struct{ id string }
 
-// installSignal is SIGUSR1 from mixbay-startup --install-card: Mixbay is
-// already open, so a new process cannot be launched to pick the file up.
-var installSignal = make(chan os.Signal, 1)
+// cardOpenMsg lands on an installed card's page.
+type cardOpenMsg struct{ id string }
 
-func init() { signal.Notify(installSignal, syscall.SIGUSR1) }
+// cardSignal is SIGUSR1 from mixbay-startup --install-card/--open-card:
+// Mixbay is already open, so a new process cannot be launched to pick the
+// request file up.
+var cardSignal = make(chan os.Signal, 1)
 
-type installRequestedMsg struct{}
+func init() { signal.Notify(cardSignal, syscall.SIGUSR1) }
 
-func installSignalCmd() tea.Cmd {
+type cardRequestedMsg struct{}
+
+func cardSignalCmd() tea.Cmd {
 	return func() tea.Msg {
-		<-installSignal
-		return installRequestedMsg{}
+		<-cardSignal
+		return cardRequestedMsg{}
 	}
 }
 

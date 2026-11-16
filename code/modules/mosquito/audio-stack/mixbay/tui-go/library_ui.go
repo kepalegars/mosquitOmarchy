@@ -42,6 +42,9 @@ type libraryApplyMsg struct {
 	// in order (one terminal setup at a time).
 	setupIDs []string
 	id       string
+	// focusID is the card page to open once the install (and its integration)
+	// finishes; only notification clicks set it.
+	focusID string
 }
 
 type libraryUninstallMsg struct {
@@ -53,6 +56,12 @@ type libraryUninstallMsg struct {
 // a multi-step install runs (backup, then download).
 type libraryBusyMsg struct{ what string }
 
+// cardOpenCmd is the notification click's final step: show the installed
+// card's control page once there is nothing left to install.
+func cardOpenCmd(id string) tea.Cmd {
+	return func() tea.Msg { return cardOpenMsg{id: id} }
+}
+
 func libraryIndexCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
@@ -62,7 +71,7 @@ func libraryIndexCmd() tea.Cmd {
 	}
 }
 
-func libraryImportCmd(ids []string, replaceUI bool) tea.Cmd {
+func libraryImportCmd(ids []string, replaceUI bool, focusID string) tea.Cmd {
 	return func() tea.Msg {
 		if replaceUI {
 			// Back up before touching anything: a failed copy must abort the
@@ -106,7 +115,7 @@ func libraryImportCmd(ids []string, replaceUI bool) tea.Cmd {
 		if len(failed) > 0 {
 			what += "; failed " + strings.Join(failed, ", ")
 		}
-		msg := libraryApplyMsg{what: what, err: err, checkDups: err == nil && len(ids) == 1, id: ids[0]}
+		msg := libraryApplyMsg{what: what, err: err, checkDups: err == nil && len(ids) == 1, id: ids[0], focusID: focusID}
 		for _, r := range res {
 			if r.Err == nil && r.Setup != "" {
 				msg.setupIDs = append(msg.setupIDs, r.ID)
@@ -338,6 +347,28 @@ func (m model) availableItems() []tuikit.PickerItem {
 			Value:   "repo:" + ic.ID,
 		})
 	}
+	// Cards embedded in the binary but not published in the repo (the Move)
+	// are installable too, and without the network: this is where they show
+	// up, so "uninstall" is not a one-way door.
+	for _, c := range profiles.NativeCards() {
+		if _, _, err := profiles.Effective(c.Spec.ID); err == nil {
+			continue
+		}
+		if _, inRepo := m.libraryIndex.Card(c.Spec.ID); inRepo {
+			continue
+		}
+		if !m.libraryMatch(c.Spec.Display, c.Spec.ID, c.Spec.Vendor) {
+			continue
+		}
+		mark := "○"
+		if m.libraryChecked[c.Spec.ID] {
+			mark = "●"
+		}
+		items = append(items, tuikit.PickerItem{
+			Display: fmt.Sprintf("%s %-30s %-8s", mark, c.Spec.Display, c.Spec.Version),
+			Value:   "native:" + c.Spec.ID,
+		})
+	}
 	if len(items) == 0 {
 		msg := "  no other profile in the repo"
 		if m.libraryFilterText != "" {
@@ -457,12 +488,13 @@ func (m model) libraryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, m.promptDuplicate(d)
 				}
 			}
-		case m.libraryTab == libAvailable && strings.HasPrefix(val, "repo:"):
+		case m.libraryTab == libAvailable &&
+			(strings.HasPrefix(val, "repo:") || strings.HasPrefix(val, "native:")):
 			ids := m.actionIDs()
 			if len(ids) == 0 {
 				return m, nil
 			}
-			return m.startInstall(ids)
+			return m.startInstall(ids, "")
 		case m.libraryTab == libInstalled && strings.HasPrefix(val, "card:"):
 			return m.updateCursor()
 		}
@@ -489,7 +521,7 @@ func (m model) actionIDs() []string {
 		return ids
 	}
 	val := m.picker.SelectedValue()
-	for _, prefix := range []string{"card:", "repo:"} {
+	for _, prefix := range []string{"card:", "repo:", "native:"} {
 		if strings.HasPrefix(val, prefix) {
 			return []string{strings.TrimPrefix(val, prefix)}
 		}
@@ -520,7 +552,7 @@ func (m model) updateCursor() (tea.Model, tea.Cmd) {
 		m.toast, _ = m.toast.SetOK(id + " is already up to date")
 		return m, nil
 	}
-	return m.startInstall([]string{id})
+	return m.startInstall([]string{id}, "")
 }
 
 // promptUpstream warns that this update bypasses the published index: the
@@ -540,8 +572,9 @@ func (m model) promptUpstream(inst, up profiles.Card) (tea.Model, tea.Cmd) {
 }
 
 // startInstall imports the cards, first offering to back up any local layout
-// the repo layout is about to replace.
-func (m model) startInstall(ids []string) (tea.Model, tea.Cmd) {
+// the repo layout is about to replace. focusID is the card page to reveal once
+// the install completes (notification clicks); empty keeps the current screen.
+func (m model) startInstall(ids []string, focusID string) (tea.Model, tea.Cmd) {
 	sort.Strings(ids)
 	var local []string
 	for _, id := range ids {
@@ -553,7 +586,7 @@ func (m model) startInstall(ids []string) (tea.Model, tea.Cmd) {
 		m.libraryChecked = map[string]bool{}
 		m.libraryLoading = true
 		m.toast, _ = m.toast.SetOK("Installing " + strings.Join(ids, ", ") + "…")
-		return m, libraryImportCmd(ids, false)
+		return m, libraryImportCmd(ids, false, focusID)
 	}
 	var b strings.Builder
 	if len(local) == 1 {
@@ -569,7 +602,7 @@ func (m model) startInstall(ids []string) (tea.Model, tea.Cmd) {
 			func() tea.Msg {
 				return libraryBusyMsg{what: "Installing " + strings.Join(ids, ", ") + "…"}
 			},
-			libraryImportCmd(ids, true),
+			libraryImportCmd(ids, true, focusID),
 		)
 	}
 	m.push(scrConfirm)
@@ -695,11 +728,51 @@ func (m *model) promptUninstall(ids []string) tea.Cmd {
 			fmt.Fprintf(&b, "  • %s\n", id)
 		}
 	}
-	b.WriteString("\nThis deletes the profile, its local UI overrides, its audio foundation setup (douze, oscmix, split files) and its history entry. A shared integration such as oscmix stays while another installed card still uses it.")
+	b.WriteString("\nThis deletes the profile, its local UI overrides, its audio foundation setup and its history entry.")
+	if notes := uninstallIntegrationNotes(ids); notes != "" {
+		b.WriteString("\n" + notes)
+	}
 	m.confirm = tuikit.NewConfirm(b.String(), "Cancel", "Uninstall")
 	m.confirmAct = func() tea.Cmd { return libraryUninstallCmd(ids) }
 	m.push(scrConfirm)
 	return nil
+}
+
+// uninstallIntegrationNotes names only the integration the selected cards
+// actually use. oscmix is shared by every RME profile: say whether it stays or
+// goes with the last one instead of talking about it for an ESI UGM192.
+func uninstallIntegrationNotes(ids []string) string {
+	removing := map[string]bool{}
+	for _, id := range ids {
+		removing[id] = true
+	}
+	setups := map[string]bool{}
+	for _, id := range ids {
+		if c, _, err := profiles.Effective(id); err == nil && c.Spec.Setup != "" {
+			setups[c.Spec.Setup] = true
+		}
+	}
+	remaining := map[string]bool{}
+	for _, m := range profiles.Installed() {
+		if removing[m.ID] {
+			continue
+		}
+		if c, _, err := profiles.Effective(m.ID); err == nil && c.Spec.Setup != "" {
+			remaining[c.Spec.Setup] = true
+		}
+	}
+	var notes []string
+	if setups["oscmix"] {
+		if remaining["oscmix"] {
+			notes = append(notes, "oscmix is shared with the other installed RME cards and stays installed.")
+		} else {
+			notes = append(notes, "oscmix is removed completely too: no installed card will use it after this.")
+		}
+	}
+	if setups["douze"] {
+		notes = append(notes, "douze is uninstalled too (service, udev rule, PipeWire split and Omarchy360 plugin). SSL 12 mixer state in ~/.config/sslctl is kept.")
+	}
+	return strings.Join(notes, "\n")
 }
 
 // libraryDetail is the info popup: what the card is, its installed and repo

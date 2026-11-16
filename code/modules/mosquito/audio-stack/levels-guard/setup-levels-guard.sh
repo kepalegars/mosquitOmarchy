@@ -9,7 +9,9 @@
 #
 # The Mixbay TUI only writes ~/.config/mosquitomixbay/ui.json
 # (`allow_native_volume`); this script never rewrites an explicit preference.
-# A missing key means false, which is what makes the guard ON on first install.
+# A missing key means free, which is the shipped default (exclusive is opt-in).
+# While a live session runs with LOCK_OUTPUT_VOLUME on (the default), the
+# output volume stays exclusive whatever ui.json says.
 #
 # Usage:
 #   ./setup-levels-guard.sh            install

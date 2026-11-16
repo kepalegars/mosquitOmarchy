@@ -29,6 +29,11 @@ set -uo pipefail
 ABLETON_VENDOR="2982"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy"
 STATE="$STATE_DIR/move-audio-state"
+# Last default devices seen while the Move was NOT selected. The audio panel
+# switches the default before this helper runs, so at --use time the "previous"
+# default can already be the Move itself; the watcher keeps this record so the
+# revert target is the device the panel replaced, not the Move.
+PREV_DEFAULT="$STATE_DIR/move-previous-default"
 APP="Mixbay"
 
 # jq filter: the card/sink/source whose name, ALSA card name or description
@@ -112,6 +117,43 @@ set_rate(){
 st_get(){ sed -n "s/^$1=//p" "$STATE" 2>/dev/null | head -n1; }
 switched(){ [[ -s $STATE ]]; }
 
+# The rate "before" is what the previous default output was RUNNING at, not
+# clock.rate: the graph's configured rate can be 96 kHz while a forced rate (or
+# the card's own clock) keeps everything at 44.1, and then the go-back offer
+# named a rate the user was never at. A forced rate wins; otherwise read the
+# previous sink, and only then fall back to the graph default.
+sink_rate(){
+  [[ -n ${1:-} ]] || return 0
+  pactl -f json list sinks 2>/dev/null \
+    | jq -r --arg n "$1" '.[] | select(.name == $n) | .sample_specification.rate' 2>/dev/null \
+    | head -n1
+}
+current_rate(){
+  local forced
+  forced=$(pw_value clock.force-rate)
+  if [[ -n $forced && $forced != 0 ]]; then printf '%s\n' "$forced"; return 0; fi
+  forced=$(sink_rate "$(pactl get-default-sink 2>/dev/null || true)")
+  [[ -n $forced ]] && { printf '%s\n' "$forced"; return 0; }
+  pw_value clock.rate
+}
+
+# prev_targets <default sink> <default source> -> "sink<TAB>source" to revert
+# to. When the panel already made the Move the default, fall back to the last
+# non-Move selection the watcher recorded; without that record there is no way
+# to name what was replaced, so the Move is kept (and no go-back is offered).
+prev_targets(){
+  local ps="$1" po="$2" fs fsr
+  if [[ -z $ps || ${ps,,} == *move* ]]; then
+    fs=$(sed -n 's/^sink=//p' "$PREV_DEFAULT" 2>/dev/null | head -n1)
+    fsr=$(sed -n 's/^source=//p' "$PREV_DEFAULT" 2>/dev/null | head -n1)
+    if [[ -n $fs ]]; then
+      ps=$fs
+      [[ -z $po || ${po,,} == *move* ]] && po=$fsr
+    fi
+  fi
+  printf '%s\t%s\n' "$ps" "$po"
+}
+
 restore(){
   local sink source
   sink=$(st_get sink); source=$(st_get source)
@@ -146,17 +188,20 @@ cmd_use(){
     set_rate 44100 1
     return 0
   fi
-  local sink source prev_sink prev_source k
+  local sink source prev_sink prev_source k prev_rate
   sink=$(move_sink)
   source=$(move_source)
-  prev_sink=$(pactl get-default-sink 2>/dev/null || true)
-  prev_source=$(pactl get-default-source 2>/dev/null || true)
+  IFS=$'\t' read -r prev_sink prev_source < <(
+    prev_targets "$(pactl get-default-sink 2>/dev/null || true)" \
+                 "$(pactl get-default-source 2>/dev/null || true)")
+  prev_rate=$(sink_rate "$prev_sink")
+  [[ -n $prev_rate ]] || prev_rate=$(current_rate)
 
   mkdir -p "$STATE_DIR"
   {
     printf 'sink=%s\n' "$prev_sink"
     printf 'source=%s\n' "$prev_source"
-    printf 'rate=%s\n' "$(pw_value clock.rate)"
+    printf 'rate=%s\n' "$prev_rate"
     for k in "${PW_KEYS[@]}"; do
       printf 'pw.%s=%s\n' "$k" "$(pw_value "$k")"
     done
@@ -189,7 +234,8 @@ cmd_status(){
     --argjson switched "$(switched && echo true || echo false)" \
     --arg prev_sink "$(st_get sink)" --arg prev_source "$(st_get source)" \
     --arg prev_rate "$(st_get rate)" \
-    '{usb:$usb,card:$card,switched:$switched,prev_sink:$prev_sink,prev_source:$prev_source,prev_rate:$prev_rate}'
+    --arg current_rate "$(current_rate)" \
+    '{usb:$usb,card:$card,switched:$switched,prev_sink:$prev_sink,prev_source:$prev_source,prev_rate:$prev_rate,current_rate:$current_rate}'
 }
 
 self_test(){
@@ -206,6 +252,12 @@ self_test(){
   [[ "$out" == 48000 ]] || fail=1
   tmp=$(mktemp -d)
   STATE="$tmp/state"
+  PREV_DEFAULT="$tmp/prev"
+  printf 'sink=prev-sink\nsource=prev-source\n' > "$PREV_DEFAULT"
+  out=$(prev_targets "alsa_output.usb-Ableton_Move.sink" "alsa_input.usb-Ableton_Move.source")
+  [[ "$out" == $'prev-sink\tprev-source' ]] || fail=1
+  out=$(prev_targets "alsa_output.pci.sink" "alsa_input.pci.source")
+  [[ "$out" == $'alsa_output.pci.sink\talsa_input.pci.source' ]] || fail=1
   printf 'sink=a\nsource=b\nrate=48000\npw.clock.min-rate=\n' > "$STATE"
   [[ "$(st_get rate)" == 48000 && "$(st_get sink)" == a ]] || fail=1
   switched || fail=1

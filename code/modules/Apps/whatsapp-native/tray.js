@@ -126,6 +126,32 @@ function setMuted(mute) {
   }
 }
 
+// WhatsApp only plays its message chime while the window is NOT focused, so
+// muting the stream whenever it loses focus is what makes notifications
+// silent. Calls share that stream, so they are excluded: WhatsApp opens a
+// capture stream for the microphone only while a call (or a voice note) is
+// running, and that is the one signal reliable enough to check.
+function whatsappMicActive() {
+  try {
+    const outs = JSON.parse(execFileSync('pactl', ['-f', 'json', 'list', 'source-outputs'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    }));
+    return outs.some(so => String(so.properties?.['application.name'] || '').toLowerCase().includes('whatsapp'));
+  } catch {
+    return false;
+  }
+}
+
+function isFocused(win) {
+  if (!win) return false;
+  try {
+    const cur = JSON.parse(hypr('activewindow', '-j'));
+    return String(cur?.address || '') === String(win.address || '');
+  } catch {
+    return false;
+  }
+}
+
 function spawnVisible() {
   lastStart = Date.now();
   launchingUntil = lastStart + 15000;
@@ -223,7 +249,8 @@ function poll() {
   if (win) {
     noWindowSince = 0;
     const ws = String(win.workspace?.name || '');
-    setMuted(ws.startsWith('special:whatsapp'));
+    const silent = ws.startsWith('special:whatsapp') || !isFocused(win);
+    setMuted(silent && !whatsappMicActive());
     return;
   }
   // No window: either Chromium exited (close-to-tray: relaunch it hidden) or

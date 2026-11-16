@@ -40,6 +40,7 @@ import (
 var (
 	FirefaceSpec = mustNativeSpec("fireface-ucx2")
 	UGM192Spec   = mustNativeSpec("ugm192")
+	MoveSpec     = mustNativeSpec("move")
 )
 
 // Quantum ES 4 is a community profile now: it is installed from the repo or

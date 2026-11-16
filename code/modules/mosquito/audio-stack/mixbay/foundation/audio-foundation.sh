@@ -121,6 +121,12 @@ run_card_setup(){
       local s="$MIXBAY_ROOT/../../../Apps/douze/setup-douze.sh"
       [[ -f $s ]] || { warn "douze module not found ($s)"; return 1; }
       bash "$s" -y --update --no-restart ;;
+    move)
+      # The Move profile is the compat helper (44.1 kHz offer, confirmation,
+      # go-back) plus the card page the library already installed.
+      local c="$MIXBAY_ROOT/compat/interface-onboarding.sh"
+      [[ -f $c ]] || { warn "Move profile helper not found ($c)"; return 1; }
+      bash "$c" --apply move ;;
     *)
       warn "unknown card setup: $1" ; return 1 ;;
   esac

@@ -49,6 +49,9 @@ func (m model) View() string {
 		if m.isUGMDevice() {
 			return m.ugmView()
 		}
+		if m.isMoveDevice() {
+			return m.moveView()
+		}
 		titleText := "Controls"
 		if m.status.Spec.Display != "" {
 			titleText = m.status.Spec.Display

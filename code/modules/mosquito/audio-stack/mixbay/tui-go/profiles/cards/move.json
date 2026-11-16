@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "spec": {
+    "id": "move",
+    "display": "Ableton Move",
+    "vendor": "Ableton",
+    "usb_vid": "2982",
+    "num_inputs": 2,
+    "num_output_pairs": 1,
+    "gain_min_db": 0,
+    "gain_max_db": 0,
+    "vol_min_db": -64,
+    "vol_max_db": 0,
+    "mixer_inputs": 2,
+    "mixer_outputs": 2,
+    "has_monitor": false,
+    "backend": "alsa",
+    "needs_kmod": false,
+    "version": "v1.0.0",
+    "caps": {
+      "volume": false,
+      "gain": false,
+      "mute": false,
+      "phantom_48v": false,
+      "monitor_blend": false,
+      "mixer": false
+    },
+    "card_match": [
+      "Ableton Move"
+    ],
+    "setup": "move",
+    "description": "USB audio interface fixed at 44.1 kHz. No software mixer: levels and the 44.1 kHz pin only. Another rate on the same graph can conflict with it."
+  },
+  "credits": {
+    "author": "mosquito"
+  },
+  "ui": {
+    "preset": "move",
+    "blocks": [
+      "levelsColumns",
+      "statusBar",
+      "help"
+    ]
+  },
+  "captures": []
+}

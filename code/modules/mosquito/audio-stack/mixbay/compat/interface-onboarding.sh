@@ -145,6 +145,13 @@ install_move_audio(){
 apply() {
   local dev="$1"
   if [[ $dev == move ]]; then
+    # The Move profile is two halves: the card page in Mixbay (install/uninstall
+    # from the library like any other profile) and the audio helper. Both come
+    # from this module, offline.
+    if command -v mosquito-mixbay-actions >/dev/null 2>&1; then
+      mosquito-mixbay-actions profiles-import move >/dev/null 2>&1 \
+        || warn "could not install the Move card page"
+    fi
     install_move_audio || return 1
     return 0
   fi

@@ -130,10 +130,10 @@ resize). `off` restores the pre-live force/pin state and the persisted config.
 With `LOCK_OUTPUT_VOLUME` on, the session reserves a Mixbay-managed interface's
 output volume for the hardware and Mixbay's own UI: the media keys and the
 Omarchy audio panel cannot move it, exactly like Mixbay's *hardware & UI
-exclusive* setting, whatever `ui.json` currently says. Mixbay greys its own row
-and shows the lock while the session runs. Without Levels Guard nothing can
-enforce the lock, so the Live Manager greys the row out with `(needs Levels
-Guard)`.
+exclusive* setting, whatever `ui.json` currently says. Mixbay switches its own
+row to the exclusive value (no greying, the stored choice is untouched) while
+the session runs. Without Levels Guard nothing can enforce the lock, so the Live
+Manager greys the row out with `(needs Levels Guard)`.
 
 ## Passwordless sudo
 

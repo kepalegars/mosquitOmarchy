@@ -28,6 +28,7 @@ STARTUP="$BIN/mixbay-startup"
 MOVE_AUDIO="$BIN/move-audio"          # Mixbay's Move profile helper
 COMPAT="$BIN/mosquito-mixbay-compat"  # installs/records a profile step
 MOVE_STATE="$CONF/mosquitomixbay/watcher-move"
+MOVE_PREV="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/move-previous-default"
 
 pref(){
   local key="$1" def="$2"
@@ -148,7 +149,13 @@ move_connected(){
   grep -qi 'ableton move' /proc/asound/cards 2>/dev/null
 }
 
-move_installed(){ [[ -x $MOVE_AUDIO ]]; }
+# The audio offer belongs to the Move profile, which is the card page AND the
+# helper: uninstalling the profile in the library must silence it, or "remove"
+# would only hide the page.
+move_installed(){
+  [[ -x $MOVE_AUDIO ]] || return 1
+  "$ACTIONS" profiles-list-local 2>/dev/null | jq -e 'any(.[]; .id == "move")' >/dev/null 2>&1
+}
 
 khz(){
   local r="$1"
@@ -177,21 +184,30 @@ move_notice_connect(){
 
 move_notice_disconnect(){
   move_installed || return 0
-  local prev
-  prev=$("$MOVE_AUDIO" --status 2>/dev/null | jq -r '.prev_rate // empty' 2>/dev/null || true)
-  if command -v omarchy-notification-send >/dev/null 2>&1; then
-    if [[ -n $prev && $prev != 0 && $prev != 44100 ]]; then
-      omarchy-notification-send --app-name Mixbay -g "$ICON_CARD_OFF" \
-        "Ableton Move disconnected" "Go back to $(khz "$prev")kHz?" \
-        --action "Go back" "$MOVE_AUDIO" --revert >/dev/null 2>&1 || true
-    elif [[ -n $prev && $prev == 44100 ]]; then
-      omarchy-notification-send --app-name Mixbay -g "$ICON_CARD_OFF" \
-        "Ableton Move disconnected" "The sample rate stays at 44.1kHz." >/dev/null 2>&1 || true
-    else
-      omarchy-notification-send --app-name Mixbay -g "$ICON_CARD_OFF" \
-        "Ableton Move disconnected" "It was not selected as the audio interface." >/dev/null 2>&1 || true
-    fi
+  local st switched prev cur state_file asked=0
+  state_file="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/move-audio-state"
+  grep -qx 'asked=1' "$state_file" 2>/dev/null && asked=1
+  st=$("$MOVE_AUDIO" --status 2>/dev/null || printf '{}')
+  switched=$(jq -r '.switched // false' <<<"$st" 2>/dev/null || echo false)
+  prev=$(jq -r '.prev_rate // empty' <<<"$st" 2>/dev/null || true)
+  cur=$(jq -r '.current_rate // empty' <<<"$st" 2>/dev/null || true)
+  command -v omarchy-notification-send >/dev/null 2>&1 || return 0
+  # Offer the way back only when there IS one: the Move had been chosen, our
+  # 44.1 kHz pin is still what the graph runs on, and the rate to return to is
+  # neither that pin nor the current one. A stale state file must not raise a
+  # "go back to 48 kHz" for a session that never pinned anything, and the rate
+  # named is the one measured before the switch — never a constant.
+  if [[ $asked == 0 && $switched == true && -n $prev && $prev != 0 && $prev != 44100 \
+        && $cur == 44100 ]]; then
+    # One question per switch, not per unplug: an ignored offer leaves the pin
+    # in place, and re-asking on every later unplug is nagging.
+    printf 'asked=1\n' >> "$state_file"
+    omarchy-notification-send --app-name Mixbay -g "$ICON_CARD_OFF" \
+      "Ableton Move disconnected" "Go back to $(khz "$prev")kHz?" \
+      --action "Go back" "$MOVE_AUDIO" --revert >/dev/null 2>&1 || true
   fi
+  # Nothing else: an unplug with no pin, or a pin this helper did not set, has
+  # no action to offer, and a "disconnected" notice with no action is noise.
 }
 
 # announce_move: one notice per real transition. The state file is seeded at
@@ -254,6 +270,20 @@ announce(){
 # panel code belongs to Mixbay, so the selection is read from PipeWire. Picking
 # the Move there pins 44.1 kHz exactly like the notification does. Picking
 # anything else changes NOTHING: only an unplug may put the previous rate back.
+# move_remember_default: keep the last default devices seen while the Move is
+# NOT selected. The panel changes the default before move-audio --use runs, so
+# this record is the only way --use can still name what it replaced (the device
+# to go back to on unplug).
+move_remember_default(){
+  move_installed || return 0
+  local sink source
+  sink=$(pactl get-default-sink 2>/dev/null || true)
+  source=$(pactl get-default-source 2>/dev/null || true)
+  [[ -n $sink && ${sink,,} != *move* && ${source,,} != *move* ]] || return 0
+  mkdir -p "$(dirname "$MOVE_PREV")"
+  printf 'sink=%s\nsource=%s\n' "$sink" "$source" > "$MOVE_PREV"
+}
+
 move_pinned_by_panel(){
   move_installed || return 0
   local sink source
@@ -271,6 +301,7 @@ main(){
 
   mkdir -p "$(dirname "$MOVE_STATE")"
   if move_connected; then printf 'connected\n' > "$MOVE_STATE"; else printf 'disconnected\n' > "$MOVE_STATE"; fi
+  move_remember_default
 
   local current
   if current="$(scan)"; then
@@ -299,6 +330,7 @@ main(){
         # needs an action here.
         sleep 0.4
         move_pinned_by_panel
+        move_remember_default
         ;;
     esac
   done

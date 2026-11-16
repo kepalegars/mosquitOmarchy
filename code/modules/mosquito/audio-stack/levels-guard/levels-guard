@@ -4,11 +4,12 @@
 # =============================================================================
 # Media-key front-end installed by setup-levels-guard.sh. When the default
 # output is a Mixbay-managed interface:
-#   - with "Control active audio interface volume with keyboard" ON, the keys
-#     drive that interface's USB hardware volume through mosquito-mixbay-actions
-#     (the same value Mixbay shows) and the OSD reports the result;
-#   - with it OFF, the keys are blocked and the OSD shows its icon and text at
-#     100% with the level bar at 0%, so the key still answers visually.
+#   - with "Audio interface output volume controls: free", the keys drive that
+#     interface's USB hardware volume through mosquito-mixbay-actions (the same
+#     value Mixbay shows) and the OSD reports the result;
+#   - with "hardware & UI exclusive", the keys are blocked and the OSD
+#     shows its icon and text at 100% with the level bar at 0%, so the key still
+#     answers visually.
 # Other interfaces delegate to Omarchy unchanged.
 #
 # This guard only covers the control surfaces (media keys + Omarchy audio
@@ -20,9 +21,25 @@ mode="${1:-output}"
 shift || true
 
 prefs="${XDG_CONFIG_HOME:-$HOME/.config}/mosquitomixbay/ui.json"
+live_active="${XDG_STATE_HOME:-$HOME/.local/state}/live-mode/active"
+live_settings="${XDG_CONFIG_HOME:-$HOME/.config}/live-mode/settings"
+
+# live_volume_lock: a live session with LOCK_OUTPUT_VOLUME (on unless "no")
+# reserves the output volume for hardware & UI, overriding Mixbay's own choice.
+live_volume_lock() {
+  [[ -f $live_active ]] || return 1
+  [[ -r $live_settings ]] || return 0
+  ! grep -Eq '^[[:space:]]*LOCK_OUTPUT_VOLUME="?no"?[[:space:]]*$' "$live_settings"
+}
 
 allow_native() {
-  [[ -r $prefs ]] && grep -Eq '"allow_native_volume"[[:space:]]*:[[:space:]]*true' "$prefs"
+  live_volume_lock && return 1
+  # Free unless ui.json says otherwise: the exclusive mode is opt-in, so a
+  # missing file or key means the native surfaces keep working.
+  if [[ -r $prefs ]] && grep -Eq '"allow_native_volume"[[:space:]]*:[[:space:]]*false' "$prefs"; then
+    return 1
+  fi
+  return 0
 }
 
 output_sink() {

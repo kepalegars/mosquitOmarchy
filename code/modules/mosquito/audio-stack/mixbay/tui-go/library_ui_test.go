@@ -40,13 +40,21 @@ func TestLibraryTabsSplitInstalledAndAvailable(t *testing.T) {
 	m.libraryTab = libAvailable
 	available := ""
 	for _, it := range m.libraryItems() {
-		if it.Value != "" && !strings.HasPrefix(it.Value, "repo:") {
-			t.Errorf("available tab must only hold repo rows, got %q", it.Value)
+		// repo rows plus cards embedded in the binary but not published there
+		// (the Move); nothing else belongs in Available.
+		if it.Value != "" && !strings.HasPrefix(it.Value, "repo:") &&
+			!strings.HasPrefix(it.Value, "native:") {
+			t.Errorf("available tab holds an unexpected row, got %q", it.Value)
 		}
 		available += it.Display + "\n"
 	}
 	if !strings.Contains(available, "New Card") || !strings.Contains(available, "○") {
 		t.Errorf("available tab missing the installable card:\n%s", available)
+	}
+	// The Move ships in the binary, not in the repo: it must still be
+	// installable from this tab, offline, and removable again.
+	if !strings.Contains(available, "Ableton Move") {
+		t.Errorf("available tab missing the embedded Move profile:\n%s", available)
 	}
 	if strings.Contains(available, "PreSonus Quantum ES 4") || strings.Contains(available, "Audient EVO 8") {
 		t.Errorf("available tab lists an installed card:\n%s", available)
@@ -256,6 +264,47 @@ func TestUninstallRecapIncludesEmbeddedCards(t *testing.T) {
 	}
 	if strings.Contains(text, "built in") {
 		t.Errorf("uninstall recap still talks about built-in cards:\n%s", text)
+	}
+}
+
+// A card with no integration must not hear about douze or oscmix. The last RME
+// profile, on the other hand, must say oscmix goes with it.
+func TestUninstallRecapNamesOnlyTheCardsIntegration(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, err := profiles.InstallLocalCard("ugm192-test", "ESI UGM192", "UGM192"); err != nil {
+		t.Fatal(err)
+	}
+	note := uninstallIntegrationNotes([]string{"ugm192-test"})
+	if note != "" {
+		t.Fatalf("card without integration got a note: %q", note)
+	}
+	last := uninstallIntegrationNotes([]string{"fireface-ucx2"})
+	if !strings.Contains(last, "oscmix is removed completely") {
+		t.Fatalf("last RME card note = %q", last)
+	}
+	if strings.Contains(last, "douze") {
+		t.Fatalf("RME note mentions douze: %q", last)
+	}
+}
+
+func TestUninstallRecapKeepsSharedOscmix(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	first, ok := profiles.NativeCard("fireface-ucx2")
+	if !ok {
+		t.Fatal("native RME card missing")
+	}
+	second := first
+	second.Spec.ID = "fireface-ucx"
+	second.Spec.Display = "RME Fireface UCX"
+	if err := profiles.DeployCard(second); err != nil {
+		t.Fatal(err)
+	}
+	note := uninstallIntegrationNotes([]string{"fireface-ucx2"})
+	if !strings.Contains(note, "shared with the other installed RME cards") {
+		t.Fatalf("shared oscmix note = %q", note)
+	}
+	if strings.Contains(note, "removed completely") {
+		t.Fatalf("shared oscmix wrongly removed: %q", note)
 	}
 }
 

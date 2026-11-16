@@ -26,20 +26,69 @@ func sameName(s string) string {
 	return b.String()
 }
 
-// Duplicates groups installed cards by normalized display name. A native or
-// downloaded card wins over a local scan card; a native card is never listed as
-// removable. The list is stable so the UI can offer one confirmation per pair.
-//
-// shortcut: name comparison only; upgrade to USB VID/PID + card_match when the
-// repo grows (TODO-PROFILES.md §5).
-func Duplicates() []Duplicate {
-	groups := map[string][]Meta{}
-	for _, m := range Installed() {
-		key := sameName(m.Display)
-		if key == "" {
+// sameCard reports two profiles for the same box. USB identity is the reliable
+// signal: the display name differs between a scan card and a repo profile
+// ("PreSonus Quantum ES 4" vs "Quantum ES 4"). The name stays as the fallback
+// for the cards that carry no ids, and an exact shared card_match entry catches
+// the rest without merging boxes that merely share a vendor.
+func sameCard(a, b Card) bool {
+	as, bs := a.Spec, b.Spec
+	if as.USBVID != "" && as.USBVID == bs.USBVID &&
+		as.USBPID != "" && as.USBPID == bs.USBPID {
+		return true
+	}
+	if na, nb := sameName(as.Display), sameName(bs.Display); na != "" && na == nb {
+		return true
+	}
+	for _, ma := range as.CardMatch {
+		ma = sameName(ma)
+		if len(ma) < 4 { // "EVO" or "UCX" alone proves nothing
 			continue
 		}
-		groups[key] = append(groups[key], m)
+		for _, mb := range bs.CardMatch {
+			if ma == sameName(mb) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Duplicates groups installed cards by identity and returns one pair per card
+// to remove. A native or downloaded card wins over a local scan card; a native
+// card is never listed as removable. The list is stable so the UI can offer one
+// confirmation per pair.
+func Duplicates() []Duplicate {
+	metas := Installed()
+	cards := make([]Card, len(metas))
+	for i, m := range metas {
+		cards[i], _, _ = Effective(m.ID)
+	}
+	parent := make([]int, len(metas))
+	for i := range parent {
+		parent[i] = i
+	}
+	var find func(int) int
+	find = func(i int) int {
+		for parent[i] != i {
+			parent[i] = parent[parent[i]]
+			i = parent[i]
+		}
+		return i
+	}
+	for i := 0; i < len(metas); i++ {
+		for j := i + 1; j < len(metas); j++ {
+			if sameCard(cards[i], cards[j]) {
+				if ri, rj := find(i), find(j); ri != rj {
+					parent[rj] = ri
+				}
+			}
+		}
+	}
+	groups := map[int][]Meta{}
+	for i, m := range metas {
+		root := find(i)
+		groups[root] = append(groups[root], m)
 	}
 	var out []Duplicate
 	for _, g := range groups {

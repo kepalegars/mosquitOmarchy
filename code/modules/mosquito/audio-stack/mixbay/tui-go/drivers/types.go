@@ -42,6 +42,7 @@ const (
 	DevEVO4       = "evo4"
 	DevFireface   = "fireface-ucx2"
 	DevUGM192     = "ugm192"
+	DevMove       = "move"
 	DevQuantumES4 = "quantum-es4"
 	DevSSL12      = "ssl12"
 )

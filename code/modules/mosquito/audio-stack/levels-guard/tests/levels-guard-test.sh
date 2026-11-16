@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Self-check for levels-guard: every Mixbay-managed interface is blocked until
-# the user opts in (with a 100% icon/text and an empty level bar); every other
-# default delegates to Omarchy.
+# Self-check for levels-guard: Mixbay-managed interfaces stay free by default,
+# are blocked when the user opts into hardware & UI exclusive (with a 100%
+# icon/text and an empty level bar), and are locked for the whole session by a
+# live-mode session that asks for it; every other default delegates to Omarchy.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -46,6 +47,7 @@ SH
 chmod +x "$tmp"/bin/*
 export PATH="$tmp/bin:$PATH"
 export XDG_CONFIG_HOME="$tmp/config"
+export XDG_STATE_HOME="$tmp/state"
 export LOG="$log"
 export OSD_LOG="$osd_log"
 export ACTIONS_LOG="$tmp/actions"
@@ -66,7 +68,14 @@ blocked_osd() {  # blocked_osd ICON : empty level bar, 100% text
 set_sink() { printf '%s\n' "$1" >"$tmp/sink"; SINK_NAME="$tmp/sink"; }
 set_source() { printf '%s\n' "$1" >"$tmp/source"; SOURCE_NAME="$tmp/source"; }
 
-# Managed output, no opt-in: ignored, full icon + 100% text + empty bar.
+# Managed output, free by default (no ui.json): the keys move the card's
+# hardware volume through Mixbay.
+run output raise >/dev/null
+grep -qF -- 'set volume -15.0 --device evo8 --pair 0' <<<"$(actions_log)" \
+  || { echo "free-by-default managed output did not reach Mixbay hardware: $(actions_log)"; exit 1; }
+
+# Exclusive opt-in: ignored, full icon + 100% text + empty bar.
+echo '{"allow_native_volume": false}' >"$tmp/config/mosquitomixbay/ui.json"
 [[ -z $(run output raise) ]] || { echo "managed output was not blocked"; exit 1; }
 blocked_osd volume || { echo "blocked output OSD is wrong"; exit 1; }
 
@@ -125,9 +134,9 @@ grep -qF -- 'set volume -25.0 --device evo8 --pair 1' <<<"$(actions_log)" \
 [[ $(run output raise) == "output raise" ]] \
   || { echo "failed hardware read did not delegate"; exit 1; }
 printf '{"spec":{"vol_min_db":-96,"vol_max_db":0,"num_output_pairs":2},"outputs":[{"volume_db":-20,"muted":false}]}\n' >"$tmp/status.json"
-rm -f "$tmp/config/mosquitomixbay/ui.json"
+echo '{"allow_native_volume": false}' >"$tmp/config/mosquitomixbay/ui.json"
 
-# Managed input, no opt-in: ignored with the mic icon; then opt-in delegates.
+# Managed input, exclusive opt-in: ignored with the mic icon; then free delegates.
 set_source 'alsa_input.usb-Audient_EVO8-00.pro-input-0'
 [[ -z $(run input) ]] || { echo "managed input was not blocked"; exit 1; }
 blocked_osd microphone || { echo "blocked input OSD is wrong"; exit 1; }
@@ -146,5 +155,23 @@ set_source 'alsa_input.usb-Focusrite_Scarlett_2i2_USB-00.analog-stereo'
 set_source 'alsa_input.usb-Audient_EVO8-00.pro-input-0'
 echo '{"allow_native_volume": true}' >"$tmp/config/mosquitomixbay/ui.json"
 [[ $(run input) == "input mute" ]] || { echo "input opt-in did not delegate"; exit 1; }
+
+# A live session with LOCK_OUTPUT_VOLUME reserves the volume for hardware & UI,
+# overriding Mixbay's free choice; "no" and an inactive session leave it free.
+set_sink 'evo8_main_output'
+mkdir -p "$tmp/state/live-mode" "$tmp/config/live-mode"
+printf 'on\n' >"$tmp/state/live-mode/active"
+printf 'LOCK_OUTPUT_VOLUME="yes"\n' >"$tmp/config/live-mode/settings"
+[[ -z $(run output raise) ]] || { echo "live output lock was ignored"; exit 1; }
+blocked_osd volume || { echo "live locked OSD is wrong"; exit 1; }
+printf 'LOCK_OUTPUT_VOLUME="no"\n' >"$tmp/config/live-mode/settings"
+run output raise >/dev/null
+grep -qF -- 'set volume' <<<"$(actions_log)" \
+  || { echo "LOCK_OUTPUT_VOLUME=no still locked: $(actions_log)"; exit 1; }
+printf 'LOCK_OUTPUT_VOLUME="yes"\n' >"$tmp/config/live-mode/settings"
+rm -f "$tmp/state/live-mode/active"
+run output raise >/dev/null
+grep -qF -- 'set volume' <<<"$(actions_log)" \
+  || { echo "inactive session still locked: $(actions_log)"; exit 1; }
 
 echo ok

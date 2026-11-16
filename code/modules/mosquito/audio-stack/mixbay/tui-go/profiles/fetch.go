@@ -438,16 +438,45 @@ type ImportResult struct {
 // shortcut: card.json only; add opt-in capture download when a screen uses it
 // (TODO-PROFILES.md §7).
 func Import(ctx context.Context, ids []string) ([]ImportResult, error) {
+	var out []ImportResult
+	var remote []string
+	// A card shipped in the binary installs without the network. That path is
+	// the one the Move takes at plug-in: the profile must exist before the
+	// user answers anything, and waiting on a repo fetch there is a delay for
+	// nothing. An installed card still goes through the repo, so updates work.
+	for _, id := range ids {
+		if _, err := os.Stat(upstreamFile(id)); err != nil && IsNative(id) {
+			c, was, err := InstallNative(id)
+			if err != nil {
+				out = append(out, ImportResult{ID: id, Err: err})
+				continue
+			}
+			out = append(out, ImportResult{
+				ID: id, Display: c.Spec.Display, Version: c.Spec.Version,
+				Setup: c.Spec.Setup, Updated: was,
+			})
+			continue
+		}
+		remote = append(remote, id)
+	}
+	if len(remote) == 0 {
+		return out, nil
+	}
 	ix, err := FetchIndex(ctx)
 	if err != nil {
 		return nil, err
 	}
 	base := RepoURL()
-	var out []ImportResult
-	for _, id := range ids {
+	for _, id := range remote {
 		res := ImportResult{ID: id}
 		ic, ok := ix.Card(id)
 		if !ok {
+			if c, was, nerr := InstallNative(id); nerr == nil {
+				res.Display, res.Version = c.Spec.Display, c.Spec.Version
+				res.Setup, res.Updated = c.Spec.Setup, was
+				out = append(out, res)
+				continue
+			}
 			res.Err = fmt.Errorf("%w: %s", ErrNotFound, id)
 			out = append(out, res)
 			continue

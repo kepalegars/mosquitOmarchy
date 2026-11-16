@@ -86,10 +86,19 @@ Panel {
     property bool unlockConfirmOpen: false
     property int unlockSelected: 1
 
-    readonly property bool locked: root.liveActive && !root.unlocked
+    // The Ableton Move is fixed at 44.1 kHz. While it is the selected
+    // interface (default sink OR source), the two values are locked exactly
+    // like a live session: changing them fights the card. It reads the state,
+    // not the profile being installed, so releasing or unplugging the Move
+    // gives the panel back.
+    property bool moveLocked: false
+    property bool moveUnlocked: false
+
+    readonly property bool locked: (root.liveActive && !root.unlocked) ||
+                                   (root.moveLocked && !root.moveUnlocked)
     readonly property bool autoLock: root.info.autolock !== false
     readonly property var displayRows: {
-        if (!root.liveActive) return root.rows
+        if (!root.liveActive && !root.moveLocked) return root.rows
         return root.rows.filter(function (r) {
             return r.kind === "rate" || r.kind === "quantum"
         })
@@ -108,20 +117,34 @@ Panel {
         if (changed) root.row = 0
     }
 
+    // setMove: the Move's lock starts locked and stays locked for as long as
+    // it is the selected interface; the L unlock lasts until it is released.
+    function setMove(on) {
+        if (on === root.moveLocked) return
+        root.moveLocked = on
+        root.moveUnlocked = false
+        if (!on && !root.liveActive) root.row = 0
+    }
     function requestUnlock() {
-        if (!root.liveActive || root.unlocked) return
+        if (!root.locked) return
         root.unlockSelected = 1
         root.unlockConfirmOpen = true
     }
     function confirmUnlock() {
         root.unlockConfirmOpen = false
         root.unlocked = true
+        root.moveUnlocked = true
     }
     function cancelUnlock() { root.unlockConfirmOpen = false }
     function toggleLock() {
-        if (!root.liveActive) return
-        if (root.unlocked) root.unlocked = false
-        else root.requestUnlock()
+        if (!root.liveActive && !root.moveLocked) return
+        if (!root.locked) {
+            // Re-lock: both owners count again.
+            root.unlocked = false
+            root.moveUnlocked = false
+        } else {
+            root.requestUnlock()
+        }
     }
 
     // The shell runs with QS_DISABLE_FILE_WATCHER=1, so a FileView watcher on
@@ -171,6 +194,7 @@ Panel {
                 root.info = JSON.parse(raw)
                 root.error = ""
                 root.setLive(root.info.live === true)
+                root.setMove(root.info.move_locked === true)
             } catch (e) {
                 root.error = "cannot read: " + e
             }
@@ -516,8 +540,12 @@ Panel {
                         // The legend follows the state: L locks while unlocked,
                         // and asks before unlocking while locked.
                         text: root.locked
-                              ? "Locked for live mode · L unlock"
-                              : root.liveActive
+                              ? (root.moveLocked && !root.liveActive
+                                 ? "Locked by Ableton Move (44.1 kHz) · L unlock"
+                                 : root.moveLocked
+                                   ? "Locked for live mode & Ableton Move · L unlock"
+                                   : "Locked for live mode · L unlock")
+                              : (root.liveActive || root.moveLocked)
                                 ? "Unlocked · ↑↓ choose   ←→ change · L lock"
                                 : "↑↓ choose   ←→ change   enter toggles"
                         color: root.dim
@@ -555,7 +583,12 @@ Panel {
                     }
 
                     Text {
-                        text: "Changing the sample rate or buffer size can cause audio crackles."
+                        // The Move warning is the reason this unlock is worth a
+                        // confirmation: 44.1 kHz is the card's fixed clock, and
+                        // another rate on the same graph fights it.
+                        text: root.moveLocked
+                              ? "The Ableton Move's interface is fixed at 44.1 kHz. Another sample rate can conflict with it (and with any other card used at the same time)."
+                              : "Changing the sample rate or buffer size can cause audio crackles."
                         color: root.dim
                         font.family: Style.font.family
                         font.pixelSize: Style.font.caption

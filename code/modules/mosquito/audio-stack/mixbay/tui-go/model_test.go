@@ -1553,6 +1553,18 @@ func TestEvoRenameCaretMovesAndEdits(t *testing.T) {
 	}
 }
 
+// allowNativeRow finds the volume-controls setting by its stable value.
+func allowNativeRow(t *testing.T, m model) tuikit.PickerItem {
+	t.Helper()
+	for _, it := range m.settingsItems() {
+		if it.Value == "allow_native" {
+			return it
+		}
+	}
+	t.Fatal("allow_native row missing")
+	return tuikit.PickerItem{}
+}
+
 func TestAllowNativeVolumeSettingPersists(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	old := levelsGuardEnabled
@@ -1562,12 +1574,18 @@ func TestAllowNativeVolumeSettingPersists(t *testing.T) {
 	m.ui.Listed = listedConnected
 	m.push(scrSettings)
 	m.syncPicker()
+	if row := allowNativeRow(t, m); !strings.HasSuffix(row.Display, ": free") {
+		t.Fatalf("fresh row must read free: %q", row.Display)
+	}
 	m.picker = m.picker.SelectValue("allow_native")
 	nm, _ := m.updateKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m = nm.(model)
 	got := loadUIPrefs()
-	if !got.AllowNativeVolume {
-		t.Fatal("allow_native_volume must persist")
+	if got.AllowNativeVolume {
+		t.Fatal("toggling must persist the exclusive choice (allow_native_volume false)")
+	}
+	if row := allowNativeRow(t, m); !strings.HasSuffix(row.Display, "hardware & UI exclusive") {
+		t.Fatalf("exclusive row after toggle: %q", row.Display)
 	}
 	if got.Listed != listedConnected {
 		t.Fatal("toggling native volume must not reset the listed-interfaces mode")
@@ -1598,13 +1616,54 @@ func TestAllowNativeVolumeNeedsLevelsGuard(t *testing.T) {
 			if !it.Disabled {
 				t.Fatal("allow_native must be disabled without mosquito.levels-guard")
 			}
-			if !strings.Contains(it.Display, "Control active audio interface volume with keyboard: on") {
-				t.Fatalf("row must be frozen on without the guard: %q", it.Display)
+			if !strings.Contains(it.Display, "Audio interface output volume controls: free") {
+				t.Fatalf("row must be frozen free without the guard: %q", it.Display)
 			}
 			return
 		}
 	}
 	t.Fatal("allow_native row missing")
+}
+
+// A live session with Live Mode's output lock shows the forced hardware & UI
+// value without greying the row, whatever ui.json says.
+func TestLiveModeLocksVolumeRow(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	old := levelsGuardEnabled
+	levelsGuardEnabled = func() bool { return true }
+	t.Cleanup(func() { levelsGuardEnabled = old })
+	write := func(rel, body string) {
+		p := filepath.Join(home, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".local/state/live-mode/active", "on\n")
+	write(".config/live-mode/settings", "LOCK_OUTPUT_VOLUME=\"yes\"\n")
+	m := initialModel()
+	m.ui.AllowNativeVolume = true
+	m.push(scrSettings)
+	m.syncPicker()
+	row := allowNativeRow(t, m)
+	if row.Disabled || !strings.HasSuffix(row.Display, "hardware & UI exclusive") {
+		t.Fatalf("locked row must show exclusive without greying: %+v", row)
+	}
+	write(".config/live-mode/settings", "LOCK_OUTPUT_VOLUME=\"no\"\n")
+	if row := allowNativeRow(t, m); row.Disabled || !strings.HasSuffix(row.Display, ": free") {
+		t.Fatalf("unlocked row = %+v", row)
+	}
+	// No session flag: the stored choice is irrelevant again.
+	write(".config/live-mode/settings", "LOCK_OUTPUT_VOLUME=\"yes\"\n")
+	if err := os.Remove(filepath.Join(home, ".local/state/live-mode/active")); err != nil {
+		t.Fatal(err)
+	}
+	if row := allowNativeRow(t, m); row.Disabled {
+		t.Fatalf("inactive session must not lock: %+v", row)
+	}
 }
 
 // Changing a setting rebuilds the picker; the cursor must stay on the row the
@@ -1673,7 +1732,7 @@ func TestCardWatcherDefaultsOn(t *testing.T) {
 // stored choices are kept: turning it back on restores them.
 func TestWatcherOffGreysRowsAndRestoresChoices(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	p := uiPrefs{DetectCards: true, NotifyCards: true, WatcherMode: watcherOff}
+	p := uiPrefs{DetectCards: true, NotifyCards: true, NotifyDisconnected: true, WatcherMode: watcherOff}
 	if err := saveUIPrefs(p); err != nil {
 		t.Fatal(err)
 	}
@@ -1688,7 +1747,7 @@ func TestWatcherOffGreysRowsAndRestoresChoices(t *testing.T) {
 	for _, it := range m.settingsItems() {
 		rows[it.Value] = it
 	}
-	for _, key := range []string{"detect_cards", "notify_cards"} {
+	for _, key := range []string{"detect_cards", "notify_cards", "notify_disconnected"} {
 		if !rows[key].Disabled {
 			t.Fatalf("%s must be greyed out while the watcher is off", key)
 		}
@@ -1698,7 +1757,7 @@ func TestWatcherOffGreysRowsAndRestoresChoices(t *testing.T) {
 	}
 	// Off → Always on brings the previous choices back.
 	m.ui.WatcherMode = nextWatcher(watcherOff)
-	if !m.ui.detects() || !m.ui.notifies() {
+	if !m.ui.detects() || !m.ui.notifies() || !m.ui.notifiesDisconnected() {
 		t.Fatal("re-enabling the watcher must restore detect/notify")
 	}
 }
@@ -1733,6 +1792,24 @@ func TestPendingInstallConsumedOnce(t *testing.T) {
 	}
 }
 
+// The installed-card click uses its own request file: nothing is imported,
+// the TUI only lands on the card's page.
+func TestPendingOpenConsumedOnce(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(pendingOpenFile()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pendingOpenFile(), []byte(`{"id":"evo8"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := takePendingOpen(); got != "evo8" {
+		t.Fatalf("pending open = %q", got)
+	}
+	if got := takePendingOpen(); got != "" {
+		t.Fatalf("second read = %q, want empty", got)
+	}
+}
+
 // An install request that lands while a dialog is open waits for it instead of
 // replacing what the user is reading.
 func TestInstallRequestWaitsForModal(t *testing.T) {
@@ -1752,6 +1829,25 @@ func TestInstallRequestWaitsForModal(t *testing.T) {
 	m = nm.(model)
 	if m.pendingInstallID != "" || !m.libraryLoading {
 		t.Fatalf("deferred install did not start: pending=%q loading=%v", m.pendingInstallID, m.libraryLoading)
+	}
+}
+
+// The open-card click waits for a dialog too, then replaces the navigation
+// stack with the card page instead of stacking on top of whatever was open.
+func TestCardOpenWaitsForModalAndRevealsCard(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := initialModel()
+	m.push(scrInfo)
+	nm, _ := m.update(cardOpenMsg{id: "evo8"})
+	m = nm.(model)
+	if m.pendingCardID != "evo8" {
+		t.Fatalf("request not deferred: %q", m.pendingCardID)
+	}
+	m.pop()
+	nm, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = nm.(model)
+	if m.pendingCardID != "" || m.top() != scrControls || m.deviceID != "evo8" {
+		t.Fatalf("card not revealed: pending=%q top=%v device=%q", m.pendingCardID, m.top(), m.deviceID)
 	}
 }
 

@@ -59,8 +59,11 @@ volontairement débranchée.
 Depuis v1.3, la garde des volumes natifs est un module séparé
 (`audio-stack/levels-guard` : panneau audio Omarchy cloné + bloc
 `levels-guard` dans `bindings.lua`). Mixbay seul ne pose que son propre
-raccourci. `ui.json` porte `allow_native_volume` (défaut false), mais le
-réglage n'est actif que si `mosquito.levels-guard` est installé et activé. La
+raccourci. `ui.json` porte `allow_native_volume` (défaut true, c'est-à-dire
+*free* ; *hardware & UI exclusive* est opt-in), mais le réglage n'est
+réellement bloquant que si `mosquito.levels-guard` est installé et activé. Une
+session Live Mode avec `LOCK_OUTPUT_VOLUME` (défaut) reprend la main et force
+l'exclusivité pour la durée de la session. La
 capture des mètres USB tourne sur un EVO 8 live dès qu'un onglet EVO est visible
 (CONTROLS, MIXER ou LEVELS), même si la fenêtre perd le focus.
 

@@ -6,7 +6,8 @@ profile format stable while closing them.
 Shipped since the first pass: two-tab library with search, bulk install,
 profile-owned integrations (`oscmix`, `evo-raw`) pinned by sha256, direct RME
 `spec.upstream` updates, credits/info, one-shot repo check, uninstall of every
-card including the seeded snapshots.
+card including the seeded snapshots, duplicate detection by USB identity
+(VID/PID, then card_match, then display name).
 
 ## 1. Split the EVO renderer into composable blocks
 
@@ -39,12 +40,6 @@ Still missing:
 `meters_ui.go` still derives the USB stream node from known prefixes. A
 community card has no meters. Add `hardware.meters` to the card (node prefix,
 channel map, scale) and build the meter engine from it.
-
-## 4. Duplicate detection is name-based
-
-`profiles.Duplicates()` compares normalized display names. That catches the
-scan-card + downloaded-profile case, but not two cards with different display
-strings for the same box. Upgrade to USB VID/PID + `card_match` overlap.
 
 ## 5. Captures in the client (not needed yet)
 

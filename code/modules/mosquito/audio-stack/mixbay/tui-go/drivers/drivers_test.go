@@ -88,6 +88,9 @@ func TestEvoOutputMuteMemory(t *testing.T) {
 
 func TestDemoStatus(t *testing.T) {
 	// No hardware on CI: every driver must serve a demo status, never fail.
+	// A fresh HOME makes the list the seeded cards, not whatever the user has
+	// installed: Registry() and Open() must then agree on every id.
+	t.Setenv("HOME", t.TempDir())
 	for _, spec := range Registry() {
 		drv, err := Open(spec.ID)
 		if err != nil {
