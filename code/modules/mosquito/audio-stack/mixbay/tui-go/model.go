@@ -216,6 +216,9 @@ type uiPrefs struct {
 	// install (the foundation/startup helper reads the same file).
 	LaunchAtStartup    bool `json:"launch_at_startup"`
 	LaunchInScratchpad bool `json:"launch_in_scratchpad"`
+	// HandleExternalWindows lets Mixbay park itself (and focus the mixer) when
+	// it opens an external GUI. Default true.
+	HandleExternalWindows bool `json:"handle_external_windows"`
 }
 
 const (
@@ -252,7 +255,7 @@ func uiPrefsFile() string {
 }
 
 func loadUIPrefs() uiPrefs {
-	p := uiPrefs{Listed: listedAll, LaunchAtStartup: true, LaunchInScratchpad: true}
+	p := uiPrefs{Listed: listedAll, LaunchAtStartup: true, LaunchInScratchpad: true, HandleExternalWindows: true}
 	data, err := os.ReadFile(uiPrefsFile())
 	if err != nil {
 		return p
@@ -277,6 +280,9 @@ func loadUIPrefs() uiPrefs {
 	}
 	if _, ok := raw["launch_in_scratchpad"]; !ok {
 		p.LaunchInScratchpad = true
+	}
+	if _, ok := raw["handle_external_windows"]; !ok {
+		p.HandleExternalWindows = true
 	}
 	return p
 }
@@ -445,9 +451,9 @@ func (m model) deviceItems() []tuikit.PickerItem {
 				continue
 			}
 		}
-		badge := "demo"
+		badge := "offline"
 		if spec.Beta {
-			badge = "demo-beta"
+			badge = "offline-beta"
 		}
 		if online {
 			badge = "● online"
@@ -540,6 +546,7 @@ func (m model) settingsItems() []tuikit.PickerItem {
 		native,
 		{Display: "Launch Mixbay at startup: " + onOff(m.ui.LaunchAtStartup), Value: "launch_startup"},
 		{Display: "Launch in scratchpad: " + onOff(m.ui.LaunchInScratchpad), Value: "launch_scratchpad"},
+		{Display: "Let Mixbay handle external windows: " + onOff(m.ui.HandleExternalWindows), Value: "external_windows"},
 		{Display: "Add an audio interface", Value: "add_interface"},
 		{Display: "Back", Value: "back"},
 	}
@@ -1462,6 +1469,8 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "launch_scratchpad":
 				m.ui.LaunchInScratchpad = !m.ui.LaunchInScratchpad
 				post = tea.Batch(startupApplyCmd(), startupPlaceCmd())
+			case "external_windows":
+				m.ui.HandleExternalWindows = !m.ui.HandleExternalWindows
 			case "foundation":
 				m.foundationLoading = true
 				m.push(scrFoundation)
@@ -1744,7 +1753,7 @@ func (m *model) activateControl(val string) tea.Cmd {
 		// engine and no AppImage. Installed as an Omarchy app on first use,
 		// so it works with or without a card (CC mode warning is the
 		// launcher's job, not a reason to refuse).
-		if err := exec.Command("mixbay-oscmix-web").Start(); err != nil {
+		if err := openExternal("mixbay-oscmix-web"); err != nil {
 			m.toast, _ = m.toast.SetWarn("Web UI: run Set up / repair oscmix first (" + err.Error() + ")")
 		}
 		return nil
@@ -1761,7 +1770,7 @@ func (m *model) activateControl(val string) tea.Cmd {
 			}
 			bin = "mixbay-oscmix-qt"
 		}
-		if err := exec.Command(bin).Start(); err != nil {
+		if err := openExternal(bin); err != nil {
 			m.toast, _ = m.toast.SetWarn(bin + " is not installed — run Set up / repair oscmix")
 		}
 		return nil

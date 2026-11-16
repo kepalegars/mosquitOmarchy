@@ -1619,6 +1619,40 @@ func TestSyncPickerKeepsCursor(t *testing.T) {
 	}
 }
 
+// A copy from the log screen is confirmed on the only row Info leaves free —
+// the shortcut hint. Without this the user presses `c` and sees nothing.
+func TestInfoCopyToastReplacesHint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := initialModel()
+	m.w, m.h = 100, 30
+	m.info = tuikit.NewInfo("setup log\n").SetSize(m.contentSize())
+	m.push(scrInfo)
+	m.toast, _ = m.toast.SetOK("log copied to the clipboard (11 bytes)")
+	if !strings.Contains(stripANSI(m.View()), "log copied to the clipboard") {
+		t.Fatal("the Info screen must show the copy confirmation")
+	}
+}
+
+// External-window handling is on by default and persists when toggled off.
+func TestExternalWindowSettingDefaultsOnAndPersists(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if !loadUIPrefs().HandleExternalWindows {
+		t.Fatal("handle_external_windows must default to on")
+	}
+	m := initialModel()
+	m.push(scrSettings)
+	m.syncPicker()
+	m.picker = m.picker.SelectValue("external_windows")
+	nm, _ := m.updateKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(model)
+	if m.ui.HandleExternalWindows {
+		t.Fatal("enter must toggle external-window handling off")
+	}
+	if loadUIPrefs().HandleExternalWindows {
+		t.Fatal("the toggle did not persist")
+	}
+}
+
 // R on Controls zeroes every control, puts the outputs back in stereo and
 // never touches the mixer.
 func TestEvoControlsResetLeavesMixer(t *testing.T) {

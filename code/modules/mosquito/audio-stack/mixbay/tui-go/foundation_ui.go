@@ -131,6 +131,13 @@ func startupPlaceCmd() tea.Cmd {
 	}
 }
 
+// openExternal starts an external GUI through mixbay-startup, which applies
+// the scratchpad/tiling policy around the new window. With the policy off the
+// helper just launches it.
+func openExternal(bin string) error {
+	return exec.Command("mixbay-startup", "--external", bin).Start()
+}
+
 func (m model) foundationItems() []tuikit.PickerItem {
 	def := "none"
 	for _, c := range m.foundation.Connections {

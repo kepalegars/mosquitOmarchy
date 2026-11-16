@@ -152,7 +152,14 @@ func (m model) View() string {
 			rows = 1
 		}
 		m.info = m.info.SetSize(w, rows)
-		return centerModal(m.info.View(), w, rows) + "\n" + centerTrunc(m.info.ShortcutsHint(), w)
+		// The copy confirmation takes over the hint row while it is up,
+		// exactly like the footer toast: Info owns the screen, so this is
+		// the only row left to show the user that `c` did something.
+		hint := m.info.ShortcutsHint()
+		if notify := m.toast.View(); notify != "" {
+			hint = notify
+		}
+		return centerModal(m.info.View(), w, rows) + "\n" + centerTrunc(hint, w)
 	case scrConfirm:
 		return centerModal(m.confirm.View(), w, h)
 	}

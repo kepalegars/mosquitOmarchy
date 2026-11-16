@@ -167,7 +167,7 @@ func (d *alsaDriver) Status() (Status, error) {
 		demo := d.ensureDemo()
 		st.Online = false
 		st.Backend = BackendDemo
-		st.Note = fmt.Sprintf("DEMO — %s not found on ALSA. State is simulated and persistent.", d.spec.Display)
+		st.Note = fmt.Sprintf("Offline — %s not found on ALSA. State is simulated and persistent.", d.spec.Display)
 		for i := 0; i < d.spec.NumInputs; i++ {
 			name := fmt.Sprintf("input%d", i+1)
 			st.Inputs = append(st.Inputs, InputState{Name: name, GainDb: demo.Gains[i], Muted: demo.Mutes[name], Phantom: demo.Phantom[name]})

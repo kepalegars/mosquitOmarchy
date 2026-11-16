@@ -17,7 +17,7 @@
     "has_monitor": false,
     "backend": "alsa",
     "needs_kmod": false,
-    "version": "v0.2.0",
+    "version": "v1.0.0",
     "caps": {
       "volume": false,
       "gain": false,

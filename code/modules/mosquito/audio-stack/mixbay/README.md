@@ -35,10 +35,10 @@ Projets amont explicitement suivis (sourcés, pas copiés) :
 | Audient EVO 8 | `evo_raw` kmod (`/dev/evo8` ioctl) | **plein contrôle** : volumes, gains 0…58 dB (échelle carte ; FU11/ALSA -8…50), mutes, 48V, loopback mixer 10×4 sur 2 bus (MIX 1\|2, MIX 3\|4) — **v1.0.0** |
 | Audient EVO 4 | même protocole | plein contrôle + monitor blend, Levels 4 canaux — **v1.0.0** |
 | Solid State Logic SSL 12 | douze (HTTP local) | volumes masters, mutes, mixer/sends, setup complet depuis Mixbay ; préamps/48V et surface SSL 360 complète via Omarchy360 — **v0.1.0** |
-| RME Fireface 802 / UCX / UCX II / UFX / UFX II / UFX III / UFX+ | oscmix (huddx01, CC mode) | aucun contrôle dans la TUI : le menu de la carte liste **Open web UI**, **Open GTK mixer**, **Open Qt UI**, **Set up / repair oscmix**. Tous les gains, 48 V, niveaux et le routage sont dans oscmix — **v0.2.0** (cartes dans `cards/rme/`) |
+| RME Fireface 802 / UCX / UCX II / UFX / UFX II / UFX III / UFX+ | oscmix (huddx01, CC mode) | aucun contrôle dans la TUI : le menu de la carte liste **Open web UI**, **Open GTK mixer**, **Open Qt UI**, **Set up / repair oscmix**. Tous les gains, 48 V, niveaux et le routage sont dans oscmix — **v1.0.0** (cartes dans `cards/rme/`) |
 | ESI UGM192 | ALSA | panneau dédié style EVO : volume de sortie (0…-64 dB) + mute réels, mètres 2 IN / 2 OUT ; GAIN, MONITOR et 48V restent matériels — **v0.1.0** |
 | PreSonus Quantum ES 4 | ALSA (profil communautaire) | **base de test reverse engineering**, pas natif : profil dans le dépôt, ou ajout via Settings → Add an audio interface, flag `beta`, volume/mute seulement |
-| Autres interfaces USB | ALSA niveau 1 (beta) | ajout via Settings → Add an audio interface ; flag `demo-beta`/`online-beta` tant que non supportées nativement |
+| Autres interfaces USB | ALSA niveau 1 (beta) | ajout via Settings → Add an audio interface ; flag `offline-beta`/`online-beta` tant que non supportées nativement |
 
 Sans hardware (ou sans kmod), chaque driver sert un **état DEMO persistant**
 (même JSON) : la TUI, le CLI et les répètes live-mode marchent débranché.
@@ -375,7 +375,7 @@ localement) et **Qt** (AppImage publiée avec les nightly builds).
   `Set up / repair oscmix`.
 - **Web UI** : <https://huddx01.github.io/oscmix/>, Web MIDI direct sur la
   carte — aucune AppImage ni moteur requis. Au premier lancement elle s'inscrit
-  comme app Omarchy (`omarchy-webapp-install`, entrée SUPER+SPACE) et ouvre un
+  comme app Omarchy « OscMix Web (TotalMix) » (`omarchy-webapp-install`, entrée SUPER+SPACE) et ouvre un
   profil Chromium dédié où le sysex MIDI est déjà autorisé : pas de demande de
   permission au premier mouvement de fader.
 - **GTK** : s'ouvre même sans carte (mode hors ligne avec sélecteur de
@@ -496,7 +496,7 @@ vue stéréo des canaux USB. Il ne remplace pas le mixer, il l'alimente.
 ## Limites
 
 - **Les cartes beta ne sont pas nativement supportées.** Elles tournent en
-  ALSA niveau 1 (volume/mute), avec le flag `demo-beta`/`online-beta`. Le
+  ALSA niveau 1 (volume/mute), avec le flag `offline-beta`/`online-beta`. Le
   modèle universel EVO 8 (strips, gains, 48V, mixer) n'est appliqué qu'après
   le reverse engineering et la validation de chaque contrôle. Rien n'est
   promis tant que la carte n'est pas passée native.
@@ -594,6 +594,12 @@ dans le graphe vivant.
   `mixbay-startup --place` déplace la fenêtre déjà ouverte, sans attendre le
   prochain login. `--run` réutilise aussi une instance existante au lieu d'en
   lancer une seconde.
+- **Let Mixbay handle external windows** : actif par défaut. Quand Mixbay
+  ouvre une GUI externe (GTK/Qt/web d'oscmix) : si la TUI est dans le
+  scratchpad, la nouvelle fenêtre part sur le plus petit workspace vide et
+  prend le focus ; sinon elle se tile normalement et Mixbay se parque dans le
+  scratchpad sans voler le focus, avec une notification rappelant `SUPER + S`.
+  Désactivé, Mixbay lance la GUI sans toucher aux fenêtres.
 - **Audio foundation** : liste des cartes déjà connectées, install/remove par
   carte avec confirmation, choix de la carte par défaut/prioritaire, et
   **Reset connection history** (le journal séparé
