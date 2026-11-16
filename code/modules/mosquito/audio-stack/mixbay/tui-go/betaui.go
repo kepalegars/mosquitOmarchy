@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"mosquitomarchy.local/mosquitomixbay-tui/drivers"
+	"mosquitomarchy.local/mosquitomixbay-tui/profiles"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
@@ -17,6 +21,41 @@ import (
 type scanCard struct {
 	Name  string
 	Match string
+}
+
+// usbCardsFromPactl extracts the connected USB interfaces from
+// `pactl -f json list cards`. Both the Add-interface scan and the hotplug
+// check read the same fields, so the extraction lives here once.
+func usbCardsFromPactl(raw []byte) ([]scanCard, error) {
+	var cards []struct {
+		Name       string            `json:"name"`
+		Properties map[string]string `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &cards); err != nil {
+		return nil, err
+	}
+	var out []scanCard
+	for _, c := range cards {
+		// USB audio only: internal PCI/platform cards and the ALSA loopback
+		// are not interfaces the user can reverse-engineer.
+		if !strings.HasPrefix(c.Name, "alsa_card.usb-") {
+			continue
+		}
+		desc := c.Properties["device.description"]
+		cardName := c.Properties["alsa.card_name"]
+		if desc == "" {
+			desc = cardName
+		}
+		if desc == "" {
+			desc = c.Name
+		}
+		match := cardName
+		if match == "" {
+			match = desc
+		}
+		out = append(out, scanCard{Name: desc, Match: match})
+	}
+	return out, nil
 }
 
 type scanMsg struct {
@@ -39,36 +78,16 @@ func scanCardsCmd() tea.Cmd {
 		if err != nil {
 			return scanMsg{err: err}
 		}
-		var raw []struct {
-			Name       string            `json:"name"`
-			Properties map[string]string `json:"properties"`
-		}
-		if err := json.Unmarshal(out, &raw); err != nil {
+		all, err := usbCardsFromPactl(out)
+		if err != nil {
 			return scanMsg{err: err}
 		}
 		var cards []scanCard
-		for _, c := range raw {
-			// USB audio only: internal PCI/platform cards and the ALSA
-			// loopback are not interfaces the user can reverse-engineer.
-			if !strings.HasPrefix(c.Name, "alsa_card.usb-") {
+		for _, c := range all {
+			if isNativeCard(c.Name + " " + c.Match) {
 				continue
 			}
-			desc := c.Properties["device.description"]
-			cardName := c.Properties["alsa.card_name"]
-			if desc == "" {
-				desc = cardName
-			}
-			if desc == "" {
-				desc = c.Name
-			}
-			match := cardName
-			if match == "" {
-				match = desc
-			}
-			if isNativeCard(desc + " " + cardName + " " + c.Name) {
-				continue
-			}
-			cards = append(cards, scanCard{Name: desc, Match: match})
+			cards = append(cards, c)
 		}
 		return scanMsg{cards: cards}
 	}
@@ -92,6 +111,51 @@ func betaAddCmd(name, match string) tea.Cmd {
 	return func() tea.Msg {
 		_, err := drivers.AddBetaDevice(name, match)
 		return betaAddMsg{name: name, match: match, err: err}
+	}
+}
+
+// hotplugMsg carries the profiles the repo offers for the interfaces
+// connected right now. key is a stable signature of that set, so the repo is
+// only checked when a card appears or disappears.
+type hotplugMsg struct {
+	ok     bool
+	key    string
+	offers []profiles.Offer
+}
+
+// hotplugCheckCmd looks at the cards connected NOW (the pactl view, not the
+// persistent connection log: an unplugged card must never prompt) and asks the
+// repo index which supported profiles are missing.
+func hotplugCheckCmd() tea.Cmd {
+	return func() tea.Msg {
+		_ = exec.Command("mixbay-audio-foundation", "--track").Run()
+		out, err := exec.Command("pactl", "-f", "json", "list", "cards").Output()
+		if err != nil {
+			return hotplugMsg{}
+		}
+		cards, err := usbCardsFromPactl(out)
+		if err != nil {
+			return hotplugMsg{}
+		}
+		var keyParts []string
+		entries := make([]profiles.ConnEntry, 0, len(cards))
+		for _, c := range cards {
+			keyParts = append(keyParts, c.Name+"|"+c.Match)
+			entries = append(entries, profiles.ConnEntry{Name: c.Name, Match: c.Match})
+		}
+		sort.Strings(keyParts)
+		key := strings.Join(keyParts, "\n")
+		if key == "" {
+			return hotplugMsg{ok: true}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		offers, err := profiles.CheckUpdates(ctx, entries)
+		if err != nil {
+			// No index and no cache: leave key empty so the next check retries.
+			return hotplugMsg{}
+		}
+		return hotplugMsg{ok: true, key: key, offers: offers}
 	}
 }
 

@@ -270,10 +270,15 @@ native_id_for_name(){
   esac
 }
 version_for_id(){
+  # Prefer the installed profile's own version: the RME cards move together,
+  # and a hardcoded copy here is what made the foundation list lag behind.
+  local v
+  v="$(jq -r '.spec.version // empty' "$(profile_card_dir "$1")/upstream/card.json" 2>/dev/null || true)"
+  [[ -n $v ]] && { printf '%s\n' "$v"; return; }
   case "$1" in
     evo8|evo4) echo v1.0.0 ;;
     ssl12) echo v0.1.0 ;;
-    fireface-ucx2) echo v0.1.0 ;;
+    fireface-ucx2) echo v1.0.0 ;;
     ugm192) echo v0.0.1 ;;
     *) echo beta ;;
   esac
@@ -498,6 +503,8 @@ status_json(){
   local cards='[]' conns='[]'
   while IFS=$'\t' read -r id name version native match; do
     [[ -n $id ]] || continue
+    # Native ids track the installed profile too; the log can predate a bump.
+    if [[ $native == true ]]; then version="$(version_for_id "$id")"; fi
     beta=false; [[ $native == false ]] && beta=true
     installed=false; native_installed "$id" && installed=true
     if [[ $beta == true ]]; then
@@ -560,6 +567,7 @@ status_human(){
   local native match
   while IFS=$'\t' read -r dev name version native match; do
     [[ -n $dev ]] || continue
+    if [[ $native == true ]]; then version="$(version_for_id "$dev")"; fi
     installed="no"; native_installed "$dev" && installed="yes"
     if [[ $native == false ]] && profile_installed "$dev"; then
       installed="yes"

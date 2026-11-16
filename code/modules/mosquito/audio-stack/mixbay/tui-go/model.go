@@ -97,6 +97,13 @@ type model struct {
 	scanCards   []scanCard
 	scanLoading bool
 
+	// hotplug is the "a supported card was just connected" watcher: the tick
+	// counter only probes every few seconds, key is the last connected set,
+	// and offered keeps one prompt per profile per session.
+	hotplugTick     int
+	hotplugKey      string
+	offeredProfiles map[string]bool
+
 	// library is Settings → Audio interface profiles. The index is cached in
 	// memory for the session; upstream/ is the only folder an import writes.
 	libraryIndex    profiles.Index
@@ -150,6 +157,7 @@ func initialModel() model {
 	m.cursor = tuikit.NewCursorMemory()
 	m.libraryChecked = map[string]bool{}
 	m.dupPrompted = map[string]bool{}
+	m.offeredProfiles = map[string]bool{}
 	m.bindPreset()
 	return m
 }
@@ -171,6 +179,16 @@ func trackConnectionsCmd() tea.Cmd {
 	}
 }
 func (m model) top() screen { return m.nav[len(m.nav)-1] }
+
+// modalOpen reports a dialog that owns the keyboard. The hotplug watcher waits
+// for it to close instead of stacking a prompt on top.
+func (m model) modalOpen() bool {
+	switch m.top() {
+	case scrConfirm, scrInfo, scrInput:
+		return true
+	}
+	return false
+}
 
 func (m *model) push(s screen) {
 	m.cursor.Remember(strconv.Itoa(int(m.top())), m.picker)
@@ -255,7 +273,7 @@ func uiPrefsFile() string {
 }
 
 func loadUIPrefs() uiPrefs {
-	p := uiPrefs{Listed: listedAll, LaunchAtStartup: true, LaunchInScratchpad: true, HandleExternalWindows: true}
+	p := uiPrefs{Listed: listedConnected, LaunchAtStartup: true, LaunchInScratchpad: true, HandleExternalWindows: true}
 	data, err := os.ReadFile(uiPrefsFile())
 	if err != nil {
 		return p
@@ -273,7 +291,7 @@ func loadUIPrefs() uiPrefs {
 		}
 	}
 	if p.Listed != listedConnected && p.Listed != listedAll && p.Listed != listedUsed {
-		p.Listed = listedAll
+		p.Listed = listedConnected
 	}
 	if _, ok := raw["launch_at_startup"]; !ok {
 		p.LaunchAtStartup = true
@@ -545,7 +563,7 @@ func (m model) settingsItems() []tuikit.PickerItem {
 		{Display: "Listed interfaces: " + listedLabel(m.ui.Listed), Value: "listed"},
 		native,
 		{Display: "Launch Mixbay at startup: " + onOff(m.ui.LaunchAtStartup), Value: "launch_startup"},
-		{Display: "Launch in scratchpad: " + onOff(m.ui.LaunchInScratchpad), Value: "launch_scratchpad"},
+		{Display: "Launch Mixbay in scratchpad: " + onOff(m.ui.LaunchInScratchpad), Value: "launch_scratchpad"},
 		{Display: "Let Mixbay handle external windows: " + onOff(m.ui.HandleExternalWindows), Value: "external_windows"},
 		{Display: "Add an audio interface", Value: "add_interface"},
 		{Display: "Back", Value: "back"},
@@ -858,7 +876,40 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.shouldPoll() {
 			cmds = append(cmds, pollStatus(m.deviceID, m.session.beginRead()))
 		}
+		// Every ten ticks (~5s): look for a supported card plugged in while
+		// Mixbay is open. Skipped while a dialog owns the screen, so a prompt
+		// never replaces something the user is reading.
+		m.hotplugTick++
+		if m.hotplugTick >= 10 {
+			m.hotplugTick = 0
+			if !m.modalOpen() {
+				cmds = append(cmds, hotplugCheckCmd())
+			}
+		}
 		return m, tea.Batch(cmds...)
+
+	case hotplugMsg:
+		if !msg.ok || msg.key == m.hotplugKey {
+			return m, nil
+		}
+		m.hotplugKey = msg.key
+		for _, o := range profiles.SortedOffers(msg.offers) {
+			if o.Kind != "install" || m.offeredProfiles[o.ID] {
+				continue
+			}
+			m.offeredProfiles[o.ID] = true
+			id := o.ID
+			m.confirm = tuikit.NewConfirm(fmt.Sprintf("%s is connected.\n\nMixbay supports it, but its profile (%s) is not installed. Install it now?", o.Display, o.Version), "Later", "Install")
+			m.confirmAct = func() tea.Cmd {
+				return tea.Sequence(
+					func() tea.Msg { return libraryBusyMsg{what: "Installing " + id + "…"} },
+					libraryImportCmd([]string{id}, false),
+				)
+			}
+			m.push(scrConfirm)
+			break
+		}
+		return m, nil
 
 	case statusMsg:
 		// Drop a reply for a device we have already navigated away from.

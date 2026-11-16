@@ -70,11 +70,12 @@ window_addrs(){
     | .address' 2>/dev/null || true
 }
 
-# hypr_move <address> <workspace> — Lua dispatcher first, classic fallback.
+# hypr_move <address> <workspace> — silent: parking Mixbay must not steal the
+# focus from the window the user just opened.
 hypr_move(){
   local addr="$1" ws="$2"
-  hyprctl dispatch "hl.dsp.window.move({ window = \"address:$addr\", workspace = \"$ws\" })" >/dev/null 2>&1 \
-    || hyprctl dispatch "movetoworkspacesilent $ws,address:$addr" >/dev/null 2>&1 \
+  hyprctl dispatch "movetoworkspacesilent $ws,address:$addr" >/dev/null 2>&1 \
+    || hyprctl dispatch "hl.dsp.window.move({ window = \"address:$addr\", workspace = \"$ws\", follow = false })" >/dev/null 2>&1 \
     || true
 }
 
@@ -180,8 +181,7 @@ empty_workspace(){
 
 # new_window <addresses-before> — the first address that was not there before,
 # polled for 10s so a slow GTK/Chromium start still counts.
-new_window(){
-  local before="$1" i a
+new_window(){  local before="$1" i a
   for i in $(seq 1 40); do
     sleep 0.25
     while IFS= read -r a; do
@@ -192,34 +192,41 @@ new_window(){
   return 1
 }
 
+launch_external(){
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@" >/dev/null 2>&1 &
+  else
+    "$@" >/dev/null 2>&1 &
+  fi
+}
+
 external(){
   local cmd="$1" handle before addr new ws
   shift
   handle="$(pref handle_external_windows true)"
-  before="$(all_addrs)"
-  if command -v setsid >/dev/null 2>&1; then
-    setsid "$cmd" "$@" >/dev/null 2>&1 &
-  else
-    "$cmd" "$@" >/dev/null 2>&1 &
-  fi
-  [[ $handle == true ]] || exit 0
-  command -v hyprctl >/dev/null 2>&1 || exit 0
+  [[ $handle == true ]] || { launch_external "$cmd" "$@"; exit 0; }
+  command -v hyprctl >/dev/null 2>&1 || { launch_external "$cmd" "$@"; exit 0; }
   addr="$(window_addrs | head -1)"
-  [[ -n $addr ]] || exit 0
-  new="$(new_window "$before")" || exit 0
+  [[ -n $addr ]] || { launch_external "$cmd" "$@"; exit 0; }
   if on_scratchpad "$addr"; then
+    before="$(all_addrs)"
+    launch_external "$cmd" "$@"
+    new="$(new_window "$before")" || exit 0
     ws="$(empty_workspace)"
     hyprctl dispatch "hl.dsp.window.move({ window = \"address:$new\", workspace = \"$ws\" })" >/dev/null 2>&1 \
       || hyprctl dispatch "movetoworkspace $ws,address:$new" >/dev/null 2>&1 || true
     hyprctl dispatch "workspace $ws" >/dev/null 2>&1 || true
     hyprctl dispatch focuswindow "address:$new" >/dev/null 2>&1 || true
-  else
-    # Silent on purpose: the external window must keep the focus.
-    hypr_move "$addr" "special:scratchpad"
-    command -v notify-send >/dev/null 2>&1 \
-      && notify-send "Mixbay" "Moved to the scratchpad — SUPER + S to bring it back" \
-      || true
+    exit 0
   fi
+  # Mixbay is not in the scratchpad: park it BEFORE the GUI exists, silently.
+  # Its window then opens and tiles on the active workspace with the focus,
+  # instead of losing it to a Mixbay moved afterwards.
+  hypr_move "$addr" "special:scratchpad"
+  command -v notify-send >/dev/null 2>&1 \
+    && notify-send "Mixbay" "Moved to the scratchpad — SUPER + S to bring it back" \
+    || true
+  launch_external "$cmd" "$@"
 }
 
 case "${1:-}" in

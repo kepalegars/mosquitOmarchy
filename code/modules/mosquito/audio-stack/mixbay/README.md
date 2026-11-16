@@ -585,10 +585,10 @@ dans le graphe vivant.
 
 ### Settings
 
-- **Listed interfaces** : `Only connected`, `All supported`, `Only used`
-  (les cartes déjà vues dans le journal de connexion).
-- **Launch Mixbay at startup** et **Launch in scratchpad** : actifs par défaut
-  à l'install. Le premier ajoute la ligne `o.launch_on_start` dans
+- **Listed interfaces** : `Only connected` (par défaut), `All supported`,
+  `Only used` (les cartes déjà vues dans le journal de connexion).
+- **Launch Mixbay at startup** et **Launch Mixbay in scratchpad** : actifs par
+  défaut à l'install. Le premier ajoute la ligne `o.launch_on_start` dans
   `~/.config/hypr/autostart.lua` ; le second parque la TUI dans
   `special:scratchpad` (bascule Omarchy habituelle) **immédiatement** :
   `mixbay-startup --place` déplace la fenêtre déjà ouverte, sans attendre le
@@ -597,9 +597,15 @@ dans le graphe vivant.
 - **Let Mixbay handle external windows** : actif par défaut. Quand Mixbay
   ouvre une GUI externe (GTK/Qt/web d'oscmix) : si la TUI est dans le
   scratchpad, la nouvelle fenêtre part sur le plus petit workspace vide et
-  prend le focus ; sinon elle se tile normalement et Mixbay se parque dans le
-  scratchpad sans voler le focus, avec une notification rappelant `SUPER + S`.
+  prend le focus ; sinon Mixbay est parqué dans le scratchpad **avant** le
+  lancement, silencieusement : la GUI se tile normalement sur le workspace
+  actif et garde le focus, avec une notification rappelant `SUPER + S`.
   Désactivé, Mixbay lance la GUI sans toucher aux fenêtres.
+- **Carte branchée à chaud** : toutes les ~5 s, Mixbay regarde les cartes USB
+  connectées. Si une carte est supportée par le dépôt mais que son profil
+  n'est pas installé, une confirmation nomme la carte et propose de
+  l'installer (import + intégration, comme depuis Audio interface profiles).
+  Un profil simplement en retard de version ne déclenche pas ce prompt.
 - **Audio foundation** : liste des cartes déjà connectées, install/remove par
   carte avec confirmation, choix de la carte par défaut/prioritaire, et
   **Reset connection history** (le journal séparé

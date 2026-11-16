@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"mosquitomarchy.local/mosquitomixbay-tui/drivers"
 	"mosquitomarchy.local/mosquitomixbay-tui/meters"
+	"mosquitomarchy.local/mosquitomixbay-tui/profiles"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
@@ -761,6 +762,9 @@ func TestFrameFitsTheWindow(t *testing.T) {
 	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
 	for _, wh := range [][2]int{{100, 30}, {80, 24}, {120, 40}, {100, 12}} {
 		m := initialModel()
+		// Offline cards are hidden by the only-connected default; this test
+		// is about the frame, so ask for the full list.
+		m.ui.Listed = listedAll
 		m.w, m.h = wh[0], wh[1]
 		mm, _ := m.update(tea.WindowSizeMsg{Width: wh[0], Height: wh[1]})
 		m = mm.(model)
@@ -1650,6 +1654,66 @@ func TestExternalWindowSettingDefaultsOnAndPersists(t *testing.T) {
 	}
 	if loadUIPrefs().HandleExternalWindows {
 		t.Fatal("the toggle did not persist")
+	}
+}
+
+// A fresh install starts on "Only connected"; the whole list is a click away.
+func TestFreshInstallListsOnlyConnected(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if got := initialModel().ui.Listed; got != listedConnected {
+		t.Fatalf("default listed = %q, want %q", got, listedConnected)
+	}
+}
+
+// A supported card plugged in while Mixbay is open must raise one prompt,
+// naming the card, and only when the profile is missing (not for updates).
+func TestHotplugPromptsForMissingProfile(t *testing.T) {
+	m := initialModel()
+	if m.top() != scrDevices {
+		t.Fatalf("test starts on screen %v", m.top())
+	}
+	install := hotplugMsg{ok: true, key: "rme", offers: []profiles.Offer{{
+		ID: "fireface-ucx2", Display: "RME Fireface UCX II", Version: "v1.0.0", Kind: "install",
+	}}}
+	nm, _ := m.update(install)
+	m = nm.(model)
+	if m.top() != scrConfirm {
+		t.Fatalf("missing profile did not prompt: top=%v", m.top())
+	}
+	if !strings.Contains(m.confirm.Message, "RME Fireface UCX II") {
+		t.Fatalf("prompt does not name the card: %q", m.confirm.Message)
+	}
+
+	// An update offer is not an install prompt.
+	m2 := initialModel()
+	nm, _ = m2.update(hotplugMsg{ok: true, key: "evo", offers: []profiles.Offer{{
+		ID: "evo8", Display: "Audient EVO 8", Version: "v1.0.0", Kind: "update",
+	}}})
+	if nm.(model).top() != scrDevices {
+		t.Fatal("an update offer must not raise the install prompt")
+	}
+}
+
+// The Add-interface scan and the hotplug watcher share the pactl extraction:
+// only USB audio cards count.
+func TestUSBEntriesFromPactlSkipsNonUSB(t *testing.T) {
+	raw := []byte(`[
+		{"name":"alsa_card.usb-RME_Fireface-00","properties":{"device.description":"RME Fireface UCX II","alsa.card_name":"RME Fireface UCX II (1) at usb-1"}},
+		{"name":"alsa_card.pci-0000_00_1f","properties":{"device.description":"Built-in Audio","alsa.card_name":"HDA Intel"}},
+		{"name":"alsa_card.usb-Generic-01","properties":{"device.description":"USB Audio"}}
+	]`)
+	cards, err := usbCardsFromPactl(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cards) != 2 {
+		t.Fatalf("USB cards = %d, want 2", len(cards))
+	}
+	if cards[0].Name != "RME Fireface UCX II" || !strings.Contains(cards[0].Match, "Fireface") {
+		t.Fatalf("first card = %+v", cards[0])
+	}
+	if cards[1].Match != "USB Audio" {
+		t.Fatalf("match must fall back to the description: %+v", cards[1])
 	}
 }
 
