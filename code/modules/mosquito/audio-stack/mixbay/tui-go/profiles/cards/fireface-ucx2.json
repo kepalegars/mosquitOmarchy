@@ -34,8 +34,7 @@
       "sink": "HiFi__Line5__sink",
       "source": "Fireface"
     },
-    "description": "Class Compliant mode: oscmix (huddx01 fork) owns the mixer, opened as GTK or Qt from the card menu. Mixbay shows actions only.",
-    "upstream": "https://raw.githubusercontent.com/kepalegars/mosquito-mixbay-profiles/main/cards/rme/fireface-ucx2/card.json"
+    "description": "Class Compliant mode: oscmix (huddx01 fork) owns the mixer, opened as GTK or Qt from the card menu. Mixbay shows actions only."
   },
   "credits": {
     "author": "mosquito"
