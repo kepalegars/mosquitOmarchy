@@ -1166,6 +1166,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.backupOpts.KeepassSettings = !m.backupOpts.KeepassSettings
 			case "zen":
 				m.backupOpts.Zen = !m.backupOpts.Zen
+			case "mixbay":
+				m.backupOpts.Mixbay = !m.backupOpts.Mixbay
 			case "reaper":
 				m.backupOpts.Reaper = cycleReaper(m.backupOpts.Reaper, msg.Dir)
 			case "keybindings":
@@ -1184,6 +1186,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.restoreOpts.Reaper = !m.restoreOpts.Reaper
 			case "zen":
 				m.restoreOpts.Zen = !m.restoreOpts.Zen
+			case "mixbay":
+				m.restoreOpts.Mixbay = !m.restoreOpts.Mixbay
 			case "keepass":
 				m.restoreOpts.Keepass = !m.restoreOpts.Keepass
 			case "keepass-settings":
@@ -1205,6 +1209,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					m.restoreOpts.Mode = "safe"
 				}
 				m.restoreNotice = restoreModeNotice(m.restoreOpts.Mode)
+			case "latest":
+				m.restoreOpts.Latest = !m.restoreOpts.Latest
 			default:
 				return m, nil
 			}
@@ -3569,6 +3575,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.backupOpts.KeepassSettings = !m.backupOpts.KeepassSettings
 		case "zen":
 			m.backupOpts.Zen = !m.backupOpts.Zen
+		case "mixbay":
+			m.backupOpts.Mixbay = !m.backupOpts.Mixbay
 		case "reaper":
 			m.backupOpts.Reaper = cycleReaper(m.backupOpts.Reaper, 1)
 		case "keybindings":
@@ -3624,6 +3632,8 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.restoreOpts.Reaper = !m.restoreOpts.Reaper
 		case "zen":
 			m.restoreOpts.Zen = !m.restoreOpts.Zen
+		case "mixbay":
+			m.restoreOpts.Mixbay = !m.restoreOpts.Mixbay
 		case "keepass":
 			m.restoreOpts.Keepass = !m.restoreOpts.Keepass
 		case "keepass-settings":
@@ -3645,11 +3655,15 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 				m.restoreOpts.Mode = "safe"
 			}
 			m.restoreNotice = restoreModeNotice(m.restoreOpts.Mode)
+		case "latest":
+			m.restoreOpts.Latest = !m.restoreOpts.Latest
 		case "restore":
 			args := []string{
 				m.pendingFile,
 				"--mode=" + m.restoreOpts.Mode,
+				"--latest=" + yesno(m.restoreOpts.Latest),
 				"--vst=" + yesno(m.restoreOpts.VST),
+				"--mixbay=" + yesno(m.restoreOpts.Mixbay),
 				"--reaper=" + yesno(m.restoreOpts.Reaper),
 				"--zen=" + yesno(m.restoreOpts.Zen),
 				"--keepass=" + yesno(m.restoreOpts.Keepass),
@@ -5760,7 +5774,7 @@ func (m model) rebuildBackupOptions() navPicker {
 	items := []tuikit.PickerItem{
 		{Display: "Archive name: " + nameRow, Value: "name"},
 		{Display: fmt.Sprintf("Packages, Themes & tweaks: %d selected", len(m.backupChecked)), Value: "apps"},
-		{Display: "App specific settings", Value: "app-settings"},
+		{Display: "App specific settings", Value: "app-settings", Disabled: !m.hasBackupAppSettings()},
 		{Display: "Keybindings: " + keybindingsBackupLabel(m.backupOpts.Keybindings), Value: "keybindings"},
 		{Display: "Omarchy bar: " + yesno(m.backupOpts.Bar), Value: "bar"},
 		{Display: "Hyprland configs: " + yesno(m.backupOpts.Hyprland), Value: "hyprland"},
@@ -5790,7 +5804,7 @@ func backupOptionInfo(value string) string {
 	case "apps":
 		return "Packages, themes and tweaks\n\nChoose which modules to include in install.list. Restore will show this list before installing anything."
 	case "app-settings":
-		return "App-specific settings\n\nChoose VST inventory or full plugin files, KeePassXC data, Zen settings and REAPER resources."
+		return "App-specific settings\n\nChoose VST inventory or full plugin files, KeePassXC data, Zen settings, MixBay interface profiles and REAPER resources."
 	case "keybindings":
 		return "Keybindings\n\nSave all bindings, only the mosquitOmarchy-managed bindings, or none."
 	case "hyprland":
@@ -5814,15 +5828,16 @@ func backupOptionInfo(value string) string {
 func (m model) rebuildBackupAppSettings() navPicker {
 	idx := m.backupAppPicker.Index()
 	opts := m.effectiveBackupOpts()
-	vst := "list only"
-	switch opts.VST {
-	case "full":
-		vst = "full files (~hundreds of MB)"
-	case "none":
-		vst = "no"
-	}
-	items := []tuikit.PickerItem{
-		{Display: "VST plugins: " + vst, Value: "vst"},
+	items := []tuikit.PickerItem{}
+	if m.backupAppSelected("audio-plugin-manager") {
+		vst := "list only"
+		switch opts.VST {
+		case "full":
+			vst = "full files (~hundreds of MB)"
+		case "none":
+			vst = "no"
+		}
+		items = append(items, tuikit.PickerItem{Display: "VST plugins: " + vst, Value: "vst"})
 	}
 	if m.backupOpts.HasKeep && m.backupAppSelected("keepassxc") {
 		items = append(items,
@@ -5830,8 +5845,11 @@ func (m model) rebuildBackupAppSettings() navPicker {
 			tuikit.PickerItem{Display: "KeePassXC settings: " + yesno(m.backupOpts.KeepassSettings), Value: "keepass-settings"},
 		)
 	}
-	if m.backupOpts.HasZen {
+	if m.backupOpts.HasZen && m.backupAppSelected("zen") {
 		items = append(items, tuikit.PickerItem{Display: "Zen settings + Mods: " + yesno(m.backupOpts.Zen), Value: "zen"})
+	}
+	if m.backupAppSelected("mixbay") {
+		items = append(items, tuikit.PickerItem{Display: "MixBay profiles + integrations: " + yesno(m.backupOpts.Mixbay), Value: "mixbay"})
 	}
 	if m.backupOpts.HasReaper && m.backupAppSelected("reaper") {
 		items = append(items, tuikit.PickerItem{Display: "Reaper ressources: " + reaperDepthLabel(m.backupOpts.Reaper), Value: "reaper"})
@@ -6025,6 +6043,9 @@ func (m model) rebuildRestoreOptions() navPicker {
 	if m.restoreManifest.Zen {
 		items = append(items, tuikit.PickerItem{Display: "Zen settings: " + yesno(m.restoreOpts.Zen), Value: "zen"})
 	}
+	if m.restoreManifest.Mixbay {
+		items = append(items, tuikit.PickerItem{Display: "MixBay profiles + integrations: " + yesno(m.restoreOpts.Mixbay), Value: "mixbay"})
+	}
 	if m.restoreManifest.Keepass {
 		items = append(items, tuikit.PickerItem{Display: "KeePassXC passwords: " + yesno(m.restoreOpts.Keepass), Value: "keepass"})
 	}
@@ -6054,6 +6075,7 @@ func (m model) rebuildRestoreOptions() navPicker {
 	}
 	items = append(items,
 		tuikit.PickerItem{Display: "Restore mode: " + modeValue, Value: "mode"},
+		tuikit.PickerItem{Display: "Restore latest module & package versions: " + yesno(m.restoreOpts.Latest), Value: "latest"},
 		tuikit.PickerItem{Display: "Restore now…", Value: "restore", Engage: true},
 		tuikit.PickerItem{Display: "Back", Value: "back"},
 	)
@@ -6344,6 +6366,11 @@ func (m model) restorePlanLines() []string {
 	} else {
 		lines = append(lines, "  • Mode: Full — overwrite the files included in the backup")
 	}
+	if m.restoreOpts.Latest {
+		lines = append(lines, "  • Latest versions: yes — update the restored MixBay profiles from the repo")
+	} else {
+		lines = append(lines, "  • Latest versions: no — restore the archived MixBay files exactly as saved")
+	}
 	if m.restoreManifest.Config {
 		if m.restoreOpts.Mode == "safe" {
 			lines = append(lines, "  • Merge config-backup.tar.gz; keep files that already exist")
@@ -6372,6 +6399,9 @@ func (m model) restorePlanLines() []string {
 	}
 	if m.restoreManifest.Zen {
 		lines = append(lines, "  • Zen settings: "+yesno(m.restoreOpts.Zen))
+	}
+	if m.restoreManifest.Mixbay {
+		lines = append(lines, "  • MixBay profiles + integrations: "+yesno(m.restoreOpts.Mixbay))
 	}
 	if m.restoreManifest.Keepass {
 		lines = append(lines, "  • KeePassXC password database: "+yesno(m.restoreOpts.Keepass))
@@ -6529,6 +6559,8 @@ func (m model) beginBackup() (model, tea.Cmd) {
 		"--keepass=" + yesno(opts.Keepass),
 		"--keepass-settings=" + yesno(opts.KeepassSettings),
 		"--zen=" + yesno(opts.Zen),
+		"--mixbay=" + yesno(opts.Mixbay),
+		"--betterbird=" + yesno(m.backupAppSelected("betterbird")),
 		"--reaper=" + opts.Reaper,
 		"--keybindings=" + opts.Keybindings,
 		"--bar=" + yesno(opts.Bar),

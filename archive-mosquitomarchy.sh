@@ -198,9 +198,34 @@ installer_names(){
   (( $# )) || { printf 'none found'; return; }
   for f in "$@"; do
     (( first )) || printf ', '
-    printf '%s' "$f"
+    printf '%s' "${f##*/}"
     first=0
   done
+}
+
+has_patch(){
+  local d
+  for d in "$ROOT"/code/modules/*/*/PATCH "$ROOT"/code/modules/PATCH; do
+    [[ -d $d ]] && return 0
+  done
+  return 1
+}
+
+has_passwords(){
+  local f
+  for f in "$ROOT"/Passwords.kdbx "$ROOT"/Documents/Passwords.kdbx; do
+    [[ -f $f ]] && return 0
+  done
+  return 1
+}
+
+# Mention PATCH and passwords only when this checkout actually carries them.
+safety_exclusions(){
+  local out=".local"
+  has_patch && out+=", PATCH"
+  has_passwords && out+=", passwords"
+  out+=", generated lists and nested archives"
+  printf '%s' "$out"
 }
 
 # ───────────────────────── Archive type menu ─────────────────────────
@@ -215,7 +240,7 @@ type_menu(){
     printf '    • tracked, untracked and ignored files (except sensitive state)\n'
     printf '    • after Start, choose whether installers, logs, local backups and\n'
     printf '      downloaded profile integrations are included\n'
-    printf '    • excludes .local, PATCH, passwords, generated lists and nested archives\n'
+    printf '    • excludes %s\n' "$(safety_exclusions)"
     printf '\n'
     printf '  source:\n'
     printf '    • the tracked code only\n'
@@ -266,6 +291,8 @@ output_folder_menu(){
     '~/'*) dest="$HOME/${dest#\~/}" ;;
   esac
   [[ $dest == /* ]] || dest="$ROOT/$dest"
+  [[ -e $dest ]] || { err "Path does not exist: $dest"; return 0; }
+  [[ -d $dest ]] || { err "Not a folder: $dest"; return 0; }
   OUT_DIR="${dest%/}"
   [[ -n $OUT_DIR ]] || OUT_DIR=/
   ok "Archive folder set to: $OUT_DIR"
@@ -283,19 +310,18 @@ ask_installers(){
   local names answer
   names="$(installer_names "${files[@]}")"
   if [[ -n $ARCHIVE_INSTALLERS ]]; then
-    if (( ARCHIVE_INSTALLERS )); then ok "Installers included: ($names)"; else msg "Installers excluded: ($names)"; fi
+    (( ARCHIVE_INSTALLERS )) && ok "Installers included."
     return 0
   fi
   if (( YES )) || [[ ! -t 0 ]]; then
     ARCHIVE_INSTALLERS=0
-    msg "Installers excluded by default: ($names)"
     return 0
   fi
-  printf '\nInstaller files (Ableton, Bitwig, DaVinci, Guitar Pro): (%s)\n' "$names"
+  printf '\nInstaller files: %s\n' "$names"
   read -r -p 'Include these files in the archive? [y/N] ' answer || answer=n
   case "${answer:-n}" in
-    [yY]) ARCHIVE_INSTALLERS=1; ok "Installers included: ($names)" ;;
-    *) ARCHIVE_INSTALLERS=0; msg "Installers excluded: ($names)" ;;
+    [yY]) ARCHIVE_INSTALLERS=1; ok "Installers included." ;;
+    *)    ARCHIVE_INSTALLERS=0 ;;
   esac
 }
 
@@ -326,7 +352,7 @@ ask_backups(){
     (( YES )) && ok "(auto) backups excluded"
     return 0
   fi
-  printf '\nLocal backups: */backups/, *.bak, *.bak.*, *.backup, *.backup.*\n'
+  printf '\n'
   local r
   read -rp "  Include the local backup files? [y/n] " r
   case "${r:-n}" in
@@ -349,9 +375,9 @@ ask_integrations(){
     (( YES )) && ok "(auto) profile integrations excluded"
     return 0
   fi
-  printf '\nDownloaded profile integrations: (%s)\n' "${dirs[*]#"$ROOT"/}"
+  printf '\nDownloaded profile integrations\n'
   local r
-  read -rp "  Include these profile files (oscmix, evo-raw)? [y/n] " r
+  read -rp "  Include these profile files? [y/n] " r
   case "${r:-n}" in
     [yY]) ARCHIVE_INTEGRATIONS=1 ;;
     *)    ARCHIVE_INTEGRATIONS=0 ;;
@@ -390,9 +416,9 @@ do_list(){
     local -a installers=()
     mapfile -d '' -t installers < <(installer_files)
     if (( ARCHIVE_INSTALLERS )); then
-      printf '  app installers       : included (%s)\n' "$(installer_names "${installers[@]}")"
+      printf '  app installers       : included\n'
     else
-      printf '  app installers       : excluded by default (%s)\n' "$(installer_names "${installers[@]}")"
+      printf '  app installers       : excluded\n'
     fi
     if (( LIST_ONLY )); then return 0; fi
     hr
@@ -471,7 +497,6 @@ create_archive(){
   rm -f -- "$listing"
   trap - EXIT
   ok "verified archive: $out ($(human "$bytes"), $entries entries)"
-  echo "  Extract by hand:  tar xzf $(basename "$out") && cd $PROJECT_NAME && ./bootstrap.sh"
   hr
 }
 
@@ -495,7 +520,9 @@ build(){
     warn "Working tree has uncommitted changes — the archive uses files on disk, not the commit."
   fi
   printf '  Content: %s tracked source files\n' "${#TRACKED[@]}"
-  msg "  Excluded: machine state, logs, backups, passwords and non-tracked files"
+  local excluded="machine state, logs, backups and non-tracked files"
+  has_passwords && excluded="machine state, logs, backups, passwords and non-tracked files"
+  msg "  Excluded: $excluded"
   local input_bytes out tmp listing
   input_bytes="$(file_bytes "${TRACKED[@]}")"
   check_space "$input_bytes" || exit 1
@@ -518,7 +545,7 @@ build_complete(){
   if (( ${ARCHIVE_BACKUPS:-0} )); then msg "  Backups: included (as requested)"; else msg "  Backups: excluded"; fi
   if (( ${ARCHIVE_INTEGRATIONS:-0} )); then msg "  Profiles: integrations included (as requested)"; else msg "  Profiles: integrations excluded"; fi
   printf '  Content: %s files, ~%s uncompressed\n' "${#FILES[@]}" "$(human "$(file_bytes "${FILES[@]}")")"
-  msg "  Safety exclusions: .local, PATCH, passwords, generated lists and nested archives"
+  msg "  Safety exclusions: $(safety_exclusions)"
   local input_bytes out tmp listing
   input_bytes="$(file_bytes "${FILES[@]}")"
   check_space "$input_bytes" || exit 1

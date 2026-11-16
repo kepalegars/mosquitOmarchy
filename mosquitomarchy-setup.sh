@@ -17,6 +17,7 @@
 #   ./mosquitomarchy-setup.sh --backup   # dated backup; OFFERS the plugin folders
 #   ./mosquitomarchy-setup.sh --backup --vst-backup=full   # idem + plugin folders archived (non-interactive)
 #   ./mosquitomarchy-setup.sh --backup --zen=no           # idem, without the Zen browser settings
+#   ./mosquitomarchy-setup.sh --backup --mixbay=no       # idem, without the MixBay profiles/integrations
 #   ./mosquitomarchy-setup.sh --list     # chronological list of the backups
 #   ./mosquitomarchy-setup.sh --restore[=FILE]  # restore a backup (chronological choice)
 #   ./mosquitomarchy-setup.sh --update-repo     # git pull the scripts from GitHub (see "Updating")
@@ -76,12 +77,19 @@ if (( ! LIB_ONLY )); then
       esac
       [[ "${a#*=}" == no ]] && export BACKUP_SKIP_ZEN=1
       ;;
+    --mixbay=*)
+      case "${a#*=}" in
+        yes|no) ;;
+        *) echo "--mixbay expects yes|no, got '${a#*=}'" >&2; exit 1 ;;
+      esac
+      [[ "${a#*=}" == no ]] && export BACKUP_SKIP_MIXBAY=1
+      ;;
     --list) MODE=list ;;
     --restore) MODE=restore ;;
     --restore=*) MODE=restore; RESTORE_FILE="${a#*=}" ;;
     --update-repo) MODE=update-repo ;;
     -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
-    *) echo "Unknown option: $a (supported: -y --status --update --uninstall --include=<mod> --backup [--vst-backup=ask|list|full|none] [--zen=yes|no] --list --restore[=FILE] --update-repo)" >&2; exit 1 ;;
+    *) echo "Unknown option: $a (supported: -y --status --update --uninstall --include=<mod> --backup [--vst-backup=ask|list|full|none] [--zen=yes|no] [--mixbay=yes|no] --list --restore[=FILE] --update-repo)" >&2; exit 1 ;;
   esac; done
 fi
 
@@ -1108,7 +1116,7 @@ MODULES=(
   "reaper:REAPER + Hyprland/Wayland integration, and its UI scale is set to the current monitor's DPI on every launch — REAPER cannot do this itself, so the launcher does it before the process starts. No action needed, nothing to remember: launch it from the Omarchy menu, the desktop entry or a shell and the size is right"
   "audio:mosquito audio stack — yabridge/APM, Mixbay, Levels Guard, live mode, PipeWire (folder row installs all five)"
   "audio-plugin-manager:mosquito Audio Plugin Manager (TUI + actions) + shared audio core"
-  "bitwig:Bitwig Studio 6.0 Beta 6 from the local .deb, its own module + optional patched bitwig.jar"
+  "bitwig:Bitwig Studio 6.0 Beta 6 from the local .deb, its own module"
   "windows-vm:VM launcher + winvm (RAM/CPU/disk) + OEM debloat (auto-detected)"
   "macos-vm:macOS VMs in QEMU/KVM (OSX-For-Omarchy) — installer + TUI manager + shared folders + USB passthrough"
   "omarchy-vm:Omarchy in QEMU/KVM from the official ISO — launcher + TUI manager + shared folder + USB/GPU passthrough"
@@ -2399,10 +2407,12 @@ do_backup(){
     info "Zen browser: skipped (--zen=no)."
   fi
   # Betterbird — the ACTIVE profile's settings + addons, but only when the
-  # app is present. Same shape as Zen above (identity + extensions + prefs),
-  # same exclusions: mail stores (Mail/, ImapMail/) are hundreds of MB of
-  # private data, not configuration — a backup of the CONFIGURATION.
-  if command -v betterbird >/dev/null 2>&1; then
+  # app is selected in the backup tree and present. Same shape as Zen above
+  # (identity + extensions + prefs), same exclusions: mail stores (Mail/,
+  # ImapMail/) are hundreds of MB of private data, not configuration — a
+  # backup of the CONFIGURATION.
+  # --betterbird=no (BACKUP_SKIP_BETTERBIRD) leaves it out.
+  if [[ -z ${BACKUP_SKIP_BETTERBIRD:-} ]] && command -v betterbird >/dev/null 2>&1; then
     local bb_prof
     if bb_prof="$(betterbird_active_profile 2>/dev/null || true)"; then
       paths+=(".thunderbird/profiles.ini")
@@ -2470,6 +2480,36 @@ do_backup(){
         ;;
     esac
   fi
+  # MixBay audio interface profiles + their downloaded integrations. Both are
+  # personal data, not part of the installed module: the profile store is the
+  # user's card library (with its UI overrides and metadata), and the
+  # integrations are the tools those cards declared. The paths follow Mixbay's
+  # own XDG layout, so a restore can put them back where the binary reads now.
+  # --mixbay=no (BACKUP_SKIP_MIXBAY) leaves them out.
+  if [[ -z ${BACKUP_SKIP_MIXBAY:-} ]]; then
+    local mb_conf="${MIXBAY_CONFIG_DIR:-$HOME/.config/mosquitomixbay}"
+    local mb_cards="$mb_conf/cards"
+    local mb_data="${XDG_DATA_HOME:-$HOME/.local/share}/mosquitomixbay"
+    local mb_integ="$mb_data/integrations"
+    local -a mb_parts=()
+    mkdir -p "$tmp/mixbay"
+    if [[ -d $mb_cards ]] && find "$mb_cards" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
+      ( cd "$mb_cards" && tar czf "$tmp/mixbay/cards.tar.gz" --ignore-failed-read . )
+      mb_parts+=("profiles")
+    fi
+    if [[ -d $mb_integ ]] && find "$mb_integ" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
+      ( cd "$mb_integ" && tar czf "$tmp/mixbay/integrations.tar.gz" --ignore-failed-read . )
+      mb_parts+=("integrations")
+    fi
+    if ((${#mb_parts[@]})); then
+      ok "MixBay ${mb_parts[*]} included"
+    else
+      rmdir "$tmp/mixbay" 2>/dev/null || true
+      info "MixBay: no profiles or integrations to back up."
+    fi
+  else
+    info "MixBay profiles/integrations: skipped (--mixbay=no)."
+  fi
   # KeePassXC is split in two on purpose:
   #   passwords  Documents/Passwords.kdbx          (the database)
   #   settings   .config/keepassxc + KeePassXC's autostart entry
@@ -2489,7 +2529,9 @@ do_backup(){
     fi
     if (( kp_db || kp_set )); then
       ok "keepassxc included (passwords: $([[ $kp_db == 1 ]] && echo yes || echo no), settings: $([[ $kp_set == 1 ]] && echo yes || echo no))"
-    else
+    elif [[ -z ${BACKUP_SKIP_KEEPASS:-} || -z ${BACKUP_SKIP_KEEPASS_SETTINGS:-} ]]; then
+      # Both toggles OFF means the user simply did not select KeePassXC: say
+      # nothing. The warning is for a requested section that found no data.
       warn "keepassxc installed but neither the database nor ~/.config/keepassxc was requested/found — nothing to back up."
     fi
   fi
@@ -2503,7 +2545,7 @@ do_backup(){
     # only" really does contain nothing else from that file.
     ( cd "$HOME" && tar czf "$tmp/config-backup.tar.gz" --ignore-failed-read \
         --exclude='.config/hypr/bindings.lua' "${paths[@]}" )
-    ok "config-backup.tar.gz (${#paths[@]} items: config + bar + menus + yabridgectl + REAPER + Zen settings + keepassxc)"
+    ok "config-backup.tar.gz (${#paths[@]} items)"
   fi
 
   pacman -Qqe > "$tmp/pkglist.txt" 2>/dev/null && ok "pkglist.txt ($(wc -l < "$tmp/pkglist.txt") packages)"
@@ -2628,6 +2670,15 @@ If the backup file ends in .tar.gz.gpg, decrypt it first:
 ## 3. AUR packages
 
     for pkg in \$(cat aurlist.txt); do yay -S "\$pkg"; done
+
+## MixBay profiles (when included)
+
+    mkdir -p ~/.config/mosquitomixbay/cards ~/.local/share/mosquitomixbay/integrations
+    tar xzf mixbay/cards.tar.gz -C ~/.config/mosquitomixbay/cards
+    tar xzf mixbay/integrations.tar.gz -C ~/.local/share/mosquitomixbay/integrations
+
+> \`./mosquitomarchy-setup.sh --restore\` does this and, when the latest-versions
+> option is on, updates the restored cards through MixBay's own CLI.
 EOF
   if [[ -f "$tmp/plugins/plugins.tar.gz" || -f "$tmp/plugins/plugins-vst.tar.gz" ]]; then
     cat >> "$tmp/RESTORE.md" <<EOF
@@ -3058,6 +3109,67 @@ restore_vst_inventory(){
   ok "VST inventory saved: $dest ($count plugins)"
 }
 
+# MixBay profiles + integrations. The archive stores each tree rooted at its
+# own folder (cards/, integrations/) so a restore lands where Mixbay reads NOW,
+# even if XDG_DATA_HOME or MIXBAY_CONFIG_DIR changed since the backup.
+#
+# latest=yes runs Mixbay's own CLI afterwards: profiles-import updates the
+# restored cards when the repo has a newer version, and profiles-integration
+# fetches/verifies the integration files they declare. Both are non-interactive
+# (the TUI is never opened). latest=no restores the archived files exactly.
+restore_mixbay(){
+  local tmp="$1" mode="$2" latest="$3"
+  local cfg="${MIXBAY_CONFIG_DIR:-$HOME/.config/mosquitomixbay}"
+  local data="${XDG_DATA_HOME:-$HOME/.local/share}/mosquitomixbay"
+  local -a tx=()
+  [[ $mode == safe ]] && tx+=(--skip-old-files)
+  local restored=0
+  if [[ -f "$tmp/mixbay/cards.tar.gz" ]]; then
+    mkdir -p "$cfg/cards"
+    if tar xzf "$tmp/mixbay/cards.tar.gz" -C "$cfg/cards" "${tx[@]}"; then restored=1
+    else warn "Could not deploy every MixBay profile file."; fi
+  fi
+  if [[ -f "$tmp/mixbay/integrations.tar.gz" ]]; then
+    mkdir -p "$data/integrations"
+    if tar xzf "$tmp/mixbay/integrations.tar.gz" -C "$data/integrations" "${tx[@]}"; then restored=1
+    else warn "Could not deploy every MixBay integration file."; fi
+  fi
+  ((restored)) || return 0
+  ok "MixBay profiles + integrations restored"
+  [[ $latest == yes ]] || { info "MixBay: restored as archived (latest versions off)."; return 0; }
+
+  local actions
+  actions="$(command -v mosquito-mixbay-actions 2>/dev/null || true)"
+  [[ -n $actions ]] || actions="$BIN_DIR/mosquito-mixbay-actions"
+  [[ -x $actions ]] || { warn "MixBay is not installed — profiles restored, but not updated."; return 0; }
+
+  local -a ids=()
+  local d id setup
+  for d in "$cfg"/cards/*/; do
+    [[ -f "$d/upstream/card.json" ]] || continue
+    ids+=("$(basename "$d")")
+  done
+  ((${#ids[@]})) || return 0
+
+  local log="$tmp/mixbay-update.log"
+  if "$actions" profiles-import "${ids[@]}" >"$log" 2>&1; then
+    ok "MixBay profiles checked against the repo (${#ids[@]} card(s))"
+  else
+    warn "MixBay profiles could not be updated (offline?); the archived copies are in place."
+    return 0
+  fi
+  for id in "${ids[@]}"; do
+    setup="$(jq -r '.spec.setup // ""' "$cfg/cards/$id/upstream/card.json" 2>/dev/null || true)"
+    [[ -n $setup && $setup != null ]] || continue
+    if "$actions" profiles-integration "$setup" >/dev/null 2>>"$log"; then
+      ok "MixBay integration ready: $setup"
+    else
+      warn "MixBay integration could not be deployed: $setup"
+    fi
+  done
+  return 0
+}
+
 restore_backup(){
   local file="$1"
   local RESTORED_VST_LIST=""
@@ -3114,6 +3226,11 @@ restore_backup(){
   local dep_hyprland="${RESTORE_DEPLOY_HYPRLAND:-yes}"
   local dep_bar="${RESTORE_DEPLOY_BAR:-yes}"
   local dep_keybindings="${RESTORE_KEYBINDINGS:-custom}"
+  local dep_mixbay="${RESTORE_DEPLOY_MIXBAY:-yes}"
+  # OFF still runs each module's own install script, which installs the current
+  # upstream version (Bitwig stays pinned to its local .deb and is never
+  # updated here). ON adds the MixBay profile/integration update pass.
+  local restore_latest="${RESTORE_LATEST:-yes}"
   local restore_failed=0
   local restart_shell_after=0
   local bar_restore_pending=0
@@ -3322,6 +3439,13 @@ restore_backup(){
       err "Could not restore the VST inventory list."
       restore_failed=1
     fi
+  fi
+
+  # --- MixBay profiles + their integrations ---
+  if [[ $dep_mixbay == no ]]; then
+    info "MixBay profiles: skipped (restore option)."
+  elif [[ -f "$tmp/mixbay/cards.tar.gz" || -f "$tmp/mixbay/integrations.tar.gz" ]]; then
+    restore_mixbay "$tmp" "$mode" "$restore_latest" || restore_failed=1
   fi
 
   # --- Third-party Omarchy shell plugins ---

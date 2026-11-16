@@ -406,15 +406,28 @@ func TestBackupRecapPrecedesEncryptionPassphrase(t *testing.T) {
 	}
 }
 
-func TestZenSettingsBackupDoesNotRequireReinstallSelection(t *testing.T) {
+func TestZenSettingsBackupFollowsZenSelection(t *testing.T) {
 	m := initialModel()
 	m.backupOpts = BackupOpts{Zen: true, HasZen: true}
-	m.backupItems = []SetupItemRec{{Folder: "apps", Key: "keepassxc", Label: "KeePassXC"}}
+	m.backupItems = []SetupItemRec{
+		{Folder: "apps", Key: "keepassxc", Label: "KeePassXC"},
+		{Folder: "apps", Key: "zen", Label: "Zen"},
+	}
 	m.backupChecked = map[string]bool{setupValue("apps", "keepassxc"): true}
 	m.backupAppPicker = newNavPicker("", nil)
 
+	if m.effectiveBackupOpts().Zen {
+		t.Fatal("Zen settings must stay off while Zen is not selected")
+	}
+	for _, item := range m.rebuildBackupAppSettings().Items() {
+		if item.Value == "zen" {
+			t.Fatal("Zen settings toggle must not appear while Zen is not selected")
+		}
+	}
+
+	m.backupChecked[setupValue("apps", "zen")] = true
 	if !m.effectiveBackupOpts().Zen {
-		t.Fatal("Zen settings were disabled because Zen was not selected for reinstall")
+		t.Fatal("Zen settings should be enabled once Zen is selected")
 	}
 	for _, item := range m.rebuildBackupAppSettings().Items() {
 		if item.Value == "zen" {
@@ -424,7 +437,7 @@ func TestZenSettingsBackupDoesNotRequireReinstallSelection(t *testing.T) {
 			return
 		}
 	}
-	t.Fatal("Zen settings toggle was hidden when Zen was not selected for reinstall")
+	t.Fatal("Zen settings toggle is missing for a selected Zen")
 }
 
 func TestSetupInfoKey(t *testing.T) {
@@ -1162,7 +1175,7 @@ func TestBackupOptionsPersistAcrossSessions(t *testing.T) {
 
 	// No file at all -> defaults, and NOT an error.
 	def := loadBackupOpts()
-	if def.VST != "list" || !def.Keepass || !def.Zen {
+	if def.VST != "list" || !def.Keepass || !def.Zen || !def.Mixbay {
 		t.Fatalf("no stored file should give the defaults, got %+v", def)
 	}
 

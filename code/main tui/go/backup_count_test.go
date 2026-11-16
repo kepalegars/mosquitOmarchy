@@ -341,16 +341,24 @@ func TestBackupAppSettingsFollowSelectedApps(t *testing.T) {
 		t.Fatalf("KeePassXC settings remained after unselecting KeePassXC: %v", rows)
 	}
 	delete(m.backupChecked, setupValue("apps", "APP Zen|zen"))
-	if !settings()["zen"] {
-		t.Fatal("Zen settings should remain selectable even when Zen is not being reinstalled")
+	if settings()["zen"] {
+		t.Fatal("Zen settings must disappear when Zen is not selected")
 	}
 
 	delete(m.backupChecked, setupValue("audio-stack", "audio-plugin-manager"))
-	if got := m.effectiveBackupOpts().VST; got != "list" {
-		t.Fatalf("full VST files should fall back to list-only without the audio plugin manager, got %q", got)
+	if settings()["vst"] {
+		t.Fatal("VST settings must disappear when the audio plugin manager is not selected")
 	}
-	if got := m.cycleBackupVST(1); got != "none" {
-		t.Fatalf("VST should cycle list-only to no backup without the audio plugin manager, got %q", got)
+	if got := m.effectiveBackupOpts().VST; got != "none" {
+		t.Fatalf("VST should be off without the audio plugin manager, got %q", got)
+	}
+	if m.hasBackupAppSettings() {
+		t.Fatal("app-specific settings should be unavailable with no relevant app selected")
+	}
+	for _, it := range m.rebuildBackupOptions().Items() {
+		if it.Value == "app-settings" && !it.Disabled {
+			t.Fatal("App specific settings row must be greyed out when nothing can fill it")
+		}
 	}
 }
 
@@ -449,11 +457,11 @@ func TestBeginBackupWritesUncheckedPreinstalls(t *testing.T) {
 	}
 }
 
-func TestBeginBackupKeepsZenSettingsIndependentOfInstallSelection(t *testing.T) {
+func TestBeginBackupFollowsAppSelection(t *testing.T) {
 	m := initialModel()
 	m.nav = []screen{scrMain, scrBackup, scrBackupOptions}
 	m.backupOpts = BackupOpts{VST: "full", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "full", HasKeep: true, HasZen: true, HasReaper: true}
-	m.backupItems = []SetupItemRec{{Folder: "audio-stack", Key: "audio-plugin-manager"}}
+	m.backupItems = []SetupItemRec{}
 	var cmd tea.Cmd
 	m, cmd = m.beginBackup()
 	if cmd != nil {
@@ -461,7 +469,7 @@ func TestBeginBackupKeepsZenSettingsIndependentOfInstallSelection(t *testing.T) 
 	}
 	defer os.Remove(m.backupSelFile)
 	got := strings.Join(m.pendingArgs, " ")
-	for _, want := range []string{"--vst=list", "--keepass=no", "--keepass-settings=no", "--zen=yes", "--reaper=none"} {
+	for _, want := range []string{"--vst=none", "--keepass=no", "--keepass-settings=no", "--zen=no", "--reaper=none", "--betterbird=no"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("backup option missing or incorrectly gated (%s): %s", want, got)
 		}
@@ -567,5 +575,67 @@ func TestRestoreAppsSelection(t *testing.T) {
 	got := string(body)
 	if strings.Contains(got, "keepassxc") || !strings.Contains(got, "\treaper") || !strings.Contains(got, "battery-management") {
 		t.Fatalf("selection file does not match the ticks:\n%s", got)
+	}
+}
+
+// TestMixbayBackupAndRestoreOptions pins the MixBay integration:
+//   - the Backup app-settings row exists only while mixbay is selected;
+//   - it defaults ON and reaches the backend as --mixbay=yes;
+//   - restore offers the section when the archive carries it, and the
+//     latest-versions toggle sits right after the restore mode.
+func TestMixbayBackupAndRestoreOptions(t *testing.T) {
+	m := initialModel()
+	m.w, m.h = 120, 40
+	m.nav = []screen{scrMain, scrBackup, scrBackupOptions}
+	m.backupOpts = BackupOpts{VST: "list", Mixbay: true, Keybindings: "no"}
+	m.backupItems = []SetupItemRec{{Folder: "audio-stack", Key: "mixbay"}}
+	m.backupChecked = map[string]bool{setupValue("audio-stack", "mixbay"): true}
+
+	row := func(p navPicker) *tuikit.PickerItem {
+		for i := range p.items {
+			if p.items[i].Value == "mixbay" {
+				return &p.items[i]
+			}
+		}
+		return nil
+	}
+	if row(m.rebuildBackupAppSettings()) == nil {
+		t.Fatal("MixBay row missing while mixbay is selected")
+	}
+	delete(m.backupChecked, setupValue("audio-stack", "mixbay"))
+	if row(m.rebuildBackupAppSettings()) != nil {
+		t.Fatal("MixBay row remained after mixbay was unselected")
+	}
+	m.backupChecked[setupValue("audio-stack", "mixbay")] = true
+
+	m, _ = m.beginBackup()
+	if !strings.Contains(strings.Join(m.pendingArgs, " "), "--mixbay=yes") {
+		t.Fatalf("backup args do not carry --mixbay=yes: %v", m.pendingArgs)
+	}
+
+	m.restoreManifest = BackupManifest{Mixbay: true}
+	m.restoreOpts = restoreOptsFor(m.restoreManifest)
+	if !m.restoreOpts.Latest || !m.restoreOpts.Mixbay {
+		t.Fatalf("restore defaults should be latest+mixbay: %+v", m.restoreOpts)
+	}
+	rows := m.rebuildRestoreOptions()
+	if row(rows) == nil {
+		t.Fatal("MixBay restore row missing for an archive that carries it")
+	}
+	var order []string
+	for _, it := range rows.items {
+		order = append(order, it.Value)
+	}
+	mode, latest := -1, -1
+	for i, v := range order {
+		if v == "mode" {
+			mode = i
+		}
+		if v == "latest" {
+			latest = i
+		}
+	}
+	if latest != mode+1 {
+		t.Fatalf("latest-versions toggle should follow restore mode: %v", order)
 	}
 }

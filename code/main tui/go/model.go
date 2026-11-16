@@ -96,6 +96,7 @@ type BackupOpts struct {
 	Keepass         bool   // include KeePassXC passwords (only when installed)
 	KeepassSettings bool   // include the KeePassXC settings (.config/keepassxc)
 	Zen             bool   // include the active Zen profile, extensions, settings, and chrome mods
+	Mixbay          bool   // include MixBay interface profiles + downloaded integrations
 	Reaper          string // "none" | "settings" | "full" (full = every dir REAPER created)
 	Keybindings     string // "all" | "custom" | "no"
 	Hyprland        bool   // include the whole ~/.config/hypr tree
@@ -116,6 +117,7 @@ type storedBackupOpts struct {
 	Keepass         bool   `json:"keepass"`
 	KeepassSettings bool   `json:"keepassSettings"`
 	Zen             bool   `json:"zen"`
+	Mixbay          bool   `json:"mixbay"`
 	Reaper          string `json:"reaper"`
 	Keybindings     string `json:"keybindings"`
 	Hyprland        bool   `json:"hyprland"`
@@ -132,7 +134,9 @@ type storedBackupOpts struct {
 // initialised from what the archive actually contains.
 type RestoreOpts struct {
 	Mode            string // "full" | "safe"
+	Latest          bool   // update the restored MixBay profiles from the repo
 	VST             bool
+	Mixbay          bool
 	Reaper          bool
 	Zen             bool
 	Keepass         bool
@@ -154,6 +158,7 @@ type BackupManifest struct {
 	VSTList         bool                 `json:"vst_list"`
 	Reaper          bool                 `json:"reaper"`
 	Zen             bool                 `json:"zen"`
+	Mixbay          bool                 `json:"mixbay"`
 	Keepass         bool                 `json:"keepass"`
 	KeepassSettings bool                 `json:"keepass_settings"`
 	Themes          bool                 `json:"themes"`
@@ -176,7 +181,9 @@ type BackupInstallGroup struct {
 func restoreOptsFor(mf BackupManifest) RestoreOpts {
 	o := RestoreOpts{
 		Mode:            "full",
+		Latest:          true,
 		VST:             mf.VST,
+		Mixbay:          mf.Mixbay,
 		Reaper:          mf.Reaper,
 		Zen:             mf.Zen,
 		Keepass:         mf.Keepass,
@@ -202,7 +209,7 @@ func restoreOptsFor(mf BackupManifest) RestoreOpts {
 // the defaults instead of an error: a corrupt preference file must never be
 // able to stop the Backup screen from opening.
 func loadBackupOpts() BackupOpts {
-	def := BackupOpts{VST: "list", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "full", Keybindings: "no", Hyprland: false, Bar: true}
+	def := BackupOpts{VST: "list", Keepass: true, KeepassSettings: true, Zen: true, Mixbay: true, Reaper: "full", Keybindings: "no", Hyprland: false, Bar: true}
 	out, err := runQuick("backup-opts", "get")
 	if err != nil {
 		return def
@@ -226,7 +233,7 @@ func loadBackupOpts() BackupOpts {
 	// saveBackupOpts, which always writes all five, so a decode that produced a
 	// zero value anywhere means the file was not written by us.
 	if st.VST == "" {
-		return BackupOpts{VST: "list", Keepass: true, KeepassSettings: true, Zen: true, Reaper: "full", Keybindings: "no", Hyprland: false, Bar: true}
+		return BackupOpts{VST: "list", Keepass: true, KeepassSettings: true, Zen: true, Mixbay: true, Reaper: "full", Keybindings: "no", Hyprland: false, Bar: true}
 	}
 	def.Keepass = st.Keepass
 	def.Zen = st.Zen
@@ -248,6 +255,10 @@ func loadBackupOpts() BackupOpts {
 	if st.Version >= 4 {
 		def.Bar = st.Bar
 	}
+	// MixBay profiles arrived in v5: older files keep the ON default.
+	if st.Version >= 5 {
+		def.Mixbay = st.Mixbay
+	}
 	return def
 }
 
@@ -256,11 +267,12 @@ func loadBackupOpts() BackupOpts {
 // as an error on the run that triggered it.
 func saveBackupOpts(o BackupOpts) {
 	payload, err := json.Marshal(storedBackupOpts{
-		Version:         4,
+		Version:         5,
 		VST:             o.VST,
 		Keepass:         o.Keepass,
 		KeepassSettings: o.KeepassSettings,
 		Zen:             o.Zen,
+		Mixbay:          o.Mixbay,
 		Reaper:          o.Reaper,
 		Keybindings:     o.Keybindings,
 		Hyprland:        o.Hyprland,
@@ -353,9 +365,9 @@ type model struct {
 	restoreAppsOpen map[string]bool
 	// restoreSelFile is the install.list-shaped file written from those ticks
 	// and handed to the backend as --install-selection.
-	restoreSelFile   string
-	restoreOpts      RestoreOpts
-	restoreManifest  BackupManifest
+	restoreSelFile  string
+	restoreOpts     RestoreOpts
+	restoreManifest BackupManifest
 	// restoreManifestReady means the archive has been read and the page's rows
 	// can be built from what it actually contains.
 	restoreManifestReady bool
@@ -977,16 +989,37 @@ func (m model) effectiveBackupOpts() BackupOpts {
 	if !m.backupOpts.HasKeep || !m.backupAppSelected("keepassxc") {
 		opts.Keepass, opts.KeepassSettings = false, false
 	}
-	if !m.backupOpts.HasZen {
+	if !m.backupOpts.HasZen || !m.backupAppSelected("zen") {
 		opts.Zen = false
+	}
+	if !m.backupAppSelected("mixbay") {
+		opts.Mixbay = false
 	}
 	if !m.backupOpts.HasReaper || !m.backupAppSelected("reaper") {
 		opts.Reaper = "none"
 	}
-	if !m.backupAppSelected("audio-plugin-manager") && opts.VST == "full" {
-		opts.VST = "list"
+	// The VST inventory is the audio plugin manager's own list: without that
+	// app selected there is nothing it could describe.
+	if !m.backupAppSelected("audio-plugin-manager") {
+		opts.VST = "none"
 	}
 	return opts
+}
+
+// hasBackupAppSettings reports whether at least one app-specific content row
+// can be offered. When nothing relevant is selected, the Backup options page
+// greys the App specific settings row instead of opening an empty sub-menu.
+func (m model) hasBackupAppSettings() bool {
+	if m.backupAppSelected("audio-plugin-manager") || m.backupAppSelected("mixbay") {
+		return true
+	}
+	if m.backupOpts.HasKeep && m.backupAppSelected("keepassxc") {
+		return true
+	}
+	if m.backupOpts.HasZen && m.backupAppSelected("zen") {
+		return true
+	}
+	return m.backupOpts.HasReaper && m.backupAppSelected("reaper")
 }
 
 func toggleTreeFolders(items []SetupItemRec, checked map[string]bool, folders []string) {
