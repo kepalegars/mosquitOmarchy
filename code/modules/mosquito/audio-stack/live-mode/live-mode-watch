@@ -308,20 +308,6 @@ patchbay_addr() {
     .[] | select((.class // "") | test($re)) | .address' 2>/dev/null
 }
 
-# patchbay_missing — the providers whose window is not up at all. Used to put
-# back the one the user closed while the other one stayed on screen: the
-# session still wants both, and that is not a reason to ask anything.
-patchbay_missing(){
-  local spec re
-  while IFS= read -r spec; do
-    [[ -n $spec ]] || continue
-    re="${spec#*|}"
-    hyprctl -j clients 2>/dev/null | jq -e --arg re "^($re)$" \
-      'any(.[]; (.class // "") | test($re))' >/dev/null 2>&1 && continue
-    printf '%s\n' "$spec"
-  done < <(patchbay_specs 2>/dev/null)
-}
-
 # patchbay_relaunch — start the specs on stdin where the session put them.
 # "scratchpad" means BORN there (exec rule on the workspace), not shown on the
 # current workspace and moved afterwards; "workspace" means the user accepted
@@ -410,13 +396,10 @@ patchbay_watch() {
   [[ -n $prev ]] || return 0
   (( prev > have )) || return 0
 
-  # One of two is still up: the other closed. Put it back silently — the
-  # session's tool is still in use, so there is nothing to decide.
-  if (( have > 0 )); then
-    patchbay_missing | patchbay_relaunch
-    patchbay_place
-    return 0
-  fi
+  # One of two is still on screen: the other was closed on purpose (or never
+  # came up). Put nothing back and ask nothing — the session's tool is still
+  # there, and relaunching behind the user's back is whack-a-mole, not help.
+  (( have > 0 )) && return 0
 
   # Everything vanished: ask ONCE per vanishing event.
   local payload sel="$STATE_DIR/confirm_sel" donef="$STATE_DIR/confirm_done" ans i
