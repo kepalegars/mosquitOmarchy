@@ -152,8 +152,9 @@ cmd_use(){
   [[ -n $sink ]] && pactl set-default-sink "$sink" 2>/dev/null || true
   [[ -n $source ]] && pactl set-default-source "$source" 2>/dev/null || true
   set_rate 44100 1
-  notify "Move is the audio interface" \
-    "Default in/out switched, graph pinned to 44.1 kHz. Unplugging offers the way back."
+  local what="graph pinned to 44.1 kHz"
+  [[ -n $sink && -n $source ]] && what="default in/out switched, graph pinned to 44.1 kHz"
+  notify "Move is the audio interface" "$what. Unplugging offers the way back."
 }
 
 cmd_revert(){
