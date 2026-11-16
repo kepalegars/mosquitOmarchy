@@ -601,11 +601,21 @@ dans le graphe vivant.
   lancement, silencieusement : la GUI se tile normalement sur le workspace
   actif et garde le focus, avec une notification rappelant `SUPER + S`.
   Désactivé, Mixbay lance la GUI sans toucher aux fenêtres.
-- **Carte branchée à chaud** : toutes les ~5 s, Mixbay regarde les cartes USB
-  connectées. Si une carte est supportée par le dépôt mais que son profil
-  n'est pas installé, une confirmation nomme la carte et propose de
-  l'installer (import + intégration, comme depuis Audio interface profiles).
+- **Detect plugged cards** (actif par défaut) : le watcher de cartes suit les
+  événements PipeWire (`pactl subscribe`), sans scrutation périodique. Une
+  carte supportée branchée pendant que Mixbay est ouvert ouvre la même
+  confirmation que la bibliothèque, en la nommant, quand son profil manque.
   Un profil simplement en retard de version ne déclenche pas ce prompt.
+- **Notify when a supported card is connected** (actif par défaut) : le
+  watcher installé par le setup envoie une notification `Mixbay` même quand
+  la TUI est fermée. Le clic ouvre/focus Mixbay ; si le profil manque, Mixbay
+  l'installe (import + intégration). Mixbay ouvert, le texte est un simple
+  « … connected — handled by Mixbay. » ; fermé, il ajoute que le clic ouvre
+  Mixbay (et installe le profil s'il manque). Le service systemd
+  `mixbay-card-watcher.service` (user) reste actif entre deux sessions.
+- **Card watcher** : `Always on` (par défaut), `Only when Mixbay is open`, ou
+  `Off`. En `Off`, les deux options ci-dessus sont grisées et affichées
+  `off` ; leurs valeurs sont conservées et reviennent à la réactivation.
 - **Audio foundation** : liste des cartes déjà connectées, install/remove par
   carte avec confirmation, choix de la carte par défaut/prioritaire, et
   **Reset connection history** (le journal séparé

@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -234,6 +235,71 @@ func cliProfilesOffer(_ []string) int {
 		return 1
 	}
 	return printJSON(profiles.SortedOffers(offers))
+}
+
+// cliCardsConnected prints the supported interfaces connected RIGHT NOW and
+// their profile state. The card watcher reads it on a PipeWire event; the
+// connection log is the wrong source there (it keeps cards that are gone).
+func cliCardsConnected() int {
+	out, err := exec.Command("pactl", "-f", "json", "list", "cards").Output()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	usb, err := usbCardsFromPactl(out)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	ctx, cancel := profileContext()
+	defer cancel()
+	ix, ierr := profiles.FetchIndex(ctx)
+	if ierr != nil {
+		// Offline is normal. A missing cache leaves ix empty; the installed
+		// profiles below still cover a card Mixbay already knows.
+		ix, _ = profiles.CachedIndex()
+	}
+	type row struct {
+		ID      string `json:"id"`
+		Display string `json:"display"`
+		Version string `json:"version"`
+		Kind    string `json:"kind"` // installed | install | update
+	}
+	rows := []row{}
+	for _, c := range usb {
+		ic, ok := profiles.MatchEntry(ix, profiles.ConnEntry{Name: c.Name, Match: c.Match})
+		if !ok {
+			if m, found := installedByName(c.Name + " " + c.Match); found {
+				rows = append(rows, row{m.ID, m.Display, m.Version, "installed"})
+			}
+			continue
+		}
+		r := row{ID: ic.ID, Display: ic.Display, Version: ic.Version, Kind: "install"}
+		if inst, _, err := profiles.Effective(ic.ID); err == nil {
+			r.Kind = "installed"
+			if profiles.VersionLess(inst.Spec.Version, ic.Version) {
+				r.Kind = "update"
+			}
+		}
+		rows = append(rows, r)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
+	return printJSON(rows)
+}
+
+// installedByName resolves a card against the local profiles, longest display
+// first: the RME names nest, so "UFX" must not beat "UFX III".
+func installedByName(name string) (profiles.Meta, bool) {
+	n := strings.ToLower(name)
+	var best profiles.Meta
+	bestLen := 0
+	for _, m := range profiles.Installed() {
+		d := strings.ToLower(m.Display)
+		if d != "" && strings.Contains(n, d) && len(d) > bestLen {
+			best, bestLen = m, len(d)
+		}
+	}
+	return best, bestLen > 0
 }
 
 func execConnections() ([]profiles.ConnEntry, error) {

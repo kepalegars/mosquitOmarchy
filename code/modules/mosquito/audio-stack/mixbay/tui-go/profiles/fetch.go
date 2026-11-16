@@ -539,6 +539,10 @@ type ConnEntry struct {
 	Match string `json:"match"`
 }
 
+// MatchEntry resolves a connected interface against the repo index with the
+// same longest-display rule the hotplug prompt uses.
+func MatchEntry(ix Index, e ConnEntry) (IndexCard, bool) { return matchEntry(ix, e) }
+
 func matchEntry(ix Index, e ConnEntry) (IndexCard, bool) {
 	if ic, ok := ix.Card(e.ID); ok {
 		return ic, true

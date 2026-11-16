@@ -1657,6 +1657,104 @@ func TestExternalWindowSettingDefaultsOnAndPersists(t *testing.T) {
 	}
 }
 
+// The supported-card watcher is on out of the box, in its "always" mode.
+func TestCardWatcherDefaultsOn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	p := loadUIPrefs()
+	if !p.detects() || !p.notifies() {
+		t.Fatalf("watcher defaults: detect=%v notify=%v, want both on", p.detects(), p.notifies())
+	}
+	if p.WatcherMode != watcherAlways {
+		t.Fatalf("watcher mode = %q, want %q", p.WatcherMode, watcherAlways)
+	}
+}
+
+// Turning the watcher off greys its two rows and reads them as off, but the
+// stored choices are kept: turning it back on restores them.
+func TestWatcherOffGreysRowsAndRestoresChoices(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	p := uiPrefs{DetectCards: true, NotifyCards: true, WatcherMode: watcherOff}
+	if err := saveUIPrefs(p); err != nil {
+		t.Fatal(err)
+	}
+	m := initialModel()
+	if m.ui.detects() || m.ui.notifies() {
+		t.Fatal("watcher off must force both effective values off")
+	}
+	if !m.ui.DetectCards || !m.ui.NotifyCards {
+		t.Fatal("watcher off must not overwrite the stored choices")
+	}
+	rows := map[string]tuikit.PickerItem{}
+	for _, it := range m.settingsItems() {
+		rows[it.Value] = it
+	}
+	for _, key := range []string{"detect_cards", "notify_cards"} {
+		if !rows[key].Disabled {
+			t.Fatalf("%s must be greyed out while the watcher is off", key)
+		}
+		if !strings.HasSuffix(rows[key].Display, ": off") {
+			t.Fatalf("%s reads %q, want off", key, rows[key].Display)
+		}
+	}
+	// Off → Always on brings the previous choices back.
+	m.ui.WatcherMode = nextWatcher(watcherOff)
+	if !m.ui.detects() || !m.ui.notifies() {
+		t.Fatal("re-enabling the watcher must restore detect/notify")
+	}
+}
+
+func TestWatcherModeCycles(t *testing.T) {
+	if got := nextWatcher(watcherAlways); got != watcherOpen {
+		t.Fatalf("always → %q, want %q", got, watcherOpen)
+	}
+	if got := nextWatcher(watcherOpen); got != watcherOff {
+		t.Fatalf("only-open → %q, want %q", got, watcherOff)
+	}
+	if got := nextWatcher(watcherOff); got != watcherAlways {
+		t.Fatalf("off → %q, want %q", got, watcherAlways)
+	}
+}
+
+// A notification click writes one request; the TUI consumes it exactly once,
+// so a later launch does not reinstall the same profile.
+func TestPendingInstallConsumedOnce(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(pendingInstallFile()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pendingInstallFile(), []byte(`{"id":"fireface-ucx2"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := takePendingInstall(); got != "fireface-ucx2" {
+		t.Fatalf("pending install = %q", got)
+	}
+	if got := takePendingInstall(); got != "" {
+		t.Fatalf("second read = %q, want empty", got)
+	}
+}
+
+// An install request that lands while a dialog is open waits for it instead of
+// replacing what the user is reading.
+func TestInstallRequestWaitsForModal(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := initialModel()
+	m.push(scrInfo)
+	nm, _ := m.update(installRequestMsg{id: "fireface-ucx2"})
+	m = nm.(model)
+	if m.pendingInstallID != "fireface-ucx2" {
+		t.Fatalf("request not deferred: %q", m.pendingInstallID)
+	}
+	if m.libraryLoading {
+		t.Fatal("install started behind the dialog")
+	}
+	m.pop()
+	nm, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = nm.(model)
+	if m.pendingInstallID != "" || !m.libraryLoading {
+		t.Fatalf("deferred install did not start: pending=%q loading=%v", m.pendingInstallID, m.libraryLoading)
+	}
+}
+
 // A fresh install starts on "Only connected"; the whole list is a click away.
 func TestFreshInstallListsOnlyConnected(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

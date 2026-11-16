@@ -91,6 +91,8 @@ func runCLI(args []string) int {
 		return cliProfilesSetURL(args[1:])
 	case "profiles-offer-json":
 		return cliProfilesOffer(nil)
+	case "cards-connected-json":
+		return cliCardsConnected()
 	case "patchbay-save":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: patchbay-save NAME")
@@ -170,6 +172,7 @@ func cliHelp() string {
   patchbay-save NAME                  save current hardware links as a preset
   patchbay-apply NAME [--replace]     apply a preset (explicit, no auto)
   profiles-index [--cached]           community profile index (JSON)
+  cards-connected-json                supported interfaces connected now + profile state
   profiles-import ID... [--all]       download/update card(s) from the repo
   profiles-export [ID...] [--to DIR]  clean PR-ready export of local cards
   profiles-list-local                 installed cards + metadata (JSON)

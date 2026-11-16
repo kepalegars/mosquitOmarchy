@@ -12,6 +12,7 @@
 #   2. mosquito-mixbay-tui → ~/.local/bin (compiled Go/Bubble Tea over the
 #      shared lib/tui-kit; the ONLY interface)
 #   3. Hyprland float rule for the TUI window
+#   3b. mixbay-card-watcher + systemd user service (supported-card notices)
 #   4. Nothing profile-specific: oscmix (RME) and the evo_raw kmod (EVO) are
 #      installed on demand by the interface profile that declares them, into
 #      ~/.local/share/mosquitomixbay/integrations/. Without a profile the bay
@@ -90,7 +91,11 @@ if ((UNINSTALL)); then
   rm -rf "$integ"
   ok "profile integrations removed ($integ)"
   [[ -x "$BIN_DIR/mixbay-startup" ]] && "$BIN_DIR/mixbay-startup" --remove || true
-  rm -f "$BIN_DIR/mosquito-mixbay" "$BIN_DIR/mosquito-mixbay-actions" "$BIN_DIR/mosquito-mixbay-tui" "$BIN_DIR/mosquito-mixbay-compat" "$BIN_DIR/mixbay-audio-foundation" "$BIN_DIR/mixbay-audio-defaults" "$BIN_DIR/mixbay-setup-ssl12" "$BIN_DIR/mixbay-oscmix-gtk" "$BIN_DIR/mixbay-oscmix-qt" "$BIN_DIR/mixbay-startup" "$BIN_DIR/mixbay-reverse"
+  systemctl --user disable --now mixbay-card-watcher.service >/dev/null 2>&1 || true
+  rm -f "$HOME/.config/systemd/user/mixbay-card-watcher.service"
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+  rm -f "${XDG_RUNTIME_DIR:-/tmp}/mosquito-mixbay-tui.pid"
+  rm -f "$BIN_DIR/mosquito-mixbay" "$BIN_DIR/mosquito-mixbay-actions" "$BIN_DIR/mosquito-mixbay-tui" "$BIN_DIR/mosquito-mixbay-compat" "$BIN_DIR/mixbay-audio-foundation" "$BIN_DIR/mixbay-audio-defaults" "$BIN_DIR/mixbay-setup-ssl12" "$BIN_DIR/mixbay-oscmix-gtk" "$BIN_DIR/mixbay-oscmix-qt" "$BIN_DIR/mixbay-startup" "$BIN_DIR/mixbay-reverse" "$BIN_DIR/mixbay-card-watcher"
   ok "binaries removed from $BIN_DIR"
   if [[ -f "$HOME/.config/hypr/hyprland.lua" ]]; then
     sed -i '/-- >>> mosquito-mixbay-tui-setup >>>/,/-- <<< mosquito-mixbay-tui-setup <<</d' "$HOME/.config/hypr/hyprland.lua"
@@ -204,6 +209,41 @@ else
     rm -f "$TUI_TMP_OUT"
     warn "mosquito-mixbay-tui build failed — re-run after fixing the cause."
   fi
+fi
+
+# -----------------------------------------------------------------------------
+# 2b. Supported-card watcher: a systemd user service listening to PipeWire card
+#     events. It stays active while Mixbay is closed, so a supported interface
+#     plugged in gets noticed (and can open Mixbay to install its profile).
+# -----------------------------------------------------------------------------
+if [[ -f "$SCRIPT_DIR/watcher/mixbay-card-watcher" ]]; then
+  cp "$SCRIPT_DIR/watcher/mixbay-card-watcher" "$BIN_DIR/mixbay-card-watcher"
+  chmod +x "$BIN_DIR/mixbay-card-watcher"
+  bash -n "$BIN_DIR/mixbay-card-watcher" || die "Invalid syntax: mixbay-card-watcher"
+  if "$BIN_DIR/mixbay-card-watcher" --self-test >/dev/null 2>&1; then
+    ok "mixbay-card-watcher deployed ($BIN_DIR/mixbay-card-watcher)"
+  else
+    warn "mixbay-card-watcher deployed but its self-test failed"
+  fi
+  UNIT_DIR="$HOME/.config/systemd/user"
+  mkdir -p "$UNIT_DIR"
+  cat > "$UNIT_DIR/mixbay-card-watcher.service" <<'EOF'
+[Unit]
+Description=Mixbay supported-card watcher
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/mixbay-card-watcher
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+EOF
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+  systemctl --user enable --now mixbay-card-watcher.service >/dev/null 2>&1 \
+    && ok "card watcher service enabled (event-driven, works while Mixbay is closed)" \
+    || warn "could not enable mixbay-card-watcher.service — run: systemctl --user enable --now mixbay-card-watcher"
 fi
 
 # -----------------------------------------------------------------------------

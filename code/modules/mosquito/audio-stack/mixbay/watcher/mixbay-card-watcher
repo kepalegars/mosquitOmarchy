@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# =============================================================================
+# mixbay-card-watcher — notify when a Mixbay-supported interface is plugged in
+# =============================================================================
+# Installed as a systemd user service by setup-mosquitomixbay.sh. It listens to
+# PipeWire card events (pactl subscribe) instead of polling, so an idle desktop
+# costs nothing and a card is seen as soon as PipeWire sees it.
+#
+# Behavior follows ~/.config/mosquitomixbay/ui.json:
+#   watcher_mode  always | only_open | off
+#   detect_cards  false → nothing is detected or logged
+#   notify_cards  false → detection still logs, but no desktop notification
+#
+# A missing profile makes the notification click open Mixbay and run the
+# install; an installed card's click just opens Mixbay.
+# =============================================================================
+set -uo pipefail
+
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}"
+UI="$CONF/mosquitomixbay/ui.json"
+SEEN="$CONF/mosquitomixbay/watcher-connected.json"
+BIN="${HOME}/.local/bin"
+ACTIONS="$BIN/mosquito-mixbay-actions"
+FOUNDATION="$BIN/mixbay-audio-foundation"
+STARTUP="$BIN/mixbay-startup"
+
+pref(){
+  local key="$1" def="$2"
+  if [[ -f $UI ]] && command -v jq >/dev/null 2>&1; then
+    jq -r --arg k "$key" --arg d "$def" \
+      'if has($k) then (.[$k]|tostring) else $d end' "$UI" 2>/dev/null \
+      || printf '%s\n' "$def"
+  else
+    printf '%s\n' "$def"
+  fi
+}
+
+# Mixbay is open when the dispatcher pidfile points at a live process, or a
+# TUI runs without the dispatcher (a plain `mosquito-mixbay-tui` in a terminal).
+mixbay_open(){
+  local p="${XDG_RUNTIME_DIR:-/tmp}/mosquito-mixbay.pid" pid
+  if [[ -f $p ]]; then
+    pid="$(cat "$p" 2>/dev/null || true)"
+    [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null && return 0
+  fi
+  pgrep -f -- "${BIN}/mosquito-mixbay-tui" >/dev/null 2>&1
+}
+
+notify_body(){
+  local display="$1" kind="$2" open="$3"
+  if [[ $open == true ]]; then
+    printf '%s connected — handled by Mixbay.\n' "$display"
+  elif [[ $kind == install ]]; then
+    printf '%s connected — handled by Mixbay. Mixbay is not open: click this notification to open it and install the profile.\n' "$display"
+  else
+    printf '%s connected — handled by Mixbay. Mixbay is not open: click this notification to open it.\n' "$display"
+  fi
+}
+
+send_notification(){
+  local id="$1" display="$2" kind="$3" open="$4" body
+  body="$(notify_body "$display" "$kind" "$open")"
+  if command -v omarchy-notification-send >/dev/null 2>&1; then
+    if [[ $kind == install ]]; then
+      omarchy-notification-send --app-name Mixbay "Mixbay" "$body" \
+        --exec "$STARTUP" --install-card "$id" >/dev/null 2>&1 || true
+    else
+      omarchy-notification-send --app-name Mixbay "Mixbay" "$body" \
+        --exec "$STARTUP" --open >/dev/null 2>&1 || true
+    fi
+  elif command -v notify-send >/dev/null 2>&1; then
+    notify-send "Mixbay" "$body" >/dev/null 2>&1 || true
+  fi
+}
+
+# new_cards <current-json> <previous-ids-json>: the rows that were not there
+# before. A card that raises several connect events still notifies once.
+new_cards(){
+  jq -c --argjson prev "$2" \
+    '[.[] | select(.id as $id | ($prev | index($id) | not))]' <<<"$1" 2>/dev/null \
+    || printf '[]\n'
+}
+
+scan(){
+  timeout 20 "$ACTIONS" cards-connected-json 2>/dev/null
+}
+
+main(){
+  command -v pactl >/dev/null 2>&1 || exit 0
+  command -v jq >/dev/null 2>&1 || exit 0
+  [[ -x $ACTIONS ]] || exit 0
+
+  # Remember what is already plugged at login, silently: the notice is for a
+  # card that just appeared, not for the desk waking up.
+  local current
+  if current="$(scan)"; then
+    jq -c '[.[].id]' <<<"$current" > "$SEEN" 2>/dev/null || true
+  fi
+
+  local line mode open previous new id display version kind
+  pactl subscribe 2>/dev/null | while IFS= read -r line; do
+    [[ $line == *"on card"* ]] || continue
+    # One plug raises several events in a row: let them settle, then read the
+    # real card list once.
+    sleep 0.8
+    current="$(scan)" || continue
+    previous="$(cat "$SEEN" 2>/dev/null || printf '[]\n')"
+    new="$(new_cards "$current" "$previous")"
+    jq -c '[.[].id]' <<<"$current" > "$SEEN" 2>/dev/null || true
+
+    mode="$(pref watcher_mode always)"
+    [[ $mode == off ]] && continue
+    [[ "$(pref detect_cards true)" == true ]] || continue
+    open=false; mixbay_open && open=true
+    [[ $mode == only_open && $open == false ]] && continue
+    # Detection (not the notice): keep the foundation's connection history
+    # current even when Mixbay is closed.
+    "$FOUNDATION" --track >/dev/null 2>&1 || true
+    [[ $new == '[]' || -z $new ]] && continue
+    [[ "$(pref notify_cards true)" == true ]] || continue
+    while IFS=$'\t' read -r id display version kind; do
+      send_notification "$id" "$display" "$kind" "$open"
+    done < <(jq -r '.[] | [.id,.display,.version,.kind]|@tsv' <<<"$new")
+  done
+}
+
+self_test(){
+  local fail=0 b
+  b="$(notify_body 'RME Fireface UCX II' install true)"
+  [[ $b == *"handled by Mixbay"* && $b != *"not open"* ]] || fail=1
+  b="$(notify_body 'RME Fireface UCX II' install false)"
+  [[ $b == *"install the profile"* ]] || fail=1
+  b="$(notify_body 'RME Fireface UCX II' installed false)"
+  [[ $b == *"open it"* && $b != *"install the profile"* ]] || fail=1
+  ((fail)) && { printf 'self-test failed\n' >&2; return 1; }
+  printf 'self-test ok\n'
+}
+
+case "${1:-}" in
+  --self-test) self_test ;;
+  "") main ;;
+  *) printf 'usage: %s [--self-test]\n' "$0" >&2; exit 2 ;;
+esac

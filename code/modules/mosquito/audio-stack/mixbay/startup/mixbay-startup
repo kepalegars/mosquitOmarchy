@@ -11,6 +11,7 @@
 #   mixbay-startup --run     # launched by Hyprland at login
 #   mixbay-startup --open    # launched by the Omarchy menu (reveals the window)
 #   mixbay-startup --place   # park/unpark the running TUI from ui.json
+#   mixbay-startup --install-card ID  # notification click: open + queue a profile
 #   mixbay-startup --external CMD  # launch an external GUI and place the windows
 # =============================================================================
 set -euo pipefail
@@ -224,9 +225,24 @@ external(){
   # instead of losing it to a Mixbay moved afterwards.
   hypr_move "$addr" "special:scratchpad"
   command -v notify-send >/dev/null 2>&1 \
-    && notify-send "Mixbay" "Moved to the scratchpad — SUPER + S to bring it back" \
+    && notify-send "Mixbay" "TUI moved to scratchpad — SUPER + S to bring it back" \
     || true
   launch_external "$cmd" "$@"
+}
+
+# install_card <id> — the card watcher's notification click: remember the
+# profile, reveal (or spawn) Mixbay, then wake the running TUI so it runs the
+# same import + integration path as the profiles screen.
+install_card(){
+  local id="${1:-}" pidfile pid
+  [[ $id =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || { printf 'usage: %s --install-card ID\n' "$0" >&2; exit 2; }
+  mkdir -p "$CONF/mosquitomixbay"
+  printf '{"id":"%s"}\n' "$id" > "$CONF/mosquitomixbay/pending-install.json"
+  open_mixbay
+  pidfile="${XDG_RUNTIME_DIR:-/tmp}/mosquito-mixbay-tui.pid"
+  [[ -f $pidfile ]] || exit 0
+  pid="$(cat "$pidfile" 2>/dev/null || true)"
+  [[ -n $pid ]] && kill -USR1 "$pid" 2>/dev/null || true
 }
 
 case "${1:-}" in
@@ -234,8 +250,9 @@ case "${1:-}" in
   --run) run ;;
   --open) open_mixbay ;;
   --place) place ;;
+  --install-card) shift; install_card "$@" ;;
   --external) shift; [[ $# -ge 1 ]] || { printf 'usage: %s --external CMD [args...]\n' "$0" >&2; exit 2; }; external "$@" ;;
   --remove) remove_block; printf 'autostart: off\n' ;;
-  -h|--help) sed -n '2,19p' "$0" ;;
-  *) printf 'usage: %s --apply|--run|--open|--place|--external CMD|--remove\n' "$0" >&2; exit 2 ;;
+  -h|--help) sed -n '2,20p' "$0" ;;
+  *) printf 'usage: %s --apply|--run|--open|--place|--install-card ID|--external CMD|--remove\n' "$0" >&2; exit 2 ;;
 esac

@@ -97,12 +97,14 @@ type model struct {
 	scanCards   []scanCard
 	scanLoading bool
 
-	// hotplug is the "a supported card was just connected" watcher: the tick
-	// counter only probes every few seconds, key is the last connected set,
-	// and offered keeps one prompt per profile per session.
-	hotplugTick     int
-	hotplugKey      string
-	offeredProfiles map[string]bool
+	// hotplug is the "a supported card was just connected" path: a PipeWire
+	// event, not a timer. key is the last connected set and offered keeps one
+	// prompt per profile per session. pending defers the check while a dialog
+	// owns the keyboard; pendingInstallID comes from a notification click.
+	hotplugKey       string
+	hotplugPending   bool
+	pendingInstallID string
+	offeredProfiles  map[string]bool
 
 	// library is Settings → Audio interface profiles. The index is cached in
 	// memory for the session; upstream/ is the only folder an import writes.
@@ -163,7 +165,15 @@ func initialModel() model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(fetchStatus(m.deviceID), tuikit.ThemeWatchCmd(), evoDotBlinkTick(), evoPollTick(m.pollGen), trackConnectionsCmd())
+	cmds := []tea.Cmd{
+		fetchStatus(m.deviceID), tuikit.ThemeWatchCmd(), evoDotBlinkTick(),
+		evoPollTick(m.pollGen), trackConnectionsCmd(), cardEventCmd(), installSignalCmd(),
+	}
+	// A notification clicked while Mixbay was closed left its request here.
+	if id := takePendingInstall(); id != "" {
+		cmds = append(cmds, func() tea.Msg { return installRequestMsg{id: id} })
+	}
+	return tea.Batch(cmds...)
 }
 
 // trackConnectionsCmd writes every currently connected USB interface to the
@@ -237,13 +247,53 @@ type uiPrefs struct {
 	// HandleExternalWindows lets Mixbay park itself (and focus the mixer) when
 	// it opens an external GUI. Default true.
 	HandleExternalWindows bool `json:"handle_external_windows"`
+	// DetectCards and NotifyCards gate the supported-card watcher. Their
+	// stored value is kept while watcher_mode is off, so turning the watcher
+	// back on restores the previous choices instead of resetting them.
+	DetectCards bool `json:"detect_cards"`
+	NotifyCards bool `json:"notify_cards"`
+	// WatcherMode is "always", "only_open" or "off". "off" forces the two
+	// rows above to read off (and be inert) without touching their values.
+	WatcherMode string `json:"watcher_mode"`
 }
 
 const (
 	listedConnected = "only_connected"
 	listedAll       = "all_supported"
 	listedUsed      = "only_used"
+
+	watcherAlways = "always"
+	watcherOpen   = "only_open"
+	watcherOff    = "off"
 )
+
+func watcherLabel(v string) string {
+	switch v {
+	case watcherOpen:
+		return "Only when Mixbay is open"
+	case watcherOff:
+		return "Off"
+	default:
+		return "Always on"
+	}
+}
+
+func nextWatcher(v string) string {
+	switch v {
+	case watcherAlways:
+		return watcherOpen
+	case watcherOpen:
+		return watcherOff
+	default:
+		return watcherAlways
+	}
+}
+
+// watcherOff / detects / notifies are the EFFECTIVE values the UI and the
+// watcher use; the stored booleans are the user's choices to restore.
+func (p uiPrefs) watcherOff() bool { return p.WatcherMode == watcherOff }
+func (p uiPrefs) detects() bool    { return !p.watcherOff() && p.DetectCards }
+func (p uiPrefs) notifies() bool   { return p.detects() && p.NotifyCards }
 
 func listedLabel(v string) string {
 	switch v {
@@ -273,7 +323,11 @@ func uiPrefsFile() string {
 }
 
 func loadUIPrefs() uiPrefs {
-	p := uiPrefs{Listed: listedConnected, LaunchAtStartup: true, LaunchInScratchpad: true, HandleExternalWindows: true}
+	p := uiPrefs{
+		Listed: listedConnected, LaunchAtStartup: true, LaunchInScratchpad: true,
+		HandleExternalWindows: true, DetectCards: true, NotifyCards: true,
+		WatcherMode: watcherAlways,
+	}
 	data, err := os.ReadFile(uiPrefsFile())
 	if err != nil {
 		return p
@@ -301,6 +355,15 @@ func loadUIPrefs() uiPrefs {
 	}
 	if _, ok := raw["handle_external_windows"]; !ok {
 		p.HandleExternalWindows = true
+	}
+	if _, ok := raw["detect_cards"]; !ok {
+		p.DetectCards = true
+	}
+	if _, ok := raw["notify_cards"]; !ok {
+		p.NotifyCards = true
+	}
+	if p.WatcherMode != watcherAlways && p.WatcherMode != watcherOpen && p.WatcherMode != watcherOff {
+		p.WatcherMode = watcherAlways
 	}
 	return p
 }
@@ -557,6 +620,16 @@ func (m model) settingsItems() []tuikit.PickerItem {
 	} else if updates, installs := m.repoNews(); updates+installs > 0 {
 		profilesRow.TrailingBadge = "■"
 	}
+	// The watcher switch owns the two rows below it: off greys them and shows
+	// off, while their stored choices wait for the switch to come back.
+	detect := tuikit.PickerItem{Display: "Detect plugged cards: " + onOff(m.ui.detects()), Value: "detect_cards"}
+	notify := tuikit.PickerItem{Display: "Notify when a supported card is connected: " + onOff(m.ui.notifies()), Value: "notify_cards"}
+	if m.ui.watcherOff() {
+		detect.Disabled = true
+		notify.Disabled = true
+	} else if !m.ui.DetectCards {
+		notify.Disabled = true
+	}
 	return []tuikit.PickerItem{
 		profilesRow,
 		{Display: "Audio foundation settings", Value: "foundation"},
@@ -565,6 +638,9 @@ func (m model) settingsItems() []tuikit.PickerItem {
 		{Display: "Launch Mixbay at startup: " + onOff(m.ui.LaunchAtStartup), Value: "launch_startup"},
 		{Display: "Launch Mixbay in scratchpad: " + onOff(m.ui.LaunchInScratchpad), Value: "launch_scratchpad"},
 		{Display: "Let Mixbay handle external windows: " + onOff(m.ui.HandleExternalWindows), Value: "external_windows"},
+		detect,
+		notify,
+		{Display: "Card watcher: " + watcherLabel(m.ui.WatcherMode), Value: "watcher_mode"},
 		{Display: "Add an audio interface", Value: "add_interface"},
 		{Display: "Back", Value: "back"},
 	}
@@ -719,6 +795,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	before := m.toast.Gen()
 	next, cmd := m.update(msg)
 	m = next.(model)
+	// Requests that arrived while a dialog owned the keyboard run as soon as
+	// it closes, instead of stacking a second prompt or being dropped.
+	if !m.modalOpen() {
+		if id := m.pendingInstallID; id != "" {
+			m.pendingInstallID = ""
+			next, c := m.startInstall([]string{id})
+			m = next.(model)
+			cmd = tea.Batch(cmd, c)
+		} else if m.hotplugPending {
+			m.hotplugPending = false
+			if m.ui.detects() {
+				cmd = tea.Batch(cmd, hotplugCheckCmd())
+			}
+		}
+	}
 	if m.toast.Gen() != before {
 		cmd = tea.Batch(cmd, m.toast.ExpireCmd())
 	}
@@ -876,20 +967,48 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.shouldPoll() {
 			cmds = append(cmds, pollStatus(m.deviceID, m.session.beginRead()))
 		}
-		// Every ten ticks (~5s): look for a supported card plugged in while
-		// Mixbay is open. Skipped while a dialog owns the screen, so a prompt
-		// never replaces something the user is reading.
-		m.hotplugTick++
-		if m.hotplugTick >= 10 {
-			m.hotplugTick = 0
-			if !m.modalOpen() {
+		return m, tea.Batch(cmds...)
+
+	case cardsChangedMsg:
+		if msg.retry {
+			// PipeWire is not up yet, or restarted: retry slowly, never spin.
+			return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return cardsChangedMsg{} })
+		}
+		cmds := []tea.Cmd{cardEventCmd()}
+		if m.ui.detects() {
+			if m.modalOpen() {
+				m.hotplugPending = true
+			} else {
 				cmds = append(cmds, hotplugCheckCmd())
 			}
 		}
 		return m, tea.Batch(cmds...)
 
+	case installRequestedMsg:
+		// The notification click found Mixbay already running.
+		cmds := []tea.Cmd{installSignalCmd()}
+		if id := takePendingInstall(); id != "" {
+			cmds = append(cmds, func() tea.Msg { return installRequestMsg{id: id} })
+		}
+		return m, tea.Batch(cmds...)
+
+	case installRequestMsg:
+		if msg.id == "" {
+			return m, nil
+		}
+		if m.modalOpen() {
+			m.pendingInstallID = msg.id
+			return m, nil
+		}
+		return m.startInstall([]string{msg.id})
+
 	case hotplugMsg:
 		if !msg.ok || msg.key == m.hotplugKey {
+			return m, nil
+		}
+		if m.modalOpen() {
+			// Re-run once the dialog is gone: the offer is still valid.
+			m.hotplugPending = true
 			return m, nil
 		}
 		m.hotplugKey = msg.key
@@ -1522,6 +1641,16 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				post = tea.Batch(startupApplyCmd(), startupPlaceCmd())
 			case "external_windows":
 				m.ui.HandleExternalWindows = !m.ui.HandleExternalWindows
+			case "detect_cards":
+				if !m.ui.watcherOff() {
+					m.ui.DetectCards = !m.ui.DetectCards
+				}
+			case "notify_cards":
+				if !m.ui.watcherOff() && m.ui.DetectCards {
+					m.ui.NotifyCards = !m.ui.NotifyCards
+				}
+			case "watcher_mode":
+				m.ui.WatcherMode = nextWatcher(m.ui.WatcherMode)
 			case "foundation":
 				m.foundationLoading = true
 				m.push(scrFoundation)

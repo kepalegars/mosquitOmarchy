@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -156,6 +161,77 @@ func hotplugCheckCmd() tea.Cmd {
 			return hotplugMsg{}
 		}
 		return hotplugMsg{ok: true, key: key, offers: offers}
+	}
+}
+
+// cardsChangedMsg is a PipeWire card event (plug, unplug or profile change).
+// retry marks the subscription dropping out, so the caller re-arms on a timer
+// instead of spinning through failed processes.
+type cardsChangedMsg struct{ retry bool }
+
+// cardEventCmd waits for the next PipeWire card event instead of polling: an
+// idle Mixbay costs nothing, and a card is noticed as soon as PipeWire sees it.
+func cardEventCmd() tea.Cmd {
+	return func() tea.Msg {
+		cmd := exec.Command("pactl", "subscribe")
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return cardsChangedMsg{retry: true}
+		}
+		if err := cmd.Start(); err != nil {
+			return cardsChangedMsg{retry: true}
+		}
+		defer func() {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}()
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			if strings.Contains(sc.Text(), "on card") {
+				return cardsChangedMsg{}
+			}
+		}
+		return cardsChangedMsg{retry: true}
+	}
+}
+
+// pendingInstallFile is the notification's click request. A config file (not
+// /tmp) means a click that launches Mixbay survives the window taking a while.
+func pendingInstallFile() string {
+	return filepath.Join(profiles.ConfigDir(), "pending-install.json")
+}
+
+// takePendingInstall consumes the request, so one click installs once.
+func takePendingInstall() string {
+	data, err := os.ReadFile(pendingInstallFile())
+	if err != nil {
+		return ""
+	}
+	_ = os.Remove(pendingInstallFile())
+	var req struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(data, &req) != nil {
+		return ""
+	}
+	return req.ID
+}
+
+// installRequestMsg starts the profile install a notification click asked for.
+type installRequestMsg struct{ id string }
+
+// installSignal is SIGUSR1 from mixbay-startup --install-card: Mixbay is
+// already open, so a new process cannot be launched to pick the file up.
+var installSignal = make(chan os.Signal, 1)
+
+func init() { signal.Notify(installSignal, syscall.SIGUSR1) }
+
+type installRequestedMsg struct{}
+
+func installSignalCmd() tea.Cmd {
+	return func() tea.Msg {
+		<-installSignal
+		return installRequestedMsg{}
 	}
 }
 
