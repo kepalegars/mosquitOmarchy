@@ -1644,6 +1644,11 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "detect_cards":
 				if !m.ui.watcherOff() {
 					m.ui.DetectCards = !m.ui.DetectCards
+					if m.ui.DetectCards {
+						// Turning detection on with a card already plugged
+						// should not wait for the next plug event.
+						post = hotplugCheckCmd()
+					}
 				}
 			case "notify_cards":
 				if !m.ui.watcherOff() && m.ui.DetectCards {
@@ -1651,6 +1656,9 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			case "watcher_mode":
 				m.ui.WatcherMode = nextWatcher(m.ui.WatcherMode)
+				if !m.ui.watcherOff() && m.ui.DetectCards {
+					post = hotplugCheckCmd()
+				}
 			case "foundation":
 				m.foundationLoading = true
 				m.push(scrFoundation)
