@@ -62,26 +62,26 @@ Same plugins → visible in Bitwig/REAPER too (yabridge). iLok activation must b
 
 ## Ableton Move
 
-The Move's USB audio interface is class-compliant on Linux but **fixed at 44.1 kHz**, and
-ableton-on-linux has no support for Move Control. `setup-ableton.sh` installs
-`move-audio-watcher` (a systemd user service, `pactl` card events, the same event-driven model
-as Mixbay's card watcher) which does one thing and never acts on its own:
+**Audio interface → Mixbay, not this module.** The Move is class-compliant but its interface is
+**fixed at 44.1 kHz**. Mixbay owns it through its **Move profile** (`move-audio`, installed from
+Mixbay's own connection notice, or by hand with
+`mosquito-mixbay-compat --apply move`): plugging the Move gets one Mixbay notification —
+*Use its audio interface? (Pins the sample rate to 44.1kHz)* — and only that answer switches the
+default in/out and pins the graph. Unplugging offers the way back to the previous devices and
+rate. The audio panel works too: picking the Move there pins 44.1 kHz; picking another device
+never reverts the rate, only the unplug does. Live mode releases the Move when a session starts
+(Live Manager row, on by default) and never re-selects it afterwards.
 
-- **Plug the Move** → a notification offers *Use it (44.1 kHz)*. Only clicking it switches the
-  default sink/source to the Move and pins the graph to 44.1 kHz (`clock.min-rate` =
-  `clock.max-rate` = `clock.force-rate`, through `pipewire-settings` when installed).
-- **Unplug it** → a notification offers *Back to &lt;previous rate&gt; Hz*: the previous default
-  devices, the four clock keys exactly as they were (an absent pin stays absent) and the
-  previous `pipewire.conf.d` file are restored.
+**Live Control is not covered.** Live 12 ships a `Move` remote script and this prefix has it
+(`…/Live 12 Suite/Resources/MIDI Remote Scripts/Move`), but the Move's control mode needs the
+Windows-only `move_display` driver to drive its screen — it is installed in `~/.wine-ableton`
+(`Redist/move-display-driver-installer.exe`) and wine cannot run it. That is why the Move stays
+on *Connect Live via USB-C* while Live runs, and why input that does arrive looks mis-mapped: it
+is arriving as plain MIDI, not through Ableton's Move protocol. A clean Linux path is a Live
+remote script speaking a community firmware protocol over sysex (the pattern `move-bitwig` uses
+on the Move), which is a separate project and has to be validated on the hardware.
 
-Detection needs both the Ableton USB vendor (`2982`) and an ALSA card whose name says Move, so
-Push/Note (same vendor, no audio interface) never trigger it. `move-audio-watcher --status`
-shows what is connected and what was switched; `--self-test` checks the matchers and parsers.
-Removing the last Ableton edition removes the service.
-
-Move Control in Live (pads/OLED driving the session) is **not** covered: it is a Windows remote
-script inside Live and is not validated under wine. For the Move as a Bitwig controller and for
-set transfer, see the `move-manager` module.
+For the Move as a **Bitwig** controller and for set transfer, see the `move-manager` module.
 
 ## Uninstall
 

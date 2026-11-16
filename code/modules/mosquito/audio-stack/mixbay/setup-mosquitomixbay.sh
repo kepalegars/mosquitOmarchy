@@ -90,7 +90,7 @@ if ((UNINSTALL)); then
   rm -f "$HOME/.config/systemd/user/mixbay-card-watcher.service"
   systemctl --user daemon-reload >/dev/null 2>&1 || true
   rm -f "${XDG_RUNTIME_DIR:-/tmp}/mosquito-mixbay-tui.pid"
-  rm -f "$BIN_DIR/mosquito-mixbay" "$BIN_DIR/mosquito-mixbay-actions" "$BIN_DIR/mosquito-mixbay-tui" "$BIN_DIR/mosquito-mixbay-compat" "$BIN_DIR/mixbay-audio-foundation" "$BIN_DIR/mixbay-audio-defaults" "$BIN_DIR/mixbay-setup-ssl12" "$BIN_DIR/mixbay-oscmix-gtk" "$BIN_DIR/mixbay-oscmix-qt" "$BIN_DIR/mixbay-startup" "$BIN_DIR/mixbay-reverse" "$BIN_DIR/mixbay-card-watcher"
+  rm -f "$BIN_DIR/mosquito-mixbay" "$BIN_DIR/mosquito-mixbay-actions" "$BIN_DIR/mosquito-mixbay-tui" "$BIN_DIR/mosquito-mixbay-compat" "$BIN_DIR/mixbay-audio-foundation" "$BIN_DIR/mixbay-audio-defaults" "$BIN_DIR/mixbay-setup-ssl12" "$BIN_DIR/mixbay-oscmix-gtk" "$BIN_DIR/mixbay-oscmix-qt" "$BIN_DIR/mixbay-startup" "$BIN_DIR/mixbay-reverse" "$BIN_DIR/mixbay-card-watcher" "$BIN_DIR/move-audio"
   ok "binaries removed from $BIN_DIR"
   if [[ -f "$HOME/.config/hypr/hyprland.lua" ]]; then
     sed -i '/-- >>> mosquito-mixbay-tui-setup >>>/,/-- <<< mosquito-mixbay-tui-setup <<</d' "$HOME/.config/hypr/hyprland.lua"
@@ -157,6 +157,21 @@ if [[ -f "$SCRIPT_DIR/harness/mixbay-reverse.py" ]]; then
   python3 -m py_compile "$BIN_DIR/mixbay-reverse" 2>/dev/null \
     || warn "mixbay-reverse deployed but python syntax check failed"
   ok "mixbay-reverse deployed: $BIN_DIR/mixbay-reverse"
+fi
+
+# Move profile helper. The profile is installed on request (compat --apply
+# move, offered by the card watcher the first time a Move is plugged), so the
+# base setup does not add it to a machine that never asked for it. It DOES
+# refresh an installed one: an update must not leave a stale helper behind.
+if [[ -x "$BIN_DIR/move-audio" && -f "$SCRIPT_DIR/watcher/move-audio" ]]; then
+  cp "$SCRIPT_DIR/watcher/move-audio" "$BIN_DIR/move-audio"
+  chmod +x "$BIN_DIR/move-audio"
+  bash -n "$BIN_DIR/move-audio" || die "Invalid syntax: move-audio"
+  if "$BIN_DIR/move-audio" --self-test >/dev/null 2>&1; then
+    ok "move-audio refreshed (Move profile)"
+  else
+    warn "move-audio refreshed but its self-test failed"
+  fi
 fi
 
 # Login autostart / scratchpad helper (both enabled by default at install).

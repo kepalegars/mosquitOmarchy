@@ -49,12 +49,6 @@
 # in ~/.config/hypr/hyprland.lua — floating installer (fixes the tile crash),
 # 100% opaque windows/popups/menus (no transparency behind), and no focus
 # stealing (no_initial_focus + focus_on_activate = false).
-#
-# Ableton Move: the Move's USB audio interface is class-compliant but fixed at
-# 44.1 kHz. setup installs move-audio-watcher (systemd user service, pactl
-# events, like Mixbay's card watcher): plugging the Move offers it in a
-# notification, and ONLY its action makes it the default in/out and pins the
-# graph to 44.1 kHz. Unplugging offers the way back. Nothing is automatic.
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 set -euo pipefail
 
@@ -349,16 +343,6 @@ active_transactions(){
     | sort -rn | cut -f2-
 }
 
-# "enabled" / "disabled" / "not installed" for the Move watcher unit — a single
-# short word for the status table (systemctl prints "not-found" for a missing
-# unit on stdout, which is not a state anyone wants to read).
-move_watcher_state(){
-  local unit="$HOME/.config/systemd/user/move-audio-watcher.service" s
-  [[ -f $unit ]] || { printf 'not installed'; return 0; }
-  s=$(systemctl --user is-enabled move-audio-watcher.service 2>/dev/null || true)
-  printf '%s' "${s:-disabled}"
-}
-
 status_check(){
   hr; msg "Ableton Live native Linux state"
   if ableton_installed; then
@@ -373,8 +357,7 @@ status_check(){
     "PipeWire                  : $( pacman -Q pipewire 2>/dev/null | awk '{print $2}' || echo 'missing?!' )" \
     "GStreamer (base/good)     : $( pkg_has gst-plugins-good && echo OK || echo missing )" \
     "Launcher ableton-live      : $( [[ -x "$HOME/.local/bin/ableton-live" ]] && echo present || echo absent )" \
-    "Prefix wine               : $( [[ -d "$HOME/.wine-ableton" ]] && echo present || echo absent )" \
-    "Move audio watcher        : $(move_watcher_state)"
+    "Prefix wine               : $( [[ -d "$HOME/.wine-ableton" ]] && echo present || echo absent )"
   do
     printf " %s\n" "$c"
   done
@@ -905,59 +888,6 @@ step_links(){
   if [[ -x "$LINKER" ]]; then bash "$LINKER"; else
     warn "link-vst-shared.sh not found ($LINKER) — symlinks not created."
   fi
-}
-
-# ───────────────────────── Ableton Move audio watcher ─────────────────────────
-# The Move's USB audio interface is class-compliant but fixed at 44.1 kHz, and
-# nothing in Ableton-on-Linux handles it. This watcher never switches anything
-# on its own: plugging the Move in sends a notification whose action makes it
-# the default in/out and pins the graph to 44.1 kHz; unplugging offers the way
-# back to the devices and rate that were in use before. Installed like
-# Mixbay's card watcher (systemd user service, pactl events), so the two live
-# side by side without polling.
-step_move_audio(){
-  local src="$SCRIPT_DIR/move-audio-watcher" dst="$HOME/.local/bin/move-audio-watcher"
-  local unit_dir="$HOME/.config/systemd/user" unit="$HOME/.config/systemd/user/move-audio-watcher.service"
-  msg "Ableton Move audio watcher"
-  if [[ ! -f $src ]]; then
-    warn "move-audio-watcher not found ($src) — the Move audio offer is skipped."
-    return 0
-  fi
-  mkdir -p "$HOME/.local/bin" "$unit_dir"
-  install -m 755 "$src" "$dst" || { warn "could not install $dst"; return 0; }
-  if "$dst" --self-test >/dev/null 2>&1; then
-    ok "watcher installed: $dst"
-  else
-    warn "watcher installed but its self-test failed — check: $dst --status"
-  fi
-  cat > "$unit" <<'EOF'
-[Unit]
-Description=Ableton Move audio interface watcher
-
-[Service]
-Type=simple
-ExecStart=%h/.local/bin/move-audio-watcher
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=default.target
-EOF
-  systemctl --user daemon-reload >/dev/null 2>&1 || true
-  systemctl --user enable move-audio-watcher.service >/dev/null 2>&1 || true
-  # Restart, not just enable: an update must load the new script in place.
-  systemctl --user restart move-audio-watcher.service >/dev/null 2>&1 \
-    && ok "Move watcher enabled (offers 44.1 kHz on plug — never switches silently)" \
-    || warn "could not start move-audio-watcher.service — run: systemctl --user enable --now move-audio-watcher"
-}
-
-# Only called once no Ableton edition is left: the watcher exists for Ableton.
-step_move_audio_remove(){
-  systemctl --user disable --now move-audio-watcher.service >/dev/null 2>&1 || true
-  rm -f "$HOME/.config/systemd/user/move-audio-watcher.service" \
-        "$HOME/.local/bin/move-audio-watcher"
-  systemctl --user daemon-reload >/dev/null 2>&1 || true
-  ok "Ableton Move watcher removed"
 }
 
 # ───────────────────────── Menu entries (one per edition) ─────────────────────────
@@ -1560,9 +1490,8 @@ recap(){
   echo "     <shared root>/vst   -> C:\\Program Files\\Steinberg\\VSTPlugins  (shared ; in Live:"
   echo "                    Settings > Plug-Ins > VST Plug-In Custom Folder > this folder, then On)"
   echo " • Bitwig/REAPER see the same plugins via yabridge (already linked)."
-  echo " • Ableton Move: plug it in — a notification offers it as the audio"
-  echo "   interface (default in/out + 44.1 kHz). Nothing switches by itself;"
-  echo "   unplugging offers the way back. Status: move-audio-watcher --status"
+  echo " • Ableton Move: its audio interface is offered by MixBay's Move profile"
+  echo "   (44.1 kHz), not by this module. Live Control is separate: see README."
   echo " • Plugin activation (iLok...) : to do IN the Ableton prefix:"
   echo "     env WINEPREFIX=\"$HOME/.wine-ableton\" \\"
   echo "       \"$HOME/.local/opt/wine-d2d1-nspa-11.13/bin/wine\" path/InstallerOrLocaleManager.exe"
@@ -1592,7 +1521,7 @@ step_main_menu(){
   read -rp "   Choice [1-5] : " choice
   case "$choice" in
     1) return 0 ;;              # normal installation flow
-    2) step_cleanup; step_uninstall; ableton_installed || step_move_audio_remove; exit 0 ;;
+    2) step_cleanup; step_uninstall; exit 0 ;;
     3) step_links; echo; ok "VST links updated."; exit 0 ;;
     4) exit 0 ;;                # the status has already been shown at the start
     5|q|Q) echo "Bye."; exit 0 ;;
@@ -1636,7 +1565,6 @@ main(){
     step_cleanup
     step_recover_transactions || { err "Aborting: recover the interrupted install before uninstalling."; exit 1; }
     step_uninstall
-    ableton_installed || step_move_audio_remove
     exit 0
   fi
   if ((STATUS_ONLY)); then exit 0; fi
@@ -1670,7 +1598,6 @@ main(){
   step_hypr_rules; echo
   step_fullscreen_env; echo
   step_links;    echo
-  step_move_audio; echo
   step_menu_entries; echo
   step_patch;     echo
   recap

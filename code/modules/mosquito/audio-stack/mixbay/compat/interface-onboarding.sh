@@ -45,6 +45,11 @@ usage() {
 usb_present() { # device id -> 0 when its USB vendor/product is plugged
   local dev="$1" vid pid f p
   case $dev in
+    move)
+      # Same USB vendor as Push/Note (2982); only the Move exposes an ALSA
+      # card named after itself, so the card is the proof.
+      grep -qi 'ableton move' /proc/asound/cards 2>/dev/null && return 0
+      return 1 ;;
     evo8) vid=2708; pid=0007 ;;
     evo4) vid=2708; pid=0006 ;;
     # 3fd9 = class-compliant (oscmix), 3f82 = Windows-driver mode.
@@ -89,6 +94,12 @@ needs_for() { # device id -> newline-separated missing pieces (empty = none)
       [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/pipewire/pipewire.conf.d/99-ssl12-sinks.conf" ]] \
         || printf '%s\n' "PipeWire playback-pair split (ssl12.pb12 … pb78)"
       ;;
+    move)
+      # Not a mixer: the profile is the audio-interface helper (offer on plug,
+      # pin 44.1 kHz, put the previous devices/rate back on unplug).
+      [[ -x "$HOME/.local/bin/move-audio" ]] \
+        || printf '%s\n' "Move profile (Mixbay's move-audio helper: 44.1 kHz offer, confirmation, go-back on unplug)"
+      ;;
     fireface-ucx2)
       # oscmix owns the TotalMix-like surface; the foundation installs it and
       # never writes to the card. Delegate to the foundation so the shared
@@ -113,8 +124,30 @@ needs_for() { # device id -> newline-separated missing pieces (empty = none)
   esac
 }
 
+# The Move profile is one script from this module: deploy it, check it, done.
+# Nothing is downloaded, so the profile works offline.
+install_move_audio(){
+  local src="$ROOT_DIR/watcher/move-audio" dst="$HOME/.local/bin/move-audio"
+  if [[ ! -f $src ]]; then
+    warn "watcher/move-audio not found under $ROOT_DIR — cannot install the Move profile."
+    return 1
+  fi
+  mkdir -p "$HOME/.local/bin"
+  install -m 755 "$src" "$dst" || return 1
+  if "$dst" --self-test >/dev/null 2>&1; then
+    ok "Move profile installed: $dst"
+  else
+    warn "move-audio installed but its self-test failed"
+    return 1
+  fi
+}
+
 apply() {
   local dev="$1"
+  if [[ $dev == move ]]; then
+    install_move_audio || return 1
+    return 0
+  fi
   # The UCX II's card-specific step is oscmix only. The foundation applies the
   # shared system floor and delegates the card to oscmix; it never writes to
   # the interface. Other cards keep the full Mixbay installer.
@@ -178,7 +211,7 @@ while (($#)); do
   case "$1" in
     --needs|--status|--prompt|--apply|--accept) MODE="${1#--}"; shift ;;
     -h|--help) usage; exit 0 ;;
-    evo4|evo8|ssl12|fireface-ucx2) DEV="$1"; shift ;;
+    evo4|evo8|ssl12|fireface-ucx2|move) DEV="$1"; shift ;;
     *) warn "Unknown argument: $1"; usage >&2; exit 2 ;;
   esac
 done
@@ -186,7 +219,10 @@ done
 
 if ! usb_present "$DEV"; then
   [[ $MODE == status ]] && echo offline
-  exit 1
+  # The Move profile is a file from this module, not a one-time system step:
+  # installing it does not need the hardware plugged (a re-run can fix a
+  # deleted helper). Every other device's apply does.
+  [[ $DEV == move && $MODE == apply ]] || exit 1
 fi
 
 missing="$(needs_for "$DEV" || true)"
