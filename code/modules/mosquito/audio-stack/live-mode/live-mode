@@ -657,6 +657,9 @@ GAPS_WERE_ON_FLAG="$STATE_DIR/gaps_were_on"
 
 SCRATCHPAD_SNAPSHOT="$STATE_DIR/scratchpad_before.json"
 PATCHBAY_ADDR_FILE="$STATE_DIR/patchbay_addr"
+# Where this session's audio apps belong: "scratchpad" or "workspace". The
+# watchdog reads it so a relaunch goes to the same place activation chose.
+PATCHBAY_TARGET_FILE="$STATE_DIR/patchbay_target"
 PATCHBAY_PREEXISTED="$STATE_DIR/patchbay_preexisting"
 PATCHBAY_CLOSED_FLAG="$STATE_DIR/patchbay_closed_this_session"
 
@@ -761,11 +764,25 @@ patchbay_addr() {
 qpwgraph_addr() { patchbay_addr; }
 
 # The commands that launch the patchbay providers for the current choice.
+# With "scratchpad" the window is BORN there through an exec rule: the app no
+# longer flashes on the current workspace and gets moved afterwards.
 patchbay_launch() {
-  local spec bin launched=0
+  local where="${1:-}" spec bin launched=0
   while IFS= read -r spec; do
     [[ -n $spec ]] || continue
     bin="${spec%%|*}"
+    if [[ $where == scratchpad ]]; then
+      # No uwsm-app here: it hands the launch to systemd, so the window is not
+      # the exec's child and the workspace rule would be dropped.
+      # Classic `exec [workspace …]` is a Lua syntax error on Hyprland 0.56;
+      # the Lua dispatcher comes first and the old form is the fallback.
+      if hypr_dispatch \
+           "hl.dsp.exec_cmd(\"[workspace special:scratchpad silent] $bin\")" \
+           "exec [workspace special:scratchpad silent] $bin"; then
+        launched=1
+        continue
+      fi
+    fi
     if setsid --fork uwsm-app -- "$bin" >/dev/null 2>&1 || setsid --fork "$bin" >/dev/null 2>&1; then
       launched=1
     fi
@@ -788,6 +805,7 @@ snapshot_scratchpad() {
   # make this one think it owes a gap toggle — same for the power-profile
   # question, which re-arms every session — nor relaunch apps it never closed.
   rm -f "$GAPS_WERE_ON_FLAG" "$STATE_DIR/profile_asked" "$CLOSED_APPS_RECORD"
+  rm -f "$PATCHBAY_TARGET_FILE"
   special_clients > "$SCRATCHPAD_SNAPSHOT"
 }
 
@@ -837,6 +855,7 @@ open_patchbay() {
         all_pre=0
       fi
     done <<< "$existing"
+    printf 'scratchpad\n' > "$PATCHBAY_TARGET_FILE"
     if (( all_pre )); then
       touch "$PATCHBAY_PREEXISTED"
       ok "Scratchpad audio app already parked in the scratchpad."
@@ -864,13 +883,14 @@ open_patchbay() {
   # scratch terminal…) → ask the user BEFORE moving anything there. The apps
   # open in the current workspace instead, on accept; refuse → the caller
   # aborts the whole activation.
-  local occupants=""
+  local occupants="" free=1
   occupants=$(scratchpad_occupied_by_others | sort -u | tr '\n' ' ')
   if [[ -n "$occupants" ]]; then
     if ! confirm $"The scratchpad is already occupied (the scratchpad audio apps can't be parked there). They will open in the CURRENT workspace. Continue?"; then
       warn "Live Mode activation cancelled (scratchpad occupied)."
       return 1
     fi
+    free=0
     ok "Opening the scratchpad audio apps in the current workspace (scratchpad kept as-is)."
   fi
 
@@ -880,7 +900,13 @@ open_patchbay() {
     names+="${names:+, }${spec%%|*}"
   done < <(patchbay_specs)
   ok "Scratchpad audio: launching $names."
-  patchbay_launch
+  if (( free )); then
+    printf 'scratchpad\n' > "$PATCHBAY_TARGET_FILE"
+    patchbay_launch scratchpad
+  else
+    printf 'workspace\n' > "$PATCHBAY_TARGET_FILE"
+    patchbay_launch
+  fi
 
   # Qt apps map their windows AFTER the process is up, and on a loaded
   # machine that took longer than 6 s here, so the loop gave up and reported
@@ -904,13 +930,14 @@ open_patchbay() {
       # Both providers are tiled, never floating: a floating mixbay over a
       # tiled graph was the scratchpad the user was actually getting.
       tile_window "$addr" >/dev/null 2>&1 || true
-      # Park it only if the scratchpad is free (no occupants).
-      if [[ -z $(scratchpad_occupied_by_others) ]]; then
+      # The exec rule already put it there; parking again is the fallback for
+      # an older Hyprland that refused the rule.
+      if (( free )); then
         park_in_scratchpad "$addr" >/dev/null 2>&1 || true
       fi
     done <<< "$existing"
-    if [[ -z $(scratchpad_occupied_by_others) ]]; then
-      ok "Scratchpad audio apps parked in the scratchpad (SUPER + S)."
+    if (( free )); then
+      ok "Scratchpad audio apps opened in the scratchpad (SUPER + S)."
     else
       ok "Scratchpad audio apps opened in the current workspace (scratchpad left as it was)."
     fi

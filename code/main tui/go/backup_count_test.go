@@ -638,4 +638,19 @@ func TestMixbayBackupAndRestoreOptions(t *testing.T) {
 	if latest != mode+1 {
 		t.Fatalf("latest-versions toggle should follow restore mode: %v", order)
 	}
+	label := func(p navPicker) string {
+		for _, it := range p.items {
+			if it.Value == "latest" {
+				return it.Display
+			}
+		}
+		return ""
+	}
+	if got := label(rows); !strings.Contains(got, "Complete update pass") || !strings.Contains(got, "(mixbay profiles included)") {
+		t.Fatalf("complete-update row should name the MixBay pass: %q", got)
+	}
+	m.restoreManifest = BackupManifest{}
+	if got := label(m.rebuildRestoreOptions()); strings.Contains(got, "mixbay") {
+		t.Fatalf("complete-update row must not promise MixBay profiles absent from the archive: %q", got)
+	}
 }

@@ -349,12 +349,24 @@ patchbay_watch() {
     printf '' > "$STATE_DIR/patchbay_addr"
     ok "scratchpad audio app(s) closed for this session by the user."
   else
-    # Keep them running: relaunch + park (same path as activation).
-    local pspec
+    # Keep them running: relaunch where activation put them this session.
+    # "scratchpad" means BORN there (exec rule on the workspace), not shown on
+    # the current workspace and moved afterwards; "workspace" means the user
+    # accepted the current workspace because the scratchpad was occupied.
+    local target pspec bin
+    target=$(cat "$STATE_DIR/patchbay_target" 2>/dev/null || echo scratchpad)
     while IFS= read -r pspec; do
       [[ -n $pspec ]] || continue
-      setsid --fork uwsm-app -- "${pspec%%|*}" >/dev/null 2>&1 || \
-      setsid --fork "${pspec%%|*}" >/dev/null 2>&1 || true
+      bin="${pspec%%|*}"
+      # No uwsm-app inside the rule: systemd's child is not the exec's child,
+      # so Hyprland would drop the workspace. Classic `exec [workspace …]` is a
+      # Lua syntax error on Hyprland 0.56.
+      if [[ $target == scratchpad ]] && hyprctl dispatch \
+           "hl.dsp.exec_cmd(\"[workspace special:scratchpad silent] $bin\")" >/dev/null 2>&1; then
+        continue
+      fi
+      setsid --fork uwsm-app -- "$bin" >/dev/null 2>&1 || \
+      setsid --fork "$bin" >/dev/null 2>&1 || true
     done < <(patchbay_specs)
     local i new
     for i in $(seq 1 20); do
@@ -366,9 +378,7 @@ patchbay_watch() {
       echo "$new" > "$STATE_DIR/patchbay_addr"
       # The Lua dispatcher form, inlined rather than shared: this watchdog is
       # its own process and does not source live-mode, so park_in_scratchpad()
-      # is not in scope here. The classic form it replaces is a LUA SYNTAX
-      # ERROR on Hyprland 0.56 ("special:scratchpad" — the colon) and was
-      # swallowed by 2>&1, so the window was never parked.
+      # is not in scope here.
       while IFS= read -r a; do
         [[ -n $a ]] || continue
         # Both providers tiled, exactly like activation: mixbay carries a
@@ -376,6 +386,9 @@ patchbay_watch() {
         hyprctl dispatch "hl.dsp.window.float({ window = \"address:$a\", action = \"off\" })" \
           >/dev/null 2>&1 \
           || hyprctl dispatch "settiled address:$a" >/dev/null 2>&1 || true
+        # Parking is only the fallback for a Hyprland that refused the exec
+        # rule; on a workspace launch the app stays where it is.
+        [[ $target == scratchpad ]] || continue
         hyprctl dispatch "hl.dsp.window.move({ window = \"address:$a\", workspace = \"special:scratchpad\" })" \
           >/dev/null 2>&1 \
           || hyprctl dispatch "movetoworkspacesilent special:scratchpad,address:$a" >/dev/null 2>&1 || true

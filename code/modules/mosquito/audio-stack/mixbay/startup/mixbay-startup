@@ -12,6 +12,7 @@
 #   mixbay-startup --open    # launched by the Omarchy menu (reveals the window)
 #   mixbay-startup --place   # park/unpark the running TUI from ui.json
 #   mixbay-startup --install-card ID  # notification click: open + queue a profile
+#   mixbay-startup --open-card ID     # notification click: open + show that card
 #   mixbay-startup --external CMD  # launch an external GUI and place the windows
 # =============================================================================
 set -euo pipefail
@@ -99,7 +100,7 @@ place(){
 
 spawn(){
   local scratch; scratch="$(pref launch_in_scratchpad true)"
-  local term app
+  local term app cmd
   if command -v foot >/dev/null 2>&1; then term=foot; else term=xterm; fi
   command -v "$term" >/dev/null 2>&1 || exit 0
   if [[ $scratch == true ]]; then
@@ -108,6 +109,19 @@ spawn(){
     app="org.omarchy.mosquito-mixbay-tui"
   fi
   if [[ $term == foot ]]; then
+    printf -v cmd '%q --app-id=%q -e %q' "$term" "$app" "$HOME_DIR/.local/bin/mosquito-mixbay"
+  else
+    printf -v cmd '%q -e %q' "$term" "$HOME_DIR/.local/bin/mosquito-mixbay"
+  fi
+  # With launch_in_scratchpad the window is BORN in the scratchpad through an
+  # exec rule; it used to appear on the current workspace and get moved by
+  # place() afterwards. place() stays as the fallback for a Hyprland that
+  # refuses the rule. Classic `exec [workspace …]` is a Lua syntax error on
+  # Hyprland 0.56.
+  if [[ $scratch == true ]] && command -v hyprctl >/dev/null 2>&1 \
+     && hyprctl dispatch "hl.dsp.exec_cmd(\"[workspace special:scratchpad silent] $cmd\")" >/dev/null 2>&1; then
+    :
+  elif [[ $term == foot ]]; then
     "$term" --app-id="$app" -e "$HOME_DIR/.local/bin/mosquito-mixbay" >/dev/null 2>&1 &
   else
     "$term" -e "$HOME_DIR/.local/bin/mosquito-mixbay" >/dev/null 2>&1 &
@@ -230,19 +244,31 @@ external(){
   launch_external "$cmd" "$@"
 }
 
-# install_card <id> — the card watcher's notification click: remember the
-# profile, reveal (or spawn) Mixbay, then wake the running TUI so it runs the
-# same import + integration path as the profiles screen.
-install_card(){
-  local id="${1:-}" pidfile pid
-  [[ $id =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || { printf 'usage: %s --install-card ID\n' "$0" >&2; exit 2; }
+# request_card <file> <id> — queue one notification-click request, reveal (or
+# spawn) Mixbay, then wake a running TUI so it acts without a restart.
+request_card(){
+  local file="$1" id="${2:-}" pidfile pid
+  [[ $id =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || { printf 'usage: %s %s ID\n' "$0" "$3" >&2; exit 2; }
   mkdir -p "$CONF/mosquitomixbay"
-  printf '{"id":"%s"}\n' "$id" > "$CONF/mosquitomixbay/pending-install.json"
+  printf '{"id":"%s"}\n' "$id" > "$CONF/mosquitomixbay/$file"
   open_mixbay
   pidfile="${XDG_RUNTIME_DIR:-/tmp}/mosquito-mixbay-tui.pid"
   [[ -f $pidfile ]] || exit 0
   pid="$(cat "$pidfile" 2>/dev/null || true)"
   [[ -n $pid ]] && kill -USR1 "$pid" 2>/dev/null || true
+}
+
+# install_card <id> — the card watcher's notification click: remember the
+# profile, reveal (or spawn) Mixbay, then wake the running TUI so it runs the
+# same import + integration path as the profiles screen.
+install_card(){
+  request_card pending-install.json "${1:-}" --install-card
+}
+
+# open_card <id> — an already-installed card's notification click: reveal
+# Mixbay and land on that card's page.
+open_card(){
+  request_card pending-open.json "${1:-}" --open-card
 }
 
 case "${1:-}" in
@@ -251,8 +277,9 @@ case "${1:-}" in
   --open) open_mixbay ;;
   --place) place ;;
   --install-card) shift; install_card "$@" ;;
+  --open-card) shift; open_card "$@" ;;
   --external) shift; [[ $# -ge 1 ]] || { printf 'usage: %s --external CMD [args...]\n' "$0" >&2; exit 2; }; external "$@" ;;
   --remove) remove_block; printf 'autostart: off\n' ;;
   -h|--help) sed -n '2,20p' "$0" ;;
-  *) printf 'usage: %s --apply|--run|--open|--place|--install-card ID|--external CMD|--remove\n' "$0" >&2; exit 2 ;;
+  *) printf 'usage: %s --apply|--run|--open|--place|--install-card ID|--open-card ID|--external CMD|--remove\n' "$0" >&2; exit 2 ;;
 esac

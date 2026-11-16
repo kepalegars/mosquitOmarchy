@@ -6073,9 +6073,13 @@ func (m model) rebuildRestoreOptions() navPicker {
 		// ordinary colour.
 		modeValue = tuikit.StyleErr.Render("Full")
 	}
+	latestLabel := "Complete update pass"
+	if m.restoreManifest.Mixbay {
+		latestLabel += " (mixbay profiles included)"
+	}
 	items = append(items,
 		tuikit.PickerItem{Display: "Restore mode: " + modeValue, Value: "mode"},
-		tuikit.PickerItem{Display: "Restore latest module & package versions: " + yesno(m.restoreOpts.Latest), Value: "latest"},
+		tuikit.PickerItem{Display: latestLabel + ": " + yesno(m.restoreOpts.Latest), Value: "latest"},
 		tuikit.PickerItem{Display: "Restore now…", Value: "restore", Engage: true},
 		tuikit.PickerItem{Display: "Back", Value: "back"},
 	)
