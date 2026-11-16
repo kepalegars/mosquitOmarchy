@@ -60,6 +60,29 @@ code/modules/Apps/ableton/setup-ableton.sh --check-update  # downloads the lates
 
 Same plugins → visible in Bitwig/REAPER too (yabridge). iLok activation must be done **in the Ableton prefix** (`env WINEPREFIX=~/.wine-ableton wine LicenceManager.exe`); runtime update: `sh <run> update`. Launch: `ableton-live`; first config: Settings > Audio > Driver **ASIO** > Device **PipeASIO**.
 
+## Ableton Move
+
+The Move's USB audio interface is class-compliant on Linux but **fixed at 44.1 kHz**, and
+ableton-on-linux has no support for Move Control. `setup-ableton.sh` installs
+`move-audio-watcher` (a systemd user service, `pactl` card events, the same event-driven model
+as Mixbay's card watcher) which does one thing and never acts on its own:
+
+- **Plug the Move** → a notification offers *Use it (44.1 kHz)*. Only clicking it switches the
+  default sink/source to the Move and pins the graph to 44.1 kHz (`clock.min-rate` =
+  `clock.max-rate` = `clock.force-rate`, through `pipewire-settings` when installed).
+- **Unplug it** → a notification offers *Back to &lt;previous rate&gt; Hz*: the previous default
+  devices, the four clock keys exactly as they were (an absent pin stays absent) and the
+  previous `pipewire.conf.d` file are restored.
+
+Detection needs both the Ableton USB vendor (`2982`) and an ALSA card whose name says Move, so
+Push/Note (same vendor, no audio interface) never trigger it. `move-audio-watcher --status`
+shows what is connected and what was switched; `--self-test` checks the matchers and parsers.
+Removing the last Ableton edition removes the service.
+
+Move Control in Live (pads/OLED driving the session) is **not** covered: it is a Windows remote
+script inside Live and is not validated under wine. For the Move as a Bitwig controller and for
+set transfer, see the `move-manager` module.
+
 ## Uninstall
 
 ```bash
