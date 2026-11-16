@@ -194,12 +194,21 @@ installer_files(){
 }
 
 installer_names(){
-  local f first=1
+  local f first=1 prev_davinci=0
   (( $# )) || { printf 'none found'; return; }
   for f in "$@"; do
+    # The FFmpeg encoder plugin is downloaded and installed BY the DaVinci
+    # module (same folder, same zip glob): show it attached to the Resolve
+    # installer with a "+" instead of as an unrelated file.
+    if [[ $f == code/modules/Apps/davinci/ffmpeg_encoder_plugin* && $prev_davinci == 1 ]]; then
+      printf ' + %s' "${f##*/}"
+      prev_davinci=0
+      continue
+    fi
     (( first )) || printf ', '
     printf '%s' "${f##*/}"
     first=0
+    [[ $f == code/modules/Apps/davinci/DaVinci_Resolve* ]] && prev_davinci=1 || prev_davinci=0
   done
 }
 
@@ -417,6 +426,9 @@ do_list(){
     mapfile -d '' -t installers < <(installer_files)
     if (( ARCHIVE_INSTALLERS )); then
       printf '  app installers       : included\n'
+      if (( ${#installers[@]} )); then
+        printf '    %s\n' "$(installer_names "${installers[@]}")"
+      fi
     else
       printf '  app installers       : excluded\n'
     fi

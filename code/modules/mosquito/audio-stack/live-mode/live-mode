@@ -684,6 +684,13 @@ special_clients() {
 # the window-class matcher differ per provider, and a provider whose window
 # cannot be recognised is worse than none at all (it would be launched and
 # never parked).
+#
+# MixBay ships TWO window classes: its normal TUI and the scratchpad variant
+# (mixbay-startup spawns that one when launch_in_scratchpad is on). Matching
+# only -tui made the scratchpad window invisible to live mode: activation
+# waited 15 s for a window that was already there, and the watchdog then
+# counted one provider missing on every pass and asked the same "close the
+# audio apps?" question forever.
 patchbay_have_mixbay() {
   [[ -x $REAL_HOME/.local/bin/mosquito-mixbay ]] \
     || command -v mosquito-mixbay >/dev/null 2>&1
@@ -702,12 +709,12 @@ patchbay_specs() {
   local choice="${PATCHBAY_APP:-mixbay+qpwgraph}"
   case $choice in
     mixbay+qpwgraph)
-      patchbay_have_mixbay && printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay-tui\n'
+      patchbay_have_mixbay && printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay(-tui|-scratchpad)\n'
       patchbay_have_qpwgraph && printf 'qpwgraph|qpwgraph|org\.rncbc\.qpwgraph|org\.pq_graph\.Qpwgraph\n'
       return 0 ;;
     mixbay)
       if patchbay_have_mixbay; then
-        printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay-tui\n'; return 0
+        printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay(-tui|-scratchpad)\n'; return 0
       fi ;;
     qpwgraph)
       if patchbay_have_qpwgraph; then
@@ -723,7 +730,7 @@ patchbay_specs() {
     printf 'mosquito-patchbay|mosquito[_-]?patchbay\n'; return 0
   fi
   if patchbay_have_mixbay; then
-    printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay-tui\n'; return 0
+    printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay(-tui|-scratchpad)\n'; return 0
   fi
   if patchbay_have_qpwgraph; then
     printf 'qpwgraph|qpwgraph|org\.rncbc\.qpwgraph|org\.pq_graph\.Qpwgraph\n'; return 0
@@ -763,6 +770,12 @@ patchbay_addr() {
 # and live-mode-watch referenced the old name.
 qpwgraph_addr() { patchbay_addr; }
 
+# patchbay_spec_running <class-regex> — does that provider have a window?
+patchbay_spec_running() {
+  hyprctl -j clients 2>/dev/null | jq -e --arg re "^($1)$" \
+    'any(.[]; (.class // "") | test($re))' >/dev/null 2>&1
+}
+
 # The commands that launch the patchbay providers for the current choice.
 # With "scratchpad" the window is BORN there through an exec rule: the app no
 # longer flashes on the current workspace and gets moved afterwards.
@@ -790,6 +803,30 @@ patchbay_launch() {
   (( launched )) || return 1
 }
 
+# patchbay_launch_missing <scratchpad|workspace> — start only the providers
+# that have no window. Activation can find one of two already open (MixBay
+# left from the desk, qpwgraph closed): the session wants both, and the
+# missing one is launched now rather than five seconds later by the watchdog.
+# Returns 0 when it launched anything.
+patchbay_launch_missing() {
+  local where="${1:-}" spec bin launched=0
+  while IFS= read -r spec; do
+    [[ -n $spec ]] || continue
+    patchbay_spec_running "${spec#*|}" && continue
+    bin="${spec%%|*}"
+    if [[ $where == scratchpad ]] && hypr_dispatch \
+         "hl.dsp.exec_cmd(\"[workspace special:scratchpad silent] $bin\")" \
+         "exec [workspace special:scratchpad silent] $bin"; then
+      launched=1
+      continue
+    fi
+    if setsid --fork uwsm-app -- "$bin" >/dev/null 2>&1 || setsid --fork "$bin" >/dev/null 2>&1; then
+      launched=1
+    fi
+  done < <(patchbay_specs) || true
+  (( launched ))
+}
+
 snapshot_scratchpad() {
   : > "$PATCHBAY_ADDR_FILE"
   # rm, NOT `: >`. This flag means "the user closed the patchbay for THIS
@@ -805,7 +842,7 @@ snapshot_scratchpad() {
   # make this one think it owes a gap toggle — same for the power-profile
   # question, which re-arms every session — nor relaunch apps it never closed.
   rm -f "$GAPS_WERE_ON_FLAG" "$STATE_DIR/profile_asked" "$CLOSED_APPS_RECORD"
-  rm -f "$PATCHBAY_TARGET_FILE"
+  rm -f "$PATCHBAY_TARGET_FILE" "$STATE_DIR/patchbay_have"
   special_clients > "$SCRATCHPAD_SNAPSHOT"
 }
 
@@ -856,6 +893,10 @@ open_patchbay() {
       fi
     done <<< "$existing"
     printf 'scratchpad\n' > "$PATCHBAY_TARGET_FILE"
+    # The session wants every provider, and one of them may not be running
+    # (e.g. MixBay was already open, qpwgraph was closed). Launch it now.
+    patchbay_launch_missing scratchpad && all_pre=0
+    record_patchbay_windows 1 &
     if (( all_pre )); then
       touch "$PATCHBAY_PREEXISTED"
       ok "Scratchpad audio app already parked in the scratchpad."
@@ -908,43 +949,36 @@ open_patchbay() {
     patchbay_launch
   fi
 
-  # Qt apps map their windows AFTER the process is up, and on a loaded
-  # machine that took longer than 6 s here, so the loop gave up and reported
-  # "could not be detected" for a patchbay that was about to appear. 20 x
-  # 0.3s was simply too short. It is now 15 s, and the address is recorded
-  # as soon as it shows up so the rest of the session has it.
-  local want i found=0
-  want=$(patchbay_specs 2>/dev/null | grep -c .)
-  for i in $(seq 1 50); do
-    sleep 0.3
-    existing=$(patchbay_addr)
-    found=$(printf '%s' "$existing" | grep -c . || true)
-    (( found >= want )) && break
-  done
-
-  if [[ -n "$existing" ]]; then
-    : > "$PATCHBAY_ADDR_FILE"
-    while IFS= read -r addr; do
-      [[ -n $addr ]] || continue
-      printf '%s\n' "$addr" >> "$PATCHBAY_ADDR_FILE"
-      # Both providers are tiled, never floating: a floating mixbay over a
-      # tiled graph was the scratchpad the user was actually getting.
-      tile_window "$addr" >/dev/null 2>&1 || true
-      # The exec rule already put it there; parking again is the fallback for
-      # an older Hyprland that refused the rule.
-      if (( free )); then
-        park_in_scratchpad "$addr" >/dev/null 2>&1 || true
-      fi
-    done <<< "$existing"
-    if (( free )); then
-      ok "Scratchpad audio apps opened in the scratchpad (SUPER + S)."
-    else
-      ok "Scratchpad audio apps opened in the current workspace (scratchpad left as it was)."
-    fi
-  else
-    warn "$names launched, but no window could be detected."
-  fi
+  # Record what appears in the BACKGROUND. Blocking here is what made an
+  # activation sit up to 15 s on a window that the exec rule had already put
+  # in the right place; the only things still needed are the address list
+  # (teardown at `off`) and the tile fix for MixBay's float rule.
+  record_patchbay_windows "$free" &
   return 0
+}
+
+# record_patchbay_windows <free> — collect the launched windows as they map,
+# tile them (MixBay carries a float+center rule and would otherwise sit
+# floating over qpwgraph) and park only as the fallback for a Hyprland that
+# refused the exec rule. Runs detached, so activation never waits on it.
+record_patchbay_windows() {
+  local free="$1" i want found addr a
+  want=$(patchbay_specs 2>/dev/null | grep -c .)
+  for i in $(seq 1 100); do        # 30 s: a cold Qt start can be slow
+    addr=$(patchbay_addr)
+    found=$(printf '%s' "$addr" | grep -c . || true)
+    (( found >= want )) && break
+    sleep 0.3
+  done
+  [[ -n $addr ]] || return 0
+  while IFS= read -r a; do
+    [[ -n $a ]] || continue
+    # A window seen on an earlier pass is already recorded and placed.
+    grep -qF -- "$a" "$PATCHBAY_ADDR_FILE" 2>/dev/null && continue
+    printf '%s\n' "$a" >> "$PATCHBAY_ADDR_FILE"
+    tile_window "$a" >/dev/null 2>&1 || true
+    (( free )) && park_in_scratchpad "$a" >/dev/null 2>&1 || true
+  done <<< "$addr"
 }
 
 # restore_scratchpad: at deactivation, remove what live mode added and put
@@ -1471,6 +1505,28 @@ cmd_on() {
   # 1. Close the selected background apps (the activation card listed them).
   close_background_apps
 
+  # 1b. Live theme FIRST. omarchy-theme-set's post-hooks restart terminals, so
+  #     anything launched before the theme lands (a foot-hosted MixBay, a
+  #     patchbay) is killed by the switch — that is why the theme used to be
+  #     applied last, and why it used to appear only after the apps. The setter
+  #     is detached because it can also kill the terminal running THIS
+  #     activation, so wait on the resulting theme name, not on the job.
+  if [[ $SWITCH_THEME == yes ]]; then
+    switch_to_live_theme
+    local themed=0 i
+    for i in $(seq 1 40); do      # 6 s
+      [[ "$(theme_current)" == "$LIVE_THEME_NAME" ]] && { themed=1; break; }
+      sleep 0.15
+    done
+    if (( themed )); then
+      ok "Live theme applied."
+    else
+      warn "Live theme not confirmed yet — the thermal guard keeps re-asserting it."
+    fi
+  else
+    ok "Theme switch skipped (SWITCH_THEME=no)."
+  fi
+
   # 2. Privileged setup (profile/audio/usb/battery/fence) runs while the
   #    rest of the activation proceeds — serialized steps made startup feel
   #    slow.
@@ -1502,24 +1558,7 @@ cmd_on() {
     return 0
   fi
 
-  # 8. Live theme switched from a DETACHED process: omarchy-theme-set's
-  #    post-hooks restart terminals, and if this script runs inside one the
-  #    restart would kill the orchestrator mid-flight.
-  #
-  #    SWITCH_THEME=no skips the whole thing. It exists because a theme set
-  #    restarts every terminal on the desktop — including the one running an
-  #    activation, including a live remote/agent session. That is exactly what
-  #    happens with the rest of the activation still in flight, so there needs
-  #    to be a way to run everything EXCEPT the disruptive part. The previous
-  #    theme is still recorded and still restored, so deactivation stays
-  #    symmetric.
-  if [[ $SWITCH_THEME == yes ]]; then
-    switch_to_live_theme
-  else
-    ok "Theme switch skipped (SWITCH_THEME=no)."
-  fi
-
-  # 9. Thermal watchdog (last: it reasserts everything above). Re-block the
+  # 8. Thermal watchdog (last: it reasserts everything above). Re-block the
   #    theme shortcuts first: the gaps toggle above is an Omarchy config toggle
   #    and reloads Hyprland, which restores the default binds.
   #
@@ -1579,6 +1618,12 @@ cmd_off() {
   # 1. Stop watchdog
   stop_watchdog
 
+  # 1b. Sleep management off at once: the stay-awake file is what paints the
+  #     red coffee icon, and everything below (theme restore, gap toggle,
+  #     scratchpad teardown) takes seconds. Leaving the icon lit until step 6
+  #     is what made it read "the coffee took ten seconds to go away".
+  stop_sleep_management
+
   # 2. Give the theme/background shortcuts back. AFTER stop_watchdog: the
   #    watchdog re-blocks them on every pass, so unblocking first let it
   #    re-unbind between the reload and its own death.
@@ -1610,10 +1655,7 @@ cmd_off() {
   # 5d. Opt-in: start again the apps this session closed at activation.
   relaunch_closed_apps
 
-  # 6. Sleep management off (also ends any mega-caffeine session)
-  stop_sleep_management
-
-  # 7. Restore the screen tint that was neutralized
+  # 6. Restore the screen tint that was neutralized
   restore_tint
 
   # 7b. PipeWire settings: give back the pre-live force/persist state.

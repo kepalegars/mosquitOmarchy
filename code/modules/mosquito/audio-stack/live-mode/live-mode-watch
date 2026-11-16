@@ -262,12 +262,12 @@ patchbay_specs() {
   local choice="${PATCHBAY_APP:-mixbay+qpwgraph}"
   case $choice in
     mixbay+qpwgraph)
-      patchbay_have_mixbay && printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay-tui\n'
+      patchbay_have_mixbay && printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay(-tui|-scratchpad)\n'
       patchbay_have_qpwgraph && printf 'qpwgraph|qpwgraph|org\.rncbc\.qpwgraph|org\.pq_graph\.Qpwgraph\n'
       return 0 ;;
     mixbay)
       if patchbay_have_mixbay; then
-        printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay-tui\n'; return 0
+        printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay(-tui|-scratchpad)\n'; return 0
       fi ;;
     qpwgraph)
       if patchbay_have_qpwgraph; then
@@ -282,7 +282,7 @@ patchbay_specs() {
     printf 'mosquito-patchbay|mosquito[_-]?patchbay\n'; return 0
   fi
   if patchbay_have_mixbay; then
-    printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay-tui\n'; return 0
+    printf 'mosquito-mixbay|org\.omarchy\.mosquito-mixbay(-tui|-scratchpad)\n'; return 0
   fi
   if patchbay_have_qpwgraph; then
     printf 'qpwgraph|qpwgraph|org\.rncbc\.qpwgraph|org\.pq_graph\.Qpwgraph\n'; return 0
@@ -308,6 +308,74 @@ patchbay_addr() {
     .[] | select((.class // "") | test($re)) | .address' 2>/dev/null
 }
 
+# patchbay_missing — the providers whose window is not up at all. Used to put
+# back the one the user closed while the other one stayed on screen: the
+# session still wants both, and that is not a reason to ask anything.
+patchbay_missing(){
+  local spec re
+  while IFS= read -r spec; do
+    [[ -n $spec ]] || continue
+    re="${spec#*|}"
+    hyprctl -j clients 2>/dev/null | jq -e --arg re "^($re)$" \
+      'any(.[]; (.class // "") | test($re))' >/dev/null 2>&1 && continue
+    printf '%s\n' "$spec"
+  done < <(patchbay_specs 2>/dev/null)
+}
+
+# patchbay_relaunch — start the specs on stdin where the session put them.
+# "scratchpad" means BORN there (exec rule on the workspace), not shown on the
+# current workspace and moved afterwards; "workspace" means the user accepted
+# the current workspace because the scratchpad was occupied.
+patchbay_relaunch(){
+  local target bin spec
+  target=$(cat "$STATE_DIR/patchbay_target" 2>/dev/null || echo scratchpad)
+  while IFS= read -r spec; do
+    [[ -n $spec ]] || continue
+    bin="${spec%%|*}"
+    # No uwsm-app inside the rule: systemd's child is not the exec's child, so
+    # Hyprland would drop the workspace. Classic `exec [workspace …]` is a Lua
+    # syntax error on Hyprland 0.56.
+    if [[ $target == scratchpad ]] && hyprctl dispatch \
+         "hl.dsp.exec_cmd(\"[workspace special:scratchpad silent] $bin\")" >/dev/null 2>&1; then
+      continue
+    fi
+    setsid --fork uwsm-app -- "$bin" >/dev/null 2>&1 || \
+    setsid --fork "$bin" >/dev/null 2>&1 || true
+  done
+}
+
+# patchbay_place — wait for the relaunched windows, tile them (MixBay carries a
+# float+center rule and would otherwise sit floating over qpwgraph) and park
+# them when the session chose the scratchpad.
+patchbay_place(){
+  local target want have new i a
+  target=$(cat "$STATE_DIR/patchbay_target" 2>/dev/null || echo scratchpad)
+  want=$(patchbay_specs 2>/dev/null | grep -c . || true)
+  for i in $(seq 1 20); do
+    new=$(patchbay_addr)
+    have=$(printf '%s' "$new" | grep -c . || true)
+    (( want > 0 )) && (( have >= want )) && break
+    sleep 0.3
+  done
+  [[ -n $new ]] || return 0
+  echo "$new" > "$STATE_DIR/patchbay_addr"
+  # The Lua dispatcher form, inlined rather than shared: this watchdog is its
+  # own process and does not source live-mode, so park_in_scratchpad() is not
+  # in scope here.
+  while IFS= read -r a; do
+    [[ -n $a ]] || continue
+    hyprctl dispatch "hl.dsp.window.float({ window = \"address:$a\", action = \"off\" })" \
+      >/dev/null 2>&1 \
+      || hyprctl dispatch "settiled address:$a" >/dev/null 2>&1 || true
+    # Parking is only the fallback for a Hyprland that refused the exec rule;
+    # on a workspace launch the app stays where it is.
+    [[ $target == scratchpad ]] || continue
+    hyprctl dispatch "hl.dsp.window.move({ window = \"address:$a\", workspace = \"special:scratchpad\" })" \
+      >/dev/null 2>&1 \
+      || hyprctl dispatch "movetoworkspacesilent special:scratchpad,address:$a" >/dev/null 2>&1 || true
+  done <<< "$new"
+}
+
 # patchbay_watch: while live mode is on, closing the mosquito patchbay
 # prompts a confirmation — "yes" parks it for the rest of the session,
 patchbay_watch() {
@@ -317,7 +385,7 @@ patchbay_watch() {
   # -s, not -f: an empty file means "flag reset", not "the user closed it".
   [[ -s "$STATE_DIR/patchbay_closed_this_session" ]] && return 0
 
-  local addr want have
+  local addr want have prev
   addr=$(patchbay_addr)
   want=$(patchbay_specs 2>/dev/null | grep -c . || true)
   have=$(printf '%s' "$addr" | grep -c . || true)
@@ -326,11 +394,32 @@ patchbay_watch() {
   # the addresses so the file always mirrors reality.
   if (( want > 0 )) && (( have >= want )); then
     printf '%s\n' "$addr" > "$STATE_DIR/patchbay_addr"
+    printf '%s' "$have" > "$STATE_DIR/patchbay_have"
     return 0
   fi
 
-  # All of them vanished: ask ONCE via the confirm overlay.
-  local payload sel="$STATE_DIR/confirm_sel" donef="$STATE_DIR/confirm_done" ans
+  # How many were on screen on the PREVIOUS pass. A question may only be asked
+  # on the pass where a window actually disappeared. Without this memory the
+  # watcher asked again on every 5 s tick, forever: one provider it could not
+  # recognise (the scratchpad MixBay class) kept have < want while the app sat
+  # right there in the scratchpad, and no answer could ever satisfy the count.
+  prev=$(cat "$STATE_DIR/patchbay_have" 2>/dev/null || true)
+  printf '%s' "$have" > "$STATE_DIR/patchbay_have"
+  # Nothing was on screen yet: this is activation's launch, not a close. A
+  # provider that never came up must not be reported as one the user closed.
+  [[ -n $prev ]] || return 0
+  (( prev > have )) || return 0
+
+  # One of two is still up: the other closed. Put it back silently — the
+  # session's tool is still in use, so there is nothing to decide.
+  if (( have > 0 )); then
+    patchbay_missing | patchbay_relaunch
+    patchbay_place
+    return 0
+  fi
+
+  # Everything vanished: ask ONCE per vanishing event.
+  local payload sel="$STATE_DIR/confirm_sel" donef="$STATE_DIR/confirm_done" ans i
   rm -f "$sel" "$donef"
   payload=$(jq -cn --arg message "Close the scratchpad audio app(s) for this Live session?" \
     --arg selectionFile "$sel" --arg doneFile "$donef" \
@@ -349,51 +438,9 @@ patchbay_watch() {
     printf '' > "$STATE_DIR/patchbay_addr"
     ok "scratchpad audio app(s) closed for this session by the user."
   else
-    # Keep them running: relaunch where activation put them this session.
-    # "scratchpad" means BORN there (exec rule on the workspace), not shown on
-    # the current workspace and moved afterwards; "workspace" means the user
-    # accepted the current workspace because the scratchpad was occupied.
-    local target pspec bin
-    target=$(cat "$STATE_DIR/patchbay_target" 2>/dev/null || echo scratchpad)
-    while IFS= read -r pspec; do
-      [[ -n $pspec ]] || continue
-      bin="${pspec%%|*}"
-      # No uwsm-app inside the rule: systemd's child is not the exec's child,
-      # so Hyprland would drop the workspace. Classic `exec [workspace …]` is a
-      # Lua syntax error on Hyprland 0.56.
-      if [[ $target == scratchpad ]] && hyprctl dispatch \
-           "hl.dsp.exec_cmd(\"[workspace special:scratchpad silent] $bin\")" >/dev/null 2>&1; then
-        continue
-      fi
-      setsid --fork uwsm-app -- "$bin" >/dev/null 2>&1 || \
-      setsid --fork "$bin" >/dev/null 2>&1 || true
-    done < <(patchbay_specs)
-    local i new
-    for i in $(seq 1 20); do
-      sleep 0.3
-      new=$(patchbay_addr)
-      [[ -n "$new" ]] && break
-    done
-    [[ -n "$new" ]] && {
-      echo "$new" > "$STATE_DIR/patchbay_addr"
-      # The Lua dispatcher form, inlined rather than shared: this watchdog is
-      # its own process and does not source live-mode, so park_in_scratchpad()
-      # is not in scope here.
-      while IFS= read -r a; do
-        [[ -n $a ]] || continue
-        # Both providers tiled, exactly like activation: mixbay carries a
-        # float+center rule and would otherwise reopen floating over qpwgraph.
-        hyprctl dispatch "hl.dsp.window.float({ window = \"address:$a\", action = \"off\" })" \
-          >/dev/null 2>&1 \
-          || hyprctl dispatch "settiled address:$a" >/dev/null 2>&1 || true
-        # Parking is only the fallback for a Hyprland that refused the exec
-        # rule; on a workspace launch the app stays where it is.
-        [[ $target == scratchpad ]] || continue
-        hyprctl dispatch "hl.dsp.window.move({ window = \"address:$a\", workspace = \"special:scratchpad\" })" \
-          >/dev/null 2>&1 \
-          || hyprctl dispatch "movetoworkspacesilent special:scratchpad,address:$a" >/dev/null 2>&1 || true
-      done <<< "$new"
-    }
+    # Keep them running: relaunch and place them (same path as activation).
+    patchbay_specs | patchbay_relaunch
+    patchbay_place
   fi
 }
 
