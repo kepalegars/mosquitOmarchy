@@ -1620,7 +1620,7 @@ cmd_off() {
 
   # 1b. Sleep management off at once: the stay-awake file is what paints the
   #     red coffee icon, and everything below (theme restore, gap toggle,
-  #     scratchpad teardown) takes seconds. Leaving the icon lit until step 6
+  #     scratchpad teardown) takes seconds. Leaving the icon lit until the end
   #     is what made it read "the coffee took ten seconds to go away".
   stop_sleep_management
 

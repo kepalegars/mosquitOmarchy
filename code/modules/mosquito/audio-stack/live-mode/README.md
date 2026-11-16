@@ -53,9 +53,21 @@ back ticked if reinstalled.
 The session parks **mosquito mixbay** (the desk tool) **plus qpwgraph** (the
 PipeWire graph) in the scratchpad by default, **both tiled** side by side —
 mixbay has a float/center window rule for its login autostart, and live mode
-clears it when parking. The same applies when the watchdog puts them back after
-a close attempt. The installer **always installs qpwgraph when it is missing**
-(via the usual one-question password prompt), so the slot is never half empty.
+clears it when parking. They are **born there**: the launch carries an
+`[workspace special:scratchpad silent]` exec rule (through Hyprland's Lua
+dispatcher on 0.56+), so nothing flashes on the current workspace and gets
+moved afterwards. An app already open (mixbay from the desk, say) is parked,
+and the missing one is started in the same pass.
+
+The Live theme is applied **before** the apps: a theme set retints and reloads
+the desktop, and anything started earlier is what made the switch look like it
+arrived last. If one of the two apps is closed during the session it stays
+closed (closing one is a choice); losing **both** raises the "close them for
+this session?" question once — a later relaunch follows the scratchpad/workspace
+choice activation made.
+
+The installer **always installs qpwgraph when it is missing** (via the usual
+one-question password prompt), so the slot is never half empty.
 
 For the full live-mode desk, installing **mosquito mixbay** (mosquitomarchy
 Setup › mosquito) is strongly recommended: qpwgraph alone only shows the graph,
