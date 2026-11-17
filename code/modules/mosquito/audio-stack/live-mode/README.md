@@ -33,7 +33,7 @@ which keeps its default.
 | `RELAUNCH_APPS` | **opt-in** — start the apps the session closed again on deactivation (default `no`) |
 | `DISABLE_PASSWORDLESS_SUDO` | **on by default** — at activation, install the scoped `live-mode-root` grant and delete every broad `NOPASSWD: ALL` drop-in. One way: nothing restores them. |
 | `PIPEWIRE_AUTOLOCK` | **on by default** — start the PipeWire Settings widget locked during live mode. `no` leaves the values editable; `L` locks/unlocks either way. |
-| `LOCK_OUTPUT_VOLUME` | **on by default** — keep a Mixbay-managed interface's output volume exclusive to Mixbay (hardware & UI) for the session. It overrides Mixbay's own choice; needs Levels Guard. |
+| `LOCK_OUTPUT_VOLUME` | **on by default** — flip Mixbay to *hardware & UI exclusive* for the session, then put the previous value back on deactivation. It overrides Mixbay's own choice; needs Levels Guard. |
 | `ROUTING_TOOL` | park the audio mixer/patchbay in the scratchpad for the session |
 | `PATCHBAY_APP` | which scratchpad audio app(s): `mixbay+qpwgraph` (both, the default, opened tiled side by side), `mixbay`, `qpwgraph` or `mosquito-patchbay` |
 | `MOVE_AUDIO` | **on by default** — release the Ableton Move's audio interface when the session starts (it is fixed at 44.1 kHz and would pin the live graph). The previous devices/rate come back; deactivation never re-selects the Move. Needs Mixbay's Move profile; the row is greyed without it. |
@@ -130,10 +130,12 @@ resize). `off` restores the pre-live force/pin state and the persisted config.
 With `LOCK_OUTPUT_VOLUME` on, the session reserves a Mixbay-managed interface's
 output volume for the hardware and Mixbay's own UI: the media keys and the
 Omarchy audio panel cannot move it, exactly like Mixbay's *hardware & UI
-exclusive* setting, whatever `ui.json` currently says. Mixbay switches its own
-row to the exclusive value (no greying, the stored choice is untouched) while
-the session runs. Without Levels Guard nothing can enforce the lock, so the Live
-Manager greys the row out with `(needs Levels Guard)`.
+exclusive* setting. Activation rewrites `allow_native_volume` to `false` in
+`ui.json` when it was not already exclusive, and deactivation puts the previous
+value back (a missing key comes back missing). Mixbay greys its own row on the
+exclusive value with `(locked by Live Mode)` while the session runs. Without
+Levels Guard nothing can enforce the lock, so the Live Manager greys the row out
+with `(needs Levels Guard)`.
 
 ## Passwordless sudo
 

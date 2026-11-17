@@ -688,9 +688,10 @@ laisse les touches et les autres surfaces piloter le volume ; *hardware &
 UI exclusive* réserve le volume matériel à Mixbay. Il est grisé et figé sur
 *free* tant que `mosquito.levels-guard` n'est pas actif (rien ne bloque alors
 les touches natives). Pendant une session Live Mode dont `LOCK_OUTPUT_VOLUME`
-est actif (défaut), Live Mode prime : la ligne affiche *hardware & UI
-exclusive* pour la durée de la session (sans grisage, la valeur enregistrée
-n'est pas modifiée). Quand il est actif et que l'interface
+est actif (défaut), Live Mode prime : `allow_native_volume` passe à `false`
+(la valeur précédente est restaurée à la désactivation) et la ligne est
+grisée sur *hardware & UI exclusive* avec `(locked by Live Mode)`. Quand il est
+actif et que l'interface
 sélectionnée en sortie est gérée par Mixbay, les touches de volume pilotent son
 volume matériel (par pas de 5 dB, ±1 dB avec ALT) et la sourdine via
 `mosquito-mixbay-actions`, avec l'OSD au niveau résultant. Sur une interface

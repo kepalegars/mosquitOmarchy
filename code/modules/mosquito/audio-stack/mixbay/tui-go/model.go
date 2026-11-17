@@ -672,17 +672,17 @@ func liveVolumeLock() bool {
 func (m model) settingsItems() []tuikit.PickerItem {
 	// Without Levels Guard nothing blocks the native surfaces, so control is
 	// always free and the row only explains why it cannot change. A live
-	// session with Live Mode's output lock shows the forced value instead of
-	// greying the row: the choice stays stored, it just cannot win right now.
+	// session with Live Mode's output lock greys the row on the forced value.
 	guard := levelsGuardEnabled()
 	lock := liveVolumeLock() && guard
 	native := tuikit.PickerItem{
-		Display: "Audio interface output volume controls: " + volumeControlLabel(!guard || m.ui.AllowNativeVolume),
+		Display: "Audio interface output volume controls: " + volumeControlLabel(!lock && (!guard || m.ui.AllowNativeVolume)),
 		Value:   "allow_native",
 	}
 	switch {
 	case lock:
-		native.Display = "Audio interface output volume controls: " + volumeControlLabel(false)
+		native.Disabled = true
+		native.Suffix = "  (locked by Live Mode)"
 	case !guard:
 		native.Disabled = true
 		native.Suffix = "  (always free without Levels Guard)"
@@ -1544,6 +1544,9 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.picker.SelectedValue() == "settings" {
+				// ui.json can change behind the TUI (Live Mode's volume
+				// takeover): re-read it so Settings shows the stored truth.
+				m.ui = loadUIPrefs()
 				m.push(scrSettings)
 				m.syncPicker()
 				// One repo check per session, on the first Settings visit.

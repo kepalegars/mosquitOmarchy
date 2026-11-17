@@ -1625,8 +1625,8 @@ func TestAllowNativeVolumeNeedsLevelsGuard(t *testing.T) {
 	t.Fatal("allow_native row missing")
 }
 
-// A live session with Live Mode's output lock shows the forced hardware & UI
-// value without greying the row, whatever ui.json says.
+// A live session with Live Mode's output lock greys Mixbay's own row on the
+// exclusive value, whatever ui.json says.
 func TestLiveModeLocksVolumeRow(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -1649,8 +1649,9 @@ func TestLiveModeLocksVolumeRow(t *testing.T) {
 	m.push(scrSettings)
 	m.syncPicker()
 	row := allowNativeRow(t, m)
-	if row.Disabled || !strings.HasSuffix(row.Display, "hardware & UI exclusive") {
-		t.Fatalf("locked row must show exclusive without greying: %+v", row)
+	if !row.Disabled || !strings.HasSuffix(row.Display, "hardware & UI exclusive") ||
+		!strings.Contains(row.Suffix, "locked by Live Mode") {
+		t.Fatalf("locked row = %+v", row)
 	}
 	write(".config/live-mode/settings", "LOCK_OUTPUT_VOLUME=\"no\"\n")
 	if row := allowNativeRow(t, m); row.Disabled || !strings.HasSuffix(row.Display, ": free") {
