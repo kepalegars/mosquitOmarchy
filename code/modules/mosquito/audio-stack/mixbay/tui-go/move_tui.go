@@ -111,8 +111,8 @@ func (m model) moveView() string {
 	u.statusMsg = ""
 	r := &evoRender{c: c, m: m, u: &u, spec: spec}
 
-	// Header: dot + name, the same convention the other cards use. No tabs:
-	// there is only one view.
+	// Header: dot + name on the right edge, the same convention the other
+	// cards use. No tabs: there is only one view.
 	dot, dotAttr := "● ", evoStyle{col: cAccent}
 	if !m.status.Online {
 		dot, dotAttr = "○ ", evoStyle{col: cRed}
@@ -121,8 +121,9 @@ func (m model) moveView() string {
 	if spec.Version != "" {
 		name += " - " + spec.Version
 	}
-	r.put(cx+1, row, dot, dotAttr)
-	r.put(cx+1+len([]rune(dot)), row, name, evoStyle{col: cAccent, bold: true})
+	rightX := cx + sectionW - len([]rune(name)) - len([]rune(dot))
+	r.put(rightX, row, dot, dotAttr)
+	r.put(rightX+len([]rune(dot)), row, name, evoStyle{col: cAccent, bold: true})
 	r.c.repeat(cx, row+1, sectionW, boxH, evoStyle{col: cAccent})
 
 	body := row + 2

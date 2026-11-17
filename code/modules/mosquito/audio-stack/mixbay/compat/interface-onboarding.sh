@@ -234,8 +234,14 @@ fi
 
 missing="$(needs_for "$DEV" || true)"
 if accepted "$DEV"; then
-  [[ $MODE == status ]] && echo ok
-  exit 1
+  # "Accepted" only silences the asking modes. An explicit --apply must still
+  # run: after an uninstall the helper is gone even though the old acceptance
+  # is still on record, and skipping it made a successful reinstall look like
+  # a failure (exit 1).
+  case $MODE in
+    status) echo ok; exit 0 ;;
+    needs|prompt) exit 1 ;;
+  esac
 fi
 
 case $MODE in

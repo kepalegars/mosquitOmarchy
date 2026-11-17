@@ -65,7 +65,7 @@ notify_body(){
       printf '%s connected — no Mixbay profile installed. Click this notification to install it.\n' "$display"
       ;;
     installed|update)
-      printf '%s connected — handled by Mixbay. Click to open its UI.\n' "$display"
+      printf '%s connected — handled by Mixbay. Click to open its UI and use it.\n' "$display"
       ;;
     unsupported)
       printf '%s connected — not supported by Mixbay yet.\n' "$display"
@@ -91,7 +91,11 @@ send_notification(){
         exec=(--exec "$STARTUP" --install-card "$id")
         ;;
       installed|update)
-        exec=(--exec "$STARTUP" --open-card "$id")
+        # Clicking the card runs the first action, so it opens Mixbay AND
+        # makes the card the default. "Use it" repeats only the default
+        # change, for when the window would just get in the way.
+        exec=(--action "Open" "$STARTUP" --use-card "$id" \
+              --action "Use it" "$STARTUP" --select-card "$id")
         ;;
       unsupported)
         exec=(--exec "$STARTUP" --open)
@@ -178,7 +182,7 @@ move_notice_connect(){
     omarchy-notification-send --app-name Mixbay -g "$ICON_CARD" \
       "Ableton Move connected" \
       "Use its audio interface? (Pins the sample rate to 44.1kHz)" \
-      --action "Yes" "$MOVE_AUDIO" --use >/dev/null 2>&1 || true
+      --action "Use it" "$MOVE_AUDIO" --use >/dev/null 2>&1 || true
   fi
 }
 
@@ -342,7 +346,7 @@ self_test(){
   [[ $b == *"no Mixbay profile installed"* && $b == *"Click this notification to install"* ]] || fail=1
   [[ $b != *"not open"* && $b != *"handled by Mixbay"* ]] || fail=1
   b="$(notify_body 'RME Fireface UCX II' installed)"
-  [[ $b == *"handled by Mixbay"* && $b == *"open its UI"* ]] || fail=1
+  [[ $b == *"handled by Mixbay"* && $b == *"open its UI and use it"* ]] || fail=1
   [[ $b != *"not open"* ]] || fail=1
   b="$(notify_body 'No Name Card' unsupported)"
   [[ $b == *"not supported by Mixbay yet"* && $b != *"open its UI"* ]] || fail=1
@@ -360,19 +364,31 @@ self_test(){
   gone="$(gone_cards "$cur" '["a","c"]')"
   [[ $(jq length <<<"$gone") == 0 ]] || fail=1
   # --exec must come after the headline/body: it consumes the rest of the line.
+  # A known card instead uses two --action buttons: the body click (first)
+  # opens + uses, the second only selects.
   if command -v omarchy-notification-send >/dev/null 2>&1; then
-    local stub argv=() i head_i=-1 exec_i=-1
+    local stub argv=() i head_i=-1 exec_i=-1 actions=0 uses=0 selects=0
     stub="$(mktemp)"
     omarchy-notification-send(){ printf '%s\n' "$@" >"$stub"; }
     send_notification evo8 'Audient EVO 8' install
-    unset -f omarchy-notification-send
     mapfile -t argv <"$stub"
-    rm -f "$stub"
     for i in "${!argv[@]}"; do
       [[ ${argv[i]} == Mixbay ]] && head_i=$i
       [[ ${argv[i]} == --exec ]] && exec_i=$i
     done
     ((head_i > -1 && exec_i > head_i)) || fail=1
+    send_notification evo8 'Audient EVO 8' installed
+    unset -f omarchy-notification-send
+    mapfile -t argv <"$stub"
+    rm -f "$stub"
+    for i in "${!argv[@]}"; do
+      case ${argv[i]} in
+        --action) actions=$((actions + 1)) ;;
+        --use-card) uses=$((uses + 1)) ;;
+        --select-card) selects=$((selects + 1)) ;;
+      esac
+    done
+    ((actions == 2 && uses == 1 && selects == 1)) || fail=1
   fi
   ((fail)) && { printf 'self-test failed\n' >&2; return 1; }
   printf 'self-test ok\n'

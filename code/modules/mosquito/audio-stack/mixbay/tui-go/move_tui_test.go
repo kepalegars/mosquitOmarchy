@@ -32,6 +32,27 @@ func TestMovePageShowsLevelsAndTheRateNote(t *testing.T) {
 	}
 }
 
+// The title sits on the right edge like the UGM192/EVO headers: the card's
+// dot + name end where the section border ends, not at the left margin.
+func TestMoveHeaderIsRightAligned(t *testing.T) {
+	m := moveModel(t)
+	out := stripANSI(m.moveView())
+	want := drivers.MoveSpec.Display + " - " + drivers.MoveSpec.Version
+	right := (100-moveContentW)/2 + moveContentW
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimRight(line, " ")
+		if !strings.HasSuffix(trimmed, want) {
+			continue
+		}
+		lead := len(line) - len(strings.TrimLeft(line, " "))
+		if lead+len([]rune(strings.TrimLeft(line, " "))) != right {
+			t.Fatalf("header ends at column %d, want %d (line %q)", lead+len(strings.TrimLeft(line, " ")), right, line)
+		}
+		return
+	}
+	t.Fatalf("right-aligned header not found:\n%s", out)
+}
+
 // The preset routes to the Move renderer even when the id is a downloaded
 // card with the same preset.
 func TestMovePresetRoutesToMovePage(t *testing.T) {

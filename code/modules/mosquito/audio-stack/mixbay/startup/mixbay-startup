@@ -13,6 +13,8 @@
 #   mixbay-startup --place   # park/unpark the running TUI from ui.json
 #   mixbay-startup --install-card ID  # notification click: open + queue a profile
 #   mixbay-startup --open-card ID     # notification click: open + show that card
+#   mixbay-startup --use-card ID      # notification click: open + make it default
+#   mixbay-startup --select-card ID   # notification button: make it default only
 #   mixbay-startup --external CMD  # launch an external GUI and place the windows
 # =============================================================================
 set -euo pipefail
@@ -22,6 +24,7 @@ CONF="${XDG_CONFIG_HOME:-$HOME_DIR/.config}"
 UI="$CONF/mosquitomixbay/ui.json"
 AUTOSTART="$CONF/hypr/autostart.lua"
 BIN="$HOME_DIR/.local/bin/mixbay-startup"
+FOUNDATION="$HOME_DIR/.local/bin/mixbay-audio-foundation"
 START="-- >>> mosquitOmarchy mixbay autostart"
 END="-- <<< mosquitOmarchy mixbay autostart"
 
@@ -271,6 +274,24 @@ open_card(){
   request_card pending-open.json "${1:-}" --open-card
 }
 
+# use_card <id> — a known card's body click: make it the default audio
+# interface, then reveal its page. The foundation writes the choice and runs
+# the same defaults script login uses, so the audio panel follows.
+use_card(){
+  local id="${1:-}"
+  [[ $id =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || { printf 'usage: %s --use-card ID\n' "$0" >&2; exit 2; }
+  [[ -x $FOUNDATION ]] && "$FOUNDATION" --set-default "$id" >/dev/null 2>&1 || true
+  open_card "$id"
+}
+
+# select_card <id> — the "Use it" button: same default change without
+# opening or moving the Mixbay window.
+select_card(){
+  local id="${1:-}"
+  [[ $id =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || { printf 'usage: %s --select-card ID\n' "$0" >&2; exit 2; }
+  [[ -x $FOUNDATION ]] && "$FOUNDATION" --set-default "$id" >/dev/null 2>&1
+}
+
 case "${1:-}" in
   --apply) apply ;;
   --run) run ;;
@@ -278,8 +299,10 @@ case "${1:-}" in
   --place) place ;;
   --install-card) shift; install_card "$@" ;;
   --open-card) shift; open_card "$@" ;;
+  --use-card) shift; use_card "$@" ;;
+  --select-card) shift; select_card "$@" ;;
   --external) shift; [[ $# -ge 1 ]] || { printf 'usage: %s --external CMD [args...]\n' "$0" >&2; exit 2; }; external "$@" ;;
   --remove) remove_block; printf 'autostart: off\n' ;;
-  -h|--help) sed -n '2,20p' "$0" ;;
-  *) printf 'usage: %s --apply|--run|--open|--place|--install-card ID|--open-card ID|--external CMD|--remove\n' "$0" >&2; exit 2 ;;
+  -h|--help) sed -n '2,19p' "$0" ;;
+  *) printf 'usage: %s --apply|--run|--open|--place|--install-card ID|--open-card ID|--use-card ID|--select-card ID|--external CMD|--remove\n' "$0" >&2; exit 2 ;;
 esac
