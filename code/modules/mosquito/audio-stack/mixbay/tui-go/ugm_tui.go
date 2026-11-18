@@ -99,7 +99,28 @@ func (r *evoRender) ugmTabBar(row, cx, sectionW int, levels bool) {
 	r.put(cx+1, row, ctrlLabel, ctrlAttr)
 	levX := cx + 1 + len([]rune(ctrlLabel)) + 1
 	r.put(levX, row, levLabel, levAttr)
+	r.cardTitle(row, cx, sectionW)
 
+	r.c.repeat(cx, row+1, sectionW, boxH, lineAttr)
+	activeX, activeW := cx+1, len([]rune(ctrlLabel))
+	if levels {
+		activeX, activeW = levX, len([]rune(levLabel))
+	}
+	r.put(activeX, row+1, strings.Repeat(" ", activeW), lineAttr)
+}
+
+// singleTabBar is the same bar for a page with one view: the tab still says
+// where the page is, and the card name keeps the right edge.
+func (r *evoRender) singleTabBar(row, cx, sectionW int, label string) {
+	lineAttr := evoStyle{col: cAccent}
+	r.put(cx+1, row, label, evoStyle{col: cWhite, bg: cAccent, bold: true})
+	r.cardTitle(row, cx, sectionW)
+	r.c.repeat(cx, row+1, sectionW, boxH, lineAttr)
+	r.put(cx+1, row+1, strings.Repeat(" ", len([]rune(label))), lineAttr)
+}
+
+// cardTitle draws the online dot and the card name against the right edge.
+func (r *evoRender) cardTitle(row, cx, sectionW int) {
 	name := r.spec.Display
 	if r.spec.Version != "" {
 		name += " - " + r.spec.Version
@@ -118,13 +139,6 @@ func (r *evoRender) ugmTabBar(row, cx, sectionW int, levels bool) {
 	rightX := cx + sectionW - len([]rune(name)) - len([]rune(dot))
 	r.put(rightX, row, dot, dotAttr)
 	r.put(rightX+len([]rune(dot)), row, name, nameAttr)
-
-	r.c.repeat(cx, row+1, sectionW, boxH, lineAttr)
-	activeX, activeW := cx+1, len([]rune(ctrlLabel))
-	if levels {
-		activeX, activeW = levX, len([]rune(levLabel))
-	}
-	r.put(activeX, row+1, strings.Repeat(" ", activeW), lineAttr)
 }
 
 // ugmControlsBody draws the single software control exactly like an EVO

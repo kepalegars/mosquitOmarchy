@@ -45,6 +45,11 @@
       "controlsGrid",
       "statusBar",
       "help"
+    ],
+    "openers": [
+      { "id": "web", "label": "Web UI" },
+      { "id": "gtk", "label": "GTK mixer" },
+      { "id": "qt", "label": "Qt mixer" }
     ]
   },
   "captures": []

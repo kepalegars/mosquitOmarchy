@@ -617,17 +617,19 @@ dans le graphe vivant.
 - **Notify when an interface is connected** (actif par défaut) : le
   watcher installé par le setup envoie une notification `Mixbay` même quand
   la TUI est fermée. Une carte **non supportée** est aussi signalée, comme
-  telle (`not supported by Mixbay yet`), sans proposition d'installation. Le
-  texte est le même que Mixbay soit ouvert ou non. Le clic ouvre/focus Mixbay
-  et va directement sur la page de la carte ; si le profil manque, Mixbay
-  l'installe (import + intégration) puis ouvre la page. L'avis de profil
-  manquant reste affiché (critique, sans timeout) jusqu'à ce que l'utilisateur
-  le ferme ou clique dessus. Le service systemd
-  `mixbay-card-watcher.service` (user) reste actif entre deux sessions.
+  telle (`Not supported by Mixbay yet.`), sans proposition d'installation.
+  Le texte est le même que Mixbay soit ouvert ou non : titre
+  `<carte> connected`, bouton `Install it` quand le profil manque, sinon
+  `Open UI & Use it` (qui choisit la carte comme interface et ouvre l'UI
+  par défaut du profil). Toutes ces notifications sont critiques et sans
+  timeout : elles restent jusqu'à ce que l'utilisateur les ferme ou clique.
+  Le service systemd `mixbay-card-watcher.service` (user) reste actif entre
+  deux sessions.
 - **Notify when an interface is disconnected** (actif par défaut) : même
   watcher, pour le débranchement. Indépendant de l'option ci-dessus ; une
-  carte retirée envoie `<carte> disconnected.`. Grisé quand la détection ou
-  le watcher est coupé.
+  carte retirée envoie `<carte> disconnected.` Le Move garde son action
+  `Go back` quand un rate a été épinglé (elle aussi persistante). Grisé quand
+  la détection ou le watcher est coupé.
 - **Card watcher** : `Always on` (par défaut), `Only when Mixbay is open`, ou
   `Off`. En `Off`, les deux options ci-dessus sont grisées et affichées
   `off` ; leurs valeurs sont conservées et reviennent à la réactivation.

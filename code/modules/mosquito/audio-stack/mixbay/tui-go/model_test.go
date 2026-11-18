@@ -38,7 +38,7 @@ func demoStatus(t *testing.T, id string) drivers.Status {
 func TestControlItemsEVO8(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	st := demoStatus(t, drivers.DevEVO8)
-	items := controlItems(st)
+	items := controlItems(st, nil, "")
 	// Sections: INPUTS + OUTPUTS + ACTIONS headings, 4 inputs x
 	// (gain+mute+48V), 2 pairs x (vol+mute), mixer + save + load + back.
 	want := 3 + 4*3 + 2*2 + 4
@@ -60,7 +60,7 @@ func TestControlItemsEVO4HasMonitor(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	st := demoStatus(t, drivers.DevEVO4)
 	found := false
-	for _, it := range controlItems(st) {
+	for _, it := range controlItems(st, nil, "") {
 		if strings.Contains(it.Display, "MONITOR") {
 			found = true
 		}
@@ -73,7 +73,7 @@ func TestControlItemsEVO4HasMonitor(t *testing.T) {
 func TestControlItemsALSAShowsNoGainRows(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	st := demoStatus(t, drivers.DevUGM192)
-	for _, it := range controlItems(st) {
+	for _, it := range controlItems(st, nil, "") {
 		if strings.Contains(it.Display, "gain") || strings.Contains(it.Display, "48V") {
 			t.Errorf("ALSA box must not offer %q", it.Display)
 		}
@@ -88,7 +88,8 @@ func TestControlItemsALSAShowsNoGainRows(t *testing.T) {
 func TestControlItemsFirefaceShowsOscmix(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	st := demoStatus(t, drivers.DevFireface)
-	items := controlItems(st)
+	uis := []cardUI{{ID: "web", Label: "Web UI"}, {ID: "gtk", Label: "GTK mixer"}, {ID: "qt", Label: "Qt mixer"}}
+	items := controlItems(st, uis, "web")
 	found := map[string]bool{}
 	for _, it := range items {
 		found[it.Value] = true
@@ -99,7 +100,7 @@ func TestControlItemsFirefaceShowsOscmix(t *testing.T) {
 			t.Errorf("action-only card must not indent rows, got %q", it.Display)
 		}
 	}
-	for _, want := range []string{"oscmix:gtk", "oscmix:qt", "oscmix:web", "oscmix:setup", "back"} {
+	for _, want := range []string{"ui:gtk", "ui:qt", "ui:web", "oscmix:setup", "back"} {
 		if !found[want] {
 			t.Errorf("UCX II controls missing %q", want)
 		}
@@ -107,20 +108,26 @@ func TestControlItemsFirefaceShowsOscmix(t *testing.T) {
 	// Web UI first, GTK second, Qt third (the Qt preview is the odd one out).
 	var order []string
 	for _, it := range items {
-		if strings.HasPrefix(it.Value, "oscmix:") {
+		if strings.HasPrefix(it.Value, "ui:") {
 			order = append(order, it.Value)
 		}
 	}
-	wantOrder := []string{"oscmix:web", "oscmix:gtk", "oscmix:qt", "oscmix:setup"}
+	wantOrder := []string{"ui:web", "ui:gtk", "ui:qt"}
 	if strings.Join(order, ",") != strings.Join(wantOrder, ",") {
 		t.Errorf("action order = %v, want %v", order, wantOrder)
 	}
-	for _, it := range items {
-		if it.Value == "back" && it.Display != "Back to devices" {
-			t.Errorf("back row = %q, want %q", it.Display, "Back to devices")
+	// The default-UI selector sits right before Back, named from the profile.
+	if !found[uiRowValue] {
+		t.Errorf("UCX II controls missing the default UI row")
+	}
+	for i, it := range items {
+		if it.Value == "back" && it.Display != "Back" {
+			t.Errorf("back row = %q, want %q", it.Display, "Back")
 		}
-		if it.Value == "oscmix:qt" && !it.Disabled {
-			t.Errorf("Qt UI must be greyed while no AppImage exists")
+		if it.Value == uiRowValue {
+			if !strings.Contains(it.Display, "Web UI") || i+1 >= len(items) || items[i+1].Value != "back" {
+				t.Errorf("default UI row = %q, want it named Web UI right before Back", it.Display)
+			}
 		}
 		if strings.HasPrefix(it.Value, "vol:") || strings.HasPrefix(it.Value, "mute:") ||
 			strings.HasPrefix(it.Value, "gain:") || it.Value == "monitor" {
@@ -129,27 +136,51 @@ func TestControlItemsFirefaceShowsOscmix(t *testing.T) {
 	}
 }
 
-// The Qt row comes back to life as soon as the AppImage is on disk.
-func TestControlItemsQtUngreysWhenInstalled(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	app := filepath.Join(home, ".local", "lib", "oscmix", "oscmix-qt.AppImage")
+// Qt is only offered when the AppImage exists: the selector cycles through
+// UIs that work, never a greyed one.
+func TestCardUIsOmitUninstalledQt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c, ok := profiles.NativeCard(drivers.DevFireface)
+	if !ok {
+		t.Fatal("embedded UCX II profile missing")
+	}
+	for _, ui := range cardUIs(c) {
+		if ui.ID == "qt" {
+			t.Fatal("Qt must not be offered before its AppImage is installed")
+		}
+	}
+	app := filepath.Join(os.Getenv("HOME"), ".local", "lib", "oscmix", "oscmix-qt.AppImage")
 	if err := os.MkdirAll(filepath.Dir(app), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(app, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	st := demoStatus(t, drivers.DevFireface)
-	for _, it := range controlItems(st) {
-		if it.Value == "oscmix:qt" {
-			if it.Disabled || it.Suffix != "" {
-				t.Errorf("installed Qt UI must not be greyed or annotated: %+v", it)
-			}
-			return
-		}
+	got := ""
+	for _, ui := range cardUIs(c) {
+		got += ui.ID + ","
 	}
-	t.Fatalf("no oscmix:qt row")
+	if got != "web,gtk,qt," {
+		t.Fatalf("openers = %q, want web,gtk,qt", got)
+	}
+}
+
+// Enter and the horizontal arrows share one selector, and the choice lands in
+// ui.json so "Open UI & Use it" can read it.
+func TestDefaultUICyclesAndPersists(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := model{nav: []screen{scrControls}, deviceID: drivers.DevFireface, ui: loadUIPrefs()}
+	m.cycleDefaultUI(1)
+	if got := m.ui.DefaultUI[drivers.DevFireface]; got != "gtk" {
+		t.Fatalf("right did not move to gtk: %q", got)
+	}
+	if got := loadUIPrefs().DefaultUI[drivers.DevFireface]; got != "gtk" {
+		t.Fatalf("default UI not saved: %q", got)
+	}
+	m.cycleDefaultUI(-1)
+	if got := m.ui.DefaultUI[drivers.DevFireface]; got != "web" {
+		t.Fatalf("left did not move back to web: %q", got)
+	}
 }
 
 func TestMixerItemsBusSelectorFirst(t *testing.T) {

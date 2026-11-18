@@ -90,10 +90,11 @@ The foundation is applied **per card**, with one shared floor:
   `~/.config/mosquitomixbay/connected-interfaces.json` (native, beta or
   unsupported). The CARDS and default lists only show interfaces in that log;
   a card never connected never appears.
-- The **first card you set up becomes the default/priority card**. Change it
-  in Mixbay → Settings → Audio foundation → Default audio interface, or with
-  `--set-default <id>`. Any card in the connection log can be chosen, whatever
-  its category.
+- **No card becomes the default by being set up or plugged in**. Only an
+  explicit choice takes the lead: Mixbay → Settings → Audio foundation →
+  Default audio interface, `--set-default <id>`, or a card's "Open UI & Use
+  it" notification button. Any card in the connection log can be chosen,
+  whatever its category.
 - The default picker marks the selected card with a filled `●`; other rows have
   no marker.
 - `--remove --device <id>` removes that card's split/mapping and its

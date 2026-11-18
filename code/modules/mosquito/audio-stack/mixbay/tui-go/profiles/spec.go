@@ -138,6 +138,31 @@ func (c Card) Blocks() []string {
 	return out
 }
 
+// Opener is one way to open a card's UI. A profile only names an opener id
+// from the build's closed set (web, gtk, qt) and its label; the launcher
+// itself lives in Mixbay, so a repo card still cannot carry a command.
+type Opener struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+}
+
+// Openers returns the UIs a card offers, in profile order.
+func (c Card) Openers() []Opener {
+	raw, ok := c.UI["openers"]
+	if !ok {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var out []Opener
+	if json.Unmarshal(b, &out) != nil {
+		return nil
+	}
+	return out
+}
+
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // foundationNamePattern keeps a card from injecting a jq/wpctl expression into

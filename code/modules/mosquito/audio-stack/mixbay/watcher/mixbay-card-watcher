@@ -12,9 +12,9 @@
 #   notify_cards       false → detection still logs, but no connection notice
 #   notify_disconnected false → no notice when an interface goes away
 #
-# A missing profile makes the notification click open Mixbay, install it and
-# land on the card's page; an installed card's click opens that page directly.
-# The missing-profile notice is persistent (critical, no timeout).
+# A missing profile makes the notification's "Install it" button open Mixbay
+# and install it; an installed card's "Open UI & Use it" opens that page (or
+# the card's default UI). Every notice is persistent (critical, no timeout).
 # =============================================================================
 set -uo pipefail
 
@@ -26,8 +26,8 @@ ACTIONS="$BIN/mosquito-mixbay-actions"
 FOUNDATION="$BIN/mixbay-audio-foundation"
 STARTUP="$BIN/mixbay-startup"
 MOVE_AUDIO="$BIN/move-audio"          # Mixbay's Move profile helper
-COMPAT="$BIN/mosquito-mixbay-compat"  # installs/records a profile step
 MOVE_STATE="$CONF/mosquitomixbay/watcher-move"
+MOVE_AT="$(dirname "$MOVE_STATE")/move-connected-at"
 MOVE_PREV="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/move-previous-default"
 
 pref(){
@@ -59,55 +59,47 @@ ICON_CARD='󰓃'
 ICON_CARD_OFF='󰓄'
 
 notify_body(){
-  local display="$1" kind="$2"
+  local kind="$1"
   case $kind in
-    install)
-      printf '%s connected — no Mixbay profile installed. Click this notification to install it.\n' "$display"
-      ;;
-    installed|update)
-      printf '%s connected — handled by Mixbay. Click to open its UI and use it.\n' "$display"
-      ;;
-    unsupported)
-      printf '%s connected — not supported by Mixbay yet.\n' "$display"
-      ;;
-    disconnected)
-      printf '%s disconnected.\n' "$display"
-      ;;
+    install)          printf 'No Mixbay profile installed.\n' ;;
+    installed|update) printf 'Mixbay profile installed.\n' ;;
+    unsupported)      printf 'Not supported by Mixbay yet.\n' ;;
+    disconnected)     printf 'Disconnected.\n' ;;
   esac
 }
 
 send_notification(){
-  local id="$1" display="$2" kind="$3" body glyph args=() exec=()
-  body="$(notify_body "$display" "$kind")"
+  local id="$1" display="$2" kind="$3" body headline glyph args=() exec=()
+  body="$(notify_body "$kind")"
+  headline="$display connected"
   glyph="$ICON_CARD"
-  [[ $kind == disconnected ]] && glyph="$ICON_CARD_OFF"
+  if [[ $kind == disconnected ]]; then
+    headline="$display disconnected"
+    glyph="$ICON_CARD_OFF"
+  fi
   if command -v omarchy-notification-send >/dev/null 2>&1; then
-    args=(--app-name Mixbay -g "$glyph")
+    # A connection notice is a decision the user has to see: critical is the
+    # only Omarchy urgency with no timeout, so it stays until dismissed.
+    args=(--app-name Mixbay -g "$glyph" -u critical -t 0)
     case $kind in
       install)
-        # Critical is the only Omarchy urgency with no timeout: the missing
-        # profile stays on screen until the user dismisses or clicks it.
-        args+=(-u critical -t 0)
-        exec=(--exec "$STARTUP" --install-card "$id")
+        exec=(--action "Install it" "$STARTUP" --install-card "$id")
         ;;
       installed|update)
-        # Clicking the card runs the first action, so it opens Mixbay AND
-        # makes the card the default. "Use it" repeats only the default
-        # change, for when the window would just get in the way.
-        exec=(--action "Open" "$STARTUP" --use-card "$id" \
-              --action "Use it" "$STARTUP" --select-card "$id")
+        # One button: make it the default and open the UI the profile's
+        # default_ui choice names (the TUI falls back to its card page).
+        exec=(--action "Open UI & Use it" "$STARTUP" --use-card "$id")
         ;;
       unsupported)
         exec=(--exec "$STARTUP" --open)
         ;;
     esac
     # --exec consumes the rest of the line, so headline and body come first.
-    omarchy-notification-send "${args[@]}" "Mixbay" "$body" "${exec[@]}" >/dev/null 2>&1 || true
+    omarchy-notification-send "${args[@]}" "$headline" "$body" "${exec[@]}" >/dev/null 2>&1 || true
   elif command -v notify-send >/dev/null 2>&1; then
-    args=(-a Mixbay -i audio-card-symbolic)
-    [[ $kind == disconnected ]] && args=(-a Mixbay -i audio-volume-muted-symbolic)
-    [[ $kind == install ]] && args+=(-u critical -t 0)
-    notify-send "${args[@]}" "Mixbay" "$body" >/dev/null 2>&1 || true
+    args=(-a Mixbay -i audio-card-symbolic -u critical -t 0)
+    [[ $kind == disconnected ]] && args=(-a Mixbay -i audio-volume-muted-symbolic -u critical -t 0)
+    notify-send "${args[@]}" "$headline" "$body" >/dev/null 2>&1 || true
   fi
 }
 
@@ -141,11 +133,10 @@ scan(){
 }
 
 # ── Ableton Move ───────────────────────────────────────────────────────────
-# The Move is not a mixer Mixbay can drive; it is a 44.1 kHz USB audio
-# interface. Its connection notice IS the offer to use it, and it replaces
-# Mixbay's generic card notice entirely (one notification, one decision).
-# The profile (watcher/move-audio) is offered once, at the first connection,
-# and installed by Mixbay itself.
+# The Move gets the same connection notice as any other card: its profile is
+# the card page plus the move-audio helper, and "Open UI & Use it" runs that
+# helper. Only the unplug needs its own repair: moving the default devices
+# back is a decision no other card has to offer.
 
 move_connected(){
   command -v lsusb >/dev/null 2>&1 || return 1
@@ -165,24 +156,6 @@ khz(){
   local r="$1"
   if (( r % 1000 == 0 )); then printf '%d' $((r / 1000)); else
     awk -v r="$r" 'BEGIN { printf "%.1f", r / 1000 }'
-  fi
-}
-
-move_notice_connect(){
-  if ! move_installed; then
-    if command -v omarchy-notification-send >/dev/null 2>&1; then
-      omarchy-notification-send --app-name Mixbay -g "$ICON_CARD" -u critical -t 0 \
-        "Ableton Move connected" \
-        "No Mixbay Move profile installed. Install it to offer its audio interface." \
-        --action "Install profile" "$COMPAT" --apply move >/dev/null 2>&1 || true
-    fi
-    return 0
-  fi
-  if command -v omarchy-notification-send >/dev/null 2>&1; then
-    omarchy-notification-send --app-name Mixbay -g "$ICON_CARD" \
-      "Ableton Move connected" \
-      "Use its audio interface? (Pins the sample rate to 44.1kHz)" \
-      --action "Use it" "$MOVE_AUDIO" --use >/dev/null 2>&1 || true
   fi
 }
 
@@ -206,7 +179,7 @@ move_notice_disconnect(){
     # One question per switch, not per unplug: an ignored offer leaves the pin
     # in place, and re-asking on every later unplug is nagging.
     printf 'asked=1\n' >> "$state_file"
-    omarchy-notification-send --app-name Mixbay -g "$ICON_CARD_OFF" \
+    omarchy-notification-send --app-name Mixbay -g "$ICON_CARD_OFF" -u critical -t 0 \
       "Ableton Move disconnected" "Go back to $(khz "$prev")kHz?" \
       --action "Go back" "$MOVE_AUDIO" --revert >/dev/null 2>&1 || true
   fi
@@ -214,8 +187,9 @@ move_notice_disconnect(){
   # no action to offer, and a "disconnected" notice with no action is noise.
 }
 
-# announce_move: one notice per real transition. The state file is seeded at
-# service start, so logging in with the Move plugged (or absent) stays quiet.
+# announce_move: the Move's connect notice is the generic one; only the unplug
+# has a Move-specific answer (put the previous default back). The state file is
+# seeded at service start, so logging in with the Move plugged stays quiet.
 announce_move(){
   local now prev
   move_connected && now=connected || now=disconnected
@@ -224,10 +198,9 @@ announce_move(){
   mkdir -p "$(dirname "$MOVE_STATE")"
   printf '%s\n' "$now" > "$MOVE_STATE"
   if [[ $now == connected ]]; then
-    move_notice_connect
-  else
-    move_notice_disconnect
+    date +%s > "$MOVE_AT"
   fi
+  [[ $now == disconnected ]] && move_notice_disconnect
 }
 
 # announce <current-json> <previous-json>: update the seen set and notify for
@@ -237,10 +210,10 @@ announce(){
   prev="$(rows "$previous")"
   new="$(new_cards "$current" "$prev")"
   gone="$(gone_cards "$current" "$prev")"
-  # The Move has its own notice (the audio-interface offer). Leaving it in
-  # these lists would announce it twice, once as an unsupported card.
+  # The Move's unplug offer is sent by announce_move below, so it is kept out
+  # of the generic gone list to avoid two notices for one unplug. Connection
+  # notices are the same for every card, including the Move.
   local move_filter='[.[] | select((((.key // "") + " " + (.display // "")) | test("move"; "i")) | not)]'
-  new="$(jq -c "$move_filter" <<<"$new" 2>/dev/null || printf '[]\n')"
   gone="$(jq -c "$move_filter" <<<"$gone" 2>/dev/null || printf '[]\n')"
   jq -c . <<<"$current" > "$SEEN" 2>/dev/null || true
 
@@ -288,13 +261,41 @@ move_remember_default(){
   printf 'sink=%s\nsource=%s\n' "$sink" "$source" > "$MOVE_PREV"
 }
 
+# A plug can make WirePlumber pick the new card. That is not a user choice:
+# while the Move is freshly connected, put the remembered previous default
+# back instead of adopting it.
+move_unsteal_default(){
+  [[ -f $MOVE_PREV ]] || return 0
+  local ps pv
+  ps=$(sed -n 's/^sink=//p' "$MOVE_PREV" 2>/dev/null | head -1)
+  pv=$(sed -n 's/^source=//p' "$MOVE_PREV" 2>/dev/null | head -1)
+  [[ -n $ps ]] && pactl set-default-sink "$ps" >/dev/null 2>&1 || true
+  [[ -n $pv ]] && pactl set-default-source "$pv" >/dev/null 2>&1 || true
+}
+
+# move_fresh: the Move was plugged in the last few seconds, so a default-device
+# change right now came from PipeWire, not from the user opening the panel.
+move_fresh(){
+  local at
+  at=$(cat "$MOVE_AT" 2>/dev/null || true)
+  [[ -n $at ]] && (( $(date +%s) - at < 10 ))
+}
+
 move_pinned_by_panel(){
   move_installed || return 0
+  # Only ever answer a choice the user made: with no remembered previous
+  # default, nothing was selected before, so pinning here would be Mixbay
+  # taking the lead on its own.
+  [[ -f $MOVE_PREV ]] || return 0
   local sink source
   sink=$(pactl get-default-sink 2>/dev/null || true)
   source=$(pactl get-default-source 2>/dev/null || true)
   [[ ${sink,,} == *move* || ${source,,} == *move* ]] || return 0
   "$MOVE_AUDIO" --status 2>/dev/null | jq -e '.switched == true' >/dev/null 2>&1 && return 0
+  if move_fresh; then
+    move_unsteal_default
+    return 0
+  fi
   "$MOVE_AUDIO" --use >/dev/null 2>&1 || true
 }
 
@@ -304,7 +305,12 @@ main(){
   [[ -x $ACTIONS ]] || exit 0
 
   mkdir -p "$(dirname "$MOVE_STATE")"
-  if move_connected; then printf 'connected\n' > "$MOVE_STATE"; else printf 'disconnected\n' > "$MOVE_STATE"; fi
+  if move_connected; then
+    printf 'connected\n' > "$MOVE_STATE"
+    date +%s > "$MOVE_AT"
+  else
+    printf 'disconnected\n' > "$MOVE_STATE"
+  fi
   move_remember_default
 
   local current
@@ -341,17 +347,16 @@ main(){
 }
 
 self_test(){
-  local fail=0 b cur prev new gone
-  b="$(notify_body 'RME Fireface UCX II' install)"
-  [[ $b == *"no Mixbay profile installed"* && $b == *"Click this notification to install"* ]] || fail=1
-  [[ $b != *"not open"* && $b != *"handled by Mixbay"* ]] || fail=1
-  b="$(notify_body 'RME Fireface UCX II' installed)"
-  [[ $b == *"handled by Mixbay"* && $b == *"open its UI and use it"* ]] || fail=1
-  [[ $b != *"not open"* ]] || fail=1
-  b="$(notify_body 'No Name Card' unsupported)"
-  [[ $b == *"not supported by Mixbay yet"* && $b != *"open its UI"* ]] || fail=1
-  b="$(notify_body 'ESI UGM192' disconnected)"
-  [[ $b == *"disconnected"* ]] || fail=1
+  local fail=0 b cur prev new gone tmp_at
+  b="$(notify_body install)"
+  [[ $b == "No Mixbay profile installed." ]] || fail=1
+  [[ $b != *"Click"* && $b != *"click"* ]] || fail=1
+  b="$(notify_body installed)"
+  [[ $b == "Mixbay profile installed." ]] || fail=1
+  b="$(notify_body unsupported)"
+  [[ $b == "Not supported by Mixbay yet." ]] || fail=1
+  b="$(notify_body disconnected)"
+  [[ $b == "Disconnected." ]] || fail=1
   cur='[{"key":"a","id":"evo8","display":"Audient EVO 8","kind":"installed"},
        {"key":"b","id":"ugm192","display":"ESI UGM192","kind":"install"}]'
   prev='[{"key":"a","id":"evo8","display":"Audient EVO 8","kind":"installed"},
@@ -363,32 +368,46 @@ self_test(){
   # An old key-only seen file must not announce every old card as unplugged.
   gone="$(gone_cards "$cur" '["a","c"]')"
   [[ $(jq length <<<"$gone") == 0 ]] || fail=1
-  # --exec must come after the headline/body: it consumes the rest of the line.
-  # A known card instead uses two --action buttons: the body click (first)
-  # opens + uses, the second only selects.
+  # A freshly plugged Move is "fresh" (PipeWire chose it, not the user); an
+  # old timestamp is a real panel choice.
+  tmp_at="$(mktemp)"
+  MOVE_AT="$tmp_at"
+  date +%s > "$tmp_at"
+  move_fresh || fail=1
+  printf '0\n' > "$tmp_at"
+  move_fresh && fail=1
+  rm -f "$tmp_at"
+  # One persistent notice per connection: headline "<card> connected", the
+  # fixed body, and exactly one action. There is no "click to open" sentence.
   if command -v omarchy-notification-send >/dev/null 2>&1; then
-    local stub argv=() i head_i=-1 exec_i=-1 actions=0 uses=0 selects=0
+    local stub argv=() i head_i=-1 label="" actions=0 critical=0 never=0
     stub="$(mktemp)"
     omarchy-notification-send(){ printf '%s\n' "$@" >"$stub"; }
-    send_notification evo8 'Audient EVO 8' install
-    mapfile -t argv <"$stub"
-    for i in "${!argv[@]}"; do
-      [[ ${argv[i]} == Mixbay ]] && head_i=$i
-      [[ ${argv[i]} == --exec ]] && exec_i=$i
-    done
-    ((head_i > -1 && exec_i > head_i)) || fail=1
-    send_notification evo8 'Audient EVO 8' installed
+    assert_notice(){
+      local want_body="$1" want_label="$2" want_actions="$3"
+      mapfile -t argv <"$stub"
+      head_i=-1 label="" actions=0 critical=0 never=0
+      for i in "${!argv[@]}"; do
+        case ${argv[i]} in
+          "$display connected"|"$display disconnected") head_i=$i ;;
+          --action) actions=$((actions + 1)); label="${argv[i+1]}" ;;
+          -u) critical=1 ;;
+          -t) [[ ${argv[i+1]} == 0 ]] && never=1 ;;
+        esac
+      done
+      ((head_i > -1)) && [[ ${argv[head_i+1]} == "$want_body" ]] || fail=1
+      ((critical == 1 && never == 1 && actions == want_actions)) || fail=1
+      [[ $label == "$want_label" ]] || fail=1
+    }
+    display='Audient EVO 8'
+    send_notification evo8 "$display" install
+    assert_notice "No Mixbay profile installed." "Install it" 1
+    send_notification evo8 "$display" installed
+    assert_notice "Mixbay profile installed." "Open UI & Use it" 1
+    send_notification evo8 "$display" disconnected
+    assert_notice "Disconnected." "" 0
     unset -f omarchy-notification-send
-    mapfile -t argv <"$stub"
     rm -f "$stub"
-    for i in "${!argv[@]}"; do
-      case ${argv[i]} in
-        --action) actions=$((actions + 1)) ;;
-        --use-card) uses=$((uses + 1)) ;;
-        --select-card) selects=$((selects + 1)) ;;
-      esac
-    done
-    ((actions == 2 && uses == 1 && selects == 1)) || fail=1
   fi
   ((fail)) && { printf 'self-test failed\n' >&2; return 1; }
   printf 'self-test ok\n'

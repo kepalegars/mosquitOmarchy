@@ -289,6 +289,9 @@ type uiPrefs struct {
 	// WatcherMode is "always", "only_open" or "off". "off" forces the two
 	// rows above to read off (and be inert) without touching their values.
 	WatcherMode string `json:"watcher_mode"`
+	// DefaultUI maps a card id to the opener id "Open UI & Use it" launches
+	// (web, gtk, qt). Chosen on the card's Controls page.
+	DefaultUI map[string]string `json:"default_ui,omitempty"`
 }
 
 const (
@@ -534,7 +537,9 @@ func (m *model) syncPicker() {
 			SetSize(cw, ch).
 			SetHelpKeys(key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")))
 	case scrControls:
-		m.picker = tuikit.NewPicker(m.status.Spec.Display+" — controls", controlItems(m.status)).SetSize(cw, ch)
+		uis := m.cardUIs()
+		chosen := chosenUI(uis, m.ui.DefaultUI[m.deviceID])
+		m.picker = tuikit.NewPicker(m.status.Spec.Display+" — controls", controlItems(m.status, uis, chosen)).SetSize(cw, ch)
 	case scrMixer:
 		m.picker = tuikit.NewPicker(m.status.Spec.Display+" — loopback mixer "+drivers.BusLabel(m.mixBus), mixerItems(m.status, m.mixBus)).SetSize(cw, ch)
 	case scrSettings:
@@ -578,17 +583,20 @@ func (m model) deviceItems() []tuikit.PickerItem {
 			}
 		}
 		badge := "offline"
+		dot := ""
 		if spec.Beta {
 			badge = "offline-beta"
 		}
 		if online {
-			badge = "● online"
+			badge = "online"
+			// The solid dot sits after the badge, not inside it.
+			dot = " ●"
 			if spec.Beta {
-				badge = "● online-beta"
+				badge = "online-beta"
 			}
 		}
 		items = append(items, tuikit.PickerItem{
-			Display: fmt.Sprintf("%-26s [%s]", spec.Display, badge),
+			Display: fmt.Sprintf("%-26s [%s]%s", spec.Display, badge, dot),
 			Value:   spec.ID,
 		})
 	}
@@ -755,8 +763,9 @@ func hasControls(st drivers.Status) bool {
 
 // controlItems builds the CONTROLS page: INPUTS section (gain/mute/48V),
 // OUTPUTS section (volume/mute), then the page actions. Only rows the
-// device's Caps advertise are emitted.
-func controlItems(st drivers.Status) []tuikit.PickerItem {
+// device's Caps advertise are emitted. uis are the UIs the profile can open;
+// chosen is the one "Open UI & Use it" will launch.
+func controlItems(st drivers.Status, uis []cardUI, chosen string) []tuikit.PickerItem {
 	caps := st.Spec.Caps
 	var items []tuikit.PickerItem
 	hasControls := hasControls(st)
@@ -821,18 +830,10 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 	if caps.Mixer {
 		add("Loopback mixer →", "goto:mixer")
 	}
+	for _, ui := range uis {
+		add("Open "+ui.Label, "ui:"+ui.ID)
+	}
 	if st.Spec.Setup == "oscmix" {
-		// Web UI first: it works with no install at all. GTK second, Qt last —
-		// it is an upstream preview AppImage that only some nightly builds
-		// carry, so grey the row while there is nothing to launch.
-		add("Open web UI", "oscmix:web")
-		add("Open GTK mixer", "oscmix:gtk")
-		qt := tuikit.PickerItem{Display: indent + "Open Qt UI", Value: "oscmix:qt"}
-		if !oscmixQtInstalled() {
-			qt.Disabled = true
-			qt.Suffix = "  (not published upstream yet)"
-		}
-		items = append(items, qt)
 		add("Set up / repair oscmix", "oscmix:setup")
 	}
 	if st.Spec.Beta {
@@ -849,7 +850,10 @@ func controlItems(st drivers.Status) []tuikit.PickerItem {
 		add("Save state", "save")
 		add("Reload saved state", "load")
 	}
-	add("Back to devices", "back")
+	if len(uis) > 1 {
+		add(fmt.Sprintf("Default UI: %s  (enter or ←/→)", uiLabel(uis, chosen)), uiRowValue)
+	}
+	add("Back", "back")
 	return items
 }
 
@@ -1003,8 +1007,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuikit.PickerToggleMsg:
-		if m.top() == scrLibrary && (strings.HasPrefix(msg.Value, "card:") || strings.HasPrefix(msg.Value, "repo:")) {
-			id := strings.TrimPrefix(strings.TrimPrefix(msg.Value, "card:"), "repo:")
+		if id, ok := libraryValueID(msg.Value); ok && m.top() == scrLibrary {
 			m.libraryChecked[id] = !m.libraryChecked[id]
 			m.syncPicker()
 		}
@@ -2062,32 +2065,18 @@ func (m *model) activateControl(val string) tea.Cmd {
 		}
 		m.push(scrConfirm)
 		return nil
-	case val == "oscmix:web":
-		// Upstream's browser frontend: Web MIDI straight to the card, no
-		// engine and no AppImage. Installed as an Omarchy app on first use,
-		// so it works with or without a card (CC mode warning is the
-		// launcher's job, not a reason to refuse).
-		if err := openExternal("mixbay-oscmix-web"); err != nil {
-			m.toast, _ = m.toast.SetWarn("Web UI: run Set up / repair oscmix first (" + err.Error() + ")")
-		}
-		return nil
-	case val == "oscmix:gtk", val == "oscmix:qt":
-		// The GTK window opens even without a card (its offline device
-		// picker); the launcher tells the user that CC mode may be off.
-		bin := "mixbay-oscmix-gtk"
-		if val == "oscmix:qt" {
-			// The AppImage is a preview upstream publishes only sometimes:
-			// do not spawn a launcher that can only fail.
-			if !oscmixQtInstalled() {
-				m.toast, _ = m.toast.SetWarn("Qt UI: upstream has not published an AppImage for this release yet — use Open GTK mixer or the web UI")
-				return nil
-			}
-			bin = "mixbay-oscmix-qt"
+	case strings.HasPrefix(val, "ui:"):
+		id := strings.TrimPrefix(val, "ui:")
+		bin, ok := uiLaunchers[id]
+		if !ok {
+			return nil
 		}
 		if err := openExternal(bin); err != nil {
-			m.toast, _ = m.toast.SetWarn(bin + " is not installed — run Set up / repair oscmix")
+			m.toast, _ = m.toast.SetWarn(uiLabel(m.cardUIs(), id) + ": run Set up / repair oscmix first (" + err.Error() + ")")
 		}
 		return nil
+	case val == uiRowValue:
+		return m.cycleDefaultUI(1)
 	case val == "oscmix:setup":
 		m.confirm = tuikit.NewConfirm("Set up oscmix (engine + GTK mixer) for "+m.status.Spec.Display+"? Build dependencies are installed with pacman. Nothing is written to the interface. Continue?", "Cancel", "Set up")
 		m.confirmAct = func() tea.Cmd {
@@ -2167,6 +2156,12 @@ func (m *model) nudgeControlStep(val string, up bool, step float64) tea.Cmd {
 		return m.activateControl(val)
 	case strings.HasPrefix(val, "phantom:"):
 		return m.activateControl(val)
+	case val == uiRowValue:
+		delta := -1
+		if up {
+			delta = 1
+		}
+		return m.cycleDefaultUI(delta)
 	}
 	return nil
 }

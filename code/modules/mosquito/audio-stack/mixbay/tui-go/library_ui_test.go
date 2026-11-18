@@ -61,6 +61,44 @@ func TestLibraryTabsSplitInstalledAndAvailable(t *testing.T) {
 	}
 }
 
+// Every selectable library row must answer Tab. Tab and Enter share one
+// prefix parser, so a future row source that forgets it fails here instead of
+// silently ignoring keys as the `native:` Move did.
+func TestEveryLibraryRowTogglesWithTab(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, err := profiles.InstallLocalCard("quantum-es4", "PreSonus Quantum ES 4", "Quantum ES"); err != nil {
+		t.Fatal(err)
+	}
+	m := model{
+		nav:            []screen{scrLibrary},
+		libraryChecked: map[string]bool{},
+		libraryIndex: profiles.Index{SchemaVersion: 1, Cards: []profiles.IndexCard{
+			{ID: "quantum-es4", Display: "PreSonus Quantum ES 4", Version: "beta"},
+			{ID: "new-card", Display: "New Card", Vendor: "New", Version: "v1"},
+		}},
+	}
+	for _, tab := range []int{libInstalled, libAvailable} {
+		m.libraryTab = tab
+		rows := m.libraryItems()
+		m.picker = tuikit.NewPicker("", rows)
+		for _, it := range rows {
+			if it.Value == "" || it.Disabled || it.Heading || strings.HasPrefix(it.Value, "dup:") {
+				continue
+			}
+			id, ok := libraryValueID(it.Value)
+			if !ok {
+				t.Fatalf("tab %d row %q has no id prefix: Tab would ignore it", tab, it.Value)
+			}
+			m.libraryChecked = map[string]bool{}
+			m.picker = m.picker.SelectValue(it.Value)
+			next, _ := m.Update(tuikit.PickerToggleMsg{Value: it.Value})
+			if !next.(model).libraryChecked[id] {
+				t.Fatalf("tab %d row %q did not toggle with Tab", tab, it.Value)
+			}
+		}
+	}
+}
+
 func TestLibraryTabSwitchClearsSelection(t *testing.T) {
 	m := model{
 		nav:            []screen{scrLibrary},

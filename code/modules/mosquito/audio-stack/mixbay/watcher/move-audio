@@ -213,7 +213,7 @@ cmd_use(){
   [[ -n $source ]] && pactl set-default-source "$source" 2>/dev/null || true
   set_rate 44100 1
   notify "Using Ableton Move's audio interface" \
-    "Sample rate pinned to 44.1kHz, you can still revert this by choosing another device in the audio panel"
+    "Sample rate pinned to 44.1kHz (unplug the Move to unpin automatically)."
 }
 
 cmd_revert(){

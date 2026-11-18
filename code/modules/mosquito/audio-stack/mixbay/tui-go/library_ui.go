@@ -520,13 +520,22 @@ func (m model) actionIDs() []string {
 		sort.Strings(ids)
 		return ids
 	}
-	val := m.picker.SelectedValue()
-	for _, prefix := range []string{"card:", "repo:", "native:"} {
-		if strings.HasPrefix(val, prefix) {
-			return []string{strings.TrimPrefix(val, prefix)}
-		}
+	if id, ok := libraryValueID(m.picker.SelectedValue()); ok {
+		return []string{id}
 	}
 	return nil
+}
+
+// libraryValueID maps a library row value to the card id it points at. Every
+// row prefix lives here so Tab (PickerToggleMsg) and Enter (actionIDs) cannot
+// disagree: a new source is selectable on both paths or on neither.
+func libraryValueID(val string) (string, bool) {
+	for _, prefix := range []string{"card:", "repo:", "native:"} {
+		if strings.HasPrefix(val, prefix) {
+			return strings.TrimPrefix(val, prefix), true
+		}
+	}
+	return "", false
 }
 
 // updateCursor installs the repo version of the highlighted installed card.

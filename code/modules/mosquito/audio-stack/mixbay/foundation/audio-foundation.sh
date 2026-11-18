@@ -179,8 +179,9 @@ backup_file(){
 
 # ── per-card state / default card ──────────────────────────────────────────
 # foundation.json is the single source of truth for "which cards did the user
-# set up" and "which one is the default/priority card". The first card set up
-# becomes the default; Settings can change it later.
+# set up" and "which one is the default/priority card". Setting a card up does
+# NOT make it the default: only an explicit --set-default (Settings or a
+# "Use it" action) may take the lead away from the current default.
 state_init(){
   mkdir -p "$(dirname "$STATE")"
   if [[ ! -f $STATE ]]; then
@@ -220,14 +221,6 @@ state_set_split(){
   jq --arg id "$1" --arg v "$2" \
     '.devices[$id] = ((.devices[$id] // {}) + {split: $v})' \
     "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
-}
-state_set_default_if_empty(){
-  [[ -n "$(state_default)" ]] && return 0
-  state_set_default "$1"
-}
-state_first_installed(){
-  state_init
-  jq -r '(.default // "") as $d | if $d != "" then $d else (.devices | to_entries | map(select(.value.installed == true)) | .[0].key // "") end' "$STATE"
 }
 
 FORCE_EVO4=0 RESTART=0 MODE=status JSON=0 DEV="" SPLIT=""
@@ -540,7 +533,7 @@ status_json(){
       cards="$(jq -c --argjson d "$cards" --argjson r "$row" '. + [$r]' <<< "$cards")"
     fi
   done < <(jq -r '.[] | [.id,.name,.version,(.native|tostring),.match] | @tsv' "$CONNLOG" 2>/dev/null || true)
-  local default; default="$(state_default)"; [[ -z $default ]] && default="$(state_first_installed)"
+  local default; default="$(state_default)"
   jq -n \
     --argjson rate "${rate:-null}" --argjson quantum "${quantum:-null}" \
     --arg allowed "$allowed" --argjson devices "$cards" --argjson connections "$conns" \
@@ -567,7 +560,7 @@ status_human(){
   else
     echo "  clock      : not managed by Mixbay (PipeWire defaults)"
   fi
-  local default; default="$(state_default)"; [[ -z $default ]] && default="$(state_first_installed)"
+  local default; default="$(state_default)"
   printf '  default    : %s\n' "${default:-none}"
   track_connections
   local native match
@@ -861,9 +854,8 @@ CONNLOG="${XDG_CONFIG_HOME:-$HOME/.config}/mosquitomixbay/connected-interfaces.j
 command -v jq >/dev/null 2>&1 || exit 0
 [[ -f $STATE ]] || exit 0
 card="$(jq -r '.default // ""' "$STATE" 2>/dev/null)"
-if [[ -z $card ]]; then
-  card="$(jq -r '.devices | to_entries | map(select(.value.installed == true)) | .[0].key // ""' "$STATE" 2>/dev/null)"
-fi
+# No default chosen yet: leave PipeWire's own choice alone. Applying the
+# first installed card here is what made a plugged-in Move take the lead.
 [[ -n $card ]] || exit 0
 sink_match="" src_match=""
 case "$card" in
@@ -983,7 +975,6 @@ apply(){
         install_evo_split
         [[ -n "$(state_split evo8)" ]] || state_set_split evo8 off
         state_set_installed evo8 true
-        state_set_default_if_empty evo8
         ;;
       evo4)
         if (( FORCE_EVO4 )); then
@@ -999,7 +990,6 @@ apply(){
           fi
         fi
         state_set_installed evo4 true
-        state_set_default_if_empty evo4
         ;;
       ssl12|fireface-ucx2)
         # douze for the SSL 12, oscmix for the RME cards. The named
@@ -1007,7 +997,6 @@ apply(){
         # above is system config only.
         if run_card_setup "$(card_setup "$dev")"; then
           state_set_installed "$dev" true
-          state_set_default_if_empty "$dev"
         else
           warn "$dev setup failed — not marked as set up"
         fi
@@ -1015,7 +1004,6 @@ apply(){
       ugm192)
         # Native ALSA level 1: the shared floor is the setup.
         state_set_installed ugm192 true
-        state_set_default_if_empty ugm192
         ;;
       *)
         if profile_installed "$dev"; then
@@ -1027,7 +1015,6 @@ apply(){
             continue
           fi
           state_set_installed "$dev" true
-          state_set_default_if_empty "$dev"
         else
           warn "Unknown device: $dev"
         fi
@@ -1189,9 +1176,9 @@ remove_device(){
   esac
   state_set_installed "$dev" false
   if [[ "$(state_default)" == "$dev" ]]; then
-    local next
-    next="$(jq -r '.devices | to_entries | map(select(.value.installed == true)) | .[0].key // ""' "$STATE" 2>/dev/null || true)"
-    state_set_default "$next"
+    # No silent promotion: the user chooses the next default. Leaving the
+    # removed id behind would be worse, so the slot is cleared.
+    state_set_default ""
   fi
   # Keep the shared floor while another card still uses it; drop the EVO
   # seat rule only when neither EVO remains.

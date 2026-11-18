@@ -3,7 +3,7 @@
 //
 // The Move is a class-compliant USB interface with a fixed 44.1 kHz clock and
 // no software mixer: no ALSA volume, mute or gain to drive. So there is no
-// Controls tab and no tab bar at all — only Capture/Playback meters, and a
+// Controls tab, only a single Levels tab with Capture/Playback meters, and a
 // permanent note saying what the card's clock implies for the rest of the
 // graph. That note is the point: a 44.1 kHz interface used beside another card
 // running at a different rate is a conflict, and the page is where it is said.
@@ -111,20 +111,9 @@ func (m model) moveView() string {
 	u.statusMsg = ""
 	r := &evoRender{c: c, m: m, u: &u, spec: spec}
 
-	// Header: dot + name on the right edge, the same convention the other
-	// cards use. No tabs: there is only one view.
-	dot, dotAttr := "● ", evoStyle{col: cAccent}
-	if !m.status.Online {
-		dot, dotAttr = "○ ", evoStyle{col: cRed}
-	}
-	name := spec.Display
-	if spec.Version != "" {
-		name += " - " + spec.Version
-	}
-	rightX := cx + sectionW - len([]rune(name)) - len([]rune(dot))
-	r.put(rightX, row, dot, dotAttr)
-	r.put(rightX+len([]rune(dot)), row, name, evoStyle{col: cAccent, bold: true})
-	r.c.repeat(cx, row+1, sectionW, boxH, evoStyle{col: cAccent})
+	// Header: a single Levels tab, like the UGM192's, plus the dot and name on
+	// the right edge. One tab only, so no key switches it.
+	r.singleTabBar(row, cx, sectionW, " Levels ")
 
 	body := row + 2
 	r.ugmLevelsBody(body, cx, sectionW)

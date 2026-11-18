@@ -109,7 +109,11 @@ Panel {
         root.liveActive = on
         if (!on) {
             root.unlocked = false
-            root.unlockConfirmOpen = false
+            // The 2 s re-read calls this with the same `on` over and over.
+            // Only a real live→off transition may drop the prompt; resetting
+            // it on every read made the confirmation vanish before it could
+            // be read.
+            if (changed) root.unlockConfirmOpen = false
         } else if (changed) {
             // autoLock on: start locked; off: start editable (L locks).
             root.unlocked = !root.autoLock
@@ -454,7 +458,11 @@ Panel {
                 Item {
                     id: body
                     width: parent.width
-                    height: normalBody.implicitHeight
+                    // The confirmation replaces the rows and is taller than the
+                    // two locked rows underneath. Taking the larger height keeps
+                    // it inside the panel instead of overflowing the bottom.
+                    height: Math.max(normalBody.implicitHeight,
+                                     confirmBody.implicitHeight + Style.spacing.sm)
 
                     Column {
                         id: normalBody

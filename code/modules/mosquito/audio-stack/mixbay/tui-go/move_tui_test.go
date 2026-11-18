@@ -18,11 +18,12 @@ func moveModel(t *testing.T) model {
 	return m
 }
 
-// The Move page is the Levels page only, and the 44.1 kHz limitation is on
-// screen even when the card is online: that note is the whole point.
+// The Move page is the Levels page only, with a single Levels tab like the
+// UGM192's, and the 44.1 kHz limitation is on screen even when the card is
+// online: that note is the whole point.
 func TestMovePageShowsLevelsAndTheRateNote(t *testing.T) {
 	out := stripANSI(moveModel(t).moveView())
-	for _, want := range []string{"Ableton Move", "Capture", "Playback (USB)", "44.1kHz", "reset peaks"} {
+	for _, want := range []string{"Levels", "Ableton Move", "Capture", "Playback (USB)", "44.1kHz", "reset peaks"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("Move page is missing %q:\n%s", want, out)
 		}
