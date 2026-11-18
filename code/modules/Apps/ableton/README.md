@@ -75,12 +75,13 @@ never reverts the rate, only the unplug does. Live mode releases the Move when a
 **Live Control is not covered.** Live 12 ships a `Move` remote script and this prefix has it
 (`…/Live 12 Suite/Resources/MIDI Remote Scripts/Move`), but the Move's control mode needs the
 Windows-only `move_display` driver to drive its screen — it is installed in `~/.wine-ableton`
-(`Redist/move-display-driver-installer.exe`) and wine cannot run it. That is why the Move stays
-on *Connect Live via USB-C* while Live runs, and why input that does arrive looks mis-mapped: it
-is arriving as plain MIDI, not through Ableton's Move protocol. A clean Linux path is a Live
-remote script speaking a community firmware protocol over sysex (the pattern `move-bitwig` uses
-on the Move), which is a separate project and has to be validated on the hardware. A wine-side
-option is planned below.
+(`Redist/move-display-driver-installer.exe`) and the driver itself does not run under wine. That is
+why the Move stays on *Connect Live via USB-C* while Live runs, and why input that does arrive looks
+mis-mapped: it is arriving as plain MIDI, not through Ableton's Move protocol. A clean Linux path is
+a Live remote script speaking a community firmware protocol over sysex (the pattern `move-bitwig`
+uses on the Move), which is a separate project and has to be validated on the hardware. The
+wine-side option below does not need that driver: it gives Live's in-process libusb access to the
+display interface through the runtime's host bridge.
 
 For the Move as a **Bitwig** controller and for set transfer, see the `move-manager` module.
 
