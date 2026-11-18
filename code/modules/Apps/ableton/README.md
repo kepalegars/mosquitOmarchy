@@ -84,57 +84,44 @@ option is planned below.
 
 For the Move as a **Bitwig** controller and for set transfer, see the `move-manager` module.
 
-### Move in wine — optional patch (planned, not shipped)
+### Move in wine — optional patch (in `PATCH/`, local only)
 
-**Goal.** Make Live's own `Move` remote script reach the hardware: transport, knobs, pads and the
-display, with the Move on its normal USB-C connection. The blocker is not Ableton—it is wine.
-Live opens the Move's display interface as a **WinUSB** device (`move_display.inf`,
-`VID_2982&PID_1958&MI_00`). Wine can only offer that to the Windows side if its libusb host bridge
-binds the device. This runtime already builds that bridge (`0032-libusb-1.0-add-host-USB-bridge-for-Push-2`,
-`0106-libusb-1.0-extend-the-host-bridge-for-Push-3`) and ships
-`lib/wine/x86_64-unix/libusb-1.0.so` + `x86_64-windows/libusb-1.0.dll`, but the bridge was written
-for the Push, not the Move.
+**Decision gate: the bridge is generic, so no wine change is needed.** The runtime's `dlls/libusb-1.0`
+comes from upstream patches `0032` (Push 2) and `0106` (Push 3): `libusb_get_device_list` passes the
+host list through unfiltered — there is no VID/PID allowlist — and the DLL exports exactly what Live
+imports (`get_device_list`, `open`, `claim_interface`, `bulk_transfer`, `strerror`, interface numbers
+0–255, hotplug stubs). The Move's display is `VID_2982&PID_1958&MI_00`; the same bridge reaches it.
 
-**Decision gate first.** Inspect the bridge in the `.run` source tree and test whether it is generic
-or filters by VID/PID. Two outcomes:
+**What the patch does** (`PATCH/move-wine/patch-move-wine.sh`, private like the rest of `PATCH/`):
 
-1. **Generic bridge** — no wine change. The optional step is only a udev access rule plus the Move
-   INF/registry entries in `~/.wine-ableton`. Cheap, fully reversible, still worth offering.
-2. **Push-only allowlist** — replace the `libusb-1.0` PE/unix pair with a rebuild that adds the
-   Move's VID/PID/interface. Any patch deeper than that pair (`ntdll`, `win32u`, …) means a full
-   wine rebuild and belongs upstream in ableton-linux, not in a per-machine patch.
+- installs `/etc/udev/rules.d/99-ableton-move-live.rules` (vendor `0x2982`, `TAG+="uaccess"`) —
+  `/dev/bus/usb/*` is root-only otherwise, so libusb cannot open the display interface;
+- sets the prefix-wide `HKCU\Software\Wine\DllOverrides` value `libusb-1.0=builtin` in
+  `~/.wine-ableton`, so Live loads wine's bridge instead of the native `libusb-1.0.dll` shipped in
+  its Program folder (that DLL expects a Windows WinUSB driver);
+- records the runtime, the udev rule hash and the previous override value in
+  `~/.local/state/mosquitomarchy/ableton-move-wine`.
 
-**Patch contract** (`PATCH/move-wine/patch-move-wine.sh`, private like the rest of `PATCH/`):
+`--check` prints `move-wine: applied` / `move-wine: not applied`; it verifies the marker, the runtime
+release, the rule hash and the current override, so a partial state reads as not applied. `--apply`
+(default) refuses to run while that prefix's wine is up. `--revert` restores the previous override
+value, removes the rule (only if this patch added it) and deletes the marker; with no marker it is a
+no-op. `--reapply` is the update hook.
 
-- `--check` prints `move-wine: applied` / `move-wine: not applied`; it verifies the marker *and*
-  the hashes of the files it replaced, so a partial or overwritten state reads as not applied.
-- `--apply` (default) refuses to run with wine processes up, records the runtime version in
-  `~/.local/state/mosquitomarchy/ableton-move-wine`, keeps the original files under
-  `PATCH/move-wine/backup/<runtime-version>/`, then writes the replacement (or the udev/INF step).
-- `--revert` restores the recorded files byte-for-byte, removes the udev rule if it added one, and
-  deletes the marker. Running it with no marker is a no-op, not an error.
-- `--reapply` is the update hook: if the marker exists and the runtime changed, redo the apply.
+**Hidden `p` flow.** `_manual_patch_spec` maps a synthetic `ableton-move` key to this script;
+`cmd_patches apps ableton` emits the Move as its own row, `_installed_state` maps it back to
+`ableton`, and `cmd_run_patch`/`cmd_remove_patch` dispatch it like `ableton` (no Go change — the TUI
+passes `PatchRec.Key` back verbatim). The uninstall tree lists it separately when applied.
 
-**Hidden `p` flow.** The backend currently allows one patch script per app
-(`_manual_patch_spec` in `code/main tui/mosquitomarchy-actions`). Add a synthetic
-`ableton-move` key mapping to this script: `cmd_patches apps ableton` then emits two records
-(main + Move), `_patch_owner` maps `ableton-move` back to `ableton` for `_installed_state`, and
-`cmd_run_patch`/`cmd_remove_patch` dispatch it like `ableton`. No Go change is needed—the TUI
-already passes `PatchRec.Key` back verbatim—so the Move patch appears as its own row in the same
-P prompt, applied and removed independently of the R2R activation patch. The uninstall tree
-should also list it for removal.
-
-**Will a `.run` update overwrite it?** Yes. `sh install-ableton-latest.run update` replaces the
-wine runtime under `~/.local/opt/wine-*` (and refreshes prefix DLLs), so a file-level overlay is
-gone, while `PATCH/` and the marker in `~/.local/state/` survive. The patch therefore must be
-re-applied by this module after every `.run` install/update: `setup-ableton.sh` calls
-`patch-move-wine.sh --reapply` after the `.run` returns (both the normal install and the
-`MOSQUITOMARCHY_UPDATE=1` path). Without that hook the next runtime update silently disables Move
-control.
+**`.run` updates.** `sh install-ableton-latest.run update` replaces the wine runtime and refreshes
+`system32/libusb-1.0.dll`; `PATCH/`, the udev rule and `user.reg` survive. `setup-ableton.sh` calls
+`patch-move-wine.sh --reapply` after every `.run` install/update (normal and
+`MOSQUITOMARCHY_UPDATE=1`), so the state is re-checked instead of silently drifting.
 
 **Acceptance.** `--check` flips only after a complete apply; Live shows the Move display and the
-transport works; `--revert` restores the original hashes; a runtime update followed by
-`setup-ableton.sh` leaves `--check` applied; unplugging the Move mid-session does not crash Live.
+transport works; `--revert` restores the previous override and removes the rule; a runtime update
+followed by `setup-ableton.sh` leaves `--check` applied; unplugging the Move mid-session does not
+crash Live.
 
 ## Uninstall
 

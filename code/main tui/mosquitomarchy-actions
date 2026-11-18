@@ -1091,18 +1091,19 @@ _setup_tree(){
 # each pay for it.
 declare -A _INSTALLED_STATE_MEMO
 _installed_state(){ # module id -> 0 when installed (ok/partial) and not excluded
-  local id="$1" st
-  if [[ -n ${_INSTALLED_STATE_MEMO[$id]+x} ]]; then
-    [[ ${_INSTALLED_STATE_MEMO[$id]} == 1 ]]
+  local key="$1" id="$1" st
+  [[ $id == ableton-move ]] && id=ableton
+  if [[ -n ${_INSTALLED_STATE_MEMO[$key]+x} ]]; then
+    [[ ${_INSTALLED_STATE_MEMO[$key]} == 1 ]]
     return
   fi
-  if is_excluded "$id" 2>/dev/null; then _INSTALLED_STATE_MEMO[$id]=0; return 1; fi
+  if is_excluded "$id" 2>/dev/null; then _INSTALLED_STATE_MEMO[$key]=0; return 1; fi
   st="$(module_state_cached "$id" 2>/dev/null)"; st="${st%%:*}"
   if [[ $st == ok || $st == partial ]]; then
-    _INSTALLED_STATE_MEMO[$id]=1
+    _INSTALLED_STATE_MEMO[$key]=1
     return 0
   fi
-  _INSTALLED_STATE_MEMO[$id]=0
+  _INSTALLED_STATE_MEMO[$key]=0
   return 1
 }
 
@@ -1193,7 +1194,7 @@ module_state_cached_into(){
 # the state here and append it to the fingerprint. The _installed_state calls
 # are memoised, so _uninstall_tree's own pass is free.
 uninstall_state_signature(){
-  local c id mid spec f t pp pk sig=""
+  local c id mid spec mspec f t pp pk sig=""
   for c in "${CATEGORIES[@]}"; do
     id="${c%%|*}"
     case $id in
@@ -1218,6 +1219,10 @@ uninstall_state_signature(){
     spec="$(_manual_patch_spec "$mid")"; [[ -n $spec ]] || continue
     [[ -f "$APPS_DIR/$spec" ]] || continue
     _patch_applied "$APPS_DIR/$spec" && sig+="patch:$mid|"
+    if [[ $mid == ableton ]]; then
+      mspec="$(_manual_patch_spec ableton-move)"; [[ -n $mspec ]] || continue
+      [[ -f "$APPS_DIR/$mspec" ]] && _patch_applied "$APPS_DIR/$mspec" && sig+="patch:ableton-move|"
+    fi
   done
   # Applied quick fixes and tweaks.
   for f in hyprland-crash 1px-seam; do
@@ -1403,6 +1408,14 @@ _uninstall_tree(){
       items+=("patches/$mid"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
         "$(json_str patches)" "$(json_str "patch:$mid")" \
         "$(json_str "$mid — remove patch")" "$(json_str "restores the original files")")")
+      if [[ $mid == ableton ]]; then
+        local mpath="$APPS_DIR/ableton/PATCH/move-wine/patch-move-wine.sh"
+        [[ -f $mpath ]] && _patch_applied "$mpath" || continue
+        items+=("patches/ableton-move"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
+          "$(json_str patches)" "$(json_str "patch:ableton-move")" \
+          "$(json_str "ableton-move — remove patch")" \
+          "$(json_str "Move control under wine: udev access + libusb override")")")
+      fi
     done
   fi
   # Quick fixes that are currently APPLIED (each supports --remove/--uninstall).
@@ -2060,6 +2073,7 @@ cmd_missing_assets(){
 _manual_patch_spec(){ # appkey -> module-relative patch script (empty: none)
   case "$1" in
     ableton)   printf 'ableton/PATCH/patch-ableton.sh' ;;
+    ableton-move) printf 'ableton/PATCH/move-wine/patch-move-wine.sh' ;;
     bitwig)    printf 'bitwig/PATCH/patch-bitwig.sh' ;;
     guitarpro) printf 'guitarpro/PATCH/patch-guitarpro' ;;
     davinci|davinci-resolve)   printf 'davinci/PATCH/patch-resolve.sh' ;;
@@ -2100,6 +2114,17 @@ cmd_patches(){
     printf '{"folder":%s,"key":%s,"label":%s,"script":%s,"applied":%s}\n' \
       "$(json_str "$folder")" "$(json_str "$key")" "$(json_str "$key")" \
       "$(json_str "$path")" "$applied"
+    # The Move's wine step is its own row: applied and removed independently
+    # of the R2R activation patch, but only offered once Ableton is installed.
+    if [[ $key == ableton ]]; then
+      local mpath="$APPS_DIR/ableton/PATCH/move-wine/patch-move-wine.sh" mapplied=false
+      if [[ -f $mpath ]]; then
+        _patch_applied "$mpath" && mapplied=true
+        printf '{"folder":%s,"key":%s,"label":%s,"script":%s,"applied":%s}\n' \
+          "$(json_str "$folder")" "$(json_str ableton-move)" \
+          "$(json_str "ableton Move")" "$(json_str "$mpath")" "$mapplied"
+      fi
+    fi
   done
 }
 

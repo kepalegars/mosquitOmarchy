@@ -490,6 +490,17 @@ ableton_winetricks_cache_ready(){
   done
 }
 
+# The optional Move wine step lives in PATCH/ (private, absent on most
+# machines). A .run install/update replaces the runtime DLL, so this hook
+# re-applies the prefix override + udev access after every official run;
+# without it an update silently drops Move control.
+move_wine_reapply(){
+  local s="$SCRIPT_DIR/PATCH/move-wine/patch-move-wine.sh"
+  [[ -f $s ]] || return 0
+  bash "$s" --reapply || warn "The Move wine patch was not re-applied (run: $s --apply)."
+  return 0
+}
+
 install_with_cached_winetricks(){
   local zip="$1" workdir patched rc newest
   [[ -n "$zip" ]] || return 1
@@ -535,6 +546,7 @@ PATCHER
   if ((YES)); then cached_args+=(--yes); fi
   sh "$patched" "${cached_args[@]}"
   rc=$?
+  ((rc)) || move_wine_reapply
   newest="$(ls -1t "$workdir"/ableton-linux-installer-*.log 2>/dev/null | head -1 || true)"
   if [[ -n "$newest" ]]; then
     cp -p -- "$newest" "$SCRIPT_DIR/" 2>/dev/null || true
@@ -545,7 +557,7 @@ PATCHER
 }
 
 step_install(){
-  local z ed
+  local z ed rc
   local -a installed_list=()
 
   if ableton_installed; then
@@ -558,7 +570,9 @@ step_install(){
       [[ -n "$RUN_INSTALLER" ]] || { err "No install-ableton-latest.run found in $SCRIPT_DIR/"; return 1; }
       msg "Update mode: keeping installed editions; refreshing runtime/prefix/integration."
       sh "$RUN_INSTALLER" update --power="$POWER_DEFAULT" --audio-buffer="$BUFFER_DEFAULT"
-      return $?
+      rc=$?
+      ((rc)) || move_wine_reapply
+      return $rc
     fi
     while IFS= read -r ed; do [[ -n "$ed" ]] && installed_list+=("$ed"); done < <(installed_editions | sort -u)
     if (( ${#installed_list[@]} > 0 )); then
@@ -668,7 +682,7 @@ disk_preflight(){
 }
 
 do_install(){
-  local zip="${1:-$LIVE_ZIP}"
+  local zip="${1:-$LIVE_ZIP}" rc
   case "$POWER_DEFAULT" in
     performance|balanced|off) ;;
     *) err "Invalid POWER: $POWER_DEFAULT (expected performance|balanced|off)"; return 1 ;;
@@ -697,7 +711,9 @@ do_install(){
     fi
     msg "Command: ${cmd[*]}"
     "${cmd[@]}"
-    return $?
+    rc=$?
+    ((rc)) || move_wine_reapply
+    return $rc
   fi
   msg "Launching the official installer with the default values:"
   msg "  --power=$POWER_DEFAULT (power profile not modified; mosquito.battery keeps control)"
@@ -718,6 +734,9 @@ do_install(){
     return $?
   fi
   "${cmd[@]}"
+  rc=$?
+  ((rc)) || move_wine_reapply
+  return $rc
 }
 
 # ───────────────────────── Blocking the Live updates (Windows side) ─────────────────────────
