@@ -14,6 +14,7 @@
 #   mixbay-startup --install-card ID  # notification click: open + queue a profile
 #   mixbay-startup --open-card ID     # notification click: open + show that card
 #   mixbay-startup --use-card ID      # notification button: make it default + open its UI
+#   mixbay-startup --select-card ID   # notification button: make it default only
 #   mixbay-startup --external CMD  # launch an external GUI and place the windows
 # =============================================================================
 set -euo pipefail
@@ -304,19 +305,26 @@ default_ui(){
   printf '%s\n' "$sel"
 }
 
-# use_card <id> — a known card's "Open UI & Use it": make it the default audio
-# interface, then open the UI chosen in its Controls page; without a choice,
-# reveal its card page. The Move has no UI of its own: its helper selects the
-# interface and pins the rate.
-use_card(){
-  local id="${1:-}" launcher=""
-  [[ $id =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || { printf 'usage: %s --use-card ID\n' "$0" >&2; exit 2; }
-  launcher="$(ui_launcher "$(default_ui "$id")")"
+# select_card <id> — make it the default audio interface, without opening
+# anything. The Move has no UI of its own: its helper selects the interface and
+# pins the rate.
+select_card(){
+  local id="${1:-}"
+  [[ $id =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || { printf 'usage: %s --select-card ID\n' "$0" >&2; exit 2; }
   if [[ $id == move ]]; then
     [[ -x $MOVE_AUDIO ]] && "$MOVE_AUDIO" --use >/dev/null 2>&1 || true
   else
     [[ -x $FOUNDATION ]] && "$FOUNDATION" --set-default "$id" >/dev/null 2>&1 || true
   fi
+}
+
+# use_card <id> — a known card's "Open UI & Use it": make it the default audio
+# interface, then open the UI chosen in its Controls page; without a choice,
+# reveal its card page.
+use_card(){
+  local id="${1:-}" launcher=""
+  select_card "$id"
+  launcher="$(ui_launcher "$(default_ui "$id")")"
   if [[ -n $launcher ]] && command -v "$launcher" >/dev/null 2>&1; then
     external "$launcher"
     exit 0
@@ -332,8 +340,9 @@ case "${1:-}" in
   --install-card) shift; install_card "$@" ;;
   --open-card) shift; open_card "$@" ;;
   --use-card) shift; use_card "$@" ;;
+  --select-card) shift; select_card "$@" ;;
   --external) shift; [[ $# -ge 1 ]] || { printf 'usage: %s --external CMD [args...]\n' "$0" >&2; exit 2; }; external "$@" ;;
   --remove) remove_block; printf 'autostart: off\n' ;;
   -h|--help) sed -n '2,18p' "$0" ;;
-  *) printf 'usage: %s --apply|--run|--open|--place|--install-card ID|--open-card ID|--use-card ID|--external CMD|--remove\n' "$0" >&2; exit 2 ;;
+  *) printf 'usage: %s --apply|--run|--open|--place|--install-card ID|--open-card ID|--use-card ID|--select-card ID|--external CMD|--remove\n' "$0" >&2; exit 2 ;;
 esac

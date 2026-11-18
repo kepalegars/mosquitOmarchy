@@ -968,10 +968,14 @@ func (r *evoRender) drawMixerSection(topRow, cx, secIdx int, compact bool) {
 		}
 	}
 	volVal := r.m.evoMxCell(s.key, "volume")
+	muted := r.m.evoMxMuted(s.key)
 	connected := volVal > evoMixDbMin
 	var boxAttr *evoStyle
-	if connected {
+	if connected || muted {
 		st := evoStyle{col: cWhite}
+		if muted {
+			st.col = cRed
+		}
 		if selSec {
 			st.bold = true
 		}
@@ -979,6 +983,11 @@ func (r *evoRender) drawMixerSection(topRow, cx, secIdx int, compact bool) {
 	}
 	siw := r.sectionIW()
 	r.boxTop(topRow, cx, s.label, selSec, siw, boxAttr)
+	if muted && siw-len([]rune(s.label))-2 >= 4 {
+		// Right of the channel name, on the frame line: the [m] is the mute
+		// indicator, and it only exists while the channel is muted.
+		r.put(cx+2+len([]rune(s.label)), topRow, " [m]", evoStyle{col: cRed, bold: true})
+	}
 	row := topRow + 1
 	slots := len(panIdx)
 	if !compact {
@@ -1008,11 +1017,13 @@ func (r *evoRender) drawMixerSection(topRow, cx, secIdx int, compact bool) {
 				plabel = "Pan R"
 			}
 			attr := evoVal
-			if sel {
-				attr = evoBold
-			}
-			if sel && r.u.numBuf != "" {
+			switch {
+			case sel && r.u.numBuf != "":
 				attr = evoStyle{col: cYellow, bold: true}
+			case muted:
+				attr = evoStyle{col: cRed, bold: sel}
+			case sel:
+				attr = evoBold
 			}
 			txt := fmt.Sprintf("%-*s %+5.0f", siw-8, plabel+":", val)
 			if len([]rune(txt)) > siw-2 {
@@ -1031,11 +1042,13 @@ func (r *evoRender) drawMixerSection(topRow, cx, secIdx int, compact bool) {
 	row++
 	r.boxSide(row, cx, siw)
 	volAttr := evoVal
-	if volSel {
-		volAttr = evoBold
-	}
-	if volSel && r.u.numBuf != "" {
+	switch {
+	case volSel && r.u.numBuf != "":
 		volAttr = evoStyle{col: cYellow, bold: true}
+	case muted:
+		volAttr = evoStyle{col: cRed, bold: volSel}
+	case volSel:
+		volAttr = evoBold
 	}
 	vtxt := fmt.Sprintf("%-*s %+6.1f dB", siw-12, "Vol:", volVal)
 	if len([]rune(vtxt)) > siw-2 {
@@ -1317,6 +1330,7 @@ func (r *evoRender) mixerHelp() ([]evoHint, []evoHint) {
 	nav := []evoHint{
 		{key: "←/→ h/l", desc: " source"},
 		{key: "↑↓ j/k", desc: " row"},
+		{key: "m", desc: " mute"},
 		{key: "Space", desc: " pan/vol"},
 		{key: evoTabSym, desc: " view"},
 	}
@@ -1329,7 +1343,7 @@ func (r *evoRender) mixerHelp() ([]evoHint, []evoHint) {
 	// interface they are omitted, which also keeps the footer inside 59 cols.
 	if r.spec.NumOutPairs > 1 {
 		nav = append(nav,
-			evoHint{key: "m", desc: " mix", col: cCyan},
+			evoHint{key: "M", desc: " mix", col: cCyan},
 			evoHint{key: "A", desc: " artist mix: " + artistMixState(r.u.artistMix), col: cCyan},
 		)
 		set = append(set,
@@ -2115,6 +2129,76 @@ func (u *evoUI) readBus() int {
 	return u.mixBus
 }
 
+// evoMxMaster maps a mixer output row to the output master it shares state
+// with, or -1 when the row has no Controls counterpart (the LOOP sources).
+func evoMxMaster(key string, spec drivers.Spec) int {
+	var l, r int
+	if _, err := fmt.Sscanf(key, "output%d_%d", &l, &r); err != nil {
+		return -1
+	}
+	i := (l - 1) / 2
+	if i < 0 || i >= spec.NumOutPairs {
+		return -1
+	}
+	return i
+}
+
+func evoMxOutputName(spec drivers.Spec, i int) string {
+	if spec.NumOutPairs == 1 {
+		return "output"
+	}
+	return fmt.Sprintf("output%d", i+1)
+}
+
+// evoMxMuted reads the mute for one mixer section. Output rows that own a
+// master read the SAME state as the Controls page, so muting in either place
+// shows up in both. Inputs and LOOP sources use the mixer's return mute.
+func (m *model) evoMxMuted(key string) bool {
+	if i := evoMxMaster(key, m.evo.spec); i >= 0 {
+		return i < len(m.status.Outputs) && m.status.Outputs[i].Muted
+	}
+	return m.status.Mixer[drivers.MixerKey(key, m.evo.readBus())].Muted
+}
+
+// evoMxToggleMute mutes the selected mixer section: inputs and LOOP sources
+// through the return mute (the record path keeps running), output rows through
+// the output master shared with Controls.
+func (m *model) evoMxToggleMute() tea.Cmd {
+	if m.evoOffline() {
+		return m.evo.evoStatus("interface offline — reconnecting", true)
+	}
+	sections := m.evo.flatMx()
+	if m.evo.mxSection >= len(sections) {
+		return nil
+	}
+	key := sections[m.evo.mxSection].key
+	on := !m.evoMxMuted(key)
+	dev := m.deviceID
+	if i := evoMxMaster(key, m.evo.spec); i >= 0 {
+		name := evoMxOutputName(m.evo.spec, i)
+		return m.applyCmd(dev, func(d drivers.Driver) error { return d.SetMute(name, on) }, "")
+	}
+	buses := []int{m.evo.mixBus}
+	if !m.evo.artistMix {
+		buses = buses[:0]
+		for b := 0; b < drivers.MixBuses(m.evo.spec); b++ {
+			buses = append(buses, b)
+		}
+	}
+	return m.applyCmd(dev, func(d drivers.Driver) error {
+		mm, ok := d.(drivers.MixerMuteDriver)
+		if !ok {
+			return fmt.Errorf("%s has no return mute", d.Spec().Display)
+		}
+		for _, bus := range buses {
+			if err := mm.SetMixerMute(key, on, bus); err != nil {
+				return err
+			}
+		}
+		return nil
+	}, "")
+}
+
 func (m *model) evoMixerKey(k string) tea.Cmd {
 	rows := evoMixerRows(m.evo.spec)
 	r, c := m.evoMxRowCol()
@@ -2160,6 +2244,8 @@ func (m *model) evoMixerKey(k string) tea.Cmd {
 			m.evoSelectMx(evoColOffset(nr, rows) + cc)
 		}
 	case "m":
+		return m.evoMxToggleMute()
+	case "M":
 		if !m.evo.artistMix {
 			return m.evo.evoStatus("Artist Mix off — OUT 1|2 ⇄ 3|4 (same mix), volumes independent", false)
 		}

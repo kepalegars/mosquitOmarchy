@@ -101,7 +101,7 @@ del_ini() { # del_ini <key>
 revert() {
   if [[ ! -f $MANIFEST ]]; then
     echo "Nothing to restore: no REAPER config backup was recorded." >&2
-    echo "Install the config with C in Setup first." >&2
+    echo "Install the config with P in Setup first." >&2
     exit 1
   fi
 

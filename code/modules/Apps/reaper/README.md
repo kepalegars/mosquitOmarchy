@@ -48,9 +48,9 @@ code/modules/Apps/reaper/setup-reaper.sh
 
 Then launch REAPER from the launcher.
 
-## Reapertips theme + custom config (C in Setup)
+## Reapertips theme + custom config (P in Setup)
 
-With the cursor on the REAPER row in **Setup**, press **C** (`C custom config` appears
+With the cursor on the REAPER row in **Setup**, press **P** (`P custom config` appears
 in the shortcut bar). It offers two fonts and, by default, uses Omarchy's current
 system font:
 
@@ -61,7 +61,7 @@ system font:
 - installs `libSwell-user.colortheme` so the native Linux menus follow the accent too;
 - applies `code/modules/Apps/reaper/configs/custom/` over the REAPER resource path.
 
-In **Uninstall**, the same key shows `C restore config` and undoes the visual
+In **Uninstall**, the same key shows `P restore config` and undoes the visual
 part: the REAPER config (including the theme selection) comes back as it was
 when C was run in Setup, and the generated theme, purple toolbar icons, splash
 and window colours are removed. Scripts, plugins, JSFX, ReaPacks, SWS and LSP
@@ -109,7 +109,7 @@ the path REAPER uses. It replaces the current files, and **every file it
 overwrites is backed up first** to `backups/<date>-install/` (inside this
 module, git-ignored). The Setup prompt says this before anything runs.
 
-The custom config is copied, never tracked for undo: `C` in Uninstall leaves
+The custom config is copied, never tracked for undo: `P` in Uninstall leaves
 every script, JSFX, plugin, ReaPack and SWS file in place. The backup folder is
 there if you want to restore one by hand.
 

@@ -42,7 +42,7 @@
 # compute watchdog from 2 s to 90 s, because SpektraFilm's spectral upsampling
 # is one long Vulkan compute submission that the default watchdog kills with
 # VK_ERROR_DEVICE_LOST. It is proposed during an interactive install, and
-# applied from the TUI only by pressing D on the davinci row in Setup — never
+# applied from the TUI only by pressing P on the davinci row in Setup — never
 # automatically during a restore. The watchdog is read from the kernel command
 # line at boot: only a full reboot activates it.
 
@@ -324,7 +324,7 @@ do_status(){
     if alt_drivers_active; then
       ok "Radeon 780M     : Mesa Rusticl profile applied"
     else
-      warn "Radeon 780M     : optimized profile not applied (D on the davinci row in Setup, or --alt-drivers)"
+      warn "Radeon 780M     : optimized profile not applied (P on the davinci row in Setup, or --alt-drivers)"
     fi
     if [[ -x "$COMPUTE_TIMEOUT_TWEAK" ]]; then
       local ctw
@@ -1130,7 +1130,7 @@ main(){
 
   # Radeon 780M: propose the optimized profile in an interactive install only.
   # A restore (YES=1) must not change the GPU backend behind the user's back;
-  # the TUI offers it explicitly with D on the davinci row.
+  # the TUI offers it explicitly with P on the davinci row.
   if detect_780m && (( YES == 0 )); then
     if ask "Apply the optimized Radeon 780M OpenCL profile (Mesa Rusticl + CPU scopes + 90 s compute watchdog, active after a reboot)?" y; then
       ALT_DRIVERS=1

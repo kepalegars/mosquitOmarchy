@@ -1659,10 +1659,10 @@ func TestBackupFolderSquareAndParentToggleIncludeChildren(t *testing.T) {
 	}
 }
 
-// TestDOnDavinciOpensAltDrivers: the 780M profile is a deliberate per-row
-// action. Pressing D with the cursor on davinci must open the confirm; on any
+// TestPOnDavinciOpensAltDrivers: the 780M profile is a deliberate per-row
+// action. Pressing P with the cursor on davinci must open the confirm; on any
 // other row it must do nothing.
-func TestDOnDavinciOpensAltDrivers(t *testing.T) {
+func TestPOnDavinciOpensAltDrivers(t *testing.T) {
 	m := flatSetup()
 	it := SetupItemRec{Folder: "apps", Key: "davinci-resolve", Label: "DaVinci Resolve"}
 	m.setupItems = append(m.setupItems, it)
@@ -1673,22 +1673,70 @@ func TestDOnDavinciOpensAltDrivers(t *testing.T) {
 	// The key must be advertised where it is usable: the old hint was appended
 	// after the whole shortcut bar, so BottomBar truncated it away at normal
 	// widths and D was invisible.
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "D 780M drivers") {
-		t.Fatalf("Setup legend does not advertise the D key on the davinci row:\n%s", view)
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "P 780M drivers") {
+		t.Fatalf("Setup legend does not advertise the P key on the davinci row:\n%s", view)
 	}
 
-	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
 	if m.top() != scrConfirm || m.pendingAction != "davinci-alt-drivers" {
-		t.Fatalf("D on davinci did not open the alt-drivers confirm: top=%v action=%q", m.top(), m.pendingAction)
+		t.Fatalf("P on davinci did not open the alt-drivers confirm: top=%v action=%q", m.top(), m.pendingAction)
 	}
 	if !strings.Contains(m.pendingMsg, "Radeon 780M") || !strings.Contains(m.pendingMsg, "SCOPE") {
 		t.Fatalf("alt-drivers prompt does not state what/scope: %q", m.pendingMsg)
 	}
 
 	m = flatSetup()
-	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "reaper"))
-	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "extracto"))
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
 	if m.top() != scrSetup || m.pendingAction == "davinci-alt-drivers" {
-		t.Fatalf("D on another row must be inert: top=%v action=%q", m.top(), m.pendingAction)
+		t.Fatalf("P on another row must be inert: top=%v action=%q", m.top(), m.pendingAction)
+	}
+}
+
+// TestPDavinciInUninstallRestoresDrivers: P in Uninstall must offer the way
+// back to the initial drivers, like P restores REAPER's config.
+func TestPDavinciInUninstallRestoresDrivers(t *testing.T) {
+	m := flatSetup()
+	m.treeMode = "uninstall"
+	it := SetupItemRec{Folder: "apps", Key: "davinci-resolve", Label: "DaVinci Resolve"}
+	m.setupItems = append(m.setupItems, it)
+	m.setupByValue[setupValue("apps", "davinci-resolve")] = it
+	m.setupPicker = m.rebuildSetup()
+	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "davinci-resolve"))
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "P restore drivers") || strings.Contains(view, "P 780M drivers") {
+		t.Fatalf("Uninstall legend does not advertise the restore key:\n%s", view)
+	}
+
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	if m.top() != scrConfirm || m.pendingAction != "davinci-alt-drivers-revert" {
+		t.Fatalf("P on davinci in Uninstall did not open the restore confirm: top=%v action=%q", m.top(), m.pendingAction)
+	}
+	for _, want := range []string{"Restore the initial DaVinci drivers", "amdocl64.icd", "compute watchdog"} {
+		if !strings.Contains(m.pendingMsg, want) {
+			t.Fatalf("restore prompt is missing %q: %q", want, m.pendingMsg)
+		}
+	}
+}
+
+// TestPatchHintOnlyWhenScriptExists: the hidden "p" hint follows the app's
+// Patch flag, and p with nothing to patch does nothing at all (no toast).
+func TestPatchHintOnlyWhenScriptExists(t *testing.T) {
+	m := flatSetup()
+	it := SetupItemRec{Folder: "apps", Key: "ableton", Label: "Ableton Live — v1", Patch: true}
+	m.setupItems = append(m.setupItems, it)
+	m.setupByValue[setupValue("apps", "ableton")] = it
+	m.setupPicker = m.rebuildSetup()
+	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "ableton"))
+
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "p patch") {
+		t.Fatalf("Setup legend does not advertise the p key on a patchable row:\n%s", view)
+	}
+
+	m, cmd := m.update(patchSecretMsg{})
+	if cmd != nil || m.top() != scrSetup || m.pendingAction != "" || m.toast.View() != "" {
+		t.Fatalf("p with no patch must be silent: top=%v action=%q cmd=%v toast=%q",
+			m.top(), m.pendingAction, cmd, m.toast.View())
 	}
 }

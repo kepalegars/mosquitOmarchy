@@ -19,6 +19,29 @@ var appVersion = "dev"
 // tall a panel is allowed to be.
 var contentPolicy = tuikit.ManagerContent
 
+// setupRowHint prefixes the keys that only act on the highlighted Setup row:
+// P for DaVinci's drivers and REAPER's config, and the hidden p for a patch
+// only when that app actually ships a patch script.
+func (m model) setupRowHint(v string) string {
+	patch := ""
+	if it, ok := m.setupByValue[v]; ok && it.Patch {
+		patch = "p patch · "
+	}
+	switch _, key := splitSetupValue(v); key {
+	case "davinci-resolve":
+		if m.treeMode == "uninstall" {
+			return patch + "P restore drivers · "
+		}
+		return patch + "P 780M drivers · "
+	case "reaper":
+		if m.treeMode == "uninstall" {
+			return patch + "P restore config · "
+		}
+		return patch + "P custom config · "
+	}
+	return patch
+}
+
 // header renders the mosquitomarchy banner at a rung that FITS maxW.
 //
 // It used to be tuikit.MosquitOmarchyTitle(maxW), which rendered the
@@ -182,20 +205,7 @@ func (m model) View() string {
 			title = screenTitle("Setup", w)
 		}
 		body = m.setupPicker.View()
-		hint := m.setupPicker.ShortcutsHint()
-		if m.treeMode != "uninstall" {
-			if _, key := splitSetupValue(m.setupPicker.SelectedValue()); key == "davinci-resolve" {
-				hint = "D 780M drivers · " + hint
-			}
-		}
-		if _, key := splitSetupValue(m.setupPicker.SelectedValue()); key == "reaper" {
-			if m.treeMode == "uninstall" {
-				hint = "C restore config · " + hint
-			} else {
-				hint = "C custom config · " + hint
-			}
-		}
-		bar = m.searchBar(hint)
+		bar = m.searchBar(m.setupRowHint(m.setupPicker.SelectedValue()) + m.setupPicker.ShortcutsHint())
 	case scrSetupCat:
 		if m.treeMode == "uninstall" {
 			title = screenTitle("Uninstall — "+m.setupCatLabel(), w)
@@ -203,20 +213,7 @@ func (m model) View() string {
 			title = screenTitle("Setup — "+m.setupCatLabel(), w)
 		}
 		body = m.setupCatPicker.View()
-		hint := m.setupCatPicker.ShortcutsHint()
-		if m.treeMode != "uninstall" {
-			if _, key := splitSetupValue(m.setupCatPicker.SelectedValue()); key == "davinci-resolve" {
-				hint = "D 780M drivers · " + hint
-			}
-		}
-		if _, key := splitSetupValue(m.setupCatPicker.SelectedValue()); key == "reaper" {
-			if m.treeMode == "uninstall" {
-				hint = "C restore config · " + hint
-			} else {
-				hint = "C custom config · " + hint
-			}
-		}
-		bar = m.searchBar(hint)
+		bar = m.searchBar(m.setupRowHint(m.setupCatPicker.SelectedValue()) + m.setupCatPicker.ShortcutsHint())
 	case scrUpdate:
 		title = screenTitle("Update", w)
 		body = m.updateBody()

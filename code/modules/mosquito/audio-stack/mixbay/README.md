@@ -307,8 +307,8 @@ seules déplacent, les modificateurs règlent la valeur sélectionnée :
   pans **±25** ;
 - `Ctrl+Shift` + `←` / `→` : volume, gain et monitor **±1**, pans **±5** ;
 - chiffres puis `Enter` pour saisir une valeur ;
-- `m` mute (controls) ou choisit le bus (mixer), `P` 48V, `O` mono/stéréo,
-  `Space` paramètre suivant dans le mixer ;
+- `m` mute (controls, et mixer : le retour de la source), `M` choisit le bus
+  (mixer), `P` 48V, `O` mono/stéréo, `Space` paramètre suivant dans le mixer ;
 - `r` remet le paramètre au défaut, `R` remet la page active au défaut
   (CONTROLS : contrôles seuls ; MIXER : bus Artist Mix actif, ou les deux bus
   liés quand Artist Mix est OFF), `A` Artist Mix ;
@@ -344,7 +344,7 @@ Trois volumes différents ne doivent pas être confondus :
 
 - **CONTROLS** montre les *masters* de sortie, ceux que règlent les gros boutons
   physiques de l'EVO (`FU10`) ;
-- **MIXER** montre les *sends* de chaque source vers le bus sélectionné (`m`
+- **MIXER** montre les *sends* de chaque source vers le bus sélectionné (`M`
   change de bus) : entrées puis lecture. Les libellés de lecture sont ceux du
   mixer Audient, `PC 1|2`, `PC 3|4` et `LOOP 5|6` (sur EVO 4 : `PC 1|2`,
   `LOOP 3|4`) ; ce ne sont pas des masters de sortie ;

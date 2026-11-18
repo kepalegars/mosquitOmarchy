@@ -2272,3 +2272,109 @@ func TestActionOnlyCardLegendHasNoControlKeys(t *testing.T) {
 		t.Errorf("legend = %q, want the action hint", line)
 	}
 }
+
+// m on a mixer input is a RETURN mute: the send is silenced while the
+// Controls page's input mute (the record path) stays untouched. It also mutes
+// both linked buses when Artist Mix is off.
+func TestEvoMixMuteInputIsReturnOnly(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 1)
+	m.evo.artistMix = false // linked buses: the mute reaches both
+	if cmd := m.evoMxSetValTo("input1", "volume", -6); cmd != nil {
+		_ = cmd()
+	}
+	m.evoSelectMx(0)
+	if strings.Contains(m.evoView(), "[m]") {
+		t.Fatal("mute indicator shown before muting")
+	}
+	if cmd := m.evoKey("m"); cmd != nil {
+		_ = cmd()
+	}
+	d, _ := drivers.Open(drivers.DevEVO8)
+	st, _ := d.Status()
+	for _, key := range []string{"input1", "input1@1"} {
+		if c := st.Mixer[key]; !c.Muted || c.VolumeDb != -6 {
+			t.Errorf("%s = %+v, want muted at the kept -6 dB", key, c)
+		}
+	}
+	if st.Inputs[0].Muted {
+		t.Error("mixer m touched the Controls input mute")
+	}
+	m.status = st
+	if !strings.Contains(m.evoView(), "[m]") {
+		t.Fatal("muted mixer channel does not show [m]")
+	}
+}
+
+// m on an output row toggles the output master, so Controls and Mixer always
+// show the same state; LOOP sources have no master and use the return mute.
+func TestEvoMixMuteOutputLinksControls(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 1)
+	m.evoSelectMx(m.evo.spec.NumInputs) // PC 1|2
+	if cmd := m.evoKey("m"); cmd != nil {
+		_ = cmd()
+	}
+	d, _ := drivers.Open(drivers.DevEVO8)
+	st, _ := d.Status()
+	m.status = st
+	if !st.Outputs[0].Muted {
+		t.Fatal("mixer m did not mute OUT 1|2")
+	}
+	if st.Mixer["output1_2"].Muted {
+		t.Error("output row used the return mute instead of the master")
+	}
+	if cmd := m.evoKey("m"); cmd != nil {
+		_ = cmd()
+	}
+	d, _ = drivers.Open(drivers.DevEVO8)
+	st, _ = d.Status()
+	m.status = st
+	if st.Outputs[0].Muted {
+		t.Error("second m did not unmute OUT 1|2")
+	}
+
+	// LOOP 5|6 has no Controls counterpart.
+	m.evoSelectMx(m.evo.spec.NumInputs + m.evo.spec.NumOutPairs)
+	if cmd := m.evoKey("m"); cmd != nil {
+		_ = cmd()
+	}
+	d, _ = drivers.Open(drivers.DevEVO8)
+	st, _ = d.Status()
+	if c := st.Mixer["output5_6"]; !c.Muted {
+		t.Errorf("LOOP row = %+v, want the return mute", c)
+	}
+}
+
+// M owns the bus switch now; m must never move the mix bus.
+func TestEvoMixBusSwitchMovedToShiftM(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 1)
+	m.evo.artistMix = true
+	m.evoSelectMx(0)
+	if cmd := m.evoKey("m"); cmd != nil {
+		_ = cmd()
+	}
+	if m.evo.mixBus != 0 {
+		t.Fatalf("m switched the bus to %d", m.evo.mixBus)
+	}
+	m.evoKey("M")
+	if m.evo.mixBus != 1 {
+		t.Fatalf("M did not switch the bus: %d", m.evo.mixBus)
+	}
+}
+
+// The device badge is centred in a fixed field so every closing bracket lines
+// up, and "online" sits centred between the brackets.
+func TestBadgeFieldAlignsBrackets(t *testing.T) {
+	for _, b := range []string{"online", "offline", "online-beta", "offline-beta"} {
+		if got := len(badgeField(b)); got != 12 {
+			t.Errorf("badgeField(%q) width = %d, want 12", b, got)
+		}
+	}
+	online := badgeField("online")
+	offline := badgeField("offline")
+	if online[len(online)-1] != offline[len(offline)-1] {
+		t.Error("online/offline fields do not end on the same column")
+	}
+	if !strings.HasPrefix(online, "   ") || !strings.HasSuffix(online, "   ") {
+		t.Errorf("online is not centred: %q", online)
+	}
+}

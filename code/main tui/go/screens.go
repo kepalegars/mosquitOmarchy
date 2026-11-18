@@ -1302,7 +1302,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		// C in Uninstall undoes the C install: restore the backups, drop the
+		// P in Uninstall undoes the P install: restore the backups, drop the
 		// files the install created. Its own prompt has only Yes/No.
 		if m.pendingAction == "reaper-custom-config-revert" {
 			if msg.Canceled || !msg.Yes {
@@ -1485,6 +1485,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case "davinci-alt-drivers":
 			return m.startWorking("Applying the Radeon 780M OpenCL profile",
 				workingArgs("davinci-alt-drivers", nil)...)
+		case "davinci-alt-drivers-revert":
+			return m.startWorking("Restoring the initial DaVinci drivers",
+				workingArgs("davinci-alt-drivers-revert", nil)...)
 		case "preinstalls-remove":
 			// The only path that ever reaches `pacman -Rns`: an explicit "Remove
 			// them". Reached from Enter AND from back, both through the same
@@ -1903,11 +1906,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			want = append(want, it)
 		}
 		if len(want) == 0 {
-			if msg.remove {
-				m.toast, _ = m.toast.SetWarn("no installed patch to remove")
-			} else {
-				m.toast, _ = m.toast.SetWarn("no patch available for the selection")
-			}
+			// No patch script (or nothing applied to remove): the key does
+			// nothing at all. The row only advertises "p patch" when a patch
+			// exists, so a prompt here would be noise.
 			return m, nil
 		}
 		keys := make([]string, 0, len(want))
@@ -2065,9 +2066,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// (a module row is an "item:" row, and the handler below answers it from
 		// setupByValue), so `i` can go back to doing what its help text and
 		// every other screen in these apps say it does.
-		// Secret "p": same contract as the category screen. The root Setup
-		// tree is where a user lands first, so pressing "p" on a checked or
-		// highlighted patchable app must not silently do nothing there.
+		// Hidden "p": patch in Setup / remove the applied patch in Uninstall.
+		// A row only advertises it when a patch script ships, and with nothing
+		// to patch the key stays silent — no prompt, no toast.
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "p" {
 			keys := m.allSelectedKeys()
 			if len(keys) == 0 {
@@ -2079,22 +2080,20 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			return m, fetchPatchSecretCmd(m.treeMode == "uninstall", keys)
 		}
-		// D (Shift+D) on the DaVinci row applies the Radeon 780M OpenCL
-		// profile. Deliberately a per-row key and not an automatic step: a
-		// restore must never change the GPU backend without being asked.
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "D" || km.String() == "shift+d") {
-			if m.treeMode != "uninstall" {
-				if _, key := splitSetupValue(m.setupPicker.SelectedValue()); key == "davinci-resolve" {
-					return m.confirmAltDrivers()
+		// P on a row that has a custom action: the Radeon 780M OpenCL profile
+		// on DaVinci (apply in Setup, restore in Uninstall) and the custom
+		// REAPER config (install in Setup, restore the backup in Uninstall).
+		// Deliberately per-row: re-running a setup must never change the GPU
+		// backend or replace the user's REAPER configuration unasked.
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "P" || km.String() == "shift+p") {
+			_, key := splitSetupValue(m.setupPicker.SelectedValue())
+			switch key {
+			case "davinci-resolve":
+				if m.treeMode == "uninstall" {
+					return m.confirmAltDriversRevert()
 				}
-			}
-		}
-		// C on the REAPER row installs the custom Reapertips config. Per-row,
-		// like D on DaVinci: re-running a setup must never replace the user's
-		// REAPER configuration without being asked. In Uninstall the same row
-		// restores the backup instead.
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "C" || km.String() == "shift+c") {
-			if _, key := splitSetupValue(m.setupPicker.SelectedValue()); key == "reaper" {
+				return m.confirmAltDrivers()
+			case "reaper":
 				if m.treeMode == "uninstall" {
 					return m.confirmReaperRevert()
 				}
@@ -2175,15 +2174,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				}
 			}
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "D" || km.String() == "shift+d") {
-			if m.treeMode != "uninstall" {
-				if _, key := splitSetupValue(m.setupCatPicker.SelectedValue()); key == "davinci-resolve" {
-					return m.confirmAltDrivers()
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "P" || km.String() == "shift+p") {
+			_, key := splitSetupValue(m.setupCatPicker.SelectedValue())
+			switch key {
+			case "davinci-resolve":
+				if m.treeMode == "uninstall" {
+					return m.confirmAltDriversRevert()
 				}
-			}
-		}
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "C" || km.String() == "shift+c") {
-			if _, key := splitSetupValue(m.setupCatPicker.SelectedValue()); key == "reaper" {
+				return m.confirmAltDrivers()
+			case "reaper":
 				if m.treeMode == "uninstall" {
 					return m.confirmReaperRevert()
 				}
@@ -2204,8 +2203,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				}
 			}
 		}
-		// Secret "p" (documented nowhere): on apps that ship a patch script,
+		// Hidden "p" (documented nowhere): on apps that ship a patch script,
 		// propose to PATCH (Setup) or to REMOVE the applied patch (Uninstall).
+		// Silent when the selection has nothing to patch.
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "p" {
 			keys := m.selectedKeysOfCat(m.setupCat)
 			if len(keys) == 0 {
@@ -3792,7 +3792,32 @@ func (m model) confirmAltDrivers() (model, tea.Cmd) {
 	return m, nil
 }
 
-// reaperConfigPrompt says what the C action installs and, above all, that it
+// davinciRevertPrompt says exactly what P in Uninstall undoes. The watchdog is
+// named as NOT undone: it is a GPU-wide Quick fix with its own owner.
+func davinciRevertPrompt() string {
+	return "Restore the initial DaVinci drivers?\n\n" +
+		"WHAT IT UNDOES\n" +
+		" • re-enables the ROCm OpenCL ICD (amdocl64.icd);\n" +
+		" • restores the original ~/.local/bin/davinci-resolve launcher;\n" +
+		" • puts back Resolve's config.dat saved before the profile was applied.\n\n" +
+		"WHAT IT LEAVES ALONE\n" +
+		" • opencl-mesa stays installed (other OpenCL apps may use it);\n" +
+		" • the 90 s AMDGPU compute watchdog is a separate Quick fix\n" +
+		"   (amdgpu-compute-timeout) and is not removed here.\n\n" +
+		"Restart Resolve to reload the previous OpenCL backend."
+}
+
+func (m model) confirmAltDriversRevert() (model, tea.Cmd) {
+	m.pendingAction = "davinci-alt-drivers-revert"
+	m.pendingMsg = davinciRevertPrompt()
+	m.pendingNo = "Cancel"
+	m.pendingYes = "Restore"
+	m.push(scrConfirm)
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).FocusYes()
+	return m, nil
+}
+
+// reaperConfigPrompt says what the P action installs and, above all, that it
 // replaces the current REAPER configuration. The backup path is stated because
 // the user must be able to recover without reading the script.
 func reaperConfigPrompt() string {
@@ -3830,7 +3855,7 @@ func (m model) confirmReaperConfig() (model, tea.Cmd) {
 func reaperRevertPrompt() string {
 	return "Restore the REAPER config backup?\n\n" +
 		"WHAT IT DOES\n" +
-		" • puts the REAPER config back as it was when C was run in Setup, so the\n" +
+		" • puts the REAPER config back as it was when P was run in Setup, so the\n" +
 		"   theme it loads is the one used before;\n" +
 		" • removes the generated theme, its purple toolbar icons, the splash and\n" +
 		"   the Linux window colours;\n" +
@@ -3908,6 +3933,8 @@ func operationName(sub string) string {
 		return "Patch"
 	case "davinci-alt-drivers":
 		return "DaVinci profile"
+	case "davinci-alt-drivers-revert":
+		return "DaVinci restore"
 	case "reaper-custom-config":
 		return "REAPER config"
 	case "reaper-custom-config-revert":

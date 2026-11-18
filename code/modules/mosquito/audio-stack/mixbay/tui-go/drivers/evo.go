@@ -1133,6 +1133,9 @@ func (d *evoDriver) writeMixerCell(src string, c MixerCell, bus int) error {
 	}
 	defer d.end()
 	lDb, rDb := panToLRDb(c.VolumeDb, c.Pan)
+	if c.Muted {
+		lDb, rDb = mixDbMin, mixDbMin
+	}
 	off := bus * 2
 	var in int
 	if _, err := fmt.Sscanf(src, "input%d", &in); err == nil {
@@ -1151,6 +1154,9 @@ func (d *evoDriver) writeMixerCell(src string, c MixerCell, bus int) error {
 	inL := d.spec.NumInputs + (l-1)/2*2
 	inR := inL + 1
 	ll, lr, rl, rr := stereoSourceGains(c.VolumeDb, c.PanL, c.PanR)
+	if c.Muted {
+		ll, lr, rl, rr = mixDbMin, mixDbMin, mixDbMin, mixDbMin
+	}
 	for _, x := range []struct {
 		cn int
 		db float64
@@ -1176,6 +1182,8 @@ func (d *evoDriver) SetMixerInput(input int, volDb, pan float64, mixOut int) err
 	}
 	cell := MixerCell{VolumeDb: clamp(volDb, mixDbMin, mixDbMax), Pan: clamp(pan, -100, 100)}
 	key := MixerKey(fmt.Sprintf("input%d", input), mixOut)
+	// A fader move must not unmute: the return mute outlives level edits.
+	cell.Muted = d.loadShadow()[key].Muted
 	if !d.hasDevice() {
 		if !d.allowDemo {
 			return ErrOffline
@@ -1212,6 +1220,8 @@ func (d *evoDriver) SetMixerOutput(srcPair int, volDb, panL, panR float64, mixOu
 		PanR:     clamp(panR, -100, 100),
 	}
 	key := MixerKey(fmt.Sprintf("output%d_%d", srcPair*2+1, srcPair*2+2), mixOut)
+	// A fader move must not unmute: the return mute outlives level edits.
+	cell.Muted = d.loadShadow()[key].Muted
 	if !d.hasDevice() {
 		if !d.allowDemo {
 			return ErrOffline
@@ -1227,6 +1237,34 @@ func (d *evoDriver) SetMixerOutput(srcPair int, volDb, panL, panR float64, mixOu
 		return err
 	}
 	sh := d.loadShadow()
+	sh[key] = cell
+	return d.saveShadow(sh)
+}
+
+// SetMixerMute mutes one source's send on one bus only: the crosspoints go to
+// -inf while the cell keeps VolumeDb, so unmuting restores the fader. This is
+// the return mute, independent of the hardware input mute.
+func (d *evoDriver) SetMixerMute(source string, muted bool, mixOut int) error {
+	if mixOut < 0 || mixOut >= MixBuses(d.spec) {
+		return fmt.Errorf("mix bus must be 0..%d", MixBuses(d.spec)-1)
+	}
+	key := MixerKey(source, mixOut)
+	sh := d.loadShadow()
+	cell, ok := sh[key]
+	if !ok {
+		return fmt.Errorf("unknown mixer source %q", source)
+	}
+	cell.Muted = muted
+	if !d.hasDevice() {
+		if !d.allowDemo {
+			return ErrOffline
+		}
+		demo := d.ensureDemo()
+		demo.Mixer[key] = cell
+		d.saveDemo()
+	} else if err := d.writeMixerCell(source, cell, mixOut); err != nil {
+		return err
+	}
 	sh[key] = cell
 	return d.saveShadow(sh)
 }

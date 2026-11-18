@@ -560,6 +560,17 @@ func (m *model) syncPicker() {
 	}
 }
 
+// badgeField centres a state badge in a fixed width so the closing bracket
+// lines up on every row ("online" is narrower than "offline"/"offline-beta").
+func badgeField(badge string) string {
+	const w = 12 // len("offline-beta")
+	pad := w - len(badge)
+	if pad < 0 {
+		pad = 0
+	}
+	return strings.Repeat(" ", pad/2) + badge + strings.Repeat(" ", pad-pad/2)
+}
+
 func (m model) deviceItems() []tuikit.PickerItem {
 	var items []tuikit.PickerItem
 	specs := drivers.Registry()
@@ -596,7 +607,7 @@ func (m model) deviceItems() []tuikit.PickerItem {
 			}
 		}
 		items = append(items, tuikit.PickerItem{
-			Display: fmt.Sprintf("%-26s [%s]%s", spec.Display, badge, dot),
+			Display: fmt.Sprintf("%-26s [%s]%s", spec.Display, badgeField(badge), dot),
 			Value:   spec.ID,
 		})
 	}

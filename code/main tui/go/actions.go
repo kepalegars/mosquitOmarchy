@@ -289,6 +289,9 @@ type SetupItemRec struct {
 	// Present marks a row that exists on this machine. The backup tree defaults
 	// its ticks to these rows and R resets the ticks to them.
 	Present bool `json:"present"`
+	// Patch marks an app that ships a patch script: only those rows advertise
+	// the hidden "p" key.
+	Patch bool `json:"patch"`
 }
 
 // backupOptionsMsg carries the backup content tree + environment facts.

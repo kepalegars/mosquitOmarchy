@@ -791,6 +791,13 @@ tree_fingerprint(){
   for gk in "${ASSET_GATED_KEYS[@]}"; do
     if _manual_asset_present "$gk"; then out+="|$gk:1"; else out+="|$gk:0"; fi
   done
+  # A patch script dropped into a module's PATCH folder adds the hidden "p"
+  # hint to that row. Presence only, so dropping one shows up on the next
+  # render instead of waiting for the cache TTL.
+  local pk
+  for pk in ableton bitwig guitarpro davinci; do
+    if _patch_present "$pk"; then out+="|p$pk:1"; else out+="|p$pk:0"; fi
+  done
   # The builder's own mtime. A change to THIS file changes the tree, and the
   # catalog fingerprints above cannot see that: two different versions of the
   # tree builder produced byte-identical fingerprints and the loser of the race
@@ -1003,8 +1010,10 @@ _setup_tree(){
           json_str_into "$info";         local j_info=$JS
           j_group='""'
           [[ $fld == audio-stack ]] && j_group='"mosquito"'
+          local j_patch=false
+          _patch_present "${CAND_KEYS[$i]}" && j_patch=true
           json_obj_into folder "$j_folder" key "$j_key" label "$j_vlabel" info "$j_info" \
-            disabled "$(json_bool "$disabled")" group "$j_group"
+            disabled "$(json_bool "$disabled")" group "$j_group" patch "$j_patch"
           items+=("${j_folder//\"/}/$name"$'\t'"$JO")
         done
         ;;
@@ -1334,8 +1343,9 @@ _uninstall_tree(){
             info="$(module_desc "$e")"
           fi ;;
       esac
-      items+=("$(setup_folder_for "$id" "$e")/$name"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
-        "$(json_str "$(setup_folder_for "$id" "$e")")" "$(json_str "$e")" "$(json_str "$name")" "$(json_str "$info")")")
+      items+=("$(setup_folder_for "$id" "$e")/$name"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s,"patch":%s}' \
+        "$(json_str "$(setup_folder_for "$id" "$e")")" "$(json_str "$e")" "$(json_str "$name")" "$(json_str "$info")" \
+        "$(_patch_present "$e" && echo true || echo false)")")
     done
   done
   # ── Themes: user (created here) and defaults (stock Omarchy) ──
@@ -2079,6 +2089,17 @@ _manual_patch_spec(){ # appkey -> module-relative patch script (empty: none)
     davinci|davinci-resolve)   printf 'davinci/PATCH/patch-resolve.sh' ;;
     *)         printf '' ;;
   esac
+}
+
+# _patch_present <appkey>: true when a patch script actually ships in the
+# module's PATCH folder. The Setup/Uninstall tree advertises the hidden "p"
+# key only for those rows.
+_patch_present(){
+  local spec
+  spec="$(_manual_patch_spec "$1")"
+  [[ -n $spec && -f "$APPS_DIR/$spec" ]] && return 0
+  # Ableton's Move wine step is a second, independent patch for the same app.
+  [[ $1 == ableton && -f "$APPS_DIR/ableton/PATCH/move-wine/patch-move-wine.sh" ]]
 }
 
 # Report whether a patch script says its patch is applied (all four support a

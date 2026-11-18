@@ -132,6 +132,10 @@ type MixerCell struct {
 	Pan      float64 `json:"pan"` // -100..+100
 	PanL     float64 `json:"pan_l,omitempty"`
 	PanR     float64 `json:"pan_r,omitempty"`
+	// Muted is a return-only mute: the send sits at -inf while VolumeDb keeps
+	// the level to restore. It is separate from the hardware input mute on the
+	// Controls page (EVO 8: that one silences the record path, not the mix).
+	Muted bool `json:"muted,omitempty"`
 }
 
 // Status is the full readable state of one device.
@@ -173,6 +177,13 @@ type Driver interface {
 type OutputChannelDriver interface {
 	SetOutputChannel(ch int, db float64) error
 	SetOutputChannelMute(ch int, muted bool) error
+}
+
+// MixerMuteDriver optionally mutes one mixer source's send on one bus without
+// touching the hardware record mute. EVO 8 needs this: its input mute silences
+// what the host records, not the return into the mix.
+type MixerMuteDriver interface {
+	SetMixerMute(source string, muted bool, mixOut int) error
 }
 
 // LiveReader is a driver that can separate a real hardware read from the DEMO

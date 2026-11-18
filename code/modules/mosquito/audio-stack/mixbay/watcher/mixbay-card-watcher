@@ -14,7 +14,8 @@
 #
 # A missing profile makes the notification's "Install it" button open Mixbay
 # and install it; an installed card's "Open UI & Use it" opens that page (or
-# the card's default UI). Every notice is persistent (critical, no timeout).
+# the card's default UI) and "Use it" only makes it the default interface.
+# Connection notices are persistent; an unplug notice auto-closes.
 # =============================================================================
 set -uo pipefail
 
@@ -59,36 +60,46 @@ ICON_CARD='󰓃'
 ICON_CARD_OFF='󰓄'
 
 notify_body(){
-  local kind="$1"
+  local kind="$1" display="$2"
   case $kind in
     install)          printf 'No Mixbay profile installed.\n' ;;
-    installed|update) printf 'Mixbay profile installed.\n' ;;
+    installed|update) printf '%s connected\n' "$display" ;;
     unsupported)      printf 'Not supported by Mixbay yet.\n' ;;
-    disconnected)     printf 'Disconnected.\n' ;;
+    disconnected)     printf '%s unconnected\n' "$display" ;;
   esac
 }
 
 send_notification(){
   local id="$1" display="$2" kind="$3" body headline glyph args=() exec=()
-  body="$(notify_body "$kind")"
+  local urgency=critical timeout=0
+  body="$(notify_body "$kind" "$display")"
   headline="$display connected"
   glyph="$ICON_CARD"
-  if [[ $kind == disconnected ]]; then
-    headline="$display disconnected"
-    glyph="$ICON_CARD_OFF"
-  fi
+  case $kind in
+    installed|update)
+      # A card that already has a profile: Mixbay is the title, the state is
+      # the body.
+      headline=Mixbay
+      ;;
+    disconnected)
+      headline=Mixbay
+      glyph="$ICON_CARD_OFF"
+      # Informational: it closes itself instead of waiting to be dismissed.
+      urgency=normal
+      timeout=5000
+      ;;
+  esac
   if command -v omarchy-notification-send >/dev/null 2>&1; then
-    # A connection notice is a decision the user has to see: critical is the
-    # only Omarchy urgency with no timeout, so it stays until dismissed.
-    args=(--app-name Mixbay -g "$glyph" -u critical -t 0)
+    args=(--app-name Mixbay -g "$glyph" -u "$urgency" -t "$timeout")
     case $kind in
       install)
         exec=(--action "Install it" "$STARTUP" --install-card "$id")
         ;;
       installed|update)
-        # One button: make it the default and open the UI the profile's
-        # default_ui choice names (the TUI falls back to its card page).
-        exec=(--action "Open UI & Use it" "$STARTUP" --use-card "$id")
+        # First button (also the card click) opens the UI the profile's
+        # default_ui choice names; the second only makes the card default.
+        exec=(--action "Open UI & Use it" "$STARTUP" --use-card "$id"
+              --action "Use it" "$STARTUP" --select-card "$id")
         ;;
       unsupported)
         exec=(--exec "$STARTUP" --open)
@@ -97,8 +108,8 @@ send_notification(){
     # --exec consumes the rest of the line, so headline and body come first.
     omarchy-notification-send "${args[@]}" "$headline" "$body" "${exec[@]}" >/dev/null 2>&1 || true
   elif command -v notify-send >/dev/null 2>&1; then
-    args=(-a Mixbay -i audio-card-symbolic -u critical -t 0)
-    [[ $kind == disconnected ]] && args=(-a Mixbay -i audio-volume-muted-symbolic -u critical -t 0)
+    args=(-a Mixbay -i audio-card-symbolic -u "$urgency" -t "$timeout")
+    [[ $kind == disconnected ]] && args=(-a Mixbay -i audio-volume-muted-symbolic -u "$urgency" -t "$timeout")
     notify-send "${args[@]}" "$headline" "$body" >/dev/null 2>&1 || true
   fi
 }
@@ -348,15 +359,15 @@ main(){
 
 self_test(){
   local fail=0 b cur prev new gone tmp_at
-  b="$(notify_body install)"
+  b="$(notify_body install x)"
   [[ $b == "No Mixbay profile installed." ]] || fail=1
   [[ $b != *"Click"* && $b != *"click"* ]] || fail=1
-  b="$(notify_body installed)"
-  [[ $b == "Mixbay profile installed." ]] || fail=1
-  b="$(notify_body unsupported)"
+  b="$(notify_body installed 'Audient EVO 8')"
+  [[ $b == "Audient EVO 8 connected" ]] || fail=1
+  b="$(notify_body unsupported x)"
   [[ $b == "Not supported by Mixbay yet." ]] || fail=1
-  b="$(notify_body disconnected)"
-  [[ $b == "Disconnected." ]] || fail=1
+  b="$(notify_body disconnected 'Audient EVO 8')"
+  [[ $b == "Audient EVO 8 unconnected" ]] || fail=1
   cur='[{"key":"a","id":"evo8","display":"Audient EVO 8","kind":"installed"},
        {"key":"b","id":"ugm192","display":"ESI UGM192","kind":"install"}]'
   prev='[{"key":"a","id":"evo8","display":"Audient EVO 8","kind":"installed"},
@@ -377,35 +388,34 @@ self_test(){
   printf '0\n' > "$tmp_at"
   move_fresh && fail=1
   rm -f "$tmp_at"
-  # One persistent notice per connection: headline "<card> connected", the
-  # fixed body, and exactly one action. There is no "click to open" sentence.
+  # One notice per connection: title, state line, buttons and timeout. A card
+  # with a profile gets two buttons; an unplug closes itself.
   if command -v omarchy-notification-send >/dev/null 2>&1; then
-    local stub argv=() i head_i=-1 label="" actions=0 critical=0 never=0
+    local stub argv=() i head_i=-1 labels="" actions=0 never=0
     stub="$(mktemp)"
     omarchy-notification-send(){ printf '%s\n' "$@" >"$stub"; }
     assert_notice(){
-      local want_body="$1" want_label="$2" want_actions="$3"
+      local want_headline="$1" want_body="$2" want_labels="$3" want_actions="$4" want_never="$5"
       mapfile -t argv <"$stub"
-      head_i=-1 label="" actions=0 critical=0 never=0
+      head_i=-1 labels="" actions=0 never=0
       for i in "${!argv[@]}"; do
         case ${argv[i]} in
-          "$display connected"|"$display disconnected") head_i=$i ;;
-          --action) actions=$((actions + 1)); label="${argv[i+1]}" ;;
-          -u) critical=1 ;;
+          "$want_headline") head_i=$i ;;
+          --action) actions=$((actions + 1)); labels+="${argv[i+1]}|" ;;
           -t) [[ ${argv[i+1]} == 0 ]] && never=1 ;;
         esac
       done
       ((head_i > -1)) && [[ ${argv[head_i+1]} == "$want_body" ]] || fail=1
-      ((critical == 1 && never == 1 && actions == want_actions)) || fail=1
-      [[ $label == "$want_label" ]] || fail=1
+      ((actions == want_actions && never == want_never)) || fail=1
+      [[ $labels == "$want_labels" ]] || fail=1
     }
     display='Audient EVO 8'
     send_notification evo8 "$display" install
-    assert_notice "No Mixbay profile installed." "Install it" 1
+    assert_notice "$display connected" "No Mixbay profile installed." "Install it|" 1 1
     send_notification evo8 "$display" installed
-    assert_notice "Mixbay profile installed." "Open UI & Use it" 1
+    assert_notice Mixbay "$display connected" "Open UI & Use it|Use it|" 2 1
     send_notification evo8 "$display" disconnected
-    assert_notice "Disconnected." "" 0
+    assert_notice Mixbay "$display unconnected" "" 0 0
     unset -f omarchy-notification-send
     rm -f "$stub"
   fi
