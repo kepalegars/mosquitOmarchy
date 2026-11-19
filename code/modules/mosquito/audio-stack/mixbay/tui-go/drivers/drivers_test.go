@@ -297,6 +297,7 @@ func TestEvoDefaultPresetOutputsAtMin(t *testing.T) {
 // Read() is the explicit live seam: no interface means ErrOffline, while
 // Status() keeps the historical DEMO fallback for the CLI and demo mode.
 func TestEvoReadRequiresHardware(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
 	d := newEvo(EVO8Spec)
 	lr, ok := any(d).(LiveReader)

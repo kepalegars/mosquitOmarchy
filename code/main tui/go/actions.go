@@ -292,6 +292,8 @@ type SetupItemRec struct {
 	// Patch marks an app that ships a patch script: only those rows advertise
 	// the hidden "p" key.
 	Patch bool `json:"patch"`
+	// MovePatch marks Ableton's separate Move wine step, bound to P.
+	MovePatch bool `json:"move_patch"`
 }
 
 // backupOptionsMsg carries the backup content tree + environment facts.

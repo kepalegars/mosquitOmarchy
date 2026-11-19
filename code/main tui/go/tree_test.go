@@ -1740,3 +1740,63 @@ func TestPatchHintOnlyWhenScriptExists(t *testing.T) {
 			m.top(), m.pendingAction, cmd, m.toast.View())
 	}
 }
+
+// Ableton's Move wine step is uppercase P on the Ableton row, separate from
+// the hidden p that still applies the R2R patch.
+func TestMoveWineUsesUppercaseP(t *testing.T) {
+	m := flatSetup()
+	it := SetupItemRec{Folder: "apps", Key: "ableton", Label: "Ableton Live — v1", Patch: true, MovePatch: true}
+	m.setupItems = append(m.setupItems, it)
+	m.setupByValue[setupValue("apps", "ableton")] = it
+	m.setupPicker = m.rebuildSetup()
+	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "ableton"))
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "p patch") || !strings.Contains(view, "P Move patch") {
+		t.Fatalf("Setup legend does not advertise both keys on the Ableton row:\n%s", view)
+	}
+
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	if m.top() != scrConfirm || m.pendingAction != "ableton-move-patch" {
+		t.Fatalf("P on ableton did not open the Move confirm: top=%v action=%q", m.top(), m.pendingAction)
+	}
+	for _, want := range []string{"udev", "libusb-1.0", "~/.wine-ableton"} {
+		if !strings.Contains(m.pendingMsg, want) {
+			t.Fatalf("Move prompt is missing %q: %q", want, m.pendingMsg)
+		}
+	}
+
+	u := flatSetup()
+	u.treeMode = "uninstall"
+	u.setupItems = append(u.setupItems, it)
+	u.setupByValue[setupValue("apps", "ableton")] = it
+	u.setupPicker = u.rebuildSetup()
+	u.setupPicker = u.setupPicker.SelectValue(setupValue("apps", "ableton"))
+	if view := ansi.Strip(u.View()); !strings.Contains(view, "P restore Move") {
+		t.Fatalf("Uninstall legend does not advertise the Move restore:\n%s", view)
+	}
+	u, _ = u.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	if u.top() != scrConfirm || u.pendingAction != "ableton-move-revert" {
+		t.Fatalf("P on ableton in Uninstall did not open the restore confirm: top=%v action=%q", u.top(), u.pendingAction)
+	}
+}
+
+// Without the Move script the P hint and the key stay silent; p (the R2R
+// patch) is still advertised.
+func TestPOnAbletonWithoutMoveScriptIsInert(t *testing.T) {
+	m := flatSetup()
+	it := SetupItemRec{Folder: "apps", Key: "ableton", Label: "Ableton Live — v1", Patch: true}
+	m.setupItems = append(m.setupItems, it)
+	m.setupByValue[setupValue("apps", "ableton")] = it
+	m.setupPicker = m.rebuildSetup()
+	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "ableton"))
+
+	view := ansi.Strip(m.View())
+	if strings.Contains(view, "P Move patch") || !strings.Contains(view, "p patch") {
+		t.Fatalf("wrong hints without the Move script:\n%s", view)
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	if m.top() != scrSetup || m.pendingAction != "" {
+		t.Fatalf("P without the Move script must be inert: top=%v action=%q", m.top(), m.pendingAction)
+	}
+}

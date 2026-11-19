@@ -1488,6 +1488,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case "davinci-alt-drivers-revert":
 			return m.startWorking("Restoring the initial DaVinci drivers",
 				workingArgs("davinci-alt-drivers-revert", nil)...)
+		case "ableton-move-patch":
+			return m.startWorking("Applying the Ableton Move wine step",
+				workingArgs("run-patch", []string{"apps", "ableton-move"})...)
+		case "ableton-move-revert":
+			return m.startWorking("Restoring the Ableton Move state",
+				workingArgs("remove-patch", []string{"apps", "ableton-move"})...)
 		case "preinstalls-remove":
 			// The only path that ever reaches `pacman -Rns`: an explicit "Remove
 			// them". Reached from Enter AND from back, both through the same
@@ -2098,6 +2104,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					return m.confirmReaperRevert()
 				}
 				return m.confirmReaperConfig()
+			case "ableton":
+				if it, ok := m.setupByValue[m.setupPicker.SelectedValue()]; ok && it.MovePatch {
+					if m.treeMode == "uninstall" {
+						return m.confirmMoveWineRevert()
+					}
+					return m.confirmMoveWine()
+				}
 			}
 		}
 		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "i" || km.String() == "?") {
@@ -2187,6 +2200,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					return m.confirmReaperRevert()
 				}
 				return m.confirmReaperConfig()
+			case "ableton":
+				if it, ok := m.setupByValue[m.setupCatPicker.SelectedValue()]; ok && it.MovePatch {
+					if m.treeMode == "uninstall" {
+						return m.confirmMoveWineRevert()
+					}
+					return m.confirmMoveWine()
+				}
 			}
 		}
 		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "i" {
@@ -3817,6 +3837,48 @@ func (m model) confirmAltDriversRevert() (model, tea.Cmd) {
 	return m, nil
 }
 
+// moveWinePrompt is the optional Ableton Move step: system udev access plus a
+// wine prefix override, nothing in the runtime itself.
+func moveWinePrompt() string {
+	return "Apply the Ableton Move control step for Live under wine?\n\n" +
+		"WHAT IT DOES\n" +
+		" • adds a udev rule so your user can open Ableton's USB devices\n" +
+		"   (Move, Push, Note) without root;\n" +
+		" • sets a prefix-wide libusb-1.0 override in ~/.wine-ableton so Live\n" +
+		"   loads wine's bridge instead of Ableton's native DLL.\n\n" +
+		"It replaces no wine file, and P in Uninstall restores the previous\n" +
+		"state."
+}
+
+func (m model) confirmMoveWine() (model, tea.Cmd) {
+	m.pendingAction = "ableton-move-patch"
+	m.pendingMsg = moveWinePrompt()
+	m.pendingNo = "Cancel"
+	m.pendingYes = "Apply"
+	m.push(scrConfirm)
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).FocusYes()
+	return m, nil
+}
+
+func moveWineRevertPrompt() string {
+	return "Restore the state before the Ableton Move wine step?\n\n" +
+		"WHAT IT UNDOES\n" +
+		" • removes the Ableton USB udev rule the step installed;\n" +
+		" • restores the previous libusb-1.0 override in ~/.wine-ableton.\n\n" +
+		"Live keeps working; the Move control falls back to wine's default\n" +
+		"behaviour."
+}
+
+func (m model) confirmMoveWineRevert() (model, tea.Cmd) {
+	m.pendingAction = "ableton-move-revert"
+	m.pendingMsg = moveWineRevertPrompt()
+	m.pendingNo = "Cancel"
+	m.pendingYes = "Restore"
+	m.push(scrConfirm)
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).FocusYes()
+	return m, nil
+}
+
 // reaperConfigPrompt says what the P action installs and, above all, that it
 // replaces the current REAPER configuration. The backup path is stated because
 // the user must be able to recover without reading the script.
@@ -3935,6 +3997,10 @@ func operationName(sub string) string {
 		return "DaVinci profile"
 	case "davinci-alt-drivers-revert":
 		return "DaVinci restore"
+	case "ableton-move-patch":
+		return "Ableton Move"
+	case "ableton-move-revert":
+		return "Ableton Move restore"
 	case "reaper-custom-config":
 		return "REAPER config"
 	case "reaper-custom-config-revert":

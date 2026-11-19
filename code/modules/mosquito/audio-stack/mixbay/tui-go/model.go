@@ -560,15 +560,25 @@ func (m *model) syncPicker() {
 	}
 }
 
-// badgeField centres a state badge in a fixed width so the closing bracket
-// lines up on every row ("online" is narrower than "offline"/"offline-beta").
+// badgeField pads a shorter state badge so the closing bracket lines up with
+// the same-kind row ("online" against "offline"). An offline badge is
+// returned untouched: its display is a fixed reference.
 func badgeField(badge string) string {
-	const w = 12 // len("offline-beta")
-	pad := w - len(badge)
-	if pad < 0 {
-		pad = 0
+	if strings.HasPrefix(badge, "offline") {
+		return badge
 	}
-	return strings.Repeat(" ", pad/2) + badge + strings.Repeat(" ", pad-pad/2)
+	w := len("offline")
+	if strings.HasSuffix(badge, "-beta") {
+		w = len("offline-beta")
+	}
+	pad := w - len(badge)
+	if pad <= 0 {
+		return badge
+	}
+	// An odd gap cannot be split evenly; the extra space goes on the left so
+	// the word sits closer to the centre of the field.
+	left := pad - pad/2
+	return strings.Repeat(" ", left) + badge + strings.Repeat(" ", pad/2)
 }
 
 func (m model) deviceItems() []tuikit.PickerItem {

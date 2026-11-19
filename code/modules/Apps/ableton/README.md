@@ -109,10 +109,14 @@ release, the rule hash and the current override, so a partial state reads as not
 value, removes the rule (only if this patch added it) and deletes the marker; with no marker it is a
 no-op. `--reapply` is the update hook.
 
-**Hidden `p` flow.** `_manual_patch_spec` maps a synthetic `ableton-move` key to this script;
-`cmd_patches apps ableton` emits the Move as its own row, `_installed_state` maps it back to
-`ableton`, and `cmd_run_patch`/`cmd_remove_patch` dispatch it like `ableton` (no Go change — the TUI
-passes `PatchRec.Key` back verbatim). The uninstall tree lists it separately when applied.
+**`P` row action.** With the cursor on the Ableton row, **P** applies this step
+and **P in Uninstall** restores the previous state — the same per-row key as
+DaVinci's drivers and REAPER's config. `_manual_patch_spec` still maps the
+synthetic `ableton-move` key to the script and `_installed_state` maps it back
+to `ableton`, so `cmd_run_patch`/`cmd_remove_patch` dispatch it directly; the
+tree marks the row with `move_patch` only when the script is present, so `P`
+stays silent otherwise. The hidden lowercase `p` remains the R2R activation
+patch and never lists the Move step.
 
 **`.run` updates.** `sh install-ableton-latest.run update` replaces the wine runtime and refreshes
 `system32/libusb-1.0.dll`; `PATCH/`, the udev rule and `user.reg` survive. `setup-ableton.sh` calls

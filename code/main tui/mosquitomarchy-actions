@@ -798,6 +798,9 @@ tree_fingerprint(){
   for pk in ableton bitwig guitarpro davinci; do
     if _patch_present "$pk"; then out+="|p$pk:1"; else out+="|p$pk:0"; fi
   done
+  # The Ableton Move wine step is a second, independent script on the same
+  # row and drives its uppercase P hint, so its presence is an input too.
+  if _move_patch_present ableton; then out+="|mableton:1"; else out+="|mableton:0"; fi
   # The builder's own mtime. A change to THIS file changes the tree, and the
   # catalog fingerprints above cannot see that: two different versions of the
   # tree builder produced byte-identical fingerprints and the loser of the race
@@ -1012,8 +1015,10 @@ _setup_tree(){
           [[ $fld == audio-stack ]] && j_group='"mosquito"'
           local j_patch=false
           _patch_present "${CAND_KEYS[$i]}" && j_patch=true
+          local j_move=false
+          _move_patch_present "${CAND_KEYS[$i]}" && j_move=true
           json_obj_into folder "$j_folder" key "$j_key" label "$j_vlabel" info "$j_info" \
-            disabled "$(json_bool "$disabled")" group "$j_group" patch "$j_patch"
+            disabled "$(json_bool "$disabled")" group "$j_group" patch "$j_patch" move_patch "$j_move"
           items+=("${j_folder//\"/}/$name"$'\t'"$JO")
         done
         ;;
@@ -1343,9 +1348,10 @@ _uninstall_tree(){
             info="$(module_desc "$e")"
           fi ;;
       esac
-      items+=("$(setup_folder_for "$id" "$e")/$name"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s,"patch":%s}' \
+      items+=("$(setup_folder_for "$id" "$e")/$name"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s,"patch":%s,"move_patch":%s}' \
         "$(json_str "$(setup_folder_for "$id" "$e")")" "$(json_str "$e")" "$(json_str "$name")" "$(json_str "$info")" \
-        "$(_patch_present "$e" && echo true || echo false)")")
+        "$(_patch_present "$e" && echo true || echo false)" \
+        "$(_move_patch_present "$e" && echo true || echo false)")")
     done
   done
   # ── Themes: user (created here) and defaults (stock Omarchy) ──
@@ -1418,14 +1424,6 @@ _uninstall_tree(){
       items+=("patches/$mid"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
         "$(json_str patches)" "$(json_str "patch:$mid")" \
         "$(json_str "$mid — remove patch")" "$(json_str "restores the original files")")")
-      if [[ $mid == ableton ]]; then
-        local mpath="$APPS_DIR/ableton/PATCH/move-wine/patch-move-wine.sh"
-        [[ -f $mpath ]] && _patch_applied "$mpath" || continue
-        items+=("patches/ableton-move"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
-          "$(json_str patches)" "$(json_str "patch:ableton-move")" \
-          "$(json_str "ableton-move — remove patch")" \
-          "$(json_str "Move control under wine: udev access + libusb override")")")
-      fi
     done
   fi
   # Quick fixes that are currently APPLIED (each supports --remove/--uninstall).
@@ -2097,8 +2095,12 @@ _manual_patch_spec(){ # appkey -> module-relative patch script (empty: none)
 _patch_present(){
   local spec
   spec="$(_manual_patch_spec "$1")"
-  [[ -n $spec && -f "$APPS_DIR/$spec" ]] && return 0
-  # Ableton's Move wine step is a second, independent patch for the same app.
+  [[ -n $spec && -f "$APPS_DIR/$spec" ]]
+}
+
+# _move_patch_present <appkey>: Ableton's Move wine step is a separate action
+# bound to uppercase P, not the hidden "p" (which stays for the R2R patch).
+_move_patch_present(){
   [[ $1 == ableton && -f "$APPS_DIR/ableton/PATCH/move-wine/patch-move-wine.sh" ]]
 }
 
@@ -2135,17 +2137,6 @@ cmd_patches(){
     printf '{"folder":%s,"key":%s,"label":%s,"script":%s,"applied":%s}\n' \
       "$(json_str "$folder")" "$(json_str "$key")" "$(json_str "$key")" \
       "$(json_str "$path")" "$applied"
-    # The Move's wine step is its own row: applied and removed independently
-    # of the R2R activation patch, but only offered once Ableton is installed.
-    if [[ $key == ableton ]]; then
-      local mpath="$APPS_DIR/ableton/PATCH/move-wine/patch-move-wine.sh" mapplied=false
-      if [[ -f $mpath ]]; then
-        _patch_applied "$mpath" && mapplied=true
-        printf '{"folder":%s,"key":%s,"label":%s,"script":%s,"applied":%s}\n' \
-          "$(json_str "$folder")" "$(json_str ableton-move)" \
-          "$(json_str "ableton Move")" "$(json_str "$mpath")" "$mapplied"
-      fi
-    fi
   done
 }
 

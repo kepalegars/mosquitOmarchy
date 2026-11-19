@@ -20,11 +20,12 @@ var appVersion = "dev"
 var contentPolicy = tuikit.ManagerContent
 
 // setupRowHint prefixes the keys that only act on the highlighted Setup row:
-// P for DaVinci's drivers and REAPER's config, and the hidden p for a patch
-// only when that app actually ships a patch script.
+// P for DaVinci's drivers, REAPER's config and Ableton's Move step, and the
+// hidden p for a patch only when that app actually ships a patch script.
 func (m model) setupRowHint(v string) string {
+	it := m.setupByValue[v]
 	patch := ""
-	if it, ok := m.setupByValue[v]; ok && it.Patch {
+	if it.Patch {
 		patch = "p patch · "
 	}
 	switch _, key := splitSetupValue(v); key {
@@ -38,6 +39,13 @@ func (m model) setupRowHint(v string) string {
 			return patch + "P restore config · "
 		}
 		return patch + "P custom config · "
+	case "ableton":
+		if it.MovePatch {
+			if m.treeMode == "uninstall" {
+				return patch + "P restore Move · "
+			}
+			return patch + "P Move patch · "
+		}
 	}
 	return patch
 }
