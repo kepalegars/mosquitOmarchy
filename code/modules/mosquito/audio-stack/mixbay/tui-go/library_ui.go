@@ -218,9 +218,10 @@ fi
 
 // bindPreset loads the card's UI composition for the active device.
 func (m *model) bindPreset() {
-	m.preset = ""
+	m.preset, m.blocks = "", nil
 	if c, _, err := profiles.Effective(m.deviceID); err == nil {
 		m.preset = c.Preset()
+		m.blocks = c.Blocks()
 	}
 }
 

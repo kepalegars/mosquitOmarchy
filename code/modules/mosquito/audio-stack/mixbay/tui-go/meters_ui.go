@@ -211,15 +211,16 @@ func (m model) wantsMeters() bool {
 	if m.quit || !m.session.live || !m.status.Online {
 		return false
 	}
-	if m.isUGMDevice() || m.isMoveDevice() {
-		return m.top() == scrControls
-	}
-	if !m.isEvoDevice() {
+	// A composition without a Levels block has nowhere to draw a meter; the
+	// EVO control rows hide theirs too, so don't hold a USB capture open.
+	if !m.hasBlock("levelsColumns") {
 		return false
 	}
-	switch m.top() {
-	case scrControls, scrMixer:
-		return true
+	switch m.controlModel() {
+	case modelGrid:
+		return m.top() == scrControls || m.top() == scrMixer
+	case modelSingle, modelLevels:
+		return m.top() == scrControls
 	}
 	return false
 }
@@ -409,7 +410,7 @@ func evoPlaybackBarsFor(spec drivers.Spec) []evoMeterBar {
 }
 
 func (m model) meterStatus() (string, int) {
-	if !m.isEvoDevice() && !m.isUGMDevice() && !m.isMoveDevice() {
+	if !m.hasBlock("levelsColumns") {
 		return "Meters need the live USB streams.", cYellow
 	}
 	if !m.session.live || !m.status.Online {

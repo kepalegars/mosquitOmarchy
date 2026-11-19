@@ -83,6 +83,13 @@ func splitWords(s string) []string {
 }
 
 func (m model) moveView() string {
+	return m.levelsOnlyView(moveNote)
+}
+
+// levelsOnlyView is the Levels page for a composition with no controls: the
+// Move adds its fixed-rate note, an auto card with only levelsColumns passes
+// none.
+func (m model) levelsOnlyView(note string) string {
 	w, h := m.contentSize()
 	pal := evoPalette()
 	c := newEvoCanvas(w, h)
@@ -95,9 +102,12 @@ func (m model) moveView() string {
 	if sectionW > w {
 		sectionW = w
 	}
-	note := wrapWords(moveNote, sectionW-2)
-	// header (2) + levels + status line (2) + note + a gap + help (2)
-	totalH := 2 + ugmLevelRows + 2 + len(note) + 1 + 2
+	noteLines := wrapWords(note, sectionW-2)
+	// The one-page title bar is always drawn (older Move cards have no tabBar
+	// block but still need their name and connection dot).
+	header := 2
+	// header + levels + status line (2) + note + a gap + help (2)
+	totalH := header + ugmLevelRows + 2 + len(noteLines) + 1 + 2
 	if w < 44 || h < totalH {
 		c.put(0, 0, fmt.Sprintf("Terminal too small (%dx%d, need 44x%d)", w, h, totalH), evoVal)
 		return c.render(pal)
@@ -113,18 +123,24 @@ func (m model) moveView() string {
 
 	// Header: a single Levels tab, like the UGM192's, plus the dot and name on
 	// the right edge. One tab only, so no key switches it.
-	r.singleTabBar(row, cx, sectionW, " Levels ")
+	if header > 0 {
+		r.singleTabBar(row, cx, sectionW, " Levels ")
+	}
 
-	body := row + 2
+	body := row + header
 	r.ugmLevelsBody(body, cx, sectionW)
-	r.drawLevelsStatusBar(body+ugmLevelRows, cx, sectionW)
+	if m.hasBlock("statusBar") {
+		r.drawLevelsStatusBar(body+ugmLevelRows, cx, sectionW)
+	}
 
 	ny := body + ugmLevelRows + 2
-	for i, line := range note {
+	for i, line := range noteLines {
 		r.put(cx+1, ny+i, line, evoDim)
 	}
-	r.drawHelpFooter(ny+len(note)+1, cx,
-		[]evoHint{{key: "Space", desc: " reset peaks"}, {key: "p", desc: " freeze"}, {key: "q", desc: " quit"}}, nil)
+	if m.hasBlock("help") {
+		r.drawHelpFooter(ny+len(noteLines)+1, cx,
+			[]evoHint{{key: "Space", desc: " reset peaks"}, {key: "p", desc: " freeze"}, {key: "q", desc: " quit"}}, nil)
+	}
 	return c.render(pal)
 }
 

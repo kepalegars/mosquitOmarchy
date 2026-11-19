@@ -11,19 +11,15 @@ card including the seeded snapshots, duplicate detection by USB identity
 
 ## 1. Split the EVO renderer into composable blocks
 
-Today `evo_tui.go` (single 73K renderer) draws the tabs, controls grid, mixer
-grid, levels columns, status bar and help. The UGM panel already reuses the
-primitives, and cards declare `ui.blocks`, but a card cannot yet compose them
-freely: `ui.preset` routes to a whole renderer.
-
-Goal:
-- extract `tabBar`, `controlsGrid`, `controlsSingle`, `mixerGrid`,
-  `levelsColumns`, `statusBar`, `help` into standalone draw functions;
-- keep a per-preset input model (EVO grid ↔ many controls, UGM ↔ one control);
-- render an unknown card from its `ui.blocks` list when the composition is
-  valid, not only from a hardcoded preset;
-- keep `git diff` behaviour identical for the shipped cards (golden-frame
-  tests before/after).
+Done: `evo_tui.go` already drew the blocks as separate functions, and the
+renderers now take their page list from `ui.blocks` (`ui_blocks.go`). The
+preset (or the native device id) still picks the input model — EVO grid,
+single control, levels only — while a declared composition chooses which of
+`tabBar`, `controlsGrid`/`controlsSingle`, `mixerGrid`, `levelsColumns`,
+`statusBar` and `help` are drawn. An `auto` card with a controls/mixer grid
+now renders the grid (SSL 12); an `auto` card with no controls and no mixer
+stays on its openers (RME). Shipped EVO 4/8, UGM192 and Move frames were
+diffed byte-for-byte against the previous build and are unchanged.
 
 ## 2. Generic USB/HID interpreter + `mixbay-reverse propose`
 
@@ -43,9 +39,10 @@ channel count, the Levels bars and the scale. A declared binding is
 authoritative: a missing node means no meters, never another card's fallback.
 Absent keeps the historical EVO/UGM discovery.
 
-Remaining: a card whose composition has no `levelsColumns` block (`auto`,
-`single-pair`) still has nowhere to draw the meters; that is §1's renderer
-work.
+A composition without `levelsColumns` has no meter surface by design; the
+renderer work that makes a declared composition reachable is §1, now done.
+`single-pair` declares `controlsSingle` and gets the meters only when its
+card adds `levelsColumns`.
 
 ## 5. Captures in the client (not needed yet)
 

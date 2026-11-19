@@ -300,9 +300,14 @@ type evoMxSection struct {
 func evoNumMixerSources(spec drivers.Spec) int { return (spec.MixerInputs - spec.NumInputs) / 2 }
 
 func evoElements(spec drivers.Spec) []evoElement {
-	els := []evoElement{{key: "output", sub: "volume", label: "OUT", color: cGreen}}
-	for i := 0; i < spec.NumInputs; i++ {
-		els = append(els, evoElement{key: fmt.Sprintf("input%d", i+1), sub: "gain", label: fmt.Sprintf("IN %d", i+1), color: cBlue})
+	var els []evoElement
+	if spec.Caps.Volume || spec.Caps.Mute {
+		els = append(els, evoElement{key: "output", sub: "volume", label: "OUT", color: cGreen})
+	}
+	if spec.Caps.Gain {
+		for i := 0; i < spec.NumInputs; i++ {
+			els = append(els, evoElement{key: fmt.Sprintf("input%d", i+1), sub: "gain", label: fmt.Sprintf("IN %d", i+1), color: cBlue})
+		}
 	}
 	if spec.HasMonitor {
 		els = append(els, evoElement{key: "monitor", label: "MONITOR", color: cCyan})
@@ -310,18 +315,31 @@ func evoElements(spec drivers.Spec) []evoElement {
 	return els
 }
 
+// evoGroups omits a group the card cannot drive: a composed card (SSL 12 has
+// volume/mute but no preamps) must not show faders whose write would fail.
 func evoGroups(spec drivers.Spec) []evoGroup {
 	if spec.NumOutPairs == 1 {
 		return []evoGroup{{label: "All", elements: evoElements(spec)}}
 	}
-	var inputs, outputs []evoElement
-	for i := 0; i < spec.NumInputs; i++ {
-		inputs = append(inputs, evoElement{key: fmt.Sprintf("input%d", i+1), sub: "gain", label: fmt.Sprintf("IN %d", i+1), color: cBlue})
+	var groups []evoGroup
+	if spec.Caps.Gain {
+		var inputs []evoElement
+		for i := 0; i < spec.NumInputs; i++ {
+			inputs = append(inputs, evoElement{key: fmt.Sprintf("input%d", i+1), sub: "gain", label: fmt.Sprintf("IN %d", i+1), color: cBlue})
+		}
+		groups = append(groups, evoGroup{label: "Inputs", elements: inputs})
 	}
-	for i := 0; i < spec.NumOutPairs; i++ {
-		outputs = append(outputs, evoElement{key: fmt.Sprintf("output%d", i+1), sub: "volume", label: fmt.Sprintf("OUT %d|%d", i*2+1, i*2+2), color: cGreen})
+	if spec.Caps.Volume || spec.Caps.Mute {
+		var outputs []evoElement
+		for i := 0; i < spec.NumOutPairs; i++ {
+			outputs = append(outputs, evoElement{key: fmt.Sprintf("output%d", i+1), sub: "volume", label: fmt.Sprintf("OUT %d|%d", i*2+1, i*2+2), color: cGreen})
+		}
+		groups = append(groups, evoGroup{label: "Outputs", elements: outputs})
 	}
-	return []evoGroup{{label: "Inputs", elements: inputs}, {label: "Outputs", elements: outputs}}
+	if len(groups) == 0 {
+		groups = append(groups, evoGroup{label: "All"})
+	}
+	return groups
 }
 
 func evoHasSubsections(spec drivers.Spec) bool { return len(evoGroups(spec)) > 1 }
@@ -331,45 +349,48 @@ func evoHasSubsections(spec drivers.Spec) bool { return len(evoGroups(spec)) > 1
 // to one block per stereo pair and can be split into individual channels.
 func (u *evoUI) groups() []evoGroup {
 	spec := u.spec
-	var inputs []evoElement
-	for i := 0; i < spec.NumInputs; i++ {
-		pair := i / 2
-		if i%2 == 0 && pair < len(u.inStereo) && u.inStereo[pair] && i+1 < spec.NumInputs {
-			inputs = append(inputs, evoElement{
-				key: fmt.Sprintf("input%d", i+1), link: fmt.Sprintf("input%d", i+2),
-				sub: "gain", label: fmt.Sprintf("IN %d|%d", i+1, i+2), color: cBlue,
-			})
-			i++
-			continue
-		}
-		inputs = append(inputs, evoElement{key: fmt.Sprintf("input%d", i+1), sub: "gain", label: fmt.Sprintf("IN %d", i+1), color: cBlue})
-	}
-	var outputs []evoElement
-	for pair := 0; pair < spec.NumOutPairs; pair++ {
-		if pair < len(u.outMono) && u.outMono[pair] {
-			for ch := pair * 2; ch < pair*2+2; ch++ {
-				outputs = append(outputs, evoElement{
-					key: fmt.Sprintf("output%d", ch+1), sub: "volume",
-					label: fmt.Sprintf("OUT %d", ch+1), color: cGreen, chanOut: true,
-				})
-			}
-			continue
-		}
-		key := fmt.Sprintf("output%d", pair+1)
-		label := fmt.Sprintf("OUT %d|%d", pair*2+1, pair*2+2)
-		if spec.NumOutPairs == 1 {
-			key, label = "output", "OUT"
-		}
-		outputs = append(outputs, evoElement{key: key, sub: "volume", label: label, color: cGreen})
-	}
 	if spec.NumOutPairs == 1 {
-		all := append(outputs, inputs...)
-		if spec.HasMonitor {
-			all = append(all, evoElement{key: "monitor", label: "MONITOR", color: cCyan})
-		}
-		return []evoGroup{{label: "All", elements: all}}
+		return []evoGroup{{label: "All", elements: evoElements(spec)}}
 	}
-	return []evoGroup{{label: "Inputs", elements: inputs}, {label: "Outputs", elements: outputs}}
+	var groups []evoGroup
+	if spec.Caps.Gain {
+		var inputs []evoElement
+		for i := 0; i < spec.NumInputs; i++ {
+			pair := i / 2
+			if i%2 == 0 && pair < len(u.inStereo) && u.inStereo[pair] && i+1 < spec.NumInputs {
+				inputs = append(inputs, evoElement{
+					key: fmt.Sprintf("input%d", i+1), link: fmt.Sprintf("input%d", i+2),
+					sub: "gain", label: fmt.Sprintf("IN %d|%d", i+1, i+2), color: cBlue,
+				})
+				i++
+				continue
+			}
+			inputs = append(inputs, evoElement{key: fmt.Sprintf("input%d", i+1), sub: "gain", label: fmt.Sprintf("IN %d", i+1), color: cBlue})
+		}
+		groups = append(groups, evoGroup{label: "Inputs", elements: inputs})
+	}
+	if spec.Caps.Volume || spec.Caps.Mute {
+		var outputs []evoElement
+		for pair := 0; pair < spec.NumOutPairs; pair++ {
+			if pair < len(u.outMono) && u.outMono[pair] {
+				for ch := pair * 2; ch < pair*2+2; ch++ {
+					outputs = append(outputs, evoElement{
+						key: fmt.Sprintf("output%d", ch+1), sub: "volume",
+						label: fmt.Sprintf("OUT %d", ch+1), color: cGreen, chanOut: true,
+					})
+				}
+				continue
+			}
+			key := fmt.Sprintf("output%d", pair+1)
+			label := fmt.Sprintf("OUT %d|%d", pair*2+1, pair*2+2)
+			outputs = append(outputs, evoElement{key: key, sub: "volume", label: label, color: cGreen})
+		}
+		groups = append(groups, evoGroup{label: "Outputs", elements: outputs})
+	}
+	if len(groups) == 0 {
+		groups = append(groups, evoGroup{label: "All"})
+	}
+	return groups
 }
 
 func (u *evoUI) activeElements() []evoElement {
@@ -783,29 +804,21 @@ func (r *evoRender) phantomInd(row, x int, on bool) {
 }
 
 func (r *evoRender) drawTabBar(row, cx, sectionW int) {
-	const ctrlLabel, mixLabel, levLabel = " Controls ", " Mixer ", " Levels "
-	levels := true
 	lineAttr := evoStyle{col: cAccent}
 	// Like the mosquito Close buttons: the selected tab is an accent block
 	// with white text. Text stays pure white in both states (no grey).
 	active := evoStyle{col: cWhite, bg: cAccent, bold: true}
-	ctrlAttr, mixAttr, levAttr := evoVal, evoVal, evoVal
-	switch r.u.window {
-	case evoWinControls:
-		ctrlAttr = active
-	case evoWinMixer:
-		mixAttr = active
-	case evoWinLevels:
-		if levels {
-			levAttr = active
+	pages := r.m.pages()
+	x := cx + 1
+	activeX, activeW := -1, 0
+	for _, p := range pages {
+		attr := evoVal
+		if r.u.window == p.win {
+			attr = active
+			activeX, activeW = x, len([]rune(p.label))
 		}
-	}
-	r.put(cx+1, row, ctrlLabel, ctrlAttr)
-	mixX := cx + 1 + len([]rune(ctrlLabel)) + 1
-	r.put(mixX, row, mixLabel, mixAttr)
-	levX := mixX + len([]rune(mixLabel)) + 1
-	if levels {
-		r.put(levX, row, levLabel, levAttr)
+		r.put(x, row, p.label, attr)
+		x += len([]rune(p.label)) + 1
 	}
 	// Connection dot + device name, right-aligned. Offline is always accent
 	// (hollow); online pulses accent <-> white. The name carries the Mixbay
@@ -832,14 +845,9 @@ func (r *evoRender) drawTabBar(row, cx, sectionW int) {
 	r.put(rightX+len([]rune(dot)), row, name, nameAttr)
 	// The panel's top separator is accent; the active tab sits on a gap in it.
 	r.c.repeat(cx, row+1, sectionW, boxH, lineAttr)
-	activeX, activeW := cx+1, len([]rune(ctrlLabel))
-	switch {
-	case r.u.window == evoWinMixer:
-		activeX, activeW = mixX, len([]rune(mixLabel))
-	case r.u.window == evoWinLevels && levels:
-		activeX, activeW = levX, len([]rune(levLabel))
+	if activeX >= 0 {
+		r.put(activeX, row+1, strings.Repeat(" ", activeW), lineAttr)
 	}
-	r.put(activeX, row+1, strings.Repeat(" ", activeW), lineAttr)
 }
 
 func (r *evoRender) drawSection(row, cx, idx, sw, bw int, forceInactive bool) int {
@@ -1436,7 +1444,24 @@ func (m model) evoView() string {
 	if cx < 0 {
 		cx = 0
 	}
-	totalH := evoControlsTop + evoControlsBodyH(m.evo.groups()) + evoControlsTail
+	// The renderer must drive both the layout and the body from the same
+	// resolved page: an old window id survives a card rebind.
+	u := m.evo
+	page, ok := m.currentPage()
+	if ok {
+		u.window = page.win
+	}
+	bodyH := evoControlsBodyH(u.groups())
+	if !m.hasBlock("controlsGrid") && m.hasBlock("mixerGrid") {
+		// drawMixerBody draws two sections around the bus; sectionH() is
+		// fixed at 10 columns-row (maxPan 2, evoMeterRows 1).
+		bodyH = 2*10 + 2
+	}
+	header := 0
+	if m.hasBlock("tabBar") {
+		header = evoControlsTop
+	}
+	totalH := header + bodyH + evoControlsTail
 	c := newEvoCanvas(w, h)
 	if h < totalH || w < mixerW {
 		msg := fmt.Sprintf("Terminal too small (%dx%d, need %dx%d)", w, h, mixerW, totalH)
@@ -1447,27 +1472,33 @@ func (m model) evoView() string {
 	if row < 0 {
 		row = 0
 	}
-	r := &evoRender{c: c, m: m, u: &m.evo, spec: spec}
-	r.drawTabBar(row, cx, mixerW)
-	row += 2
+	r := &evoRender{c: c, m: m, u: &u, spec: spec}
+	if header > 0 {
+		r.drawTabBar(row, cx, mixerW)
+		row += header
+	}
 	var nav, set []evoHint
-	levels := m.evo.window == evoWinLevels
+	levels := page.block == "levelsColumns"
 	switch {
 	case levels:
 		row = r.drawLevelsBody(row, cx, mixerW)
 		nav, set = r.levelsHelp()
-		row = r.drawLevelsStatusBar(row, cx, mixerW)
-	case m.evo.window == evoWinControls:
-		row = r.drawControlsBody(row, cx, mixerW)
-		nav, set = r.controlsHelp()
-	default:
+		if m.hasBlock("statusBar") {
+			row = r.drawLevelsStatusBar(row, cx, mixerW)
+		}
+	case page.block == "mixerGrid":
 		row = r.drawMixerBody(row, cx)
 		nav, set = r.mixerHelp()
+	default:
+		row = r.drawControlsBody(row, cx, mixerW)
+		nav, set = r.controlsHelp()
 	}
-	if !levels {
+	if !levels && m.hasBlock("statusBar") {
 		row = r.drawStatusBar(row, cx, mixerW)
 	}
-	r.drawHelpFooter(row+1, cx, nav, set)
+	if m.hasBlock("help") {
+		r.drawHelpFooter(row+1, cx, nav, set)
+	}
 	return c.render(pal)
 }
 
@@ -1734,11 +1765,14 @@ func (m model) isEvoDevice() bool {
 }
 
 func (m *model) evoEnter() {
-	if !m.isEvoDevice() {
+	if m.controlModel() != modelGrid {
 		return
 	}
 	m.evo.spec = m.status.Spec
 	m.evo.window = evoWinControls
+	if p, ok := m.currentPage(); ok {
+		m.evo.window = p.win
+	}
 	m.evo.sub = 0
 	m.evo.cursor = 0
 	m.evo.mxSection = 0
@@ -1831,8 +1865,10 @@ func (m *model) evoKey(k string) tea.Cmd {
 		// mixer with Esc must land on CONTROLS, not keep the mixer on screen.
 		if m.top() == scrMixer {
 			u.window = evoWinMixer
-		} else {
+		} else if m.hasBlock("controlsGrid") {
 			u.window = evoWinControls
+		} else if p, ok := m.currentPage(); ok {
+			u.window = p.win
 		}
 		u.numBuf = ""
 		return fetchStatus(m.deviceID)
@@ -1852,18 +1888,7 @@ func (m *model) evoKey(k string) tea.Cmd {
 		u.mode, u.fileList, u.fileCursor, u.fileScroll = 2, files, 0, 0
 		return nil
 	case "tab":
-		switch u.window {
-		case evoWinControls:
-			u.window = evoWinMixer
-			m.push(scrMixer)
-		case evoWinMixer:
-			u.window = evoWinLevels
-		default:
-			u.window = evoWinControls
-			if m.top() == scrMixer {
-				m.pop()
-			}
-		}
+		m.cyclePage()
 		u.numBuf = ""
 		return nil
 	case "enter":

@@ -52,36 +52,67 @@ func (m model) ugmView() string {
 	if sectionW > w {
 		sectionW = w
 	}
-	if w < 44 || h < ugmTotalH {
-		c.put(0, 0, fmt.Sprintf("Terminal too small (%dx%d, need 44x%d)", w, h, ugmTotalH), evoVal)
-		return c.render(pal)
-	}
 	cx := (w - sectionW) / 2
-	row := (h - ugmTotalH) / 2
-	if row < 0 {
-		row = 0
-	}
 	// The EVO status line must not leak onto the UGM panel.
 	u := m.evo
 	u.statusMsg = ""
+	page, ok := m.currentPage()
+	if ok {
+		u.window = page.win
+	}
+	bodyRows := 0
+	if m.hasBlock("controlsSingle") {
+		bodyRows = ugmBodyRows
+	}
+	if m.hasBlock("levelsColumns") && ugmLevelRows > bodyRows {
+		bodyRows = ugmLevelRows
+	}
+	if bodyRows == 0 {
+		bodyRows = ugmBodyRows
+	}
+	// A one-model panel keeps its title bar even when an older card's blocks
+	// predate the tabBar entry: the bar is the page's chrome, not a tab strip
+	// the card can turn off without losing its name and connection dot.
+	header := 2
+	totalH := header + bodyRows + 5
+	if w < 44 || h < totalH {
+		c.put(0, 0, fmt.Sprintf("Terminal too small (%dx%d, need 44x%d)", w, h, totalH), evoVal)
+		return c.render(pal)
+	}
+	row := (h - totalH) / 2
+	if row < 0 {
+		row = 0
+	}
 	r := &evoRender{c: c, m: m, u: &u, spec: spec}
-	levels := m.evo.window == evoWinLevels
-	r.ugmTabBar(row, cx, sectionW, levels)
-	body := row + 2
+	if header > 0 {
+		if pages := m.pages(); len(pages) == 1 {
+			r.singleTabBar(row, cx, sectionW, pages[0].label)
+		} else {
+			r.ugmTabBar(row, cx, sectionW, u.window == evoWinLevels)
+		}
+		row += header
+	}
+	body := row
 	tail := ugmBodyRows
 	var nav, set []evoHint
-	if levels {
+	if page.block == "levelsColumns" {
 		r.ugmLevelsBody(body, cx, sectionW)
 		nav, set = r.levelsHelp()
 		tail = ugmLevelRows
-		r.drawLevelsStatusBar(body+tail, cx, sectionW)
+		if m.hasBlock("statusBar") {
+			r.drawLevelsStatusBar(body+tail, cx, sectionW)
+		}
 	} else {
 		r.ugmControlsBody(body, cx, sectionW)
 		nav, set = r.ugmControlsHelp()
-		r.drawStatusBarWith(body+tail, cx, sectionW, m.numBuf, "dB",
-			[]evoHint{{key: "q", desc: " quit"}})
+		if m.hasBlock("statusBar") {
+			r.drawStatusBarWith(body+tail, cx, sectionW, m.numBuf, "dB",
+				[]evoHint{{key: "q", desc: " quit"}})
+		}
 	}
-	r.drawHelpFooter(body+tail+3, cx, nav, set)
+	if m.hasBlock("help") {
+		r.drawHelpFooter(body+tail+3, cx, nav, set)
+	}
 	return c.render(pal)
 }
 
@@ -223,9 +254,16 @@ func (m *model) ugmKey(k string) tea.Cmd {
 		switch k {
 		case "q":
 			return m.evoQuitConfirm()
-		case "tab", "esc", "backspace":
-			m.evo.window = evoWinControls
+		case "tab":
+			m.cyclePage()
 			return nil
+		case "esc", "backspace":
+			if m.hasBlock("controlsSingle") {
+				m.evo.window = evoWinControls
+				return nil
+			}
+			m.pop()
+			return fetchStatus(dev)
 		case "p":
 			m.meterFrozen = !m.meterFrozen
 			return nil
@@ -250,7 +288,7 @@ func (m *model) ugmKey(k string) tea.Cmd {
 		m.pop()
 		return fetchStatus(dev)
 	case "tab":
-		m.evo.window = evoWinLevels
+		m.cyclePage()
 		m.cancelNumeric()
 		return nil
 	case "m":

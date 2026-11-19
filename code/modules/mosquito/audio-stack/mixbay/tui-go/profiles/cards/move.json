@@ -37,6 +37,7 @@
   "ui": {
     "preset": "move",
     "blocks": [
+      "tabBar",
       "levelsColumns",
       "statusBar",
       "help"

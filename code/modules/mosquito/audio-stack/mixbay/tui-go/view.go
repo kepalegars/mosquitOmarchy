@@ -43,14 +43,16 @@ func (m model) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.statusLine(w))
 	case scrControls:
-		if m.isEvoDevice() {
+		switch m.controlModel() {
+		case modelGrid:
 			return m.evoView()
-		}
-		if m.isUGMDevice() {
+		case modelSingle:
 			return m.ugmView()
-		}
-		if m.isMoveDevice() {
-			return m.moveView()
+		case modelLevels:
+			if m.isMoveDevice() {
+				return m.moveView()
+			}
+			return m.levelsOnlyView("")
 		}
 		titleText := "Controls"
 		if m.status.Spec.Display != "" {
@@ -72,7 +74,7 @@ func (m model) View() string {
 		b.WriteString("\n")
 		b.WriteString(m.statusLine(w))
 	case scrMixer:
-		if m.isEvoDevice() {
+		if m.controlModel() == modelGrid {
 			return m.evoView()
 		}
 		titleText := "Loopback mixer"

@@ -130,9 +130,11 @@ type model struct {
 	profileChecked  bool
 	profileBlink    int
 
-	// preset is the card's UI composition ("evo8", "ugm192", "auto"…). It
-	// routes the renderer and can be overridden per card by user/layout.json.
+	// preset is the card's UI preset ("evo8", "ugm192", "auto"…). It chooses
+	// the input model; blocks is the card's ui.blocks composition and is
+	// authoritative for which pages that model draws.
 	preset string
+	blocks []string
 
 	// meter captures the EVO USB streams while an EVO panel is visible, even
 	// when the terminal loses focus. Freezing is a pure UI decision.
@@ -487,11 +489,14 @@ func (m model) shouldPoll() bool {
 	if !m.focused {
 		return false
 	}
-	if m.isUGMDevice() || m.isMoveDevice() {
+	switch m.controlModel() {
+	case modelSingle, modelLevels:
 		return m.top() == scrControls
+	case modelGrid:
+		return m.evo.mode == 0 &&
+			(m.top() == scrControls || m.top() == scrMixer)
 	}
-	return m.isEvoDevice() && m.evo.mode == 0 &&
-		(m.top() == scrControls || m.top() == scrMixer)
+	return false
 }
 
 type applyMsg struct {
@@ -1194,7 +1199,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// device leaves evo.spec empty until its real status arrives, so the
 		// mixer can never iterate an old spec's section list over a new
 		// device's layout.
-		if m.isEvoDevice() {
+		if m.controlModel() == modelGrid {
 			switch {
 			case m.evo.spec.ID == "":
 				m.evoEnter()
@@ -1265,14 +1270,14 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Any completed write invalidates polls that started before it.
 		m.session.wrote()
 		if msg.err != nil {
-			if m.isEvoDevice() && (m.top() == scrControls || m.top() == scrMixer) {
+			if m.controlModel() == modelGrid && (m.top() == scrControls || m.top() == scrMixer) {
 				return m, m.evo.evoStatus(msg.err.Error(), true)
 			}
 			m.toast, _ = m.toast.SetErr(msg.err.Error())
 			return m, nil
 		}
 		if msg.what != "" {
-			if m.isEvoDevice() && (m.top() == scrControls || m.top() == scrMixer) {
+			if m.controlModel() == modelGrid && (m.top() == scrControls || m.top() == scrMixer) {
 				return m, tea.Batch(m.evo.evoStatus(msg.what, false), fetchStatus(m.deviceID))
 			}
 			m.toast, _ = m.toast.SetOK(msg.what)
@@ -1533,17 +1538,20 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.top() == scrLibrary {
 		return m.libraryKey(msg)
 	}
-	// EVO 4 / EVO 8 draw their own evotui frame and own their keys.
-	if m.isEvoDevice() && (m.top() == scrControls || m.top() == scrMixer) {
-		return m, m.evoKey(k)
-	}
-	// The Move has only meters: no controls to edit.
-	if m.isMoveDevice() && m.top() == scrControls {
-		return m, m.moveKey(k)
-	}
-	// The UGM192 has its own single-panel frame (volume/mute + meters).
-	if m.isUGMDevice() && m.top() == scrControls {
-		return m, m.ugmKey(k)
+	// A composed card owns its keys through the model its blocks selected.
+	switch m.controlModel() {
+	case modelGrid:
+		if m.top() == scrControls || m.top() == scrMixer {
+			return m, m.evoKey(k)
+		}
+	case modelSingle:
+		if m.top() == scrControls {
+			return m, m.ugmKey(k)
+		}
+	case modelLevels:
+		if m.top() == scrControls {
+			return m, m.moveKey(k)
+		}
 	}
 	if m.top() == scrPatchbay {
 		return m.patchbayKey(msg)

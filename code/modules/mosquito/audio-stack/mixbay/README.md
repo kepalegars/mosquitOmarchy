@@ -107,7 +107,8 @@ réinstallable depuis le dépôt.
   nombre est le nombre de canaux), `floor_db` le bas de l'échelle (défaut
   -60). Une liaison déclarée est autoritaire : si le nœud est absent, la
   carte n'a pas de mètres au lieu d'emprunter ceux d'une autre. Absent =
-  découverte historique EVO/UGM.
+  découverte historique EVO/UGM. Les mètres n'ont de place que dans une
+  composition qui déclare `levelsColumns`.
 
 Stockage local : `~/.config/mosquitomixbay/cards/<id>/` avec
 `upstream/card.json`, `user/layout.json` (surcharge UI creuse),
@@ -122,8 +123,16 @@ remplacent) :
 { "preset": "auto", "blocks": ["controlsGrid", "statusBar"] }
 ```
 
-Presets disponibles : `evo8`, `evo4`, `ugm192`, `single-pair`, `auto` (`auto`
-choisit la disposition selon le backend de la carte).
+Presets disponibles : `evo8`, `evo4`, `ugm192`, `single-pair`, `move`, `auto`.
+Le preset garde le modèle d'entrée (`evo8`/`evo4` : grille de contrôles,
+`ugm192`/`single-pair` : un seul contrôle, `move` : mètres seuls) ; `blocks`
+choisit les pages réellement dessinées dans ce modèle. Une carte `auto` qui
+déclare `controlsGrid`/`mixerGrid` (SSL 12) utilise donc la grille, une carte
+`auto` avec `controlsSingle` le panneau à un contrôle, et une carte sans
+contrôle ni mixer (RME, pilotée par son UI) garde le menu de ses openers.
+Les blocs connus : `tabBar`, `controlsGrid`, `controlsSingle`, `mixerGrid`,
+`levelsColumns`, `statusBar`, `help`. Sans `blocks`, le preset reprend sa
+composition historique.
 
 Commandes (`mosquito-mixbay-actions …`) : `profiles-index`,
 `profiles-import ID… [--all]`, `profiles-export [ID…] [--to DIR]`,
