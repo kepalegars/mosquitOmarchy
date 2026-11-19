@@ -103,6 +103,32 @@ type Capture struct {
 	Label  string `json:"label,omitempty"`
 }
 
+// MaxMeterChannels is the widest meter binding the TUI can hold (its peak
+// arrays are fixed). Mirrored by drivers.MaxMeterChannels.
+const MaxMeterChannels = 8
+
+// Meters is the declarative USB meter binding. The build turns it into the
+// two pw-record captures; a card never names a command or a path.
+type Meters struct {
+	// Node is a fragment of the PipeWire node name (vendor/model). A declared
+	// binding is authoritative: when the node is absent, the card gets no
+	// meters instead of another card's channels.
+	Node string `json:"node"`
+	// Capture and Playback are the channel labels in USB stream order; their
+	// length is the channel count. Empty means that direction has no meters.
+	Capture  []string `json:"capture,omitempty"`
+	Playback []string `json:"playback,omitempty"`
+	// FloorDb is the bottom of the meter scale in dB. Zero means the default
+	// (-60), which is what the EVO capture path has always used.
+	FloorDb float64 `json:"floor_db,omitempty"`
+}
+
+// Hardware is the optional transport binding section. It is data only: the
+// build interprets the fields it knows and validation rejects the rest.
+type Hardware struct {
+	Meters *Meters `json:"meters,omitempty"`
+}
+
 // Card is one interface profile. UI stays generic on purpose: a future Mixbay
 // may add blocks without invalidating older cards, and local overrides merge
 // into it sparsely.
@@ -111,6 +137,7 @@ type Card struct {
 	Spec          Spec           `json:"spec"`
 	Credits       Credits        `json:"credits,omitempty"`
 	UI            map[string]any `json:"ui,omitempty"`
+	Hardware      *Hardware      `json:"hardware,omitempty"`
 	Captures      []Capture      `json:"captures,omitempty"`
 }
 
@@ -169,6 +196,10 @@ var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 // the generated default-sink picker. Real node fragments look like
 // "HiFi__Line5__sink" or "Fireface".
 var foundationNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
+
+// meterNodePattern is narrower than a node name on purpose: the fragment is
+// only used for a case-folded substring match, never as a command.
+var meterNodePattern = regexp.MustCompile(`^[A-Za-z0-9_.: -]+$`)
 
 // ValidID reports whether id is safe as a folder/file name. Import paths and
 // local folders both go through it, so a crafted index cannot escape the store.
@@ -315,6 +346,37 @@ func Validate(c Card) []Issue {
 			add("error", fmt.Sprintf("ui.blocks[%d]", i), "unknown block %q (known: %s)", b, strings.Join(Blocks, ", "))
 		}
 	}
+	if h := c.Hardware; h != nil {
+		if m := h.Meters; m != nil {
+			if !meterNodePattern.MatchString(m.Node) || strings.TrimSpace(m.Node) == "" {
+				add("error", "hardware.meters.node", "%q is not a PipeWire node fragment", m.Node)
+			}
+			if len(m.Capture) == 0 && len(m.Playback) == 0 {
+				add("error", "hardware.meters", "needs a capture or playback channel map")
+			}
+			for _, dir := range []struct {
+				field  string
+				labels []string
+			}{{"capture", m.Capture}, {"playback", m.Playback}} {
+				if len(dir.labels) > MaxMeterChannels {
+					add("error", "hardware.meters."+dir.field, "%d channels, at most %d", len(dir.labels), MaxMeterChannels)
+				}
+				seen := map[string]bool{}
+				for i, label := range dir.labels {
+					label = strings.TrimSpace(label)
+					if label == "" {
+						add("error", fmt.Sprintf("hardware.meters.%s[%d]", dir.field, i), "must not be empty")
+					} else if seen[label] {
+						add("error", fmt.Sprintf("hardware.meters.%s[%d]", dir.field, i), "duplicate label %q", label)
+					}
+					seen[label] = true
+				}
+			}
+			if m.FloorDb > 0 || m.FloorDb < -120 {
+				add("error", "hardware.meters.floor_db", "%v is outside -120..0 dB", m.FloorDb)
+			}
+		}
+	}
 	for i, cap := range c.Captures {
 		if !strings.HasPrefix(cap.File, "captures/") || !strings.HasSuffix(cap.File, ".jsonl") {
 			add("error", fmt.Sprintf("captures[%d].file", i), "must be captures/<name>.jsonl")
@@ -344,7 +406,7 @@ func Parse(data []byte) (Card, []Issue, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return Card{}, nil, fmt.Errorf("card is not JSON: %w", err)
 	}
-	allowed := map[string]bool{"schema_version": true, "spec": true, "credits": true, "ui": true, "captures": true}
+	allowed := map[string]bool{"schema_version": true, "spec": true, "credits": true, "ui": true, "hardware": true, "captures": true}
 	var issues []Issue
 	for k := range raw {
 		if !allowed[k] {
@@ -361,7 +423,7 @@ func Parse(data []byte) (Card, []Issue, error) {
 		"mixer_inputs": true, "mixer_outputs": true, "has_monitor": true,
 		"backend": true, "needs_kmod": true, "description": true, "version": true,
 		"beta": true, "card_match": true, "bus_names": true, "caps": true,
-		"setup": true, "foundation": true,
+		"setup": true, "foundation": true, "upstream": true,
 	}
 	if specRaw, ok := raw["spec"]; ok {
 		var keys map[string]json.RawMessage
@@ -369,6 +431,30 @@ func Parse(data []byte) (Card, []Issue, error) {
 			for k := range keys {
 				if !specKeys[k] {
 					issues = append(issues, Issue{Level: "error", Field: "spec." + k, Detail: "unknown key"})
+				}
+			}
+		}
+	}
+	// Hardware carries bindings the build interprets; strict like spec so a
+	// typo cannot silently disable them.
+	if hwRaw, ok := raw["hardware"]; ok {
+		var keys map[string]json.RawMessage
+		if json.Unmarshal(hwRaw, &keys) == nil {
+			for k := range keys {
+				if k != "meters" {
+					issues = append(issues, Issue{Level: "error", Field: "hardware." + k, Detail: "unknown key"})
+				}
+			}
+			if mRaw, ok := keys["meters"]; ok {
+				var mkeys map[string]json.RawMessage
+				if json.Unmarshal(mRaw, &mkeys) == nil {
+					for k := range mkeys {
+						switch k {
+						case "node", "capture", "playback", "floor_db":
+						default:
+							issues = append(issues, Issue{Level: "error", Field: "hardware.meters." + k, Detail: "unknown key"})
+						}
+					}
 				}
 			}
 		}

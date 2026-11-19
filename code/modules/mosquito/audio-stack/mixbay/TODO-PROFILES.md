@@ -37,9 +37,15 @@ Still missing:
 
 ## 3. Declarative meter bindings
 
-`meters_ui.go` still derives the USB stream node from known prefixes. A
-community card has no meters. Add `hardware.meters` to the card (node prefix,
-channel map, scale) and build the meter engine from it.
+Done: `hardware.meters` (`node`, `capture`, `playback`, `floor_db`) is parsed,
+validated, carried into `drivers.Spec.Meters`, and drives node discovery, the
+channel count, the Levels bars and the scale. A declared binding is
+authoritative: a missing node means no meters, never another card's fallback.
+Absent keeps the historical EVO/UGM discovery.
+
+Remaining: a card whose composition has no `levelsColumns` block (`auto`,
+`single-pair`) still has nowhere to draw the meters; that is §1's renderer
+work.
 
 ## 5. Captures in the client (not needed yet)
 

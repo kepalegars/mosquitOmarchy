@@ -70,6 +70,19 @@ type Caps struct {
 	Mixer   bool `json:"mixer"`
 }
 
+// MaxMeterChannels is the widest meter binding the TUI can hold. Mirrors
+// profiles.MaxMeterChannels; the peak arrays are fixed at this size.
+const MaxMeterChannels = 8
+
+// MeterSpec is a card's declarative USB meter binding. Labels are in USB
+// stream order; their length is the channel count for that direction.
+type MeterSpec struct {
+	Node     string   `json:"node"`
+	Capture  []string `json:"capture,omitempty"`
+	Playback []string `json:"playback,omitempty"`
+	FloorDb  float64  `json:"floor_db,omitempty"`
+}
+
 // Spec describes one supported interface.
 type Spec struct {
 	ID           string  `json:"id"`
@@ -106,6 +119,9 @@ type Spec struct {
 	// Setup names the card-specific integration (oscmix, douze). The device
 	// screen shows it as actions instead of controls.
 	Setup string `json:"setup,omitempty"`
+	// Meters is the card's declarative USB meter binding, when it declares
+	// one. It is card data, not a driver constant.
+	Meters *MeterSpec `json:"meters,omitempty"`
 }
 
 // InputState is one mic/line input.

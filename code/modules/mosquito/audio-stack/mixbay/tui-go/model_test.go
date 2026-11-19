@@ -1457,8 +1457,8 @@ func TestEvoLevelsTabRendersUSBStreams(t *testing.T) {
 func TestVerticalBarPeakIsThinFullWidth(t *testing.T) {
 	c := newEvoCanvas(8, 20)
 	r := &evoRender{c: c}
-	r.drawVerticalBar(1, 0, 19, 4, 0.8, 0.8)
-	peakRow := 19 - int(math.Round(20*meterFraction(0.8))) + 1
+	r.drawVerticalBar(1, 0, 19, 4, 0.8, 0.8, -60)
+	peakRow := 19 - int(math.Round(20*meterFraction(0.8, -60))) + 1
 	for col := 0; col < 4; col++ {
 		cell := c.cells[peakRow*c.w+1+col]
 		if cell.r != '─' {
@@ -1500,7 +1500,7 @@ func TestMeterDBShortAndColor(t *testing.T) {
 		{0, " -∞"},
 		{0.1, "-20"},
 	} {
-		if got := meterDBShort(tc.level); got != tc.want {
+		if got := meterDBShort(tc.level, -60); got != tc.want {
 			t.Errorf("meterDBShort(%v) = %q, want %q", tc.level, got, tc.want)
 		}
 	}

@@ -200,7 +200,7 @@ func (r *evoRender) ugmLevelsBody(row, cx, sectionW int) {
 	readoutRow := row + 1
 	barTop := row + 2
 	barBot := barTop + barRows - 1
-	r.drawMeterScale(x, barTop, barBot)
+	r.drawMeterScale(x, barTop, barBot, r.m.meterFloor())
 	r.drawMeterColumns(captureX, readoutRow, barTop, barBot, barW, gap, capBars)
 	r.drawMeterColumns(playbackX, readoutRow, barTop, barBot, barW, gap, playBars)
 }

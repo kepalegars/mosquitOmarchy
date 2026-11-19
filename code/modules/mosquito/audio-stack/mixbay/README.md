@@ -93,6 +93,21 @@ réinstallable depuis le dépôt.
   sont acceptées : la validation refuse tout le reste.
   La fondation audio n'est appliquée qu'après la **première connexion** de la
   carte ; un simple téléchargement ne pose que le setup de la carte.
+- **Mètres déclarés** : une carte peut décrire ses flux USB sans code :
+  ```json
+  "hardware": { "meters": {
+    "node": "Quantum ES 4",
+    "capture": ["IN1", "IN2", "IN3", "IN4"],
+    "playback": ["OUT1", "OUT2"],
+    "floor_db": -48
+  } }
+  ```
+  `node` est un fragment du nom PipeWire (casse et `_`/`-`/espaces ignorés),
+  `capture`/`playback` donnent les libellés dans l'ordre des canaux (leur
+  nombre est le nombre de canaux), `floor_db` le bas de l'échelle (défaut
+  -60). Une liaison déclarée est autoritaire : si le nœud est absent, la
+  carte n'a pas de mètres au lieu d'emprunter ceux d'une autre. Absent =
+  découverte historique EVO/UGM.
 
 Stockage local : `~/.config/mosquitomixbay/cards/<id>/` avec
 `upstream/card.json`, `user/layout.json` (surcharge UI creuse),

@@ -13,10 +13,10 @@ import (
 
 // EVO USB meters. The node names carry the card's serial/model suffix and
 // vary with the ALSA/UCM profile, so discover them from the live PipeWire
-// graph instead of hardcoding one machine's name. The channel count comes
-// from the node's ports; the fallback matches the EVO 8 (6) / EVO 4 (4)
-// UAC2 descriptors.
-const evoMaxMeterChannels = 8
+// graph instead of hardcoding one machine's name. A card that declares
+// hardware.meters supplies the node fragment and channel map; the native
+// EVO/UGM fallbacks stay for cards that predate the binding.
+const evoMaxMeterChannels = drivers.MaxMeterChannels
 
 type meterStartedMsg struct{ engine *meters.Engine }
 type meterSnapshotMsg struct {
@@ -25,19 +25,67 @@ type meterSnapshotMsg struct {
 }
 type meterClosedMsg struct{ engine *meters.Engine }
 
-// usbMeterSources builds the two captures for a supported USB interface.
+// usbMeterSources builds the captures for a supported USB interface.
 // Playback is observed on the sink monitor, capture on the source: never on
-// the analog OUT controls, which are not in the USB stream.
+// the analog OUT controls, which are not in the USB stream. A card's
+// hardware.meters binding replaces the native discovery; an empty direction
+// simply has no source, and a declared-but-missing node yields no meter at
+// all rather than half a panel.
 func usbMeterSources(spec drivers.Spec) []meters.Source {
-	outNode, outCh := discoverMeterNode(spec, true)
-	inNode, inCh := discoverMeterNode(spec, false)
-	if outNode == "" || inNode == "" {
-		return nil
+	m := spec.Meters
+	if m == nil {
+		outNode, outCh := discoverMeterNode(spec, true)
+		inNode, inCh := discoverMeterNode(spec, false)
+		if outNode == "" || inNode == "" {
+			return nil
+		}
+		return []meters.Source{
+			{Key: meters.KeyPlayback, Node: outNode, Channels: outCh, Monitor: true},
+			{Key: meters.KeyInput, Node: inNode, Channels: inCh},
+		}
 	}
-	return []meters.Source{
-		{Key: meters.KeyPlayback, Node: outNode, Channels: outCh, Monitor: true},
-		{Key: meters.KeyInput, Node: inNode, Channels: inCh},
+	var out []meters.Source
+	if len(m.Playback) > 0 {
+		node, ch := discoverMeterNode(spec, true)
+		if node == "" {
+			return nil
+		}
+		out = append(out, meters.Source{Key: meters.KeyPlayback, Node: node, Channels: ch, Monitor: true})
 	}
+	if len(m.Capture) > 0 {
+		node, ch := discoverMeterNode(spec, false)
+		if node == "" {
+			return nil
+		}
+		out = append(out, meters.Source{Key: meters.KeyInput, Node: node, Channels: ch})
+	}
+	return out
+}
+
+// meterNodeMatches compares a pw-link node name to the card filter. A
+// declared binding accepts the human spelling ("Quantum ES 4") against
+// PipeWire's underscored form; the native fallback keeps its exact substring
+// behaviour.
+func meterNodeMatches(node, want string, declared bool) bool {
+	if want == "" {
+		return true
+	}
+	if !declared {
+		return strings.Contains(node, want)
+	}
+	return strings.Contains(meterFold(node), meterFold(want))
+}
+
+func meterFold(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		switch r {
+		case '_', '-', '.', ' ':
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // discoverMeterNode finds the ALSA node of this interface in the live graph
@@ -50,6 +98,7 @@ func discoverMeterNode(spec drivers.Spec, playback bool) (string, int) {
 	if playback {
 		args = []string{"-i"}
 	}
+	declared := spec.Meters != nil && spec.Meters.Node != ""
 	out, err := exec.Command("pw-link", args...).Output()
 	if err == nil {
 		prefix := "alsa_output.usb-"
@@ -58,13 +107,17 @@ func discoverMeterNode(spec drivers.Spec, playback bool) (string, int) {
 		}
 		// Keep a model filter so two cards on one machine cannot cross-meter.
 		want := ""
-		switch spec.ID {
-		case drivers.DevEVO8:
-			want = "EVO8"
-		case drivers.DevEVO4:
-			want = "EVO4"
-		case drivers.DevUGM192:
-			want = "UGM192"
+		if declared {
+			want = spec.Meters.Node
+		} else {
+			switch spec.ID {
+			case drivers.DevEVO8:
+				want = "EVO8"
+			case drivers.DevEVO4:
+				want = "EVO4"
+			case drivers.DevUGM192:
+				want = "UGM192"
+			}
 		}
 		counts := map[string]int{}
 		for _, line := range strings.Split(string(out), "\n") {
@@ -77,10 +130,15 @@ func discoverMeterNode(spec drivers.Spec, playback bool) (string, int) {
 			if !strings.HasPrefix(node, prefix) {
 				continue
 			}
-			if want != "" && !strings.Contains(node, want) {
-				continue
-			}
-			if want == "" && !strings.Contains(node, spec.Vendor) {
+			if declared {
+				if !meterNodeMatches(node, want, true) {
+					continue
+				}
+			} else if want != "" {
+				if !strings.Contains(node, want) {
+					continue
+				}
+			} else if !strings.Contains(node, spec.Vendor) {
 				continue
 			}
 			counts[node]++
@@ -92,11 +150,26 @@ func discoverMeterNode(spec drivers.Spec, playback bool) (string, int) {
 			}
 		}
 		if best != "" && bestN > 0 {
+			if declared {
+				labels := spec.Meters.Capture
+				if playback {
+					labels = spec.Meters.Playback
+				}
+				// The map is the contract: never meter more channels than
+				// the card labels, even if the node exposes more ports.
+				if len(labels) > 0 && len(labels) < bestN {
+					bestN = len(labels)
+				}
+			}
 			if bestN > evoMaxMeterChannels {
 				bestN = evoMaxMeterChannels
 			}
 			return best, bestN
 		}
+	}
+	// A declared binding never falls back to another card's node names.
+	if declared {
+		return "", 0
 	}
 	// Fallback: the stable pro-audio names seen on the reference EVOs.
 	suffix := "8"
@@ -217,13 +290,20 @@ func (m *model) evoLevelsKey(k string) tea.Cmd {
 	return nil
 }
 
-func meterDB(level float64) float64 {
+func (m model) meterFloor() float64 {
+	if s := m.status.Spec.Meters; s != nil && s.FloorDb < 0 {
+		return s.FloorDb
+	}
+	return -60
+}
+
+func meterDB(level, floor float64) float64 {
 	if level <= 1e-5 {
-		return -60
+		return floor
 	}
 	db := 20 * math.Log10(level)
-	if db < -60 {
-		db = -60
+	if db < floor {
+		db = floor
 	}
 	if db > 0 {
 		db = 0
@@ -231,19 +311,19 @@ func meterDB(level float64) float64 {
 	return db
 }
 
-func meterDBShort(level float64) string {
+func meterDBShort(level, floor float64) string {
 	if level <= 1e-5 {
 		return " -∞"
 	}
-	db := meterDB(level)
+	db := meterDB(level, floor)
 	if db > -0.5 {
 		db = 0
 	}
 	return fmt.Sprintf("%3.0f", db)
 }
 
-func meterFraction(level float64) float64 {
-	return clampf((meterDB(level)+60)/60, 0, 1)
+func meterFraction(level, floor float64) float64 {
+	return clampf((meterDB(level, floor)-floor)/(0-floor), 0, 1)
 }
 
 func meterColor(db float64) int {
@@ -263,11 +343,26 @@ type evoMeterBar struct {
 	ch    int
 }
 
+func meterBars(labels []string, key string) []evoMeterBar {
+	if len(labels) == 0 {
+		return nil
+	}
+	bars := make([]evoMeterBar, 0, len(labels))
+	for i, label := range labels {
+		bars = append(bars, evoMeterBar{label: label, key: key, ch: i})
+	}
+	return bars
+}
+
 // evoCaptureBarsFor lists the USB capture channels the Levels page shows:
-// the hardware inputs first, then the two loopback-capture channels. The
-// layout follows the device spec, so the EVO 4 gets IN1/IN2 + LP3/LP4 and the
-// EVO 8 IN1-4 + LP5/LP6 instead of a hardcoded six-bar panel.
+// the card's declared channel map when it has one, else the hardware inputs
+// followed by the two loopback-capture channels. The layout follows the
+// device spec, so the EVO 4 gets IN1/IN2 + LP3/LP4 and the EVO 8 IN1-4 +
+// LP5/LP6 instead of a hardcoded six-bar panel.
 func evoCaptureBarsFor(spec drivers.Spec) []evoMeterBar {
+	if spec.Meters != nil {
+		return meterBars(spec.Meters.Capture, meters.KeyInput)
+	}
 	bars := make([]evoMeterBar, 0, spec.NumInputs+2)
 	for i := 0; i < spec.NumInputs; i++ {
 		bars = append(bars, evoMeterBar{
@@ -286,10 +381,14 @@ func evoCaptureBarsFor(spec drivers.Spec) []evoMeterBar {
 	return bars
 }
 
-// evoPlaybackBarsFor lists the USB playback monitor channels: the output
-// pairs the card exposes, then the loopback output pair. EVO 4 = PC1/PC2 +
-// LP3/LP4; EVO 8 = PC1-4 + LP5/LP6.
+// evoPlaybackBarsFor lists the USB playback monitor channels: the card's
+// declared channel map when it has one, else the output pairs the card
+// exposes, then the loopback output pair. EVO 4 = PC1/PC2 + LP3/LP4;
+// EVO 8 = PC1-4 + LP5/LP6.
 func evoPlaybackBarsFor(spec drivers.Spec) []evoMeterBar {
+	if spec.Meters != nil {
+		return meterBars(spec.Meters.Playback, meters.KeyPlayback)
+	}
 	pairs := spec.NumOutPairs * 2
 	bars := make([]evoMeterBar, 0, pairs+2)
 	for i := 0; i < pairs; i++ {
@@ -347,26 +446,33 @@ func (r *evoRender) drawLevelsBody(row, cx, sectionW int) int {
 	)
 	capBars := evoCaptureBarsFor(r.spec)
 	playBars := evoPlaybackBarsFor(r.spec)
-	nbars := len(capBars)
-	if len(playBars) > nbars {
-		nbars = len(playBars)
-	}
-	if nbars < 1 {
-		nbars = 1
-	}
-	groupW := nbars*barW + (nbars-1)*gap
-	totalW := scaleW + groupW*2 + groupGap
 	bodyRow := row
+	groupW := func(n int) int { return n*barW + (n-1)*gap }
+	capW, playW := groupW(len(capBars)), groupW(len(playBars))
+	totalW := scaleW
+	if len(capBars) > 0 {
+		totalW += capW
+	}
+	if len(playBars) > 0 {
+		if len(capBars) > 0 {
+			totalW += groupGap
+		}
+		totalW += playW
+	}
 	x := cx + (sectionW-totalW)/2
 	if x < cx {
 		x = cx
 	}
-	captureX := x + scaleW
-	playbackX := captureX + groupW + groupGap
-
-	r.put(captureX+(groupW-len([]rune("Capture")))/2, row, "Capture", evoStyle{col: cAccent, bold: true})
-	playbackTitle := "Playback (USB)"
-	r.put(playbackX+(groupW-len([]rune(playbackTitle)))/2, row, playbackTitle, evoStyle{col: cAccent, bold: true})
+	next := x + scaleW
+	if len(capBars) > 0 {
+		captureX := next
+		r.put(captureX+(capW-len([]rune("Capture")))/2, row, "Capture", evoStyle{col: cAccent, bold: true})
+		next += capW + groupGap
+	}
+	if len(playBars) > 0 {
+		playbackTitle := "Playback (USB)"
+		r.put(next+(playW-len([]rune(playbackTitle)))/2, row, playbackTitle, evoStyle{col: cAccent, bold: true})
+	}
 	row++
 	readoutRow := row
 	row++
@@ -374,18 +480,24 @@ func (r *evoRender) drawLevelsBody(row, cx, sectionW int) int {
 	const barRows = 18
 	barBot := barTop + barRows - 1
 
-	r.drawMeterScale(x, barTop, barBot)
-	r.drawMeterColumns(captureX, readoutRow, barTop, barBot, barW, gap, capBars)
-	r.drawMeterColumns(playbackX, readoutRow, barTop, barBot, barW, gap, playBars)
+	r.drawMeterScale(x, barTop, barBot, r.m.meterFloor())
+	next = x + scaleW
+	if len(capBars) > 0 {
+		r.drawMeterColumns(next, readoutRow, barTop, barBot, barW, gap, capBars)
+		next += capW + groupGap
+	}
+	if len(playBars) > 0 {
+		r.drawMeterColumns(next, readoutRow, barTop, barBot, barW, gap, playBars)
+	}
 
 	return bodyRow + evoControlsBodyH(r.u.groups())
 }
 
 // drawMeterScale is the dB barometer on the left of a Levels page.
-func (r *evoRender) drawMeterScale(x, barTop, barBot int) {
+func (r *evoRender) drawMeterScale(x, barTop, barBot int, floor float64) {
 	rows := barBot - barTop + 1
-	for _, db := range []float64{-60, -40, -20, -12, -6, 0} {
-		y := barBot - int(math.Round((db+60)/60*float64(rows-1)))
+	for _, db := range meterTicks(floor) {
+		y := barBot - int(math.Round((db-floor)/(0-floor)*float64(rows-1)))
 		if y < barTop {
 			y = barTop
 		}
@@ -401,33 +513,49 @@ func (r *evoRender) drawMeterScale(x, barTop, barBot int) {
 	}
 }
 
+// meterTicks keeps the reference EVO scale unchanged (-60 is the default)
+// and spreads proportional ticks when a card declares another floor.
+func meterTicks(floor float64) []float64 {
+	if floor == -60 {
+		return []float64{-60, -40, -20, -12, -6, 0}
+	}
+	ticks := []float64{floor, floor * 2 / 3, floor / 3}
+	for _, db := range []float64{-12, -6, 0} {
+		if db > floor {
+			ticks = append(ticks, db)
+		}
+	}
+	return ticks
+}
+
 // drawMeterColumns draws one group of vertical meters: dB readout above,
 // bar, then the channel label underneath.
 func (r *evoRender) drawMeterColumns(groupX, readoutRow, barTop, barBot, barW, gap int, bars []evoMeterBar) {
+	floor := r.m.meterFloor()
 	for i, b := range bars {
 		bx := groupX + i*(barW+gap)
 		level := r.m.meterLevel(b.key, b.ch)
 		peak := r.m.meterPeak(b.key, b.ch)
 		attr := evoDim
 		if level > 1e-5 {
-			attr = evoStyle{col: meterColor(meterDB(level))}
+			attr = evoStyle{col: meterColor(meterDB(level, floor))}
 		}
-		r.put(bx+(barW-len([]rune(b.label))+1)/2, readoutRow, meterDBShort(level), attr)
-		r.drawVerticalBar(bx, barTop, barBot, barW, level, peak)
+		r.put(bx+(barW-len([]rune(b.label))+1)/2, readoutRow, meterDBShort(level, floor), attr)
+		r.drawVerticalBar(bx, barTop, barBot, barW, level, peak, floor)
 		r.put(bx+(barW-len([]rune(b.label))+1)/2, barBot+1, b.label, evoDim)
 	}
 }
 
-func (r *evoRender) drawVerticalBar(x, top, bot, width int, level, peak float64) {
+func (r *evoRender) drawVerticalBar(x, top, bot, width int, level, peak, floor float64) {
 	rows := bot - top + 1
-	full := int(math.Round(float64(rows) * meterFraction(level)))
+	full := int(math.Round(float64(rows) * meterFraction(level, floor)))
 	fillTop := bot - full + 1
-	peakPos := int(math.Round(float64(rows) * meterFraction(peak)))
+	peakPos := int(math.Round(float64(rows) * meterFraction(peak, floor)))
 	peakRow := bot - peakPos + 1
 	for y := top; y <= bot; y++ {
 		for col := 0; col < width; col++ {
 			if y >= fillTop {
-				db := -60 + 60*float64(bot-y+1)/float64(rows)
+				db := floor + (0-floor)*float64(bot-y+1)/float64(rows)
 				r.c.put(x+col, y, "█", evoStyle{col: meterColor(db)})
 			} else {
 				r.c.put(x+col, y, "░", evoStyle{col: cBorder, dim: true})
@@ -437,7 +565,7 @@ func (r *evoRender) drawVerticalBar(x, top, bot, width int, level, peak float64)
 	if peakPos > 0 {
 		st := evoStyle{col: cWhite}
 		if peakRow >= fillTop {
-			db := -60 + 60*float64(bot-peakRow+1)/float64(rows)
+			db := floor + (0-floor)*float64(bot-peakRow+1)/float64(rows)
 			st.bg = meterColor(db)
 		}
 		for col := 0; col < width; col++ {
@@ -501,8 +629,9 @@ func (r *evoRender) drawMiniBar(row, x, width int, level, peak float64, col int)
 	if width < 1 {
 		return
 	}
-	full := int(math.Round(float64(width) * meterFraction(level)))
-	peakPos := int(math.Round(float64(width) * meterFraction(peak)))
+	floor := r.m.meterFloor()
+	full := int(math.Round(float64(width) * meterFraction(level, floor)))
+	peakPos := int(math.Round(float64(width) * meterFraction(peak, floor)))
 	fill := evoStyle{col: col}
 	empty := evoStyle{col: cBorder, dim: true}
 	mark := evoStyle{col: cWhite, bold: true}

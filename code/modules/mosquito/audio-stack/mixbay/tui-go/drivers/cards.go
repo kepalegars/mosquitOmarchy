@@ -14,7 +14,7 @@ import (
 // the same JSON shape on purpose; this is the only place they meet.
 func specFromProfile(c profiles.Card) Spec {
 	s := c.Spec
-	return Spec{
+	spec := Spec{
 		ID: s.ID, Display: s.Display, Vendor: s.Vendor,
 		USBVID: s.USBVID, USBPID: s.USBPID,
 		NumInputs: s.NumInputs, NumOutPairs: s.NumOutPairs,
@@ -32,6 +32,15 @@ func specFromProfile(c profiles.Card) Spec {
 		},
 		Setup: s.Setup,
 	}
+	if h := c.Hardware; h != nil && h.Meters != nil {
+		spec.Meters = &MeterSpec{
+			Node:     h.Meters.Node,
+			Capture:  append([]string(nil), h.Meters.Capture...),
+			Playback: append([]string(nil), h.Meters.Playback...),
+			FloorDb:  h.Meters.FloorDb,
+		}
+	}
+	return spec
 }
 
 // mustNativeSpec reads one built-in card. A corrupt embedded file is a build
