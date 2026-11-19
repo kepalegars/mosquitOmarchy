@@ -35,6 +35,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"mosquitomarchy.local/mosquitomixbay-tui/config"
+	"mosquitomarchy.local/mosquitomixbay-tui/profiles"
 )
 
 var (
@@ -117,8 +120,7 @@ func (d *alsaDriver) amixer(args ...string) (string, error) {
 }
 
 func (d *alsaDriver) demoFile() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "mosquitomixbay", d.spec.ID, "demo.json")
+	return filepath.Join(config.Dir(), d.spec.ID, "demo.json")
 }
 
 func (d *alsaDriver) ensureDemo() *demoState {
@@ -152,7 +154,7 @@ func (d *alsaDriver) saveDemo() {
 	}
 	_ = os.MkdirAll(filepath.Dir(d.demoFile()), 0o755)
 	data, _ := json.MarshalIndent(d.demo, "", "  ")
-	_ = os.WriteFile(d.demoFile(), data, 0o644)
+	_ = profiles.WriteFileAtomic(d.demoFile(), data)
 }
 
 func (d *alsaDriver) outName(i int) string {
@@ -342,19 +344,17 @@ func (d *alsaDriver) Save() error {
 	if err != nil {
 		return err
 	}
-	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".config", "mosquitomixbay", d.spec.ID)
+	dir := filepath.Join(config.Dir(), d.spec.ID)
 	_ = os.MkdirAll(dir, 0o755)
 	data, _ := json.MarshalIndent(st, "", "  ")
-	return os.WriteFile(filepath.Join(dir, "config.json"), data, 0o644)
+	return profiles.WriteFileAtomic(filepath.Join(dir, "config.json"), data)
 }
 
 func (d *alsaDriver) Load() error {
 	if !d.allowDemo && !d.Probe() {
 		return ErrOffline
 	}
-	home, _ := os.UserHomeDir()
-	data, err := os.ReadFile(filepath.Join(home, ".config", "mosquitomixbay", d.spec.ID, "config.json"))
+	data, err := os.ReadFile(filepath.Join(config.Dir(), d.spec.ID, "config.json"))
 	if err != nil {
 		return fmt.Errorf("no saved config: %w", err)
 	}

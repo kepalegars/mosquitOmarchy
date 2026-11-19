@@ -23,15 +23,14 @@ MGR_PIDFILE="${XDG_RUNTIME_DIR:-/tmp}/mosquito-mixbay.pid"
 _mgr_cleanup() { rm -f "$MGR_PIDFILE"; }
 
 _mgr_running() {
-  local p field
+  local p
   while IFS= read -r p; do
     [[ -n $p && $p != "$$" ]] || continue
-    [[ -r /proc/$p/cmdline ]] || continue
-    while IFS= read -r -d '' field; do
-      if [[ $field == "$MGR_TUI_BIN" || $field == "${MGR_TUI_BIN##*/}" ]]; then
-        echo "$p"; break
-      fi
-    done < "/proc/$p/cmdline"
+    local -a argv=()
+    # One-shot calls (`…-tui status-json`) use the same binary; only the
+    # interactive TUI runs it with no arguments.
+    mapfile -d '' -t argv < "/proc/$p/cmdline" 2>/dev/null || continue
+    [[ ${#argv[@]} -eq 1 && ${argv[0]} == "$MGR_TUI_BIN" ]] && echo "$p"
   done < <(pgrep -f -- "${MGR_TUI_BIN##*/}" 2>/dev/null || true)
   return 0
 }
@@ -40,7 +39,7 @@ if [[ $# -eq 0 ]]; then
   trap _mgr_cleanup EXIT
   pids="$(_mgr_running)"
   if [[ -n $pids ]]; then
-    echo "mosquito-mixbay: another instance is already open — focusing it (kill it first to open a new one)." >&2
+    echo "mosquito-mixbay: another instance is already open (kill it first to open a new one)." >&2
     exit 0
   fi
   printf '%s\n' "$$" > "$MGR_PIDFILE"

@@ -2361,21 +2361,24 @@ func TestEvoMixBusSwitchMovedToShiftM(t *testing.T) {
 	}
 }
 
-// An offline badge is the fixed reference; an online badge is centred between
-// its brackets with the same padding on each side.
-func TestBadgeFieldCentresOnline(t *testing.T) {
+// An offline badge is the fixed reference; an online badge is padded on the
+// right to the same width so every bracket lines up.
+func TestBadgeFieldAlignsBrackets(t *testing.T) {
 	for _, b := range []string{"offline", "offline-beta"} {
 		if got := badgeField(b); got != b {
 			t.Errorf("badgeField(%q) = %q, want it unchanged", b, got)
 		}
 	}
-	for _, b := range []string{"online", "online-beta"} {
-		got := badgeField(b)
-		if !strings.HasPrefix(got, " ") || !strings.HasSuffix(got, " ") {
-			t.Errorf("badgeField(%q) = %q, want one space on each side", b, got)
+	for _, pair := range [][2]string{{"online", "offline"}, {"online-beta", "offline-beta"}} {
+		got, ref := badgeField(pair[0]), pair[1]
+		if len(got) != len(ref) {
+			t.Errorf("badgeField(%q) = %q (%d cells), want %d to align with %q", pair[0], got, len(got), len(ref), ref)
 		}
-		if strings.TrimSpace(got) != b {
-			t.Errorf("badgeField(%q) = %q, word changed", b, got)
+		if strings.TrimSpace(got) != pair[0] {
+			t.Errorf("badgeField(%q) = %q, word changed", pair[0], got)
+		}
+		if strings.HasPrefix(got, " ") {
+			t.Errorf("badgeField(%q) = %q, want no leading space", pair[0], got)
 		}
 	}
 }

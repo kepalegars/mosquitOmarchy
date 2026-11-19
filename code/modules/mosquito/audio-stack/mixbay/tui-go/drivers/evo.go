@@ -40,6 +40,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/unix"
+
+	"mosquitomarchy.local/mosquitomixbay-tui/profiles"
 )
 
 // EVO specs are embedded JSON cards (see cards.go and profiles/cards/).
@@ -405,7 +407,7 @@ func (d *evoDriver) saveDemo() {
 	}
 	_ = os.MkdirAll(filepath.Dir(d.demoFile()), 0o755)
 	data, _ := json.MarshalIndent(d.demo, "", "  ")
-	_ = os.WriteFile(d.demoFile(), data, 0o644)
+	_ = profiles.WriteFileAtomic(d.demoFile(), data)
 }
 
 // --- readable state -----------------------------------------------------
@@ -725,7 +727,7 @@ func (d *evoDriver) loadOutputMutes() map[string]float64 {
 func (d *evoDriver) saveOutputMutes(m map[string]float64) error {
 	_ = os.MkdirAll(d.shadowDir(), 0o755)
 	data, _ := json.MarshalIndent(m, "", "  ")
-	return os.WriteFile(d.outputMuteFile(), data, 0o644)
+	return profiles.WriteFileAtomic(d.outputMuteFile(), data)
 }
 
 func (d *evoDriver) setOutputMuteEmulated(target string, muted bool) error {
@@ -788,7 +790,7 @@ func (d *evoDriver) loadOutputChannels() map[string]float64 {
 func (d *evoDriver) saveOutputChannels(m map[string]float64) error {
 	_ = os.MkdirAll(d.shadowDir(), 0o755)
 	data, _ := json.MarshalIndent(m, "", "  ")
-	return os.WriteFile(d.outputChannelFile(), data, 0o644)
+	return profiles.WriteFileAtomic(d.outputChannelFile(), data)
 }
 
 // pwOutputSink finds the device's Pro Audio playback sink. PipeWire applies
@@ -1306,7 +1308,7 @@ func (d *evoDriver) loadShadow() map[string]MixerCell {
 func (d *evoDriver) saveShadow(m map[string]MixerCell) error {
 	_ = os.MkdirAll(filepath.Dir(d.shadowFile()), 0o755)
 	data, _ := json.MarshalIndent(m, "", "  ")
-	return os.WriteFile(d.shadowFile(), data, 0o644)
+	return profiles.WriteFileAtomic(d.shadowFile(), data)
 }
 
 func (d *evoDriver) Save() error {
@@ -1362,7 +1364,7 @@ func (d *evoDriver) SaveTo(path string) error {
 	}
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	data, _ := json.MarshalIndent(cfg, "", "  ")
-	return os.WriteFile(path, data, 0o644)
+	return profiles.WriteFileAtomic(path, data)
 }
 
 // ProtectedConfigName is the built-in preset that cannot be overwritten.
@@ -1454,6 +1456,41 @@ func (d *evoDriver) LoadFrom(path string) error {
 		v, _ := m[k].(bool)
 		return v
 	}
+	// Build the mixer state and validate every key before touching anything:
+	// a malformed snapshot must leave the device as it was, not half-restored.
+	shadow := d.loadShadow()
+	if rawMixer, ok := cfg["mixer"]; ok && len(rawMixer) > 0 {
+		// Named snapshot carries its own mixer state.
+		shadow = map[string]MixerCell{}
+		for k, v := range rawMixer {
+			cell := MixerCell{}
+			if m, ok := v.(map[string]any); ok {
+				if f, ok := num(m, "volume"); ok {
+					cell.VolumeDb = f
+				}
+				if f, ok := num(m, "pan"); ok {
+					cell.Pan = f
+				}
+				if f, ok := num(m, "pan_l"); ok {
+					cell.PanL = f
+				}
+				if f, ok := num(m, "pan_r"); ok {
+					cell.PanR = f
+				}
+			}
+			shadow[k] = cell
+		}
+	}
+	keys := make([]string, 0, len(shadow))
+	for k := range shadow {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if _, err := parseMixerKey(k); err != nil {
+			return fmt.Errorf("mixer %s: %w", k, err)
+		}
+	}
 	// Hold one fd for the whole restore so the burst of SET_CURs doesn't
 	// STALL the device (see begin/end).
 	if d.hasDevice() {
@@ -1507,34 +1544,6 @@ func (d *evoDriver) LoadFrom(path string) error {
 			return err
 		}
 	}
-	shadow := d.loadShadow()
-	if rawMixer, ok := cfg["mixer"]; ok && len(rawMixer) > 0 {
-		// Named snapshot carries its own mixer state.
-		shadow = map[string]MixerCell{}
-		for k, v := range rawMixer {
-			cell := MixerCell{}
-			if m, ok := v.(map[string]any); ok {
-				if f, ok := num(m, "volume"); ok {
-					cell.VolumeDb = f
-				}
-				if f, ok := num(m, "pan"); ok {
-					cell.Pan = f
-				}
-				if f, ok := num(m, "pan_l"); ok {
-					cell.PanL = f
-				}
-				if f, ok := num(m, "pan_r"); ok {
-					cell.PanR = f
-				}
-			}
-			shadow[k] = cell
-		}
-	}
-	keys := make([]string, 0, len(shadow))
-	for k := range shadow {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
 	for _, k := range keys {
 		if err := d.SetMixerKey(k, shadow[k]); err != nil {
 			return fmt.Errorf("mixer %s: %w", k, err)
@@ -1582,23 +1591,45 @@ func (d *evoDriver) ResetMixerBus(bus int) error {
 	return nil
 }
 
-// SetMixerKey restores one shadow cell by key ("inputN[@bus]",
-// "outputX_Y[@bus]"), preserving a stereo source's separate pan_l/pan_r.
-func (d *evoDriver) SetMixerKey(key string, cell MixerCell) error {
+// mixerTarget is a parsed shadow key: a mixer input (1-based) or the left
+// channel of an output pair (1-based), each on a bus.
+type mixerTarget struct {
+	input  int
+	output int
+	bus    int
+}
+
+// parseMixerKey is the single reader of the "inputN[@bus]" /
+// "outputX_Y[@bus]" key format. Loading a preset validates with it before
+// writing anything, so it must stay pure.
+func parseMixerKey(key string) (mixerTarget, error) {
 	base, bus := splitMixerKey(key)
 	var n int
 	if _, err := fmt.Sscanf(base, "input%d", &n); err == nil {
-		return d.SetMixerInput(n, cell.VolumeDb, cell.Pan, bus)
+		return mixerTarget{input: n, bus: bus}, nil
 	}
 	var l, r int
 	if _, err := fmt.Sscanf(base, "output%d_%d", &l, &r); err == nil && r == l+1 && l%2 == 1 {
-		pl, pr := cell.PanL, cell.PanR
-		if pl == 0 && pr == 0 && cell.Pan != 0 {
-			pl, pr = cell.Pan, cell.Pan
-		}
-		return d.SetMixerOutput((l-1)/2, cell.VolumeDb, pl, pr, bus)
+		return mixerTarget{output: l, bus: bus}, nil
 	}
-	return fmt.Errorf("unknown mixer source %q", key)
+	return mixerTarget{}, fmt.Errorf("unknown mixer source %q", key)
+}
+
+// SetMixerKey restores one shadow cell by key ("inputN[@bus]",
+// "outputX_Y[@bus]"), preserving a stereo source's separate pan_l/pan_r.
+func (d *evoDriver) SetMixerKey(key string, cell MixerCell) error {
+	t, err := parseMixerKey(key)
+	if err != nil {
+		return err
+	}
+	if t.input != 0 {
+		return d.SetMixerInput(t.input, cell.VolumeDb, cell.Pan, t.bus)
+	}
+	pl, pr := cell.PanL, cell.PanR
+	if pl == 0 && pr == 0 && cell.Pan != 0 {
+		pl, pr = cell.Pan, cell.Pan
+	}
+	return d.SetMixerOutput((t.output-1)/2, cell.VolumeDb, pl, pr, t.bus)
 }
 
 func splitMixerKey(key string) (string, int) {

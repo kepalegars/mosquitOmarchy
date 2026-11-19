@@ -24,6 +24,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"mosquitomarchy.local/mosquitomixbay-tui/config"
 	"mosquitomarchy.local/mosquitomixbay-tui/drivers"
 	"mosquitomarchy.local/mosquitomixbay-tui/meters"
 	"mosquitomarchy.local/mosquitomixbay-tui/patchbay"
@@ -359,10 +360,7 @@ func nextListed(v string) string {
 	}
 }
 
-func uiPrefsFile() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "mosquitomixbay", "ui.json")
-}
+func uiPrefsFile() string { return filepath.Join(config.Dir(), "ui.json") }
 
 func loadUIPrefs() uiPrefs {
 	p := uiPrefs{
@@ -420,9 +418,8 @@ func loadUIPrefs() uiPrefs {
 
 func saveUIPrefs(p uiPrefs) error {
 	p.ShowOnlineOnly = p.Listed == listedConnected
-	_ = os.MkdirAll(filepath.Dir(uiPrefsFile()), 0o755)
 	data, _ := json.MarshalIndent(p, "", "  ")
-	return os.WriteFile(uiPrefsFile(), data, 0o644)
+	return profiles.WriteFileAtomic(uiPrefsFile(), data)
 }
 
 // --- data fetching -----------------------------------------------------
@@ -565,10 +562,9 @@ func (m *model) syncPicker() {
 	}
 }
 
-// badgeField centres a state badge between its brackets. An offline badge is
-// returned untouched: its display is a fixed reference. The online badge is
-// one cell shorter than offline, so it needs one space on each side; its
-// closing bracket therefore sits one cell right of the offline row.
+// badgeField pads a state badge to the width of its offline twin, on the
+// right, so both brackets line up. An offline badge is returned untouched:
+// its display is a fixed reference.
 func badgeField(badge string) string {
 	if strings.HasPrefix(badge, "offline") {
 		return badge
@@ -581,9 +577,7 @@ func badgeField(badge string) string {
 	if pad <= 0 {
 		return badge
 	}
-	// Equal padding on both sides is what reads as centred in a monospace
-	// cell; an odd gap is widened rather than pushed entirely to one side.
-	return " " + badge + " "
+	return badge + strings.Repeat(" ", pad)
 }
 
 func (m model) deviceItems() []tuikit.PickerItem {
@@ -1351,7 +1345,10 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncPicker()
 		// Go straight into the guided harness: discover channels, walk the
 		// controls, confirm, then return to the main menu.
-		return m, reverseHarnessCmd(msg.name, msg.match, true)
+		return m, reverseHarnessCmd(harnessArgs{
+			Name: msg.name, Match: msg.match, USB: msg.usb,
+			Inputs: msg.inputs, Outputs: msg.outputs, Guided: true,
+		})
 
 	case reverseHarnessMsg:
 		// The harness has its own final confirmation. Either way, the user is
@@ -1962,7 +1959,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				c := m.scanCards[i]
 				m.confirm = tuikit.NewConfirm("Add "+c.Name+" as a beta interface and start the guided capture? Mixbay will discover its channels, walk each control, ask for a final confirmation, then return here. Capture needs sudo (usbmon); nothing is written to the card.", "Cancel", "Add + capture")
-				m.confirmAct = func() tea.Cmd { return betaAddCmd(c.Name, c.Match) }
+				m.confirmAct = func() tea.Cmd { return betaAddCmd(c.Name, c.Match, c.USB) }
 				m.push(scrConfirm)
 				return m, nil
 			}
@@ -2120,7 +2117,13 @@ func (m *model) activateControl(val string) tea.Cmd {
 			match = m.status.Spec.CardMatch[0]
 		}
 		m.confirm = tuikit.NewConfirm("Start the guided USB reverse-engineering harness for "+name+"? It captures a quiet baseline, then one action you perform, and saves the observed transfers. Nothing on the card is written until you replay and confirm. Capture needs sudo (usbmon).", "Cancel", "Start capture")
-		m.confirmAct = func() tea.Cmd { return reverseHarnessCmd(name, match, true) }
+		spec := m.status.Spec
+		m.confirmAct = func() tea.Cmd {
+			return reverseHarnessCmd(harnessArgs{
+				Name: name, Match: match,
+				Inputs: spec.NumInputs, Outputs: spec.NumOutPairs * 2, Guided: true,
+			})
+		}
 		m.push(scrConfirm)
 		return nil
 	case strings.HasPrefix(val, "mute:"):

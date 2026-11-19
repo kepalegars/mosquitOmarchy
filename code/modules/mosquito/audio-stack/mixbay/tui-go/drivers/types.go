@@ -209,6 +209,18 @@ type LiveReader interface {
 	Read() (Status, error)
 }
 
+// PresetDriver saves and restores named snapshots of a driver's own state.
+// It is a named contract so the UI never picks up an accidental method.
+type PresetDriver interface {
+	SaveTo(string) error
+	LoadFrom(string) error
+}
+
+// ResetDriver restores the factory routing and levels.
+type ResetDriver interface {
+	ResetToDefaults() error
+}
+
 // Registry lists every interface installed on this machine. The embedded
 // snapshots are seeded into the store on first read, so a card can be
 // uninstalled and later installed again from the repo.

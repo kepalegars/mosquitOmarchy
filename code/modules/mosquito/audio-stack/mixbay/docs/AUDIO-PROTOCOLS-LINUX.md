@@ -806,8 +806,8 @@ car c'est transverse et utile à tous les utilisateurs.
   `capture.txt`, `map.json` sous `~/.config/mosquitomixbay/reverse/` ;
 - replay contrôle/bulk/interrupt, uniquement les octets capturés, dans l'ordre,
   avec GET/acks, `--dry-run`, confirmation `REPLAY`, `--verify` ;
-- intégré à la TUI : Settings → Reverse engineering harness, et carte beta →
-  Restart reverse engineering.
+- intégré à la TUI : Add an audio interface (capture guidée juste après
+  l'ajout), et carte beta → Restart reverse engineering.
 
 Limites actuelles : pas de reconstruction HID multi-octets, pas de timing
 sub-milliseconde, pas de promotion automatique beta → native, pas de PCIe

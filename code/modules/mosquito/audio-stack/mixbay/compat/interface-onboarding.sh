@@ -88,8 +88,8 @@ needs_for() { # device id -> newline-separated missing pieces (empty = none)
       fi
       ;;
     ssl12)
-      # Not in drivers.Registry() yet: this case documents the douze pattern
-      # for the day the SSL 12 control backend lands in Mixbay.
+      # Control surface is the douze daemon (drivers/douze.go, a native card):
+      # these are only its system-side pieces, which the foundation owns.
       [[ -f /etc/udev/rules.d/70-douze.rules ]] || printf '%s\n' "SSL 12 control udev rule (31e9:0024, TAG+=uaccess before 73)"
       [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/pipewire/pipewire.conf.d/99-ssl12-sinks.conf" ]] \
         || printf '%s\n' "PipeWire playback-pair split (ssl12.pb12 … pb78)"

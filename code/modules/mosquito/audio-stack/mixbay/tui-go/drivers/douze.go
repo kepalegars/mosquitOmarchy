@@ -27,6 +27,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"mosquitomarchy.local/mosquitomixbay-tui/profiles"
 )
 
 const douzeBase = "http://127.0.0.1:1212"
@@ -72,7 +74,7 @@ func (d *douzeDriver) saveDemo() {
 	}
 	_ = os.MkdirAll(filepath.Dir(d.demoFile()), 0o755)
 	data, _ := json.MarshalIndent(d.demo, "", "  ")
-	_ = os.WriteFile(d.demoFile(), data, 0o644)
+	_ = profiles.WriteFileAtomic(d.demoFile(), data)
 }
 
 func (d *douzeDriver) demoStatus(note string) Status {

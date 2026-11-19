@@ -38,9 +38,12 @@ per card
 
 ## What is applied by default
 
-`setup-mosquitomixbay.sh` runs `audio-foundation.sh --apply` after the EVO
-capture helper. The onboarding prompt (`mosquito-mixbay-compat`) also reports
-the same missing steps, so both surfaces agree.
+`setup-mosquitomixbay.sh` deploys `audio-foundation.sh` but deliberately does
+**not** apply it: the foundation is a per-interface step, run when a card is
+set up and has been connected once. The onboarding prompt
+(`mosquito-mixbay-compat`) delegates the EVO steps to
+`audio-foundation.sh --needs` and adds the EVO 8 capture rule, which the
+foundation installs only with the evo-raw integration.
 
 1. **udev** — `/etc/udev/rules.d/70-mixbay-evo.rules`:
    `TAG+="uaccess"` for `KERNEL=="evo4"` and `KERNEL=="evo8"`. The kmod's own

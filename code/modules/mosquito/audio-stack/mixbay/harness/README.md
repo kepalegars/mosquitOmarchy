@@ -18,7 +18,7 @@ La capture nécessite root ; le replay utilise `pyusb` et les droits udev.
 ## Installation
 
 ```bash
-./setup-mosquitomixbay.sh -y --no-kmod
+./setup-mosquitomixbay.sh -y
 ```
 
 Le binaire est déployé dans `~/.local/bin/mixbay-reverse`.
@@ -45,7 +45,7 @@ mixbay-reverse capture --guided --name "PreSonus Quantum ES 4" --match "Quantum 
 3. **Diff** : transferts nouveaux ou payload changée ; le polling identique
    est ignoré.
 4. **Sauvegarde** dans `~/.config/mosquitomixbay/reverse/<carte>/<timestamp>/`.
-5. **Résumé final** et confirmation, puis retour à Mixbay.
+5. **Résumé final**, puis retour à Mixbay (le replay, lui, demande `REPLAY`).
 
 Le mode non guidé reste disponible pour capturer un seul contrôle :
 
@@ -110,10 +110,10 @@ le diff, la fenêtre de replay et le stockage. Aucun matériel requis.
 
 ## Intégration TUI
 
-- **Settings → Reverse engineering harness (usbmon)** lance le harnais sans
-  carte présélectionnée.
-- Sur une carte beta : **Restart reverse engineering** lance le harnais avec le
-  nom de la carte.
+- **Settings → Add an audio interface** : après l'ajout de la carte beta, le
+  harnais guidé démarre tout seul avec les contrôles que cette carte déclare.
+- Sur une carte beta : **Restart reverse engineering** relance le harnais.
+- Il n'y a pas d'entrée « harness » séparée dans Settings.
 - Après la capture, la TUI affiche un toast ; `mixbay-reverse sessions` liste
   les labels.
 

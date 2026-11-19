@@ -198,7 +198,7 @@ def find_device(args: argparse.Namespace, prompt: bool = True) -> UsbDevice:
         devs = [d for d in devs if d.bus == args.bus]
     if args.dev is not None:
         devs = [d for d in devs if d.dev == args.dev]
-    needles = [n for n in (args.name, args.match) if n]
+    needles = [n for n in (args.name, args.match, getattr(args, "usb", "")) if n]
     if needles:
         def hit(d: UsbDevice, all_needles: bool) -> bool:
             hay = " ".join((d.product, d.manufacturer, d.serial)).lower()
@@ -683,11 +683,15 @@ def _open_usb(dev: UsbDevice, interface: int, detach: bool):
     handle = usb_core.find(**kwargs)
     if handle is None:
         # Bus/devnum changes after a re-enumeration; fall back to the stable
-        # VID:PID (and serial when present).
+        # VID:PID (and serial when present). Without a serial this may pick a
+        # *different* unit of the same model: say so before writing anything.
         kwargs.pop("bus", None)
         kwargs.pop("address", None)
         if dev.serial:
             kwargs["serial_number"] = dev.serial
+        else:
+            warn("device re-enumerated without a serial number: replaying onto "
+                 "the first matching VID:PID, which may be another unit")
         handle = usb_core.find(**kwargs)
     if handle is None:
         die("device not found by pyusb (unplugged, re-enumerated, or vendor class hidden)")
@@ -781,7 +785,14 @@ def cmd_show(args: argparse.Namespace) -> int:
     path, entry = resolve_label(args.label)
     meta, baseline, action, candidates = load_session(path)
     say(f"label   : {args.label}")
-    say(f"device  : {meta.get('device', {}).get('label') or meta.get('device')}")
+    dev = meta.get("device") or {}
+    if isinstance(dev, dict):
+        name = dev.get("product") or dev.get("manufacturer") or "USB device"
+        vid, pid = dev.get("vid"), dev.get("pid")
+        ids = f" [{vid:04x}:{pid:04x}]" if isinstance(vid, int) and isinstance(pid, int) else ""
+        say(f"device  : {name}{ids} bus {dev.get('bus', '?')} dev {dev.get('dev', '?')}")
+    else:
+        say(f"device  : {dev}")
     say(f"session : {path}")
     say(f"range   : {entry.get('range')}")
     say(f"counts  : baseline={len(baseline)} action={len(action)} candidates={len(candidates)}")
@@ -848,7 +859,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
         say(f"  mixbay-reverse replay --label {args.label or '<label>'} --dry-run")
         return 0
 
-    channels = discover_channels(dev, [args.name, args.match])
+    channels = discover_channels(dev, [args.name, args.match, args.usb])
     say("\nChannel discovery (read-only, from PipeWire/pactl):")
     say(f"  ALSA card : {channels['card'] or 'not found'}")
     say(f"  Profile   : {channels['profile'] or 'unknown'}")
@@ -860,6 +871,15 @@ def cmd_capture(args: argparse.Namespace) -> int:
         say(f"    source : {name}")
     if not channels["playback"] and not channels["capture"]:
         warn("no PipeWire channels found; falling back to 2 in / 2 out")
+    # The card Mixbay just stored declares how many controls its primitive
+    # driver can drive. Guided steps must not describe more than that, or the
+    # capture proposes targets the beta driver can never set.
+    if args.inputs:
+        channels["capture"] = args.inputs
+        say(f"  Card spec : {args.inputs} input control(s)")
+    if args.outputs:
+        channels["playback"] = args.outputs
+        say(f"  Card spec : {args.outputs} output control(s)")
 
     steps = [s.strip() for s in (args.steps or "").split(",") if s.strip()]
     if not steps:
@@ -944,6 +964,11 @@ def build_parser() -> argparse.ArgumentParser:
     cap = sub.add_parser("capture", help="capture baseline + one action")
     cap.add_argument("--name", default="", help="substring of product/manufacturer")
     cap.add_argument("--match", default="", help="ALSA/card name substring")
+    cap.add_argument("--usb", default="", help="USB product/manufacturer substring")
+    cap.add_argument("--inputs", type=int, default=0,
+                     help="input controls declared by the card spec (0 = discover)")
+    cap.add_argument("--outputs", type=int, default=0,
+                     help="output controls declared by the card spec (0 = discover)")
     cap.add_argument("--vid", type=lambda s: int(s, 0), default=None)
     cap.add_argument("--pid", type=lambda s: int(s, 0), default=None)
     cap.add_argument("--bus", type=int, default=None)

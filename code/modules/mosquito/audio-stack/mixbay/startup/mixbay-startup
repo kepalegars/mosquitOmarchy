@@ -252,7 +252,7 @@ external(){
 # spawn) Mixbay, then wake a running TUI so it acts without a restart.
 request_card(){
   local file="$1" id="${2:-}" pidfile pid
-  [[ $id =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || { printf 'usage: %s %s ID\n' "$0" "$3" >&2; exit 2; }
+  [[ $id =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || { printf 'invalid card id: %s\n' "$id" >&2; exit 2; }
   mkdir -p "$CONF/mosquitomixbay"
   printf '{"id":"%s"}\n' "$id" > "$CONF/mosquitomixbay/$file"
   open_mixbay

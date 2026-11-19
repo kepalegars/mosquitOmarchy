@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"mosquitomarchy.local/mosquitomixbay-tui/config"
 )
 
 // ErrNoPresets is the empty state, not a failure.
@@ -22,10 +24,7 @@ type Preset struct {
 }
 
 // Dir is the patchbay preset directory.
-func Dir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "mosquitomixbay", "pipewire")
-}
+func Dir() string { return filepath.Join(config.Dir(), "pipewire") }
 
 func presetPath(name string) string { return filepath.Join(Dir(), name+".json") }
 

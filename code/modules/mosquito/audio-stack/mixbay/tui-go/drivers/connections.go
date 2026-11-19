@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"mosquitomarchy.local/mosquitomixbay-tui/config"
 )
 
 // ConnectionEntry is one interface ever seen in the connection log written by
@@ -19,8 +21,7 @@ type ConnectionEntry struct {
 }
 
 func connectionFile() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "mosquitomixbay", "connected-interfaces.json")
+	return filepath.Join(config.Dir(), "connected-interfaces.json")
 }
 
 func ConnectionLog() []ConnectionEntry {

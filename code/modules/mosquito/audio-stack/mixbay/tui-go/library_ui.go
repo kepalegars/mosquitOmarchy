@@ -193,10 +193,11 @@ func libraryUninstallCmd(ids []string) tea.Cmd {
 		// then only writes the .removed marker for a shipped card.
 		fmt.Fprintf(&script, "rm -rf \"${MIXBAY_CONFIG_DIR:-$HOME/.config/mosquitomixbay}/cards/%s\"\n", id)
 		// Drop the history entry too; otherwise the card keeps appearing in
-		// "used" lists and the default picker after its profile is gone.
-		fmt.Fprintf(&script, `log="$HOME/.config/mosquitomixbay/connected-interfaces.json"
-if [ -f "$log" ]; then
-  jq --arg id '%s' 'map(select(.id != $id))' "$log" > "$log.tmp" && mv "$log.tmp" "$log"
+		// "used" lists and the default picker after its profile is gone. Same
+		// root as the cards above, so a MIXBAY_CONFIG_DIR install stays whole.
+		fmt.Fprintf(&script, `log="${MIXBAY_CONFIG_DIR:-$HOME/.config/mosquitomixbay}/connected-interfaces.json"
+if [ -f "$log" ] && command -v jq >/dev/null 2>&1; then
+  tmp="$(mktemp "$log.XXXXXX")" && jq --arg id '%s' 'map(select(.id != $id))' "$log" > "$tmp" && mv "$tmp" "$log"
 fi
 `, id)
 	}

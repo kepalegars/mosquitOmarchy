@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,6 +30,9 @@ type scanCard struct {
 	Key   string
 	Name  string
 	Match string
+	// USB is device.product.name, the string the reverse harness matches on.
+	// Match stays the ALSA card name, which is what the card spec stores.
+	USB string
 }
 
 // usbCardsFromPactl extracts the connected USB interfaces from
@@ -61,7 +65,10 @@ func usbCardsFromPactl(raw []byte) ([]scanCard, error) {
 		if match == "" {
 			match = desc
 		}
-		out = append(out, scanCard{Key: c.Name, Name: desc, Match: match})
+		out = append(out, scanCard{
+			Key: c.Name, Name: desc, Match: match,
+			USB: c.Properties["device.product.name"],
+		})
 	}
 	return out, nil
 }
@@ -72,9 +79,12 @@ type scanMsg struct {
 }
 
 type betaAddMsg struct {
-	name  string
-	match string
-	err   error
+	name    string
+	match   string
+	usb     string
+	inputs  int
+	outputs int
+	err     error
 }
 
 func scanCardsCmd() tea.Cmd {
@@ -115,10 +125,14 @@ func isNativeCard(s string) bool {
 	return false
 }
 
-func betaAddCmd(name, match string) tea.Cmd {
+func betaAddCmd(name, match, usb string) tea.Cmd {
 	return func() tea.Msg {
-		_, err := drivers.AddBetaDevice(name, match)
-		return betaAddMsg{name: name, match: match, err: err}
+		dev, err := drivers.AddBetaDevice(name, match)
+		// The harness speaks output *channels*; a card declares pairs.
+		return betaAddMsg{
+			name: name, match: match, usb: usb,
+			inputs: dev.Inputs, outputs: dev.Outputs * 2, err: err,
+		}
 	}
 }
 
@@ -259,7 +273,16 @@ func cardSignalCmd() tea.Cmd {
 // reports the outcome and returns to the main menu.
 type reverseHarnessMsg struct{ err error }
 
-func reverseHarnessCmd(name, match string, guided bool) tea.Cmd {
+// harnessArgs is what the TUI knows about the card before any capture. Inputs
+// and outputs are the counts the stored card can actually drive; the harness
+// must not propose more.
+type harnessArgs struct {
+	Name, Match, USB string
+	Inputs, Outputs  int
+	Guided           bool
+}
+
+func reverseHarnessCmd(a harnessArgs) tea.Cmd {
 	path, err := exec.LookPath("mixbay-reverse")
 	if err != nil {
 		return func() tea.Msg {
@@ -267,14 +290,23 @@ func reverseHarnessCmd(name, match string, guided bool) tea.Cmd {
 		}
 	}
 	args := []string{"capture"}
-	if guided {
+	if a.Guided {
 		args = append(args, "--guided")
 	}
-	if name != "" {
-		args = append(args, "--name", name)
+	if a.Name != "" {
+		args = append(args, "--name", a.Name)
 	}
-	if match != "" {
-		args = append(args, "--match", match)
+	if a.Match != "" {
+		args = append(args, "--match", a.Match)
+	}
+	if a.USB != "" {
+		args = append(args, "--usb", a.USB)
+	}
+	if a.Inputs > 0 {
+		args = append(args, "--inputs", strconv.Itoa(a.Inputs))
+	}
+	if a.Outputs > 0 {
+		args = append(args, "--outputs", strconv.Itoa(a.Outputs))
 	}
 	c := exec.Command(path, args...)
 	return tea.ExecProcess(c, func(err error) tea.Msg { return reverseHarnessMsg{err: err} })

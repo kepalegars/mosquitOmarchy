@@ -2903,7 +2903,7 @@ func (m *model) evoSaveTo(path string) tea.Cmd {
 	}
 	dev := m.deviceID
 	return m.applyCmd(dev, func(d drivers.Driver) error {
-		if s, ok := d.(interface{ SaveTo(string) error }); ok {
+		if s, ok := d.(drivers.PresetDriver); ok {
 			return s.SaveTo(path)
 		}
 		return d.Save()
@@ -2916,7 +2916,7 @@ func (m *model) evoLoadFrom(path string) tea.Cmd {
 	}
 	dev := m.deviceID
 	return m.applyCmd(dev, func(d drivers.Driver) error {
-		if l, ok := d.(interface{ LoadFrom(string) error }); ok {
+		if l, ok := d.(drivers.PresetDriver); ok {
 			return l.LoadFrom(path)
 		}
 		return d.Load()
@@ -2930,7 +2930,7 @@ func (m *model) evoLoadDefault() tea.Cmd {
 	}
 	dev := m.deviceID
 	return m.applyCmd(dev, func(d drivers.Driver) error {
-		if r, ok := d.(interface{ ResetToDefaults() error }); ok {
+		if r, ok := d.(drivers.ResetDriver); ok {
 			return r.ResetToDefaults()
 		}
 		return fmt.Errorf("default preset unavailable for this device")

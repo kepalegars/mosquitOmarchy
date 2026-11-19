@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -95,19 +97,35 @@ func RepoPageURL() string {
 }
 
 // SetRepoURL persists a mirror/repo URL and returns the normalized value.
-func SetRepoURL(url string) (string, error) {
-	url = normalizeRepoURL(strings.TrimSpace(url))
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		return "", errors.New("profile URL must be http(s)")
+// The index is the root of trust (card and integration checksums come from
+// it), so plain http is refused except for a loopback mirror, where there is
+// no network to intercept.
+func SetRepoURL(raw string) (string, error) {
+	target := normalizeRepoURL(strings.TrimSpace(raw))
+	u, err := url.Parse(target)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return "", errors.New("profile URL must be https")
+	}
+	if u.Scheme == "http" && !loopbackHost(u.Hostname()) {
+		return "", errors.New("profile URL must use https (http is only accepted for a local mirror)")
 	}
 	path := filepath.Join(ConfigDir(), "profiles.json")
 	data, _ := json.MarshalIndent(struct {
 		URL string `json:"url"`
-	}{URL: url}, "", "  ")
-	if err := writeFileAtomic(path, append(data, '\n')); err != nil {
+	}{URL: target}, "", "  ")
+	if err := WriteFileAtomic(path, append(data, '\n')); err != nil {
 		return "", err
 	}
-	return url, nil
+	return target, nil
+}
+
+// loopbackHost reports whether a mirror host cannot leave the machine.
+func loopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // normalizeRepoURL turns a GitHub web URL into its raw base so users can paste
@@ -246,7 +264,7 @@ func EnsureIntegration(ctx context.Context, name string) (string, error) {
 			return "", fmt.Errorf("%s/%s: sha256 mismatch (index %s, download %s)", name, file, want, got)
 		}
 		path := filepath.Join(dir, file)
-		if err := writeFileAtomic(path, body); err != nil {
+		if err := WriteFileAtomic(path, body); err != nil {
 			return "", err
 		}
 		mode := os.FileMode(0o644)
@@ -258,7 +276,7 @@ func EnsureIntegration(ctx context.Context, name string) (string, error) {
 		}
 	}
 	marker, _ := json.MarshalIndent(integ, "", "  ")
-	if err := writeFileAtomic(filepath.Join(dir, ".manifest.json"), append(marker, '\n')); err != nil {
+	if err := WriteFileAtomic(filepath.Join(dir, ".manifest.json"), append(marker, '\n')); err != nil {
 		return "", err
 	}
 	return dir, nil
@@ -381,7 +399,7 @@ func indexCacheFile() string {
 }
 
 func saveIndexCache(data []byte) error {
-	return writeFileAtomic(indexCacheFile(), data)
+	return WriteFileAtomic(indexCacheFile(), data)
 }
 
 // CachedIndex returns the last successfully fetched index, so the library
@@ -507,7 +525,7 @@ func deployCard(c Card, ic IndexCard, revision string) error {
 	if err := os.MkdirAll(filepath.Dir(upstreamFile(id)), 0o755); err != nil {
 		return err
 	}
-	if err := writeFileAtomic(upstreamFile(id), Encode(c)); err != nil {
+	if err := WriteFileAtomic(upstreamFile(id), Encode(c)); err != nil {
 		return err
 	}
 	best := readMeta(id)

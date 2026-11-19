@@ -468,13 +468,13 @@ mixbay-reverse replay --label gain:input1 --yes
 
 Il capture `usbmon`, découvre les canaux de la carte (PipeWire/pactl), puis
 avance contrôle par contrôle : baseline silencieuse, **une** action, diff,
-sauvegarde. Un résumé final demande confirmation et ramène au menu principal.
+sauvegarde. Un résumé final ramène au menu principal.
 Le replay ne renvoie **que** les octets capturés, dans l'ordre, avec les
 GET/acks intermédiaires ; `--dry-run` et une confirmation `REPLAY` sont
 obligatoires. Voir [`harness/README.md`](harness/README.md).
 
-TUI : **Settings → Reverse engineering harness (usbmon)**, et sur une carte
-beta **Restart reverse engineering**. Surtout, **Add an audio interface** lance
+TUI : **Settings → Add an audio interface**, et sur une carte bêta
+**Restart reverse engineering**. **Add an audio interface** lance
 le mode guidé juste après l'ajout de la carte : découverte des canaux, steps,
 confirmation finale, retour à l'accueil. La capture demande sudo (usbmon) ; le
 replay utilise `pyusb` et les droits udev. Une carte beta reste beta tant que
@@ -746,7 +746,9 @@ mosquitomixbay/
     drivers/                 Driver iface : evo.go, alsa.go (+ tests)
     meters/                  capture pw-record f32 + ballistiques (+ tests)
     patchbay/                graphe pw-dump, presets de liens (+ tests)
-    cli.go model.go view.go meters_ui.go patchbay_ui.go main.go
+    ui_blocks.go betaui.go library_ui.go foundation_ui.go setup_ui.go
+    profiles_cli.go session.go view.go evo_tui.go ugm_tui.go move_tui.go
+    evo_anim.go meters_ui.go patchbay_ui.go ui_openers.go cli.go model.go main.go
   README.md  INTEGRATION.md
 ../levels-guard/            module séparé (panneau Omarchy + touches média)
 ```
@@ -756,4 +758,8 @@ mosquitomixbay/
 partagé avec evoctl, `config.json`, les snapshots nommés et `.output-mute.json`
 pour le mute de sortie émulé — le preset `default` n'existe pas sur disque, il
 est fourni par le binaire et protégé), `~/.config/mosquitomixbay/<dev>/demo.json`
-(DEMO) et `~/.config/mosquitomixbay/pipewire/<preset>.json` (patchbay).
+(DEMO), `~/.config/mosquitomixbay/pipewire/<preset>.json` (patchbay),
+`~/.config/mosquitomixbay/cards/<id>/` (profils), `foundation.json` +
+`connected-interfaces.json` (fondation audio, écrits par le shell),
+`onboarding.json` (premier branchement), `reverse/` (harnais usbmon),
+`profiles.json` + `~/.cache/mosquitomixbay/profiles-index.json` (dépôt).

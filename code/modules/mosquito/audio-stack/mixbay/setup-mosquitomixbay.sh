@@ -38,11 +38,16 @@ die()   { warn "$*"; exit 1; }
 
 YES=0 STATUS_ONLY=0 UNINSTALL=0 NO_FOUNDATION=0
 for a in "$@"; do case "$a" in
-  -y|--yes) YES=1 ;;
+  -y|--yes) YES=1 ;;                # accepted for the audio-stack orchestrator; nothing prompts here
   --status) STATUS_ONLY=1 ;;
   --no-foundation) NO_FOUNDATION=1 ;;
   --uninstall) UNINSTALL=1 ;;
+  *) warn "unknown option ignored: $a" ;;
 esac; done
+
+# Escape a value used as a sed replacement, so a checkout path containing
+# & | or \ cannot corrupt the deployed helper.
+sed_escape() { printf '%s' "$1" | sed 's/[\\&|]/\\&/g'; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="$HOME/.local/bin"
@@ -78,24 +83,34 @@ if ((UNINSTALL)); then
     bash "$SCRIPT_DIR/foundation/audio-foundation.sh" --remove \
       || warn "audio foundation removal reported a problem"
   fi
-  local integ="${XDG_DATA_HOME:-$HOME/.local/share}/mosquitomixbay/integrations"
+  integ="${XDG_DATA_HOME:-$HOME/.local/share}/mosquitomixbay/integrations"
+  keep_integ=0
   if [[ -f "$integ/oscmix/setup-oscmix.sh" ]]; then
     bash "$integ/oscmix/setup-oscmix.sh" --uninstall \
-      || warn "oscmix removal reported a problem"
+      || { warn "oscmix removal reported a problem"; keep_integ=1; }
   fi
-  rm -rf "$integ"
-  ok "profile integrations removed ($integ)"
+  if ((keep_integ)); then
+    warn "profile integrations kept in $integ (oscmix removal failed)"
+  else
+    rm -rf "$integ"
+    ok "profile integrations removed ($integ)"
+  fi
   [[ -x "$BIN_DIR/mixbay-startup" ]] && "$BIN_DIR/mixbay-startup" --remove || true
   systemctl --user disable --now mixbay-card-watcher.service >/dev/null 2>&1 || true
   rm -f "$HOME/.config/systemd/user/mixbay-card-watcher.service"
   systemctl --user daemon-reload >/dev/null 2>&1 || true
-  rm -f "${XDG_RUNTIME_DIR:-/tmp}/mosquito-mixbay-tui.pid"
+  rm -f "${XDG_RUNTIME_DIR:-/tmp}/mosquito-mixbay-tui.pid" "${XDG_RUNTIME_DIR:-/tmp}/mosquito-mixbay.pid"
   rm -f "$BIN_DIR/mosquito-mixbay" "$BIN_DIR/mosquito-mixbay-actions" "$BIN_DIR/mosquito-mixbay-tui" "$BIN_DIR/mosquito-mixbay-compat" "$BIN_DIR/mixbay-audio-foundation" "$BIN_DIR/mixbay-audio-defaults" "$BIN_DIR/mixbay-setup-ssl12" "$BIN_DIR/mixbay-oscmix-gtk" "$BIN_DIR/mixbay-oscmix-qt" "$BIN_DIR/mixbay-startup" "$BIN_DIR/mixbay-reverse" "$BIN_DIR/mixbay-card-watcher" "$BIN_DIR/move-audio"
   ok "binaries removed from $BIN_DIR"
   if [[ -f "$HOME/.config/hypr/hyprland.lua" ]]; then
-    sed -i '/-- >>> mosquito-mixbay-tui-setup >>>/,/-- <<< mosquito-mixbay-tui-setup <<</d' "$HOME/.config/hypr/hyprland.lua"
-    hyprctl reload >/dev/null 2>&1 || true
-    ok "Hyprland float rule removed"
+    if grep -qF -- '-- >>> mosquito-mixbay-tui-setup >>>' "$HOME/.config/hypr/hyprland.lua" \
+       && grep -qF -- '-- <<< mosquito-mixbay-tui-setup <<<' "$HOME/.config/hypr/hyprland.lua"; then
+      sed -i '/-- >>> mosquito-mixbay-tui-setup >>>/,/-- <<< mosquito-mixbay-tui-setup <<</d' "$HOME/.config/hypr/hyprland.lua"
+      hyprctl reload >/dev/null 2>&1 || true
+      ok "Hyprland float rule removed"
+    else
+      warn "Hyprland block markers are incomplete; edit ~/.config/hypr/hyprland.lua by hand"
+    fi
   fi
   rm -f "$HOME/.local/share/applications/mosquito-mixbay.desktop"
   command -v update-desktop-database >/dev/null && update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
@@ -120,9 +135,12 @@ mkdir -p "$BIN_DIR"
 # -----------------------------------------------------------------------------
 for f in mosquito-mixbay mosquito-mixbay-actions; do
   [[ -f "$SCRIPT_DIR/$f" ]] || die "$f not found next to this script"
-  cp "$SCRIPT_DIR/$f" "$BIN_DIR/$f"
-  chmod +x "$BIN_DIR/$f"
-  bash -n "$BIN_DIR/$f" || die "Invalid syntax: $f"
+  tmp="$(mktemp "$BIN_DIR/.$f.XXXXXX")"
+  cp "$SCRIPT_DIR/$f" "$tmp"
+  chmod +x "$tmp"
+  bash -n "$tmp" || { rm -f "$tmp"; die "Invalid syntax: $f"; }
+  # mv replaces the inode: a running dispatcher keeps reading the old file.
+  mv -f "$tmp" "$BIN_DIR/$f"
   ok "$f deployed: $BIN_DIR/$f"
 done
 
@@ -131,7 +149,7 @@ done
 # the script falls back to its own location when run from the checkout.
 if [[ -f "$SCRIPT_DIR/compat/interface-onboarding.sh" ]]; then
   COMPAT_TMP="$(mktemp "$BIN_DIR/.mosquito-mixbay-compat.XXXXXX")"
-  sed "s|@MIXBAY_ROOT@|$SCRIPT_DIR|g" "$SCRIPT_DIR/compat/interface-onboarding.sh" > "$COMPAT_TMP"
+  sed "s|@MIXBAY_ROOT@|$(sed_escape "$SCRIPT_DIR")|g" "$SCRIPT_DIR/compat/interface-onboarding.sh" > "$COMPAT_TMP"
   chmod +x "$COMPAT_TMP"
   bash -n "$COMPAT_TMP" || { rm -f "$COMPAT_TMP"; die "Invalid syntax: mosquito-mixbay-compat"; }
   # mv replaces the inode: safe even when the caller is the running helper.
@@ -143,7 +161,7 @@ fi
 # onboarding prompt). Same @MIXBAY_ROOT@ baking as the compat helper.
 if [[ -f "$SCRIPT_DIR/foundation/audio-foundation.sh" ]]; then
   FOUNDATION_TMP="$(mktemp "$BIN_DIR/.mixbay-audio-foundation.XXXXXX")"
-  sed "s|@MIXBAY_ROOT@|$SCRIPT_DIR|g" "$SCRIPT_DIR/foundation/audio-foundation.sh" > "$FOUNDATION_TMP"
+  sed "s|@MIXBAY_ROOT@|$(sed_escape "$SCRIPT_DIR")|g" "$SCRIPT_DIR/foundation/audio-foundation.sh" > "$FOUNDATION_TMP"
   chmod +x "$FOUNDATION_TMP"
   bash -n "$FOUNDATION_TMP" || { rm -f "$FOUNDATION_TMP"; die "Invalid syntax: mixbay-audio-foundation"; }
   mv -f "$FOUNDATION_TMP" "$BIN_DIR/mixbay-audio-foundation"
@@ -152,10 +170,12 @@ fi
 
 # Guided USB reverse-engineering harness (usbmon capture + pyusb replay).
 if [[ -f "$SCRIPT_DIR/harness/mixbay-reverse.py" ]]; then
-  cp "$SCRIPT_DIR/harness/mixbay-reverse.py" "$BIN_DIR/mixbay-reverse"
-  chmod +x "$BIN_DIR/mixbay-reverse"
-  python3 -m py_compile "$BIN_DIR/mixbay-reverse" 2>/dev/null \
+  tmp="$(mktemp "$BIN_DIR/.mixbay-reverse.XXXXXX")"
+  cp "$SCRIPT_DIR/harness/mixbay-reverse.py" "$tmp"
+  chmod +x "$tmp"
+  python3 -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[2], "exec")' "$tmp" mixbay-reverse 2>/dev/null \
     || warn "mixbay-reverse deployed but python syntax check failed"
+  mv -f "$tmp" "$BIN_DIR/mixbay-reverse"
   ok "mixbay-reverse deployed: $BIN_DIR/mixbay-reverse"
 fi
 
@@ -164,9 +184,11 @@ fi
 # base setup does not add it to a machine that never asked for it. It DOES
 # refresh an installed one: an update must not leave a stale helper behind.
 if [[ -x "$BIN_DIR/move-audio" && -f "$SCRIPT_DIR/watcher/move-audio" ]]; then
-  cp "$SCRIPT_DIR/watcher/move-audio" "$BIN_DIR/move-audio"
-  chmod +x "$BIN_DIR/move-audio"
-  bash -n "$BIN_DIR/move-audio" || die "Invalid syntax: move-audio"
+  tmp="$(mktemp "$BIN_DIR/.move-audio.XXXXXX")"
+  cp "$SCRIPT_DIR/watcher/move-audio" "$tmp"
+  chmod +x "$tmp"
+  bash -n "$tmp" || { rm -f "$tmp"; die "Invalid syntax: move-audio"; }
+  mv -f "$tmp" "$BIN_DIR/move-audio"
   if "$BIN_DIR/move-audio" --self-test >/dev/null 2>&1; then
     ok "move-audio refreshed (Move profile)"
   else
@@ -176,9 +198,11 @@ fi
 
 # Login autostart / scratchpad helper (both enabled by default at install).
 if [[ -f "$SCRIPT_DIR/startup/mixbay-startup" ]]; then
-  cp "$SCRIPT_DIR/startup/mixbay-startup" "$BIN_DIR/mixbay-startup"
-  chmod +x "$BIN_DIR/mixbay-startup"
-  bash -n "$BIN_DIR/mixbay-startup" || die "Invalid syntax: mixbay-startup"
+  tmp="$(mktemp "$BIN_DIR/.mixbay-startup.XXXXXX")"
+  cp "$SCRIPT_DIR/startup/mixbay-startup" "$tmp"
+  chmod +x "$tmp"
+  bash -n "$tmp" || { rm -f "$tmp"; die "Invalid syntax: mixbay-startup"; }
+  mv -f "$tmp" "$BIN_DIR/mixbay-startup"
   "$BIN_DIR/mixbay-startup" --apply || warn "could not write the Mixbay autostart line"
   ok "mixbay-startup deployed (login + scratchpad, on by default)"
 fi
@@ -189,10 +213,11 @@ fi
 SSL12_SETUP_SRC="$SCRIPT_DIR/../../../Apps/douze/setup-douze.sh"
 if [[ -f "$SSL12_SETUP_SRC" ]]; then
   SSL12_TMP="$(mktemp "$BIN_DIR/.mixbay-setup-ssl12.XXXXXX")"
-  cat > "$SSL12_TMP" <<EOF
+  cat > "$SSL12_TMP" <<'EOF'
 #!/usr/bin/env bash
-exec bash "$SSL12_SETUP_SRC" -y --update --restart-pipewire "\$@"
+exec bash "@SSL12_SETUP@" -y --update --restart-pipewire "$@"
 EOF
+  sed -i "s|@SSL12_SETUP@|$(sed_escape "$SSL12_SETUP_SRC")|" "$SSL12_TMP"
   chmod +x "$SSL12_TMP"
   mv -f "$SSL12_TMP" "$BIN_DIR/mixbay-setup-ssl12"
   ok "mixbay-setup-ssl12 deployed: $BIN_DIR/mixbay-setup-ssl12"
@@ -227,9 +252,11 @@ fi
 #     plugged in gets noticed (and can open Mixbay to install its profile).
 # -----------------------------------------------------------------------------
 if [[ -f "$SCRIPT_DIR/watcher/mixbay-card-watcher" ]]; then
-  cp "$SCRIPT_DIR/watcher/mixbay-card-watcher" "$BIN_DIR/mixbay-card-watcher"
-  chmod +x "$BIN_DIR/mixbay-card-watcher"
-  bash -n "$BIN_DIR/mixbay-card-watcher" || die "Invalid syntax: mixbay-card-watcher"
+  tmp="$(mktemp "$BIN_DIR/.mixbay-card-watcher.XXXXXX")"
+  cp "$SCRIPT_DIR/watcher/mixbay-card-watcher" "$tmp"
+  chmod +x "$tmp"
+  bash -n "$tmp" || { rm -f "$tmp"; die "Invalid syntax: mixbay-card-watcher"; }
+  mv -f "$tmp" "$BIN_DIR/mixbay-card-watcher"
   if "$BIN_DIR/mixbay-card-watcher" --self-test >/dev/null 2>&1; then
     ok "mixbay-card-watcher deployed ($BIN_DIR/mixbay-card-watcher)"
   else
@@ -244,7 +271,9 @@ Description=Mixbay supported-card watcher
 [Service]
 Type=simple
 ExecStart=%h/.local/bin/mixbay-card-watcher
-Restart=always
+# on-failure, not always: the watcher exits 0 when pactl/jq are missing, and
+# restarting it every 3 s would only hide that from the journal.
+Restart=on-failure
 RestartSec=3
 
 [Install]
@@ -268,8 +297,17 @@ touch "$HYPR_CONF"
 # DPI, height from the opening monitor's ratio (code/lib/hypr-tui.sh). The
 # scratchpad keeps its bigger panel, monitor-relative so it fits any screen.
 TUI_W="$(HYPRLAND_CONFIG="$HYPR_CONF" bash "$(dirname "${BASH_SOURCE[0]}")/../../../../lib/hypr-tui.sh" width)"
-sed -i '/-- >>> mosquito-mixbay-tui-setup >>>/,/-- <<< mosquito-mixbay-tui-setup <<</d' "$HYPR_CONF"
-cat >>"$HYPR_CONF" <<EOF
+# A block whose end marker is missing must never be deleted with a sed range:
+# the range would run to EOF and eat the rest of hyprland.lua.
+if grep -qF -- '-- >>> mosquito-mixbay-tui-setup >>>' "$HYPR_CONF"; then
+  if grep -qF -- '-- <<< mosquito-mixbay-tui-setup <<<' "$HYPR_CONF"; then
+    sed -i '/-- >>> mosquito-mixbay-tui-setup >>>/,/-- <<< mosquito-mixbay-tui-setup <<</d' "$HYPR_CONF"
+  else
+    warn "Hyprland block in $HYPR_CONF has no end marker; leaving the file untouched"
+  fi
+fi
+if ! grep -qF -- '-- >>> mosquito-mixbay-tui-setup >>>' "$HYPR_CONF"; then
+  cat >>"$HYPR_CONF" <<EOF
 -- >>> mosquito-mixbay-tui-setup >>> float mosquito-mixbay-tui
 -- One size for every mosquito TUI (code/lib/hypr-tui.sh): width from the
 -- column grid at the screen DPI, height from the monitor ratio.
@@ -277,8 +315,11 @@ o.window("org.omarchy.mosquito-mixbay-tui", { float = true, center = true, size 
 o.window("org.omarchy.mosquito-mixbay-scratchpad", { float = true, center = true, size = { "monitor_w*0.65", "monitor_h*0.81" } })
 -- <<< mosquito-mixbay-tui-setup <<<
 EOF
+fi
 hyprctl reload >/dev/null 2>&1 || true
-ok "Hyprland float rule installed ($HYPR_CONF)"
+grep -qF -- '-- >>> mosquito-mixbay-tui-setup >>>' "$HYPR_CONF" \
+  && ok "Hyprland float rule installed ($HYPR_CONF)" \
+  || warn "Hyprland float rule not installed ($HYPR_CONF)"
 
 # -----------------------------------------------------------------------------
 # 4. Profile-owned tooling (oscmix, evo_raw kmod) is not installed here.

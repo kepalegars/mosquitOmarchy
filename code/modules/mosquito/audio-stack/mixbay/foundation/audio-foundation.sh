@@ -159,6 +159,9 @@ CAPTURE_HELPER="/usr/local/lib/mosquitomixbay/evo8-capture-enable.py"
 # Omarchy's bar/audio panel (AudioNodes.platformHides) reads this file to leave
 # Mixbay's internal split nodes out of every output/input list.
 PLATFORM_AUDIO="/usr/share/omarchy-platform/audio.json"
+# The panel file may pre-exist (written by the platform or an older Mixbay).
+# Keep one copy before the foundation replaces it, so --remove can put it back.
+PLATFORM_AUDIO_BAK="/usr/local/lib/mosquitomixbay/audio.json.orig"
 DEFAULT_SCRIPT="$BIN_DIR/mixbay-audio-defaults"
 DEFAULT_UNIT="$SYS_USER/mixbay-audio-defaults.service"
 EVO_SPLIT_UNIT="$SYS_USER/mixbay-evo8-split.service"
@@ -177,6 +180,15 @@ backup_file(){
     && cp -a "$f" "$f.bak.mixbay-foundation" 2>/dev/null || true
 }
 
+# Same idea for the root-owned platform panel file: the copy lives in Mixbay's
+# own directory, so nothing new appears next to the platform's file.
+backup_platform_audio(){
+  [[ -f $PLATFORM_AUDIO ]] || return 0
+  mq_sudo test -f "$PLATFORM_AUDIO_BAK" && return 0
+  mq_sudo install -D -m 0644 "$PLATFORM_AUDIO" "$PLATFORM_AUDIO_BAK" 2>/dev/null \
+    || warn "could not back up $PLATFORM_AUDIO"
+}
+
 # ── per-card state / default card ──────────────────────────────────────────
 # foundation.json is the single source of truth for "which cards did the user
 # set up" and "which one is the default/priority card". Setting a card up does
@@ -189,8 +201,10 @@ state_init(){
     return 0
   fi
   # Migrate the old one-field {"applied":...} file from the first foundation
-  # version: it has no .devices, and every jq query below would fail.
+  # version: it has no .devices, and every jq query below would fail. Keep the
+  # unreadable file instead of deleting the user's state outright.
   if ! jq -e 'type == "object" and has("devices") and (.devices | type == "object")' "$STATE" >/dev/null 2>&1; then
+    mv "$STATE" "$STATE.corrupt" 2>/dev/null || rm -f "$STATE"
     printf '{"default":"","devices":{}}\n' > "$STATE"
   fi
 }
@@ -198,17 +212,27 @@ state_installed(){
   state_init
   jq -e --arg id "$1" '.devices[$id].installed == true' "$STATE" >/dev/null 2>&1
 }
+# Replace a JSON state file in one step: jq writes a sibling temp file, then
+# the rename swaps it in. A crash never leaves a half-written state file.
+state_write(){
+  local tmp; tmp="$(mktemp "$STATE.XXXXXX")" || return 1
+  if jq "$@" "$STATE" > "$tmp"; then
+    mv "$tmp" "$STATE"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
 state_set_installed(){
   state_init
   local id="$1" on="$2"
-  jq --arg id "$id" --argjson on "$on" \
-    '.devices[$id] = ((.devices[$id] // {}) + {installed: $on, at: (now|todate)})' \
-    "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
+  state_write --arg id "$id" --argjson on "$on" \
+    '.devices[$id] = ((.devices[$id] // {}) + {installed: $on, at: (now|todate)})'
 }
 state_default(){ state_init; jq -r '.default // ""' "$STATE"; }
 state_set_default(){
   state_init
-  jq --arg id "$1" '.default = $id' "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
+  state_write --arg id "$1" '.default = $id'
 }
 # split is "on"/"off"/"" (never chosen). "off" is a user choice, not a gap the
 # onboarding prompt may keep asking about.
@@ -218,9 +242,8 @@ state_split(){
 }
 state_set_split(){
   state_init
-  jq --arg id "$1" --arg v "$2" \
-    '.devices[$id] = ((.devices[$id] // {}) + {split: $v})' \
-    "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
+  state_write --arg id "$1" --arg v "$2" \
+    '.devices[$id] = ((.devices[$id] // {}) + {split: $v})'
 }
 
 FORCE_EVO4=0 RESTART=0 MODE=status JSON=0 DEV="" SPLIT=""
@@ -292,6 +315,15 @@ display_name_for_id(){
     *) echo "" ;;
   esac
 }
+connlog_write(){
+  local tmp; tmp="$(mktemp "$CONNLOG.XXXXXX")" || return 1
+  if jq "$@" "$CONNLOG" > "$tmp"; then
+    mv "$tmp" "$CONNLOG"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
 seed_log_once(){
   [[ -f $CONNLOG ]] && return 0
   mkdir -p "$(dirname "$CONNLOG")"
@@ -307,9 +339,8 @@ seed_log_once(){
       *) continue ;;
     esac
     version="$(version_for_id "$id")"
-    jq --arg id "$id" --arg name "$name" --arg match "$match" --arg version "$version" \
-      '. + [{id:$id,name:$name,match:$match,version:$version,native:true,last_seen:(now|todate)}]' \
-      "$CONNLOG" > "$CONNLOG.tmp" && mv "$CONNLOG.tmp" "$CONNLOG"
+    connlog_write --arg id "$id" --arg name "$name" --arg match "$match" --arg version "$version" \
+      '. + [{id:$id,name:$name,match:$match,version:$version,native:true,last_seen:(now|todate)}]'
   done < <(jq -r '.devices | to_entries[] | select(.value.installed == true) | .key' "$STATE" 2>/dev/null || true)
 }
 
@@ -336,10 +367,9 @@ track_connections(){
       existing="$(profile_id_for_name "$desc" || true)"
       id="${existing:-beta-$(slug "$desc")}"
     fi
-    jq --arg id "$id" --arg name "$name" --arg match "$match" \
+    connlog_write --arg id "$id" --arg name "$name" --arg match "$match" \
       --arg version "$version" --argjson native "$native" \
-      'map(select(.id != $id)) + [{id:$id,name:$name,match:$match,version:$version,native:$native,last_seen:(now|todate)}]' \
-      "$CONNLOG" > "$CONNLOG.tmp" && mv "$CONNLOG.tmp" "$CONNLOG"
+      'map(select(.id != $id)) + [{id:$id,name:$name,match:$match,version:$version,native:$native,last_seen:(now|todate)}]'
   done < <(pactl -f json list cards 2>/dev/null | jq -r '
     .[] | select(.name|startswith("alsa_card.usb-"))
     | [.properties["alsa.card_name"] // "",
@@ -685,6 +715,7 @@ install_platform_hints(){
        { node: "alsa_(output|input)\\.usb-Audient_EVO4-.*\\.pro-.*", by: "evo4_(main_output|mic_1_2)" }
      ]}
   ' > "$tmp"
+  backup_platform_audio
   mq_sudo install -D -m 0644 "$tmp" "$PLATFORM_AUDIO" \
     && ok "audio panel hints installed ($(split_state evo8) split)" \
     || warn "could not install $PLATFORM_AUDIO"
@@ -1149,6 +1180,7 @@ remove_device(){
       rm -f "$EVO_CONF"
       systemctl --user disable --now mixbay-evo8-split.service 2>/dev/null || true
       rm -f "$EVO_SPLIT_UNIT"
+      systemctl --user daemon-reload 2>/dev/null || true
       ;;
     evo4)
       if grep -q 'EVO4' "$EVO4_CONF" 2>/dev/null; then rm -f "$EVO4_CONF"; fi
@@ -1186,6 +1218,9 @@ remove_device(){
     if ! state_installed evo8 && ! state_installed evo4; then
       mq_sudo rm -f "$UDEV_RULE" 2>/dev/null && mq_sudo udevadm control --reload-rules 2>/dev/null || true
     fi
+    # The panel hints name the EVO nodes: recompute them, or a removed card
+    # stays hidden/replaced in the Omarchy audio panel.
+    [[ -f $PLATFORM_AUDIO ]] && install_platform_hints >/dev/null 2>&1 || true
   fi
   install_defaults
   ok "$dev removed from the Mixbay foundation (shared WirePlumber floor kept)"
@@ -1201,8 +1236,21 @@ remove_all(){
       && ok "udev seat rule removed" || warn "could not remove $UDEV_RULE"
   fi
   if [[ -f $PLATFORM_AUDIO ]]; then
-    mq_sudo rm -f "$PLATFORM_AUDIO" && ok "audio panel hints removed" \
-      || warn "could not remove $PLATFORM_AUDIO"
+    if mq_sudo test -f "$PLATFORM_AUDIO_BAK"; then
+      mq_sudo install -D -m 0644 "$PLATFORM_AUDIO_BAK" "$PLATFORM_AUDIO" \
+        && ok "audio panel hints restored (previous file)" \
+        || warn "could not restore $PLATFORM_AUDIO"
+      mq_sudo rm -f "$PLATFORM_AUDIO_BAK" || true
+    else
+      mq_sudo rm -f "$PLATFORM_AUDIO" && ok "audio panel hints removed" \
+        || warn "could not remove $PLATFORM_AUDIO"
+    fi
+  fi
+  if [[ -f $CAPTURE_RULE || -f $CAPTURE_HELPER ]]; then
+    mq_sudo rm -f "$CAPTURE_RULE" "$CAPTURE_HELPER" \
+      && mq_sudo udevadm control --reload-rules \
+      && ok "EVO 8 capture helper removed" \
+      || warn "could not remove the EVO 8 capture helper (needs sudo)"
   fi
   state_init
   printf '{"default":"","devices":{}}\n' > "$STATE"
@@ -1245,7 +1293,7 @@ needs(){
         || { echo "$dev in Class Compliant mode (raw MIDI port missing; check: amidi -l)"; miss=1; }
     fi
   fi
-  return $(( miss == 0 ))
+  return $(( miss != 0 ))
 }
 
 case $MODE in

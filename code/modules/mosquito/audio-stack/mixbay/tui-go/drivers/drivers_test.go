@@ -631,3 +631,32 @@ func TestAlsaProbeMatchesSerializedRME(t *testing.T) {
 		t.Errorf("card = %d after a failed probe, want -1", d.card)
 	}
 }
+
+// A snapshot with an unknown mixer source must be refused before anything is
+// written: the old order restored outputs/inputs first and left the device
+// half-applied.
+func TestEvoLoadValidatesMixerBeforeWriting(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MOSQUITOMIXBAY_EVO_DEVDIR", t.TempDir())
+	d, err := Open(DevEVO8)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	pd, ok := d.(PresetDriver)
+	if !ok {
+		t.Fatal("EVO driver must implement PresetDriver")
+	}
+	before, _ := d.Status()
+	path := filepath.Join(t.TempDir(), "bad.json")
+	body := `{"output":{"volume":-20},"mixer":{"input1":{"volume":-6},"bogus":{"volume":-3}}}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write snapshot: %v", err)
+	}
+	if err := pd.LoadFrom(path); err == nil {
+		t.Fatal("LoadFrom accepted an unknown mixer source")
+	}
+	after, _ := d.Status()
+	if before.Outputs[0].VolumeDb != after.Outputs[0].VolumeDb {
+		t.Errorf("output volume moved to %v before validation failed", after.Outputs[0].VolumeDb)
+	}
+}

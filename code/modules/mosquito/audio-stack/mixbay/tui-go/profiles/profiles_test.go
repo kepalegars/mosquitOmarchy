@@ -290,7 +290,7 @@ func TestExportRedactsAndWritesIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	card.Captures = []Capture{{File: "captures/gain.jsonl", SHA256: "0000000000000000000000000000000000000000000000000000000000000000"}}
-	if err := writeFileAtomic(upstreamFile("beta-lab"), Encode(card)); err != nil {
+	if err := WriteFileAtomic(upstreamFile("beta-lab"), Encode(card)); err != nil {
 		t.Fatal(err)
 	}
 	capDir := filepath.Join(cardDir("beta-lab"), "captures")
@@ -560,5 +560,24 @@ func TestDuplicatesByUSBIdentity(t *testing.T) {
 	if !(dups[0].KeepID == "move-a" && dups[0].RemoveID == "move-b") &&
 		!(dups[0].KeepID == "move-b" && dups[0].RemoveID == "move-a") {
 		t.Fatalf("wrong pair: %+v", dups[0])
+	}
+}
+
+// The index is the root of trust: plain http would let a MITM swap both the
+// index and the files it checksums.
+func TestSetRepoURLRequiresHTTPS(t *testing.T) {
+	t.Setenv("MIXBAY_CONFIG_DIR", t.TempDir())
+	if _, err := SetRepoURL("http://example.com/mirror"); err == nil {
+		t.Fatal("SetRepoURL accepted plain http for a remote host")
+	}
+	if _, err := SetRepoURL("http://127.0.0.1:9/mirror"); err != nil {
+		t.Fatalf("loopback mirror refused: %v", err)
+	}
+	got, err := SetRepoURL("https://example.com/mirror")
+	if err != nil {
+		t.Fatalf("https mirror refused: %v", err)
+	}
+	if got != "https://example.com/mirror" {
+		t.Errorf("SetRepoURL = %q, want it unchanged", got)
 	}
 }

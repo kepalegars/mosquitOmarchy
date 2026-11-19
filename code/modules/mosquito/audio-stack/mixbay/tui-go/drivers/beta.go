@@ -19,6 +19,10 @@ type BetaDevice struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
 	Match string `json:"match"`
+	// Controls the installed card declares. The guided harness uses them so
+	// it never proposes a control this driver cannot set.
+	Inputs  int `json:"inputs,omitempty"`
+	Outputs int `json:"outputs,omitempty"`
 }
 
 // BetaDevices lists locally installed non-native cards.
@@ -30,7 +34,10 @@ func BetaDevices() []BetaDevice {
 		if len(c.Spec.CardMatch) > 0 {
 			match = c.Spec.CardMatch[0]
 		}
-		out = append(out, BetaDevice{ID: c.Spec.ID, Name: c.Spec.Display, Match: match})
+		out = append(out, BetaDevice{
+			ID: c.Spec.ID, Name: c.Spec.Display, Match: match,
+			Inputs: c.Spec.NumInputs, Outputs: c.Spec.NumOutPairs,
+		})
 	}
 	return out
 }
@@ -55,7 +62,10 @@ func AddBetaDevice(name, match string) (BetaDevice, error) {
 	if err != nil {
 		return BetaDevice{}, err
 	}
-	return BetaDevice{ID: card.Spec.ID, Name: card.Spec.Display, Match: match}, nil
+	return BetaDevice{
+		ID: card.Spec.ID, Name: card.Spec.Display, Match: match,
+		Inputs: card.Spec.NumInputs, Outputs: card.Spec.NumOutPairs,
+	}, nil
 }
 
 // RemoveBetaDevice drops a local card (used when the user removes the card).

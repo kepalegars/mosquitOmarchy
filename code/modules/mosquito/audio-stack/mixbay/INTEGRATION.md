@@ -16,15 +16,19 @@ est là, mais l'intégration n'en dépend plus.
 # module_state(): ajouter au case
 mixbay) st_mixbay ;;
 
-# st_mixbay — miroir de st_audio (binaire + règle Hyprland + kmod en bonus) :
+# st_mixbay — binaire + règle Hyprland. Le kmod et la fondation audio sont
+# par interface : une installation propre (aucune carte configurée) est "ok".
+# C'est le contrat de setup-mosquitomixbay.sh --status, dupliqué ici parce que
+# l'orchestrateur ne connaît pas le chemin du checkout.
 st_mixbay(){
   [[ -x "$BIN_DIR/mosquito-mixbay-tui" && -x "$BIN_DIR/mosquito-mixbay" ]] || { echo missing; return; }
-  local miss=""
   grep -qF "mosquito-mixbay-tui-setup" "$HOME/.config/hypr/hyprland.lua" 2>/dev/null \
-    || miss="${miss:+$miss, }hyprland float rule"
-  [[ -e /dev/evo8 || -e /dev/evo4 ]] \
-    || miss="${miss:+$miss, }evo_raw kmod (demo mode only)"
-  [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
+    || { echo "partial:missing hyprland float rule"; return; }
+  if jq -e '.devices | to_entries | any(.value.installed == true)' \
+       "$HOME/.config/mosquitomixbay/foundation.json" >/dev/null 2>&1; then
+    [[ -f "$HOME/.config/wireplumber/wireplumber.conf.d/50-mixbay-interfaces.conf" ]] \
+      || { echo "partial:missing the audio foundation files"; return; }
+  fi
   echo ok
 }
 
@@ -75,8 +79,8 @@ en plein set (même pattern que la garde thermale existante).
 
 - Matrice TotalMix des RME : portée par `oscmix` (installé et lancé depuis
   le menu de la carte), pas par le driver ALSA de Mixbay.
-- Profils PipeWire EVO 8 (6 canaux, `analog-surround-51`) : voir
-  `dev/wireplumber/evo8` upstream — à empaqueter quand le hardware est là.
+- Profils PipeWire EVO 8 (6 canaux, `analog-surround-51`) : livrés par
+  `50-mixbay-evo.conf` et le watchdog de split (`--split on`).
 - Patchbay automatique au branchement : volontairement absent. Les presets se
   sauvent/appliquent à la main (`patchbay-save` / `patchbay-apply`).
 - `save`/`load` scène nommés (`--scene NAME`) : le format JSON le permet,

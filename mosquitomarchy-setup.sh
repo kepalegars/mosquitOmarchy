@@ -1002,8 +1002,13 @@ st_mixbay(){
   [[ -x "$BIN_DIR/mosquito-mixbay" && -x "$BIN_DIR/mosquito-mixbay-tui" ]] || { echo missing; return; }
   grep -qF "mosquito-mixbay-tui-setup" "$HOME/.config/hypr/hyprland.lua" 2>/dev/null \
     || { echo "partial:missing hyprland float rule"; return; }
-  [[ -f "$HOME/.config/wireplumber/wireplumber.conf.d/50-mixbay-interfaces.conf" ]] \
-    || { echo "partial:missing audio foundation"; return; }
+  # The foundation is per-interface: a clean install has no card set up yet and
+  # must report ok. Mirror setup-mosquitomixbay.sh --status exactly.
+  if jq -e '.devices | to_entries | any(.value.installed == true)' \
+       "$HOME/.config/mosquitomixbay/foundation.json" >/dev/null 2>&1; then
+    [[ -f "$HOME/.config/wireplumber/wireplumber.conf.d/50-mixbay-interfaces.conf" ]] \
+      || { echo "partial:missing the audio foundation files (rerun mixbay-audio-foundation --apply)"; return; }
+  fi
   echo ok
 }
 st_mosquitomarchy(){

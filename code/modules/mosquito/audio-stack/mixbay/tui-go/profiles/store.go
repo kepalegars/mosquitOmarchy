@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"mosquitomarchy.local/mosquitomixbay-tui/config"
 )
 
 // Native card snapshots shipped inside the binary. They are generated from the
@@ -39,13 +41,9 @@ type Meta struct {
 }
 
 // ConfigDir is ~/.config/mosquitomixbay (or $MIXBAY_CONFIG_DIR for tests).
-func ConfigDir() string {
-	if v := os.Getenv("MIXBAY_CONFIG_DIR"); v != "" {
-		return v
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "mosquitomixbay")
-}
+// Every package that writes under it goes through config.Dir, so this stays
+// the exported name for callers but has exactly one implementation.
+func ConfigDir() string { return config.Dir() }
 
 // CardsDir holds one folder per downloaded/local card.
 func CardsDir() string { return filepath.Join(ConfigDir(), "cards") }
@@ -144,7 +142,7 @@ func EnsureSeeded() {
 		if err := os.MkdirAll(filepath.Dir(upstreamFile(id)), 0o755); err != nil {
 			continue
 		}
-		if writeFileAtomic(upstreamFile(id), data) != nil {
+		if WriteFileAtomic(upstreamFile(id), data) != nil {
 			continue
 		}
 		_ = writeMeta(id, Meta{
@@ -170,7 +168,7 @@ func InstallNative(id string) (Card, bool, error) {
 	if err := os.MkdirAll(filepath.Dir(upstreamFile(id)), 0o755); err != nil {
 		return Card{}, was, err
 	}
-	if err := writeFileAtomic(upstreamFile(id), Encode(c)); err != nil {
+	if err := WriteFileAtomic(upstreamFile(id), Encode(c)); err != nil {
 		return Card{}, was, err
 	}
 	best := readMeta(id)
@@ -285,7 +283,7 @@ func writeMeta(id string, m Meta) error {
 		return err
 	}
 	data, _ := json.MarshalIndent(m, "", "  ")
-	return writeFileAtomic(metaFile(id), append(data, '\n'))
+	return WriteFileAtomic(metaFile(id), append(data, '\n'))
 }
 
 // SaveUserLayout stores a sparse UI override for one card. The file is
@@ -305,7 +303,7 @@ func SaveUserLayout(id string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(userLayoutFile(id)), 0o755); err != nil {
 		return err
 	}
-	return writeFileAtomic(userLayoutFile(id), data)
+	return WriteFileAtomic(userLayoutFile(id), data)
 }
 
 // HasUserUI reports whether the card carries a local layout override.
@@ -340,7 +338,7 @@ func BackupUserUI(id string) (string, error) {
 		return "", err
 	}
 	dest := filepath.Join(dir, id+"-"+time.Now().UTC().Format("20060102-150405.000")+".json")
-	if err := writeFileAtomic(dest, data); err != nil {
+	if err := WriteFileAtomic(dest, data); err != nil {
 		return "", err
 	}
 	if err := os.Remove(src); err != nil {
@@ -369,7 +367,7 @@ func Remove(id string) error {
 		if err := os.MkdirAll(cardDir(id), 0o755); err != nil {
 			return err
 		}
-		return writeFileAtomic(removedFile(id), []byte("removed\n"))
+		return WriteFileAtomic(removedFile(id), []byte("removed\n"))
 	}
 	return nil
 }
@@ -400,7 +398,7 @@ func InstallLocalCard(id, name, match string) (Card, error) {
 	if err := os.MkdirAll(filepath.Dir(upstreamFile(id)), 0o755); err != nil {
 		return Card{}, err
 	}
-	if err := writeFileAtomic(upstreamFile(id), append(data, '\n')); err != nil {
+	if err := WriteFileAtomic(upstreamFile(id), append(data, '\n')); err != nil {
 		return Card{}, err
 	}
 	_ = os.Remove(removedFile(id))
@@ -450,7 +448,9 @@ func MigrateLegacyBeta() error {
 	return nil
 }
 
-func writeFileAtomic(path string, data []byte) error {
+// WriteFileAtomic writes through a sibling temp file and a rename, so a
+// crash never leaves a half-written card, index or preference file.
+func WriteFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err

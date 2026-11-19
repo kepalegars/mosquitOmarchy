@@ -99,12 +99,14 @@ did, with the same user-visible result.
 ## Mixbay audio foundation / EVO 4
 
 - [x] `mixbay-audio-foundation --status --json` returns valid JSON with
-      `default` + `devices[]`; `--needs evo8` exits 0 while udev/WirePlumber/
-      defaults are missing (compat helper consumes it).
+      `default` + `devices[]`; `--needs evo8` exits non-zero while udev/
+      WirePlumber/defaults are missing, 0 when everything is present (the
+      compat helper consumes its output, not just its status).
 - [x] `mixbay-audio-foundation --apply --device evo8` without a card writes
       `50-mixbay-interfaces.conf`, `70-mixbay-evo.rules`, the capture helper
-      and `mixbay-audio-defaults.service`; records `installed`, sets
-      `default=evo8`, and skips the split with a clear message.
+      and `mixbay-audio-defaults.service`; records `installed`, leaves
+      `default` empty (no silent promotion: `--set-default` is explicit), and
+      skips the split with a clear message.
 - [x] `go test ./...` in `tui-go`: `TestEVOMeterBarsFollowSpec`,
       `TestBetaDeviceRoundTrip`, `TestIsNativeCard` pass.
 - [ ] Settings → Audio foundation: list shows every native card with version/
@@ -116,8 +118,9 @@ did, with the same user-visible result.
       sets the right sink/source at next login.
 - [ ] Settings → Add an audio interface: with a Quantum ES 4 (or another USB
       card) connected, it appears in the scan (not the EVO/SSL/RME/ESI ones);
-      adding it shows `demo-beta`/`online-beta`, opens the reverse-engineering
-      plan, and persists in `beta-devices.json`.
+      adding it shows `demo-beta`/`online-beta`, opens the guided capture, and
+      persists as a local card under `~/.config/mosquitomixbay/cards/<id>/`
+      (the legacy `beta-devices.json` is migrated once, not written).
 - [ ] Beta controls: Restart reverse engineering asks for confirmation and
       shows the capture-harness plan; ALSA level 1 volume/mute works.
 - [ ] SSL 12: native row; "Set up / repair SSL 12" runs the douze installer

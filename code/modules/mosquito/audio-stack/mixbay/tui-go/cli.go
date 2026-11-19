@@ -141,7 +141,7 @@ func runCLI(args []string) int {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
-		r, ok := d.(interface{ ResetToDefaults() error })
+		r, ok := d.(drivers.ResetDriver)
 		if !ok {
 			fmt.Fprintf(os.Stderr, "%s has no built-in default preset\n", *dev)
 			return 1
