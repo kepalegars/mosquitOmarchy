@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"mosquitomarchy.local/mosquitomixbay-tui/drivers"
@@ -2361,8 +2362,8 @@ func TestEvoMixBusSwitchMovedToShiftM(t *testing.T) {
 	}
 }
 
-// An offline badge is the fixed reference; an online badge is padded on the
-// right to the same width so every bracket lines up.
+// An offline badge is the fixed reference. An online one is a single centred
+// dot in the same width, so every bracket lines up.
 func TestBadgeFieldAlignsBrackets(t *testing.T) {
 	for _, b := range []string{"offline", "offline-beta"} {
 		if got := badgeField(b); got != b {
@@ -2371,14 +2372,17 @@ func TestBadgeFieldAlignsBrackets(t *testing.T) {
 	}
 	for _, pair := range [][2]string{{"online", "offline"}, {"online-beta", "offline-beta"}} {
 		got, ref := badgeField(pair[0]), pair[1]
-		if len(got) != len(ref) {
-			t.Errorf("badgeField(%q) = %q (%d cells), want %d to align with %q", pair[0], got, len(got), len(ref), ref)
+		// The dot is one cell but three bytes: compare display cells.
+		if w := utf8.RuneCountInString(got); w != len(ref) {
+			t.Errorf("badgeField(%q) = %q (%d cells), want %d to align with %q", pair[0], got, w, len(ref), ref)
 		}
-		if strings.TrimSpace(got) != pair[0] {
-			t.Errorf("badgeField(%q) = %q, word changed", pair[0], got)
+		if strings.Count(got, "●") != 1 || strings.TrimSpace(got) != "●" {
+			t.Errorf("badgeField(%q) = %q, want one dot and nothing else", pair[0], got)
 		}
-		if strings.HasPrefix(got, " ") {
-			t.Errorf("badgeField(%q) = %q, want no leading space", pair[0], got)
+		left := len(got) - len(strings.TrimLeft(got, " "))
+		right := len(got) - len(strings.TrimRight(got, " "))
+		if d := left - right; d < -1 || d > 1 {
+			t.Errorf("badgeField(%q) = %q, dot is not centred (%d left, %d right)", pair[0], got, left, right)
 		}
 	}
 }

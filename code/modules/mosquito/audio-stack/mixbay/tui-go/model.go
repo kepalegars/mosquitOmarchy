@@ -562,9 +562,9 @@ func (m *model) syncPicker() {
 	}
 }
 
-// badgeField pads a state badge to the width of its offline twin, on the
-// right, so both brackets line up. An offline badge is returned untouched:
-// its display is a fixed reference.
+// badgeField renders a state badge in the width of its offline twin, so both
+// brackets line up. An offline badge is the fixed reference, word and all; an
+// online one is a single filled dot centred in that same width.
 func badgeField(badge string) string {
 	if strings.HasPrefix(badge, "offline") {
 		return badge
@@ -573,11 +573,8 @@ func badgeField(badge string) string {
 	if strings.HasSuffix(badge, "-beta") {
 		w = len("offline-beta")
 	}
-	pad := w - len(badge)
-	if pad <= 0 {
-		return badge
-	}
-	return badge + strings.Repeat(" ", pad)
+	left := (w - 1) / 2
+	return strings.Repeat(" ", left) + "●" + strings.Repeat(" ", w-1-left)
 }
 
 func (m model) deviceItems() []tuikit.PickerItem {
@@ -603,20 +600,19 @@ func (m model) deviceItems() []tuikit.PickerItem {
 			}
 		}
 		badge := "offline"
-		dot := ""
 		if spec.Beta {
 			badge = "offline-beta"
 		}
 		if online {
+			// The dot is the whole badge; badgeField centres it inside the
+			// offline width.
 			badge = "online"
-			// The solid dot sits after the badge, not inside it.
-			dot = " ●"
 			if spec.Beta {
 				badge = "online-beta"
 			}
 		}
 		items = append(items, tuikit.PickerItem{
-			Display: fmt.Sprintf("%-26s [%s]%s", spec.Display, badgeField(badge), dot),
+			Display: fmt.Sprintf("%-26s [%s]", spec.Display, badgeField(badge)),
 			Value:   spec.ID,
 		})
 	}
