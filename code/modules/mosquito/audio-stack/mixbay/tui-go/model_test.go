@@ -2361,21 +2361,21 @@ func TestEvoMixBusSwitchMovedToShiftM(t *testing.T) {
 	}
 }
 
-// The device badge is centred in a fixed field so every closing bracket lines
-// up, and "online" sits centred between the brackets.
-func TestBadgeFieldLeavesOfflineAlone(t *testing.T) {
+// An offline badge is the fixed reference; an online badge is centred between
+// its brackets with the same padding on each side.
+func TestBadgeFieldCentresOnline(t *testing.T) {
 	for _, b := range []string{"offline", "offline-beta"} {
 		if got := badgeField(b); got != b {
 			t.Errorf("badgeField(%q) = %q, want it unchanged", b, got)
 		}
 	}
-	for _, pair := range [][2]string{{"online", "offline"}, {"online-beta", "offline-beta"}} {
-		online, offline := badgeField(pair[0]), badgeField(pair[1])
-		if len(online) != len(offline) {
-			t.Errorf("%s width = %d, want %d to line up with %s", pair[0], len(online), len(offline), pair[1])
+	for _, b := range []string{"online", "online-beta"} {
+		got := badgeField(b)
+		if !strings.HasPrefix(got, " ") || !strings.HasSuffix(got, " ") {
+			t.Errorf("badgeField(%q) = %q, want one space on each side", b, got)
 		}
-	}
-	if online := badgeField("online"); !strings.HasPrefix(online, " ") || strings.HasSuffix(online, " ") {
-		t.Errorf("online is not padded toward the centre: %q", online)
+		if strings.TrimSpace(got) != b {
+			t.Errorf("badgeField(%q) = %q, word changed", b, got)
+		}
 	}
 }

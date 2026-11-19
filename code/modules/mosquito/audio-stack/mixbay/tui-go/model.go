@@ -565,9 +565,10 @@ func (m *model) syncPicker() {
 	}
 }
 
-// badgeField pads a shorter state badge so the closing bracket lines up with
-// the same-kind row ("online" against "offline"). An offline badge is
-// returned untouched: its display is a fixed reference.
+// badgeField centres a state badge between its brackets. An offline badge is
+// returned untouched: its display is a fixed reference. The online badge is
+// one cell shorter than offline, so it needs one space on each side; its
+// closing bracket therefore sits one cell right of the offline row.
 func badgeField(badge string) string {
 	if strings.HasPrefix(badge, "offline") {
 		return badge
@@ -580,10 +581,9 @@ func badgeField(badge string) string {
 	if pad <= 0 {
 		return badge
 	}
-	// An odd gap cannot be split evenly; the extra space goes on the left so
-	// the word sits closer to the centre of the field.
-	left := pad - pad/2
-	return strings.Repeat(" ", left) + badge + strings.Repeat(" ", pad/2)
+	// Equal padding on both sides is what reads as centred in a monospace
+	// cell; an odd gap is widened rather than pushed entirely to one side.
+	return " " + badge + " "
 }
 
 func (m model) deviceItems() []tuikit.PickerItem {

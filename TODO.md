@@ -71,6 +71,16 @@ Last reviewed: 2026-11-03.
       off by default: a prefix is many GB. The manual menu row above must work
       with the toggle off.
 
+## Audio plugin manager
+
+- [ ] **Audio plugin manager — architecture review** (whole feature): map
+      every boundary (`backend/`, TUI screens, install/uninstall, wine prefix
+      handling, quarantine, backup/restore, state files), look for duplication
+      with `setup-mosquitomarchy.sh` and the VST paths, verify the
+      one-source-of-truth rule for plugin roots and prefixes, check idempotence
+      and rollback, and decide whether the wine tooling belongs in Python
+      (OmaVST reference) or the shell.
+
 ## Audio stack
 
 - [ ] **Mixbay — fork the whole interface and embed as much of douze/Omarchy360
@@ -139,13 +149,16 @@ Last reviewed: 2026-11-03.
          engineering asks for confirmation, removal removes the beta entry.
       9. Uninstall Mixbay: foundation files/udev/default service removed,
          capture helper removed, `pipewire-settings` config untouched.
-- [ ] **Mixbay — architecture review** (whole feature, after the test plan):
-      map every boundary (`drivers.Driver`, `Spec`, `Caps`, beta specs, douze
-      HTTP driver, foundation shell, TUI screens, state files), look for
-      duplication between the foundation and the module installers, verify
-      the "one source of truth" rule for udev/PipeWire/defaults, check
-      idempotence and rollback, and decide whether the reverse-engineering
-      harness belongs in Go, Python or the shell.
+- [x] **Mixbay — architecture review** (delivered 2026-11-19:
+      `mixbay/docs/ARCHITECTURE-REVIEW.md`). Follow-ups it ranked, still open:
+      `setup-mosquitomixbay.sh:81` `local` outside a function aborts
+      `--uninstall` after the foundation was already removed;
+      `/usr/share/omarchy-platform/audio.json` overwritten and deleted without
+      a backup (`audio-foundation.sh:688,1203`); `--needs` exit status inverted
+      (`:1248`); four disagreeing status surfaces; `MIXBAY_CONFIG_DIR` honoured
+      only by `profiles.ConfigDir`; harness `--match` uses the ALSA name while
+      the harness matches USB strings; `SetRepoURL` accepts `http://`; EVO
+      `LoadFrom` applies before validating and snapshot writes are not atomic.
 - [ ] **Mixbay — pro-audio protocol reference** (delivered 2026-10-31:
       `code/modules/mosquito/audio-stack/mixbay/docs/AUDIO-PROTOCOLS-LINUX.md`).
       It covers Dante, ADAT, MADI, AES3/S/PDIF, AES67/RAVENNA, AVB/MILAN,
