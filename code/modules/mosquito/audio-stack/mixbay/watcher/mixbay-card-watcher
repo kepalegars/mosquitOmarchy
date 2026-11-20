@@ -11,11 +11,13 @@
 #   detect_cards       false → nothing is detected or logged
 #   notify_cards       false → detection still logs, but no connection notice
 #   notify_disconnected false → no notice when an interface goes away
+#   notify_sticky      true  → notices stay until dismissed (6 s otherwise)
 #
 # A missing profile makes the notification's "Install it" button open Mixbay
 # and install it; an installed card's "Open UI & Use it" opens that page (or
 # the card's default UI) and "Use it" only makes it the default interface.
-# Connection notices are persistent; an unplug notice auto-closes.
+# Notices close themselves after six seconds unless "Keep notifications on
+# screen" is on; an unplug notice is informational like any other.
 # =============================================================================
 set -uo pipefail
 
@@ -40,6 +42,12 @@ pref(){
   else
     printf '%s\n' "$def"
   fi
+}
+
+# Same six-second default for every watcher notice; the settings switch makes
+# them stay until dismissed.
+notice_timeout(){
+  [[ "$(pref notify_sticky false)" == true ]] && printf '0' || printf '6000'
 }
 
 # Mixbay is open when the dispatcher pidfile points at a live process, or a
@@ -71,7 +79,8 @@ notify_body(){
 
 send_notification(){
   local id="$1" display="$2" kind="$3" body headline glyph args=() exec=()
-  local urgency=critical timeout=0
+  local urgency=critical timeout
+  timeout="$(notice_timeout)"
   body="$(notify_body "$kind" "$display")"
   headline="$display connected"
   glyph="$ICON_CARD"
@@ -84,9 +93,8 @@ send_notification(){
     disconnected)
       headline=Mixbay
       glyph="$ICON_CARD_OFF"
-      # Informational: it closes itself instead of waiting to be dismissed.
+      # Informational: it is the same kind of notice as the others.
       urgency=normal
-      timeout=5000
       ;;
   esac
   if command -v omarchy-notification-send >/dev/null 2>&1; then
@@ -179,23 +187,25 @@ move_notice_disconnect(){
   switched=$(jq -r '.switched // false' <<<"$st" 2>/dev/null || echo false)
   prev=$(jq -r '.prev_rate // empty' <<<"$st" 2>/dev/null || true)
   cur=$(jq -r '.current_rate // empty' <<<"$st" 2>/dev/null || true)
-  command -v omarchy-notification-send >/dev/null 2>&1 || return 0
   # Offer the way back only when there IS one: the Move had been chosen, our
   # 44.1 kHz pin is still what the graph runs on, and the rate to return to is
   # neither that pin nor the current one. A stale state file must not raise a
   # "go back to 48 kHz" for a session that never pinned anything, and the rate
   # named is the one measured before the switch — never a constant.
   if [[ $asked == 0 && $switched == true && -n $prev && $prev != 0 && $prev != 44100 \
-        && $cur == 44100 ]]; then
+        && $cur == 44100 ]] && command -v omarchy-notification-send >/dev/null 2>&1; then
     # One question per switch, not per unplug: an ignored offer leaves the pin
     # in place, and re-asking on every later unplug is nagging.
     printf 'asked=1\n' >> "$state_file"
-    omarchy-notification-send --app-name Mixbay -g "$ICON_CARD_OFF" -u critical -t 0 \
+    omarchy-notification-send --app-name Mixbay -g "$ICON_CARD_OFF" -u critical \
+      -t "$(notice_timeout)" \
       "Ableton Move disconnected" "Go back to $(khz "$prev")kHz?" \
       --action "Go back" "$MOVE_AUDIO" --revert >/dev/null 2>&1 || true
+    return 0
   fi
-  # Nothing else: an unplug with no pin, or a pin this helper did not set, has
-  # no action to offer, and a "disconnected" notice with no action is noise.
+  # Nothing to undo: the plain unplug notice every other interface gets, so
+  # the Move is never the one card that leaves no trace.
+  send_notification move "Ableton Move" disconnected
 }
 
 # announce_move: the Move's connect notice is the generic one; only the unplug
@@ -210,8 +220,20 @@ announce_move(){
   printf '%s\n' "$now" > "$MOVE_STATE"
   if [[ $now == connected ]]; then
     date +%s > "$MOVE_AT"
+    return 0
   fi
-  [[ $now == disconnected ]] && move_notice_disconnect
+  # The same switches as any other card: a muted watcher says nothing, and the
+  # state above is still kept current for the next read.
+  local mode open=false
+  mode="$(pref watcher_mode always)"
+  [[ $mode == off ]] && return 0
+  [[ "$(pref detect_cards true)" == true ]] || return 0
+  [[ "$(pref notify_disconnected true)" == true ]] || return 0
+  if [[ $mode == only_open ]]; then
+    mixbay_open && open=true
+    [[ $open == true ]] || return 0
+  fi
+  move_notice_disconnect
 }
 
 # announce <current-json> <previous-json>: update the seen set and notify for
@@ -221,12 +243,18 @@ announce(){
   prev="$(rows "$previous")"
   new="$(new_cards "$current" "$prev")"
   gone="$(gone_cards "$current" "$prev")"
-  # The Move's unplug offer is sent by announce_move below, so it is kept out
-  # of the generic gone list to avoid two notices for one unplug. Connection
-  # notices are the same for every card, including the Move.
-  local move_filter='[.[] | select((((.key // "") + " " + (.display // "")) | test("move"; "i")) | not)]'
-  gone="$(jq -c "$move_filter" <<<"$gone" 2>/dev/null || printf '[]\n')"
+  # With the Move profile installed, its unplug offer is sent by announce_move
+  # below, so it is kept out of the generic gone list to avoid two notices for
+  # one unplug. Without the profile the Move is just another card and keeps
+  # the normal unplug notice.
+  if move_installed; then
+    local move_filter='[.[] | select((((.key // "") + " " + (.display // "")) | test("move"; "i")) | not)]'
+    gone="$(jq -c "$move_filter" <<<"$gone" 2>/dev/null || printf '[]\n')"
+  fi
   jq -c . <<<"$current" > "$SEEN" 2>/dev/null || true
+  # Tracked before the switches below, so muting the watcher never leaves a
+  # stale "connected" behind to announce later.
+  announce_move
 
   mode="$(pref watcher_mode always)"
   [[ $mode == off ]] && return 0
@@ -249,9 +277,6 @@ announce(){
       send_notification "$id" "$display" disconnected
     done < <(jq -r '.[] | [.id,.display]|@tsv' <<<"$gone")
   fi
-  # One Mixbay notice for the Move, replacing both the generic connect and
-  # disconnect ones.
-  announce_move
 }
 
 # The audio panel selects a device by changing the default sink/source; no
@@ -264,12 +289,18 @@ announce(){
 # to go back to on unplug).
 move_remember_default(){
   move_installed || return 0
-  local sink source
+  local sink source ps pv
   sink=$(pactl get-default-sink 2>/dev/null || true)
   source=$(pactl get-default-source 2>/dev/null || true)
-  [[ -n $sink && ${sink,,} != *move* && ${source,,} != *move* ]] || return 0
+  # Each side on its own: a Move still selected on one side must not hide the
+  # other side's real previous default, nor erase a known one.
+  ps=$(sed -n 's/^sink=//p' "$MOVE_PREV" 2>/dev/null | head -1)
+  pv=$(sed -n 's/^source=//p' "$MOVE_PREV" 2>/dev/null | head -1)
+  [[ -n $sink && ${sink,,} != *move* ]] && ps=$sink
+  [[ -n $source && ${source,,} != *move* ]] && pv=$source
+  [[ -n $ps || -n $pv ]] || return 0
   mkdir -p "$(dirname "$MOVE_PREV")"
-  printf 'sink=%s\nsource=%s\n' "$sink" "$source" > "$MOVE_PREV"
+  printf 'sink=%s\nsource=%s\n' "$ps" "$pv" > "$MOVE_PREV"
 }
 
 # A plug can make WirePlumber pick the new card. That is not a user choice:
@@ -277,11 +308,15 @@ move_remember_default(){
 # back instead of adopting it.
 move_unsteal_default(){
   [[ -f $MOVE_PREV ]] || return 0
-  local ps pv
+  local ps pv sink source
   ps=$(sed -n 's/^sink=//p' "$MOVE_PREV" 2>/dev/null | head -1)
   pv=$(sed -n 's/^source=//p' "$MOVE_PREV" 2>/dev/null | head -1)
-  [[ -n $ps ]] && pactl set-default-sink "$ps" >/dev/null 2>&1 || true
-  [[ -n $pv ]] && pactl set-default-source "$pv" >/dev/null 2>&1 || true
+  sink=$(pactl get-default-sink 2>/dev/null || true)
+  source=$(pactl get-default-source 2>/dev/null || true)
+  # Only undo the side PipeWire took. A Move the user picked for one side
+  # stays there; the other side goes back to what it was.
+  [[ -n $ps && ${sink,,} == *move* ]] && pactl set-default-sink "$ps" >/dev/null 2>&1 || true
+  [[ -n $pv && ${source,,} == *move* ]] && pactl set-default-source "$pv" >/dev/null 2>&1 || true
 }
 
 # move_fresh: the Move was plugged in the last few seconds, so a default-device
@@ -409,13 +444,22 @@ self_test(){
       ((actions == want_actions && never == want_never)) || fail=1
       [[ $labels == "$want_labels" ]] || fail=1
     }
+    # A private ui.json: the real one says whether notices are sticky, and
+    # this test has to cover both answers.
+    local ui_saved="$UI" ui_tmp
+    ui_tmp="$(mktemp)"; UI="$ui_tmp"; printf '{}\n' > "$ui_tmp"
     display='Audient EVO 8'
     send_notification evo8 "$display" install
-    assert_notice "$display connected" "No Mixbay profile installed." "Install it|" 1 1
+    assert_notice "$display connected" "No Mixbay profile installed." "Install it|" 1 0
     send_notification evo8 "$display" installed
-    assert_notice Mixbay "$display connected" "Open UI & Use it|Use it|" 2 1
+    assert_notice Mixbay "$display connected" "Open UI & Use it|Use it|" 2 0
     send_notification evo8 "$display" disconnected
     assert_notice Mixbay "$display unconnected" "" 0 0
+    # Settings → Keep notifications on screen: every notice refuses to expire.
+    printf '{"notify_sticky":true}\n' > "$ui_tmp"
+    send_notification evo8 "$display" installed
+    assert_notice Mixbay "$display connected" "Open UI & Use it|Use it|" 2 1
+    UI="$ui_saved"; rm -f "$ui_tmp"
     unset -f omarchy-notification-send
     rm -f "$stub"
   fi

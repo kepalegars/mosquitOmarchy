@@ -289,6 +289,9 @@ type uiPrefs struct {
 	// NotifyDisconnected is its own switch: going away is less interesting
 	// than a missing profile for many users, but still on by default.
 	NotifyDisconnected bool `json:"notify_disconnected"`
+	// NotifySticky keeps a watcher notice on screen until it is dismissed.
+	// Off by default: a notice closes itself after six seconds.
+	NotifySticky bool `json:"notify_sticky"`
 	// WatcherMode is "always", "only_open" or "off". "off" forces the two
 	// rows above to read off (and be inert) without touching their values.
 	WatcherMode string `json:"watcher_mode"`
@@ -743,7 +746,8 @@ func (m model) settingsItems() []tuikit.PickerItem {
 		detect,
 		notify,
 		notifyGone,
-		{Display: "Card watcher: " + watcherLabel(m.ui.WatcherMode), Value: "watcher_mode"},
+		{Display: "Keep notifications on screen: " + onOff(m.ui.NotifySticky), Value: "notify_sticky"},
+		{Display: "Watch for interfaces: " + watcherLabel(m.ui.WatcherMode), Value: "watcher_mode"},
 		{Display: "Add an audio interface", Value: "add_interface"},
 		{Display: "Back", Value: "back"},
 	}
@@ -1805,6 +1809,8 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if !m.ui.watcherOff() && m.ui.DetectCards {
 					m.ui.NotifyDisconnected = !m.ui.NotifyDisconnected
 				}
+			case "notify_sticky":
+				m.ui.NotifySticky = !m.ui.NotifySticky
 			case "watcher_mode":
 				m.ui.WatcherMode = nextWatcher(m.ui.WatcherMode)
 				if !m.ui.watcherOff() && m.ui.DetectCards {

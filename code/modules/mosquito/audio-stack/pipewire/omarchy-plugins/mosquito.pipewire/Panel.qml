@@ -98,7 +98,10 @@ Panel {
                                    (root.moveLocked && !root.moveUnlocked)
     readonly property bool autoLock: root.info.autolock !== false
     readonly property var displayRows: {
-        if (!root.liveActive && !root.moveLocked) return root.rows
+        // Locked hides the two switches the lock owner owns. Unlocking with L
+        // gives them back right away, for live mode and the Move alike; the
+        // Move only locks the two values, not the persisted config.
+        if (!root.locked) return root.rows
         return root.rows.filter(function (r) {
             return r.kind === "rate" || r.kind === "quantum"
         })

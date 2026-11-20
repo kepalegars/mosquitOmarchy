@@ -35,6 +35,7 @@ STATE="$STATE_DIR/move-audio-state"
 # revert target is the device the panel replaced, not the Move.
 PREV_DEFAULT="$STATE_DIR/move-previous-default"
 APP="Mixbay"
+UI="${XDG_CONFIG_HOME:-$HOME/.config}/mosquitomixbay/ui.json"
 
 # jq filter: the card/sink/source whose name, ALSA card name or description
 # mentions Move.
@@ -45,14 +46,25 @@ MOVE_MATCH='.[]
             | join(" ")) | test("move"; "i"))
   | .name'
 
+# Mixbay's Settings → "Keep notifications on screen": six seconds otherwise.
+# A missing or unreadable ui.json keeps the default.
+notice_timeout(){
+  local t=6000
+  if [[ -f $UI ]] && command -v jq >/dev/null 2>&1; then
+    [[ "$(jq -r '.notify_sticky // false' "$UI" 2>/dev/null)" == true ]] && t=0
+  fi
+  printf '%s' "$t"
+}
+
 notify(){
-  local headline="$1" body="$2"
+  local headline="$1" body="$2" t
   shift 2
+  t="$(notice_timeout)"
   if command -v omarchy-notification-send >/dev/null 2>&1; then
-    omarchy-notification-send --app-name "$APP" -g "󰓃" \
+    omarchy-notification-send --app-name "$APP" -g "󰓃" -t "$t" \
       "$headline" "$body" "$@" >/dev/null 2>&1 || true
   elif command -v notify-send >/dev/null 2>&1; then
-    notify-send -a "$APP" "$headline" "$body" >/dev/null 2>&1 || true
+    notify-send -a "$APP" -t "$t" "$headline" "$body" >/dev/null 2>&1 || true
   fi
 }
 

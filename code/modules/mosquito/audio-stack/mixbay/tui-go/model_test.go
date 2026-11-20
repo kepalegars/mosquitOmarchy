@@ -1749,6 +1749,42 @@ func TestExternalWindowSettingDefaultsOnAndPersists(t *testing.T) {
 	}
 }
 
+// "Keep notifications on screen" is off by default (a notice closes itself
+// after six seconds) and persists when toggled on. The watcher row is named
+// like the rest of Mixbay: interfaces, not cards.
+func TestNotifyStickyDefaultsOffAndPersists(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if loadUIPrefs().NotifySticky {
+		t.Fatal("notify_sticky must default to off")
+	}
+	m := initialModel()
+	m.push(scrSettings)
+	m.syncPicker()
+	rows := map[string]string{}
+	for _, it := range m.settingsItems() {
+		rows[it.Value] = it.Display
+	}
+	if !strings.HasSuffix(rows["notify_sticky"], ": off") {
+		t.Fatalf("row reads %q, want off", rows["notify_sticky"])
+	}
+	if strings.Contains(rows["watcher_mode"], "Card") {
+		t.Fatalf("watcher row still says card: %q", rows["watcher_mode"])
+	}
+	m.picker = m.picker.SelectValue("notify_sticky")
+	nm, _ := m.updateKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(model)
+	if !m.ui.NotifySticky || !loadUIPrefs().NotifySticky {
+		t.Fatal("the toggle did not persist")
+	}
+	for _, it := range m.settingsItems() {
+		if it.Value == "notify_sticky" {
+			if !strings.HasSuffix(it.Display, ": on") {
+				t.Fatalf("row after toggling reads %q, want on", it.Display)
+			}
+		}
+	}
+}
+
 // The supported-card watcher is on out of the box, in its "always" mode.
 func TestCardWatcherDefaultsOn(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
