@@ -416,6 +416,16 @@ case "$cmd" in
     echo "OK Bitwig controller scripts removed (restart Bitwig so the Ableton vendor disappears)"
     ;;
 
+  bitwig-move-native-install)
+    # The alternative route: one controller script, no on-device module.
+    bitwig_move_native_install && echo "TIP In Bitwig: Settings → Controllers → Add Controller → vendor Ableton, then controller Move for Bitwig; restart Bitwig after install."
+    ;;
+
+  bitwig-move-native-uninstall)
+    bitwig_move_native_uninstall
+    echo "OK native Bitwig controller removed (restart Bitwig so it disappears)"
+    ;;
+
   bitwig-move-uninstall-module)
     # Removes the on-device Move Bitwig module in a visible terminal (the
     # vendored uninstall.sh when present, else ssh rm -rf). Like install,

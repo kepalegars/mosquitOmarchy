@@ -138,25 +138,36 @@ notification tells you to open the file yourself. The setting lives in
 
 ## Move as a Bitwig controller
 
-A dedicated submenu installs two halves: the **host controller scripts**, copied into
-`~/Documents/Bitwig Studio/Controller Scripts/Ableton/Move/` so Bitwig lists the vendor as
-**Ableton** and the controller as **Move** (restart Bitwig, or Settings ▸ Controllers ▸ rescan,
-then Add Controller and pick the `midiin4`/`midiou4` USB ports); and the **on-device Move
-module**, built and pushed to the Move over ssh.
+Two mutually exclusive routes are offered. Bitwig loads every `*.control.js` below
+`~/Bitwig Studio/Controller Scripts`, so installing one route removes the other; the TUI asks
+before replacing an installed route.
 
-Both can be removed from the same submenu. Removing the host scripts only deletes that folder
-(and the `Ableton/` vendor folder if it ends up empty) — nothing else in the Controller Scripts
-tree is touched.
+**Schwung route.** Installs two halves: the **host controller scripts**, copied into
+`~/Bitwig Studio/Controller Scripts/Ableton/Move/` so Bitwig lists the vendor as **Ableton**
+and the controller as **Move** (restart Bitwig, or Settings ▸ Controllers ▸ rescan, then Add
+Controller and pick the `midiin4`/`midiou4` USB ports); and the **on-device Move module**, built
+and pushed to the Move over ssh. Schwung is required for the module; when it is missing the TUI
+offers to install it first. Both halves can be removed from the same submenu. Removing the host
+scripts only deletes that folder (and the `Ableton/` vendor folder if it ends up empty) — nothing
+else in the Controller Scripts tree is touched.
 
-On-device detection needs ssh to `move.local`. When ssh is unreachable the status reads
-**unknown**, not "not installed", and both install and uninstall stay offered, so a broken ssh
-can never make the module look absent.
+**Native route.** Installs Pikub's single-file controller at
+`~/Bitwig Studio/Controller Scripts/Ableton Move/AbletonMove.control.js`. It needs no Schwung
+and no on-device module: Bitwig lists it as vendor **Ableton**, controller **Move for Bitwig**
+(restart Bitwig, then Add Controller and pick the same MIDI ports). The script is vendored in
+`native-bitwig/` (v5.11, MIT, from
+[PikubLab/move-for-bitwig](https://github.com/PikubLab/move-for-bitwig)); the module only
+installs and removes it.
 
-The controller itself is a **separate upstream project**, vendored here in `move-bitwig/`
+Installing either route asks for the Move to be connected first. On-device detection needs ssh
+to `move.local`. When ssh is unreachable the status reads **unknown**, not "not installed", and
+both install and uninstall stay offered, so a broken ssh can never make the module look absent.
+
+The Schwung controller is a **separate upstream project**, vendored here in `move-bitwig/`
 (v0.6.0, from [pi43r/move-bitwig](https://github.com/pi43r/move-bitwig)). Its own
 `README.md` is the control reference, `SPEC.md` how it works, `HISTORY.md` the
 historical backlog, and the repo root `TODO.md` / `TESTING.md` what is still open
-or untested. This module only installs and removes it.
+or untested.
 
 ## Settings
 

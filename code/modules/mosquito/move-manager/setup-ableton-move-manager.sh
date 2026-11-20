@@ -354,6 +354,23 @@ deploy_move_bitwig() {
   ok "move-bitwig sources deployed ($dst)"
 }
 
+# Deploys the vendored native-route script (Pikub's single-file controller).
+deploy_native_bitwig() {
+  local src="$SCRIPT_DIR/native-bitwig" dst="$REAL_HOME/.local/share/mosquito-move-manager/native-bitwig"
+  [[ -d $src ]] || { warn "native-bitwig/ not found in $SCRIPT_DIR — native Bitwig route skipped."; return 0; }
+  mkdir -p "$dst"
+  local f rel
+  while IFS= read -r -d '' f; do
+    rel="${f#$src/}"
+    mkdir -p "$(dirname "$dst/$rel")"
+    if [[ -f "$dst/$rel" ]] && cmp -s "$f" "$dst/$rel"; then
+      continue
+    fi
+    cp "$f" "$dst/$rel"
+  done < <(find "$src" -type f -print0)
+  ok "native Bitwig route deployed ($dst)"
+}
+
 # -----------------------------------------------------------------------------
 # 2. Omarchy overlay for native prompts (mosquito.move-manager, shipped here)
 # -----------------------------------------------------------------------------
@@ -1066,6 +1083,7 @@ else
   deploy_converter_resources
   deploy_bwpreset_converter
   deploy_move_bitwig
+  deploy_native_bitwig
   # The TUI is the ONLY interface now (Roadmap 3.9): the old native script
   # and its interface mode file are stale — clean up any instance from a
   # pre-3.9 install so nothing on-disk still references the removed modes.
@@ -1102,7 +1120,7 @@ else
   echo "  • Convert a preset -> $BIN_DIR/convert-adg-to-move + converter/ resources (Ableton .adg → Move preset)"
   echo "  • Bitwig preset     -> $BIN_DIR/bwpreset-converter/ (Bitwig .bwpreset → Move preset; output in <working-dir>/Presets)"
   echo "  • Schwung Manager  -> $BIN_DIR/schwung-manager-webapp (dedicated Chromium profile, http://move[N].local:7700)"
-  echo "  • Bitwig Move      -> .local/share/mosquito-move-manager/move-bitwig (controller scripts + on-device module)"
+  echo "  • Bitwig Move      -> .local/share/mosquito-move-manager/{move-bitwig,native-bitwig} (both controller routes)"
   echo "  • Chromium policy  -> no 'Keep?' prompt on Move Manager downloads (as root)"
   echo "  • ydotool NOPASSWD -> /etc/sudoers.d/mosquito-move-manager-ydotoold (as root; lets the TUI open the .als in Bitwig)"
   echo "  • Webapp icon      -> $WEBAPP_ICON_DST (custom Move Manager icon)"

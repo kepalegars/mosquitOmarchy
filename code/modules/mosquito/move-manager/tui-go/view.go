@@ -225,13 +225,29 @@ func (m model) View() string {
 			body = m.schwungPicker.View()
 			bar = barLine(m.schwungPicker.ShortcutsHint())
 		}
+	case scrBitwigRoutes:
+		title = screenTitle("Bitwig controller routes", m.contentSizeW())
+		if m.loading {
+			body = "checking Bitwig and the Move…"
+		} else {
+			body = m.bitwigRoutesPicker.View()
+			bar = barLine(m.bitwigRoutesPicker.ShortcutsHint())
+		}
 	case scrBitwigMenu:
-		title = screenTitle("Move as Bitwig controller", m.contentSizeW())
+		title = screenTitle("Schwung route", m.contentSizeW())
 		if m.loading {
 			body = "checking Bitwig and the Move…"
 		} else {
 			body = m.bitwigPicker.View()
 			bar = barLine(m.bitwigPicker.ShortcutsHint())
+		}
+	case scrBitwigNativeMenu:
+		title = screenTitle("Native route", m.contentSizeW())
+		if m.loading {
+			body = "checking Bitwig and the Move…"
+		} else {
+			body = m.bitwigNativePicker.View()
+			bar = barLine(m.bitwigNativePicker.ShortcutsHint())
 		}
 	case scrBitwigTipWait:
 		title = screenTitle("Bitwig controller ready", m.contentSizeW())
@@ -247,7 +263,8 @@ func (m model) View() string {
 		scrConvertRetryConfirm, scrNoAlsConfirm, scrConvertPresetAddMore,
 		scrPresetUploadConfirm,
 		scrSchwungUninstallConfirm, scrBitwigUninstallConfirm,
-		scrBitwigModuleUninstallConfirm, scrBitwigTipConfirm:
+		scrBitwigModuleUninstallConfirm, scrBitwigTipConfirm,
+		scrBitwigGateConfirm, scrBitwigNativeUninstallConfirm:
 		body = m.confirm.View()
 		bar = barLine(m.confirm.ShortcutsHint())
 	case scrPresetUpload:
@@ -261,7 +278,8 @@ func (m model) View() string {
 	case scrConverting, scrWorkingDirRunning, scrSuperfileInstalling,
 		scrAbletonClosing, scrBitwigOpening, scrPresetConverting,
 		scrSchwungInstalling, scrSchwungUninstalling, scrBitwigInstalling,
-		scrBitwigUninstalling, scrBitwigModuleUninstalling:
+		scrBitwigUninstalling, scrBitwigModuleUninstalling,
+		scrBitwigNativeUninstalling:
 		title = screenTitle("Working…", m.contentSizeW())
 		body = m.runner.View()
 		bar = barLine(m.runner.ShortcutsHint())

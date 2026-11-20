@@ -30,6 +30,12 @@ import (
 )
 
 func main() {
+	// --version is what the setup script's status snapshot asks for; without
+	// it the flag fell through to a full-screen TUI and the check hung.
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fmt.Println("mosquito-move-manager-tui")
+		return
+	}
 	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
 	_, err := p.Run()
 	// Drop this instance's marker on any exit path so a normal quit can never

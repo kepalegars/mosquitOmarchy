@@ -345,6 +345,13 @@ BITWIG_CONTROLLERS_ROOT="$HOME/Bitwig Studio/Controller Scripts"
 # copying them flat at the root made Bitwig show no vendor at all.
 BITWIG_CONTROLLERS_DIR="$BITWIG_CONTROLLERS_ROOT/Ableton/Move"
 BITWIG_CONTROLLERS_VENDOR_DIR="$BITWIG_CONTROLLERS_ROOT/Ableton"
+# Native route: Pikub's single-file controller lives in its own vendor folder.
+# Bitwig loads every *.control.js below Controller Scripts, so the two routes
+# must never coexist — each install removes the other.
+BITWIG_NATIVE_DIR="$BITWIG_CONTROLLERS_ROOT/Ableton Move"
+BITWIG_NATIVE_SCRIPT="$BITWIG_NATIVE_DIR/AbletonMove.control.js"
+NATIVE_BITWIG_DIR="$HOME/.local/share/mosquito-move-manager/native-bitwig"
+NATIVE_BITWIG_SCRIPT="$NATIVE_BITWIG_DIR/AbletonMove.control.js"
 MOVE_BITWIG_SSH_HOST="ableton@move.local"
 MOVE_BITWIG_REMOTE_DIR="/data/UserData/schwung/modules/overtake/move-bitwig"
 
@@ -356,17 +363,19 @@ bitwig_move_status_json() {
   # bitwig(installed) · controllers(deployed in the Bitwig user scripts dir)
   # · onDevice(module present on the Move, via ssh — only when schwung +
   # reachable Move, otherwise "unknown").
-  local bitwig=false controllers=false ondevice="unknown" bitwig_bin=""
+  local bitwig=false controllers=false native=false schwung=false ondevice="unknown" bitwig_bin=""
   bitwig_bin="$(command -v "${BITWIG_BIN:-bitwig-studio}" 2>/dev/null || true)"
   [[ -n $bitwig_bin ]] && bitwig=true
   if [[ -f "$(bitwig_move_controllers_dir)/Move.control.js" ]]; then
     controllers=true
   fi
+  [[ -f $BITWIG_NATIVE_SCRIPT ]] && native=true
   # Same 2xx/3xx acceptance as schwung_status_json: the manager answers 303,
   # not 200. If ssh then fails nothing is claimed — onDevice stays "unknown"
   # (never a false "not installed"), so the menu keeps offering both install
   # and uninstall.
   if detect_move && [[ $(schwung_http_code) =~ ^[23] ]]; then
+    schwung=true
     local out
     if out=$(timeout 8 ssh -o BatchMode=yes -o ConnectTimeout=5 \
       "$MOVE_BITWIG_SSH_HOST" \
@@ -377,8 +386,9 @@ bitwig_move_status_json() {
     fi
   fi
   jq -nc --argjson bitwig "$bitwig" --argjson controllers "$controllers" \
+    --argjson native "$native" --argjson schwung "$schwung" \
     --arg ondevice "$ondevice" --arg bitwig_bin "$bitwig_bin" \
-    '{bitwig:$bitwig, bitwig_bin:$bitwig_bin, controllers:$controllers, onDevice:$ondevice}'
+    '{bitwig:$bitwig, bitwig_bin:$bitwig_bin, controllers:$controllers, native:$native, schwung:$schwung, onDevice:$ondevice}'
 }
 
 bitwig_move_install() {
@@ -394,6 +404,8 @@ bitwig_move_install() {
     err "move-bitwig sources not deployed ($mbdir) — re-run the setup script."
     return 1
   fi
+  # One route at a time: the native script would be loaded alongside this one.
+  bitwig_move_remove_native
   mkdir -p "$cdir"
   cp -f "$mbdir"/Controller\ Scripts/* "$cdir"/ 2>/dev/null || {
     err "could not copy controller scripts into $cdir"; return 1; }
@@ -425,6 +437,34 @@ bitwig_move_uninstall() {
   # non-empty dir) — any other vendor/controller there is left untouched.
   rmdir "$BITWIG_CONTROLLERS_VENDOR_DIR" 2>/dev/null || true
   ok "controller scripts removed from $cdir"
+}
+
+bitwig_move_remove_native() {
+  rm -f "$BITWIG_NATIVE_SCRIPT" 2>/dev/null || true
+  rmdir "$BITWIG_NATIVE_DIR" 2>/dev/null || true
+}
+
+bitwig_move_native_install() {
+  local src="$NATIVE_BITWIG_SCRIPT"
+  if [[ ! -f $src ]]; then
+    err "native Bitwig script not deployed ($src) — re-run the setup script."
+    return 1
+  fi
+  # One route at a time: drop the Schwung vendor folder (and only that) first.
+  bitwig_move_uninstall >/dev/null 2>&1 || true
+  mkdir -p "$BITWIG_NATIVE_DIR"
+  cp -f "$src" "$BITWIG_NATIVE_SCRIPT" 2>/dev/null || {
+    err "could not copy the native script into $BITWIG_NATIVE_DIR"; return 1; }
+  ok "native controller deployed to $BITWIG_NATIVE_SCRIPT (restart Bitwig so it appears)"
+}
+
+bitwig_move_native_uninstall() {
+  if [[ -f $BITWIG_NATIVE_SCRIPT ]]; then
+    rm -f "$BITWIG_NATIVE_SCRIPT" 2>/dev/null || true
+  fi
+  # Drop the vendor folder only if it is now empty.
+  rmdir "$BITWIG_NATIVE_DIR" 2>/dev/null || true
+  ok "native controller removed from $BITWIG_NATIVE_DIR"
 }
 
 bitwig_move_uninstall_module() {

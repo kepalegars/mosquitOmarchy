@@ -536,6 +536,8 @@ type bitwigMoveStatusMsg struct {
 	bitwig      bool
 	bitwigBin   string
 	controllers bool
+	native      bool
+	schwung     bool
 	onDevice    string
 	err         error
 }
@@ -550,12 +552,15 @@ func fetchBitwigMoveStatus() tea.Cmd {
 			Bitwig      bool   `json:"bitwig"`
 			BitwigBin   string `json:"bitwig_bin"`
 			Controllers bool   `json:"controllers"`
+			Native      bool   `json:"native"`
+			Schwung     bool   `json:"schwung"`
 			OnDevice    string `json:"onDevice"`
 		}
 		if err := json.Unmarshal(out, &v); err != nil {
 			return bitwigMoveStatusMsg{err: fmt.Errorf("bitwig-move-status: %w", err)}
 		}
-		return bitwigMoveStatusMsg{bitwig: v.Bitwig, bitwigBin: v.BitwigBin, controllers: v.Controllers, onDevice: v.OnDevice}
+		return bitwigMoveStatusMsg{bitwig: v.Bitwig, bitwigBin: v.BitwigBin, controllers: v.Controllers,
+			native: v.Native, schwung: v.Schwung, onDevice: v.OnDevice}
 	}
 }
 

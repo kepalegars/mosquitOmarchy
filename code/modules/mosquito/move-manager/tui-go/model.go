@@ -57,7 +57,12 @@ const (
 	scrSchwungInstalling
 	scrSchwungUninstallConfirm
 	scrSchwungUninstalling
+	scrBitwigRoutes
 	scrBitwigMenu
+	scrBitwigNativeMenu
+	scrBitwigGateConfirm
+	scrBitwigNativeUninstalling
+	scrBitwigNativeUninstallConfirm
 	scrBitwigInstalling
 	scrBitwigUninstallConfirm
 	scrBitwigUninstalling
@@ -76,18 +81,20 @@ type model struct {
 	loading bool
 	fatal   error
 
-	mainPicker        navPicker
-	settingsPicker    navPicker
-	abletonPicker     navPicker
-	bundlePicker      navPicker
-	routePicker       navPicker
-	convertPresetPckr navPicker
-	schwungPicker     navPicker
-	bitwigPicker      navPicker
-	addressInput      tuikit.TextInput
-	confirm           tuikit.Confirm
-	runner            tuikit.Runner
-	toast             tuikit.Toast
+	mainPicker         navPicker
+	settingsPicker     navPicker
+	abletonPicker      navPicker
+	bundlePicker       navPicker
+	routePicker        navPicker
+	convertPresetPckr  navPicker
+	schwungPicker      navPicker
+	bitwigPicker       navPicker
+	bitwigRoutesPicker navPicker
+	bitwigNativePicker navPicker
+	addressInput       tuikit.TextInput
+	confirm            tuikit.Confirm
+	runner             tuikit.Runner
+	toast              tuikit.Toast
 	// tipInfo renders the Bitwig controller-setup tip in the Readme-style
 	// framed modal (StyleModal) on scrBitwigTipWait.
 	tipInfo tuikit.Info
@@ -131,7 +138,16 @@ type model struct {
 	bitwigInstalled   bool
 	bitwigBin         string
 	bitwigControllers bool
+	bitwigNative      bool
 	bitwigOnDevice    string
+
+	// Route-install gates: which question is on screen, which route the answer
+	// applies to, and whether a status refresh should continue the install.
+	bitwigGate           string
+	bitwigPendingInstall string
+	bitwigRecheckInstall bool
+	bitwigAfterSchwung   bool
+	bitwigTipRoute       string
 
 	// settingsPending holds a Left/Right-adjusted but not-yet-applied value
 	// per Settings row (the target: "on"/"off" or "default"/"superfile").
@@ -167,6 +183,8 @@ func initialModel() model {
 	m.presetNoMovePicker = newNavPicker("", nil)
 	m.schwungPicker = newNavPicker("", nil)
 	m.bitwigPicker = newNavPicker("", nil)
+	m.bitwigRoutesPicker = newNavPicker("", nil)
+	m.bitwigNativePicker = newNavPicker("", nil)
 	m.runner = tuikit.NewRunner()
 	return m
 }
@@ -256,12 +274,15 @@ func mainMenuItems(s MoveStatus, checking bool) []tuikit.PickerItem {
 		{Display: "Convert a Move set", Value: "convert"},
 		{Display: "Convert a preset", Value: "convert_preset"},
 	}
-	// Schwung and the Bitwig Move controller both act on the Move device
-	// itself — the user's rule: they are always VISIBLE but greyed out /
-	// non-selectable while it is not connected.
+	// Schwung acts on the Move device itself, so it stays visible but greyed
+	// out while the Move is not connected. The Bitwig routes also install and
+	// remove host-side scripts, so they stay reachable and ask for the Move
+	// themselves before an install.
 	items = append(items,
 		tuikit.PickerItem{Display: "Schwung", Value: "schwung", Disabled: !s.Connected},
-		tuikit.PickerItem{Display: "Move as Bitwig controller", Value: "bitwig_move", Disabled: !s.Connected},
+		// Reachable without the Move: the routes gate asks for it before an
+		// install, and host-side uninstalls must work while it is unplugged.
+		tuikit.PickerItem{Display: "Move as Bitwig controller", Value: "bitwig_move"},
 	)
 	items = append(items, tuikit.PickerItem{Display: "Settings", Value: "settings"})
 	items = append(items, tuikit.PickerItem{Display: "Close", Value: "quit"})
@@ -306,16 +327,36 @@ func (m model) wireSchwungMenu() []tuikit.PickerItem {
 	return items
 }
 
-// wireBitwigMenu builds the Bitwig Move controller submenu from the last
-// fetched state. Both the host controller scripts (Bitwig side) and the
-// on-device Move module are offered for install AND uninstall: on-device
-// detection needs ssh to the Move, so when that is unavailable the status
-// reads "unknown" and the menu still offers both, explaining the caveat.
+// wireBitwigRoutesMenu offers the two mutually exclusive controller routes.
+// The status line is what tells the user which one Bitwig will load.
+func (m model) wireBitwigRoutesMenu() []tuikit.PickerItem {
+	status := "no controller route installed"
+	switch {
+	case m.bitwigControllers && m.bitwigNative:
+		status = "both routes installed — Bitwig loads both; remove one"
+	case m.bitwigControllers:
+		status = "installed: Schwung route"
+	case m.bitwigNative:
+		status = "installed: Native route"
+	}
+	return []tuikit.PickerItem{
+		{Display: "Schwung route — controller + Move module", Value: "schwung_route"},
+		{Display: "Native route — one Bitwig script, no Move module", Value: "native_route"},
+		{Display: status, Disabled: true},
+		{Display: "Back", Value: "back"},
+	}
+}
+
+// wireBitwigMenu builds the Schwung-route submenu from the last fetched state.
+// Both the host controller scripts (Bitwig side) and the on-device Move module
+// are offered for install AND uninstall: on-device detection needs ssh to the
+// Move, so when that is unavailable the status reads "unknown" and the menu
+// still offers both, explaining the caveat.
 func (m model) wireBitwigMenu() []tuikit.PickerItem {
 	if !m.bitwigInstalled {
 		return []tuikit.PickerItem{
 			{Display: "Bitwig Studio isn't installed on this system", Disabled: true},
-			{Display: "Uninstall the Move module from the device", Value: "uninstall_module"},
+			{Display: "Uninstall the Move module from the device", Value: "uninstall_module", Disabled: m.bitwigOnDevice == "no"},
 			{Display: "Back", Value: "back"},
 		}
 	}
@@ -337,8 +378,36 @@ func (m model) wireBitwigMenu() []tuikit.PickerItem {
 	return []tuikit.PickerItem{
 		{Display: main, Value: "install"},
 		{Display: "Uninstall the controller scripts", Value: "uninstall", Disabled: !m.bitwigControllers},
-		{Display: "Uninstall the Move module from the device", Value: "uninstall_module"},
+		{Display: "Uninstall the Move module from the device", Value: "uninstall_module", Disabled: m.bitwigOnDevice == "no"},
 		{Display: statusLine, Disabled: true},
+		{Display: "Back", Value: "back"},
+	}
+}
+
+// wireBitwigNativeMenu is the alternative route: Pikub's single script, no
+// on-device module. Bitwig loads every *.control.js, hence one route at a time.
+func (m model) wireBitwigNativeMenu() []tuikit.PickerItem {
+	statusLine := "native script: not installed"
+	if m.bitwigNative {
+		statusLine = "native script: installed"
+	}
+	if !m.bitwigInstalled {
+		return []tuikit.PickerItem{
+			{Display: "Bitwig Studio isn't installed on this system", Disabled: true},
+			{Display: "Uninstall the native controller", Value: "uninstall", Disabled: !m.bitwigNative},
+			{Display: statusLine, Disabled: true},
+			{Display: "Back", Value: "back"},
+		}
+	}
+	main := "Install the native controller"
+	if m.bitwigNative {
+		main = "Update the native controller"
+	}
+	return []tuikit.PickerItem{
+		{Display: main, Value: "install"},
+		{Display: "Uninstall the native controller", Value: "uninstall", Disabled: !m.bitwigNative},
+		{Display: statusLine, Disabled: true},
+		{Display: "In Bitwig choose vendor Ableton → Move for Bitwig", Disabled: true},
 		{Display: "Back", Value: "back"},
 	}
 }
@@ -502,6 +571,17 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.top() == scrSettings {
 			m.rebuildSettingsPicker()
 		}
+		// A route install asked for the Move, the user said it was plugged
+		// in: refresh the route state too, then continue from bitwigMoveStatusMsg.
+		if m.bitwigRecheckInstall {
+			if msg.status.Connected {
+				m.loading = true
+				return m, fetchBitwigMoveStatus()
+			}
+			m.bitwigRecheckInstall = false
+			m.bitwigPendingInstall = ""
+			m.toast, _ = m.toast.SetWarn("Move still not connected")
+		}
 		return m, nil
 
 	case bundlesMsg:
@@ -657,9 +737,22 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.bitwigInstalled = msg.bitwig
 		m.bitwigBin = msg.bitwigBin
 		m.bitwigControllers = msg.controllers
+		m.bitwigNative = msg.native
+		m.schwungInstalled = msg.schwung
 		m.bitwigOnDevice = msg.onDevice
-		if m.top() == scrBitwigMenu {
+		switch m.top() {
+		case scrBitwigRoutes:
+			m.bitwigRoutesPicker = newNavPicker("", m.wireBitwigRoutesMenu()).SetSize(m.contentSize())
+		case scrBitwigMenu:
 			m.bitwigPicker = newNavPicker("", m.wireBitwigMenu()).SetSize(m.contentSize())
+		case scrBitwigNativeMenu:
+			m.bitwigNativePicker = newNavPicker("", m.wireBitwigNativeMenu()).SetSize(m.contentSize())
+		}
+		// The connect gate's second half: now that both the Move and the
+		// route state are fresh, the install can decide its next question.
+		if m.bitwigRecheckInstall {
+			m.bitwigRecheckInstall = false
+			return m.requestBitwigInstall(m.bitwigPendingInstall)
 		}
 		return m, nil
 

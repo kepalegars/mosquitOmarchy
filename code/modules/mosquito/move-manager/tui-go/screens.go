@@ -308,9 +308,36 @@ func (m *model) enterCmd() tea.Cmd {
 			"Remove Schwung from the Move?\n\nInstalled modules keep working until removed separately.",
 			"No", "Yes, remove")
 		return nil
+	case scrBitwigRoutes:
+		m.loading = true
+		return fetchBitwigMoveStatus()
 	case scrBitwigMenu:
 		m.loading = true
 		return fetchBitwigMoveStatus()
+	case scrBitwigNativeMenu:
+		m.loading = true
+		return fetchBitwigMoveStatus()
+	case scrBitwigGateConfirm:
+		switch m.bitwigGate {
+		case "connect":
+			m.confirm = tuikit.NewConfirm(
+				"The Move is not connected.\n\nPlug it in over USB, then press Yes to check again.",
+				"Cancel", "Check again")
+		case "schwung":
+			m.confirm = tuikit.NewConfirm(
+				"Schwung is not installed on the Move.\n\nThe Schwung route builds its Move module with Schwung. Install Schwung now?",
+				"Skip", "Install Schwung")
+		default:
+			m.confirm = tuikit.NewConfirm(
+				"The other Bitwig route is installed.\n\nBitwig loads every controller script, so installing this route removes the other one. Continue?",
+				"Cancel", "Replace")
+		}
+		return nil
+	case scrBitwigNativeUninstallConfirm:
+		m.confirm = tuikit.NewConfirm(
+			"Remove the native Move controller from Bitwig Studio?\n\nThis only removes Pikub's script; the Move device is untouched.",
+			"Keep", "Remove")
+		return nil
 	case scrBitwigUninstallConfirm:
 		m.confirm = tuikit.NewConfirm(
 			"Remove the Move controller scripts from Bitwig Studio?\n\nThe module stays on the Move (remove it in the Schwung Manager).",
@@ -336,14 +363,15 @@ func (m *model) enterCmd() tea.Cmd {
 		// The tip body is a Readme-style framed modal (StyleModal via
 		// tuikit.Info), not bare lines — same bounded, wrapping frame the
 		// audio manager's Readme uses.
-		m.tipInfo = tuikit.NewInfo(bitwigTipText()).SetSize(m.contentSize())
+		m.tipInfo = tuikit.NewInfo(bitwigTipText(m.bitwigTipRoute)).SetSize(m.contentSize())
 		return bitwigRunningCmd()
 	case scrQuitConfirm:
 		m.confirm = tuikit.NewConfirm("Quit mosquito Move Manager?", "No", "Yes")
 		return nil
 	case scrConverting, scrManagerWait, scrWorkingDirRunning,
 		scrPresetConverting, scrSchwungInstalling, scrSchwungUninstalling,
-		scrBitwigInstalling, scrBitwigUninstalling, scrBitwigModuleUninstalling:
+		scrBitwigInstalling, scrBitwigUninstalling, scrBitwigModuleUninstalling,
+		scrBitwigNativeUninstalling:
 		// Started explicitly by the handler that pushed this screen
 		// (it already knows which command to run) — nothing to do here.
 		return nil
@@ -628,6 +656,16 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil // stay on the log; esc/enter leave
 			}
 			m.pop() // back to the Schwung menu
+			if m.bitwigAfterSchwung {
+				// The Schwung route install asked for Schwung first: re-ask
+				// the remaining gates (the other route may need replacing)
+				// now that Schwung is present.
+				m.bitwigAfterSchwung = false
+				m.schwungInstalled = true
+				route := m.bitwigPendingInstall
+				m.bitwigPendingInstall = ""
+				return m.requestBitwigInstall(route)
+			}
 			m.toast, _ = m.toast.SetOK("Schwung installed — now set up through the Schwung Manager")
 			return m, tea.Batch(m.enterCmd(), fetchStatus())
 		}
@@ -636,6 +674,8 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.runner.Cancel()
 			}
 			if m.runner.Done() || km.String() == "esc" {
+				m.bitwigAfterSchwung = false
+				m.bitwigPendingInstall = ""
 				m.pop()
 				return m, m.enterCmd()
 			}
@@ -684,6 +724,18 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.runner, cmd = m.runner.Update(msg)
 		return m, cmd
 
+	case scrBitwigRoutes:
+		if res, ok := msg.(tuikit.PickerResultMsg); ok {
+			if res.Canceled || res.Value == "back" {
+				m.pop()
+				return m, m.enterCmd()
+			}
+			return m.handleBitwigRoutesChoice(res.Value)
+		}
+		var cmd tea.Cmd
+		m.bitwigRoutesPicker, cmd = m.bitwigRoutesPicker.Update(msg)
+		return m, cmd
+
 	case scrBitwigMenu:
 		if res, ok := msg.(tuikit.PickerResultMsg); ok {
 			if res.Canceled || res.Value == "back" {
@@ -694,6 +746,94 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.bitwigPicker, cmd = m.bitwigPicker.Update(msg)
+		return m, cmd
+
+	case scrBitwigNativeMenu:
+		if res, ok := msg.(tuikit.PickerResultMsg); ok {
+			if res.Canceled || res.Value == "back" {
+				m.pop()
+				return m, m.enterCmd()
+			}
+			return m.handleBitwigNativeChoice(res.Value)
+		}
+		var cmd tea.Cmd
+		m.bitwigNativePicker, cmd = m.bitwigNativePicker.Update(msg)
+		return m, cmd
+
+	case scrBitwigGateConfirm:
+		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
+			gate := m.bitwigGate
+			m.bitwigGate = ""
+			m.pop()
+			if res.Canceled || (!res.Yes && gate != "schwung") {
+				m.bitwigPendingInstall = ""
+				m.bitwigAfterSchwung = false
+				return m, m.enterCmd()
+			}
+			if !res.Yes {
+				// "Skip": install the controller without Schwung; the module
+				// step needs it, so that part will report the failure.
+				return m.startBitwigInstall(m.bitwigPendingInstall)
+			}
+			switch gate {
+			case "connect":
+				// Keep the pending route: the status answer below continues it.
+				m.bitwigRecheckInstall = true
+				return m, fetchStatus()
+			case "schwung":
+				m.bitwigAfterSchwung = true
+				m.push(scrSchwungInstalling)
+				m.runner = tuikit.NewRunner().SetSize(m.contentSize())
+				var cmd tea.Cmd
+				m.runner, cmd = m.runner.Start("Installing Schwung", actionsBin(), "schwung-install")
+				return m, cmd
+			default:
+				return m.startBitwigInstall(m.bitwigPendingInstall)
+			}
+		}
+		var cmd tea.Cmd
+		m.confirm, cmd = m.confirm.Update(msg)
+		return m, cmd
+
+	case scrBitwigNativeUninstallConfirm:
+		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
+			if res.Canceled || !res.Yes {
+				m.pop()
+				return m, m.enterCmd()
+			}
+			m.pop()
+			m.push(scrBitwigNativeUninstalling)
+			m.runner = tuikit.NewRunner().SetSize(m.contentSize())
+			var cmd tea.Cmd
+			m.runner, cmd = m.runner.Start("Removing the native controller", actionsBin(), "bitwig-move-native-uninstall")
+			return m, cmd
+		}
+		var cmd tea.Cmd
+		m.confirm, cmd = m.confirm.Update(msg)
+		return m, cmd
+
+	case scrBitwigNativeUninstalling:
+		if done, ok := msg.(tuikit.RunnerDoneMsg); ok {
+			m.pop() // back to the native menu, on success or failure
+			if done.Err != nil {
+				m.toast, _ = m.toast.SetErr(done.Err.Error())
+				return m, tea.Batch(m.enterCmd(), fetchStatus())
+			}
+			m.toast, _ = m.toast.SetOK("native controller removed")
+			return m, tea.Batch(m.enterCmd(), fetchStatus())
+		}
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "enter") {
+			if km.String() == "esc" && !m.runner.Done() {
+				m.runner.Cancel()
+			}
+			if m.runner.Done() || km.String() == "esc" {
+				m.pop()
+				return m, m.enterCmd()
+			}
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.runner, cmd = m.runner.Update(msg)
 		return m, cmd
 
 	case scrBitwigInstalling:
@@ -1124,7 +1264,7 @@ func (m model) handleMainChoice(v string) (tea.Model, tea.Cmd) {
 		m.push(scrSchwungMenu)
 		return m, m.enterCmd()
 	case "bitwig_move":
-		m.push(scrBitwigMenu)
+		m.push(scrBitwigRoutes)
 		return m, m.enterCmd()
 	case "settings":
 		m.push(scrSettings)
@@ -1364,10 +1504,14 @@ func (m model) handleSchwungChoice(v string) (tea.Model, tea.Cmd) {
 // tip modal. It leads with the essential path — Bitwig → Settings →
 // Controllers → Add Controller → vendor Ableton, controller Move — then the
 // MIDI port hint and the restart note.
-func bitwigTipText() string {
+func bitwigTipText(route string) string {
+	controller := "Move"
+	if route == "native" {
+		controller = "Move for Bitwig"
+	}
 	return strings.Join([]string{
 		"In Bitwig: Settings → Controllers → Add Controller →",
-		tuikit.StyleAccent.Render("choose vendor  Ableton , then controller  Move ."),
+		tuikit.StyleAccent.Render("choose vendor  Ableton , then controller  " + controller + " ."),
 		"",
 		"Then select the MIDI ports  midiin4 / midiou4  (the Move).",
 		"",
@@ -1378,15 +1522,73 @@ func bitwigTipText() string {
 	}, "\n")
 }
 
+func (m model) handleBitwigRoutesChoice(v string) (tea.Model, tea.Cmd) {
+	switch v {
+	case "schwung_route":
+		m.push(scrBitwigMenu)
+		return m, m.enterCmd()
+	case "native_route":
+		m.push(scrBitwigNativeMenu)
+		return m, m.enterCmd()
+	}
+	return m, nil
+}
+
+func (m model) handleBitwigNativeChoice(v string) (tea.Model, tea.Cmd) {
+	switch v {
+	case "install":
+		return m.requestBitwigInstall("native")
+	case "uninstall":
+		m.push(scrBitwigNativeUninstallConfirm)
+		return m, m.enterCmd()
+	}
+	return m, nil
+}
+
+// requestBitwigInstall asks what an install needs before it starts — a
+// connected Move, Schwung for its route, and replacing the other route.
+// Uninstall is never gated.
+func (m model) requestBitwigInstall(route string) (tea.Model, tea.Cmd) {
+	m.bitwigPendingInstall = route
+	gate := ""
+	switch {
+	case !m.status.Connected:
+		gate = "connect"
+	case route == "schwung" && !m.schwungInstalled:
+		gate = "schwung"
+	case route == "schwung" && m.bitwigNative:
+		gate = "override"
+	case route == "native" && m.bitwigControllers:
+		gate = "override"
+	}
+	if gate == "" {
+		return m.startBitwigInstall(route)
+	}
+	m.bitwigGate = gate
+	m.push(scrBitwigGateConfirm)
+	return m, m.enterCmd()
+}
+
+func (m model) startBitwigInstall(route string) (tea.Model, tea.Cmd) {
+	m.bitwigPendingInstall = ""
+	m.bitwigRecheckInstall = false
+	m.bitwigTipRoute = route
+	m.push(scrBitwigInstalling)
+	m.loading = true
+	m.runner = tuikit.NewRunner().SetSize(m.contentSize())
+	title, action := "Installing the Move controller", "bitwig-move-install"
+	if route == "native" {
+		title, action = "Installing the native controller", "bitwig-move-native-install"
+	}
+	var cmd tea.Cmd
+	m.runner, cmd = m.runner.Start(title, actionsBin(), action)
+	return m, cmd
+}
+
 func (m model) handleBitwigChoice(v string) (tea.Model, tea.Cmd) {
 	switch v {
 	case "install":
-		m.push(scrBitwigInstalling)
-		m.loading = true
-		m.runner = tuikit.NewRunner().SetSize(m.contentSize())
-		var cmd tea.Cmd
-		m.runner, cmd = m.runner.Start("Installing the Move controller", actionsBin(), "bitwig-move-install")
-		return m, cmd
+		return m.requestBitwigInstall("schwung")
 	case "uninstall":
 		m.push(scrBitwigUninstallConfirm)
 		return m, m.enterCmd()
