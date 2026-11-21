@@ -966,18 +966,20 @@ SUDOEOF
   # Single elevated install (pkexec GUI prompt when not already root): copy the
   # validated content into a same-filesystem temp under /etc/sudoers.d, then
   # atomically rename it into place. Deliberately one privilege escalation so
-  # the GUI asks for the password only once.
+  # the GUI asks for the password only once. The source is passed as a path,
+  # not on stdin: commands run through the persistent root helper do not
+  # inherit the caller's stdin, so `cat > tmp` would wait forever.
   if ! mq_sudo bash -c '
       set -e
       tmp="$(mktemp /etc/sudoers.d/.mosquito-move-manager-ydotoold.XXXXXX)"
       trap "rm -f \"$tmp\"" EXIT
-      cat > "$tmp"
+      cp "$1" "$tmp"
       chmod 0440 "$tmp"
       chown root:root "$tmp" 2>/dev/null || true
       visudo -cf "$tmp" >/dev/null 2>&1
-      mv -f "$tmp" "$1"
+      mv -f "$tmp" "$2"
       trap - EXIT
-    ' _ "$SUDOERS_DST" < "$tmp"; then
+    ' _ "$tmp" "$SUDOERS_DST"; then
     rm -f "$tmp"
     warn "could not install $SUDOERS_DST — NOPASSWD rule not installed"
     return 0
