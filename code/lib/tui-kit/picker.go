@@ -472,7 +472,7 @@ func (d pickerDelegate) folderTitleStyle(pi PickerItem, index, selected int) lip
 func (d pickerDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	pi, ok := item.(PickerItem)
 	if ok && pi.Disabled {
-		d.renderDisabled(w, m, pi)
+		d.renderDisabled(w, m, pi, time.Now())
 		return
 	}
 	d.renderCentered(w, m, index, item)
@@ -517,15 +517,19 @@ func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, ite
 	// the overflow until fitBlock cut it with no chance to scroll.
 	marqueeKey := pi.Value + "\x00" + pi.Display + "\x00" + pi.Sub
 	now := time.Now()
-	title := ansi.Truncate(pi.Display, titleAvail, "")
+	// Every overflowing row scrolls, not only the selected one: status lines
+	// and long names used to be clipped for good. The selected row still gets
+	// its own cycle (restarted when the cursor lands on it); the others share
+	// the absolute clock so they never fight over the start time.
+	title := MarqueeText(pi.Display, titleAvail, now)
 	if index == m.Index() {
 		title = selectedMarqueeText(marqueeKey, pi.Display, titleAvail, now)
 	}
 	suffix := ""
 	if pi.Suffix != "" {
-		// The suffix keeps the row's ordinary style even when the title is an
-		// Accent block, so only the title blinks.
-		suffix = d.titleStyle(index, m.Index()).Render(pi.Suffix)
+		// Secondary metadata (an installed marker, a format list, a size)
+		// stays grey even on the selected row, so only the title blinks.
+		suffix = StyleDisabled.Render(pi.Suffix)
 	}
 	titleStyled := d.leadCell(pi, index == m.Index()) + d.folderTitleStyle(pi, index, m.Index()).Render(title) + suffix + d.trailingCell(pi)
 	// Fixed 3-column slot before the title: three spaces when unselected,
@@ -564,7 +568,7 @@ func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, ite
 		if index == m.Index() {
 			desc = selectedMarqueeText(marqueeKey, desc, descAvail, now)
 		} else {
-			desc = ansi.Truncate(desc, descAvail, "")
+			desc = MarqueeText(desc, descAvail, now)
 		}
 		descStyled := d.descStyle(index, m.Index()).Render(desc)
 		// The description sits on its own line but belongs to the SAME row, so
@@ -601,7 +605,7 @@ func (d pickerDelegate) descStyle(index, selected int) lipgloss.Style {
 	})
 }
 
-func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem) {
+func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem, now time.Time) {
 	if m.Width() <= 0 {
 		return
 	}
@@ -632,7 +636,7 @@ func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem)
 	if titleAvail < 1 {
 		titleAvail = 1
 	}
-	title := ansi.Truncate(pi.Display, titleAvail, "")
+	title := MarqueeText(pi.Display, titleAvail, now)
 	suffix := ""
 	if pi.Suffix != "" {
 		suffix = StyleDisabled.Render(pi.Suffix)
@@ -652,7 +656,7 @@ func (d pickerDelegate) renderDisabled(w io.Writer, m list.Model, pi PickerItem)
 		if descAvail < 1 {
 			descAvail = 1
 		}
-		desc := ansi.Truncate(pi.Sub, descAvail, "")
+		desc := MarqueeText(pi.Sub, descAvail, now)
 		row += "\n" + "   " + d.badgeCell(pi) + StyleDisabled.Render(desc)
 	}
 	fmt.Fprint(w, fitBlock(row, d.maxRowW, m.Width())) //nolint: errcheck
