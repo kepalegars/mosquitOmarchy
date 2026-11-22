@@ -156,6 +156,9 @@ type model struct {
 	pollGen int
 
 	quit bool
+	// launchTried makes the per-card "load at launch" preset fire once per
+	// app start, never on a later device switch.
+	launchTried bool
 }
 
 func initialModel() model {
@@ -747,7 +750,7 @@ func (m model) settingsItems() []tuikit.PickerItem {
 		notify,
 		notifyGone,
 		{Display: "Keep notifications on screen: " + onOff(m.ui.NotifySticky), Value: "notify_sticky"},
-		{Display: "Watch for interfaces: " + watcherLabel(m.ui.WatcherMode), Value: "watcher_mode"},
+		{Display: "Interface watcher: " + watcherLabel(m.ui.WatcherMode), Value: "watcher_mode"},
 		{Display: "Add an audio interface", Value: "add_interface"},
 		{Display: "Back", Value: "back"},
 	}
@@ -1224,7 +1227,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			idx = 0
 		}
 		m.picker = m.picker.SelectIndex(idx)
-		return m, nil
+		return m, m.maybeLaunchPreset()
 
 	case meterStartedMsg:
 		if msg.engine == nil {

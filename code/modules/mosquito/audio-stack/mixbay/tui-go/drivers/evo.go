@@ -473,7 +473,6 @@ func (d *evoDriver) readHardware() (Status, error) {
 	}
 	defer d.end()
 	d.enableCapture()
-	d.resetMonoOutputChannelsOnce()
 	// Volumes (CH1 of each pair; pairs are ganged on write).
 	var outMutes map[string]float64
 	if !d.supportsNativeOutputMute() {
@@ -779,6 +778,9 @@ func (d *evoDriver) outputChannelFile() string {
 	return filepath.Join(d.shadowDir(), ".output-channels.json")
 }
 
+// loadOutputChannels reads the persisted mono trims as they are. Nothing here
+// clears them: a launch never rewrites the card, so trims set while Mixbay was
+// closed survive. Only an explicit reset (R) drops them.
 func (d *evoDriver) loadOutputChannels() map[string]float64 {
 	m := map[string]float64{}
 	if data, err := os.ReadFile(d.outputChannelFile()); err == nil {
@@ -867,38 +869,6 @@ func dbToPactl(db float64) int {
 	return v
 }
 
-// Mono layout is session state: a leftover trim from a crashed session must
-// not survive the next start, which always opens in stereo.
-var (
-	evoChannelResetMu sync.Mutex
-	evoChannelReset   = map[string]bool{}
-)
-
-func (d *evoDriver) claimMonoReset() bool {
-	evoChannelResetMu.Lock()
-	defer evoChannelResetMu.Unlock()
-	if evoChannelReset[d.spec.ID] {
-		return false
-	}
-	evoChannelReset[d.spec.ID] = true
-	return true
-}
-
-func (d *evoDriver) resetMonoOutputChannelsOnce() {
-	if !d.claimMonoReset() {
-		return
-	}
-	if len(d.loadOutputChannels()) == 0 {
-		return
-	}
-	trims := map[int]float64{}
-	for ch := 0; ch < d.spec.NumOutPairs*2; ch++ {
-		trims[ch] = 0
-	}
-	_ = d.pwSetTrims(trims)
-	_ = d.saveOutputChannels(map[string]float64{})
-}
-
 // outputPairSplit turns the two absolute channel levels into the shared FU10
 // base (the louder channel) and the per-channel trims (≤ 0 dB).
 func outputPairSplit(l1, l2 float64) (float64, [2]float64) {
@@ -977,7 +947,6 @@ func (d *evoDriver) SetOutputChannel(ch int, db float64) error {
 		return err
 	}
 	defer d.end()
-	d.claimMonoReset()
 	trims := d.loadOutputChannels()
 	mutes := d.loadOutputMutes()
 	base, err := d.outputPairBase(pair)
@@ -1027,7 +996,6 @@ func (d *evoDriver) SetOutputChannelMute(ch int, muted bool) error {
 		return err
 	}
 	defer d.end()
-	d.claimMonoReset()
 	trims := d.loadOutputChannels()
 	mutes := d.loadOutputMutes()
 	base, err := d.outputPairBase(pair)

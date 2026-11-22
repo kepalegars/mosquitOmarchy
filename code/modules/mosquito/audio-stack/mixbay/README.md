@@ -202,6 +202,12 @@ Ce que **mixbay ajoute** :
   annule) ;
 - preset `default.json` en lecture seule, toujours en tête du picker : sauver
   sous ce nom est refusé et force un nouveau nom ;
+- `L` dans le picker de chargement choisit le preset à appliquer **une fois au
+  lancement** (`L` à nouveau l'annule). Le choix vit dans
+  `~/.config/audient-evo-py/<id>/.launch-preset` : quitter Mixbay n'écrit rien
+  et un lancement sans `L` ne touche jamais aux réglages de la carte ; carte
+  débranchée, rien n'est écrit : le preset s'applique à la première lecture en
+  ligne, et une seule fois par session ;
 - `A` Artist Mix : OFF lie OUT 1|2 et OUT 3|4 (même mix, volumes de sortie
   indépendants) ;
 - `O` bascule mono/stéréo sur la paire sous le curseur : les entrées se lient
@@ -339,8 +345,8 @@ seules déplacent, les modificateurs règlent la valeur sélectionnée :
 - `Tab` cycle CONTROLS → MIXER → LEVELS (EVO 8) → CONTROLS ; sur LEVELS,
   `Space` remet les crêtes à zéro, `p` fige l'affichage, `Esc`/`Tab` retour ;
 - `s` sauve (`+ new preset` pour un nouveau nom, `r` pour renommer), `o` charge
-  (même picker : `r` renomme, `d` supprime après confirmation ; `default` est
-  protégé), `Esc` retour, `q` quitte.
+  (même picker : `r` renomme, `d` supprime après confirmation, `L` charge au
+  lancement ; `default` est protégé), `Esc` retour, `q` quitte.
 
 Les valeurs sont relues sur la carte toutes les **500 ms** tant que la fenêtre
 est focused (rapport de focus terminal, DECSET 1004, compatible foot/kitty/

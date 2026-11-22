@@ -2422,3 +2422,59 @@ func TestBadgeFieldAlignsBrackets(t *testing.T) {
 		}
 	}
 }
+
+// L in the LOAD picker opts a preset in and out for launch; the choice is
+// persisted beside the presets and never copied.
+func TestEvoLaunchPresetToggle(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	dir := m.evoConfigDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gig.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.evoKey("o")
+	for i, f := range m.evo.fileList {
+		if f == "gig.json" {
+			m.evo.fileCursor = i
+		}
+	}
+	if cmd := m.evoKey("L"); cmd == nil {
+		t.Fatal("L should report the choice")
+	}
+	if m.evo.launch != "gig.json" {
+		t.Fatalf("launch = %q, want gig.json", m.evo.launch)
+	}
+	if got := m.evoLaunchPreset(); got != "gig.json" {
+		t.Fatalf("persisted launch = %q", got)
+	}
+	m.evoKey("L")
+	if got := m.evoLaunchPreset(); got != "" {
+		t.Fatalf("second L must clear the opt-in, got %q", got)
+	}
+}
+
+// A launch only writes while the card is online, and only once per start.
+func TestEvoLaunchPresetSkipsOffline(t *testing.T) {
+	m := evoModel(t, drivers.DevEVO8, 0)
+	m.evo.launch = "gig.json"
+	m.launchTried = false
+	m.status.Online = false
+	if cmd := m.maybeLaunchPreset(); cmd != nil {
+		t.Fatal("offline card must not be written at launch")
+	}
+	if m.launchTried {
+		t.Fatal("an offline read must not use the one launch attempt")
+	}
+	m.status.Online = true
+	if cmd := m.maybeLaunchPreset(); cmd != nil {
+		t.Fatal("a missing preset file must be skipped")
+	}
+	if !m.launchTried {
+		t.Fatal("the online status must use the one launch attempt")
+	}
+	if cmd := m.maybeLaunchPreset(); cmd != nil {
+		t.Fatal("a second status must not load again")
+	}
+}

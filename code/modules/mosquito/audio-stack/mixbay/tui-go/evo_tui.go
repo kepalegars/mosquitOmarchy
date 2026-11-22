@@ -23,6 +23,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"mosquitomarchy.local/mosquitomixbay-tui/drivers"
+	"mosquitomarchy.local/mosquitomixbay-tui/profiles"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
@@ -245,6 +246,7 @@ type evoUI struct {
 	renaming   bool   // save picker: renaming the entry under renameFrom
 	renameFrom string // original filename being renamed
 	caretPos   int    // byte offset inside fileInput
+	launch     string // preset applied once at launch (empty = none)
 }
 
 // pickerCount is the number of selectable rows: the config files, plus a
@@ -992,9 +994,9 @@ func (r *evoRender) drawMixerSection(topRow, cx, secIdx int, compact bool) {
 	siw := r.sectionIW()
 	r.boxTop(topRow, cx, s.label, selSec, siw, boxAttr)
 	if muted && siw-len([]rune(s.label))-2 >= 4 {
-		// Right of the channel name, on the frame line: the [m] is the mute
-		// indicator, and it only exists while the channel is muted.
-		r.put(cx+2+len([]rune(s.label)), topRow, " [m]", evoStyle{col: cRed, bold: true})
+		// The [m] is the mute indicator: right-aligned on the frame line so
+		// every cell shows it in the same column, whatever the name length.
+		r.put(cx+siw-3, topRow, " [m]", evoStyle{col: cRed, bold: true})
 	}
 	row := topRow + 1
 	slots := len(panIdx)
@@ -1389,6 +1391,37 @@ func (m model) evoConfigDir() string {
 	return filepath.Join(home, ".config", "audient-evo-py", m.status.Spec.ID)
 }
 
+// evoLaunchPresetFile is the per-card opt-in written by `L` in the load
+// picker. It sits beside the presets but hidden, so the picker never lists it.
+func (m model) evoLaunchPresetFile() string {
+	return filepath.Join(m.evoConfigDir(), ".launch-preset")
+}
+
+// evoLaunchPreset returns the preset chosen for launch, or "" for "leave the
+// hardware as it is". Reading is all this does: nothing is ever written to
+// the card because of it.
+func (m model) evoLaunchPreset() string {
+	data, err := os.ReadFile(m.evoLaunchPresetFile())
+	if err != nil {
+		return ""
+	}
+	name := strings.TrimSpace(string(data))
+	if name == "" || !strings.HasSuffix(name, ".json") || strings.ContainsAny(name, "/\\") {
+		return ""
+	}
+	return name
+}
+
+// setEvoLaunchPreset stores (or clears, with "") the opt-in. The preset file
+// itself is never copied: launch reads it as it is at that moment.
+func (m model) setEvoLaunchPreset(name string) error {
+	if name == "" {
+		_ = os.Remove(m.evoLaunchPresetFile())
+		return nil
+	}
+	return profiles.WriteFileAtomic(m.evoLaunchPresetFile(), []byte(name+"\n"))
+}
+
 func (m model) evoScanFiles() []string {
 	// The built-in preset is always offered and can never be overwritten.
 	out := []string{drivers.ProtectedConfigName + ".json"}
@@ -1577,6 +1610,9 @@ func (m model) evoFilePicker(w, h int, pal [9]lipgloss.Color) string {
 				if f == drivers.ProtectedConfigName+".json" {
 					text += "  (read-only)"
 				}
+				if f == u.launch {
+					text += "  (launch)"
+				}
 			}
 			if rr := []rune(text); len(rr) > evoBoxIW-2 {
 				text = string(rr[:evoBoxIW-2])
@@ -1661,7 +1697,8 @@ func (m model) evoFilePicker(w, h int, pal [9]lipgloss.Color) string {
 		hints = append(hints, evoHint{key: "r", desc: " rename"})
 	}
 	if u.mode == 2 {
-		hints = append(hints, evoHint{key: "r", desc: " rename"}, evoHint{key: "d", desc: " delete"})
+		hints = append(hints, evoHint{key: "r", desc: " rename"}, evoHint{key: "d", desc: " delete"},
+			evoHint{key: "L", desc: " launch"})
 	}
 	contentW := len([]rune(evoHsep)) * (len(hints) - 1)
 	for _, hh := range hints {
@@ -1790,6 +1827,7 @@ func (m *model) evoEnter() {
 	m.evo.mode = 0
 	m.evo.caretOn = true
 	m.evo.caretPos = 0
+	m.evo.launch = m.evoLaunchPreset()
 	m.evo.clearAnims()
 }
 
@@ -2767,6 +2805,27 @@ func (m *model) evoPickerKey(k string) tea.Cmd {
 	case "tab":
 		u.pickerMove(1, true)
 		moved = true
+	case "L":
+		if u.mode != 2 || u.renaming {
+			return nil
+		}
+		if u.fileCursor >= len(u.fileList) {
+			return nil
+		}
+		f := u.fileList[u.fileCursor]
+		name := strings.TrimSuffix(f, ".json")
+		if m.evoLaunchPreset() == f {
+			if err := m.setEvoLaunchPreset(""); err != nil {
+				return u.evoStatus("launch preset: "+err.Error(), true)
+			}
+			u.launch = ""
+			return u.evoStatus("“"+name+"” no longer loads at launch", false)
+		}
+		if err := m.setEvoLaunchPreset(f); err != nil {
+			return u.evoStatus("launch preset: "+err.Error(), true)
+		}
+		u.launch = f
+		return u.evoStatus("“"+name+"” will load at launch", false)
 	case "d":
 		if u.mode != 2 || u.renaming {
 			return nil
@@ -2921,6 +2980,30 @@ func (m *model) evoLoadFrom(path string) tea.Cmd {
 		}
 		return d.Load()
 	}, "")
+}
+
+// maybeLaunchPreset applies the card's opt-in launch preset once, on the
+// first ONLINE status after start. Waiting for "online" matters: a card that
+// enumerates a moment after the TUI starts would otherwise burn the one
+// attempt on an offline read and never load. Nothing is ever written to an
+// unplugged card, and a preset chosen later with `L` does not fire, because
+// the first online status already used the attempt.
+func (m *model) maybeLaunchPreset() tea.Cmd {
+	if m.launchTried || !m.status.Online {
+		return nil
+	}
+	m.launchTried = true
+	if m.evo.launch == "" {
+		return nil
+	}
+	if m.evo.launch == drivers.ProtectedConfigName+".json" {
+		return m.evoLoadDefault()
+	}
+	path := filepath.Join(m.evoConfigDir(), m.evo.launch)
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+	return m.evoLoadFrom(path)
 }
 
 // evoLoadDefault applies the built-in, read-only preset.
