@@ -253,6 +253,10 @@ func (m model) View() string {
 		title = screenTitle("Bitwig controller ready", m.contentSizeW())
 		body = m.tipInfo.View()
 		bar = barLine(tuikit.StyleHelp.Render("esc to go back"))
+	case scrBitwigGuide:
+		title = screenTitle("Bitwig controller setup", m.contentSizeW())
+		body = m.tipInfo.View()
+		bar = barLine(tuikit.StyleHelp.Render("esc to go back"))
 	case scrAddress:
 		title = screenTitle("Move address", m.contentSizeW())
 		body = m.addressInput.View()

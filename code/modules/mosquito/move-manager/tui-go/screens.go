@@ -363,8 +363,13 @@ func (m *model) enterCmd() tea.Cmd {
 		// The tip body is a Readme-style framed modal (StyleModal via
 		// tuikit.Info), not bare lines — same bounded, wrapping frame the
 		// audio manager's Readme uses.
-		m.tipInfo = tuikit.NewInfo(bitwigTipText(m.bitwigTipRoute)).SetSize(m.contentSize())
+		m.tipInfo = tuikit.NewInfo(bitwigTipText(m.bitwigTipRoute, false)).SetSize(m.contentSize())
 		return bitwigRunningCmd()
+	case scrBitwigGuide:
+		// Same instructions as the post-install prompt, without the
+		// "wait for Bitwig to close" poll: this one is read-only.
+		m.tipInfo = tuikit.NewInfo(bitwigTipText(m.bitwigTipRoute, true)).SetSize(m.contentSize())
+		return nil
 	case scrQuitConfirm:
 		m.confirm = tuikit.NewConfirm("Quit mosquito Move Manager?", "No", "Yes")
 		return nil
@@ -966,6 +971,15 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, bitwigRunningCmd()
 
+	case scrBitwigGuide:
+		if _, ok := msg.(tuikit.InfoDismissedMsg); ok {
+			m.pop()
+			return m, m.enterCmd()
+		}
+		var cmd tea.Cmd
+		m.tipInfo, cmd = m.tipInfo.Update(msg)
+		return m, cmd
+
 	case scrSuperfileInstallConfirm:
 		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
 			m.pop()
@@ -1503,13 +1517,15 @@ func (m model) handleSchwungChoice(v string) (tea.Model, tea.Cmd) {
 // bitwigTipText is the controller-setup instruction shown inside the framed
 // tip modal. It leads with the essential path — Bitwig → Settings →
 // Controllers → Add Controller → vendor Ableton, controller Move — then the
-// MIDI port hint and the restart note.
-func bitwigTipText(route string) string {
+// MIDI port hint and the restart note. The guide (read-only, opened from the
+// menu) adds the USB note and drops the "close Bitwig" line, which only makes
+// sense for the post-install wait.
+func bitwigTipText(route string, guide bool) string {
 	controller := "Move"
 	if route == "native" {
 		controller = "Move for Bitwig"
 	}
-	return strings.Join([]string{
+	lines := []string{
 		"In Bitwig: Settings → Controllers → Add Controller →",
 		tuikit.StyleAccent.Render("choose vendor  Ableton , then controller  " + controller + " ."),
 		"",
@@ -1517,9 +1533,15 @@ func bitwigTipText(route string) string {
 		"",
 		"Restart Bitwig (or rescan Controllers) after installing so the",
 		"Ableton vendor and Move controller show up.",
-		"",
-		"Close Bitwig to return to the menu, or esc to go back now.",
-	}, "\n")
+	}
+	if guide {
+		lines = append(lines, "",
+			"No MIDI ports listed? The Move must be plugged in over USB —",
+			"Wi-Fi/Schwung alone exposes no MIDI ports to Bitwig.")
+	} else {
+		lines = append(lines, "", "Close Bitwig to return to the menu, or esc to go back now.")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m model) handleBitwigRoutesChoice(v string) (tea.Model, tea.Cmd) {
@@ -1536,6 +1558,10 @@ func (m model) handleBitwigRoutesChoice(v string) (tea.Model, tea.Cmd) {
 
 func (m model) handleBitwigNativeChoice(v string) (tea.Model, tea.Cmd) {
 	switch v {
+	case "guide":
+		m.bitwigTipRoute = "native"
+		m.push(scrBitwigGuide)
+		return m, m.enterCmd()
 	case "install":
 		return m.requestBitwigInstall("native")
 	case "uninstall":
@@ -1587,6 +1613,10 @@ func (m model) startBitwigInstall(route string) (tea.Model, tea.Cmd) {
 
 func (m model) handleBitwigChoice(v string) (tea.Model, tea.Cmd) {
 	switch v {
+	case "guide":
+		m.bitwigTipRoute = "schwung"
+		m.push(scrBitwigGuide)
+		return m, m.enterCmd()
 	case "install":
 		return m.requestBitwigInstall("schwung")
 	case "uninstall":

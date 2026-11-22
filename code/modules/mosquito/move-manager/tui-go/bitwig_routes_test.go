@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	tuikit "mosquitomarchy.local/tui-kit"
+)
 
 func bitwigTestModel() model {
 	m := initialModel()
@@ -105,5 +110,48 @@ func TestBitwigInstallGates(t *testing.T) {
 				t.Fatalf("top = %v gate = %q, want %q", got.top(), got.bitwigGate, tc.gate)
 			}
 		})
+	}
+}
+
+// The routes menu marks the installed route in place instead of printing a
+// separate status line; both route menus offer the Guide row.
+func TestBitwigRouteMenusMarkInstalledAndOfferGuide(t *testing.T) {
+	m := bitwigTestModel()
+	m.bitwigControllers = true
+
+	suffixes := map[string]string{}
+	hasStatus := false
+	for _, it := range m.wireBitwigRoutesMenu() {
+		suffixes[it.Value] = it.Suffix
+		if it.Disabled && it.Value == "" {
+			hasStatus = true
+		}
+	}
+	if hasStatus {
+		t.Fatal("routes menu still has a separate grey status row")
+	}
+	if got := suffixes["schwung_route"]; got != "  (installed)" {
+		t.Fatalf("Schwung suffix = %q, want the installed marker", got)
+	}
+	if got := suffixes["native_route"]; got != "" {
+		t.Fatalf("native suffix = %q, want none while not installed", got)
+	}
+
+	for name, items := range map[string][]tuikit.PickerItem{
+		"schwung": m.wireBitwigMenu(),
+		"native":  m.wireBitwigNativeMenu(),
+	} {
+		found := false
+		for _, it := range items {
+			if it.Value == "guide" {
+				found = true
+			}
+			if name == "native" && strings.Contains(it.Display, "In Bitwig choose vendor") {
+				t.Fatal("native menu still has the grey vendor hint row")
+			}
+		}
+		if !found {
+			t.Fatalf("%s menu has no Guide row", name)
+		}
 	}
 }

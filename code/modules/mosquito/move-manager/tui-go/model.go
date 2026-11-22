@@ -70,6 +70,7 @@ const (
 	scrBitwigModuleUninstalling
 	scrBitwigTipConfirm
 	scrBitwigTipWait
+	scrBitwigGuide
 )
 
 type model struct {
@@ -327,24 +328,19 @@ func (m model) wireSchwungMenu() []tuikit.PickerItem {
 	return items
 }
 
-// wireBitwigRoutesMenu offers the two mutually exclusive controller routes.
-// The status line is what tells the user which one Bitwig will load.
+// wireBitwigRoutesMenu offers the two mutually exclusive controller routes,
+// each marked in place with a grey "(installed)" suffix. Bitwig loads every
+// *.control.js, so the two may never coexist — an install removes the other.
 func (m model) wireBitwigRoutesMenu() []tuikit.PickerItem {
-	status := "no controller route installed"
-	switch {
-	case m.bitwigControllers && m.bitwigNative:
-		status = "both routes installed — Bitwig loads both; remove one"
-	case m.bitwigControllers:
-		status = "installed: Schwung route"
-	case m.bitwigNative:
-		status = "installed: Native route"
+	schwung := tuikit.PickerItem{Display: "Schwung route — controller + Move module", Value: "schwung_route"}
+	native := tuikit.PickerItem{Display: "Native route — one Bitwig script, no Move module", Value: "native_route"}
+	if m.bitwigControllers {
+		schwung.Suffix = "  (installed)"
 	}
-	return []tuikit.PickerItem{
-		{Display: "Schwung route — controller + Move module", Value: "schwung_route"},
-		{Display: "Native route — one Bitwig script, no Move module", Value: "native_route"},
-		{Display: status, Disabled: true},
-		{Display: "Back", Value: "back"},
+	if m.bitwigNative {
+		native.Suffix = "  (installed)"
 	}
+	return []tuikit.PickerItem{schwung, native, {Display: "Back", Value: "back"}}
 }
 
 // wireBitwigMenu builds the Schwung-route submenu from the last fetched state.
@@ -379,6 +375,7 @@ func (m model) wireBitwigMenu() []tuikit.PickerItem {
 		{Display: main, Value: "install"},
 		{Display: "Uninstall the controller scripts", Value: "uninstall", Disabled: !m.bitwigControllers},
 		{Display: "Uninstall the Move module from the device", Value: "uninstall_module", Disabled: m.bitwigOnDevice == "no"},
+		{Display: "Guide — set up the controller in Bitwig", Value: "guide"},
 		{Display: statusLine, Disabled: true},
 		{Display: "Back", Value: "back"},
 	}
@@ -406,8 +403,8 @@ func (m model) wireBitwigNativeMenu() []tuikit.PickerItem {
 	return []tuikit.PickerItem{
 		{Display: main, Value: "install"},
 		{Display: "Uninstall the native controller", Value: "uninstall", Disabled: !m.bitwigNative},
+		{Display: "Guide — set up the controller in Bitwig", Value: "guide"},
 		{Display: statusLine, Disabled: true},
-		{Display: "In Bitwig choose vendor Ableton → Move for Bitwig", Disabled: true},
 		{Display: "Back", Value: "back"},
 	}
 }
