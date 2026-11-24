@@ -25,6 +25,16 @@ agent_conf="$gnupg_dir/gpg-agent.conf"
 install_plugin() {
   local id="$1" url="$2"
   if omarchy plugin list --json 2>/dev/null | jq -e --arg id "$id" '.[] | select(.id == $id)' >/dev/null; then
+    # An existing clone is a git checkout, and the dialog itself (QML) lives
+    # there, not in the binary. Upstream hardened the password fields in
+    # 0.4.4/0.4.3 (read-only fields + FieldEditor.js), so a stale clone keeps
+    # the old, vulnerable QML while the binary is rebuilt from the same stale
+    # sources. Pull before building.
+    if omarchy plugin update "$id" --yes >/dev/null 2>&1; then
+      echo "  ✓ $id updated from upstream"
+    else
+      echo "  ! could not update $id (offline?) — building the installed copy" >&2
+    fi
     omarchy plugin enable "$id" >/dev/null
   else
     omarchy plugin add "$url" --enable --yes

@@ -7,12 +7,10 @@ Last reviewed: 2026-11-03.
 
 ## Now
 
-- [ ] Verify the WhatsApp first-show reload on a real reboot: autostart with
-      `whatsapp --start-in-tray`, open from the tray, content must appear after
-      one reload. The fix is installed (repo and installed `main.js` hashes
-      match) and the hidden-start reload was verified by opening a second
-      instance on 2026-10-30; the reboot/tray click is still owed. See
-      `TESTING.md`.
+- [ ] Fix WhatsApp opening inside a special workspace / scratchpad. It should
+      open as a normal tiled window, never parked in `special:scratchpad` or a
+      special workspace. Find the launcher/window rule responsible (Hyprland
+      window rules, autostart line, or a scratchpad helper) and remove it.
 
 ## Backup / restore
 

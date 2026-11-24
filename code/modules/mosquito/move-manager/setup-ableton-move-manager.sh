@@ -925,6 +925,22 @@ install_chromium_policy() {
   fi
 }
 
+ensure_ydotool_pkg() {
+  # The .als→Bitwig direct-open path drives Bitwig with ydotool. Only the
+  # NOPASSWD rule used to be installed, so on a fresh machine ydotool was
+  # missing and that path bailed at runtime ("ydotool is required").
+  if command -v ydotool >/dev/null 2>&1; then
+    ok "ydotool already installed"
+    return 0
+  fi
+  info "ydotool is missing — installing it (needed to open the .als in Bitwig)"
+  if mq_sudo pacman -S --needed --noconfirm ydotool; then
+    ok "ydotool installed"
+  else
+    warn "could not install ydotool — the direct-open path will stay unavailable"
+  fi
+}
+
 ensure_ydotoold_nopasswd() {
   # ydotool direct-open runs from the Go TUI, whose runner has no terminal
   # (stdin/stdout are pipes), so an interactive sudo password prompt can
@@ -1107,6 +1123,7 @@ else
   remove_legacy_launcher
   install_udev
   install_chromium_policy
+  ensure_ydotool_pkg
   ensure_ydotoold_nopasswd
   install_webapp_icon
 

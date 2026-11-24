@@ -39,6 +39,22 @@ fi
 BUNDLE_DIR="$MOVE_DIR/ablbundle"
 mkdir -p "$BUNDLE_DIR"
 
+# Where downloads land is decided HERE (and by mosquito Move Manager), not by
+# the webapp, so say it once per direct open. The TUI sets
+# MOVE_MANAGER_NO_NOTIFY: it already tells the user what to do with the set.
+notify_downloads_dir() {
+  [[ -z ${MOVE_MANAGER_NO_NOTIFY:-} ]] || return 0
+  local shown="$BUNDLE_DIR" body
+  [[ $shown == "$HOME"/* ]] && shown="~/${shown#"$HOME"/}"
+  body="Every download goes to $shown (set by mosquito Move Manager).
+Ctrl+J lists the downloads in progress."
+  if command -v omarchy-notification-send >/dev/null 2>&1; then
+    timeout 10 omarchy-notification-send "Move Manager" "$body" -g ableton-move-manager -u normal -t 10000 >/dev/null 2>&1 || true
+  elif command -v notify-send >/dev/null 2>&1; then
+    timeout 10 notify-send -a "Move Manager" "Move Manager" "$body" 2>/dev/null || true
+  fi
+}
+
 PROFILE="${XDG_CACHE_HOME:-$HOME/.cache}/move-manager"
 
 close_existing_instance() {
@@ -73,6 +89,7 @@ seed_profile_prefs() {
 
 close_existing_instance
 seed_profile_prefs
+notify_downloads_dir
 
 exec chromium \
   --app="$URL" \

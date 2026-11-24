@@ -726,6 +726,8 @@ st_ableton_move_converter(){
   [[ -x "$HOME/.local/bin/move-bundle-to-midi" ]] || { echo partial; return; }
   [[ -x "$HOME/.local/bin/move-udev-refresh" ]] || { echo partial; return; }
   [[ -x "$HOME/.local/bin/move-manager-webapp" ]] || { echo partial; return; }
+  command -v ydotool >/dev/null 2>&1 \
+    || { echo "partial:ydotool is missing (rerun setup-ableton-move-manager.sh)"; return; }
   [[ -d "$HOME/.config/omarchy/plugins/mosquito.move-manager" ]] \
     || { echo "partial:missing the mosquito.move-manager overlay (rerun setup-ableton-move-manager.sh)"; return; }
   echo ok
@@ -1175,6 +1177,7 @@ MODULES=(
 FIXES=(
   "omarchy-menu:Recover the Omarchy menu when clones leave blank rows / an empty Apps list (remove menu-plugin clones, re-enable omarchy.menu, restart the shell)"
   "hyprland-crash:Recover a Hyprland desktop after a crash (broken/truncated hyprland.lua, fatal Lua escapes, lost keyboard layout, missing Omarchy shell) — self-heals at every boot via a post-boot hook"
+  "quickshell-bar:Recover an empty or broken Omarchy bar (Quickshell) — restore shell.json (bar layout + widget settings) from the newest valid backup, dropping widgets this machine does not have, then restart the shell"
   "ableton-wine-scroll:Ableton/Wine: stop the patched Wine's optional pointer features (XInput2 grab) from freezing trackpad scrolling in other apps while Live is open (persistent master switch in the prefix)"
   "1px-seam:Hair-thin transparent 1px line between the Omarchy bar and a window in borderless/no-gaps tiling — switch the blur to its legacy path (helps when blur is enabled)"
   "ableton-fullscreen:Ableton Live Full Screen is shifted/broken (content sits off where you click) — launches Live with WINE_WIN32_FULLSCREEN_CLASS=off (documented ableton-linux cure; drag-the-window alternative)"
@@ -1217,6 +1220,7 @@ fix_category(){
     terminal-padding) echo "Appearance" ;;
     omarchy-menu)     echo "Omarchy" ;;
     hyprland-crash)   echo "Recovery" ;;
+    quickshell-bar)   echo "Recovery" ;;
     ableton-wine-scroll) echo "Windows & input" ;;
     ableton-fullscreen) echo "Windows & input" ;;
     wine-menu)          echo "Windows & input" ;;
@@ -1237,6 +1241,7 @@ run_fix(){ # single fix by id
   case $id in
     omarchy-menu) bash "$SCRIPT_DIR/code/modules/Fixes/fix-omarchy-menu.sh" ;;
     hyprland-crash) bash "$SCRIPT_DIR/code/modules/Fixes/fix-hyprland-crash.sh" ;;
+    quickshell-bar) bash "$SCRIPT_DIR/code/modules/Fixes/fix-quickshell-bar.sh" ;;
     ableton-wine-scroll) bash "$SCRIPT_DIR/code/modules/Fixes/fix-wine-scroll.sh" ;;
     ableton-fullscreen) bash "$SCRIPT_DIR/code/modules/Fixes/fix-ableton-fullscreen.sh" ;;
     1px-seam) bash "$SCRIPT_DIR/code/modules/Fixes/fix-1px-seam.sh" ;;

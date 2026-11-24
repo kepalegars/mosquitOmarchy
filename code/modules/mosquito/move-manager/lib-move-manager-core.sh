@@ -815,7 +815,7 @@ open_webapp() {
   # .als was found, but finish-bitwig-open was never started). Close it on
   # every child that can outlive us.
   if [[ -x $WEBAPP_LAUNCHER ]]; then
-    "$WEBAPP_LAUNCHER" >/dev/null 2>&1 3>&- &
+    MOVE_MANAGER_NO_NOTIFY=1 "$WEBAPP_LAUNCHER" >/dev/null 2>&1 3>&- &
   elif command -v omarchy-launch-webapp >/dev/null 2>&1; then
     omarchy-launch-webapp "$(move_url)" >/dev/null 2>&1 3>&- &
   else
