@@ -11,7 +11,6 @@ theme) into the **active** Zen profile.
 ## What
 
 - **Extensions (XPI)** — `seed/extensions/` → `<profile>/extensions/`
-  - `{91aa3897-2634-4a8a-9092-279db23a7689}.xpi` — Zen Internet (browser-UI mods)
   - `addon@darkreader.org.xpi` — Dark Reader
   - `uBlock0@raymondhill.net.xpi` — uBlock Origin
   - `keepassxc-browser@keepassxc.org.xpi` — KeePassXC-Browser (password autofill)
