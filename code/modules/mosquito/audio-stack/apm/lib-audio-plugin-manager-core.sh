@@ -120,33 +120,6 @@ ok(){ printf " ${G}✓${N} %s\n" "$*"; }
 warn(){ printf " ${Y}!${N} %s\n" "$*" >&2; }
 err(){ printf " ${R}✗${N} %s\n" "$*" >&2; }
 
-# A desktop notification for a refusal the user must act on outside the TUI
-# (an archive holding an installer). Best-effort: the install result never
-# depends on a notification daemon being there.
-notify_install_abort(){
-  local title="$1" body="$2"
-  if command -v omarchy-notification-send >/dev/null 2>&1; then
-    timeout 10 omarchy-notification-send --urgency normal --app-name "Audio plugin manager" \
-      "$title" "$body" >/dev/null 2>&1 || true
-  elif command -v notify-send >/dev/null 2>&1; then
-    timeout 10 notify-send "$title" "$body" >/dev/null 2>&1 || true
-  fi
-}
-
-# The TUI shows its own success dialog, but an installer can take minutes and
-# the user is often somewhere else by then: tell them it finished, the same
-# way the other modules do. Never blocks the install on a wedged daemon.
-notify_install_done(){
-  local title="$1" body="$2"
-  if command -v omarchy-notification-send >/dev/null 2>&1; then
-    timeout 10 omarchy-notification-send --app-name "Audio plugin manager" -g "✓" \
-      -u normal -t 6000 "$title" "$body" >/dev/null 2>&1 || true
-  elif command -v notify-send >/dev/null 2>&1; then
-    timeout 10 notify-send -a "Audio plugin manager" -u normal -t 6000 \
-      "$title" "$body" >/dev/null 2>&1 || true
-  fi
-}
-
 # ── Shared wine-menu helpers ────────────────────────────────────────────────
 # Dropping the Start-Menu shortcuts Wine republishes under
 # ~/.local/share/applications/wine/Programs. Every plugin installer (smartEQ,
@@ -2796,8 +2769,6 @@ install_plugin() {
     *)             installed_value="vst:vst2:${newfiles[0]}" ;;
   esac
   printf 'installed-plugin: %s\n' "$installed_value"
-  notify_install_done "Plugin installed" \
-    "$(plugin_label "${newfiles[0]}") (${#newfiles[@]} file(s)) is ready to use in your DAW."
   propose_fixes_after_install "$installed_value"
 }
 
@@ -4272,8 +4243,6 @@ install_native_plugin_from_file() {
     installer="$(find "$work" -type f \( -iname '*.exe' -o -iname '*.msi' \) -print -quit 2>/dev/null)"
     if [[ -n $installer ]]; then
       err "archive contains a Windows installer ($(basename "$installer")) — extract it and install the plugin manually"
-      notify_install_abort "Archive not installed: $(basename "$src")" \
-        "It contains $(basename "$installer"), a Windows installer. Extract the archive and install the plugin manually."
       rm -rf "$work"
       return 1
     fi
@@ -4312,7 +4281,6 @@ install_native_plugin_from_file() {
   fi
 
   local entry dest_dir dest kind installed=0 failed=0
-  local -a installed_names=()
   for entry in "${found[@]}"; do
     case "${entry,,}" in
       *.lv2)  dest_dir="$HOME/.lv2";  kind=LV2  ;;
@@ -4351,18 +4319,9 @@ install_native_plugin_from_file() {
     # prefix, and "" keeps "which prefix owns this" honest.
     state_register_install "$(plugin_key "$dest")" "" "$dest"
     printf '%s\n' "$dest"
-    installed_names+=("$(basename "$dest")")
     installed=$(( installed + 1 ))
   done
   [[ -n $cleanup_work ]] && rm -rf "$cleanup_work"
-  if (( installed > 0 )); then
-    if (( installed == 1 )); then
-      notify_install_done "Plugin installed" "${installed_names[0]} is ready to use in your DAW."
-    else
-      notify_install_done "$installed plugins installed" \
-        "$(printf '%s\n' "${installed_names[@]}" | head -5 | paste -sd, -) — ready to use in your DAW."
-    fi
-  fi
   if (( installed == 0 )); then
     err "no plugin installed from $src ($failed already present or unsupported)"
     return 1

@@ -1142,8 +1142,10 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case actionOKMsg:
 		m.loading = false
-		m.toast, _ = m.toast.SetOK(msg.what)
+		// pop() clears non-critical toasts, so set the confirmation AFTER
+		// leaving the install screen or it vanishes in the same update.
 		m.pop()
+		m.toast, _ = m.toast.SetOK(msg.what)
 		return m, tea.Batch(m.enterCmd(), fetchStatus())
 
 	case actionErrMsg:
@@ -1300,8 +1302,8 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		r := msg.report
 		if len(r.Kept) == 0 && len(r.Registered) == 0 && len(r.Desktops) == 0 && len(r.Deduped) == 0 {
-			m.toast, _ = m.toast.SetOK("Cleanup: everything already consistent")
 			m.pop()
+			m.toast, _ = m.toast.SetOK("Cleanup: everything already consistent")
 			return m, m.enterCmd()
 		}
 		var b strings.Builder
@@ -1383,8 +1385,8 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			freed += d.Bytes
 		}
 		if total == 0 {
-			m.toast, _ = m.toast.SetOK("Quarantine: nothing to delete")
 			m.pop()
+			m.toast, _ = m.toast.SetOK("Quarantine: nothing to delete")
 			return m, m.enterCmd()
 		}
 		b.WriteString(fmt.Sprintf("%d entry(ies) permanently deleted, %s freed:\n", total, humanBytes(freed)))
