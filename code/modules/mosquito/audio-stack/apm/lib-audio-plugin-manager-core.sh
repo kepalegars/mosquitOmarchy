@@ -133,6 +133,20 @@ notify_install_abort(){
   fi
 }
 
+# The TUI shows its own success dialog, but an installer can take minutes and
+# the user is often somewhere else by then: tell them it finished, the same
+# way the other modules do. Never blocks the install on a wedged daemon.
+notify_install_done(){
+  local title="$1" body="$2"
+  if command -v omarchy-notification-send >/dev/null 2>&1; then
+    timeout 10 omarchy-notification-send --app-name "Audio plugin manager" -g "✓" \
+      -u normal -t 6000 "$title" "$body" >/dev/null 2>&1 || true
+  elif command -v notify-send >/dev/null 2>&1; then
+    timeout 10 notify-send -a "Audio plugin manager" -u normal -t 6000 \
+      "$title" "$body" >/dev/null 2>&1 || true
+  fi
+}
+
 # ── Shared wine-menu helpers ────────────────────────────────────────────────
 # Dropping the Start-Menu shortcuts Wine republishes under
 # ~/.local/share/applications/wine/Programs. Every plugin installer (smartEQ,
@@ -517,6 +531,31 @@ state_register_install() {
   jq -S --arg k "$key" --arg p "$prefix" \
     --argjson files "$(printf '%s\n' "${all[@]}" | grep -v '^$' | jq -R . | jq -s 'unique')" \
     '.plugins[$k] = {prefix:$p, files:$files}' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+# state_register_batch <"key<TAB>prefix<TAB>file" ...>
+# One jq pass and one atomic replace for a whole sweep. The per-plugin version
+# reads, rewrites and fsyncs the log for every file; a 50-plugin adoption did
+# that ~150 times and took ~4.5s here. Same semantics: keep files already
+# known for a key, add the new ones, deduplicate.
+state_register_batch(){
+  (($#)) || return 0
+  local tmp payload
+  state_compatible || state_init
+  payload="$(printf '%s\n' "$@" \
+    | jq -R 'split("\t") | {key:.[0], prefix:.[1], file:.[2]}' \
+    | jq -sc .)" || return 1
+  tmp="$(mktemp)"
+  if ! jq -S --argjson entries "$payload" '
+    reduce $entries[] as $e (.;
+      .plugins[$e.key] = {
+        prefix: $e.prefix,
+        files: (((.plugins[$e.key].files // []) + [$e.file]) | unique)
+      })' "$STATE_FILE" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv "$tmp" "$STATE_FILE"
 }
 
 state_register_standalone() {
@@ -2051,14 +2090,24 @@ adopt_plugins_silent(){
 # $1 = prefix to attribute wine plugins to (optional).
 adopt_plugin_rows(){
   local pfx_override="${1:-}"
-  local _f key pfx first variants n=0
+  local _f key pfx first variants k
+  local -A known=()
+  local -a pending=() names=()
   local _tmp="${TMPDIR:-/tmp}/apm-adopt.$$"
   plugin_group_rows > "$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }
+
+  # ONE state read for all keys and ONE prefix lookup, not one of each per
+  # plugin: default_prefix() itself scans the log for an owning prefix, so the
+  # old loop was O(plugins²) jq calls.
+  pfx="${pfx_override:-$(default_prefix)}"
+  while IFS= read -r k; do [[ -n $k ]] && known["$k"]=1; done < <(state_list_keys)
+
   while IFS=$'\t' read -r _sk _gk _label grp _formats _enabled value variants key; do
     [[ -n $key ]] || continue
-    state_has "$key" && continue
-    pfx="${pfx_override:-$(default_prefix)}"
-    case "$value" in native:*) pfx="" ;; esac
+    [[ -n ${known[$key]:-} ]] && continue
+    known["$key"]=1
+    local rowpfx="$pfx"
+    case "$value" in native:*) rowpfx="" ;; esac
     first=""
     while IFS= read -r _f; do
       [[ -n $_f ]] || continue
@@ -2069,15 +2118,19 @@ adopt_plugin_rows(){
       # plugin_key() here files LV2 as "lv2/<label>" and the row stays untracked
       # forever (the same mismatch add-orphan documented).
       if [[ $_f == native:* ]]; then
-        state_register_install "native/$(native_plugin_label "$bare")" "" "$bare"
+        k="native/$(native_plugin_label "$bare")"
       else
-        state_register_install "$(plugin_key "$bare")" "$pfx" "$bare"
+        k="$(plugin_key "$bare")"
       fi
+      pending+=("$(printf '%s\t%s\t%s' "$k" "$rowpfx" "$bare")")
     done <<< "$(printf '%s' "$variants" | tr ';' '\n')"
-    ok "registered from the manager: ${first##*/}"
-    n=$((n + 1))
+    names+=("${first##*/}")
   done < "$_tmp"
   rm -f "$_tmp"
+
+  # One write, not one mv+jq suite per plugin.
+  if ((${#pending[@]})); then state_register_batch "${pending[@]}"; fi
+  for k in "${names[@]}"; do ok "registered from the manager: $k"; done
   return 0
 }
 
@@ -2677,10 +2730,14 @@ install_plugin() {
   #
   # The other two write paths (add-to-manager, adopt-plugins) already loop per
   # file; this is the same loop, so all three agree on what a plugin is.
+  # One log write for the whole suite, not one jq+mv per file (iZotope RX
+  # drops 17 modules in a single install).
+  local -a _pending=()
   for _f in "${newfiles[@]}"; do
-    state_register_install "$(plugin_key "$_f")" "$wine_prefix" "$_f"
+    _pending+=("$(printf '%s\t%s\t%s' "$(plugin_key "$_f")" "$wine_prefix" "$_f")")
   done
   unset _f
+  state_register_batch "${_pending[@]}"
   register_standalones_from_prefix "$wine_prefix"
   post_install
   # A plugin importing MSVCP140_ATOMIC_WAIT.dll cannot run under Wine's builtin
@@ -2739,6 +2796,8 @@ install_plugin() {
     *)             installed_value="vst:vst2:${newfiles[0]}" ;;
   esac
   printf 'installed-plugin: %s\n' "$installed_value"
+  notify_install_done "Plugin installed" \
+    "$(plugin_label "${newfiles[0]}") (${#newfiles[@]} file(s)) is ready to use in your DAW."
   propose_fixes_after_install "$installed_value"
 }
 
@@ -3254,8 +3313,12 @@ _wine_source_index(){
       lower="${base,,}"
       [[ -n ${_WINE_SOURCE_INDEX[$lower]:-} ]] && continue
       _WINE_SOURCE_INDEX[$lower]="$f"
+    # Let find do the extension filtering: four prefixes expose ~9k files but
+    # only ~1k are plugin candidates, and this loop ran a dozen bash tests on
+    # every line. Filtering here cut the cold group scan from ~2.5s to ~1s.
     done < <(find -L "$p/drive_c/Program Files" "$p/drive_c/Program Files (x86)" \
-      -type f 2>/dev/null)
+      -type f \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' -o -iname '*.so' \) \
+      2>/dev/null)
   done
   return 0
 }
@@ -4249,6 +4312,7 @@ install_native_plugin_from_file() {
   fi
 
   local entry dest_dir dest kind installed=0 failed=0
+  local -a installed_names=()
   for entry in "${found[@]}"; do
     case "${entry,,}" in
       *.lv2)  dest_dir="$HOME/.lv2";  kind=LV2  ;;
@@ -4287,9 +4351,18 @@ install_native_plugin_from_file() {
     # prefix, and "" keeps "which prefix owns this" honest.
     state_register_install "$(plugin_key "$dest")" "" "$dest"
     printf '%s\n' "$dest"
+    installed_names+=("$(basename "$dest")")
     installed=$(( installed + 1 ))
   done
   [[ -n $cleanup_work ]] && rm -rf "$cleanup_work"
+  if (( installed > 0 )); then
+    if (( installed == 1 )); then
+      notify_install_done "Plugin installed" "${installed_names[0]} is ready to use in your DAW."
+    else
+      notify_install_done "$installed plugins installed" \
+        "$(printf '%s\n' "${installed_names[@]}" | head -5 | paste -sd, -) — ready to use in your DAW."
+    fi
+  fi
   if (( installed == 0 )); then
     err "no plugin installed from $src ($failed already present or unsupported)"
     return 1

@@ -1432,21 +1432,25 @@ case "$cmd" in
     _apm_ad="${TMPDIR:-/tmp}/apm-adopt.$$"
     plugin_group_rows > "$_apm_ad"
     n=0
+    # Read the log once and resolve the prefix once: the old loop called
+    # default_prefix() (which itself scans the log) per plugin, making the
+    # sweep quadratic in jq processes.
+    declare -A _apm_known=()
+    while IFS= read -r _apm_k; do
+      [[ -n $_apm_k ]] && _apm_known["$_apm_k"]=1
+    done < <(state_list_keys)
+    _apm_pfx="$(default_prefix)"
+    declare -a _apm_pending=()
     while IFS=$'\t' read -r sortkey gkey label grp formats enabled value variants key; do
       [[ -n $key ]] || continue
-      state_has "$key" && continue
+      [[ -n ${_apm_known[$key]:-} ]] && continue
+      _apm_known["$key"]=1
       # A native plugin lives in the system tree, not in a wine prefix. Filing
       # it under the default prefix would claim it was installed by an
       # installer, and the uninstall tree would then offer to remove a wine
       # program that never contained it.
-      # No `local`: the action dispatcher is a top-level `case`, not a function,
-      # and `local` there is an error that aborts the whole action.
-      pfx="$(default_prefix)"
-      case "$value" in
-        native:*) pfx="" ;;
-        *) pfx="$(default_prefix)" ;;
-      esac
-      first=""
+      _apm_rowpfx="$_apm_pfx"
+      case "$value" in native:*) _apm_rowpfx="" ;; esac
       while IFS= read -r f; do
         [[ -n $f ]] || continue
         bare="$f"
@@ -1454,14 +1458,14 @@ case "$cmd" in
           vst:*:*) bare="${f#vst:*:}" ;;
           native:*) bare="${f#native:}" ;;
         esac
-        [[ -n $first ]] || first="$bare"
         # Native rows are keyed "native/<label>" by plugin_group_rows, not
         # plugin_key() ("lv2/<label>") — the mismatch add-orphan documents.
         if [[ $f == native:* ]]; then
-          state_register_install "native/$(native_plugin_label "$bare")" "" "$bare"
+          _apm_k="native/$(native_plugin_label "$bare")"
         else
-          state_register_install "$(plugin_key "$bare")" "$pfx" "$bare"
+          _apm_k="$(plugin_key "$bare")"
         fi
+        _apm_pending+=("$(printf '%s\t%s\t%s' "$_apm_k" "$_apm_rowpfx" "$bare")")
       done <<< "$(printf '%s' "$variants" | tr ';' '\n')"
       # n=$((n+1)), NOT (( n++ )): under `set -e` the arithmetic command
       # returns the value it was BEFORE the increment, so (( n++ )) on n=0
@@ -1470,6 +1474,7 @@ case "$cmd" in
       n=$((n + 1))
     done < "$_apm_ad"
     rm -f "$_apm_ad"
+    if ((${#_apm_pending[@]})); then state_register_batch "${_apm_pending[@]}"; fi
     if ((n > 0)); then
       # Tracked ≠ loadable: rebuild the chainloaders for what was just added.
       apm_yabridge_sync >&2

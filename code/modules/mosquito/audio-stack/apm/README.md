@@ -372,7 +372,8 @@ formats — `.lv2`, `.clap`, `.vst3` — and **every** bundle found is installed
 in the log); a format already present is skipped so the others still land. An archive holding a
 Windows installer (`.exe`/`.msi`) is refused **before anything is copied**: nothing is installed
 and a desktop notification asks you to extract the archive and install the plugin manually —
-the manager cannot know which files an installer would place where.
+the manager cannot know which files an installer would place where. A successful install raises
+a desktop notification too, so you get the confirmation even if the TUI is no longer in front.
 
 LV2 bundles read as plain folders to file explorers (superfile and Nautilus both show
 `foo.lv2` as a directory), so if you enter one and pick anything inside, the install climbs

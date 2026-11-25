@@ -80,7 +80,12 @@ did, with the same user-visible result.
       in their native folder and in the log; a format already installed is
       skipped without blocking the others. A zip containing a `Setup.exe` must
       install nothing, raise a desktop notification asking for a manual
-      extract, and leave the manager usable.
+      extract, and leave the manager usable. A successful native or wine
+      install also raises a "Plugin installed" notification.
+- [ ] Adoption sweep timing: with ~180 installed plugins, a cold
+      `mosquito-audio-plugin-manager-actions adopt-plugins` (groups cache
+      removed) should take a couple of seconds, warm well under one, and
+      register every untracked plugin in one log write.
 
 ## Addons / Hyprland autofocus
 
