@@ -738,7 +738,7 @@ func (m model) settingsItems() []tuikit.PickerItem {
 		notify.Disabled = true
 		notifyGone.Disabled = true
 	}
-	return []tuikit.PickerItem{
+	return append(settingsNotice(guard), []tuikit.PickerItem{
 		profilesRow,
 		{Display: "Audio foundation settings", Value: "foundation"},
 		{Display: "Listed interfaces: " + listedLabel(m.ui.Listed), Value: "listed"},
@@ -753,6 +753,19 @@ func (m model) settingsItems() []tuikit.PickerItem {
 		{Display: "Interface watcher: " + watcherLabel(m.ui.WatcherMode), Value: "watcher_mode"},
 		{Display: "Add an audio interface", Value: "add_interface"},
 		{Display: "Back", Value: "back"},
+	}...)
+}
+
+// settingsNotice explains what is lost when Levels Guard was never installed.
+// A partial install is the watcher's job (repair notice), so this only speaks
+// when both the helper and the plugin are gone.
+func settingsNotice(guard bool) []tuikit.PickerItem {
+	if guard {
+		return nil
+	}
+	return []tuikit.PickerItem{
+		{Display: "Levels Guard is not installed", Disabled: true},
+		{Display: "Some features cannot work without it — install it for clean Mixbay operation.", Disabled: true},
 	}
 }
 

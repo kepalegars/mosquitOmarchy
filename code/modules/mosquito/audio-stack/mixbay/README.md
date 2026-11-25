@@ -623,6 +623,10 @@ dans le graphe vivant.
 
 ### Settings
 
+- **Levels Guard absent** : la page affiche un avertissement
+  (`Levels Guard is not installed`) quand ni le helper ni le plugin n'existent :
+  certaines fonctions de Mixbay ne peuvent pas marcher sans lui, et l'installer
+  est recommandé pour un fonctionnement propre.
 - **Listed interfaces** : `Only connected` (par défaut), `All supported`,
   `Only used` (les cartes déjà vues dans le journal de connexion).
 - **Launch Mixbay at startup** et **Launch Mixbay in scratchpad** : actifs par
@@ -663,6 +667,15 @@ dans le graphe vivant.
 - **Card watcher** : `Always on` (par défaut), `Only when Mixbay is open`, ou
   `Off`. En `Off`, les deux options ci-dessus sont grisées et affichées
   `off` ; leurs valeurs sont conservées et reviennent à la réactivation.
+- **Levels Guard** : si le plugin est installé mais que son panneau a disparu
+  de la barre Omarchy (shell.json restauré, rechargement du shell, clone
+  supprimé), le watcher envoie une notification `Levels Guard needs repair`
+  avec `Repair now` et `Stop asking` — à chaque démarrage, quand la barre ou
+  le plugin change, et au passage de `ok` à partiel. Un Levels Guard
+  totalement absent n'est jamais signalé ici : la page Settings explique ce
+  qui ne peut pas fonctionner sans lui. `Stop asking` crée
+  `~/.config/mosquitomixbay/levels-guard-off` (le supprimer pour réactiver
+  les rappels).
 - **Audio foundation** : liste des cartes déjà connectées, install/remove par
   carte avec confirmation, choix de la carte par défaut/prioritaire, et
   **Reset connection history** (le journal séparé

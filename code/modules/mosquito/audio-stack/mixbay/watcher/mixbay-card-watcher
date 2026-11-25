@@ -18,6 +18,15 @@
 # the card's default UI) and "Use it" only makes it the default interface.
 # Notices close themselves after six seconds unless "Keep notifications on
 # screen" is on; an unplug notice is informational like any other.
+#
+# Levels Guard: when the plugin is installed but its audio panel is not in the
+# Omarchy bar (a restored shell.json, a shell reload, a removed clone), the
+# watcher raises one notice with "Repair now" / "Stop asking" — at every
+# service start, when the bar or plugin files change, and once when the state
+# goes from ok to partial. "Stop asking" creates
+# ~/.config/mosquitomixbay/levels-guard-off; delete it to ask again. A
+# completely absent Levels Guard is never reported here (Mixbay's Settings
+# page says why instead).
 # =============================================================================
 set -uo pipefail
 
@@ -32,6 +41,15 @@ MOVE_AUDIO="$BIN/move-audio"          # Mixbay's Move profile helper
 MOVE_STATE="$CONF/mosquitomixbay/watcher-move"
 MOVE_AT="$(dirname "$MOVE_STATE")/move-connected-at"
 MOVE_PREV="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/move-previous-default"
+# Levels Guard: the helper/plugin pair the guard installs, the bar layout that
+# must place its widget, and the watcher's own state (last seen state + the
+# user's "stop asking" sentinel).
+LEVELS_HELPER="$BIN/levels-guard"
+LEVELS_PLUGIN="$CONF/omarchy/plugins/mosquito.levels-guard"
+LEVELS_PLUGIN_ID="mosquito.levels-guard"
+SHELL_JSON="$CONF/omarchy/shell.json"
+LEVELS_STATE="$CONF/mosquitomixbay/watcher-levels-guard"
+LEVELS_STOP="$CONF/mosquitomixbay/levels-guard-off"
 
 pref(){
   local key="$1" def="$2"
@@ -345,6 +363,71 @@ move_pinned_by_panel(){
   "$MOVE_AUDIO" --use >/dev/null 2>&1 || true
 }
 
+# ── Levels Guard ───────────────────────────────────────────────────────────
+# The guard is installed, but is its audio panel actually in the bar? A missing
+# widget while the plugin stays installed is the silent breakage (a restored
+# shell.json drops widgets for plugins the restorer did not know).
+bar_widget_present(){
+  [[ -f $SHELL_JSON ]] || return 1
+  jq -e --arg id "$LEVELS_PLUGIN_ID" \
+    '[(.bar.layout // {}) | .[]? | .[]? | objects | .id] | index($id) != null' \
+    "$SHELL_JSON" >/dev/null 2>&1
+}
+
+# absent | partial | ok. "absent" is never reported by the watcher: without
+# Levels Guard at all, Mixbay's Settings page owns the explanation.
+levels_guard_state(){
+  [[ -x $LEVELS_HELPER || -d $LEVELS_PLUGIN ]] || { echo absent; return; }
+  [[ -x $LEVELS_HELPER && -d $LEVELS_PLUGIN ]] || { echo partial; return; }
+  if command -v omarchy-plugin-list >/dev/null 2>&1; then
+    omarchy-plugin-list --json 2>/dev/null |
+      jq -e --arg id "$LEVELS_PLUGIN_ID" 'any(.[]; .id == $id and .enabled == true)' \
+      >/dev/null 2>&1 || { echo partial; return; }
+  fi
+  bar_widget_present || { echo partial; return; }
+  echo ok
+}
+
+# levels_guard_notice <state> [force]: remember the state and raise the notice
+# when it is partial. Startup passes force=1 so a still-broken bar is shown at
+# every login; later checks notify only on an ok → partial transition (a shell
+# reload or a removed plugin), so unrelated bar edits do not nag.
+levels_guard_notice(){
+  local state="$1" force="${2:-0}" prev mode
+  mkdir -p "$(dirname "$LEVELS_STATE")"
+  prev="$(cat "$LEVELS_STATE" 2>/dev/null || true)"
+  printf '%s\n' "$state" > "$LEVELS_STATE"
+  [[ $state == partial ]] || return 0
+  [[ -e $LEVELS_STOP ]] && return 0
+  mode="$(pref watcher_mode always)"
+  [[ $mode == off ]] && return 0
+  [[ $mode == only_open ]] && { mixbay_open || return 0; }
+  [[ $force == 1 || $prev != partial ]] || return 0
+  command -v omarchy-notification-send >/dev/null 2>&1 || return 0
+  omarchy-notification-send --app-name Mixbay -g "$ICON_CARD_OFF" -u normal \
+    -t "$(notice_timeout)" \
+    "Levels Guard needs repair" \
+    "The audio panel is missing from the Omarchy bar." \
+    --action "Repair now" "$STARTUP" --levels-guard-repair \
+    --action "Stop asking" "$STARTUP" --levels-guard-stop \
+    >/dev/null 2>&1 || true
+}
+
+# Re-check when the bar config or the plugin directory changes (Quickshell
+# reload, repair, clone removal). Without inotifywait the startup check and
+# the PipeWire server events are the only re-checks.
+levels_guard_watch(){
+  command -v inotifywait >/dev/null 2>&1 || return 0
+  local -a paths=("$CONF/omarchy")
+  [[ -d $LEVELS_PLUGIN ]] && paths+=("$LEVELS_PLUGIN")
+  inotifywait -m -q -e close_write,create,delete,moved_to,moved_from,delete_self,move_self \
+    "${paths[@]}" 2>/dev/null |
+    while read -r _; do
+      sleep 0.5
+      levels_guard_notice "$(levels_guard_state)"
+    done
+}
+
 main(){
   command -v pactl >/dev/null 2>&1 || exit 0
   command -v jq >/dev/null 2>&1 || exit 0
@@ -358,6 +441,8 @@ main(){
     printf 'disconnected\n' > "$MOVE_STATE"
   fi
   move_remember_default
+  levels_guard_notice "$(levels_guard_state)" 1
+  levels_guard_watch &
 
   local current
   if current="$(scan)"; then
@@ -387,6 +472,7 @@ main(){
         sleep 0.4
         move_pinned_by_panel
         move_remember_default
+        levels_guard_notice "$(levels_guard_state)"
         ;;
     esac
   done
@@ -459,6 +545,39 @@ self_test(){
     printf '{"notify_sticky":true}\n' > "$ui_tmp"
     send_notification evo8 "$display" installed
     assert_notice Mixbay "$display connected" "Open UI & Use it|Use it|" 2 1
+    # Levels Guard: absent is silent, an installed clone with no bar entry is
+    # partial, and the notice carries the two answer buttons.
+    local lg_plugin="$LEVELS_PLUGIN" lg_helper="$LEVELS_HELPER" lg_shell="$SHELL_JSON"
+    local lg_state="$LEVELS_STATE" lg_stop="$LEVELS_STOP" lg_home
+    lg_home="$(mktemp -d)"
+    LEVELS_PLUGIN="$lg_home/plugin"; LEVELS_HELPER="$lg_home/helper"
+    SHELL_JSON="$lg_home/shell.json"; LEVELS_STATE="$lg_home/state"; LEVELS_STOP="$lg_home/stop"
+    omarchy-plugin-list(){ printf '[{"id":"mosquito.levels-guard","enabled":true}]\n'; }
+    [[ $(levels_guard_state) == absent ]] || fail=1
+    mkdir -p "$LEVELS_PLUGIN"; : > "$LEVELS_HELPER"; chmod +x "$LEVELS_HELPER"
+    printf '{"bar":{"layout":{"right":[]}}}\n' > "$SHELL_JSON"
+    printf '{"watcher_mode":"always"}\n' > "$ui_tmp"
+    [[ $(levels_guard_state) == partial ]] || fail=1
+    printf 'ok\n' > "$LEVELS_STATE"
+    levels_guard_notice partial
+    assert_notice "Levels Guard needs repair" "The audio panel is missing from the Omarchy bar." "Repair now|Stop asking|" 2 0
+    # Same state again: no second nag. A forced check (login) does show it.
+    : > "$stub"
+    levels_guard_notice partial
+    [[ ! -s $stub ]] || fail=1
+    levels_guard_notice partial 1
+    assert_notice "Levels Guard needs repair" "The audio panel is missing from the Omarchy bar." "Repair now|Stop asking|" 2 0
+    # Stop asking silences even a forced check.
+    : > "$stub"; : > "$LEVELS_STOP"
+    levels_guard_notice partial 1
+    [[ ! -s $stub ]] || fail=1
+    # Widget back in the bar: healthy.
+    rm -f "$LEVELS_STOP"
+    printf '{"bar":{"layout":{"right":[{"id":"mosquito.levels-guard"}]}}}\n' > "$SHELL_JSON"
+    [[ $(levels_guard_state) == ok ]] || fail=1
+    LEVELS_PLUGIN="$lg_plugin"; LEVELS_HELPER="$lg_helper"; SHELL_JSON="$lg_shell"
+    LEVELS_STATE="$lg_state"; LEVELS_STOP="$lg_stop"
+    rm -rf "$lg_home"; unset -f omarchy-plugin-list
     UI="$ui_saved"; rm -f "$ui_tmp"
     unset -f omarchy-notification-send
     rm -f "$stub"

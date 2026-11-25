@@ -15,6 +15,8 @@
 #   mixbay-startup --open-card ID     # notification click: open + show that card
 #   mixbay-startup --use-card ID      # notification button: make it default + open its UI
 #   mixbay-startup --select-card ID   # notification button: make it default only
+#   mixbay-startup --levels-guard-repair  # notification button: re-install the guard
+#   mixbay-startup --levels-guard-stop    # notification button: never ask again
 #   mixbay-startup --external CMD  # launch an external GUI and place the windows
 # =============================================================================
 set -euo pipefail
@@ -332,6 +334,30 @@ use_card(){
   open_card "$id"
 }
 
+# --- Levels Guard notice buttons -------------------------------------------
+# stop asking: the sentinel the card watcher checks. A state file, not a
+# ui.json key: the TUI rewrites ui.json from its struct and would drop it.
+levels_guard_stop(){
+  mkdir -p "$CONF/mosquitomixbay"
+  : > "$CONF/mosquitomixbay/levels-guard-off"
+}
+
+# repair: run the owning module from the checkout mosquitomarchy-actions points
+# at. The health `heal` path is the fallback when only the deployed copy exists
+# (it re-applies the module too, and the module needs no root).
+levels_guard_repair(){
+  local actions="$HOME_DIR/.local/bin/mosquitomarchy-actions" root="" script=""
+  [[ -e $actions ]] && root="$(cd "$(dirname "$(readlink -f "$actions")")/../.." 2>/dev/null && pwd)" || true
+  [[ -n $root ]] && script="$root/code/modules/mosquito/audio-stack/levels-guard/setup-levels-guard.sh"
+  if [[ -f $script ]]; then
+    bash "$script" -y >/dev/null 2>&1 || true
+    return 0
+  fi
+  if command -v mosquitomarchy-actions >/dev/null 2>&1; then
+    mosquitomarchy-actions heal levels-guard >/dev/null 2>&1 || true
+  fi
+}
+
 case "${1:-}" in
   --apply) apply ;;
   --run) run ;;
@@ -341,8 +367,10 @@ case "${1:-}" in
   --open-card) shift; open_card "$@" ;;
   --use-card) shift; use_card "$@" ;;
   --select-card) shift; select_card "$@" ;;
+  --levels-guard-repair) levels_guard_repair ;;
+  --levels-guard-stop) levels_guard_stop ;;
   --external) shift; [[ $# -ge 1 ]] || { printf 'usage: %s --external CMD [args...]\n' "$0" >&2; exit 2; }; external "$@" ;;
   --remove) remove_block; printf 'autostart: off\n' ;;
-  -h|--help) sed -n '2,18p' "$0" ;;
-  *) printf 'usage: %s --apply|--run|--open|--place|--install-card ID|--open-card ID|--use-card ID|--select-card ID|--external CMD|--remove\n' "$0" >&2; exit 2 ;;
+  -h|--help) sed -n '2,20p' "$0" ;;
+  *) printf 'usage: %s --apply|--run|--open|--place|--install-card ID|--open-card ID|--use-card ID|--select-card ID|--levels-guard-repair|--levels-guard-stop|--external CMD|--remove\n' "$0" >&2; exit 2 ;;
 esac

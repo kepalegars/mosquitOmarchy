@@ -267,6 +267,17 @@ did, with the same user-visible result.
       package and reloads the plugin.
 - [x] Manual findings are not ticked by default and are excluded from
       `healthKeys` (Go test `TestHealthManualFindingCannotBeTicked`).
+- [ ] Levels Guard bar widget: with the plugin installed, remove
+      `mosquito.levels-guard` from the `shell.json` bar layout (or restore a
+      shell.json that dropped it). Health check lists the `levels-guard`
+      module as partial with "bar widget"; tick + heal puts the entry back
+      and restarts the shell.
+- [ ] Mixbay Levels Guard notice: same broken bar with `watcher_mode=always`
+      raises one watcher notification with `Repair now` / `Stop asking` at
+      service start. Stop asking creates
+      `~/.config/mosquitomixbay/levels-guard-off` and silences it; Repair now
+      fixes the bar. With neither the helper nor the plugin installed, the
+      watcher stays silent and Settings shows the install notice.
 
 ## MixBay / audio hardware
 

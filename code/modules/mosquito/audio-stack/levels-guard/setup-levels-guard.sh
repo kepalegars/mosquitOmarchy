@@ -31,6 +31,7 @@ PLUGIN_DIR="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 OLD_PLUGIN_ID="mosquito.mixbay-audio"
 OLD_PLUGIN_DIR="$HOME/.config/omarchy/plugins/$OLD_PLUGIN_ID"
 AUDIO_UPSTREAM="/usr/share/omarchy/shell/plugins/panels/audio"
+SHELL_JSON="$HOME/.config/omarchy/shell.json"
 HYPR_BINDINGS="$HOME/.config/hypr/bindings.lua"
 HELPER_SRC="$SCRIPT_DIR/levels-guard"
 HELPER_BIN="$BIN_DIR/levels-guard"
@@ -59,12 +60,93 @@ plugin_enabled(){
     jq -e --arg id "$PLUGIN_ID" 'any(.[]; .id == $id and .enabled == true)' >/dev/null 2>&1
 }
 
+# Is the guard widget actually placed in the bar? A restored shell.json (the
+# quickshell-bar fix drops unknown widgets) keeps the plugin installed and
+# enabled while the volume panel silently disappears from the bar.
+bar_widget_present(){
+  [[ -f $SHELL_JSON ]] || return 1
+  python3 - "$SHELL_JSON" "$PLUGIN_ID" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        layout = json.load(f).get("bar", {}).get("layout")
+except (OSError, ValueError):
+    sys.exit(1)
+if not isinstance(layout, dict):
+    sys.exit(1)
+items = [it for values in layout.values() if isinstance(values, list)
+         for it in values if isinstance(it, dict)]
+sys.exit(0 if any(it.get("id") == sys.argv[2] for it in items) else 1)
+PY
+}
+
+restart_shell(){
+  if command -v omarchy-restart-shell >/dev/null 2>&1; then
+    omarchy-restart-shell >/dev/null 2>&1 \
+      || warn "restart the shell to load the guard (omarchy-restart-shell)"
+  else
+    warn "restart the shell to load the guard"
+  fi
+}
+
+# ensure_bar_widget [--no-restart] — adopt the stock audio entry in place, or
+# append the guard widget to the right section when the bar has neither.
+ensure_bar_widget(){
+  local no_restart=0 changed=""
+  [[ ${1:-} == --no-restart ]] && no_restart=1
+  [[ -f $SHELL_JSON ]] || return 0
+  changed="$(mq_normalize_bar_widget "$SHELL_JSON" "${USER:-$(id -un)}" audio "$PLUGIN_ID" "$OLD_PLUGIN_ID" 2>/dev/null || true)"
+  bar_widget_present && {
+    [[ $changed == changed ]] && (( ! no_restart )) && restart_shell
+    return 0
+  }
+  changed+="$(python3 - "$SHELL_JSON" "$PLUGIN_ID" <<'PY'
+import json, os, sys
+path, wid = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+except (OSError, ValueError):
+    sys.exit(0)
+layout = data.get("bar", {}).get("layout")
+if not isinstance(layout, dict):
+    sys.exit(0)
+section = "right" if isinstance(layout.get("right"), list) else next(
+    (k for k, v in layout.items() if isinstance(v, list)), None)
+if section is None:
+    sys.exit(0)
+layout[section].append({"id": wid})
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+print("changed")
+PY
+)"
+  [[ $changed == *changed* ]] && (( ! no_restart )) && restart_shell
+  return 0
+}
+
+# keep_clone: the installed clone is still valid; repair only what surrounds
+# it (enabled state, bar entry) and never rebuild it.
+keep_clone(){
+  if ! plugin_enabled && command -v omarchy-plugin-enable >/dev/null 2>&1; then
+    omarchy-plugin-enable "$PLUGIN_ID" >/dev/null 2>&1 \
+      || warn "could not enable $PLUGIN_ID"
+  fi
+  ensure_bar_widget
+}
+
 guard_status(){
   local miss=""
   [[ -x $HELPER_BIN ]] || miss="${miss:+$miss, }levels-guard helper"
   [[ -d $PLUGIN_DIR ]] || miss="${miss:+$miss, }$PLUGIN_ID plugin"
   if [[ -d $PLUGIN_DIR ]] && ! plugin_enabled; then
     miss="${miss:+$miss, }$PLUGIN_ID disabled"
+  fi
+  if [[ -d $PLUGIN_DIR ]] && ! bar_widget_present; then
+    miss="${miss:+$miss, }$PLUGIN_ID bar widget"
   fi
   grep -qF -- '-- >>> levels-guard >>>' "$HYPR_BINDINGS" 2>/dev/null \
     || miss="${miss:+$miss, }media-key block"
@@ -187,12 +269,18 @@ install_plugin(){
     cur_inst="$(audio_installed_hash "$PLUGIN_DIR")"
     if [[ -z $old_up || $old_up != "$up_now" ]]; then
       warn "upstream Omarchy audio panel changed — keeping installed Levels Guard (remove $PLUGIN_DIR to refresh)"
+      keep_clone
       return 0
     fi
     if [[ -z $old_inst || $old_inst != "$cur_inst" ]]; then
       warn "Levels Guard was edited locally — keeping it"
+      keep_clone
       return 0
     fi
+    # Upstream and files still match: the clone is good. Only its enabled
+    # state or bar entry can be wrong, so repair those instead of rebuilding.
+    keep_clone
+    return 0
   fi
 
   local plugins_dir stage
@@ -232,18 +320,13 @@ install_plugin(){
   done
   # Adopt the stock audio panel's bar entry (or the old Mixbay clone's) in
   # place, so the guard replaces it without moving or duplicating the widget.
-  local shell_json="$HOME/.config/omarchy/shell.json" user="${USER:-$(id -un)}"
+  local shell_json="$SHELL_JSON" user="${USER:-$(id -un)}"
   mq_normalize_bar_widget "$shell_json" "$user" audio "$PLUGIN_ID" "$OLD_PLUGIN_ID" >/dev/null 2>&1 || true
   omarchy-plugin-enable "$PLUGIN_ID" >/dev/null 2>&1 \
     || { warn "installed but could not enable $PLUGIN_ID"; return 1; }
-  mq_normalize_bar_widget "$shell_json" "$user" audio "$PLUGIN_ID" "$OLD_PLUGIN_ID" >/dev/null 2>&1 || true
+  ensure_bar_widget --no-restart
   # The running shell caches QML components; a rescan alone keeps the old panel.
-  if command -v omarchy-restart-shell >/dev/null 2>&1; then
-    omarchy-restart-shell >/dev/null 2>&1 \
-      || warn "restart the shell to load the guard (omarchy-restart-shell)"
-  else
-    warn "restart the shell to load the guard"
-  fi
+  restart_shell
   ok "Omarchy audio panel guard installed ($PLUGIN_ID)"
 }
 

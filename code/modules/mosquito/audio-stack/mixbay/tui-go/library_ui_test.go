@@ -210,10 +210,37 @@ func TestProfilesSquareBlinkAndUpdate(t *testing.T) {
 }
 
 func TestSettingsListsProfilesThenFoundation(t *testing.T) {
+	old := levelsGuardEnabled
+	levelsGuardEnabled = func() bool { return true } // no install notice row
+	t.Cleanup(func() { levelsGuardEnabled = old })
 	m := model{}
 	items := m.settingsItems()
 	if len(items) < 2 || items[0].Value != "profiles" || items[1].Value != "foundation" {
 		t.Fatalf("settings order = %v, want profiles then foundation", []string{items[0].Value, items[1].Value})
+	}
+}
+
+// The install notice is the only place a fully absent Levels Guard is
+// mentioned: no helper and no plugin means Mixbay loses its exclusive volume
+// control. A partial install is the watcher's repair notice instead.
+func TestSettingsNoticeOnlyWhenLevelsGuardMissing(t *testing.T) {
+	old := levelsGuardEnabled
+	t.Cleanup(func() { levelsGuardEnabled = old })
+	levelsGuardEnabled = func() bool { return false }
+	m := model{}
+	items := m.settingsItems()
+	if len(items) < 2 || !items[0].Disabled || items[0].Value != "" ||
+		!strings.Contains(items[0].Display, "Levels Guard is not installed") {
+		t.Fatalf("missing Levels Guard notice: %+v", items[:2])
+	}
+	if !strings.Contains(items[1].Display, "cannot work without it") {
+		t.Fatalf("notice does not say what breaks: %q", items[1].Display)
+	}
+	levelsGuardEnabled = func() bool { return true }
+	for _, it := range m.settingsItems() {
+		if strings.Contains(it.Display, "Levels Guard") {
+			t.Fatalf("installed Levels Guard still shows the notice: %q", it.Display)
+		}
 	}
 }
 
