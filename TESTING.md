@@ -304,12 +304,16 @@ did, with the same user-visible result.
       live inputs keep playing) and leaves the CONTROLS output mute alone;
       `m` again restores it. The load picker no longer offers `L` and no
       preset is applied when Mixbay starts.
-- [ ] Settings → **Interface connection notifications** off: plugging a card
+- [ ] Settings → **Notify when an interface is connected** off: plugging a card
       (and the Move's direct notice path) sends no desktop notification even
       with `mixbay-card-watcher.service` running; turning it back on restores
       the notices. With **Keep notifications on screen** off, a connection
       notice expires by itself (it must not be sent as `critical`, which
       Omarchy pins forever). Levels Guard repair notices are unaffected.
+- [ ] With a light-accent theme (e.g. kanagawa), the selected EVO / UGM tab
+      and the active interface-library tab have dark text on the accent fill;
+      no white-on-white labels. Settings → Detect plugged interfaces off
+      greys both notice rows and "Keep notifications on screen".
 
 ## Ableton Move / Bitwig hardware
 

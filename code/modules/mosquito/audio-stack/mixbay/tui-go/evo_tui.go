@@ -91,6 +91,7 @@ const (
 	cWhite
 	cBlue
 	cAccent
+	cOnAccent
 	cBorder
 )
 
@@ -150,7 +151,7 @@ func (c *evoCanvas) repeat(x, y, n int, r rune, st evoStyle) {
 
 // render turns the canvas into styled lines, trimming trailing blanks so a
 // sparse frame does not emit kilometres of spaces.
-func (c *evoCanvas) render(pal [9]lipgloss.Color) string {
+func (c *evoCanvas) render(pal [10]lipgloss.Color) string {
 	var b strings.Builder
 	for y := 0; y < c.h; y++ {
 		end := c.w
@@ -186,7 +187,7 @@ func (c *evoCanvas) render(pal [9]lipgloss.Color) string {
 	return b.String()
 }
 
-func evoStyleFor(pal [9]lipgloss.Color, st evoStyle) lipgloss.Style {
+func evoStyleFor(pal [10]lipgloss.Color, st evoStyle) lipgloss.Style {
 	s := lipgloss.NewStyle()
 	if st.col != cNone {
 		s = s.Foreground(pal[st.col])
@@ -659,8 +660,8 @@ type evoRender struct {
 
 func (r *evoRender) put(x, y int, s string, st evoStyle) { r.c.put(x, y, s, st) }
 
-func evoPalette() [9]lipgloss.Color {
-	var p [9]lipgloss.Color
+func evoPalette() [10]lipgloss.Color {
+	var p [10]lipgloss.Color
 	p[cGreen] = tuikit.ColorGreen
 	p[cRed] = tuikit.ColorRed
 	p[cCyan] = tuikit.ColorCyan
@@ -672,6 +673,11 @@ func evoPalette() [9]lipgloss.Color {
 	p[cWhite] = tuikit.ColorOnSurface
 	p[cBlue] = tuikit.ColorBlue
 	p[cAccent] = tuikit.ColorAccent
+	// Text ON an accent fill cannot use the theme foreground: some themes
+	// (kanagawa and friends) have an accent very close to white, so cream
+	// text on it is invisible. Compute black/white from the accent itself,
+	// the same way the shared confirm buttons do.
+	p[cOnAccent] = tuikit.BestContrastOn(tuikit.ColorAccent)
 	p[cBorder] = tuikit.ColorOnSurface
 	return p
 }
@@ -805,9 +811,9 @@ func (r *evoRender) phantomInd(row, x int, on bool) {
 
 func (r *evoRender) drawTabBar(row, cx, sectionW int) {
 	lineAttr := evoStyle{col: cAccent}
-	// Like the mosquito Close buttons: the selected tab is an accent block
-	// with white text. Text stays pure white in both states (no grey).
-	active := evoStyle{col: cWhite, bg: cAccent, bold: true}
+	// The selected tab is an accent block; its text uses the contrast colour
+	// computed from the accent so a near-white accent gets dark text.
+	active := evoStyle{col: cOnAccent, bg: cAccent, bold: true}
 	pages := r.m.pages()
 	x := cx + 1
 	activeX, activeW := -1, 0
@@ -1502,7 +1508,7 @@ func (m model) evoView() string {
 	return c.render(pal)
 }
 
-func (m model) evoFilePicker(w, h int, pal [9]lipgloss.Color) string {
+func (m model) evoFilePicker(w, h int, pal [10]lipgloss.Color) string {
 	c := newEvoCanvas(w, h)
 	u := &m.evo
 	boxW := evoBoxIW + 2

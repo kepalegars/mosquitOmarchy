@@ -9,8 +9,8 @@
 # Behavior follows ~/.config/mosquitomixbay/ui.json:
 #   watcher_mode       always | only_open | off
 #   detect_cards       false → nothing is detected or logged
-#   notify_cards       false → Settings "Interface connection notifications"
-#                               off:
+#   notify_cards       false → Settings "Notify when an interface is
+#                               connected" off:
 #                               detection still logs, but no connection notice
 #   notify_disconnected false → no notice when an interface goes away
 #   notify_sticky      true  → notices stay until dismissed (6 s otherwise)
@@ -569,7 +569,7 @@ self_test(){
     assert_notice Mixbay "$display connected" "Open UI & Use it|Use it|" 2 1
     mapfile -t argv <"$stub"
     [[ " ${argv[*]} " == *" critical "* ]] || fail=1
-    # Settings → "Interface connection notifications" off (and disconnect off):
+    # Settings → "Notify when an interface is connected" off (and disconnect off):
     # every notice kind must stay silent, including direct callers such as
     # the Move path. Gating only in announce() let those through.
     printf '{"notify_sticky":true,"notify_cards":false,"notify_disconnected":false}\n' > "$ui_tmp"

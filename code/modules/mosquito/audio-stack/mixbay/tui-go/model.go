@@ -724,16 +724,19 @@ func (m model) settingsItems() []tuikit.PickerItem {
 	}
 	// The watcher switch owns the two rows below it: off greys them and shows
 	// off, while their stored choices wait for the switch to come back.
-	detect := tuikit.PickerItem{Display: "Detect plugged cards: " + onOff(m.ui.detects()), Value: "detect_cards"}
-	notify := tuikit.PickerItem{Display: "Interface connection notifications: " + onOff(m.ui.notifies()), Value: "notify_cards"}
+	detect := tuikit.PickerItem{Display: "Detect plugged interfaces: " + onOff(m.ui.detects()), Value: "detect_cards"}
+	notify := tuikit.PickerItem{Display: "Notify when an interface is connected: " + onOff(m.ui.notifies()), Value: "notify_cards"}
 	notifyGone := tuikit.PickerItem{Display: "Notify when an interface is disconnected: " + onOff(m.ui.notifiesDisconnected()), Value: "notify_disconnected"}
+	sticky := tuikit.PickerItem{Display: "Keep notifications on screen: " + onOff(m.ui.NotifySticky), Value: "notify_sticky"}
 	if m.ui.watcherOff() {
 		detect.Disabled = true
 		notify.Disabled = true
 		notifyGone.Disabled = true
+		sticky.Disabled = true
 	} else if !m.ui.DetectCards {
 		notify.Disabled = true
 		notifyGone.Disabled = true
+		sticky.Disabled = true
 	}
 	return append(settingsNotice(guard), []tuikit.PickerItem{
 		profilesRow,
@@ -746,7 +749,7 @@ func (m model) settingsItems() []tuikit.PickerItem {
 		detect,
 		notify,
 		notifyGone,
-		{Display: "Keep notifications on screen: " + onOff(m.ui.NotifySticky), Value: "notify_sticky"},
+		sticky,
 		{Display: "Interface watcher: " + watcherLabel(m.ui.WatcherMode), Value: "watcher_mode"},
 		{Display: "Add an audio interface", Value: "add_interface"},
 		{Display: "Back", Value: "back"},
@@ -1823,7 +1826,9 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.ui.NotifyDisconnected = !m.ui.NotifyDisconnected
 				}
 			case "notify_sticky":
-				m.ui.NotifySticky = !m.ui.NotifySticky
+				if !m.ui.watcherOff() && m.ui.DetectCards {
+					m.ui.NotifySticky = !m.ui.NotifySticky
+				}
 			case "watcher_mode":
 				m.ui.WatcherMode = nextWatcher(m.ui.WatcherMode)
 				if !m.ui.watcherOff() && m.ui.DetectCards {

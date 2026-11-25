@@ -900,7 +900,7 @@ func (m model) libraryTabs(w int) string {
 		if m.libraryTab == i {
 			return lipgloss.NewStyle().
 				Background(tuikit.ColorAccent).
-				Foreground(tuikit.ColorOnSurface).
+				Foreground(tuikit.BestContrastOn(tuikit.ColorAccent)).
 				Bold(true).
 				Render(" " + label + " ")
 		}

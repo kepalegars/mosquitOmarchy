@@ -120,7 +120,7 @@ func (m model) ugmView() string {
 func (r *evoRender) ugmTabBar(row, cx, sectionW int, levels bool) {
 	const ctrlLabel, levLabel = " Controls ", " Levels "
 	lineAttr := evoStyle{col: cAccent}
-	active := evoStyle{col: cWhite, bg: cAccent, bold: true}
+	active := evoStyle{col: cOnAccent, bg: cAccent, bold: true}
 	ctrlAttr, levAttr := evoVal, evoVal
 	if levels {
 		levAttr = active
@@ -144,7 +144,7 @@ func (r *evoRender) ugmTabBar(row, cx, sectionW int, levels bool) {
 // where the page is, and the card name keeps the right edge.
 func (r *evoRender) singleTabBar(row, cx, sectionW int, label string) {
 	lineAttr := evoStyle{col: cAccent}
-	r.put(cx+1, row, label, evoStyle{col: cWhite, bg: cAccent, bold: true})
+	r.put(cx+1, row, label, evoStyle{col: cOnAccent, bg: cAccent, bold: true})
 	r.cardTitle(row, cx, sectionW)
 	r.c.repeat(cx, row+1, sectionW, boxH, lineAttr)
 	r.put(cx+1, row+1, strings.Repeat(" ", len([]rune(label))), lineAttr)
