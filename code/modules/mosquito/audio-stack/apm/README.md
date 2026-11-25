@@ -366,9 +366,13 @@ yabridge resync for VST, the `.disabled` suffix for native. Every host recognise
 its contents, and dropping the suffix brings it back.
 
 **Install a plugin from file** takes one picker and auto-detects: a `.exe`/`.msi` goes through
-the wine-prefix wizard, while a raw bundle or a `.zip`/`.tar`/`.tar.gz`/`.tgz` containing one
-(searched two levels deep, for a vendor zip that wraps the bundle) installs natively. You do not
-say which kind it is up front.
+the wine-prefix wizard, while a raw bundle or a `.zip`/`.tar`/`.tar.gz`/`.tgz` installs natively.
+You do not say which kind it is up front. Archives are searched four levels deep for moveable
+formats — `.lv2`, `.clap`, `.vst3` — and **every** bundle found is installed (registering each
+in the log); a format already present is skipped so the others still land. An archive holding a
+Windows installer (`.exe`/`.msi`) is refused **before anything is copied**: nothing is installed
+and a desktop notification asks you to extract the archive and install the plugin manually —
+the manager cannot know which files an installer would place where.
 
 LV2 bundles read as plain folders to file explorers (superfile and Nautilus both show
 `foo.lv2` as a directory), so if you enter one and pick anything inside, the install climbs

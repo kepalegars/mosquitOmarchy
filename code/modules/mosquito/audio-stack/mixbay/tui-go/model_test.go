@@ -2342,9 +2342,9 @@ func TestEvoMixMuteInputIsReturnOnly(t *testing.T) {
 	}
 }
 
-// m on an output row toggles the output master, so Controls and Mixer always
-// show the same state; LOOP sources have no master and use the return mute.
-func TestEvoMixMuteOutputLinksControls(t *testing.T) {
+// m on a PC row mutes the PC source's send, not the hardware output master:
+// muting the mixer must not silence live inputs or change what Controls shows.
+func TestEvoMixMutePCIsReturnOnly(t *testing.T) {
 	m := evoModel(t, drivers.DevEVO8, 1)
 	m.evoSelectMx(m.evo.spec.NumInputs) // PC 1|2
 	if cmd := m.evoKey("m"); cmd != nil {
@@ -2353,23 +2353,25 @@ func TestEvoMixMuteOutputLinksControls(t *testing.T) {
 	d, _ := drivers.Open(drivers.DevEVO8)
 	st, _ := d.Status()
 	m.status = st
-	if !st.Outputs[0].Muted {
-		t.Fatal("mixer m did not mute OUT 1|2")
+	if c := st.Mixer["output1_2"]; !c.Muted {
+		t.Fatalf("PC 1|2 = %+v, want the return mute", c)
 	}
-	if st.Mixer["output1_2"].Muted {
-		t.Error("output row used the return mute instead of the master")
+	if st.Outputs[0].Muted {
+		t.Error("mixer m muted OUT 1|2 instead of the PC send")
+	}
+	if !strings.Contains(m.evoView(), "[m]") {
+		t.Fatal("muted PC row does not show [m]")
 	}
 	if cmd := m.evoKey("m"); cmd != nil {
 		_ = cmd()
 	}
 	d, _ = drivers.Open(drivers.DevEVO8)
 	st, _ = d.Status()
-	m.status = st
-	if st.Outputs[0].Muted {
-		t.Error("second m did not unmute OUT 1|2")
+	if c := st.Mixer["output1_2"]; c.Muted {
+		t.Error("second m did not unmute PC 1|2")
 	}
 
-	// LOOP 5|6 has no Controls counterpart.
+	// LOOP 5|6 behaves the same way.
 	m.evoSelectMx(m.evo.spec.NumInputs + m.evo.spec.NumOutPairs)
 	if cmd := m.evoKey("m"); cmd != nil {
 		_ = cmd()
@@ -2423,58 +2425,15 @@ func TestBadgeFieldAlignsBrackets(t *testing.T) {
 	}
 }
 
-// L in the LOAD picker opts a preset in and out for launch; the choice is
-// persisted beside the presets and never copied.
-func TestEvoLaunchPresetToggle(t *testing.T) {
+// L is no longer a launch shortcut: pressing it in the load picker must not
+// write a per-card opt-in or load anything.
+func TestEvoLoadPickerHasNoLaunchKey(t *testing.T) {
 	m := evoModel(t, drivers.DevEVO8, 0)
-	dir := m.evoConfigDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "gig.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	m.evoKey("o")
-	for i, f := range m.evo.fileList {
-		if f == "gig.json" {
-			m.evo.fileCursor = i
-		}
+	if cmd := m.evoKey("L"); cmd != nil {
+		t.Fatal("L must not trigger a preset load")
 	}
-	if cmd := m.evoKey("L"); cmd == nil {
-		t.Fatal("L should report the choice")
-	}
-	if m.evo.launch != "gig.json" {
-		t.Fatalf("launch = %q, want gig.json", m.evo.launch)
-	}
-	if got := m.evoLaunchPreset(); got != "gig.json" {
-		t.Fatalf("persisted launch = %q", got)
-	}
-	m.evoKey("L")
-	if got := m.evoLaunchPreset(); got != "" {
-		t.Fatalf("second L must clear the opt-in, got %q", got)
-	}
-}
-
-// A launch only writes while the card is online, and only once per start.
-func TestEvoLaunchPresetSkipsOffline(t *testing.T) {
-	m := evoModel(t, drivers.DevEVO8, 0)
-	m.evo.launch = "gig.json"
-	m.launchTried = false
-	m.status.Online = false
-	if cmd := m.maybeLaunchPreset(); cmd != nil {
-		t.Fatal("offline card must not be written at launch")
-	}
-	if m.launchTried {
-		t.Fatal("an offline read must not use the one launch attempt")
-	}
-	m.status.Online = true
-	if cmd := m.maybeLaunchPreset(); cmd != nil {
-		t.Fatal("a missing preset file must be skipped")
-	}
-	if !m.launchTried {
-		t.Fatal("the online status must use the one launch attempt")
-	}
-	if cmd := m.maybeLaunchPreset(); cmd != nil {
-		t.Fatal("a second status must not load again")
+	if _, err := os.Stat(filepath.Join(m.evoConfigDir(), ".launch-preset")); !os.IsNotExist(err) {
+		t.Fatalf("L wrote a launch opt-in: %v", err)
 	}
 }

@@ -23,7 +23,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"mosquitomarchy.local/mosquitomixbay-tui/drivers"
-	"mosquitomarchy.local/mosquitomixbay-tui/profiles"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
@@ -246,7 +245,6 @@ type evoUI struct {
 	renaming   bool   // save picker: renaming the entry under renameFrom
 	renameFrom string // original filename being renamed
 	caretPos   int    // byte offset inside fileInput
-	launch     string // preset applied once at launch (empty = none)
 }
 
 // pickerCount is the number of selectable rows: the config files, plus a
@@ -1391,37 +1389,6 @@ func (m model) evoConfigDir() string {
 	return filepath.Join(home, ".config", "audient-evo-py", m.status.Spec.ID)
 }
 
-// evoLaunchPresetFile is the per-card opt-in written by `L` in the load
-// picker. It sits beside the presets but hidden, so the picker never lists it.
-func (m model) evoLaunchPresetFile() string {
-	return filepath.Join(m.evoConfigDir(), ".launch-preset")
-}
-
-// evoLaunchPreset returns the preset chosen for launch, or "" for "leave the
-// hardware as it is". Reading is all this does: nothing is ever written to
-// the card because of it.
-func (m model) evoLaunchPreset() string {
-	data, err := os.ReadFile(m.evoLaunchPresetFile())
-	if err != nil {
-		return ""
-	}
-	name := strings.TrimSpace(string(data))
-	if name == "" || !strings.HasSuffix(name, ".json") || strings.ContainsAny(name, "/\\") {
-		return ""
-	}
-	return name
-}
-
-// setEvoLaunchPreset stores (or clears, with "") the opt-in. The preset file
-// itself is never copied: launch reads it as it is at that moment.
-func (m model) setEvoLaunchPreset(name string) error {
-	if name == "" {
-		_ = os.Remove(m.evoLaunchPresetFile())
-		return nil
-	}
-	return profiles.WriteFileAtomic(m.evoLaunchPresetFile(), []byte(name+"\n"))
-}
-
 func (m model) evoScanFiles() []string {
 	// The built-in preset is always offered and can never be overwritten.
 	out := []string{drivers.ProtectedConfigName + ".json"}
@@ -1610,9 +1577,6 @@ func (m model) evoFilePicker(w, h int, pal [9]lipgloss.Color) string {
 				if f == drivers.ProtectedConfigName+".json" {
 					text += "  (read-only)"
 				}
-				if f == u.launch {
-					text += "  (launch)"
-				}
 			}
 			if rr := []rune(text); len(rr) > evoBoxIW-2 {
 				text = string(rr[:evoBoxIW-2])
@@ -1697,8 +1661,7 @@ func (m model) evoFilePicker(w, h int, pal [9]lipgloss.Color) string {
 		hints = append(hints, evoHint{key: "r", desc: " rename"})
 	}
 	if u.mode == 2 {
-		hints = append(hints, evoHint{key: "r", desc: " rename"}, evoHint{key: "d", desc: " delete"},
-			evoHint{key: "L", desc: " launch"})
+		hints = append(hints, evoHint{key: "r", desc: " rename"}, evoHint{key: "d", desc: " delete"})
 	}
 	contentW := len([]rune(evoHsep)) * (len(hints) - 1)
 	for _, hh := range hints {
@@ -1827,7 +1790,6 @@ func (m *model) evoEnter() {
 	m.evo.mode = 0
 	m.evo.caretOn = true
 	m.evo.caretPos = 0
-	m.evo.launch = m.evoLaunchPreset()
 	m.evo.clearAnims()
 }
 
@@ -2192,40 +2154,16 @@ func (u *evoUI) readBus() int {
 	return u.mixBus
 }
 
-// evoMxMaster maps a mixer output row to the output master it shares state
-// with, or -1 when the row has no Controls counterpart (the LOOP sources).
-func evoMxMaster(key string, spec drivers.Spec) int {
-	var l, r int
-	if _, err := fmt.Sscanf(key, "output%d_%d", &l, &r); err != nil {
-		return -1
-	}
-	i := (l - 1) / 2
-	if i < 0 || i >= spec.NumOutPairs {
-		return -1
-	}
-	return i
-}
-
-func evoMxOutputName(spec drivers.Spec, i int) string {
-	if spec.NumOutPairs == 1 {
-		return "output"
-	}
-	return fmt.Sprintf("output%d", i+1)
-}
-
-// evoMxMuted reads the mute for one mixer section. Output rows that own a
-// master read the SAME state as the Controls page, so muting in either place
-// shows up in both. Inputs and LOOP sources use the mixer's return mute.
+// evoMxMuted reads a mixer section's return mute. Every row, including the PC
+// playback sources, is muted here: the mixer's mute silences the send into the
+// bus without touching the output master the Controls page owns.
 func (m *model) evoMxMuted(key string) bool {
-	if i := evoMxMaster(key, m.evo.spec); i >= 0 {
-		return i < len(m.status.Outputs) && m.status.Outputs[i].Muted
-	}
 	return m.status.Mixer[drivers.MixerKey(key, m.evo.readBus())].Muted
 }
 
-// evoMxToggleMute mutes the selected mixer section: inputs and LOOP sources
-// through the return mute (the record path keeps running), output rows through
-// the output master shared with Controls.
+// evoMxToggleMute silences the selected source's send on the mix bus (its
+// return mute), so a PC row mutes the PC audio without dropping a hardware
+// output. The record path and the Controls output mute are untouched.
 func (m *model) evoMxToggleMute() tea.Cmd {
 	if m.evoOffline() {
 		return m.evo.evoStatus("interface offline — reconnecting", true)
@@ -2237,10 +2175,6 @@ func (m *model) evoMxToggleMute() tea.Cmd {
 	key := sections[m.evo.mxSection].key
 	on := !m.evoMxMuted(key)
 	dev := m.deviceID
-	if i := evoMxMaster(key, m.evo.spec); i >= 0 {
-		name := evoMxOutputName(m.evo.spec, i)
-		return m.applyCmd(dev, func(d drivers.Driver) error { return d.SetMute(name, on) }, "")
-	}
 	buses := []int{m.evo.mixBus}
 	if !m.evo.artistMix {
 		buses = buses[:0]
@@ -2805,27 +2739,6 @@ func (m *model) evoPickerKey(k string) tea.Cmd {
 	case "tab":
 		u.pickerMove(1, true)
 		moved = true
-	case "L":
-		if u.mode != 2 || u.renaming {
-			return nil
-		}
-		if u.fileCursor >= len(u.fileList) {
-			return nil
-		}
-		f := u.fileList[u.fileCursor]
-		name := strings.TrimSuffix(f, ".json")
-		if m.evoLaunchPreset() == f {
-			if err := m.setEvoLaunchPreset(""); err != nil {
-				return u.evoStatus("launch preset: "+err.Error(), true)
-			}
-			u.launch = ""
-			return u.evoStatus("“"+name+"” no longer loads at launch", false)
-		}
-		if err := m.setEvoLaunchPreset(f); err != nil {
-			return u.evoStatus("launch preset: "+err.Error(), true)
-		}
-		u.launch = f
-		return u.evoStatus("“"+name+"” will load at launch", false)
 	case "d":
 		if u.mode != 2 || u.renaming {
 			return nil
@@ -2980,30 +2893,6 @@ func (m *model) evoLoadFrom(path string) tea.Cmd {
 		}
 		return d.Load()
 	}, "")
-}
-
-// maybeLaunchPreset applies the card's opt-in launch preset once, on the
-// first ONLINE status after start. Waiting for "online" matters: a card that
-// enumerates a moment after the TUI starts would otherwise burn the one
-// attempt on an offline read and never load. Nothing is ever written to an
-// unplugged card, and a preset chosen later with `L` does not fire, because
-// the first online status already used the attempt.
-func (m *model) maybeLaunchPreset() tea.Cmd {
-	if m.launchTried || !m.status.Online {
-		return nil
-	}
-	m.launchTried = true
-	if m.evo.launch == "" {
-		return nil
-	}
-	if m.evo.launch == drivers.ProtectedConfigName+".json" {
-		return m.evoLoadDefault()
-	}
-	path := filepath.Join(m.evoConfigDir(), m.evo.launch)
-	if _, err := os.Stat(path); err != nil {
-		return nil
-	}
-	return m.evoLoadFrom(path)
 }
 
 // evoLoadDefault applies the built-in, read-only preset.

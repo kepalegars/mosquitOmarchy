@@ -908,9 +908,13 @@ func nativeInstallCmd(path string) tea.Cmd {
 			return actionErrMsg{err: err}
 		}
 		var v struct {
-			Path string `json:"path"`
+			Path  string   `json:"path"`
+			Paths []string `json:"paths"`
 		}
 		_ = json.Unmarshal(out, &v)
+		if len(v.Paths) > 1 {
+			return actionOKMsg{what: fmt.Sprintf("%d plugins installed", len(v.Paths))}
+		}
 		return actionOKMsg{what: "plugin installed: " + filepath.Base(v.Path)}
 	}
 }

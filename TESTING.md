@@ -75,6 +75,12 @@ did, with the same user-visible result.
 - [ ] Close the wizard normally; APM must exit, the watcher must disappear
       (`pgrep -f mosquito-wine-installer-bg` empty), and no window may remain on
       `special:wine-bg`.
+- [ ] **Install from archive** — pick a zip holding several `.vst3` / `.clap` /
+      `.lv2` bundles, including one inside a product folder. All of them land
+      in their native folder and in the log; a format already installed is
+      skipped without blocking the others. A zip containing a `Setup.exe` must
+      install nothing, raise a desktop notification asking for a manual
+      extract, and leave the manager usable.
 
 ## Addons / Hyprland autofocus
 
@@ -289,6 +295,10 @@ did, with the same user-visible result.
 - [ ] EVO 8 inputs 3/4: USB capture CH3/4 and loopback CH5/6; decode vendor init
       EU51/EU58 with a USB capture of the Audient app.
 - [ ] Re-check mixbay status/live behavior on the EVO 8 after any driver change.
+- [ ] On the EVO MIXER page, `m` on a PC row mutes that PC send (`[m]` appears,
+      live inputs keep playing) and leaves the CONTROLS output mute alone;
+      `m` again restores it. The load picker no longer offers `L` and no
+      preset is applied when Mixbay starts.
 
 ## Ableton Move / Bitwig hardware
 

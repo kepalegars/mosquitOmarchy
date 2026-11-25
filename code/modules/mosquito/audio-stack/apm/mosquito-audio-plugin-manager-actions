@@ -1500,12 +1500,12 @@ case "$cmd" in
     ;;
 
   install-native-plugin)
-    # These core functions print their own ok()/status lines to stdout
-    # before a final bare path -- only that last line is the real return
-    # value (see e.g. install_native_plugin_from_file, toggle_native_plugin_enabled,
-    # toggle_vst_plugin_hidden in lib-audio-plugin-manager-core.sh).
-    dest="$(install_native_plugin_from_file "${1:?file required}" | tail -1)"
-    jq -nc --arg path "$dest" '{path:$path}'
+    # The core prints ok() lines then one bare path per installed plugin: an
+    # archive may hold several bundles. Keep them all so the TUI can say how
+    # many landed; other install/toggle paths still end in a single path.
+    out="$(install_native_plugin_from_file "${1:?file required}")"
+    mapfile -t paths < <(printf '%s\n' "$out" | grep '^/')
+    printf '%s\n' "${paths[@]}" | jq -R . | jq -sc '{paths:., path:(.[-1] // "")}'
     ;;
 
   toggle-native-plugin)

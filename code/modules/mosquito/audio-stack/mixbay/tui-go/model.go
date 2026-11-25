@@ -156,9 +156,6 @@ type model struct {
 	pollGen int
 
 	quit bool
-	// launchTried makes the per-card "load at launch" preset fire once per
-	// app start, never on a later device switch.
-	launchTried bool
 }
 
 func initialModel() model {
@@ -1240,7 +1237,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			idx = 0
 		}
 		m.picker = m.picker.SelectIndex(idx)
-		return m, m.maybeLaunchPreset()
+		return m, nil
 
 	case meterStartedMsg:
 		if msg.engine == nil {

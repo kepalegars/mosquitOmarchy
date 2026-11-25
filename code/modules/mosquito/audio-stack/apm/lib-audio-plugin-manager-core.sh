@@ -120,6 +120,19 @@ ok(){ printf " ${G}✓${N} %s\n" "$*"; }
 warn(){ printf " ${Y}!${N} %s\n" "$*" >&2; }
 err(){ printf " ${R}✗${N} %s\n" "$*" >&2; }
 
+# A desktop notification for a refusal the user must act on outside the TUI
+# (an archive holding an installer). Best-effort: the install result never
+# depends on a notification daemon being there.
+notify_install_abort(){
+  local title="$1" body="$2"
+  if command -v omarchy-notification-send >/dev/null 2>&1; then
+    timeout 10 omarchy-notification-send --urgency normal --app-name "Audio plugin manager" \
+      "$title" "$body" >/dev/null 2>&1 || true
+  elif command -v notify-send >/dev/null 2>&1; then
+    timeout 10 notify-send "$title" "$body" >/dev/null 2>&1 || true
+  fi
+}
+
 # ── Shared wine-menu helpers ────────────────────────────────────────────────
 # Dropping the Start-Menu shortcuts Wine republishes under
 # ~/.local/share/applications/wine/Programs. Every plugin installer (smartEQ,
@@ -960,9 +973,16 @@ plugin_key() {
   # implementation detail of the bundle: it changes with the yabridge layout,
   # so the same plugin got a different key on a different machine and could
   # never match its own log entry. Every open offered it as an orphan again.
-  case "$rel" in
-    *.vst3/*) rel="${rel%%.vst3/*}.vst3" ;;
-    *.clap/*)  rel="${rel%%.clap/*}.clap" ;;
+  # Only for bridged bundles inside VST_ROOT: a native ~/.vst3/MyPlug.vst3
+  # also matches "*.vst3/*" through its parent folder and used to key as an
+  # empty "native/" shared by every VST3/CLAP on the machine.
+  case "$f" in
+    "$VST_ROOT"/*)
+      case "$rel" in
+        *.vst3/*) rel="${rel%%.vst3/*}.vst3" ;;
+        *.clap/*)  rel="${rel%%.clap/*}.clap" ;;
+      esac
+      ;;
   esac
   # Drop the leading format folder (vst/ vst3/ clap/) so "vst3/Vendor/Plugin.vst3"
   # keys consistently as "Vendor/Plugin" whether it lives in vst3 or clap.
@@ -4169,24 +4189,39 @@ all_plugin_list_rows_sorted() {
 # installs it into the matching ~/.lv2, ~/.clap or ~/.vst3 — user paths
 # only, never touches the system ones, so this never needs sudo.
 install_native_plugin_from_file() {
-  local src="$1" work="" cleanup_work=""
-  case "$src" in
-    *.zip|*.tar.gz|*.tgz|*.tar)
-      work="$(mktemp -d)"; cleanup_work="$work"
-      case "$src" in
-        *.zip) unzip -oq "$src" -d "$work" 2>/dev/null || { err "could not extract $src"; rm -rf "$work"; return 1; } ;;
-        *)     tar -xf "$src" -C "$work" 2>/dev/null || { err "could not extract $src"; rm -rf "$work"; return 1; } ;;
-      esac
-      ;;
-    *) work="$(dirname "$src")" ;;
+  local src="$1" work="" cleanup_work="" archive=false
+
+  case "${src,,}" in
+    *.zip|*.tar.gz|*.tgz|*.tar) archive=true ;;
   esac
+
+  if $archive; then
+    work="$(mktemp -d)"; cleanup_work="$work"
+    case "${src,,}" in
+      *.zip) unzip -oq "$src" -d "$work" 2>/dev/null || { err "could not extract $src"; rm -rf "$work"; return 1; } ;;
+      *)     tar -xf "$src" -C "$work" 2>/dev/null || { err "could not extract $src"; rm -rf "$work"; return 1; } ;;
+    esac
+    # A Windows installer is not a plugin: what it ships is a setup.exe plus
+    # payload DLLs that only make sense after it runs. Copying the tree blind
+    # would scatter that payload into ~/.lv2 / ~/.clap / ~/.vst3, so refuse
+    # before anything is copied and tell the user to extract it by hand.
+    local installer
+    installer="$(find "$work" -type f \( -iname '*.exe' -o -iname '*.msi' \) -print -quit 2>/dev/null)"
+    if [[ -n $installer ]]; then
+      err "archive contains a Windows installer ($(basename "$installer")) — extract it and install the plugin manually"
+      notify_install_abort "Archive not installed: $(basename "$src")" \
+        "It contains $(basename "$installer"), a Windows installer. Extract the archive and install the plugin manually."
+      rm -rf "$work"
+      return 1
+    fi
+  fi
 
   # LV2 (and some VST3/CLAP) bundles read as plain folders to file
   # explorers: superfile AND nautilus show foo.lv2 as a directory, so
   # entering it and picking anything inside must resolve to the bundle
   # itself instead of descending. Walk up to the nearest *.lv2/*.clap/
   # *.vst3 ancestor, innermost first (a picked bundle matches itself).
-  if [[ $src != *.zip && $src != *.tar* && $src != *.tgz ]]; then
+  if ! $archive; then
     local climb="$src"
     while [[ $climb != / && $climb != . && -n $climb ]]; do
       case "${climb,,}" in
@@ -4197,47 +4232,69 @@ install_native_plugin_from_file() {
     done
   fi
 
-  # Look for exactly one recognizable bundle, up to 2 levels deep (archives
-  # commonly wrap the bundle in one extra top-level folder).
-  local found kind
-  if [[ $src != *.zip && $src != *.tar* && $src != *.tgz ]]; then
-    found="$src"
+  # One archive can ship several formats side by side (a vendor zip often has
+  # VST3 + CLAP + LV2), so install every bundle found, not just the first.
+  # Four levels covers the usual product/format wrapper folders; the search
+  # never leaves the temporary extraction dir.
+  local -a found=()
+  if $archive; then
+    mapfile -t found < <(find "$work" -maxdepth 4 \( -iname '*.lv2' -o -iname '*.clap' -o -iname '*.vst3' \) -print 2>/dev/null | sort)
   else
-    found="$(find "$work" -maxdepth 2 \( -iname '*.lv2' -o -iname '*.clap' -o -iname '*.vst3' \) -print -quit 2>/dev/null)"
+    found=("$src")
   fi
-  [[ -n $found ]] || { err "no .lv2/.clap/.vst3 bundle found in $src"; [[ -n $cleanup_work ]] && rm -rf "$cleanup_work"; return 1; }
-
-  local dest_dir dest
-  case "${found,,}" in
-    *.lv2)  dest_dir="$HOME/.lv2";  kind=LV2  ;;
-    *.clap) dest_dir="$HOME/.clap"; kind=CLAP ;;
-    *.vst3) dest_dir="$HOME/.vst3"; kind=VST3 ;;
-    *) err "unrecognized plugin format: $found"; [[ -n $cleanup_work ]] && rm -rf "$cleanup_work"; return 1 ;;
-  esac
-  mkdir -p "$dest_dir"
-  dest="$dest_dir/$(basename "$found")"
-  if [[ -e $dest ]]; then
-    err "$kind plugin already installed: $dest (uninstall it first to replace)"
+  if (( ${#found[@]} == 0 )); then
+    err "no .lv2/.clap/.vst3 bundle found in $src"
     [[ -n $cleanup_work ]] && rm -rf "$cleanup_work"
     return 1
   fi
-  cp -a "$found" "$dest" || { err "copy failed: $found -> $dest"; [[ -n $cleanup_work ]] && rm -rf "$cleanup_work"; return 1; }
+
+  local entry dest_dir dest kind installed=0 failed=0
+  for entry in "${found[@]}"; do
+    case "${entry,,}" in
+      *.lv2)  dest_dir="$HOME/.lv2";  kind=LV2  ;;
+      *.clap) dest_dir="$HOME/.clap"; kind=CLAP ;;
+      *.vst3) dest_dir="$HOME/.vst3"; kind=VST3 ;;
+      *) continue ;;
+    esac
+    # Native hosts scan LV2/VST3 bundles as directories and CLAP as a single
+    # shared object; this also skips the inner *.vst3 of a bridged bundle,
+    # which is not a plugin in its own right.
+    if [[ ${entry,,} == *.clap ]]; then
+      [[ -f $entry ]] || continue
+    else
+      [[ -d $entry ]] || continue
+    fi
+    mkdir -p "$dest_dir"
+    dest="$dest_dir/$(basename "$entry")"
+    if [[ -e $dest ]]; then
+      # Keep going: one already-present format must not block the others.
+      warn "$kind plugin already installed: $dest (uninstall it first to replace)"
+      failed=$(( failed + 1 ))
+      continue
+    fi
+    if ! cp -a "$entry" "$dest"; then
+      warn "copy failed: $entry -> $dest"
+      failed=$(( failed + 1 ))
+      continue
+    fi
+    ok "$kind plugin installed: $(basename "$dest") -> $dest_dir"
+    # Register each copy in the log. This used to be MISSING, and it is not a
+    # cosmetic omission: every other install path calls state_register_install,
+    # so a plugin installed this way landed on disk and nowhere else, and the
+    # next launch offered it back as "found on disk but not tracked".
+    #
+    # The prefix is empty on purpose: a native bundle belongs to no wine
+    # prefix, and "" keeps "which prefix owns this" honest.
+    state_register_install "$(plugin_key "$dest")" "" "$dest"
+    printf '%s\n' "$dest"
+    installed=$(( installed + 1 ))
+  done
   [[ -n $cleanup_work ]] && rm -rf "$cleanup_work"
-  ok "$kind plugin installed: $(basename "$dest") -> $dest_dir"
-  # Register it in the log. This used to be MISSING, and it is not a cosmetic
-  # omission: every other install path calls state_register_install, so a plugin
-  # installed this way landed on disk and nowhere else. The next launch then
-  # reconciled the log against the filesystem, found the file had no log entry,
-  # and offered the plugin the user had JUST installed as "found on disk but not
-  # tracked" — asking them to adopt what they had only just installed.
-  #
-  # The prefix is empty on purpose: a native bundle is a directory that belongs
-  # to no wine prefix. state_register_install takes the prefix as the owning
-  # container, and putting "" in it keeps "which prefix owns this" honest
-  # instead of attributing a native plugin to whichever prefix happened to be
-  # default at the time.
-  state_register_install "$(plugin_key "$dest")" "" "$dest"
-  printf '%s\n' "$dest"
+  if (( installed == 0 )); then
+    err "no plugin installed from $src ($failed already present or unsupported)"
+    return 1
+  fi
+  return 0
 }
 
 # Non-destructive uninstall (same "never actually delete" spirit as
