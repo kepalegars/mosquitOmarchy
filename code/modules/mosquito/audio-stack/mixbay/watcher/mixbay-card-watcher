@@ -9,7 +9,8 @@
 # Behavior follows ~/.config/mosquitomixbay/ui.json:
 #   watcher_mode       always | only_open | off
 #   detect_cards       false → nothing is detected or logged
-#   notify_cards       false → detection still logs, but no connection notice
+#   notify_cards       false → Settings "Card connection notifications" off:
+#                               detection still logs, but no connection notice
 #   notify_disconnected false → no notice when an interface goes away
 #   notify_sticky      true  → notices stay until dismissed (6 s otherwise)
 #
@@ -98,6 +99,15 @@ notify_body(){
 send_notification(){
   local id="$1" display="$2" kind="$3" body headline glyph args=() exec=()
   local urgency=critical timeout
+  # Gate HERE as well as in announce(): the Move and other callers reach this
+  # function directly, so a switch off in Settings must silence every card
+  # notice, not just the ones from the PipeWire loop.
+  case $kind in
+    install|installed|update|unsupported)
+      [[ "$(pref notify_cards true)" == true ]] || return 0 ;;
+    disconnected)
+      [[ "$(pref notify_disconnected true)" == true ]] || return 0 ;;
+  esac
   timeout="$(notice_timeout)"
   body="$(notify_body "$kind" "$display")"
   headline="$display connected"
@@ -199,6 +209,9 @@ khz(){
 move_notice_disconnect(){
   move_installed || return 0
   local st switched prev cur state_file asked=0
+  # This notice sends through its own omarchy-notification-send call (it has
+  # the "Go back" action), so honour the switch here too.
+  [[ "$(pref notify_disconnected true)" == true ]] || return 0
   state_file="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/move-audio-state"
   grep -qx 'asked=1' "$state_file" 2>/dev/null && asked=1
   st=$("$MOVE_AUDIO" --status 2>/dev/null || printf '{}')
@@ -545,6 +558,17 @@ self_test(){
     printf '{"notify_sticky":true}\n' > "$ui_tmp"
     send_notification evo8 "$display" installed
     assert_notice Mixbay "$display connected" "Open UI & Use it|Use it|" 2 1
+    # Settings → "Card connection notifications" off (and disconnect off):
+    # every notice kind must stay silent, including direct callers such as
+    # the Move path. Gating only in announce() let those through.
+    printf '{"notify_sticky":true,"notify_cards":false,"notify_disconnected":false}\n' > "$ui_tmp"
+    : > "$stub"
+    send_notification evo8 "$display" install
+    send_notification evo8 "$display" installed
+    send_notification evo8 "$display" unsupported
+    send_notification evo8 "$display" disconnected
+    [[ ! -s $stub ]] || fail=1
+    printf '{"notify_sticky":true}\n' > "$ui_tmp"
     # Levels Guard: absent is silent, an installed clone with no bar entry is
     # partial, and the notice carries the two answer buttons.
     local lg_plugin="$LEVELS_PLUGIN" lg_helper="$LEVELS_HELPER" lg_shell="$SHELL_JSON"

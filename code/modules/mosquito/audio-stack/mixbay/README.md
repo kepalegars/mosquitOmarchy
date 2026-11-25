@@ -643,7 +643,7 @@ dans le graphe vivant.
   carte supportée branchée pendant que Mixbay est ouvert ouvre la même
   confirmation que la bibliothèque, en la nommant, quand son profil manque.
   Un profil simplement en retard de version ne déclenche pas ce prompt.
-- **Notify when an interface is connected** (actif par défaut) : le
+- **Card connection notifications** (actif par défaut) : le
   watcher installé par le setup envoie une notification `Mixbay` même quand
   la TUI est fermée. Une carte **non supportée** est aussi signalée, comme
   telle (`Not supported by Mixbay yet.`), sans proposition d'installation.
