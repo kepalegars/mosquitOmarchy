@@ -1182,7 +1182,7 @@ FIXES=(
   "1px-seam:Hair-thin transparent 1px line between the Omarchy bar and a window in borderless/no-gaps tiling — switch the blur to its legacy path (helps when blur is enabled)"
   "ableton-fullscreen:Ableton Live Full Screen is shifted/broken (content sits off where you click) — launches Live with WINE_WIN32_FULLSCREEN_CLASS=off (documented ableton-linux cure; drag-the-window alternative)"
   "bluetooth:Fix Bluetooth stutter/instability — MX Master freezing every second (BLE params Latency=0 / 6-7 ms + USB autosuspend off) and audio glitches (stop BlueZ AVDTP polling of paired speakers)"
-  "hyprland-autofocus:Disable every automatic Hyprland focus change — pointer follow, client activation, monitor move and new-window focus; only a click or a bind changes focus"
+  "hyprland-autofocus:Stop background apps from stealing Hyprland focus — the app you are using keeps it and its own dialogs still take it; the pointer still decides focus and focusing never moves it"
   "chromium-google-api-key:Stop Chromium's permanent 'Google API keys are missing' infobar in the browser and every --app webapp — a dummy key in ~/.config/environment.d (logout/login required; --remove restores)"
 )
 
