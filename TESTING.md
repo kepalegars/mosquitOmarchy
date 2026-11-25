@@ -304,10 +304,12 @@ did, with the same user-visible result.
       live inputs keep playing) and leaves the CONTROLS output mute alone;
       `m` again restores it. The load picker no longer offers `L` and no
       preset is applied when Mixbay starts.
-- [ ] Settings → **Card connection notifications** off: plugging a card
+- [ ] Settings → **Interface connection notifications** off: plugging a card
       (and the Move's direct notice path) sends no desktop notification even
       with `mixbay-card-watcher.service` running; turning it back on restores
-      the notices. Levels Guard repair notices are unaffected.
+      the notices. With **Keep notifications on screen** off, a connection
+      notice expires by itself (it must not be sent as `critical`, which
+      Omarchy pins forever). Levels Guard repair notices are unaffected.
 
 ## Ableton Move / Bitwig hardware
 

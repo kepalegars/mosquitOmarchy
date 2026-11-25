@@ -9,7 +9,8 @@
 # Behavior follows ~/.config/mosquitomixbay/ui.json:
 #   watcher_mode       always | only_open | off
 #   detect_cards       false → nothing is detected or logged
-#   notify_cards       false → Settings "Card connection notifications" off:
+#   notify_cards       false → Settings "Interface connection notifications"
+#                               off:
 #                               detection still logs, but no connection notice
 #   notify_disconnected false → no notice when an interface goes away
 #   notify_sticky      true  → notices stay until dismissed (6 s otherwise)
@@ -98,7 +99,11 @@ notify_body(){
 
 send_notification(){
   local id="$1" display="$2" kind="$3" body headline glyph args=() exec=()
-  local urgency=critical timeout
+  local urgency timeout
+  # Omarchy's shell pins every CRITICAL notification on screen, whatever -t
+  # the sender asks for. Card notices must be NORMAL to expire on their own;
+  # only "Keep notifications on screen" raises them to critical (sticky).
+  if [[ "$(pref notify_sticky false)" == true ]]; then urgency=critical; else urgency=normal; fi
   # Gate HERE as well as in announce(): the Move and other callers reach this
   # function directly, so a switch off in Settings must silence every card
   # notice, not just the ones from the PipeWire loop.
@@ -121,8 +126,6 @@ send_notification(){
     disconnected)
       headline=Mixbay
       glyph="$ICON_CARD_OFF"
-      # Informational: it is the same kind of notice as the others.
-      urgency=normal
       ;;
   esac
   if command -v omarchy-notification-send >/dev/null 2>&1; then
@@ -208,10 +211,12 @@ khz(){
 
 move_notice_disconnect(){
   move_installed || return 0
-  local st switched prev cur state_file asked=0
+  local st switched prev cur state_file asked=0 urgency=normal
   # This notice sends through its own omarchy-notification-send call (it has
-  # the "Go back" action), so honour the switch here too.
+  # the "Go back" action), so honour both the switch and the sticky setting
+  # here too — critical would pin it on screen forever.
   [[ "$(pref notify_disconnected true)" == true ]] || return 0
+  [[ "$(pref notify_sticky false)" == true ]] && urgency=critical
   state_file="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/move-audio-state"
   grep -qx 'asked=1' "$state_file" 2>/dev/null && asked=1
   st=$("$MOVE_AUDIO" --status 2>/dev/null || printf '{}')
@@ -228,7 +233,7 @@ move_notice_disconnect(){
     # One question per switch, not per unplug: an ignored offer leaves the pin
     # in place, and re-asking on every later unplug is nagging.
     printf 'asked=1\n' >> "$state_file"
-    omarchy-notification-send --app-name Mixbay -g "$ICON_CARD_OFF" -u critical \
+    omarchy-notification-send --app-name Mixbay -g "$ICON_CARD_OFF" -u "$urgency" \
       -t "$(notice_timeout)" \
       "Ableton Move disconnected" "Go back to $(khz "$prev")kHz?" \
       --action "Go back" "$MOVE_AUDIO" --revert >/dev/null 2>&1 || true
@@ -550,6 +555,10 @@ self_test(){
     display='Audient EVO 8'
     send_notification evo8 "$display" install
     assert_notice "$display connected" "No Mixbay profile installed." "Install it|" 1 0
+    # Omarchy pins CRITICAL toasts forever; a normal card notice must expire.
+    mapfile -t argv <"$stub"
+    [[ " ${argv[*]} " == *" normal "* ]] || fail=1
+    [[ " ${argv[*]} " == *" critical "* ]] && fail=1
     send_notification evo8 "$display" installed
     assert_notice Mixbay "$display connected" "Open UI & Use it|Use it|" 2 0
     send_notification evo8 "$display" disconnected
@@ -558,7 +567,9 @@ self_test(){
     printf '{"notify_sticky":true}\n' > "$ui_tmp"
     send_notification evo8 "$display" installed
     assert_notice Mixbay "$display connected" "Open UI & Use it|Use it|" 2 1
-    # Settings → "Card connection notifications" off (and disconnect off):
+    mapfile -t argv <"$stub"
+    [[ " ${argv[*]} " == *" critical "* ]] || fail=1
+    # Settings → "Interface connection notifications" off (and disconnect off):
     # every notice kind must stay silent, including direct callers such as
     # the Move path. Gating only in announce() let those through.
     printf '{"notify_sticky":true,"notify_cards":false,"notify_disconnected":false}\n' > "$ui_tmp"

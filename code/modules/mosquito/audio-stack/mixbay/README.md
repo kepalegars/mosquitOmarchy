@@ -643,17 +643,18 @@ dans le graphe vivant.
   carte supportée branchée pendant que Mixbay est ouvert ouvre la même
   confirmation que la bibliothèque, en la nommant, quand son profil manque.
   Un profil simplement en retard de version ne déclenche pas ce prompt.
-- **Card connection notifications** (actif par défaut) : le
+- **Interface connection notifications** (actif par défaut) : le
   watcher installé par le setup envoie une notification `Mixbay` même quand
   la TUI est fermée. Une carte **non supportée** est aussi signalée, comme
   telle (`Not supported by Mixbay yet.`), sans proposition d'installation.
   Le texte est le même que Mixbay soit ouvert ou non : titre
   `<carte> connected`, bouton `Install it` quand le profil manque, sinon
   `Open UI & Use it` (qui choisit la carte comme interface et ouvre l'UI
-  par défaut du profil). Toutes ces notifications sont critiques et sans
-  timeout : elles restent jusqu'à ce que l'utilisateur les ferme ou clique.
-  Le service systemd `mixbay-card-watcher.service` (user) reste actif entre
-  deux sessions.
+  par défaut du profil). Elles s'effacent seules après quelques secondes :
+  le shell Omarchy affiche les notifications **critiques** jusqu'à ce qu'on
+  les ferme, donc ces avis utilisent la priorité normale, sauf quand
+  **Keep notifications on screen** est activé. Le service systemd
+  `mixbay-card-watcher.service` (user) reste actif entre deux sessions.
 - **Notify when an interface is disconnected** (actif par défaut) : même
   watcher, pour le débranchement. Indépendant de l'option ci-dessus ; une
   carte retirée envoie `<carte> disconnected.` Le Move garde son action

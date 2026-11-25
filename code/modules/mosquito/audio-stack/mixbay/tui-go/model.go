@@ -725,7 +725,7 @@ func (m model) settingsItems() []tuikit.PickerItem {
 	// The watcher switch owns the two rows below it: off greys them and shows
 	// off, while their stored choices wait for the switch to come back.
 	detect := tuikit.PickerItem{Display: "Detect plugged cards: " + onOff(m.ui.detects()), Value: "detect_cards"}
-	notify := tuikit.PickerItem{Display: "Card connection notifications: " + onOff(m.ui.notifies()), Value: "notify_cards"}
+	notify := tuikit.PickerItem{Display: "Interface connection notifications: " + onOff(m.ui.notifies()), Value: "notify_cards"}
 	notifyGone := tuikit.PickerItem{Display: "Notify when an interface is disconnected: " + onOff(m.ui.notifiesDisconnected()), Value: "notify_disconnected"}
 	if m.ui.watcherOff() {
 		detect.Disabled = true
