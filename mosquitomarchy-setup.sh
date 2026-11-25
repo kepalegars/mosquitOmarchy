@@ -1184,6 +1184,7 @@ FIXES=(
   "bluetooth:Fix Bluetooth stutter/instability — MX Master freezing every second (BLE params Latency=0 / 6-7 ms + USB autosuspend off) and audio glitches (stop BlueZ AVDTP polling of paired speakers)"
   "hyprland-autofocus:Stop background apps from stealing Hyprland focus — the app you are using keeps it and its own dialogs still take it; the pointer still decides focus and focusing never moves it"
   "chromium-google-api-key:Stop Chromium's permanent 'Google API keys are missing' infobar in the browser and every --app webapp — a dummy key in ~/.config/environment.d (logout/login required; --remove restores)"
+  "reaper-cursors:REAPER's context cursors stopped changing when trimming/grabbing clips (glycin-based gdk-pixbuf cannot load .cur files) — install a local gdk-pixbuf 2.42 decoder scoped to reaper-launch; --remove restores"
 )
 
 # ── Two families, one mechanism ──────────────────────────────────────────────
@@ -1233,6 +1234,7 @@ fix_category(){
     amdgpu-compute-timeout) echo "Hardware" ;;
     nautilus-audio)     echo "Files & audio" ;;
     hyprland-autofocus) echo "Windows & input" ;;
+    reaper-cursors)     echo "Windows & input" ;;
     chromium-google-api-key) echo "Appearance" ;;
     *)                echo "Other" ;;
   esac
@@ -1250,6 +1252,7 @@ run_fix(){ # single fix by id
     bluetooth) bash "$SCRIPT_DIR/code/modules/Fixes/fix-bluetooth.sh" -y ;;
     hyprland-autofocus) bash "$SCRIPT_DIR/code/modules/Fixes/fix-hyprland-autofocus.sh" ;;
     chromium-google-api-key) bash "$SCRIPT_DIR/code/modules/Fixes/fix-chromium-google-api-key.sh" ;;
+    reaper-cursors) bash "$SCRIPT_DIR/code/modules/Fixes/fix-reaper-cursors.sh" -y ;;
     *) err "Unknown fix: $id"; return 1 ;;
   esac
 }

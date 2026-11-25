@@ -93,6 +93,15 @@ mosquitomarchy_daw_wrapper_points_at() {
 #
 # Silent, and optional on purpose: a missing reaper-ui-scale must not stop
 # REAPER from launching, so this is a plain "run it if it is there".
+# Export the local gdk-pixbuf 2.42 shim installed by fix-reaper-cursors, if
+# present. Scoped to REAPER's launcher: no other app inherits this library.
+mosquitomarchy_reaper_cursor_lib() {
+  local libdir="$HOME/.local/lib/reaper-cursors"
+  if [[ -f $libdir/libgdk_pixbuf-2.0.so.0 ]]; then
+    export LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  fi
+}
+
 mosquitomarchy_daw_prelaunch() {
   case "$1" in
     reaper)
@@ -102,6 +111,10 @@ mosquitomarchy_daw_prelaunch() {
         && "$HOME/.local/bin/reaper-theme-sync" --quiet || true
       [[ -x "$HOME/.local/bin/reaper-ui-scale" ]] \
         && "$HOME/.local/bin/reaper-ui-scale" --quiet || true
+      # fix-reaper-cursors: glycin-based gdk-pixbuf cannot decode REAPER's .cur
+      # cursors, so they never change. A locally installed 2.42 lib can; only
+      # export it when the fix actually installed it.
+      mosquitomarchy_reaper_cursor_lib
       ;;
   esac
   return 0
@@ -140,9 +153,15 @@ mosquitomarchy_daw_prelaunch() {
         && "\$HOME/.local/bin/reaper-theme-sync" --quiet || true
       [ -x "\$HOME/.local/bin/reaper-ui-scale" ] \
         && "\$HOME/.local/bin/reaper-ui-scale" --quiet || true
+      mosquitomarchy_reaper_cursor_lib
       ;;
   esac
   return 0
+}
+mosquitomarchy_reaper_cursor_lib() {
+  local libdir="\$HOME/.local/lib/reaper-cursors"
+  [ -f "\$libdir/libgdk_pixbuf-2.0.so.0" ] \
+    && export LD_LIBRARY_PATH="\$libdir\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 }
 PRELAUNCH="$pre"
 if [ -n "\$PRELAUNCH" ]; then
@@ -183,7 +202,8 @@ wrapper_has_prelaunch() {
   [[ -f $w ]] || return 1
   case "$app" in
     reaper) grep -q 'reaper-theme-sync' "$w" 2>/dev/null \
-              && grep -q 'reaper-ui-scale' "$w" 2>/dev/null ;;
+              && grep -q 'reaper-ui-scale' "$w" 2>/dev/null \
+              && grep -q 'mosquitomarchy_reaper_cursor_lib' "$w" 2>/dev/null ;;
     *)      return 0 ;;
   esac
 }

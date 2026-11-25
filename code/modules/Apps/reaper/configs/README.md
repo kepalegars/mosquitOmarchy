@@ -45,12 +45,16 @@ plugins.
 
 ## SWS / ReaPack add-ons
 
-The config action downloads ReaPack and SWS from GitHub Releases for the
-system's architecture (x86_64, aarch64, armv7l or i686). To use a specific
-version instead, drop a compatible file in `~/Downloads`: a bare
+On Arch, the config action installs the **distro packages** `reapack` and
+`sws` — important: the upstream ReaPack binary needs `libxml2.so.2`, which
+current Arch no longer ships, so it silently fails to load. The packaged build
+links against `libxml2.so.16`. On other systems it falls back to GitHub
+Releases. To use a specific version instead, drop a compatible file in
+`~/Downloads`: a bare
 `reaper_*-$arch.so`, a `sws-*-Linux-$arch*.tar.xz`, or a `.reaperpkg`/`.zip`.
 Only the `.so` matching this system is extracted and copied to
-`UserPlugins/`. Other useful add-ons are separate:
+`UserPlugins/`; every candidate is checked with `ldd` and a binary with
+missing libraries is refused. Other useful add-ons are separate:
 
 | Add-on | What it adds | Link |
 | --- | --- | --- |

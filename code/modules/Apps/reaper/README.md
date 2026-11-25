@@ -55,9 +55,10 @@ in the shortcut bar). It offers two fonts and, by default, uses Omarchy's curren
 system font:
 
 - installs LSP plugins (VST2/VST3/CLAP/LV2) when they are missing;
-- downloads ReaPack + SWS from GitHub Releases for this system's architecture,
-  or copies a compatible file the user put in `~/Downloads` (`.so`, Linux
-  `.tar.xz` or `.reaperpkg`, any version);
+- installs ReaPack + SWS from the Arch packages `reapack`/`sws` (the upstream
+  ReaPack build requires the obsolete `libxml2.so.2` and will not load on
+  current Arch), with a GitHub/Downloads fallback on other systems and an
+  `ldd` check so a broken `.so` is never installed;
 - installs the **Reapertips** theme (dark or light, following Omarchy),
   recoloured to Omarchy's accent;
 - installs the purple toolbar icons (100/150/200%) and the REAPER 7 splash;
