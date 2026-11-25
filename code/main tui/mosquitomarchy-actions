@@ -245,6 +245,8 @@ fix_applied(){
       grep -q -- "mosquitomarchy-1px-seam" "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/looknfeel.lua" 2>/dev/null ;;
     hyprland-autofocus)
       grep -qF -- "mosquito-no-autofocus" "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua" 2>/dev/null ;;
+    chromium-google-api-key)
+      grep -qF -- "mosquitomarchy-chromium-google-api-key" "${XDG_CONFIG_HOME:-$HOME/.config}/environment.d/90-chromium-google-api-key.conf" 2>/dev/null ;;
     *) return 1 ;;
   esac
 }
@@ -1431,7 +1433,7 @@ _uninstall_tree(){
   # never applied them, with nothing meaningful for removal to do.
   local -a applied_fixes=()
   local fid
-  for fid in hyprland-crash 1px-seam hyprland-autofocus; do
+  for fid in hyprland-crash 1px-seam hyprland-autofocus chromium-google-api-key; do
     fix_applied "$fid" && applied_fixes+=("$fid")
   done
   if ((${#applied_fixes[@]})); then
@@ -2897,6 +2899,7 @@ cmd_uninstall(){
         hyprland-crash)      flag=--remove;    script=code/modules/Fixes/fix-hyprland-crash.sh ;;
         1px-seam)            flag=--remove;    script=code/modules/Fixes/fix-1px-seam.sh ;;
         hyprland-autofocus)  flag=--remove;    script=code/modules/Fixes/fix-hyprland-autofocus.sh ;;
+        chromium-google-api-key) flag=--remove; script=code/modules/Fixes/fix-chromium-google-api-key.sh ;;
         *) warn "Fix '$fid' is not removable — skipped."; continue ;;
       esac
       if [[ -f "$SCRIPT_DIR/$script" ]] && bash "$SCRIPT_DIR/$script" "$flag" -y; then

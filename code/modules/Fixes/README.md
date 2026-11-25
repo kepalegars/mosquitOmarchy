@@ -21,6 +21,7 @@ should. Preferences live next door, in `code/modules/Tweaks/` (see its README).
 | `ableton-fullscreen` | `fix-ableton-fullscreen.sh` | Ableton's Full Screen mode is shifted, so the content sits off where you click. Launches Live with `WINE_WIN32_FULLSCREEN_CLASS=off`. `--remove` reverts. |
 | `bluetooth` | `fix-bluetooth.sh` | Bluetooth stutter/instability: MX Master micro-freezes (BLE `Latency=44` → `0`, interval 6–7; USB autosuspend off on the controller **and** its parent hub) and A2DP reconnect spam (`ReconnectUUIDs=` + `ReconnectAttempts=0`). Writes ConnectionParameters **before** restarting bluetoothd so the daemon actually loads them. Also auto-invoked by the `mx-master` module when the mouse is on Bluetooth. `--remove` reverts. |
 | `hyprland-autofocus` | `fix-hyprland-autofocus.sh` | Disables every automatic focus change: pointer follow (`follow_mouse=0`), client activation, monitor focus on pointer move, fallback focus, and initial focus for new windows. Only a click or a bind changes focus. `--remove` restores the previous behaviour. |
+| `chromium-google-api-key` | `fix-chromium-google-api-key.sh` | Omarchy's unbranded Chromium shows a permanent "Google API keys are missing" infobar in the browser and in every `--app` webapp. Sets a dummy `GOOGLE_API_KEY` in `~/.config/environment.d/` so Chromium considers a key configured; no Google service is actually enabled. Logout/login is required for GUI apps to inherit it. `--remove` restores the previous state. |
 
 ## Modules
 

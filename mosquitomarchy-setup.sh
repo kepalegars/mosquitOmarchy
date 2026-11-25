@@ -1183,6 +1183,7 @@ FIXES=(
   "ableton-fullscreen:Ableton Live Full Screen is shifted/broken (content sits off where you click) — launches Live with WINE_WIN32_FULLSCREEN_CLASS=off (documented ableton-linux cure; drag-the-window alternative)"
   "bluetooth:Fix Bluetooth stutter/instability — MX Master freezing every second (BLE params Latency=0 / 6-7 ms + USB autosuspend off) and audio glitches (stop BlueZ AVDTP polling of paired speakers)"
   "hyprland-autofocus:Disable every automatic Hyprland focus change — pointer follow, client activation, monitor move and new-window focus; only a click or a bind changes focus"
+  "chromium-google-api-key:Stop Chromium's permanent 'Google API keys are missing' infobar in the browser and every --app webapp — a dummy key in ~/.config/environment.d (logout/login required; --remove restores)"
 )
 
 # ── Two families, one mechanism ──────────────────────────────────────────────
@@ -1232,6 +1233,7 @@ fix_category(){
     amdgpu-compute-timeout) echo "Hardware" ;;
     nautilus-audio)     echo "Files & audio" ;;
     hyprland-autofocus) echo "Windows & input" ;;
+    chromium-google-api-key) echo "Appearance" ;;
     *)                echo "Other" ;;
   esac
 }
@@ -1247,6 +1249,7 @@ run_fix(){ # single fix by id
     1px-seam) bash "$SCRIPT_DIR/code/modules/Fixes/fix-1px-seam.sh" ;;
     bluetooth) bash "$SCRIPT_DIR/code/modules/Fixes/fix-bluetooth.sh" -y ;;
     hyprland-autofocus) bash "$SCRIPT_DIR/code/modules/Fixes/fix-hyprland-autofocus.sh" ;;
+    chromium-google-api-key) bash "$SCRIPT_DIR/code/modules/Fixes/fix-chromium-google-api-key.sh" ;;
     *) err "Unknown fix: $id"; return 1 ;;
   esac
 }
