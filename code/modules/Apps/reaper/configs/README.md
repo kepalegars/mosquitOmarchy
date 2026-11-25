@@ -2,28 +2,28 @@
 
 ## Theme archive
 
-Download the free **Reapertips Theme** from
+Download the latest **Reapertips Theme** from
 <https://www.reapertips.com/products/reapertips-theme> and drop
-`Reapertips Theme v*.zip` in `~/Downloads`, then run `./bootstrap.sh` once:
-it moves the newest archive here and Setup ▸ REAPER ▸ **C** picks it up.
+`Reapertips Theme v*.zip` in `~/Downloads`. Setup ▸ REAPER ▸ **P** copies the
+newest one here automatically — no bootstrap step. That zip is required for the
+complete config (theme + splash + toolbar icons).
 
-Like every other archive this repo does not ship (Ableton, DaVinci, Spektrafilm,
-Guitar Pro, Bitwig…), download it **before** running `bootstrap.sh`: the
-bootstrap files it into the repo in one pass, and the matching Setup row is
-usable immediately. Downloading it later works too — just re-run the bootstrap.
-
-The zip stays local and is git-ignored; it is not redistributed with the repo.
+Like the other archives this repo does not ship, downloading it before the
+bootstrap is the smoothest path, but P finds it in Downloads whenever you add
+it. The zip stays local and is git-ignored; it is not redistributed.
 
 ## `custom/` — the config this repo ships
 
 `custom/` mirrors REAPER's resource path (`~/.config/REAPER`) and is applied
-over it by Setup ▸ REAPER ▸ **C**:
+over it by Setup ▸ REAPER ▸ **P**:
 
 ```
-custom/Scripts/...       -> ~/.config/REAPER/Scripts/...
-custom/Effects/...       -> ~/.config/REAPER/Effects/...
-custom/UserPlugins/...   -> ~/.config/REAPER/UserPlugins/...
-custom/reaper.ini        -> ~/.config/REAPER/reaper.ini
+custom/Scripts/...             -> ~/.config/REAPER/Scripts/...
+custom/Effects/...             -> ~/.config/REAPER/Effects/...
+custom/UserPlugins/...         -> ~/.config/REAPER/UserPlugins/...
+custom/reaper.ini              -> ~/.config/REAPER/reaper.ini
+custom/reaper-themeconfig.ini  -> ~/.config/REAPER/reaper-themeconfig.ini
+custom/reaper-extstate.ini     -> ~/.config/REAPER/reaper-extstate.ini
 ```
 
 The layout is the one REAPER itself uses, so a file can be dropped at the
@@ -38,15 +38,19 @@ included with the rest of the repo on GitHub — add the files under
 account tokens, huge samples) does not belong here.
 
 Files the install overwrites are backed up first to
-`code/modules/Apps/reaper/backups/<date>-install/`. Setup ▸ Uninstall ▸ **C**
+`code/modules/Apps/reaper/backups/<date>-install/`. Setup ▸ Uninstall ▸ **P**
 restores the REAPER config and removes the theme, splash, window colours and
 toolbar icons. It never removes scripts, plugins, JSFX, ReaPacks, SWS or LSP
 plugins.
 
 ## SWS / ReaPack add-ons
 
-These are downloaded separately (not shipped, same as the theme archive). Install
-them into the tree above so they travel with the repo:
+The config action downloads ReaPack and SWS from GitHub Releases for the
+system's architecture (x86_64, aarch64, armv7l or i686). To use a specific
+version instead, drop a compatible file in `~/Downloads`: a bare
+`reaper_*-$arch.so`, a `sws-*-Linux-$arch*.tar.xz`, or a `.reaperpkg`/`.zip`.
+Only the `.so` matching this system is extracted and copied to
+`UserPlugins/`. Other useful add-ons are separate:
 
 | Add-on | What it adds | Link |
 | --- | --- | --- |

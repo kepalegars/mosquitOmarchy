@@ -4319,6 +4319,9 @@ case "$sub" in
   # same script backwards.
   reaper-custom-config) bash "$REAPER_DIR/setup-reaper-config.sh" "--fonts=${1:-system}" ;;
   reaper-custom-config-revert) bash "$REAPER_DIR/setup-reaper-config.sh" --revert ;;
+  # Read-only: can ReaPack + SWS be obtained (Downloads or GitHub)? The P prompt
+  # only mentions them when the answer is "missing".
+  reaper-addons-status) bash "$REAPER_DIR/reaper-addons.bash" status ;;
   theme-images)              cmd_theme_images "${1:-}" ;;
   theme-default-dir)         cmd_theme_default_dir "${1:-get}" "${2:-}" ;;
   theme-pick)                cmd_theme_pick "${1:-file}" "${2:-}" ;;

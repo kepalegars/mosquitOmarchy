@@ -25,7 +25,7 @@ func TestPOnReaperOpensConfigPrompt(t *testing.T) {
 	if m.top() != scrConfirm || m.pendingAction != "reaper-custom-config" {
 		t.Fatalf("P on reaper did not open the config confirm: top=%v action=%q", m.top(), m.pendingAction)
 	}
-	for _, want := range []string{"REPLACES THE CURRENT CONFIG", "-install/"} {
+	for _, want := range []string{"REPLACES THE CURRENT CONFIG", "-install/", "THEME FILE", "Downloads", "bootstrap"} {
 		if !strings.Contains(m.pendingMsg, want) {
 			t.Fatalf("REAPER config prompt is missing %q: %q", want, m.pendingMsg)
 		}
@@ -82,5 +82,36 @@ func TestPOnReaperInUninstallRestores(t *testing.T) {
 	}
 	if res := cmd().(tuikit.ConfirmResultMsg); res.Canceled || !res.Yes {
 		t.Fatalf("default restore answer = %+v, want Yes", res)
+	}
+}
+
+// TestReaperPromptScrollsAndWarns: the long P prompt lives in a height-capped
+// scrollable list, and the red warning only appears when neither Downloads nor
+// the network can provide ReaPack + SWS.
+func TestReaperPromptScrollsAndWarns(t *testing.T) {
+	m := flatSetup()
+	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "reaper"))
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	m, _ = m.update(reaperAddonsStatusMsg{missing: false})
+
+	if len(m.confirm.List) < 2 {
+		t.Fatal("REAPER prompt has no detail lines to scroll")
+	}
+	from, to := m.confirm.ListBoundsForTest()
+	if to-from >= len(m.confirm.List) {
+		t.Fatalf("prompt list is not capped: %d of %d rows visible", to-from, len(m.confirm.List))
+	}
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "scroll list") {
+		t.Fatalf("scrollable prompt does not advertise ↑/↓:\n%s", view)
+	}
+	if strings.Contains(ansi.Strip(m.View()), reaperAddonsMissingText) {
+		t.Fatal("add-ons warning shown even though they are available")
+	}
+
+	m, _ = m.update(reaperAddonsStatusMsg{missing: true})
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "sws & reapack are neither in downloads") ||
+		!strings.Contains(view, "sws-2.14.0.7-Linux-x86_64.tar.xz") {
+		t.Fatalf("missing add-ons warning is not at the top of the prompt:\n%s", view)
 	}
 }

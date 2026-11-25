@@ -55,6 +55,9 @@ in the shortcut bar). It offers two fonts and, by default, uses Omarchy's curren
 system font:
 
 - installs LSP plugins (VST2/VST3/CLAP/LV2) when they are missing;
+- downloads ReaPack + SWS from GitHub Releases for this system's architecture,
+  or copies a compatible file the user put in `~/Downloads` (`.so`, Linux
+  `.tar.xz` or `.reaperpkg`, any version);
 - installs the **Reapertips** theme (dark or light, following Omarchy),
   recoloured to Omarchy's accent;
 - installs the purple toolbar icons (100/150/200%) and the REAPER 7 splash;
@@ -63,7 +66,7 @@ system font:
 
 In **Uninstall**, the same key shows `P restore config` and undoes the visual
 part: the REAPER config (including the theme selection) comes back as it was
-when C was run in Setup, and the generated theme, purple toolbar icons, splash
+when P was run in Setup, and the generated theme, purple toolbar icons, splash
 and window colours are removed. Scripts, plugins, JSFX, ReaPacks, SWS and LSP
 plugins are **never** removed by this.
 
@@ -76,29 +79,36 @@ repos, the theme is still installed.
 
 ### Theme source
 
-Download the free theme from
-<https://www.reapertips.com/products/reapertips-theme>, drop
-`Reapertips Theme v*.zip` in `~/Downloads`, and run `./bootstrap.sh` once: it
-moves the newest archive into `code/modules/Apps/reaper/configs/` (never
-overwriting). The installer picks the newest archive there, reads the Purple and
-Light variations, and works only from what it extracts — no hardcoded
-external-disk path.
+Download the latest free theme from
+<https://www.reapertips.com/products/reapertips-theme> and drop
+`Reapertips Theme v*.zip` in `~/Downloads`. The config action copies the newest
+archive into `code/modules/Apps/reaper/configs/` itself — no bootstrap step, no
+prompt. It can also be placed in that folder directly. The zip is git-ignored.
 
-As with every other archive this repo does not ship (Ableton, DaVinci,
-Spektrafilm, Guitar Pro, Bitwig…), download it **before** the bootstrap so it is
-filed away in the same pass and the REAPER config works immediately. Downloading
-it later is fine, just re-run the bootstrap. The archive is git-ignored.
+As with the other archives this repo does not ship (Ableton, DaVinci,
+Spektrafilm, Guitar Pro, Bitwig…), downloading it before the first bootstrap is
+still the smoothest path; downloading it later works too, P finds it in
+Downloads. The installer reads the Purple and Light variations from the archive
+and works only from what it extracts — no hardcoded external-disk path.
 
 ### Custom config
 
 `configs/custom/` mirrors the REAPER resource path (`~/.config/REAPER`), so:
 
 ```
-configs/custom/Scripts/...        -> ~/.config/REAPER/Scripts/...
-configs/custom/Effects/...        -> ~/.config/REAPER/Effects/...
-configs/custom/UserPlugins/...    -> ~/.config/REAPER/UserPlugins/...
-configs/custom/reaper.ini         -> ~/.config/REAPER/reaper.ini
+configs/custom/Scripts/...             -> ~/.config/REAPER/Scripts/...
+configs/custom/Effects/...             -> ~/.config/REAPER/Effects/...
+configs/custom/UserPlugins/...         -> ~/.config/REAPER/UserPlugins/...
+configs/custom/reaper.ini              -> ~/.config/REAPER/reaper.ini
+configs/custom/reaper-themeconfig.ini  -> ~/.config/REAPER/reaper-themeconfig.ini
+configs/custom/reaper-extstate.ini     -> ~/.config/REAPER/reaper-extstate.ini
 ```
+
+The three `.ini` files carry the global settings, the Reapertips Theme Adjuster
+colours/layout and the Default 6.0 / 7.0 Theme Adjuster window state. The
+installer writes `lastthemefn5`, `splash` and `splashimage` itself, into the
+`[reaper]` section of `reaper.ini` — that is what makes the REAPER 7 splash
+actually show instead of REAPER's stock one.
 
 `Scripts/`, `Effects/` and `UserPlugins/` are there for ReaScripts, JSFX and
 native extensions (SWS, ReaPack). `configs/README.md` lists the recommended SWS /

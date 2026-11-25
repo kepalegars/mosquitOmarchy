@@ -7,6 +7,7 @@
 #
 # What an install does, all taken from the newest Reapertips archive in ./configs:
 #   • LSP plugins (EQ, dynamics, limiter) from the Arch repos, when missing;
+#   • ReaPack + SWS, downloaded from GitHub Releases or copied from ~/Downloads;
 #   • the Omarchy-generated theme: the Reapertips dark or light base recoloured
 #     to Omarchy's accent and set in its system font (reaper-theme-sync owns
 #     that part, also on every launch);
@@ -85,12 +86,21 @@ track_file() {
   fi
 }
 
-set_ini() { # set_ini <key> <value>  (reaper.ini, last occurrence wins)
+set_ini() { # set_ini <key> <value>  (inside [reaper], one copy only)
+  # reaper.ini is section-scoped. Appending a key at EOF made REAPER ignore it:
+  # it kept its own empty splashimage= in [reaper] and showed the stock splash.
   local ini="$RES/reaper.ini" key="$1" val="$2"
   [[ -f $ini ]] || return 0
-  grep -q "^$key=" "$ini" \
-    && sed -i "s|^$key=.*|$key=$val|" "$ini" \
-    || printf '%s=%s\n' "$key" "$val" >>"$ini"
+  awk -v k="$key" -v v="$key=$val" '
+    BEGIN { in_reaper = 0; seen = 0 }
+    /^\[reaper\][[:space:]]*$/ {
+      print; print v; in_reaper = 1; seen = 1; next
+    }
+    /^\[/ { in_reaper = 0 }
+    index($0, k "=") == 1 { next }
+    { print }
+    END { if (!seen) print v }
+  ' "$ini" >"$ini.mosq-tmp" && cat "$ini.mosq-tmp" >"$ini" && rm -f "$ini.mosq-tmp"
 }
 
 del_ini() { # del_ini <key>
@@ -185,11 +195,22 @@ fi
 
 shopt -s nullglob
 archives=("$CONFIGS"/[Rr]eapertips*Theme*.zip)
+# The archive is not shipped: pick the newest one straight out of ~/Downloads
+# and file it here. No bootstrap step, no prompt.
+if (( ${#archives[@]} == 0 )); then
+  downloaded=("$HOME"/Downloads/[Rr]eapertips*Theme*.zip)
+  if (( ${#downloaded[@]} )); then
+    newest="$(printf '%s\n' "${downloaded[@]}" | sort -V | tail -1)"
+    mkdir -p "$CONFIGS"
+    cp -f -- "$newest" "$CONFIGS/"
+    echo "Copied theme archive from Downloads: $(basename "$newest")"
+    archives=("$CONFIGS"/[Rr]eapertips*Theme*.zip)
+  fi
+fi
 shopt -u nullglob
 if (( ${#archives[@]} == 0 )); then
-  echo "No Reapertips theme archive in $CONFIGS" >&2
-  echo "Drop 'Reapertips Theme v*.zip' in ~/Downloads and run ./bootstrap.sh," >&2
-  echo "or copy it into $CONFIGS yourself." >&2
+  echo "No Reapertips theme archive found." >&2
+  echo "Put 'Reapertips Theme v*.zip' in ~/Downloads (or in $CONFIGS) and retry." >&2
   exit 1
 fi
 ARCHIVE="$(printf '%s\n' "${archives[@]}" | sort -V | tail -1)"
@@ -206,7 +227,12 @@ THEME_LIGHT="$(find "$TMP" -type f -path '*/02_Theme/Theme Variations/*– Light
 FONTDIR="$(find "$TMP" -type d -path '*/01_Install these fonts' -print -quit)"
 TOOLBAR="$(find "$TMP" -type d -path '*/04_Toolbar Icons/other colors/purple' -print -quit)"
 COLORTHEME="$(find "$TMP" -type f -path '*/03_Extras/Linux Colortheme/libSwell-user.colortheme' -print -quit)"
-SPLASH="$(find "$TMP" -type f -path '*/03_Extras/REAPER 7 Splash Screens/Mac/Reapertips_Splash-01.png' -print -quit)"
+# The small Mac splash from 03_Extras is the one used (the full-size one
+# dominates a 1080p window). Fall back to the full version if it is absent.
+SPLASH="$(find "$TMP" -type f -path '*/03_Extras/REAPER 7 Splash Screens/Mac/Reapertips_Splash-01_small.png' -print -quit)"
+[[ -n $SPLASH ]] || SPLASH="$(find "$TMP" -type f -name Reapertips_Splash-01_small.png -print -quit)"
+[[ -n $SPLASH ]] || SPLASH="$(find "$TMP" -type f -path '*/03_Extras/REAPER 7 Splash Screens/Mac/Reapertips_Splash-01.png' -print -quit)"
+[[ -n $SPLASH ]] || SPLASH="$(find "$TMP" -type f -name Reapertips_Splash-01.png -print -quit)"
 
 mkdir -p "$STATE" "$RES/ColorThemes" "$RES/Data/toolbar_icons/150" "$RES/Data/toolbar_icons/200" "$HOME/.local/bin" "$BACKUP_ROOT"
 
@@ -214,7 +240,7 @@ mkdir -p "$STATE" "$RES/ColorThemes" "$RES/Data/toolbar_icons/150" "$RES/Data/to
 # whole, before the custom config or any theme setting can change it.
 track_file "$RES/reaper.ini"
 
-echo "== 1/6 LSP plugins =="
+echo "== 1/7 LSP plugins =="
 # Non-fatal: the theme is the point of this action, and pacman can be offline.
 if mq_sudo pacman -S --needed --noconfirm \
     lsp-plugins lsp-plugins-clap lsp-plugins-vst3 lsp-plugins-vst lsp-plugins-lv2; then
@@ -223,7 +249,12 @@ else
   echo "WARNING: LSP plugins could not be installed (offline?). The theme still goes in." >&2
 fi
 
-echo "== 2/6 Fonts ($FONTS) =="
+echo "== 2/7 ReaPack + SWS ="
+# Both come from GitHub Releases; a compatible file in ~/Downloads wins
+# so the user can pick a version. Non-fatal, like the LSP step.
+bash "$HERE/reaper-addons.bash" install "$RES/UserPlugins" || true
+
+echo "== 3/7 Fonts ($FONTS) =="
 if [[ $FONTS == reapertips && -d $FONTDIR ]]; then
   mkdir -p "$HOME/.local/share/fonts"
   for f in "$FONTDIR"/*.ttf; do
@@ -238,7 +269,9 @@ else
   echo "Using Omarchy's system font (detected by reaper-theme-sync)."
 fi
 
-echo "== 3/6 Custom config (backup first) =="
+echo "== 4/7 Custom config (backup first) =="
+echo "The newest Reapertips Theme v*.zip in ~/Downloads is copied into $CONFIGS"
+echo "automatically — no bootstrap needed. It is not shipped with the repo."
 CUSTOM="$CONFIGS/custom"
 if [[ -d $CUSTOM ]]; then
   applied=0
@@ -258,7 +291,7 @@ else
   echo "No configs/custom/ folder — theme assets only."
 fi
 
-echo "== 4/6 Theme (dark/light) + Linux window colours =="
+echo "== 5/7 Theme (dark/light) + Linux window colours =="
 mkdir -p "$BK"
 write_info "$BK" install
 cp -f -- "$THEME_DARK" "$STATE/reapertips-base-dark.ReaperThemeZip"
@@ -280,7 +313,7 @@ source "$HERE/../../../lib/wine-runtime-daw.bash"
 mosquitomarchy_apply_daw_wine_runtime quiet || true
 echo "Theme: $TARGET"
 
-echo "== 5/6 Toolbar icons + splash =="
+echo "== 6/7 Toolbar icons + splash =="
 if [[ -d $TOOLBAR ]]; then
   for f in "$TOOLBAR"/*; do
     [[ -f $f ]] || continue
@@ -305,7 +338,7 @@ if [[ -f $SPLASH ]]; then
   echo "Splash: $RES/splash.png"
 fi
 
-echo "== 6/6 REAPER settings =="
+echo "== 7/7 REAPER settings =="
 mkdir -p "$RES"
 touch "$RES/reaper.ini"
 set_ini lastthemefn5 "$TARGET"

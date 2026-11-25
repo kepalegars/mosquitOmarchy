@@ -19,16 +19,65 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/gui-run.bash"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/elevate.bash"  # mq_sudo: native pkexec prompt when not root
 set -euo pipefail
 
-echo "== 1/5 Packages (reaper) =="
-mq_sudo pacman -S --needed --noconfirm reaper
+echo "== 1/6 Packages (reaper) =="
+# Source of truth: https://archlinux.org/packages/extra/x86_64/reaper/ (Arch's
+# official "extra" package, not an AUR build).
+#
+# Two traps, both seen in the wild:
+#  1. the configured Omarchy mirror lags the website (it served 7.82-1 while
+#     the page published 7.86-1), so `pacman -Sy && -S --needed` kept finding
+#     an "update" that was actually a DOWNGRADE;
+#  2. pacman DOES downgrade when the installed version is newer than the one in
+#     the synced DB. So never call -S on an already-installed REAPER here.
+# Read the published version, compare with pacman's own vercmp, and only ever
+# install a NEWER package (from the Arch archive, which has the published one).
+latest=""
+if command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+  latest="$(curl -fsSL --max-time 20 https://archlinux.org/packages/extra/x86_64/reaper/json/ \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%s-%s" % (d["pkgver"], d["pkgrel"]))' 2>/dev/null || true)"
+fi
+installed="$(pacman -Q reaper 2>/dev/null | awk '{print $2}' || true)"
+if [[ -z $installed ]]; then
+  cmp=-1
+elif command -v vercmp >/dev/null 2>&1; then
+  cmp="$(vercmp "$installed" "$latest" 2>/dev/null || echo 2)"
+else
+  cmp="$(printf '%s\n%s\n' "$installed" "$latest" | sort -V | head -1)"
+  [[ $cmp == "$installed" ]] && cmp=-1 || cmp=1
+  [[ $installed == "$latest" ]] && cmp=0
+fi
 
+if [[ $cmp == 0 ]]; then
+  echo "reaper $installed is the published extra version — nothing to do."
+elif [[ $cmp == 1 ]]; then
+  echo "reaper $installed is newer than the configured mirror's ${latest:-unknown}: keeping it."
+elif [[ $(uname -m) == x86_64 && -n $latest ]]; then
+  pkg="reaper-$latest-x86_64.pkg.tar.zst"
+  tmp="$(mktemp -d)"
+  if curl -fsSL --max-time 300 -o "$tmp/$pkg" "https://archive.archlinux.org/packages/r/reaper/$pkg" \
+     && curl -fsSL --max-time 60 -o "$tmp/$pkg.sig" "https://archive.archlinux.org/packages/r/reaper/$pkg.sig" \
+     && [[ -s $tmp/$pkg ]]; then
+    echo "Installing the published extra package: $pkg"
+    mq_sudo pacman -U --noconfirm "$tmp/$pkg"
+  else
+    echo "WARNING: $pkg unavailable; leaving reaper ${installed:-not installed} alone." >&2
+  fi
+  rm -rf "$tmp"
+elif [[ -z $installed ]]; then
+  # No published version known: a fresh install from the configured mirror is
+  # still safe (there is nothing to downgrade).
+  mq_sudo pacman -Sy
+  mq_sudo pacman -S --needed --noconfirm reaper
+else
+  echo "WARNING: no published version available for $(uname -m); keeping reaper $installed." >&2
+fi
 BIN=""
 for c in /usr/lib/REAPER/reaper /opt/REAPER/reaper; do
   [ -x "$c" ] && BIN="$c" && break
 done
 [ -z "$BIN" ] && { echo "REAPER binary not found"; exit 1; }
 
-echo "== 2/5 Launch wrapper =="
+echo "== 2/6 Launch wrapper =="
 mkdir -p "$HOME/.local/bin"
 # The wrapper MUST put Ableton's patched wine runtime (d2d1-nspa) first in PATH:
 # REAPER resolves `wine` from PATH, and the system wine-staging has no working
@@ -46,7 +95,7 @@ if ! mosquitomarchy_apply_daw_wine_runtime; then
   echo "   crash on open. Run the Ableton setup, or code/lib/daw-wine-runtime-install.sh." >&2
 fi
 
-echo "== 3/5 Application shortcut =="
+echo "== 3/6 Application shortcut =="
 mkdir -p "$HOME/.local/share/applications"
 DESK="$HOME/.local/share/applications/cockos-reaper.desktop"
 SRC=""

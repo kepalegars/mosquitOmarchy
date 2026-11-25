@@ -14,6 +14,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
@@ -1799,6 +1800,16 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			return m, m.refetchTree()
 		}
+		return m, nil
+
+	case reaperAddonsStatusMsg:
+		// The P prompt only mentions ReaPack/SWS when they cannot be obtained.
+		// The check is async so opening the prompt never waits on the network.
+		if msg.err != nil || m.top() != scrConfirm || m.pendingAction != "reaper-custom-config" {
+			return m, nil
+		}
+		m.pendingMsg = reaperConfigPrompt(msg.missing)
+		m.confirm = m.reaperConfirm(msg.missing)
 		return m, nil
 
 	case missingAssetsMsg:
@@ -3879,36 +3890,77 @@ func (m model) confirmMoveWineRevert() (model, tea.Cmd) {
 	return m, nil
 }
 
-// reaperConfigPrompt says what the P action installs and, above all, that it
-// replaces the current REAPER configuration. The backup path is stated because
-// the user must be able to recover without reading the script.
-func reaperConfigPrompt() string {
-	return "Install the Reapertips theme and the custom REAPER config?\n\n" +
-		"WHAT IT CHANGES\n" +
-		" • installs the Reapertips theme (dark or light), its purple toolbar\n" +
-		"   icons, the REAPER 7 splash screen and the Linux window colours;\n" +
-		" • copies configs/custom/ over the REAPER resource path, when that\n" +
-		"   folder exists (scripts, plugins, settings — whatever you put there);\n" +
-		" • uses Omarchy's accent colour and follows it on later launches;\n" +
-		" • follows Omarchy's dark/light mode (Reapertips Purple or Light).\n\n" +
-		"IT REPLACES THE CURRENT CONFIG\n" +
-		"The REAPER config and every file it overwrites are backed up first in\n" +
-		"code/modules/Apps/reaper/backups/<date>-install/.\n\n" +
-		"FONTS\n" +
-		" • System fonts: use the font Omarchy currently uses (recommended, default).\n" +
-		" • Reapertips fonts: install Fira Sans + Roboto and keep the theme's own."
+// reaperAddonsMissingText is the ONLY thing added to the prompt when ReaPack
+// and SWS can be obtained neither from ~/Downloads nor from GitHub.
+const reaperAddonsMissingText = "sws & reapack are neither in downloads nor in sws-2.14.0.7-Linux-x86_64.tar.xz"
+
+// reaperConfigLines is the detail under the question. It lives in a Confirm
+// list instead of the message: the dialog would otherwise be taller than the
+// frame and the bottom of it would be clipped, with no way to read it.
+func reaperConfigLines() []string {
+	return []string{
+		"WHAT IT CHANGES",
+		" • installs the Reapertips theme (dark or light), its purple toolbar",
+		"   icons, the REAPER 7 splash screen and the Linux window colours;",
+		" • copies configs/custom/ over the REAPER resource path, when that",
+		"   folder exists (scripts, plugins, settings — whatever you put there);",
+		" • uses Omarchy's accent colour and follows it on later launches;",
+		" • follows Omarchy's dark/light mode (Reapertips Purple or Light).",
+		"",
+		"THEME FILE",
+		"The newest Reapertips Theme v*.zip in ~/Downloads is copied into",
+		"code/modules/Apps/reaper/configs/ automatically — no bootstrap needed.",
+		"Put it there for the complete config; the zip is not shipped.",
+		"",
+		"IT REPLACES THE CURRENT CONFIG",
+		"The REAPER config and every file it overwrites are backed up first in",
+		"code/modules/Apps/reaper/backups/<date>-install/.",
+		"",
+		"FONTS",
+		" • System fonts: the font Omarchy currently uses (recommended, default).",
+		" • Reapertips fonts: install Fira Sans + Roboto and keep the theme's own.",
+	}
+}
+
+func reaperConfigHead(missingAddons bool) string {
+	var b strings.Builder
+	if missingAddons {
+		b.WriteString(lipgloss.NewStyle().Foreground(tuikit.ColorRed).Bold(true).Render(reaperAddonsMissingText))
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Install the Reapertips theme and the custom REAPER config?")
+	return b.String()
+}
+
+// reaperConfigPrompt keeps the full text for logs/tests; the dialog itself
+// shows the head and a height-capped, scrollable list of the lines.
+func reaperConfigPrompt(missingAddons bool) string {
+	return reaperConfigHead(missingAddons) + "\n\n" + strings.Join(reaperConfigLines(), "\n")
+}
+
+func (m model) reaperConfirm(missingAddons bool) tuikit.Confirm {
+	_, h := m.contentSize()
+	rows := h - 11
+	if rows > 14 {
+		rows = 14
+	}
+	if rows < 3 {
+		rows = 3
+	}
+	return tuikit.NewConfirm(reaperConfigHead(missingAddons), m.pendingNo, m.pendingYes).
+		WithExtra("Reapertips fonts", "r").
+		FocusYes().
+		SetList("", reaperConfigLines(), rows)
 }
 
 func (m model) confirmReaperConfig() (model, tea.Cmd) {
 	m.pendingAction = "reaper-custom-config"
-	m.pendingMsg = reaperConfigPrompt()
+	m.pendingMsg = reaperConfigPrompt(false)
 	m.pendingNo = "Cancel"
 	m.pendingYes = "System fonts"
 	m.push(scrConfirm)
-	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).
-		WithExtra("Reapertips fonts", "r").
-		FocusYes()
-	return m, nil
+	m.confirm = m.reaperConfirm(false)
+	return m, fetchReaperAddonsStatusCmd()
 }
 
 // reaperRevertPrompt is the Uninstall counterpart of reaperConfigPrompt: it

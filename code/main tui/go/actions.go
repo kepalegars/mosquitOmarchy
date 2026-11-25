@@ -671,6 +671,24 @@ func fetchMissingAssetsCmd(plan []string) tea.Cmd {
 	}
 }
 
+// reaperAddonsStatusMsg answers the pre-prompt check for ReaPack/SWS. When
+// they are missing, the config prompt leads with a short red warning; when
+// both are obtainable the prompt does not mention them at all.
+type reaperAddonsStatusMsg struct {
+	missing bool
+	err     error
+}
+
+func fetchReaperAddonsStatusCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("reaper-addons-status")
+		if err != nil {
+			return reaperAddonsStatusMsg{err: err}
+		}
+		return reaperAddonsStatusMsg{missing: strings.TrimSpace(string(out)) == "missing"}
+	}
+}
+
 // HealthRec is one drifted piece the `health` query reports: a partially
 // installed module, a mosquitOmarchy artifact that went missing, or an owned
 // Omarchy plugin clone whose source changed / whose files were edited.
