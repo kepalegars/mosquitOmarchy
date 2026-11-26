@@ -38,12 +38,15 @@ included with the rest of the repo on GitHub — add the files under
 account tokens, huge samples) does not belong here.
 
 `configs/update-custom-config.sh` resnapshots the settings/layout `.ini` files,
-`reaper-kb.ini` (custom actions), `reapack.ini` (repositories) and the
-`Scripts/` / `Effects/` trees from the current REAPER resource path. It drops
-licence/nag state, binary extensions, ReaPack's package cache and the
-machine-bound theme/splash pointers, so the copy stays shippable. The config
-installer copies whatever is under `custom/`, so scripts, JSFX, custom actions
-and ReaPack repositories all arrive together.
+`reaper-kb.ini` (custom actions), `reapack.ini` (repositories), the
+`Scripts/` / `Effects/` trees, and the binary extensions named in
+`configs/extra-user-plugins.list` (currently ReaSmoothPlayhead) into
+`custom/UserPlugins/`. Extensions managed by the modules — ReaPack, SWS and
+the Wayland ReaImGui — are never snapshotted or overwritten from there. The
+config installer copies whatever is under `custom/`, so scripts, JSFX, custom
+actions, ReaPack repositories and those extra extensions all arrive together.
+Licence/nag state, the ReaPack package cache and machine-bound theme/splash
+pointers stay out.
 
 Files the install overwrites are backed up first to
 `code/modules/Apps/reaper/backups/<date>-install/`. Setup ▸ Uninstall ▸ **P**

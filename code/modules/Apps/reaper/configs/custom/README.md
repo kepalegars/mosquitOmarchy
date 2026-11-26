@@ -43,8 +43,10 @@ can also copy the zip there yourself. It is not shipped with the repo.
 This folder is committed: if you build a personal config here, ship it with the
 rest of the repo — files left only on your machine never reach the user. `../update-custom-config.sh` refreshes the `.ini` files (settings, layouts,
 custom actions, ReaPack repositories) and the `Scripts/` / `Effects` trees from
-the current REAPER resource path in a shippable form. Binary extensions
-(`UserPlugins/`), ReaPack's package cache and licence data stay out.
+the current REAPER resource path in a shippable form. Binary extensions are copied only when named in
+`../extra-user-plugins.list`; ReaPack, SWS and the Wayland ReaImGui are always
+excluded because the modules install them. ReaPack's package cache and licence
+data stay out.
 
 Recommended add-ons (download links, not shipped — see `../README.md`):
 SWS extension, ReaPack, ReaTeam scripts, ReaImGui. Put the native `.so` files in

@@ -1,0 +1,10 @@
+# Binary REAPER extensions shipped with the custom config.
+#
+# One filename per line, exactly as it appears in ~/.config/REAPER/UserPlugins.
+# update-custom-config.sh copies only these from the live install; all other
+# UserPlugins binaries are left out. setup-reaper-config.sh deploys them when
+# the custom config is applied (P in Setup) and never removes them on revert.
+#
+# NEVER list extensions managed by the modules (they would be overwritten with
+# stale binaries): reaper_reapack-*.so, reaper_sws-*.so, reaper_imgui-*.so.
+reaper_playhead-x64.so

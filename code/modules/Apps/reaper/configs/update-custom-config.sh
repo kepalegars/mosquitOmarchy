@@ -12,10 +12,11 @@
 #   Scripts/                 Lua scripts (+ their images) and __startup.lua
 #   Effects/                 JSFX and their .jsfx-inc dependencies
 #   FXChains/, TrackTemplates/  exported chains/templates when present
+#   UserPlugins/               only the binaries listed in extra-user-plugins.list
 #
-# Deliberately NOT copied: UserPlugins/ (binary extensions are installed by
-# the module), Data/ (generated), ReaPack/ (package cache, re-downloadable),
-# licence/registration files, and machine-bound ini keys.
+# Deliberately NOT copied: extensions managed by the modules (ReaPack, SWS,
+# ReaImGui), Data/ (generated), ReaPack/ (package cache), licence files, and
+# machine-bound ini keys.
 #
 # In reaper.ini the [nag] section and the theme/splash pointers are stripped:
 # the config installer writes lastthemefn5, splash and splashimage itself with
@@ -85,11 +86,49 @@ for d in Scripts Effects FXChains TrackTemplates; do
   fi
 done
 
+# Extra binary extensions: only what the dedicated list names, never the
+# ones the modules install themselves.
+LIST="$HERE/extra-user-plugins.list"
+mkdir -p "$DEST/UserPlugins"
+wanted=()
+if [[ -f $LIST ]]; then
+  while IFS= read -r line || [[ -n $line ]]; do
+    line="${line%%#*}"
+    line="$(printf '%s' "$line" | tr -d '[:space:]')"
+    [[ -n $line ]] || continue
+    case "$line" in
+      reaper_reapack-*|reaper_sws-*|reaper_imgui-*)
+        warn "Skipping module-managed extension in the list: $line" ; continue ;;
+    esac
+    wanted+=("$line")
+  done < "$LIST"
+fi
+for old in "$DEST"/UserPlugins/*; do
+  [[ -e $old ]] || continue
+  name="$(basename "$old")"
+  [[ $name == .gitkeep ]] && continue
+  keep=0
+  for w in "${wanted[@]:-}"; do [[ $w == "$name" ]] && keep=1; done
+  ((keep)) || rm -f -- "$old"
+done
+for name in "${wanted[@]:-}"; do
+  [[ -n $name ]] || continue
+  if [[ -f "$RES/UserPlugins/$name" ]]; then
+    cp -f -- "$RES/UserPlugins/$name" "$DEST/UserPlugins/$name"
+  else
+    warn "Listed extension not installed: $name"
+    rm -f -- "$DEST/UserPlugins/$name"
+  fi
+done
+if ! find "$DEST/UserPlugins" -mindepth 1 -print -quit | grep -q .; then
+  : > "$DEST/UserPlugins/.gitkeep"
+fi
+
 info "Custom config updated from $RES"
 for f in reaper.ini reaper-themeconfig.ini reaper-extstate.ini reaper-kb.ini reapack.ini; do
   [[ -f $DEST/$f ]] && printf '    %-26s %s bytes\n' "$f" "$(wc -c < "$DEST/$f")"
 done
-for d in Scripts Effects FXChains TrackTemplates; do
+for d in Scripts Effects FXChains TrackTemplates UserPlugins; do
   [[ -d $DEST/$d ]] && printf '    %-26s %s files\n' "$d/" "$(find "$DEST/$d" -type f | wc -l)"
 done
 ok "Review the diff from the repo root, then commit: git diff --stat -- code/modules/Apps/reaper/configs/custom/"
