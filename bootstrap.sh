@@ -10,9 +10,10 @@
 # .deb/.jar, DaVinci zip) are NOT part of the repo and are NOT downloaded: they
 # sit behind account logins and a multi-GB zip does not belong in a clone. The
 # clean technique is to drop every installer you want into ~/Downloads, then
-# run the bootstrap: it moves each recognised file into its module folder
-# (never overwriting an existing file) and then names which Setup rows stay
-# greyed out for the files still missing.
+# run the bootstrap: it discovers every recognised file, ASKS once, and only
+# then moves the accepted ones into their module folder (never overwriting an
+# existing file). Declining leaves everything in Downloads. It then names
+# which Setup rows stay greyed out for the files still missing.
 #
 # Usage:
 #   # Repo already cloned → direct execution:
@@ -170,27 +171,65 @@ collect_installers(){
     '*[Ss]pektra[Ff]ilm*.zip|code/modules/Apps/spektrafilm'
     '[Rr]eapertips Theme*.zip|code/modules/Apps/reaper/configs'
   )
-  local moved=0 skipped=0 entry pat dest f base target
+  # Discover FIRST, ask ONCE, then move. Saying no leaves every file exactly
+  # where it is: no copy, no move, not even a new module folder.
+  local -a moves=() skips=()
+  local entry pat dest f base target rec src answer
+  declare -A seen=()
   shopt -s nullglob
   for entry in "${map[@]}"; do
     pat="${entry%%|*}"; dest="${entry##*|}"
-    mkdir -p "$SRC/$dest"
     for f in "$dl"/$pat; do
       [[ -f $f ]] || continue
+      [[ -z ${seen[$f]:-} ]] || continue   # exact patterns precede generic ones
+      seen[$f]=1
       base="$(basename "$f")"; target="$SRC/$dest/$base"
-      if [[ -e "$target" ]]; then
-        warn "• $base — already in $dest/, move skipped (existing file kept)"
-        skipped=$((skipped+1))
-      elif mv -- "$f" "$target"; then
-        ok "• $base → $dest/"
-        moved=$((moved+1))
+      if [[ -e $target ]]; then
+        skips+=("$base"$'\t'"$dest")
       else
-        warn "• $base — could not move to $dest/ (left in Downloads)"
+        moves+=("$f"$'\t'"$target"$'\t'"$base"$'\t'"$dest")
       fi
     done
   done
   shopt -u nullglob
-  (( moved == 0 && skipped == 0 )) && warn "No installer files found in $dl."
+
+  for rec in "${skips[@]:-}"; do
+    [[ -n $rec ]] || continue
+    IFS=$'\t' read -r base dest <<< "$rec"
+    warn "• $base — already in $dest/, move skipped (existing file kept)"
+  done
+
+  if ((${#moves[@]})); then
+    hr
+    msg "Found ${#moves[@]} installer file(s) in $dl:"
+    for rec in "${moves[@]}"; do
+      IFS=$'\t' read -r src target base dest <<< "$rec"
+      printf '  • %s → %s/\n' "$base" "$dest"
+    done
+    answer=y
+    if (( YES )); then
+      msg "Non-interactive (-y): moving them."
+    elif [[ -t 0 ]]; then
+      read -rp "Move these files into mosquitomarchy? [Y/n] " answer
+    else
+      warn "No terminal: leaving every file in $dl (re-run interactively or with -y)."
+      answer=n
+    fi
+    if [[ ${answer:-n} =~ ^[yY] ]]; then
+      for rec in "${moves[@]}"; do
+        IFS=$'\t' read -r src target base dest <<< "$rec"
+        if mkdir -p "$SRC/$dest" && mv -n -- "$src" "$target"; then
+          ok "• $base → $dest/"
+        else
+          warn "• $base — could not move to $dest/ (left in Downloads)"
+        fi
+      done
+    else
+      msg "Left every discovered file in $dl — nothing copied, nothing moved."
+    fi
+  else
+    (( ${#skips[@]} )) || warn "No installer files found in $dl."
+  fi
 
   # Which Setup rows stay greyed out for a still-missing installer.
   local -a greyed=()

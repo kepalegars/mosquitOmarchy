@@ -144,9 +144,9 @@ downloads_dir(){
   printf '%s\n' "$HOME/Downloads"
 }
 
-# A zip is already available if bootstrap filed it here, an earlier run left
-# it in the checkout, or it is still sitting in ~/Downloads. Symlink it rather
-# than downloading a second copy.
+# A zip is available in the module folder, in the checkout, or still in
+# ~/Downloads. In the last case it is MOVED here (never copied), like bootstrap
+# does; the existing destination always wins.
 archive_location(){ # name -> path (empty when it must be downloaded)
   local name="$1" f dl
   dl="$(downloads_dir)"
@@ -157,15 +157,25 @@ archive_location(){ # name -> path (empty when it must be downloaded)
 }
 
 fetch_archive(){ # name url
-  local name="$1" url="$2" target="$CLONE/$1" staged="$SCRIPT_DIR/$1" tmp found
+  local name="$1" url="$2" target="$CLONE/$1" staged="$SCRIPT_DIR/$1" tmp found dl
   found="$(archive_location "$name")"
   if [[ -n $found ]]; then
     if [[ $found == "$target" ]]; then
       ok "$name present in the upstream folder."
-    else
-      ln -s -- "$found" "$target"
-      ok "$name linked from ${found%/*}."
+      return 0
     fi
+    if [[ $found != "$staged" ]]; then
+      dl="$(downloads_dir)"
+      if [[ $found == "$dl/$name" ]]; then
+        mv -n -- "$found" "$staged"
+        ok "$name moved from $(basename "$dl")/ to the native module folder."
+      fi
+    fi
+    [[ -f $staged ]] || { err "Could not stage $name in $SCRIPT_DIR."; return 1; }
+    if [[ ! -e $target ]]; then
+      ln -s -- "$staged" "$target"
+    fi
+    ok "$name staged for the upstream installer."
     return 0
   fi
   msg "Downloading $name (large file — be patient)"

@@ -796,7 +796,7 @@ tree_fingerprint(){
   # hint to that row. Presence only, so dropping one shows up on the next
   # render instead of waiting for the cache TTL.
   local pk
-  for pk in ableton-wine bitwig guitarpro davinci; do
+  for pk in ableton-wine ableton-native bitwig guitarpro davinci; do
     if _patch_present "$pk"; then out+="|p$pk:1"; else out+="|p$pk:0"; fi
   done
   # The Ableton Move wine step is a second, independent script on the same
@@ -2090,6 +2090,7 @@ cmd_missing_assets(){
 _manual_patch_spec(){ # appkey -> module-relative patch script (empty: none)
   case "$1" in
     ableton-wine) printf 'ableton/wine/PATCH/patch-ableton.sh' ;;
+    ableton-native) printf 'ableton/native/PATCH/patch-ableton-native.sh' ;;
     ableton-move) printf 'ableton/wine/PATCH/move-wine/patch-move-wine.sh' ;;
     bitwig)    printf 'bitwig/PATCH/patch-bitwig.sh' ;;
     guitarpro) printf 'guitarpro/PATCH/patch-guitarpro' ;;

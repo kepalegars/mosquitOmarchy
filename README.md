@@ -287,9 +287,10 @@ self-update work, then `./bootstrap.sh`.
 **You bring these yourself.** None of them can be fetched automatically: Bitwig
 and Ableton are behind account logins, and a multi-GB zip has no business in a
 git clone. The clean technique: download every installer you want, drop them
-all in `~/Downloads`, then run `./bootstrap.sh` — it moves each recognised
-file into its module folder (never overwriting an existing file) and tells you
-which Setup rows stay greyed out for the files still missing. You can also drop
+all in `~/Downloads`, then run `./bootstrap.sh` — it lists everything it found
+and asks once before moving anything; saying no leaves every file where it is.
+Accepted files go into their module folder (never overwriting an existing one),
+and it tells you which Setup rows stay greyed out. You can also drop
 a file straight into its module folder; each module looks for its installer
 **where its own script lives** and says which file it expects when it is
 missing.

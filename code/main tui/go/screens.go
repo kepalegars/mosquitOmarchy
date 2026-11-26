@@ -1980,6 +1980,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.pendingAction = "apply-patches"
 			m.pendingMsg = "Apply the patch for: " + strings.Join(labels, ", ") + "?"
 			m.pendingYes = "Apply patch"
+			// The native patch is a guided flow (HWID -> clipboard -> tool ->
+			// .auz), not a silent binary patch. Say what pressing Enter does.
+			if len(want) == 1 && want[0].Key == "ableton-native" {
+				m.pendingMsg = "Patch Ableton Live 12.4.7 (Native)?\n\n" +
+					"It copies the HWID from Live's native Unlock.json to the clipboard, " +
+					"opens the authorization tool, and once you close it places the new " +
+					".auz in the Ableton install folder."
+				m.pendingYes = "Patch Ableton"
+			}
 		}
 		m.pendingNo = "Cancel"
 		m.push(scrConfirm)

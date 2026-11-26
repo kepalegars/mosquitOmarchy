@@ -17,9 +17,10 @@ They are idempotent: re-running is safe.
 
 Nothing here is downloaded: Ableton and Bitwig are behind account logins, and a
 multi-GB zip does not belong in a git clone. Drop every installer you want into
-`~/Downloads`, then run `./bootstrap.sh` — it moves each recognised file into
-its module folder (never overwriting an existing file) and reports which Setup
-rows stay greyed out. You can also drop a file straight into its module folder
+`~/Downloads`, then run `./bootstrap.sh` — it lists what it found and asks
+before moving anything; declining leaves every file in place. Accepted files go
+into their module folder (never overwriting an existing file), and it reports
+which Setup rows stay greyed out. You can also drop a file straight into its module folder
 (`code/modules/Apps/ableton/wine/` or `code/modules/Apps/ableton/native/`, `code/modules/Apps/guitarpro/`, `code/modules/Apps/bitwig/`,
 `code/modules/Apps/davinci/`, `code/modules/Apps/spektrafilm/`).
 

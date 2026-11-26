@@ -18,8 +18,10 @@ The two files must be in this folder (bootstrap moves them here from
 - `ableton_live_suite_12.4.7_64.zip` —
   <https://cdn-downloads.ableton.com/channels/12.4.7/ableton_live_suite_12.4.7_64.zip>
 
-If either is missing, the script downloads it from that URL. They are symlinked
-into the upstream checkout (never copied), so each archive exists only once.
+If either is found in `~/Downloads`, the installer **moves** it here (it never
+copies and never overwrites an existing file). If neither is available, the
+script downloads them from those URLs. The archives are then symlinked into the
+upstream checkout, so each archive exists only once.
 
 ## Disk space
 
@@ -35,21 +37,27 @@ you delete them.
 The Setup confirm uses the same GiB display as the rest of the TUI: about
 **23.3 GiB** (upstream's 25 GB) when the zips are already available, and about
 **34.4 GiB** when both still have to be downloaded. Zips in `~/Downloads` count
-as available — the script symlinks them instead of downloading a second copy.
-The install preflight uses the same numbers.
+as available — the script moves them into this folder instead of downloading a
+second copy. The install preflight uses the same numbers.
 
 ## Hardware ID and offline authorization
 
-`authorize-native.sh` reads the challenge code (HWID) from the **native**
-`Unlock.json` (`$XDG_DATA_HOME/Ableton/Live 12.4.7/Unlock/Unlock.json` — never
-from a Wine prefix), copies it to the clipboard, launches
+`PATCH/patch-ableton-native.sh` reads the challenge code (HWID) from the
+**native** `Unlock.json`
+(`$XDG_DATA_HOME/Ableton/Live 12.4.7/Unlock/Unlock.json` — never from a Wine
+prefix), copies it to the clipboard, launches
 `~/Documents/new patch/WM_Ableton.r2rwm`, waits for you to close it, then copies
 the new `.auz` into the install folder and opens that folder.
 
+Press **p** on the `ableton-native` row in mosquitomarchy Setup to run it; the
+confirm explains the HWID → tool → `.auz` steps first.
+
 ```sh
-./authorize-native.sh --no-run   # only read/copy the HWID
-./authorize-native.sh            # full flow
-R2RWM_TOOL=/path/to/tool bash ./authorize-native.sh
+PATCH/patch-ableton-native.sh --no-run   # only read/copy the HWID
+PATCH/patch-ableton-native.sh            # full flow
+PATCH/patch-ableton-native.sh --check    # applied / not applied (used by p)
+PATCH/patch-ableton-native.sh --revert   # remove only the .auz files it copied
+R2RWM_TOOL=/path/to/tool bash PATCH/patch-ableton-native.sh
 ```
 
 Live must have been started once for `Unlock.json` to exist. The `.r2rwm` tool

@@ -1720,6 +1720,21 @@ func TestPDavinciInUninstallRestoresDrivers(t *testing.T) {
 	}
 }
 
+// TestNativePatchPromptExplainsTheFlow: the hidden p on the native Ableton
+// row must explain the HWID/tool/.auz steps instead of offering a silent patch.
+func TestNativePatchPromptExplainsTheFlow(t *testing.T) {
+	m := initialModel()
+	m2, _ := m.update(patchSecretMsg{items: []PatchRec{{Key: "ableton-native", Label: "ableton-native"}}})
+	if m2.top() != scrConfirm || m2.pendingAction != "apply-patches" {
+		t.Fatalf("native patch did not open the confirm: top=%v action=%q", m2.top(), m2.pendingAction)
+	}
+	for _, want := range []string{"Ableton Live 12.4.7 (Native)", "HWID", ".auz"} {
+		if !strings.Contains(m2.pendingMsg, want) {
+			t.Fatalf("prompt missing %q: %q", want, m2.pendingMsg)
+		}
+	}
+}
+
 // TestPatchHintOnlyWhenScriptExists: the hidden "p" hint follows the app's
 // Patch flag, and p with nothing to patch does nothing at all (no toast).
 func TestPatchHintOnlyWhenScriptExists(t *testing.T) {
