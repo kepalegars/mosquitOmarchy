@@ -50,6 +50,11 @@ in `~/Documents`. It copies the code to the clipboard, opens `PATCH/WM_Ableton.r
 with `WitchWand.exe` (the same app the Wine patch uses), waits for you to close
 it, then copies the new `.auz` into the install folder and opens that folder.
 
+The rest of `wine/PATCH/tools` is **not** copied here: `WM_Ableton.r2rwm` is the
+only payload the native patch needs. If `WitchWand.exe` is missing, the script
+runs the Wine module's `R2R System v1.5.2.exe` installer once (nothing is copied
+into this folder).
+
 Nothing is saved or typed: the hardware code is always detected from a file
 Live itself generated. `.auz` license files are ignored — they contain many
 hex codes that are not the hardware code.

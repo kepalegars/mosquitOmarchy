@@ -2110,12 +2110,13 @@ _patch_present(){
   # hint, no Patches row: nothing can be applied.
   if [[ $1 == ableton-native ]]; then
     [[ -f "$APPS_DIR/ableton/native/PATCH/WM_Ableton.r2rwm" ]] || return 1
-    local app d found=1
+    local d found=1
     for d in "${HOME:-}/.wine-ableton/drive_c/Program Files/TEAM R2R/R2R System" \
              "${HOME:-}/.wine-ableton/drive_c/Program Files (x86)/TEAM R2R/R2R System"; do
       [[ -f "$d/WitchWand.exe" ]] && found=0
     done
-    (( found == 0 )) || return 1
+    # Without WitchWand yet, the Wine module's R2R installer can provide it.
+    (( found == 0 )) || [[ -f "$APPS_DIR/ableton/wine/PATCH/tools/R2R System v1.5.2.exe" ]] || return 1
   fi
   return 0
 }
