@@ -159,13 +159,28 @@ fetch_archive(){ # name url
   ok "$name downloaded."
 }
 
+archive_bytes(){ # exact sizes from the CDN links in the upstream README
+  case $1 in
+    "$PUSH_ZIP")  echo 7498197732 ;;
+    "$SUITE_ZIP") echo 4451071191 ;;
+  esac
+}
+
 disk_preflight(){
-  local kb
+  # Upstream install.sh (set_version): 25 GB peak, 13 GB when the program is
+  # already in, 1 GB when the content is in. Add the archives only when we
+  # still have to download them.
+  local kb need=25000000000 f
+  [[ -e "$PREFIX/.install-program" ]] && need=13000000000
+  [[ -e "$PREFIX/.install-content" ]] && need=1000000000
+  for f in "$PUSH_ZIP" "$SUITE_ZIP"; do
+    [[ -f "$SCRIPT_DIR/$f" || -f "$CLONE/$f" ]] || need=$((need + $(archive_bytes "$f")))
+  done
   kb="$(df -Pk "$SCRIPT_DIR" | awk 'NR == 2 { print $4 }')"
   [[ $kb =~ ^[0-9]+$ ]] || { err "Could not check free disk space."; return 1; }
-  (( kb >= 26 * 1024 * 1024 )) \
-    || { err "Need about 25 GB free to install Live ($((kb / 1024 / 1024)) GB available)."; return 1; }
-  ok "Disk space preflight passed."
+  (( kb * 1024 >= need )) \
+    || { err "Need about $((need / 1000000000)) GB free to install Live and its archives ($((kb / 1024 / 1024)) GB available)."; return 1; }
+  ok "Disk space preflight passed ($((need / 1000000000)) GB needed)."
 }
 
 tag_desktop_entry(){

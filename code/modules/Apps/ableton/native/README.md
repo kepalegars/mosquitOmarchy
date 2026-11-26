@@ -19,8 +19,21 @@ The two files must be in this folder (bootstrap moves them here from
   <https://cdn-downloads.ableton.com/channels/12.4.7/ableton_live_suite_12.4.7_64.zip>
 
 If either is missing, the script downloads it from that URL. They are symlinked
-into the upstream checkout (never copied), so a 4.5 GB archive exists only once.
-About 25 GB of free disk space is needed while installing.
+into the upstream checkout (never copied), so each archive exists only once.
+
+## Disk space
+
+From upstream `install.sh` (`set_version`, Live 12): **25 GB** is the peak while
+installing, **13 GB** if the program is already in place, **1 GB** if the content
+is too, and about **7 GB** remains afterwards. Those figures assume both zips
+are already on disk. The zips themselves are 7.50 GB and 4.45 GB (their CDN
+`Content-Length`), so a fresh install with neither archive present needs about
+**37 GB** free; with both present, about **25 GB**. The module keeps the zips,
+so the final footprint is roughly 19 GB (7 GB program + 12 GB archives) unless
+you delete them.
+
+The Setup confirm shows the live estimate: it adds the archive downloads only
+when they are missing, and the preflight in the script uses the same numbers.
 
 ## Usage
 

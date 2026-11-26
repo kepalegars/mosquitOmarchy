@@ -19,6 +19,16 @@ func TestSpaceLineInstallKnown(t *testing.T) {
 	}
 }
 
+func TestSpaceLineInstallDetail(t *testing.T) {
+	line := spaceLine("install", DiskRec{FreeKB: 40 * 1024 * 1024, NeedKB: 36 * 1024 * 1024,
+		Detail: "incl. 11.9 GB of archives to download"})
+	for _, want := range []string{"needs ~36.0 GiB", "incl. 11.9 GB of archives to download"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("line %q missing %q", line, want)
+		}
+	}
+}
+
 func TestSpaceLineUninstallKnown(t *testing.T) {
 	line := spaceLine("uninstall", DiskRec{FreeKB: 2048, FreedKB: 1024})
 	if line != "Disk: frees ~1 MiB" {
