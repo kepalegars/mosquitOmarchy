@@ -82,6 +82,12 @@ did, with the same user-visible result.
       install nothing, show a TUI error asking for a manual extract, and leave
       the manager usable. A successful native install keeps its "plugin
       installed" toast after returning to the menu (no desktop notification).
+- [ ] **VST2 + VST3 + presets archive** — install
+      `Downloads/Glitch_2_1_5_Linux_Free.zip`: both `glitch2.so` (with its
+      `glitch2.res` folder) and `glitch2.vst3` land in the VST2/VST3 folders and
+      are tracked, the inner VST3 `.so` is not installed a second time, and all
+      29 `.g2bnk` banks land under `$XDG_DATA_HOME/glitch2/presets` with a link
+      beside the VST2 binary.
 - [ ] Adoption sweep timing: with ~180 installed plugins, a cold
       `mosquito-audio-plugin-manager-actions adopt-plugins` (groups cache
       removed) should take a couple of seconds, warm well under one, and

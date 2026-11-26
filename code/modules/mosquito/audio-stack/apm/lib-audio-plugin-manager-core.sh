@@ -4220,8 +4220,9 @@ all_plugin_list_rows_sorted() {
 }
 
 # Detects the format of a picked file/folder (possibly an archive) and
-# installs it into the matching ~/.lv2, ~/.clap or ~/.vst3 — user paths
-# only, never touches the system ones, so this never needs sudo.
+# installs it into the matching user plugin folder: LV2/CLAP/VST3 bundles,
+# Linux VST2 .so files (with their sibling .res resources), and optional
+# preset folders that travel with the plug-in. No sudo, no system paths.
 install_native_plugin_from_file() {
   local src="$1" work="" cleanup_work="" archive=false
 
@@ -4265,33 +4266,50 @@ install_native_plugin_from_file() {
   fi
 
   # One archive can ship several formats side by side (a vendor zip often has
-  # VST3 + CLAP + LV2), so install every bundle found, not just the first.
-  # Four levels covers the usual product/format wrapper folders; the search
-  # never leaves the temporary extraction dir.
+  # VST2 + VST3 + CLAP + LV2, plus presets), so install everything found, not
+  # just the first bundle. Four levels covers the usual product/format wrapper
+  # folders; the search never leaves the temporary extraction dir.
   local -a found=()
   if $archive; then
-    mapfile -t found < <(find "$work" -maxdepth 4 \( -iname '*.lv2' -o -iname '*.clap' -o -iname '*.vst3' \) -print 2>/dev/null | sort)
+    mapfile -t found < <(find "$work" -maxdepth 4 \
+      \( -iname '*.lv2' -o -iname '*.clap' -o -iname '*.vst3' -o -iname '*.so' \) \
+      -print 2>/dev/null | sort)
   else
     found=("$src")
   fi
   if (( ${#found[@]} == 0 )); then
-    err "no .lv2/.clap/.vst3 bundle found in $src"
+    err "no .lv2/.clap/.vst3 bundle or Linux VST .so found in $src"
     [[ -n $cleanup_work ]] && rm -rf "$cleanup_work"
     return 1
   fi
 
-  local entry dest_dir dest kind installed=0 failed=0
+  local entry lower dest_dir dest kind installed=0 failed=0
+  local res stem label="" vst2_dest=""
+  local -a pending=()
   for entry in "${found[@]}"; do
-    case "${entry,,}" in
-      *.lv2)  dest_dir="$HOME/.lv2";  kind=LV2  ;;
-      *.clap) dest_dir="$HOME/.clap"; kind=CLAP ;;
-      *.vst3) dest_dir="$HOME/.vst3"; kind=VST3 ;;
+    lower="${entry,,}"
+    # The .so INSIDE a VST3/CLAP/LV2 bundle is not a second plugin: glitch2's
+    # VST3 bundle, for instance, wraps the same binary as its VST2 build.
+    case "$lower" in
+      *.vst3/*|*.clap/*|*.lv2/*) [[ $lower == *.so ]] && continue ;;
+    esac
+    case "$lower" in
+      *.lv2)  dest_dir="${NATIVE_LV2_DIRS_USER[0]:-$HOME/.lv2}";  kind=LV2  ;;
+      *.clap) dest_dir="${NATIVE_CLAP_DIRS_USER[0]:-$HOME/.clap}"; kind=CLAP ;;
+      *.vst3) dest_dir="${NATIVE_VST3_DIRS_USER[0]:-$HOME/.vst3}"; kind=VST3 ;;
+      *.so)
+        # A bare Linux shared object is only a plug-in if it exports a VST
+        # entry point — runtime DLL lookalikes shipped beside a plug-in are
+        # not plugins and must not be registered as such.
+        [[ -f $entry ]] || continue
+        grep -aqE 'VSTPluginMain|GetPluginFactory' "$entry" 2>/dev/null || continue
+        dest_dir="$VST_VST2"; kind=VST2
+        ;;
       *) continue ;;
     esac
     # Native hosts scan LV2/VST3 bundles as directories and CLAP as a single
-    # shared object; this also skips the inner *.vst3 of a bridged bundle,
-    # which is not a plugin in its own right.
-    if [[ ${entry,,} == *.clap ]]; then
+    # shared object; the inner *.vst3 of a bridged bundle is skipped above.
+    if [[ $kind == CLAP || $kind == VST2 ]]; then
       [[ -f $entry ]] || continue
     else
       [[ -d $entry ]] || continue
@@ -4309,23 +4327,66 @@ install_native_plugin_from_file() {
       failed=$(( failed + 1 ))
       continue
     fi
+    if [[ $kind == VST2 ]]; then
+      # VST2 plug-ins that ship resources (skins, default banks) look for a
+      # sibling <name>.res directory. glitch2.so without glitch2.res reports
+      # "Missing resource files", so carry the whole folder over.
+      stem="$(basename "$dest" .so)"
+      while IFS= read -r res; do
+        [[ -n $res ]] || continue
+        cp -a "$res" "$dest_dir/" 2>/dev/null \
+          && ok "resources installed: $(basename "$res") -> $dest_dir" \
+          || warn "could not copy resources: $res"
+      done < <(find "$(dirname "$entry")" -maxdepth 1 -mindepth 1 -type d \
+                -iname "${stem}.*" -print 2>/dev/null | sort)
+      # Some older VST2 .so files carry an executable stack, which recent
+      # kernels/distros refuse to map. Clear it on OUR copy when patchelf is
+      # there; no new dependency and the original archive is untouched.
+      if command -v patchelf >/dev/null 2>&1; then
+        patchelf --clear-execstack "$dest" >/dev/null 2>&1 \
+          || warn "could not clear the executable stack on $dest"
+      fi
+      vst2_dest="$dest"
+    fi
+    [[ -n $label ]] || label="$(basename "$dest")"
+    label="${label%.*}"
     ok "$kind plugin installed: $(basename "$dest") -> $dest_dir"
-    # Register each copy in the log. This used to be MISSING, and it is not a
-    # cosmetic omission: every other install path calls state_register_install,
-    # so a plugin installed this way landed on disk and nowhere else, and the
-    # next launch offered it back as "found on disk but not tracked".
-    #
-    # The prefix is empty on purpose: a native bundle belongs to no wine
-    # prefix, and "" keeps "which prefix owns this" honest.
-    state_register_install "$(plugin_key "$dest")" "" "$dest"
+    # Register each copy in the log. The prefix is empty on purpose: a native
+    # plug-in belongs to no wine prefix, and "" keeps "which prefix owns this"
+    # honest instead of blaming whatever prefix was default at the time.
+    pending+=("$(printf '%s\t%s\t%s' "$(plugin_key "$dest")" "" "$dest")")
     printf '%s\n' "$dest"
     installed=$(( installed + 1 ))
   done
+
+  # Vendor ZIPs often bundle preset banks next to the plug-in. They are not
+  # plug-ins and hosts do not scan them, but the plug-in's own browser needs
+  # them somewhere stable: put them under XDG data and, when a VST2 plug-in
+  # was installed, link them beside it so the browser finds them immediately.
+  if (( installed > 0 )) && $archive; then
+    local -a presets=()
+    mapfile -t presets < <(find "$work" -maxdepth 3 -type d -iname '*preset*' -print 2>/dev/null | sort)
+    if ((${#presets[@]})); then
+      local preset_home="${XDG_DATA_HOME:-$HOME/.local/share}/${label:-plugin}/presets"
+      mkdir -p "$preset_home"
+      for res in "${presets[@]}"; do
+        cp -a "$res" "$preset_home/" 2>/dev/null \
+          && ok "presets installed: $(basename "$res") -> $preset_home" \
+          || warn "could not copy presets: $res"
+      done
+      if [[ -n $vst2_dest ]]; then
+        local link="$VST_VST2/${label}_Presets"
+        [[ -e $link || -L $link ]] || ln -s "$preset_home" "$link" 2>/dev/null || true
+      fi
+    fi
+  fi
+
   [[ -n $cleanup_work ]] && rm -rf "$cleanup_work"
   if (( installed == 0 )); then
     err "no plugin installed from $src ($failed already present or unsupported)"
     return 1
   fi
+  state_register_batch "${pending[@]}"
   return 0
 }
 

@@ -368,12 +368,18 @@ its contents, and dropping the suffix brings it back.
 **Install a plugin from file** takes one picker and auto-detects: a `.exe`/`.msi` goes through
 the wine-prefix wizard, while a raw bundle or a `.zip`/`.tar`/`.tar.gz`/`.tgz` installs natively.
 You do not say which kind it is up front. Archives are searched four levels deep for moveable
-formats — `.lv2`, `.clap`, `.vst3` — and **every** bundle found is installed (registering each
-in the log); a format already present is skipped so the others still land. An archive holding a
-Windows installer (`.exe`/`.msi`) is refused **before anything is copied**: nothing is installed
-and a desktop notification asks you to extract the archive and install the plugin manually —
-the manager cannot know which files an installer would place where. A successful install confirms
-on the TUI's status line; nothing is sent to the desktop notification daemon.
+formats — `.lv2`, `.clap`, `.vst3` bundles **and Linux VST2 `.so` files** — and **every** plugin
+found is installed (registering each in the log); a format already present is skipped so the
+others still land. A bare `.so` counts as a plug-in only when it exports `VSTPluginMain` or
+`GetPluginFactory`, so the copy of the same binary inside a VST3 bundle is not installed twice.
+VST2 plug-ins keep their sibling `<name>.res` resource folder (skins, factory banks); older
+`.so` files get their executable stack cleared when `patchelf` is available. Preset folders that
+travel with the plug-in are copied under `$XDG_DATA_HOME/<name>/presets` and linked beside the
+VST2 binary so the plug-in's browser finds them. An archive holding a Windows installer
+(`.exe`/`.msi`) is refused **before anything is copied**: nothing is installed and the TUI says
+to extract the archive and install the plugin manually — the manager cannot know which files an
+installer would place where. A successful install confirms on the TUI's status line; nothing is
+sent to the desktop notification daemon.
 
 LV2 bundles read as plain folders to file explorers (superfile and Nautilus both show
 `foo.lv2` as a directory), so if you enter one and pick anything inside, the install climbs
