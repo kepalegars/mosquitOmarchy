@@ -38,6 +38,32 @@ The Setup confirm uses the same GiB display as the rest of the TUI: about
 as available — the script symlinks them instead of downloading a second copy.
 The install preflight uses the same numbers.
 
+## Hardware ID and offline authorization
+
+`authorize-native.sh` reads the challenge code (HWID) from the **native**
+`Unlock.json` (`$XDG_DATA_HOME/Ableton/Live 12.4.7/Unlock/Unlock.json` — never
+from a Wine prefix), copies it to the clipboard, launches
+`~/Documents/new patch/WM_Ableton.r2rwm`, waits for you to close it, then copies
+the new `.auz` into the install folder and opens that folder.
+
+```sh
+./authorize-native.sh --no-run   # only read/copy the HWID
+./authorize-native.sh            # full flow
+R2RWM_TOOL=/path/to/tool bash ./authorize-native.sh
+```
+
+Live must have been started once for `Unlock.json` to exist. The `.r2rwm` tool
+is a Windows binary, so it is launched with Wine (the Ableton Wine runtime if
+present), but no `WINEPREFIX` is forced and nothing is written to a prefix.
+
+## What this build can and cannot do
+
+- It is **X11 only**: the bundled Qt has only the `xcb` platform plugin, so on
+  Hyprland it runs through Xwayland. There is no native Wayland backend.
+- It reads VST3 bundles (`~/.vst3`, `/usr/lib/vst3`, …). This build **does not
+  support VST2**, so yabridged VST2 `.so` files in `~/.vst` are invisible;
+  only Windows plugins bridged as VST3 (e.g. `~/.vst3/yabridge/*.vst3`) show up.
+
 ## Usage
 
 ```sh
