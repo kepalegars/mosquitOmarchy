@@ -82,6 +82,12 @@ did, with the same user-visible result.
       install nothing, show a TUI error asking for a manual extract, and leave
       the manager usable. A successful native install keeps its "plugin
       installed" toast after returning to the menu (no desktop notification).
+- [ ] **Cross-platform / multi-format archives** — installing
+      `orbinator-v1-0-0.1782566590.zip` installs only the Linux LV2 + VST3
+      bundles (no Mac/Windows copies), `ANINA-Linux-latest.zip` installs CLAP +
+      VST3, and `parrot_v1.1.0_linux.tar.gz` installs CLAP + LV2 + VST3, all
+      under the same `PLUGINS_ROOT/{clap,lv2,vst3}` folders. No plug-in is also
+      listed as `vst/so` because of the binary inside its VST3 bundle.
 - [ ] **VST2 + VST3 + presets archive** — install
       `Downloads/Glitch_2_1_5_Linux_Free.zip`: both `glitch2.so` (with its
       `glitch2.res` folder) and `glitch2.vst3` land in the VST2/VST3 folders and

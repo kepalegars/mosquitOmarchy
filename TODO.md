@@ -17,7 +17,7 @@ Last reviewed: 2026-11-03.
 - [ ] **Review VST backup/restore so it covers all plugin-adjacent data**, not
       only the plugin binaries. Today `backup_plugins_archive()` in
       `mosquitomarchy-setup.sh` archives only `VST_DIRS` under the APM plugin
-      root (`vst`, `vst3`, `clap`, `clap-native`, `vst3-native`, `lv2`).
+      root (`vst`, `vst3`, `clap`, `lv2`).
       It misses:
       - user presets and plugin settings outside the plugin folder (native
         Linux `~/.config/<vendor>`, `~/.local/share/<vendor>`; Wine prefixes

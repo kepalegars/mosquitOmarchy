@@ -903,10 +903,21 @@ scan_plugins() {
     is_runtime_dep_dll "$f" && continue
     base="${f%.hidden}"
     ext="${base##*.}"; ext="${ext,,}"
+    # The .so inside a VST3 bundle is not a separate VST2 plug-in; without
+    # this, every native VST3 also showed up a second time as "vst/so".
+    if [[ $ext == so ]]; then
+      case "${f,,}" in
+        *".vst3/"*|*".clap/"*|*".lv2/"*|*"/contents/"*) continue ;;
+      esac
+    fi
     case "$ext" in
       dll)   printf '%s\tvst2\n' "$f" ;;
-      vst3)  printf '%s\tvst3\n' "$f" ;;
-      clap)  printf '%s\tclap\n' "$f" ;;
+      # Native Linux .clap/.vst3 now live in these same folders: an ELF
+      # .clap is a native plug-in, not a Windows bundle to bridge, and a
+      # native VST3 is a directory, never a loose file here.
+      vst3|clap)
+        file -b "$base" 2>/dev/null | grep -q '^ELF ' && continue
+        printf '%s\t%s\n' "$f" "$ext" ;;
       so)    printf '%s\tso\n' "$f" ;;
     esac
   done
@@ -4051,18 +4062,15 @@ grp="${key%/*}"; [[ $key == "$grp" ]] && grp="${label#vst/}"; grp="${grp#vst3/}"
 # native plugin, and is excluded here (it already appears in the VST list
 # above).
 # Bare fallback only (same caveat as VST_ROOT above) -- every real entry
-# point overrides these via apply_plugins_root() (PLUGINS_ROOT/lv2,
-# PLUGINS_ROOT/clap-native, PLUGINS_ROOT/vst3-native) once load_prefs()
-# runs. Known limitation: a native plugin already sitting directly under
-# the OLD hardcoded ~/.lv2, ~/.clap or ~/.vst3 before this change is not
-# automatically swept into the new location -- move it by hand (or
-# reinstall it) if you have one; this machine had none at the time this
-# was written.
+# point overrides these via apply_plugins_root() (PLUGINS_ROOT/lv2, /clap
+# and /vst3) once load_prefs() runs. Native VST3/CLAP share the same
+# folders as the bridged ones; scan_native_plugins() and scan_plugins()
+# separate them by file type, not by directory.
 NATIVE_LV2_DIRS_USER=("$HOME/.lv2")
 NATIVE_LV2_DIRS_SYSTEM=("/usr/lib/lv2" "/usr/local/lib/lv2")
-NATIVE_CLAP_DIRS_USER=("$HOME/.clap")
+NATIVE_CLAP_DIRS_USER=("$VST_ROOT/clap")
 NATIVE_CLAP_DIRS_SYSTEM=("/usr/lib/clap" "/usr/local/lib/clap")
-NATIVE_VST3_DIRS_USER=("$HOME/.vst3")
+NATIVE_VST3_DIRS_USER=("$VST_ROOT/vst3")
 NATIVE_VST3_DIRS_SYSTEM=("/usr/lib/vst3" "/usr/local/lib/vst3")
 
 # An LV2 bundle folder is only counted as a plugin (not a spec/extension
@@ -4125,7 +4133,15 @@ scan_native_plugins() {
         is_lv2_plugin_bundle "$entry" || continue
       fi
       if [[ $fmt == vst3 ]]; then
+        # Native VST3 is a bundle DIRECTORY; a loose .vst3 file in the shared
+        # folder is a bridged Windows bundle handled by scan_plugins().
         is_yabridge_stub "$entry" && continue
+        [[ -d $entry ]] || continue
+      fi
+      if [[ $fmt == clap ]]; then
+        # Bridged Windows CLAP files share this folder: only ELF shared
+        # objects are native CLAP plug-ins.
+        file -b "$entry" 2>/dev/null | grep -q '^ELF ' || continue
       fi
       printf '%s\t%s\t%s\t%s\n' "$entry" "$fmt" "$loc" "$enabled"
     done
@@ -4283,7 +4299,7 @@ install_native_plugin_from_file() {
     return 1
   fi
 
-  local entry lower dest_dir dest kind installed=0 failed=0
+  local entry lower dest_dir dest kind key installed=0 failed=0
   local res stem label="" vst2_dest=""
   local -a pending=()
   for entry in "${found[@]}"; do
@@ -4293,6 +4309,18 @@ install_native_plugin_from_file() {
     case "$lower" in
       *.vst3/*|*.clap/*|*.lv2/*) [[ $lower == *.so ]] && continue ;;
     esac
+    # Cross-platform ZIPs ship Mac and Windows builds with the same bundle
+    # name. Only the Linux build is installable here: a VST3 bundle must
+    # contain a Contents/<arch>-linux directory, and a CLAP must be an ELF
+    # shared object rather than a Windows PE .clap.
+    if [[ $lower == *.vst3 ]]; then
+      [[ -d $entry ]] || continue
+      [[ -n $(find "$entry" -maxdepth 2 -mindepth 1 -type d -iname '*-linux' -print -quit 2>/dev/null) ]] || continue
+    fi
+    if [[ $lower == *.clap ]]; then
+      [[ -f $entry ]] || continue
+      file -b "$entry" 2>/dev/null | grep -q '^ELF ' || continue
+    fi
     case "$lower" in
       *.lv2)  dest_dir="${NATIVE_LV2_DIRS_USER[0]:-$HOME/.lv2}";  kind=LV2  ;;
       *.clap) dest_dir="${NATIVE_CLAP_DIRS_USER[0]:-$HOME/.clap}"; kind=CLAP ;;
@@ -4354,7 +4382,12 @@ install_native_plugin_from_file() {
     # Register each copy in the log. The prefix is empty on purpose: a native
     # plug-in belongs to no wine prefix, and "" keeps "which prefix owns this"
     # honest instead of blaming whatever prefix was default at the time.
-    pending+=("$(printf '%s\t%s\t%s' "$(plugin_key "$dest")" "" "$dest")")
+    # Native bundles now share the managed folders, so plugin_key() would
+    # file them under "clap/…" / "vst3/…" (the Windows keys) instead of the
+    # "native/<label>" key the scan and reconcile screens use. VST2 .so
+    # files belong to the VST side and keep their plain plugin_key.
+    if [[ $kind == VST2 ]]; then key="$(plugin_key "$dest")"; else key="native/$(native_plugin_label "$dest")"; fi
+    pending+=("$(printf '%s\t%s\t%s' "$key" "" "$dest")")
     printf '%s\n' "$dest"
     installed=$(( installed + 1 ))
   done
@@ -4395,11 +4428,14 @@ install_native_plugin_from_file() {
 # different plugin universe entirely). Refuses system-path entries -- those
 # came from pacman and go back through pacman.
 uninstall_native_plugin() {
-  local entry="$1"
-  case "$entry" in
-    "$HOME"/.lv2/*|"$HOME"/.clap/*|"$HOME"/.vst3/*) ;;
-    *) err "not a user-installed plugin (installed via pacman -- use your package manager): $entry"; return 1 ;;
-  esac
+  local entry="$1" d owned=1
+  for d in "${NATIVE_LV2_DIRS_USER[@]}" "${NATIVE_CLAP_DIRS_USER[@]}" "${NATIVE_VST3_DIRS_USER[@]}"; do
+    [[ $entry == "$d"/* ]] && { owned=0; break; }
+  done
+  if (( owned != 0 )); then
+    err "not a user-installed plugin (installed via pacman -- use your package manager): $entry"
+    return 1
+  fi
   [[ -e $entry ]] || { err "not found: $entry"; return 1; }
   local qdir="$HOME/.cache/audio-plugin-manager-quarantine/$(date +%Y%m%d-%H%M%S)-uninstall"
   mkdir -p "$qdir"
@@ -4905,7 +4941,7 @@ load_prefs() {
 # one lowercase per-format subfolder, all created up-front so the manager
 # (and any DAW pointed at it) has a complete structure from day one.
 init_plugins_root() {
-  mkdir -p "$PLUGINS_ROOT"/{vst,vst3,clap,clap-native,vst3-native,lv2}
+  mkdir -p "$PLUGINS_ROOT"/{vst,vst3,clap,lv2}
   set_plugins_root_icon "$PLUGINS_ROOT"
 }
 
@@ -6150,34 +6186,22 @@ EOF
 
 # Derives every plugin-storage path from PLUGINS_ROOT -- called at the end
 # of load_prefs() so every real entry point (the actions script, main())
-# picks this up automatically. vst/vst3/clap stay the Windows/wine/
-# yabridge-only folders (unchanged mechanism, just relocated under the new
-# root); lv2 is native-only (no Windows equivalent in this tool, so no
-# collision risk). Native VST3/CLAP get their OWN sibling folders
-# (vst3-native/clap-native) rather than sharing the Windows ones:
-# yabridgectl's plugin_dirs scan (and our own scan_plugins()) is RECURSIVE
-# with no exclude mechanism, so a genuine native Linux .vst3/.clap sitting
-# in the same folder as the Windows ones would get picked up and
-# mis-treated as a bridgeable Windows plugin (confirmed via a real
-# `yabridgectl status` on this machine -- its plugin_dirs already recurses
-# into vendor subfolders). Everything still lives under the one
-# PLUGINS_ROOT, satisfying "one folder to point every plugin at".
+# picks this up automatically. One folder per format: Windows, bridged and
+# native plug-ins all share vst/vst3/clap under that root. scan_plugins()
+# and scan_native_plugins() tell the two worlds apart by file type (PE vs
+# ELF, bundle dir vs bridged symlink), not by folder name, so a DAW only
+# ever needs one path per format.
 apply_plugins_root() {
   VST_ROOT="${AUDIOSTACK_VST_ROOT:-$PLUGINS_ROOT}"
   VST_VST2="$VST_ROOT/vst"
   VST_VST3="$VST_ROOT/vst3"
   VST_CLAP="$VST_ROOT/clap"
-  # The XDG user dirs stay scanned ALONGSIDE the managed root: installs
-  # from file land in ~/.lv2|~/.clap|~/.vst3 (the hosts' standard paths),
-  # so dropping them from the scan made every such install invisible to
-  # the list, the uninstall and the orphan detection. Duplicates with the
-  # managed dir are skipped (same dir twice would list every plugin twice).
+  # LV2 has no Windows counterpart here, so its standard XDG folder stays
+  # scanned alongside the managed root as well.
   NATIVE_LV2_DIRS_USER=("$HOME/.lv2")
   [[ "$VST_ROOT/lv2" != "$HOME/.lv2" ]] && NATIVE_LV2_DIRS_USER+=("$VST_ROOT/lv2")
-  NATIVE_CLAP_DIRS_USER=("$HOME/.clap")
-  [[ "$VST_ROOT/clap-native" != "$HOME/.clap" ]] && NATIVE_CLAP_DIRS_USER+=("$VST_ROOT/clap-native")
-  NATIVE_VST3_DIRS_USER=("$HOME/.vst3")
-  [[ "$VST_ROOT/vst3-native" != "$HOME/.vst3" ]] && NATIVE_VST3_DIRS_USER+=("$VST_ROOT/vst3-native")
+  NATIVE_CLAP_DIRS_USER=("$VST_ROOT/clap")
+  NATIVE_VST3_DIRS_USER=("$VST_ROOT/vst3")
 }
 
 # Rewrites the state log's recorded plugin file paths after a
@@ -6211,9 +6235,9 @@ migrate_plugins_root() {
   fi
 
   local old_vst2="$VST_VST2" old_vst3="$VST_VST3" old_clap="$VST_CLAP"
-  local old_lv2="${NATIVE_LV2_DIRS_USER[0]}" old_clapn="${NATIVE_CLAP_DIRS_USER[0]}" old_vst3n="${NATIVE_VST3_DIRS_USER[0]}"
+  local old_lv2="${NATIVE_LV2_DIRS_USER[0]}"
   local new_vst2="$new_root/vst" new_vst3="$new_root/vst3" new_clap="$new_root/clap"
-  local new_lv2="$new_root/lv2" new_clapn="$new_root/clap-native" new_vst3n="$new_root/vst3-native"
+  local new_lv2="$new_root/lv2"
 
   msg "Moving plugins: $old_root → $new_root"
   mkdir -p "$new_root"
@@ -6221,7 +6245,7 @@ migrate_plugins_root() {
 
   local pair src dst
   for pair in "$old_vst2:$new_vst2" "$old_vst3:$new_vst3" "$old_clap:$new_clap" \
-              "$old_lv2:$new_lv2" "$old_clapn:$new_clapn" "$old_vst3n:$new_vst3n"; do
+              "$old_lv2:$new_lv2"; do
     src="${pair%%:*}"; dst="${pair#*:}"
     [[ -d $src ]] || continue
     mkdir -p "$dst"

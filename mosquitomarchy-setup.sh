@@ -1594,12 +1594,12 @@ mq_vst_init(){
   local root; root="$(mq_vst_src_base)"
   VST_SRC_BASE="$root"
   VST_ROOT_FROM_APM="$(mq_vst_root_from_apm)"
-  # The per-format subfolders actually in use, with the manager's own lowercase
-  # names (vst/vst3/clap/clap-native/vst3-native/lv2) alongside the legacy
-  # uppercase ones an older archive used.
+  # One folder per format: native and bridged plug-ins share the manager's
+  # lowercase vst/vst3/clap folders. Legacy uppercase names from old archives
+  # are still backed up if present.
   VST_DIRS=()
   local sub
-  for sub in vst vst3 clap clap-native vst3-native lv2 VST2 VST3 CLAP; do
+  for sub in vst vst3 clap lv2 VST2 VST3 CLAP; do
     [[ -d "$root/$sub" ]] && VST_DIRS+=("$root/$sub")
   done
   has_vst_sources=$(( ${#VST_DIRS[@]} > 0 && 1 ))
