@@ -36,7 +36,8 @@ and `README.md` files are repo bookkeeping and are not installed.
 can also copy the zip there yourself. It is not shipped with the repo.
 
 This folder is committed: if you build a personal config here, ship it with the
-rest of the repo — files left only on your machine never reach the user.
+rest of the repo — files left only on your machine never reach the user. `../update-custom-config.sh` refreshes the three `.ini` files from the
+current REAPER resource path in a shippable form.
 
 Recommended add-ons (download links, not shipped — see `../README.md`):
 SWS extension, ReaPack, ReaTeam scripts, ReaImGui. Put the native `.so` files in
