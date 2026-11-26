@@ -48,7 +48,7 @@ esac
 
 # REAPER holds these files open. Replacing the ini/theme under a running app
 # crashes it; fail early even when this script is called directly.
-if command -v pgrep >/dev/null 2>&1 && pgrep -x reaper >/dev/null 2>&1; then
+if [[ $RES == "$HOME/.config/REAPER" ]] && command -v pgrep >/dev/null 2>&1 && pgrep -x reaper >/dev/null 2>&1; then
   echo "REAPER is running — close it before applying/restoring the config." >&2
   exit 1
 fi

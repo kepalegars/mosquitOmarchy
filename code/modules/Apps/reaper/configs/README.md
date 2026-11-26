@@ -37,10 +37,13 @@ included with the rest of the repo on GitHub — add the files under
 `custom/`, do not leave them on one machine. Anything private (licences,
 account tokens, huge samples) does not belong here.
 
-`configs/update-custom-config.sh` resnapshots the three `.ini` files from the
-current REAPER resource path. It drops the licence/nag state and the
-machine-bound theme and splash pointers so the copy stays shippable, and is
-the supported way to publish a new tuning.
+`configs/update-custom-config.sh` resnapshots the settings/layout `.ini` files,
+`reaper-kb.ini` (custom actions), `reapack.ini` (repositories) and the
+`Scripts/` / `Effects/` trees from the current REAPER resource path. It drops
+licence/nag state, binary extensions, ReaPack's package cache and the
+machine-bound theme/splash pointers, so the copy stays shippable. The config
+installer copies whatever is under `custom/`, so scripts, JSFX, custom actions
+and ReaPack repositories all arrive together.
 
 Files the install overwrites are backed up first to
 `code/modules/Apps/reaper/backups/<date>-install/`. Setup ▸ Uninstall ▸ **P**

@@ -15,9 +15,14 @@ Effects/                  JSFX (.jsfx)                    -> ~/.config/REAPER/Ef
 UserPlugins/              native extensions (reaper_*.so) -> ~/.config/REAPER/UserPlugins/
 FXChains/                 FX chain files                  -> ~/.config/REAPER/FXChains/
 TrackTemplates/           track templates                 -> ~/.config/REAPER/TrackTemplates/
-reaper.ini                global REAPER settings           -> ~/.config/REAPER/reaper.ini
+reaper.ini                global settings + layouts        -> ~/.config/REAPER/reaper.ini
 reaper-themeconfig.ini    Theme Adjuster colours/layout    -> ~/.config/REAPER/reaper-themeconfig.ini
 reaper-extstate.ini       Theme Adjuster v6/v7 UI state    -> ~/.config/REAPER/reaper-extstate.ini
+reaper-kb.ini             custom actions (SCR/KEY)         -> ~/.config/REAPER/reaper-kb.ini
+reapack.ini               ReaPack repositories             -> ~/.config/REAPER/reapack.ini
+Scripts/                  Lua scripts + __startup.lua      -> ~/.config/REAPER/Scripts/
+Effects/                  JSFX + .jsfx-inc deps            -> ~/.config/REAPER/Effects/
+FXChains/, TrackTemplates/ exported chains/templates       -> ~/.config/REAPER/...
 ```
 
 The three `.ini` files are a snapshot of a tuned REAPER install: `reaper.ini`
@@ -36,8 +41,10 @@ and `README.md` files are repo bookkeeping and are not installed.
 can also copy the zip there yourself. It is not shipped with the repo.
 
 This folder is committed: if you build a personal config here, ship it with the
-rest of the repo — files left only on your machine never reach the user. `../update-custom-config.sh` refreshes the three `.ini` files from the
-current REAPER resource path in a shippable form.
+rest of the repo — files left only on your machine never reach the user. `../update-custom-config.sh` refreshes the `.ini` files (settings, layouts,
+custom actions, ReaPack repositories) and the `Scripts/` / `Effects` trees from
+the current REAPER resource path in a shippable form. Binary extensions
+(`UserPlugins/`), ReaPack's package cache and licence data stay out.
 
 Recommended add-ons (download links, not shipped — see `../README.md`):
 SWS extension, ReaPack, ReaTeam scripts, ReaImGui. Put the native `.so` files in
