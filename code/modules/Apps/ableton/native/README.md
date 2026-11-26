@@ -32,11 +32,11 @@ are already on disk. The zips themselves are 7.50 GB and 4.45 GB (their CDN
 so the final footprint is roughly 19 GB (7 GB program + 12 GB archives) unless
 you delete them.
 
-The Setup confirm shows the live estimate: it adds the archive downloads only
-when they are missing. Zips still in `~/Downloads` count as available — the
-script symlinks them instead of downloading a second copy. The preflight uses
-the same numbers. The `GiB` shown by the TUI is the same space as upstream's
-`GB` (25 GB = 23.3 GiB), just in binary units.
+The Setup confirm uses the same GiB display as the rest of the TUI: about
+**23.3 GiB** (upstream's 25 GB) when the zips are already available, and about
+**34.4 GiB** when both still have to be downloaded. Zips in `~/Downloads` count
+as available — the script symlinks them instead of downloading a second copy.
+The install preflight uses the same numbers.
 
 ## Usage
 

@@ -58,11 +58,7 @@ func spaceLine(op string, r DiskRec) string {
 		} else if r.NeedKB > 0 {
 			need = "~" + formatKiB(r.NeedKB) + " and some bananas"
 		}
-		line := fmt.Sprintf("Disk: %s free · needs %s", free, need)
-		if r.Detail != "" {
-			line += " · " + r.Detail
-		}
-		return line
+		return fmt.Sprintf("Disk: %s free · needs %s", free, need)
 	}
 	freed := spaceBananas
 	if !r.FreedUnknown {
