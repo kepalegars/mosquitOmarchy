@@ -33,7 +33,10 @@ so the final footprint is roughly 19 GB (7 GB program + 12 GB archives) unless
 you delete them.
 
 The Setup confirm shows the live estimate: it adds the archive downloads only
-when they are missing, and the preflight in the script uses the same numbers.
+when they are missing. Zips still in `~/Downloads` count as available — the
+script symlinks them instead of downloading a second copy. The preflight uses
+the same numbers. The `GiB` shown by the TUI is the same space as upstream's
+`GB` (25 GB = 23.3 GiB), just in binary units.
 
 ## Usage
 

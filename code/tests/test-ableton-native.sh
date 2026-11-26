@@ -23,6 +23,15 @@ out="$(bash "$SCRIPT" --status)"
 grep -q 'Push3-RecoveryImage-2.4.7.zip present' <<<"$out"
 grep -q 'ableton_live_suite_12.4.7_64.zip present' <<<"$out"
 
+# Downloads counts too: the script symlinks those zips instead of downloading.
+rm -f "$TMP/Push3-RecoveryImage-2.4.7.zip" "$TMP/ableton_live_suite_12.4.7_64.zip"
+mkdir -p "$HOME/Downloads"
+: > "$HOME/Downloads/Push3-RecoveryImage-2.4.7.zip"
+: > "$HOME/Downloads/ableton_live_suite_12.4.7_64.zip"
+out="$(bash "$SCRIPT" --status)"
+grep -q 'Push3-RecoveryImage-2.4.7.zip present at' <<<"$out"
+grep -q '/Downloads/Push3-RecoveryImage-2.4.7.zip' <<<"$out"
+
 bash "$SCRIPT" --help | grep -q '12.4.7 ONLY'
 bash "$SCRIPT" --uninstall | grep -q 'not installed'
 

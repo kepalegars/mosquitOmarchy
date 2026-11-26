@@ -160,10 +160,7 @@ json_str_array(){
 cmd_status(){
   load_excluded
   apply_includes
-  local row id state detail label excl cat out ver
-  # REPO_VERSION is exactly what module_version prints; reading it once avoids
-  # one command substitution per row.
-  ver="$REPO_VERSION"
+  local row id state detail label excl cat out
   for row in "${MODULES[@]}"; do
     id="${row%%:*}" label="${row#*:}"
     # module_state may append ":detail" (e.g. "partial:missing foo bar"). The
@@ -180,7 +177,7 @@ cmd_status(){
     # Build the row inline: 45 rows x six `$(json_str ...)` calls were ~270
     # subshells, which is most of what made the first Status visit slow.
     json_str_into "$id"; out="{\"id\":$JS"
-    json_str_into "$label - v$ver"; out+=",\"label\":$JS"
+    module_version_into "$id"; json_str_into "$label - v$MV"; out+=",\"label\":$JS"
     json_str_into "$state"; out+=",\"state\":$JS"
     json_str_into "$detail"; out+=",\"detail\":$JS"
     json_str_into "$cat"; out+=",\"category\":$JS"
@@ -742,12 +739,12 @@ cmd_theme_apply(){
 # ─── Setup tree cache ───────────────────────────────────────────────────────
 #
 # The tree is the same data every time: which catalogs exist, which fixes are
-# declared, and one repo version. None of that changes while the user is just
-# looking at the screen, and the TUI asks for it again on every visit to Setup
-# and every visit to Uninstall.
+# declared, and the version of each script. None of that changes while the user
+# is just looking at the screen, and the TUI asks for it again on every visit to
+# Setup and every visit to Uninstall.
 #
 # So it is cached on disk, and invalidated by an FINGERPRINT rather than by a
-# clock alone: the catalogs, the fixes block and VERSION are what the tree is
+# clock alone: the catalogs, the fixes block, VERSION and VERSIONS are what the tree is
 # derived from, so a change to any of them must show up on the next read even
 # if the cache is seconds old. The TTL is only a backstop for the case where
 # something outside those files changes a module's presence.
@@ -763,7 +760,7 @@ cmd_theme_apply(){
 # builtin, and adding or removing a catalog line changes the length, so a new app
 # shows up on the very next read with nothing to refresh. An edit that only
 # rewrites a line in place keeps the length, so the declared FIXES and CATEGORIES
-# counts and the repo version are mixed in, and the reaper in cache_store covers
+# counts and the version files are mixed in, and the reaper in cache_store covers
 # a same-length edit that then goes unnoticed for longer than that.
 tree_fingerprint(){
   local f out='k2' body
@@ -771,7 +768,9 @@ tree_fingerprint(){
     body="$(<"$f")"          # a redirect, no fork
     out+="|${f##*/}:${#body}"
   done < <(tui_scripts)
-  out+="|v${REPO_VERSION:-}|f${#FIXES[@]}|t${#TWEAKS[@]}|c${#CATEGORIES[@]}|o${#MODULES[@]}"
+  local _versions=''
+  [[ -r "$SCRIPT_DIR/VERSIONS" ]] && _versions="$(<"$SCRIPT_DIR/VERSIONS")"
+  out+="|v${REPO_VERSION:-}|vl${#_versions}|f${#FIXES[@]}|t${#TWEAKS[@]}|c${#CATEGORIES[@]}|o${#MODULES[@]}"
   # The Setup/Uninstall trees embed the stock preinstall list (a "Preinstalls"
   # folder with one row per package), so the list is an INPUT to the tree:
   # without it, a cached tree from before the folder existed keeps being
@@ -921,12 +920,8 @@ _setup_tree(){
   # TAB and is stripped before printing.
   local -a folders=() items=()
 
-  # REPO_VERSION is sourced once from VERSION at the top of
-  # mosquitomarchy-setup.sh, so it is read here for free. module_version()
-  # re-read the file per row instead, and with ~46 rows that was ~46 forks
-  # before a single character of the tree had been printed.
-  local ver="${REPO_VERSION:-1.0.0}"
-
+  # module_version_into reads the per-script map with no fork: ~46 rows used
+  # to cost ~46 command substitutions before the tree printed anything.
   for c in "${CATEGORIES[@]}"; do
     id="${c%%|*}"; label="${c#*|}"; label="${label%%|*}"
     # The Omarchy menu registration is shown INSIDE the mosquito folder (see
@@ -947,8 +942,9 @@ _setup_tree(){
         for fe in "${FIXES[@]:-}"; do
           fid="${fe%%:*}"
           json_str_into "$fid"; local j_fid=$JS
+          module_version_into "$fid"; json_str_into "$fid - v$MV"; local j_flabel=$JS
           json_str_into "${fe#*:}"; local j_info=$JS
-          json_obj_into folder "$j_folder" key "$j_fid" label "$j_fid" info "$j_info"
+          json_obj_into folder "$j_folder" key "$j_fid" label "$j_flabel" info "$j_info"
           items+=("fixes/$fid"$'\t'"$JO")
         done
         ;;
@@ -958,8 +954,9 @@ _setup_tree(){
         for te in "${TWEAKS[@]:-}"; do
           tid="${te%%:*}"
           json_str_into "$tid"; local j_tid=$JS
+          module_version_into "$tid"; json_str_into "$tid - v$MV"; local j_tlabel=$JS
           json_str_into "${te#*:}"; local j_tinfo=$JS
-          json_obj_into folder "$j_folder" key "$j_tid" label "$j_tid" info "$j_tinfo"
+          json_obj_into folder "$j_folder" key "$j_tid" label "$j_tlabel" info "$j_tinfo"
           items+=("tweaks/$tid"$'\t'"$JO")
         done
         ;;
@@ -987,7 +984,9 @@ _setup_tree(){
           # above had just removed (the row read "Monitor Settings — Hyprland
           # display/monitor panel"). category_candidates now returns the human
           # name for PLUG rows, so this override only had to be dropped.
-          local vlabel="$name - v$ver"
+          local vk="${CAND_KEYS[$i]}"
+          [[ $vk == "TUI "* ]] && vk="${vk#TUI }"
+          module_version_into "$vk"; local vlabel="$name - v$MV"
           # remove-ai's Setup row reads EXACTLY "bring back omarchy's agentic
           # stuff" (no version suffix; it is an action, not a versioned module).
           [[ ${CAND_KEYS[$i]} == remove-ai ]] && vlabel="$name"
@@ -1037,17 +1036,19 @@ _setup_tree(){
     "$(json_str themes)" "$(json_str "Themes")" false)")
   folders+=("user"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s,"parent":%s}' \
     "$(json_str user)" "$(json_str user)" false "$(json_str themes)")")
+  module_version_into achraf67
   items+=("user/achraf67"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
     "$(json_str user)" "$(json_str achraf67)" \
-    "$(json_str "achraf67 - v$ver")" \
+    "$(json_str "achraf67 - v$MV")" \
     "$(json_str "Omarchy theme created by mosquitOmarchy (Achraf67) — colors, icons and wallpaper")")")
   if ((${#_missing_themes[@]})); then
     folders+=("defaults"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s,"parent":%s}' \
       "$(json_str defaults)" "$(json_str defaults)" false "$(json_str themes)")")
     for _tn in "${_missing_themes[@]}"; do
+      module_version_into "$_tn"
       items+=("defaults/$_tn"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
         "$(json_str defaults)" "$(json_str "stocktheme:$_tn")" \
-        "$(json_str "$_tn - v$ver")" \
+        "$(json_str "$_tn - v$MV")" \
         "$(json_str "Omarchy default theme missing from ~/.config/omarchy/themes — install to restore it")")")
     done
   fi
@@ -3072,12 +3073,12 @@ _backup_item_label(){ # <folder> <key> -> label used by the backup content tree
              if [[ -n $ttext ]]; then
                if [[ $ttext == *" — "* ]]; then name="${ttext%% — *}"; else name="$ttext"; fi
              fi
-             printf '%s - v%s' "$name" "${REPO_VERSION:-1.0.0}" ;;
-    theme:*) printf '%s - v%s' "${key#theme:}" "${REPO_VERSION:-1.0.0}" ;;
+             printf '%s - v%s' "$name" "$(module_version "$pkg")" ;;
+    theme:*) printf '%s - v%s' "${key#theme:}" "$(module_version default)" ;;
     preinstall:*) preinstall_label "${key#preinstall:}" ;;
     remove-ai) printf "remove omarchy's agentic stuff" ;;
     omarchyplugin:*) printf '%s' "${key#omarchyplugin:}" ;;
-    *) printf '%s - v%s' "$key" "${REPO_VERSION:-1.0.0}" ;;
+    *) printf '%s - v%s' "$key" "$(module_version "$key")" ;;
   esac
 }
 
@@ -3511,20 +3512,32 @@ _space_install_targets(){
 # Content-Length of the links in the upstream README.
 _ableton_native_space(){ # -> "need_bytes|detail", all in decimal GB as upstream
   local prefix="${XDG_DATA_HOME:-$HOME/.local/share}/ableton-live-12"
-  local dir="$APPS_DIR/ableton/native" peak=25000000000 downloads=0
-  local name file bytes detail
+  local dir="$APPS_DIR/ableton/native" peak=25000000000 downloads=0 in_downloads=0
+  local name file bytes detail dl
+  if command -v xdg-user-dir >/dev/null 2>&1; then
+    dl="$(xdg-user-dir DOWNLOAD 2>/dev/null || true)"
+  fi
+  [[ -n ${dl:-} ]] || dl="$HOME/Downloads"
   [[ -e "$prefix/.install-program" ]] && peak=13000000000
   [[ -e "$prefix/.install-content" ]] && peak=1000000000
   for name in \
       "Push3-RecoveryImage-2.4.7.zip:7498197732" \
       "ableton_live_suite_12.4.7_64.zip:4451071191"; do
     file="${name%%:*}"; bytes="${name##*:}"
-    [[ -f "$dir/$file" || -f "$dir/linux-native-ableton/$file" ]] || downloads=$((downloads+bytes))
+    if [[ -f "$dir/$file" || -f "$dir/linux-native-ableton/$file" ]]; then
+      continue
+    elif [[ -f "$dl/$file" ]]; then
+      in_downloads=1
+    else
+      downloads=$((downloads+bytes))
+    fi
   done
   if (( downloads )); then
     detail="$(awk -v b="$downloads" 'BEGIN { printf "incl. %.1f GB of archives to download", b/1e9 }')"
+  elif (( in_downloads )); then
+    detail="upstream peak $((peak / 1000000000)) GB · archives in ~/Downloads"
   else
-    detail="archives already on disk"
+    detail="upstream peak $((peak / 1000000000)) GB · archives already on disk"
   fi
   printf '%s|%s\n' "$((peak+downloads))" "$detail"
 }

@@ -135,12 +135,37 @@ ensure_clone(){
 }
 
 # ── archives ─────────────────────────────────────────────────────────────────
+downloads_dir(){
+  local d
+  if have xdg-user-dir; then
+    d="$(xdg-user-dir DOWNLOAD 2>/dev/null || true)"
+    [[ -n $d ]] && { printf '%s\n' "$d"; return; }
+  fi
+  printf '%s\n' "$HOME/Downloads"
+}
+
+# A zip is already available if bootstrap filed it here, an earlier run left
+# it in the checkout, or it is still sitting in ~/Downloads. Symlink it rather
+# than downloading a second copy.
+archive_location(){ # name -> path (empty when it must be downloaded)
+  local name="$1" f dl
+  dl="$(downloads_dir)"
+  for f in "$SCRIPT_DIR/$name" "$CLONE/$name" "$dl/$name"; do
+    [[ -f $f ]] && { printf '%s\n' "$f"; return 0; }
+  done
+  return 0
+}
+
 fetch_archive(){ # name url
-  local name="$1" url="$2" target="$CLONE/$1" staged="$SCRIPT_DIR/$1" tmp
-  [[ -f $target ]] && { ok "$name present in the upstream folder."; return 0; }
-  if [[ -f $staged ]]; then
-    ln -s -- "$staged" "$target"
-    ok "$name linked from this folder."
+  local name="$1" url="$2" target="$CLONE/$1" staged="$SCRIPT_DIR/$1" tmp found
+  found="$(archive_location "$name")"
+  if [[ -n $found ]]; then
+    if [[ $found == "$target" ]]; then
+      ok "$name present in the upstream folder."
+    else
+      ln -s -- "$found" "$target"
+      ok "$name linked from ${found%/*}."
+    fi
     return 0
   fi
   msg "Downloading $name (large file — be patient)"
@@ -174,7 +199,7 @@ disk_preflight(){
   [[ -e "$PREFIX/.install-program" ]] && need=13000000000
   [[ -e "$PREFIX/.install-content" ]] && need=1000000000
   for f in "$PUSH_ZIP" "$SUITE_ZIP"; do
-    [[ -f "$SCRIPT_DIR/$f" || -f "$CLONE/$f" ]] || need=$((need + $(archive_bytes "$f")))
+    [[ -n $(archive_location "$f") ]] || need=$((need + $(archive_bytes "$f")))
   done
   kb="$(df -Pk "$SCRIPT_DIR" | awk 'NR == 2 { print $4 }')"
   [[ $kb =~ ^[0-9]+$ ]] || { err "Could not check free disk space."; return 1; }
@@ -196,8 +221,10 @@ do_status(){
   [[ -f "$PREFIX/.ableton-live-linux" && -f "$PREFIX/uninstall.sh" ]] \
     && ok "Installed: Ableton Live Suite 12.4.7 (Native) in $PREFIX" \
     || warn "Not installed in $PREFIX."
+  local found
   for z in "$PUSH_ZIP" "$SUITE_ZIP"; do
-    [[ -f "$SCRIPT_DIR/$z" || -f "$CLONE/$z" ]] && ok "$z present" || warn "$z missing (download on install)"
+    found="$(archive_location "$z")"
+    [[ -n $found ]] && ok "$z present at $found" || warn "$z missing (download on install)"
   done
 }
 

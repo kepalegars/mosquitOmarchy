@@ -33,4 +33,16 @@ detail="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["detail"])'
 (( need > 24000000 && need < 25000000 )) || { echo "FAIL: need_kb=$need" >&2; exit 1; }
 [[ $detail == *"already on disk"* ]] || { echo "FAIL: detail=$detail" >&2; exit 1; }
 
-echo 'ok: native Ableton space estimate follows archive presence'
+# Still not filed in the module folder, but sitting in ~/Downloads: bootstrap
+# (or the module itself) will use them, so no download is counted.
+rm -f "$NATIVE/Push3-RecoveryImage-2.4.7.zip" "$NATIVE/ableton_live_suite_12.4.7_64.zip"
+mkdir -p "$HOME/Downloads"
+: > "$HOME/Downloads/Push3-RecoveryImage-2.4.7.zip"
+: > "$HOME/Downloads/ableton_live_suite_12.4.7_64.zip"
+out="$(bash "$ACTIONS" space install ableton-native)"
+need="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["need_kb"])' "$out")"
+detail="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["detail"])' "$out")"
+(( need > 24000000 && need < 25000000 )) || { echo "FAIL: need_kb=$need" >&2; exit 1; }
+[[ $detail == *"archives in ~/Downloads"* ]] || { echo "FAIL: detail=$detail" >&2; exit 1; }
+
+echo 'ok: native Ableton space estimate follows archive presence, including ~/Downloads'
