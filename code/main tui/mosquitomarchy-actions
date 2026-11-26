@@ -2105,7 +2105,13 @@ _manual_patch_spec(){ # appkey -> module-relative patch script (empty: none)
 _patch_present(){
   local spec
   spec="$(_manual_patch_spec "$1")"
-  [[ -n $spec && -f "$APPS_DIR/$spec" ]]
+  [[ -n $spec && -f "$APPS_DIR/$spec" ]] || return 1
+  # The native patch needs its Windows tool next to it. No tool -> no "p"
+  # hint, no Patches row: nothing can be applied.
+  if [[ $1 == ableton-native ]]; then
+    [[ -f "$APPS_DIR/ableton/native/PATCH/WM_Ableton.r2rwm" ]] || return 1
+  fi
+  return 0
 }
 
 # _move_patch_present <appkey>: Ableton's Move wine step is a separate action
@@ -2137,6 +2143,7 @@ cmd_patches(){
   for key in "$@"; do
     spec="$(_manual_patch_spec "$key")"
     [[ -n $spec ]] || continue
+    _patch_present "$key" || continue
     # Only propose a patch for an app that is actually INSTALLED: a failed
     # install must never offer the patch (the patch would fail anyway).
     _installed_state "$key" || continue

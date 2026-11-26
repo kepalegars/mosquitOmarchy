@@ -45,9 +45,14 @@ second copy. The install preflight uses the same numbers.
 `PATCH/patch-ableton-native.sh` reads the challenge code (HWID) from the
 **native** `Unlock.json`
 (`$XDG_DATA_HOME/Ableton/Live 12.4.7/Unlock/Unlock.json` — never from a Wine
-prefix), copies it to the clipboard, launches
-`~/Documents/new patch/WM_Ableton.r2rwm`, waits for you to close it, then copies
-the new `.auz` into the install folder and opens that folder.
+prefix), copies it to the clipboard, launches `PATCH/WM_Ableton.r2rwm` (moved
+here from `~/Documents/new patch`), waits for you to close it, then copies the
+new `.auz` into the install folder and opens that folder.
+
+Live only shows the challenge code in its authorization dialog and does not
+always write `Unlock.json`. Give it once with `ABLETON_HWID=…` (see below); the
+script remembers it in `$XDG_STATE_HOME/mosquitomarchy/ableton-native-hwid` so
+later `p` runs need no terminal.
 
 Press **p** on the `ableton-native` row in mosquitomarchy Setup to run it; the
 confirm explains the HWID → tool → `.auz` steps first.
@@ -57,8 +62,13 @@ PATCH/patch-ableton-native.sh --no-run   # only read/copy the HWID
 PATCH/patch-ableton-native.sh            # full flow
 PATCH/patch-ableton-native.sh --check    # applied / not applied (used by p)
 PATCH/patch-ableton-native.sh --revert   # remove only the .auz files it copied
+ABLETON_HWID=XXXX-XXXX-XXXX-XXXX-XXXX-XXXX bash PATCH/patch-ableton-native.sh --no-run
 R2RWM_TOOL=/path/to/tool bash PATCH/patch-ableton-native.sh
 ```
+
+The `p` shortcut is advertised only while both the patch script and
+`PATCH/WM_Ableton.r2rwm` are present — if the tool is missing, the row shows no
+patch hint and no Patches entry.
 
 Live must have been started once for `Unlock.json` to exist. The `.r2rwm` tool
 is a Windows binary, so it is launched with Wine (the Ableton Wine runtime if
