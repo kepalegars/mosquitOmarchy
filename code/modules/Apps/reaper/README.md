@@ -10,7 +10,9 @@ X11 fallback behaviour by keeping the system `libSwell` (the old binary was
 saved manually under `backups/`). `setup-reaper.sh --wayland` re-enables it.
 
 There is no `reaper-ui-scale`, no launcher-time theme sync and no Hyprland rule
-managed by this module. The theme is generated once when the custom config is
+managed by this module. The gdk-pixbuf 2.42 `.cur` decoder from `fix-reaper-cursors.sh` is loaded by
+`reaper-launch` on both X11 and Wayland: without it REAPER's arrange-view cursor
+can vanish because gdk-pixbuf/glycin returns a NULL cursor image. The theme is generated once when the custom config is
 applied and then stays as it is. LSP plugins are an optional yes/no question at
 the end of an interactive install (`--lsp` / `--no-lsp` for automation), and a
 mosquitOmarchy backup records whether they were present so a restore installs

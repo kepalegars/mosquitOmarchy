@@ -82,12 +82,13 @@ mosquitomarchy_daw_wrapper_points_at() {
 # Returns 1 (and changes nothing) when the runtime is not installed: silently
 # writing a wrapper that falls back to the system wine is what made the original
 # bug invisible.
-# Only the X11 fallback needs the gdk-pixbuf 2.42 .cur decoder; the marker is
-# written by setup-reaper.sh --x11.
+# REAPER loads its built-in cursors from .cur files through gdk-pixbuf. The
+# current gdk-pixbuf/glycin loader misreads them and returns NULL, which makes
+# the cursor disappear in the arrange view. fix-reaper-cursors.sh installs a
+# 2.42 decoder locally; use it on both X11 and native Wayland.
 mosquitomarchy_reaper_cursor_lib() {
-  local marker="$HOME/.config/REAPER/.mosquitomarchy/keep-x11-swell"
   local libdir="$HOME/.local/lib/reaper-cursors"
-  if [[ -f $marker && -f $libdir/libgdk_pixbuf-2.0.so.0 ]]; then
+  if [[ -f $libdir/libgdk_pixbuf-2.0.so.0 ]]; then
     export LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   fi
 }
@@ -115,11 +116,11 @@ AWINE_DIR="$dir"
 if [ -x "\$AWINE_DIR/wine" ]; then
   export PATH="\$AWINE_DIR:\$PATH"
 fi
-# Only the X11 fallback needs the old gdk-pixbuf .cur decoder.
+# gdk-pixbuf 2.42 .cur decoder (fix-reaper-cursors.sh), needed on X11 and
+# native Wayland so REAPER's arrange-view cursor does not vanish.
 mosquitomarchy_reaper_cursor_lib() {
-  local marker="\$HOME/.config/REAPER/.mosquitomarchy/keep-x11-swell"
   local libdir="\$HOME/.local/lib/reaper-cursors"
-  if [ -f "\$marker" ] && [ -f "\$libdir/libgdk_pixbuf-2.0.so.0" ]; then
+  if [ -f "\$libdir/libgdk_pixbuf-2.0.so.0" ]; then
     export LD_LIBRARY_PATH="\$libdir\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
   fi
 }
@@ -163,7 +164,7 @@ wrapper_has_prelaunch() {
   [[ -f $w ]] || return 1
   case "$app" in
     reaper) grep -q 'mosquitomarchy_reaper_cursor_lib' "$w" 2>/dev/null \
-              && ! grep -qE 'reaper-theme-sync|reaper-ui-scale' "$w" 2>/dev/null ;;
+              && ! grep -qE 'reaper-theme-sync|reaper-ui-scale|keep-x11' "$w" 2>/dev/null ;;
     *)      return 0 ;;
   esac
 }
