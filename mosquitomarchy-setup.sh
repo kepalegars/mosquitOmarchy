@@ -238,16 +238,23 @@ REPO_REMOTE="${OMARCHY_SCRIPTS_REMOTE:-origin}"
 REPO_BRANCH="master"
 
 # ── Displayed script versions ──────────────────────────────────────────────
-# The version shown next to a module is the version of its SCRIPT (the
-# installer), NOT of the application it installs. Every module is on the same
-# version as the repo (the root VERSION file), so there is no per-module list to
-# forget to update: one place decides, and the modules read it.
-#
-# The per-module case statement it used to carry listed four scripts still on
-# 0.1.0, and it was already out of step with the README. Keeping a second list
-# next to VERSION is how the two drift, so it is gone rather than corrected.
-REPO_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo 1.0.0)"
-module_version(){ printf '%s\n' "$REPO_VERSION"; }
+# The version shown next to a row is the version of its SCRIPT (the installer),
+# NOT of the application it installs. Each script has its own line in VERSIONS;
+# VERSION is only the manager/TUI version and the fallback for non-script rows
+# (stock/created themes). VERSIONS is the one per-script list — nothing else
+# carries a copy of these numbers.
+REPO_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo 2.0.0)"
+declare -A SCRIPT_VERSIONS=()
+if [[ -r "$SCRIPT_DIR/VERSIONS" ]]; then
+  while IFS='=' read -r _vid _vver || [[ -n $_vid ]]; do
+    [[ $_vid =~ ^[A-Za-z0-9._-]+$ && $_vver =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+      && SCRIPT_VERSIONS[$_vid]="$_vver"
+  done < "$SCRIPT_DIR/VERSIONS"
+fi
+# No fork in the hot tree loops: publish the answer into a global like json_str_into.
+MV=''
+module_version_into(){ MV="${SCRIPT_VERSIONS[$1]:-${SCRIPT_VERSIONS[default]:-$REPO_VERSION}}"; }
+module_version(){ module_version_into "$1"; printf '%s\n' "$MV"; }
 
 # ── Local applied-version tracking for Updates ─────────────────────────────
 # The Updates screen proposes an installed module whenever files owned by that

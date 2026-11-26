@@ -770,7 +770,7 @@ tree_fingerprint(){
   done < <(tui_scripts)
   local _versions=''
   [[ -r "$SCRIPT_DIR/VERSIONS" ]] && _versions="$(<"$SCRIPT_DIR/VERSIONS")"
-  out+="|v${REPO_VERSION:-}|vl${#_versions}|f${#FIXES[@]}|t${#TWEAKS[@]}|c${#CATEGORIES[@]}|o${#MODULES[@]}"
+  out+="|v${REPO_VERSION:-}|vs${_versions//$'\n'/;}|f${#FIXES[@]}|t${#TWEAKS[@]}|c${#CATEGORIES[@]}|o${#MODULES[@]}"
   # The Setup/Uninstall trees embed the stock preinstall list (a "Preinstalls"
   # folder with one row per package), so the list is an INPUT to the tree:
   # without it, a cached tree from before the folder existed keeps being
@@ -1917,8 +1917,9 @@ cmd_update_check(){
     files_json="$(json_str_array UPDATE_DETAIL_FILES)"
     changes_json="$(json_str_array UPDATE_DETAIL_CHANGES)"
     ((i)) && printf ','
-    printf '{"key":%s,"label":%s,"reason":%s,"base":%s,"applied":%s,"files":%s,"changes":%s}' \
+    printf '{"key":%s,"label":%s,"reason":%s,"version":%s,"base":%s,"applied":%s,"files":%s,"changes":%s}' \
       "$(json_str "$id")" "$(json_str "${row#*:}")" "$(json_str "$UPDATE_DETAIL_REASON")" \
+      "$(json_str "$(module_version "$id")")" \
       "$(json_str "$UPDATE_DETAIL_BASE")" "$(json_str "${UPDATE_DETAIL_APPLIED:0:7}")" \
       "$files_json" "$changes_json"
     i=$((i+1))
@@ -1936,8 +1937,9 @@ cmd_update_check(){
       local dv_state; dv_state="$(module_state davinci-resolve 2>/dev/null || true)"; dv_state="${dv_state%%:*}"
       if [[ $dv_state == ok || $dv_state == partial ]]; then
         ((i)) && printf ','
-        printf '{"key":"davinci-resolve","label":"DaVinci Resolve","reason":%s,"base":"","applied":"","files":[],"changes":[%s]}' \
+        printf '{"key":"davinci-resolve","label":"DaVinci Resolve","reason":%s,"version":%s,"base":"","applied":"","files":[],"changes":[%s]}' \
           "$(json_str "Resolve ${dv_new} detected (integration recorded for ${dv_old}) — re-apply the DaVinci integration and patches")" \
+          "$(json_str "$(module_version davinci-resolve)")" \
           "$(json_str "Re-apply the license patch, AAC fix, FFmpeg plugin, launcher and audio settings")"
         i=$((i+1))
       fi
@@ -1956,8 +1958,9 @@ cmd_update_check(){
     for row in "${ids[@]}"; do [[ ${row%%:*} == ableton-wine ]] && ableton_listed=1; done
     if ((ableton_listed == 0)); then
       ((i)) && printf ','
-      printf '{"key":"ableton-wine","label":"Ableton Live (Wine)","reason":%s,"base":"","applied":"","files":[],"changes":[%s]}' \
+      printf '{"key":"ableton-wine","label":"Ableton Live (Wine)","reason":%s,"version":%s,"base":"","applied":"","files":[],"changes":[%s]}' \
         "$(json_str "The official install-ableton-latest.run is missing — update downloads it")" \
+        "$(json_str "$(module_version ableton-wine)")" \
         "$(json_str "Fetch the official Ableton Wine installer into code/modules/Apps/ableton/wine/")"
     fi
   fi

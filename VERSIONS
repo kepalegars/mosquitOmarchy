@@ -1,0 +1,93 @@
+# Per-script versions shown by the Setup / Status / Update screens.
+# One line per id exposed in mosquitomarchy-setup.sh (MODULES, FIXES, TWEAKS),
+# plus the TUI package ids from code/modules/TUIs and the fallback below.
+# `VERSION` is NOT a second list: it is the manager/TUI version only, and the
+# fallback for anything with no entry here (stock/created themes).
+#
+# Bump a line when that script changes; do not bump unrelated lines.
+# Versions follow maturity: 1.x = stable/feature-rich, 0.9 = functional but
+# awaiting real-hardware/user verification, 0.0/0.1/0.2 = beta or new.
+
+# manager / watchdog
+mosquitomarchy=2.0.0
+mosquitomarchy-update=1.1.0
+
+# modules — stable
+audio=1.0.0
+audio-plugin-manager=1.6.0
+ableton-wine=1.5.0
+ableton-move-manager=0.6.0
+ableton-native=0.2.0
+achraf67=1.1.0
+apps=1.0.0
+battery-management=1.2.0
+better-pip=1.1.0
+betterbird=1.0.1
+bitwig=1.0.1
+brightness=1.0.1
+davinci-resolve=1.2.0
+downloads=1.0.1
+douze=0.9.0
+extracto=1.0.1
+flea=1.0.1
+guitarpro=1.0.2
+handbrake=1.0.1
+jamjamjam-plugin=1.1.0
+keepassxc=1.2.0
+levels-guard=1.1.0
+live-mode=0.9.0
+macos-vm=0.9.0
+mega-caffeine=1.2.0
+mixbay=1.4.0
+mx-master=0.0.2
+omarchy-vm=1.3.0
+omaskpinpass=1.1.0
+pipewire-settings=1.1.0
+process-killer=1.0.0
+reaper=1.3.0
+reboot-into-windows=1.0.1
+remove-ai=1.0.0
+signal=1.1.0
+spektrafilm=0.9.0
+strata=0.1.0
+superfile=1.1.0
+taskq=1.0.0
+tidal=1.0.1
+touchpad=0.0.2
+whatsapp-native=1.1.0
+windows-vm=1.1.0
+zen=1.1.0
+
+# fixes
+1px-seam=1.0.0
+ableton-fullscreen=1.0.0
+ableton-wine-scroll=1.0.0
+bluetooth=1.1.0
+chromium-google-api-key=0.9.0
+hyprland-autofocus=1.0.1
+hyprland-crash=1.0.0
+omarchy-menu=1.0.0
+quickshell-bar=0.9.0
+reaper-cursors=0.9.0
+
+# tweaks
+amdgpu-compute-timeout=0.9.0
+colors-unifier=1.1.0
+nautilus-audio=0.9.0
+terminal-padding=1.0.0
+tui-theme=1.1.0
+wine-apps=1.0.0
+wine-menu=1.0.0
+wine-theme=1.0.0
+
+# TUIs (package ids from code/modules/TUIs)
+aria2=1.0.0
+bagels=1.0.0
+basalt=1.0.0
+caligula-git=1.0.0
+crunchycleaner-bin=1.0.0
+septabee=1.0.0
+tdf-git=1.0.0
+
+# Non-script rows (stock / created themes, unknown ids)
+default=1.0.0

@@ -5751,7 +5751,12 @@ func pickerTreeItems(folders []FolderRec, items []SetupItemRec, checked, open ma
 // description happened to contain no " — " to truncate at, so some rows
 // had one and some did not.
 func updateModuleLabel(m model, it ItemRec) string {
-	if v := m.updateRec.RepoVersion; v != "" {
+	v := it.Version
+	if v == "" {
+		// Older/fixture records carry only the repo version.
+		v = m.updateRec.RepoVersion
+	}
+	if v != "" {
 		return it.Key + " - v" + v
 	}
 	return it.Key

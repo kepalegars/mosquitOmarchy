@@ -240,7 +240,9 @@ type ItemRec struct {
 	// Update rows may also carry the update-check's local changelog: a
 	// one-line reason, the checked repo base, the locally recorded applied
 	// commit, the owned changed files, and one changelog line per file.
-	Reason  string   `json:"reason"`
+	Reason string `json:"reason"`
+	// Version is this module's script version, not the repo version.
+	Version string   `json:"version"`
 	Base    string   `json:"base"`
 	Applied string   `json:"applied"`
 	Files   []string `json:"files"`

@@ -354,14 +354,20 @@ Every version shown in a TUI is the version of the **script**, never of the appl
 installs. For example, a module version identifies the mosquitOmarchy installer, not the
 application it installs; it is what "check for updates" acts on.
 
-There is one source: the root [`VERSION`](VERSION) file, currently **1.0.0**, which
-`module_version()` reads and the installers inject into `mosquitomarchy-tui` and
-`mosquito-mixbay-tui` at build time (`-X main.appVersion`). There is deliberately no
-second list — a list next to `VERSION` is how the two drift.
+Each script has its own line in [`VERSIONS`](VERSIONS), read by `module_version()`:
+modules, fixes, tweaks and TUI rows each carry their own real version. The root
+[`VERSION`](VERSION) file is only the manager/TUI version (currently **2.0.0**), injected
+into `mosquitomarchy-tui` at build time; `mosquito-mixbay-tui` takes its version from its
+own `mixbay` line in `VERSIONS`. Rows with no script (stock/created themes) fall back to
+the `default` line in `VERSIONS`.
 
-The rule is what makes the update zone meaningful. A row saying 1.0.0 next to a row saying
-0.9.0 would look like one module was newer than another; in fact both would be describing
-their installers, and the only real comparison is against the version on GitHub.
+`VERSIONS` is the single list — nothing else carries a copy of these numbers; bump the
+line when that script changes. The maturity shown follows the script's state: 1.x for a
+stable, feature-rich installer, 0.9 for one still awaiting real-hardware/user verification
+(live-mode, douze, spektrafilm, macOS VM), 0.0–0.2 for beta or brand-new scripts
+(touchpad and mx-master are v0.0.2 "MEGA BETA", Ableton Move v0.6, ableton-native 0.2,
+strata 0.1). Two different numbers describe two different scripts, not two different
+installations; the comparison that matters for the update zone is still against GitHub.
 
 ## After the install
 

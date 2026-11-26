@@ -235,7 +235,8 @@ if ! command -v go >/dev/null 2>&1; then
   warn "go not found — mosquito-mixbay-tui won't be built. Install go (mise / pacman -S go) and re-run."
 else
   TUI_TMP_OUT="$(mktemp "$BIN_DIR/.mosquito-mixbay-tui.XXXXXX")"
-  TUI_VERSION="$(cat "$SCRIPT_DIR/../../../../../VERSION" 2>/dev/null || echo dev)"
+  TUI_VERSION="$(awk -F= '$1=="mixbay"{print $2; exit}' "$SCRIPT_DIR/../../../../../VERSIONS" 2>/dev/null || true)"
+  [[ -n $TUI_VERSION ]] || TUI_VERSION="$(cat "$SCRIPT_DIR/../../../../../VERSION" 2>/dev/null || echo dev)"
   if (cd "$SCRIPT_DIR/tui-go" && go build -ldflags "-X main.appVersion=$TUI_VERSION" -o "$TUI_TMP_OUT" .); then
     chmod +x "$TUI_TMP_OUT"
     mv -f "$TUI_TMP_OUT" "$BIN_DIR/mosquito-mixbay-tui"
