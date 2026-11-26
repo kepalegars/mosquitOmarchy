@@ -4393,6 +4393,19 @@ func cleanAbletonLog(raw string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
 	lines := strings.Split(s, "\n")
+	// debugfs rdump restores the UIDs stored in the image; as an unprivileged
+	// user that is refused harmlessly (the files stay owned by the user, which
+	// is what a home install wants). Drop the noise so the log does not read
+	// as a failed step.
+	kept := lines[:0]
+	for _, line := range lines {
+		if strings.Contains(line, "while changing ownership of") ||
+			strings.HasPrefix(strings.TrimSpace(line), "debugfs 1.") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	lines = kept
 	for len(lines) > 0 && strings.TrimSpace(lines[0]) == "" {
 		lines = lines[1:]
 	}

@@ -354,3 +354,32 @@ mq_sudo() {
   fi
   sudo "$@"
 }
+
+# ── One elevation at launch, shared by concurrent launches ───────────────────
+# Call this at the START of an action, before any root step. mq_sudo_prime (above)
+# already prefers omaskpinpass and falls back to mosquitomarchy's themed askpass
+# / pkexec. The flock serialises simultaneous launches: the first primes sudo's
+# timestamp, the rest find it cached and return without a second prompt.
+# Best effort: a declined prompt must not abort work that needs no root.
+mq_elevate_once() {
+  [[ -n ${MQ_ELEVATED_ONCE:-} ]] && return 0
+  if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+    MQ_ELEVATED_ONCE=1; export MQ_ELEVATED_ONCE; return 0
+  fi
+  local lock="${XDG_RUNTIME_DIR:-/tmp}/mq-elevate.lock" fd=""
+  exec {fd}>"$lock" 2>/dev/null || fd=""
+  [[ -n $fd ]] && flock -x "$fd" 2>/dev/null || true
+  # Another launch may have primed while we waited for the lock.
+  if sudo -n -v 2>/dev/null; then
+    MQ_SUDO_PRIMED=1; MQ_PRIME_KIND=sudo
+  else
+    mq_sudo_prime || true
+  fi
+  if [[ -n $fd ]]; then
+    flock -u "$fd" 2>/dev/null || true
+    exec {fd}>&- 2>/dev/null || true
+  fi
+  MQ_ELEVATED_ONCE=1
+  export MQ_ELEVATED_ONCE MQ_SUDO_PRIMED MQ_PRIME_KIND
+  return 0
+}

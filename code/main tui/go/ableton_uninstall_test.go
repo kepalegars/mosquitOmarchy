@@ -76,6 +76,25 @@ func TestCleanAbletonLog(t *testing.T) {
 	}
 }
 
+// debugfs rdump's ownership warnings are harmless for a home install and must
+// not make the log look like a failed step, but a real debugfs error must stay.
+func TestCleanAbletonLogDropsRdumpNoise(t *testing.T) {
+	raw := "step 6 copying\ndebugfs 1.47.4 (6-Mar-2025)\n" +
+		"dump_file: Operation not permitted while changing ownership of opt/push3/Live\n" +
+		"rdump: Operation not permitted while changing ownership of opt/push3/lib\n" +
+		"step 7 ok"
+	got := cleanAbletonLog(raw)
+	want := "step 6 copying\nstep 7 ok"
+	if got != want {
+		t.Fatalf("cleanAbletonLog = %q, want %q", got, want)
+	}
+
+	real := "step 6\ndebugfs: cannot open rootfs.img: No such file or directory\n"
+	if got := cleanAbletonLog(real); !strings.Contains(got, "cannot open rootfs.img") {
+		t.Fatalf("a real debugfs error was filtered out: %q", got)
+	}
+}
+
 // TestAbletonErrorKeepsLogFrame: a failed module run must not fall straight
 // back to the menu. It asks to view the transcript, and that transcript is a
 // real scrInfo (so `c` copies it).
