@@ -96,7 +96,8 @@ Details, options and caveats live in each module's own `README.md`. This table i
 |---|---|---|
 | `reaper` | REAPER + its Hyprland/Wayland integration | [README](code/modules/Apps/reaper/README.md) |
 | `bitwig` | Bitwig Studio from the local `.deb`, with its own module | [README](code/modules/Apps/bitwig/README.md) |
-| `ableton` | Ableton Live 12 native on Linux, sharing the same VST root | [README](code/modules/Apps/ableton/README.md) |
+| `ableton-wine` | Ableton Live 12 via Wine (shibco/ableton-linux), sharing the shared VST root | [README](code/modules/Apps/ableton/README.md) |
+| `ableton-native` | Ableton Live Suite 12.4.7 only — native Linux build (velkajelka/linux-native-ableton) | [README](code/modules/Apps/ableton/README.md) |
 | `guitarpro` | Guitar Pro 8 in its own Wine prefix | [README](code/modules/Apps/guitarpro/README.md) |
 | `davinci-resolve` | DaVinci Resolve (free or Studio) + silent DRwrap integration | [README](code/modules/Apps/davinci/README.md) |
 | `spektrafilm` | SpektraFilm (film simulation): OFX from a local zip (any version) + standalone `spektrafilm-git` AUR app | [README](code/modules/Apps/spektrafilm/README.md) |
@@ -303,8 +304,9 @@ Also not in the repo:
 
 | App | File | Get it |
 |---|---|---|
-| Ableton Live | `install-ableton-latest.run` (installs Ableton) | [releases](https://github.com/shibco/ableton-linux/releases/latest) |
-| Ableton Live | `ableton_live_suite_*.zip` or `_intro_*.zip` | [ableton.com](https://www.ableton.com/en/download/) (account needed) |
+| Ableton Live (Wine) | `install-ableton-latest.run` (installs Ableton) | [releases](https://github.com/shibco/ableton-linux/releases/latest) |
+| Ableton Live (Wine) | `ableton_live_suite_*.zip` or `_intro_*.zip` | [ableton.com](https://www.ableton.com/en/download/) (account needed) |
+| Ableton Live Suite 12.4.7 (Native) | `Push3-RecoveryImage-2.4.7.zip` + `ableton_live_suite_12.4.7_64.zip` — downloaded automatically if absent | [upstream README](https://github.com/velkajelka/linux-native-ableton#install) |
 | Bitwig Studio | `bitwig-studio-*.deb`, version pinned by the module | [bitwig.com](https://www.bitwig.com/download/) |
 | DaVinci Resolve | `DaVinci_Resolve_*_Linux.zip` (~7 GB) | [Blackmagic](https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion) |
 | SpektraFilm OFX | `spektrafilm*.zip` (any version) | [spektrafilm.114c.de](https://downloads.spektrafilm.114c.de/latest/spektrafilm-OFX-linux.zip) |

@@ -19,7 +19,7 @@ func TestStartUninstallRoutesAbletonToItsOwnFlow(t *testing.T) {
 	m := initialModel()
 
 	// Ableton alone: no confirm screen, a command is returned, nothing stashed.
-	m2, cmd := m.startUninstall([]string{"ableton"}, "Uninstall Ableton?")
+	m2, cmd := m.startUninstall([]string{"ableton-wine"}, "Uninstall Ableton?")
 	if cmd == nil {
 		t.Fatalf("ableton uninstall produced no command (its flow never ran)")
 	}
@@ -31,7 +31,7 @@ func TestStartUninstallRoutesAbletonToItsOwnFlow(t *testing.T) {
 	}
 
 	// Ableton batched with another module: the other waits until it returns.
-	m3, cmd := m.startUninstall([]string{"ableton", "reaper"}, "Uninstall 2 items?")
+	m3, cmd := m.startUninstall([]string{"ableton-wine", "reaper"}, "Uninstall 2 items?")
 	if cmd == nil {
 		t.Fatalf("batched ableton uninstall produced no command")
 	}
@@ -46,7 +46,7 @@ func TestStartUninstallRoutesAbletonToItsOwnFlow(t *testing.T) {
 // actions runner.
 func TestStartAbletonInstallHoldsRestOfPlan(t *testing.T) {
 	m := initialModel()
-	m2, cmd := m.startAbletonInstall([]string{"apps\tableton\treaper", "tweaks\tfoo"})
+	m2, cmd := m.startAbletonInstall("ableton-wine", []string{"apps\tableton-wine\treaper", "tweaks\tfoo"})
 	if cmd == nil {
 		t.Fatalf("ableton install produced no command (its flow never ran)")
 	}
@@ -59,7 +59,7 @@ func TestStartAbletonInstallHoldsRestOfPlan(t *testing.T) {
 			t.Fatalf("abletonInstallWait = %q, want %q", m2.abletonInstallWait, want)
 		}
 	}
-	if !planHasAbleton([]string{"apps\tableton"}) {
+	if !planHasAbleton([]string{"apps\tableton-native"}) {
 		t.Fatal("planHasAbleton missed the ableton key")
 	}
 }
@@ -100,7 +100,7 @@ func TestAbletonErrorKeepsLogFrame(t *testing.T) {
 func TestTakeAbletonLogIncludesNativeRunLog(t *testing.T) {
 	repo := t.TempDir()
 	t.Setenv("MOSQUITOMARCHY_REPO", repo)
-	dir := filepath.Join(repo, "code", "modules", "Apps", "ableton")
+	dir := filepath.Join(repo, "code", "modules", "Apps", "ableton", "wine")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

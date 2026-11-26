@@ -56,7 +56,8 @@ var kbCatalog = []struct {
 	Items []KbCatItem
 }{
 	{"apps", "package app", []KbCatItem{
-		{"Ableton Live", "ableton-live", "launch"},
+		{"Ableton Live (Wine)", "ableton-live", "launch"},
+		{"Ableton Live (Native)", "$HOME/.local/share/ableton-live-12/push3_opt/push3/AbletonLive12", "launch"},
 		{"Guitar Pro 8", "guitarpro", "launch"},
 		{"Bitwig Studio", "bitwig-studio", "launch"},
 		{"DaVinci Resolve", "davinci-resolve", "launch"},

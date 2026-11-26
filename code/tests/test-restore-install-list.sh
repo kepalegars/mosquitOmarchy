@@ -56,9 +56,9 @@ restore_install_list "$LIST" full
 [[ ${seen[0]} == 'apps:douze extracto keepassxc reaper zen' ]]
 [[ ${seen[1]} == 'plugins:taskq' ]]
 [[ $package_sync_calls == 1 ]]
-! restore_install_has "$LIST" apps ableton
-printf 'apps\tdouze\tableton\n' > "$LIST"
-restore_install_has "$LIST" apps ableton
+! restore_install_has "$LIST" apps ableton-wine
+printf 'apps\tdouze\tableton-wine\n' > "$LIST"
+restore_install_has "$LIST" apps ableton-wine
 
 category_run(){ MODULE_FAILURES=1; }
 if restore_install_list "$LIST" full; then

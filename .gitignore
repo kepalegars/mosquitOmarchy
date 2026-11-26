@@ -2,7 +2,7 @@
 # These files are downloaded on demand via apps/download-assets.sh
 # (assets.links catalog). Do NOT commit them: they far exceed the
 # GitHub repository limit (100 MB per file) and bloat the clone.
-code/modules/Apps/ableton/*.zip
+code/modules/Apps/ableton/**/*.zip
 code/modules/Apps/davinci/*.zip
 code/modules/Apps/spektrafilm/*.zip
 code/modules/Apps/guitarpro/*.exe
@@ -56,7 +56,8 @@ code/modules/mosquito/audio-stack/apm/yabridge-driver.lock
 # All the files (including each app's patches) are recovered via the
 # LATEST RELEASE of the repository (archive from archive-customarchy.sh) —
 # not on the repo.
-code/modules/Apps/ableton/PATCH/
+code/modules/Apps/ableton/wine/PATCH/
+code/modules/Apps/ableton/native/linux-native-ableton/
 code/modules/Apps/guitarpro/PATCH/
 code/modules/Apps/davinci/PATCH/
 code/modules/Apps/bitwig/PATCH/

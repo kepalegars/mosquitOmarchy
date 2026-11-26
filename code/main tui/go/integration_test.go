@@ -264,8 +264,8 @@ func TestSecretPatchWorksOnSetupRoot(t *testing.T) {
 	m := initialModel()
 	m.w, m.h = 120, 40
 	m.push(scrSetup)
-	m.setupItems = []SetupItemRec{{Folder: "apps", Key: "ableton", Label: "Ableton"}}
-	m.selected[setupValue("apps", "ableton")] = true
+	m.setupItems = []SetupItemRec{{Folder: "apps", Key: "ableton-wine", Label: "Ableton"}}
+	m.selected[setupValue("apps", "ableton-wine")] = true
 	_, cmd := m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
 	if cmd == nil {
 		t.Fatal("p on Setup root did not dispatch the patch query")
@@ -273,7 +273,7 @@ func TestSecretPatchWorksOnSetupRoot(t *testing.T) {
 }
 
 func TestHighlightedKeyOf(t *testing.T) {
-	if got := highlightedKeyOf("item:apps:ableton"); len(got) != 1 || got[0] != "ableton" {
+	if got := highlightedKeyOf("item:apps:ableton-wine"); len(got) != 1 || got[0] != "ableton-wine" {
 		t.Fatalf("highlightedKeyOf = %v", got)
 	}
 	if got := highlightedKeyOf("cat:apps"); got != nil {
@@ -288,7 +288,7 @@ func TestStartAbletonInstallRunsInteractive(t *testing.T) {
 	m := initialModel()
 	m.nav = []screen{scrMain, scrSetup}
 	m.w, m.h = 120, 40
-	m2, cmd := m.startAbletonInstall([]string{"apps\tbitwig\tableton"})
+	m2, cmd := m.startAbletonInstall("ableton-wine", []string{"apps\tbitwig\tableton-wine"})
 	if cmd == nil {
 		t.Fatal("startAbletonInstall returned no command")
 	}

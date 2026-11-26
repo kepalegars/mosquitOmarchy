@@ -1724,11 +1724,11 @@ func TestPDavinciInUninstallRestoresDrivers(t *testing.T) {
 // Patch flag, and p with nothing to patch does nothing at all (no toast).
 func TestPatchHintOnlyWhenScriptExists(t *testing.T) {
 	m := flatSetup()
-	it := SetupItemRec{Folder: "apps", Key: "ableton", Label: "Ableton Live — v1", Patch: true}
+	it := SetupItemRec{Folder: "apps", Key: "ableton-wine", Label: "Ableton Live — v1", Patch: true}
 	m.setupItems = append(m.setupItems, it)
-	m.setupByValue[setupValue("apps", "ableton")] = it
+	m.setupByValue[setupValue("apps", "ableton-wine")] = it
 	m.setupPicker = m.rebuildSetup()
-	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "ableton"))
+	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "ableton-wine"))
 
 	if view := ansi.Strip(m.View()); !strings.Contains(view, "p patch") {
 		t.Fatalf("Setup legend does not advertise the p key on a patchable row:\n%s", view)
@@ -1745,11 +1745,11 @@ func TestPatchHintOnlyWhenScriptExists(t *testing.T) {
 // the hidden p that still applies the R2R patch.
 func TestMoveWineUsesUppercaseP(t *testing.T) {
 	m := flatSetup()
-	it := SetupItemRec{Folder: "apps", Key: "ableton", Label: "Ableton Live — v1", Patch: true, MovePatch: true}
+	it := SetupItemRec{Folder: "apps", Key: "ableton-wine", Label: "Ableton Live — v1", Patch: true, MovePatch: true}
 	m.setupItems = append(m.setupItems, it)
-	m.setupByValue[setupValue("apps", "ableton")] = it
+	m.setupByValue[setupValue("apps", "ableton-wine")] = it
 	m.setupPicker = m.rebuildSetup()
-	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "ableton"))
+	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "ableton-wine"))
 
 	view := ansi.Strip(m.View())
 	if !strings.Contains(view, "p patch") || !strings.Contains(view, "P Move patch") {
@@ -1769,9 +1769,9 @@ func TestMoveWineUsesUppercaseP(t *testing.T) {
 	u := flatSetup()
 	u.treeMode = "uninstall"
 	u.setupItems = append(u.setupItems, it)
-	u.setupByValue[setupValue("apps", "ableton")] = it
+	u.setupByValue[setupValue("apps", "ableton-wine")] = it
 	u.setupPicker = u.rebuildSetup()
-	u.setupPicker = u.setupPicker.SelectValue(setupValue("apps", "ableton"))
+	u.setupPicker = u.setupPicker.SelectValue(setupValue("apps", "ableton-wine"))
 	if view := ansi.Strip(u.View()); !strings.Contains(view, "P restore Move") {
 		t.Fatalf("Uninstall legend does not advertise the Move restore:\n%s", view)
 	}
@@ -1785,11 +1785,11 @@ func TestMoveWineUsesUppercaseP(t *testing.T) {
 // patch) is still advertised.
 func TestPOnAbletonWithoutMoveScriptIsInert(t *testing.T) {
 	m := flatSetup()
-	it := SetupItemRec{Folder: "apps", Key: "ableton", Label: "Ableton Live — v1", Patch: true}
+	it := SetupItemRec{Folder: "apps", Key: "ableton-wine", Label: "Ableton Live — v1", Patch: true}
 	m.setupItems = append(m.setupItems, it)
-	m.setupByValue[setupValue("apps", "ableton")] = it
+	m.setupByValue[setupValue("apps", "ableton-wine")] = it
 	m.setupPicker = m.rebuildSetup()
-	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "ableton"))
+	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "ableton-wine"))
 
 	view := ansi.Strip(m.View())
 	if strings.Contains(view, "P Move patch") || !strings.Contains(view, "p patch") {

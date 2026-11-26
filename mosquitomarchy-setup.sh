@@ -163,6 +163,7 @@ load_excluded(){
   while IFS= read -r m || [[ -n $m ]]; do
     [[ -z $m ]] && continue
     [[ $m == keys ]] && m=keybindings                # renamed module id (old state files)
+    [[ $m == ableton ]] && m=ableton-wine          # renamed module id (old state files)
     [[ $m == davinci ]] && m=davinci-resolve       # renamed module id (old state files)
     [[ $m == achraff ]] && m=achraf67              # renamed module id (old state files)
     EXCLUDED+=("$m")
@@ -709,8 +710,8 @@ st_omarchy_vm(){
   [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
   echo ok
 }
-st_ableton(){
-  # Native Linux Ableton Live (ableton-linux project): launcher + dedicated wine prefix
+st_ableton_wine(){
+  # Ableton Live via Wine (shibco/ableton-linux): launcher + dedicated wine prefix
   [[ -x "$HOME/.local/bin/ableton-live" ]] || { echo missing; return; }
   local links_ok=1
   for l in "$HOME/.wine-ableton/drive_c/Program Files/Common Files/VST3" \
@@ -719,6 +720,14 @@ st_ableton(){
     [[ -L $l ]] || links_ok=0
   done
   ((links_ok)) && echo ok || echo partial
+}
+
+st_ableton_native(){
+  # Upstream installer writes .ableton-live-linux last-ish, and uninstall.sh
+  # only when the install completed; use both so a half-run reads partial.
+  local p="${XDG_DATA_HOME:-$HOME/.local/share}/ableton-live-12"
+  [[ -f "$p/.ableton-live-linux" ]] || { echo missing; return; }
+  [[ -f "$p/uninstall.sh" && -d "$p/push3_opt" ]] && echo ok || echo partial
 }
 st_ableton_move_converter(){
   # Ableton Move → Move Manager → Ableton → Bitwig workflow (native prompts, MIDI export)
@@ -1125,14 +1134,15 @@ st_apps(){
 
 MODULES=(
   "mosquitomarchy:mosquitomarchy-deployer — the manager interface itself (dispatcher + menu entry + float rule + post-boot update hook + mosquitomarchy-update watchdog) — installed automatically by the bootstrap"
-  "reaper:REAPER + Hyprland/Wayland integration, and its UI scale is set to the current monitor's DPI on every launch — REAPER cannot do this itself, so the launcher does it before the process starts. No action needed, nothing to remember: launch it from the Omarchy menu, the desktop entry or a shell and the size is right"
+  "reaper:REAPER with the native Wayland libSwell — dialogs open on the main window's monitor, no Hyprland window rules and no launcher-time theme/scale sync; LSP plugins are an optional yes/no choice at the end of the install"
   "audio:mosquito audio stack — yabridge/APM, Mixbay, Levels Guard, live mode, PipeWire (folder row installs all five)"
   "audio-plugin-manager:mosquito Audio Plugin Manager (TUI + actions) + shared audio core"
   "bitwig:Bitwig Studio 6.0 Beta 6 from the local .deb, its own module"
   "windows-vm:VM launcher + winvm (RAM/CPU/disk) + OEM debloat (auto-detected)"
   "macos-vm:macOS VMs in QEMU/KVM (OSX-For-Omarchy) — installer + TUI manager + shared folders + USB passthrough"
   "omarchy-vm:Omarchy in QEMU/KVM from the official ISO — launcher + TUI manager + shared folder + USB/GPU passthrough"
-  "ableton:Native Linux Ableton Live 12 (ableton-linux) + multi-DAW VST sharing"
+  "ableton-wine:Ableton Live 12 via Wine (shibco/ableton-linux) + multi-DAW VST sharing — any Suite/Intro edition"
+  "ableton-native:Native Linux Ableton Live Suite 12.4.7 only (velkajelka/linux-native-ableton) — Push 3 image build + Windows Suite content, installed in ~/.local/share/ableton-live-12"
   "guitarpro:Guitar Pro 8 via wine (dedicated prefix + launcher + menu shortcut)"
   "davinci-resolve:DaVinci Resolve (Studio or free) + AAC fix + FFmpeg encoder. Media Storage helper runs at every Resolve launch (home folders + removable drives); remove it with: rm ~/.local/bin/davinci-resolve-storage. Radeon 780M/Phoenix: press P on this row in Setup to apply the optimized Mesa Rusticl + CPU-scopes profile and the 90 s amdgpu compute watchdog for SpektraFilm (active after a full reboot; never applied automatically by a restore)"
   "spektrafilm:SpektraFilm (film simulation) — installs the OFX plugins from a local zip and the standalone spektrafilm-git AUR app; any OFX version accepted"
@@ -1342,7 +1352,7 @@ module_state(){
     windows-vm) st_windows_vm ;;
     macos-vm) st_macos_vm ;;
     omarchy-vm) st_omarchy_vm ;;
-    ableton) st_ableton ;; guitarpro) st_guitarpro ;;
+    ableton-wine) st_ableton_wine ;; ableton-native) st_ableton_native ;; guitarpro) st_guitarpro ;;
     ableton-move-manager) st_ableton_move_converter ;;
     davinci-resolve) st_davinci ;;
     spektrafilm) st_spektrafilm ;;
@@ -1400,7 +1410,8 @@ module_of_path(){
     code/modules/mosquitomarchy\ tui/update/*) echo mosquitomarchy-update ;;
     code/modules/Apps/reaper/*)      echo reaper ;;
     code/modules/Apps/bitwig/*)      echo bitwig ;;
-    code/modules/Apps/ableton/*)     echo ableton ;;
+    code/modules/Apps/ableton/wine/*)   echo ableton-wine ;;
+    code/modules/Apps/ableton/native/*) echo ableton-native ;;
     code/modules/Apps/guitarpro/*)   echo guitarpro ;;
     code/modules/Apps/davinci/*)     echo davinci-resolve ;;
     code/modules/Apps/spektrafilm/*) echo spektrafilm ;;
@@ -2503,6 +2514,18 @@ do_backup(){
         fi
         ;;
     esac
+    # Remember whether the LSP plugins were installed at backup time. A restore
+    # installs them straight away from this marker and never asks the question.
+    mkdir -p "$tmp/reaper"
+    local lsp_pkg p lsp_all=1
+    for lsp_pkg in lsp-plugins lsp-plugins-clap lsp-plugins-vst3 lsp-plugins-vst lsp-plugins-lv2; do
+      pacman -Q "$lsp_pkg" >/dev/null 2>&1 || lsp_all=0
+    done
+    if ((lsp_all)); then
+      printf '%s\n' lsp-plugins lsp-plugins-clap lsp-plugins-vst3 lsp-plugins-vst lsp-plugins-lv2 \
+        > "$tmp/reaper/lsp-installed"
+      ok "REAPER LSP plugins recorded for restore"
+    fi
   fi
   # MixBay audio interface profiles + their downloaded integrations. Both are
   # personal data, not part of the installed module: the profile store is the
@@ -3395,6 +3418,16 @@ restore_backup(){
     fi
   fi
 
+  # --- LSP plugins: the backup recorded them, so install without prompting.
+  if [[ $dep_reaper != no && -f "$tmp/reaper/lsp-installed" ]]; then
+    msg "Installing LSP plugins recorded in the backup"
+    mapfile -t lsp_restore_pkgs < "$tmp/reaper/lsp-installed"
+    if ! mq_sudo pacman -S --needed --noconfirm "${lsp_restore_pkgs[@]}"; then
+      warn "Could not restore the LSP plugins from the backup."
+      restore_failed=1
+    fi
+  fi
+
   # --- REAPER full data: install REAPER once, then deploy its folders. The
   # install.list already ran it when selected, so do not run the module twice.
   if [[ $dep_reaper != no && -f "$tmp/reaper/reaper.tar.gz" ]]; then
@@ -4087,16 +4120,15 @@ un_omarchy_vm(){
   ok "Omarchy VM helpers + menu + keybinding removed"
 }
 
-un_ableton(){
-  local title="Ableton Live"
+un_ableton_wine(){
+  local title="Ableton Live (Wine)"
   if [[ -f "$HOME/.local/bin/ableton-live" || -d "$HOME/.wine-ableton" ]]; then
-    title="Native Linux Ableton Live (ableton-linux)"
     info "Uninstalling $title"
     if (( PURGE )); then
       # asks the official installer to remove runtime + prefix (--delete-prefix)
       # otherwise runtime only (--keep-prefix keeps Live, licenses and projects)
       local run=""
-      for f in "$HOME"/mosquitOmarchy/code/modules/Apps/ableton/install-ableton-latest.run; do
+      for f in "$ABLETON_WINE_DIR"/install-ableton-*.run; do
         [[ -f $f ]] && run=$f
       done
       if [[ -n $run ]]; then
@@ -4104,12 +4136,12 @@ un_ableton(){
       else
         warn "install-ableton-latest.run not found — partial manual removal."
       fi
-      rm -f "$HOME/.local/share/applications/ableton-live.desktop"
-      ok "Native Ableton removed (--delete-prefix)"
+      rm -f "$APPS_DIR"/ableton-live*.desktop
+      ok "Wine Ableton removed (--delete-prefix)"
     else
       warn "Prefix ~/.wine-ableton, Live, licenses and projects KEPT (--purge to remove everything)."
       rm -f "$BIN_DIR/ableton-live"
-      rm_desktops ableton-live.desktop
+      rm -f "$APPS_DIR"/ableton-live*.desktop
       ok "Launcher and menu entries removed (prefix and Live kept)"
     fi
   fi
@@ -4121,6 +4153,16 @@ un_ableton(){
     rm -f "$HOME/.config/windows/ableton.conf"
     ok "Ableton RemoteApp removed"
   fi
+}
+
+un_ableton_native(){
+  local p="${XDG_DATA_HOME:-$HOME/.local/share}/ableton-live-12"
+  [[ -f "$p/uninstall.sh" ]] || { warn "Native Ableton uninstaller not found in $p — nothing removed."; return 0; }
+  info "Uninstalling Ableton Live Suite 12.4.7 (Native)"
+  local -a args=()
+  (( PURGE )) && args+=(--purge)
+  bash "$p/uninstall.sh" "${args[@]}" || { err "Native Ableton uninstaller reported a problem."; return 1; }
+  ok "Native Ableton removed (its own uninstaller; Push 3 archives are kept)"
 }
 
 un_ableton_move_converter(){
@@ -4971,7 +5013,8 @@ uninstall_module(){
     windows-vm) un_windows_vm ;;
     macos-vm) un_macos_vm ;;
     omarchy-vm) un_omarchy_vm ;;
-    ableton) un_ableton ;;
+    ableton-wine) un_ableton_wine ;;
+    ableton-native) un_ableton_native ;;
     guitarpro) un_guitarpro ;;
     davinci-resolve) un_davinci ;;
     spektrafilm) un_spektrafilm ;;
@@ -5103,7 +5146,8 @@ VM_DIR="$SCRIPTS/VMs/windows-vm"
 MIXBAY_DIR="$AUDIO_STACK_DIR/mixbay"
 MACOS_VM_DIR="$SCRIPTS/VMs/macos-vm"
 OMARCHY_VM_DIR="$SCRIPTS/VMs/omarchy-vm"
-ABLETON_DIR="$APPS_DIR/ableton"
+ABLETON_WINE_DIR="$APPS_DIR/ableton/wine"
+ABLETON_NATIVE_DIR="$APPS_DIR/ableton/native"
 GUITARPRO_DIR="$APPS_DIR/guitarpro"
 DAVINCI_DIR="$APPS_DIR/davinci"
 SPEKTRAFILM_DIR="$APPS_DIR/spektrafilm"
@@ -5249,12 +5293,12 @@ run_omarchy_vm(){
   bash "$OMARCHY_VM_DIR/setup-omarchy-vm.sh" --setup-only $([[ $YES == 1 ]] && echo -y)
 }
 
-run_ableton(){
+run_ableton_wine(){
   # The official .run installer is not tracked in git, so a fresh clone has
   # none. Update only downloads it; a restore/install downloads it first, then
   # runs the module that installs Live from it.
-  if ! ableton_installer_present "$ABLETON_DIR"; then
-    if ! bash "$ABLETON_DIR/setup-ableton.sh" -y --check-update; then
+  if ! ableton_installer_present "$ABLETON_WINE_DIR"; then
+    if ! bash "$ABLETON_WINE_DIR/setup-ableton.sh" -y --check-update; then
       err "Could not download the Ableton installer; the module was not started."
       return 1
     fi
@@ -5262,13 +5306,20 @@ run_ableton(){
       return 0
     fi
   fi
-  bash "$ABLETON_DIR/setup-ableton.sh" $([[ $YES == 1 ]] && echo -y)
+  bash "$ABLETON_WINE_DIR/setup-ableton.sh" $([[ $YES == 1 ]] && echo -y)
 }
 
-# The upstream native installer is not tracked in the repo. Update offers the
-# Ableton module when its local .run is absent so the module can clone it.
+run_ableton_native(){
+  # The wrapper clones the upstream repo, fetches the two archives when they
+  # are missing (or files them from ~/Downloads via bootstrap), then runs the
+  # upstream installer. It installs 12.4.7 only.
+  bash "$ABLETON_NATIVE_DIR/setup-ableton-native.sh" $([[ $YES == 1 ]] && echo -y)
+}
+
+# The upstream Wine installer is not tracked in the repo. Update offers the
+# ableton-wine module when its local .run is absent so the module can clone it.
 ableton_installer_present(){
-  local dir="${1:-$ABLETON_DIR}" f
+  local dir="${1:-$ABLETON_WINE_DIR}" f
   for f in "$dir"/install-ableton-*.run; do [[ -f $f ]] && return 0; done
   return 1
 }
@@ -5684,7 +5735,8 @@ exec_modules(){
       windows-vm) run_module windows-vm run_windows_vm ;;
       macos-vm) run_module macos-vm run_macos_vm ;;
       omarchy-vm) run_module omarchy-vm run_omarchy_vm ;;
-      ableton) run_module ableton run_ableton ;;
+      ableton-wine) run_module ableton-wine run_ableton_wine ;;
+      ableton-native) run_module ableton-native run_ableton_native ;;
       guitarpro) run_module guitarpro run_guitarpro ;;
       davinci-resolve) run_module davinci-resolve run_davinci ;;
       spektrafilm) run_module spektrafilm run_spektrafilm ;;
@@ -5750,7 +5802,7 @@ exec_modules(){
 
 # Categories of the "setup" action. id|label|modules (space-separated module ids).
 CATEGORIES=(
-  "apps|Apps|reaper bitwig ableton guitarpro davinci-resolve spektrafilm extracto douze tidal handbrake signal betterbird whatsapp-native superfile strata flea zen keepassxc"
+  "apps|Apps|reaper bitwig ableton-native ableton-wine guitarpro davinci-resolve spektrafilm extracto douze tidal handbrake signal betterbird whatsapp-native superfile strata flea zen keepassxc"
   "tuis|TUIs|"
   # "Plugins" is the project's own layer: the manager itself (the deployer),
   # its update module, and project utilities such as power management and SSH

@@ -49,7 +49,7 @@
 # in ~/.config/hypr/hyprland.lua — floating installer (fixes the tile crash),
 # 100% opaque windows/popups/menus (no transparency behind), and no focus
 # stealing (no_initial_focus + focus_on_activate = false).
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../../lib/gui-run.bash"  # gui-run: reopen in a terminal when launched from a file manager
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,7 +62,7 @@ if [[ ! -t 0 ]] && [[ -z "${MOSQUITOMARCHY_TUI:-}${MOSQUITOMARCHY_NO_GUI:-}" ]] 
   exec foot --hold --title "install-ableton" -- "$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")" "$@"
 fi
 
-LINKER="$SCRIPT_DIR/../../mosquito/audio-stack/apm/link-vst-shared.sh"
+LINKER="$SCRIPT_DIR/../../../mosquitomarchy/audio-stack/apm/link-vst-shared.sh"
 POWER_DEFAULT="${POWER:-off}"   # off = do not change the power profile (mosquito.battery keeps control)
 BUFFER_DEFAULT="${BUFFER:-512}" # 512 frames = stable latency for PipeASIO
 
@@ -795,7 +795,7 @@ step_hypr_rules(){
 
   if [[ ! -f "$HYPR_FILE" ]]; then
     warn "hyprland config missing: $HYPR_FILE — rules not applied."
-    echo "   Add manually: see code/modules/Apps/ableton/setup-ableton.sh step_hypr_rules"
+    echo "   Add manually: see code/modules/Apps/ableton/wine/setup-ableton.sh step_hypr_rules"
     return 0
   fi
 
@@ -925,6 +925,36 @@ step_links(){
 # uninstalling one of two: the generic entry then reappeared next to the
 # remaining targeted one). The .run may replace the launcher during an
 # install/update, so this is re-applied on every run.
+#
+# The launcher also owns the Name of the generic entry it rewrites on every
+# launch. Tag it "Wine" there as well, otherwise the native and Wine shortcuts
+# become indistinguishable again after the first Wine launch.
+patch_launcher_wine_name(){
+  local launcher="$HOME/.local/bin/ableton-live"
+  [[ -f "$launcher" ]] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 - "$launcher" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    text = fh.read()
+marker = "mosquitOmarchy: wine menu name"
+if marker in text:
+    sys.exit(0)
+old = "        printf 'Name=%s\\n' \"$entry_name\"\n"
+new = "        " + marker + "\n        printf 'Name=%s (Wine)\\n' \"$entry_name\"\n"
+if old not in text:
+    sys.exit(2)
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(text.replace(old, new, 1))
+PY
+  case $? in
+    0) ok "Launcher menu entry tagged (Wine)." ;;
+    *) warn "Could not tag the launcher menu entry — Wine shortcut may be unnamed after a launch." ;;
+  esac
+  return 0
+}
+
 patch_launcher_multi_edition(){
   local launcher="$HOME/.local/bin/ableton-live"
   [[ -f "$launcher" ]] || return 0
@@ -994,6 +1024,7 @@ step_menu_entries(){
   local apps_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
   local icons_dir="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
   mkdir -p "$apps_dir"
+  patch_launcher_wine_name
   local exe name entry base ed icon wmclass f found=0 count=0
   local generic="$apps_dir/ableton-live.desktop"
   while IFS= read -r exe; do
@@ -1008,7 +1039,7 @@ step_menu_entries(){
     f="$apps_dir/ableton-live-$ed.desktop"
     {
       printf '[Desktop Entry]\n'
-      printf 'Name=%s\n' "$name"
+      printf 'Name=%s (Wine)\n' "$name"
       printf 'Comment=Music production and performance\n'
       printf 'Exec=env ABLETON_LIVE_EXE="%s" %s %%f\n' "$exe" "$HOME/.local/bin/ableton-live"
       printf 'Type=Application\n'
@@ -1039,7 +1070,7 @@ step_menu_entries(){
         icon="live-$ed"; [[ -f "$icons_dir/$icon.svg" ]] || icon="live-intro"
         {
           printf '[Desktop Entry]\n'
-          printf 'Name=%s\n' "$name"
+          printf 'Name=%s (Wine)\n' "$name"
           printf 'Comment=Music production and performance\n'
           printf 'Exec=%s %%f\n' "$HOME/.local/bin/ableton-live"
           printf 'Type=Application\n'

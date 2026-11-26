@@ -2115,7 +2115,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					return m.confirmReaperRevert()
 				}
 				return m.confirmReaperConfig()
-			case "ableton":
+			case "ableton-wine":
 				if it, ok := m.setupByValue[m.setupPicker.SelectedValue()]; ok && it.MovePatch {
 					if m.treeMode == "uninstall" {
 						return m.confirmMoveWineRevert()
@@ -2211,7 +2211,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					return m.confirmReaperRevert()
 				}
 				return m.confirmReaperConfig()
-			case "ableton":
+			case "ableton-wine":
 				if it, ok := m.setupByValue[m.setupCatPicker.SelectedValue()]; ok && it.MovePatch {
 					if m.treeMode == "uninstall" {
 						return m.confirmMoveWineRevert()
@@ -2637,12 +2637,28 @@ func planHasDavinci(plan []string) bool {
 	return false
 }
 
-// planHasAbleton reports whether an install plan contains the ableton module
-// (it needs the terminal for its own archive/disk prompts).
+// isAbletonKey covers both installs and the legacy "ableton" id, which maps
+// to the Wine module (the id was split into ableton-wine/ableton-native).
+func isAbletonKey(k string) bool {
+	return k == "ableton" || k == "ableton-wine" || k == "ableton-native"
+}
+
+// abletonScript is the module script the TUI hands the terminal for an
+// interactive install/uninstall of one Ableton variant.
+func abletonScript(key string) string {
+	sub, name := "wine", "setup-ableton.sh"
+	if key == "ableton-native" {
+		sub, name = "native", "setup-ableton-native.sh"
+	}
+	return filepath.Join(repoRoot(), "code/modules/Apps/ableton", sub, name)
+}
+
+// planHasAbleton reports whether an install plan contains an Ableton module
+// (it needs the terminal for its own prompts).
 func planHasAbleton(plan []string) bool {
 	for _, group := range plan {
 		for _, k := range strings.Split(group, "\t") {
-			if k == "ableton" {
+			if isAbletonKey(k) {
 				return true
 			}
 		}
@@ -2651,9 +2667,9 @@ func planHasAbleton(plan []string) bool {
 }
 
 // installStage is one special app install that must run after everything else:
-// prompt, install, next. Ableton is always the last stage.
+// prompt, install, next. The Ableton stages are always the last ones.
 type installStage struct {
-	kind string // "davinci" | "guitarpro" | "ableton"
+	kind string // "davinci" | "guitarpro" | "ableton-wine" | "ableton-native"
 	plan []string
 }
 
@@ -2662,7 +2678,9 @@ func splitInstallStages(plan []string) (first []string, stages []installStage) {
 		"davinci":         "davinci",
 		"davinci-resolve": "davinci",
 		"guitarpro":       "guitarpro",
-		"ableton":         "ableton",
+		"ableton":         "ableton-wine",
+		"ableton-wine":    "ableton-wine",
+		"ableton-native":  "ableton-native",
 	}
 	byKind := map[string][]string{}
 	for _, group := range plan {
@@ -2683,7 +2701,7 @@ func splitInstallStages(plan []string) (first []string, stages []installStage) {
 			first = append(first, folder+"\t"+strings.Join(keep, "\t"))
 		}
 	}
-	for _, kind := range []string{"davinci", "guitarpro", "ableton"} {
+	for _, kind := range []string{"davinci", "guitarpro", "ableton-wine", "ableton-native"} {
 		if len(byKind[kind]) > 0 {
 			stages = append(stages, installStage{kind: kind, plan: byKind[kind]})
 		}
@@ -2713,8 +2731,8 @@ func (m model) runNextInstallStage() (model, tea.Cmd) {
 	case "davinci":
 		m.pendingAction = "apply"
 		return m.startWorking("Installing DaVinci Resolve", workingArgs("apply", stage.plan)...)
-	case "ableton":
-		return m.startAbletonInstall(stage.plan)
+	case "ableton-wine", "ableton-native":
+		return m.startAbletonInstall(stage.kind, stage.plan)
 	case "tweaks":
 		m.pendingAction = "quick-tweaks"
 		return m.startWorking("Applying tweaks", workingArgs("tweaks-run", stage.plan)...)
@@ -3904,8 +3922,8 @@ func reaperConfigLines() []string {
 		"   icons, the REAPER 7 splash screen and the Linux window colours;",
 		" • copies configs/custom/ over the REAPER resource path, when that",
 		"   folder exists (scripts, plugins, settings — whatever you put there);",
-		" • uses Omarchy's accent colour and follows it on later launches;",
-		" • follows Omarchy's dark/light mode (Reapertips Purple or Light).",
+		" • recolours the Reapertips theme to Omarchy's current accent ONCE;",
+		" • the theme then stays fixed: later Omarchy changes do not alter it.",
 		"",
 		"THEME FILE",
 		"The newest Reapertips Theme v*.zip in ~/Downloads is copied into",
@@ -4164,10 +4182,10 @@ func (m model) startUninstall(keys []string, prompt string) (model, tea.Cmd) {
 	// installer. That flow lives in the module, so hand it the terminal
 	// (tea.ExecProcess) instead of extending the confirm here. Any keys batched
 	// behind Ableton resume once it returns.
-	if i := indexOfString(rest, "ableton"); i >= 0 {
+	if i := indexOfAbleton(rest); i >= 0 {
 		m.uninstallWait = append(append([]string(nil), rest[:i]...), rest[i+1:]...)
 		m.uninstallMsg = prompt
-		return m.runAbletonUninstall()
+		return m.runAbletonUninstall(rest[i])
 	}
 	m.uninstallWait = rest
 	m.uninstallMsg = prompt
@@ -4189,14 +4207,24 @@ func indexOfString(ss []string, want string) int {
 	return -1
 }
 
+// indexOfAbleton finds the first Wine or Native Ableton key in a batch.
+func indexOfAbleton(ss []string) int {
+	for i, s := range ss {
+		if isAbletonKey(s) {
+			return i
+		}
+	}
+	return -1
+}
+
 // runAbletonUninstall suspends the TUI and runs the Ableton module's own
 // `--uninstall` flow in the real terminal: one-edition-at-a-time selection, the
 // confirmation, and the clean removal. Re-implementing that flow in the TUI
 // would duplicate the module's logic and drift from it; this way the two are
 // always the same screen.
-func (m model) runAbletonUninstall() (model, tea.Cmd) {
+func (m model) runAbletonUninstall(key string) (model, tea.Cmd) {
 	m.pendingAction = ""
-	c, logPath := abletonInteractiveCommand("--uninstall")
+	c, logPath := abletonInteractiveCommand(key, "--uninstall")
 	m.abletonLogFile = logPath
 	m.abletonLogSince = time.Now()
 	return m, tea.ExecProcess(c, func(err error) tea.Msg {
@@ -4208,8 +4236,8 @@ func (m model) runAbletonUninstall() (model, tea.Cmd) {
 // gets a real PTY (gum/read prompts keep working), while the transcript is
 // written to a temp file. Without script(1) the flow still runs, just without
 // a copyable log.
-func abletonInteractiveCommand(flag string) (*exec.Cmd, string) {
-	script := filepath.Join(repoRoot(), "code/modules/Apps/ableton/setup-ableton.sh")
+func abletonInteractiveCommand(key, flag string) (*exec.Cmd, string) {
+	script := abletonScript(key)
 	env := append(os.Environ(), "MOSQUITOMARCHY_TUI=1")
 	if scriptBin, err := exec.LookPath("script"); err == nil {
 		// script(1) creates the log 0644, so put it inside a 0700 temp dir
@@ -4253,6 +4281,19 @@ func (m *model) takeAbletonLog() string {
 		if path, native := newestAbletonInstallerLog(since); native != "" {
 			parts = append(parts, "===== Saved installer log: "+filepath.Base(path)+" =====\n\n"+native)
 		}
+		// The upstream native installer keeps its own install.log in the prefix.
+		dataHome := os.Getenv("XDG_DATA_HOME")
+		if dataHome == "" {
+			dataHome = filepath.Join(os.Getenv("HOME"), ".local", "share")
+		}
+		logPath := filepath.Join(dataHome, "ableton-live-12", "install.log")
+		if st, err := os.Stat(logPath); err == nil && st.ModTime().After(since.Add(-2*time.Second)) {
+			if b, err := os.ReadFile(logPath); err == nil {
+				if clean := cleanAbletonLog(string(b)); clean != "" {
+					parts = append(parts, "===== Native installer log =====\n\n"+clean)
+				}
+			}
+		}
 	}
 	return strings.Join(parts, "\n\n")
 }
@@ -4264,7 +4305,7 @@ func (m *model) takeAbletonLog() string {
 func newestAbletonInstallerLog(since time.Time) (string, string) {
 	var dirs []string
 	if repo := repoRoot(); repo != "" {
-		dirs = append(dirs, filepath.Join(repo, "code/modules/Apps/ableton"))
+		dirs = append(dirs, filepath.Join(repo, "code/modules/Apps/ableton/wine"))
 	}
 	// The .run falls back to TMPDIR when its own folder is read-only.
 	dirs = append(dirs, os.TempDir())
@@ -4397,7 +4438,7 @@ func (m model) finishAbleton(kind string) (model, tea.Cmd) {
 // tea.ExecProcess suspends the TUI and hands it to the interactive prompts, then
 // the captured PTY transcript is shown in the usual log frame. The rest of a
 // batched plan is held back until Ableton returns.
-func (m model) startAbletonInstall(plan []string) (model, tea.Cmd) {
+func (m model) startAbletonInstall(key string, plan []string) (model, tea.Cmd) {
 	var rest []string
 	for _, group := range plan {
 		parts := strings.Split(group, "\t")
@@ -4406,7 +4447,7 @@ func (m model) startAbletonInstall(plan []string) (model, tea.Cmd) {
 		}
 		keys := make([]string, 0, len(parts)-1)
 		for _, k := range parts[1:] {
-			if k != "ableton" {
+			if !isAbletonKey(k) {
 				keys = append(keys, k)
 			}
 		}
@@ -4416,7 +4457,7 @@ func (m model) startAbletonInstall(plan []string) (model, tea.Cmd) {
 	}
 	m.abletonInstallWait = rest
 	m.pendingAction = ""
-	c, logPath := abletonInteractiveCommand("-i")
+	c, logPath := abletonInteractiveCommand(key, "-i")
 	m.abletonLogFile = logPath
 	m.abletonLogSince = time.Now()
 	return m, tea.ExecProcess(c, func(err error) tea.Msg {
@@ -4613,10 +4654,10 @@ func (m model) resumeUninstall() (model, tea.Cmd) {
 		return m, nil
 	}
 	// Ableton goes through its own one-edition-at-a-time uninstall flow.
-	if i := indexOfString(keys, "ableton"); i >= 0 {
+	if i := indexOfAbleton(keys); i >= 0 {
 		m.uninstallWait = append(append([]string(nil), keys[:i]...), keys[i+1:]...)
 		m.uninstallMsg = msg
-		return m.runAbletonUninstall()
+		return m.runAbletonUninstall(keys[i])
 	}
 	m.pendingAction = "uninstall"
 	m.pendingArgs = keys

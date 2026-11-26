@@ -173,7 +173,7 @@ collect_complete(){
   # local backups and downloaded profile integrations.
   local exclude='(^|/)\.git(/|$)|(^|/)PATCH(/|$)|(^|/)\.local(/|$)|(^|/)(Passwords\.kdbx|pkglist\.txt|aurlist\.txt|apps\.selected)$|\.tar\.gz(\.gpg)?$'
   (( ${LOGS:-0} )) || exclude+='|\.log$'
-  (( ${ARCHIVE_INSTALLERS:-0} )) || exclude+='|^code/modules/Apps/(ableton/[^/]+\.(run|zip)|bitwig/[^/]+\.deb|davinci/[^/]+\.zip|spektrafilm/[^/]+\.zip|guitarpro/[^/]+\.exe)$'
+  (( ${ARCHIVE_INSTALLERS:-0} )) || exclude+='|^code/modules/Apps/(ableton/[^/]+\.(run|zip)|ableton/[^/]+/[^/]+\.(run|zip)|bitwig/[^/]+\.deb|davinci/[^/]+\.zip|spektrafilm/[^/]+\.zip|guitarpro/[^/]+\.exe)$'
   (( ${ARCHIVE_BACKUPS:-0} )) || exclude+='|(^|/)backups/|\.bak($|\.)|\.backup($|\.)'
   (( ${ARCHIVE_INTEGRATIONS:-0} )) || exclude+='|(^|/)mixbay/integrations/'
   {
@@ -185,6 +185,8 @@ collect_complete(){
 installer_files(){
   local f
   for f in "$ROOT"/code/modules/Apps/ableton/*.{run,zip} \
+           "$ROOT"/code/modules/Apps/ableton/wine/*.{run,zip} \
+           "$ROOT"/code/modules/Apps/ableton/native/*.{run,zip} \
            "$ROOT"/code/modules/Apps/bitwig/*.deb \
            "$ROOT"/code/modules/Apps/davinci/*.zip \
            "$ROOT"/code/modules/Apps/spektrafilm/*.zip \

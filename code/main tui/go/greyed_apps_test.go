@@ -13,9 +13,9 @@ func TestGreyedAssetGatedRowShowsShortLabel(t *testing.T) {
 	folders := []FolderRec{{Folder: "apps", Label: "Apps"}}
 	items := []SetupItemRec{{
 		Folder:   "apps",
-		Key:      "ableton",
+		Key:      "ableton-wine",
 		Label:    "ableton - v1.0.0",
-		Info:     "Native Linux Ableton Live 12 (ableton-linux) + multi-DAW VST sharing — needs ableton-live.zip in code/modules/Apps/ableton/",
+		Info:     "Ableton Live 12 via Wine (shibco/ableton-linux) — needs a Live zip in code/modules/Apps/ableton/wine/",
 		Disabled: true,
 	}}
 	rows := pickerTreeItems(folders, items, map[string]bool{}, map[string]bool{"apps": true}, false, "install", false)
