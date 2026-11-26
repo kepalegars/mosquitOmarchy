@@ -6661,7 +6661,7 @@ plugin_scan_fingerprint() {
   done
   {
     find "${roots[@]}" -maxdepth 6 \( -type f -o -type l \) -printf '%T@|%s|%p\n' 2>/dev/null
-    printf 'h2=%s h32=%s g=3\n' "${HIDE_VST2:-false}" "${HIDE_32BIT:-false}"
+    printf 'h2=%s h32=%s g=4\n' "${HIDE_VST2:-false}" "${HIDE_32BIT:-false}"
   } | sort | md5sum | cut -c1-16
 }
 
@@ -6768,8 +6768,12 @@ vendor_folder_for_plugin(){
   local i
   for ((i = 0; i < 6; i++)); do
     base="$(basename "$dir")"
+    # Architecture folders INSIDE a bundle are implementation details, not
+    # vendors. Without the Linux variants, a native glitch2.so whose VST3
+    # bundle is linked into a wine prefix was filed under "x86_64-linux".
     case "$base" in
-      vst3|vst2|VST3|VST2|clap|CLAP|Contents|"x86_64-win"|"x86-win"|win64|win32)
+      vst3|vst2|VST3|VST2|clap|CLAP|Contents|"x86_64-win"|"x86-win"|win64|win32|\
+      "x86_64-linux"|"aarch64-linux"|"arm64-linux")
         dir="$(dirname "$dir")"
         continue
         ;;
