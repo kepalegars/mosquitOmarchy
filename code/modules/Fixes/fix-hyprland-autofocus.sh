@@ -1,24 +1,17 @@
 #!/usr/bin/env bash
-# fix-hyprland-autofocus.sh — smart focus: only the app you are using may take
-# focus, and focusing never warps the pointer.
+# fix-hyprland-autofocus.sh — native Hyprland focus, without pointer warps.
 #
-# By default a client may ask for focus (misc:focus_on_activate), a new window
-# takes focus when it maps, and activation warps the pointer to the window's
-# middle. This writes one marked Lua block that stops all three, then gives
-# focus back only when the new window belongs to the app already focused (same
-# PID, or same non-empty class — Wine dialogs share their main window's
-# PID/class):
+# Hyprland already focuses the window you open, the window you hover and a
+# client's activation request. This writes one marked Lua block that keeps
+# that behaviour intact and only stops the pointer from jumping to the middle
+# of a window when focus changes:
 #
-#   misc:focus_on_activate = false
 #   cursor:no_warps = true
-#   window rule: no_initial_focus for every window
-#   hl.on("window.urgent" / "window.open") → focus if same app
 #
-# Pointer-follow is left at the Omarchy/Hyprland default: hovering a window
-# still focuses it. Result: a background app finishing its load does not steal
-# focus, a dialog opened by the app you are using does, and the pointer never
-# jumps to the middle of a window. The block is idempotent and reversible;
-# other window rules are untouched.
+# There is no heuristic about user intent and no per-app list: every window
+# behaves the same way, opened from a keybind, the apps menu or by an app
+# itself. The block is idempotent and reversible; other options and window
+# rules are untouched.
 #
 # Usage:
 #   ./fix-hyprland-autofocus.sh            # apply
@@ -43,19 +36,13 @@ status() {
   info "Hyprland auto-focus fix — status"
   printf '    config : %s\n' "$HYPR"
   if grep -qF -- "$BEGIN" "$HYPR"; then
-    if grep -qF 'window.urgent' "$HYPR"; then
-      printf '    block  : installed (smart)\n'
-    else
-      printf '    block  : installed (legacy)\n'
-    fi
+    printf '    block  : installed\n'
   else
     printf '    block  : absent\n'
   fi
   if command -v hyprctl >/dev/null 2>&1; then
-    local o
-    for o in misc:focus_on_activate cursor:no_warps; do
-      printf '    %-34s %s\n' "$o" "$(hyprctl getoption "$o" 2>/dev/null | head -n1)"
-    done
+    printf '    %-34s %s\n' cursor:no_warps \
+      "$(hyprctl getoption cursor:no_warps 2>/dev/null | head -n1)"
   fi
 }
 
@@ -63,41 +50,13 @@ apply() {
   marker_strip "$HYPR" "$BEGIN" "$END" 2>/dev/null || true
   cat >>"$HYPR" <<'EOF'
 
--- >>> mosquito-no-autofocus >>> smart focus: the app you are using keeps it
--- New windows never focus themselves (no_initial_focus) and activation
--- requests are ignored (focus_on_activate); the callbacks hand focus back
--- only to a window of the app already focused — same PID, or same non-empty
--- class (Wine dialogs share the main window's PID/class). Pointer-follow stays
--- at the Omarchy default, and no_warps keeps the pointer where it is when
--- focus changes. Remove with: fix-hyprland-autofocus.sh --remove
+-- >>> mosquito-no-autofocus >>> native focus, no pointer warp
+-- Hyprland decides focus as usual (new window, activation, pointer-follow).
+-- Only the pointer jumping to the middle of a window on focus change is
+-- disabled. Remove with: fix-hyprland-autofocus.sh --remove
 hl.config({
-  misc = { focus_on_activate = false },
   cursor = { no_warps = true },
 })
-o.window(".*", { no_initial_focus = true })
-
-local function mosquito_same_app(a, b)
-  if not a or not b then return false end
-  if a.pid == b.pid then return true end
-  return a.class ~= "" and a.class == b.class
-end
-
-local function mosquito_focus_if_same_app(w)
-  if not w or w.active or not w.mapped then return end
-  local focused = hl.get_active_window()
-  if not focused or mosquito_same_app(w, focused) then
-    hl.dispatch(hl.dsp.focus({ window = "address:" .. w.address }))
-  end
-end
-
--- An app explicitly asking for focus: Wine dialogs, save prompts, activation.
-hl.on("window.urgent", mosquito_focus_if_same_app)
--- New native Wayland windows. XWayland is skipped: Wine menus and tooltips
--- also arrive as windows; real XWayland dialogs come through `urgent`.
-hl.on("window.open", function(w)
-  if w.xwayland then return end
-  mosquito_focus_if_same_app(w)
-end)
 -- <<< mosquito-no-autofocus <<<
 EOF
   if command -v luac >/dev/null 2>&1; then
@@ -109,7 +68,7 @@ EOF
     errors="$(hyprctl configerrors 2>/dev/null || true)"
     [[ -z $errors ]] || warn "Hyprland reported config errors: $errors"
   fi
-  ok "Smart auto-focus installed (pointer-follow kept; same-app dialogs still focus). Reloaded Hyprland."
+  ok "Native focus kept, pointer warps disabled. Reloaded Hyprland."
 }
 
 remove() {
@@ -118,13 +77,13 @@ remove() {
     luac -p "$HYPR" 2>/dev/null || warn "hyprland.lua did not parse after removal — check it by hand."
   fi
   command -v hyprctl >/dev/null 2>&1 && hyprctl reload >/dev/null 2>&1 || true
-  ok "Automatic focus restored (previous Hyprland behaviour)."
+  ok "Pointer warps restored (previous Hyprland behaviour)."
 }
 
 case "${1:-apply}" in
   apply|--apply) apply ;;
   --status)      status ;;
   --remove|--uninstall) remove ;;
-  -h|--help)     sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help)     sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) err "Unknown option: $1 (apply --status --remove)"; exit 1 ;;
 esac

@@ -124,14 +124,13 @@ did, with the same user-visible result.
       (`addons-reinstall`), and a removed addon folder must be dropped from
       `~/.local/state/mosquitomarchy/addons-installed`.
 - [ ] `fix-hyprland-autofocus.sh --status` reports the block absent. Apply it,
-      reload Hyprland, and check `hyprctl getoption misc:focus_on_activate` →
-      `false`, `cursor:no_warps` → `true`, `input:follow_mouse` still `1`, and
-      `hyprctl configerrors` empty. Hover another window: it takes focus. Focus
-      Zen, start a slow app (REAPER) and click Zen while it loads: finishing
-      must not take focus. Open a dialog inside the focused app (Ableton save
-      prompt, REAPER dropdown entry): it takes focus without moving the pointer
-      to the window centre. `SUPER + arrows` still changes focus without moving
-      the pointer. `--remove` restores the old behaviour.
+      reload Hyprland, and check `cursor:no_warps` → `true`,
+      `input:follow_mouse` still `1`, and `hyprctl configerrors` empty. Open a
+      terminal with `SUPER + RETURN` and an app from the Omarchy apps menu: each
+      takes focus without moving the pointer to the window centre. Hover another
+      window: it takes focus. Open a dialog inside the focused app: it takes
+      focus without moving the pointer. `SUPER + arrows` still changes focus
+      without moving the pointer. `--remove` restores the old behaviour.
 
 ## Mixbay audio foundation / EVO 4
 
