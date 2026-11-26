@@ -1389,11 +1389,7 @@ case "$cmd" in
         # Key EXACTLY the way plugin_group_rows keys the row: native plugins
         # (lv2/clap/vst3 loaded directly) are "native/<label>", not plugin_key()
         # ("lv2/<label>"), which is why LV2s came back untracked after adding.
-        if [[ $f == native:* ]]; then
-          key="native/$(native_plugin_label "$bare")"
-        else
-          key="$(plugin_key "$bare")"
-        fi
+        key="$(plugin_group_key_for "$f" "$bare")"
         state_register_install "$key" "$prefix" "$bare"
       done <<< "$files"
       n=$((n + 1))
@@ -1465,11 +1461,7 @@ case "$cmd" in
         esac
         # Native rows are keyed "native/<label>" by plugin_group_rows, not
         # plugin_key() ("lv2/<label>") — the mismatch add-orphan documents.
-        if [[ $f == native:* ]]; then
-          _apm_k="native/$(native_plugin_label "$bare")"
-        else
-          _apm_k="$(plugin_key "$bare")"
-        fi
+        _apm_k="$(plugin_group_key_for "$f" "$bare")"
         _apm_pending+=("$(printf '%s\t%s\t%s' "$_apm_k" "$_apm_rowpfx" "$bare")")
       done <<< "$(printf '%s' "$variants" | tr ';' '\n')"
       # n=$((n+1)), NOT (( n++ )): under `set -e` the arithmetic command

@@ -2101,11 +2101,7 @@ adopt_plugin_rows(){
       # Native plugins are keyed "native/<label>" by plugin_group_rows; using
       # plugin_key() here files LV2 as "lv2/<label>" and the row stays untracked
       # forever (the same mismatch add-orphan documented).
-      if [[ $_f == native:* ]]; then
-        k="native/$(native_plugin_label "$bare")"
-      else
-        k="$(plugin_key "$bare")"
-      fi
+      k="$(plugin_group_key_for "$_f" "$bare")"
       pending+=("$(printf '%s\t%s\t%s' "$k" "$rowpfx" "$bare")")
     done <<< "$(printf '%s' "$variants" | tr ';' '\n')"
     names+=("${first##*/}")
@@ -4164,6 +4160,18 @@ native_plugin_label() {
   printf '%s\n' "$base"
 }
 
+# plugin_group_key_for <value> <path> — the ONE key both the grouped list and
+# the state log use. A Linux VST2 .so is native code like LV2/CLAP/VST3, so it
+# shares their "native/<name>" row instead of becoming a second category.
+plugin_group_key_for(){
+  local value="$1" path="$2"
+  case "$value" in
+    native:*) printf 'native/%s\n' "$(native_plugin_label "$path")" ;;
+    vst:so:*) printf 'native/%s\n' "$(basename "$path" .so)" ;;
+    *)        plugin_key "$path" ;;
+  esac
+}
+
 # Sorted, filtered (per PLUGIN_SORT_MODE) list for display. Emits:
 #   sortkey<TAB>label<TAB>format<TAB>location<TAB>enabled<TAB>path
 native_plugin_list_rows() {
@@ -4386,7 +4394,7 @@ install_native_plugin_from_file() {
     # file them under "clap/…" / "vst3/…" (the Windows keys) instead of the
     # "native/<label>" key the scan and reconcile screens use. VST2 .so
     # files belong to the VST side and keep their plain plugin_key.
-    if [[ $kind == VST2 ]]; then key="$(plugin_key "$dest")"; else key="native/$(native_plugin_label "$dest")"; fi
+    if [[ $kind == VST2 ]]; then key="$(plugin_group_key_for "vst:so:$dest" "$dest")"; else key="$(plugin_group_key_for "native:$dest" "$dest")"; fi
     pending+=("$(printf '%s\t%s\t%s' "$key" "" "$dest")")
     printf '%s\n' "$dest"
     installed=$(( installed + 1 ))
@@ -6661,7 +6669,7 @@ plugin_scan_fingerprint() {
   done
   {
     find "${roots[@]}" -maxdepth 6 \( -type f -o -type l \) -printf '%T@|%s|%p\n' 2>/dev/null
-    printf 'h2=%s h32=%s g=4\n' "${HIDE_VST2:-false}" "${HIDE_32BIT:-false}"
+    printf 'h2=%s h32=%s g=5\n' "${HIDE_VST2:-false}" "${HIDE_32BIT:-false}"
   } | sort | md5sum | cut -c1-16
 }
 
@@ -6813,6 +6821,9 @@ plugin_group_rows_build() {
       file -b "${f%.hidden}" 2>/dev/null | grep -q '^PE32 executable' && continue
     fi
     key="$(plugin_key "$f")"
+    # A bare Linux VST2 .so is native code: give it the same key as the
+    # LV2/CLAP/VST3 rows so glitch2 appears once with "so,vst3", not twice.
+    [[ $type == so ]] && key="$(plugin_group_key_for "vst:so:$f" "$f")"
     # A macOS-style .vst3/.clap is a BUNDLE: "Serum2.vst3/Contents/x86_64-win/
     # Serum2.vst3". plugin_key() only strips the leading format folder, so the
     # key kept the whole bundle path and the vendor came out as
@@ -6916,8 +6927,9 @@ plugin_group_rows_build() {
     [[ $f == *.hidden ]] && g_enabled[$key]=false
   done <<< "$(scan_plugins)"
 
-  # Native plugins: one group each, keyed on their own label so a native and a
-  # vst plugin of the same name are not merged by accident.
+  # Native plugins: LV2/CLAP/VST3 bundles and Linux VST2 .so files. A key can
+  # already exist from the VST scan (the .so was seen first) -- merge the
+  # formats and variants so one plugin appears ONCE with all its formats.
   local entry fmt loc nenabled
   while IFS=$'\t' read -r entry fmt loc nenabled; do
     [[ -n $entry ]] || continue
@@ -6932,6 +6944,12 @@ plugin_group_rows_build() {
       g_first[$key]="native:$entry"
       g_variants[$key]="native:$entry"
       g_enabled[$key]="$nenabled"
+    else
+      case ",${g_formats[$key]}," in
+        *",$fmt,"*) ;;
+        *) g_formats[$key]="${g_formats[$key]},$fmt" ;;
+      esac
+      g_variants[$key]="${g_variants[$key]};native:$entry"
     fi
   done < <(scan_native_plugins)
 

@@ -372,6 +372,8 @@ formats — `.lv2`, `.clap`, `.vst3` bundles **and Linux VST2 `.so` files** — 
 found is installed (registering each in the log); a format already present is skipped so the
 others still land. A bare `.so` counts as a plug-in only when it exports `VSTPluginMain` or
 `GetPluginFactory`, so the copy of the same binary inside a VST3 bundle is not installed twice.
+A Linux VST2 `.so` is grouped with the native plugins (`Native` folder), so a plugin shipped
+as both VST2 and VST3 appears once with `so,vst3` in its format list instead of in two folders.
 VST2 plug-ins keep their sibling `<name>.res` resource folder (skins, factory banks); older
 `.so` files get their executable stack cleared when `patchelf` is available. Preset folders that
 travel with the plug-in are copied under `$XDG_DATA_HOME/<name>/presets` and linked beside the

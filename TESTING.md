@@ -94,6 +94,10 @@ did, with the same user-visible result.
       are tracked, the inner VST3 `.so` is not installed a second time, and all
       29 `.g2bnk` banks land under `$XDG_DATA_HOME/glitch2/presets` with a link
       beside the VST2 binary.
+- [ ] Glitch 2's VST2 `.so` and VST3 bundle appear as ONE row under
+      **Native**, with `so,vst3` in the format list; no separate `glitch2`
+      folder or `x86_64-linux` category, and the state log holds only
+      `native/glitch2`.
 - [ ] Sort cycle on **Installed plugins**: `s` visibly reorders both plugins
       and vendor folders — Vendor clusters by folder, Name is global A→Z,
       Format groups by format, Install date is newest-first (using file birth
