@@ -115,3 +115,37 @@ func TestReaperPromptScrollsAndWarns(t *testing.T) {
 		t.Fatalf("missing add-ons warning is not at the top of the prompt:\n%s", view)
 	}
 }
+
+// TestReaperRunningBlocksConfig: applying the config while REAPER is open
+// crashes it, so the prompt becomes a Close-and-Retry dialog and Enter never
+// launches the installer.
+func TestReaperRunningBlocksConfig(t *testing.T) {
+	m := flatSetup()
+	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "reaper"))
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	m, _ = m.update(reaperRunningMsg{running: true})
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "REAPER is open") || !strings.Contains(view, "Retry") {
+		t.Fatalf("running-REAPER prompt is missing the close/retry instruction:\n%s", view)
+	}
+	if m.confirm.ExtraLabel != "" {
+		t.Fatal("font choices must not be offered while REAPER is open")
+	}
+
+	_, cmd := m.update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Retry confirm returned no answer")
+	}
+	res := cmd().(tuikit.ConfirmResultMsg)
+	if res.Canceled || !res.Yes {
+		t.Fatalf("default Retry answer = %+v, want Yes", res)
+	}
+	m, cmd = m.update(res)
+	if m.top() != scrConfirm || m.pendingAction != "reaper-custom-config" {
+		t.Fatalf("Enter while REAPER is open must not start the install: top=%v action=%q", m.top(), m.pendingAction)
+	}
+	if cmd == nil {
+		t.Fatal("Retry must re-check whether REAPER is still running")
+	}
+}

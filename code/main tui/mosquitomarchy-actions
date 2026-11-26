@@ -3505,6 +3505,30 @@ _space_install_targets(){
   return $rc
 }
 
+# Live 12 numbers from upstream install.sh (set_version, NEEDED_GB /
+# PROGRAM_DONE_GB / AFTER_GB): 25 GB peak, 13 GB once the program is in,
+# 1 GB once the content is in. The two archive sizes are the CDN
+# Content-Length of the links in the upstream README.
+_ableton_native_space(){ # -> "need_bytes|detail", all in decimal GB as upstream
+  local prefix="${XDG_DATA_HOME:-$HOME/.local/share}/ableton-live-12"
+  local dir="$APPS_DIR/ableton/native" peak=25000000000 downloads=0
+  local name file bytes detail
+  [[ -e "$prefix/.install-program" ]] && peak=13000000000
+  [[ -e "$prefix/.install-content" ]] && peak=1000000000
+  for name in \
+      "Push3-RecoveryImage-2.4.7.zip:7498197732" \
+      "ableton_live_suite_12.4.7_64.zip:4451071191"; do
+    file="${name%%:*}"; bytes="${name##*:}"
+    [[ -f "$dir/$file" || -f "$dir/linux-native-ableton/$file" ]] || downloads=$((downloads+bytes))
+  done
+  if (( downloads )); then
+    detail="$(awk -v b="$downloads" 'BEGIN { printf "incl. %.1f GB of archives to download", b/1e9 }')"
+  else
+    detail="archives already on disk"
+  fi
+  printf '%s|%s\n' "$((peak+downloads))" "$detail"
+}
+
 cmd_space(){
   local op="${1:-}"; shift || true
   local free_kb free_unknown=false
@@ -3526,7 +3550,7 @@ cmd_space(){
 
   local need_kb=0 freed_kb=0 need_unknown=false freed_unknown=false resolved=0
   local pkgs rc pkg size targets trc row mkey ipaths upaths plist path key_known
-  local ref_install_kb path_found path_missing temp_short=false
+  local ref_install_kb path_found path_missing temp_short=false space_detail=''
   local -a install_pkgs=()
   for k in "${keys[@]:-}"; do
     [[ -n $k ]] || continue
@@ -3540,6 +3564,17 @@ cmd_space(){
     ipaths=''; upaths=''; ref_install_kb=''
     if [[ -n $row ]]; then
       IFS='|' read -r _ ipaths upaths ref_install_kb _ _ <<< "$row"
+    fi
+    # Native Ableton is not a package and its install folder does not exist
+    # yet: measure it from upstream's own peak figure, plus the archive
+    # downloads only when they are not already in the module folder.
+    if [[ $op == install && $mkey == ableton-native ]]; then
+      local answer need_bytes
+      answer="$(_ableton_native_space)"
+      need_bytes="${answer%%|*}"; space_detail="${answer#*|}"
+      need_kb=$((need_bytes / 1024))
+      key_known=1; resolved=$((resolved+1))
+      continue
     fi
     key_known=0
     path_found=0
@@ -3638,9 +3673,10 @@ cmd_space(){
     (( ${#keys[@]} > 0 && resolved == 0 )) && freed_unknown=true
   fi
 
-  printf '{"free_kb":%d,"need_kb":%d,"freed_kb":%d,"free_unknown":%s,"need_unknown":%s,"freed_unknown":%s,"temp_short":%s}\n' \
+  printf '{"free_kb":%d,"need_kb":%d,"freed_kb":%d,"free_unknown":%s,"need_unknown":%s,"freed_unknown":%s,"temp_short":%s,"detail":%s}\n' \
     "$free_kb" "$need_kb" "$freed_kb" \
-    "$free_unknown" "$need_unknown" "$freed_unknown" "$temp_short"
+    "$free_unknown" "$need_unknown" "$freed_unknown" "$temp_short" \
+    "$(json_str "$space_detail")"
 }
 
 sub="${1:-}"
@@ -4334,6 +4370,9 @@ case "$sub" in
   # Read-only: can ReaPack + SWS be obtained (Downloads or GitHub)? The P prompt
   # only mentions them when the answer is "missing".
   reaper-addons-status) bash "$REAPER_DIR/reaper-addons.bash" status ;;
+  # Read-only: is a REAPER process alive? The config install/restore must not
+  # rewrite files while REAPER has them open (it crashes the app).
+  reaper-running) pgrep -x reaper >/dev/null 2>&1 && echo yes || echo no ;;
   theme-images)              cmd_theme_images "${1:-}" ;;
   theme-default-dir)         cmd_theme_default_dir "${1:-get}" "${2:-}" ;;
   theme-pick)                cmd_theme_pick "${1:-file}" "${2:-}" ;;

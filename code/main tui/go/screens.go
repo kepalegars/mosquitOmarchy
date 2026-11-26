@@ -1293,6 +1293,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.shortcutSkipped = state == "skipped"
 			markShortcutPrompted(state)
 		}
+		// If REAPER is still open, keep the confirm up and re-check rather than
+		// popping it and silently dropping the user's answer.
+		if m.reaperRunning && !msg.Canceled && (msg.Yes || msg.Extra) && (m.pendingAction == "reaper-custom-config" || m.pendingAction == "reaper-custom-config-revert") {
+			m.reaperRetryAsked = true
+			return m, fetchReaperRunningCmd()
+		}
 		m.pop()
 		if m.cancelRunAsking {
 			// Only an explicit Yes stops the run; Esc/No keeps it going.
@@ -1808,8 +1814,39 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if msg.err != nil || m.top() != scrConfirm || m.pendingAction != "reaper-custom-config" {
 			return m, nil
 		}
-		m.pendingMsg = reaperConfigPrompt(msg.missing)
-		m.confirm = m.reaperConfirm(msg.missing)
+		m.reaperAddonsMissing = msg.missing
+		if m.pendingAction == "reaper-custom-config" {
+			m.pendingMsg = reaperConfigPrompt(msg.missing, m.reaperRunning)
+			m.confirm = m.reaperConfirm(msg.missing, m.reaperRunning)
+		}
+		return m, nil
+
+	case reaperRunningMsg:
+		// Never touch REAPER's config while an instance is alive.
+		if msg.err != nil || m.top() != scrConfirm {
+			return m, nil
+		}
+		switch m.pendingAction {
+		case "reaper-custom-config":
+			m.reaperRunning = msg.running
+			m.pendingMsg = reaperConfigPrompt(m.reaperAddonsMissing, msg.running)
+			m.confirm = m.reaperConfirm(m.reaperAddonsMissing, msg.running)
+			if msg.running && m.reaperRetryAsked {
+				m.toast, _ = m.toast.SetErr("REAPER is still open — close it, then press Retry")
+			}
+			m.reaperRetryAsked = false
+		case "reaper-custom-config-revert":
+			m.reaperRunning = msg.running
+			if msg.running {
+				m.confirm = tuikit.NewConfirm(reaperRunningText, "Cancel", "Retry").FocusYes()
+				if m.reaperRetryAsked {
+					m.toast, _ = m.toast.SetErr("REAPER is still open — close it, then press Retry")
+				}
+			} else {
+				m.confirm = tuikit.NewConfirm(reaperRevertPrompt(), "Cancel", "Restore").FocusYes()
+			}
+			m.reaperRetryAsked = false
+		}
 		return m, nil
 
 	case missingAssetsMsg:
@@ -3912,6 +3949,10 @@ func (m model) confirmMoveWineRevert() (model, tea.Cmd) {
 // and SWS can be obtained neither from ~/Downloads nor from GitHub.
 const reaperAddonsMissingText = "sws & reapack are neither in downloads nor in sws-2.14.0.7-Linux-x86_64.tar.xz"
 
+// reaperRunningText is shown instead of the config action when REAPER is open:
+// rewriting its ini/theme while it runs crashes the app.
+const reaperRunningText = "REAPER is open — close it before applying the config, then press Retry."
+
 // reaperConfigLines is the detail under the question. It lives in a Confirm
 // list instead of the message: the dialog would otherwise be taller than the
 // frame and the bottom of it would be clipped, with no way to read it.
@@ -3940,8 +3981,12 @@ func reaperConfigLines() []string {
 	}
 }
 
-func reaperConfigHead(missingAddons bool) string {
+func reaperConfigHead(missingAddons, running bool) string {
 	var b strings.Builder
+	if running {
+		b.WriteString(lipgloss.NewStyle().Foreground(tuikit.ColorRed).Bold(true).Render(reaperRunningText))
+		b.WriteString("\n\n")
+	}
 	if missingAddons {
 		b.WriteString(lipgloss.NewStyle().Foreground(tuikit.ColorRed).Bold(true).Render(reaperAddonsMissingText))
 		b.WriteString("\n\n")
@@ -3952,11 +3997,16 @@ func reaperConfigHead(missingAddons bool) string {
 
 // reaperConfigPrompt keeps the full text for logs/tests; the dialog itself
 // shows the head and a height-capped, scrollable list of the lines.
-func reaperConfigPrompt(missingAddons bool) string {
-	return reaperConfigHead(missingAddons) + "\n\n" + strings.Join(reaperConfigLines(), "\n")
+func reaperConfigPrompt(missingAddons, running bool) string {
+	return reaperConfigHead(missingAddons, running) + "\n\n" + strings.Join(reaperConfigLines(), "\n")
 }
 
-func (m model) reaperConfirm(missingAddons bool) tuikit.Confirm {
+func (m model) reaperConfirm(missingAddons, running bool) tuikit.Confirm {
+	if running {
+		// No extra font choice while REAPER is open: the only useful action is
+		// to close it and retry. Never auto-kill the app (unsaved work).
+		return tuikit.NewConfirm(reaperRunningText, "Cancel", "Retry").FocusYes()
+	}
 	_, h := m.contentSize()
 	rows := h - 11
 	if rows > 14 {
@@ -3965,7 +4015,7 @@ func (m model) reaperConfirm(missingAddons bool) tuikit.Confirm {
 	if rows < 3 {
 		rows = 3
 	}
-	return tuikit.NewConfirm(reaperConfigHead(missingAddons), m.pendingNo, m.pendingYes).
+	return tuikit.NewConfirm(reaperConfigHead(missingAddons, false), m.pendingNo, m.pendingYes).
 		WithExtra("Reapertips fonts", "r").
 		FocusYes().
 		SetList("", reaperConfigLines(), rows)
@@ -3973,12 +4023,13 @@ func (m model) reaperConfirm(missingAddons bool) tuikit.Confirm {
 
 func (m model) confirmReaperConfig() (model, tea.Cmd) {
 	m.pendingAction = "reaper-custom-config"
-	m.pendingMsg = reaperConfigPrompt(false)
+	m.reaperAddonsMissing, m.reaperRunning, m.reaperRetryAsked = false, false, false
+	m.pendingMsg = reaperConfigPrompt(false, false)
 	m.pendingNo = "Cancel"
 	m.pendingYes = "System fonts"
 	m.push(scrConfirm)
-	m.confirm = m.reaperConfirm(false)
-	return m, fetchReaperAddonsStatusCmd()
+	m.confirm = m.reaperConfirm(false, false)
+	return m, tea.Batch(fetchReaperAddonsStatusCmd(), fetchReaperRunningCmd())
 }
 
 // reaperRevertPrompt is the Uninstall counterpart of reaperConfigPrompt: it
@@ -3998,12 +4049,13 @@ func reaperRevertPrompt() string {
 
 func (m model) confirmReaperRevert() (model, tea.Cmd) {
 	m.pendingAction = "reaper-custom-config-revert"
+	m.reaperRunning, m.reaperRetryAsked = false, false
 	m.pendingMsg = reaperRevertPrompt()
 	m.pendingNo = "Cancel"
 	m.pendingYes = "Restore"
 	m.push(scrConfirm)
 	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).FocusYes()
-	return m, nil
+	return m, fetchReaperRunningCmd()
 }
 
 func (m model) closeConfirm() (model, tea.Cmd) {

@@ -592,6 +592,11 @@ type model struct {
 	pendingMsg  string
 	pendingNo   string
 	pendingYes  string
+	// REAPER's config prompts check these before writing: the app crashes if
+	// its files are replaced while it is running.
+	reaperAddonsMissing bool
+	reaperRunning       bool
+	reaperRetryAsked    bool
 	// cancelRunAsking is set while the "Are you sure?" confirm for stopping a
 	// running action is up. pendingAction belongs to the run itself and must
 	// not be overwritten: the run's completion still reads it.

@@ -58,6 +58,9 @@ system font:
 - installs `libSwell-user.colortheme` so the native Linux menus follow the accent too;
 - applies `code/modules/Apps/reaper/configs/custom/` over the REAPER resource path.
 
+Both actions require REAPER to be closed: the TUI asks you to close it and
+retry, and the config script refuses to write while a REAPER process is alive.
+
 In **Uninstall**, the same key shows `P restore config` and undoes the visual
 part: the REAPER config (including the theme selection) comes back as it was
 when P was run in Setup, and the generated theme, purple toolbar icons, splash

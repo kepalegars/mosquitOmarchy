@@ -536,6 +536,7 @@ type DiskRec struct {
 	NeedUnknown  bool  `json:"need_unknown"`
 	FreedUnknown bool  `json:"freed_unknown"`
 	TempShort    bool  `json:"temp_short"`
+	Detail       string `json:"detail"` // optional module-specific breakdown, e.g. the Ableton archive download
 }
 
 // spaceMsg carries the answer back to the confirm that asked for it. seq makes
@@ -686,6 +687,24 @@ func fetchReaperAddonsStatusCmd() tea.Cmd {
 			return reaperAddonsStatusMsg{err: err}
 		}
 		return reaperAddonsStatusMsg{missing: strings.TrimSpace(string(out)) == "missing"}
+	}
+}
+
+// reaperRunningMsg answers the pre-prompt check for an open REAPER process.
+// Writing the config while REAPER has it open crashes the app, so the prompt
+// asks the user to close it instead of starting the action.
+type reaperRunningMsg struct {
+	running bool
+	err     error
+}
+
+func fetchReaperRunningCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("reaper-running")
+		if err != nil {
+			return reaperRunningMsg{err: err}
+		}
+		return reaperRunningMsg{running: strings.TrimSpace(string(out)) == "yes"}
 	}
 }
 
