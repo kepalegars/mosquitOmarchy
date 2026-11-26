@@ -94,6 +94,11 @@ did, with the same user-visible result.
       are tracked, the inner VST3 `.so` is not installed a second time, and all
       29 `.g2bnk` banks land under `$XDG_DATA_HOME/glitch2/presets` with a link
       beside the VST2 binary.
+- [ ] Sort cycle on **Installed plugins**: `s` visibly reorders both plugins
+      and vendor folders — Vendor clusters by folder, Name is global A→Z,
+      Format groups by format, Install date is newest-first (using file birth
+      time, so an archive's old mtime is not treated as the install date).
+      The choice is remembered per page and survives leaving/returning.
 - [ ] Adoption sweep timing: with ~180 installed plugins, a cold
       `mosquito-audio-plugin-manager-actions adopt-plugins` (groups cache
       removed) should take a couple of seconds, warm well under one, and

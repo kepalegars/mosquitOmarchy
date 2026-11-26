@@ -6581,7 +6581,12 @@ main() {
 plugin_group_rows() {
   local f type key grp label sortkey enabled fmt
   local -A g_label=() g_formats=() g_first=() g_enabled=() g_any=() g_variants=()
-  local -a order=()
+  local -a order=() sort_args=(-t "$(printf '\t')")
+  case "$PLUGIN_SORT_MODE" in
+    vendor) sort_args+=(-k2,2 -k1,1) ;;          # folder, then label
+    date)   sort_args+=(-r -k1,1) ;;             # newest install first
+    *)      sort_args+=(-k1,1) ;;                # global name / format
+  esac
 
 _apm_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/mosquito-audio-plugin-manager"
   local _apm_fp _apm_rc _apm_rtmp _apm_rname
@@ -6595,7 +6600,10 @@ _apm_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/mosquito-audio-plugin-manager"
       # after a cache write came out ordered and every later one, cache hit,
       # came out in scan order. Pressing `s` then set the mode, saved it, and
       # changed nothing on screen: the list came back in the same order.
-      plugin_group_rows_emit "$_apm_rc" | sort -t"$(printf '\t')" -k1,1
+      # Sort by the GROUP key first (folder order), then by the row key
+      # (order inside it). Sorting only -k1 made "vendor" identical to
+      # "name": the emitted first key is the label in both modes.
+      plugin_group_rows_emit "$_apm_rc" | sort "${sort_args[@]}"
       return 0
     fi
   fi
@@ -6624,7 +6632,7 @@ _apm_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/mosquito-audio-plugin-manager"
       rm -f "$_apm_rtmp"
     fi
   fi
-  plugin_group_rows_emit "$_apm_body" | sort -t"$(printf '\t')" -k1,1
+  plugin_group_rows_emit "$_apm_body" | sort "${sort_args[@]}"
   rm -f "$_apm_body"
   return 0
 }
@@ -6653,7 +6661,7 @@ plugin_scan_fingerprint() {
   done
   {
     find "${roots[@]}" -maxdepth 6 \( -type f -o -type l \) -printf '%T@|%s|%p\n' 2>/dev/null
-    printf 'h2=%s h32=%s g=2\n' "${HIDE_VST2:-false}" "${HIDE_32BIT:-false}"
+    printf 'h2=%s h32=%s g=3\n' "${HIDE_VST2:-false}" "${HIDE_32BIT:-false}"
   } | sort | md5sum | cut -c1-16
 }
 
@@ -6668,11 +6676,15 @@ plugin_group_rows_emit() {
     # plugins inside each of them. One key could not do both: sorting by vendor
     # ordered the folders and left every folder's contents in scan order, which
     # is why only the groupings ever appeared to change when `s` was pressed.
+    # "-" (not "") marks a GLOBAL order: a leading TAB would be skipped by
+    # `IFS=$'\t' read` in every consumer and shift every field one to the left.
+    # Vendor is the only mode that clusters by folder; name/format/date sort
+    # the whole list, which is what the labels promise.
     case "$PLUGIN_SORT_MODE" in
-      format) gkey="$grp|$formats"; skey="$formats" ;;
-      name)   gkey="$grp|$label";   skey="$label" ;;
-      date)   gkey="$grp|$date";    skey="$date" ;;
-      *)      gkey="$grp|$label";   skey="$label" ;;
+      format) gkey="-"; skey="$formats|$label" ;;
+      name)   gkey="-"; skey="$label" ;;
+      date)   gkey="-"; skey="$date|$label" ;;
+      *)      gkey="$grp"; skey="$label" ;;
     esac
     # NINE fields: skey, gkey, label, grp, formats, enabled, value, variants, key.
     # The format string listed eight %s for nine arguments, so the LAST field —
@@ -6781,7 +6793,7 @@ vendor_folder_for_plugin(){
 }
 
 plugin_group_rows_build() {
-  local f type key grp label sortkey enabled fmt
+  local f type key grp label sortkey enabled fmt first p
   local -A g_label=() g_formats=() g_first=() g_enabled=() g_any=() g_variants=() g_grp=()
   local -a order=()
 
@@ -6932,12 +6944,19 @@ plugin_group_rows_build() {
     # cannot rebuild the key from the display label — "FabFilter Micro" and
     # "FabFilter Micro (Mono)" are different plugins, and the vendor folder is
     # already split out into field 3, so the key is not derivable from the row.
-    # A ninth, trailing field caches the mtime `date` sorts on: one stat per
-    # plugin at BUILD time instead of one per row on every cache read.
-    date=0
-    if [[ ${g_first[$k]} == vst:* ]]; then
-      date="$(stat -c '%Y' "${g_first[$k]#vst:*:}" 2>/dev/null || echo 0)"
-    fi
+    # A ninth, trailing field caches the install date `date` sorts on: one
+    # stat per plugin at BUILD time instead of one per row on every cache read.
+    # Use the file's birth time (%W) — cp -a preserves an archive's old mtime,
+    # so %Y reported a 2014 preset as a 2014 install. Fall back to mtime where
+    # the filesystem has no birth time.
+    first="${g_first[$k]}"
+    case "$first" in
+      vst:*:*) p="${first#vst:}"; p="${p#*:}" ;;
+      native:*) p="${first#native:}" ;;
+      *) p="$first" ;;
+    esac
+    date="$(stat -c '%W %Y' "$p" 2>/dev/null | awk '{print ($1 > 0 ? $1 : $2)}')"
+    [[ -n $date ]] || date=0
     # No sort key here: the cache stores the grouping, and the sort is applied
     # at read time so `s` reorders without a rescan.
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \

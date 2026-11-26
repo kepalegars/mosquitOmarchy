@@ -507,15 +507,20 @@ case "$cmd" in
           "$_label" "$value" "$vendor" "$formats" "$enabled" "$_variants" "$(_wpm_parent_lookup "$value")" "$subgroup"
       done < "$_apm_g"
       # One folder row per VENDOR (never per subgroup), the tree's top level.
-      # Normalised before `sort -u`, so two folders whose display name is the
-      # same ("Airwindows (…)") never become two identical rows.
-      awk -F'\t' '{sub(/\/.*$/, "", $4); print $4}' "$_apm_g" |
-        while IFS= read -r grp; do
-          [[ -n $grp ]] && vendor_display_name "$grp"
-        done | sort -u | while IFS= read -r grp; do
-          [[ -n $grp ]] || continue
-          printf 'f\t%s\tvendor:%s\n' "$([[ $grp == native ]] && printf Native || printf '%s' "$grp")" "$grp"
-        done
+      # Folder order follows the SORTED plugin rows, not a separate
+      # alphabetical list: pressing `s` must move the folders too, otherwise
+      # the tree looks identical even when the plugins inside changed order.
+      # Deduplicate by display name so two groups that normalise to the same
+      # vendor label ("Airwindows (…)") never produce two identical rows.
+      declare -A _apm_folders=()
+      while IFS= read -r grp; do
+        [[ -n $grp ]] || continue
+        display="$(vendor_display_name "$grp")"
+        [[ $grp == native ]] && display=Native
+        [[ -n $display && -z ${_apm_folders[$display]:-} ]] || continue
+        _apm_folders[$display]=1
+        printf 'f\t%s\tvendor:%s\n' "$display" "$grp"
+      done < <(awk -F'\t' '{sub(/\/.*$/, "", $4); print $4}' "$_apm_g" | awk '!seen[$0]++')
     } | jq -R -s -c 'split("\n")
         | map(select(length > 0) | split("\t"))
         | map(
