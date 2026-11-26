@@ -70,5 +70,5 @@ missing libraries is refused. Other useful add-ons are separate:
   `custom/Effects/`, and FX chains / track templates can be exported from REAPER
   into `custom/FXChains/` and `custom/TrackTemplates/`.
 
-`reaper-theme-sync` keeps the theme's accent and font in step with Omarchy; the
-SWS/ReaPack scripts above are unaffected by theme changes.
+The theme is recoloured once when the config is applied and then stays fixed;
+there is no launcher-time sync.

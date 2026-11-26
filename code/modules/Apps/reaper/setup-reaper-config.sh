@@ -9,8 +9,8 @@
 #   • LSP plugins (EQ, dynamics, limiter) from the Arch repos, when missing;
 #   • ReaPack + SWS, downloaded from GitHub Releases or copied from ~/Downloads;
 #   • the Omarchy-generated theme: the Reapertips dark or light base recoloured
-#     to Omarchy's accent and set in its system font (reaper-theme-sync owns
-#     that part, also on every launch);
+#     to Omarchy's accent and set in its system font (generated once, never
+#     rewritten at launch);
 #   • the Linux libSwell window colours, same accent;
 #   • the purple toolbar icons (100%, 150%, 200%);
 #   • the REAPER 7 splash screen.
@@ -182,7 +182,7 @@ revert() {
   # The theme generator must find no base, or the next launch would recreate
   # the theme we just removed. The backups stay for the user.
   rm -f -- "$STATE"/reapertips-base*.ReaperThemeZip "$STATE/libSwell-base.colortheme" \
-    "$STATE/font-mode" "$STATE/sync.sig" "$MANIFEST" "$STATE/fonts-added"
+    "$STATE/font-mode" "$MANIFEST" "$STATE/fonts-added"
 
   echo "Restored $restored file(s). Backups: $BACKUP_ROOT"
   echo "Launch REAPER from the launcher (or: ~/.local/bin/reaper-launch)."
@@ -266,7 +266,7 @@ if [[ $FONTS == reapertips && -d $FONTDIR ]]; then
   command -v fc-cache >/dev/null 2>&1 && fc-cache -f "$HOME/.local/share/fonts" >/dev/null || true
   echo "Installed the Reapertips fonts (Fira Sans, Roboto)."
 else
-  echo "Using Omarchy's system font (detected by reaper-theme-sync)."
+  echo "Using Omarchy's system font."
 fi
 
 echo "== 4/7 Custom config (backup first) =="
@@ -304,14 +304,9 @@ if [[ -f $COLORTHEME ]]; then
 fi
 track_file "$TARGET"
 track_file "$RES/libSwell-user.colortheme"
-cp -f -- "$HERE/reaper-theme-sync" "$HOME/.local/bin/reaper-theme-sync"
-chmod +x "$HOME/.local/bin/reaper-theme-sync"
-"$HOME/.local/bin/reaper-theme-sync" --force
-# Put the pre-launch hook into reaper-launch (idempotent, and it is the only
-# place that can regenerate the theme when Omarchy's accent/font changes).
-source "$HERE/../../../lib/wine-runtime-daw.bash"
-mosquitomarchy_apply_daw_wine_runtime quiet || true
-echo "Theme: $TARGET"
+# One-shot generation: the theme and its pointer are then left alone.
+bash "$HERE/reaper-theme-apply"
+echo "Theme: $TARGET (applied once)"
 
 echo "== 6/7 Toolbar icons + splash =="
 if [[ -d $TOOLBAR ]]; then

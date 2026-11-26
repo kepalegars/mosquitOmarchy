@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Regenerates REAPER's Reapertips theme and libSwell colors from the current
-# Omarchy accent, font and dark/light mode. Called by reaper-launch before
-# REAPER starts, and by setup-reaper-config.sh right after installing.
+# Generates REAPER's Reapertips theme and libSwell colours ONCE, when the
+# custom config is installed. Never called at launch: the theme stays as applied.
 #
 # REAPER has no launch flag / global "accent" setting: theme colours are baked
 # into the .ReaperThemeZip. So the theme is generated here from the untouched
@@ -14,10 +13,6 @@ set -euo pipefail
 RES="${REAPER_RESOURCE_PATH:-$HOME/.config/REAPER}"
 STATE="$RES/.mosquitomarchy"
 TARGET="$RES/ColorThemes/Reapertips Theme – Omarchy.ReaperThemeZip"
-SIGFILE="$STATE/sync.sig"
-
-FORCE=0
-for a in "$@"; do [[ $a == --force ]] && FORCE=1; done
 
 accent="$(omarchy-theme-color accent 2>/dev/null || true)"
 if [[ ! $accent =~ ^#[0-9a-fA-F]{6}$ ]]; then
@@ -34,18 +29,7 @@ fi
 [[ $mode == light || $mode == dark ]] || mode=dark
 
 base="$STATE/reapertips-base-$mode.ReaperThemeZip"
-if [[ ! -f "$base" ]]; then
-  # No base means the config was restored (or never installed): if REAPER's
-  # exit re-pointed lastthemefn5 at the theme we removed, drop that pointer so
-  # it falls back to the default theme instead of looking broken.
-  if [[ -f $RES/reaper.ini ]]; then
-    cur="$(sed -n 's/^lastthemefn5=//p' "$RES/reaper.ini" | tail -1)"
-    if [[ $cur == *"/ColorThemes/Reapertips Theme – "* && ! -f $cur ]]; then
-      sed -i "/^lastthemefn5=/d" "$RES/reaper.ini"
-    fi
-  fi
-  exit 0
-fi
+[[ -f $base ]] || exit 0
 variant="$mode"
 
 font_mode="$(cat "$STATE/font-mode" 2>/dev/null || echo system)"
@@ -59,22 +43,6 @@ else
   # Reapertips choice: the theme keeps its Fira Sans, and the native menus get
   # the same family instead of libSwell's stock Liberation Sans.
   font="Fira Sans"
-fi
-
-# A theme picked by hand is the user's choice: only repoint reaper.ini when it
-# still names a theme this script generated.
-if [[ -f $RES/reaper.ini ]]; then
-  cur="$(sed -n 's/^lastthemefn5=//p' "$RES/reaper.ini" | tail -1)"
-  if [[ $cur == *"/ColorThemes/Reapertips Theme – "* && $cur != "$TARGET" ]]; then
-    sed -i "s|^lastthemefn5=.*|lastthemefn5=$TARGET|" "$RES/reaper.ini"
-  fi
-fi
-
-sig="$accent|$mode|$font_mode|$font|$base|$(stat -c '%Y' "$base" 2>/dev/null || echo 0)"
-if (( ! FORCE )) && [[ -f $SIGFILE && -f $TARGET ]] \
-   && { [[ ! -f "$STATE/libSwell-base.colortheme" ]] || [[ -f "$RES/libSwell-user.colortheme" ]]; } \
-   && [[ "$(cat "$SIGFILE")" == "$sig" ]]; then
-  exit 0
 fi
 
 tmp="$(mktemp -d)"
@@ -148,5 +116,3 @@ if [[ -f "$base_colors" ]]; then
     sed -E "s/#d1a660/$accent/Ig" "$base_colors" >"$RES/libSwell-user.colortheme"
   fi
 fi
-
-printf '%s' "$sig" >"$SIGFILE"

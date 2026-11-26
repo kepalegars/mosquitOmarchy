@@ -82,42 +82,14 @@ mosquitomarchy_daw_wrapper_points_at() {
 # Returns 1 (and changes nothing) when the runtime is not installed: silently
 # writing a wrapper that falls back to the system wine is what made the original
 # bug invisible.
-# An extra command to run just before exec, per application.
-#
-# REAPER's UI scale cannot follow the monitor on its own: libSwell derives one
-# DPI from a single system-wide value, and X11 has no per-monitor DPI, so the
-# number cannot change when the window moves. `reaper-ui-scale` writes the
-# focused monitor's Hyprland scale into reaper.ini instead. It has to happen
-# BEFORE the process starts, because REAPER reads ui_scale once at startup and
-# writes its own value back on exit.
-#
-# Silent, and optional on purpose: a missing reaper-ui-scale must not stop
-# REAPER from launching, so this is a plain "run it if it is there".
-# Export the local gdk-pixbuf 2.42 shim installed by fix-reaper-cursors, if
-# present. Scoped to REAPER's launcher: no other app inherits this library.
+# Only the X11 fallback needs the gdk-pixbuf 2.42 .cur decoder; the marker is
+# written by setup-reaper.sh --x11.
 mosquitomarchy_reaper_cursor_lib() {
+  local marker="$HOME/.config/REAPER/.mosquitomarchy/keep-x11-swell"
   local libdir="$HOME/.local/lib/reaper-cursors"
-  if [[ -f $libdir/libgdk_pixbuf-2.0.so.0 ]]; then
+  if [[ -f $marker && -f $libdir/libgdk_pixbuf-2.0.so.0 ]]; then
     export LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   fi
-}
-
-mosquitomarchy_daw_prelaunch() {
-  case "$1" in
-    reaper)
-      # Regenerate the recoloured theme before REAPER reads it, then the scale.
-      # Both are optional: a missing helper must not stop REAPER from launching.
-      [[ -x "$HOME/.local/bin/reaper-theme-sync" ]] \
-        && "$HOME/.local/bin/reaper-theme-sync" --quiet || true
-      [[ -x "$HOME/.local/bin/reaper-ui-scale" ]] \
-        && "$HOME/.local/bin/reaper-ui-scale" --quiet || true
-      # fix-reaper-cursors: glycin-based gdk-pixbuf cannot decode REAPER's .cur
-      # cursors, so they never change. A locally installed 2.42 lib can; only
-      # export it when the fix actually installed it.
-      mosquitomarchy_reaper_cursor_lib
-      ;;
-  esac
-  return 0
 }
 
 mosquitomarchy_write_daw_wrapper() {
@@ -143,26 +115,15 @@ AWINE_DIR="$dir"
 if [ -x "\$AWINE_DIR/wine" ]; then
   export PATH="\$AWINE_DIR:\$PATH"
 fi
-# The pre-launch hook has to live in the wrapper too: the call above runs in
-# THIS shell while it was being written, which is the setup's shell and not the
-# one REAPER will start in.
-mosquitomarchy_daw_prelaunch() {
-  case "\$1" in
-    reaper)
-      [ -x "\$HOME/.local/bin/reaper-theme-sync" ] \
-        && "\$HOME/.local/bin/reaper-theme-sync" --quiet || true
-      [ -x "\$HOME/.local/bin/reaper-ui-scale" ] \
-        && "\$HOME/.local/bin/reaper-ui-scale" --quiet || true
-      mosquitomarchy_reaper_cursor_lib
-      ;;
-  esac
-  return 0
-}
+# Only the X11 fallback needs the old gdk-pixbuf .cur decoder.
 mosquitomarchy_reaper_cursor_lib() {
+  local marker="\$HOME/.config/REAPER/.mosquitomarchy/keep-x11-swell"
   local libdir="\$HOME/.local/lib/reaper-cursors"
-  [ -f "\$libdir/libgdk_pixbuf-2.0.so.0" ] \
-    && export LD_LIBRARY_PATH="\$libdir\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+  if [ -f "\$marker" ] && [ -f "\$libdir/libgdk_pixbuf-2.0.so.0" ]; then
+    export LD_LIBRARY_PATH="\$libdir\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+  fi
 }
+mosquitomarchy_reaper_cursor_lib
 PRELAUNCH="$pre"
 if [ -n "\$PRELAUNCH" ]; then
   mosquitomarchy_daw_prelaunch "\$PRELAUNCH"
@@ -201,9 +162,8 @@ wrapper_has_prelaunch() {
   local w="$1" app="$2"
   [[ -f $w ]] || return 1
   case "$app" in
-    reaper) grep -q 'reaper-theme-sync' "$w" 2>/dev/null \
-              && grep -q 'reaper-ui-scale' "$w" 2>/dev/null \
-              && grep -q 'mosquitomarchy_reaper_cursor_lib' "$w" 2>/dev/null ;;
+    reaper) grep -q 'mosquitomarchy_reaper_cursor_lib' "$w" 2>/dev/null \
+              && ! grep -qE 'reaper-theme-sync|reaper-ui-scale' "$w" 2>/dev/null ;;
     *)      return 0 ;;
   esac
 }

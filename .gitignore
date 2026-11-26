@@ -12,8 +12,8 @@ code/modules/Apps/bitwig/*.deb
 # local (it is not ours to redistribute). configs/custom/ IS committed: it is
 # the config this repo ships.
 code/modules/Apps/reaper/configs/*.zip
-# Dated REAPER config backups written by the C action, local only.
-code/modules/Apps/reaper/backups/
+# Dated REAPER config backups stay local; the one-time Wayland migration
+# backup (old X11 libSwell / imgui / launcher / hyprland.lua) IS committed.
 
 # ── Local backups: copies made before an edit/install, never source ──
 # A complete archive includes them only when the archive asks and the user
@@ -23,6 +23,9 @@ code/modules/Apps/reaper/backups/
 *.backup
 *.backup.*
 **/backups/
+!code/modules/Apps/reaper/backups/
+code/modules/Apps/reaper/backups/*
+!code/modules/Apps/reaper/backups/2026-11-26_15-20-58-before-wayland-rewrite/
 
 # ── Profile-owned Mixbay integrations (oscmix, evo-raw) ──
 # Downloaded on demand by the interface profile that declares them, outside

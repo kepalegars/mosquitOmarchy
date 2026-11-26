@@ -1,29 +1,22 @@
 # REAPER
 
-Installs REAPER, adds a `reaper-launch` wrapper, and adds a menu shortcut. Its real work is the
-Hyprland window rules: the main window tiles, and **every other REAPER window floats** — the
-preferences dialog, save confirmations, the Media Explorer, anything — centered on the monitor,
-fully opaque, no blur, and exempt from Omarchy's global opacity.
+REAPER can run with the native Wayland `libSwell` from
+[GoranKovac/Wayland-Swell](https://github.com/GoranKovac/Wayland-Swell): its
+dialogs are real child toplevels and follow the main window's monitor, so no
+Hyprland window rules are needed.
 
-The exceptions are deliberate: REAPER's own popup menus (File, Edit, right-click) and its
-tooltips are left wherever REAPER puts them rather than being yanked to the center, because
-forcing those to center makes them unusable.
+If the Wayland build misbehaves, run `setup-reaper.sh --x11`: it restores the
+X11 fallback behaviour by keeping the system `libSwell` (the old binary was
+saved manually under `backups/`). `setup-reaper.sh --wayland` re-enables it.
 
-All rules live in `~/.config/hypr/hyprland.lua`.
+There is no `reaper-ui-scale`, no launcher-time theme sync and no Hyprland rule
+managed by this module. The theme is generated once when the custom config is
+applied and then stays as it is. LSP plugins are an optional yes/no question at
+the end of an interactive install (`--lsp` / `--no-lsp` for automation), and a
+mosquitOmarchy backup records whether they were present so a restore installs
+them directly without asking.
 
-## Running it
-
-Launches on Hyprland's **native XWayland**, with auto-DPI disabled — it relies on Omarchy's
-global `xwayland.force_zero_scaling` plus `ui_scale_auto=0`, otherwise the UI comes out giant
-and blurry.
-
-`xwayland-satellite` was used previously for isolation and then dropped: it has no XDND bridge,
-so drag & drop did not work, and it relays the X11 window class late, which caused float and
-opacity glitches.
-
-> Drag & drop from another app into REAPER is still unreliable, and that is REAPER's own
-> Linux/SWELL port rather than a compositor issue. Use the Media Explorer or
-> **Insert ▸ Media File** instead.
+## Plugin folders
 
 ## Plugin folders
 
@@ -129,22 +122,10 @@ personal one, it must still be committed and delivered with the rest of the repo
 on GitHub — files left only on one machine never reach the user. Anything
 private (licences, tokens) does not belong in it.
 
-### Accent colour, dark/light and fonts
+### Accent colour and fonts
 
-REAPER has no launch flag or global accent setting: theme colours are baked into
-the `.ReaperThemeZip`, and there is no upstream "follow the desktop theme" hook
-(the community tools — Theme Replacer, theme-tweak windows — are editors, not
-dynamic sync). The workable path is to regenerate the theme from an untouched
-base before REAPER starts, which is exactly what `reaper-theme-sync` does:
-
-- `omarchy-theme-color accent` → replaces the theme's own accents (`#ff92af`
-  purple, `#feb946` light) and the libSwell accent (`#d1a660`);
-- `omarchy-theme-color mode` → picks the Reapertips **Light** or **Purple** base,
-  so switching Omarchy between dark and light switches REAPER on next launch;
-- `omarchy-font-current` → rewrites the theme's font blobs and
-  `default_font_face` when "System fonts" was chosen.
-
-It always starts from the archive copy kept in `~/.config/REAPER/.mosquitomarchy/`
-and is called by `reaper-launch` before every start, so Omarchy theme changes are
-picked up without re-running Setup. While REAPER is already running, reload the
-theme in REAPER (or restart) to see the new colours.
+`reaper-theme-apply` generates the Reapertips theme **once**, choosing the
+Light/Purple base for Omarchy's mode and replacing its accents and the
+libSwell accent with Omarchy's accent. It is not called at launch: the theme
+and `lastthemefn5` stay as applied until you re-apply the config with P or
+change the theme inside REAPER.

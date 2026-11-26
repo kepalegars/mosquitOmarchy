@@ -1,0 +1,5 @@
+REAPER backup
+action: before Wayland/native rewrite (manual)
+date: 2026-11-26 15:20:58
+contains: previous setup-reaper.sh, X11 libSwell.so, hyprland.lua with REAPER block
+reaper_imgui-x86_64.so (X11/GDK build)
