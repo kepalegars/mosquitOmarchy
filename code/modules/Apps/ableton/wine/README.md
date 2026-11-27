@@ -4,10 +4,12 @@ Installs **Ableton Live 12 native Linux** via the [shibco/ableton-linux](https:/
 
 The `.run` installer is **not in the repo** — it is one of the two files the release archive
 carries (`archive-mosquitomarchy.sh` at the repo root), or downloaded separately
-(https://github.com/shibco/ableton-linux/releases). The active `PATCH/` scripts
-(`patch-ableton.sh`, `fixes/*.sh`, `move-wine/patch-move-wine.sh`) **are** in the
-repo because the TUI and this module call them. Only `PATCH/tools/`, `.venv/`,
-`old/`, `*.auz` and the loose `vcruntime140_1.dll` stay local.
+(https://github.com/shibco/ableton-linux/releases). The active scripts are in
+the repo: `PATCH/patch-ableton.sh` and `patch-move-wine.sh` (next to this
+module's setup script) — the TUI and `setup-ableton.sh` call them. The menu
+repair is now `setup-ableton.sh --fix-menu`. Only `PATCH/tools/`, `.venv/`,
+`old/`, `*.auz`, `PATCH/uninstall-witchwand.sh` and the loose
+`vcruntime140_1.dll` stay local.
 
 **The Live edition zip must be downloaded manually** (from your ableton.com account) and dropped in `code/modules/Apps/ableton/wine/`. At opening, the script verifies it is present and otherwise warns which file is missing (`Ableton_Live_<edition>_<version>_64.zip`) before offering rescan / a typed path.
 
@@ -95,7 +97,7 @@ host list through unfiltered — there is no VID/PID allowlist — and the DLL e
 imports (`get_device_list`, `open`, `claim_interface`, `bulk_transfer`, `strerror`, interface numbers
 0–255, hotplug stubs). The Move's display is `VID_2982&PID_1958&MI_00`; the same bridge reaches it.
 
-**What the patch does** (`PATCH/move-wine/patch-move-wine.sh`, private like the rest of `PATCH/`):
+**What the patch does** (`patch-move-wine.sh`, next to this module's setup script):
 
 - installs `/etc/udev/rules.d/99-ableton-move-live.rules` (vendor `0x2982`, `TAG+="uaccess"`) —
   `/dev/bus/usb/*` is root-only otherwise, so libusb cannot open the display interface;

@@ -31,7 +31,7 @@ PREFIX="${ABLETON_PREFIX:-$HOME/.wine-ableton}"
 UDEV="/etc/udev/rules.d/99-ableton-move-live.rules"
 UDEV_BODY='# Ableton USB devices (Move, Push, Note): let the logged-in user open the
 # display interfaces through libusb (wine'"'"'s host bridge runs as that user).
-# Installed by ableton/PATCH/move-wine/patch-move-wine.sh.
+# Installed by ableton/wine/patch-move-wine.sh.
 SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="2982", MODE="0660", TAG+="uaccess"
 '
 

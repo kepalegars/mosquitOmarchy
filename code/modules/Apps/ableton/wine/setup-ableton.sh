@@ -17,6 +17,7 @@
 #   ./setup-ableton.sh -i           # install flow only, with interactive prompts
 #   ./setup-ableton.sh --links      # only (re)links the shared VST folders
 #   ./setup-ableton.sh --status     # current state, without modifying anything
+#   ./setup-ableton.sh --fix-menu   # rebuild the desktop entries without reinstalling
 #   ./setup-ableton.sh -u|--uninstall  # uninstall editions ONE BY ONE; removing the
 #                                       # last one also removes the prefix via the
 #                                       # official .run (see step_uninstall)
@@ -66,12 +67,13 @@ LINKER="$SCRIPT_DIR/../../../mosquitomarchy/audio-stack/apm/link-vst-shared.sh"
 POWER_DEFAULT="${POWER:-off}"   # off = do not change the power profile (mosquito.battery keeps control)
 BUFFER_DEFAULT="${BUFFER:-512}" # 512 frames = stable latency for PipeASIO
 
-YES=0 LINKS_ONLY=0 STATUS_ONLY=0 UNINSTALL_ONLY=0 UPDATE_ONLY=0 INSTALL_ONLY=0
+YES=0 LINKS_ONLY=0 STATUS_ONLY=0 UNINSTALL_ONLY=0 UPDATE_ONLY=0 INSTALL_ONLY=0 FIX_MENU_ONLY=0
 while (( $# )); do a="$1"; case "$a" in
   -y|--yes) YES=1 ;;
   -i|--install) INSTALL_ONLY=1 ;;
   --links) LINKS_ONLY=1 ;;
   --status) STATUS_ONLY=1 ;;
+  --fix-menu) FIX_MENU_ONLY=1 ;;
   --check-update) UPDATE_ONLY=1 ;;
   -u|--uninstall) UNINSTALL_ONLY=1 ;;
   -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
@@ -495,7 +497,7 @@ ableton_winetricks_cache_ready(){
 # re-applies the prefix override + udev access after every official run;
 # without it an update silently drops Move control.
 move_wine_reapply(){
-  local s="$SCRIPT_DIR/PATCH/move-wine/patch-move-wine.sh"
+  local s="$SCRIPT_DIR/patch-move-wine.sh"
   [[ -f $s ]] || return 0
   bash "$s" --reapply || warn "The Move wine patch was not re-applied (run: $s --apply)."
   return 0
@@ -1534,7 +1536,7 @@ recap(){
   echo
   echo " • First audio setup: Settings > Audio > Driver ASIO > Device PipeASIO."
   echo " • Menu entry gone? Repair manually:"
-  echo "     bash \"$SCRIPT_DIR/PATCH/fixes/fix-menu.sh\""
+  echo "     bash \"$SCRIPT_DIR/setup-ableton.sh\" --fix-menu"
   echo " • Windows plugins in the Ableton environment:"
   echo "     <shared root>/vst3  -> C:\\Program Files\\Common Files\\VST3     (shared, auto-scanned)"
   echo "     <shared root>/vst   -> C:\\Program Files\\Steinberg\\VSTPlugins  (shared ; in Live:"
@@ -1594,16 +1596,83 @@ ableton_patch_applied(){
   grep -qiE 'applied|in place|patched' <<<"$out"
 }
 
-# Repeats the logic (sourced function) of PATCH/fixes/open-patched-folder.sh: open the
-# install folder of the last patched Ableton in the file explorer.
-open_last_patched_folder(){
-  local f="$SCRIPT_DIR/PATCH/fixes/open-patched-folder.sh"
-  if [[ -f "$f" ]]; then
-    # subshell: the source defines ableton_open_folder without polluting the script
-    ( source "$f"; ableton_open_folder ) || true
-  else
-    warn "PATCH/fixes/open-patched-folder.sh not found ($f) — open the edition manually."
+# Rebuild the menu entries on demand (was PATCH/fixes/fix-menu.sh). Single
+# edition -> the launcher's generic entry; several -> one targeted entry each.
+fix_menu_entries(){
+  local launcher="$BIN_DIR/ableton-live" apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+  local icons="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
+  local prefix="$HOME/.wine-ableton" exe base name ed file ic wmclass
+  local -a exes=()
+
+  [[ -x $launcher ]] || { err "Launcher missing: $launcher — reinstall first."; return 1; }
+  mkdir -p "$apps"
+  while IFS= read -r exe; do [[ -f $exe ]] && exes+=("$exe"); done \
+    < <(ls -1 "$prefix"/drive_c/ProgramData/Ableton/*/Program/"Ableton Live"*.exe 2>/dev/null | sort -V)
+  if (( ${#exes[@]} == 0 )); then
+    warn "No installed edition in $prefix — nothing to show in the menu."
+    return 0
   fi
+
+  write_one(){
+    local target="$1" label="$2" exec_line="$3" extra="${4:-}"
+    local icon="live-$(printf '%s' "$label" | awk '{print tolower($NF)}')"
+    [[ -f "$icons/$icon.svg" ]] || icon="live-intro"
+    {
+      printf '[Desktop Entry]\n'
+      printf 'Name=%s (Wine)\n' "$label"
+      printf 'Comment=Music production and performance\n'
+      printf 'Exec=%s\n' "$exec_line"
+      printf 'Type=Application\n'
+      printf 'StartupNotify=true\n'
+      printf 'Path=%s\n' "$prefix"
+      printf 'Icon=%s\n' "$icon"
+      [[ -z $extra ]] || printf '%s\n' "$extra"
+      printf 'Categories=AudioVideo;Audio;\n'
+    } > "$target"
+    chmod 644 "$target"
+  }
+
+  if (( ${#exes[@]} == 1 )); then
+    rm -f -- "$apps"/ableton-live-*.desktop
+    base="$(basename "${exes[0]}")"; name="${base%.exe}"
+    write_one "$apps/ableton-live.desktop" "$name" "$launcher %f"
+    ok "Menu entry restored: $apps/ableton-live.desktop ($name)"
+  else
+    rm -f -- "$apps/ableton-live.desktop"
+    for exe in "${exes[@]}"; do
+      base="$(basename "$exe")"; name="${base%.exe}"
+      ed="$(printf '%s' "$name" | awk '{print tolower($NF)}')"
+      wmclass="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')"
+      file="$apps/ableton-live-$ed.desktop"
+      write_one "$file" "$name" "env ABLETON_LIVE_EXE=\"$exe\" $launcher %f" "StartupWMClass=$wmclass"
+      ok "Menu entry restored: $file ($name)"
+    done
+  fi
+  command -v update-desktop-database >/dev/null && update-desktop-database "$apps" >/dev/null 2>&1 || true
+  ok "Done — check the Omarchy application menu."
+}
+
+# Open the install folder of the last patched edition directly (no helper file).
+open_last_patched_folder(){
+  local root="$HOME/.wine-ableton/drive_c/ProgramData/Ableton" exe folder opener
+  local -a exes=()
+  mapfile -d '' exes < <(find "$root" -maxdepth 4 -type f -iname 'Ableton Live 12*.exe' \
+    -not -path '*_updated*' -print0 2>/dev/null || true)
+  ((${#exes[@]})) || { warn "No Ableton Live 12 exe found in $root."; return 0; }
+  exe="$(printf '%s\0' "${exes[@]}" | xargs -0 -r -I{} sh -c \
+    'printf "%s %s\n" "$(stat -c %Y "{}")" "{}"' | sort -rn | head -1 | cut -d' ' -f2-)"
+  folder="$(dirname "$exe")"
+  if command -v nautilus >/dev/null 2>&1; then
+    opener="nautilus --new-window"
+  elif command -v xdg-open >/dev/null 2>&1; then
+    opener="xdg-open"
+  else
+    ok "No folder opener found — folder: $folder"
+    return 0
+  fi
+  setsid nohup $opener -- "$folder" >/dev/null 2>&1 < /dev/null &
+  disown 2>/dev/null || true
+  ok "Opened $folder in the file manager."
 }
 
 # ───────────────────────── Main ─────────────────────────
@@ -1611,6 +1680,7 @@ main(){
   msg "install-ableton — Ableton Live native Linux + multi-DAW VST sharing"
   status_check
 
+  if ((FIX_MENU_ONLY)); then fix_menu_entries; exit 0; fi
   if ((UNINSTALL_ONLY)); then
     step_cleanup
     step_recover_transactions || { err "Aborting: recover the interrupted install before uninstalling."; exit 1; }

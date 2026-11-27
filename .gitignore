@@ -58,14 +58,16 @@ code/modules/mosquito/audio-stack/apm/yabridge-driver.json
 code/modules/mosquito/audio-stack/apm/yabridge-driver.lock
 
 # ── Patches: scripts are tracked, local binaries/tools are not ──────────────
-# Ableton's active patch scripts (patch-ableton.sh, fixes/*.sh,
-# move-wine/patch-move-wine.sh) ARE on GitHub: the TUI and setup-ableton.sh
-# advertise and call them. Only the private binaries, Python venv, license
-# files and abandoned experiments stay local.
+# Ableton's active patch scripts (PATCH/patch-ableton.sh and
+# wine/patch-move-wine.sh) ARE on GitHub: the TUI and setup-ableton.sh call
+# them. Menu repair is embedded in setup-ableton.sh --fix-menu. The local-only
+# extras are binaries, the venv, license files, abandoned experiments and the
+# uninstall helper.
 code/modules/Apps/ableton/wine/PATCH/tools/
 code/modules/Apps/ableton/wine/PATCH/.venv/
 code/modules/Apps/ableton/wine/PATCH/old/
 code/modules/Apps/ableton/wine/PATCH/vcruntime140_1.dll
+code/modules/Apps/ableton/wine/PATCH/uninstall-witchwand.sh
 code/modules/Apps/ableton/native/linux-native-ableton/
 code/modules/Apps/ableton/native/PATCH/
 code/modules/Apps/guitarpro/PATCH/

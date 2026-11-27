@@ -2091,7 +2091,7 @@ _manual_patch_spec(){ # appkey -> module-relative patch script (empty: none)
   case "$1" in
     ableton-wine) printf 'ableton/wine/PATCH/patch-ableton.sh' ;;
     ableton-native) printf 'ableton/native/PATCH/patch-ableton-native.sh' ;;
-    ableton-move) printf 'ableton/wine/PATCH/move-wine/patch-move-wine.sh' ;;
+    ableton-move) printf 'ableton/wine/patch-move-wine.sh' ;;
     bitwig)    printf 'bitwig/PATCH/patch-bitwig.sh' ;;
     guitarpro) printf 'guitarpro/PATCH/patch-guitarpro' ;;
     davinci|davinci-resolve)   printf 'davinci/PATCH/patch-resolve.sh' ;;
@@ -2119,7 +2119,7 @@ _patch_present(){
 # _move_patch_present <appkey>: Ableton's Move wine step is a separate action
 # bound to uppercase P, not the hidden "p" (which stays for the R2R patch).
 _move_patch_present(){
-  [[ $1 == ableton-wine && -f "$APPS_DIR/ableton/wine/PATCH/move-wine/patch-move-wine.sh" ]]
+  [[ $1 == ableton-wine && -f "$APPS_DIR/ableton/wine/patch-move-wine.sh" ]]
 }
 
 # Report whether a patch script says its patch is applied (all four support a
