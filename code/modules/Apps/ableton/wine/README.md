@@ -4,8 +4,10 @@ Installs **Ableton Live 12 native Linux** via the [shibco/ableton-linux](https:/
 
 The `.run` installer is **not in the repo** — it is one of the two files the release archive
 carries (`archive-mosquitomarchy.sh` at the repo root), or downloaded separately
-(https://github.com/shibco/ableton-linux/releases). The `PATCH/` folder is **not** in any
-release: it is a private extra and stays on the machine that has it.
+(https://github.com/shibco/ableton-linux/releases). The active `PATCH/` scripts
+(`patch-ableton.sh`, `fixes/*.sh`, `move-wine/patch-move-wine.sh`) **are** in the
+repo because the TUI and this module call them. Only `PATCH/tools/`, `.venv/`,
+`old/`, `*.auz` and the loose `vcruntime140_1.dll` stay local.
 
 **The Live edition zip must be downloaded manually** (from your ableton.com account) and dropped in `code/modules/Apps/ableton/wine/`. At opening, the script verifies it is present and otherwise warns which file is missing (`Ableton_Live_<edition>_<version>_64.zip`) before offering rescan / a typed path.
 

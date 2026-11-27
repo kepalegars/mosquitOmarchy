@@ -57,11 +57,15 @@ code/modules/mosquito/audio-stack/apm/audio-plugin-manager-state.json
 code/modules/mosquito/audio-stack/apm/yabridge-driver.json
 code/modules/mosquito/audio-stack/apm/yabridge-driver.lock
 
-# ── Patches (whole folders): provided separately, never on GitHub ──
-# All the files (including each app's patches) are recovered via the
-# LATEST RELEASE of the repository (archive from archive-customarchy.sh) —
-# not on the repo.
-code/modules/Apps/ableton/wine/PATCH/
+# ── Patches: scripts are tracked, local binaries/tools are not ──────────────
+# Ableton's active patch scripts (patch-ableton.sh, fixes/*.sh,
+# move-wine/patch-move-wine.sh) ARE on GitHub: the TUI and setup-ableton.sh
+# advertise and call them. Only the private binaries, Python venv, license
+# files and abandoned experiments stay local.
+code/modules/Apps/ableton/wine/PATCH/tools/
+code/modules/Apps/ableton/wine/PATCH/.venv/
+code/modules/Apps/ableton/wine/PATCH/old/
+code/modules/Apps/ableton/wine/PATCH/vcruntime140_1.dll
 code/modules/Apps/ableton/native/linux-native-ableton/
 code/modules/Apps/ableton/native/PATCH/
 code/modules/Apps/guitarpro/PATCH/
