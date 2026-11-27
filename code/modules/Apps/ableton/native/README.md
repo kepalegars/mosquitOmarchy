@@ -70,6 +70,28 @@ PATCH/patch-ableton-native.sh --revert   # remove only the .auz files it copied
 R2RWM_TOOL=/path/to/tool bash PATCH/patch-ableton-native.sh
 ```
 
+## Alternative: native ELF patcher
+
+`PATCH/patch.sh` adapts [ReXulEc/abletonPatcherGUI](https://github.com/ReXulEc/abletonPatcherGUI)
+to this build. Upstream's CLI backend generates a signed `Authorize.auz` and
+replaces an 886-byte DSA key blob **inside the app binary**. That blob also
+exists in the native ELF `push3_opt/push3/Live`, so the script points the CLI
+at it:
+
+```sh
+PATCH/patch.sh            # patch (backs up Live first, stages Authorize.auz)
+PATCH/patch.sh --check    # applied / not applied
+PATCH/patch.sh --revert   # restore the backed-up ELF and remove our .auz
+PATCH/patch.sh --no-run   # only detect the HWID
+```
+
+The upstream checkout and its Node dependencies live in `PATCH/abletonPatcherGUI/`
+(gitignored). The script bypasses the interactive prompts by writing
+`config/cache.json` from the detected HWID, then runs the same
+`node util/patcher.js` backend as `npm run cli`. It also fixes an upstream
+case bug: `config.json` stores the keys in uppercase while
+`Buffer.toString("hex")` returns lowercase.
+
 The `p` shortcut is advertised only while the patch script,
 `PATCH/WM_Ableton.r2rwm` and `WitchWand.exe` in the Ableton Wine prefix are
 present — otherwise the row shows no patch hint and no Patches entry.
