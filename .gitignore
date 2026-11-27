@@ -7,6 +7,8 @@ code/modules/Apps/davinci/*.zip
 code/modules/Apps/spektrafilm/*.zip
 code/modules/Apps/guitarpro/*.exe
 code/modules/Apps/**/*.run
+# Offline authorization files are machine-specific and never belong in git.
+*.auz
 code/modules/Apps/bitwig/*.deb
 # Reapertips theme archive: collected from ~/Downloads by bootstrap.sh and kept
 # local (it is not ours to redistribute). configs/custom/ IS committed: it is
