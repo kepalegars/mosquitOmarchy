@@ -802,6 +802,7 @@ tree_fingerprint(){
   # The Ableton Move wine step is a second, independent script on the same
   # row and drives its uppercase P hint, so its presence is an input too.
   if _move_patch_present ableton-wine; then out+="|mableton:1"; else out+="|mableton:0"; fi
+  if _move_patch_present ableton-native; then out+="|mableton-native:1"; else out+="|mableton-native:0"; fi
   # The builder's own mtime. A change to THIS file changes the tree, and the
   # catalog fingerprints above cannot see that: two different versions of the
   # tree builder produced byte-identical fingerprints and the loser of the race
@@ -1110,6 +1111,7 @@ declare -A _INSTALLED_STATE_MEMO
 _installed_state(){ # module id -> 0 when installed (ok/partial) and not excluded
   local key="$1" id="$1" st
   [[ $id == ableton-move ]] && id=ableton-wine
+  [[ $id == ableton-native-move ]] && id=ableton-native
   if [[ -n ${_INSTALLED_STATE_MEMO[$key]+x} ]]; then
     [[ ${_INSTALLED_STATE_MEMO[$key]} == 1 ]]
     return
@@ -1239,6 +1241,10 @@ uninstall_state_signature(){
     if [[ $mid == ableton-wine ]]; then
       mspec="$(_manual_patch_spec ableton-move)"; [[ -n $mspec ]] || continue
       [[ -f "$APPS_DIR/$mspec" ]] && _patch_applied "$APPS_DIR/$mspec" && sig+="patch:ableton-move|"
+    fi
+    if [[ $mid == ableton-native ]]; then
+      mspec="$(_manual_patch_spec ableton-native-move)"; [[ -n $mspec ]] || continue
+      [[ -f "$APPS_DIR/$mspec" ]] && _patch_applied "$APPS_DIR/$mspec" && sig+="patch:ableton-native-move|"
     fi
   done
   # Applied quick fixes and tweaks.
@@ -2092,6 +2098,7 @@ _manual_patch_spec(){ # appkey -> module-relative patch script (empty: none)
     ableton-wine) printf 'ableton/wine/PATCH/patch-ableton.sh' ;;
     ableton-native) printf 'ableton/native/PATCH/patch-ableton-native.sh' ;;
     ableton-move) printf 'ableton/wine/patch-move-wine.sh' ;;
+    ableton-native-move) printf 'ableton/native/patch-move-native.sh' ;;
     bitwig)    printf 'bitwig/PATCH/patch-bitwig.sh' ;;
     guitarpro) printf 'guitarpro/PATCH/patch-guitarpro' ;;
     davinci|davinci-resolve)   printf 'davinci/PATCH/patch-resolve.sh' ;;
@@ -2119,7 +2126,11 @@ _patch_present(){
 # _move_patch_present <appkey>: Ableton's Move wine step is a separate action
 # bound to uppercase P, not the hidden "p" (which stays for the R2R patch).
 _move_patch_present(){
-  [[ $1 == ableton-wine && -f "$APPS_DIR/ableton/wine/patch-move-wine.sh" ]]
+  case $1 in
+    ableton-wine)   [[ -f "$APPS_DIR/ableton/wine/patch-move-wine.sh" ]] ;;
+    ableton-native) [[ -f "$APPS_DIR/ableton/native/patch-move-native.sh" ]] ;;
+    *) return 1 ;;
+  esac
 }
 
 # Report whether a patch script says its patch is applied (all four support a

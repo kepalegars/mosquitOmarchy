@@ -46,6 +46,13 @@ func (m model) setupRowHint(v string) string {
 			}
 			return patch + "P Move patch · "
 		}
+	case "ableton-native":
+		if it.MovePatch {
+			if m.treeMode == "uninstall" {
+				return patch + "P restore Move · "
+			}
+			return patch + "P Move (native) · "
+		}
 	}
 	return patch
 }

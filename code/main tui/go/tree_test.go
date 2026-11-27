@@ -1796,6 +1796,29 @@ func TestMoveWineUsesUppercaseP(t *testing.T) {
 	}
 }
 
+func TestMoveNativeUsesUppercaseP(t *testing.T) {
+	m := flatSetup()
+	it := SetupItemRec{Folder: "apps", Key: "ableton-native", Label: "Ableton Live — v1", Patch: true, MovePatch: true}
+	m.setupItems = append(m.setupItems, it)
+	m.setupByValue[setupValue("apps", "ableton-native")] = it
+	m.setupPicker = m.rebuildSetup()
+	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "ableton-native"))
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "P Move (native)") {
+		t.Fatalf("Setup legend missing the native Move hint:\n%s", view)
+	}
+	m, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	if m.top() != scrConfirm || m.pendingAction != "ableton-native-move-patch" {
+		t.Fatalf("P on native Ableton did not open the Move confirm: top=%v action=%q", m.top(), m.pendingAction)
+	}
+	for _, want := range []string{"udev", "no Wine prefix", "P in Uninstall"} {
+		if !strings.Contains(m.pendingMsg, want) {
+			t.Fatalf("Move prompt is missing %q: %q", want, m.pendingMsg)
+		}
+	}
+}
+
 // Without the Move script the P hint and the key stay silent; p (the R2R
 // patch) is still advertised.
 func TestPOnAbletonWithoutMoveScriptIsInert(t *testing.T) {

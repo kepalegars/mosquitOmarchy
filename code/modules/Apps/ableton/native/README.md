@@ -63,8 +63,11 @@ PATCH/patch-ableton-native.sh --no-run   # only detect the HWID
 ```
 
 `Live` is backed up as `Live.mosquitomarchy-backup` before the first patch, and
-the generated `Authorize.auz` is copied into the install folder and opened in
-the file manager. The upstream checkout and its Node dependencies live in
+the generated `Authorize.auz` is copied into the install folder. Both the
+folder **and the `.auz`** are opened at the end: `xdg-open` uses the
+`application/x-ableton-authorization` handler registered by the installer, so
+Live imports the authorization directly. The upstream checkout and its Node
+dependencies live in
 `PATCH/abletonPatcherGUI/`. The script bypasses the interactive prompts by
 writing `config/cache.json` from the detected HWID, then runs the same
 `node util/patcher.js` backend as `npm run cli`. It also fixes an upstream case
@@ -106,3 +109,20 @@ Ableton account as usual.
 
 The generated menu entry is renamed to `Ableton Live 12 (Native)` so it is
 distinguishable from the Wine module's `Ableton Live … (Wine)` entries.
+
+## Move / USB devices
+
+`patch-move-native.sh` is the native counterpart of the Wine Move patch. It
+only installs the udev rule for Ableton USB devices (vendor `2982`); the Wine
+patch's `libusb-1.0` DllOverride has no equivalent for a Linux ELF, so no Wine
+prefix or Windows DLL is touched. Press **P** on the `ableton-native` row to
+apply it; **P** in the Uninstall tree removes it.
+
+```sh
+patch-move-native.sh            # apply
+patch-move-native.sh --check    # move-native: applied | not applied
+patch-move-native.sh --revert   # remove only the rule we installed
+```
+
+The rule grants access; whether the Move is actually supported depends on the
+Move/companion support compiled into this Push 3 based build of Live.

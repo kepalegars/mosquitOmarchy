@@ -1501,6 +1501,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		case "ableton-move-revert":
 			return m.startWorking("Restoring the Ableton Move state",
 				workingArgs("remove-patch", []string{"apps", "ableton-move"})...)
+		case "ableton-native-move-patch":
+			return m.startWorking("Applying the Ableton Move USB rule (Native)",
+				workingArgs("run-patch", []string{"apps", "ableton-native-move"})...)
+		case "ableton-native-move-revert":
+			return m.startWorking("Restoring the Ableton Move state (Native)",
+				workingArgs("remove-patch", []string{"apps", "ableton-native-move"})...)
 		case "preinstalls-remove":
 			// The only path that ever reaches `pacman -Rns`: an explicit "Remove
 			// them". Reached from Enter AND from back, both through the same
@@ -2168,6 +2174,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					}
 					return m.confirmMoveWine()
 				}
+			case "ableton-native":
+				if it, ok := m.setupByValue[m.setupPicker.SelectedValue()]; ok && it.MovePatch {
+					if m.treeMode == "uninstall" {
+						return m.confirmMoveNativeRevert()
+					}
+					return m.confirmMoveNative()
+				}
 			}
 		}
 		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "i" || km.String() == "?") {
@@ -2263,6 +2276,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 						return m.confirmMoveWineRevert()
 					}
 					return m.confirmMoveWine()
+				}
+			case "ableton-native":
+				if it, ok := m.setupByValue[m.setupCatPicker.SelectedValue()]; ok && it.MovePatch {
+					if m.treeMode == "uninstall" {
+						return m.confirmMoveNativeRevert()
+					}
+					return m.confirmMoveNative()
 				}
 			}
 		}
@@ -3954,6 +3974,43 @@ func (m model) confirmMoveWineRevert() (model, tea.Cmd) {
 	return m, nil
 }
 
+func moveNativePrompt() string {
+	return "Apply the Ableton Move USB step for Live 12 (Native)?\n\n" +
+		"WHAT IT DOES\n" +
+		" • adds a udev rule so your user can open Move/Push/Note USB devices\n" +
+		"   without root.\n\n" +
+		"It touches no Wine prefix and no Windows DLL: the native Linux build\n" +
+		"uses its own USB stack. Whether Move is supported at all depends on\n" +
+		"this build of Live. P in Uninstall removes the rule."
+}
+
+func (m model) confirmMoveNative() (model, tea.Cmd) {
+	m.pendingAction = "ableton-native-move-patch"
+	m.pendingMsg = moveNativePrompt()
+	m.pendingNo = "Cancel"
+	m.pendingYes = "Apply"
+	m.push(scrConfirm)
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).FocusYes()
+	return m, nil
+}
+
+func moveNativeRevertPrompt() string {
+	return "Restore the state before the native Ableton Move step?\n\n" +
+		"WHAT IT UNDOES\n" +
+		" • removes the Ableton USB udev rule this step installed.\n\n" +
+		"Live keeps working; the Move device falls back to default permissions."
+}
+
+func (m model) confirmMoveNativeRevert() (model, tea.Cmd) {
+	m.pendingAction = "ableton-native-move-revert"
+	m.pendingMsg = moveNativeRevertPrompt()
+	m.pendingNo = "Cancel"
+	m.pendingYes = "Restore"
+	m.push(scrConfirm)
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).FocusYes()
+	return m, nil
+}
+
 // reaperAddonsMissingText is the ONLY thing added to the prompt when ReaPack
 // and SWS can be obtained neither from ~/Downloads nor from GitHub.
 const reaperAddonsMissingText = "sws & reapack are neither in downloads nor in sws-2.14.0.7-Linux-x86_64.tar.xz"
@@ -4132,6 +4189,10 @@ func operationName(sub string) string {
 		return "Ableton Move"
 	case "ableton-move-revert":
 		return "Ableton Move restore"
+	case "ableton-native-move-patch":
+		return "Ableton Move (Native)"
+	case "ableton-native-move-revert":
+		return "Ableton Move restore (Native)"
 	case "reaper-custom-config":
 		return "REAPER config"
 	case "reaper-custom-config-revert":
