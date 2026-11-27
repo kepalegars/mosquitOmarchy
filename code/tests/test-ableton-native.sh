@@ -37,8 +37,9 @@ bash "$SCRIPT" --uninstall | grep -q 'not installed'
 
 # yabridge VST3 wrappers are exposed at the top level of ~/.vst3.
 mkdir -p "$HOME/.vst3/yabridge/Foo.vst3"
-bash "$SCRIPT" --links | grep -q 'Foo.vst3'
+out="$(bash "$SCRIPT" --links)"; grep -q 'Foo.vst3' <<<"$out"
 [[ -L "$HOME/.vst3/Foo.vst3" ]]
-bash "$SCRIPT" --links | grep -q 'No new yabridge VST3 wrappers'
+[[ -L "$HOME/Music/Audio Plugins/vst3/Foo-native.vst3" ]]
+out="$(bash "$SCRIPT" --links)"; grep -q 'No new yabridge VST3 wrappers' <<<"$out"
 
 echo 'ok: native Ableton wrapper status/help/uninstall/links are safe'

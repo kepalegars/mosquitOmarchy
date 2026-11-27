@@ -112,18 +112,24 @@ distinguishable from the Wine module's `Ableton Live … (Wine)` entries.
 
 ## yabridge VST3 plug-ins
 
-This Live build scans the **top level** of `~/.vst3` and cannot load the Windows
-`.vst3` bundles that APM links into the shared VST root. yabridge keeps its
-Linux wrappers one level down in `~/.vst3/yabridge/`, so the installer now
-exposes them as top-level symlinks:
+APM puts the **Windows** `.vst3` bundles into the shared VST root
+(`~/Music/Audio Plugins/vst3`) for Wine/yabridge hosts, but native Live cannot
+load those. yabridge's **Linux wrappers** live one level down in
+`~/.vst3/yabridge/`. This is not a bug in APM - it serves a different host.
+
+The installer now exposes the wrappers without touching APM's files:
+
+- `~/.vst3/<name>.vst3` -> wrapper bundle (for the system VST3 folders),
+- `<shared root>/vst3/<name>-native.vst3` -> the same wrapper, so you can keep
+  Live's **VST3 Plug-in Custom Folder** pointing at the shared root.
 
 ```sh
 ./setup-ableton-native.sh --links   # idempotent; run after adding plug-ins
 ```
 
-Existing files with the same name are never overwritten. Restart Live and
-rescan plug-ins afterwards. VST2 yabridge wrappers in `~/.vst` remain invisible:
-this build has no VST2 support.
+Existing files are never overwritten. Restart Live and rescan plug-ins.
+VST2 yabridge wrappers in `~/.vst` remain invisible: this build has no VST2
+support.
 
 ## Move / USB devices
 

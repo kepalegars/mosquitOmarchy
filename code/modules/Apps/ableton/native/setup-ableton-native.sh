@@ -241,26 +241,38 @@ do_status(){
 }
 
 # yabridge keeps its Linux wrapper bundles one level down in ~/.vst3/yabridge,
-# while this Live build scans only the top level of ~/.vst3. Expose the wrappers
-# as symlinks — without touching the Windows bundles APM links into the shared
-# VST root (native Live cannot load those directly).
+# while APM puts the WINDOWS .vst3 bundles into the shared VST root for Wine
+# hosts. Native Live cannot load those, so expose the wrappers both at the
+# top level of ~/.vst3 and (with a "-native" suffix, to avoid collisions) in
+# the shared root that Live's custom VST3 folder already points at.
 link_yabridge_vst3(){
   local src="$HOME/.vst3/yabridge" dst="$HOME/.vst3" bundle name target added=0
+  local root shared
+  if [[ -n ${AUDIOSTACK_VST_ROOT:-} ]]; then
+    root="$AUDIOSTACK_VST_ROOT"
+  elif find "$HOME/VST" -mindepth 2 \( -iname '*.dll' -o -iname '*.vst3' -o -iname '*.clap' \) 2>/dev/null | grep -q .; then
+    root="$HOME/VST"
+  else
+    root="$HOME/Music/Audio Plugins"
+  fi
+  shared="$root/vst3"
   [[ -d $src ]] || { warn "No yabridge VST3 folder at $src — nothing to link."; return 0; }
-  mkdir -p "$dst"
+  mkdir -p "$dst" "$shared"
   for bundle in "$src"/*.vst3; do
     [[ -d $bundle ]] || continue
-    name="$(basename "$bundle")"; target="$dst/$name"
-    if [[ -e $target || -L $target ]]; then
-      if [[ $(readlink -f "$target" 2>/dev/null) == "$(readlink -f "$bundle")" ]]; then
+    name="$(basename "$bundle")"
+    for target in "$dst/$name" "$shared/${name%.vst3}-native.vst3"; do
+      if [[ -e $target || -L $target ]]; then
+        if [[ $(readlink -f "$target" 2>/dev/null) == "$(readlink -f "$bundle")" ]]; then
+          continue
+        fi
+        warn "$target already exists — left untouched."
         continue
       fi
-      warn "$target already exists — left untouched."
-      continue
-    fi
-    ln -s -- "$bundle" "$target"
-    ok "VST3 wrapper exposed: $name"
-    added=$((added+1))
+      ln -s -- "$bundle" "$target"
+      ok "VST3 wrapper exposed: $target"
+      added=$((added+1))
+    done
   done
   (( added )) || msg "No new yabridge VST3 wrappers to expose."
   msg "Restart Live and rescan plug-ins to pick them up."
