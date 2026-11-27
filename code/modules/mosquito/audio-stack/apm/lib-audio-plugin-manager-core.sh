@@ -698,9 +698,9 @@ toggle_executable_menu(){
   local exe="$1" base stem slug icon
   # A manager has no menu entry on purpose: opening it from the app menu would
   # bypass the adoption watcher, which is exactly how its plugins came back
-  # untracked. It lives in "Launch a standalone plugin" instead.
-  if is_manager_exe "$exe"; then
-    warn "plugin managers are opened from \"Launch a standalone plugin\", where what they install is tracked — no menu entry"
+  # untracked. It lives in "Launch a standalone executable" instead.
+  if is_plugin_manager_exe "$exe"; then
+    warn "plugin managers are opened from \"Launch a standalone executable\", where what they install is tracked — no menu entry"
     return 1
   fi
   base="${exe##*/}"
@@ -1750,6 +1750,43 @@ apm_cleanup_drive_aliases_json() {
   printf '{"removed":[%s],"count":%d,"skipped":[%s]}\n' "$removed" "$n" "$skipped"
 }
 
+# Empty the temp folders wine and installers fill in every prefix APM knows.
+# The folders themselves stay; a prefix with real clients is skipped because an
+# installer may be reading its own temp right now. An idle wineserver is released
+# first, like the drive-letter cleanup.
+apm_temp_cleanup_log() { printf '%s/prefix-temp-cleanup.log' "$APM_CONFIG_DIR"; }
+apm_cleanup_prefix_temps_json() {
+  local pf d u p count total=0 removed="" skipped="" fragment
+  for pf in "${WINE_PREFIXES[@]:-}"; do
+    [[ -d $pf/drive_c ]] || continue
+    if apm_prefix_busy "$pf" && ! apm_prefix_release_idle "$pf"; then
+      fragment="$(printf '{"prefix":"%s","reason":"in use"}' "$(basename "$pf")")"
+      skipped="${skipped}${skipped:+,}$fragment"
+      warn "$(basename "$pf") is in use — its temp was left alone."
+      continue
+    fi
+    count=0
+    local -a dirs=("$pf/drive_c/windows/temp")
+    while IFS= read -r u; do
+      dirs+=("$u/AppData/Local/Temp")
+    done < <(find "$pf/drive_c/users" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null)
+    for d in "${dirs[@]}"; do
+      [[ -d $d ]] || continue
+      while IFS= read -r -d '' p; do
+        rm -rf -- "$p" 2>/dev/null && count=$((count + 1)) || warn "could not remove $p"
+      done < <(find "$d" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+    done
+    ((count == 0)) && continue
+    total=$((total + count))
+    fragment="$(printf '{"prefix":"%s","count":%d}' "$(basename "$pf")" "$count")"
+    removed="${removed}${removed:+,}$fragment"
+    mkdir -p "$(dirname "$(apm_temp_cleanup_log)")" 2>/dev/null || true
+    printf '%s\t%s\t%d entries removed\n' "$(date '+%Y-%m-%d %H:%M')" "$(basename "$pf")" "$count" \
+      >> "$(apm_temp_cleanup_log)" 2>/dev/null || true
+  done
+  printf '{"removed":[%s],"count":%d,"skipped":[%s]}\n' "$removed" "$total" "$skipped"
+}
+
 # is_manager_installer <path> — an installer whose payload is a MANAGER app, not
 # a plugin.
 #
@@ -1797,6 +1834,57 @@ is_manager_exe(){
   state_compatible || return 1
   base="${f##*/}"; stem="${base%.*}"
   jq -e --arg s "$stem" '.managers[$s] // empty' "$STATE_FILE" >/dev/null 2>&1
+}
+
+# A manager that installs plugins from INSIDE its own window: launching it
+# detached leaves its output untracked. Kilohearts is remembered in the log at
+# install time; Mercurial Tones Hub arrives as a plain MSI, so name it here.
+is_plugin_manager_exe(){
+  is_manager_exe "${1:-}" && return 0
+  # Match the BASENAME: an uninstaller sitting in the manager's folder is not
+  # the manager, and launching it must not leave a watcher behind.
+  local low="${1##*/}"; low="${low,,}"
+  case "$low" in
+    *mercurial*|*software*center*|*kilohearts*|*collectivemusic*) return 0 ;;
+  esac
+  return 1
+}
+
+# WebView2 apps (Mercurial Tones Hub) look for the Evergreen runtime in their
+# own wine prefix, and a plugin MSI never installs it. Reuse a runtime another
+# prefix already has: link its version folder here and point the loader at it
+# with its documented folder override for this launch. No download, no registry
+# import, and nothing changes for apps that do not need WebView2.
+apm_ensure_webview2(){
+  local prefix="$1" exe="${2:-}" low src pfx ver dst win
+  low="${exe,,}"
+  case "$low" in
+    *mercurial*|*software*center*) ;;
+    *) return 0 ;;
+  esac
+  local -a candidates=(
+    "$prefix/drive_c/Program Files (x86)/Microsoft/EdgeWebView/Application/"*
+    "$prefix/drive_c/Program Files/Microsoft/EdgeWebView/Application/"*
+  )
+  for pfx in "$HOME"/.wine*/drive_c; do
+    candidates+=("$pfx/Program Files (x86)/Microsoft/EdgeWebView/Application/"* \
+                 "$pfx/Program Files/Microsoft/EdgeWebView/Application/"*)
+  done
+  for src in "${candidates[@]}"; do
+    [[ -f $src/msedgewebview2.exe ]] || continue
+    if [[ $src != "$prefix/drive_c/"* ]]; then
+      ver="${src##*/}"
+      dst="$prefix/drive_c/Program Files (x86)/Microsoft/EdgeWebView/Application/$ver"
+      mkdir -p "$(dirname "$dst")"
+      [[ -e $dst || -L $dst ]] || ln -s "$src" "$dst" || true
+      src="$dst"
+    fi
+    win="C:\\${src#"$prefix/drive_c/"}"
+    export WEBVIEW2_BROWSER_EXECUTABLE_FOLDER="${win//\//\\}"
+    msg "WebView2 runtime ready for $(basename "$exe") in $(basename "$prefix")"
+    return 0
+  done
+  warn "no WebView2 runtime in any wine prefix — $(basename "$exe") will report it missing"
 }
 
 is_sonible_installer() {
@@ -2003,6 +2091,56 @@ apm_wine() {
 # manager while it is open. So this installs the app, puts a menu entry on it,
 # and returns the manager's own executable so the caller can offer to open it
 # with the adoption sweep watching the folder.
+# Manager apps that install plugins by DOWNLOADING an .exe/.msi and running it
+# themselves leave those plugins outside the log. While such a manager is open,
+# watch the downloads folder: once a new installer stops growing, move it out
+# of the manager's reach and run it through install_plugin — the exact path
+# "Install a plugin from file" uses — so the files land in the shared folders
+# and are registered. Existing files are seeded, so nothing is run twice.
+# shortcut: a one-second stable-size window; a manager firing its installer
+# inside that second still runs it, and the close sweep adopts what it wrote.
+declare -gA _apm_seen_installers=() _apm_installer_sizes=()
+# Everything already on disk when the manager opens is marked 2 (ignore for
+# good); a file first seen during the session is 1 and needs one stable tick.
+apm_seed_manager_installers(){
+  local dir="${XDG_DOWNLOAD_DIR:-$HOME/Downloads}" f
+  _apm_seen_installers=(); _apm_installer_sizes=()
+  [[ -d $dir ]] || return 0
+  while IFS= read -r f; do
+    [[ -n $f ]] && _apm_seen_installers["$f"]=2
+  done < <(find "$dir" -maxdepth 4 -type f \( -iname '*.exe' -o -iname '*.msi' \) -print 2>/dev/null)
+}
+apm_intercept_new_installer(){
+  local prefix="$1" dir="${XDG_DOWNLOAD_DIR:-$HOME/Downloads}" f base size stage
+  local staging="${XDG_CACHE_HOME:-$HOME/.cache}/audio-plugin-manager/manager-installers"
+  local -a ready=()
+  [[ -d $dir ]] || return 0
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    local state="${_apm_seen_installers["$f"]:-}"
+    [[ $state == 2 ]] && continue
+    size="$(stat -c %s "$f" 2>/dev/null || echo 0)"
+    if [[ -z $state ]]; then
+      _apm_seen_installers["$f"]=1
+      _apm_installer_sizes["$f"]="$size"
+      continue
+    fi
+    # A file still being downloaded is not safe to run yet.
+    [[ ${_apm_installer_sizes["$f"]:-} == "$size" ]] || { _apm_installer_sizes["$f"]="$size"; continue; }
+    ready+=("$f")
+  done < <(find "$dir" -maxdepth 4 -type f \( -iname '*.exe' -o -iname '*.msi' \) -print 2>/dev/null)
+  for f in "${ready[@]}"; do
+    base="$(basename "$f")"
+    mkdir -p "$staging"
+    stage="$staging/$base"
+    [[ -e $stage ]] && stage="$staging/$$-$base"
+    mv "$f" "$stage" || continue
+    msg "intercepted installer: $base — installing it through the manager"
+    install_plugin "$stage" "$prefix" || warn "installer failed: $base"
+    rm -f "$stage"
+  done
+}
+
 # watch_for_plugins <manager-exe> <prefix> — run the manager and adopt whatever
 # it drops into the shared folder while it is open.
 #
@@ -2015,11 +2153,15 @@ apm_wine() {
 # non-destructive, idempotent, and a plugin already registered is skipped.
 watch_for_plugins(){
   local exe="$1" prefix="$2" _p_secs=2 pid before after shortcuts_before shortcuts_after
+  # A WebView2 manager cannot find its runtime in a prefix that only got a
+  # plugin MSI. Set it up BEFORE the launch so the window actually opens.
+  apm_ensure_webview2 "$prefix" "$exe"
   # Snapshot what is already tracked, so what the manager ADDS can be named.
   before="$(plugin_group_rows 2>/dev/null | cut -f9 | sort -u)"
   # Same shortcut snapshot as install_plugin: installing from inside a manager
   # window can drop Desktop / Start Menu .lnk too.
   shortcuts_before="$(apm_shortcuts_snapshot "$prefix" 2>/dev/null || true)"
+  apm_seed_manager_installers
   msg "Open it, install what you want, then close it. Nothing is touched before you close it."
   WINEPREFIX="$prefix" "$(apm_wine)" "$exe" &
   pid=$!
@@ -2033,13 +2175,18 @@ watch_for_plugins(){
     _kids="$(pgrep -P "$_t" 2>/dev/null || true)"
     [[ -n $_kids ]] && _tree+=($_kids)
   done
-  local _w
-  for _w in "${_tree[@]}"; do
-    [[ -n $_w ]] || continue
-    if kill -0 "$_w" 2>/dev/null; then
-      msg "still running (pid $_w) — waiting for it to close"
-      while kill -0 "$_w" 2>/dev/null; do sleep 1; done
-    fi
+  local _w alive
+  if kill -0 "${_tree[0]}" 2>/dev/null; then
+    msg "manager still running (pid ${_tree[0]}) — watching its downloads and plugin folder"
+  fi
+  while :; do
+    alive=0
+    for _w in "${_tree[@]}"; do
+      if kill -0 "$_w" 2>/dev/null; then alive=1; break; fi
+    done
+    ((alive)) || break
+    apm_intercept_new_installer "$prefix" || true
+    sleep 1
   done
   # ONE sweep, at the end.
   #
@@ -2317,21 +2464,21 @@ install_manager_app(){
   rm -f "$_before_exes" "$_after_exes"
   if [[ -z $exe ]]; then
     warn "No manager executable could be identified in the prefix — open it from there by hand."
-    printf 'manager-note: nothing was registered, so nothing is listed under "Launch a standalone plugin".\n'
+    printf 'manager-note: nothing was registered, so nothing is listed under "Launch a standalone executable".\n'
     return 0
   fi
   name="$(basename "$exe")"; stem="${name%.exe}"
   # NO menu entry. The manager is only ever opened THROUGH the plugin manager —
   # that is what keeps the adoption sweep attached to it — so a standalone
   # Omarchy entry would be a way to launch it that silently skips that. It is
-  # listed under "Launch a standalone plugin" instead.
+  # listed under "Launch a standalone executable" instead.
   state_register_standalone "$stem" "$exe"
   state_mark_manager "$stem"
   ok "manager installed into the prefix and tracked: $stem"
   printf 'installed-manager: %s\n' "$exe"
   printf 'manager-exe: %s\n' "$exe"
   printf 'manager-note: %s is a plugin MANAGER, not a plugin.\n' "$stem"
-  printf 'manager-note: It is listed under "Launch a standalone plugin" and is opened from there.\n'
+  printf 'manager-note: It is listed under "Launch a standalone executable" and is opened from there.\n'
   printf 'manager-note: Opening it from here keeps the plugins folder watched, so every\n'
   printf 'manager-note: vst2/vst3 it installs is registered as it appears.\n'
   printf 'manager-note: There is deliberately no Omarchy menu entry for it: launching it\n'
@@ -2362,6 +2509,11 @@ apm_kinetic_scroll_resume() {
 
 install_plugin() {
   local file="$1" wine_prefix="${2:-$(default_prefix)}" f dst base
+  # An MSI can launch its own app at the end ("Launch the hub" checked). That
+  # child inherits THIS process environment, so the WebView2 override has to be
+  # set before wine starts — doing it only when the app is opened from the menu
+  # is too late for a launch triggered by the installer itself.
+  apm_ensure_webview2 "$wine_prefix" "$file"
 
   # A manager installer takes its own path: it copies no plugin, so the
   # new-file check below would report it as a failure, and the plugins arrive
@@ -3268,6 +3420,21 @@ wine_source_of() {
   return 1
 }
 
+# A plugin found under a prefix's VST folder is NOT owned by that prefix when
+# the path is a link into the shared store — every prefix has that link, so the
+# first one in the scan order won (`.wine`, the gaming prefix) and got recorded
+# as the owner. Resolve the hit and keep the real prefix only when the file
+# really lives under that prefix's drive_c.
+wine_owner_prefix_of(){
+  local src="$1" prefix real
+  [[ -n $src ]] || return 1
+  prefix="${src%%/drive_c/*}"
+  [[ $prefix != "$src" ]] || return 1
+  real="$(readlink -f "$src" 2>/dev/null || printf '%s' "$src")"
+  [[ $real == "$prefix/drive_c/"* ]] || return 1
+  printf '%s\n' "$prefix"
+}
+
 # declare -A, NOT a plain array. A plain array makes bash evaluate the subscript
 # as an arithmetic expression, so any filename with a "." in it died with
 #   arithmetic syntax error: invalid arithmetic operator (error token is ".dll")
@@ -3860,7 +4027,7 @@ launch_standalone() {
   local list pick
   list="$(executable_list)"
   if [[ -z $list ]]; then ui_info "No standalone executable registered yet — install a plugin via the manager first."; return 0; fi
-  pick=$(ui_select --plain "Launch a standalone plugin (via wine)?" "$list") || { ui_info "No standalone picked."; return 0; }
+  pick=$(ui_select --plain "Launch a standalone executable (via wine)?" "$list") || { ui_info "No standalone picked."; return 0; }
   local pfx
   pfx="$(default_prefix)"
   case "$pick" in */drive_c/*) pfx="${pick%%/drive_c/*}" ;; esac
@@ -3886,9 +4053,9 @@ manage_executables() {
     local f base slug shown
     while IFS=$'\t' read -r f junk; do
       [[ -n $f ]] || continue
-      # Managers belong in "Launch a standalone plugin" (watcher attached), not
+      # Managers belong in "Launch a standalone executable" (watcher attached), not
       # in the app-menu toggle.
-      is_manager_exe "$f" && continue
+      is_plugin_manager_exe "$f" && continue
       base="$(basename "$f")"
       slug="$APPS_DIR/$DESKTOP_SLUG-$(basename "${base%.exe}" | tr ' ' '-' | tr -cd '[:alnum:]-').desktop"
       shown=hide
@@ -4089,6 +4256,20 @@ is_lv2_plugin_bundle() {
   [[ $body == *"lv2:"*"Plugin"* ]]
 }
 
+# A native VST3 bundle carries an ELF .so under Contents/. A bridged Windows
+# bundle is a directory too (Serum2.vst3/Contents/x86_64-win/Serum2.vst3), so
+# "is a directory" alone double-counted it as a native plugin the moment the
+# native scan started looking in the shared vst3 folder.
+is_native_vst3_bundle() {
+  local entry="$1" so
+  [[ -d $entry ]] || return 1
+  for so in "$entry"/Contents/*/*.so; do
+    [[ -f $so ]] || continue
+    file -b "$so" 2>/dev/null | grep -q '^ELF ' && return 0
+  done
+  return 1
+}
+
 # Is $1 (an entry directly under a ~/.vst3 or /usr/lib/vst3 scan root) a
 # yabridge bridge stub rather than a genuine native plugin? See the
 # disambiguation note above.
@@ -4129,10 +4310,11 @@ scan_native_plugins() {
         is_lv2_plugin_bundle "$entry" || continue
       fi
       if [[ $fmt == vst3 ]]; then
-        # Native VST3 is a bundle DIRECTORY; a loose .vst3 file in the shared
-        # folder is a bridged Windows bundle handled by scan_plugins().
+        # Native VST3 is a bundle DIRECTORY with an ELF .so in Contents/; a
+        # bridged Windows bundle (loose file or Contents/x86_64-win/ layout)
+        # is handled by scan_plugins().
         is_yabridge_stub "$entry" && continue
-        [[ -d $entry ]] || continue
+        is_native_vst3_bundle "$entry" || continue
       fi
       if [[ $fmt == clap ]]; then
         # Bridged Windows CLAP files share this folder: only ELF shared
@@ -4251,13 +4433,24 @@ install_native_plugin_from_file() {
   local src="$1" work="" cleanup_work="" archive=false
 
   case "${src,,}" in
-    *.zip|*.tar.gz|*.tgz|*.tar) archive=true ;;
+    *.zip|*.tar.gz|*.tgz|*.tar|*.run) archive=true ;;
   esac
 
   if $archive; then
     work="$(mktemp -d)"; cleanup_work="$work"
     case "${src,,}" in
       *.zip) unzip -oq "$src" -d "$work" 2>/dev/null || { err "could not extract $src"; rm -rf "$work"; return 1; } ;;
+      *.run)
+        # A Makeself .run is a shell header followed by a tar stream. Read the
+        # payload without EXECUTING the installer: its own install.sh would
+        # move files into ~/.vst3 and drop a desktop entry, bypassing the log.
+        # shortcut: gzip payloads only, extend when a bzip2/xz .run appears.
+        local skip
+        skip="$(grep -a -m1 -o 'skip="[0-9]*"' "$src" 2>/dev/null | tr -dc '0-9')"
+        [[ -n $skip ]] || { err "not a Makeself archive: $src"; rm -rf "$work"; return 1; }
+        tail -n "+$((skip + 1))" "$src" | tar -xzf - -C "$work" 2>/dev/null \
+          || { err "could not extract Makeself payload: $src"; rm -rf "$work"; return 1; }
+        ;;
       *)     tar -xf "$src" -C "$work" 2>/dev/null || { err "could not extract $src"; rm -rf "$work"; return 1; } ;;
     esac
     # A Windows installer is not a plugin: what it ships is a setup.exe plus
@@ -4544,11 +4737,12 @@ reconcile_tick_to_add() {
     fi
   done
 
-  local f src prefix
+  local f src prefix owner
   for f in "${chosen[@]}"; do
     prefix="$(default_prefix)"
-    src="$(wine_source_of "$f")" 2>/dev/null || src=""
-    [[ -n $src ]] && prefix="${src%%/drive_c/*}"
+    src="$(wine_source_of "$f" 2>/dev/null)" || src=""
+    owner="$(wine_owner_prefix_of "$src" 2>/dev/null)" || owner=""
+    [[ -n $owner ]] && prefix="$owner"
     state_register_install "$(plugin_key "$f")" "$prefix" "$f"
     ok "added to the manager: $(basename "$f")"
   done
@@ -4740,11 +4934,12 @@ cleanup() {
     orphans+=("$f")
   done <<< "$(scan_plugins)"
   if ((${#orphans[@]})); then
-    local pf prefix src
+    local pf prefix src owner
     for pf in "${orphans[@]}"; do
       prefix="$(default_prefix)"
       src="$(wine_source_of "$pf" 2>/dev/null)" || src=""
-      [[ -n $src ]] && prefix="${src%%/drive_c/*}"
+      owner="$(wine_owner_prefix_of "$src" 2>/dev/null)" || owner=""
+      [[ -n $owner ]] && prefix="$owner"
       state_register_install "$(plugin_key "$pf")" "$prefix" "$pf"
       registered+=("$(basename "$pf")  ($(plugin_group_label "$pf"))")
     done
@@ -6406,7 +6601,7 @@ main_menu() {
       $'Install a plugin\tinstall' \
       $'Uninstall a plugin\tuninstall' \
       $'Manage prefixes\tprefixes' \
-      $'Launch a standalone plugin\tstandalone' \
+      $'Launch a standalone executable\tstandalone' \
       $'Manage visible executables in Omarchy Menu\texecs' \
       $'Cleanup inconsistencies\tcleanup' \
       $'Settings\tsettings' \
@@ -6669,7 +6864,9 @@ plugin_scan_fingerprint() {
   done
   {
     find "${roots[@]}" -maxdepth 6 \( -type f -o -type l \) -printf '%T@|%s|%p\n' 2>/dev/null
-    printf 'h2=%s h32=%s g=5\n' "${HIDE_VST2:-false}" "${HIDE_32BIT:-false}"
+    # g must change whenever the SCAN rules change (native VST3 now needs an
+    # ELF .so in Contents/) or the cached rows resurrect plugins already gone.
+    printf 'h2=%s h32=%s g=6\n' "${HIDE_VST2:-false}" "${HIDE_32BIT:-false}"
   } | sort | md5sum | cut -c1-16
 }
 

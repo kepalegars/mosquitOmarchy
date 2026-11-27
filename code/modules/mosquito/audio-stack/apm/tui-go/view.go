@@ -231,7 +231,7 @@ func (m model) View() string {
 			bar = barLine(m.picker.ShortcutsHint())
 		}
 	case scrStandalonePick:
-		title = screenTitle("Launch a standalone plugin", m.contentSizeW())
+		title = screenTitle("Launch a standalone executable", m.contentSizeW())
 		if m.loading {
 			body = "loading…"
 		} else {
@@ -298,14 +298,14 @@ func (m model) View() string {
 		scrSuperfileInstallConfirm, scrPluginListSaveConfirm,
 		scrPluginsRootConfirm, scrRunnerSuccessConfirm, scrQuitConfirm,
 		scrWizardRoot, scrInstallFixesConfirm, scrInstallFixesHow, scrFixApplyConfirm,
-		scrCleanupConfirm, scrDriveAliasConfirm, scrQuarantineClearConfirm,
-		scrQuarantineClearDone:
+		scrCleanupConfirm, scrDriveAliasConfirm, scrPrefixTempsConfirm,
+		scrQuarantineClearConfirm, scrQuarantineClearDone:
 		body = m.confirm.View()
 		bar = barLine(m.confirm.ShortcutsHint())
 	case scrInstallPrefixName, scrPrefixMoveTargetName:
 		body = m.input.View()
 		bar = barLine(m.input.ShortcutsHint())
-	case scrUninstalling, scrInstalling, scrMoving, scrSuperfileInstalling, scrPluginsRootMigrating:
+	case scrUninstalling, scrInstalling, scrMoving, scrSuperfileInstalling, scrPluginsRootMigrating, scrPrefixTempsRunning:
 		title = screenTitle("Working…", m.contentSizeW())
 		body = m.runner.View()
 		bar = barLine(m.runner.ShortcutsHint())

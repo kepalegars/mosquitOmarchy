@@ -7,7 +7,7 @@ import "testing"
 func TestManagerMarkerIsRead(t *testing.T) {
 	out := "manager installed into the prefix and tracked: Kilohearts\n" +
 		"installed-manager: /p/drive_c/ProgramData/Kilohearts/Kilohearts Installer.exe\n" +
-		"manager-note: listed under \"Launch a standalone plugin\"\n"
+		"manager-note: listed under \"Launch a standalone executable\"\n"
 	if got := installedManagerValue(out); got == "" {
 		t.Error("the manager marker was not read from a completed manager install")
 	}

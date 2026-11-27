@@ -15,9 +15,18 @@ func TestCleanupDefaultsOrderAndToggle(t *testing.T) {
 		t.Fatalf("cleanup opts = %d, want %d", len(m.cleanupOpts), len(cleanupOrder))
 	}
 	for _, id := range cleanupOrder {
-		want := id != "apm-drives"
+		want := id != "apm-drives" && id != "apm-prefix-temps"
 		if m.cleanupOpts[id] != want {
 			t.Fatalf("%s = %v, want %v", id, m.cleanupOpts[id], want)
+		}
+	}
+	// The temp row sits directly under the drive-letter row.
+	for i, id := range cleanupOrder {
+		if id == "apm-drives" {
+			if i+1 >= len(cleanupOrder) || cleanupOrder[i+1] != "apm-prefix-temps" {
+				t.Fatalf("temp cleanup row is not after apm-drives: %v", cleanupOrder)
+			}
+			break
 		}
 	}
 
@@ -28,6 +37,13 @@ func TestCleanupDefaultsOrderAndToggle(t *testing.T) {
 	})
 	if !m.cleanupOpts["apm-drives"] {
 		t.Fatal("drive-letter toggle did not turn on")
+	}
+	// The permament-delete row is also opt-in; enable it for the all-on check.
+	m, _ = m.update(tuikit.PickerToggleOptionMsg{
+		Value: "cleanup:apm-prefix-temps", Next: true, Previous: false,
+	})
+	if !m.cleanupOpts["apm-prefix-temps"] {
+		t.Fatal("temp toggle did not turn on")
 	}
 
 	picker := m.rebuildCleanup()

@@ -214,7 +214,7 @@ running, because a registry import into a live prefix is overwritten when winese
 
 Renamed from "VST Manager" when it started handling both plugin universes. `Installed
 plugins`, `Install a plugin from file`, `Uninstall a plugin`, `Plugin fixes`, `Cleanup
-inconsistencies` and `Launch a standalone plugin` are common to both and sit on the first
+inconsistencies` and `Launch a standalone executable` are common to both and sit on the first
 menu. `Windows VST Plugins (Wine)` is a submenu for the Wine-only leftovers — prefix
 management, executable visibility, the Hide VST2 / Hide 32-bit filters.
 
@@ -353,7 +353,7 @@ Uninstall screen.
 - `shift+F` opens the live filter zone **above the bottom shortcut bar** (the same shape as
   mosquitOmarchy's Setup/Uninstall filter). Matching rows are flattened to `Vendor › Plugin`
   leaves, so a hit inside a closed folder is still visible. `F` or `Esc` closes and restores the
-  full tree. The same search works in Uninstall, Launch a standalone plugin and the
+  full tree. The same search works in Uninstall, Launch a standalone executable and the
   Plugin-fixes chooser
 - `Tab` toggles the highlighted plugin, or a whole folder row
 - `←` `→` folds/unfolds the folder the cursor is in
@@ -366,7 +366,9 @@ yabridge resync for VST, the `.disabled` suffix for native. Every host recognise
 its contents, and dropping the suffix brings it back.
 
 **Install a plugin from file** takes one picker and auto-detects: a `.exe`/`.msi` goes through
-the wine-prefix wizard, while a raw bundle or a `.zip`/`.tar`/`.tar.gz`/`.tgz` installs natively.
+the wine-prefix wizard, while a raw bundle, a `.zip`/`.tar`/`.tar.gz`/`.tgz` or a Makeself `.run`
+installs natively. A `.run` is opened as a payload, never executed: only plugin bundles inside it
+are installed, not the vendor's `install.sh` and its desktop entries.
 You do not say which kind it is up front. Archives are searched four levels deep for moveable
 formats — `.lv2`, `.clap`, `.vst3` bundles **and Linux VST2 `.so` files** — and **every** plugin
 found is installed (registering each in the log); a format already present is skipped so the
@@ -414,6 +416,18 @@ inside the default wine prefix without going through a DAW. Two ways to pick the
 
 The default prefix is the same one installs target (see *Default wine prefix* in Settings).
 The launched program's window is floated by the same Hyprland rule as a plugin editor.
+
+A known plugin manager opened here (Kilohearts, Mercurial Tones Hub) takes the Kilohearts
+route instead of being detached: a watcher waits for the window to close, then registers what
+it installed. A WebView2 manager also gets a runtime linked into that prefix from one that
+already has it, and `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` is set for the launch — a plugin MSI
+never installs WebView2 itself. Without another prefix carrying the runtime, the manager still
+launches but reports it missing.
+
+While a manager is open, a new `.exe`/`.msi` appearing under the downloads folder is moved
+out of its reach and run through the same install path as *Install a plugin from file*, so the
+plugin files land in the shared folders and are registered. Installers already present when
+the manager opened are left alone; the close sweep still catches anything installed directly.
 
 ## Plugin fixes
 
@@ -555,6 +569,7 @@ it, and verify the result parses before writing it.
 | **Default install file directory** | where the install picker starts. A preference only. |
 | **Default wine prefix** | the prefix installs target and *Launch an executable* runs in. **Automatic** by default: a prefix that already owns plugins, else `~/.wine-vst`. Choosing a specific one is **confirmation-gated** with a warning — the manager's defaults keep plugin installs out of the prefix your regular Windows apps use, so pointing it at a shared prefix (`~/.wine`) makes plugin installers write there too. Existing plugins are never moved; only new installs follow. Can be set back to *Automatic*. |
 | **Redundant wine drive letters** | a row on *Windows VST Plugins* shows only what the cleanup can actually fix: **duplicate letters** and **letters whose target is gone**. Raw-only `X::` links are ignored — Wine recreates one for every block device on each start (verified), so counting them made the dialog ask for a cleanup that could never converge. An **idle** wineserver is stopped automatically; a prefix with real clients (a DAW, a running plugin host) is reported as `N pending — close it first` instead of being skipped and then wrongly answered with "already clean". The cleanup also runs on the target prefix before and after every install. `c:`/`z:`, letters referenced by registry state, and all real data are kept. Removals are logged to `~/.config/audio-plugin-manager/drive-aliases.log`. |
+| **Empty wine prefix temp folders** | a row directly under the drive-letter cleanup on *Windows VST Plugins*. Empties the contents of `<prefix>/drive_c/windows/temp` and each user's `AppData/Local/Temp` in every detected prefix; the folders themselves stay and nothing outside them is touched. Prefixes with a running client are skipped. Permanent (no quarantine), behind a confirmation, logged to `~/.config/audio-plugin-manager/prefix-temp-cleanup.log`. |
 | **File picker** | superfile, or the native/zenity chain. Shared by both install flows. |
 | **Plugin window handler** | `Classic (float + decorations)` or `Hyprland-managed`. Rewrites the **global** wine-editor window rules, so it is confirmation-gated; affects only windows opened from now on, and a per-plugin fix still overrides it. Also on `x` in the plugin list. |
 | **Rewrite applied fixes when installing** | when *On*, a fix **already applied** to that plugin is rewritten silently on each install (so a rule you hand-edited is restored). When *Off*, nothing is applied without being asked. Independent of the row below. |

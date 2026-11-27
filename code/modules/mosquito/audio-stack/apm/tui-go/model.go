@@ -103,7 +103,7 @@ type settingsDwellMsg struct {
 
 // isWineInstaller reports whether a picked file is a Windows installer
 // (exe/msi, routed through the existing wine-prefix wizard) as opposed to
-// a native plugin file or archive (lv2/clap/vst3/zip/tar/tar.gz/tgz) --
+// a native plugin file or archive (lv2/clap/vst3/zip/tar/tar.gz/tgz/.run) --
 // everything not exe/msi is treated as native and handed to the bash side,
 // which does the real format validation.
 func isWineInstaller(path string) bool {
@@ -164,6 +164,8 @@ const (
 	scrOrphansConfirm // "track these N?" before the checked orphans are registered
 	scrCleanupConfirm
 	scrDriveAliasConfirm      // "Clean up redundant wine drive letters" confirm
+	scrPrefixTempsConfirm     // "Empty wine prefix temp folders" confirm
+	scrPrefixTempsRunning     // spinner while the temp folders are emptied
 	scrQuarantineClearConfirm // "Empty the quarantine" confirm (destructive)
 	scrQuarantineClearDone    // result prompt: "See log / OK" after emptying
 	scrPluginsRootConfirm     // "move every plugin to X?" before migrating
@@ -546,7 +548,7 @@ func mainItems() []tuikit.PickerItem {
 		{Display: "Install a plugin from file", Value: "install"},
 		{Display: "Uninstall a plugin", Value: "uninstall"},
 		{Display: "Plugin fixes", Value: "fixes"},
-		{Display: "Launch a standalone plugin", Value: "standalone"},
+		{Display: "Launch a standalone executable", Value: "standalone"},
 		{Display: "Windows VST Plugins", Value: "vst"},
 		{Display: "Settings", Value: "settings"},
 		{Display: "Close", Value: "quit"},
@@ -660,6 +662,7 @@ func vstMenuItems(s Status) []tuikit.PickerItem {
 		// moment the default prefix is changed.
 		{Display: "Open prefix folder: " + baseName(defaultPrefixFor(s)), Value: "open_prefix"},
 		driveRow,
+		{Display: "Empty wine prefix temp folders", Value: "cleanup_prefix_temps"},
 		{Display: "Back", Value: "back"},
 	}
 }
@@ -1586,6 +1589,22 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						"See log", "OK")
 				}
 				m.push(scrRunnerSuccessConfirm)
+			case scrPrefixTempsRunning:
+				var report prefixTempsReport
+				lines := bytes.Split(bytes.TrimSpace([]byte(m.runner.Output())), []byte{'\n'})
+				if n := len(lines); n > 0 {
+					_ = json.Unmarshal(bytes.TrimSpace(lines[n-1]), &report)
+				}
+				msg := fmt.Sprintf("Emptied %d temp entry(ies) in %d prefix(es).", report.Count, len(report.Removed))
+				if len(report.Skipped) > 0 {
+					msg += fmt.Sprintf(" Skipped %d busy prefix(es).", len(report.Skipped))
+				}
+				if done.Err != nil {
+					msg += "\nThe backend reported an error — see the log."
+				}
+				msg += "\nLog: ~/.config/audio-plugin-manager/prefix-temp-cleanup.log"
+				m.confirm = tuikit.NewConfirm(msg, "See log", "OK")
+				m.replace(scrRunnerSuccessConfirm)
 			case scrUninstalling, scrMoving, scrPluginsRootMigrating:
 				if done.Err == nil {
 					m.confirm = tuikit.NewConfirm("Success! The step completed without errors.", "See log", "OK")

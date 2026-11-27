@@ -7169,6 +7169,7 @@ var cleanupOrder = []string{
 	"apm-quarantine",
 	"apm-inconsistencies",
 	"apm-drives",
+	"apm-prefix-temps",
 	"vm-cache",
 	"move-als",
 	"mixbay-history",
@@ -7180,6 +7181,7 @@ var cleanupLabels = map[string]string{
 	"apm-quarantine":      "APM: quarantine (parked uninstalled files)",
 	"apm-inconsistencies": "APM: inconsistencies (plugin log / orphan fixes)",
 	"apm-drives":          "APM: redundant Wine drive letters",
+	"apm-prefix-temps":    "APM: wine prefix temp folders",
 	"vm-cache":            "VM cache (incomplete ISO / temp files)",
 	"move-als":            "Move Manager: ALS working folder",
 	"mixbay-history":      "Mixbay: connection history",
@@ -7188,15 +7190,17 @@ var cleanupLabels = map[string]string{
 // cleanupDriveWarning is the persistent orange line under the Cleanup list,
 // same role as the Full-restore notice: the one option here can invalidate a
 // registry reference.
-const cleanupDriveWarning = "! Wine drive letters: only duplicate mappings are removed; a plugin that hard-codes a removed letter may need its preset folder re-selected."
+const cleanupDriveWarning = "! APM: drive letters only remove duplicate mappings; prefix temps are deleted permanently (not quarantined), and busy prefixes are skipped."
 
 func defaultCleanupOpts() map[string]bool {
 	opts := make(map[string]bool, len(cleanupOrder))
 	for _, id := range cleanupOrder {
 		opts[id] = true
 	}
-	// Off by default: the only option that can break a stored reference.
+	// Off by default: one can break a stored reference, the other deletes
+	// temp files permanently instead of quarantining them.
 	opts["apm-drives"] = false
+	opts["apm-prefix-temps"] = false
 	return opts
 }
 

@@ -699,6 +699,18 @@ func driveCleanupCmd() tea.Cmd {
 	}
 }
 
+// prefixTempEntry is one prefix whose temp folders were emptied.
+type prefixTempEntry struct {
+	Prefix string `json:"prefix"`
+	Count  int    `json:"count"`
+}
+
+type prefixTempsReport struct {
+	Removed []prefixTempEntry   `json:"removed"`
+	Count   int                 `json:"count"`
+	Skipped []driveAliasSkipped `json:"skipped"`
+}
+
 // quarantineDirReport is one emptied quarantine folder as reported by the
 // `empty-quarantine` action.
 type quarantineDirReport struct {

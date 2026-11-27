@@ -4142,10 +4142,10 @@ cleanup_mq_prefix_temps(){
   local bin out n skipped
   bin="$(cleanup_apm_bin)" || { warn "APM not installed — wine prefix temps skipped."; return 0; }
   out="$("$bin" cleanup-prefix-temps 2>/dev/null | tail -1)" || out=""
-  [[ -n $out ]] || { warn "mosquitOmarchy: wine prefix temps — nothing reported."; return 0; }
+  [[ -n $out ]] || { warn "APM wine prefix temps: nothing reported."; return 0; }
   n="$(printf '%s' "$out" | jq -r '.count // 0' 2>/dev/null || echo 0)"
   skipped="$(printf '%s' "$out" | jq -r '.skipped | length' 2>/dev/null || echo 0)"
-  ok "mosquitOmarchy wine prefix temps: $n temp entr(y/ies) deleted, $skipped busy prefix(es) skipped."
+  ok "APM wine prefix temps: $n temp entr(y/ies) deleted, $skipped busy prefix(es) skipped."
 }
 
 # cleanup_vm_removable — one "path<TAB>size" line per file the VM cache clean

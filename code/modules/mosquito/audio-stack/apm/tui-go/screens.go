@@ -1969,7 +1969,7 @@ func (m *model) rebuildStandalonePicker() {
 	} else {
 		items = itemsToPicker(m.standaloneCache)
 	}
-	header := "Launch a standalone plugin (via wine)?"
+	header := "Launch a standalone executable (via wine)?"
 	m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
 		return tuikit.NewPicker(header, items).SetSize(m.contentSize()).
 			SetHelpKeys(
@@ -2936,6 +2936,24 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.confirm, cmd = m.confirm.Update(msg)
 		return m, cmd
 
+	case scrPrefixTempsConfirm:
+		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
+			if res.Canceled || !res.Yes {
+				m.pop()
+				return m, nil
+			}
+			// REPLACE the confirm, never pop back to the options list: the
+			// spinner and then the result prompt happen in place.
+			m.replace(scrPrefixTempsRunning)
+			m.runner = tuikit.NewRunner().SetSize(m.contentSize())
+			var cmd tea.Cmd
+			m.runner, cmd = m.runner.Start("Emptying wine prefix temp folders", actionsBin(), "cleanup-prefix-temps")
+			return m, cmd
+		}
+		var cmd tea.Cmd
+		m.confirm, cmd = m.confirm.Update(msg)
+		return m, cmd
+
 	case scrQuarantineClearConfirm:
 		if res, ok := msg.(tuikit.ConfirmResultMsg); ok {
 			m.pop()
@@ -3134,7 +3152,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A manager that is ALREADY installed should be opened from where it
 		// belongs, not re-run as a fresh installer.
 		//
-		// The two paths are not equivalent: "Launch a standalone plugin" goes
+		// The two paths are not equivalent: "Launch a standalone executable" goes
 		// through the watcher that registers what the app installs, while
 		// "Install a plugin from file" just runs it and leaves everything it
 		// writes untracked — which is exactly how forty plugins came back as
@@ -3144,7 +3162,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.confirm = tuikit.NewConfirm(
 				"This is a plugin manager that is already installed here.\n\n"+
 					"Re-running it as an installer installs nothing and leaves every plugin\n"+
-					"it writes untracked. The clean route is \"Launch a standalone plugin\" in\n"+
+					"it writes untracked. The clean route is \"Launch a standalone executable\" in\n"+
 					"Settings, which watches the plugins folder while it is open.\n\n"+
 					"Open it from there instead?",
 				"Run it anyway", "Open it from Settings")
@@ -4071,6 +4089,17 @@ func (m model) handleVstMenuChoice(v string) (tea.Model, tea.Cmd) {
 			fmt.Sprintf("Remove %d redundant wine drive mapping(s)?\n\nThese are duplicate letters pointing at the same mounted disk, or letters whose target no longer exists. Raw-device aliases Wine recreates on every start are ignored. Only dosdevices symlinks are removed; c:/z: and any letter still referenced by registry state are kept. Every removal is logged to ~/.config/audio-plugin-manager/drive-aliases.log.%s", cleanable, blocked),
 			"No", "Yes, clean up")
 		m.push(scrDriveAliasConfirm)
+		return m, nil
+	case "cleanup_prefix_temps":
+		m.confirm = tuikit.NewConfirm(
+			"Empty the temp folders of every wine prefix APM knows about?\n\n"+
+				"Only the contents of <prefix>/drive_c/windows/temp and each user's\n"+
+				"AppData/Local/Temp are removed — the folders stay, and nothing outside\n"+
+				"them is touched. Prefixes with a running client (DAW, installer) are\n"+
+				"skipped. This is permanent: temp files are not quarantined.\n"+
+				"Each prefix is logged to ~/.config/audio-plugin-manager/prefix-temp-cleanup.log.",
+			"No", "Yes, empty them")
+		m.push(scrPrefixTempsConfirm)
 		return m, nil
 	case "open_prefix":
 		p := defaultPrefixFor(m.status)

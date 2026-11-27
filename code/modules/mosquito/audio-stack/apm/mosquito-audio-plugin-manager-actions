@@ -292,6 +292,20 @@ case "$cmd" in
       *)                 target="$PWD/$exe" ;;
     esac
 
+    # A manager installs its plugins from INSIDE its own window. Launching it
+    # detached and returning would leave everything it writes untracked, so
+    # take the Kilohearts route: a detached watcher waits for it to close and
+    # adopts the result. The TUI returns immediately either way.
+    if is_plugin_manager_exe "$exe"; then
+      self="$(command -v -- "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+      log="${XDG_CACHE_HOME:-$HOME/.cache}/mosquito-audio-plugin-manager/manager-watch.log"
+      mkdir -p "$(dirname "$log")"
+      setsid "$self" watch-manager "$exe" "$pfx" >>"$log" 2>&1 &
+      disown
+      echo "launched: $(basename "$exe") (watching until it closes; log: $log)"
+      exit 0
+    fi
+
     # WINEPREFIX selects the prefix. The CWD is the exe's own folder, because a
     # program that resolves data files relative to itself stops finding them when
     # launched from the manager's folder.
@@ -1055,19 +1069,19 @@ case "$cmd" in
   pick-any-plugin-file)
     # One unified picker for BOTH plugin universes -- the Go TUI decides
     # what to do with the result by extension (exe/msi -> wine install;
-    # lv2/clap/vst3/zip/tar/tar.gz/tgz -> native install), the user never
+    # lv2/clap/vst3/zip/tar/tar.gz/tgz/run -> native install), the user never
     # has to say which kind it is up front. Only reached when the picker
     # preference is "default" — the Go TUI handles "superfile" itself
     # (pickFileViaSuperfileEmbedded(), tea.ExecProcess, its own terminal),
     # so it never spawns a separate window.
     file=""
-    title="Install a plugin — pick a Windows installer (exe/msi) or a native plugin (lv2/clap/vst3/archive)"
+    title="Install a plugin — pick a Windows installer (exe/msi) or a native plugin (lv2/clap/vst3/archive/.run)"
     if command -v omarchy-file-select >/dev/null 2>&1 && { [[ -n ${DISPLAY:-} || -n ${WAYLAND_DISPLAY:-} || -n ${OMARCHY_WL:-} ]]; }; then
       # The portal chooser has no "starting folder" option to pass --
       # DOWNLOADS_DIR only shapes the fallback pickers below.
-      file=$(omarchy-file-select --title "$title" --extensions "exe msi lv2 clap vst3 zip tar.gz tgz" 2>/dev/null | head -1)
+      file=$(omarchy-file-select --title "$title" --extensions "exe msi lv2 clap vst3 zip tar.gz tgz run" 2>/dev/null | head -1)
     elif command -v omarchy-menu-file >/dev/null 2>&1; then
-      file=$(omarchy-menu-file "$title" "$DOWNLOADS_DIR:$HOME/" "exe msi lv2 clap vst3 zip tar.gz tgz" 2>/dev/null | head -1)
+      file=$(omarchy-menu-file "$title" "$DOWNLOADS_DIR:$HOME/" "exe msi lv2 clap vst3 zip tar.gz tgz run" 2>/dev/null | head -1)
     elif command -v zenity >/dev/null 2>&1; then
       file=$(zenity --file-selection --title="$title" --filename="$DOWNLOADS_DIR/" 2>/dev/null) || true
     fi
@@ -1088,7 +1102,7 @@ case "$cmd" in
     # they come back untracked on the next launch. Re-exec the watch-manager
     # action detached: it stays with the app until it closes (even if the TUI
     # quits), then adopts + syncs. Its output goes to a log, not the terminal.
-    if is_manager_exe "$exe"; then
+    if is_plugin_manager_exe "$exe"; then
       self="$(command -v -- "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
       log="${XDG_CACHE_HOME:-$HOME/.cache}/mosquito-audio-plugin-manager/manager-watch.log"
       mkdir -p "$(dirname "$log")"
@@ -1144,12 +1158,12 @@ case "$cmd" in
 
   list-managers)
     # Managers are listed apart from the toggleable executables: they belong in
-    # "Launch a standalone plugin" and NOT in the Omarchy menu, because opening
+    # "Launch a standalone executable" and NOT in the Omarchy menu, because opening
     # one from the menu drops the watcher that registers what it installs.
     while IFS=$'\t' read -r base f; do
       [[ -n $f ]] || continue
       [[ -e $f ]] || continue
-      is_manager_exe "$f" || continue
+      is_plugin_manager_exe "$f" || continue
       jq -nc --arg display "$base" --arg value "$f" '{display:$display, value:$value, manager:true}'
     done <<< "$(executable_list)"
     ;;
@@ -1157,9 +1171,9 @@ case "$cmd" in
   list-executables-toggle)
     while IFS=$'\t' read -r base f; do
       [[ -n $f ]] || continue
-      # Managers are launched from "Launch a standalone plugin", where the
+      # Managers are launched from "Launch a standalone executable", where the
       # adoption watcher is attached — a menu entry would bypass it.
-      is_manager_exe "$f" && continue
+      is_plugin_manager_exe "$f" && continue
       slug="$APPS_DIR/$DESKTOP_SLUG-$(basename "${base%.exe}" | tr ' ' '-' | tr -cd '[:alnum:]-').desktop"
       shown=false
       [[ -f $slug ]] && shown=true
@@ -1377,7 +1391,8 @@ case "$cmd" in
 
       prefix="$(default_prefix)"
       src="$(wine_source_of "$path" 2>/dev/null)" || src=""
-      [[ -n $src ]] && prefix="${src%%/drive_c/*}"
+      owner="$(wine_owner_prefix_of "$src" 2>/dev/null)" || owner=""
+      [[ -n $owner ]] && prefix="$owner"
       while IFS= read -r f; do
         [[ -n $f ]] || continue
         bare="$f"
@@ -1499,6 +1514,12 @@ case "$cmd" in
     # prefix. Only symlinks are touched; letters referenced by registry state
     # or the manager's own log are preserved. JSON report for the TUI.
     apm_cleanup_drive_aliases_json
+    ;;
+
+  cleanup-prefix-temps)
+    # Empty the wine/installer temp folders of every detected prefix. Busy
+    # prefixes are skipped; JSON report for the TUI.
+    apm_cleanup_prefix_temps_json
     ;;
 
   install-native-plugin)
