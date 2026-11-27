@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/home/Downloads" "$TMP/repo/code/modules/Apps/ableton/native" "$TMP/repo/code/modules/Apps/ableton/wine"
+mkdir -p "$TMP/home/Downloads" "$TMP/repo/code/modules/Apps/ableton/native" "$TMP/repo/code/modules/Apps/ableton/wires"
 ZIP="$TMP/home/Downloads/Push3-RecoveryImage-2.4.7.zip"
 : > "$ZIP"
 : > "$TMP/home/Downloads/ableton_live_suite_12.4.7_64.zip"

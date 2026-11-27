@@ -58,16 +58,20 @@ code/modules/mosquito/audio-stack/apm/yabridge-driver.json
 code/modules/mosquito/audio-stack/apm/yabridge-driver.lock
 
 # ── Patches: scripts are tracked, local binaries/tools are not ──────────────
-# Ableton's active patch scripts (PATCH/patch-ableton.sh and
-# wine/patch-move-wine.sh) ARE on GitHub: the TUI and setup-ableton.sh call
-# them. Menu repair is embedded in setup-ableton.sh --fix-menu. The local-only
+# Ableton's active patch scripts (PATCH/patch-ableton-wires.sh and
+# wires/patch-move-wires.sh) ARE on GitHub: the TUI and setup-ableton-wires.sh call
+# them. Menu repair is embedded in setup-ableton-wires.sh --fix-menu. The local-only
 # extras are binaries, the venv, license files, abandoned experiments and the
 # uninstall helper.
-code/modules/Apps/ableton/wine/PATCH/tools/
-code/modules/Apps/ableton/wine/PATCH/.venv/
-code/modules/Apps/ableton/wine/PATCH/old/
-code/modules/Apps/ableton/wine/PATCH/vcruntime140_1.dll
-code/modules/Apps/ableton/wine/PATCH/uninstall-witchwand.sh
+code/modules/Apps/ableton/wires/PATCH/tools/
+code/modules/Apps/ableton/wires/PATCH/.venv/
+code/modules/Apps/ableton/wires/PATCH/old/
+code/modules/Apps/ableton/wires/PATCH/vcruntime140_1.dll
+code/modules/Apps/ableton/wires/PATCH/uninstall-witchwand.sh
+# Wires downloads/runtime are local payloads, never GitHub content.
+code/modules/Apps/ableton/wires/wires/
+code/modules/Apps/ableton/wires/*.tar.zst
+code/modules/Apps/ableton/wires/*.sha256
 code/modules/Apps/ableton/native/linux-native-ableton/
 code/modules/Apps/ableton/native/PATCH/
 code/modules/Apps/guitarpro/PATCH/

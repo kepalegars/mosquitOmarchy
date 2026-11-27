@@ -15,7 +15,7 @@ mosquitomarchy-update=1.1.0
 # modules — stable
 audio=1.0.0
 audio-plugin-manager=1.6.0
-ableton-wine=1.5.0
+ableton-wires=1.5.0
 ableton-move-manager=0.6.0
 ableton-native=0.2.0
 achraf67=1.1.0
@@ -61,7 +61,7 @@ zen=1.1.0
 # fixes
 1px-seam=1.0.0
 ableton-fullscreen=1.0.0
-ableton-wine-scroll=1.0.0
+ableton-wires-scroll=1.0.0
 bluetooth=1.1.0
 chromium-google-api-key=0.9.0
 hyprland-autofocus=1.0.1

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # patch-move-native.sh — Ableton Move USB access for Live 12 (Native).
 #
-# Native counterpart of wine/patch-move-wine.sh. Only the udev part is
+# Native counterpart of wires/patch-move-wires.sh. Only the udev part is
 # portable: the Wine patch's DllOverride of libusb-1.0 has no meaning for a
 # Linux ELF, so this script never touches a Wine prefix or a Windows DLL.
 # Whether Move itself works depends on the support compiled into this Push 3

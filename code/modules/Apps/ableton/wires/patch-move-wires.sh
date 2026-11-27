@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# patch-move-wine.sh — optional Ableton Move control in Live under wine.
+# patch-move-wires.sh — optional Ableton Move control in Live under wine.
 #
 # Decision gate (see README, "Move in wine"): the runtime's libusb host bridge
 # (0032 + 0106) enumerates every host device and exports exactly what Live and
@@ -13,25 +13,28 @@
 #      otherwise prefer and which needs a Windows WinUSB driver).
 #
 # Both are cheap and fully reversible. A runtime update refreshes the prefix
-# DLL but keeps user.reg, so --reapply exists for setup-ableton.sh to call
+# DLL but keeps user.reg, so --reapply exists for setup-ableton-wires.sh to call
 # after every .run install/update.
 #
 # Usage:
-#   patch-move-wine.sh              # apply (default)
-#   patch-move-wine.sh --apply
-#   patch-move-wine.sh --check      # "move-wine: applied|not applied"
-#   patch-move-wine.sh --revert     # restore the previous state
-#   patch-move-wine.sh --reapply    # update hook: re-apply if it was applied
+#   patch-move-wires.sh              # apply (default)
+#   patch-move-wires.sh --apply
+#   patch-move-wires.sh --check      # "move-wine: applied|not applied"
+#   patch-move-wires.sh --revert     # restore the previous state
+#   patch-move-wires.sh --reapply    # update hook: re-apply if it was applied
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy"
 MARKER="$STATE_DIR/ableton-move-wine"
-PREFIX="${ABLETON_PREFIX:-$HOME/.wine-ableton}"
+_wires_root="${MOSQUITOMARCHY_WIRES_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mosquitomarchy/runtime/wires}"
+DEFAULT_PREFIX="$_wires_root/root/Works/Music-Production/environment"
+[[ -d $DEFAULT_PREFIX/drive_c ]] || DEFAULT_PREFIX="$HOME/.wine-ableton"
+PREFIX="${ABLETON_PREFIX:-$DEFAULT_PREFIX}"
 UDEV="/etc/udev/rules.d/99-ableton-move-live.rules"
 UDEV_BODY='# Ableton USB devices (Move, Push, Note): let the logged-in user open the
 # display interfaces through libusb (wine'"'"'s host bridge runs as that user).
-# Installed by ableton/wine/patch-move-wine.sh.
+# Installed by ableton/wires/patch-move-wires.sh.
 SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="2982", MODE="0660", TAG+="uaccess"
 '
 
@@ -52,6 +55,9 @@ esac
 
 wine_root(){
   local b
+  for b in "$_wires_root"/root/.runtimes/*/bin/wine; do
+    [[ -x $b ]] && { dirname "$(dirname "$b")"; return 0; }
+  done
   b="$(ls -1d "$HOME"/.local/opt/wine-*/bin/wine 2>/dev/null | sort -V | tail -1 || true)"
   [[ -n $b ]] || return 1
   dirname "$(dirname "$b")"

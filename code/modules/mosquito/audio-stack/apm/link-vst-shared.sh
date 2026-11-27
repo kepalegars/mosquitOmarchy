@@ -66,6 +66,11 @@ if ((${#PREFIXES[@]} == 0)); then
   [[ -d "$HOME/.wine/drive_c" ]] && PREFIXES+=("$HOME/.wine")
   [[ -d "$HOME/.wine-ableton/drive_c" ]] && PREFIXES+=("$HOME/.wine-ableton")
   [[ -d "$HOME/.wine-vst/drive_c" ]] && PREFIXES+=("$HOME/.wine-vst")
+  # Wires (Ableton via the Para-Real Wine fork): one environment per Work.
+  wires_root="${MOSQUITOMARCHY_WIRES_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mosquitomarchy/runtime/wires/root}"
+  for d in "$wires_root"/Works/*/environment; do
+    [[ -d "$d/drive_c" ]] && PREFIXES+=("$d")
+  done
 fi
 
 [[ -e "$VST_SRC_VST2" || -e "$VST_SRC_VST3" || -e "$VST_SRC_CLAP" ]] || {
@@ -94,6 +99,7 @@ local_prefix_name(){
   if [[ "$1" == "$HOME/.wine" ]]; then echo "yabridge (~/.wine)"
   elif [[ "$1" == "$HOME/.wine-ableton" ]]; then echo "ableton-linux (~/.wine-ableton)"
   elif [[ "$1" == "$HOME/.wine-vst" ]]; then echo "vst-manager (~/.wine-vst)"
+  elif [[ "$1" == */Works/*/environment ]]; then echo "wires ($1)"
   else echo "$1"; fi
 }
 
@@ -700,6 +706,29 @@ done
 # mismatched prefix is a "try again later", not a reason to abort after the
 # filesystem links have already been made.
 link_vendor_registry || warn "some vendor registry state could not be shared — close the prefix and re-run if it is in use"
+
+
+# yabridge VST3 wrappers live one level down in ~/.vst3/yabridge and do not
+# carry the "-native" suffix any more: expose them at the scanned top level.
+link_yabridge_wrappers(){
+  local src="$HOME/.vst3/yabridge" dst="$HOME/.vst3" b n t added=0
+  [[ -d $src ]] || return 0
+  mkdir -p "$dst"
+  for b in "$src"/*.vst3; do
+    [[ -d $b ]] || continue
+    n="$(basename "$b")"; t="$dst/$n"
+    if [[ -e $t || -L $t ]]; then
+      [[ $(readlink -f "$t" 2>/dev/null) == "$(readlink -f "$b")" ]] && continue
+      warn "$t exists — left untouched"
+      continue
+    fi
+    ln -s -- "$b" "$t"
+    ok "yabridge VST3 linked: $n"
+    added=$((added+1))
+  done
+  (( added )) || true
+}
+link_yabridge_wrappers
 
 if ((changed)); then
   echo

@@ -163,7 +163,7 @@ load_excluded(){
   while IFS= read -r m || [[ -n $m ]]; do
     [[ -z $m ]] && continue
     [[ $m == keys ]] && m=keybindings                # renamed module id (old state files)
-    [[ $m == ableton ]] && m=ableton-wine          # renamed module id (old state files)
+    [[ $m == ableton ]] && m=ableton-wires          # renamed module id (old state files)
     [[ $m == davinci ]] && m=davinci-resolve       # renamed module id (old state files)
     [[ $m == achraff ]] && m=achraf67              # renamed module id (old state files)
     EXCLUDED+=("$m")
@@ -717,16 +717,15 @@ st_omarchy_vm(){
   [[ -n $miss ]] && { echo "partial:missing ${miss# }"; return; }
   echo ok
 }
-st_ableton_wine(){
-  # Ableton Live via Wine (shibco/ableton-linux): launcher + dedicated wine prefix
-  [[ -x "$HOME/.local/bin/ableton-live" ]] || { echo missing; return; }
-  local links_ok=1
-  for l in "$HOME/.wine-ableton/drive_c/Program Files/Common Files/VST3" \
-           "$HOME/.wine-ableton/drive_c/Program Files (x86)/Common Files/VST3" \
-           "$HOME/.wine-ableton/drive_c/Program Files/Steinberg/VSTPlugins"; do
-    [[ -L $l ]] || links_ok=0
-  done
-  ((links_ok)) && echo ok || echo partial
+_wires_root(){ printf '%s\n' "${MOSQUITOMARCHY_WIRES_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mosquitomarchy/runtime/wires/root}"; }
+_wires_work(){ printf '%s\n' "$(_wires_root)/Works/Music-Production"; }
+
+st_ableton_wires(){
+  local work pl
+  work="$(_wires_work)"; pl="$work/PLUGS.WIRES"
+  [[ -f $pl ]] && grep -qx 'ableton-live-12' "$pl" || { echo missing; return; }
+  [[ -d "$work/environment/drive_c" && -f "$work/VERSION.WIRES" ]] || { echo partial; return; }
+  echo ok
 }
 
 st_ableton_native(){
@@ -1148,7 +1147,7 @@ MODULES=(
   "windows-vm:VM launcher + winvm (RAM/CPU/disk) + OEM debloat (auto-detected)"
   "macos-vm:macOS VMs in QEMU/KVM (OSX-For-Omarchy) — installer + TUI manager + shared folders + USB passthrough"
   "omarchy-vm:Omarchy in QEMU/KVM from the official ISO — launcher + TUI manager + shared folder + USB/GPU passthrough"
-  "ableton-wine:Ableton Live 12 via Wine (shibco/ableton-linux) + multi-DAW VST sharing — any Suite/Intro edition"
+  "ableton-wires:Ableton Live 12 via Wires (Para-Real Wires Wine runtime) + shared VSTs — any edition"
   "ableton-native:Native Linux Ableton Live Suite 12.4.7 only (velkajelka/linux-native-ableton) — Push 3 image build + Windows Suite content, installed in ~/.local/share/ableton-live-12"
   "guitarpro:Guitar Pro 8 via wine (dedicated prefix + launcher + menu shortcut)"
   "davinci-resolve:DaVinci Resolve (Studio or free) + AAC fix + FFmpeg encoder. Media Storage helper runs at every Resolve launch (home folders + removable drives); remove it with: rm ~/.local/bin/davinci-resolve-storage. Radeon 780M/Phoenix: press P on this row in Setup to apply the optimized Mesa Rusticl + CPU-scopes profile and the 90 s amdgpu compute watchdog for SpektraFilm (active after a full reboot; never applied automatically by a restore)"
@@ -1195,7 +1194,6 @@ FIXES=(
   "omarchy-menu:Recover the Omarchy menu when clones leave blank rows / an empty Apps list (remove menu-plugin clones, re-enable omarchy.menu, restart the shell)"
   "hyprland-crash:Recover a Hyprland desktop after a crash (broken/truncated hyprland.lua, fatal Lua escapes, lost keyboard layout, missing Omarchy shell) — self-heals at every boot via a post-boot hook"
   "quickshell-bar:Recover an empty or broken Omarchy bar (Quickshell) — restore shell.json (bar layout + widget settings) from the newest valid backup, dropping widgets this machine does not have, then restart the shell"
-  "ableton-wine-scroll:Ableton/Wine: stop the patched Wine's optional pointer features (XInput2 grab) from freezing trackpad scrolling in other apps while Live is open (persistent master switch in the prefix)"
   "1px-seam:Hair-thin transparent 1px line between the Omarchy bar and a window in borderless/no-gaps tiling — switch the blur to its legacy path (helps when blur is enabled)"
   "ableton-fullscreen:Ableton Live Full Screen is shifted/broken (content sits off where you click) — launches Live with WINE_WIN32_FULLSCREEN_CLASS=off (documented ableton-linux cure; drag-the-window alternative)"
   "bluetooth:Fix Bluetooth stutter/instability — MX Master freezing every second (BLE params Latency=0 / 6-7 ms + USB autosuspend off) and audio glitches (stop BlueZ AVDTP polling of paired speakers)"
@@ -1240,7 +1238,6 @@ fix_category(){
     omarchy-menu)     echo "Omarchy" ;;
     hyprland-crash)   echo "Recovery" ;;
     quickshell-bar)   echo "Recovery" ;;
-    ableton-wine-scroll) echo "Windows & input" ;;
     ableton-fullscreen) echo "Windows & input" ;;
     wine-menu)          echo "Windows & input" ;;
     wine-apps)          echo "Windows & input" ;;
@@ -1263,7 +1260,6 @@ run_fix(){ # single fix by id
     omarchy-menu) bash "$SCRIPT_DIR/code/modules/Fixes/fix-omarchy-menu.sh" ;;
     hyprland-crash) bash "$SCRIPT_DIR/code/modules/Fixes/fix-hyprland-crash.sh" ;;
     quickshell-bar) bash "$SCRIPT_DIR/code/modules/Fixes/fix-quickshell-bar.sh" ;;
-    ableton-wine-scroll) bash "$SCRIPT_DIR/code/modules/Fixes/fix-wine-scroll.sh" ;;
     ableton-fullscreen) bash "$SCRIPT_DIR/code/modules/Fixes/fix-ableton-fullscreen.sh" ;;
     1px-seam) bash "$SCRIPT_DIR/code/modules/Fixes/fix-1px-seam.sh" ;;
     bluetooth) bash "$SCRIPT_DIR/code/modules/Fixes/fix-bluetooth.sh" -y ;;
@@ -1359,7 +1355,7 @@ module_state(){
     windows-vm) st_windows_vm ;;
     macos-vm) st_macos_vm ;;
     omarchy-vm) st_omarchy_vm ;;
-    ableton-wine) st_ableton_wine ;; ableton-native) st_ableton_native ;; guitarpro) st_guitarpro ;;
+    ableton-wires) st_ableton_wires ;; ableton-native) st_ableton_native ;; guitarpro) st_guitarpro ;;
     ableton-move-manager) st_ableton_move_converter ;;
     davinci-resolve) st_davinci ;;
     spektrafilm) st_spektrafilm ;;
@@ -1417,7 +1413,7 @@ module_of_path(){
     code/modules/mosquitomarchy\ tui/update/*) echo mosquitomarchy-update ;;
     code/modules/Apps/reaper/*)      echo reaper ;;
     code/modules/Apps/bitwig/*)      echo bitwig ;;
-    code/modules/Apps/ableton/wine/*)   echo ableton-wine ;;
+    code/modules/Apps/ableton/wires/*)   echo ableton-wires ;;
     code/modules/Apps/ableton/native/*) echo ableton-native ;;
     code/modules/Apps/guitarpro/*)   echo guitarpro ;;
     code/modules/Apps/davinci/*)     echo davinci-resolve ;;
@@ -4127,39 +4123,10 @@ un_omarchy_vm(){
   ok "Omarchy VM helpers + menu + keybinding removed"
 }
 
-un_ableton_wine(){
-  local title="Ableton Live (Wine)"
-  if [[ -f "$HOME/.local/bin/ableton-live" || -d "$HOME/.wine-ableton" ]]; then
-    info "Uninstalling $title"
-    if (( PURGE )); then
-      # asks the official installer to remove runtime + prefix (--delete-prefix)
-      # otherwise runtime only (--keep-prefix keeps Live, licenses and projects)
-      local run=""
-      for f in "$ABLETON_WINE_DIR"/install-ableton-*.run; do
-        [[ -f $f ]] && run=$f
-      done
-      if [[ -n $run ]]; then
-        sh "$run" uninstall --delete-prefix
-      else
-        warn "install-ableton-latest.run not found — partial manual removal."
-      fi
-      rm -f "$APPS_DIR"/ableton-live*.desktop
-      ok "Wine Ableton removed (--delete-prefix)"
-    else
-      warn "Prefix ~/.wine-ableton, Live, licenses and projects KEPT (--purge to remove everything)."
-      rm -f "$BIN_DIR/ableton-live"
-      rm -f "$APPS_DIR"/ableton-live*.desktop
-      ok "Launcher and menu entries removed (prefix and Live kept)"
-    fi
-  fi
-  # RemoteApp VM (old workflow)
-  if [[ -f "$BIN_DIR/ableton-vm" || -f "$APPS_DIR/ableton-vm.desktop" ]]; then
-    info "Uninstalling Ableton Live (RemoteApp VM — old workflow)"
-    rm -f "$BIN_DIR/ableton-vm"
-    rm_desktops ableton-vm.desktop
-    rm -f "$HOME/.config/windows/ableton.conf"
-    ok "Ableton RemoteApp removed"
-  fi
+un_ableton_wires(){
+  info "Uninstalling Ableton Live 12 (Wires)"
+  bash "$ABLETON_WIRES_DIR/setup-ableton-wires.sh" --uninstall $([[ $PURGE == 1 ]] && echo --purge)
+  return $?
 }
 
 un_ableton_native(){
@@ -5020,7 +4987,7 @@ uninstall_module(){
     windows-vm) un_windows_vm ;;
     macos-vm) un_macos_vm ;;
     omarchy-vm) un_omarchy_vm ;;
-    ableton-wine) un_ableton_wine ;;
+    ableton-wires) un_ableton_wires ;;
     ableton-native) un_ableton_native ;;
     guitarpro) un_guitarpro ;;
     davinci-resolve) un_davinci ;;
@@ -5153,7 +5120,7 @@ VM_DIR="$SCRIPTS/VMs/windows-vm"
 MIXBAY_DIR="$AUDIO_STACK_DIR/mixbay"
 MACOS_VM_DIR="$SCRIPTS/VMs/macos-vm"
 OMARCHY_VM_DIR="$SCRIPTS/VMs/omarchy-vm"
-ABLETON_WINE_DIR="$APPS_DIR/ableton/wine"
+ABLETON_WIRES_DIR="$APPS_DIR/ableton/wires"
 ABLETON_NATIVE_DIR="$APPS_DIR/ableton/native"
 GUITARPRO_DIR="$APPS_DIR/guitarpro"
 DAVINCI_DIR="$APPS_DIR/davinci"
@@ -5300,20 +5267,13 @@ run_omarchy_vm(){
   bash "$OMARCHY_VM_DIR/setup-omarchy-vm.sh" --setup-only $([[ $YES == 1 ]] && echo -y)
 }
 
-run_ableton_wine(){
-  # The official .run installer is not tracked in git, so a fresh clone has
-  # none. Update only downloads it; a restore/install downloads it first, then
-  # runs the module that installs Live from it.
-  if ! ableton_installer_present "$ABLETON_WINE_DIR"; then
-    if ! bash "$ABLETON_WINE_DIR/setup-ableton.sh" -y --check-update; then
-      err "Could not download the Ableton installer; the module was not started."
-      return 1
-    fi
-    if [[ ${MOSQUITOMARCHY_UPDATE:-0} == 1 || ${MOSQUITOMARCHY_UPDATE_FLOW:-0} == 1 ]]; then
-      return 0
-    fi
-  fi
-  bash "$ABLETON_WINE_DIR/setup-ableton.sh" $([[ $YES == 1 ]] && echo -y)
+run_ableton_wires(){
+  bash "$ABLETON_WIRES_DIR/setup-ableton-wires.sh" $([[ $YES == 1 ]] && echo -y) \
+    $([[ ${MOSQUITOMARCHY_UPDATE:-0} == 1 || ${MOSQUITOMARCHY_UPDATE_FLOW:-0} == 1 ]] && echo --update)
+}
+
+run_wires_runtime_update(){
+  bash "$ABLETON_WIRES_DIR/setup-ableton-wires.sh" -y --update --runtime-only
 }
 
 run_ableton_native(){
@@ -5321,14 +5281,6 @@ run_ableton_native(){
   # are missing (or files them from ~/Downloads via bootstrap), then runs the
   # upstream installer. It installs 12.4.7 only.
   bash "$ABLETON_NATIVE_DIR/setup-ableton-native.sh" $([[ $YES == 1 ]] && echo -y)
-}
-
-# The upstream Wine installer is not tracked in the repo. Update offers the
-# ableton-wine module when its local .run is absent so the module can clone it.
-ableton_installer_present(){
-  local dir="${1:-$ABLETON_WINE_DIR}" f
-  for f in "$dir"/install-ableton-*.run; do [[ -f $f ]] && return 0; done
-  return 1
 }
 
 run_guitarpro(){
@@ -5742,7 +5694,8 @@ exec_modules(){
       windows-vm) run_module windows-vm run_windows_vm ;;
       macos-vm) run_module macos-vm run_macos_vm ;;
       omarchy-vm) run_module omarchy-vm run_omarchy_vm ;;
-      ableton-wine) run_module ableton-wine run_ableton_wine ;;
+      ableton-wires) run_module ableton-wires run_ableton_wires ;;
+      wires-runtime) run_module wires-runtime run_wires_runtime_update ;;
       ableton-native) run_module ableton-native run_ableton_native ;;
       guitarpro) run_module guitarpro run_guitarpro ;;
       davinci-resolve) run_module davinci-resolve run_davinci ;;
@@ -5809,7 +5762,7 @@ exec_modules(){
 
 # Categories of the "setup" action. id|label|modules (space-separated module ids).
 CATEGORIES=(
-  "apps|Apps|reaper bitwig ableton-native ableton-wine guitarpro davinci-resolve spektrafilm extracto douze tidal handbrake signal betterbird whatsapp-native superfile strata flea zen keepassxc"
+  "apps|Apps|reaper bitwig ableton-native ableton-wires guitarpro davinci-resolve spektrafilm extracto douze tidal handbrake signal betterbird whatsapp-native superfile strata flea zen keepassxc"
   "tuis|TUIs|"
   # "Plugins" is the project's own layer: the manager itself (the deployer),
   # its update module, and project utilities such as power management and SSH

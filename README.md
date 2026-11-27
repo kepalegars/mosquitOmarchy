@@ -96,7 +96,7 @@ Details, options and caveats live in each module's own `README.md`. This table i
 |---|---|---|
 | `reaper` | REAPER + its Hyprland/Wayland integration | [README](code/modules/Apps/reaper/README.md) |
 | `bitwig` | Bitwig Studio from the local `.deb`, with its own module | [README](code/modules/Apps/bitwig/README.md) |
-| `ableton-wine` | Ableton Live 12 via Wine (shibco/ableton-linux), sharing the shared VST root | [README](code/modules/Apps/ableton/README.md) |
+| `ableton-wires` | Ableton Live 12 via Wine (shibco/ableton-linux), sharing the shared VST root | [README](code/modules/Apps/ableton/README.md) |
 | `ableton-native` | Ableton Live Suite 12.4.7 only — native Linux build (velkajelka/linux-native-ableton) | [README](code/modules/Apps/ableton/README.md) |
 | `guitarpro` | Guitar Pro 8 in its own Wine prefix | [README](code/modules/Apps/guitarpro/README.md) |
 | `davinci-resolve` | DaVinci Resolve (free or Studio) + silent DRwrap integration | [README](code/modules/Apps/davinci/README.md) |

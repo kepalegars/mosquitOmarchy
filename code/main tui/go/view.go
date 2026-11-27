@@ -39,7 +39,7 @@ func (m model) setupRowHint(v string) string {
 			return patch + "P restore config · "
 		}
 		return patch + "P custom config · "
-	case "ableton-wine":
+	case "ableton-wires":
 		if it.MovePatch {
 			if m.treeMode == "uninstall" {
 				return patch + "P restore Move · "

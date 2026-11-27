@@ -154,7 +154,7 @@ func TestClickingUnencryptedArchiveShowsLoading(t *testing.T) {
 // TestSplitInstallStages pins the ordered prompt+install contract: ordinary
 // modules first, then DaVinci, then Guitar Pro, and Ableton last.
 func TestSplitInstallStages(t *testing.T) {
-	plan := []string{"apps\treaper\tdavinci-resolve\tguitarpro\tableton-wine\tableton-native\tzen"}
+	plan := []string{"apps\treaper\tdavinci-resolve\tguitarpro\tableton-wires\tableton-native\tzen"}
 	first, stages := splitInstallStages(plan)
 	if len(first) != 1 || !strings.Contains(first[0], "reaper") || !strings.Contains(first[0], "zen") {
 		t.Fatalf("ordinary modules should run first, got %v", first)
@@ -162,7 +162,7 @@ func TestSplitInstallStages(t *testing.T) {
 	if strings.Contains(first[0], "davinci") || strings.Contains(first[0], "guitarpro") || strings.Contains(first[0], "ableton") {
 		t.Fatalf("special apps leaked into the first stage: %v", first)
 	}
-	want := []string{"davinci", "guitarpro", "ableton-wine", "ableton-native"}
+	want := []string{"davinci", "guitarpro", "ableton-wires", "ableton-native"}
 	if len(stages) != len(want) {
 		t.Fatalf("expected %d special stages, got %v", len(want), stages)
 	}

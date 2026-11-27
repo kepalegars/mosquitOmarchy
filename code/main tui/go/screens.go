@@ -1136,6 +1136,21 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				}
 				m.addonsPicker = m.rebuildAddons().KeepCursor(keep)
 			}
+		case scrStatus:
+			// Status is a tree too. The arrows were advertised in its hint but
+			// never handled, so they did nothing; `l` now folds it through the
+			// same path.
+			if id, inTree := tuikit.ParentFolderOf(m.statusPicker.Items(), "status-cat:", m.statusPicker.SelectedValue()); inTree {
+				// Store false rather than deleting: rebuildStatus treats an
+				// unseen category as open, which would re-open what we just
+				// closed.
+				m.statusOpen[id] = msg.Dir > 0
+				keep := m.statusPicker.SelectedValue()
+				if msg.Dir < 0 {
+					keep = "status-cat:" + id
+				}
+				m.statusPicker = m.rebuildStatus().KeepCursor(keep)
+			}
 		case scrBackupOptions:
 			// Left/Right toggles the focused option. Per-app choices live in
 			// their own sub-menu; keybindings and Hyprland are direct rows.
@@ -2167,7 +2182,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					return m.confirmReaperRevert()
 				}
 				return m.confirmReaperConfig()
-			case "ableton-wine":
+			case "ableton-wires":
 				if it, ok := m.setupByValue[m.setupPicker.SelectedValue()]; ok && it.MovePatch {
 					if m.treeMode == "uninstall" {
 						return m.confirmMoveWineRevert()
@@ -2270,7 +2285,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					return m.confirmReaperRevert()
 				}
 				return m.confirmReaperConfig()
-			case "ableton-wine":
+			case "ableton-wires":
 				if it, ok := m.setupByValue[m.setupCatPicker.SelectedValue()]; ok && it.MovePatch {
 					if m.treeMode == "uninstall" {
 						return m.confirmMoveWineRevert()
@@ -2641,7 +2656,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	case scrThemeUnlock:
 		if km, ok := msg.(tea.KeyMsg); ok {
 			switch km.String() {
-			case "left", "right", "l", "r":
+			case "left", "right", "r":
 				m.themeUnlockStyle = !m.themeUnlockStyle
 				m.themeUnlockPicker = m.rebuildThemeUnlock()
 				return m, nil
@@ -2666,23 +2681,26 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	case scrInfo:
 		m.info, cmd = m.info.Update(msg)
 	case scrWorking:
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "backspace" || km.String() == "enter") {
-			if m.runner.Done() {
-				// A run launched straight from the main menu leaves the
-				// runner alone on the stack (startWorking replaces), and
-				// pop() refuses single-element stacks — so Esc stranded
-				// there forever on the frameless finished log. Rewind to
-				// the main menu instead of stranding.
-				if len(m.nav) <= 1 {
-					m.nav = []screen{scrMain}
-					m.mainPicker = m.rebuildMainMenu()
+		if km, ok := msg.(tea.KeyMsg); ok {
+			switch km.String() {
+			case "esc", "backspace", "h", "enter", "l":
+				if m.runner.Done() {
+					// A run launched straight from the main menu leaves the
+					// runner alone on the stack (startWorking replaces), and
+					// pop() refuses single-element stacks — so Esc stranded
+					// there forever on the frameless finished log. Rewind to
+					// the main menu instead of stranding.
+					if len(m.nav) <= 1 {
+						m.nav = []screen{scrMain}
+						m.mainPicker = m.rebuildMainMenu()
+						return m, nil
+					}
+					m.pop()
 					return m, nil
 				}
-				m.pop()
-				return m, nil
-			}
-			if km.String() == "esc" || km.String() == "backspace" {
-				return m.askCancelRun()
+				if km.String() == "esc" || km.String() == "backspace" || km.String() == "h" {
+					return m.askCancelRun()
+				}
 			}
 		}
 		m.runner, cmd = m.runner.Update(msg)
@@ -2704,15 +2722,15 @@ func planHasDavinci(plan []string) bool {
 }
 
 // isAbletonKey covers both installs and the legacy "ableton" id, which maps
-// to the Wine module (the id was split into ableton-wine/ableton-native).
+// to the Wine module (the id was split into ableton-wires/ableton-native).
 func isAbletonKey(k string) bool {
-	return k == "ableton" || k == "ableton-wine" || k == "ableton-native"
+	return k == "ableton" || k == "ableton-wires" || k == "ableton-native"
 }
 
 // abletonScript is the module script the TUI hands the terminal for an
 // interactive install/uninstall of one Ableton variant.
 func abletonScript(key string) string {
-	sub, name := "wine", "setup-ableton.sh"
+	sub, name := "wires", "setup-ableton-wires.sh"
 	if key == "ableton-native" {
 		sub, name = "native", "setup-ableton-native.sh"
 	}
@@ -2735,7 +2753,7 @@ func planHasAbleton(plan []string) bool {
 // installStage is one special app install that must run after everything else:
 // prompt, install, next. The Ableton stages are always the last ones.
 type installStage struct {
-	kind string // "davinci" | "guitarpro" | "ableton-wine" | "ableton-native"
+	kind string // "davinci" | "guitarpro" | "ableton-wires" | "ableton-native"
 	plan []string
 }
 
@@ -2744,8 +2762,8 @@ func splitInstallStages(plan []string) (first []string, stages []installStage) {
 		"davinci":         "davinci",
 		"davinci-resolve": "davinci",
 		"guitarpro":       "guitarpro",
-		"ableton":         "ableton-wine",
-		"ableton-wine":    "ableton-wine",
+		"ableton":         "ableton-wires",
+		"ableton-wires":   "ableton-wires",
 		"ableton-native":  "ableton-native",
 	}
 	byKind := map[string][]string{}
@@ -2767,7 +2785,7 @@ func splitInstallStages(plan []string) (first []string, stages []installStage) {
 			first = append(first, folder+"\t"+strings.Join(keep, "\t"))
 		}
 	}
-	for _, kind := range []string{"davinci", "guitarpro", "ableton-wine", "ableton-native"} {
+	for _, kind := range []string{"davinci", "guitarpro", "ableton-wires", "ableton-native"} {
 		if len(byKind[kind]) > 0 {
 			stages = append(stages, installStage{kind: kind, plan: byKind[kind]})
 		}
@@ -2797,7 +2815,7 @@ func (m model) runNextInstallStage() (model, tea.Cmd) {
 	case "davinci":
 		m.pendingAction = "apply"
 		return m.startWorking("Installing DaVinci Resolve", workingArgs("apply", stage.plan)...)
-	case "ableton-wine", "ableton-native":
+	case "ableton-wires", "ableton-native":
 		return m.startAbletonInstall(stage.kind, stage.plan)
 	case "tweaks":
 		m.pendingAction = "quick-tweaks"
@@ -4427,7 +4445,7 @@ func (m *model) takeAbletonLog() string {
 func newestAbletonInstallerLog(since time.Time) (string, string) {
 	var dirs []string
 	if repo := repoRoot(); repo != "" {
-		dirs = append(dirs, filepath.Join(repo, "code/modules/Apps/ableton/wine"))
+		dirs = append(dirs, filepath.Join(repo, "code/modules/Apps/ableton/wires"))
 	}
 	// The .run falls back to TMPDIR when its own folder is read-only.
 	dirs = append(dirs, os.TempDir())
@@ -5107,10 +5125,11 @@ func (m model) rebuildSetup() navPicker {
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
-			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
+			key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		).
+		WithFoldState().
 		KeepCursor(m.setupPicker.SelectedValue()).
 		// Fallback for when the row the cursor was on is genuinely gone (the
 		// typing filter just hid it): land on the same index, not on row 0.
@@ -5598,9 +5617,11 @@ func (m model) rebuildSetupCat() navPicker {
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
+			key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
-		)
+		).
+		WithFoldState()
 	return p.SelectIndex(idx)
 }
 
@@ -6200,10 +6221,11 @@ func (m model) rebuildBackupApps() navPicker {
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "reset to installed")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
-			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
+			key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
-		)
+		).
+		WithFoldState()
 	return p.SelectIndex(idx)
 }
 
@@ -6541,9 +6563,10 @@ func (m model) rebuildRestoreApps() navPicker {
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
-			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
+			key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "done")),
-		)
+		).
+		WithFoldState()
 	return p.SelectIndex(idx)
 }
 
@@ -7027,8 +7050,9 @@ func (m *model) rebuildStatus() navPicker {
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "info")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
-			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
+			key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
 		).
+		WithFoldState().
 		SelectIndex(idx)
 }
 

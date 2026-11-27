@@ -185,7 +185,7 @@ collect_complete(){
 installer_files(){
   local f
   for f in "$ROOT"/code/modules/Apps/ableton/*.{run,zip} \
-           "$ROOT"/code/modules/Apps/ableton/wine/*.{run,zip} \
+           "$ROOT"/code/modules/Apps/ableton/wires/*.{run,zip} \
            "$ROOT"/code/modules/Apps/ableton/native/*.{run,zip} \
            "$ROOT"/code/modules/Apps/bitwig/*.deb \
            "$ROOT"/code/modules/Apps/davinci/*.zip \

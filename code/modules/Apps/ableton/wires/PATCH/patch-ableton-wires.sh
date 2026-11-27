@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# patch-ableton.sh — Patch Ableton : installe l'app « R2R System v1.5.2.exe »
+# patch-ableton-wires.sh — Patch Ableton : installe l'app « R2R System v1.5.2.exe »
 # (installateur Windows présent dans PATCH/tools/) dans LE WINE D'ABLETON
 # (le runtime patché ~/.local/opt/wine-d2d1-nspa-11.13), puis ouvre un fichier
 # (à configurer ci-dessous, présent dans PATCH/tools/) avec l'application
@@ -20,14 +20,14 @@
 #   4) ouvre AVEC l'app installée le fichier $TARGET_FILE (configuré ci-dessous).
 #
 # Usage :
-#   ./patch-ableton.sh                         # sélection édition → install + ouverture
-#   ./patch-ableton.sh -y                      # non interactif (édition la plus récente)
-#   ./patch-ableton.sh --list                  # détecte (éditions + app) sans rien lancer
-#   ./patch-ableton.sh --target DIR            # fore le dossier d'install de l'exe Ableton
-#   ./patch-ableton.sh --app EXE               # fore le chemin de l'app installée
-#   ./patch-ableton.sh --file CHEMIN           # fichier à ouvrir (sinon celui configuré)
-#   ./patch-ableton.sh --no-run                # prépare (copie vcruntime) sans lancer
-#   ./patch-ableton.sh -h                      # aide
+#   ./patch-ableton-wires.sh                         # sélection édition → install + ouverture
+#   ./patch-ableton-wires.sh -y                      # non interactif (édition la plus récente)
+#   ./patch-ableton-wires.sh --list                  # détecte (éditions + app) sans rien lancer
+#   ./patch-ableton-wires.sh --target DIR            # fore le dossier d'install de l'exe Ableton
+#   ./patch-ableton-wires.sh --app EXE               # fore le chemin de l'app installée
+#   ./patch-ableton-wires.sh --file CHEMIN           # fichier à ouvrir (sinon celui configuré)
+#   ./patch-ableton-wires.sh --no-run                # prépare (copie vcruntime) sans lancer
+#   ./patch-ableton-wires.sh -h                      # aide
 set -euo pipefail
 
 G='\033[1;32m'; B='\033[1;34m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
@@ -110,7 +110,12 @@ ASK(){
 
 # ───────────────────────── Environnement Ableton-Wine ─────────────────────────
 ABLETON_PREFIX="${ABLETON_PREFIX:-$HOME/.wine-ableton}"
-WINE_BIN="$(ls -1 "$HOME/.local/opt"/wine-*/bin/wine 2>/dev/null | head -1 || true)"
+# Prefer the Wires runtime that owns the prefix, then fall back to the old
+# shibco wine (kept for people still using a legacy prefix).
+_wires_root="${MOSQUITOMARCHY_WIRES_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/mosquitomarchy/runtime/wires}"
+WINE_BIN=""
+for w in "$_wires_root"/root/.runtimes/*/bin/wine; do [[ -x $w ]] && WINE_BIN="$w"; done
+[ -n "$WINE_BIN" ] || WINE_BIN="$(ls -1 "$HOME/.local/opt"/wine-*/bin/wine 2>/dev/null | head -1 || true)"
 [ -n "$WINE_BIN" ] || WINE_BIN="$HOME/.local/opt/wine-d2d1-nspa-11.13/bin/wine"
 WINEPREFIX="$ABLETON_PREFIX"
 

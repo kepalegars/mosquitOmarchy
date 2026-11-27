@@ -21,7 +21,7 @@ multi-GB zip does not belong in a git clone. Drop every installer you want into
 before moving anything; declining leaves every file in place. Accepted files go
 into their module folder (never overwriting an existing file), and it reports
 which Setup rows stay greyed out. You can also drop a file straight into its module folder
-(`code/modules/Apps/ableton/wine/` or `code/modules/Apps/ableton/native/`, `code/modules/Apps/guitarpro/`, `code/modules/Apps/bitwig/`,
+(`code/modules/Apps/ableton/wires/` or `code/modules/Apps/ableton/native/`, `code/modules/Apps/guitarpro/`, `code/modules/Apps/bitwig/`,
 `code/modules/Apps/davinci/`, `code/modules/Apps/spektrafilm/`).
 
 A missing installer is not a failure. The module that needs it stays visible in

@@ -42,7 +42,7 @@ APP_DIR="$(cd "$(dirname "$SETUP")" && pwd)"
 # moment it sees a non-tty stdin/stdout — exactly our case (child of the
 # TUI's Runner). Tell it we are already "in a terminal" (the TUI is it).
 export GUI_RUN_EXEC=1
-# patch-ableton.sh re-execs itself in a disposable `foot` window when it has no
+# patch-ableton-wires.sh re-execs itself in a disposable `foot` window when it has no
 # tty but a DISPLAY — which would open a window instead of streaming into the
 # TUI's Runner. Tell it we are held so it runs inline.
 export ABLE_PATCH_HELD=1
@@ -796,12 +796,12 @@ tree_fingerprint(){
   # hint to that row. Presence only, so dropping one shows up on the next
   # render instead of waiting for the cache TTL.
   local pk
-  for pk in ableton-wine ableton-native bitwig guitarpro davinci; do
+  for pk in ableton-wires ableton-native bitwig guitarpro davinci; do
     if _patch_present "$pk"; then out+="|p$pk:1"; else out+="|p$pk:0"; fi
   done
   # The Ableton Move wine step is a second, independent script on the same
   # row and drives its uppercase P hint, so its presence is an input too.
-  if _move_patch_present ableton-wine; then out+="|mableton:1"; else out+="|mableton:0"; fi
+  if _move_patch_present ableton-wires; then out+="|mableton:1"; else out+="|mableton:0"; fi
   if _move_patch_present ableton-native; then out+="|mableton-native:1"; else out+="|mableton-native:0"; fi
   # The builder's own mtime. A change to THIS file changes the tree, and the
   # catalog fingerprints above cannot see that: two different versions of the
@@ -1110,7 +1110,7 @@ _setup_tree(){
 declare -A _INSTALLED_STATE_MEMO
 _installed_state(){ # module id -> 0 when installed (ok/partial) and not excluded
   local key="$1" id="$1" st
-  [[ $id == ableton-move ]] && id=ableton-wine
+  [[ $id == ableton-move ]] && id=ableton-wires
   [[ $id == ableton-native-move ]] && id=ableton-native
   if [[ -n ${_INSTALLED_STATE_MEMO[$key]+x} ]]; then
     [[ ${_INSTALLED_STATE_MEMO[$key]} == 1 ]]
@@ -1238,7 +1238,7 @@ uninstall_state_signature(){
     spec="$(_manual_patch_spec "$mid")"; [[ -n $spec ]] || continue
     [[ -f "$APPS_DIR/$spec" ]] || continue
     _patch_applied "$APPS_DIR/$spec" && sig+="patch:$mid|"
-    if [[ $mid == ableton-wine ]]; then
+    if [[ $mid == ableton-wires ]]; then
       mspec="$(_manual_patch_spec ableton-move)"; [[ -n $mspec ]] || continue
       [[ -f "$APPS_DIR/$mspec" ]] && _patch_applied "$APPS_DIR/$mspec" && sig+="patch:ableton-move|"
     fi
@@ -1952,22 +1952,31 @@ cmd_update_check(){
     fi
   fi
 
-  # The official Wine Ableton .run installer is never stored in git (a 100 MB+
-  # binary). Update offers it ONLY when ableton-wine is actually installed:
-  # an uninstalled Wine module has no update to offer, and the native module
-  # never uses this installer. Selecting Update downloads the .run instead of
-  # starting the whole Live install flow.
-  local aw_state; aw_state="$(module_state ableton-wine 2>/dev/null || true)"; aw_state="${aw_state%%:*}"
-  if [[ $aw_state == ok || $aw_state == partial ]] \
-     && ! ableton_installer_present "$APPS_DIR/ableton/wine"; then
-    local ableton_listed=0
-    for row in "${ids[@]}"; do [[ ${row%%:*} == ableton-wine ]] && ableton_listed=1; done
-    if ((ableton_listed == 0)); then
+  # Wires runtime + Ableton installer updates are reported by the module
+  # script itself (it compares local cache with the wires.sh CDN). They are
+  # offered only when the app is installed; applying one re-runs the install
+  # in place through the normal Update action.
+  local aw_state wires_check
+  aw_state="$(module_state ableton-wires 2>/dev/null || true)"; aw_state="${aw_state%%:*}"
+  if [[ $aw_state == ok || $aw_state == partial ]]; then
+    wires_check="$(bash "$APPS_DIR/ableton/wires/setup-ableton-wires.sh" --check-update 2>/dev/null || true)"
+    if grep -q '^installer:update' <<<"$wires_check"; then
+      local listed=0
+      for row in "${ids[@]}"; do [[ ${row%%:*} == ableton-wires ]] && listed=1; done
+      if ((listed == 0)); then
+        ((i)) && printf ','
+        printf '{"key":"ableton-wires","label":"Ableton Live (Wires)","reason":%s,"version":%s,"base":"","applied":"","files":[],"changes":[%s]}' \
+          "$(json_str "A newer Wires Ableton installer is available on wires.sh")" \
+          "$(json_str "$(module_version ableton-wires)")" \
+          "$(json_str "Download the new installer and update the existing Wires Ableton Work in place")"
+      fi
+    fi
+    if grep -q '^runtime:update' <<<"$wires_check"; then
       ((i)) && printf ','
-      printf '{"key":"ableton-wine","label":"Ableton Live (Wine)","reason":%s,"version":%s,"base":"","applied":"","files":[],"changes":[%s]}' \
-        "$(json_str "The official install-ableton-latest.run is missing — update downloads it")" \
-        "$(json_str "$(module_version ableton-wine)")" \
-        "$(json_str "Fetch the official Ableton Wine installer into code/modules/Apps/ableton/wine/")"
+      printf '{"key":"wires-runtime","label":"Wires Runtime (Wayland)","reason":%s,"version":%s,"base":"","applied":"","files":[],"changes":[%s]}' \
+        "$(json_str "A newer Wires Runtime (Wayland) is available on wires.sh")" \
+        "$(json_str "$(module_version ableton-wires)")" \
+        "$(json_str "Download the new Wayland runtime; update Ableton from Update afterwards if needed")"
     fi
   fi
   printf ']}\n'
@@ -1980,7 +1989,7 @@ cmd_update_check(){
 # running anything, with the exact file name to drop in the module folder.
 _manual_asset_spec(){ # appkey -> "expected-file|url" (empty: no manual file)
   case "$1" in
-    ableton-wine) printf '%s|%s' 'Ableton_Live_<edition>_<version>_64.zip' 'https://www.ableton.com/en/account/' ;;
+    ableton-wires) printf '%s|%s' 'Ableton_Live_<edition>_<version>_64.zip' 'https://www.ableton.com/en/account/' ;;
     bitwig)    printf '%s|%s' 'bitwig-studio-*.deb' 'https://www.bitwig.com/download/' ;;
     guitarpro) printf '%s|%s' 'guitar-pro-8-setup.exe' 'https://www.guitar-pro.com/' ;;
     davinci|davinci-resolve)   printf '%s|%s' 'DaVinci_Resolve_[Studio_]<version>_Linux.zip' 'https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion' ;;
@@ -1991,8 +2000,10 @@ _manual_asset_spec(){ # appkey -> "expected-file|url" (empty: no manual file)
 _manual_asset_present(){ # appkey -> 0 if its installer file exists
   local key="$1" f
   case "$key" in
-    ableton-wine)
-      for f in "$APPS_DIR"/ableton/wine/Ableton*.zip "$APPS_DIR"/ableton/wine/ableton*.zip; do [[ -f $f ]] && return 0; done ;;
+    ableton-wires)
+      local dl; dl="$(command -v xdg-user-dir >/dev/null 2>&1 && xdg-user-dir DOWNLOAD 2>/dev/null || echo "$HOME/Downloads")"
+      for f in "$APPS_DIR"/ableton/wires/Ableton*.zip "$APPS_DIR"/ableton/wires/ableton*.zip \
+               "$dl"/Ableton*.zip "$dl"/ableton*.zip; do [[ -f $f ]] && return 0; done ;;
     bitwig)
       for f in "$APPS_DIR"/bitwig/bitwig*.deb; do [[ -f $f ]] && return 0; done ;;
     guitarpro)
@@ -2031,7 +2042,7 @@ _manual_asset_note(){ # appkey -> human note (empty when nothing to add)
 # it, and two hardcoded copies drift apart silently — davinci got gated while the
 # cache key still did not know about it, so its row would have kept whatever
 # state the last run wrote until the 30-minute reap.
-ASSET_GATED_KEYS=(ableton-wine bitwig guitarpro davinci-resolve spektrafilm)
+ASSET_GATED_KEYS=(ableton-wires bitwig guitarpro davinci-resolve spektrafilm)
 
 # Every module in that list: the row stays VISIBLE in Setup but is greyed and
 # refuses Enter, because dropping it from the list would leave the user
@@ -2057,7 +2068,7 @@ _asset_gate(){ # appkey -> expected filename when gated-and-absent, empty when u
 # the note from the id pointed users at a directory that does not exist.
 _asset_dir(){ # appkey -> module folder name
   case "$1" in
-    ableton-wine) printf 'ableton/wine' ;;
+    ableton-wires) printf 'ableton/wires' ;;
     davinci|davinci-resolve) printf 'davinci' ;;
     *) printf '%s' "$1" ;;
   esac
@@ -2095,9 +2106,9 @@ cmd_missing_assets(){
 # silent when there is no patch, as the pre-TUI launcher did.
 _manual_patch_spec(){ # appkey -> module-relative patch script (empty: none)
   case "$1" in
-    ableton-wine) printf 'ableton/wine/PATCH/patch-ableton.sh' ;;
+    ableton-wires) printf 'ableton/wires/PATCH/patch-ableton-wires.sh' ;;
     ableton-native) printf 'ableton/native/PATCH/patch-ableton-native.sh' ;;
-    ableton-move) printf 'ableton/wine/patch-move-wine.sh' ;;
+    ableton-move) printf 'ableton/wires/patch-move-wires.sh' ;;
     ableton-native-move) printf 'ableton/native/patch-move-native.sh' ;;
     bitwig)    printf 'bitwig/PATCH/patch-bitwig.sh' ;;
     guitarpro) printf 'guitarpro/PATCH/patch-guitarpro' ;;
@@ -2127,7 +2138,7 @@ _patch_present(){
 # bound to uppercase P, not the hidden "p" (which stays for the R2R patch).
 _move_patch_present(){
   case $1 in
-    ableton-wine)   [[ -f "$APPS_DIR/ableton/wine/patch-move-wine.sh" ]] ;;
+    ableton-wires)   [[ -f "$APPS_DIR/ableton/wires/patch-move-wires.sh" ]] ;;
     ableton-native) [[ -f "$APPS_DIR/ableton/native/patch-move-native.sh" ]] ;;
     *) return 1 ;;
   esac
@@ -2512,11 +2523,11 @@ _verify_selection_installed(){ # cat keys...
 # user watches. At the end, append the newest native installer log so the TUI
 # frame also contains the upstream installer's own transcript.
 cmd_ableton_install(){
-  local id="${1:-ableton-wine}" script before="" newest="" rc=0 dir
+  local id="${1:-ableton-wires}" script before="" newest="" rc=0 dir
   if [[ $id == ableton-native ]]; then
     dir="$APPS_DIR/ableton/native"; script="$dir/setup-ableton-native.sh"
   else
-    dir="$APPS_DIR/ableton/wine"; script="$dir/setup-ableton.sh"
+    dir="$APPS_DIR/ableton/wires"; script="$dir/setup-ableton-wires.sh"
   fi
   [[ -f $script ]] || { err "Ableton setup script not found: $script"; return 1; }
   YES=1
@@ -2654,7 +2665,7 @@ cmd_run_patch(){
     [[ -f $path ]] || { warn "patch script not found for '$key' — skipped."; continue; }
     msg "Applying the $key patch: $(basename "$path")"
     case "$key" in
-      ableton-wine) bash "$path" -y || rc=1 ;;
+      ableton-wires) bash "$path" -y || rc=1 ;;
       bitwig)  mq_sudo bash "$path" || rc=1 ;;
       davinci|davinci-resolve) mq_sudo bash "$path" || rc=1 ;;
       *)       bash "$path" || rc=1 ;;
@@ -3469,7 +3480,7 @@ _space_pkgs(){
       return 2 ;;
     install:windows-vm|install:macos-vm|install:omarchy-vm)
       return 1 ;;
-    install:ableton-wine|install:ableton-native|install:ableton-move-manager)
+    install:ableton-wires|install:ableton-native|install:ableton-move-manager)
       return 3 ;;
     install:mixbay)
       return 1 ;;
@@ -3493,7 +3504,7 @@ _space_pkgs(){
     uninstall:battery|uninstall:battery-management|uninstall:better-pip|\
     uninstall:mega-caffeine|uninstall:brightness|uninstall:achraf67|\
     uninstall:touchpad|uninstall:mx-master|uninstall:mixbay|\
-    uninstall:ableton-wine|uninstall:ableton-native|uninstall:ableton-move-manager|\
+    uninstall:ableton-wires|uninstall:ableton-native|uninstall:ableton-move-manager|\
     uninstall:windows-vm|uninstall:macos-vm|uninstall:omarchy-vm|\
     uninstall:levels-guard|uninstall:mosquitomarchy-update|\
     uninstall:davinci|uninstall:davinci-resolve)
@@ -4391,7 +4402,7 @@ case "$sub" in
   restore-update-check)     mq_cached restore-update 30 cmd_restore_update_check ;;
   update-check)             mq_cached update-check 60 cmd_update_check ;;
   install) mq_cache_clear; cmd_install "${1:-}" "${@:2}" ;;
-  ableton-install) mq_cache_clear; cmd_ableton_install "${1:-ableton-wine}" ;;
+  ableton-install) mq_cache_clear; cmd_ableton_install "${1:-ableton-wires}" ;;
   apply) mq_cache_clear; cmd_apply "$@" ;;
   run-patch) mq_cache_clear; cmd_run_patch "$@" ;;
   remove-patch) mq_cache_clear; cmd_remove_patch "$@" ;;
