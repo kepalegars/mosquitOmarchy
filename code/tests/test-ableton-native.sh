@@ -35,4 +35,10 @@ grep -q '/Downloads/Push3-RecoveryImage-2.4.7.zip' <<<"$out"
 bash "$SCRIPT" --help | grep -q '12.4.7 ONLY'
 bash "$SCRIPT" --uninstall | grep -q 'not installed'
 
-echo 'ok: native Ableton wrapper status/help/uninstall are safe without archives'
+# yabridge VST3 wrappers are exposed at the top level of ~/.vst3.
+mkdir -p "$HOME/.vst3/yabridge/Foo.vst3"
+bash "$SCRIPT" --links | grep -q 'Foo.vst3'
+[[ -L "$HOME/.vst3/Foo.vst3" ]]
+bash "$SCRIPT" --links | grep -q 'No new yabridge VST3 wrappers'
+
+echo 'ok: native Ableton wrapper status/help/uninstall/links are safe'

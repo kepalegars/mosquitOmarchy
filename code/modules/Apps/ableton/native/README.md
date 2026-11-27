@@ -110,6 +110,21 @@ Ableton account as usual.
 The generated menu entry is renamed to `Ableton Live 12 (Native)` so it is
 distinguishable from the Wine module's `Ableton Live … (Wine)` entries.
 
+## yabridge VST3 plug-ins
+
+This Live build scans the **top level** of `~/.vst3` and cannot load the Windows
+`.vst3` bundles that APM links into the shared VST root. yabridge keeps its
+Linux wrappers one level down in `~/.vst3/yabridge/`, so the installer now
+exposes them as top-level symlinks:
+
+```sh
+./setup-ableton-native.sh --links   # idempotent; run after adding plug-ins
+```
+
+Existing files with the same name are never overwritten. Restart Live and
+rescan plug-ins afterwards. VST2 yabridge wrappers in `~/.vst` remain invisible:
+this build has no VST2 support.
+
 ## Move / USB devices
 
 `patch-move-native.sh` is the native counterpart of the Wine Move patch. It

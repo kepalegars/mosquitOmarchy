@@ -98,9 +98,18 @@ if applied; then
   exit 0
 fi
 
-if ! ldconfig -p 2>/dev/null | grep -q 'libusb-1.0.so.0'; then
-  warn "libusb-1.0 not found in ldconfig — install it before testing Move."
+# ldconfig is not always on PATH inside the TUI runner. Accept the library on
+# disk too, otherwise a perfectly good install gets a bogus warning.
+libusb_ok=0
+if command -v ldconfig >/dev/null 2>&1 \
+   && ldconfig -p 2>/dev/null | grep -q 'libusb-1.0.so.0'; then
+  libusb_ok=1
 fi
+for f in /usr/lib/libusb-1.0.so.0 /lib/libusb-1.0.so.0 \
+         /usr/lib64/libusb-1.0.so.0 /lib64/libusb-1.0.so.0; do
+  [[ -e $f ]] && libusb_ok=1
+done
+(( libusb_ok )) || warn "libusb-1.0 not found — install it before testing Move."
 msg(){ printf '==> %s\n' "$*"; }
 msg "Installing the Ableton USB udev rule ($UDEV)"
 write_rule || { err "Could not write $UDEV."; exit 1; }

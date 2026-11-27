@@ -18,6 +18,7 @@
 #   ./setup-ableton-native.sh -i           # same, for the TUI's terminal flow
 #   ./setup-ableton-native.sh -y           # non-interactive
 #   ./setup-ableton-native.sh --status
+#   ./setup-ableton-native.sh --links   # expose yabridge VST3 wrappers to Live
 #   ./setup-ableton-native.sh -u|--uninstall
 set -euo pipefail
 
@@ -45,13 +46,14 @@ ok(){ printf ' %s✓%s %s\n' "$G" "$N" "$*"; }
 warn(){ printf ' %s!%s %s\n' "$Y" "$N" "$*"; }
 err(){ printf ' %s✗%s %s\n' "$R" "$N" "$*" >&2; }
 
-YES=0 INSTALL=0 UNINSTALL=0 STATUS=0
+YES=0 INSTALL=0 UNINSTALL=0 STATUS=0 LINKS_ONLY=0
 while (($#)); do
   case $1 in
     -y|--yes) YES=1 ;;
     -i|--install) INSTALL=1 ;;
     -u|--uninstall) UNINSTALL=1 ;;
     --status) STATUS=1 ;;
+    --links) LINKS_ONLY=1 ;;
     -h|--help)
       sed -n '2,22p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) err "Unknown option: $1"; exit 2 ;;
@@ -238,6 +240,32 @@ do_status(){
   done
 }
 
+# yabridge keeps its Linux wrapper bundles one level down in ~/.vst3/yabridge,
+# while this Live build scans only the top level of ~/.vst3. Expose the wrappers
+# as symlinks — without touching the Windows bundles APM links into the shared
+# VST root (native Live cannot load those directly).
+link_yabridge_vst3(){
+  local src="$HOME/.vst3/yabridge" dst="$HOME/.vst3" bundle name target added=0
+  [[ -d $src ]] || { warn "No yabridge VST3 folder at $src — nothing to link."; return 0; }
+  mkdir -p "$dst"
+  for bundle in "$src"/*.vst3; do
+    [[ -d $bundle ]] || continue
+    name="$(basename "$bundle")"; target="$dst/$name"
+    if [[ -e $target || -L $target ]]; then
+      if [[ $(readlink -f "$target" 2>/dev/null) == "$(readlink -f "$bundle")" ]]; then
+        continue
+      fi
+      warn "$target already exists — left untouched."
+      continue
+    fi
+    ln -s -- "$bundle" "$target"
+    ok "VST3 wrapper exposed: $name"
+    added=$((added+1))
+  done
+  (( added )) || msg "No new yabridge VST3 wrappers to expose."
+  msg "Restart Live and rescan plug-ins to pick them up."
+}
+
 do_install(){
   ensure_deps
   ensure_clone
@@ -259,6 +287,7 @@ do_install(){
     ( cd "$CLONE" && bash ./install.sh --version 12 --prefix "$PREFIX" )
   fi
   tag_desktop_entry
+  link_yabridge_vst3
   ok "Native Ableton Live Suite 12.4.7 installed."
 }
 
@@ -273,4 +302,5 @@ do_uninstall(){
 
 if (( STATUS )); then do_status
 elif (( UNINSTALL )); then do_uninstall
+elif (( LINKS_ONLY )); then link_yabridge_vst3
 else do_install; fi
