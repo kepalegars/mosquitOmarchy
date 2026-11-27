@@ -2108,15 +2108,10 @@ _patch_present(){
   [[ -n $spec && -f "$APPS_DIR/$spec" ]] || return 1
   # The native patch needs its Windows tool next to it. No tool -> no "p"
   # hint, no Patches row: nothing can be applied.
+  # The PATCH folder is local-only: advertise "p" only when the patch script
+  # itself is actually present on this machine.
   if [[ $1 == ableton-native ]]; then
-    [[ -f "$APPS_DIR/ableton/native/PATCH/WM_Ableton.r2rwm" ]] || return 1
-    local d found=1
-    for d in "${HOME:-}/.wine-ableton/drive_c/Program Files/TEAM R2R/R2R System" \
-             "${HOME:-}/.wine-ableton/drive_c/Program Files (x86)/TEAM R2R/R2R System"; do
-      [[ -f "$d/WitchWand.exe" ]] && found=0
-    done
-    # Without WitchWand yet, the Wine module's R2R installer can provide it.
-    (( found == 0 )) || [[ -f "$APPS_DIR/ableton/wine/PATCH/tools/R2R System v1.5.2.exe" ]] || return 1
+    [[ -f "$APPS_DIR/ableton/native/PATCH/patch-ableton-native.sh" ]] || return 1
   fi
   return 0
 }
@@ -4140,6 +4135,19 @@ cleanup_apm_drives(){
   ok "APM Wine drive letters: $removed redundant mapping(s) removed, $skipped skipped (prefix in use or letter referenced)."
 }
 
+# Empty the wine prefix temps through APM, which owns the prefix list and the
+# same cleanup used by the APM menu. Named for mosquitOmarchy because it is a
+# main-TUI cleanup row, even though the work is delegated.
+cleanup_mq_prefix_temps(){
+  local bin out n skipped
+  bin="$(cleanup_apm_bin)" || { warn "APM not installed — wine prefix temps skipped."; return 0; }
+  out="$("$bin" cleanup-prefix-temps 2>/dev/null | tail -1)" || out=""
+  [[ -n $out ]] || { warn "mosquitOmarchy: wine prefix temps — nothing reported."; return 0; }
+  n="$(printf '%s' "$out" | jq -r '.count // 0' 2>/dev/null || echo 0)"
+  skipped="$(printf '%s' "$out" | jq -r '.skipped | length' 2>/dev/null || echo 0)"
+  ok "mosquitOmarchy wine prefix temps: $n temp entr(y/ies) deleted, $skipped busy prefix(es) skipped."
+}
+
 # cleanup_vm_removable — one "path<TAB>size" line per file the VM cache clean
 # would remove. Complete ISOs referenced by a VM are never listed; VM disks and
 # configs are never touched.
@@ -4290,7 +4298,7 @@ cmd_cleanup_preview(){
       setup-cache)         s="$(cleanup_setup_cache_bytes)" ;;
       lists-cache)         s="$(cleanup_lists_cache_bytes)" ;;
       apm-quarantine)      s="$(cleanup_sum_paths "$HOME/.cache/vst-quarantine" "$HOME/.cache/audio-plugin-manager-quarantine")" ;;
-      apm-inconsistencies|apm-drives) s=0 ;;
+      apm-inconsistencies|apm-drives|apm-prefix-temps) s=0 ;;
       vm-cache)            s="$(cleanup_vm_bytes)" ;;
       move-als)            s="$(cleanup_sum_paths "$(cleanup_move_als_dir)")" ;;
       mixbay-history)      s="$(cleanup_sum_paths "$HOME/.config/mosquitomixbay/connected-interfaces.json")" ;;
@@ -4325,6 +4333,7 @@ cmd_cleanup(){
       apm-quarantine)      cleanup_apm_quarantine ;;
       apm-inconsistencies) cleanup_apm_inconsistencies ;;
       apm-drives)          cleanup_apm_drives ;;
+      apm-prefix-temps)    cleanup_mq_prefix_temps ;;
       vm-cache)            cleanup_vm_cache ;;
       move-als)            cleanup_move_als ;;
       mixbay-history)      cleanup_mixbay_history ;;

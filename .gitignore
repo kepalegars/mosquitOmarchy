@@ -61,7 +61,7 @@ code/modules/mosquito/audio-stack/apm/yabridge-driver.lock
 # not on the repo.
 code/modules/Apps/ableton/wine/PATCH/
 code/modules/Apps/ableton/native/linux-native-ableton/
-code/modules/Apps/ableton/native/PATCH/abletonPatcherGUI/
+code/modules/Apps/ableton/native/PATCH/
 code/modules/Apps/guitarpro/PATCH/
 code/modules/Apps/davinci/PATCH/
 code/modules/Apps/bitwig/PATCH/

@@ -40,65 +40,44 @@ The Setup confirm uses the same GiB display as the rest of the TUI: about
 as available — the script moves them into this folder instead of downloading a
 second copy. The install preflight uses the same numbers.
 
-## Hardware ID and offline authorization
+## Patch (local PATCH folder)
 
-`PATCH/patch-ableton-native.sh` reads the challenge code (HWID) from the
-**native** `Unlock.json`
-(`$XDG_DATA_HOME/Ableton/Live 12.4.7/Unlock/Unlock.json` — never from a Wine
-prefix), or from the "Instructions for Offline Authorization" text Live saves
-in `~/Documents`. It copies the code to the clipboard, opens `PATCH/WM_Ableton.r2rwm`
-with `WitchWand.exe` (the same app the Wine patch uses), waits for you to close
-it, then copies the new `.auz` into the install folder and opens that folder.
+**The whole `PATCH/` folder is local-only and gitignored.** Nothing in it is
+shipped by the repo; the Setup row advertises `p` only when the script is
+actually present on this machine.
 
-The rest of `wine/PATCH/tools` is **not** copied here: `WM_Ableton.r2rwm` is the
-only payload the native patch needs. If `WitchWand.exe` is missing, the script
-runs the Wine module's `R2R System v1.5.2.exe` installer once (nothing is copied
-into this folder).
-
-Nothing is saved or typed: the hardware code is always detected from a file
-Live itself generated. `.auz` license files are ignored — they contain many
-hex codes that are not the hardware code.
-
-Press **p** on the `ableton-native` row in mosquitomarchy Setup to run it; the
-confirm explains the HWID → tool → `.auz` steps first.
-
-```sh
-PATCH/patch-ableton-native.sh --no-run   # only read/copy the HWID
-PATCH/patch-ableton-native.sh            # full flow
-PATCH/patch-ableton-native.sh --check    # applied / not applied (used by p)
-PATCH/patch-ableton-native.sh --revert   # remove only the .auz files it copied
-R2RWM_TOOL=/path/to/tool bash PATCH/patch-ableton-native.sh
-```
-
-## Alternative: native ELF patcher
-
-`PATCH/patch.sh` adapts [ReXulEc/abletonPatcherGUI](https://github.com/ReXulEc/abletonPatcherGUI)
-to this build. Upstream's CLI backend generates a signed `Authorize.auz` and
+`PATCH/patch-ableton-native.sh` adapts
+[ReXulEc/abletonPatcherGUI](https://github.com/ReXulEc/abletonPatcherGUI) to
+this build. Upstream's CLI backend generates a signed `Authorize.auz` and
 replaces an 886-byte DSA key blob **inside the app binary**. That blob also
 exists in the native ELF `push3_opt/push3/Live`, so the script points the CLI
-at it:
+at it. The hardware code is detected from a file Live itself generated
+(`Unlock.json` or the "Instructions for Offline Authorization" note) — `.auz`
+license files are ignored because they contain unrelated hex codes.
 
 ```sh
-PATCH/patch.sh            # patch (backs up Live first, stages Authorize.auz)
-PATCH/patch.sh --check    # applied / not applied
-PATCH/patch.sh --revert   # restore the backed-up ELF and remove our .auz
-PATCH/patch.sh --no-run   # only detect the HWID
+PATCH/patch-ableton-native.sh            # patch, then open the install folder
+PATCH/patch-ableton-native.sh --check    # applied / not applied
+PATCH/patch-ableton-native.sh --revert   # restore the backed-up ELF, remove our .auz
+PATCH/patch-ableton-native.sh --no-run   # only detect the HWID
 ```
 
-The upstream checkout and its Node dependencies live in `PATCH/abletonPatcherGUI/`
-(gitignored). The script bypasses the interactive prompts by writing
-`config/cache.json` from the detected HWID, then runs the same
-`node util/patcher.js` backend as `npm run cli`. It also fixes an upstream
-case bug: `config.json` stores the keys in uppercase while
-`Buffer.toString("hex")` returns lowercase.
+`Live` is backed up as `Live.mosquitomarchy-backup` before the first patch, and
+the generated `Authorize.auz` is copied into the install folder and opened in
+the file manager. The upstream checkout and its Node dependencies live in
+`PATCH/abletonPatcherGUI/`. The script bypasses the interactive prompts by
+writing `config/cache.json` from the detected HWID, then runs the same
+`node util/patcher.js` backend as `npm run cli`. It also fixes an upstream case
+bug: `config.json` stores the keys in uppercase while `Buffer.toString("hex")`
+returns lowercase.
 
-The `p` shortcut is advertised only while the patch script,
-`PATCH/WM_Ableton.r2rwm` and `WitchWand.exe` in the Ableton Wine prefix are
-present — otherwise the row shows no patch hint and no Patches entry.
+## Old R2R/WitchWand flow (backup)
 
-Live must have been started once for `Unlock.json` to exist. The `.r2rwm` tool
-is a Windows binary, so it is launched with Wine (the Ableton Wine runtime if
-present), but no `WINEPREFIX` is forced and nothing is written to a prefix.
+`PATCH/old/` keeps the previous local patch (`patch-ableton-native.sh`,
+`WM_Ableton.r2rwm`, `vcruntime140_1.dll`). It detected the HWID, copied it to
+the clipboard, opened the `.r2rwm` with `WitchWand.exe` under Wine and staged
+the resulting `.auz`. It is kept as a fallback only; the `p` shortcut now runs
+the ELF patcher above.
 
 ## What this build can and cannot do
 
