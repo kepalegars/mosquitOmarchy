@@ -15,10 +15,11 @@
 #   kb_reset                         remove the WHOLE managed block
 #   kb_reload                        hyprctl reload + configerrors report
 #   kb_free_keys                     print still-free "SUPER + X" combos
+#   kb_bound_elsewhere <combo>       describe a binding outside our block (or nothing)
 #   kb_count                         number of managed bindings
 
 KB_CONF="${KB_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua}"
-KB_DEF_DIR="/usr/share/omarchy/default/hypr/bindings"
+KB_DEF_DIR="${KB_DEF_DIR:-/usr/share/omarchy/default/hypr/bindings}"
 KB_BEGIN='-- >>> mosquitOmarchy_Keybindings'
 KB_END='-- <<< mosquitOmarchy_Keybindings'
 KB_LEGACY_BEGIN='-- >>> Omarchy_Custom_Scripts_Keys'
@@ -58,8 +59,28 @@ kb_load_ours(){
 }
 
 kb_friendly_default(){ # combo → the Omarchy default label it would replace, if any
-  rg -N "o\.bind\(\"$1\"" "$KB_DEF_DIR"/*.lua 2>/dev/null \
-    | sed -n 's/.*o\.bind("[^"]*", *"\([^"]*\)".*/\1/p' | head -1
+  # -F: a combo's "+" is literal, not a regex quantifier.
+  rg -N -F "o.bind(\"$1\"" "$KB_DEF_DIR"/*.lua 2>/dev/null \
+    | sed -n 's/.*o\.bind("[^"]*", *"\([^"]*\)".*/\1/p' | head -1 || true
+  return 0
+}
+
+kb_bound_elsewhere(){ # <combo> → who owns it outside our marker block, empty if free
+  local combo="$1" line label
+  if [[ -f "$KB_CONF" ]]; then
+    line="$(sed -e "/$KB_BEGIN/,/$KB_END/d" -e "/$KB_LEGACY_BEGIN/,/$KB_LEGACY_END/d" "$KB_CONF" 2>/dev/null \
+      | rg -N -F "o.bind(\"$combo\"" 2>/dev/null | head -1 || true)"
+    if [[ -n "$line" ]]; then
+      label="$(printf '%s' "$line" | sed -n 's/.*o\.bind("[^"]*", *"\([^"]*\)".*/\1/p')"
+      printf 'your bindings.lua (%s)' "${label:-$combo}"
+      return 0
+    fi
+  fi
+  line="$(rg -N -F "o.bind(\"$combo\"" "$KB_DEF_DIR"/*.lua 2>/dev/null | head -1 || true)"
+  if [[ -n "$line" ]]; then
+    label="$(printf '%s' "$line" | sed -n 's/.*o\.bind("[^"]*", *"\([^"]*\)".*/\1/p')"
+    printf 'Omarchy default (%s)' "${label:-$combo}"
+  fi
   return 0
 }
 

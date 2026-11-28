@@ -5632,6 +5632,11 @@ run_mosquitomarchy(){
   # this (the logic now lives in code/main tui/install-tui.sh
   # and is reused here as a module).
   bash "$SCRIPT_DIR/code/main tui/install-tui.sh" -y
+  # Installing from Setup must also give a way to OPEN the manager: reuse the
+  # TUI's own add-shortcut (adds SUPER + ALT + M and answers the first-run
+  # prompt). Bootstrap deliberately deploys the binary only — it leaves that
+  # choice to the first-run question.
+  bash "$SCRIPT_DIR/code/main tui/mosquitomarchy-actions" add-shortcut
 }
 
 un_mosquitomarchy(){

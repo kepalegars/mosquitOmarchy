@@ -124,13 +124,15 @@ There is no external keybindings script: this TUI owns the `SUPER` bindings of t
 marked block, so removing the block restores Omarchy's defaults.
 
 Rows are the managed bindings, plus categories to add one — package app, quick function,
-Ableton Move, custom command. `enter` binds and proposes a Hyprland reload to validate the
-config. Choosing a key that is an Omarchy **default** unbinds it first, with a comment saying
-what it replaced. The Uninstall flavor adds a **Reset** row that wipes every binding this
-package manages, behind a precise confirmation.
+Ableton Move, mosquito, custom command. The key picker lists the still-free combos and starts
+with **Enter a key manually**, for combos like `SUPER + ALT + M`; if that key is already bound
+elsewhere, you are told by what and asked whether to override it. `enter` binds and proposes a
+Hyprland reload to validate the config. Choosing a key that is an Omarchy **default** unbinds it
+first, with a comment saying what it replaced. The Uninstall flavor adds a **Reset** row that
+wipes every binding this package manages, behind a precise confirmation.
 
-The primitives are `kb-list`, `kb-add`, `kb-remove`, `kb-reset`, `kb-reload` and `kb-free`
-subcommands of `mosquitomarchy-actions`, in `code/lib/keybindings.bash`.
+The primitives are `kb-list`, `kb-check`, `kb-add`, `kb-remove`, `kb-reset`, `kb-reload` and
+`kb-free` subcommands of `mosquitomarchy-actions`, in `code/lib/keybindings.bash`.
 
 ## Backup encryption
 

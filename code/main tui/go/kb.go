@@ -12,6 +12,7 @@ package main
 // uninstall pages, and a global uninstall run removes the ticked combos too.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -39,6 +40,15 @@ type kbMsg struct {
 type kbFreeMsg struct {
 	keys []string
 	err  error
+}
+
+// kbCheckMsg answers a manually typed combo: is it already owned by a binding
+// outside our marker block, and by whom.
+type kbCheckMsg struct {
+	combo string
+	taken bool
+	where string
+	err   error
 }
 
 // KbCatItem is one bindable thing from a category catalog.
@@ -135,6 +145,24 @@ func fetchKbFreeCmd() tea.Cmd {
 			}
 		}
 		return kbFreeMsg{keys: keys}
+	}
+}
+
+func fetchKbCheckCmd(combo string) tea.Cmd {
+	return func() tea.Msg {
+		outB, err := runQuick("kb-check", combo)
+		if err != nil {
+			return kbCheckMsg{err: err}
+		}
+		var res struct {
+			Combo string `json:"combo"`
+			Taken bool   `json:"taken"`
+			Where string `json:"where"`
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(outB), &res); err != nil {
+			return kbCheckMsg{err: err}
+		}
+		return kbCheckMsg{combo: res.Combo, taken: res.Taken, where: res.Where}
 	}
 }
 
@@ -254,9 +282,12 @@ func (m model) rebuildKBItems() navPicker {
 }
 
 // rebuildKBKeys renders the still-free SUPER combos for the pending binding.
+// The manual row is first: "free" only covers SUPER + X, so any other combo
+// (SUPER + ALT + M, a function key, …) needs a way in.
 func (m model) rebuildKBKeys() navPicker {
 	idx := m.kbKeyPicker.Index()
-	items := make([]tuikit.PickerItem, 0, len(m.kbFree)+1)
+	items := make([]tuikit.PickerItem, 0, len(m.kbFree)+2)
+	items = append(items, tuikit.PickerItem{Display: "Enter a key manually (e.g. SUPER + ALT + M)", Value: "manual"})
 	for _, k := range m.kbFree {
 		items = append(items, tuikit.PickerItem{Display: k, Value: k})
 	}
@@ -265,4 +296,24 @@ func (m model) rebuildKBKeys() navPicker {
 		SetHelpKeys(key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "bind")),
 			key.NewBinding(key.WithKeys("esc", "h"), key.WithHelp("esc/h", "back"))).
 		SelectIndex(idx)
+}
+
+// askBind is the single confirm step for both a picked free key and a manually
+// typed one. Accepting an already-bound combo appends "force" so kb-add knows
+// the user accepted the override.
+func (m model) askBind(combo string, taken bool, where string) (model, tea.Cmd) {
+	m.pendingAction = "kb-add"
+	m.pendingArgs = []string{combo, m.kbPending.Label, m.kbPending.Cmd, m.kbPending.Type}
+	m.pendingNo = "Cancel"
+	if taken {
+		m.pendingArgs = append(m.pendingArgs, "force")
+		m.pendingYes = "Bind anyway"
+		m.pendingMsg = fmt.Sprintf("%s is already bound (%s).\n\nBind it to %s anyway?\n\nThe mosquitOmarchy block in bindings.lua will override the earlier binding. Hyprland needs a reload for it to take effect — you'll be asked right after.", combo, where, m.kbPending.Label)
+	} else {
+		m.pendingYes = "Bind"
+		m.pendingMsg = fmt.Sprintf("Bind %s → %s?\n\nThe binding is written to the mosquitOmarchy block in bindings.lua. Hyprland needs a reload for it to take effect — you'll be asked right after.", combo, m.kbPending.Label)
+	}
+	m.push(scrConfirm)
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+	return m, nil
 }
