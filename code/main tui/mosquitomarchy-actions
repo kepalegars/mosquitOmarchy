@@ -1001,8 +1001,10 @@ _setup_tree(){
           if [[ -n $gate ]]; then
             info="${info:+$info — }$(_asset_gate_note "${CAND_KEYS[$i]}")"
             needs="${CAND_KEYS[$i]}"
+            disabled=true
+          else
+            disabled=false
           fi
-          disabled=false
           # Folder may differ from the category: septabee is a catalogued TUI that
           # is filed under Apps, so the folder is resolved per row rather than
           # taken from $id. The audio tools live in the nested audio-stack
@@ -3610,6 +3612,42 @@ _dl_notify_all_done(){
   (( active )) || notify-send -u normal "mosquitomarchy" "All archives have been downloaded by mosquitomarchy."
 }
 
+
+# One row per archive still missing for a module key, with the direct URL when
+# mosquitomarchy can fetch it and the page URL when the user must download it.
+cmd_asset_missing(){
+  local key="${1:-}" name url page expected dl dir downloadable
+  dl="$(command -v xdg-user-dir >/dev/null 2>&1 && xdg-user-dir DOWNLOAD 2>/dev/null || echo "$HOME/Downloads")"
+  dir="$APPS_DIR/ableton"
+  page="$(_manual_asset_spec "$key")"; page="${page#*|}"
+  printf '['
+  local first=1
+  while IFS=$'\t' read -r url name; do
+    [[ -n $name ]] || continue
+    [[ -f "$dir/$name" || -f "$dl/$name" ]] && continue
+    ((first)) || printf ','
+    first=0
+    printf '{"name":%s,"path":%s,"url":%s,"page":%s}' \
+      "$(json_str "$name")" "$(json_str "$dir/$name")" "$(json_str "$url")" "$(json_str "$page")"
+  done < <(_asset_urls "$key")
+  if ((first)) && [[ -n $page ]]; then
+    expected="$(_manual_asset_spec "$key")"; expected="${expected%%|*}"
+    printf '{"name":%s,"path":%s,"url":%s,"page":%s}' \
+      "$(json_str "$expected")" "$(json_str "$dir/")" '""' "$(json_str "$page")"
+  fi
+  printf ']\n'
+}
+
+cmd_open_download_page(){
+  local key="${1:-}" spec url
+  spec="$(_manual_asset_spec "$key")"; url="${spec#*|}"
+  [[ -n $url ]] || return 0
+  command -v xdg-open >/dev/null 2>&1 && xdg-open "$url" >/dev/null 2>&1 &
+  command -v notify-send >/dev/null 2>&1 \
+    && notify-send -u normal "mosquitomarchy" "Download the required archive into ~/Downloads so mosquitomarchy can read it."
+  printf '{"opened":true}\n'
+}
+
 cmd_download_assets(){
   local key="${1:-}" url name dest state tmp rc=0
   mkdir -p "$ASSET_DL_DIR" "$APPS_DIR/ableton"
@@ -4487,6 +4525,8 @@ case "$sub" in
   space)                    cmd_space "${1:-}" "${@:2}" ;;
   download-assets)          cmd_download_assets "${1:-}" ;;
   asset-download-status)    cmd_asset_download_status ;;
+  asset-missing)            cmd_asset_missing "${1:-}" ;;
+  open-download-page)       cmd_open_download_page "${1:-}" ;;
   status)                   mq_cached status 300 cmd_status ;;
   categories)               cmd_categories ;;
   candidates)               cmd_candidates "${1:-}" ;;

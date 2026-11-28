@@ -979,6 +979,57 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.toast, _ = m.toast.SetWarn(msg.err.Error())
 		return m, nil
 
+	case assetMissingMsg:
+		if m.top() != scrConfirm || m.pendingAction != "download-assets-prompt" {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.pendingMsg = "Could not read the required archives: " + msg.err.Error()
+			m.confirm.Message = m.pendingMsg
+			return m, nil
+		}
+		var lines []string
+		canDownload := false
+		page := ""
+		for _, a := range msg.items {
+			lines = append(lines, a.Name+" → "+a.Path)
+			if a.URL != "" {
+				canDownload = true
+			}
+			if a.Page != "" {
+				page = a.Page
+			}
+		}
+		if len(lines) == 0 {
+			m.pendingMsg = "No missing archive detected for " + msg.key + "."
+			m.confirm.Message = m.pendingMsg
+			return m, nil
+		}
+		verb := "Archive"
+		if len(lines) > 1 {
+			verb = "Archives"
+		}
+		m.pendingMsg = verb + " required for " + msg.key + "\n\n"
+		if canDownload && page != "" {
+			m.pendingMsg += "Choose Download to automatically download the archives into " +
+				lines[0][strings.Index(lines[0], "→")+2:] + ",\n" +
+				"or Open download page to access the vendor site."
+		} else if canDownload {
+			m.pendingMsg += "Choose Download to automatically download the archives into " +
+				lines[0][strings.Index(lines[0], "→")+2:] + "."
+		} else {
+			m.pendingMsg += "Choose Open download page to access the vendor site, " +
+				"then place the archives in ~/Downloads so mosquitomarchy can read them."
+		}
+		m.confirm = tuikit.NewConfirm(m.pendingMsg, "Cancel", "Download")
+		if page != "" {
+			m.confirm = m.confirm.WithExtra("Open download page", "o")
+		}
+		if !canDownload {
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, "Cancel", "Open download page")
+		}
+		return m, nil
+
 	case assetDownloadsMsg:
 		if msg.err == nil {
 			if m.assetDL == nil {
@@ -1329,6 +1380,25 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 
 	case tuikit.ConfirmResultMsg:
 		if m.top() != scrConfirm {
+			return m, nil
+		}
+		if m.pendingAction == "download-assets-prompt" {
+			key := "ableton-wires"
+			if len(m.pendingArgs) > 0 {
+				key = m.pendingArgs[0]
+			}
+			m.pendingArgs = nil
+			m.pendingAction = ""
+			if msg.Canceled {
+				return m, nil
+			}
+			if msg.Extra {
+				return m.startWorking("Opening download page", workingArgs("open-download-page", []string{key})...)
+			}
+			if msg.Yes {
+				m.toast, _ = m.toast.SetWarn("! archive download started in the background")
+				return m.startWorking("Downloading archive", workingArgs("download-assets", []string{key})...)
+			}
 			return m, nil
 		}
 		if m.pendingAction == "add-shortcut" {
@@ -2238,17 +2308,6 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					return m.confirmReaperRevert()
 				}
 				return m.confirmReaperConfig()
-			case "d":
-				if it, ok := m.setupByValue[m.setupPicker.SelectedValue()]; ok && it.Needs != "" {
-					m.pendingAction = "download-assets-prompt"
-					m.pendingArgs = []string{it.Needs}
-					m.pendingMsg = "Archive required for " + it.Key + "\n\n" + it.Info
-					m.pendingNo = "Cancel"
-					m.pendingYes = "Download"
-					m.push(scrConfirm)
-					m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).FocusYes()
-					return m, nil
-				}
 			case "ableton-wires":
 				if it, ok := m.setupByValue[m.setupPicker.SelectedValue()]; ok && it.MovePatch {
 					if m.treeMode == "uninstall" {
@@ -3391,6 +3450,16 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			}
 			if it, ok := m.setupByValue[v]; ok {
 				if it.Disabled {
+					if it.Needs != "" {
+						m.pendingAction = "download-assets-prompt"
+						m.pendingArgs = []string{it.Needs}
+						m.pendingMsg = "Checking required archives…"
+						m.pendingNo = "Cancel"
+						m.pendingYes = "Download"
+						m.push(scrConfirm)
+						m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+						return m, fetchAssetMissingCmd(it.Needs)
+					}
 					m.toast, _ = m.toast.SetErr("nothing to do here")
 					return m, nil
 				}

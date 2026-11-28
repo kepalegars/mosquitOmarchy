@@ -908,3 +908,31 @@ func fetchAssetDownloadsCmd() tea.Cmd {
 		return assetDownloadsMsg{items: recs}
 	}
 }
+
+
+type AssetMissing struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	URL  string `json:"url"`
+	Page string `json:"page"`
+}
+
+type assetMissingMsg struct {
+	key   string
+	items []AssetMissing
+	err   error
+}
+
+func fetchAssetMissingCmd(key string) tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("asset-missing", key)
+		if err != nil {
+			return assetMissingMsg{key: key, err: err}
+		}
+		var recs []AssetMissing
+		if e := json.Unmarshal(out, &recs); e != nil {
+			return assetMissingMsg{key: key, err: e}
+		}
+		return assetMissingMsg{key: key, items: recs}
+	}
+}
