@@ -357,7 +357,7 @@ application it installs; it is what "check for updates" acts on.
 
 Each script has its own line in [`VERSIONS`](VERSIONS), read by `module_version()`:
 modules, fixes, tweaks and TUI rows each carry their own real version. The root
-[`VERSION`](VERSION) file is only the manager/TUI version (currently **2.0.0**), injected
+[`VERSION`](VERSION) file is only the manager/TUI version (currently **2.0.5**), injected
 into `mosquitomarchy-tui` at build time; `mosquito-mixbay-tui` takes its version from its
 own `mixbay` line in `VERSIONS`. Rows with no script (stock/created themes) fall back to
 the `default` line in `VERSIONS`.

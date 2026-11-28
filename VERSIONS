@@ -9,7 +9,7 @@
 # awaiting real-hardware/user verification, 0.0/0.1/0.2 = beta or new.
 
 # manager / watchdog
-mosquitomarchy=2.0.0
+mosquitomarchy=2.0.5
 mosquitomarchy-update=1.1.0
 
 # modules — stable
