@@ -1,0 +1,6 @@
+schema_version = 1
+
+[browser]
+corner_radius_scale = 0.6
+reduce_animations = true
+remember_folder_views = true

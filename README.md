@@ -109,6 +109,7 @@ Details, options and caveats live in each module's own `README.md`. This table i
 | `betterbird` | Betterbird (Thunderbird fork): install, system-tray close/minimise, login autostart, window opens floating | [setup](code/modules/Apps/betterbird/setup-betterbird.sh) |
 | `whatsapp-native` | WhatsApp Web as a Chromium web app: tray supervisor (login starts hidden in the tray, menu opens directly), silent notifications, close-to-tray, no menu bar, no shortcut, login autostart | [README](code/modules/Apps/whatsapp-native/README.md) |
 | `superfile` | SuperFile terminal file manager; the system default file manager is left unchanged | [README](code/modules/Apps/superfile/README.md) |
+| `luciole` | Luciole native Wayland file manager: default for folders, Open file location and Open/Save dialogs, seeded settings, palette follows the Omarchy theme | [README](code/modules/Apps/luciole/README.md) |
 | `zen` | Zen Browser, seeded extensions and theme | [README](code/modules/Apps/zen/README.md) |
 | `keepassxc` | KeePassXC password manager + browser integration (Leaves Omarchy's keyring intact) | [README](code/modules/Apps/keepassxc/README.md) |
 | `apps` | The TUIs of `code/modules/TUIs/`, reinstallable from a backup selection | [README](code/modules/Apps/README.md) · [TUIs](code/modules/TUIs/README.md) |

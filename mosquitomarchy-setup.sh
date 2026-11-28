@@ -882,6 +882,13 @@ st_superfile(){
   # default-file-manager replacement: installed = the .desktop entry exists.
   [[ -f "$HOME/.local/share/applications/superfile.desktop" ]] && echo ok || echo missing
 }
+st_luciole(){
+  # Luciole is the default file manager everywhere + follows the Omarchy theme.
+  command -v luciole >/dev/null 2>&1 || { echo missing; return; }
+  [[ "$(xdg-mime query default inode/directory 2>/dev/null || true)" == dev.noctalia.luciole.desktop ]] \
+    && [[ -x "$HOME/.config/omarchy/hooks/theme-set.d/luciole-module.sh" ]] \
+    && echo ok || echo partial
+}
 st_strata(){
   pacman -Q strata >/dev/null 2>&1 || { echo missing; return; }
   [[ "$(xdg-mime query default inode/directory 2>/dev/null || true)" == *Strata* ]] \
@@ -1180,6 +1187,7 @@ MODULES=(
   "keepassxc:KeePassXC as your password manager + KeePassXC-Browser integration (Firefox/Zen and Chromium). Omarchy's keyring is left INTACT — LibreSecret apps (Chromium Safe Storage, kDrive, …) keep using gnome-keyring, so no 'KeePassXC requests access to Chromium Safe Storage' prompt and apps don't lose their login. Browser link: the native-messaging manifests are installed; finish by ticking the browsers in KeePassXC → Settings → Browser Integration and clicking Connect in the extension. On FIRST KeePassXC launch choose YOUR .kdbx: the install pins it into keepassxc.ini so every launch opens THAT database. Opt into replacing gnome-keyring with 'setup-keepassxc-integration.sh --secret-service'."
   "mosquitomarchy-update:Update watchdog"
   "superfile:SuperFile — terminal file manager (menu entry + keybind + Omarchy theme)"
+  "luciole:Luciole — native Wayland file manager (Noctalia); default for folders, Open file location and Open/Save dialogs, SUPER+SHIFT+F, your settings deployed after install, and its palette follows the active Omarchy theme"
   "strata:Strata — GTK4 file manager; becomes the default for folders, Open/Save dialogs, \"Open file location\" and Omarchy's SUPER+SHIFT+F"
   "flea:Flea — fastest GUI file manager; installs flea (Omarchy) or flea-bin (AUR) and makes it the default explorer/chooser"
   "extracto:Simple custom install script for file-roller — restores Nautilus' Extract Here / Create Archive (file-roller + 7zip + unrar, file-roller prompts for the password itself); no desktop entry, no Nautilus script"
@@ -1389,6 +1397,7 @@ handbrake) st_handbrake ;;
     # it.
     achraf67) st_achraf67 ;;
     superfile) st_superfile ;;
+    luciole) st_luciole ;;
     strata) st_strata ;;
     flea) st_flea ;;
     extracto) st_extracto ;;
@@ -1433,6 +1442,7 @@ module_of_path(){
     code/modules/Apps/flea/*)        echo flea ;;
     code/modules/Apps/keepassxc/*)   echo keepassxc ;;
     code/modules/Apps/superfile/*)   echo superfile ;;
+    code/modules/Apps/luciole/*)     echo luciole ;;
     code/modules/Apps/strata/*)      echo strata ;;
     code/modules/Apps/zen/*)         echo zen ;;
     code/modules/Apps/*|code/modules/TUIs/*) echo apps ;;
@@ -4631,6 +4641,14 @@ un_superfile(){
     warn "$SUPERFILE_DIR/setup-superfile.sh not found — nothing to revert."
   fi
 }
+un_luciole(){
+  info "Uninstalling Luciole (defaults + theme hook, keeps settings)"
+  if [[ -f "$LUCIOLE_DIR/setup-luciole.sh" ]]; then
+    bash "$LUCIOLE_DIR/setup-luciole.sh" --remove
+  else
+    warn "$LUCIOLE_DIR/setup-luciole.sh not found — nothing to revert."
+  fi
+}
 un_strata(){
   info "Uninstalling Strata (integrations + per-user binary)"
   if [[ -f "$STRATA_DIR/setup-strata.sh" ]]; then
@@ -5023,6 +5041,7 @@ handbrake) un_handbrake ;;
     keybindings) un_keybindings ;;
     mosquitomarchy-update) un_mosquitomarchy_update ;;
     superfile) un_superfile ;;
+    luciole) un_luciole ;;
     strata) un_strata ;;
     flea) un_flea ;;
     zen) un_zen ;;
@@ -5146,6 +5165,7 @@ BRIGHTNESS_DIR="$SCRIPTS/Plugins/brightness"
 TOUCHPAD_DIR="$SCRIPTS/Plugins/touchpad"
 MXMASTER_DIR="$SCRIPTS/Plugins/mx-master"
 SUPERFILE_DIR="$SCRIPTS/Apps/superfile"
+LUCIOLE_DIR="$SCRIPTS/Apps/luciole"
 STRATA_DIR="$SCRIPTS/Apps/strata"
 FLEA_DIR="$SCRIPTS/Apps/flea"
 THEME_DIR="$SCRIPTS/Themes"
@@ -5541,6 +5561,7 @@ run_brightness(){ bash "$BRIGHTNESS_DIR/optimized-brightness.sh"; }
 run_achraf67(){ bash "$THEME_DIR/create-theme.sh" --apply --no-unlock-style "$THEME_DIR/Wallpapers/achraf67.png"; }
 run_touchpad(){ bash "$TOUCHPAD_DIR/touchpad.sh" $([[ $YES == 1 ]] && echo -y); }
 run_superfile(){ bash "$SUPERFILE_DIR/setup-superfile.sh" $([[ $YES == 1 ]] && echo -y); }
+run_luciole(){ bash "$LUCIOLE_DIR/setup-luciole.sh" $([[ $YES == 1 ]] && echo -y); }
 run_strata(){ bash "$STRATA_DIR/setup-strata.sh" $([[ $YES == 1 ]] && echo -y); }
 run_flea(){ bash "$FLEA_DIR/setup-flea.sh" $([[ $YES == 1 ]] && echo -y); }
 run_zen(){ bash "$ZEN_DIR/setup-zen.sh" $([[ $YES == 1 ]] && echo -y); }
@@ -5736,6 +5757,7 @@ exec_modules(){
       keybindings) run_module keybindings run_keybindings ;;
       mosquitomarchy-update) run_module mosquitomarchy-update run_mosquitomarchy_update ;;
       superfile) run_module superfile run_superfile ;;
+      luciole) run_module luciole run_luciole ;;
       strata) run_module strata run_strata ;;
       flea) run_module flea run_flea ;;
       zen) run_module zen run_zen ;;
@@ -5772,7 +5794,7 @@ exec_modules(){
 
 # Categories of the "setup" action. id|label|modules (space-separated module ids).
 CATEGORIES=(
-  "apps|Apps|reaper bitwig ableton-native ableton-wires guitarpro davinci-resolve spektrafilm extracto douze tidal handbrake signal betterbird whatsapp-native superfile strata flea zen keepassxc"
+  "apps|Apps|reaper bitwig ableton-native ableton-wires guitarpro davinci-resolve spektrafilm extracto douze tidal handbrake signal betterbird whatsapp-native superfile luciole strata flea zen keepassxc"
   "tuis|TUIs|"
   # "Plugins" is the project's own layer: the manager itself (the deployer),
   # its update module, and project utilities such as power management and SSH
