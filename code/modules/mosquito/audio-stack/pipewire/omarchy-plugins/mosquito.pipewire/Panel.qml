@@ -94,8 +94,14 @@ Panel {
     property bool moveLocked: false
     property bool moveUnlocked: false
 
+    // An aggregate needs one rate for all members. It locks the two values
+    // even outside a live session; L is the shared, explicit escape hatch.
+    property bool aggregateLocked: false
+    property bool aggregateUnlocked: false
+
     readonly property bool locked: (root.liveActive && !root.unlocked) ||
-                                   (root.moveLocked && !root.moveUnlocked)
+                                   (root.moveLocked && !root.moveUnlocked) ||
+                                   (root.aggregateLocked && !root.aggregateUnlocked)
     readonly property bool autoLock: root.info.autolock !== false
     readonly property var displayRows: {
         // Locked hides the two switches the lock owner owns. Unlocking with L
@@ -141,17 +147,41 @@ Panel {
         root.unlockConfirmOpen = false
         root.unlocked = true
         root.moveUnlocked = true
+        root.aggregateUnlocked = true
     }
     function cancelUnlock() { root.unlockConfirmOpen = false }
     function toggleLock() {
-        if (!root.liveActive && !root.moveLocked) return
+        if (!root.liveActive && !root.moveLocked && !root.aggregateLocked) return
         if (!root.locked) {
-            // Re-lock: both owners count again.
+            // Re-lock: all owners count again.
             root.unlocked = false
             root.moveUnlocked = false
+            root.aggregateUnlocked = false
         } else {
             root.requestUnlock()
         }
+    }
+    function setAggregate(on) {
+        if (on === root.aggregateLocked) return
+        root.aggregateLocked = on
+        root.aggregateUnlocked = false
+        if (!on && !root.liveActive && !root.moveLocked) root.row = 0
+    }
+    function lockLegend() {
+        if (!root.locked) {
+            return (root.liveActive || root.moveLocked || root.aggregateLocked)
+                   ? "Unlocked · ↑↓ choose   ←→ change · L lock"
+                   : "↑↓ choose   ←→ change   enter toggles"
+        }
+        if (root.aggregateLocked && !root.liveActive && !root.moveLocked)
+            return "Locked by aggregate " + (root.info.aggregate || "device") + " · L unlock"
+        if (root.moveLocked && !root.liveActive)
+            return "Locked by Ableton Move (44.1 kHz) · L unlock"
+        if (root.moveLocked)
+            return "Locked for live mode & Ableton Move · L unlock"
+        if (root.aggregateLocked)
+            return "Locked for live mode & aggregate · L unlock"
+        return "Locked for live mode · L unlock"
     }
 
     // The shell runs with QS_DISABLE_FILE_WATCHER=1, so a FileView watcher on
@@ -202,6 +232,7 @@ Panel {
                 root.error = ""
                 root.setLive(root.info.live === true)
                 root.setMove(root.info.move_locked === true)
+                root.setAggregate(root.info.aggregate_locked === true)
             } catch (e) {
                 root.error = "cannot read: " + e
             }
@@ -328,6 +359,7 @@ Panel {
         iconComponent: pipewireMark
         tooltipText: root.info.rate
             ? "PipeWire · " + root.rateLabel() + " · " + root.quantumLabel()
+              + (root.info.aggregate ? " · aggregate: " + root.info.aggregate : "")
             : "PipeWire settings"
         onPressed: function (b) { root.toggle() }
     }
@@ -550,15 +582,7 @@ Panel {
                     Text {
                         // The legend follows the state: L locks while unlocked,
                         // and asks before unlocking while locked.
-                        text: root.locked
-                              ? (root.moveLocked && !root.liveActive
-                                 ? "Locked by Ableton Move (44.1 kHz) · L unlock"
-                                 : root.moveLocked
-                                   ? "Locked for live mode & Ableton Move · L unlock"
-                                   : "Locked for live mode · L unlock")
-                              : (root.liveActive || root.moveLocked)
-                                ? "Unlocked · ↑↓ choose   ←→ change · L lock"
-                                : "↑↓ choose   ←→ change   enter toggles"
+                        text: root.lockLegend()
                         color: root.dim
                         font.family: Style.font.family
                         font.pixelSize: Style.font.caption
@@ -597,9 +621,11 @@ Panel {
                         // The Move warning is the reason this unlock is worth a
                         // confirmation: 44.1 kHz is the card's fixed clock, and
                         // another rate on the same graph fights it.
-                        text: root.moveLocked
-                              ? "The Ableton Move's interface is fixed at 44.1 kHz. Another sample rate can conflict with it (and with any other card used at the same time)."
-                              : "Changing the sample rate or buffer size can cause audio crackles."
+                        text: root.aggregateLocked && !root.moveLocked
+                              ? "An aggregate device is active. Changing the sample rate or buffer size can desync its members."
+                              : root.moveLocked
+                                ? "The Ableton Move's interface is fixed at 44.1 kHz. Another sample rate can conflict with it (and with any other card used at the same time)."
+                                : "Changing the sample rate or buffer size can cause audio crackles."
                         color: root.dim
                         font.family: Style.font.family
                         font.pixelSize: Style.font.caption

@@ -100,8 +100,12 @@ func (m model) View() string {
 		b.WriteString(m.picker.View())
 		b.WriteString("\n")
 		b.WriteString(m.footer(w, ""))
-	case scrPatchbay:
-		title, rows := m.accentBudget(h, "PipeWire patchbay")
+	case scrAggregate, scrAggregatePick:
+		titleText := "Aggregate devices"
+		if m.top() == scrAggregatePick {
+			titleText = "Pick the cards to aggregate"
+		}
+		title, rows := m.accentBudget(h, titleText)
 		m.picker = m.picker.SetSize(w, rows)
 		b.WriteString(centerBlock(title, w))
 		b.WriteString("\n")
@@ -180,7 +184,7 @@ func (m model) View() string {
 	// showing the Mixbay script version there too made two versions appear in
 	// the same interface. Keep the script version on the list/settings chrome
 	// only.
-	if m.top() == scrDevices || m.top() == scrSettings || m.top() == scrPatchbay || m.top() == scrFoundation || m.top() == scrFoundationDefault || m.top() == scrAddInterface {
+	if m.top() == scrDevices || m.top() == scrSettings || m.top() == scrAggregate || m.top() == scrAggregatePick || m.top() == scrFoundation || m.top() == scrFoundationDefault || m.top() == scrAddInterface {
 		ver = versionRow(w)
 		ch := h - 1
 		if ch < 1 {
@@ -332,8 +336,10 @@ func (m model) legendLine(w int) string {
 		hint = "Tab controls · [ ] vol · { }/,/. pan · digits dial · bus row switches MIX · ? help"
 	case scrSettings:
 		hint = "enter toggles · esc back"
-	case scrPatchbay:
-		hint = "enter apply (explicit) · r refresh · esc back"
+	case scrAggregate:
+		hint = "n new · a activate/deactivate · d delete · p repair · A lock · s save links · r refresh · esc back"
+	case scrAggregatePick:
+		hint = "space toggle · n name & save · esc back"
 	case scrFoundation:
 		hint = "enter install/remove · d default · r refresh · esc back"
 		if _, ok := m.selectedSplitCard(); ok {

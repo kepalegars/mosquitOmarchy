@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# mixbay-aggregate-guard — event-driven repair of an active aggregate.
+#
+# qpwgraph can remove the links combine-stream created. pw-mon reports object
+# removals as events, so this guard never polls the graph; on a removal it asks
+# Mixbay to re-add only the links that were present when the aggregate was
+# activated. It cannot disconnect anything and does nothing when no aggregate
+# is active (aggregate-repair returns immediately).
+set -uo pipefail
+
+ACTIONS="${HOME}/.local/bin/mosquito-mixbay-actions"
+[[ -x $ACTIONS ]] || ACTIONS="$(command -v mosquito-mixbay-actions 2>/dev/null || true)"
+[[ -n $ACTIONS && -x $ACTIONS ]] || exit 0
+command -v pw-mon >/dev/null 2>&1 || exit 0
+
+last=0
+if command -v stdbuf >/dev/null 2>&1; then
+  monitor=(stdbuf -oL pw-mon -N -o -p)
+else
+  monitor=(pw-mon -N -o -p)
+fi
+
+"${monitor[@]}" 2>/dev/null | while IFS= read -r line; do
+  case "$line" in
+    *removed*|*destroyed*)
+      now="$(date +%s)"
+      if (( now - last >= 2 )); then
+        last=$now
+        "$ACTIONS" aggregate-repair >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
+done

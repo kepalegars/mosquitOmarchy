@@ -63,6 +63,10 @@ type Settings struct {
 	// Mixbay's own free/exclusive preference, and needs Levels Guard to block
 	// the native surfaces.
 	LockOutputVolume bool
+	// AggregateLock freezes Mixbay's aggregate devices for the session: no new
+	// recipe, activation, deactivation or deletion. ON by default because all
+	// members of an active aggregate would cut at once.
+	AggregateLock bool
 	// MoveAudio releases the Ableton Move's USB audio interface when the
 	// session starts. ON by default, and the default is the useful one: the
 	// Move is fixed at 44.1 kHz, so a desk that pinned it would drag the whole
@@ -88,6 +92,7 @@ func defaultSettings() Settings {
 		DisablePasswordlessSudo: true,
 		PipewireAutolock:        true,
 		LockOutputVolume:        true,
+		AggregateLock:           true,
 		MoveAudio:               true,
 	}
 }
@@ -161,6 +166,9 @@ func loadSettings() Settings {
 	if v, ok := kv["LOCK_OUTPUT_VOLUME"]; ok {
 		s.LockOutputVolume = v != "no"
 	}
+	if v, ok := kv["AGGREGATE_LOCK"]; ok {
+		s.AggregateLock = v != "no"
+	}
 	if v, ok := kv["MOVE_AUDIO"]; ok {
 		s.MoveAudio = v != "no"
 	}
@@ -190,6 +198,7 @@ func saveSettings(s Settings) error {
 		"DISABLE_PASSWORDLESS_SUDO=\"" + boolVal(s.DisablePasswordlessSudo) + "\"\n" +
 		"PIPEWIRE_AUTOLOCK=\"" + boolVal(s.PipewireAutolock) + "\"\n" +
 		"LOCK_OUTPUT_VOLUME=\"" + boolVal(s.LockOutputVolume) + "\"\n" +
+		"AGGREGATE_LOCK=\"" + boolVal(s.AggregateLock) + "\"\n" +
 		"MOVE_AUDIO=\"" + boolVal(s.MoveAudio) + "\"\n"
 	return os.WriteFile(path, []byte(content), 0o644)
 }

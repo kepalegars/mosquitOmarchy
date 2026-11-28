@@ -86,6 +86,16 @@ forces the current values and sets the persisted config aside for the session.
 Nothing is persisted while live mode is active; `live-off` restores the
 pre-session force/pin state and the remember-on-restart file.
 
+## Active aggregate devices
+
+When Mixbay has an aggregate active, `show` reports `aggregate_active`,
+`aggregate_locked` and the recipe name in `aggregate`. The two values are
+locked even outside a live session: one sample rate has to suit every member of
+the aggregate. `L` unlocks for the rest of the session with an explicit
+confirmation; the backend refuses `set-rate` / `set-quantum` / `set-force` /
+`reset` while the aggregate is locked, so a direct CLI call cannot bypass the
+panel. `live-on` / `live-off` are unaffected.
+
 ## Two things worth knowing
 
 **Absent is not zero.** An untouched graph reports only `clock.rate`,

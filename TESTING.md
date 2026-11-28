@@ -247,6 +247,10 @@ did, with the same user-visible result.
 
 ## Live mode
 
+Plan dédié, plus détaillé, pour les agrégats Mixbay et la chaîne de verrouillage
+Live Mode / `pipewire-settings` / Levels Guard / patchbay / hot-plug :
+`TESTING-AGGREGATE-DEVICES.md`.
+
 - [ ] Manager row: ←/→ and Tab on the package-fence row; persisted
       `FENCE_PACKAGES`.
 - [ ] Manager row: ←/→ and Enter on `Relaunch closed apps on deactivation`;

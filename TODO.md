@@ -166,18 +166,16 @@ Last reviewed: 2026-11-03.
       current when a card is promoted to native, add the hardware-validation
       column after each test session, and link every new backend to its
       upstream project and licence.
-- [ ] **Mixbay — aggregate devices + drift correction** (design in
-      `docs/AUDIO-PROTOCOLS-LINUX.md` §6, implementation NOT started). Model a
-      clock domain per card (internal / word clock / ADAT / MADI / AES3 /
-      Dante PTP / USB feedback) and add a Settings → Aggregate screen:
-      member cards, sync source, sample rate, per-member drift correction,
-      latency, channel map, saved profiles, health (ppm, xruns, estimated
-      added latency). Implement with PipeWire `libpipewire-module-combine-stream`,
-      `libpipewire-module-loopback`, `priority.driver`, `clock.name` and the
-      adaptive resampler — do **not** write an audio server. Default drift
-      correction ON for members with no shared hardware clock; OFF when
-      `clock.name` matches. Never claim bit-perfect when resampling. Test with
-      two unsynchronised USB cards, then with a word-clocked pair.
+- [x] **Mixbay — aggregate devices + drift correction** (shipped 2026-11-27:
+      `mixbay/docs/AUDIO-PROTOCOLS-LINUX.md` §6 design implemented as
+      `tui-go/aggregate/` + `Devices → Aggregate devices`; combine-stream,
+      drift flags, selector multi-clés, lock Live Mode, garde patchbay et
+      guard `pw-mon`). La source de sync est **détectée**, pas forcée (aucun
+      `priority.driver` global écrit) : le drift est ON par défaut, OFF quand
+      `clock.name` est partagé. Santé affichée : taux, quantum, flags de
+      resampling et liens — pas de ppm/xruns fiables sans outil supplémentaire,
+      et aucun bit-perfect promis. Reste la validation matérielle : deux cartes
+      USB de clocks différentes, puis une paire word-clockée.
 - [ ] **Mixbay — Dante protocol in the audio foundation** (design in
       `docs/AUDIO-PROTOCOLS-LINUX.md` §8, implementation NOT started).
       Explicit upstream: `inferno` <https://github.com/teodly/inferno>

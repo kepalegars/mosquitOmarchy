@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 
+	"mosquitomarchy.local/mosquitomixbay-tui/aggregate"
 	"mosquitomarchy.local/mosquitomixbay-tui/drivers"
 	"mosquitomarchy.local/mosquitomixbay-tui/patchbay"
 )
@@ -106,6 +107,32 @@ func runCLI(args []string) int {
 		}
 		replace := len(args) > 2 && args[2] == "--replace"
 		return cliPatchbayApply(args[1], replace)
+	case "aggregate-status-json":
+		return cliAggregateStatus()
+	case "aggregate-list":
+		return cliAggregateList()
+	case "aggregate-save":
+		return cliAggregateSave(args[1:])
+	case "aggregate-activate":
+		return cliAggregateActivate(args[1:])
+	case "aggregate-deactivate":
+		return cliAggregateSimple("aggregate-deactivate", func() error { return aggregate.Deactivate(false) })
+	case "aggregate-delete":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: aggregate-delete NAME")
+			return 2
+		}
+		return cliAggregateSimple("aggregate-delete", func() error { return aggregate.Delete(args[1]) })
+	case "aggregate-repair":
+		return cliAggregateRepair()
+	case "aggregate-restore":
+		return cliAggregateSimple("aggregate-restore", aggregate.Restore)
+	case "aggregate-lock":
+		return cliAggregateSimple("aggregate-lock", func() error { return aggregate.SetLock(true) })
+	case "aggregate-unlock":
+		return cliAggregateSimple("aggregate-unlock", func() error { return aggregate.SetUnlocked(true) })
+	case "aggregate-release":
+		return cliAggregateSimple("aggregate-release", func() error { return aggregate.SetLock(false) })
 	case "save", "load":
 		fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 		dev := fs.String("device", defaultDevice(), "device id")
@@ -171,6 +198,16 @@ func cliHelp() string {
   patchbay-status-json                PipeWire links, interfaces and presets
   patchbay-save NAME                  save current hardware links as a preset
   patchbay-apply NAME [--replace]     apply a preset (explicit, no auto)
+  aggregate-status-json               active aggregate, lock and link health (JSON)
+  aggregate-list                      saved aggregate recipes (JSON)
+  aggregate-save NAME [--node N]...   build a recipe from current graph nodes
+                 [--input-node N] [--display D]
+  aggregate-activate NAME             activate a recipe (creates the virtual output)
+  aggregate-deactivate                unload the active aggregate
+  aggregate-delete NAME               remove a saved recipe
+  aggregate-repair                    restore links a graph editor removed
+  aggregate-restore                   reload the active recipe (user service)
+  aggregate-lock | aggregate-unlock | aggregate-release   Live Mode fence helpers
   profiles-index [--cached]           community profile index (JSON)
   cards-connected-json [--all]        interfaces connected now + profile state
   profiles-import ID... [--all]       download/update card(s) from the repo
@@ -549,5 +586,110 @@ func cliPatchbayApply(name string, replace bool) int {
 		fmt.Fprintf(os.Stderr, "%d link(s) skipped: endpoints missing\n", len(res.Missing))
 		return 1
 	}
+	return 0
+}
+
+// stringList lets a CLI caller repeat --node and --input-node instead of
+// encoding a comma-separated list that node names may legitimately contain.
+type stringList []string
+
+func (s *stringList) String() string { return strings.Join(*s, ",") }
+func (s *stringList) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
+
+func cliAggregateStatus() int {
+	st, err := aggregate.Status()
+	printJSON(st)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+
+func cliAggregateList() int {
+	list, err := aggregate.List()
+	if err != nil && err != aggregate.ErrNoPresets {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if list == nil {
+		list = []aggregate.Preset{}
+	}
+	return printJSON(list)
+}
+
+func cliAggregateSave(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: aggregate-save NAME [--node N]... [--input-node N]... [--display D]")
+		return 2
+	}
+	fs := flag.NewFlagSet("aggregate-save", flag.ContinueOnError)
+	var outputs, inputs stringList
+	display := fs.String("display", "", "name shown in the audio panel")
+	overwrite := fs.Bool("overwrite", false, "replace an existing recipe")
+	fs.Var(&outputs, "node", "output node (repeatable)")
+	fs.Var(&inputs, "input-node", "input node (repeatable)")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if err := aggregate.EnsureWritable(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	g, err := patchbay.Snapshot()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	p, err := aggregate.MakePreset(args[0], *display, g, outputs, inputs)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if err := aggregate.Save(p, *overwrite); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Println("ok")
+	return 0
+}
+
+func cliAggregateActivate(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: aggregate-activate NAME")
+		return 2
+	}
+	p, err := aggregate.Load(args[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if err := aggregate.Activate(p, false); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Println("ok")
+	return 0
+}
+
+func cliAggregateSimple(what string, act func() error) int {
+	if err := act(); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", what, err)
+		return 1
+	}
+	fmt.Println("ok")
+	return 0
+}
+
+func cliAggregateRepair() int {
+	added, err := aggregate.Repair()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	printJSON(map[string]int{"added": added})
 	return 0
 }

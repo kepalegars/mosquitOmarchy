@@ -53,6 +53,19 @@ LIVE_KEYS=(clock.min-rate clock.max-rate clock.force-rate
            clock.min-quantum clock.max-quantum clock.force-quantum)
 live_mode_active(){ [[ -f $LIVE_STATE_DIR/active ]]; }
 
+# An active aggregate needs one graph rate for all its members. Changing the
+# clock mid-recipe can leave one card silent, so the settings panel locks the
+# rate/quantum while it is active, exactly like live mode and the Move.
+AGG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/mosquitomixbay/aggregate"
+aggregate_active(){ [[ -s $AGG_DIR/active.json ]]; }
+aggregate_name(){ [[ -f $AGG_DIR/active.json ]] && jq -r '.name // ""' "$AGG_DIR/active.json" 2>/dev/null || true; }
+aggregate_locked(){ aggregate_active && [[ ! -f $AGG_DIR/unlocked ]]; }
+require_aggregate_unlocked(){
+  aggregate_locked || return 0
+  err "an aggregate device is active — unlock it in the PipeWire panel or in Mixbay first"
+  return 1
+}
+
 # The upstream's lists, unchanged. These are not "the ones PipeWire allows" —
 # they are the ones worth offering — and inventing a longer list would put values
 # in the menu that no hardware here can run.
@@ -141,6 +154,10 @@ cmd_show(){
   local live=false autolock=true
   live_mode_active && live=true
   [[ -f $LIVE_SETTINGS ]] && grep -q '^PIPEWIRE_AUTOLOCK="no"' "$LIVE_SETTINGS" && autolock=false
+  local agg_active=false agg_locked=false agg_name=""
+  aggregate_active && agg_active=true
+  aggregate_locked && agg_locked=true
+  agg_name="$(aggregate_name)"
 
   # The Ableton Move is fixed at 44.1 kHz. While it is the selected interface
   # (default sink OR source, set by Mixbay's Move profile) the two values stay
@@ -153,7 +170,9 @@ cmd_show(){
     dsr="$( { pactl get-default-sink 2>/dev/null; pactl get-default-source 2>/dev/null; } || true )"
     grep -qi 'move' <<<"$dsr" && move_locked=true
   fi
-  printf '"live":%s,"autolock":%s,"move_locked":%s}\n' "$live" "$autolock" "$move_locked"
+  printf '"live":%s,"autolock":%s,"move_locked":%s,' "$live" "$autolock" "$move_locked"
+  printf '"aggregate_active":%s,"aggregate_locked":%s,"aggregate":%s}\n' \
+    "$agg_active" "$agg_locked" "$(json_null_if_empty "$agg_name")"
 }
 
 # Pin min = default = max, then set force/unforce. The triple is what makes an
@@ -222,6 +241,7 @@ _delete_conf(){
 }
 
 cmd_set_rate(){
+  require_aggregate_unlocked || return 1
   local rate="${1:-}" force="${2:-auto}"
   _in_list "$rate" "${ALLOWED_RATES[@]}" || {
     err "rate '${rate}' is not one of: ${ALLOWED_RATES[*]}"; return 1; }
@@ -244,6 +264,7 @@ cmd_set_rate(){
 }
 
 cmd_set_quantum(){
+  require_aggregate_unlocked || return 1
   local q="${1:-}" force="${2:-auto}"
   _in_list "$q" "${ALLOWED_QUANTUMS[@]}" || {
     err "quantum '${q}' is not one of: ${ALLOWED_QUANTUMS[*]}"; return 1; }
@@ -264,6 +285,7 @@ cmd_set_quantum(){
 # Flip force WITHOUT changing the configured value: force the current default, or
 # unforce and let the graph follow it again.
 cmd_set_force(){
+  require_aggregate_unlocked || return 1
   local what="${1:-}" on="${2:-}"
   case "$what" in
     rate|quantum|both) ;;
@@ -347,6 +369,7 @@ cmd_live_off(){
 }
 
 cmd_reset(){
+  require_aggregate_unlocked || return 1
   msg "back to PipeWire's defaults: ${DEF_RATE} Hz, quantum ${QUANTUM_MIN}/${DEF_QUANTUM}/${QUANTUM_MAX}"
   pw_set clock.rate "$DEF_RATE"
   pw_del clock.min-rate; pw_del clock.max-rate

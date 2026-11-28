@@ -20,6 +20,11 @@ type Node struct {
 	Class       string
 	Channels    int
 	Hardware    bool
+	// The selector fields let an aggregate re-find a card after a node rename.
+	ClockName string
+	Profile   string
+	Card      string
+	Device    string
 }
 
 // Port is one node port. Direction is PipeWire's "in" or "out".
@@ -65,6 +70,12 @@ func (g Graph) Hardware() []Node {
 func (g Graph) fingerprintFor(links []Link) []string {
 	used := map[string]bool{}
 	for _, l := range links {
+		// Links owned by an aggregate are not patchbay wiring: including them
+		// would make an unrelated preset stop applying when an aggregate is
+		// activated, and --replace would try to remove them.
+		if isAggregateEndpoint(l.OutNode) || isAggregateEndpoint(l.InNode) {
+			continue
+		}
 		if g.hardwareNode(l.OutNode) {
 			used[l.OutNode] = true
 		}
@@ -189,6 +200,10 @@ func Parse(data []byte) (Graph, error) {
 			Class:       rawString(o.Info.Props, "media.class"),
 			Channels:    rawInt(o.Info.Props, "audio.channels"),
 			Hardware:    rawString(o.Info.Props, "api.alsa.card") != "" || rawString(o.Info.Props, "device.class") == "sound",
+			ClockName:   rawString(o.Info.Props, "clock.name"),
+			Profile:     rawString(o.Info.Props, "device.profile.name"),
+			Card:        rawString(o.Info.Props, "api.alsa.card"),
+			Device:      rawString(o.Info.Props, "device.name"),
 		}
 		g.Nodes = append(g.Nodes, n)
 		byID[n.ID] = n
@@ -234,14 +249,39 @@ func sortedLinks(links []Link) []Link {
 	return out
 }
 
+func isAggregateEndpoint(name string) bool {
+	return strings.HasPrefix(strings.TrimSpace(name), "agg_")
+}
+
 func (g Graph) hardwareLinks() []Link {
 	var out []Link
 	for _, l := range g.Links {
+		if isAggregateEndpoint(l.OutNode) || isAggregateEndpoint(l.InNode) {
+			continue
+		}
 		if g.hardwareNode(l.OutNode) || g.hardwareNode(l.InNode) {
 			out = append(out, l)
 		}
 	}
 	return sortedLinks(out)
+}
+
+// HasLink reports whether one exact link exists in the graph.
+func (g Graph) HasLink(l Link) bool {
+	key := l.key()
+	for _, have := range g.Links {
+		if have.key() == key {
+			return true
+		}
+	}
+	return false
+}
+
+// AddLink adds one PipeWire link. It is used by aggregate repair, which only
+// ever restores links that were present when the aggregate was activated.
+func AddLink(l Link) error {
+	_, err := runCommand("pw-link", endpoint(l.OutNode, l.OutPort), endpoint(l.InNode, l.InPort))
+	return err
 }
 
 func (g Graph) hasPort(node, port, dir string) bool {

@@ -24,10 +24,10 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"mosquitomarchy.local/mosquitomixbay-tui/aggregate"
 	"mosquitomarchy.local/mosquitomixbay-tui/config"
 	"mosquitomarchy.local/mosquitomixbay-tui/drivers"
 	"mosquitomarchy.local/mosquitomixbay-tui/meters"
-	"mosquitomarchy.local/mosquitomixbay-tui/patchbay"
 	"mosquitomarchy.local/mosquitomixbay-tui/profiles"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
@@ -39,7 +39,8 @@ const (
 	scrControls
 	scrMixer
 	scrSettings
-	scrPatchbay
+	scrAggregate
+	scrAggregatePick
 	scrFoundation
 	scrFoundationDefault
 	scrAddInterface
@@ -89,6 +90,10 @@ type model struct {
 
 	// patchbay is loaded on demand only: no polling, no auto-apply.
 	patchbay patchbayView
+
+	// aggregate is the named virtual-device screen. Its status is refreshed on
+	// entry and on demand, never polled in the background.
+	aggregate aggregateView
 
 	// foundation is the Settings → Audio foundation card list/default.
 	foundation        foundationState
@@ -549,8 +554,10 @@ func (m *model) syncPicker() {
 		m.picker = tuikit.NewPicker(m.status.Spec.Display+" — loopback mixer "+drivers.BusLabel(m.mixBus), mixerItems(m.status, m.mixBus)).SetSize(cw, ch)
 	case scrSettings:
 		m.picker = tuikit.NewPicker("Settings", m.settingsItems()).SetSize(cw, ch)
-	case scrPatchbay:
-		m.picker = tuikit.NewPicker("PipeWire patchbay", m.patchbayItems()).SetSize(cw, ch)
+	case scrAggregate:
+		m.picker = tuikit.NewPicker("Aggregate devices", m.aggregateItems()).SetSize(cw, ch)
+	case scrAggregatePick:
+		m.picker = tuikit.NewPicker("Pick the cards to aggregate", m.aggregatePickItems()).SetSize(cw, ch)
 	case scrFoundation:
 		m.picker = tuikit.NewPicker("Audio foundation settings", m.foundationItems()).SetSize(cw, ch)
 	case scrFoundationDefault:
@@ -624,10 +631,10 @@ func (m model) deviceItems() []tuikit.PickerItem {
 	if len(items) == 0 {
 		items = append(items, tuikit.PickerItem{Display: "No interfaces connected", Disabled: true})
 	}
-	pb := tuikit.PickerItem{Display: "PipeWire patchbay", Value: "patchbay"}
-	if !patchbay.Available() {
+	pb := tuikit.PickerItem{Display: "Aggregate devices", Value: "aggregate"}
+	if !aggregate.Available() {
 		pb.Disabled = true
-		pb.Suffix = "  (needs pw-dump and pw-link)"
+		pb.Suffix = "  (needs pw-cli and pw-dump)"
 	}
 	items = append(items,
 		pb,
@@ -1398,13 +1405,47 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toast, _ = m.toast.SetOK(fmt.Sprintf("log copied to the clipboard (%d bytes)", msg.Bytes))
 		return m, nil
 
+	case aggregateLoadedMsg:
+		m.aggregate.loading = false
+		m.aggregate.err = ""
+		m.aggregate.info, m.aggregate.presets, m.aggregate.graph = msg.info, msg.presets, msg.graph
+		if msg.err != nil {
+			m.aggregate.err = msg.err.Error()
+		}
+		if m.top() == scrAggregate || m.top() == scrAggregatePick {
+			m.syncPicker()
+		}
+		return m, nil
+
+	case aggregateActionMsg:
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr(msg.err.Error())
+		} else {
+			switch msg.what {
+			case "save":
+				m.toast, _ = m.toast.SetOK("aggregate saved")
+			case "activate":
+				m.toast, _ = m.toast.SetOK("aggregate activated — choose the new output in the audio panel")
+			case "deactivate":
+				m.toast, _ = m.toast.SetOK("aggregate deactivated")
+			case "delete":
+				m.toast, _ = m.toast.SetOK("aggregate deleted")
+			case "repair":
+				m.toast, _ = m.toast.SetOK(fmt.Sprintf("aggregate links restored (%d)", msg.added))
+			case "unlock":
+				m.toast, _ = m.toast.SetOK("aggregate lock changed for this session")
+			}
+		}
+		m.aggregate.loading = true
+		return m, loadAggregateCmd()
+
 	case patchbayLoadedMsg:
 		m.patchbay.loading = false
 		m.patchbay.err, m.patchbay.states = "", msg.states
 		if msg.err != nil {
 			m.patchbay.err = msg.err.Error()
 		}
-		if m.top() == scrPatchbay {
+		if m.top() == scrAggregate {
 			m.syncPicker()
 		}
 		return m, nil
@@ -1477,7 +1518,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Picker navigation (up/down) on list screens.
-	if m.top() == scrDevices || m.top() == scrControls || m.top() == scrMixer || m.top() == scrSettings || m.top() == scrPatchbay || m.top() == scrFoundation || m.top() == scrFoundationDefault || m.top() == scrAddInterface || m.top() == scrLibrary {
+	if m.top() == scrDevices || m.top() == scrControls || m.top() == scrMixer || m.top() == scrSettings || m.top() == scrAggregate || m.top() == scrFoundation || m.top() == scrFoundationDefault || m.top() == scrAddInterface || m.top() == scrLibrary {
 		var cmd tea.Cmd
 		m.picker, cmd = m.picker.Update(msg)
 		return m, cmd
@@ -1506,7 +1547,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if m.top() == scrInfo {
-		if k, ok := msg.(tea.KeyMsg); ok && (k.String() == "esc" || k.String() == "backspace" || k.String() == "enter" || k.String() == "q") {
+		if k, ok := msg.(tea.KeyMsg); ok && (k.String() == "esc" || k.String() == "h" || k.String() == "backspace" || k.String() == "enter" || k.String() == "l" || k.String() == "q") {
 			m.pop()
 			return m, nil
 		}
@@ -1540,7 +1581,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if m.top() == scrInfo {
-		if k == "esc" || k == "backspace" || k == "enter" || k == "q" {
+		if k == "esc" || k == "h" || k == "backspace" || k == "enter" || k == "l" || k == "q" {
 			m.pop()
 			return m, nil
 		}
@@ -1566,8 +1607,11 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.moveKey(k)
 		}
 	}
-	if m.top() == scrPatchbay {
-		return m.patchbayKey(msg)
+	if m.top() == scrAggregate {
+		return m.aggregateKey(msg)
+	}
+	if m.top() == scrAggregatePick {
+		return m.aggregatePickKey(msg)
 	}
 	switch m.top() {
 	case scrDevices:
@@ -1578,7 +1622,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.syncPicker()
 			m.toast, _ = m.toast.SetOK("Connection status refreshed")
 			return m, trackConnectionsCmd()
-		case "enter":
+		case "enter", "l":
 			if m.picker.SelectedValue() == "quit" {
 				m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")
 				m.confirmAct = func() tea.Cmd {
@@ -1603,15 +1647,16 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			if m.picker.SelectedValue() == "patchbay" {
-				if !patchbay.Available() {
-					m.toast, _ = m.toast.SetWarn("Patchbay needs pw-dump and pw-link")
+			if m.picker.SelectedValue() == "aggregate" {
+				if !aggregate.Available() {
+					m.toast, _ = m.toast.SetWarn("Aggregate devices need pw-cli and pw-dump")
 					return m, nil
 				}
+				m.aggregate.loading, m.aggregate.err = true, ""
 				m.patchbay.loading, m.patchbay.err = true, ""
-				m.push(scrPatchbay)
+				m.push(scrAggregate)
 				m.syncPicker()
-				return m, loadPatchbayCmd()
+				return m, tea.Batch(loadAggregateCmd(), loadPatchbayCmd())
 			}
 			m.deviceID = m.picker.SelectedValue()
 			m.loading = true
@@ -1639,7 +1684,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.push(scrControls)
 			m.syncPicker()
 			return m, fetchStatus(m.deviceID)
-		case "q", "esc", "backspace":
+		case "q", "esc", "backspace", "h":
 			m.confirm = tuikit.NewConfirm("Quit mosquito-mixbay?", "No", "Yes")
 			m.confirmAct = func() tea.Cmd {
 				m.quit = true
@@ -1650,7 +1695,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case scrControls:
 		switch k {
-		case "esc", "backspace":
+		case "esc", "backspace", "h":
 			if m.numBuf != "" {
 				if k == "backspace" {
 					m.numBuf = m.numBuf[:len(m.numBuf)-1]
@@ -1708,7 +1753,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "r":
 			return m, fetchStatus(m.deviceID)
-		case "enter":
+		case "enter", "l":
 			return m, m.activateControl(m.picker.SelectedValue())
 		case "left", "right", "[", "]":
 			if m.numBuf != "" {
@@ -1727,7 +1772,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case scrMixer:
 		switch k {
-		case "esc", "backspace":
+		case "esc", "backspace", "h":
 			if m.numBuf != "" {
 				if k == "backspace" {
 					m.numBuf = m.numBuf[:len(m.numBuf)-1]
@@ -1749,7 +1794,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.applyCmd(m.deviceID, func(d drivers.Driver) error { return d.Save() }, "state saved")
 		case "r":
 			return m, fetchStatus(m.deviceID)
-		case "enter":
+		case "enter", "l":
 			return m, m.activateMixer(m.picker.SelectedValue())
 		case "[", "]":
 			// adjust the selected source's volume (evotui [ ] rule)
@@ -1770,7 +1815,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case scrInfo:
 		// Info is the log screen: scrolling and `c` (copy) must reach the
 		// component, not pop it. Only the "continue" keys leave.
-		if k == "esc" || k == "enter" || k == "backspace" || k == "q" {
+		if k == "esc" || k == "h" || k == "enter" || k == "l" || k == "backspace" || k == "q" {
 			m.pop()
 			return m, nil
 		}
@@ -1779,10 +1824,10 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case scrSettings:
 		switch k {
-		case "esc", "backspace":
+		case "esc", "backspace", "h":
 			m.pop()
 			return m, nil
-		case "enter", "left", "right":
+		case "enter", "l", "left", "right":
 			var post tea.Cmd
 			switch m.picker.SelectedValue() {
 			case "back":
@@ -1858,7 +1903,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case scrFoundation:
 		switch k {
-		case "esc", "backspace":
+		case "esc", "backspace", "h":
 			m.pop()
 			return m, nil
 		case "r":
@@ -1884,7 +1929,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirmAct = func() tea.Cmd { return foundationSplitCmd(on, id) }
 			m.push(scrConfirm)
 			return m, nil
-		case "enter":
+		case "enter", "l":
 			val := m.picker.SelectedValue()
 			switch {
 			case val == "back":
@@ -1940,10 +1985,10 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case scrFoundationDefault:
 		switch k {
-		case "esc", "backspace":
+		case "esc", "backspace", "h":
 			m.pop()
 			return m, nil
-		case "enter":
+		case "enter", "l":
 			val := m.picker.SelectedValue()
 			if val == "back" {
 				m.pop()
@@ -1957,13 +2002,13 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case scrAddInterface:
 		switch k {
-		case "esc", "backspace":
+		case "esc", "backspace", "h":
 			m.pop()
 			return m, nil
 		case "r":
 			m.scanLoading = true
 			return m, scanCardsCmd()
-		case "enter":
+		case "enter", "l":
 			val := m.picker.SelectedValue()
 			switch {
 			case val == "back":

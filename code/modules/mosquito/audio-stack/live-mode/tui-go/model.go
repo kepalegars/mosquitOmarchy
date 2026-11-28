@@ -113,6 +113,11 @@ func (m model) mainItems() []tuikit.PickerItem {
 	if locked {
 		lockedSuffix = "  (needs mixbay or qpwgraph)"
 	}
+	aggLocked := !haveMixbay()
+	aggSuffix := ""
+	if aggLocked {
+		aggSuffix = "  (needs mixbay)"
+	}
 	return []tuikit.PickerItem{
 		{Display: "Session", Heading: true},
 		{Display: fmt.Sprintf("Thermal limit: %d°C", s.ThermalLimitC), Value: "thermal"},
@@ -131,6 +136,7 @@ func (m model) mainItems() []tuikit.PickerItem {
 		{Display: "Scratchpad app: " + patchbayLabel(s.PatchbayApp), Value: "patchbay", Disabled: locked, Suffix: lockedSuffix},
 		{Display: "Lock PipeWire settings during live mode: " + boolLabel(s.PipewireAutolock), Value: "pipewire_lock"},
 		volumeLockItem(s.LockOutputVolume),
+		{Display: "Lock aggregate devices during live mode: " + boolLabel(s.AggregateLock), Value: "aggregate_lock", Disabled: aggLocked, Suffix: aggSuffix},
 		moveAudioItem(s.MoveAudio),
 
 		{Display: "Safety", Heading: true},
@@ -238,6 +244,8 @@ func (m model) mainItemsWithPending() []tuikit.PickerItem {
 			items[i].Display = "Lock PipeWire settings during live mode: " + boolLabel(target == "on")
 		case "volume_lock":
 			items[i] = volumeLockItem(target == "on")
+		case "aggregate_lock":
+			items[i].Display = "Lock aggregate devices during live mode: " + boolLabel(target == "on")
 		case "move_audio":
 			items[i] = moveAudioItem(target == "on")
 		case "gaps":
@@ -281,6 +289,8 @@ func setPending(s Settings, row, target string) Settings {
 		s.PipewireAutolock = target == "on"
 	case "volume_lock":
 		s.LockOutputVolume = target == "on"
+	case "aggregate_lock":
+		s.AggregateLock = target == "on"
 	case "move_audio":
 		s.MoveAudio = target == "on"
 	case "theme":
@@ -373,6 +383,10 @@ func (m model) cycleSetting(dir int) (tea.Model, tea.Cmd) {
 		m.toast, _ = m.toast.SetWarn("No scratchpad audio app installed — install mosquito mixbay or qpwgraph first")
 		return m, nil
 	}
+	if row == "aggregate_lock" && !haveMixbay() {
+		m.toast, _ = m.toast.SetWarn("Aggregate lock needs Mixbay")
+		return m, nil
+	}
 	switch row {
 	case "thermal":
 		cur := m.settings.ThermalLimitC
@@ -416,6 +430,16 @@ func (m model) cycleSetting(dir int) (tea.Model, tea.Cmd) {
 		m.pending[row] = nextPatchbayApp(curApp)
 	case "pipewire_lock":
 		cur := m.settings.PipewireAutolock
+		if p, ok := m.pending[row]; ok {
+			cur = p == "on"
+		}
+		m.pending[row] = liveToggleTarget(!cur)
+	case "aggregate_lock":
+		if !haveMixbay() {
+			m.toast, _ = m.toast.SetWarn("Aggregate lock needs Mixbay")
+			return m, nil
+		}
+		cur := m.settings.AggregateLock
 		if p, ok := m.pending[row]; ok {
 			cur = p == "on"
 		}
@@ -498,6 +522,10 @@ func (m *model) apply(choice string) {
 		m.toast, _ = m.toast.SetWarn("No scratchpad audio app installed — install mosquito mixbay or qpwgraph first")
 		return
 	}
+	if choice == "aggregate_lock" && !haveMixbay() {
+		m.toast, _ = m.toast.SetWarn("Aggregate lock needs Mixbay")
+		return
+	}
 	switch choice {
 	case "choose_apps":
 		// Leaving the settings screen commits any pending value first.
@@ -540,6 +568,12 @@ func (m *model) apply(choice string) {
 		s.PatchbayApp = nextPatchbayApp(s.PatchbayApp)
 	case "pipewire_lock":
 		s.PipewireAutolock = !s.PipewireAutolock
+	case "aggregate_lock":
+		if !haveMixbay() {
+			m.toast, _ = m.toast.SetWarn("Aggregate lock needs Mixbay")
+			return
+		}
+		s.AggregateLock = !s.AggregateLock
 	case "volume_lock":
 		if !levelsGuardInstalled() {
 			m.toast, _ = m.toast.SetWarn("Volume lock needs Levels Guard")

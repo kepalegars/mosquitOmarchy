@@ -784,12 +784,18 @@ car c'est transverse et utile à tous les utilisateurs.
 - **Clock** : 48 kHz par défaut, 44,1–192 autorisés, quantum 1024, sauf si
   `pipewire-settings` gère déjà l'horloge. Mismatch signalé, jamais forcé.
 
-### 7.6 Patchbay
+### 7.6 Patchbay et agrégats
 
-- **Explicite** : rien n'est appliqué automatiquement au branchement.
+- **Patchbay explicite** : rien n'est appliqué automatiquement au branchement.
 - **Presets** : liens matériels + empreinte des interfaces ; apply refuse si
-  l'empreinte a changé.
-- **UI** : Devices → PipeWire patchbay, sauvegarde/application manuelles.
+  l'empreinte a changé, et ignore les liens `agg_*` d'un agrégat actif.
+- **UI** : Devices → **Aggregate devices**, avec les liens bruts en bas d'écran.
+- **Agrégats** : `combine-stream` charge un sink virtuel `agg_<slug>` (et
+  optionnellement une source), un flux par carte, correction de dérive par
+  membre. Activation via `pw-cli` sans redémarrage du graphe ; persistance par
+  service user ; garde `pw-mon` pour rejouer les liens supprimés par qpwgraph.
+- **Sélection** : `device.name` + `api.alsa.card` + `device.profile.name` +
+  `node.name`, avec vérification post-chargement du graphe.
 
 ### 7.7 Harness de reverse engineering (implémenté)
 

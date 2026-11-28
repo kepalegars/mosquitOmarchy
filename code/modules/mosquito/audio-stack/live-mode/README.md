@@ -34,6 +34,7 @@ which keeps its default.
 | `DISABLE_PASSWORDLESS_SUDO` | **on by default** — at activation, install the scoped `live-mode-root` grant and delete every broad `NOPASSWD: ALL` drop-in. One way: nothing restores them. |
 | `PIPEWIRE_AUTOLOCK` | **on by default** — start the PipeWire Settings widget locked during live mode. `no` leaves the values editable; `L` locks/unlocks either way. |
 | `LOCK_OUTPUT_VOLUME` | **on by default** — flip Mixbay to *hardware & UI exclusive* for the session, then put the previous value back on deactivation. It overrides Mixbay's own choice; needs Levels Guard. |
+| `AGGREGATE_LOCK` | **on by default** — freeze Mixbay's aggregate devices for the session: no create, activate, deactivate or delete. The active recipe is never auto-restored on exit; a deliberate unlock followed by a change survives. Needs Mixbay; the row is greyed without it. |
 | `ROUTING_TOOL` | park the audio mixer/patchbay in the scratchpad for the session |
 | `PATCHBAY_APP` | which scratchpad audio app(s): `mixbay+qpwgraph` (both, the default, opened tiled side by side), `mixbay`, `qpwgraph` or `mosquito-patchbay` |
 | `MOVE_AUDIO` | **on by default** — release the Ableton Move's audio interface when the session starts (it is fixed at 44.1 kHz and would pin the live graph). The previous devices/rate come back; deactivation never re-selects the Move. Needs Mixbay's Move profile; the row is greyed without it. |

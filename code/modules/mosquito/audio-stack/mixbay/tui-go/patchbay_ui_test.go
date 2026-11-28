@@ -33,7 +33,7 @@ func TestPatchbayItemsMarkMismatch(t *testing.T) {
 func TestPatchbayEnterOpensConfirm(t *testing.T) {
 	m := initialModel()
 	m.w, m.h = 100, 30
-	m.nav = append(m.nav, scrPatchbay)
+	m.nav = append(m.nav, scrAggregate)
 	m.patchbay.states = []patchbay.State{{Preset: patchbay.Preset{Name: "studio"}, Applies: true}}
 	m.syncPicker()
 	m.picker = m.picker.SelectValue("apply:studio")
@@ -51,7 +51,7 @@ func TestPatchbayEnterOpensConfirm(t *testing.T) {
 func TestPatchbayLoadedFillsPicker(t *testing.T) {
 	m := initialModel()
 	m.w, m.h = 100, 30
-	m.nav = append(m.nav, scrPatchbay)
+	m.nav = append(m.nav, scrAggregate)
 	m.patchbay.loading = true
 	nm, _ := m.Update(patchbayLoadedMsg{states: []patchbay.State{{Preset: patchbay.Preset{Name: "studio"}, Applies: true}}})
 	mm := nm.(model)
@@ -70,7 +70,7 @@ func TestPatchbayLoadedFillsPicker(t *testing.T) {
 func TestPatchbaySaveOpensNamePrompt(t *testing.T) {
 	m := initialModel()
 	m.w, m.h = 100, 30
-	m.nav = append(m.nav, scrPatchbay)
+	m.nav = append(m.nav, scrAggregate)
 	m.syncPicker()
 	nm, _ := m.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
 	mm := nm.(model)
@@ -82,7 +82,7 @@ func TestPatchbaySaveOpensNamePrompt(t *testing.T) {
 func TestPatchbaySaveSubmitClosesPrompt(t *testing.T) {
 	m := initialModel()
 	m.w, m.h = 100, 30
-	m.nav = append(m.nav, scrPatchbay)
+	m.nav = append(m.nav, scrAggregate)
 	m.syncPicker()
 	nm, _ := m.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
 	m = nm.(model)
@@ -90,7 +90,7 @@ func TestPatchbaySaveSubmitClosesPrompt(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("submitting a name must run the save command")
 	}
-	if got := nm.(model).top(); got != scrPatchbay {
+	if got := nm.(model).top(); got != scrAggregate {
 		t.Fatalf("top = %v, want patchbay", got)
 	}
 }

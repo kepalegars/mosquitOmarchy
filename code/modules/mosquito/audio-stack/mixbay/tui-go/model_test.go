@@ -832,8 +832,8 @@ func TestNumericDialAppliesGain(t *testing.T) {
 	}
 }
 
-// The devices page carries Settings then the patchbay before Close, and the
-// settings page keeps only interface preferences.
+// The devices page carries Settings then Aggregate devices before Close, and
+// the settings page keeps only interface preferences.
 func TestDevicesPageHasSettingsRow(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	m := initialModel()
@@ -841,12 +841,12 @@ func TestDevicesPageHasSettingsRow(t *testing.T) {
 	for _, it := range m.deviceItems() {
 		vals[it.Value] = true
 	}
-	if !vals["settings"] || !vals["patchbay"] || !vals["quit"] {
-		t.Fatalf("devices page missing settings/patchbay/close rows: %v", vals)
+	if !vals["settings"] || !vals["aggregate"] || !vals["quit"] {
+		t.Fatalf("devices page missing settings/aggregate/close rows: %v", vals)
 	}
 	for _, it := range m.settingsItems() {
-		if it.Value == "patchbay" {
-			t.Fatal("patchbay must live on the main menu, not Settings")
+		if it.Value == "aggregate" {
+			t.Fatal("aggregate devices must live on the main menu, not Settings")
 		}
 	}
 }
@@ -859,7 +859,7 @@ func TestOnlineOnlyFilter(t *testing.T) {
 	m.ui.Listed = listedConnected
 	var shown []string
 	for _, it := range m.deviceItems() {
-		if it.Value == "" || it.Value == "settings" || it.Value == "patchbay" || it.Value == "quit" {
+		if it.Value == "" || it.Value == "settings" || it.Value == "aggregate" || it.Value == "quit" {
 			continue
 		}
 		shown = append(shown, it.Value)
@@ -891,7 +891,7 @@ func TestDevicesPageSaysWhenNoInterfaceConnected(t *testing.T) {
 	if !items[0].Disabled || items[0].Display != "No interfaces connected" {
 		t.Fatalf("first row = %+v, want disabled 'No interfaces connected'", items[0])
 	}
-	if items[1].Value != "patchbay" {
+	if items[1].Value != "aggregate" {
 		t.Fatalf("navigation rows moved: %+v", items[1])
 	}
 }

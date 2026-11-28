@@ -99,7 +99,9 @@ The foundation is applied **per card**, with one shared floor:
   it" notification button. Any card in the connection log can be chosen,
   whatever its category.
 - The default picker marks the selected card with a filled `●`; other rows have
-  no marker.
+  no marker. When an aggregate is active, `mixbay-audio-defaults` exits without
+  touching the default sink/source: the virtual output was chosen in the audio
+  panel and must not be replaced at login or after a hotplug.
 - `--remove --device <id>` removes that card's split/mapping and its
   card-specific integration (douze for the SSL 12, oscmix for the RME cards),
   plus a downloaded card's profile folder. A shared integration is kept while

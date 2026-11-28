@@ -4,7 +4,8 @@
 # Thin passthrough to the mosquito-mixbay-tui binary's CLI modes (see
 # tui-go/cli.go, which owns the full list: devices-json, status-json, set,
 # mixer, save/load, reset-defaults, profiles-*, cards-connected-json,
-# patchbay-*). Stable name so hooks never depend on the TUI binary name.
+# patchbay-*, aggregate-*). Stable name so hooks never depend on the TUI
+# binary name.
 #
 #   mosquito-mixbay-actions --help      # the authoritative command list
 #   mosquito-mixbay-actions status-json [--device evo8]

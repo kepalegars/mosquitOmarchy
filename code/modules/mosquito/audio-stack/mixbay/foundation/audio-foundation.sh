@@ -883,6 +883,9 @@ set -u
 STATE="${XDG_CONFIG_HOME:-$HOME/.config}/mosquitomixbay/foundation.json"
 CONNLOG="${XDG_CONFIG_HOME:-$HOME/.config}/mosquitomixbay/connected-interfaces.json"
 command -v jq >/dev/null 2>&1 || exit 0
+# An aggregate is a user choice made in the audio panel. Re-applying the
+# per-card default here would silently replace it at login or after a hotplug.
+[[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/mosquitomixbay/aggregate/active.json" ]] && exit 0
 [[ -f $STATE ]] || exit 0
 card="$(jq -r '.default // ""' "$STATE" 2>/dev/null)"
 # No default chosen yet: leave PipeWire's own choice alone. Applying the

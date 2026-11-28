@@ -66,6 +66,7 @@ RELAUNCH_APPS=no
 DISABLE_PASSWORDLESS_SUDO=yes
 PIPEWIRE_AUTOLOCK=yes
 LOCK_OUTPUT_VOLUME=yes
+AGGREGATE_LOCK=yes
 
 load_settings() {
   # Defaults FIRST, then the file, then normalisation.
@@ -94,6 +95,7 @@ load_settings() {
   PIPEWIRE_AUTOLOCK=yes
   MOVE_AUDIO=yes
   LOCK_OUTPUT_VOLUME=yes
+  AGGREGATE_LOCK=yes
   FENCE_PACKAGES=no
   [[ -f $CONFIG_FILE ]] && source "$CONFIG_FILE" || true
 
@@ -123,6 +125,9 @@ load_settings() {
   [[ $PIPEWIRE_AUTOLOCK == no ]] || PIPEWIRE_AUTOLOCK=yes
   # On by default: only an explicit "no" leaves the native volume free.
   [[ $LOCK_OUTPUT_VOLUME == no ]] || LOCK_OUTPUT_VOLUME=yes
+  # On by default: freeze aggregate creation/activation/deletion for the
+  # session. Only an explicit "no" leaves the aggregate screen editable.
+  [[ $AGGREGATE_LOCK == no ]] || AGGREGATE_LOCK=yes
   # On by default: release the Ableton Move's interface for the session. The
   # Move is fixed at 44.1 kHz; leaving it selected would pin the whole graph
   # (and the session) there. Only an explicit "no" keeps it.
@@ -1155,6 +1160,46 @@ release_mixbay_volume() {
 }
 
 # ---------------------------------------------------------------------------
+# Aggregate devices fence
+#
+# Creating, activating, deleting or repairing an aggregate mid-session can cut
+# every card that feeds it. The Mixbay CLI checks this lock before any write;
+# live mode owns the lock file and the per-session unlock. Unlike the volume
+# preference, the active recipe is NOT restored on exit: a deliberate unlock
+# followed by a change must survive the session.
+# ---------------------------------------------------------------------------
+MIXBAY_AGG_DIR="${XDG_CONFIG_HOME:-$REAL_HOME/.config}/mosquitomixbay/aggregate"
+MIXBAY_AGG_LOCK="$MIXBAY_AGG_DIR/lock"
+MIXBAY_AGG_UNLOCK="$MIXBAY_AGG_DIR/unlocked"
+MIXBAY_AGG_BEFORE="$STATE_DIR/aggregate_before"
+MIXBAY_ACTIONS="$REAL_HOME/.local/bin/mosquito-mixbay-actions"
+
+lock_aggregate() {
+  [[ $AGGREGATE_LOCK == no ]] && return 0
+  [[ -x $MIXBAY_ACTIONS ]] || return 0
+  mkdir -p "$MIXBAY_AGG_DIR"
+  # Snapshot only for diagnostics after a crash; never restored automatically.
+  jq -r '.name // ""' "$MIXBAY_AGG_DIR/active.json" 2>/dev/null > "$MIXBAY_AGG_BEFORE" || true
+  "$MIXBAY_ACTIONS" aggregate-release >/dev/null 2>&1 || true
+  "$MIXBAY_ACTIONS" aggregate-lock >/dev/null 2>&1 \
+    && ok "aggregate devices frozen for the session" \
+    || warn "aggregate devices lock could not be applied"
+}
+
+release_aggregate() {
+  [[ -x $MIXBAY_ACTIONS ]] || return 0
+  "$MIXBAY_ACTIONS" aggregate-release >/dev/null 2>&1 \
+    && ok "aggregate devices unfrozen" \
+    || warn "aggregate devices fence could not be released"
+  rm -f "$MIXBAY_AGG_UNLOCK" "$MIXBAY_AGG_LOCK"
+}
+
+repair_aggregate() {
+  [[ -x $MIXBAY_ACTIONS ]] || return 0
+  "$MIXBAY_ACTIONS" aggregate-repair >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------------------
 # Sleep management — replicated from mega-caffeine, under live mode's name
 #
 # • systemd-inhibit blocks the lid from suspending (computer stays on with
@@ -1552,6 +1597,7 @@ cmd_on() {
     [[ $NO_GAPS == yes ]] && _lm_bullets+=("Gaps disabled during the session")
     [[ $SILENCE_NOTIFICATIONS == yes ]] && _lm_bullets+=("Notifications silenced")
     [[ $LOCK_OUTPUT_VOLUME == yes ]] && _lm_bullets+=("Mixbay output volume locked")
+    [[ $AGGREGATE_LOCK == yes ]] && _lm_bullets+=("Aggregate devices locked")
     [[ $SWITCH_THEME == yes ]] && _lm_bullets+=("Switch to the Live theme")
     [[ $DISABLE_PASSWORDLESS_SUDO == yes ]] && _lm_bullets+=("Disable passwordless sudo")
     # The fence is the one line that must be visible when it is on, because it
@@ -1570,7 +1616,7 @@ cmd_on() {
   # on_failure() removes the session flag so a failed/crashed activation can
   # never strand the "manage only while off" gate or the toggle logic, and
   # gives the theme/background shortcuts back.
-  on_fail() { rm -f "$ACTIVE_FLAG"; unblock_theme_keys; release_mixbay_volume; }
+  on_fail() { rm -f "$ACTIVE_FLAG"; unblock_theme_keys; release_mixbay_volume; release_aggregate; }
   trap on_fail EXIT
 
   # Mark active first: every helper below (sleep management, watchdog,
@@ -1631,6 +1677,7 @@ cmd_on() {
   release_move_audio
   pipewire_live_on
   lock_mixbay_volume
+  lock_aggregate
   frame_show &
 
   # 6. Scratchpad windows out of the way.
@@ -1645,6 +1692,10 @@ cmd_on() {
   if (( patchbay_rc == 1 )); then
     return 0
   fi
+  # qpwgraph may have been opened after an aggregate was activated. Restore any
+  # link it dropped while setting up the scratchpad; the guard service keeps
+  # watching removals for the rest of the session.
+  repair_aggregate
 
   # 8. Thermal watchdog (last: it reasserts everything above). Re-block the
   #    theme shortcuts first: the gaps toggle above is an Omarchy config toggle
@@ -1691,6 +1742,7 @@ cmd_off() {
     # Mixbay's volume pinned to exclusive.
     unblock_theme_keys
     release_mixbay_volume
+    release_aggregate
     ok "Live Mode is already off."
     return 0
   fi
@@ -1754,6 +1806,9 @@ cmd_off() {
 
   # 7c. Mixbay's own volume choice: put back what the session overrode.
   release_mixbay_volume
+
+  # 7d. Aggregate fence: the recipe itself is never auto-restored.
+  release_aggregate
 
   # 8. Privileged: restore profile, audio, usb, battery, thermal, fence
   sudo -n "$ROOT_HELPER" restore >/dev/null 2>&1 || warn "Partial restore (sudo denied for some ops)."

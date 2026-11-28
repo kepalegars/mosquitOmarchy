@@ -679,11 +679,71 @@ dans le graphe vivant.
 - **Add an audio interface** : scan des cartes USB non natives, ajout beta,
   et harnais `mixbay-reverse` (usbmon) pour capturer/labelliser/rejouer.
 
-## Patchbay PipeWire
+## Aggregate devices
+
+Un agrégat est une **recette locale** qui transforme plusieurs cartes en une
+seule sortie virtuelle (et optionnellement une seule entrée) via
+`libpipewire-module-combine-stream`. Rien n'est écrit dans la config PipeWire,
+aucune horloge globale n'est forcée, aucun daemon audio n'est ajouté.
+
+- `Devices → Aggregate devices → New aggregate…` : `space` coche des nœuds
+  `Audio/Sink` (sorties) ou `Audio/Source` (entrées), `n` demande un nom.
+- `a` active/désactive la recette sélectionnée. L'activation charge le module
+  avec `pw-cli load-module` (pas de redémarrage du graphe) et crée un sink
+  `agg_<slug>` : il apparaît dans le panneau audio Omarchy comme une sortie
+  normale. Le choix de cette sortie reste à l'utilisateur.
+- Chaque membre a sa correction de dérive (`resample.quality`, défaut 4) sauf
+  quand il partage un `clock.name` avec le maître (`resample.disable`). Le
+  taux/quantum et le fait que le resampling soit actif sont affichés ; aucun
+  bit-perfect n'est promis.
+- Un seul agrégat actif à la fois. Le fichier `active.json` est relu au login
+  par `mixbay-aggregate.service`. `mixbay-aggregate-guard.service` écoute
+  `pw-mon` (événements, jamais de polling) et rejoue les liens qu'un éditeur de
+  graphe aurait supprimés — sans jamais en déconnecter.
+- `p` répare manuellement, `d` supprime une recette, `A` lève le verrou Live
+  Mode pour la session.
+- `~/.config/mosquitomixbay/aggregate/` contient les recettes, `active.json` et
+  les fichiers de verrou ; les IDs de modules et les liens attendus vivent dans
+  `$XDG_RUNTIME_DIR/mixbay-aggregate.json`.
+
+```bash
+mosquito-mixbay-actions aggregate-status-json
+mosquito-mixbay-actions aggregate-save studio --node <sink> --node <sink2> --input-node <source>
+mosquito-mixbay-actions aggregate-activate studio
+mosquito-mixbay-actions aggregate-deactivate
+mosquito-mixbay-actions aggregate-repair
+```
+
+Le ciblage utilise un **sélecteur multi-clés** (`device.name`,
+`api.alsa.card`, `device.profile.name`, `node.name` en dernier recours), pas un
+nom de nœud seul : un changement de profil ALSA/UCM ne rend pas la recette
+muette. Après activation, le graphe est relu pour vérifier que chaque membre a
+vraiment reçu un flux ; sinon l'agrégat est `degraded`, jamais silencieusement
+`active`. Un membre ne peut jamais être un monitor ou un autre agrégat.
+
+## Sécurité du live et liens entre modules
+
+- Live Mode `AGGREGATE_LOCK` (défaut on) écrit un lock que **toute** commande
+  `aggregate-*` mutante vérifie avant d'écrire. L'UI grise les lignes avec
+  `(locked by Live Mode)`. La recette active n'est jamais restaurée à la
+  fin de session : un déverrouillage explicite suivi d'un changement survit.
+- Le panneau **pipewire-settings** expose `aggregate_active` /
+  `aggregate_locked` et verrouille taux/quantum tant qu'un agrégat est actif
+  (déverrouillage `L` avec confirmation). Son backend refuse aussi un
+  `set-rate` direct tant que le verrou est posé.
+- Le patchbay de Mixbay ignore les liens `agg_*` : `patchbay-apply --replace`
+  ne peut pas débrancher un agrégat. qpwgraph, lui, reste libre : c'est le rôle
+  du guard et de `aggregate-repair`.
+- Levels Guard ne reconnaît pas les nœuds `agg_` : le volume d'un agrégat reste
+  logiciel et ajustable, même en live. C'est volontaire.
+
+## Patchbay PipeWire (liens bruts)
 
 Le mixeur et le patchbay sont deux couches **séparées** : le mixer choisit ce
 que chaque canal contient (gains, sends, bus), le patchbay choisit quels nœuds
 PipeWire sont reliés entre eux. Changer l'un ne change pas l'autre.
+
+Les liens bruts restent accessibles au bas de l'écran **Aggregate devices**.
 
 Le patchbay est **explicite** : rien n'est appliqué automatiquement au
 branchement ou au démarrage. `qpwgraph` reste l'éditeur de graphe ; mixbay
@@ -761,7 +821,8 @@ mosquitomixbay/
     drivers/                 Driver iface : evo.go, alsa.go (+ tests)
     meters/                  capture pw-record f32 + ballistiques (+ tests)
     patchbay/                graphe pw-dump, presets de liens (+ tests)
-    ui_blocks.go betaui.go library_ui.go foundation_ui.go setup_ui.go
+    aggregate/               recettes, sélecteurs, modules combine-stream (+ tests)
+    ui_blocks.go betaui.go library_ui.go foundation_ui.go setup_ui.go aggregate_ui.go
     profiles_cli.go session.go view.go evo_tui.go ugm_tui.go move_tui.go
     evo_anim.go meters_ui.go patchbay_ui.go ui_openers.go cli.go model.go main.go
   README.md  INTEGRATION.md
@@ -774,6 +835,7 @@ partagé avec evoctl, `config.json`, les snapshots nommés et `.output-mute.json
 pour le mute de sortie émulé — le preset `default` n'existe pas sur disque, il
 est fourni par le binaire et protégé), `~/.config/mosquitomixbay/<dev>/demo.json`
 (DEMO), `~/.config/mosquitomixbay/pipewire/<preset>.json` (patchbay),
+`~/.config/mosquitomixbay/aggregate/` (agrégats + verrou live),
 `~/.config/mosquitomixbay/cards/<id>/` (profils), `foundation.json` +
 `connected-interfaces.json` (fondation audio, écrits par le shell),
 `onboarding.json` (premier branchement), `reverse/` (harnais usbmon),

@@ -83,5 +83,8 @@ en plein set (même pattern que la garde thermale existante).
   `50-mixbay-evo.conf` et le watchdog de split (`--split on`).
 - Patchbay automatique au branchement : volontairement absent. Les presets se
   sauvent/appliquent à la main (`patchbay-save` / `patchbay-apply`).
+- Agrégats : activation explicite (`aggregate-activate`) uniquement. Le guard
+  `pw-mon` ne fait que rejouer les liens d'un agrégat **déjà actif**, il n'en
+  crée aucun au branchement.
 - `save`/`load` scène nommés (`--scene NAME`) : le format JSON le permet,
   le CLI ne l'expose pas encore.

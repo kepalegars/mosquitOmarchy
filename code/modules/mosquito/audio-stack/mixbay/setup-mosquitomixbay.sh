@@ -96,11 +96,16 @@ if ((UNINSTALL)); then
     ok "profile integrations removed ($integ)"
   fi
   [[ -x "$BIN_DIR/mixbay-startup" ]] && "$BIN_DIR/mixbay-startup" --remove || true
-  systemctl --user disable --now mixbay-card-watcher.service >/dev/null 2>&1 || true
-  rm -f "$HOME/.config/systemd/user/mixbay-card-watcher.service"
+  # Unload an active aggregate before its CLI disappears. Lock is irrelevant
+  # here: uninstall is an explicit user action, not a live-session change.
+  rm -f "$HOME/.config/mosquitomixbay/aggregate/lock" "$HOME/.config/mosquitomixbay/aggregate/unlocked"
+  [[ -x "$BIN_DIR/mosquito-mixbay-actions" ]] && [[ -f "$HOME/.config/mosquitomixbay/aggregate/active.json" ]] \
+    && "$BIN_DIR/mosquito-mixbay-actions" aggregate-deactivate >/dev/null 2>&1 || true
+  systemctl --user disable --now mixbay-aggregate-guard.service mixbay-aggregate.service mixbay-card-watcher.service >/dev/null 2>&1 || true
+  rm -f "$HOME/.config/systemd/user/mixbay-aggregate.service" "$HOME/.config/systemd/user/mixbay-aggregate-guard.service" "$HOME/.config/systemd/user/mixbay-card-watcher.service"
   systemctl --user daemon-reload >/dev/null 2>&1 || true
   rm -f "${XDG_RUNTIME_DIR:-/tmp}/mosquito-mixbay-tui.pid" "${XDG_RUNTIME_DIR:-/tmp}/mosquito-mixbay.pid"
-  rm -f "$BIN_DIR/mosquito-mixbay" "$BIN_DIR/mosquito-mixbay-actions" "$BIN_DIR/mosquito-mixbay-tui" "$BIN_DIR/mosquito-mixbay-compat" "$BIN_DIR/mixbay-audio-foundation" "$BIN_DIR/mixbay-audio-defaults" "$BIN_DIR/mixbay-setup-ssl12" "$BIN_DIR/mixbay-oscmix-gtk" "$BIN_DIR/mixbay-oscmix-qt" "$BIN_DIR/mixbay-startup" "$BIN_DIR/mixbay-reverse" "$BIN_DIR/mixbay-card-watcher" "$BIN_DIR/move-audio"
+  rm -f "$BIN_DIR/mosquito-mixbay" "$BIN_DIR/mosquito-mixbay-actions" "$BIN_DIR/mosquito-mixbay-tui" "$BIN_DIR/mosquito-mixbay-compat" "$BIN_DIR/mixbay-audio-foundation" "$BIN_DIR/mixbay-audio-defaults" "$BIN_DIR/mixbay-setup-ssl12" "$BIN_DIR/mixbay-oscmix-gtk" "$BIN_DIR/mixbay-oscmix-qt" "$BIN_DIR/mixbay-startup" "$BIN_DIR/mixbay-reverse" "$BIN_DIR/mixbay-card-watcher" "$BIN_DIR/mixbay-aggregate-guard" "$BIN_DIR/move-audio"
   ok "binaries removed from $BIN_DIR"
   if [[ -f "$HOME/.config/hypr/hyprland.lua" ]]; then
     if grep -qF -- '-- >>> mosquito-mixbay-tui-setup >>>' "$HOME/.config/hypr/hyprland.lua" \
@@ -287,6 +292,57 @@ EOF
     && ok "card watcher service enabled (event-driven, works while Mixbay is closed)" \
     || warn "could not start mixbay-card-watcher.service — run: systemctl --user enable --now mixbay-card-watcher"
 fi
+
+# -----------------------------------------------------------------------------
+# 2c. Aggregate devices: one service restores the active recipe at login, one
+#     event-driven guard repairs links a graph editor removed. Both are inert
+#     while no aggregate is active (ConditionPathExists), so they never fight
+#     a normal PipeWire graph.
+# -----------------------------------------------------------------------------
+if [[ -f "$SCRIPT_DIR/foundation/mixbay-aggregate-guard" ]]; then
+  AG_TMP="$(mktemp "$BIN_DIR/.mixbay-aggregate-guard.XXXXXX")"
+  cp "$SCRIPT_DIR/foundation/mixbay-aggregate-guard" "$AG_TMP"
+  chmod +x "$AG_TMP"
+  bash -n "$AG_TMP" || { rm -f "$AG_TMP"; die "Invalid syntax: mixbay-aggregate-guard"; }
+  mv -f "$AG_TMP" "$BIN_DIR/mixbay-aggregate-guard"
+  ok "mixbay-aggregate-guard deployed: $BIN_DIR/mixbay-aggregate-guard"
+fi
+UNIT_DIR="$HOME/.config/systemd/user"
+mkdir -p "$UNIT_DIR"
+cat > "$UNIT_DIR/mixbay-aggregate.service" <<'EOF'
+[Unit]
+Description=Mixbay aggregate devices (restore active recipe)
+After=pipewire.service wireplumber.service
+ConditionPathExists=%h/.config/mosquitomixbay/aggregate/active.json
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/mosquito-mixbay-actions aggregate-restore
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical-session.target
+EOF
+cat > "$UNIT_DIR/mixbay-aggregate-guard.service" <<'EOF'
+[Unit]
+Description=Mixbay aggregate link guard
+After=mixbay-aggregate.service
+ConditionPathExists=%h/.config/mosquitomixbay/aggregate/active.json
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/mixbay-aggregate-guard
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target
+EOF
+systemctl --user daemon-reload >/dev/null 2>&1 || true
+systemctl --user enable mixbay-aggregate.service mixbay-aggregate-guard.service >/dev/null 2>&1 || true
+systemctl --user restart mixbay-aggregate.service mixbay-aggregate-guard.service >/dev/null 2>&1 \
+  && ok "aggregate services enabled" \
+  || warn "aggregate services installed but not started — run: systemctl --user enable --now mixbay-aggregate mixbay-aggregate-guard"
 
 # -----------------------------------------------------------------------------
 # 3. Hyprland float rule (same marked-block pattern as siblings)
