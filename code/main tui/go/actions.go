@@ -943,3 +943,35 @@ func openDownloadPageCmd(key string) tea.Cmd {
 		return nil
 	}
 }
+
+// assetReadyMsg lists the gated module keys whose archives are now present
+// and complete (the backend adopts a finished download from ~/Downloads).
+type assetReadyMsg struct {
+	keys []string
+	err  error
+}
+
+func fetchAssetReadyCmd(keys []string) tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick(append([]string{"assets-ready"}, keys...)...)
+		if err != nil {
+			return assetReadyMsg{err: err}
+		}
+		var ks []string
+		for _, l := range strings.Split(string(out), "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				ks = append(ks, l)
+			}
+		}
+		return assetReadyMsg{keys: ks}
+	}
+}
+
+// assetPollMsg wakes the archive watcher. It is a plain timer: the handler
+// only spawns a backend check while a Setup screen actually shows a greyed
+// archive row, so the idle cost is one sleeping timer.
+type assetPollMsg struct{}
+
+func assetPollTickCmd() tea.Cmd {
+	return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return assetPollMsg{} })
+}

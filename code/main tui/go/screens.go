@@ -979,6 +979,48 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.toast, _ = m.toast.SetWarn(msg.err.Error())
 		return m, nil
 
+	case assetPollMsg:
+		// Only a Setup screen with a greyed archive row is worth a check:
+		// elsewhere the ticker is just a sleeping timer.
+		if m.top() == scrSetup || m.top() == scrSetupCat {
+			if keys := m.pendingAssetKeys(); len(keys) > 0 {
+				return m, tea.Batch(fetchAssetReadyCmd(keys), assetPollTickCmd())
+			}
+		}
+		return m, assetPollTickCmd()
+
+	case assetReadyMsg:
+		if msg.err != nil {
+			return m, nil
+		}
+		changed := false
+		for _, key := range msg.keys {
+			for i := range m.setupItems {
+				it := &m.setupItems[i]
+				if it.Key != key || it.Needs == "" {
+					continue
+				}
+				it.Needs = ""
+				it.Disabled = false
+				// The backend appends its "needs …" sentence last; drop it so
+				// `i` no longer claims an archive is missing.
+				if j := strings.LastIndex(it.Info, " — needs "); j >= 0 {
+					it.Info = it.Info[:j]
+				}
+				m.setupByValue[setupValue(it.Folder, it.Key)] = *it
+				changed = true
+			}
+		}
+		if changed {
+			if m.top() == scrSetup {
+				m.setupPicker = m.rebuildSetup()
+			}
+			if m.top() == scrSetupCat {
+				m.setupCatPicker = m.rebuildSetupCat()
+			}
+		}
+		return m, nil
+
 	case assetMissingMsg:
 		if m.top() != scrConfirm || m.pendingAction != "download-assets-prompt" {
 			return m, nil
@@ -1040,6 +1082,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		return m, nil
 
 	case assetDownloadsMsg:
+		var finished []string
 		if msg.err == nil {
 			if m.assetDL == nil {
 				m.assetDL = make(map[string]AssetDownloadRec)
@@ -1047,6 +1090,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			for _, r := range msg.items {
 				if r.Status == "active" || r.Status == "done" || r.Status == "failed" {
 					m.assetDL[r.Key] = r
+				}
+				if r.Status == "done" {
+					finished = append(finished, r.Key)
 				}
 			}
 			switch m.top() {
@@ -1064,6 +1110,9 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					}
 				}
 			}
+		}
+		if len(finished) > 0 {
+			return m, fetchAssetReadyCmd(finished)
 		}
 		return m, nil
 
@@ -4895,6 +4944,19 @@ func (m model) confirmPreinstallRemove(pkgs []string) (model, tea.Cmd) {
 
 // confirmInstallSelection installs the Tab-checked rows, and only those. An
 // empty selection is a warning, not an implicit cursor install.
+// pendingAssetKeys lists the gated keys whose greyed rows are on screen.
+func (m *model) pendingAssetKeys() []string {
+	seen := make(map[string]bool, 4)
+	var keys []string
+	for _, it := range m.setupItems {
+		if it.Needs != "" && !seen[it.Needs] {
+			seen[it.Needs] = true
+			keys = append(keys, it.Needs)
+		}
+	}
+	return keys
+}
+
 func (m model) confirmInstallSelection() (model, tea.Cmd) {
 	keys := dedupeAudioBundle(m.allSelectedKeys())
 	if len(keys) == 0 {

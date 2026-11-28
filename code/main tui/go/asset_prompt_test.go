@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	tuikit "mosquitomarchy.local/tui-kit"
@@ -60,5 +61,29 @@ func TestPageOnlyPromptOpensPage(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatalf("Yes on a page-only prompt did not launch the opener")
+	}
+}
+
+// A ready archive clears the greyed row and its stale "needs …" info.
+func TestAssetReadyUngreysRow(t *testing.T) {
+	m := initialModel()
+	m.setupItems = []SetupItemRec{{
+		Folder: "apps", Key: "davinci-resolve", Disabled: true,
+		Needs: "davinci-resolve", Info: "DaVinci Resolve — needs DaVinci_Resolve_*.zip in code/modules/Apps/davinci/",
+	}}
+	m.setupByValue = map[string]SetupItemRec{
+		setupValue("apps", "davinci-resolve"): m.setupItems[0],
+	}
+
+	m2, _ := m.update(assetReadyMsg{keys: []string{"davinci-resolve"}})
+	it := m2.setupItems[0]
+	if it.Needs != "" || it.Disabled {
+		t.Fatalf("row still gated: needs=%q disabled=%v", it.Needs, it.Disabled)
+	}
+	if strings.Contains(it.Info, "needs DaVinci") {
+		t.Fatalf("stale archive note kept: %q", it.Info)
+	}
+	if got := m2.setupByValue[setupValue("apps", "davinci-resolve")]; got.Needs != "" || got.Disabled {
+		t.Fatalf("setupByValue still gated: %+v", got)
 	}
 }

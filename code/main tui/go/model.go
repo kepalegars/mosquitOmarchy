@@ -716,7 +716,7 @@ func (m model) Init() tea.Cmd {
 	// themselves with a spinner on the main menu and settle into a square (or
 	// nothing) when they finish; neither is re-run until the app is quit.
 	return tea.Batch(tuikit.ThemeWatchCmd(), firstRunCmd(), fetchUpdateCheckCmd(),
-		fetchHealthCmd(), loadingTickCmd(), warmCacheCmd())
+		fetchHealthCmd(), loadingTickCmd(), warmCacheCmd(), assetPollTickCmd())
 }
 
 // top, contentSize and their friends take a POINTER receiver. The model holds
