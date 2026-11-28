@@ -38,6 +38,13 @@ func (p navPicker) SetHelpKeys(keys ...key.Binding) navPicker {
 	return p
 }
 
+// WithFoldState marks a folder tree so the kit makes `l` the single-key fold
+// toggle. The host still folds through PickerSortMsg (see screens.go).
+func (p navPicker) WithFoldState() navPicker {
+	p.Picker = p.Picker.WithFoldState()
+	return p
+}
+
 // SelectValue moves the cursor to a row by its value. Used instead of
 // SelectIndex wherever the row is identified by what it DOES: an index breaks
 // the moment a row is inserted above it, and it breaks silently — the test still
@@ -55,9 +62,9 @@ func (p navPicker) SelectIndex(i int) navPicker {
 func (p navPicker) Update(msg tea.Msg) (navPicker, tea.Cmd) {
 	if km, ok := msg.(tea.KeyMsg); ok {
 		switch km.String() {
-		case "down", "j", "pgdown", "l", "f", "d":
+		case "down", "j", "pgdown", "f", "d":
 			return p.step(1), nil
-		case "up", "k", "pgup", "h", "b", "u":
+		case "up", "k", "pgup", "b", "u":
 			return p.step(-1), nil
 		case "home", "g":
 			return p.selectFirst(), nil

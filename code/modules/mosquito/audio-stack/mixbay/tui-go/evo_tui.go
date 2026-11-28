@@ -2668,6 +2668,15 @@ func (u *evoUI) pickerMove(delta int, wrap bool) {
 
 func (m *model) evoPickerKey(k string) tea.Cmd {
 	u := &m.evo
+	// In the live name field h/j/k/l are letters, not navigation. Handle them
+	// before the switch so a preset called "jack" can be typed.
+	if (u.mode == 1 || u.renaming) && u.pickerEditable() {
+		switch k {
+		case "h", "j", "k", "l":
+			u.pickerInsertChar(k)
+			return nil
+		}
+	}
 	moved := false
 	switch k {
 	case "esc", "backspace":
@@ -2733,10 +2742,13 @@ func (m *model) evoPickerKey(k string) tea.Cmd {
 			u.fileInput = u.fileInput[:u.caretPos] + u.fileInput[u.caretPos+size:]
 			return nil
 		}
-	case "up":
+	case "h":
+		u.mode = 0
+		return nil
+	case "up", "k":
 		u.pickerMove(-1, false)
 		moved = true
-	case "down":
+	case "down", "j":
 		u.pickerMove(1, false)
 		moved = true
 	case "shift+tab":
@@ -2766,7 +2778,7 @@ func (m *model) evoPickerKey(k string) tea.Cmd {
 		}
 		m.push(scrConfirm)
 		return nil
-	case "enter":
+	case "enter", "l":
 		name := strings.TrimSpace(strings.TrimSuffix(u.fileInput, ".json"))
 		if u.renaming {
 			return m.evoCommitRename(name)
@@ -2805,11 +2817,7 @@ func (m *model) evoPickerKey(k string) tea.Cmd {
 		if (u.mode == 1 || u.renaming) && u.pickerEditable() && len(k) == 1 {
 			c := k[0]
 			if c >= 32 && c <= 126 {
-				maxLen := evoBoxIW - len("File: ") - len(".json") - 1
-				if len(u.fileInput) < maxLen {
-					u.fileInput = u.fileInput[:u.caretPos] + k + u.fileInput[u.caretPos:]
-					u.caretPos++
-				}
+				u.pickerInsertChar(k)
 			}
 		}
 	}
@@ -2823,6 +2831,17 @@ func (m *model) evoPickerKey(k string) tea.Cmd {
 		u.caretPos = len(u.fileInput)
 	}
 	return nil
+}
+
+// pickerInsertChar inserts one printable character at the caret, capped to
+// the field. Shared by ordinary typing and the h/j/k/l letters that would
+// otherwise be swallowed by the list keys.
+func (u *evoUI) pickerInsertChar(k string) {
+	maxLen := evoBoxIW - len("File: ") - len(".json") - 1
+	if len(u.fileInput) < maxLen {
+		u.fileInput = u.fileInput[:u.caretPos] + k + u.fileInput[u.caretPos:]
+		u.caretPos++
+	}
 }
 
 // pickerEditable reports whether the save picker's name field accepts typing:

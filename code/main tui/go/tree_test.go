@@ -1819,6 +1819,29 @@ func TestMoveNativeUsesUppercaseP(t *testing.T) {
 	}
 }
 
+// `l` is the one-key fold gesture on a tree: it must close the category the
+// cursor is in and never act on a row (Enter is the only validation here).
+func TestVimLFoldsATreeWithoutActing(t *testing.T) {
+	m := flatSetup()
+	m.setupPicker = m.setupPicker.SelectValue(setupValue("apps", "reaper"))
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("l")})
+	if m.folderOpen["apps"] {
+		t.Fatal("l did not collapse the folder under the cursor")
+	}
+	if len(m.selected) != 0 || m.pendingAction != "" {
+		t.Fatalf("l acted on a tree row: selected=%v action=%q", m.selected, m.pendingAction)
+	}
+	if m.setupPicker.SelectedValue() != folderValue("apps") {
+		t.Fatalf("cursor did not land on the closed folder: %q", m.setupPicker.SelectedValue())
+	}
+
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("l")})
+	if !m.folderOpen["apps"] {
+		t.Fatal("a second l did not re-open the folder")
+	}
+}
+
 // Without the Move script the P hint and the key stay silent; p (the R2R
 // patch) is still advertised.
 func TestPOnAbletonWithoutMoveScriptIsInert(t *testing.T) {

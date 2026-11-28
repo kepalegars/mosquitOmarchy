@@ -201,7 +201,7 @@ func (m model) rebuildKBList() navPicker {
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "remove")),
-			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")))
+			key.NewBinding(key.WithKeys("esc", "h"), key.WithHelp("esc/h", "back")))
 	return p.SelectIndex(idx)
 }
 
@@ -216,7 +216,7 @@ func (m model) rebuildKBCat() navPicker {
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
 	return newNavPicker("Add a keybinding — choose what it does", items).SetSize(m.contentSize()).
 		SetHelpKeys(key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "pick a key")),
-			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back"))).
+			key.NewBinding(key.WithKeys("esc", "h"), key.WithHelp("esc/h", "back"))).
 		SelectIndex(idx)
 }
 
@@ -249,7 +249,7 @@ func (m model) rebuildKBItems() navPicker {
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
 	return newNavPicker("Add a keybinding — choose what it does", items).SetSize(m.contentSize()).
 		SetHelpKeys(key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "pick a key")),
-			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back"))).
+			key.NewBinding(key.WithKeys("esc", "h"), key.WithHelp("esc/h", "back"))).
 		SelectIndex(idx)
 }
 
@@ -263,6 +263,6 @@ func (m model) rebuildKBKeys() navPicker {
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
 	return newNavPicker("Pick a free key for: "+m.kbPending.Label, items).SetSize(m.contentSize()).
 		SetHelpKeys(key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "bind")),
-			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back"))).
+			key.NewBinding(key.WithKeys("esc", "h"), key.WithHelp("esc/h", "back"))).
 		SelectIndex(idx)
 }

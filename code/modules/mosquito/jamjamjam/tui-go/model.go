@@ -72,7 +72,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.settings {
 			switch msg.String() {
-			case "esc", "backspace", "q", "s":
+			case "esc", "backspace", "q", "s", "h":
 				m.settings = false
 			case "n":
 				if m.config.NoteNaming == "flats" {
@@ -87,13 +87,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.help {
 			switch msg.String() {
-			case "q", "esc", "backspace", "?":
+			case "q", "esc", "backspace", "?", "h":
 				m.help = false
 			}
 			return m, nil
 		}
 		switch msg.String() {
-		case "ctrl+c", "q", "esc", "backspace":
+		case "ctrl+c", "q", "esc", "backspace", "h":
 			m.releaseHold()
 			m.quit = true
 			return m, tea.Quit
@@ -319,13 +319,13 @@ func (m model) helpView() string {
 		tuikit.StyleHeader.Render("r") + "  " + tuikit.StyleMuted.Render("reset the analysis (key, BPM, chord memory)"),
 		tuikit.StyleHeader.Render("s") + "  " + tuikit.StyleMuted.Render("settings (note naming)"),
 		tuikit.StyleHeader.Render("?") + "  " + tuikit.StyleMuted.Render("toggle this help"),
-		tuikit.StyleHeader.Render("esc / q") + "  " + tuikit.StyleMuted.Render("quit"),
+		tuikit.StyleHeader.Render("esc / h / q") + "  " + tuikit.StyleMuted.Render("quit"),
 		"",
 		tuikit.StyleMuted.Render("On the neck: R = root, digits = scale degrees, high strings on top."),
 	}
 	body := strings.Join(rows, "\n")
 	return tuikit.FrameScreen(m.w, m.h, tuikit.StyleAccent.Render("jamjamjam · help"), body,
-		tuikit.BottomBar("", tuikit.StyleHelp.Render("? / esc / q close"), m.w))
+		tuikit.BottomBar("", tuikit.StyleHelp.Render("? / esc / h / q close"), m.w))
 }
 
 // settingsView is the "s" overlay: the TUI-owned settings.
@@ -338,11 +338,11 @@ func (m model) settingsView() string {
 		tuikit.StyleMuted.Render("NOTE NAMING") + "  " + tuikit.StyleHeader.Render("["+m.config.NoteNaming+"]") +
 			"   " + tuikit.StyleMuted.Render("press n to toggle flats/sharps"),
 		"",
-		tuikit.StyleMuted.Render("esc / s back · q quit"),
+		tuikit.StyleMuted.Render("esc / h / s back · q quit"),
 	}
 	body := strings.Join(rows, "\n")
 	return tuikit.FrameScreen(m.w, m.h, tuikit.StyleHeader.Render("jamjamjam · settings"), body,
-		tuikit.BottomBar(m.status, tuikit.StyleHelp.Render("n naming · esc back"), m.w))
+		tuikit.BottomBar(m.status, tuikit.StyleHelp.Render("n naming · esc/h back"), m.w))
 }
 
 // splashTitle is the splash's title block, at whichever rung fits the window.

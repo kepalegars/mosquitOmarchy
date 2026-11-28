@@ -237,12 +237,12 @@ func (r Runner) View() string {
 	return StyleFrame.Render(body)
 }
 
-// ShortcutsHint returns the bottom-row shortcut hint for this Runner: Esc
-// cancels the run, and a finished run still advertises enter/esc to leave
-// the log.
+// ShortcutsHint returns the bottom-row shortcut hint for this Runner: Esc (or
+// `h`) cancels the run, and a finished run still advertises enter/l and esc/h
+// to leave the log.
 func (r Runner) ShortcutsHint() string {
 	if r.done {
-		return StyleHelp.Render("enter/esc continue")
+		return StyleHelp.Render("enter/l · esc/h continue")
 	}
-	return StyleHelp.Render("esc cancel")
+	return StyleHelp.Render("esc/h cancel")
 }

@@ -203,7 +203,7 @@ func TestShortcutsHintFitsAndKeepsThePrimaryAction(t *testing.T) {
 	if w := lipgloss.Width(plain); w > 92 {
 		t.Errorf("hint is %d columns in a 92-column panel:\n%s", w, plain)
 	}
-	for _, want := range []string{"i info", "enter install selection"} {
+	for _, want := range []string{"i info", "enter/l install selection"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("hint dropped %q — it must survive the fit:\n%s", want, plain)
 		}

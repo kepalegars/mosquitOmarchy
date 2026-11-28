@@ -118,9 +118,9 @@ func (m model) rebuildAddons() navPicker {
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
-			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
+			key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
-		).KeepCursor(m.addonsPicker.SelectedValue())
+		).WithFoldState().KeepCursor(m.addonsPicker.SelectedValue())
 }
 
 // rebuildFilteredAddons is the typing-filter view: matching leaf rows only,

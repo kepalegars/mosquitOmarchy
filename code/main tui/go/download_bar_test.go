@@ -54,7 +54,7 @@ func TestDownloadBarFitsTheWindow(t *testing.T) {
 		t.Fatalf("view has %d rows, want %d", got, m.h)
 	}
 	lines := strings.Split(m.View(), "\n")
-	if !strings.Contains(lines[len(lines)-1], "esc cancel") {
+	if !strings.Contains(lines[len(lines)-1], "esc/h cancel") {
 		t.Fatalf("last row is not the shortcut legend: %q", lines[len(lines)-1])
 	}
 	foundBar := false

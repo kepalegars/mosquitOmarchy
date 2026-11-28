@@ -257,7 +257,7 @@ func (m *model) ugmKey(k string) tea.Cmd {
 		case "tab":
 			m.cyclePage()
 			return nil
-		case "esc", "backspace":
+		case "esc", "backspace", "h":
 			if m.hasBlock("controlsSingle") {
 				m.evo.window = evoWinControls
 				return nil
@@ -276,7 +276,7 @@ func (m *model) ugmKey(k string) tea.Cmd {
 	switch k {
 	case "q":
 		return m.evoQuitConfirm()
-	case "esc", "backspace":
+	case "esc", "backspace", "h":
 		if m.numBuf != "" {
 			if k == "backspace" {
 				m.numBuf = m.numBuf[:len(m.numBuf)-1]
@@ -297,7 +297,7 @@ func (m *model) ugmKey(k string) tea.Cmd {
 		return m.applyCmd(dev, func(d drivers.Driver) error {
 			return d.SetVolume(0, m.status.Spec.VolMin)
 		}, "volume reset")
-	case "enter":
+	case "enter", "l":
 		if m.numBuf != "" {
 			return m.finishNumeric()
 		}

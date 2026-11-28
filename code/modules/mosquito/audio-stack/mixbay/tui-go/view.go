@@ -325,40 +325,51 @@ func (m model) legendLine(w int) string {
 	var hint string
 	switch m.top() {
 	case scrDevices:
-		hint = "↑/↓ · enter open · r refresh · q quit"
+		hint = "↑/k up · ↓/j down · enter/l open · h/q quit · r refresh"
 	case scrControls:
 		if hasControls(m.status) {
-			hint = "Tab mixer · enter · [ ] adjust · { } big · digits dial · s/o save/load · ? help"
+			if m.controlModel() == modelGrid {
+				// The EVO grid is one of the two real 2D surfaces: h/l move
+				// columns, j/k move rows, and they keep meaning here.
+				hint = "Tab mixer · j/k rows · h/l cols · enter · [ ] adjust · { } big · digits dial · esc back · s/o save/load · ? help"
+			} else {
+				hint = "Tab mixer · ↑/k up · ↓/j down · enter/l · [ ] adjust · { } big · digits dial · esc/h back · s/o save/load · ? help"
+			}
 		} else {
-			hint = "↑/↓ · enter open · r refresh · esc back · ? help"
+			hint = "↑/k up · ↓/j down · enter/l open · esc/h back · r refresh · ? help"
 		}
 	case scrMixer:
-		hint = "Tab controls · [ ] vol · { }/,/. pan · digits dial · bus row switches MIX · ? help"
+		if m.controlModel() == modelGrid {
+			hint = "Tab controls · j/k rows · h/l sources · [ ] vol · { }/,/. pan · digits dial · bus row switches MIX · esc back · ? help"
+		} else {
+			hint = "Tab controls · ↑/k up · ↓/j down · enter/l · [ ] vol · { }/,/. pan · digits dial · bus row switches MIX · esc/h back · ? help"
+		}
 	case scrSettings:
-		hint = "enter toggles · esc back"
+		hint = "←/→/enter/l toggle · esc/h back"
 	case scrAggregate:
-		hint = "n new · a activate/deactivate · d delete · p repair · A lock · s save links · r refresh · esc back"
+		hint = "n new · a activate/deactivate · d delete · p repair · A lock · s save links · r refresh · esc/h back"
 	case scrAggregatePick:
-		hint = "space toggle · n name & save · esc back"
+		hint = "space toggle · n name & save · esc/h back"
 	case scrFoundation:
-		hint = "enter install/remove · d default · r refresh · esc back"
+		hint = "enter/l install/remove · d default · r refresh · esc/h back"
 		if _, ok := m.selectedSplitCard(); ok {
-			hint = "enter install/remove · s split on/off · d default · r refresh · esc back"
+			hint = "enter/l install/remove · s split on/off · d default · r refresh · esc/h back"
 		}
 	case scrFoundationDefault:
-		hint = "enter choose · esc back"
+		hint = "enter/l choose · esc/h back"
 	case scrAddInterface:
-		hint = "enter add as beta · r rescan · esc back"
+		hint = "enter/l add as beta · r rescan · esc/h back"
 	case scrLibrary:
 		if m.libraryFilterOpen {
+			// h/j/k/l are literal characters in the live filter.
 			hint = "type to filter · enter action · esc close"
 		} else if m.libraryTab == libAvailable {
-			hint = "←/→ tabs · tab select · enter install · F search · O open repo · i info · r refresh · esc back"
+			hint = "←/→/h/l tabs · tab select · enter install · F search · O open repo · i info · r refresh · esc back"
 		} else {
-			hint = "←/→ tabs · tab select · enter update · F search · e export · D uninstall · i info · r refresh · esc back"
+			hint = "←/→/h/l tabs · tab select · enter update · F search · e export · D uninstall · i info · r refresh · esc back"
 		}
 	default:
-		hint = "↑/↓ · enter · q quit"
+		hint = "↑/k up · ↓/j down · enter/l · q quit"
 	}
 	return tuikit.StyleHelp.Render(centerTrunc(hint, w))
 }

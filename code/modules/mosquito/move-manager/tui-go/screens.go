@@ -534,7 +534,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// armed the pick (superfile embedded or the default pick-adg action)
 		// and pathMsg/presetStatusMsg carries the result through.
 		if km, ok := msg.(tea.KeyMsg); ok {
-			if km.String() == "esc" || km.String() == "ctrl+c" {
+			if km.String() == "esc" || km.String() == "h" || km.String() == "ctrl+c" {
 				m.presetFiles = nil
 				m.nav = []screen{scrMain}
 				m.toast, _ = m.toast.SetWarn("preset selection canceled")
@@ -599,7 +599,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handlePresetUploadPoll(pr)
 		}
 		if km, ok := msg.(tea.KeyMsg); ok &&
-			(km.String() == "esc" || km.String() == "enter" || km.String() == "ctrl+c") {
+			(km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l" || km.String() == "ctrl+c") {
 			m.presetUploadSawRunning = false
 			m.nav = []screen{scrMain}
 			// The user dismissed the upload screen while the Manager is
@@ -628,11 +628,11 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done, ok := msg.(tuikit.RunnerDoneMsg); ok {
 			return m.handlePresetConvertDone(done)
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "enter") {
-			if km.String() == "esc" && !m.runner.Done() {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l") {
+			if (km.String() == "esc" || km.String() == "h") && !m.runner.Done() {
 				m.runner.Cancel()
 			}
-			if m.runner.Done() || km.String() == "esc" {
+			if m.runner.Done() || km.String() == "esc" || km.String() == "h" {
 				m.presetFiles = nil
 				m.pop()
 				return m, m.enterCmd()
@@ -674,11 +674,11 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast, _ = m.toast.SetOK("Schwung installed — now set up through the Schwung Manager")
 			return m, tea.Batch(m.enterCmd(), fetchStatus())
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "enter") {
-			if km.String() == "esc" && !m.runner.Done() {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l") {
+			if (km.String() == "esc" || km.String() == "h") && !m.runner.Done() {
 				m.runner.Cancel()
 			}
-			if m.runner.Done() || km.String() == "esc" {
+			if m.runner.Done() || km.String() == "esc" || km.String() == "h" {
 				m.bitwigAfterSchwung = false
 				m.bitwigPendingInstall = ""
 				m.pop()
@@ -715,11 +715,11 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast, _ = m.toast.SetOK("Schwung uninstalled from the Move")
 			return m, tea.Batch(m.enterCmd(), fetchStatus())
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "enter") {
-			if km.String() == "esc" && !m.runner.Done() {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l") {
+			if (km.String() == "esc" || km.String() == "h") && !m.runner.Done() {
 				m.runner.Cancel()
 			}
-			if m.runner.Done() || km.String() == "esc" {
+			if m.runner.Done() || km.String() == "esc" || km.String() == "h" {
 				m.nav = []screen{scrMain}
 				return m, m.enterCmd()
 			}
@@ -827,11 +827,11 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast, _ = m.toast.SetOK("native controller removed")
 			return m, tea.Batch(m.enterCmd(), fetchStatus())
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "enter") {
-			if km.String() == "esc" && !m.runner.Done() {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l") {
+			if (km.String() == "esc" || km.String() == "h") && !m.runner.Done() {
 				m.runner.Cancel()
 			}
-			if m.runner.Done() || km.String() == "esc" {
+			if m.runner.Done() || km.String() == "esc" || km.String() == "h" {
 				m.pop()
 				return m, m.enterCmd()
 			}
@@ -850,11 +850,11 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.push(scrBitwigTipConfirm)
 			return m, m.enterCmd()
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "enter") {
-			if km.String() == "esc" && !m.runner.Done() {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l") {
+			if (km.String() == "esc" || km.String() == "h") && !m.runner.Done() {
 				m.runner.Cancel()
 			}
-			if m.runner.Done() || km.String() == "esc" {
+			if m.runner.Done() || km.String() == "esc" || km.String() == "h" {
 				m.pop()
 				return m, m.enterCmd()
 			}
@@ -894,11 +894,11 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast, _ = m.toast.SetOK("controller scripts removed")
 			return m, tea.Batch(m.enterCmd(), fetchStatus())
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "enter") {
-			if km.String() == "esc" && !m.runner.Done() {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l") {
+			if (km.String() == "esc" || km.String() == "h") && !m.runner.Done() {
 				m.runner.Cancel()
 			}
-			if m.runner.Done() || km.String() == "esc" {
+			if m.runner.Done() || km.String() == "esc" || km.String() == "h" {
 				m.pop()
 				return m, m.enterCmd()
 			}
@@ -934,11 +934,11 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast, _ = m.toast.SetOK("Move module removal done — check the terminal for ssh output")
 			return m, tea.Batch(m.enterCmd(), fetchStatus())
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "enter") {
-			if km.String() == "esc" && !m.runner.Done() {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l") {
+			if (km.String() == "esc" || km.String() == "h") && !m.runner.Done() {
 				m.runner.Cancel()
 			}
-			if m.runner.Done() || km.String() == "esc" {
+			if m.runner.Done() || km.String() == "esc" || km.String() == "h" {
 				m.pop() // back to the Bitwig menu
 				return m, tea.Batch(m.enterCmd(), fetchStatus())
 			}
@@ -963,7 +963,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case scrBitwigTipWait:
 		if km, ok := msg.(tea.KeyMsg); ok {
-			if km.String() == "esc" || km.String() == "ctrl+c" {
+			if km.String() == "esc" || km.String() == "h" || km.String() == "ctrl+c" {
 				m.bitwigSawRunning = false
 				m.pop()
 				return m, m.enterCmd()
@@ -1005,15 +1005,15 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "enter") {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l") {
 			// Esc: cancel the runner (if still running) AND pop back to
 			// the previous screen immediately — never sit on a half-drawn
 			// waiting view the user has already dismissed.
 			// Enter: only meaningful once done; otherwise let the run finish.
-			if km.String() == "esc" && !m.runner.Done() {
+			if (km.String() == "esc" || km.String() == "h") && !m.runner.Done() {
 				m.runner.Cancel()
 			}
-			if m.runner.Done() || km.String() == "esc" {
+			if m.runner.Done() || km.String() == "esc" || km.String() == "h" {
 				m.pop()
 				return m, m.enterCmd()
 			}
@@ -1088,15 +1088,15 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m.startAbletonConversion()
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "enter") {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l") {
 			// Esc: cancel the close-wait AND pop back to main immediately
 			// so the user is never trapped on a waiting screen they've
 			// already dismissed. Enter does nothing while the wait runs;
 			// once done it leaves the log.
-			if km.String() == "esc" && !m.runner.Done() {
+			if (km.String() == "esc" || km.String() == "h") && !m.runner.Done() {
 				m.runner.Cancel()
 			}
-			if m.runner.Done() || km.String() == "esc" {
+			if m.runner.Done() || km.String() == "esc" || km.String() == "h" {
 				m.nav = []screen{scrMain}
 				m.toast, _ = m.toast.SetWarn("Ableton close wait canceled")
 				return m, m.enterCmd()
@@ -1125,15 +1125,15 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// here, esc/enter leaves.
 			return m, nil
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "enter") {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l") {
 			// Esc: cancel the Bitwig open AND quit the TUI — there's
 			// nothing useful left on this screen once the user has
 			// dismissed it, so don't strand them on a half-drawn wait.
 			// Enter does nothing while the open runs; once done, quit.
-			if km.String() == "esc" && !m.runner.Done() {
+			if (km.String() == "esc" || km.String() == "h") && !m.runner.Done() {
 				m.runner.Cancel()
 			}
-			if m.runner.Done() || km.String() == "esc" {
+			if m.runner.Done() || km.String() == "esc" || km.String() == "h" {
 				m.quit = true
 				return m, tea.Quit
 			}
@@ -1147,15 +1147,15 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done, ok := msg.(tuikit.RunnerDoneMsg); ok {
 			return m.handleRunnerDone(done)
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "enter") {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l") {
 			// Esc: cancel/abort the conversion AND pop back to main
 			// immediately so the user is never trapped on a running screen
 			// they've already dismissed. Enter does nothing while the run
 			// is in flight; once done it leaves the log.
-			if km.String() == "esc" && !m.runner.Done() {
+			if (km.String() == "esc" || km.String() == "h") && !m.runner.Done() {
 				m.runner.Cancel()
 			}
-			if m.runner.Done() || km.String() == "esc" {
+			if m.runner.Done() || km.String() == "esc" || km.String() == "h" {
 				m.pop()
 				return m, m.enterCmd()
 			}
@@ -1173,14 +1173,14 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleManagerPoll(pr)
 		}
 		if km, ok := msg.(tea.KeyMsg); ok {
-			if km.String() == "esc" || km.String() == "enter" {
+			if km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l" {
 				// Esc: cancel the runner (if running) AND pop back
 				// immediately. Enter: only meaningful once the manager is
 				// up (managerWaiting) or the runner is done.
-				if km.String() == "esc" && !m.managerWaiting && !m.runner.Done() {
+				if (km.String() == "esc" || km.String() == "h") && !m.managerWaiting && !m.runner.Done() {
 					m.runner.Cancel()
 				}
-				if m.managerWaiting || m.runner.Done() || km.String() == "esc" {
+				if m.managerWaiting || m.runner.Done() || km.String() == "esc" || km.String() == "h" {
 					m.managerWaiting = false
 					m.pop()
 					m.toast, _ = m.toast.SetOK("stopped waiting — the Move Manager stays open")

@@ -18,7 +18,7 @@ func TestEVOPaletteContrastOnAccent(t *testing.T) {
 		accent string
 		want   lipgloss.Color
 	}{
-		{"#f8f8f2", lipgloss.Color("0")}, // near-white: dark text
+		{"#f8f8f2", lipgloss.Color("0")},  // near-white: dark text
 		{"#1e1e2e", lipgloss.Color("15")}, // dark: light text
 	} {
 		tuikit.ColorAccent = lipgloss.Color(tc.accent)

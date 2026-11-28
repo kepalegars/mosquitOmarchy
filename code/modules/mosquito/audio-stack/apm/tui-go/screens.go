@@ -776,7 +776,7 @@ func (m *model) rebuildOrphanPicker() {
 			treeItemsToPicker(orphanTree(m.orphanCache), m.orphanChecked, m.folderExpanded)).SetSize(m.contentSize()).
 			SetHelpKeys(
 				key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
-				key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
+				key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
 				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "track")),
 			).WithTree(m.folderExpanded)
 	})
@@ -818,7 +818,7 @@ func (m *model) rebuildUninstallPicker() {
 				key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "search")),
 				key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 				key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "open folder")),
-				key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
+				key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
 				key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "uninstall selection")),
 			).WithTree(m.folderExpanded)
 	})
@@ -1754,7 +1754,7 @@ func (m *model) rebuildFixPicker() {
 			key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "toggle")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
-			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
+			key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
 		).WithTree(m.fixFolderExpanded)
 	m.picker = m.picker.SelectIndex(sidx)
@@ -1852,7 +1852,7 @@ func (m *model) rebuildFixPluginPicker() {
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "search")),
 			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
-			key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
+			key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "next")),
 		).WithTree(m.folderExpanded)
 	m.picker = m.picker.SelectIndex(sidx)
@@ -1910,7 +1910,7 @@ func pluginListHelpKeys() []key.Binding {
 		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 		key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "search")),
 		key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
-		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "collapse/expand")),
+		key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
 		key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "window handler")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "info")),
 	}
@@ -3802,7 +3802,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "esc" {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h") {
 			// Esc: cancel the install AND pop back to settings immediately.
 			if !m.runner.Done() {
 				m.runner.Cancel()
@@ -3810,7 +3810,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pop()
 			return m, m.enterCmd()
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "enter" {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "enter" || km.String() == "l") {
 			// Enter only continues once done.
 			if m.runner.Done() {
 				m.pop()
@@ -3823,7 +3823,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case scrWizardDaw:
-		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "esc" {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h") {
 			// Esc cancels the reporting run and heads to the main menu.
 			// The plugins-folder decision was already persisted at the top
 			// of wizard-finish, so cancelling here only skips the readout.
@@ -3833,7 +3833,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.nav = []screen{scrMain}
 			return m, m.enterCmd()
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "enter" {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "enter" || km.String() == "l") {
 			if m.runner.Done() {
 				m.nav = []screen{scrMain}
 				return m, m.enterCmd()
@@ -3849,7 +3849,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = done
 			return m, nil
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "esc" {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h") {
 			// Esc: cancel AND pop back to main immediately.
 			if !m.runner.Done() {
 				m.runner.Cancel()
@@ -3857,7 +3857,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.nav = []screen{scrMain}
 			return m, m.enterCmd()
 		}
-		if km, ok := msg.(tea.KeyMsg); ok && km.String() == "enter" {
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "enter" || km.String() == "l") {
 			if m.runner.Done() {
 				m.nav = []screen{scrMain}
 				return m, m.enterCmd()

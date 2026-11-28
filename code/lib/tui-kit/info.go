@@ -69,7 +69,7 @@ func (i Info) Init() tea.Cmd { return nil }
 func (i Info) Update(msg tea.Msg) (Info, tea.Cmd) {
 	if km, ok := msg.(tea.KeyMsg); ok {
 		switch km.String() {
-		case "esc", "enter", "q", "ctrl+c", "backspace":
+		case "esc", "enter", "h", "l", "q", "ctrl+c", "backspace":
 			return i, func() tea.Msg { return InfoDismissedMsg{} }
 		case "c":
 			// Copy the WHOLE body, not what the viewport happens to show: the
@@ -138,14 +138,15 @@ func (i Info) View() string {
 }
 
 // ShortcutsHint returns the bottom-row shortcut hint for this Info:
-// "↑/↓ scroll · c copy · esc/enter to continue" when the body is long enough to
-// scroll, "c copy · esc/enter to continue" otherwise. `c` is always offered —
-// this is the screen that shows logs, and getting a log out of it is the whole
-// point (a truncated copy would be useless, so it copies the entire body).
+// "↑/↓ scroll · c copy · esc/h/enter/l to continue" when the body is long enough
+// to scroll, "c copy · esc/h/enter/l to continue" otherwise. `c` is always
+// offered — this is the screen that shows logs, and getting a log out of it is
+// the whole point (a truncated copy would be useless, so it copies the entire
+// body).
 func (i Info) ShortcutsHint() string {
 	scrollable := i.viewport.Height > 0 && i.viewport.TotalLineCount() > i.viewport.Height
 	if scrollable {
-		return StyleHelp.Render("↑/↓ scroll · c copy · esc/enter to continue")
+		return StyleHelp.Render("↑/↓ scroll · c copy · esc/h/enter/l to continue")
 	}
-	return StyleHelp.Render("c copy · esc/enter to continue")
+	return StyleHelp.Render("c copy · esc/h/enter/l to continue")
 }

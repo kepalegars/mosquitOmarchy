@@ -447,9 +447,11 @@ func (m model) libraryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "backspace":
 		m.pop()
 		return m, nil
-	case "left", "right":
+	case "left", "right", "h", "l":
+		// This is one of the two real 2D surfaces: h/l are left/right TABS,
+		// not back/confirm (the other is the EVO control grid).
 		tab := libInstalled
-		if k == "right" {
+		if k == "right" || k == "l" {
 			tab = libAvailable
 		}
 		if m.libraryTab != tab {

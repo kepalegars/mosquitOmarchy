@@ -764,7 +764,7 @@ type Picker struct {
 	helpOpen bool
 	// extraHints are the human-readable hint strings of any custom keys
 	// registered through SetHelpKeys, kept here so ShortcutsHint() can
-	// produce a single-line "↑/k up · ↓/j down · enter select · esc back ·
+	// produce a single-line "↑/k up · ↓/j down · enter/l select · esc/h back ·
 	// ? more · tab select · ←/→ sort" string without re-implementing
 	// bubbles' help renderer.
 	extraHints []string
@@ -796,6 +796,10 @@ type Picker struct {
 	// arrows keep their original meaning, so a settings screen that cycles a
 	// value with ←/→ is unaffected.
 	treeOpen map[string]bool
+	// foldKeys marks a folder tree whose host folds it through PickerSortMsg
+	// instead of TreeFoldMsg (the main TUI rebuilds per screen). It changes
+	// only what `l` does: toggle the folder under the cursor, never confirm.
+	foldKeys bool
 	// busyGlyph, when non-empty, replaces the selection cursor (SetBusyGlyph):
 	// a host shows BusyFrames here while a background job runs.
 	busyGlyph string
@@ -821,6 +825,19 @@ func NewPicker(header string, items []PickerItem) Picker { return newPicker(head
 //	    m.picker = m.picker.SelectValue(msg.Cursor)
 func (p Picker) WithTree(open map[string]bool) Picker {
 	p.treeOpen = open
+	return p
+}
+
+// WithFoldState declares that this picker is a folder tree whose host folds it
+// by handling PickerSortMsg itself (the mosquitomarchy TUI rebuilds every
+// screen from its own open map). It changes one key: `l` toggles the folder the
+// cursor is in, and never confirms, so `enter` stays the only way to act on a
+// tree row.
+//
+// The fold direction is read from the folder row's own Fold glyph, so the host
+// does not have to hand the kit its open map.
+func (p Picker) WithFoldState() Picker {
+	p.foldKeys = true
 	return p
 }
 
@@ -1032,8 +1049,8 @@ func (p Picker) SetHelpNote(note string) Picker {
 }
 
 // ShortcutsHint returns the canonical single-line shortcut bar for this
-// picker: the built-in navigation keys ("↑/k up · ↓/j down · enter select · esc
-// back · ? help") plus any custom hints registered through SetHelpKeys
+// picker: the built-in navigation keys ("↑/k up · ↓/j down · enter/l select ·
+// esc/h back · ? help") plus any custom hints registered through SetHelpKeys
 // ("tab select", "←/→ sort", …). Empty for a zero Picker.
 //
 // The bar is a FIXED number of rows (BarRows) — every layout budget subtracts
@@ -1055,6 +1072,7 @@ func (p Picker) ShortcutsHint() string {
 	if !p.ready {
 		return ""
 	}
+	isTree := p.treeOpen != nil || p.foldKeys
 	// When the host registered its own "enter …" hint, drop the generic
 	// "enter select" so the bar doesn't advertise two meanings for enter.
 	hasEnterHint := false
@@ -1066,14 +1084,19 @@ func (p Picker) ShortcutsHint() string {
 	}
 	nav := []string{"↑/k up", "↓/j down"}
 	if !hasEnterHint {
-		nav = append(nav, "enter select")
+		if isTree {
+			// On a tree `l` folds, so it cannot share Enter's hint.
+			nav = append(nav, "enter select")
+		} else {
+			nav = append(nav, "enter/l select")
+		}
 	}
-	// Least important first: these three are identical on every screen and are
+	// Least important first: these are identical on every screen and are
 	// all listed on the help screen, so they are the first things to go when
 	// the bar has to shrink. The screen's OWN hints go only after these, and
 	// then from the tail — they are the only description of what this
 	// particular screen's keys do.
-	tail := []string{"esc back", "? help"}
+	tail := []string{"esc/h back", "? help"}
 
 	extras := append([]string{}, p.extraHints...)
 
@@ -1086,6 +1109,12 @@ func (p Picker) ShortcutsHint() string {
 	var primary, rest []string
 	for _, h := range extras {
 		if strings.HasPrefix(h, "enter ") {
+			// On a plain list `l` is the same action as Enter, so the bar
+			// shows one combined key. On a tree `l` folds and Enter
+			// validates: two jobs, two hints.
+			if !isTree {
+				h = strings.Replace(h, "enter ", "enter/l ", 1)
+			}
 			primary = append(primary, h)
 		} else {
 			rest = append(rest, h)
@@ -1114,7 +1143,7 @@ func (p Picker) ShortcutsHint() string {
 	// loop dropped screen hints while keeping "? help" on the bar. The
 	// arrow/vim keys go last of all: standard everywhere, so a cramped bar
 	// is better spent on what Enter and ←/→ do HERE.
-	for _, k := range []string{"? help", "esc back", "enter select", "↑/k up", "↓/j down"} {
+	for _, k := range []string{"? help", "esc/h back", "enter/l select", "↑/k up", "↓/j down"} {
 		if idx := indexOf(tail, k); idx >= 0 {
 			tail = append(tail[:idx], tail[idx+1:]...)
 			if lipgloss.Width(fit()) <= w {
@@ -1157,30 +1186,25 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.KeyMsg:
 		switch {
-		case key.Matches(m, key.NewBinding(key.WithKeys("ctrl+c", "esc", "backspace"))):
+		case key.Matches(m, key.NewBinding(key.WithKeys("ctrl+c", "esc", "h", "backspace"))):
 			// Backspace means "back" on every picker: it leaves the screen
 			// exactly like Esc. The host keeps Backspace for its own live
 			// filter / text-input screens by handling it before the picker
 			// ever sees the key, so this only affects plain lists.
 			return p, func() tea.Msg { return PickerResultMsg{Canceled: true} }
 		case key.Matches(m, key.NewBinding(key.WithKeys("enter"))):
-			if it, ok := p.list.SelectedItem().(PickerItem); ok {
-				if inert(it) {
-					return p, nil // inert: never choose a heading or an unavailable option
-				}
-				// A toggle row is not an action, it is a setting: choosing it
-				// asks for the OTHER state. The message carries that state so
-				// the host can repaint the row immediately and write
-				// afterwards (see PickerItem.Toggle for why the order is not
-				// negotiable).
-				if it.Toggle != nil {
-					return p, func() tea.Msg {
-						return PickerToggleOptionMsg{Value: it.Value, Next: !it.Toggle.Value, Previous: it.Toggle.Value}
-					}
-				}
-				return p, func() tea.Msg { return PickerResultMsg{Value: it.Value} }
+			return p.confirm()
+		case key.Matches(m, key.NewBinding(key.WithKeys("l"))):
+			// Vim's "right": confirm on a plain list, but a tree treats it as
+			// the single-key fold toggle so a stray `l` can never install a
+			// whole selection. `enter` remains the only validation on trees.
+			if p.treeOpen != nil {
+				return p.toggleFold()
 			}
-			return p, nil
+			if p.foldKeys {
+				return p.toggleFoldSort()
+			}
+			return p.confirm()
 		case key.Matches(m, key.NewBinding(key.WithKeys("tab"))):
 			if it, ok := p.list.SelectedItem().(PickerItem); ok {
 				if inert(it) {
@@ -1260,6 +1284,86 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 		}
 	}
 	return p, cmd
+}
+
+// confirm chooses the selected row: the shared body of Enter and of `l` on a
+// picker that is not a tree.
+func (p Picker) confirm() (Picker, tea.Cmd) {
+	if it, ok := p.list.SelectedItem().(PickerItem); ok {
+		if inert(it) {
+			return p, nil // inert: never choose a heading or an unavailable option
+		}
+		// A toggle row is not an action, it is a setting: choosing it
+		// asks for the OTHER state. The message carries that state so
+		// the host can repaint the row immediately and write
+		// afterwards (see PickerItem.Toggle for why the order is not
+		// negotiable).
+		if it.Toggle != nil {
+			return p, func() tea.Msg {
+				return PickerToggleOptionMsg{Value: it.Value, Next: !it.Toggle.Value, Previous: it.Toggle.Value}
+			}
+		}
+		return p, func() tea.Msg { return PickerResultMsg{Value: it.Value} }
+	}
+	return p, nil
+}
+
+// folderRowUnder is the index of the folder row the cursor is in: the selected
+// row itself when it is a folder, otherwise the nearest folder row above it.
+func folderRowUnder(items []PickerItem, value string) int {
+	target := -1
+	for i, it := range items {
+		if it.Value == value {
+			target = i
+			break
+		}
+	}
+	if target < 0 {
+		return -1
+	}
+	if items[target].Folder {
+		return target
+	}
+	for i := target - 1; i >= 0; i-- {
+		if items[i].Folder {
+			return i
+		}
+	}
+	return -1
+}
+
+// toggleFold is `l` on a WithTree picker: flip the folder the cursor is in and
+// let the host rebuild on TreeFoldMsg.
+func (p Picker) toggleFold() (Picker, tea.Cmd) {
+	idx := folderRowUnder(p.Items(), p.SelectedValue())
+	if idx < 0 {
+		return p, nil
+	}
+	folder := p.Items()[idx].Value
+	open := !p.treeOpen[folder]
+	p.treeOpen[folder] = open
+	cursor := p.SelectedValue()
+	if !open {
+		// The children are about to vanish, including the row the cursor is
+		// on. Land on the folder title rather than past the end.
+		cursor = folder
+	}
+	return p, func() tea.Msg { return TreeFoldMsg{Folder: folder, Open: open, Cursor: cursor} }
+}
+
+// toggleFoldSort is `l` on a WithFoldState picker: the direction that flips the
+// folder's current fold glyph, sent as the PickerSortMsg the host already
+// handles.
+func (p Picker) toggleFoldSort() (Picker, tea.Cmd) {
+	idx := folderRowUnder(p.Items(), p.SelectedValue())
+	if idx < 0 {
+		return p, nil
+	}
+	dir := 1
+	if p.Items()[idx].Fold == FoldExpanded {
+		dir = -1
+	}
+	return p, func() tea.Msg { return PickerSortMsg{Dir: dir} }
 }
 
 // foldKey is ←/→ on a picker declared with WithTree.
@@ -1427,9 +1531,16 @@ func (p Picker) FullHelpText() string {
 	base := []string{
 		"↑/k · ↓/j      move (no wrap)",
 		"enter          select the highlighted row",
-		"esc · ctrl+c   cancel / back",
-		"?              close this help",
 	}
+	if p.treeOpen != nil || p.foldKeys {
+		base = append(base, "l              toggle the folder the cursor is in")
+	} else {
+		base[1] = "enter/l        select the highlighted row"
+	}
+	base = append(base,
+		"esc/h · ctrl+c cancel / back",
+		"?              close this help",
+	)
 	all := append(base, p.extraHints...)
 	lines := []string{
 		StyleHeader.Render("Shortcuts"),

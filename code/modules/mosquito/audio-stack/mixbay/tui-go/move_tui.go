@@ -157,7 +157,7 @@ func (m *model) moveKey(k string) tea.Cmd {
 	case " ":
 		m.resetMeterPeaks()
 		return nil
-	case "esc", "backspace":
+	case "esc", "backspace", "h":
 		m.pop()
 		return fetchStatus(m.deviceID)
 	}

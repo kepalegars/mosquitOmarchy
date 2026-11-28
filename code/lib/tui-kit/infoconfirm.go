@@ -66,16 +66,16 @@ func (c InfoConfirm) Update(msg tea.Msg) (InfoConfirm, tea.Cmd) {
 		return c, cmd
 	}
 	switch km.String() {
-	case "ctrl+c", "esc", "backspace":
+	case "ctrl+c", "esc", "h", "backspace":
 		return c, func() tea.Msg { return ConfirmResultMsg{Canceled: true} }
 	case "n", "N":
 		return c, func() tea.Msg { return ConfirmResultMsg{Yes: false} }
 	case "y", "Y":
 		return c, func() tea.Msg { return ConfirmResultMsg{Yes: true} }
-	case "left", "right", "tab", "shift+tab", "h", "l":
+	case "left", "right", "tab", "shift+tab":
 		c.yesFocus = !c.yesFocus
 		return c, nil
-	case "enter":
+	case "enter", "l":
 		return c, func() tea.Msg { return ConfirmResultMsg{Yes: c.yesFocus} }
 	}
 	// Anything else (arrows/page keys) scrolls a long message.
@@ -110,5 +110,5 @@ func (c InfoConfirm) View() string {
 
 // ShortcutsHint is the same hint line a Confirm shows.
 func (c InfoConfirm) ShortcutsHint() string {
-	return StyleHelp.Render("←/→ choose · enter submit · esc back")
+	return StyleHelp.Render("←/→ choose · enter/l submit · esc/h back")
 }

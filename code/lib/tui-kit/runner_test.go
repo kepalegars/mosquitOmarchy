@@ -13,8 +13,8 @@ import (
 // only advertises cancel, and a finished runner advertises enter/esc to
 // leave the log.
 func TestRunnerShortcutsHint(t *testing.T) {
-	if got := NewRunner().ShortcutsHint(); !strings.Contains(got, "esc cancel") {
-		t.Fatalf("running hint = %q, want esc cancel", got)
+	if got := NewRunner().ShortcutsHint(); !strings.Contains(got, "esc/h cancel") {
+		t.Fatalf("running hint = %q, want esc/h cancel", got)
 	}
 	if got := NewRunner().ShortcutsHint(); strings.Contains(got, "enter next step") {
 		t.Fatalf("running hint = %q, must not advertise enter", got)
@@ -22,8 +22,8 @@ func TestRunnerShortcutsHint(t *testing.T) {
 
 	done := NewRunner()
 	done.done = true
-	if got := done.ShortcutsHint(); !strings.Contains(got, "enter/esc continue") {
-		t.Fatalf("done hint = %q, want enter/esc continue", got)
+	if got := done.ShortcutsHint(); !strings.Contains(got, "enter/l · esc/h continue") {
+		t.Fatalf("done hint = %q, want enter/l · esc/h continue", got)
 	}
 }
 

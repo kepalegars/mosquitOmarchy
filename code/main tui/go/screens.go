@@ -2656,7 +2656,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 	case scrThemeUnlock:
 		if km, ok := msg.(tea.KeyMsg); ok {
 			switch km.String() {
-			case "left", "right", "r":
+			case "left", "right":
 				m.themeUnlockStyle = !m.themeUnlockStyle
 				m.themeUnlockPicker = m.rebuildThemeUnlock()
 				return m, nil

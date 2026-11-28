@@ -51,9 +51,9 @@ func (p navPicker) SelectIndex(i int) navPicker {
 func (p navPicker) Update(msg tea.Msg) (navPicker, tea.Cmd) {
 	if km, ok := msg.(tea.KeyMsg); ok {
 		switch km.String() {
-		case "down", "j", "pgdown", "l", "f", "d":
+		case "down", "j", "pgdown", "f", "d":
 			return p.step(1), nil
-		case "up", "k", "pgup", "h", "b", "u":
+		case "up", "k", "pgup", "b", "u":
 			return p.step(-1), nil
 		case "home", "g":
 			return p.selectFirst(), nil

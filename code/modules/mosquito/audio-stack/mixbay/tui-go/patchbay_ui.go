@@ -108,7 +108,7 @@ func (m *model) promptPatchbaySave() tea.Cmd {
 
 func (m model) patchbayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "backspace":
+	case "esc", "backspace", "h":
 		m.pop()
 		return m, nil
 	case "r":
@@ -117,7 +117,7 @@ func (m model) patchbayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, loadPatchbayCmd()
 	case "s":
 		return m, m.promptPatchbaySave()
-	case "enter":
+	case "enter", "l":
 		v := m.picker.SelectedValue()
 		switch {
 		case v == "back":

@@ -27,10 +27,10 @@ type ConfirmResultMsg struct {
 }
 
 // Confirm is a modal yes/no dialog. Left/Right or Tab cycles the focused
-// button, Enter submits, y/n are direct shortcuts for an explicit yes/no
-// answer, ctrl+c/esc always cancel (back out, matching Picker's and
-// TextInput's own ctrl+c/esc convention — never conflated with the No
-// button, see ConfirmResultMsg's own doc comment).
+// button, Enter (or vim's `l`) submits, y/n are direct shortcuts for an
+// explicit yes/no answer, ctrl+c/esc/h always cancel (back out, matching
+// Picker's and TextInput's own ctrl+c/esc convention — never conflated with the
+// No button, see ConfirmResultMsg's own doc comment).
 //
 // A Confirm may optionally carry a third button (WithExtra), rendered
 // between No and Yes: e.g. "No / Re-check / Yes". It is purely additive —
@@ -185,16 +185,16 @@ func (c Confirm) Update(msg tea.Msg) (Confirm, tea.Cmd) {
 		return c, func() tea.Msg { return ConfirmResultMsg{Extra: true} }
 	}
 	switch km.String() {
-	case "ctrl+c", "esc", "backspace":
+	case "ctrl+c", "esc", "h", "backspace":
 		return c, func() tea.Msg { return ConfirmResultMsg{Canceled: true} }
 	case "n", "N":
 		return c, func() tea.Msg { return ConfirmResultMsg{Yes: false} }
 	case "y", "Y":
 		return c, func() tea.Msg { return ConfirmResultMsg{Yes: true} }
-	case "left", "shift+tab", "h":
+	case "left", "shift+tab":
 		c.focus = (c.focus - 1 + c.buttonCount()) % c.buttonCount()
 		return c, nil
-	case "right", "tab", "l":
+	case "right", "tab":
 		c.focus = (c.focus + 1) % c.buttonCount()
 		return c, nil
 	case "up", "k":
@@ -211,7 +211,7 @@ func (c Confirm) Update(msg tea.Msg) (Confirm, tea.Cmd) {
 			c.listTop = len(c.List) - c.ListMaxRows
 		}
 		return c, nil
-	case "enter":
+	case "enter", "l":
 		switch {
 		case c.focus == 0:
 			return c, func() tea.Msg { return ConfirmResultMsg{Yes: false} }
@@ -363,16 +363,16 @@ func intersperse(parts []string, sep string) []string {
 }
 
 // ShortcutsHint returns the bottom-row shortcut hint for a Confirm:
-// "←/→ choose · enter submit · esc back" — matches every Confirm's
-// controls (Left/Right or Tab to move focus, Enter to submit, Esc/Ctrl+C
-// to cancel).
+// "←/→ choose · enter/l submit · esc/h back" — matches every Confirm's
+// controls (Left/Right or Tab to move focus, Enter or `l` to submit, Esc/Ctrl+C
+// or `h` to cancel).
 func (c Confirm) ShortcutsHint() string {
 	if c.listScrollable() {
 		// The arrows are on the two jobs at once here, so the hint has to say
 		// which is which: ↑/↓ walk the list, ←/→ pick an answer.
-		return StyleHelp.Render("↑/↓ scroll list · ←/→ choose · enter submit · esc back")
+		return StyleHelp.Render("↑/↓ scroll list · ←/→ choose · enter/l submit · esc/h back")
 	}
-	return StyleHelp.Render("←/→ choose · enter submit · esc back")
+	return StyleHelp.Render("←/→ choose · enter/l submit · esc/h back")
 }
 
 // ListBoundsForTest exposes the visible window. A test in another module has to

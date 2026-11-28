@@ -156,7 +156,7 @@ func TestAddonShortcutsFit(t *testing.T) {
 	m := addonTestModel()
 	m.w, m.h = 100, 40
 	hint := m.rebuildAddons().ShortcutsHint()
-	for _, want := range []string{"tab", "search", "collapse", "apply"} {
+	for _, want := range []string{"tab", "search", "fold", "apply"} {
 		if !strings.Contains(hint, want) {
 			t.Fatalf("shortcut %q missing from %q", want, hint)
 		}

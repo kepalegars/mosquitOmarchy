@@ -2305,7 +2305,7 @@ func TestActionOnlyCardLegendHasNoControlKeys(t *testing.T) {
 			t.Errorf("action-only legend advertises %q: %q", bad, line)
 		}
 	}
-	if !strings.Contains(line, "enter open") {
+	if !strings.Contains(line, "enter/l open") {
 		t.Errorf("legend = %q, want the action hint", line)
 	}
 }

@@ -531,12 +531,12 @@ func fetchTreeCmd(sub string) tea.Cmd {
 // preinstalls and module ids that happen to be package names), so the
 // *_unknown flags are part of the answer, not an error.
 type DiskRec struct {
-	FreeKB       int64  `json:"free_kb"`
-	NeedKB       int64  `json:"need_kb"`
-	FreedKB      int64  `json:"freed_kb"`
-	FreeUnknown  bool   `json:"free_unknown"`
-	NeedUnknown  bool   `json:"need_unknown"`
-	FreedUnknown bool   `json:"freed_unknown"`
+	FreeKB       int64 `json:"free_kb"`
+	NeedKB       int64 `json:"need_kb"`
+	FreedKB      int64 `json:"freed_kb"`
+	FreeUnknown  bool  `json:"free_unknown"`
+	NeedUnknown  bool  `json:"need_unknown"`
+	FreedUnknown bool  `json:"freed_unknown"`
 	TempShort    bool  `json:"temp_short"`
 }
 
