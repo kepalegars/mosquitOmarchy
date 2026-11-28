@@ -55,7 +55,7 @@ func TestManualKeyWarnsBeforeOverriding(t *testing.T) {
 
 	// Backend says the combo is already owned: the confirm must say so and
 	// carry "force" so kb-add knows the user accepted the override.
-	mm, _ = mm.update(kbCheckMsg{combo: "SUPER + ALT + M", taken: true, where: "Omarchy default (Launch terminal)"})
+	mm, _ = mm.update(kbCheckMsg{combo: "SUPER + ALT + M", taken: true, where: "Omarchy default (Launch terminal)", overridable: true})
 	if mm.top() != scrConfirm {
 		t.Fatalf("taken key did not ask for confirmation: top=%v", mm.top())
 	}
@@ -73,5 +73,41 @@ func TestManualKeyWarnsBeforeOverriding(t *testing.T) {
 	}
 	if !strings.Contains(mm.pendingMsg, "Bind SUPER + SHIFT + F12") {
 		t.Fatalf("free key confirm message wrong: %q", mm.pendingMsg)
+	}
+}
+
+// A conflict declared after our block cannot be overridden: no "Bind anyway"
+// prompt, and the manual entry comes back with its text for editing.
+func TestUnsolvableConflictReturnsToEntry(t *testing.T) {
+	m := initialModel()
+	m.w, m.h = 100, 34
+	m.nav = []screen{scrMain, scrKBKeys}
+	m.kbPending = KbCatItem{Label: "REAPER"}
+	mm, _ := m.screenPicked(tuikit.PickerResultMsg{Value: "manual"})
+	mm, _ = mm.update(tuikit.InputResultMsg{Value: "SUPER + ALT + V"})
+
+	mm, _ = mm.update(kbCheckMsg{combo: "SUPER + ALT + V", taken: true, where: "hyprland.lua (VM focus)"})
+	if mm.top() != scrKBInput {
+		t.Fatalf("unsolvable conflict did not return to the key input: top=%v", mm.top())
+	}
+	if mm.kbInputStep != 2 {
+		t.Fatalf("key input step = %d, want 2", mm.kbInputStep)
+	}
+}
+
+// Cancelling a bind prompt (plain or "Bind anyway") resumes the manual entry
+// instead of dropping its text.
+func TestCancelBindPromptResumesEntry(t *testing.T) {
+	m := initialModel()
+	m.w, m.h = 100, 34
+	m.nav = []screen{scrMain, scrKBKeys, scrConfirm}
+	m.kbPending = KbCatItem{Label: "REAPER"}
+	m.pendingAction = "kb-add"
+	m.kbManual = true
+	m.kbInput = tuikit.NewTextInput("Key combo:", "SUPER + ALT + M")
+
+	mm, _ := m.update(tuikit.ConfirmResultMsg{Canceled: true})
+	if mm.top() != scrKBInput || mm.kbInputStep != 2 {
+		t.Fatalf("cancel did not resume the key input: top=%v step=%d", mm.top(), mm.kbInputStep)
 	}
 }

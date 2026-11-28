@@ -45,10 +45,11 @@ type kbFreeMsg struct {
 // kbCheckMsg answers a manually typed combo: is it already owned by a binding
 // outside our marker block, and by whom.
 type kbCheckMsg struct {
-	combo string
-	taken bool
-	where string
-	err   error
+	combo       string
+	taken       bool
+	where       string
+	overridable bool
+	err         error
 }
 
 // KbCatItem is one bindable thing from a category catalog.
@@ -158,14 +159,15 @@ func fetchKbCheckCmd(combo string) tea.Cmd {
 			return kbCheckMsg{err: err}
 		}
 		var res struct {
-			Combo string `json:"combo"`
-			Taken bool   `json:"taken"`
-			Where string `json:"where"`
+			Combo       string `json:"combo"`
+			Taken       bool   `json:"taken"`
+			Where       string `json:"where"`
+			Overridable bool   `json:"overridable"`
 		}
 		if err := json.Unmarshal(bytes.TrimSpace(outB), &res); err != nil {
 			return kbCheckMsg{err: err}
 		}
-		return kbCheckMsg{combo: res.Combo, taken: res.Taken, where: res.Where}
+		return kbCheckMsg{combo: res.Combo, taken: res.Taken, where: res.Where, overridable: res.Overridable}
 	}
 }
 
@@ -299,6 +301,18 @@ func (m model) rebuildKBKeys() navPicker {
 		SetHelpKeys(key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "bind")),
 			key.NewBinding(key.WithKeys("esc", "h"), key.WithHelp("esc/h", "back"))).
 		SelectIndex(idx)
+}
+
+// resumeKeyEntry puts the manual key input back with its text intact, so
+// cancelling a bind prompt lets the user edit the combo instead of retyping it.
+func (m model) resumeKeyEntry() (model, tea.Cmd) {
+	if !m.kbManual {
+		return m, nil
+	}
+	m.kbManual = false
+	m.kbInputStep = 2
+	m.push(scrKBInput)
+	return m, m.kbInput.Init()
 }
 
 // askBind is the single confirm step for both a picked free key and a manually

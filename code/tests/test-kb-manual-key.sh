@@ -25,21 +25,29 @@ ACTIONS="$ROOT/code/main tui/mosquitomarchy-actions"
 
 out="$(bash "$ACTIONS" kb-check 'super+a')"
 grep -q '"taken":true' <<<"$out"
+grep -q '"overridable":true' <<<"$out"
 grep -q 'Terminal' <<<"$out"
 
 out="$(bash "$ACTIONS" kb-check 'super+q')"
 grep -q '"taken":true' <<<"$out"
+grep -q '"overridable":true' <<<"$out"
 grep -q 'Omarchy default (Launch terminal)' <<<"$out"
 
 # A combo managed by mosquitOmarchy itself is a conflict too.
 out="$(bash "$ACTIONS" kb-check 'SUPER + B')"
-grep -q '"taken":true' <<<"$out"
-grep -q 'currently: ours' <<<"$out"
+grep -q '"taken":true,"where":"managed by mosquitOmarchy (currently: ours)","overridable":true' <<<"$out"
 
 # A binding in another hypr config is a conflict too; a commented example is not.
 out="$(bash "$ACTIONS" kb-check 'SUPER + ALT + V')"
 grep -q '"taken":true' <<<"$out"
+grep -q '"overridable":false' <<<"$out"
 grep -q 'hyprland.lua (Omarchy VM: focus the VM)' <<<"$out"
+
+# Even "force" cannot override a bind declared after our block.
+if bash "$ACTIONS" kb-add 'SUPER + ALT + V' 'Mine' 'true' cmd force >/dev/null 2>&1; then
+  echo 'FAIL: kb-add force overrode an unsolvable conflict' >&2
+  exit 1
+fi
 
 out="$(bash "$ACTIONS" kb-check 'SUPER + H')"
 grep -q '"taken":false' <<<"$out"

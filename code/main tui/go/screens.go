@@ -1454,6 +1454,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				workingArgs("reaper-custom-config", []string{fonts})...)
 		}
 		if msg.Canceled || !msg.Yes {
+			if m.pendingAction == "kb-add" {
+				// Back to the key entry with its text, ready to edit/resume.
+				m.pendingAction = ""
+				return m.resumeKeyEntry()
+			}
 			if m.pendingAction == "backup" {
 				m.cleanupBackupSelection()
 			}
@@ -1643,6 +1648,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			args := append([]string{}, m.pendingArgs...)
 			return m.startWorking("Applying addons", workingArgs("addons-apply", args)...)
 		case "kb-add":
+			m.kbManual = false
 			return m.startWorking("Binding the key", workingArgs("kb-add", m.pendingArgs)...)
 		case "kb-remove":
 			return m.startWorking("Removing keybindings", workingArgs("kb-remove", m.pendingArgs)...)
@@ -1805,6 +1811,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				// the combo in the backend, which also says who owns it.
 				combo := strings.TrimSpace(msg.Value)
 				m.kbInputStep = 0
+				m.kbManual = true
 				m.pop()
 				return m, fetchKbCheckCmd(combo)
 			}
@@ -2092,6 +2099,12 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if msg.err != nil {
 			m.toast, _ = m.toast.SetErr("keybindings: " + msg.err.Error())
 			return m, nil
+		}
+		if msg.taken && !msg.overridable {
+			// The owner is declared after our block: an override would not
+			// actually take effect, so don't offer a misleading "Bind anyway".
+			m.toast, _ = m.toast.SetErr(fmt.Sprintf("%s is bound in %s after our block — edit that config instead", msg.combo, msg.where))
+			return m.resumeKeyEntry()
 		}
 		return m.askBind(msg.combo, msg.taken, msg.where)
 

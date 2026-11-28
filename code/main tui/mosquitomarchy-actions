@@ -3317,11 +3317,13 @@ cmd_kb_check(){ # <combo> → {"combo","taken","where"} — read-only
   local combo="$1" where
   combo="$(tr 'a-z' 'A-Z' <<< "$combo" | sed -E 's/ *\+ */ + /g; s/^ +//; s/ +$//')"
   [[ "$combo" =~ ^([A-Z0-9_]+( +\+ )?)+[A-Z0-9_]+$ ]] || { err "Invalid combo format: $combo"; return 1; }
-  where="$(kb_bound_elsewhere "$combo")"
+  kb_bound_elsewhere "$combo"
+  local where="$KB_CONFLICT_WHERE"
   if [[ -n "$where" ]]; then
-    printf '{"combo":%s,"taken":true,"where":%s}\n' "$(json_str "$combo")" "$(json_str "$where")"
+    printf '{"combo":%s,"taken":true,"where":%s,"overridable":%s}\n' \
+      "$(json_str "$combo")" "$(json_str "$where")" "$([[ $KB_CONFLICT_OVERRIDABLE == 1 ]] && echo true || echo false)"
   else
-    printf '{"combo":%s,"taken":false,"where":""}\n' "$(json_str "$combo")"
+    printf '{"combo":%s,"taken":false,"where":"","overridable":false}\n' "$(json_str "$combo")"
   fi
   return 0
 }
@@ -3334,10 +3336,17 @@ cmd_kb_add(){ # <combo> <label> <cmd> <type> [force]
   # A combo bound OUTSIDE our block would duplicate: the TUI warns first and
   # only passes "force" when the user accepts the override. Our block is
   # written last (with hl.unbind), so it wins over the earlier binding.
-  where="$(kb_bound_elsewhere "$combo")"
-  if [[ "$force" != "force" && -n "$where" ]]; then
-    err "Already bound elsewhere ($where): $combo"
-    return 1
+  kb_bound_elsewhere "$combo"
+  local where="$KB_CONFLICT_WHERE"
+  if [[ -n "$where" ]]; then
+    if (( KB_CONFLICT_OVERRIDABLE == 0 )); then
+      err "Cannot override $combo: $where declares it after our block — edit that config instead"
+      return 1
+    fi
+    if [[ "$force" != "force" ]]; then
+      err "Already bound elsewhere ($where): $combo"
+      return 1
+    fi
   fi
   kb_ensure "$combo" "$label" "$cmd" "$type"
   ok "Bound: $combo → $label (force=${force:-no})"

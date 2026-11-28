@@ -25,6 +25,11 @@ KB_END='-- <<< mosquitOmarchy_Keybindings'
 KB_LEGACY_BEGIN='-- >>> Omarchy_Custom_Scripts_Keys'
 KB_LEGACY_END='-- <<< Omarchy_Custom_Scripts_Keys'
 KB_CHANGED=0
+# Set by kb_bound_elsewhere (globals, not stdout: command substitution would
+# lose them): the conflicting owner, and whether our hl.unbind can remove it.
+# Bindings declared after our block cannot be removed.
+KB_CONFLICT_WHERE=""
+KB_CONFLICT_OVERRIDABLE=0
 declare -A KB_OURS=()   # combo → "label|cmd|type"
 KB_OWN_ORDER=()         # combos in insertion order
 
@@ -65,8 +70,10 @@ kb_friendly_default(){ # combo → the Omarchy default label it would replace, i
   return 0
 }
 
-kb_bound_elsewhere(){ # <combo> → who owns it outside our marker block, empty if free
+kb_bound_elsewhere(){ # <combo> — sets KB_CONFLICT_WHERE / KB_CONFLICT_OVERRIDABLE
   local combo="$1" file line label
+  KB_CONFLICT_WHERE=""
+  KB_CONFLICT_OVERRIDABLE=0
   # Every hypr Lua config can bind a combo (hyprland.lua holds the VM focus
   # shortcut, plugins add their own), not just bindings.lua. Skip commented
   # examples and our own marker block: only an OUTSIDE binding conflicts.
@@ -81,10 +88,21 @@ kb_bound_elsewhere(){ # <combo> → who owns it outside our marker block, empty 
         | rg -N -i -F "o.bind(\"$combo\"" 2>/dev/null | head -1 || true)"
     fi
     if [[ -n "$line" ]]; then
+      if [[ "$file" == "$KB_CONF" ]]; then
+        # A bind in the same file is overridable only when it sits BEFORE our
+        # marker block: our hl.unbind runs there, not at the end of the file.
+        local bind_ln begin_ln
+        bind_ln="$(grep -n -F "$line" "$file" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+        begin_ln="$(grep -n -F -- "$KB_BEGIN" "$file" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+        [[ -n "$begin_ln" ]] || begin_ln="$(grep -n -F -- "$KB_LEGACY_BEGIN" "$file" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+        if [[ -n "$bind_ln" && -n "$begin_ln" ]] && ((bind_ln < begin_ln)); then
+          KB_CONFLICT_OVERRIDABLE=1
+        fi
+      fi
       label="$(printf '%s' "$line" | sed -n 's/.*o\.bind("[^"]*", *"\([^"]*\)".*/\1/p')"
       [[ -n "$label" ]] || label="$(printf '%s' "$line" | sed -n 's/.*o\.bind("[^"]*", *\([^,]*\),.*/\1/p' | tr -d ' ')"
       [[ "$label" == nil ]] && label=""
-      printf '%s (%s)' "${file##*/}" "${label:-$combo}"
+      KB_CONFLICT_WHERE="$(printf '%s (%s)' "${file##*/}" "${label:-$combo}")"
       return 0
     fi
   done
@@ -95,14 +113,16 @@ kb_bound_elsewhere(){ # <combo> → who owns it outside our marker block, empty 
   for k in "${!KB_OURS[@]}"; do
     if [[ "${k^^}" == "$combo" ]]; then
       IFS='|' read -r label _ _ <<<"${KB_OURS[$k]}"
-      printf 'managed by mosquitOmarchy (currently: %s)' "${label:-$k}"
+      KB_CONFLICT_OVERRIDABLE=1  # kb_ensure replaces our own binding
+      KB_CONFLICT_WHERE="$(printf 'managed by mosquitOmarchy (currently: %s)' "${label:-$k}")"
       return 0
     fi
   done
   line="$(rg -N -i -F "o.bind(\"$combo\"" "$KB_DEF_DIR"/*.lua 2>/dev/null | head -1 || true)"
   if [[ -n "$line" ]]; then
     label="$(printf '%s' "$line" | sed -n 's/.*o\.bind("[^"]*", *"\([^"]*\)".*/\1/p')"
-    printf 'Omarchy default (%s)' "${label:-$combo}"
+    KB_CONFLICT_OVERRIDABLE=1  # defaults load before our block
+    KB_CONFLICT_WHERE="$(printf 'Omarchy default (%s)' "${label:-$combo}")"
   fi
   return 0
 }

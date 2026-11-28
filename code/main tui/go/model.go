@@ -542,7 +542,8 @@ type model struct {
 	kbFree       []string
 	kbPending    KbCatItem
 	kbInput      tuikit.TextInput
-	kbInputStep  int // 0 = label, 1 = command
+	kbInputStep  int  // 0 = label, 1 = command, 2 = manual key
+	kbManual     bool // the current bind confirm came from the manual key input
 
 	// "Theming" (theme.go). folder -> image -> name ->
 	// create, each kept until the flow finishes so Esc can step back.
