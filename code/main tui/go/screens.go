@@ -5231,6 +5231,10 @@ func (m model) homePageInfo() string {
 	return homePageInfoFor(m.mainPicker.SelectedValue())
 }
 
+// Where to find live CPU/GPU temperatures: they are not on the Status page.
+const batteryTempInfo = "CPU/GPU temperatures are in the battery management panel\n" +
+	"(Setup ▸ Plugins ▸ Battery management), next to the battery status."
+
 // homePageInfoFor maps a main-menu row value to its explanation. An unknown
 // value falls back to the whole map rather than to nothing: a page added to
 // mainMenuItems without a paragraph here should still answer `i`.
@@ -5239,7 +5243,8 @@ func homePageInfoFor(page string) string {
 	case "status":
 		return "Status — every module, what it installed and what is missing.\n\n" +
 			"Press i on a row for the detail behind its state.\n" +
-			"Read-only: nothing on this page installs or changes anything."
+			"Read-only: nothing on this page installs or changes anything.\n\n" +
+			batteryTempInfo
 
 	case "update":
 		return "Update — fetch the scripts repo when a newer version exists,\n\n" +
@@ -5307,6 +5312,7 @@ func homePagesOverview() string {
 		b.WriteString("\n")
 		b.WriteString(homePageInfoFor(page))
 	}
+	b.WriteString("\n\n" + batteryTempInfo)
 	b.WriteString("\n\nClose — leave. Nothing is applied on the way out; everything in\n" +
 		"this app is applied by the Enter/l you press on the row that does it.")
 	return b.String()

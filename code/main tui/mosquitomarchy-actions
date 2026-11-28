@@ -1060,10 +1060,10 @@ _setup_tree(){
     folders+=("defaults"$'\t'"$(printf '{"folder":%s,"label":%s,"accent":%s,"parent":%s}' \
       "$(json_str defaults)" "$(json_str defaults)" false "$(json_str themes)")")
     for _tn in "${_missing_themes[@]}"; do
-      module_version_into "$_tn"
+      # Stock themes are not mosquitomarchy modules: no version suffix.
       items+=("defaults/$_tn"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s}' \
         "$(json_str defaults)" "$(json_str "stocktheme:$_tn")" \
-        "$(json_str "$_tn - v$MV")" \
+        "$(json_str "$_tn")" \
         "$(json_str "Omarchy default theme missing from ~/.config/omarchy/themes — install to restore it")")")
     done
   fi
@@ -1089,16 +1089,17 @@ _setup_tree(){
       for pp in "${pre_seen[@]}"; do
         pl="$(preinstall_label "$pp")"
         # A stock preinstall that is already gone has nothing to remove. Keep
-        # the row (so the stock set is still visible) but grey it: selecting it
-        # used to reach a "Remove 1 preinstall?" confirm that frees 0 KiB.
+        # the row (so the stock set is still visible) but grey it, with no
+        # blurb: selecting it used to reach a "Remove 1 preinstall?" confirm
+        # that freed 0 KiB.
         if pkg_has "$pp"; then
           items+=("preinstalls/$pp"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s}' \
             "$(json_str preinstalls)" "$(json_str "preinstall:$pp")" \
             "$(json_str "$pl")")")
         else
-          items+=("preinstalls/$pp"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"info":%s,"disabled":true}' \
+          items+=("preinstalls/$pp"$'\t'"$(printf '{"folder":%s,"key":%s,"label":%s,"disabled":true}' \
             "$(json_str preinstalls)" "$(json_str "preinstall:$pp")" \
-            "$(json_str "$pl")" "$(json_str "not installed — nothing to remove")")")
+            "$(json_str "$pl")")")
         fi
       done
     fi
