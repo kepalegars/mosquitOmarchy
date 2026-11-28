@@ -183,7 +183,8 @@ func (r *evoRender) ugmControlsBody(row, cx, sectionW int) {
 	}
 	r.boxTop(row, cx, " OUTPUT 1|2 ", true, bw, nil)
 	r.boxSide(row+1, cx, bw)
-	r.hslider(row+1, cx+evoSliderOff, ugmVolFrac(r.spec, out.VolumeDb), out.Muted, true, cGreen, sw)
+	r.hslider(row+1, cx+evoSliderOff, ugmVolFrac(r.spec, out.VolumeDb), out.Muted,
+		r.m.clipActiveAny(meters.KeyPlayback, []int{0, 1}), true, cGreen, sw)
 
 	r.boxSide(row+2, cx, bw)
 	attr := evoBold
@@ -314,6 +315,7 @@ func (m *model) ugmKey(k string) tea.Cmd {
 
 func (m *model) resetMeterPeaks() {
 	m.meterPeakIn, m.meterPeakOut = [evoMaxMeterChannels]float64{}, [evoMaxMeterChannels]float64{}
+	m.resetClip()
 	if m.meter != nil {
 		m.meter.ResetPeaks()
 	}

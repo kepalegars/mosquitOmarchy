@@ -149,6 +149,7 @@ type model struct {
 	meterSnap     meters.Snapshot
 	meterPeakIn   [evoMaxMeterChannels]float64
 	meterPeakOut  [evoMaxMeterChannels]float64
+	clip          *meters.ClipTracker
 	meterFrozen   bool
 
 	// focused is the terminal's focus state (DECSET 1004 via WithReportFocus).
@@ -170,6 +171,7 @@ func initialModel() model {
 	m.libraryChecked = map[string]bool{}
 	m.dupPrompted = map[string]bool{}
 	m.offeredProfiles = map[string]bool{}
+	m.clip = meters.NewClipTracker()
 	m.bindPreset()
 	return m
 }
@@ -220,6 +222,7 @@ func (m model) openCard(id string) (tea.Model, tea.Cmd) {
 	m.meterStarting = false
 	m.meterSnap = meters.Snapshot{}
 	m.meterPeakIn, m.meterPeakOut = [evoMaxMeterChannels]float64{}, [evoMaxMeterChannels]float64{}
+	m.resetClip()
 	m.meterFrozen = false
 	m.evo.spec = drivers.Spec{}
 	m.evo.window = evoWinControls
@@ -1263,6 +1266,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.meter = msg.engine
 		m.meterStarting = false
 		m.meterPeakIn, m.meterPeakOut = [evoMaxMeterChannels]float64{}, [evoMaxMeterChannels]float64{}
+		m.resetClip()
 		return m, waitMetersCmd(msg.engine)
 
 	case meterSnapshotMsg:
@@ -1275,6 +1279,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.meterSnap = msg.snap
 		copy(m.meterPeakIn[:], msg.snap.Peaks[meters.KeyInput])
 		copy(m.meterPeakOut[:], msg.snap.Peaks[meters.KeyPlayback])
+		if m.clip != nil {
+			m.clip.Update(msg.snap, time.Now())
+		}
 		return m, waitMetersCmd(m.meter)
 
 	case meterClosedMsg:
@@ -1677,6 +1684,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.meterStarting = false
 			m.meterSnap = meters.Snapshot{}
 			m.meterPeakIn, m.meterPeakOut = [evoMaxMeterChannels]float64{}, [evoMaxMeterChannels]float64{}
+			m.resetClip()
 			m.meterFrozen = false
 			// Unbind the previous device's spec: evoEnter() here would copy
 			// the STALE status.Spec (the interface we just left) into the

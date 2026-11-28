@@ -730,8 +730,9 @@ func (r *evoRender) boxBot(row, cx, iw int) {
 }
 
 // hslider is evotui's half-block fader: 2 cells per slider cell, the odd cell
-// shown as a half block, filled red when muted.
-func (r *evoRender) hslider(row, x int, frac float64, muted, sel bool, color, w int) {
+// shown as a half block, filled red when muted. clip paints the last cell red
+// for the shared hold window; it wins over both the fill and mute colours.
+func (r *evoRender) hslider(row, x int, frac float64, muted, clip, sel bool, color, w int) {
 	slots := w * 2
 	filled := int(math.Round(float64(slots) * frac))
 	if filled < 0 {
@@ -758,6 +759,9 @@ func (r *evoRender) hslider(row, x int, frac float64, muted, sel bool, color, w 
 	}
 	if empty := w - full - partial; empty > 0 {
 		r.c.repeat(pos, row, empty, boxH, emptySt)
+	}
+	if clip && w > 0 {
+		r.c.put(x+w-1, row, string(slFull), evoStyle{col: cRed, bold: true})
 	}
 }
 
@@ -869,7 +873,11 @@ func (r *evoRender) drawSection(row, cx, idx, sw, bw int, forceInactive bool) in
 	if e.sub == "" {
 		r.panSlider(row, cx+evoSliderOff, frac, active, e.color, sw)
 	} else {
-		r.hslider(row, cx+evoSliderOff, frac, muted, active, e.color, sw)
+		clip := false
+		if src, chans := evoMeterChannels(r.spec, e.key); src != "" {
+			clip = r.m.clipActiveAny(src, chans)
+		}
+		r.hslider(row, cx+evoSliderOff, frac, muted, clip, active, e.color, sw)
 	}
 	row++
 	r.boxSide(row, cx, bw)
@@ -1052,7 +1060,11 @@ func (r *evoRender) drawMixerSection(topRow, cx, secIdx int, compact bool) {
 	volFrac := clampf((volVal-evoMixDbMin)/(evoMxMaxForKey(s.key)-evoMixDbMin), 0, 1)
 	volSel := selSec && r.u.mxParam == volIdx
 	r.boxSide(row, cx, siw)
-	r.hslider(row, cx+2, volFrac, false, volSel, s.color, siw-2)
+	mclip := false
+	if src, chans := evoMeterChannels(r.spec, s.key); src != "" {
+		mclip = r.m.clipActiveAny(src, chans)
+	}
+	r.hslider(row, cx+2, volFrac, false, mclip, volSel, s.color, siw-2)
 	row++
 	r.boxSide(row, cx, siw)
 	volAttr := evoVal

@@ -5,6 +5,7 @@ import (
 	"math"
 	"os/exec"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"mosquitomarchy.local/mosquitomixbay-tui/drivers"
@@ -253,6 +254,30 @@ func (m model) meterLevel(key string, ch int) float64 {
 		return v[ch]
 	}
 	return 0
+}
+
+// clipActive is the one shared clip query every card renderer uses. The hold
+// lives in meters.ClipTracker so controls and Levels agree on the same window.
+func (m model) clipActive(key string, ch int) bool {
+	if m.clip == nil {
+		return false
+	}
+	return m.clip.Active(key, ch, time.Now())
+}
+
+func (m model) clipActiveAny(key string, chans []int) bool {
+	for _, ch := range chans {
+		if m.clipActive(key, ch) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *model) resetClip() {
+	if m.clip != nil {
+		m.clip.Reset()
+	}
 }
 
 func (m model) meterPeak(key string, ch int) float64 {
@@ -542,12 +567,12 @@ func (r *evoRender) drawMeterColumns(groupX, readoutRow, barTop, barBot, barW, g
 			attr = evoStyle{col: meterColor(meterDB(level, floor))}
 		}
 		r.put(bx+(barW-len([]rune(b.label))+1)/2, readoutRow, meterDBShort(level, floor), attr)
-		r.drawVerticalBar(bx, barTop, barBot, barW, level, peak, floor)
+		r.drawVerticalBar(bx, barTop, barBot, barW, level, peak, floor, r.m.clipActive(b.key, b.ch))
 		r.put(bx+(barW-len([]rune(b.label))+1)/2, barBot+1, b.label, evoDim)
 	}
 }
 
-func (r *evoRender) drawVerticalBar(x, top, bot, width int, level, peak, floor float64) {
+func (r *evoRender) drawVerticalBar(x, top, bot, width int, level, peak, floor float64, clip bool) {
 	rows := bot - top + 1
 	full := int(math.Round(float64(rows) * meterFraction(level, floor)))
 	fillTop := bot - full + 1
@@ -571,6 +596,12 @@ func (r *evoRender) drawVerticalBar(x, top, bot, width int, level, peak, floor f
 		}
 		for col := 0; col < width; col++ {
 			r.c.put(x+col, peakRow, "─", st)
+		}
+	}
+	if clip && rows > 0 {
+		st := evoStyle{col: cRed, bold: true}
+		for col := 0; col < width; col++ {
+			r.c.put(x+col, top, "█", st)
 		}
 	}
 }
@@ -626,7 +657,7 @@ func evoMeterChannels(spec drivers.Spec, key string) (string, []int) {
 	return "", nil
 }
 
-func (r *evoRender) drawMiniBar(row, x, width int, level, peak float64, col int) {
+func (r *evoRender) drawMiniBar(row, x, width int, level, peak float64, col int, clip bool) {
 	if width < 1 {
 		return
 	}
@@ -645,6 +676,9 @@ func (r *evoRender) drawMiniBar(row, x, width int, level, peak float64, col int)
 		default:
 			r.c.put(x+i, row, "▯", empty)
 		}
+	}
+	if clip {
+		r.c.put(x+width-1, row, "▮", evoStyle{col: cRed, bold: true})
 	}
 }
 
@@ -665,12 +699,12 @@ func (r *evoRender) drawKeyMeter(row, x, width int, key string, col int) {
 		x += len([]rune(label))
 		avail := width - len([]rune(label)) - 1
 		bw := avail / 2
-		r.drawMiniBar(row, x, bw, r.m.meterLevel(src, chans[0]), r.m.meterPeak(src, chans[0]), col)
+		r.drawMiniBar(row, x, bw, r.m.meterLevel(src, chans[0]), r.m.meterPeak(src, chans[0]), col, r.m.clipActive(src, chans[0]))
 		x += bw
 		r.put(x, row, " ", evoDim)
 		x++
-		r.drawMiniBar(row, x, avail-bw, r.m.meterLevel(src, chans[1]), r.m.meterPeak(src, chans[1]), col)
+		r.drawMiniBar(row, x, avail-bw, r.m.meterLevel(src, chans[1]), r.m.meterPeak(src, chans[1]), col, r.m.clipActive(src, chans[1]))
 		return
 	}
-	r.drawMiniBar(row, x, width, r.m.meterLevel(src, chans[0]), r.m.meterPeak(src, chans[0]), col)
+	r.drawMiniBar(row, x, width, r.m.meterLevel(src, chans[0]), r.m.meterPeak(src, chans[0]), col, r.m.clipActive(src, chans[0]))
 }

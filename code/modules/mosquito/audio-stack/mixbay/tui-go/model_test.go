@@ -1458,7 +1458,7 @@ func TestEvoLevelsTabRendersUSBStreams(t *testing.T) {
 func TestVerticalBarPeakIsThinFullWidth(t *testing.T) {
 	c := newEvoCanvas(8, 20)
 	r := &evoRender{c: c}
-	r.drawVerticalBar(1, 0, 19, 4, 0.8, 0.8, -60)
+	r.drawVerticalBar(1, 0, 19, 4, 0.8, 0.8, -60, false)
 	peakRow := 19 - int(math.Round(20*meterFraction(0.8, -60))) + 1
 	for col := 0; col < 4; col++ {
 		cell := c.cells[peakRow*c.w+1+col]
@@ -1474,11 +1474,41 @@ func TestVerticalBarPeakIsThinFullWidth(t *testing.T) {
 func TestMiniBarHasNoPeakMarkerAtZero(t *testing.T) {
 	c := newEvoCanvas(10, 1)
 	r := &evoRender{c: c}
-	r.drawMiniBar(0, 0, 10, 0, 0, cGreen)
+	r.drawMiniBar(0, 0, 10, 0, 0, cGreen, false)
 	for i := 0; i < 10; i++ {
 		if c.cells[i].r == '│' {
 			t.Fatalf("mini bar cell %d has a peak marker at zero", i)
 		}
+	}
+}
+
+func TestClipPaintsLastSliderCellRed(t *testing.T) {
+	c := newEvoCanvas(12, 1)
+	r := &evoRender{c: c}
+	r.hslider(0, 0, 0.5, false, true, false, cGreen, 10)
+	last := c.cells[9]
+	if last.st.col != cRed || !last.st.bold {
+		t.Fatalf("last slider cell = %+v, want bold red clip indicator", last)
+	}
+	if c.cells[0].st.col == cRed {
+		t.Fatal("clip must only paint the last cell")
+	}
+}
+
+func TestClipPaintsTopOfLevelBarAndMiniBar(t *testing.T) {
+	c := newEvoCanvas(8, 20)
+	r := &evoRender{c: c}
+	r.drawVerticalBar(1, 0, 19, 4, 0.8, 0.8, -60, true)
+	for col := 0; col < 4; col++ {
+		if got := c.cells[col+1].st.col; got != cRed {
+			t.Fatalf("level clip top cell %d colour = %d, want cRed", col, got)
+		}
+	}
+	m := newEvoCanvas(10, 1)
+	mr := &evoRender{c: m}
+	mr.drawMiniBar(0, 0, 10, 0.5, 0.5, cGreen, true)
+	if got := m.cells[9].st.col; got != cRed {
+		t.Fatalf("mini bar clip colour = %d, want cRed", got)
 	}
 }
 

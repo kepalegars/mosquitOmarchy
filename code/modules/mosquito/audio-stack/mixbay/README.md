@@ -238,6 +238,11 @@ Ce que **mixbay ajoute** :
 - **mètres USB** : chaque carte de contrôle (IN, OUT, sources du mixer) porte
   une fine barre de niveau et un repère de crête. Le signal lu est le monitor
   USB de la carte, jamais le niveau analogique OUT (l'EVO n'en expose pas) ;
+- **clip** : dès qu'un canal atteint ~0 dBFS, la dernière case du fader de
+  volume (contrôles et mixer) et le haut de la barre de niveau (mini-barres et
+  onglet LEVELS) passent en rouge pendant **2 s** après le dernier clip. Le
+  seuil (0.99 linéaire) et la durée sont partagés dans `meters/` : toutes les
+  cartes qui dessinent ces blocs en profitent sans champ de profil supplémentaire ;
 - onglet **LEVELS** (`Tab` depuis MIXER) : 12 mètres verticaux dBFS, les 6
   canaux de capture (IN1-4, LP5/6) et les 6 canaux de lecture (PC1-4, LP5/6),
   avec repère de crête, `Space` pour remettre les crêtes à zéro et `p` pour
