@@ -88,6 +88,14 @@ kb_bound_elsewhere(){ # <combo> → who owns it outside our marker block, empty 
       return 0
     fi
   done
+  # Our own managed binding counts as used too: rebinding SUPER + ALT + M to
+  # something else must warn, not silently replace the mosquitOmarchy opener.
+  kb_load_ours
+  if [[ -n "${KB_OURS[$combo]+x}" ]]; then
+    IFS='|' read -r label _ _ <<<"${KB_OURS[$combo]}"
+    printf 'managed by mosquitOmarchy (currently: %s)' "${label:-$combo}"
+    return 0
+  fi
   line="$(rg -N -F "o.bind(\"$combo\"" "$KB_DEF_DIR"/*.lua 2>/dev/null | head -1 || true)"
   if [[ -n "$line" ]]; then
     label="$(printf '%s' "$line" | sed -n 's/.*o\.bind("[^"]*", *"\([^"]*\)".*/\1/p')"

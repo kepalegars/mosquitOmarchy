@@ -31,6 +31,11 @@ out="$(bash "$ACTIONS" kb-check 'super+q')"
 grep -q '"taken":true' <<<"$out"
 grep -q 'Omarchy default (Launch terminal)' <<<"$out"
 
+# A combo managed by mosquitOmarchy itself is a conflict too.
+out="$(bash "$ACTIONS" kb-check 'SUPER + B')"
+grep -q '"taken":true' <<<"$out"
+grep -q 'currently: ours' <<<"$out"
+
 # A binding in another hypr config is a conflict too; a commented example is not.
 out="$(bash "$ACTIONS" kb-check 'SUPER + ALT + V')"
 grep -q '"taken":true' <<<"$out"
