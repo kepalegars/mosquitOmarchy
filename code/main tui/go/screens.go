@@ -696,6 +696,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if m.top() == scrSetupCat {
 			m.setupCatPicker = m.rebuildSetupCat()
 		}
+		m.learnAssets()
 		return m, nil
 
 	case backupOptionsMsg:
@@ -979,45 +980,33 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.toast, _ = m.toast.SetWarn(msg.err.Error())
 		return m, nil
 
-	case assetPollMsg:
-		// Only a Setup screen with a greyed archive row is worth a check:
-		// elsewhere the ticker is just a sleeping timer.
-		if m.top() == scrSetup || m.top() == scrSetupCat {
-			if keys := m.pendingAssetKeys(); len(keys) > 0 {
-				return m, tea.Batch(fetchAssetReadyCmd(keys), assetPollTickCmd())
-			}
+	case assetWatchMsg:
+		// Presence is a glob + stat per gated key, once a second; the backend
+		// is only asked when a candidate's size+mtime stopped moving.
+		if (m.top() == scrSetup || m.top() == scrSetupCat) && len(m.asset.globs) > 0 {
+			return m, tea.Batch(scanAssetsCmd(m.asset.globs, m.asset.sig, m.asset.stable, m.asset.checked),
+				assetWatchTickCmd())
 		}
-		return m, assetPollTickCmd()
+		return m, assetWatchTickCmd()
+
+	case assetScanMsg:
+		m.asset.sig = msg.sig
+		m.asset.stable = msg.stable
+		m.asset.checked = msg.checked
+		for _, key := range msg.gone {
+			m.setAssetGated(key)
+		}
+		if len(msg.verify) > 0 {
+			return m, fetchAssetReadyCmd(msg.verify)
+		}
+		return m, nil
 
 	case assetReadyMsg:
 		if msg.err != nil {
 			return m, nil
 		}
-		changed := false
 		for _, key := range msg.keys {
-			for i := range m.setupItems {
-				it := &m.setupItems[i]
-				if it.Key != key || it.Needs == "" {
-					continue
-				}
-				it.Needs = ""
-				it.Disabled = false
-				// The backend appends its "needs …" sentence last; drop it so
-				// `i` no longer claims an archive is missing.
-				if j := strings.LastIndex(it.Info, " — needs "); j >= 0 {
-					it.Info = it.Info[:j]
-				}
-				m.setupByValue[setupValue(it.Folder, it.Key)] = *it
-				changed = true
-			}
-		}
-		if changed {
-			if m.top() == scrSetup {
-				m.setupPicker = m.rebuildSetup()
-			}
-			if m.top() == scrSetupCat {
-				m.setupCatPicker = m.rebuildSetupCat()
-			}
+			m.setAssetReady(key)
 		}
 		return m, nil
 
@@ -4944,17 +4933,84 @@ func (m model) confirmPreinstallRemove(pkgs []string) (model, tea.Cmd) {
 
 // confirmInstallSelection installs the Tab-checked rows, and only those. An
 // empty selection is a warning, not an implicit cursor install.
-// pendingAssetKeys lists the gated keys whose greyed rows are on screen.
-func (m *model) pendingAssetKeys() []string {
-	seen := make(map[string]bool, 4)
-	var keys []string
+// learnAssets remembers how to watch every greyed row the backend just sent,
+// and re-clears rows this session already proved ready (the setup cache can
+// still say they are missing).
+func (m *model) learnAssets() {
 	for _, it := range m.setupItems {
-		if it.Needs != "" && !seen[it.Needs] {
-			seen[it.Needs] = true
-			keys = append(keys, it.Needs)
+		// Watch every archive-backed row, not only the greyed ones: a row
+		// whose archive is deleted must grey itself again.
+		if len(it.NeedsFiles) == 0 {
+			continue
+		}
+		m.asset.globs[it.Key] = it.NeedsFiles
+		if it.NeedsNote != "" {
+			m.asset.notes[it.Key] = it.NeedsNote
 		}
 	}
-	return keys
+	for key := range m.asset.ready {
+		m.setAssetReady(key)
+	}
+}
+
+// setAssetReady un-greys the rows of a key whose archive is present and
+// complete, and drops the backend's "needs …" sentence from their info.
+func (m *model) setAssetReady(key string) {
+	m.asset.ready[key] = true
+	changed := false
+	for i := range m.setupItems {
+		it := &m.setupItems[i]
+		if it.Key != key || it.Needs == "" {
+			continue
+		}
+		it.Needs = ""
+		it.Disabled = false
+		if j := strings.LastIndex(it.Info, " — needs "); j >= 0 {
+			it.Info = it.Info[:j]
+		}
+		m.setupByValue[setupValue(it.Folder, it.Key)] = *it
+		changed = true
+	}
+	if changed {
+		m.refreshSetupRows()
+	}
+}
+
+// setAssetGated is the reverse: the archive vanished, so the row greys again
+// and Enter explains what is missing.
+func (m *model) setAssetGated(key string) {
+	delete(m.asset.ready, key)
+	note := m.asset.notes[key]
+	changed := false
+	for i := range m.setupItems {
+		it := &m.setupItems[i]
+		if it.Key != key || it.Needs != "" {
+			continue
+		}
+		it.Needs = key
+		it.Disabled = true
+		if note != "" && !strings.Contains(it.Info, note) {
+			if it.Info == "" {
+				it.Info = note
+			} else {
+				it.Info += " — " + note
+			}
+		}
+		m.setupByValue[setupValue(it.Folder, it.Key)] = *it
+		changed = true
+	}
+	if changed {
+		m.refreshSetupRows()
+	}
+}
+
+func (m *model) refreshSetupRows() {
+	if m.top() == scrSetup {
+		m.setupPicker = m.rebuildSetup()
+	}
+	if m.top() == scrSetupCat {
+		m.setupCatPicker = m.rebuildSetupCat()
+	}
 }
 
 func (m model) confirmInstallSelection() (model, tea.Cmd) {

@@ -437,6 +437,7 @@ type model struct {
 	blinkOn         bool
 	assetBlink      bool
 	assetDL         map[string]AssetDownloadRec
+	asset           assetWatchState
 
 	// aiRemoved caches the backend's "is omarchy's agentic stuff gone?" answer
 	// and aiRemovedKnown says whether that answer has arrived yet.
@@ -692,6 +693,7 @@ func initialModel() model {
 		backupOpts:       loadBackupOpts(),
 		cleanupOpts:      defaultCleanupOpts(),
 		treeMode:         "install",
+		asset:            newAssetWatch(),
 	}
 	m.mainPicker = newNavPicker("", m.mainMenuItems()).
 		SetHelpKeys(key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")))
@@ -716,7 +718,7 @@ func (m model) Init() tea.Cmd {
 	// themselves with a spinner on the main menu and settle into a square (or
 	// nothing) when they finish; neither is re-run until the app is quit.
 	return tea.Batch(tuikit.ThemeWatchCmd(), firstRunCmd(), fetchUpdateCheckCmd(),
-		fetchHealthCmd(), loadingTickCmd(), warmCacheCmd(), assetPollTickCmd())
+		fetchHealthCmd(), loadingTickCmd(), warmCacheCmd(), assetWatchTickCmd())
 }
 
 // top, contentSize and their friends take a POINTER receiver. The model holds

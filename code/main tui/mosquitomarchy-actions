@@ -1022,8 +1022,19 @@ _setup_tree(){
           local j_move=false
           _move_patch_present "${CAND_KEYS[$i]}" && j_move=true
           json_str_into "$needs"; local j_needs=$JS
+          local j_needs_files='[]' j_needs_note='""' _g _arr="" _note
+          _note="$(_asset_note_for "$vk")"
+          if [[ -n $_note ]]; then
+            while IFS= read -r _g; do
+              [[ -n $_g ]] || continue
+              _arr+="${_arr:+,}$(json_str "$_g")"
+            done < <(_asset_globs "$vk")
+            j_needs_files="[$_arr]"
+            json_str_into "$_note"; j_needs_note=$JS
+          fi
           json_obj_into folder "$j_folder" key "$j_key" label "$j_vlabel" info "$j_info" \
-            disabled "$(json_bool "$disabled")" group "$j_group" patch "$j_patch" move_patch "$j_move" needs "$j_needs"
+            disabled "$(json_bool "$disabled")" group "$j_group" patch "$j_patch" move_patch "$j_move" needs "$j_needs" \
+            needs_files "$j_needs_files" needs_note "$j_needs_note"
           items+=("${j_folder//\"/}/$name"$'\t'"$JO")
         done
         ;;
@@ -2000,26 +2011,14 @@ _manual_asset_spec(){ # appkey -> "expected-file|url" (empty: no manual file)
     *)         printf '' ;;
   esac
 }
-_manual_asset_present(){ # appkey -> 0 if its installer file exists
-  local key="$1" f
-  case "$key" in
-    ableton-wires|ableton-native)
-      local dl; dl="$(command -v xdg-user-dir >/dev/null 2>&1 && xdg-user-dir DOWNLOAD 2>/dev/null || echo "$HOME/Downloads")"
-      for f in "$APPS_DIR"/ableton/Ableton*.zip "$APPS_DIR"/ableton/ableton*.zip \
-               "$dl"/Ableton*.zip "$dl"/ableton*.zip; do [[ -f $f ]] && return 0; done ;;
-    bitwig)
-      for f in "$APPS_DIR"/bitwig/bitwig*.deb; do [[ -f $f ]] && return 0; done ;;
-    guitarpro)
-      [[ -f $APPS_DIR/guitarpro/guitar-pro-8-setup.exe ]] && return 0 ;;
-    davinci|davinci-resolve)
-      for f in "$APPS_DIR"/davinci/*[Rr]esolve*.zip "$APPS_DIR"/davinci/[Dd]a[Vv]inci*.zip; do [[ -f $f ]] && return 0; done ;;
-    spektrafilm)
-      for f in "$APPS_DIR"/spektrafilm/*.zip; do
-        [[ -f $f ]] || continue
-        [[ ${f,,} == *spektrafilm* ]] || continue
-        return 0
-      done ;;
-  esac
+_manual_asset_present(){ # appkey -> 0 if a complete installer file exists
+  # A partial download in ~/Downloads must not open the gate: the same
+  # completeness check the watcher uses decides, and a file in the module
+  # folder is checked the same way (cached by size+mtime).
+  local f
+  while IFS= read -r f; do
+    _asset_complete "$f" && return 0
+  done < <(_asset_files "$1")
   return 1
 }
 # A Blackmagic zip that is NOT DaVinci Resolve (e.g. Fusion Studio) → a clear
@@ -2077,13 +2076,19 @@ _asset_dir(){ # appkey -> module folder name
   esac
 }
 
-# The same answer as a sentence, for the row's info line.
-_asset_gate_note(){ # appkey -> human sentence when gated, empty when usable
-  local expected; expected="$(_asset_gate "$1")"
+# The row's "needs …" sentence, whether or not the archive is there right now:
+# the TUI keeps it so a row can grey again when the file disappears.
+_asset_note_for(){ # appkey -> sentence, empty for keys without a gate
+  local expected; expected="$(_manual_asset_spec "$1" | cut -d'|' -f1)"
   [[ -n $expected ]] || return 0
   # No leading dash: the caller joins this onto info with " — ", and a note that
   # starts with its own dash reads as "label — — needs…".
   printf 'needs %s in code/modules/Apps/%s/' "$expected" "$(_asset_dir "$1")"
+}
+
+_asset_gate_note(){ # appkey -> sentence only while gated
+  [[ -n "$(_asset_gate "$1")" ]] || return 0
+  _asset_note_for "$1"
 }
 
 cmd_missing_assets(){
@@ -3667,36 +3672,40 @@ cmd_open_download_page(){
 
 
 # Every archive candidate for a gated key: the module folder first, then the
-# browser's download folder. _manual_asset_present stays the gate (module
-# folder only, except Ableton whose installers read Downloads too); this wider
-# list exists so the readiness poll can adopt a finished download.
-_asset_files(){ # key -> absolute paths that could satisfy it
-  local key="$1" f dl
-  dl="$(command -v xdg-user-dir >/dev/null 2>&1 && xdg-user-dir DOWNLOAD 2>/dev/null || echo "$HOME/Downloads")"
-  case "$key" in
+# browser's download folder. The gate and the readiness watcher share this
+# list, so a finished download is both visible and adoptable.
+_asset_dl(){ # Downloads dir, resolved once per backend run
+  [[ -n ${_MQ_ASSET_DL:-} ]] || _MQ_ASSET_DL="$(command -v xdg-user-dir >/dev/null 2>&1 && xdg-user-dir DOWNLOAD 2>/dev/null || echo "$HOME/Downloads")"
+  printf '%s\n' "$_MQ_ASSET_DL"
+}
+
+_asset_globs(){ # key -> absolute glob patterns (module folder, then Downloads)
+  local dl; dl="$(_asset_dl)"
+  case "$1" in
     ableton-wires|ableton-native)
-      for f in "$APPS_DIR"/ableton/Ableton*.zip "$APPS_DIR"/ableton/ableton*.zip \
-               "$dl"/Ableton*.zip "$dl"/ableton*.zip; do
-        [[ -f $f ]] && printf '%s\n' "$f"
-      done ;;
+      printf '%s\n' "$APPS_DIR"/ableton/Ableton*.zip "$APPS_DIR"/ableton/ableton*.zip \
+        "$dl"/Ableton*.zip "$dl"/ableton*.zip ;;
     bitwig)
-      for f in "$APPS_DIR"/bitwig/bitwig*.deb "$dl"/bitwig*.deb; do
-        [[ -f $f ]] && printf '%s\n' "$f"
-      done ;;
+      printf '%s\n' "$APPS_DIR"/bitwig/bitwig*.deb "$dl"/bitwig*.deb ;;
     guitarpro)
-      for f in "$APPS_DIR"/guitarpro/guitar-pro-8-setup.exe "$dl"/guitar-pro-8-setup.exe; do
-        [[ -f $f ]] && printf '%s\n' "$f"
-      done ;;
+      printf '%s\n' "$APPS_DIR"/guitarpro/guitar-pro-8-setup.exe "$dl"/guitar-pro-8-setup.exe ;;
     davinci|davinci-resolve)
-      for f in "$APPS_DIR"/davinci/*[Rr]esolve*.zip "$APPS_DIR"/davinci/[Dd]a[Vv]inci*.zip \
-               "$dl"/*[Rr]esolve*.zip "$dl"/[Dd]a[Vv]inci*.zip; do
-        [[ -f $f ]] && printf '%s\n' "$f"
-      done ;;
+      printf '%s\n' "$APPS_DIR"/davinci/*[Rr]esolve*.zip "$APPS_DIR"/davinci/[Dd]a[Vv]inci*.zip \
+        "$dl"/*[Rr]esolve*.zip "$dl"/[Dd]a[Vv]inci*.zip ;;
     spektrafilm)
-      for f in "$APPS_DIR"/spektrafilm/*.zip "$dl"/*spektrafilm*.zip; do
-        [[ -f $f && ${f,,} == *spektrafilm* ]] && printf '%s\n' "$f"
-      done ;;
+      printf '%s\n' "$APPS_DIR"/spektrafilm/*.zip "$dl"/*spektrafilm*.zip ;;
   esac
+}
+
+_asset_files(){ # key -> existing files matching _asset_globs
+  local key="$1" g f
+  while IFS= read -r g; do
+    while IFS= read -r f; do
+      [[ -f $f ]] || continue
+      [[ $key != spektrafilm || ${f,,} == *spektrafilm* ]] || continue
+      printf '%s\n' "$f"
+    done < <(compgen -G "$g")
+  done < <(_asset_globs "$key")
 }
 
 # Is this archive complete? Cheap on purpose: this runs on a timer. A fresh
@@ -3709,7 +3718,7 @@ _asset_complete(){
   now="$(date +%s)"
   mtime="$(stat -c %Y -- "$f" 2>/dev/null)" || return 1
   age=$(( now - mtime ))
-  (( age >= 5 )) || return 1
+  (( age >= 2 )) || return 1
   size="$(stat -c %s -- "$f" 2>/dev/null)" || return 1
   case "${f,,}" in
     *.zip)
@@ -3734,12 +3743,17 @@ _asset_complete(){
 # download sitting in ~/Downloads is adopted into the module folder first, so
 # the existing installers (which only read their own folder) just work.
 cmd_asset_ready(){
-  local key f dir moved
+  local key f dir have
   for key in "$@"; do
     dir="$APPS_DIR/$(_asset_dir "$key")"
-    # Only adopt from Downloads when the gate is still closed: an archive the
-    # module can already read must not be duplicated into the folder.
-    if [[ -n "$(_asset_gate "$key")" ]]; then
+    # Adopt a finished download only when the module folder has no complete
+    # archive of its own: the installers read that folder, not Downloads.
+    have=0
+    while IFS= read -r f; do
+      [[ $f == "$dir"/* ]] || continue
+      _asset_complete "$f" && { have=1; break; }
+    done < <(_asset_files "$key")
+    if (( ! have )); then
       while IFS= read -r f; do
         [[ $f == "$dir"/* ]] && continue
         _asset_complete "$f" || continue
@@ -3748,11 +3762,14 @@ cmd_asset_ready(){
       done < <(_asset_files "$key")
     fi
     [[ -z "$(_asset_gate "$key")" ]] || continue
-    moved=0
     while IFS= read -r f; do
-      if _asset_complete "$f"; then moved=1; break; fi
+      if _asset_complete "$f"; then
+        # The cached Setup tree still says the row is gated; drop it so a
+        # later visit cannot grey the row again.
+        rm -f "$MQ_QUERY_CACHE/setup-tree" 2>/dev/null || true
+        printf '%s\n' "$key"; break
+      fi
     done < <(_asset_files "$key")
-    (( moved )) && printf '%s\n' "$key"
   done
 }
 

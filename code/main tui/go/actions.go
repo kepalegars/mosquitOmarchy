@@ -296,8 +296,13 @@ type SetupItemRec struct {
 	Patch bool `json:"patch"`
 	// MovePatch marks Ableton's separate Move wine step, bound to P.
 	MovePatch bool `json:"move_patch"`
-	// Needs is the module key whose archive is missing; d downloads it.
+	// Needs is the module key whose archive is missing; Enter explains it.
 	Needs string `json:"needs"`
+	// NeedsFiles are the absolute globs that would satisfy Needs, and
+	// NeedsNote is the sentence shown for the greyed row. Both let the TUI
+	// watch for the archive appearing/disappearing without asking the backend.
+	NeedsFiles []string `json:"needs_files"`
+	NeedsNote  string   `json:"needs_note"`
 }
 
 // backupOptionsMsg carries the backup content tree + environment facts.
@@ -967,11 +972,101 @@ func fetchAssetReadyCmd(keys []string) tea.Cmd {
 	}
 }
 
-// assetPollMsg wakes the archive watcher. It is a plain timer: the handler
-// only spawns a backend check while a Setup screen actually shows a greyed
-// archive row, so the idle cost is one sleeping timer.
-type assetPollMsg struct{}
+// assetWatchState is the TUI-side archive watcher. Presence is decided in Go
+// (a glob + stat per key, once a second); the backend is only asked to verify
+// a candidate once its size+mtime have stopped moving, so a 4 GB download is
+// never hashed or re-checked per tick.
+type assetWatchState struct {
+	globs   map[string][]string
+	notes   map[string]string
+	sig     map[string]string
+	stable  map[string]int
+	checked map[string]string
+	ready   map[string]bool
+}
 
-func assetPollTickCmd() tea.Cmd {
-	return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return assetPollMsg{} })
+func newAssetWatch() assetWatchState {
+	return assetWatchState{
+		globs:   map[string][]string{},
+		notes:   map[string]string{},
+		sig:     map[string]string{},
+		stable:  map[string]int{},
+		checked: map[string]string{},
+		ready:   map[string]bool{},
+	}
+}
+
+type assetWatchMsg struct{}
+
+func assetWatchTickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return assetWatchMsg{} })
+}
+
+// assetScanMsg carries what one glob pass saw: which stable candidates to
+// verify, which keys lost their archive, and the updated watcher state.
+type assetScanMsg struct {
+	verify  []string
+	gone    []string
+	sig     map[string]string
+	stable  map[string]int
+	checked map[string]string
+}
+
+func scanAssetsCmd(globs map[string][]string, sig map[string]string, stable map[string]int, checked map[string]string) tea.Cmd {
+	return func() tea.Msg {
+		out := assetScanMsg{
+			sig:     make(map[string]string, len(sig)),
+			stable:  make(map[string]int, len(stable)),
+			checked: make(map[string]string, len(checked)),
+		}
+		for k, v := range sig {
+			out.sig[k] = v
+		}
+		for k, v := range stable {
+			out.stable[k] = v
+		}
+		for k, v := range checked {
+			out.checked[k] = v
+		}
+		for key, patterns := range globs {
+			cand, csig := "", ""
+			for _, pat := range patterns {
+				matches, _ := filepath.Glob(pat)
+				for _, p := range matches {
+					fi, err := os.Stat(p)
+					if err != nil || fi.Size() == 0 {
+						continue
+					}
+					cand = p
+					csig = fmt.Sprintf("%s|%d|%d", p, fi.Size(), fi.ModTime().UnixNano())
+					break
+				}
+				if cand != "" {
+					break
+				}
+			}
+			if cand == "" {
+				if out.sig[key] != "" {
+					out.gone = append(out.gone, key)
+				}
+				out.sig[key] = ""
+				out.stable[key] = 0
+				delete(out.checked, key)
+				continue
+			}
+			if csig == out.sig[key] {
+				out.stable[key]++
+			} else {
+				out.stable[key] = 0
+			}
+			out.sig[key] = csig
+			// Two quiet ticks (2 s) mean nothing is still writing; verify once
+			// per size+mtime, never again while the file is unchanged.
+			if out.stable[key] >= 2 && out.checked[key] != csig {
+				out.verify = append(out.verify, key)
+				out.checked[key] = csig
+			}
+		}
+		return out
+	}
 }

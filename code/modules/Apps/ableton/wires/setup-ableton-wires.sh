@@ -66,7 +66,7 @@ print(sorted(names)[-1] if names else "")' 2>/dev/null || true
 latest_runtime(){
   curl -fsSL --max-time 25 "$RUNTIME_JSON" 2>/dev/null \
     | python3 -c 'import sys,json
-try: names=[x["name"] for x in json.load(sys.stdin) if x["name"].startswith("Wires.Runtime.") and ".WL-PARA.REAL.tar.zst" in x["name"]]
+try: names=[x["name"] for x in json.load(sys.stdin) if x["name"].startswith("Wires.Runtime.") and x["name"].endswith(".WL-PARA.REAL.tar.zst")]
 except Exception: names=[]
 print(sorted(names)[-1] if names else "")' 2>/dev/null || true
 }
@@ -128,40 +128,49 @@ prepare_assets(){
 
   run="$CACHE/$ins"
   if [[ $(manifest_get installer) != "$ins" || ! -f $run ]]; then
-    download_checked "https://cdn.wires.sh/install/$ins" "$run" "$(sha_for "$ins")" || return 1
+    download_checked "https://cdn.wires.sh/install/$ins" "$run" "$(sha_for "$ins")" >&2 || return 1
     manifest_set installer "$ins"
     rm -rf "$CACHE/installer"
   fi
   local archive="$CACHE/$rt"
   if [[ $(manifest_get runtime) != "$rt" || ! -f $archive ]]; then
     sha="$(sha_for "$rt")"
-    download_checked "https://cdn.wires.sh/runtimes/$rt" "$archive" "$sha" || return 1
+    download_checked "https://cdn.wires.sh/runtimes/$rt" "$archive" "$sha" >&2 || return 1
     manifest_set runtime "$rt"
-    local dir="${rt%.tar.zst}"
-    rm -rf "$WIRES_ROOT/.runtimes/$dir"
-    mkdir -p "$WIRES_ROOT/.runtimes/$dir"
-    tar --use-compress-program=zstd -xf "$archive" -C "$WIRES_ROOT/.runtimes" --strip-components=1 2>/dev/null \
-      || tar -xf "$archive" -C "$WIRES_ROOT/.runtimes" --strip-components=1
-    manifest_set runtime_name "$dir"
   fi
 
   if [[ ! -f $CACHE/installer/entrypoint.sh ]]; then
     mkdir -p "$CACHE/installer"
     ( cd "$CACHE/installer" && bash "$run" --target "$CACHE/installer" --noexec ) >/dev/null
   fi
-  # Local overrides only: point at the Wayland runtime and allow --installer.
-  python3 - "$CACHE/installer/install.sh" "$(manifest_get runtime_name)" <<'PY'
-import sys, re
-p, name = sys.argv[1], sys.argv[2]
+  # Local overrides only: let the plug installer accept --installer/--runtime.
+  # The runtime archive's own root directory names the runtime, so passing
+  # --runtime below is enough; no name override is needed.
+  python3 - "$CACHE/installer/install.sh" <<'PY'
+import sys
+p = sys.argv[1]
 s = open(p, encoding="utf-8").read()
-s = re.sub(r"WIRES_RUNTIME='[^']*'", "WIRES_RUNTIME='%s'" % name, s, count=1)
 s = s.replace("WIRES_CATALOGUE=0", "WIRES_CATALOGUE=1", 1)
+# mosquitomarchy always passes --installer, so "install the app or only the
+# runtime?" has exactly one answer: skip that menu.
+marker = "# mosquitomarchy: installer given"
+if marker not in s:
+    needle = '    wires_ui_select "$(wires_message core.intent.question)" install values labels \'\' \'\' off || return $?\n'
+    inject = ('    ' + marker + '\n'
+              '    if [ -n "${WIRES_INSTALLER_INPUT:-}" ]; then\n'
+              '        WIRES_UI_SELECTED=install\n'
+              '    else\n'
+              '        ' + needle.strip('\n') + '\n'
+              '    fi\n')
+    s = s.replace(needle, inject, 1)
+if marker not in s:
+    sys.stderr.write("warn: could not skip the Wires intent menu (upstream changed)\n")
 open(p, "w", encoding="utf-8").write(s)
 PY
 
   local exe="${CACHE}/AbletonLiveSuite.exe"
   [[ -f $exe ]] || find_live_exe >/dev/null || {
-    warn "No Ableton Suite zip found — downloading the 12.4.7 installer from Ableton."
+    warn "No Ableton Suite zip found — downloading the 12.4.7 installer from Ableton." >&2
     curl -fL --retry 3 -o "$CACHE/suite.zip" "$SUITE_URL"
     unzip -p "$CACHE/suite.zip" "$(unzip -Z1 "$CACHE/suite.zip" | grep -iE 'Installer.*\.exe$' | head -1)" > "$exe"
   }

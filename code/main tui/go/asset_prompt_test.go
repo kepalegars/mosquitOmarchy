@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -85,5 +87,94 @@ func TestAssetReadyUngreysRow(t *testing.T) {
 	}
 	if got := m2.setupByValue[setupValue("apps", "davinci-resolve")]; got.Needs != "" || got.Disabled {
 		t.Fatalf("setupByValue still gated: %+v", got)
+	}
+}
+
+// The watcher sees a file appear, asks for verification once its size+mtime
+// are stable, and reports it gone when the file is removed.
+func TestScanAssetsAppearAndDisappear(t *testing.T) {
+	dir := t.TempDir()
+	globs := map[string][]string{"k": {filepath.Join(dir, "*.zip")}}
+
+	empty := scanAssetsCmd(globs, map[string]string{}, map[string]int{}, map[string]string{})().(assetScanMsg)
+	if len(empty.verify) != 0 || len(empty.gone) != 0 {
+		t.Fatalf("empty dir: verify=%v gone=%v", empty.verify, empty.gone)
+	}
+
+	p := filepath.Join(dir, "archive.zip")
+	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first := scanAssetsCmd(globs, empty.sig, empty.stable, empty.checked)().(assetScanMsg)
+	if len(first.verify) != 0 {
+		t.Fatalf("verified on the first sighting: %v", first.verify)
+	}
+	second := scanAssetsCmd(globs, first.sig, first.stable, first.checked)().(assetScanMsg)
+	if len(second.verify) != 0 {
+		t.Fatalf("verified after one quiet tick: %v", second.verify)
+	}
+	third := scanAssetsCmd(globs, second.sig, second.stable, second.checked)().(assetScanMsg)
+	if len(third.verify) != 1 || third.verify[0] != "k" {
+		t.Fatalf("stable file not verified: %v", third.verify)
+	}
+
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	gone := scanAssetsCmd(globs, third.sig, third.stable, third.checked)().(assetScanMsg)
+	if len(gone.gone) != 1 || gone.gone[0] != "k" {
+		t.Fatalf("removal not noticed: %v", gone.gone)
+	}
+}
+
+// A disappeared archive greys the row again, note included.
+func TestAssetGoneRegreysRow(t *testing.T) {
+	m := initialModel()
+	m.setupItems = []SetupItemRec{{Folder: "apps", Key: "k", Info: "desc"}}
+	m.setupByValue = map[string]SetupItemRec{setupValue("apps", "k"): m.setupItems[0]}
+	m.asset.ready["k"] = true
+	m.asset.notes["k"] = "needs X in code/modules/Apps/k/"
+
+	m.setAssetGated("k")
+	it := m.setupItems[0]
+	if it.Needs != "k" || !it.Disabled {
+		t.Fatalf("row not gated again: needs=%q disabled=%v", it.Needs, it.Disabled)
+	}
+	if !strings.Contains(it.Info, "needs X") {
+		t.Fatalf("note not restored: %q", it.Info)
+	}
+}
+
+// A row whose archive was present at startup is watched too, so deleting the
+// file greys it without any prior "ready" event.
+func TestAssetGoneRegreysUngatedRow(t *testing.T) {
+	m := initialModel()
+	m.setupItems = []SetupItemRec{{Folder: "apps", Key: "k", Info: "desc"}}
+	m.setupByValue = map[string]SetupItemRec{setupValue("apps", "k"): m.setupItems[0]}
+	m.asset.notes["k"] = "needs X in code/modules/Apps/k/"
+
+	m.setAssetGated("k")
+	it := m.setupItems[0]
+	if it.Needs != "k" || !it.Disabled {
+		t.Fatalf("row not gated: needs=%q disabled=%v", it.Needs, it.Disabled)
+	}
+	if !strings.Contains(it.Info, "needs X") {
+		t.Fatalf("note not added: %q", it.Info)
+	}
+}
+
+// learnAssets registers the globs of a row that is NOT greyed, so the watcher
+// can notice its archive disappearing.
+func TestLearnAssetsWatchesPresentRow(t *testing.T) {
+	m := initialModel()
+	m.setupItems = []SetupItemRec{{
+		Folder: "apps", Key: "k", NeedsFiles: []string{"/tmp/x/*.zip"}, NeedsNote: "needs x",
+	}}
+	m.learnAssets()
+	if got := m.asset.globs["k"]; len(got) != 1 || got[0] != "/tmp/x/*.zip" {
+		t.Fatalf("globs not learned: %v", got)
+	}
+	if m.asset.notes["k"] != "needs x" {
+		t.Fatalf("note not learned: %q", m.asset.notes["k"])
 	}
 }
