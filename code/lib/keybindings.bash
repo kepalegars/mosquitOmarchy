@@ -60,7 +60,7 @@ kb_load_ours(){
 
 kb_friendly_default(){ # combo → the Omarchy default label it would replace, if any
   # -F: a combo's "+" is literal, not a regex quantifier.
-  rg -N -F "o.bind(\"$1\"" "$KB_DEF_DIR"/*.lua 2>/dev/null \
+  rg -N -i -F "o.bind(\"$1\"" "$KB_DEF_DIR"/*.lua 2>/dev/null \
     | sed -n 's/.*o\.bind("[^"]*", *"\([^"]*\)".*/\1/p' | head -1 || true
   return 0
 }
@@ -75,10 +75,10 @@ kb_bound_elsewhere(){ # <combo> → who owns it outside our marker block, empty 
     if [[ "$file" == "$KB_CONF" ]]; then
       line="$(sed -e "/$KB_BEGIN/,/$KB_END/d" -e "/$KB_LEGACY_BEGIN/,/$KB_LEGACY_END/d" \
         -e '/^[[:space:]]*--/d' "$file" 2>/dev/null \
-        | rg -N -F "o.bind(\"$combo\"" 2>/dev/null | head -1 || true)"
+        | rg -N -i -F "o.bind(\"$combo\"" 2>/dev/null | head -1 || true)"
     else
       line="$(sed -e '/^[[:space:]]*--/d' "$file" 2>/dev/null \
-        | rg -N -F "o.bind(\"$combo\"" 2>/dev/null | head -1 || true)"
+        | rg -N -i -F "o.bind(\"$combo\"" 2>/dev/null | head -1 || true)"
     fi
     if [[ -n "$line" ]]; then
       label="$(printf '%s' "$line" | sed -n 's/.*o\.bind("[^"]*", *"\([^"]*\)".*/\1/p')"
@@ -91,12 +91,15 @@ kb_bound_elsewhere(){ # <combo> → who owns it outside our marker block, empty 
   # Our own managed binding counts as used too: rebinding SUPER + ALT + M to
   # something else must warn, not silently replace the mosquitOmarchy opener.
   kb_load_ours
-  if [[ -n "${KB_OURS[$combo]+x}" ]]; then
-    IFS='|' read -r label _ _ <<<"${KB_OURS[$combo]}"
-    printf 'managed by mosquitOmarchy (currently: %s)' "${label:-$combo}"
-    return 0
-  fi
-  line="$(rg -N -F "o.bind(\"$combo\"" "$KB_DEF_DIR"/*.lua 2>/dev/null | head -1 || true)"
+  local k
+  for k in "${!KB_OURS[@]}"; do
+    if [[ "${k^^}" == "$combo" ]]; then
+      IFS='|' read -r label _ _ <<<"${KB_OURS[$k]}"
+      printf 'managed by mosquitOmarchy (currently: %s)' "${label:-$k}"
+      return 0
+    fi
+  done
+  line="$(rg -N -i -F "o.bind(\"$combo\"" "$KB_DEF_DIR"/*.lua 2>/dev/null | head -1 || true)"
   if [[ -n "$line" ]]; then
     label="$(printf '%s' "$line" | sed -n 's/.*o\.bind("[^"]*", *"\([^"]*\)".*/\1/p')"
     printf 'Omarchy default (%s)' "${label:-$combo}"
@@ -226,18 +229,24 @@ kb_reload(){
 }
 
 kb_free_keys(){
+  # Same sources as the "already bound" check (every hypr *.lua, defaults and
+  # our own block), gathered in ONE pass — per-combo checks took ~5 s here.
   local taken
   taken="$( {
-    [[ -f "$KB_CONF" ]] && sed -e "/$KB_BEGIN/,/$KB_END/d" -e "/$KB_LEGACY_BEGIN/,/$KB_LEGACY_END/d" "$KB_CONF" 2>/dev/null \
-      | rg -o 'o\.bind\("[^"]+"' -N --no-filename 2>/dev/null | sed 's/o\.bind("//; s/"$//'
-    rg -o 'o\.bind\("[^"]+"' -N --no-filename "$KB_DEF_DIR"/*.lua 2>/dev/null \
-      | sed 's/o\.bind("//; s/"$//'
+    local file
+    for file in "$(dirname "$KB_CONF")"/*.lua; do
+      [[ -f "$file" ]] || continue
+      sed -e '/^[[:space:]]*--/d' -e "/$KB_BEGIN/,/$KB_END/d" \
+          -e "/$KB_LEGACY_BEGIN/,/$KB_LEGACY_END/d" "$file" 2>/dev/null || true
+    done
+    cat "$KB_DEF_DIR"/*.lua 2>/dev/null || true
     printf '%s\n' "${KB_OWN_ORDER[@]}"
-  } | sort -u )"
+  } | rg -o 'o\.bind\("[^"]+"' -N --no-filename 2>/dev/null \
+    | sed 's/o\.bind("//; s/"$//' | sort -u || true)"
   local c cand
   for c in {A..Z} {0..9} F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12; do
     cand="SUPER + $c"
-    grep -qx -F "$cand" <<<"$taken" 2>/dev/null || printf '%s\n' "$cand"
+    grep -qix -F "$cand" <<<"$taken" 2>/dev/null || printf '%s\n' "$cand"
   done
   return 0
 }

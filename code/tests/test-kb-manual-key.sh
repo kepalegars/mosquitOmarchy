@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/home/.config/hypr" "$TMP/empty"
-printf 'o.bind("SUPER + Q", "Launch terminal", "foot")\n' > "$TMP/empty/default.lua"
+printf 'o.bind("Super + Q", "Launch terminal", "foot")\n' > "$TMP/empty/default.lua"
 cat > "$TMP/home/.config/hypr/hyprland.lua" <<'EOF'
 -- o.bind("SUPER + H", "commented example", "foot")
 o.bind("SUPER + ALT + V", "Omarchy VM: focus the VM", "omarchy-vm-focus")
