@@ -25,6 +25,18 @@ func TestKeyPickerOffersManualEntry(t *testing.T) {
 	}
 }
 
+// A combo picked from the "free" list is checked too: that list only knows
+// bindings.lua, so another hypr config can still own the key.
+func TestPickedKeyAlsoChecksOwner(t *testing.T) {
+	m := initialModel()
+	m.w, m.h = 100, 34
+	m.nav = []screen{scrMain, scrKBKeys}
+	mm, cmd := m.screenPicked(tuikit.PickerResultMsg{Value: "SUPER + J"})
+	if cmd == nil || mm.top() != scrKBKeys || mm.pendingAction != "" {
+		t.Fatalf("picking a key did not defer to the owner check: top=%v action=%q cmd=%v", mm.top(), mm.pendingAction, cmd)
+	}
+}
+
 func TestManualKeyWarnsBeforeOverriding(t *testing.T) {
 	m := initialModel()
 	m.w, m.h = 100, 34

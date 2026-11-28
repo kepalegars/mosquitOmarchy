@@ -3628,7 +3628,9 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.push(scrKBInput)
 			return m, m.kbInput.Init()
 		}
-		return m.askBind(res.Value, false, "")
+		// Same check as a manually typed combo: a combo in the free list can
+		// still be owned by another hypr config file.
+		return m, fetchKbCheckCmd(res.Value)
 
 	case scrSettings:
 		// A ToggleSpec row never arrives here: the kit emits

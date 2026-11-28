@@ -8,6 +8,10 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/home/.config/hypr" "$TMP/empty"
 printf 'o.bind("SUPER + Q", "Launch terminal", "foot")\n' > "$TMP/empty/default.lua"
+cat > "$TMP/home/.config/hypr/hyprland.lua" <<'EOF'
+-- o.bind("SUPER + H", "commented example", "foot")
+o.bind("SUPER + ALT + V", "Omarchy VM: focus the VM", "omarchy-vm-focus")
+EOF
 cat > "$TMP/home/.config/hypr/bindings.lua" <<'EOF'
 o.bind("SUPER + A", "Terminal", "foot")
 -- >>> mosquitOmarchy_Keybindings
@@ -26,6 +30,14 @@ grep -q 'Terminal' <<<"$out"
 out="$(bash "$ACTIONS" kb-check 'super+q')"
 grep -q '"taken":true' <<<"$out"
 grep -q 'Omarchy default (Launch terminal)' <<<"$out"
+
+# A binding in another hypr config is a conflict too; a commented example is not.
+out="$(bash "$ACTIONS" kb-check 'SUPER + ALT + V')"
+grep -q '"taken":true' <<<"$out"
+grep -q 'hyprland.lua (Omarchy VM: focus the VM)' <<<"$out"
+
+out="$(bash "$ACTIONS" kb-check 'SUPER + H')"
+grep -q '"taken":false' <<<"$out"
 
 out="$(bash "$ACTIONS" kb-check 'SUPER + SHIFT + F12')"
 grep -q '"taken":false' <<<"$out"

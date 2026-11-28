@@ -94,7 +94,10 @@ var kbCatalog = []struct {
 	// terminal itself when there is none, which a bare TUI binary cannot).
 	{"mosquito", "mosquito", []KbCatItem{
 		{"mosquitOmarchy", "$HOME/.local/bin/mosquitomarchy", "cmd"},
-		{"JamJamJam", "omarchy-launch-or-focus-tui jamjamjam-tui", "cmd"},
+		// The old jamjamjam-tui was retired: its binary is no longer
+		// installed, so the launcher silently did nothing. The panel is the
+		// live JamJamJam interface (same IPC the bar widget uses).
+		{"JamJamJam", "omarchy-shell mosquito.jamjamjam.panel toggle", "cmd"},
 		{"PipeWire settings", "omarchy-shell shell summon mosquito.pipewire '{}'", "cmd"},
 	}},
 	{"custom", "custom command", nil},
@@ -287,7 +290,7 @@ func (m model) rebuildKBItems() navPicker {
 func (m model) rebuildKBKeys() navPicker {
 	idx := m.kbKeyPicker.Index()
 	items := make([]tuikit.PickerItem, 0, len(m.kbFree)+2)
-	items = append(items, tuikit.PickerItem{Display: "Enter a key manually (e.g. SUPER + ALT + M)", Value: "manual"})
+	items = append(items, tuikit.PickerItem{Display: "Enter a key manually", Value: "manual"})
 	for _, k := range m.kbFree {
 		items = append(items, tuikit.PickerItem{Display: k, Value: k})
 	}

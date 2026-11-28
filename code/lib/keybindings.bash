@@ -66,16 +66,28 @@ kb_friendly_default(){ # combo → the Omarchy default label it would replace, i
 }
 
 kb_bound_elsewhere(){ # <combo> → who owns it outside our marker block, empty if free
-  local combo="$1" line label
-  if [[ -f "$KB_CONF" ]]; then
-    line="$(sed -e "/$KB_BEGIN/,/$KB_END/d" -e "/$KB_LEGACY_BEGIN/,/$KB_LEGACY_END/d" "$KB_CONF" 2>/dev/null \
-      | rg -N -F "o.bind(\"$combo\"" 2>/dev/null | head -1 || true)"
+  local combo="$1" file line label
+  # Every hypr Lua config can bind a combo (hyprland.lua holds the VM focus
+  # shortcut, plugins add their own), not just bindings.lua. Skip commented
+  # examples and our own marker block: only an OUTSIDE binding conflicts.
+  for file in "$(dirname "$KB_CONF")"/*.lua; do
+    [[ -f "$file" ]] || continue
+    if [[ "$file" == "$KB_CONF" ]]; then
+      line="$(sed -e "/$KB_BEGIN/,/$KB_END/d" -e "/$KB_LEGACY_BEGIN/,/$KB_LEGACY_END/d" \
+        -e '/^[[:space:]]*--/d' "$file" 2>/dev/null \
+        | rg -N -F "o.bind(\"$combo\"" 2>/dev/null | head -1 || true)"
+    else
+      line="$(sed -e '/^[[:space:]]*--/d' "$file" 2>/dev/null \
+        | rg -N -F "o.bind(\"$combo\"" 2>/dev/null | head -1 || true)"
+    fi
     if [[ -n "$line" ]]; then
       label="$(printf '%s' "$line" | sed -n 's/.*o\.bind("[^"]*", *"\([^"]*\)".*/\1/p')"
-      printf 'your bindings.lua (%s)' "${label:-$combo}"
+      [[ -n "$label" ]] || label="$(printf '%s' "$line" | sed -n 's/.*o\.bind("[^"]*", *\([^,]*\),.*/\1/p' | tr -d ' ')"
+      [[ "$label" == nil ]] && label=""
+      printf '%s (%s)' "${file##*/}" "${label:-$combo}"
       return 0
     fi
-  fi
+  done
   line="$(rg -N -F "o.bind(\"$combo\"" "$KB_DEF_DIR"/*.lua 2>/dev/null | head -1 || true)"
   if [[ -n "$line" ]]; then
     label="$(printf '%s' "$line" | sed -n 's/.*o\.bind("[^"]*", *"\([^"]*\)".*/\1/p')"
