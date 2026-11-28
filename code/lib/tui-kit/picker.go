@@ -255,6 +255,10 @@ const (
 // Disabled alone.
 func inert(pi PickerItem) bool { return pi.Disabled || pi.Heading }
 
+// tabInert also skips dimmed asset rows: they are visible and Enter-able but
+// cannot be ticked with Tab.
+func tabInert(pi PickerItem) bool { return inert(pi) || pi.Dim }
+
 // Folder icons, drawn in the leading slot in place of the ○/● checkbox.
 //
 // They are U+25A2/U+25A3, i.e. Geometric Shapes — the SAME Unicode block as
@@ -1134,6 +1138,10 @@ func (p Picker) ShortcutsHint() string {
 				h = strings.Replace(h, "enter ", "enter/l ", 1)
 			}
 			primary = append(primary, h)
+		} else if isTree && strings.HasSuffix(h, " fold") {
+			// The fold gesture is the one thing a tree screen cannot do
+			// without its hint; pin it next to Enter like a primary action.
+			primary = append(primary, h)
 		} else {
 			rest = append(rest, h)
 		}
@@ -1156,12 +1164,18 @@ func (p Picker) ShortcutsHint() string {
 		return StyleHelp.Render(plain)
 	}
 
-	// 1. Shed the redundant keys, least useful first. esc/? live in tail,
-	// not nav, so both lists have to be searched — this is where the old
-	// loop dropped screen hints while keeping "? help" on the bar. The
-	// arrow/vim keys go last of all: standard everywhere, so a cramped bar
-	// is better spent on what Enter and ←/→ do HERE.
-	for _, k := range []string{"? help", "esc/h back", "enter/l select", "↑/k up", "↓/j down"} {
+	// 1. Shed the SCREEN's own hints first, from the tail. They are all still
+	// on the ? overlay, while esc/h (the way out) and enter/l (the action)
+	// are not things a user should have to guess on a cramped bar.
+	for len(extras) > 0 {
+		extras = extras[:len(extras)-1]
+		if lipgloss.Width(fit()) <= w {
+			return StyleHelp.Render(fit())
+		}
+	}
+	// 2. Only if the universal keys alone still do not fit, shed the least
+	// useful of them: ? help first, then the redundant vim/arrow aliases.
+	for _, k := range []string{"? help", "↑/k up", "↓/j down", "enter/l select", "esc/h back"} {
 		if idx := indexOf(tail, k); idx >= 0 {
 			tail = append(tail[:idx], tail[idx+1:]...)
 			if lipgloss.Width(fit()) <= w {
@@ -1174,13 +1188,6 @@ func (p Picker) ShortcutsHint() string {
 			if lipgloss.Width(fit()) <= w {
 				return StyleHelp.Render(fit())
 			}
-		}
-	}
-	// 2. Still too wide: drop the screen's own hints from the tail.
-	for len(extras) > 0 {
-		extras = extras[:len(extras)-1]
-		if lipgloss.Width(fit()) <= w {
-			break
 		}
 	}
 	return StyleHelp.Render(TruncateLine(fit(), w))
@@ -1225,7 +1232,7 @@ func (p Picker) Update(msg tea.Msg) (Picker, tea.Cmd) {
 			return p.confirm()
 		case key.Matches(m, key.NewBinding(key.WithKeys("tab"))):
 			if it, ok := p.list.SelectedItem().(PickerItem); ok {
-				if inert(it) {
+				if tabInert(it) {
 					return p, nil
 				}
 				// Tab toggles the CURRENT item only — the cursor stays

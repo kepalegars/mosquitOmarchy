@@ -309,7 +309,7 @@ func BuildFolderTree(folders []TreeFolder, items map[string][]TreeItem, open map
 			}
 			if it.Dim {
 				row.Dim = true
-				row.DimPrefix = len("    " + branch)
+				row.DimPrefix = len([]rune("    " + branch))
 			}
 			if it.Disabled {
 				row.Disabled = true

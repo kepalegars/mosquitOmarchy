@@ -4909,13 +4909,12 @@ func (m model) confirmInstallSelection() (model, tea.Cmd) {
 		if found {
 			m.pendingAction = "download-assets-prompt"
 			m.pendingArgs = []string{hit.Needs}
-			m.pendingMsg = "Archive required for " + k + "\n\n" + hit.Info +
-				"\n\nPress d to download it with mosquitomarchy (or place it in ~/Downloads)."
+			m.pendingMsg = "Checking required archives…"
 			m.pendingNo = "Cancel"
 			m.pendingYes = "Download"
 			m.push(scrConfirm)
-			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).FocusYes()
-			return m, nil
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
+			return m, fetchAssetMissingCmd(hit.Needs)
 		}
 	}
 	m.pendingAction = "apply"
