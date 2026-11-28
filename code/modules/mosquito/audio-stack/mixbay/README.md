@@ -686,8 +686,10 @@ seule sortie virtuelle (et optionnellement une seule entrée) via
 `libpipewire-module-combine-stream`. Rien n'est écrit dans la config PipeWire,
 aucune horloge globale n'est forcée, aucun daemon audio n'est ajouté.
 
-- `Devices → Aggregate devices → New aggregate…` : `space` coche des nœuds
-  `Audio/Sink` (sorties) ou `Audio/Source` (entrées), `n` demande un nom.
+- `Devices → Aggregate devices`, touche `n` : `space` coche des nœuds
+  `Audio/Sink` (sorties) ou `Audio/Source` (entrées), `n` demande un nom. Le
+  sélecteur affiche les mêmes libellés que le panneau audio (`alc257 analog`,
+  etc.) et **exclut toujours Superwhisper**.
 - `a` active/désactive la recette sélectionnée. L'activation charge le module
   avec `pw-cli load-module` (pas de redémarrage du graphe) et crée un sink
   `agg_<slug>` : il apparaît dans le panneau audio Omarchy comme une sortie
@@ -762,11 +764,12 @@ change, l'apply est refusé plutôt que de câbler à moitié. Par défaut l'app
 **ajoute** sans jamais couper un lien existant ; `--replace` ne retire que les
 liens matériels absents du preset, jamais les liens purement logiciels.
 
-Dans la TUI : Devices → **PipeWire patchbay** (lecture à la demande, `r` pour
-rafraîchir ; aucune surveillance en arrière-plan). Le raccourci est grisé si
-`pw-dump` ou `pw-link` manque. `Save current wiring…` (`s`) demande un nom et
-**crée seulement** : nom vide ou déjà pris est refusé, jamais écrasé. Le CLI
-`patchbay-save` garde son écrasement explicite.
+Dans la TUI, les presets de liens bruts sont au bas de **Aggregate devices**,
+préfixés `link: ` ; `enter` applique. La lecture est à la demande (`r`), sans
+surveillance en arrière-plan. `s` demande un nom et **crée seulement** : nom vide
+ou déjà pris est refusé, jamais écrasé. Le CLI `patchbay-save` garde son
+écrasement explicite. ni bouton « Refresh », ni ligne « Save current wiring » :
+les raccourcis `r` / `s` suffisent.
 
 ## Garde des volumes natifs (module Levels Guard)
 

@@ -349,7 +349,7 @@ func (m model) legendLine(w int) string {
 	case scrAggregate:
 		hint = "n new · a activate/deactivate · d delete · p repair · A lock · s save links · r refresh · esc/h back"
 	case scrAggregatePick:
-		hint = "space toggle · n name & save · esc/h back"
+		hint = "j/k row · h/l column · space/enter toggle · n name & save · esc back"
 	case scrFoundation:
 		hint = "enter/l install/remove · d default · r refresh · esc/h back"
 		if _, ok := m.selectedSplitCard(); ok {

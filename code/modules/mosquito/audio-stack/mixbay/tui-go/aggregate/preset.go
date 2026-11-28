@@ -100,6 +100,9 @@ func (p Preset) Validate() error {
 			if strings.HasPrefix(m.Node, "agg_") || strings.Contains(m.Node, ":monitor") {
 				return fmt.Errorf("an aggregate cannot contain its own monitor or another aggregate: %s", m.Node)
 			}
+			if isSuperwhisper(m.Node) {
+				return fmt.Errorf("superwhisper endpoints cannot be aggregate members")
+			}
 			key := strings.ToLower(m.Node)
 			if seen[key] {
 				return fmt.Errorf("member listed twice: %s", m.Node)
@@ -141,10 +144,17 @@ func MakePreset(name, display string, g patchbay.Graph, outputNodes, inputNodes 
 	return p, nil
 }
 
+func isSuperwhisper(s string) bool {
+	return strings.Contains(strings.ToLower(s), "superwhisper")
+}
+
 func memberFor(g patchbay.Graph, node, wantClass string) (Member, bool) {
 	for _, n := range g.Nodes {
 		if n.Name != node {
 			continue
+		}
+		if isSuperwhisper(n.Name) || isSuperwhisper(n.Description) || isSuperwhisper(n.Nick) {
+			return Member{}, false
 		}
 		if wantClass != "" && n.Class != wantClass {
 			return Member{}, false

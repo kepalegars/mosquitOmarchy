@@ -25,6 +25,9 @@ type Node struct {
 	Profile   string
 	Card      string
 	Device    string
+	// Nick mirrors the audio panel's nickname source; Description its fallback.
+	Nick               string
+	ProfileDescription string
 }
 
 // Port is one node port. Direction is PipeWire's "in" or "out".
@@ -194,16 +197,18 @@ func Parse(data []byte) (Graph, error) {
 			continue
 		}
 		n := Node{
-			ID:          o.ID,
-			Name:        name,
-			Description: rawString(o.Info.Props, "node.description"),
-			Class:       rawString(o.Info.Props, "media.class"),
-			Channels:    rawInt(o.Info.Props, "audio.channels"),
-			Hardware:    rawString(o.Info.Props, "api.alsa.card") != "" || rawString(o.Info.Props, "device.class") == "sound",
-			ClockName:   rawString(o.Info.Props, "clock.name"),
-			Profile:     rawString(o.Info.Props, "device.profile.name"),
-			Card:        rawString(o.Info.Props, "api.alsa.card"),
-			Device:      rawString(o.Info.Props, "device.name"),
+			ID:                 o.ID,
+			Name:               name,
+			Description:        rawString(o.Info.Props, "node.description"),
+			Class:              rawString(o.Info.Props, "media.class"),
+			Channels:           rawInt(o.Info.Props, "audio.channels"),
+			Hardware:           rawString(o.Info.Props, "api.alsa.card") != "" || rawString(o.Info.Props, "device.class") == "sound",
+			ClockName:          rawString(o.Info.Props, "clock.name"),
+			Profile:            rawString(o.Info.Props, "device.profile.name"),
+			Card:               rawString(o.Info.Props, "api.alsa.card"),
+			Device:             rawString(o.Info.Props, "device.name"),
+			Nick:               rawString(o.Info.Props, "node.nick"),
+			ProfileDescription: rawString(o.Info.Props, "device.profile.description"),
 		}
 		g.Nodes = append(g.Nodes, n)
 		byID[n.ID] = n

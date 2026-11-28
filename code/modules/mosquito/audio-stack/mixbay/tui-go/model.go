@@ -1412,7 +1412,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.aggregate.err = msg.err.Error()
 		}
-		if m.top() == scrAggregate || m.top() == scrAggregatePick {
+		if m.top() == scrAggregatePick {
+			m.syncAggregatePick()
+		} else if m.top() == scrAggregate {
 			m.syncPicker()
 		}
 		return m, nil
