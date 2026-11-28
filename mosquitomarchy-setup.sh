@@ -581,6 +581,11 @@ repo_update_avail(){ # 0 if a GitHub version is newer than the local one
   [[ -n "$local_head" ]] || return 1
   remote_head="$(timeout 15 git -C "$REPO_DIR" ls-remote "$REPO_REMOTE" "refs/heads/$REPO_BRANCH" 2>/dev/null | awk '{print $1}' | head -1)"
   [[ -n "$remote_head" ]] || return 1
+  # ls-remote only returns the hash: on a stale checkout the object is absent,
+  # so merge-base below fails and hides every real update. Fetch it first.
+  if ! git -C "$REPO_DIR" cat-file -e "${remote_head}^{commit}" 2>/dev/null; then
+    timeout 20 git -C "$REPO_DIR" fetch --quiet "$REPO_REMOTE" "$REPO_BRANCH" >/dev/null 2>&1 || true
+  fi
   # A local checkout with unpushed commits is AHEAD, not outdated. Comparing
   # the two hashes for inequality reported "GitHub has a newer version" on the
   # owner machine after every commit, and offered a pull that cannot
