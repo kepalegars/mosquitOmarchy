@@ -19,7 +19,7 @@ type aggregateView struct {
 	graph   patchbay.Graph
 	picked  map[string]bool
 
-	// The card picker is a 2-column grid like the EVO controls: column 0 is
+	// The interface picker is a 2-column grid like the EVO controls: column 0 is
 	// outputs, column 1 inputs. row is shared and clamped when switching
 	// columns, and picked is shared too — one selection map for both sides.
 	column int
@@ -198,8 +198,8 @@ func (m model) aggregateItems() []tuikit.PickerItem {
 	return items
 }
 
-// aggregatePickLists splits the live graph into the two columns of the card
-// picker. Both columns share the same selection map and the same row index.
+// aggregatePickLists splits the live graph into the two columns of the
+// interface picker. Both columns share the same selection map and the same row index.
 func (m model) aggregatePickLists() ([]string, []string, map[string]patchbay.Node) {
 	var outputs, inputs []string
 	nodes := map[string]patchbay.Node{}
@@ -234,7 +234,7 @@ func (m model) aggregatePickLists() ([]string, []string, map[string]patchbay.Nod
 func aggregateRowValue(row int) string { return fmt.Sprintf("row:%d", row) }
 
 // clampAggregateRow mirrors evoClampCursor: switching to a shorter column
-// keeps the row index where possible instead of jumping to a different card.
+// keeps the row index where possible instead of jumping to a different interface.
 func (m *model) clampAggregateRow() {
 	outputs, inputs, _ := m.aggregatePickLists()
 	rows := max(len(outputs), len(inputs))
@@ -308,7 +308,7 @@ func (m model) aggregatePickItems() []tuikit.PickerItem {
 	return append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
 }
 
-// aggregateActiveNode is the card under the shared (row, column) cursor.
+// aggregateActiveNode is the interface under the shared (row, column) cursor.
 func (m model) aggregateActiveNode() (string, bool) {
 	outputs, inputs, _ := m.aggregatePickLists()
 	list := outputs
@@ -490,8 +490,9 @@ func (m model) aggregatePickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "backspace":
 		m.pop()
 		return m, nil
-	case "h", "l":
-		// With two columns both keys toggle; j/k stay on the shared row.
+	case "h", "l", "left", "right":
+		// Vim and arrow keys both switch columns; j/k/up/down stay on the
+		// shared row. With two columns either direction toggles.
 		m.aggregate.column = 1 - m.aggregate.column
 		m.syncAggregatePick()
 		return m, nil

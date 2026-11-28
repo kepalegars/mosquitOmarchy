@@ -1,7 +1,7 @@
 # Test plan — Aggregate devices, drift correction & live-fence chain
 
 **Objet précis :** valider la fonctionnalité « Aggregate devices » de Mixbay
-(agrégation de cartes + correction de dérive), **et ses interactions** avec
+(agrégation d.interfaces + correction de dérive), **et ses interactions** avec
 Live Mode, `pipewire-settings`, Levels Guard, le patchbay Mixbay/qpwgraph, la
 fondation audio et le hot-plug USB.
 
@@ -28,7 +28,7 @@ Matériel :
 - au moins **deux interfaces USB audio** avec des horloges différentes (ex. EVO 8
   + UGM192) ; une **paire word-clockée** si disponible pour le cas « sync
   matérielle » ;
-- un micro branché sur chaque carte pour le test d'entrée ;
+- un micro branché sur chaque interface pour le test d'entrée ;
 - `qpwgraph` pour le test de suppression de liens ;
 - `pw-cli`, `pw-dump`, `pw-mon`, `pw-metadata`, `jq` présents (`command -v …`).
 
@@ -51,7 +51,7 @@ live-mode off
 systemctl --user restart pipewire pipewire-pulse wireplumber
 ```
 
-Un agrégat **actif** coupe toutes ses cartes membres si on le désactive en
+Un agrégat **actif** coupe toutes ses interfaces membres si on le désactive en
 pleine session : ne jamais le faire pendant un test live sans prévenir.
 
 ---
@@ -108,7 +108,7 @@ Procédure TUI : `mosquito-mixbay` → **Devices → Aggregate devices**.
 - [ ] `n` → le sélecteur liste les `Audio/Sink` **et** les sinks virtuels
       Mixbay (`evo8_main_output`, `ssl12.pb12`), mais **aucun** `agg_*` ni
       `:monitor`.
-- [ ] Cocher deux cartes avec `space` (`[x]` visible), `n`, saisir
+- [ ] Cocher deux interfaces avec `space` (`[x]` visible), `n`, saisir
       `Studio Pair`, confirmer. Vérifier
       `~/.config/mosquitomixbay/aggregate/studio-pair.json` :
       - `name: "Studio Pair"`, `display_name`, `schema_version: 1` ;
@@ -133,7 +133,7 @@ Procédure TUI : `mosquito-mixbay` → **Devices → Aggregate devices**.
       Pair"`, `"links_ok": true`, `"members"` non vide, `"rate"` cohérent avec
       `pw-metadata -n settings 0`.
 - [ ] Le panneau audio Omarchy liste `Studio` comme sortie. La sélectionner,
-      lire un ton test (`pw-play` ou DAW) et confirmer **son sur les deux cartes**.
+      lire un ton test (`pw-play` ou DAW) et confirmer **son sur les deux interfaces**.
 - [ ] `pw-dump` montre les liens du sink `agg_studio_pair` vers les deux
       sinks matériels ; le preset patchbay n'a pas été modifié.
 - [ ] `a` de nouveau (ou `aggregate-deactivate`) → nœud `agg_*` disparu,
@@ -154,7 +154,7 @@ Procédure TUI : `mosquito-mixbay` → **Devices → Aggregate devices**.
       avec un nœud manquant.
 - [ ] `pw-dump | grep -c 'agg_studio_pair'` reste stable après deux
       redémarrages successifs (pas de modules empilés).
-- [ ] Couper une carte membre, redémarrer le service : la recette est refusée
+- [ ] Couper une interface membre, redémarrer le service : la recette est refusée
       proprement (`interfaces changed`) et un message lisible s'affiche ;
       aucun câblage partiel n'est créé.
 
@@ -217,7 +217,7 @@ Procédure TUI : `mosquito-mixbay` → **Devices → Aggregate devices**.
       `~/.config/live-mode/settings` ; le redémarrage du manager relit `off`.
 - [ ] Simuler Mixbay absent (`PATH` sans `mosquito-mixbay-actions`) : la ligne
       est grisée avec `(needs mixbay)` et reste figée sur sa valeur.
-- [ ] Avec `AGGREGATE_LOCK=yes`, la carte d'activation affiche
+- [ ] Avec `AGGREGATE_LOCK=yes`, l'interface d'activation affiche
       `Aggregate devices locked` en plus de `Mixbay output volume locked`.
 - [ ] `live-mode on` → `~/.config/mosquitomixbay/aggregate/lock` existe ;
       `aggregate-status-json` montre `"locked": true`.
@@ -280,22 +280,22 @@ Procédure TUI : `mosquito-mixbay` → **Devices → Aggregate devices**.
 
 ---
 
-## 10. Fondation audio, carte par défaut et Levels Guard
+## 10. Fondation audio, interface par défaut et Levels Guard
 
-- [ ] Choisir une carte physique comme défaut
+- [ ] Choisir une interface physique comme défaut
       (`mixbay-audio-foundation --set-default evo8`), activer l'agrégat,
       puis `systemctl --user restart mixbay-audio-defaults.service`.
       Le sink par défaut **reste** `agg_studio_pair` (le script voit
       `active.json` et sort immédiatement).
-- [ ] Désactiver l'agrégat, redémarrer le service de défaut : la carte
+- [ ] Désactiver l'agrégat, redémarrer le service de défaut : l'interface
       physique redevient le sink par défaut.
 - [ ] Sans Levels Guard installé, créer et activer un agrégat : aucune
       ligne n'est grisée pour cause de garde absent (seule la ligne de
       volume natif reste figée sur *free*, comportement historique).
 - [ ] Avec Levels Guard installé et l'agrégat sélectionné, les touches
       volume pilotent le **volume logiciel** de l'agrégat (OSD normal) et
-      pas le hardware des cartes membres. En live avec
-      `LOCK_OUTPUT_VOLUME=yes`, les cartes membres restent verrouillées
+      pas le hardware des interfaces membres. En live avec
+      `LOCK_OUTPUT_VOLUME=yes`, les interfaces membres restent verrouillées
       (comportement Levels Guard inchangé).
 - [ ] Vérifier qu'aucun `clock.name`, `priority.driver` ou
       `default.clock.rate` global n'a été écrit par l'agrégat
@@ -310,15 +310,15 @@ Procédure TUI : `mosquito-mixbay` → **Devices → Aggregate devices**.
       autres membres continue ; `aggregate-status-json` passe `degraded`
       avec `missing`/`links_ok` cohérent ; aucune panique, aucun crash de la
       TUI ni du guard.
-- [ ] Rebrancher la carte : l'agrégat **ne se réactive pas tout seul**
+- [ ] Rebrancher l'interface : l'agrégat **ne se réactive pas tout seul**
       (comportement voulu). `a` (désactiver puis réactiver) restaure ;
-      vérifier que le sélecteur multi-clés retrouve la carte malgré un
+      vérifier que le sélecteur multi-clés retrouve l'interface malgré un
       éventuel changement de suffixe de nom.
-- [ ] Changer le profil ALSA d'une carte (ex. `--split on|off` EVO 4 ou
+- [ ] Changer le profil ALSA d'une interface (ex. `--split on|off` EVO 4 ou
       `wpctl set-profile`) pour modifier `device.profile.name` /
       `node.name` : la recette sauvegardée est refusée à l'apply avec
       « interfaces changed » ; après re-sauvegarde, l'activation fonctionne.
-- [ ] **Deux cartes USB non synchronisées** : lire un ton pendant 10 min,
+- [ ] **Deux interfaces USB non synchronisées** : lire un ton pendant 10 min,
       vérifier l'absence de clics et de dérive audible ; noter le taux et
       `resampling N/N` affichés dans l'UI.
 - [ ] **Paire word-clockée** (si dispo) : positionner `"drift": false`

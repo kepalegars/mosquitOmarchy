@@ -100,14 +100,14 @@ func TestAggregatePickGridNavigationAndBack(t *testing.T) {
 
 	key := func(s string) {
 		t.Helper()
-		nm, _ := m.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
+		nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
 		m = nm.(model)
 	}
 	active := func() string {
 		t.Helper()
 		name, ok := m.aggregateActiveNode()
 		if !ok {
-			t.Fatal("no active card")
+			t.Fatal("no active interface")
 		}
 		return name
 	}
@@ -118,9 +118,9 @@ func TestAggregatePickGridNavigationAndBack(t *testing.T) {
 	if m.aggregate.column != 1 || active() != "in_a" {
 		t.Fatalf("h must switch columns, got column=%d active=%s", m.aggregate.column, active())
 	}
-	key("h")
+	key("left")
 	if m.aggregate.column != 0 || active() != "out_a" {
-		t.Fatalf("h must toggle back, got column=%d active=%s", m.aggregate.column, active())
+		t.Fatalf("left arrow must switch columns too, got column=%d active=%s", m.aggregate.column, active())
 	}
 	key("j")
 	if m.aggregate.row != 1 || active() != "out_b" {
@@ -132,7 +132,7 @@ func TestAggregatePickGridNavigationAndBack(t *testing.T) {
 	}
 	key(" ")
 	if !m.aggregate.picked["in_a"] {
-		t.Fatal("space must toggle the active card")
+		t.Fatal("space must toggle the active interface")
 	}
 
 	m.picker = m.picker.SelectValue("back")

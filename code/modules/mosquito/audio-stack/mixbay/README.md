@@ -681,15 +681,17 @@ dans le graphe vivant.
 
 ## Aggregate devices
 
-Un agrégat est une **recette locale** qui transforme plusieurs cartes en une
+Un agrégat est une **recette locale** qui transforme plusieurs interfaces en une
 seule sortie virtuelle (et optionnellement une seule entrée) via
 `libpipewire-module-combine-stream`. Rien n'est écrit dans la config PipeWire,
 aucune horloge globale n'est forcée, aucun daemon audio n'est ajouté.
 
-- `Devices → Aggregate devices`, touche `n` : `space` coche des nœuds
-  `Audio/Sink` (sorties) ou `Audio/Source` (entrées), `n` demande un nom. Le
-  sélecteur affiche les mêmes libellés que le panneau audio (`alc257 analog`,
-  etc.) et **exclut toujours Superwhisper**.
+- `Devices → Aggregate devices`, touche `n` : **Pick the interfaces to
+  aggregate** affiche deux colonnes (outputs / inputs) partageant la même ligne
+  et la même sélection. `j/k` ou `↑/↓` changent de ligne, `h/l` ou `←/→`
+  basculent de colonne, `space`/`enter` cochent l'interface active, `n` demande
+  un nom. Le sélecteur affiche les mêmes libellés que le panneau audio
+  (`alc257 analog`, etc.) et **exclut toujours Superwhisper**.
 - `a` active/désactive la recette sélectionnée. L'activation charge le module
   avec `pw-cli load-module` (pas de redémarrage du graphe) et crée un sink
   `agg_<slug>` : il apparaît dans le panneau audio Omarchy comme une sortie

@@ -1,4 +1,4 @@
-// Package aggregate turns a small list of sound cards into one named virtual
+// Package aggregate turns a small list of sound interfaces into one named virtual
 // output (and optionally input) using PipeWire's combine-stream module.
 //
 // It is control-plane only: no audio is handled in Go, no clock property is
@@ -17,9 +17,9 @@ import (
 // ErrNoPresets is the empty state, not a failure.
 var ErrNoPresets = errors.New("no aggregate presets")
 
-// Member is one card taking part in an aggregate. Node is the PipeWire node
+// Member is one interface taking part in an aggregate. Node is the PipeWire node
 // name it was found under; the remaining selector keys are kept so a reload
-// can match the card even if the exact node name changed.
+// can match the interface even if the exact node name changed.
 type Member struct {
 	Node     string   `json:"node"`
 	Class    string   `json:"class,omitempty"`
@@ -190,7 +190,7 @@ func fingerprint(outputs, inputs []Member) []string {
 	return out
 }
 
-// Applies reports whether the cards the preset was built from are still there.
+// Applies reports whether the interfaces the preset was built from are still there.
 func (p Preset) Applies() bool {
 	return sameList(p.Fingerprint, fingerprint(p.Outputs, p.Inputs))
 }

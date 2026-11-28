@@ -54,7 +54,7 @@ func positions(m Member) string {
 }
 
 // matches builds the multi-key selector for one member. node.name is kept as
-// the last key: on a profile/UCM change the other keys still identify the card.
+// the last key: on a profile/UCM change the other keys still identify the interface.
 func matches(m Member) string {
 	var keys []string
 	if m.Device != "" {

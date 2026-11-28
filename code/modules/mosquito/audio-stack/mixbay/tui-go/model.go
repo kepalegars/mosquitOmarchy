@@ -557,7 +557,7 @@ func (m *model) syncPicker() {
 	case scrAggregate:
 		m.picker = tuikit.NewPicker("Aggregate devices", m.aggregateItems()).SetSize(cw, ch)
 	case scrAggregatePick:
-		m.picker = tuikit.NewPicker("Pick the cards to aggregate", m.aggregatePickItems()).SetSize(cw, ch)
+		m.picker = tuikit.NewPicker("Pick the interfaces to aggregate", m.aggregatePickItems()).SetSize(cw, ch)
 	case scrFoundation:
 		m.picker = tuikit.NewPicker("Audio foundation settings", m.foundationItems()).SetSize(cw, ch)
 	case scrFoundationDefault:

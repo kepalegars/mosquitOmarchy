@@ -103,7 +103,7 @@ func (m model) View() string {
 	case scrAggregate, scrAggregatePick:
 		titleText := "Aggregate devices"
 		if m.top() == scrAggregatePick {
-			titleText = "Pick the cards to aggregate"
+			titleText = "Pick the interfaces to aggregate"
 		}
 		title, rows := m.accentBudget(h, titleText)
 		m.picker = m.picker.SetSize(w, rows)
