@@ -805,7 +805,7 @@ func (m model) libraryDetail(id string) string {
 		if c := creditsLine(ic.Credits); c != "" {
 			fmt.Fprintf(&b, "credits    %s\n", c)
 		}
-		b.WriteString("\nEnter downloads this profile.")
+		b.WriteString("\nBack on the library, Enter/l installs this profile.")
 		return b.String()
 	}
 	var b strings.Builder

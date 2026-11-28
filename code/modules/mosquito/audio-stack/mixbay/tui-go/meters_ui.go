@@ -431,7 +431,7 @@ func (m model) meterStatus() (string, int) {
 func (r *evoRender) levelsHelp() ([]evoHint, []evoHint) {
 	return []evoHint{
 		{key: evoTabSym, desc: " view"},
-		{key: "Esc", desc: " controls"},
+		{key: "Esc/h", desc: " controls"},
 		{key: "Space", desc: " reset peaks"},
 		{key: "p", desc: " freeze"},
 		{key: "q", desc: " quit"},

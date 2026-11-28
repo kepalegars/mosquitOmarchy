@@ -534,7 +534,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// armed the pick (superfile embedded or the default pick-adg action)
 		// and pathMsg/presetStatusMsg carries the result through.
 		if km, ok := msg.(tea.KeyMsg); ok {
-			if km.String() == "esc" || km.String() == "h" || km.String() == "ctrl+c" {
+			if km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l" || km.String() == "ctrl+c" {
 				m.presetFiles = nil
 				m.nav = []screen{scrMain}
 				m.toast, _ = m.toast.SetWarn("preset selection canceled")
@@ -963,7 +963,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case scrBitwigTipWait:
 		if km, ok := msg.(tea.KeyMsg); ok {
-			if km.String() == "esc" || km.String() == "h" || km.String() == "ctrl+c" {
+			if km.String() == "esc" || km.String() == "h" || km.String() == "enter" || km.String() == "l" || km.String() == "ctrl+c" {
 				m.bitwigSawRunning = false
 				m.pop()
 				return m, m.enterCmd()
@@ -1539,7 +1539,7 @@ func bitwigTipText(route string, guide bool) string {
 			"No MIDI ports listed? The Move must be plugged in over USB —",
 			"Wi-Fi/Schwung alone exposes no MIDI ports to Bitwig.")
 	} else {
-		lines = append(lines, "", "Close Bitwig to return to the menu, or esc to go back now.")
+		lines = append(lines, "", "Close Bitwig to return to the menu, or esc/h (enter/l) to go back now.")
 	}
 	return strings.Join(lines, "\n")
 }

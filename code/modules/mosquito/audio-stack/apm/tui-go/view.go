@@ -152,7 +152,7 @@ func (m model) View() string {
 		}
 	case scrInstallPick:
 		title = screenTitle("Install a plugin", m.contentSizeW())
-		body = "waiting for the file picker…\n\nesc goes back"
+		body = "waiting for the file picker…\n\nesc/h goes back"
 	case scrVstMenu:
 		title = screenTitle("Windows VST Plugins", m.contentSizeW())
 		body = m.picker.View()

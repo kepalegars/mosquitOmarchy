@@ -72,7 +72,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.settings {
 			switch msg.String() {
-			case "esc", "backspace", "q", "s", "h":
+			case "esc", "backspace", "q", "s", "h", "enter", "l":
 				m.settings = false
 			case "n":
 				if m.config.NoteNaming == "flats" {
@@ -87,7 +87,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.help {
 			switch msg.String() {
-			case "q", "esc", "backspace", "?", "h":
+			case "q", "esc", "backspace", "?", "h", "enter", "l":
 				m.help = false
 			}
 			return m, nil
@@ -325,7 +325,7 @@ func (m model) helpView() string {
 	}
 	body := strings.Join(rows, "\n")
 	return tuikit.FrameScreen(m.w, m.h, tuikit.StyleAccent.Render("jamjamjam · help"), body,
-		tuikit.BottomBar("", tuikit.StyleHelp.Render("? / esc / h / q close"), m.w))
+		tuikit.BottomBar("", tuikit.StyleHelp.Render("? / esc/h / enter/l / q close"), m.w))
 }
 
 // settingsView is the "s" overlay: the TUI-owned settings.
@@ -342,7 +342,7 @@ func (m model) settingsView() string {
 	}
 	body := strings.Join(rows, "\n")
 	return tuikit.FrameScreen(m.w, m.h, tuikit.StyleHeader.Render("jamjamjam · settings"), body,
-		tuikit.BottomBar(m.status, tuikit.StyleHelp.Render("n naming · esc/h back"), m.w))
+		tuikit.BottomBar(m.status, tuikit.StyleHelp.Render("n naming · esc/h/enter/l back"), m.w))
 }
 
 // splashTitle is the splash's title block, at whichever rung fits the window.

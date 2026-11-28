@@ -688,7 +688,7 @@ func (m model) rebuildThemeUninstall() navPicker {
 			stockCount++
 		}
 	}
-	h := "Uninstall which themes? (Tab ticks, Enter removes the ticked ones)"
+	h := "Uninstall which themes? (Tab ticks, Enter/l removes the ticked ones)"
 	if len(m.themeList) == 0 {
 		h = "No themes to uninstall"
 	} else if stockCount > 0 {

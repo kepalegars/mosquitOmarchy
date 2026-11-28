@@ -880,7 +880,6 @@ func reportCrash(tool, output string) {
 	).Run()
 }
 
-
 // AssetDownloadRec is one background archive download reported by the backend.
 type AssetDownloadRec struct {
 	Key    string `json:"key"`
@@ -908,7 +907,6 @@ func fetchAssetDownloadsCmd() tea.Cmd {
 		return assetDownloadsMsg{items: recs}
 	}
 }
-
 
 type AssetMissing struct {
 	Name string `json:"name"`

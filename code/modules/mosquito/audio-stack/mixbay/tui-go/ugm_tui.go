@@ -107,7 +107,7 @@ func (m model) ugmView() string {
 		nav, set = r.ugmControlsHelp()
 		if m.hasBlock("statusBar") {
 			r.drawStatusBarWith(body+tail, cx, sectionW, m.numBuf, "dB",
-				[]evoHint{{key: "q", desc: " quit"}})
+				[]evoHint{{key: "q", desc: " quit"}}, true)
 		}
 	}
 	if m.hasBlock("help") {

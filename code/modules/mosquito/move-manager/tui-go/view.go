@@ -216,7 +216,7 @@ func (m model) View() string {
 				"Ableton version chosen in Settings.",
 			}, "\n"))
 		}
-		bar = barLine(tuikit.StyleHelp.Render("esc to cancel"))
+		bar = barLine(tuikit.StyleHelp.Render("esc/h/enter/l cancel"))
 	case scrSchwungMenu:
 		title = screenTitle("Schwung", m.contentSizeW())
 		if m.loading {
@@ -252,11 +252,11 @@ func (m model) View() string {
 	case scrBitwigTipWait:
 		title = screenTitle("Bitwig controller ready", m.contentSizeW())
 		body = m.tipInfo.View()
-		bar = barLine(tuikit.StyleHelp.Render("esc to go back"))
+		bar = barLine(tuikit.StyleHelp.Render("esc/h/enter/l to go back"))
 	case scrBitwigGuide:
 		title = screenTitle("Bitwig controller setup", m.contentSizeW())
 		body = m.tipInfo.View()
-		bar = barLine(tuikit.StyleHelp.Render("esc to go back"))
+		bar = barLine(m.tipInfo.ShortcutsHint())
 	case scrAddress:
 		title = screenTitle("Move address", m.contentSizeW())
 		body = m.addressInput.View()
@@ -274,7 +274,7 @@ func (m model) View() string {
 	case scrPresetUpload:
 		title = screenTitle("Preset converted", m.contentSizeW())
 		body = m.presetUploadView()
-		bar = barLine(tuikit.StyleHelp.Render("esc to go back to the main menu"))
+		bar = barLine(tuikit.StyleHelp.Render("esc/h/enter/l back to the main menu"))
 	case scrPresetNoMove:
 		title = screenTitle("Preset converted — Move not connected", m.contentSizeW())
 		body = m.presetNoMovePicker.View()
@@ -295,7 +295,7 @@ func (m model) View() string {
 		} else {
 			title = screenTitle("Waiting for the Move Manager", m.contentSizeW())
 			body = m.managerWaitView()
-			bar = barLine(tuikit.StyleHelp.Render("esc to stop waiting"))
+			bar = barLine(tuikit.StyleHelp.Render("esc/h/enter/l stop waiting"))
 		}
 	}
 	if m.w == 0 || m.h == 0 {

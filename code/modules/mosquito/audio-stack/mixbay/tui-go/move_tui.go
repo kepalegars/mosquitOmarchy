@@ -139,7 +139,7 @@ func (m model) levelsOnlyView(note string) string {
 	}
 	if m.hasBlock("help") {
 		r.drawHelpFooter(ny+len(noteLines)+1, cx,
-			[]evoHint{{key: "Space", desc: " reset peaks"}, {key: "p", desc: " freeze"}, {key: "q", desc: " quit"}}, nil)
+			[]evoHint{{key: "Space", desc: " reset peaks"}, {key: "p", desc: " freeze"}, {key: "Esc/h/enter/l", desc: " back"}, {key: "q", desc: " quit"}}, nil)
 	}
 	return c.render(pal)
 }
@@ -157,7 +157,7 @@ func (m *model) moveKey(k string) tea.Cmd {
 	case " ":
 		m.resetMeterPeaks()
 		return nil
-	case "esc", "backspace", "h":
+	case "esc", "backspace", "h", "enter", "l":
 		m.pop()
 		return fetchStatus(m.deviceID)
 	}

@@ -1220,6 +1220,20 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				}
 				m.addonsPicker = m.rebuildAddons().KeepCursor(keep)
 			}
+		case scrQuickFixes:
+			if m.quickFixesOpen == nil {
+				m.quickFixesOpen = map[string]bool{}
+			}
+			if id, inTree := tuikit.TreeParentOf(m.quickFixPicker.items, m.quickFixPicker.SelectedValue()); inTree {
+				// Store false rather than deleting: quickFixesList defaults an
+				// unseen category to open, which would undo the collapse.
+				m.quickFixesOpen[id] = msg.Dir > 0
+				keep := m.quickFixPicker.SelectedValue()
+				if msg.Dir < 0 {
+					keep = tuikit.TreeValue(tuikit.TreeFolderPrefix, id)
+				}
+				m.quickFixPicker = m.rebuildQuickFixes().KeepCursor(keep)
+			}
 		case scrStatus:
 			// Status is a tree too. The arrows were advertised in its hint but
 			// never handled, so they did nothing; `l` now folds it through the
@@ -2176,7 +2190,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		// there is no action to run from here. `esc` leaves the screen.
 		if km, ok := msg.(tea.KeyMsg); ok {
 			switch km.String() {
-			case "esc":
+			case "esc", "h":
 				m.pop()
 				return m, nil
 			case "right", "left", "enter":
@@ -2194,7 +2208,8 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				}
 				// The category the cursor is IN, not only the one it is on:
 				// sitting on a module and pressing ← closes its category.
-				if cat, ok := tuikit.ParentFolderOf(m.statusPicker.items, "status-cat:", v); ok {
+				if cat, ok := tuikit.ParentFolderOf(m.statusPicker.items, "status-cat:", v); ok &&
+					(km.String() != "enter" || strings.HasPrefix(v, "status-cat:")) {
 					if km.String() == "left" {
 						m.statusOpen[cat] = false
 					} else {
@@ -3044,6 +3059,7 @@ func (m model) isTweakKey(key string) bool {
 func (m model) openQuickFixes() (tea.Model, tea.Cmd) {
 	m.push(scrQuickFixes)
 	m.quickFixChecked = map[string]bool{}
+	m.quickFixesOpen = map[string]bool{}
 	m.quickFixPicker = newNavPicker("", []tuikit.PickerItem{{Display: "loading…", Value: "", Disabled: true}}).SetSize(m.contentSize())
 	return m, fetchFixesCmd()
 }
@@ -3073,12 +3089,19 @@ func (m model) quickFixesList() []tuikit.PickerItem {
 		})
 	}
 	var out []tuikit.PickerItem
+	if m.quickFixesOpen == nil {
+		m.quickFixesOpen = map[string]bool{}
+	}
 	for _, cat := range order {
 		items := byCat[cat]
-		open := map[string]bool{cat: true}
+		// Categories start open; the fold state lives on the model so `l`
+		// and ←/→ can collapse them like every other tree screen.
+		if _, seen := m.quickFixesOpen[cat]; !seen {
+			m.quickFixesOpen[cat] = true
+		}
 		out = append(out, tuikit.BuildFolderTree(
 			[]tuikit.TreeFolder{{ID: cat, Label: cat, Total: len(items), Marked: m.markedFixes(items)}},
-			map[string][]tuikit.TreeItem{cat: items}, open, false)...)
+			map[string][]tuikit.TreeItem{cat: items}, m.quickFixesOpen, false)...)
 	}
 	return out
 }
@@ -3190,9 +3213,11 @@ func (m model) rebuildQuickFixes() navPicker {
 	return newNavPicker("", m.quickFixesList()).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
+			key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply selection")),
 		).
+		WithFoldState().
 		KeepCursor(cur)
 }
 
@@ -7634,7 +7659,7 @@ func (m model) rebuildMenuEntriesPicker() navPicker {
 		})
 	}
 	items = append(items, tuikit.PickerItem{Display: "Back", Value: "back"})
-	p := newNavPicker("Menu entries — tick = keep in the Omarchy menu (Enter applies the change):", items).SetSize(m.contentSize()).
+	p := newNavPicker("Menu entries — tick = keep in the Omarchy menu (Enter/l applies the change):", items).SetSize(m.contentSize()).
 		SetHelpKeys(
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),

@@ -503,6 +503,7 @@ type model struct {
 	// carries the exact list that was shown.
 	quickFixes      []ItemRec
 	quickFixChecked map[string]bool
+	quickFixesOpen  map[string]bool
 	quickFixPicker  navPicker
 	quickFixLoaded  bool
 	// tweaks is the Tweaks (preferences) catalog, fetched the same way as the

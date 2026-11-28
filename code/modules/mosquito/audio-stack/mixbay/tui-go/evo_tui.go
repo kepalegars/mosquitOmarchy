@@ -1239,12 +1239,12 @@ func (r *evoRender) currentUnit() string {
 
 func (r *evoRender) drawStatusBar(row, cx, sectionW int) int {
 	return r.drawStatusBarWith(row, cx, sectionW, r.u.numBuf, r.currentUnit(),
-		[]evoHint{{key: "s", desc: " save"}, {key: "o", desc: " load"}, {key: "q", desc: " quit"}})
+		[]evoHint{{key: "s", desc: " save"}, {key: "o", desc: " load"}, {key: "q", desc: " quit"}}, false)
 }
 
 // drawStatusBarWith is the EVO separator line and its right-aligned hints.
 // The UGM192 uses it too: same place for q quit, without save/load.
-func (r *evoRender) drawStatusBarWith(row, cx, sectionW int, numBuf, unit string, hints []evoHint) int {
+func (r *evoRender) drawStatusBarWith(row, cx, sectionW int, numBuf, unit string, hints []evoHint, vim bool) int {
 	dim := evoDim
 	if numBuf != "" {
 		attr := evoStyle{col: cYellow}
@@ -1268,9 +1268,14 @@ func (r *evoRender) drawStatusBarWith(row, cx, sectionW int, numBuf, unit string
 	}
 	row++
 	if numBuf != "" {
+		setKey, cancelKey := "↵", "Esc"
+		if vim {
+			// The UGM screen is not a 2D grid: l confirms and h cancels.
+			setKey, cancelKey = "↵/l", "Esc/h"
+		}
 		hints = append([]evoHint{
-			{key: "↵", desc: ":set", col: cYellow},
-			{key: "Esc", desc: ":cancel", col: cYellow},
+			{key: setKey, desc: ":set", col: cYellow},
+			{key: cancelKey, desc: ":cancel", col: cYellow},
 		}, hints...)
 	}
 	hintsW := 1
@@ -1660,8 +1665,13 @@ func (m model) evoFilePicker(w, h int, pal [10]lipgloss.Color) string {
 	}
 	hints := []evoHint{
 		{key: "Tab", desc: " " + string(arrowD) + string(arrowU)},
-		{key: "↵", desc: " " + act},
-		{key: "Esc", desc: " cancel"},
+		{key: "↵/l", desc: " " + act},
+		{key: "Esc/h", desc: " cancel"},
+	}
+	// While a name is being typed, h/l are literal letters — do not promise
+	// them as back/confirm on this screen.
+	if (u.mode == 1 || u.renaming) && u.pickerEditable() {
+		hints[1].key, hints[2].key = "↵", "Esc"
 	}
 	if u.mode == 1 {
 		hints = append(hints, evoHint{key: "r", desc: " rename"})

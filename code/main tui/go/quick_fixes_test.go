@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	tuikit "mosquitomarchy.local/tui-kit"
 )
 
@@ -40,6 +41,27 @@ func TestTheQuickFixesFolderIsOnTheSetupPage(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("the Quick fixes folder is not on the Setup page")
+	}
+}
+
+// The fixes screen is a tree too: `l` folds the category under the cursor and
+// must never apply the ticked fixes (that would act on a stray keypress).
+func TestQuickFixesLFoldsInsteadOfApplying(t *testing.T) {
+	m := qfSetup()
+	m.nav = append(m.nav, scrQuickFixes)
+	m.quickFixesOpen = map[string]bool{}
+	m.quickFixPicker = m.rebuildQuickFixes()
+	m.quickFixPicker = m.quickFixPicker.SelectValue(tuikit.TreeValue(tuikit.TreeItemPrefix, "wine-menu"))
+
+	next, cmd := m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("l")})
+	if cmd != nil {
+		next, _ = next.update(cmd())
+	}
+	if next.quickFixesOpen["Windows & input"] {
+		t.Fatal("l did not collapse the quick-fix category")
+	}
+	if next.pendingAction != "" {
+		t.Fatalf("l applied a fix instead of folding: action=%q", next.pendingAction)
 	}
 }
 

@@ -1937,7 +1937,13 @@ func (m *model) rebuildPluginPicker() {
 		}
 		m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
 			return tuikit.NewPicker(header, items).SetSize(m.contentSize()).
-				SetHelpKeys(pluginListHelpKeys()...)
+				SetHelpKeys(
+					key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
+					key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "search")),
+					key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
+					key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "window handler")),
+					key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "info")),
+				)
 		})
 		return
 	}
@@ -3431,7 +3437,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.rememberCursorHere()
 			m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
-				return tuikit.NewPicker("Registered standalones — enter removes the entry, the file is left alone:", items).
+				return tuikit.NewPicker("Registered standalones — enter/l removes the entry, the file is left alone:", items).
 					SetSize(m.contentSize()).
 					SetHelpKeys(key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "untrack")))
 			})
@@ -3476,7 +3482,7 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.rebuildPicker(func(tuikit.Picker) tuikit.Picker {
-				return tuikit.NewPicker("Toggle which executables appear in the menu — keep picking, esc to finish:", execItemsToPicker(et.items)).
+				return tuikit.NewPicker("Toggle which executables appear in the menu — keep picking, esc/h to finish:", execItemsToPicker(et.items)).
 					SetSize(m.contentSize()).
 					SetHelpKeys(
 						key.NewBinding(key.WithKeys("tab", "x"), key.WithHelp("tab/x", "toggle")),
@@ -3844,6 +3850,27 @@ func (m model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.runner, cmd = m.runner.Update(msg)
 		return m, cmd
 
+	case scrPrefixTempsRunning:
+		// This runner REPLACED its confirm screen, so backing out returns to
+		// the VST menu one level up — not to the main menu.
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "esc" || km.String() == "h") {
+			if !m.runner.Done() {
+				m.runner.Cancel()
+			}
+			m.pop()
+			return m, m.enterCmd()
+		}
+		if km, ok := msg.(tea.KeyMsg); ok && (km.String() == "enter" || km.String() == "l") {
+			if m.runner.Done() {
+				m.pop()
+				return m, m.enterCmd()
+			}
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.runner, cmd = m.runner.Update(msg)
+		return m, cmd
+
 	case scrUninstalling, scrInstalling, scrMoving, scrPluginsRootMigrating:
 		if done, ok := msg.(tuikit.RunnerDoneMsg); ok {
 			_ = done
@@ -3937,7 +3964,7 @@ func (m model) handleAudioSettingsChoice(v string) (tea.Model, tea.Cmd) {
 		m.scanBusy = true
 		m.scanFrame = 0
 		m.picker = m.picker.SetBusyGlyph(tuikit.BusyFrames[0])
-		m.toast, _ = m.toast.SetWarn("scanning for untracked plugins… (esc : cancel)")
+		m.toast, _ = m.toast.SetWarn("scanning for untracked plugins… (esc/h : cancel)")
 		return m, tea.Batch(rescanCmd(m.scanGen), scanTickCmd())
 	case "pick_plugins_root":
 		m.loading = true

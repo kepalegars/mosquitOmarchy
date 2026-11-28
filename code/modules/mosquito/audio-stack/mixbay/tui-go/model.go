@@ -894,7 +894,7 @@ func controlItems(st drivers.Status, uis []cardUI, chosen string) []tuikit.Picke
 		add("Reload saved state", "load")
 	}
 	if len(uis) > 1 {
-		add(fmt.Sprintf("Default UI: %s  (enter or ←/→)", uiLabel(uis, chosen)), uiRowValue)
+		add(fmt.Sprintf("Default UI: %s  (enter/l or ←/→)", uiLabel(uis, chosen)), uiRowValue)
 	}
 	add("Back", "back")
 	return items

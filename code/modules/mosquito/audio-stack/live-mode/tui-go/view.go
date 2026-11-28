@@ -151,12 +151,12 @@ func (m model) View() string {
 		}
 	case scrApps:
 		title = lipgloss.NewStyle().Width(m.contentSizeW()).Align(lipgloss.Center).
-			Render(tuikit.StyleAccent.Bold(true).Render("Background apps — Enter removes · + adds"))
+			Render(tuikit.StyleAccent.Bold(true).Render("Background apps — Enter/l removes · + adds"))
 		body = m.appsPicker.View()
 		bar = barLine(m.appsPicker.ShortcutsHint())
 	case scrAppAdd:
 		title = lipgloss.NewStyle().Width(m.contentSizeW()).Align(lipgloss.Center).
-			Render(tuikit.StyleAccent.Bold(true).Render("Add background apps — Tab toggles · Enter saves"))
+			Render(tuikit.StyleAccent.Bold(true).Render("Add background apps — Tab toggles · Enter/l saves"))
 		body = m.appsPicker.View()
 		bar = barLine(m.appsPicker.ShortcutsHint())
 	case scrQuit:

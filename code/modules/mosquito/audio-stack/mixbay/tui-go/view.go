@@ -299,7 +299,7 @@ func (m model) statusNote() string {
 		note = " "
 	}
 	if m.numBuf != "" {
-		note = fmt.Sprintf("dial: %s_  (Enter applies · Esc cancels)", m.numBuf)
+		note = fmt.Sprintf("dial: %s_  (enter/l applies · esc/h cancels)", m.numBuf)
 	}
 	return note
 }
