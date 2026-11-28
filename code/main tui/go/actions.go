@@ -296,6 +296,8 @@ type SetupItemRec struct {
 	Patch bool `json:"patch"`
 	// MovePatch marks Ableton's separate Move wine step, bound to P.
 	MovePatch bool `json:"move_patch"`
+	// Needs is the module key whose archive is missing; d downloads it.
+	Needs string `json:"needs"`
 }
 
 // backupOptionsMsg carries the backup content tree + environment facts.
@@ -876,4 +878,33 @@ func reportCrash(tool, output string) {
 		"Click to diagnose with AI",
 		"--exec", agent, path, tool,
 	).Run()
+}
+
+
+// AssetDownloadRec is one background archive download reported by the backend.
+type AssetDownloadRec struct {
+	Key    string `json:"key"`
+	Name   string `json:"name"`
+	Pct    int    `json:"pct"`
+	Status string `json:"status"`
+	Dest   string `json:"dest"`
+}
+
+type assetDownloadsMsg struct {
+	items []AssetDownloadRec
+	err   error
+}
+
+func fetchAssetDownloadsCmd() tea.Cmd {
+	return func() tea.Msg {
+		out, err := runQuick("asset-download-status")
+		if err != nil {
+			return assetDownloadsMsg{err: err}
+		}
+		var recs []AssetDownloadRec
+		if e := json.Unmarshal(out, &recs); e != nil {
+			return assetDownloadsMsg{err: e}
+		}
+		return assetDownloadsMsg{items: recs}
+	}
 }

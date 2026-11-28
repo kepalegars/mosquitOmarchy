@@ -330,6 +330,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		return m, loadingTickCmd()
 
 	case blinkMsg:
+		m.assetBlink = !m.assetBlink
+		var acmd tea.Cmd
+		if m.top() == scrSetup || m.top() == scrSetupCat {
+			acmd = fetchAssetDownloadsCmd()
+		}
 		// Blink the "mosquito" row while a Setup screen is open; stop as soon
 		// as Setup is left (no re-arm).
 		switch m.top() {
@@ -337,7 +342,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			// While the tree is still loading there is nothing to blink:
 			// rebuilding here wiped the loading row the push had just set.
 			if m.treeLoading {
-				return m, blinkCmd()
+				return m, tea.Batch(blinkCmd(), acmd)
 			}
 			// The only thing blinkOn changes is the accent on the "mosquito"
 			// category. If that row is not in the visible window there is
@@ -350,11 +355,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			}
 			m.blinkOn = !m.blinkOn
 			m.setupPicker = m.rebuildSetup()
-			return m, blinkCmd()
+			return m, tea.Batch(blinkCmd(), acmd)
 		case scrSetupCat:
 			m.blinkOn = !m.blinkOn
 			m.setupCatPicker = m.rebuildSetupCat()
-			return m, blinkCmd()
+			return m, tea.Batch(blinkCmd(), acmd)
 		case scrConfirm:
 			// The disk warning uses the same 600 ms rhythm as the Setup
 			// "mosquito" row, but toggles its own red fill: the theme accent
@@ -974,6 +979,25 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.toast, _ = m.toast.SetWarn(msg.err.Error())
 		return m, nil
 
+	case assetDownloadsMsg:
+		if msg.err == nil {
+			if m.assetDL == nil {
+				m.assetDL = make(map[string]AssetDownloadRec)
+			}
+			for _, r := range msg.items {
+				if r.Status == "active" || r.Status == "done" || r.Status == "failed" {
+					m.assetDL[r.Key] = r
+				}
+			}
+			switch m.top() {
+			case scrSetup:
+				m.setupPicker = m.rebuildSetup()
+			case scrSetupCat:
+				m.setupCatPicker = m.rebuildSetupCat()
+			}
+		}
+		return m, nil
+
 	case spaceMsg:
 		m.applySpaceMsg(msg)
 		return m, nil
@@ -1504,6 +1528,14 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			ids := m.pendingFixIDs
 			m.pendingFixIDs = nil
 			return m.startWorking("Applying tweaks", workingArgs("tweaks-run", ids)...)
+		case "download-assets-prompt":
+			key := "ableton-wires"
+			if len(m.pendingArgs) > 0 {
+				key = m.pendingArgs[0]
+			}
+			m.toast, _ = m.toast.SetWarn("! archive download started in the background")
+			m.pendingArgs = nil
+			return m.startWorking("Downloading archive", workingArgs("download-assets", []string{key})...)
 		case "davinci-alt-drivers":
 			return m.startWorking("Applying the Radeon 780M OpenCL profile",
 				workingArgs("davinci-alt-drivers", nil)...)
@@ -1688,6 +1720,14 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			if strings.Contains(msg.Value, "\"") {
 				m.toast, _ = m.toast.SetWarn("quotes are not allowed")
 				return m, m.kbInput.Init()
+			}
+			if m.kbInputStep == 2 {
+				// Manual key entry from the key picker: validate and look up
+				// the combo in the backend, which also says who owns it.
+				combo := strings.TrimSpace(msg.Value)
+				m.kbInputStep = 0
+				m.pop()
+				return m, fetchKbCheckCmd(combo)
 			}
 			if m.kbInputStep == 0 {
 				m.kbCustomLabel = msg.Value
@@ -1969,6 +2009,13 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		m.kbKeyPicker = m.rebuildKBKeys()
 		return m, nil
 
+	case kbCheckMsg:
+		if msg.err != nil {
+			m.toast, _ = m.toast.SetErr("keybindings: " + msg.err.Error())
+			return m, nil
+		}
+		return m.askBind(msg.combo, msg.taken, msg.where)
+
 	case patchSecretMsg:
 		// Secret "p": install mode proposes to PATCH every selection that has a
 		// patch script; uninstall mode proposes to REMOVE only the patches that
@@ -2182,6 +2229,17 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					return m.confirmReaperRevert()
 				}
 				return m.confirmReaperConfig()
+			case "d":
+				if it, ok := m.setupByValue[m.setupPicker.SelectedValue()]; ok && it.Needs != "" {
+					m.pendingAction = "download-assets-prompt"
+					m.pendingArgs = []string{it.Needs}
+					m.pendingMsg = "Archive required for " + it.Key + "\n\n" + it.Info
+					m.pendingNo = "Cancel"
+					m.pendingYes = "Download"
+					m.push(scrConfirm)
+					m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).FocusYes()
+					return m, nil
+				}
 			case "ableton-wires":
 				if it, ok := m.setupByValue[m.setupPicker.SelectedValue()]; ok && it.MovePatch {
 					if m.treeMode == "uninstall" {
@@ -3555,14 +3613,13 @@ func (m model) screenPicked(res tuikit.PickerResultMsg) (model, tea.Cmd) {
 			m.pop()
 			return m, nil
 		}
-		m.pendingAction = "kb-add"
-		m.pendingArgs = []string{res.Value, m.kbPending.Label, m.kbPending.Cmd, m.kbPending.Type}
-		m.pendingMsg = fmt.Sprintf("Bind %s → %s?\n\nThe binding is written to the mosquitOmarchy block in bindings.lua. Hyprland needs a reload for it to take effect — you'll be asked right after.", res.Value, m.kbPending.Label)
-		m.pendingNo = "Cancel"
-		m.pendingYes = "Bind"
-		m.push(scrConfirm)
-		m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes)
-		return m, nil
+		if res.Value == "manual" {
+			m.kbInputStep = 2
+			m.kbInput = tuikit.NewTextInput("Key combo (e.g. SUPER + ALT + M):", "")
+			m.push(scrKBInput)
+			return m, m.kbInput.Init()
+		}
+		return m.askBind(res.Value, false, "")
 
 	case scrSettings:
 		// A ToggleSpec row never arrives here: the kit emits
@@ -4199,6 +4256,8 @@ func operationName(sub string) string {
 		return "Theme"
 	case "run-patch", "remove-patch":
 		return "Patch"
+	case "download-assets-prompt", "download-assets":
+		return "Download"
 	case "davinci-alt-drivers":
 		return "DaVinci profile"
 	case "davinci-alt-drivers-revert":
@@ -4716,6 +4775,30 @@ func (m model) confirmInstallSelection() (model, tea.Cmd) {
 	}
 	if len(mods) == 0 {
 		return m, nil
+	}
+	// A row whose archive is missing is fully selectable, but Enter explains
+	// what is missing and offers to download it instead of starting an install
+	// that cannot succeed.
+	for _, k := range keys {
+		var hit SetupItemRec
+		found := false
+		for _, it := range m.setupItems {
+			if it.Key == k && it.Needs != "" {
+				hit, found = it, true
+				break
+			}
+		}
+		if found {
+			m.pendingAction = "download-assets-prompt"
+			m.pendingArgs = []string{hit.Needs}
+			m.pendingMsg = "Archive required for " + k + "\n\n" + hit.Info +
+				"\n\nPress d to download it with mosquitomarchy (or place it in ~/Downloads)."
+			m.pendingNo = "Cancel"
+			m.pendingYes = "Download"
+			m.push(scrConfirm)
+			m.confirm = tuikit.NewConfirm(m.pendingMsg, m.pendingNo, m.pendingYes).FocusYes()
+			return m, nil
+		}
 	}
 	m.pendingAction = "apply"
 	m.pendingArgs = plan
@@ -5250,6 +5333,9 @@ func (m model) setupIndex(uninstall bool) map[string]*setupCategory {
 			Disabled: it.Disabled,
 		}
 		row.Label = trimOwnPrefix(it.Folder, it.Label)
+		if d, ok := m.assetDL[it.Key]; ok && d.Status == "active" && m.assetBlink {
+			row.Label += " ■"
+		}
 		// "bring back omarchy's agentic stuff" only makes sense while
 		// something is still missing. This used to be decided in
 		// pickerTreeItems, which the flat Setup page no longer goes

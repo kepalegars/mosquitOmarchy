@@ -435,6 +435,8 @@ type model struct {
 	healthItems     []HealthRec
 	shortcutSkipped bool
 	blinkOn         bool
+	assetBlink      bool
+	assetDL         map[string]AssetDownloadRec
 
 	// aiRemoved caches the backend's "is omarchy's agentic stuff gone?" answer
 	// and aiRemovedKnown says whether that answer has arrived yet.

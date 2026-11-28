@@ -997,12 +997,12 @@ _setup_tree(){
           # and the `i` key, so the reason is one keypress away without
           # clogging the Setup page.
           gate="$(_asset_gate "${CAND_KEYS[$i]}")"
+          needs=""
           if [[ -n $gate ]]; then
-            disabled=true
             info="${info:+$info — }$(_asset_gate_note "${CAND_KEYS[$i]}")"
-          else
-            disabled=false
+            needs="${CAND_KEYS[$i]}"
           fi
+          disabled=false
           # Folder may differ from the category: septabee is a catalogued TUI that
           # is filed under Apps, so the folder is resolved per row rather than
           # taken from $id. The audio tools live in the nested audio-stack
@@ -1019,8 +1019,9 @@ _setup_tree(){
           _patch_present "${CAND_KEYS[$i]}" && j_patch=true
           local j_move=false
           _move_patch_present "${CAND_KEYS[$i]}" && j_move=true
+          json_str_into "$needs"; local j_needs=$JS
           json_obj_into folder "$j_folder" key "$j_key" label "$j_vlabel" info "$j_info" \
-            disabled "$(json_bool "$disabled")" group "$j_group" patch "$j_patch" move_patch "$j_move"
+            disabled "$(json_bool "$disabled")" group "$j_group" patch "$j_patch" move_patch "$j_move" needs "$j_needs"
           items+=("${j_folder//\"/}/$name"$'\t'"$JO")
         done
         ;;
@@ -2000,9 +2001,9 @@ _manual_asset_spec(){ # appkey -> "expected-file|url" (empty: no manual file)
 _manual_asset_present(){ # appkey -> 0 if its installer file exists
   local key="$1" f
   case "$key" in
-    ableton-wires)
+    ableton-wires|ableton-native)
       local dl; dl="$(command -v xdg-user-dir >/dev/null 2>&1 && xdg-user-dir DOWNLOAD 2>/dev/null || echo "$HOME/Downloads")"
-      for f in "$APPS_DIR"/ableton/wires/Ableton*.zip "$APPS_DIR"/ableton/wires/ableton*.zip \
+      for f in "$APPS_DIR"/ableton/Ableton*.zip "$APPS_DIR"/ableton/ableton*.zip \
                "$dl"/Ableton*.zip "$dl"/ableton*.zip; do [[ -f $f ]] && return 0; done ;;
     bitwig)
       for f in "$APPS_DIR"/bitwig/bitwig*.deb; do [[ -f $f ]] && return 0; done ;;
@@ -2068,7 +2069,7 @@ _asset_gate(){ # appkey -> expected filename when gated-and-absent, empty when u
 # the note from the id pointed users at a directory that does not exist.
 _asset_dir(){ # appkey -> module folder name
   case "$1" in
-    ableton-wires) printf 'ableton/wires' ;;
+    ableton-wires|ableton-native) printf 'ableton' ;;
     davinci|davinci-resolve) printf 'davinci' ;;
     *) printf '%s' "$1" ;;
   esac
@@ -3309,20 +3310,35 @@ cmd_kb_free(){
   return 0
 }
 
-cmd_kb_add(){ # <combo> <label> <cmd> <type>
-  (($# >= 4)) || { err "Usage: kb-add <combo> <label> <cmd> <type>"; return 1; }
-  local combo="$1" label="$2" cmd="$3" type="$4"
+cmd_kb_check(){ # <combo> → {"combo","taken","where"} — read-only
+  (($# >= 1)) || { err "Usage: kb-check <combo>"; return 1; }
+  local combo="$1" where
   combo="$(tr 'a-z' 'A-Z' <<< "$combo" | sed -E 's/ *\+ */ + /g; s/^ +//; s/ +$//')"
   [[ "$combo" =~ ^([A-Z0-9_]+( +\+ )?)+[A-Z0-9_]+$ ]] || { err "Invalid combo format: $combo"; return 1; }
-  # A combo bound OUTSIDE our managed block would duplicate: refuse and let
-  # the TUI tell the user to pick another key.
-  if [[ -f "$KB_CONF" ]] && sed "/$KB_BEGIN/,/$KB_END/d" "$KB_CONF" 2>/dev/null \
-      | rg -x -F "o.bind(\"$combo\"" -N >/dev/null 2>&1; then
-    err "Already bound outside the managed block: $combo"
+  where="$(kb_bound_elsewhere "$combo")"
+  if [[ -n "$where" ]]; then
+    printf '{"combo":%s,"taken":true,"where":%s}\n' "$(json_str "$combo")" "$(json_str "$where")"
+  else
+    printf '{"combo":%s,"taken":false,"where":""}\n' "$(json_str "$combo")"
+  fi
+  return 0
+}
+
+cmd_kb_add(){ # <combo> <label> <cmd> <type> [force]
+  (($# >= 4)) || { err "Usage: kb-add <combo> <label> <cmd> <type> [force]"; return 1; }
+  local combo="$1" label="$2" cmd="$3" type="$4" force="${5:-}" where
+  combo="$(tr 'a-z' 'A-Z' <<< "$combo" | sed -E 's/ *\+ */ + /g; s/^ +//; s/ +$//')"
+  [[ "$combo" =~ ^([A-Z0-9_]+( +\+ )?)+[A-Z0-9_]+$ ]] || { err "Invalid combo format: $combo"; return 1; }
+  # A combo bound OUTSIDE our block would duplicate: the TUI warns first and
+  # only passes "force" when the user accepts the override. Our block is
+  # written last (with hl.unbind), so it wins over the earlier binding.
+  where="$(kb_bound_elsewhere "$combo")"
+  if [[ "$force" != "force" && -n "$where" ]]; then
+    err "Already bound elsewhere ($where): $combo"
     return 1
   fi
   kb_ensure "$combo" "$label" "$cmd" "$type"
-  ok "Bound: $combo → $label"
+  ok "Bound: $combo → $label (force=${force:-no})"
 }
 
 cmd_kb_remove(){ # combo…
@@ -3565,6 +3581,108 @@ _ableton_native_space(){ # -> need_bytes, in GiB via cmd_space like every other 
   printf '%s\n' "$((peak+downloads))"
 }
 
+
+# ─── Generic asset downloads (background, shared archive folder) ───────────
+ASSET_DL_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/asset-downloads"
+SUITE_CDN_URL="https://cdn-downloads.ableton.com/channels/12.4.7/ableton_live_suite_12.4.7_64.zip"
+PUSH_CDN_URL="https://cdn-downloads.ableton.com/hardware_updates/push3/2.4.7/Push3-RecoveryImage-2.4.7.zip"
+
+_asset_urls(){ # key -> url<TAB>name (all share the central ableton folder)
+  local dir="$APPS_DIR/ableton"
+  case $1 in
+    ableton-wires)
+      printf '%s\t%s\n' "$SUITE_CDN_URL" 'ableton_live_suite_12.4.7_64.zip' ;;
+    ableton-native)
+      printf '%s\t%s\n' "$PUSH_CDN_URL" 'Push3-RecoveryImage-2.4.7.zip'
+      printf '%s\t%s\n' "$SUITE_CDN_URL" 'ableton_live_suite_12.4.7_64.zip' ;;
+  esac
+}
+
+_dl_state_path(){ printf '%s/%s\n' "$ASSET_DL_DIR" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
+
+_dl_notify_all_done(){
+  command -v notify-send >/dev/null 2>&1 || return 0
+  local f active=0
+  for f in "$ASSET_DL_DIR"/*; do
+    [[ -f $f ]] || continue
+    grep -q '^status=active' "$f" && active=1
+  done
+  (( active )) || notify-send -u normal "mosquitomarchy" "All archives have been downloaded by mosquitomarchy."
+}
+
+cmd_download_assets(){
+  local key="${1:-}" url name dest state tmp rc=0
+  mkdir -p "$ASSET_DL_DIR" "$APPS_DIR/ableton"
+  local -a started=()
+  while IFS=$'\t' read -r url name; do
+    [[ -n $url ]] || continue
+    dest="$APPS_DIR/ableton/$name"
+    [[ -f $dest ]] && continue
+    state="$(_dl_state_path "$key:$name")"
+    if [[ -f $state ]]; then
+      old_pid="$(sed -n 's/^pid=//p' "$state")"
+      if grep -q '^status=active' "$state" && [[ -n $old_pid ]] && kill -0 "$old_pid" 2>/dev/null; then
+        continue
+      fi
+    fi
+    tmp="$dest.part"
+    {
+      printf 'status=active\npct=0\nname=%s\ndest=%s\n' "$name" "$dest" > "$state"
+      total="$(curl -fsSLI --max-time 20 "$url" 2>/dev/null | awk 'tolower($1)=="content-length:" {gsub(/\r/,"",$2); print $2; exit}')"
+      [[ $total =~ ^[0-9]+$ ]] || total=0
+      curl -fL --retry 2 -o "$tmp" "$url" 2>/dev/null &
+      pid=$!
+      printf 'pid=%s\n' "$pid" >> "$state"
+      while kill -0 "$pid" 2>/dev/null; do
+        got=0; [[ -f $tmp ]] && got="$(stat -c %s "$tmp" 2>/dev/null || echo 0)"
+        if (( total > 0 )); then pct=$((got*100/total)); else pct=0; fi
+        (( pct > 100 )) && pct=100
+        printf 'status=active\npct=%d\nname=%s\ndest=%s\npid=%s\n' "$pct" "$name" "$dest" "$pid" > "$state"
+        sleep 1
+      done
+      wait "$pid"; rc=$?
+      if (( rc == 0 )); then
+        mv -f "$tmp" "$dest"
+        printf 'status=done\npct=100\nname=%s\ndest=%s\n' "$name" "$dest" > "$state"
+      else
+        rm -f "$tmp"
+        printf 'status=failed\npct=0\nname=%s\ndest=%s\n' "$name" "$dest" > "$state"
+      fi
+      _dl_notify_all_done
+    } &
+    disown 2>/dev/null || true
+    started+=("$name")
+  done < <(_asset_urls "$key")
+  if ((${#started[@]})); then
+    printf '{"started":true,"count":%d}\n' "${#started[@]}"
+    return 0
+  fi
+  # Nothing downloadable: send the user to the account page and explain.
+  spec="$(_manual_asset_spec "$key")"; open_url="${spec#*|}"
+  command -v notify-send >/dev/null 2>&1 && notify-send -u normal "mosquitomarchy" "Download the required archive into ~/Downloads so mosquitomarchy can read it."
+  printf '{"started":false,"open_url":%s}\n' "$(json_str "$open_url")"
+}
+
+cmd_asset_download_status(){
+  local f name pct status dest key
+  printf '['
+  local first=1
+  for f in "$ASSET_DL_DIR"/*; do
+    [[ -f $f ]] || continue
+    name="$(sed -n 's/^name=//p' "$f" | head -1)"
+    pct="$(sed -n 's/^pct=//p' "$f" | head -1)"
+    status="$(sed -n 's/^status=//p' "$f" | head -1)"
+    dest="$(sed -n 's/^dest=//p' "$f" | head -1)"
+    key="$(basename "$f")"
+    [[ -n $name ]] || continue
+    ((first)) || printf ','
+    first=0
+    printf '{"key":%s,"name":%s,"pct":%d,"status":%s,"dest":%s}' \
+      "$(json_str "$key")" "$(json_str "$name")" "${pct:-0}" "$(json_str "$status")" "$(json_str "$dest")"
+  done
+  printf ']\n'
+}
+
 cmd_space(){
   local op="${1:-}"; shift || true
   local free_kb free_unknown=false
@@ -3717,7 +3835,7 @@ shift || true
 # launches (mq_elevate_once takes a flock around mq_sudo_prime). Read-only
 # queries must stay silent, so only mutating subcommands prime it.
 case $sub in
-  space|status|categories|candidates|missing-assets|patches|health|cleanup-preview|kb-list|kb-free|fixes|tweaks|setup|uninstall-tree|preinstalls|backup-options|backup-opts|backups|backup-manifest|restore-update-check|update-check|addons-list|reaper-addons-status|reaper-running|theme-images|theme-default-dir|theme-pick|theme-list|theme-list-any|crash-notify|ai-removed|menu-entries) : ;;
+  space|status|categories|candidates|missing-assets|patches|health|cleanup-preview|kb-list|kb-free|kb-check|fixes|tweaks|setup|uninstall-tree|preinstalls|backup-options|backup-opts|backups|backup-manifest|restore-update-check|update-check|addons-list|reaper-addons-status|reaper-running|theme-images|theme-default-dir|theme-pick|theme-list|theme-list-any|crash-notify|ai-removed|menu-entries) : ;;
   *) mq_elevate_once ;;
 esac
 # Elevation is primed ONCE per action (mq_sudo_prime, called from
@@ -4367,6 +4485,8 @@ cmd_cleanup(){
 
 case "$sub" in
   space)                    cmd_space "${1:-}" "${@:2}" ;;
+  download-assets)          cmd_download_assets "${1:-}" ;;
+  asset-download-status)    cmd_asset_download_status ;;
   status)                   mq_cached status 300 cmd_status ;;
   categories)               cmd_categories ;;
   candidates)               cmd_candidates "${1:-}" ;;
@@ -4378,6 +4498,7 @@ case "$sub" in
   heal) mq_cache_clear; cmd_heal "$@" ;;
   kb-list)                  cmd_kb_list ;;
   kb-free)                  cmd_kb_free ;;
+  kb-check)                 cmd_kb_check "$@" ;;
   kb-add) mq_cache_clear; cmd_kb_add "$@" ;;
   kb-remove) mq_cache_clear; cmd_kb_remove "$@" ;;
   kb-reset) mq_cache_clear; cmd_kb_reset ;;

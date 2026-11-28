@@ -158,10 +158,10 @@ collect_installers(){
   # so a moved file lights its row back up on the next render.
   local -a map=(
     # Native (upstream) archives: exact first, so they never land in wine/.
-    'Push3-RecoveryImage-2.4.7.zip|code/modules/Apps/ableton/native'
-    'ableton_live_suite_12.4.7_64.zip|code/modules/Apps/ableton/native'
-    'Ableton*.zip|code/modules/Apps/ableton/wires'
-    'ableton*.zip|code/modules/Apps/ableton/wires'
+    'Push3-RecoveryImage-2.4.7.zip|code/modules/Apps/ableton'
+    'ableton_live_suite_12.4.7_64.zip|code/modules/Apps/ableton'
+    'Ableton*.zip|code/modules/Apps/ableton'
+    'ableton*.zip|code/modules/Apps/ableton'
     'install-ableton-*.run|code/modules/Apps/ableton/wires'
     'guitar-pro-8-setup.exe|code/modules/Apps/guitarpro'
     'bitwig-studio-*.deb|code/modules/Apps/bitwig'
@@ -233,8 +233,8 @@ collect_installers(){
 
   # Which Setup rows stay greyed out for a still-missing installer.
   local -a greyed=()
-  compgen -G "$SRC/code/modules/Apps/ableton/wires/Ableton*.zip" >/dev/null \
-    || compgen -G "$SRC/code/modules/Apps/ableton/wires/ableton*.zip" >/dev/null \
+  compgen -G "$SRC/code/modules/Apps/ableton/Ableton*.zip" >/dev/null \
+    || compgen -G "$SRC/code/modules/Apps/ableton/ableton*.zip" >/dev/null \
     || greyed+=("ableton-wires")
   compgen -G "$SRC/code/modules/Apps/bitwig/bitwig*.deb" >/dev/null \
     || greyed+=("bitwig")

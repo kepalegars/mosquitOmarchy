@@ -28,6 +28,9 @@ func (m model) setupRowHint(v string) string {
 	if it.Patch {
 		patch = "p patch · "
 	}
+	if it.Needs != "" {
+		patch += "d download · "
+	}
 	switch _, key := splitSetupValue(v); key {
 	case "davinci-resolve":
 		if m.treeMode == "uninstall" {

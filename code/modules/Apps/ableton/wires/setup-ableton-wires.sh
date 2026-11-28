@@ -97,11 +97,13 @@ download_checked(){ # url dest [expected_sha]
 }
 
 find_live_exe(){
-  local z base
-  for z in "$SCRIPT_DIR"/*.zip "$HOME/Downloads"/ableton_live_suite*.zip; do
+  local z base shared
+  shared="$(cd "$SCRIPT_DIR/.." && pwd)"
+  for z in "$shared"/Ableton*.zip "$shared"/ableton*.zip "$SCRIPT_DIR"/*.zip "$HOME/Downloads"/ableton_live_suite*.zip; do
     [[ -f $z ]] || continue
     base="$(unzip -Z1 "$z" 2>/dev/null | grep -iE 'Installer.*\.exe$' | head -1 || true)"
     [[ -n $base ]] || continue
+    cp -n -- "$z" "$CACHE/archive.zip" 2>/dev/null || true
     unzip -p "$z" "$base" > "$CACHE/AbletonLiveSuite.exe"
     printf '%s\n' "$CACHE/AbletonLiveSuite.exe"
     return 0

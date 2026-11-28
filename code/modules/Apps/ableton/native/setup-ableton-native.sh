@@ -23,6 +23,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ARCHIVE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LIB="$SCRIPT_DIR/../../../lib/elevate.bash"
 if [[ -f $LIB ]]; then
   # shellcheck source=../../../lib/elevate.bash
@@ -152,14 +153,14 @@ downloads_dir(){
 archive_location(){ # name -> path (empty when it must be downloaded)
   local name="$1" f dl
   dl="$(downloads_dir)"
-  for f in "$SCRIPT_DIR/$name" "$CLONE/$name" "$dl/$name"; do
+  for f in "$ARCHIVE_DIR/$name" "$CLONE/$name" "$dl/$name"; do
     [[ -f $f ]] && { printf '%s\n' "$f"; return 0; }
   done
   return 0
 }
 
 fetch_archive(){ # name url
-  local name="$1" url="$2" target="$CLONE/$1" staged="$SCRIPT_DIR/$1" tmp found dl
+  local name="$1" url="$2" target="$CLONE/$1" staged="$ARCHIVE_DIR/$1" tmp found dl
   found="$(archive_location "$name")"
   if [[ -n $found ]]; then
     if [[ $found == "$target" ]]; then
