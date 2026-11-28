@@ -934,3 +934,12 @@ func fetchAssetMissingCmd(key string) tea.Cmd {
 		return assetMissingMsg{key: key, items: recs}
 	}
 }
+
+// openDownloadPageCmd hands the URL to the detached browser and returns at
+// once: the page opening is not a run worth a log or a confirmation.
+func openDownloadPageCmd(key string) tea.Cmd {
+	return func() tea.Msg {
+		_, _ = runQuick("open-download-page", key)
+		return nil
+	}
+}

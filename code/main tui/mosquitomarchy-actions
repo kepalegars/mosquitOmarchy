@@ -3648,12 +3648,20 @@ cmd_asset_missing(){
 }
 
 cmd_open_download_page(){
-  local key="${1:-}" spec url
+  local key="${1:-}" spec url opener
   spec="$(_manual_asset_spec "$key")"; url="${spec#*|}"
   [[ -n $url ]] || return 0
-  command -v xdg-open >/dev/null 2>&1 && xdg-open "$url" >/dev/null 2>&1 &
+  # Detach the browser from this short-lived script: a plain "&" child died
+  # with the caller, which is why no page ever opened from the TUI.
+  if command -v omarchy-launch-browser >/dev/null 2>&1; then
+    setsid omarchy-launch-browser "$url" >/dev/null 2>&1 < /dev/null &
+  elif command -v xdg-open >/dev/null 2>&1; then
+    opener=xdg-open
+    setsid "$opener" "$url" >/dev/null 2>&1 < /dev/null &
+  fi
   command -v notify-send >/dev/null 2>&1 \
-    && notify-send -u normal "mosquitomarchy" "Download the required archive into ~/Downloads so mosquitomarchy can read it."
+    && notify-send -u normal -t 10000 "mosquitomarchy" \
+      "Download the required archive into ~/Downloads so mosquitomarchy can read it."
   printf '{"opened":true}\n'
 }
 

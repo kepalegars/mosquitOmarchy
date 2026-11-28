@@ -983,6 +983,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		if m.top() != scrConfirm || m.pendingAction != "download-assets-prompt" {
 			return m, nil
 		}
+		// A fast Enter/Esc/Enter leaves an older fetch in flight: it must not
+		// repaint the prompt now asking about another module.
+		if len(m.pendingArgs) > 0 && msg.key != m.pendingArgs[0] {
+			return m, nil
+		}
 		if msg.err != nil {
 			m.pendingMsg = "Could not read the required archives: " + msg.err.Error()
 			m.confirm.Message = m.pendingMsg
@@ -1404,10 +1409,16 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.pendingArgs = nil
 			m.pendingAction = ""
 			if msg.Canceled {
+				// Esc must leave the prompt. The old early return kept the
+				// confirm up on "Checking required archives…" for good.
+				m.pop()
 				return m, nil
 			}
 			if msg.Extra {
-				return m.startWorking("Opening download page", workingArgs("open-download-page", []string{key})...)
+				// Open the page without a log screen or a second confirmation:
+				// return to the tree and let the detached browser do the work.
+				m.pop()
+				return m, openDownloadPageCmd(key)
 			}
 			if msg.Yes {
 				m.toast, _ = m.toast.SetWarn("! archive download started in the background")
