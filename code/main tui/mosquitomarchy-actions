@@ -3882,7 +3882,7 @@ shift || true
 # launches (mq_elevate_once takes a flock around mq_sudo_prime). Read-only
 # queries must stay silent, so only mutating subcommands prime it.
 case $sub in
-  space|status|categories|candidates|missing-assets|patches|health|cleanup-preview|kb-list|kb-free|kb-check|fixes|tweaks|setup|uninstall-tree|preinstalls|backup-options|backup-opts|backups|backup-manifest|restore-update-check|update-check|addons-list|reaper-addons-status|reaper-running|theme-images|theme-default-dir|theme-pick|theme-list|theme-list-any|crash-notify|ai-removed|menu-entries) : ;;
+  space|status|categories|candidates|missing-assets|patches|health|cleanup-preview|kb-list|kb-free|kb-check|fixes|tweaks|setup|uninstall-tree|preinstalls|backup-options|backup-opts|backups|backup-manifest|restore-update-check|update-check|addons-list|reaper-addons-status|reaper-running|theme-images|theme-default-dir|theme-pick|theme-list|theme-list-any|crash-notify|ai-removed|menu-entries|asset-download-status|asset-missing|backup-sel) : ;;
   *) mq_elevate_once ;;
 esac
 # Elevation is primed ONCE per action (mq_sudo_prime, called from

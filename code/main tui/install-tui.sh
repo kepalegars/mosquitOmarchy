@@ -93,6 +93,11 @@ resolve_go() {
 ensure_go() {
   if resolve_go; then ok "go present ($("$GO_BIN" version | awk '{print $3}'))"; return 0; fi
 
+  if [[ -n ${MQ_TUI_NO_ELEVATE:-} ]]; then
+    warn "Go is missing — no dependency install at launch (install it manually)."
+    return 1
+  fi
+
   info "Go is not installed — installing it now (needed to build the TUI)."
 
   if command -v mise >/dev/null 2>&1; then
@@ -160,6 +165,10 @@ ensure_go() {
 # before building/installing anything that may need a GUI password prompt.
 ensure_zenity() {
   command -v zenity >/dev/null 2>&1 && { ok "zenity present (GTK sudo prompt)"; return 0; }
+  if [[ -n ${MQ_TUI_NO_ELEVATE:-} ]]; then
+    warn "zenity is missing — no dependency install at launch (install it manually)."
+    return 1
+  fi
   command -v pacman >/dev/null 2>&1 || { warn "zenity missing; no pacman to install the GTK sudo prompt."; return 1; }
 
   local dbpath repo found=0 missing=0 mode=-S

@@ -56,10 +56,15 @@ fi
 # toolchain hiccup must not slow boot down.
 REBUILD_FLAG="$HOME/.local/state/mosquitomarchy/rebuild-pending"
 if [[ ${1:-} != "--status" && ${1:-} != "status" && -f $REBUILD_FLAG && -n $_REPO ]]; then
-  if GUI_RUN_EXEC=1 bash "$_REPO/code/main tui/install-tui.sh" -y >/dev/null 2>&1; then
-    rm -f "$REBUILD_FLAG"
+  # One attempt, then clear the flag: a failed rebuild (missing Go/zenity, no
+  # network) used to re-run the dependency installers — and their elevation
+  # prompts — on EVERY launch, with all output hidden.
+  rm -f "$REBUILD_FLAG"
+  LOG="${XDG_STATE_HOME:-$HOME/.local/state}/mosquitomarchy/rebuild.log"
+  if GUI_RUN_EXEC=1 MQ_TUI_NO_ELEVATE=1 bash "$_REPO/code/main tui/install-tui.sh" -y >"$LOG" 2>&1; then
+    :
   else
-    echo "mosquitomarchy: pending rebuild failed — launching the previous build." >&2
+    echo "mosquitomarchy: rebuild failed (see $LOG) — launching the previous build." >&2
   fi
 fi
 
