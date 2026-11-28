@@ -994,6 +994,15 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.setupPicker = m.rebuildSetup()
 			case scrSetupCat:
 				m.setupCatPicker = m.rebuildSetupCat()
+			case scrConfirm:
+				if m.pendingAction == "download-assets-prompt" && len(m.pendingArgs) > 0 {
+					key := m.pendingArgs[0]
+					if d, ok := m.assetDL[key]; ok {
+						m.pendingMsg = "Archive download in progress for " + key +
+							fmt.Sprintf("\n\n%s — %d%%\n\nPress d / Enter to wait here, or leave: the download continues.", d.Name, d.Pct)
+						m.confirm.Message = m.pendingMsg
+					}
+				}
 			}
 		}
 		return m, nil
