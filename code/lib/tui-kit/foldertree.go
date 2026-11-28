@@ -41,6 +41,8 @@ type (
 		// Disabled greys the row and takes it out of navigation (a greyed row
 		// the user cannot reach still lists what exists, with a reason).
 		Disabled bool
+		// Dim greys the label after DimPrefix runes but keeps the row navigable.
+		Dim bool
 		// Badge is an optional trailing marker, e.g. the ■ that says "a fix is
 		// already applied here".
 		Badge string
@@ -304,6 +306,10 @@ func BuildFolderTree(folders []TreeFolder, items map[string][]TreeItem, open map
 				Display: "    " + branch + mark + " " + it.Label,
 				Value:   TreeValue(TreeItemPrefix, it.ID),
 				Badge:   it.Badge,
+			}
+			if it.Dim {
+				row.Dim = true
+				row.DimPrefix = len("    " + branch)
 			}
 			if it.Disabled {
 				row.Disabled = true

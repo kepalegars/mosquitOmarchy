@@ -5410,7 +5410,8 @@ func (m model) setupIndex(uninstall bool) map[string]*setupCategory {
 			Label:    it.Label,
 			Checked:  m.selected[v],
 			Info:     it.Info,
-			Disabled: it.Disabled,
+			Disabled: it.Disabled && it.Needs == "",
+			Dim:      it.Needs != "",
 		}
 		row.Label = trimOwnPrefix(it.Folder, it.Label)
 		if d, ok := m.assetDL[it.Key]; ok && d.Status == "active" && m.assetBlink {

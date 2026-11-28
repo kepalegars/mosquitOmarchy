@@ -97,13 +97,20 @@ download_checked(){ # url dest [expected_sha]
 }
 
 find_live_exe(){
-  local z base shared
+  local z base shared dl
   shared="$(cd "$SCRIPT_DIR/.." && pwd)"
-  for z in "$shared"/Ableton*.zip "$shared"/ableton*.zip "$SCRIPT_DIR"/*.zip "$HOME/Downloads"/ableton_live_suite*.zip; do
+  dl="$(command -v xdg-user-dir >/dev/null 2>&1 && xdg-user-dir DOWNLOAD 2>/dev/null || echo "$HOME/Downloads")"
+  for z in "$shared"/Ableton*.zip "$shared"/ableton*.zip "$dl"/Ableton*.zip "$dl"/ableton*.zip; do
     [[ -f $z ]] || continue
+    # Bootstrap and the native helper MOVE archives into the shared folder.
+    # Do the same here instead of leaving a second multi-GB copy in Downloads.
+    if [[ $z == "$dl"/* ]]; then
+      base="$(basename "$z")"
+      [[ -f "$shared/$base" ]] || mv -n -- "$z" "$shared/$base"
+      z="$shared/$base"
+    fi
     base="$(unzip -Z1 "$z" 2>/dev/null | grep -iE 'Installer.*\.exe$' | head -1 || true)"
     [[ -n $base ]] || continue
-    cp -n -- "$z" "$CACHE/archive.zip" 2>/dev/null || true
     unzip -p "$z" "$base" > "$CACHE/AbletonLiveSuite.exe"
     printf '%s\n' "$CACHE/AbletonLiveSuite.exe"
     return 0

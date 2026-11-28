@@ -77,6 +77,10 @@ type PickerItem struct {
 	Sub      string // optional grey subtext line, e.g. the native overlay's value hint
 	Value    string
 	Disabled bool // rendered greyed out, skipped by navigation, inert on enter
+	// Dim styles only the part of Display after DimPrefix; the row stays
+	// navigable. Used by the Setup tree for missing-archive rows.
+	Dim       bool
+	DimPrefix int
 	// Badge is an optional short marker (a single glyph like "●") rendered
 	// in the theme accent on a fixed leading slot, for a row that needs a
 	// state cue the plain Display can't carry. When ANY row in a picker
@@ -531,7 +535,21 @@ func (d pickerDelegate) renderCentered(w io.Writer, m list.Model, index int, ite
 		// stays grey even on the selected row, so only the title blinks.
 		suffix = StyleDisabled.Render(pi.Suffix)
 	}
-	titleStyled := d.leadCell(pi, index == m.Index()) + d.folderTitleStyle(pi, index, m.Index()).Render(title) + suffix + d.trailingCell(pi)
+	titleStyled := ""
+	styled := d.folderTitleStyle(pi, index, m.Index()).Render(title)
+	if pi.Dim {
+		r := []rune(title)
+		n := pi.DimPrefix
+		if n > len(r) {
+			n = len(r)
+		}
+		if n < 0 {
+			n = 0
+		}
+		styled = d.folderTitleStyle(pi, index, m.Index()).Render(string(r[:n])) +
+			StyleDisabled.Render(string(r[n:]))
+	}
+	titleStyled = d.leadCell(pi, index == m.Index()) + styled + suffix + d.trailingCell(pi)
 	// Fixed 3-column slot before the title: three spaces when unselected,
 	// one space + "▶ " (styled) when selected — *exactly* three visible
 	// columns in both cases, so the title always starts on the same
@@ -1541,7 +1559,17 @@ func (p Picker) FullHelpText() string {
 		"esc/h · ctrl+c cancel / back",
 		"?              close this help",
 	)
-	all := append(base, p.extraHints...)
+	// The bottom bar combines Enter's host hint with `l`; the overlay must say
+	// the same thing, or the two help surfaces disagree about the keys.
+	extras := append([]string{}, p.extraHints...)
+	if p.treeOpen == nil && !p.foldKeys {
+		for i, h := range extras {
+			if strings.HasPrefix(h, "enter ") {
+				extras[i] = strings.Replace(h, "enter ", "enter/l ", 1)
+			}
+		}
+	}
+	all := append(base, extras...)
 	lines := []string{
 		StyleHeader.Render("Shortcuts"),
 		"",
