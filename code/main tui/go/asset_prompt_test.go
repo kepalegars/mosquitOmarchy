@@ -37,3 +37,28 @@ func TestLateAssetMissingIsIgnored(t *testing.T) {
 		t.Fatalf("late result repainted the message: %q", m2.pendingMsg)
 	}
 }
+
+// With no direct URL the only button is the page, so Yes must open the browser
+// (and return to the tree), never start a download.
+func TestPageOnlyPromptOpensPage(t *testing.T) {
+	m := initialModel()
+	m.push(scrConfirm)
+	m.pendingAction = "download-assets-prompt"
+	m.pendingArgs = []string{"davinci-resolve"}
+	m.pendingMsg = "Checking required archives…"
+	m.confirm = tuikit.NewConfirm(m.pendingMsg, "Cancel", "Download")
+
+	m2, _ := m.update(assetMissingMsg{key: "davinci-resolve", items: []AssetMissing{{
+		Name: "DaVinci_Resolve.zip", Path: "/tmp/x", Page: "https://example.com/download",
+	}}})
+	if len(m2.pendingArgs) != 2 || m2.pendingArgs[1] != "page" {
+		t.Fatalf("page-only prompt not marked: %v", m2.pendingArgs)
+	}
+	m3, cmd := m2.update(tuikit.ConfirmResultMsg{Yes: true})
+	if m3.top() == scrWorking || m3.top() == scrConfirm {
+		t.Fatalf("Yes on a page-only prompt left the tree: top=%v", m3.top())
+	}
+	if cmd == nil {
+		t.Fatalf("Yes on a page-only prompt did not launch the opener")
+	}
+}

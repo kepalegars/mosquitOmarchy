@@ -1031,7 +1031,11 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 			m.confirm = m.confirm.WithExtra("Open download page", "o")
 		}
 		if !canDownload {
+			// No direct URL: the page is the only action, so it sits on the
+			// Yes button. Mark it so Yes opens the browser instead of running
+			// a download that does not exist.
 			m.confirm = tuikit.NewConfirm(m.pendingMsg, "Cancel", "Open download page")
+			m.pendingArgs = []string{msg.key, "page"}
 		}
 		return m, nil
 
@@ -1403,6 +1407,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 		}
 		if m.pendingAction == "download-assets-prompt" {
 			key := "ableton-wires"
+			pageOnly := len(m.pendingArgs) > 1 && m.pendingArgs[1] == "page"
 			if len(m.pendingArgs) > 0 {
 				key = m.pendingArgs[0]
 			}
@@ -1414,7 +1419,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 				m.pop()
 				return m, nil
 			}
-			if msg.Extra {
+			if msg.Extra || (msg.Yes && pageOnly) {
 				// Open the page without a log screen or a second confirmation:
 				// return to the tree and let the detached browser do the work.
 				m.pop()
