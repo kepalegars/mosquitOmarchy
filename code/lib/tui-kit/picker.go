@@ -1164,18 +1164,26 @@ func (p Picker) ShortcutsHint() string {
 		return StyleHelp.Render(plain)
 	}
 
-	// 1. Shed the SCREEN's own hints first, from the tail. They are all still
-	// on the ? overlay, while esc/h (the way out) and enter/l (the action)
-	// are not things a user should have to guess on a cramped bar.
+	// 1. "? help" is the least useful thing on a cramped bar: every key is
+	// listed on the ? overlay anyway. Drop it first so the screen's own hints
+	// and esc/h survive at normal terminal widths.
+	if idx := indexOf(tail, "? help"); idx >= 0 {
+		tail = append(tail[:idx], tail[idx+1:]...)
+		if lipgloss.Width(fit()) <= w {
+			return StyleHelp.Render(fit())
+		}
+	}
+	// 2. Then shed the SCREEN's own hints from the tail. esc/h (the way out)
+	// and the actions are not things a user should have to guess.
 	for len(extras) > 0 {
 		extras = extras[:len(extras)-1]
 		if lipgloss.Width(fit()) <= w {
 			return StyleHelp.Render(fit())
 		}
 	}
-	// 2. Only if the universal keys alone still do not fit, shed the least
-	// useful of them: ? help first, then the redundant vim/arrow aliases.
-	for _, k := range []string{"? help", "↑/k up", "↓/j down", "enter/l select", "esc/h back"} {
+	// 3. Only if the universal keys alone still do not fit, shed the least
+	// useful of them: redundant vim/arrow aliases, and esc/h last of all.
+	for _, k := range []string{"↑/k up", "↓/j down", "enter/l select", "esc/h back"} {
 		if idx := indexOf(tail, k); idx >= 0 {
 			tail = append(tail[:idx], tail[idx+1:]...)
 			if lipgloss.Width(fit()) <= w {

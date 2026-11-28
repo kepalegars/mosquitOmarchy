@@ -1050,7 +1050,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 					key := m.pendingArgs[0]
 					if d, ok := m.assetDL[key]; ok {
 						m.pendingMsg = "Archive download in progress for " + key +
-							fmt.Sprintf("\n\n%s — %d%%\n\nPress d / Enter to wait here, or leave: the download continues.", d.Name, d.Pct)
+							fmt.Sprintf("\n\n%s — %d%%\n\nWait here, or leave: the download continues.", d.Name, d.Pct)
 						m.confirm.Message = m.pendingMsg
 					}
 				}
@@ -2364,7 +2364,7 @@ func (m model) update(msg tea.Msg) (model, tea.Cmd) {
 						"Omarchy menu (mega caffeine, live mode, mosquito Move Manager,\n" +
 						"mosquitomarchy itself).\n\n" +
 						"Each line starts from what is installed right now. The tick is what\n" +
-						"Enter will make true: un-tick an installed entry to strip it from the\n" +
+						"Enter/l will make true: un-tick an installed entry to strip it from the\n" +
 						"Omarchy menu, tick a missing one to add it back. Only the lines you\n" +
 						"actually changed are applied.").SetSize(m.contentSize())
 				m.push(scrInfo)
@@ -5114,11 +5114,11 @@ func homePageInfoFor(page string) string {
 
 	case "setup":
 		return "Setup — install, update or re-run modules, grouped in folders.\n\n" +
-			"Tab ticks, Left/Right folds a folder, i explains a row, Enter applies\n" +
+			"Tab ticks, Left/Right folds a folder, i explains a row, Enter/l applies\n" +
 			"the whole ticked selection. Every script is idempotent, so re-running\n" +
 			"one on a configured machine is safe.\n\n" +
 			"A row greyed out has nothing to install: its installer file is not on\n" +
-			"this machine. Enter on the row names the file; drop it in ~/Downloads\n" +
+			"this machine. Enter/l on the row names the file; drop it in ~/Downloads\n" +
 			"and re-run bootstrap (it files it away), then the row comes back."
 
 	case "uninstall":
@@ -5137,7 +5137,7 @@ func homePageInfoFor(page string) string {
 
 	case "health":
 		return "Health check — the checks worth running before blaming something.\n\n" +
-			"Tick the ones you want, Enter runs them. It re-applies any module left\n" +
+			"Tick the ones you want, Enter/l runs them. It re-applies any module left\n" +
 			"half-installed rather than reinstalling everything."
 
 	case "backup":
@@ -5174,7 +5174,7 @@ func homePagesOverview() string {
 		b.WriteString(homePageInfoFor(page))
 	}
 	b.WriteString("\n\nClose — leave. Nothing is applied on the way out; everything in\n" +
-		"this app is applied by the Enter you press on the row that does it.")
+		"this app is applied by the Enter/l you press on the row that does it.")
 	return b.String()
 }
 
@@ -5323,10 +5323,12 @@ func (m model) rebuildSetup() navPicker {
 	np := newNavPicker("", out).SetSize(m.contentSize()).
 		SetContentWidth(pinned).
 		SetHelpKeys(
+			// i goes first: it is shed from the TAIL when the bar is cramped,
+			// and it is the only way to read why a greyed row is greyed.
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
-			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		).
 		WithFoldState().
@@ -5819,10 +5821,12 @@ func (m model) rebuildSetupCat() navPicker {
 	}
 	p := newNavPicker("", pickerTreeItems(folders, items, m.selected, m.folderOpen, m.blinkOn, m.treeMode, m.aiRemovalLogged())).SetSize(m.contentSize()).
 		SetHelpKeys(
+			// i goes first: it is shed from the TAIL when the bar is cramped,
+			// and it is the only way to read why a greyed row is greyed.
+			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("F", "/"), key.WithHelp("F", "search")),
 			key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "toggle")),
 			key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
-			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", enterHelp)),
 		).
 		WithFoldState()
@@ -6276,9 +6280,9 @@ func healthHeadline(n, fixable int) string {
 	case fixable == 0:
 		return fmt.Sprintf("%d findings, no automatic fix (press i for details):", n)
 	case n == 1:
-		return "1 piece needs attention (tick it, then Enter re-applies it):"
+		return "1 piece needs attention (tick it, then Enter/l re-applies it):"
 	default:
-		return fmt.Sprintf("%d pieces need attention (tick the ones to re-apply, then Enter):", n)
+		return fmt.Sprintf("%d pieces need attention (tick the ones to re-apply, then Enter/l):", n)
 	}
 }
 

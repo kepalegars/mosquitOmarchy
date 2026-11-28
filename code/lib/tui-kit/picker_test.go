@@ -172,6 +172,26 @@ func TestToggleSpecDisplay(t *testing.T) {
 	}
 }
 
+func TestShortcutsHintKeepsFoldAndBackWhenNarrow(t *testing.T) {
+	kb := func(k, d string) key.Binding {
+		return key.NewBinding(key.WithKeys(k), key.WithHelp(k, d))
+	}
+	p := NewPicker("", []PickerItem{{Display: "a", Value: "a"}}).
+		SetSize(88, 20).WithFoldState().SetHelpKeys(
+		kb("F", "search"),
+		kb("tab", "toggle"),
+		kb("i", "info"),
+		key.NewBinding(key.WithKeys("left", "right", "l"), key.WithHelp("←/→/l", "fold")),
+		kb("enter", "install selection"),
+	)
+	plain := ansi.Strip(p.ShortcutsHint())
+	for _, want := range []string{"←/→/l fold", "enter install selection", "esc/h back"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("narrow tree bar dropped %q: %s", want, plain)
+		}
+	}
+}
+
 // TestShortcutsHintFitsAndKeepsThePrimaryAction is the regression for a
 // shortcut bar that did not fit.
 //

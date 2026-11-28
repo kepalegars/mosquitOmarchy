@@ -226,7 +226,7 @@ func (m model) View() string {
 		title := tuikit.StyleAccent.Render("jamjamjam")
 		body := tuikit.StyleMuted.Render("waiting for the backend (analysis not running)…")
 		return tuikit.FrameScreen(m.w, m.h, title, body,
-			tuikit.BottomBar(m.status, tuikit.StyleHelp.Render("q quit"), m.w))
+			tuikit.BottomBar(m.status, tuikit.StyleHelp.Render("esc/h/q quit"), m.w))
 	}
 	title := m.titleLine()
 	body := m.body()
@@ -256,7 +256,7 @@ func (m model) logoWordmark() string {
 // hintBar builds the single greyed shortcut line with the analyze button
 // right-aligned on the same row.
 func (m model) hintBar() string {
-	hint := tuikit.StyleHelp.Render("hold Right Ctrl · m metronome · r reset · s settings · ? help · q quit")
+	hint := tuikit.StyleHelp.Render("hold Right Ctrl · m metronome · r reset · s settings · ? help · esc/h/q quit")
 	button := m.analyzeButton()
 	return lipglossJoin(hint, button, m.w)
 }
